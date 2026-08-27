@@ -85,6 +85,9 @@ export interface TaskSubmission {
   /** Whether the task has an interactive user who can confirm high-risk actions.
    *  Defaults to true. Scheduled tasks, rituals set this to false. */
   interactive?: boolean;
+  /** `/loop` (operator-instructed): the runner lifts the turn cap + SDK
+   *  wall-clock; the "loop" tag exempts the stuck-task kill. */
+  unlimited?: boolean;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
   /**
@@ -274,13 +277,11 @@ function drainContainerQueue(): void {
     // (unrelated) task neither inherits that run's prior nor leaks into it.
     outsideRunToolContext(() =>
       dispatchWithSlot(next.taskId, next.agentType, next.submission),
-    ).catch(
-      (err) => {
-        log.error({ err, taskId: next.taskId }, "queued task failed");
-        updateTaskStatus(next.taskId, "failed", undefined, String(err));
-        releaseContainerSlot();
-      },
-    );
+    ).catch((err) => {
+      log.error({ err, taskId: next.taskId }, "queued task failed");
+      updateTaskStatus(next.taskId, "failed", undefined, String(err));
+      releaseContainerSlot();
+    });
   }
 }
 
@@ -441,9 +442,17 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   // malformed gates payload must not lose the task — log and run ungated.
   if (submission.gates?.length) {
     try {
-      declareGates(taskId, submission.gates, submission.gatesSource ?? "submission", db);
+      declareGates(
+        taskId,
+        submission.gates,
+        submission.gatesSource ?? "submission",
+        db,
+      );
     } catch (err) {
-      log.warn({ taskId, err: errMsg(err) }, "gates: declaration failed — task runs ungated");
+      log.warn(
+        { taskId, err: errMsg(err) },
+        "gates: declaration failed — task runs ungated",
+      );
     }
   }
 
@@ -650,6 +659,7 @@ async function dispatchWithSlot(
     onTextChunk: submission.onTextChunk,
     signal: submission.abortController?.signal,
     interactive: submission.interactive,
+    unlimited: submission.unlimited,
   };
 
   // V8.4: freeze the ledger (gates declared so far are the fixed contract for

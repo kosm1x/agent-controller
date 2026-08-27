@@ -122,6 +122,7 @@ import {
   MAX_ROUNDS_DEFAULT,
   MAX_ROUNDS_CODING,
   MAX_ROUNDS_BROWSER,
+  LOOP_MAX_TURNS,
   TOKEN_BUDGET_FAST,
   TOKEN_BUDGET_CODING,
   TOKEN_BUDGET_BROWSER,
@@ -1137,11 +1138,14 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         "shell_exec",
       ].includes(t),
     );
-    const maxRounds = hasPlaywright
-      ? MAX_ROUNDS_BROWSER
-      : hasCodingTools
-        ? MAX_ROUNDS_CODING
-        : MAX_ROUNDS_DEFAULT;
+    // `/loop` (operator-instructed): the cap is lifted for THIS task only.
+    const maxRounds = input.unlimited
+      ? LOOP_MAX_TURNS
+      : hasPlaywright
+        ? MAX_ROUNDS_BROWSER
+        : hasCodingTools
+          ? MAX_ROUNDS_CODING
+          : MAX_ROUNDS_DEFAULT;
 
     // Per-task execution context: isolates destructive locks + memory rate limits
     // Non-interactive tasks (scheduled, rituals) bypass the confirmation gate.
@@ -1273,7 +1277,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           toolRegistry.getDefinitions().map((d) => d.function.name);
 
         console.log(
-          `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${maxRounds}` +
+          `[fast-runner] Claude SDK path: ${allToolNames.length} tools, maxTurns=${input.unlimited ? "unlimited (/loop)" : maxRounds}` +
             (sdkImages.length > 0 ? `, images=${sdkImages.length}` : ""),
         );
 
@@ -1282,6 +1286,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           systemPrompt,
           toolNames: allToolNames,
           maxTurns: maxRounds,
+          unlimited: input.unlimited,
           abortSignal: input.signal,
           // Metered by the dispatcher aggregate over result.tokenUsage (and
           // by recordReflectionCost when reflection invokes this runner
@@ -1368,6 +1373,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               // R1 audit W4: bounded — half the rounds finishes a nearly-done
               // task; anything needing more re-caps into checkpoint + ¿Sigo?.
               maxTurns: Math.max(4, Math.ceil(maxRounds / 2)),
+              unlimited: input.unlimited,
               abortSignal: input.signal,
               costLedger: false,
               trace: { taskId: input.taskId, runId: input.runId },
@@ -1417,6 +1423,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               systemPrompt,
               toolNames: allToolNames,
               maxTurns: maxRounds,
+              unlimited: input.unlimited,
               abortSignal: input.signal,
               costLedger: false,
               trace: { taskId: input.taskId, runId: input.runId },

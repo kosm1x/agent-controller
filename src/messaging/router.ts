@@ -1240,6 +1240,16 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
   }
 }
 
+/** `/loop <tarea>` — operator-instructed unlimited task (2026-08-27): no turn
+ * cap, no SDK wall-clock, exempt from the stuck-task kill. Only the hard stop
+ * ("Para") ends it. Operator-only; the prefix is stripped before anything
+ * else sees the text. */
+const LOOP_RE = /^\/loop\b[\s:—-]*/i;
+const LOOP_TURN_LINE =
+  "\n[MODO /loop — sin límite de turnos ni de tiempo: continúa hasta TERMINAR la tarea completa; el operador puede detenerte con «Para».]";
+const LOOP_USAGE =
+  "Uso: /loop <tarea> — corre sin límite de turnos ni de tiempo; «Para» la detiene.";
+
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
   private pendingReplies = new Map<string, PendingReply>();
@@ -1742,7 +1752,8 @@ export class MessageRouter {
       reply = handleRitualesCommand(text) ?? "";
     } catch (err) {
       console.error(`[rituales] command failed:`, errMsg(err));
-      reply = "No pude leer los rituales ahora mismo. Intenta de nuevo en un momento.";
+      reply =
+        "No pude leer los rituales ahora mismo. Intenta de nuevo en un momento.";
     }
     if (!reply) return false;
     this.sendToChannel(msg.channel, msg.from, reply);
@@ -1760,7 +1771,9 @@ export class MessageRouter {
     } catch {
       /* non-fatal */
     }
-    console.log(`[rituales] channel=${msg.channel} text="${text.slice(0, 60)}"`);
+    console.log(
+      `[rituales] channel=${msg.channel} text="${text.slice(0, 60)}"`,
+    );
     return true;
   }
 
@@ -2341,7 +2354,7 @@ export class MessageRouter {
         i === conversationHistory.length - 1 && turn.role === "user"
           ? {
               ...turn,
-              content: `${timeContextLine(mxDate, mxTime)}\n\n${turn.content}`,
+              content: `${timeContextLine(mxDate, mxTime)}${msg.loop ? LOOP_TURN_LINE : ""}\n\n${turn.content}`,
             }
           : turn,
     );
@@ -2353,12 +2366,16 @@ export class MessageRouter {
       // cut can forge a coding signal ("precio"→"pr") and misroute this chat into
       // the nanoclaw sandbox (2026-07-06). See classifier `detectionText`.
       detectionText: msg.text,
-      agentType: "auto",
+      // `/loop`: pinned to the host fast runner (the only runner with the
+      // unlimited path) and flagged; the "loop" tag exempts the stuck kill.
+      agentType: msg.loop ? "fast" : "auto",
+      unlimited: msg.loop === true,
       tools,
       conversationHistory: historyForRunner,
       tags: [
         "messaging",
         msg.channel,
+        ...(msg.loop ? ["loop"] : []),
         ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
       ],
       // V8.3 seam origin: same thread key the interactive confirm seam records
@@ -2439,6 +2456,7 @@ export class MessageRouter {
         tags: [
           "messaging",
           msg.channel,
+          ...(msg.loop ? ["loop"] : []),
           ...enrichment.matchedSkillIds.map((id) => `skill:${id}`),
         ],
         threadId: this.operatorThreadKey(msg, tk),
@@ -2473,6 +2491,22 @@ export class MessageRouter {
       this.channels.get(msg.channel)?.mode,
     );
 
+    // `/loop <tarea>` (operator only): strip the prefix and flag the message;
+    // submitInboundTask lifts every cap for this one task.
+    if (
+      LOOP_RE.test(msg.text) &&
+      this.operatorThreadKey(msg, tk) !== undefined
+    ) {
+      msg.text = msg.text.replace(LOOP_RE, "").trim();
+      if (!msg.text) {
+        this.sendToChannel(msg.channel, msg.from, LOOP_USAGE);
+        return;
+      }
+      msg.loop = true;
+      console.log(
+        `[loop] channel=${msg.channel} unlimited task: "${msg.text.slice(0, 60)}"`,
+      );
+    }
     if (this.interceptContextClear(msg, tk)) return;
     if (await this.interceptBackgroundAgentSpawn(msg, tk)) return;
     if (this.interceptAgentList(msg)) return;
@@ -3597,7 +3631,7 @@ export class MessageRouter {
         i === spec.conversationHistory.length - 1 && turn.role === "user"
           ? {
               ...turn,
-              content: `${timeContextLine(mxDate, mxTime)}\n\n${turn.content}`,
+              content: `${timeContextLine(mxDate, mxTime)}${spec.tags.includes("loop") ? LOOP_TURN_LINE : ""}\n\n${turn.content}`,
             }
           : turn,
     );
@@ -3609,7 +3643,9 @@ export class MessageRouter {
       title: spec.title,
       description: spec.buildDescription(widened) + correction,
       detectionText: spec.detectionText,
-      agentType: "auto",
+      // A `/loop` task keeps its unlimited semantics across the scope re-run.
+      agentType: spec.tags.includes("loop") ? "fast" : "auto",
+      unlimited: spec.tags.includes("loop"),
       tools: widened,
       conversationHistory: history,
       tags: [...spec.tags, "scope-rerun"],

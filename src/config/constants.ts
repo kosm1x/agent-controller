@@ -71,6 +71,13 @@ export const MAX_ROUNDS_DEFAULT = int("MAX_ROUNDS_DEFAULT", 30);
 export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 55);
 /** Max inference rounds for Playwright browser tasks (navigate+snapshot+click cycles). */
 export const MAX_ROUNDS_BROWSER = int("MAX_ROUNDS_BROWSER", 35);
+/** `/loop` (operator-instructed, 2026-08-27): no turn cap. Deliberately NOT an
+ * env knob — the cap is lifted only for the task the operator prefixed with
+ * `/loop`; every other task keeps the three caps above. The SDK needs a number,
+ * so this is "unlimited" in practice; the SDK wall-clock timer (claude-sdk.ts)
+ * and the stuck-task kill (reactions/manager.ts) are lifted alongside. The
+ * kill switch is the operator's hard stop ("Para"). */
+export const LOOP_MAX_TURNS = 1_000_000;
 
 // --- Prompt size governance (CCP6) ---
 /** Max tokens for the system prompt (sections + KB + facts). ~24K chars. */

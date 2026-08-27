@@ -77,7 +77,9 @@ export class ReactionManager {
     this.stmtStuckTasks = this.db.prepare(
       `SELECT task_id, title FROM tasks
        WHERE status = 'running'
-       AND started_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')`,
+       AND started_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')
+       -- /loop tasks (tag "loop") run unbounded by operator instruction; "Para" stops them.
+       AND (metadata IS NULL OR metadata NOT LIKE '%"loop"%')`,
     );
     this.stmtMarkStuck = this.db.prepare(
       `UPDATE tasks SET status = 'failed', error = ?, updated_at = datetime('now'), completed_at = datetime('now')

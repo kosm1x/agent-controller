@@ -23,6 +23,8 @@ export interface IncomingMessage {
   replyTo?: string; // Message ID for threading
   imageUrl?: string; // Base64 data URL for vision (from photos)
   metadata?: Record<string, unknown>;
+  /** Set by the router when the operator prefixed the text with `/loop` (prefix stripped). */
+  loop?: boolean;
 }
 
 export interface OutgoingMessage {

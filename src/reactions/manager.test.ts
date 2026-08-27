@@ -373,4 +373,28 @@ describe("ReactionManager", () => {
     expect(stuckRun.completed_at).not.toBeNull();
     expect(liveRun.status).toBe("running"); // scoped — untouched
   });
+
+  it('a /loop task (tag "loop" in metadata) is NEVER marked stuck — operator-instructed unbounded run', () => {
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, started_at, metadata) VALUES (?, 'running', ?, datetime('now','-3 hours'), ?)`,
+    ).run(
+      "loop-1",
+      "Loop one",
+      JSON.stringify({ tags: ["messaging", "telegram", "loop"] }),
+    );
+    db.prepare(
+      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-loop', 'loop-1', 'running')`,
+    ).run();
+
+    (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
+
+    const task = db
+      .prepare("SELECT status FROM tasks WHERE task_id='loop-1'")
+      .get() as { status: string };
+    const run = db
+      .prepare("SELECT status FROM runs WHERE run_id='run-loop'")
+      .get() as { status: string };
+    expect(task.status).toBe("running");
+    expect(run.status).toBe("running");
+  });
 });

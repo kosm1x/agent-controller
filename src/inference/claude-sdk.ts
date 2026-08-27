@@ -493,6 +493,8 @@ export async function queryClaudeSdk(opts: {
   systemPrompt: string;
   toolNames: string[];
   maxTurns?: number;
+  /** `/loop`: no wall-clock timer (the caller lifts the turn cap). */
+  unlimited?: boolean;
   model?: string;
   /**
    * Reasoning-effort knob (V8.5 Phase 2.3). Maps to SDK Options.effort;
@@ -645,13 +647,17 @@ export async function queryClaudeSdk(opts: {
   // ceiling when iterating through large research corpora.
   const SDK_TIMEOUT_MS = 15 * 60_000;
   let timedOut = false;
-  const timeoutTimer = setTimeout(() => {
-    console.warn(
-      `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
-    );
-    timedOut = true;
-    abortController.abort();
-  }, SDK_TIMEOUT_MS);
+  // `/loop` (unlimited): no wall-clock timer — the operator's hard stop is the
+  // only kill switch. `clearTimeout(undefined)` below is a no-op.
+  const timeoutTimer = opts.unlimited
+    ? undefined
+    : setTimeout(() => {
+        console.warn(
+          `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
+        );
+        timedOut = true;
+        abortController.abort();
+      }, SDK_TIMEOUT_MS);
 
   // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
   // server rejects JSON containing unpaired surrogates with a 400 error

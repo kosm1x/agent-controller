@@ -1045,7 +1045,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
   });
 
   it("R2 C2: leg-1's streamed work survives when leg-2 returns only a thin closer", async () => {
-    const longBody = "Análisis del corpus: " + "hallazgo relevante. ".repeat(20);
+    const longBody =
+      "Análisis del corpus: " + "hallazgo relevante. ".repeat(20);
     mockQuerySdk.mockResolvedValueOnce(
       makeSdkResult({
         text: `[error_max_turns — max turns reached] Partial response below — turn/budget limit hit before completion.\n\n${longBody}\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported error_max_turns; content above is partial and the task did not formally complete.`,
@@ -1123,5 +1124,41 @@ describe("R4 audit W1 — a thrown resume still counts as THE recovery leg", () 
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.output?.text).toContain("Parte 1");
+  });
+});
+
+describe("/loop — unlimited task on the claude-sdk path (2026-08-27)", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+  });
+
+  it("unlimited:true lifts the turn cap and the SDK wall-clock for THIS task only", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nListo.", numTurns: 3 }),
+    );
+    await fastRunner.execute({
+      taskId: "loop-1",
+      runId: "run-loop-1",
+      title: "Tarea larga",
+      description: "Corre hasta terminar",
+      unlimited: true,
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    const args = mockQuerySdk.mock.calls[0][0];
+    expect(args.maxTurns).toBeGreaterThanOrEqual(1_000_000);
+    expect(args.unlimited).toBe(true);
+  });
+
+  it("without the flag the default cap stands and the wall-clock stays armed", async () => {
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await fastRunner.execute({
+      taskId: "loop-0",
+      runId: "run-loop-0",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    const args = mockQuerySdk.mock.calls[0][0];
+    expect(args.maxTurns).toBeLessThan(1_000);
+    expect(args.unlimited).toBeFalsy();
   });
 });

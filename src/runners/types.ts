@@ -41,6 +41,9 @@ export interface RunnerInput {
   /** Whether the task has an interactive user for confirmation prompts.
    *  Defaults to true. Scheduled tasks / rituals set false. */
   interactive?: boolean;
+  /** `/loop` (operator-instructed): no turn cap, no SDK wall-clock timeout,
+   *  exempt from the stuck-task kill. Only the hard stop ends it. */
+  unlimited?: boolean;
 }
 
 /**

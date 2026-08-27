@@ -116,7 +116,9 @@ vi.mock("../memory/jme.js", () => ({
 // command itself (config + DB) is unit-tested in rituals/rituales-command.test.ts.
 const ritualesMocks = vi.hoisted(() => ({
   handleRitualesCommand: vi.fn((text: string) =>
-    text.includes("pausa") ? "Pausado: Signal intelligence." : "🗓 Rituales (hora MX)\n1. Signal intelligence — diario 06:00",
+    text.includes("pausa")
+      ? "Pausado: Signal intelligence."
+      : "🗓 Rituales (hora MX)\n1. Signal intelligence — diario 06:00",
   ),
 }));
 vi.mock("../rituals/rituales-command.js", () => ({
@@ -2016,7 +2018,6 @@ describe("MessageRouter", () => {
     });
   });
 
-
   describe("no reply for unknown task", () => {
     it("should not send anything for untracked task_id", () => {
       router.startEventListeners();
@@ -3043,7 +3044,9 @@ describe("usability Phase 5.5 — /rituales intercept", () => {
       text: "/rituales",
       timestamp: new Date(),
     });
-    expect(ritualesMocks.handleRitualesCommand).toHaveBeenCalledWith("/rituales");
+    expect(ritualesMocks.handleRitualesCommand).toHaveBeenCalledWith(
+      "/rituales",
+    );
     expect(waAdapter.sentMessages[0].text).toMatch(/^🗓 Rituales/);
     expect(submitTask).not.toHaveBeenCalled();
     expect(memoryRetainSpy).toHaveBeenCalledWith(
@@ -3059,7 +3062,9 @@ describe("usability Phase 5.5 — /rituales intercept", () => {
       text: "rituales pausa 1",
       timestamp: new Date(),
     });
-    expect(waAdapter.sentMessages[0].text).toBe("Pausado: Signal intelligence.");
+    expect(waAdapter.sentMessages[0].text).toBe(
+      "Pausado: Signal intelligence.",
+    );
     expect(submitTask).not.toHaveBeenCalled();
   });
 
@@ -3094,7 +3099,9 @@ describe("usability Phase 5.5 — /rituales intercept", () => {
       metadata: { isGroup: true, senderJid: "member@s.whatsapp.net" },
     });
     expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
-    expect(waAdapter.sentMessages.some((m) => /Pausado|Rituales/.test(m.text))).toBe(false);
+    expect(
+      waAdapter.sentMessages.some((m) => /Pausado|Rituales/.test(m.text)),
+    ).toBe(false);
   });
 
   it("a non-command ('ritualesco') is not intercepted", async () => {
@@ -3105,5 +3112,69 @@ describe("usability Phase 5.5 — /rituales intercept", () => {
       timestamp: new Date(),
     });
     expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("/loop — operator-instructed unlimited task (2026-08-27)", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    _resetThreadPins();
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+  });
+
+  it("the owner's `/loop <tarea>` submits ONE task pinned to fast, unlimited, tagged loop, prefix stripped", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "/loop Revisa todos los PRs abiertos y ciérralos uno por uno",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.title).toBe(
+      "Chat: Revisa todos los PRs abiertos y ciérralos uno por uno",
+    );
+    expect(sub.agentType).toBe("fast");
+    expect(sub.unlimited).toBe(true);
+    expect(sub.tags).toContain("loop");
+    const last = sub.conversationHistory?.at(-1);
+    expect(last?.role).toBe("user");
+    expect(last?.content).toContain("[MODO /loop");
+    expect(last?.content).not.toContain("/loop Revisa");
+  });
+
+  it("a bare `/loop` answers the usage line and creates no task", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "/loop",
+      timestamp: new Date(),
+    });
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(waAdapter.sentMessages[0].text).toMatch(/^Uso: \/loop/);
+  });
+
+  it("without the prefix nothing changes: auto routing, no unlimited flag, no loop tag", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Revisa todos los PRs abiertos y ciérralos uno por uno",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.agentType).toBe("auto");
+    expect(sub.unlimited).toBe(false);
+    expect(sub.tags).not.toContain("loop");
+    expect(sub.conversationHistory?.at(-1)?.content).not.toContain(
+      "[MODO /loop",
+    );
   });
 });

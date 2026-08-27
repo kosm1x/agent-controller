@@ -103,6 +103,8 @@ Agent progress must be validated through concrete tool results, not LLM self-ass
 
 Every agent loop must have bounded iteration limits, token budgets, and timeouts. No unbounded loops — ever. Prometheus enforces this via `maxIterations`, `budgetTokens`, and `maxReplans`. New runners must implement equivalent guards.
 
+**One operator-instructed exception (`/loop`, 2026-08-27):** a Telegram/WhatsApp message from the operator prefixed `/loop <tarea>` runs on the host fast runner with the turn cap lifted (`LOOP_MAX_TURNS`), no SDK 15-min wall-clock (`queryClaudeSdk({unlimited})`), and exempt from the reactions manager's 15-min stuck kill (task tag `loop` in `tasks.metadata`). Its only bound is the operator's hard stop ("Para" → abort). It is per-task and prefix-gated by design — never an env knob, never a default; the router strips the prefix (`LOOP_RE`) and pins `agentType: "fast"` + `unlimited: true` + tag `loop`, carried across scope re-runs. Do not extend it to scheduled tasks, rituals, or container runners.
+
 ### Transparency
 
 Planning steps must be explicit and observable. The planner's goal graph, executor's per-goal logs, and reflector's scoring all serve this. When building new agent capabilities, ensure every decision point emits a trace event visible in the dashboard SSE stream.
