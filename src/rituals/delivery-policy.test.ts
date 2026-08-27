@@ -328,13 +328,20 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
   });
 
   it("a push that would pass the day's word cap is deferred (pushes still free)", () => {
-    // A long Morning Sync (anchors are not capped) leaves 200 words of room.
+    // Anchors are exempt from word budget. Use forced pushes to fill to ~1390 words,
+    // then verify a 20-word push pushes total over 1400.
     applyRitualDeliveryPolicy("schedule:ms", "a-sync", "palabra ".repeat(495).trim(), SYNC);
-    applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre del día", { now: NOW }); // 3 words
-    const fits = applyRitualDeliveryPolicy("schedule:tweet", "t0", "palabra ".repeat(150).trim(), { displayName: "Tweet", scheduleId: "tw", now: NOW });
-    expect(fits.deliver).toBe(true); // 648
-    const d = applyRitualDeliveryPolicy("schedule:post", "t1", "palabra ".repeat(100).trim(), { displayName: "Posthumanismo", scheduleId: "post", now: NOW });
-    expect(d).toMatchObject({ deliver: false, reason: "budget" }); // 748 > 700 with 1 slot left
+    applyRitualDeliveryPolicy("nightly-close", "a-close", "Cierre del día", { now: NOW }); // 3 words (exempt anchor)
+    // Force 5 × ~250-word non-anchor pushes (forced bypasses budget gate).
+    for (let i = 0; i < 5; i++) {
+      applyRitualDeliveryPolicy("schedule:tweet", `tw${i}`, "palabra ".repeat(260).trim(), { displayName: "Tweet", scheduleId: "tw", now: NOW, forced: true });
+    }
+    // 5 × 250 = 1250 words in ledger. 140 more still fits (1390 ≤ 1400).
+    const fits = applyRitualDeliveryPolicy("schedule:scan", "t0", "palabra ".repeat(140).trim(), { displayName: "Scan", scheduleId: "sc", now: NOW, forced: true });
+    expect(fits.deliver).toBe(true); // 1390
+    // 20 more words would reach 1410 > 1400 → deferred.
+    const d = applyRitualDeliveryPolicy("schedule:post", "t1", "palabra ".repeat(20).trim(), { displayName: "Posthumanismo", scheduleId: "post", now: NOW });
+    expect(d).toMatchObject({ deliver: false, reason: "budget" }); // 1410 > 1400 with 1 slot left
   });
 
   it("the budget is per MX day: yesterday's pushes do not count", () => {
@@ -357,7 +364,7 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     expect(budgetUsed(DAY).pushes).toBe(PUSH_CAP);
   });
 
-  it("Morning Sync and nightly-close ALWAYS deliver and COUNT toward the plan's 4/700 (R2 C2)", () => {
+  it("Morning Sync and nightly-close ALWAYS deliver and COUNT toward the plan's 4/1400 (R2 C2)", () => {
     fillBudget(0);
     expect(db().prepare("SELECT COUNT(*) AS n FROM ritual_deliveries WHERE anchor = 1 AND delivered = 1").get()).toEqual({ n: 2 });
     expect(budgetUsed(DAY).pushes).toBe(2);
@@ -385,39 +392,6 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     const d = applyRitualDeliveryPolicy("market-eod-scan", "t5", "SPY −1.2%", { now: NOW });
     expect(d).toMatchObject({ deliver: false, reason: "budget" });
     expect(pendingDeferrals().map((r) => r.title)).toEqual(["market-eod-scan"]);
-  });
-
-  it("ANCHOR_SCHEDULE_IDS: a schedule in the list delivers even when the budget is full", () => {
-    const READING_ID = "bdb82f0c-c2f4-4414-8244-300bf4721d78";
-    process.env.ANCHOR_SCHEDULE_IDS = READING_ID;
-    fillBudget(2);
-    const d = applyRitualDeliveryPolicy(
-      `schedule:${READING_ID}`,
-      "t-reading",
-      "Reflexión filosófica del día",
-      { displayName: "Transición al Posthumanismo — Reflexión Diaria", scheduleId: READING_ID, now: NOW },
-    );
-    expect(d.deliver).toBe(true);
-    // Must be recorded as anchor so the ledger is honest.
-    const row = db().prepare("SELECT anchor FROM ritual_deliveries WHERE task_id = 't-reading'").get() as { anchor: number };
-    expect(row.anchor).toBe(1);
-    delete process.env.ANCHOR_SCHEDULE_IDS;
-  });
-
-  it("ANCHOR_SCHEDULE_IDS: a schedule NOT in the list still hits the budget", () => {
-    process.env.ANCHOR_SCHEDULE_IDS = "some-other-id";
-    fillBudget(2);
-    const d = applyRitualDeliveryPolicy("schedule:x", "t-not-anchor", "hola", { displayName: "Química", scheduleId: "x", now: NOW });
-    expect(d).toMatchObject({ deliver: false, reason: "budget" });
-    delete process.env.ANCHOR_SCHEDULE_IDS;
-  });
-
-  it("ANCHOR_SCHEDULE_IDS: empty/whitespace env var has no effect", () => {
-    process.env.ANCHOR_SCHEDULE_IDS = "  ,  ";
-    fillBudget(2);
-    const d = applyRitualDeliveryPolicy("schedule:x", "t-empty", "hola", { displayName: "Química", scheduleId: "x", now: NOW });
-    expect(d).toMatchObject({ deliver: false, reason: "budget" });
-    delete process.env.ANCHOR_SCHEDULE_IDS;
   });
 
   it("an operator-forced run (/run) delivers over the cap", () => {

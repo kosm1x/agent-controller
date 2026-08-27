@@ -83,14 +83,14 @@ export const EMAILED_RITUALS: ReadonlySet<string> = new Set([
  * Push slots are reserved for anchors not yet delivered today
  * (`anchorsPending`); words are NOT reserved for them — the close is ~130
  * words (cap 250) and reserving its cap would defer the operator's own
- * readings daily — so a day ends at ≤ 700 words + the close.
+ * readings daily — so a day ends at ≤ 1400 words + the close.
  * Arithmetic the operator should know: the anchors are ~350 words and 2 of
  * the 4 slots, so 2 pushes / ~350 words a day remain for the optional layer
  * in fire order; a 400–600-word daily reading arrives capped at 250 with its
  * `/rituales completo <id>` handle.
  */
 export const PUSH_CAP = 4;
-export const WORD_CAP = 700;
+export const WORD_CAP = 1400;
 export const EMAILED_PUSH_WORD_CAP = 120;
 export const TELEGRAM_PUSH_WORD_CAP = 250;
 /** One emailed push a day; its words = the cap plus the pointer line. */
@@ -99,31 +99,8 @@ export const RITUAL_WORD_CAPS: ReadonlyMap<string, number> = new Map([
   ["nightly-close", 250],
 ]);
 
-/**
- * Schedules that always deliver regardless of reading budget (same semantics
- * as Morning Sync and nightly-close). Configured via `ANCHOR_SCHEDULE_IDS`
- * as a comma-separated list of schedule UUIDs. Added to support curated daily
- * readings (e.g. Transhumanismo reflection) that should never be budget-deferred.
- * Note: anchors still respect manual /rituales silencio mutes.
- */
-export function getAnchorScheduleIds(): ReadonlySet<string> {
-  const raw = process.env.ANCHOR_SCHEDULE_IDS ?? "";
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-}
-
 export function isAnchor(ritualId: string, opts: DeliveryOptions): boolean {
   if (ritualId === "nightly-close") return true;
-  if (
-    opts.scheduleId !== undefined &&
-    getAnchorScheduleIds().has(opts.scheduleId)
-  ) {
-    return true;
-  }
   return (
     opts.scheduleId !== undefined &&
     opts.displayName !== undefined &&
