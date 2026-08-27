@@ -24,6 +24,10 @@
  *   5.6 reading budget: PUSH_CAP pushes / WORD_CAP words per MX day. Morning
  *       Sync and nightly-close always deliver (they count); everything else
  *       over the cap is deferred into the next Morning Sync.
+ *       Ruling 2026-08-27: 5/1400 (was 4/700). Root cause: push-cap+word-cap
+ *       both blocked the 12:00 reading (bdb82f0c) after 3 optionals + 1
+ *       anchor-pending = 4 = old PUSH_CAP. Ritual pushes/day · words/day
+ *       now: anchors ~350w × 2 + 3 optional slots × ~250w = ~1100w / 5 total.
  *
  * Every decision is recorded in `ritual_deliveries` (delivered 0/1 + reason
  * + words + MX day) so the metrics script can count silences and deferrals.
@@ -83,14 +87,18 @@ export const EMAILED_RITUALS: ReadonlySet<string> = new Set([
  * Push slots are reserved for anchors not yet delivered today
  * (`anchorsPending`); words are NOT reserved for them — the close is ~130
  * words (cap 250) and reserving its cap would defer the operator's own
- * readings daily — so a day ends at ≤ 700 words + the close.
+ * readings daily — so a day ends at ≤ 1400 words + the close.
  * Arithmetic the operator should know: the anchors are ~350 words and 2 of
- * the 4 slots, so 2 pushes / ~350 words a day remain for the optional layer
+ * the 5 slots, so 3 pushes / ~1050 words a day remain for the optional layer
  * in fire order; a 400–600-word daily reading arrives capped at 250 with its
  * `/rituales completo <id>` handle.
+ * Operator ruling 2026-08-27: 5/1400 — root cause was push-cap+word-cap
+ * both firing (3 optional + 1 anchor-pending = 4 = old cap before close);
+ * raising PUSH_CAP to 5 gives the 12:00 reading a slot after Morning Sync
+ * and the two early-morning optionals.
  */
-export const PUSH_CAP = 4;
-export const WORD_CAP = 700;
+export const PUSH_CAP = 5;
+export const WORD_CAP = 1400;
 export const EMAILED_PUSH_WORD_CAP = 120;
 export const TELEGRAM_PUSH_WORD_CAP = 250;
 /** One emailed push a day; its words = the cap plus the pointer line. */
