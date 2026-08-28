@@ -46,6 +46,7 @@ import {
   auditNumbers,
   formatUnverifiedFooter,
   numbersAnnotateEnabled,
+  stripForwardedSiblingFindings,
   takeToolEvidence,
   type NumbersAudit,
 } from "./numbers.js";
@@ -66,7 +67,9 @@ export const LANDING_GATE_SPEC: GateSpec = {
  * manufactured green). Shell gates are skipped for these; the landing gate is
  * their proof. Mirrors the dispatcher's `needsContainer`.
  */
-export function ranInContainer(agentType: AgentType | null | undefined): boolean {
+export function ranInContainer(
+  agentType: AgentType | null | undefined,
+): boolean {
   if (agentType === "nanoclaw") return true;
   if (agentType === "heavy") return getConfig().heavyRunnerContainerized;
   return false;
@@ -177,7 +180,15 @@ export async function applyCompletionLedger(
   const evidence = takeToolEvidence(taskId);
   try {
     if (deliverable) {
-      numbers = auditNumbers(deliverable, [...evidence, args.taskDescription]);
+      // The task input counts as evidence (the user typed it) — EXCEPT the
+      // block the swarm runner forwards from sibling children: a sibling's
+      // unverified figure is prose, not an observing tool, and must not
+      // launder into this child's provenance (memory plan v2.0 Track 3;
+      // qa-audit R1 C3).
+      numbers = auditNumbers(deliverable, [
+        ...evidence,
+        stripForwardedSiblingFindings(args.taskDescription),
+      ]);
       let annotated = 0;
       if (numbersAnnotateEnabled() && numbers.unverified.length > 0) {
         const marked = annotateUnverified(deliverable, numbers);
@@ -404,3 +415,5 @@ export async function reverifyChildLedger(
   });
   return verdict;
 }
+
+export { stripForwardedSiblingFindings } from "./numbers.js";

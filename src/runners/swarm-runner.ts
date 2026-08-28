@@ -124,13 +124,26 @@ export function buildSubTaskDescription(
 
   if (siblings.length > 0) {
     const siblingLines: string[] = [];
+    const sharedBlocks: string[] = [];
     for (const sib of siblings) {
       const tracker = trackers.get(sib.id);
       const status = tracker?.status ?? "pending";
       let line = `- ${sib.description} [${status}]`;
       if (tracker?.status === "completed" && tracker.output) {
-        const summary = tracker.output.slice(0, 200);
-        line += ` — Result: ${summary}`;
+        // tracker.output is the JSON-stringified tasks.output blob (see the
+        // results mapping below) — unwrap the deliverable text FIRST; an
+        // anchored parser over the raw blob can never match (qa-audit R2 C4).
+        const text = extractDeliverableText(tracker.output) ?? tracker.output;
+        // Memory plan v2.0 Track 3: a sibling's "## Shared findings" section
+        // is forwarded in full (capped) INSTEAD of the 200-char status slice
+        // — the slice is not a channel for facts other goals must not
+        // re-research.
+        const shared = extractSharedFindings(text);
+        if (shared) {
+          sharedBlocks.push(`### ${sib.description}\n${shared}`);
+        } else {
+          line += ` — Result: ${stripSharedFindings(text).slice(0, 200)}`;
+        }
       }
       siblingLines.push(line);
     }
@@ -138,9 +151,110 @@ export function buildSubTaskDescription(
       "\n## Sibling goals (for coordination, not your responsibility)",
     );
     parts.push(...siblingLines);
+    if (sharedBlocks.length > 0) {
+      // Aggregate cap: per-block caps alone let a wide swarm inflate a late
+      // sibling's description by tens of kB, which the classifier scores by
+      // word count and routes heavier (qa-audit R1 W6).
+      let joined = sharedBlocks.join("\n");
+      if (joined.length > SHARED_FINDINGS_TOTAL_MAX_CHARS) {
+        joined = `${joined.slice(0, SHARED_FINDINGS_TOTAL_MAX_CHARS)}…`;
+      }
+      parts.push(FORWARDED_FINDINGS_HEADING, joined);
+    }
+    parts.push(
+      "\n## Coordination",
+      '- Do not research what a sibling owns ("owned by g-N"). Findings above come only from siblings that finished before you started; a fact you need from a concurrent sibling is not coming — say so instead of inventing it.',
+      `- End your answer with a "${SHARED_FINDINGS_HEADING}" section listing facts other goals need (it is forwarded to later siblings and stripped from the user's reply).`,
+    );
   }
 
   return parts.join("\n");
+}
+
+/** Heading a child uses to publish facts for its siblings (Track 3). */
+export const SHARED_FINDINGS_HEADING = "## Shared findings";
+/** Heading the runner uses when forwarding those sections to a sibling. The
+ * V8.4 numbers audit excludes this block from a child's evidence corpus. */
+export const FORWARDED_FINDINGS_HEADING =
+  "\n## Shared findings from completed siblings";
+/** Per-sibling cap — keeps a chatty sibling from eating a child's context. */
+export const SHARED_FINDINGS_MAX_CHARS = 1500;
+/** Aggregate cap across all forwarded siblings. */
+export const SHARED_FINDINGS_TOTAL_MAX_CHARS = 3000;
+
+/** A `## Shared findings` HEADING LINE (optional trailing colon), any case. */
+const SHARED_FINDINGS_LINE_RE =
+  /^ {0,3}##[ \t]+shared findings[ \t]*:?[ \t]*$/gim;
+const FENCED_CODE_RE = /```[\s\S]*?```/g;
+
+/**
+ * @internal Exported for testing.
+ * The body of a child's LAST "## Shared findings" section — a heading LINE,
+ * not a mention (the Coordination bullet names the heading in prose, and a
+ * child may restate it) — up to the next H2 line or the end, on a copy with
+ * fenced code removed (a ```markdown example must not win over the real
+ * section). Trimmed and capped; null when the output has no such section.
+ * (qa-audit R1 C4: the first cut was `indexOf`.)
+ */
+export function extractSharedFindings(output: string): string | null {
+  const { text, blocks } = shieldCode(output.replace(/\r\n/g, "\n"));
+  const headings = [...text.matchAll(SHARED_FINDINGS_LINE_RE)];
+  const last = headings[headings.length - 1];
+  if (!last || last.index === undefined) return null;
+  const rest = text.slice(last.index + last[0].length);
+  const nextH2 = rest.search(/^ {0,3}##[ \t]+(?!#)/m);
+  // Restore BEFORE trimming: a placeholder at the edge would lose its
+  // delimiting space and never be put back.
+  const body = restoreCode(
+    nextH2 < 0 ? rest : rest.slice(0, nextH2),
+    blocks,
+  ).trim();
+  if (!body) return null;
+  return body.length > SHARED_FINDINGS_MAX_CHARS
+    ? `${body.slice(0, SHARED_FINDINGS_MAX_CHARS)}…`
+    : body;
+}
+
+/**
+ * @internal Exported for testing.
+ * A child's output without its "## Shared findings" section(s) — the
+ * agent-to-agent channel must not reach the operator through the joined
+ * final answer (qa-audit R1 C2). Code blocks are left untouched.
+ */
+export function stripSharedFindings(output: string): string {
+  const { text, blocks } = shieldCode(output);
+  const stripped = text.replace(
+    /^ {0,3}##[ \t]+shared findings[ \t]*:?[ \t]*$\n?[\s\S]*?(?=^ {0,3}##[ \t]+(?!#)|(?![\s\S]))/gim,
+    "",
+  );
+  return restoreCode(stripped, blocks).trimEnd();
+}
+
+/**
+ * Replace code blocks with placeholders so a heading inside a code example
+ * is never read as (or stripped as) a real section: fenced pairs, an
+ * unmatched trailing \`\`\` (CommonMark: an unclosed fence runs to the end of
+ * the document). Indented (4-space) code needs no shielding: headings are
+ * anchored at `^ {0,3}##`, and shielding it corrupted deliverables — a fenced
+ * block under a list item became a nested placeholder (qa-audit R3 C1).
+ * `restoreCode` puts the originals back.
+ */
+function shieldCode(input: string): { text: string; blocks: string[] } {
+  const blocks: string[] = [];
+  const keep = (m: string): string => {
+    blocks.push(m);
+    // NUL-delimited: prose cannot spell the placeholder, so a child that
+    // writes " CODE0 " in a table is never rewritten (qa-audit R4 W5).
+    return `\u0000CODE${blocks.length - 1}\u0000`;
+  };
+  let text = input.replace(FENCED_CODE_RE, keep);
+  const open = text.indexOf("```");
+  if (open >= 0) text = text.slice(0, open) + keep(text.slice(open));
+  return { text, blocks };
+}
+
+function restoreCode(text: string, blocks: string[]): string {
+  return text.replace(/\u0000CODE(\d+)\u0000/g, (m, i) => blocks[Number(i)] ?? m);
 }
 
 /**
@@ -434,8 +548,12 @@ function buildExecutionResults(
       // deliver `{"text":"..."}` fragments to the operator. Extract the
       // deliverable text per sub-task; fall back to the raw string only
       // when no canonical field exists.
+      // Track 3: the child's "## Shared findings" section is agent-to-agent
+      // scaffolding — never part of the operator's joined final answer.
       result: tracker.output
-        ? (extractDeliverableText(tracker.output) ?? tracker.output)
+        ? stripSharedFindings(
+            extractDeliverableText(tracker.output) ?? tracker.output,
+          )
         : tracker.output,
       error: tracker.error,
       durationMs: 0, // Not tracked per sub-task
@@ -635,11 +753,7 @@ export const swarmRunner: Runner = {
           }
           // Audit W3: a "completed" child with NO output must not become a
           // silent empty deliverable (the never-silent floor) — report it.
-          if (
-            mirrored === "" ||
-            mirrored === null ||
-            mirrored === undefined
-          ) {
+          if (mirrored === "" || mirrored === null || mirrored === undefined) {
             return {
               success: false,
               error: `Demoted heavy sub-task ${demoted.taskId} completed but recorded no output — check that task row`,
@@ -831,7 +945,9 @@ export const swarmRunner: Runner = {
       abandonedChildren.length > 0
         ? `Swarm hard ceiling (${SWARM_HARD_CEILING_MS / 60_000} min) expired with ${abandonedChildren.length} child task(s) still running: ${abandonedChildren
             .map((t) => t.taskId || t.goalId)
-            .join(", ")} — they may complete late; check those task rows for the deliverable.`
+            .join(
+              ", ",
+            )} — they may complete late; check those task rows for the deliverable.`
         : undefined;
     if (abandonedNote) {
       console.warn(`[swarm] Task ${input.taskId}: ${abandonedNote}`);

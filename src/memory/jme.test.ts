@@ -68,6 +68,14 @@ function applyJmeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_jme_turns_task ON jme_turns(task_id);
     CREATE INDEX IF NOT EXISTS idx_jme_turns_ts   ON jme_turns(ts DESC);
 
+    CREATE TABLE IF NOT EXISTS jme_signals (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      ts      INTEGER NOT NULL,
+      kind    TEXT NOT NULL CHECK(kind IN ('length','format','depth','explicit')),
+      snippet TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS jme_facts (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       source_task TEXT NOT NULL,
@@ -161,6 +169,200 @@ describe("JME — episodic store", () => {
       .prepare("SELECT channel FROM jme_turns WHERE task_id = 't1'")
       .get() as { channel: string };
     expect(row.channel).toBe("whatsapp");
+  });
+});
+
+describe("JME — preference signals + injection order (memory plan v2.0, Track 2)", () => {
+  /** A signal FOLLOWS a reply: seed a Jarvis turn from a moment ago. */
+  const seedRecentReply = (ageMs = 60_000) =>
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "t-prev",
+        "jarvis",
+        "Aquí va el análisis completo…",
+        "telegram",
+        Date.now() - ageMs,
+      );
+  beforeEach(() => {
+    seedRecentReply();
+  });
+
+  it("a correction with NO recent Jarvis reply is a task opener, not a signal", async () => {
+    const { writeEpisodic, SIGNAL_FOLLOWUP_WINDOW_MS } = await getJme();
+    mockDb.exec("DELETE FROM jme_turns");
+    writeEpisodic({ taskId: "t-open", role: "user", content: "dame la tabla" });
+    expect(signalRows()).toHaveLength(0);
+
+    // A reply older than the window does not count either
+    seedRecentReply(SIGNAL_FOLLOWUP_WINDOW_MS + 1_000);
+    writeEpisodic({ taskId: "t-open", role: "user", content: "más corto" });
+    expect(signalRows()).toHaveLength(0);
+
+    // …but one inside the window does
+    seedRecentReply(SIGNAL_FOLLOWUP_WINDOW_MS - 1_000);
+    writeEpisodic({ taskId: "t-open", role: "user", content: "más corto" });
+    expect(signalRows()).toHaveLength(1);
+  });
+
+  const signalRows = () =>
+    mockDb
+      .prepare("SELECT task_id, kind, snippet FROM jme_signals ORDER BY id")
+      .all() as Array<{ task_id: string; kind: string; snippet: string }>;
+
+  it("a USER turn that corrects a reply writes one jme_signals row (turn still stored)", async () => {
+    const { writeEpisodic, getTurnsForTask } = await getJme();
+    writeEpisodic({
+      taskId: "t-sig",
+      role: "user",
+      content: "Muy largo, dame la tabla",
+    });
+
+    expect(getTurnsForTask("t-sig")).toHaveLength(1);
+    expect(signalRows()).toEqual([
+      { task_id: "t-sig", kind: "length", snippet: "Muy largo, dame la tabla" },
+    ]);
+  });
+
+  it("a Jarvis turn never writes a signal, even when it contains the words", async () => {
+    const { writeEpisodic } = await getJme();
+    writeEpisodic({
+      taskId: "t-sig",
+      role: "jarvis",
+      content: "¿Prefieres que te lo dé en una tabla o más corto?",
+    });
+    expect(signalRows()).toHaveLength(0);
+  });
+
+  it("a plain user message writes no signal", async () => {
+    const { writeEpisodic } = await getJme();
+    writeEpisodic({
+      taskId: "t-sig",
+      role: "user",
+      content: "¿Cómo va el deploy de Pulso?",
+    });
+    expect(signalRows()).toHaveLength(0);
+  });
+
+  it("the signal survives the consolidator consuming the turn", async () => {
+    const { consolidateAll } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("t-old", "user", "profundiza", "telegram", Date.now() - 31 * 60_000);
+    mockDb
+      .prepare(
+        `INSERT INTO jme_signals (task_id, ts, kind, snippet) VALUES (?, ?, ?, ?)`,
+      )
+      .run("t-old", Date.now() - 31 * 60_000, "depth", "profundiza");
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    await consolidateAll();
+
+    // The settled turn is consumed (the seeded 60s-old reply stays: too young to settle)
+    expect(
+      mockDb
+        .prepare("SELECT COUNT(*) AS n FROM jme_turns WHERE task_id = 't-old'")
+        .get(),
+    ).toEqual({ n: 0 });
+    expect(signalRows()).toHaveLength(1);
+  });
+
+  it("pins the inferred-preference rule in the extraction prompt (confidence ≤ 0.7)", async () => {
+    const { consolidateAll } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("t-pin", "user", "más corto", "telegram", Date.now() - 31 * 60_000);
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    await consolidateAll();
+
+    const req = inferMock.mock.calls[0][0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const system = req.messages[0].content;
+    expect(system).toMatch(/"inferred": true or false/);
+    expect(system).toMatch(/FORMAT, LENGTH or DEPTH/);
+    expect(system).toMatch(/confidence at most 0\.7/);
+    expect(system).toMatch(/treated as inferred/);
+  });
+
+  it("caps an INFERRED preference at 0.7 server-side, even when Haiku omits or inflates confidence", async () => {
+    const { consolidateAll, INFERRED_PREFERENCE_MAX_CONFIDENCE } =
+      await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "t-inf",
+        "user",
+        "dame la tabla",
+        "telegram",
+        Date.now() - 31 * 60_000,
+      );
+    inferMock.mockResolvedValueOnce({
+      content: JSON.stringify([
+        {
+          factText: "Fede prefers tables",
+          category: "preference",
+          inferred: true,
+        },
+        {
+          factText: "Fede prefers bullets",
+          category: "preference",
+          confidence: 0.95,
+          inferred: true,
+        },
+        {
+          factText: "Fede said he prefers prose",
+          category: "preference",
+          confidence: 0.95,
+          inferred: false,
+        },
+        // R3 W1: a preference WITHOUT the flag is treated as inferred
+        { factText: "Fede prefers charts", category: "preference", confidence: 0.95 },
+        // R3 W2: the model cannot mint operator consent (1.0)
+        {
+          factText: "Fede loves tables",
+          category: "preference",
+          confidence: 1.0,
+          inferred: false,
+        },
+      ]),
+    });
+
+    await consolidateAll();
+
+    const rows = mockDb
+      .prepare(`SELECT fact_text, confidence FROM jme_facts ORDER BY id`)
+      .all() as Array<{ fact_text: string; confidence: number }>;
+    expect(rows.map((r) => r.confidence)).toEqual([
+      INFERRED_PREFERENCE_MAX_CONFIDENCE,
+      INFERRED_PREFERENCE_MAX_CONFIDENCE,
+      0.95,
+      INFERRED_PREFERENCE_MAX_CONFIDENCE,
+      0.99,
+    ]);
+  });
+
+  it("orderForInjection puts preferences first and keeps the rest in recall order", async () => {
+    const { orderForInjection } = await getJme();
+    const facts = [
+      { id: 1, category: "event" as const },
+      { id: 2, category: "preference" as const },
+      { id: 3, category: "project" as const },
+      { id: 4, category: "preference" as const },
+      { id: 5, category: "decision" as const },
+    ];
+    expect(orderForInjection(facts).map((f) => f.id)).toEqual([2, 4, 1, 3, 5]);
+    // Never drops or duplicates
+    expect(orderForInjection([]).length).toBe(0);
   });
 });
 
@@ -317,6 +519,56 @@ describe("JME — stats", () => {
 // ── Phase 2: Consolidator + Dedup ─────────────────────────────────────────────
 
 describe("JME — upsertFact (dedup)", () => {
+  it("never supersedes an operator-CONFIRMED preference (confidence 1.0) with a re-inferred twin (R2 W-g)", async () => {
+    const { upsertFact, jmeStats, CONSOLIDATOR_DEDUP_THRESHOLD } =
+      await getJme();
+    const {
+      embed: embedMock,
+      cosineSimilarity: cosSim,
+      deserializeEmbedding: deser,
+      serializeEmbedding: ser,
+    } = await import("./embeddings.js");
+    const vec = new Float32Array([1, 0, 0]);
+    const blob = Buffer.from(vec.buffer);
+    vi.mocked(embedMock).mockResolvedValue(vec);
+    vi.mocked(ser).mockReturnValue(blob);
+    await upsertFact({
+      sourceTask: "consolidator-nightly",
+      factText: "Fede prefers tables for competitive analysis",
+      category: "preference",
+      confidence: 0.7,
+    });
+    // Operator confirms it (mc-ctl jme-preferences --confirm)
+    mockDb.exec(`UPDATE jme_facts SET confidence = 1.0`);
+
+    // Nightly re-infers a near-duplicate (between dedup and skip thresholds)
+    vi.mocked(deser).mockReturnValue(vec);
+    vi.mocked(cosSim).mockReturnValue(CONSOLIDATOR_DEDUP_THRESHOLD + 0.02);
+    const outcome = await upsertFact({
+      sourceTask: "consolidator-nightly",
+      factText: "Fede prefers comparative tables",
+      category: "preference",
+      confidence: 0.7,
+    });
+
+    expect(outcome).toBe("skipped");
+    expect(jmeStats().factsTotal).toBe(1);
+    const row = mockDb
+      .prepare(`SELECT confidence, expires_at FROM jme_facts`)
+      .get() as { confidence: number; expires_at: number | null };
+    expect(row).toEqual({ confidence: 1.0, expires_at: null });
+
+    // …but a confirmed DECISION is still superseded like any other fact
+    mockDb.exec(`UPDATE jme_facts SET category = 'decision'`);
+    expect(
+      await upsertFact({
+        sourceTask: "consolidator-nightly",
+        factText: "Fede decided on comparative tables",
+        category: "decision",
+      }),
+    ).toBe("superseded");
+  });
+
   it("inserts a new fact when no near-duplicate exists (embed unavailable)", async () => {
     const { upsertFact, jmeStats } = await getJme();
 

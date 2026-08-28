@@ -920,7 +920,8 @@ export const fastRunner: Runner = {
       // a wall of text that inflates latency.
       const JME_QUERY_MAX_CHARS = 2_000;
       try {
-        const { queryMemory } = await import("../memory/jme.js");
+        const { queryMemory, orderForInjection } =
+          await import("../memory/jme.js");
         const rawLastMsg =
           input.conversationHistory.filter((t) => t.role === "user").pop()
             ?.content ?? input.title;
@@ -928,10 +929,16 @@ export const fastRunner: Runner = {
           typeof rawLastMsg === "string"
             ? rawLastMsg.slice(0, JME_QUERY_MAX_CHARS)
             : input.title.slice(0, JME_QUERY_MAX_CHARS);
-        const jmeFacts = await withTimeout(
-          queryMemory(lastMsg, { k: 8, minScore: 0.25 }),
-          JME_QUERY_TIMEOUT_MS,
-          "jme-recall",
+        // Preferences first (memory plan v2.0 Track 2): prompt primacy for
+        // the how-to-answer rules. (Not a truncation defense — the budget
+        // cut below cannot fire at k=8 with today's fact sizes; see
+        // orderForInjection's doc.)
+        const jmeFacts = orderForInjection(
+          await withTimeout(
+            queryMemory(lastMsg, { k: 8, minScore: 0.25 }),
+            JME_QUERY_TIMEOUT_MS,
+            "jme-recall",
+          ),
         );
         if (jmeFacts.length > 0) {
           // Build a compact block; each fact ~100-200 chars → 8 facts ~ 1,200 tokens max

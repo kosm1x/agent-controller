@@ -118,6 +118,51 @@ describe("plan", () => {
     expect(sysMsg!.content).toMatch(/never silently drop items/i);
   });
 
+  it("system prompt carries the ownership rule (memory plan v2.0 Track 3: disjoint research targets per sibling)", async () => {
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Goal",
+            completion_criteria: [],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+
+    const { graph } = await plan("Compare five competitors of MercadoLibre");
+
+    const sysMsg = mockInfer.mock.calls[0][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    expect(sysMsg!.content).toMatch(/DISJOINT research targets/);
+    expect(sysMsg!.content).toMatch(/Do not research <X> — owned by g-N/);
+    // W5 fold: a goal that needs an owned fact depends_on its owner.
+    expect(sysMsg!.content).toMatch(/must depends_on that goal/);
+
+    // W4 fold: replans re-split fan-outs and carry the same rule.
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({ goals: [] }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+    });
+    await replan("Compare five competitors", graph, "g-1 timed out");
+    const replanSys = mockInfer.mock.calls[1][0].messages.find(
+      (m: { role: string }) => m.role === "system",
+    );
+    expect(replanSys!.content).toMatch(/same ownership rule as planning/);
+    expect(replanSys!.content).toMatch(/owned by g-N/);
+  });
+
   // V8.4 (2026-08-16): object-form criteria carry a runnable proof; the prose
   // contract (`completionCriteria: string[]`) is unchanged and the specs land on
   // `metadata.gates` for the ledger. Malformed shapes are dropped, never thrown.
@@ -130,7 +175,11 @@ describe("plan", () => {
             description: "Ship it",
             completion_criteria: [
               "reads well",
-              { criterion: "typecheck passes", check: "npx tsc --noEmit", expect: "/^$/" },
+              {
+                criterion: "typecheck passes",
+                check: "npx tsc --noEmit",
+                expect: "/^$/",
+              },
               { criterion: "no proof, prose only" },
               { check: "orphan check without criterion" },
               42,
@@ -147,15 +196,29 @@ describe("plan", () => {
     });
     const { graph } = await plan("Test task");
     const g = graph.getGoal("g-1");
-    expect(g.completionCriteria).toEqual(["reads well", "typecheck passes", "no proof, prose only"]);
+    expect(g.completionCriteria).toEqual([
+      "reads well",
+      "typecheck passes",
+      "no proof, prose only",
+    ]);
     expect(g.metadata.gates).toEqual([
-      { criterion: "typecheck passes", check: "npx tsc --noEmit", expect: "/^$/" },
+      {
+        criterion: "typecheck passes",
+        check: "npx tsc --noEmit",
+        expect: "/^$/",
+      },
     ]);
   });
 
   it("splitCriteria: strings only → no metadata.gates key", () => {
-    expect(splitCriteria(["a", "b"])).toEqual({ completionCriteria: ["a", "b"], gates: [] });
-    expect(splitCriteria(undefined)).toEqual({ completionCriteria: [], gates: [] });
+    expect(splitCriteria(["a", "b"])).toEqual({
+      completionCriteria: ["a", "b"],
+      gates: [],
+    });
+    expect(splitCriteria(undefined)).toEqual({
+      completionCriteria: [],
+      gates: [],
+    });
   });
 
   it("system prompt tells the planner when to use the object form", async () => {
@@ -170,7 +233,9 @@ describe("plan", () => {
     const sysMsg = mockInfer.mock.calls[0][0].messages.find(
       (m: { role: string }) => m.role === "system",
     );
-    expect(sysMsg!.content).toContain('"check": "shell command that proves it"');
+    expect(sysMsg!.content).toContain(
+      '"check": "shell command that proves it"',
+    );
     expect(sysMsg!.content).toMatch(
       /object form of a completion criterion whenever a shell command can prove it/,
     );

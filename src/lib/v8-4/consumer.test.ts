@@ -12,6 +12,7 @@ import {
   applyCompletionLedger,
   needsLandingGate,
   reverifyChildLedger,
+  stripForwardedSiblingFindings,
 } from "./consumer.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import { _resetToolEvidence, recordToolEvidence } from "./numbers.js";
@@ -35,7 +36,10 @@ beforeEach(() => {
   // Deterministic remote for the landing probe: one head, no PRs, no network.
   _setLandingExecForTests(async (cmd, args) =>
     cmd === "git" && args[0] === "ls-remote"
-      ? { stdout: "0abc\trefs/heads/main\n1abc\trefs/heads/feat/landed\n", exitCode: 0 }
+      ? {
+          stdout: "0abc\trefs/heads/main\n1abc\trefs/heads/feat/landed\n",
+          exitCode: 0,
+        }
       : { stdout: "", exitCode: 1 },
   );
 });
@@ -222,7 +226,9 @@ describe("applyCompletionLedger — landing gate", () => {
       base({
         taskId: "t-landed",
         agentType: "nanoclaw",
-        result: okResult({ finalAnswer: "Pushed branch feat/landed with the fix." }),
+        result: okResult({
+          finalAnswer: "Pushed branch feat/landed with the fix.",
+        }),
       }),
     );
     expect(landed.gates?.verdict).toBe("met");
@@ -231,7 +237,9 @@ describe("applyCompletionLedger — landing gate", () => {
       base({
         taskId: "t-ghost",
         agentType: "nanoclaw",
-        result: okResult({ finalAnswer: "Pushed branch feat/ghost with the fix." }),
+        result: okResult({
+          finalAnswer: "Pushed branch feat/ghost with the fix.",
+        }),
       }),
     );
     expect(ghost.gates?.verdict).toBe("failed");
@@ -292,6 +300,46 @@ describe("applyCompletionLedger — numbers audit", () => {
     );
   });
 
+  it("a figure forwarded from a sibling's '## Shared findings' is NOT evidence (memory plan v2.0 Track 3, R1 C3)", async () => {
+    // The exact shape buildSubTaskDescription emits (swarm-runner.ts): goal
+    // text + criteria, then the runner-authored sibling sections LAST — a
+    // "— Result:" 200-char slice of a sibling's deliverable, the forwarded
+    // block, the Coordination contract. Only the first part is evidence.
+    const forwarded = [
+      "Compare Clip vs Kustodia fees for 12 merchants",
+      "",
+      "## Completion Criteria",
+      "- one row per provider",
+      "",
+      "## Sibling goals (for coordination, not your responsibility)",
+      "- Research Kustodia [completed] — Result: Kustodia cobra 1.2% por escrow y tiene 5,412,891 usuarios.",
+      "- Research Conekta [running]",
+      "",
+      "## Shared findings from completed siblings",
+      "### Research Clip",
+      "- Clip: 3.6% + IVA per transaction",
+      "",
+      "## Coordination",
+      '- Do not research what a sibling owns ("owned by g-N").',
+    ].join("\n");
+    const out = await applyCompletionLedger(
+      base({
+        taskDescription: forwarded,
+        result: okResult({
+          text: "Clip cobra 3.6% + IVA; Kustodia 1.2% con 5,412,891 usuarios; 12 comercios.",
+        }),
+      }),
+    );
+    // 12 comes from the goal text (evidence); the three sibling figures do not.
+    expect(out.numbers?.unverified).toEqual(["3.6%", "1.2%", "5,412,891"]);
+    expect((out.output as { text: string }).text).toBe(
+      "Clip cobra 3.6% (sin verificar) + IVA; Kustodia 1.2% (sin verificar) con 5,412,891 usuarios (sin verificar); 12 comercios.",
+    );
+    expect(stripForwardedSiblingFindings(forwarded)).toBe(
+      "Compare Clip vs Kustodia fees for 12 merchants\n\n## Completion Criteria\n- one row per provider",
+    );
+  });
+
   it("TASK_GATES_NUMBERS_ANNOTATE=false disarms the annotation (audit still recorded)", async () => {
     process.env.TASK_GATES_NUMBERS_ANNOTATE = "false";
     recordToolEvidence("t1", "nothing numeric");
@@ -340,7 +388,9 @@ describe("applyCompletionLedger — citations (usability Phase 3.3)", () => {
     try {
       const text =
         "Resumen [1][2].\n\n## Referencias\n[1] https://example.com/ok\n[2] https://example.com/gone";
-      const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+      const out = await applyCompletionLedger(
+        base({ result: okResult({ text }) }),
+      );
       expect((out.output as { text: string }).text).toBe(
         "Resumen [1].\n\n## Referencias\n[1] https://example.com/ok\n\n⚠️ Quité 1 referencia que no existe (DOI/URL/Crossref sin registro): «https://example.com/gone».",
       );
@@ -393,7 +443,9 @@ describe("qa W1 fold — shell gates are not run against the host tree for conta
     const out = await applyCompletionLedger(
       base({
         agentType: "nanoclaw",
-        result: okResult({ finalAnswer: "Pushed branch feat/landed with the fix." }),
+        result: okResult({
+          finalAnswer: "Pushed branch feat/landed with the fix.",
+        }),
       }),
     );
     const rows = listGates("t1");
@@ -415,12 +467,23 @@ describe("qa W1 fold — shell gates are not run against the host tree for conta
         `INSERT INTO tasks (task_id, title, description, status, agent_type) VALUES ('child-nc', 'c', 'd', 'completed', 'nanoclaw')`,
       )
       .run();
-    declareGates("child-nc", [{ criterion: "typecheck", check: "true" }], "plan");
+    declareGates(
+      "child-nc",
+      [{ criterion: "typecheck", check: "true" }],
+      "plan",
+    );
     const v = await reverifyChildLedger("parent", "child-nc", { text: "done" });
     expect(v?.verdict).toBe("unverified");
     expect(listGates("child-nc")[0]!.state).toBe("pending");
     // A fast child DOES get its shell gates re-run.
-    declareGates("child-fast", [{ criterion: "typecheck", check: "true" }], "plan");
-    expect((await reverifyChildLedger("parent", "child-fast", { text: "done" }))?.verdict).toBe("met");
+    declareGates(
+      "child-fast",
+      [{ criterion: "typecheck", check: "true" }],
+      "plan",
+    );
+    expect(
+      (await reverifyChildLedger("parent", "child-fast", { text: "done" }))
+        ?.verdict,
+    ).toBe("met");
   });
 });

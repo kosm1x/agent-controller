@@ -661,3 +661,24 @@ export function numbersAnnotateEnabled(
 ): boolean {
   return env.TASK_GATES_NUMBERS_ANNOTATE !== "false";
 }
+
+/**
+ * Drop everything the swarm runner authored about SIBLINGS from a child's
+ * description before it is used as numbers-audit evidence: the
+ * "## Sibling goals …" status lines (each carries a 200-char slice of a
+ * sibling's deliverable), the forwarded "## Shared findings from completed
+ * siblings" block and the "## Coordination" contract — the runner appends
+ * them last, so the cut runs from the sibling heading to the end. A
+ * sibling's unverified figure is prose, not an observing tool (qa-audit R1
+ * C3 / R2 C3). The goal text and completion criteria above the cut still
+ * count (the operator/planner wrote them). Exported for tests. Heading text
+ * mirrors `buildSubTaskDescription` in src/runners/swarm-runner.ts (kept as
+ * a literal here so the claim detector does not import a runner). Applied at
+ * BOTH auditNumbers callers: the completion ledger (consumer.ts) and the
+ * artifact-write provenance gate (provenance-gate.ts) — qa-audit R3 C2.
+ */
+export function stripForwardedSiblingFindings(description: string): string {
+  return description
+    .replace(/^ {0,3}##[ \t]+Sibling goals \(for coordination[\s\S]*$/im, "")
+    .trimEnd();
+}

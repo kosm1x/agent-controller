@@ -26,6 +26,7 @@ import { errMsg } from "../lib/err-msg.js";
 import { logRecall } from "./recall-utility.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
+import { detectPreferenceSignal, signalSnippet } from "./preference-signals.js";
 
 // ── Phase 3 constants ────────────────────────────────────────────────────────
 
@@ -88,6 +89,9 @@ const TTL_MS: Record<JmeFactCategory, number | null> = {
   project: 90 * 24 * 60 * 60 * 1000,
 };
 
+/** Track 2: a preference signal must FOLLOW a Jarvis reply this recent. */
+export const SIGNAL_FOLLOWUP_WINDOW_MS = 30 * 60 * 1000;
+
 // ── Episodic store ───────────────────────────────────────────────────────────
 
 /**
@@ -96,18 +100,61 @@ const TTL_MS: Record<JmeFactCategory, number | null> = {
  */
 export function writeEpisodic(turn: JmeTurn): void {
   const db = getDatabase();
+  const now = Date.now();
   writeWithRetry(() => {
     db.prepare(
       `INSERT INTO jme_turns (task_id, ts, role, content, channel)
        VALUES (?, ?, ?, ?, ?)`,
-    ).run(
-      turn.taskId,
-      Date.now(),
-      turn.role,
-      turn.content,
-      turn.channel ?? "unknown",
-    );
+    ).run(turn.taskId, now, turn.role, turn.content, turn.channel ?? "unknown");
   });
+
+  // Track 2 (memory plan v2.0): a USER turn that corrects a reply's length,
+  // format or depth is a preference signal. Turns are consumed nightly;
+  // jme_signals is the durable record the gate reads.
+  if (turn.role !== "user") return;
+  const kind = detectPreferenceSignal(turn.content);
+  if (!kind) return;
+  // Best-effort: the router writes the user turn and the Jarvis turn back to
+  // back in one promise chain — a signal-write failure must never cost the
+  // second turn (qa-audit R1 W1).
+  try {
+    // A correction FOLLOWS a reply. "Dame una lista de…" as the opening line
+    // of a fresh task is an instruction, not a correction — the vocabulary
+    // alone cannot tell them apart (corpus replay 2026-08-28: most hits were
+    // task openers), so a signal also requires a Jarvis turn within the
+    // follow-up window. The operator is the only writer to jme_turns.
+    const recentReply = db
+      .prepare(
+        `SELECT 1 FROM jme_turns WHERE role = 'jarvis' AND ts >= ? LIMIT 1`,
+      )
+      .get(now - SIGNAL_FOLLOWUP_WINDOW_MS);
+    if (!recentReply) return;
+    writeWithRetry(() => {
+      db.prepare(
+        `INSERT INTO jme_signals (task_id, ts, kind, snippet) VALUES (?, ?, ?, ?)`,
+      ).run(turn.taskId, now, kind, signalSnippet(turn.content));
+    });
+  } catch (err) {
+    console.warn(`[jme] preference signal write failed: ${errMsg(err)}`);
+  }
+}
+
+/**
+ * Track 2 (memory plan v2.0): order recalled facts for prompt injection —
+ * preferences first, everything else in its recall order. The point is
+ * prompt primacy: the how-to-answer rules lead the `[JME MEMORY]` block.
+ * (The fast-runner's 1,500-token cut cannot fire at k=8 with today's fact
+ * sizes — max 302 chars, the 8 longest sum to ~2.4k — so ordering is not a
+ * truncation defense; qa-audit R1 W2.) Ranking (queryMemory) and k are
+ * untouched; this only reorders the recalled set.
+ */
+export function orderForInjection<T extends { category: JmeFactCategory }>(
+  facts: readonly T[],
+): T[] {
+  return [
+    ...facts.filter((f) => f.category === "preference"),
+    ...facts.filter((f) => f.category !== "preference"),
+  ];
 }
 
 /**
@@ -651,14 +698,16 @@ export async function upsertFact(
 
   let bestSim = 0;
   let bestId: number | null = null;
+  let bestConfirmed = false;
   for (const candidate of candidates) {
     const row = db
       .prepare(
-        `SELECT embedding FROM jme_facts
+        `SELECT embedding, category, confidence FROM jme_facts
          WHERE id = ? AND embedding IS NOT NULL
            AND (expires_at IS NULL OR expires_at > ?)`,
       )
-      .get(candidate.id, now) as { embedding: Buffer } | undefined;
+      .get(candidate.id, now) as
+      { embedding: Buffer; category: string; confidence: number } | undefined;
     if (!row) continue;
     try {
       const sim = cosineSimilarity(
@@ -668,6 +717,7 @@ export async function upsertFact(
       if (sim > bestSim) {
         bestSim = sim;
         bestId = candidate.id;
+        bestConfirmed = row.category === "preference" && row.confidence >= 1.0;
       }
     } catch {
       // malformed stored embedding — not a dedup candidate
@@ -675,6 +725,14 @@ export async function upsertFact(
   }
 
   if (bestSim >= CONSOLIDATOR_SKIP_THRESHOLD) {
+    return "skipped";
+  }
+
+  // Track 2: an operator-CONFIRMED preference (confidence 1.0 via
+  // `mc-ctl jme-preferences --confirm`) is never superseded by a re-inferred
+  // twin — the confirmation would silently revert to "inferred" on the next
+  // nightly run (qa-audit R2 W-g). Its wording is the operator's call.
+  if (bestSim >= CONSOLIDATOR_DEDUP_THRESHOLD && bestConfirmed) {
     return "skipped";
   }
 
@@ -710,9 +768,10 @@ Rules:
 - Extract ONLY from what Fede (the user) states. NEVER extract from Jarvis's replies: Jarvis often restates facts it already remembers, and re-extracting those would create duplicates. Jarvis turns are context for understanding Fede, not a fact source.
 - Categories: "decision" | "preference" | "event" | "emotion" | "project"
 - Confidence: 0.0–1.0 (how confident you are this is a lasting fact)
+- Every "preference" fact carries "inferred": true or false. Inferred = you derived it from Fede correcting the FORMAT, LENGTH or DEPTH of a Jarvis reply ("muy largo", "dame la tabla", "profundiza", a follow-up that reframes the answer); phrase it as how he wants replies ("Fede prefers ...") with confidence at most 0.7. Stated = Fede said it himself; keep the normal confidence. A preference without the field is treated as inferred.
 
 Respond with ONLY a JSON array, no explanation:
-[{"factText": "...", "category": "...", "confidence": 0.9}, ...]
+[{"factText": "...", "category": "...", "confidence": 0.9}, {"factText": "...", "category": "preference", "confidence": 0.9, "inferred": false}, {"factText": "...", "category": "preference", "confidence": 0.6, "inferred": true}, ...]
 
 If no durable facts are present, respond with: []`;
 
@@ -722,6 +781,13 @@ export const CONSOLIDATOR_MIN_TURN_AGE_MS = 30 * 60 * 1000;
 /** Per-run turn cap: bounds the Haiku context; the leftover is picked up the
  * following night (and pruneStaleTurns bounds the worst case at 7d). */
 export const CONSOLIDATOR_MAX_TURNS = 400;
+
+/** Track 2: ceiling for a preference the extractor INFERRED from a correction
+ * (vs one Fede stated). Enforced in consolidateAll, not only in the prompt. */
+export const INFERRED_PREFERENCE_MAX_CONFIDENCE = 0.7;
+/** Track 2: ceiling for ANY model-authored preference. 1.0 is reserved for the
+ * operator's confirmation (`mc-ctl jme-preferences --confirm`). */
+export const MODEL_PREFERENCE_MAX_CONFIDENCE = 0.99;
 
 export interface ConsolidateResult {
   turnsProcessed: number;
@@ -845,6 +911,7 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       factText: string;
       category: string;
       confidence?: number;
+      inferred?: boolean;
     }> = [];
     try {
       const cleaned = rawText
@@ -870,11 +937,29 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
         ).find((c) => c === f.category) ?? "decision";
 
       try {
+        // Track 2: an INFERRED preference is capped at 0.7 here, not just in
+        // the prompt — a Haiku reply that omits confidence would otherwise
+        // default to 1.0 and read as "stated" (qa-audit R1 W3). Fail-safe
+        // direction: a preference WITHOUT an explicit `inferred: false` is
+        // treated as inferred — a forgotten flag must never promote a guess
+        // to "stated" (qa-audit R2 W-f).
+        const rawConfidence =
+          typeof f.confidence === "number" ? f.confidence : 1.0;
+        const inferred = category === "preference" && f.inferred !== false;
+        // confidence 1.0 on a preference is the OPERATOR's mark (`mc-ctl
+        // jme-preferences --confirm`), which upsertFact never supersedes — a
+        // model-authored stated preference tops out at 0.99 so the model
+        // cannot mint operator consent (qa-audit R3 W2).
+        const confidence = inferred
+          ? Math.min(INFERRED_PREFERENCE_MAX_CONFIDENCE, rawConfidence)
+          : category === "preference"
+            ? Math.min(MODEL_PREFERENCE_MAX_CONFIDENCE, rawConfidence)
+            : rawConfidence;
         const outcome = await upsertFact({
           sourceTask: "consolidator-nightly",
           factText: f.factText,
           category,
-          confidence: typeof f.confidence === "number" ? f.confidence : 1.0,
+          confidence,
         });
         if (outcome === "inserted") result.factsInserted++;
         else if (outcome === "skipped") result.factsSkipped++;

@@ -1228,6 +1228,22 @@ export function initDatabase(dbPath: string): Database.Database {
         "V8.2 sync-surfacing — judgments.surfaced_at records the judgment reaching the operator via the Morning Sync surface (V8.3 §12 consent linkage reads it)",
       up: (db) => db.exec("ALTER TABLE judgments ADD COLUMN surfaced_at TEXT"),
     },
+    {
+      version: 5,
+      description:
+        "JME preference signals — jme_signals records behavioral corrections (length/format/depth/explicit) in operator turns; survives the nightly turn consumption (memory-architecture plan v2.0, Track 2)",
+      up: (db) =>
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS jme_signals (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            ts      INTEGER NOT NULL,
+            kind    TEXT NOT NULL CHECK(kind IN ('length','format','depth','explicit')),
+            snippet TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_jme_signals_ts ON jme_signals(ts DESC);
+        `),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

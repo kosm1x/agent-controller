@@ -33,6 +33,7 @@ import {
   CHECKABLE_SOURCE_RE,
   auditNumbers,
   peekToolEvidence,
+  stripForwardedSiblingFindings,
 } from "./numbers.js";
 
 export type ProvenanceMode = "off" | "shadow" | "enforce";
@@ -123,7 +124,10 @@ function taskDescription(taskId: string): string {
       .prepare(`SELECT description FROM tasks WHERE task_id = ?`)
       .get(taskId) as { description?: string } | undefined;
     const d = row?.description ?? "";
-    return /^\s*## Identidad/.test(d) ? "" : d;
+    // A swarm child's description ends with runner-authored sibling
+    // sections (status slices, forwarded findings) — prose, not evidence
+    // (qa-audit R3 C2).
+    return /^\s*## Identidad/.test(d) ? "" : stripForwardedSiblingFindings(d);
   } catch {
     return "";
   }

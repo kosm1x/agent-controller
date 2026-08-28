@@ -1669,6 +1669,89 @@ cmd_stats() {
 # JME utility dashboard (Phase 3)
 # ---------------------------------------------------------------------------
 
+# mc-ctl jme-preferences [--confirm <id> | --reject <id>]
+# Memory plan v2.0 Track 2: list preference facts (stated vs inferred), the
+# correction-signal rate per chat turn (the track's gate), confirm an inferred
+# preference (confidence → 1.0) or reject one (soft-expire; row kept).
+cmd_jme_preferences() {
+  need_db
+  local action="${1:-}" id="${2:-}"
+  local now_ms
+  now_ms=$(date +%s%3N)
+
+  case "$action" in
+    --confirm|--reject)
+      [[ "$id" =~ ^[0-9]+$ ]] || die "usage: mc-ctl jme-preferences ${action} <id>"
+      local n
+      if [ "$action" = "--confirm" ]; then
+        n=$(sql_raw "UPDATE jme_facts SET confidence = 1.0 WHERE id = ${id} AND category = 'preference' AND (expires_at IS NULL OR expires_at > ${now_ms}); SELECT changes();")
+        [ "$n" = "1" ] || die "no live preference fact with id ${id}"
+        echo "confirmed #${id} → confidence 1.0 (stated)"
+      else
+        # Reject = confidence 0 + expired now. confidence=0 is the marker that
+        # tells a rejected row apart from one the consolidator superseded
+        # (which keeps its confidence), so the list can show it.
+        n=$(sql_raw "UPDATE jme_facts SET confidence = 0, expires_at = ${now_ms} WHERE id = ${id} AND category = 'preference' AND (expires_at IS NULL OR expires_at > ${now_ms}); SELECT changes();")
+        [ "$n" = "1" ] || die "no live preference fact with id ${id}"
+        echo "rejected #${id} → confidence 0, expired now (kept and listed under Rejected; if the consolidator re-infers the same text, that repeat is the cue for a stop rule)"
+      fi
+      return
+      ;;
+    "") ;;
+    *) die "usage: mc-ctl jme-preferences [--confirm <id> | --reject <id>]" ;;
+  esac
+
+  echo -e "${BOLD}=== JME preferences (memory plan v2.0, Track 2) ===${NC}"
+  echo ""
+  # inferred = confidence <= 0.7 — the ceiling consolidateAll enforces on
+  # INFERRED_PREFERENCE_MAX_CONFIDENCE (src/memory/jme.ts). Pre-existing stated
+  # preferences sit at 0.72–0.99, so the inferred population starts at 0.
+  echo -e "${BOLD}Live preference facts${NC} (inferred = confidence <= 0.7, lowest first):"
+  sql "SELECT id,
+              printf('%.2f', confidence) AS conf,
+              CASE WHEN confidence >= 1.0 THEN 'confirmed' WHEN confidence <= 0.7 THEN 'inferred' ELSE 'stated' END AS kind,
+              date(ts/1000, 'unixepoch') AS since,
+              substr(fact_text, 1, 96) AS preference
+       FROM jme_facts
+       WHERE category = 'preference' AND (expires_at IS NULL OR expires_at > ${now_ms})
+       ORDER BY confidence ASC, ts DESC;"
+  echo ""
+  echo -e "${BOLD}Rejected${NC} (confidence 0, expired — a re-inferred twin is the cue for a stop rule):"
+  sql "SELECT id, date(ts/1000, 'unixepoch') AS since, substr(fact_text, 1, 96) AS preference
+       FROM jme_facts
+       WHERE category = 'preference' AND confidence = 0 AND expires_at IS NOT NULL
+       ORDER BY ts DESC LIMIT 20;"
+  echo ""
+  # jme_signals lands with schema migration v5 at service boot; this script is
+  # live on checkout, so it can run against a DB the service has not migrated.
+  if [ "$(sql_raw "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jme_signals';")" != "1" ]; then
+    echo -e "  ${YELLOW}jme_signals not present yet — schema migration v5 applies on the next mission-control start (deploy pending).${NC}"
+    return
+  fi
+  echo -e "${BOLD}Correction signals per 100 chat turns${NC} (weeks are %W, Monday-based, not ISO):"
+  echo -e "  Numerator = owner-Telegram turns only (the JME capture predicate); denominator = recall_audit source='jme', one row per chat turn on EVERY chat path — the rate is a LOWER BOUND, read the snippets."
+  echo -e "  Readout (advisory, not a gate): once >= 5 inferred preferences exist, a 4-week rate >= 30% below the first 4 weeks = success."
+  echo -e "  INCONCLUSIVE, not a verdict: fewer than 20 signals in a window (calibration: ~0.3–0.8% of turns ≈ <1 signal/week — expect months, not weeks)."
+  sql "WITH t AS (
+         SELECT strftime('%Y-W%W', created_at) AS wk, COUNT(*) AS chat_turns
+         FROM recall_audit WHERE source = 'jme' GROUP BY wk
+       ), s AS (
+         SELECT strftime('%Y-W%W', ts/1000, 'unixepoch') AS wk,
+                COUNT(*) AS signals,
+                SUM(kind = 'length') AS len, SUM(kind = 'format') AS fmt,
+                SUM(kind = 'depth') AS dep, SUM(kind = 'explicit') AS expl
+         FROM jme_signals GROUP BY wk
+       )
+       SELECT t.wk AS week, t.chat_turns, COALESCE(s.signals, 0) AS signals,
+              printf('%.1f', 100.0 * COALESCE(s.signals, 0) / t.chat_turns) AS per_100,
+              COALESCE(s.len, 0) AS length, COALESCE(s.fmt, 0) AS format,
+              COALESCE(s.dep, 0) AS depth, COALESCE(s.expl, 0) AS explicit
+       FROM t LEFT JOIN s ON s.wk = t.wk
+       ORDER BY t.wk DESC LIMIT 30;"
+  echo ""
+  echo -e "  confirm: ${GREEN}mc-ctl jme-preferences --confirm <id>${NC}   reject: ${GREEN}mc-ctl jme-preferences --reject <id>${NC}"
+}
+
 cmd_jme_stats() {
   need_db
   echo -e "${BOLD}=== JME Utility Dashboard ===${NC}"
@@ -1900,6 +1983,7 @@ usage() {
   echo -e "  ${GREEN}conversations${NC} [N]   Last N conversations (default 10)"
   echo -e "  ${GREEN}memory${NC}              Memory backend status"
   echo -e "  ${GREEN}jme-stats${NC}           JME utility dashboard — facts, recall rate, verdict runway"
+  echo -e "  ${GREEN}jme-preferences${NC}     Preference facts (stated/inferred) + correction-signal rate; --confirm <id> | --reject <id>"
   echo ""
   echo -e "  ${BOLD}Hindsight${NC}"
   echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
@@ -3139,6 +3223,7 @@ case "$cmd" in
   db)                cmd_db "$@" ;;
   stats)             cmd_stats ;;
   jme-stats)         cmd_jme_stats ;;
+  jme-preferences)   cmd_jme_preferences "$@" ;;
 
   validation)        cmd_validation "$@" ;;
 

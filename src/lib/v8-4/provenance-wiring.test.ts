@@ -310,46 +310,115 @@ describe("R4 audit pins", () => {
     enterRunToolContext("t-r4", () => {
       for (const f of shapes) expect(fuenteIsCheckable(f), f).toBe(false);
       recordRunTool("shell_exec");
-      expect(fuenteIsCheckable("**Fuente:** `shell_exec wc -l ventas.csv`")).toBe(true);
-      expect(fuenteIsCheckable("**Fuente:** `gsheets_read Ventas!A:F`")).toBe(false);
+      expect(
+        fuenteIsCheckable("**Fuente:** `shell_exec wc -l ventas.csv`"),
+      ).toBe(true);
+      expect(fuenteIsCheckable("**Fuente:** `gsheets_read Ventas!A:F`")).toBe(
+        false,
+      );
     });
     // URL / path shapes never need a tool; a bare data-source word is not provenance.
-    expect(fuenteIsCheckable("https://www.inegi.org.mx/app/descarga/")).toBe(true);
+    expect(fuenteIsCheckable("https://www.inegi.org.mx/app/descarga/")).toBe(
+      true,
+    );
     expect(fuenteIsCheckable("`/root/claude/x/ventas.csv`")).toBe(true);
     expect(fuenteIsCheckable("INEGI 2024")).toBe(false);
     expect(fuenteIsCheckable("denue")).toBe(false);
   });
 
   it("W-5: the persona prompt is NOT evidence for a chat task; a scheduled task's prompt IS", () => {
-    seedTask("t-persona", "## Identidad — regla absoluta\nNO eres Claude. Cobertura 98.7% de hogares.");
+    seedTask(
+      "t-persona",
+      "## Identidad — regla absoluta\nNO eres Claude. Cobertura 98.7% de hogares.",
+    );
     const chat = enterRunToolContext("t-persona", () =>
-      checkArtifactProvenance({ tool: "jarvis_file_write", artifact: "kb:x", text: "Cobertura 98.7% de hogares." }),
+      checkArtifactProvenance({
+        tool: "jarvis_file_write",
+        artifact: "kb:x",
+        text: "Cobertura 98.7% de hogares.",
+      }),
     );
     expect(chat.ok).toBe(false);
-    seedTask("t-ritual", "Genera el reporte: universo 100 mercados, equity $10,000.00.");
+    seedTask(
+      "t-ritual",
+      "Genera el reporte: universo 100 mercados, equity $10,000.00.",
+    );
     const ritual = enterRunToolContext("t-ritual", () =>
-      checkArtifactProvenance({ tool: "jarvis_file_write", artifact: "kb:y", text: "Universo: 100 mercados | Equity $10,000.00" }),
+      checkArtifactProvenance({
+        tool: "jarvis_file_write",
+        artifact: "kb:y",
+        text: "Universo: 100 mercados | Equity $10,000.00",
+      }),
     );
     expect(ritual.ok).toBe(true);
   });
 
+  it("R3 C2 (memory plan v2.0 Track 3): a swarm child's runner-authored sibling tail is NOT evidence for an artifact write; its own goal text still is", () => {
+    seedTask(
+      "t-swarm-child",
+      [
+        "Compare Clip vs Kustodia fees for 12 merchants",
+        "",
+        "## Sibling goals (for coordination, not your responsibility)",
+        "- Research Kustodia [completed] — Result: Kustodia cobra 1.2% por escrow.",
+        "",
+        "## Shared findings from completed siblings",
+        "### Research Clip",
+        "- Clip: 3.6% + IVA per transaction",
+        "",
+        "## Coordination",
+        "- Do not research what a sibling owns.",
+      ].join("\n"),
+    );
+    const laundered = enterRunToolContext("t-swarm-child", () =>
+      checkArtifactProvenance({
+        tool: "gsheets_write",
+        artifact: "sheet:fees",
+        text: "Clip 3.6% + IVA; Kustodia 1.2%",
+      }),
+    );
+    expect(laundered.ok).toBe(false);
+    const own = enterRunToolContext("t-swarm-child", () =>
+      checkArtifactProvenance({
+        tool: "gsheets_write",
+        artifact: "sheet:fees",
+        text: "12 comercios comparados",
+      }),
+    );
+    expect(own.ok).toBe(true);
+  });
+
   it("W-7: a full-file rewrite counts the file's prior content as evidence (only NEW figures are claims)", async () => {
-    const { jarvisFileWriteTool } = await import("../../tools/builtin/jarvis-files.js");
+    const { jarvisFileWriteTool } =
+      await import("../../tools/builtin/jarvis-files.js");
     seedTask("t-prior", "x");
     process.env[ENV] = "off";
     await enterRunToolContext("t-prior", () =>
-      jarvisFileWriteTool.execute({ path: "p/readme.md", title: "R", content: "Usuarios: 1,741 registros · ingresos $12,500" }),
+      jarvisFileWriteTool.execute({
+        path: "p/readme.md",
+        title: "R",
+        content: "Usuarios: 1,741 registros · ingresos $12,500",
+      }),
     );
     delete process.env[ENV];
     const same = JSON.parse(
       await enterRunToolContext("t-prior", () =>
-        jarvisFileWriteTool.execute({ path: "p/readme.md", title: "R", content: "# README\nUsuarios: 1,741 registros · ingresos $12,500 · nueva sección" }),
+        jarvisFileWriteTool.execute({
+          path: "p/readme.md",
+          title: "R",
+          content:
+            "# README\nUsuarios: 1,741 registros · ingresos $12,500 · nueva sección",
+        }),
       ),
     );
     expect(same.success).toBe(true);
     const changed = JSON.parse(
       await enterRunToolContext("t-prior", () =>
-        jarvisFileWriteTool.execute({ path: "p/readme.md", title: "R", content: "Usuarios: 1,742 registros · ingresos $12,500" }),
+        jarvisFileWriteTool.execute({
+          path: "p/readme.md",
+          title: "R",
+          content: "Usuarios: 1,742 registros · ingresos $12,500",
+        }),
       ),
     );
     expect(changed.error).toContain("«1,742»");
@@ -373,7 +442,11 @@ describe("checkArtifactProvenance (unit)", () => {
     recordToolEvidence("t-cells", "margin 35%");
     expect(
       enterRunToolContext("t-cells", () =>
-        checkArtifactProvenance({ tool: "gsheets_write", artifact: "s", cells: [["Margen", 0.35]] }),
+        checkArtifactProvenance({
+          tool: "gsheets_write",
+          artifact: "s",
+          cells: [["Margen", 0.35]],
+        }),
       ),
     ).toMatchObject({ ok: true, unsourced: [] });
   });
@@ -423,25 +496,46 @@ describe("checkArtifactProvenance (unit)", () => {
   });
 
   it("R1 C3: a figure the USER typed this turn is sourced (router records the message as evidence)", async () => {
-    const { gsheetsWriteTool } = await import("../../tools/builtin/google-docs.js");
-    seedTask("t-user", "## Identidad — regla absoluta (persona prompt, 24 KB, no user text)");
-    recordToolEvidence("t-user", "Estoy viendo 975 M de impresiones en el sheet y no 776 M — corrígelo");
-    google.googleFetch.mockResolvedValue({ updates: { updatedRange: "Hoja!A2:B2", updatedRows: 1 } });
+    const { gsheetsWriteTool } =
+      await import("../../tools/builtin/google-docs.js");
+    seedTask(
+      "t-user",
+      "## Identidad — regla absoluta (persona prompt, 24 KB, no user text)",
+    );
+    recordToolEvidence(
+      "t-user",
+      "Estoy viendo 975 M de impresiones en el sheet y no 776 M — corrígelo",
+    );
+    google.googleFetch.mockResolvedValue({
+      updates: { updatedRange: "Hoja!A2:B2", updatedRows: 1 },
+    });
     const out = JSON.parse(
       await enterRunToolContext("t-user", () =>
-        gsheetsWriteTool.execute({ spreadsheet_id: "sid", range: "Hoja!A:B", values: [["Impresiones", "975M"]] }),
+        gsheetsWriteTool.execute({
+          spreadsheet_id: "sid",
+          range: "Hoja!A:B",
+          values: [["Impresiones", "975M"]],
+        }),
       ),
     );
     expect(out.error).toBeUndefined();
-    expect(traces("t-user")[0]).toMatchObject({ figures: 1, unsourced: 0, rejected: false });
+    expect(traces("t-user")[0]).toMatchObject({
+      figures: 1,
+      unsourced: 0,
+      rejected: false,
+    });
   });
 
   it("R1 C4: gdocs_replace is gated like gdocs_write", async () => {
-    const { gdocsReplaceTool } = await import("../../tools/builtin/google-docs.js");
+    const { gdocsReplaceTool } =
+      await import("../../tools/builtin/google-docs.js");
     seedTask("t-rep", "x");
     const rejected = JSON.parse(
       await enterRunToolContext("t-rep", () =>
-        gdocsReplaceTool.execute({ document_id: "d1", text: "Mercado: $5.16B" }),
+        gdocsReplaceTool.execute({
+          document_id: "d1",
+          text: "Mercado: $5.16B",
+        }),
       ),
     );
     expect(rejected.error).toMatch(/gdocs_replace.*«\$5\.16B»/);

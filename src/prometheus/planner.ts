@@ -56,6 +56,7 @@ Rules:
 - If the task involves an unfamiliar or specialized domain, make the first goal "Build domain overview using knowledge_map tool" before detailed execution goals.
 - NEVER delegate understanding: each goal description must be specific enough to execute without guessing. Include file paths, function names, or concrete targets when known. Never write "based on findings from g-1, do X" — instead, make g-2 depend_on g-1 and describe exactly what g-2 must do with its own terms.
 - MANDATORY (CCP8): Every goal that modifies code, files, or configuration MUST include at least one file path or resource identifier in its description. Goals like "fix the bug" without specifying which file are too vague — write "fix the timeout handling in src/inference/adapter.ts" instead.
+- Ownership: sibling goals that run concurrently must have DISJOINT research targets. When two goals could touch the same entity, source or file, assign it to exactly ONE goal and write in every other goal's description "Do not research <X> — owned by g-N". A goal reports only on what it owns. A goal that NEEDS a fact another goal owns must depends_on that goal (its findings are forwarded only to goals that start after it finishes) — never batch it as an independent sibling.
 
 ## Workload sizing — split large tasks across rounds
 
@@ -86,6 +87,7 @@ You may add new goals, remove failed goals, or change dependencies.
 | Tool failure rate is high | Add diagnostic/fallback goals | The tools may need different parameters or alternatives |
 
 New or revised goals follow the same workload sizing as planning: one execution round (~2 minutes, ~10-15 tool calls) per goal; split enumerable workloads into batches of 3-5 items with criteria bounded to each batch.
+New or revised goals follow the same ownership rule as planning: concurrent siblings have DISJOINT research targets — assign a shared entity to exactly ONE goal, write "Do not research <X> — owned by g-N" in the others, and make a goal that needs an owned fact depends_on its owner.
 
 Respond with a revised goal graph in the same JSON schema:
 {

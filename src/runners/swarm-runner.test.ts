@@ -67,6 +67,12 @@ vi.mock("../lib/v8-4/consumer.js", () => ({
 
 import {
   buildSubTaskDescription,
+  extractSharedFindings,
+  stripSharedFindings,
+  FORWARDED_FINDINGS_HEADING,
+  SHARED_FINDINGS_HEADING,
+  SHARED_FINDINGS_MAX_CHARS,
+  SHARED_FINDINGS_TOTAL_MAX_CHARS,
   syncSubTaskStatuses,
   maxParallelWidth,
   swarmRunner,
@@ -226,6 +232,377 @@ describe("buildSubTaskDescription — sibling context", () => {
 
     expect(desc).toContain("Build API layer [completed]");
     expect(desc).not.toContain("Result:");
+  });
+});
+
+describe("buildSubTaskDescription — ownership + shared findings (memory plan v2.0, Track 3)", () => {
+  it("forwards a completed sibling's '## Shared findings' section in full, not the 200-char slice", () => {
+    const graph = makeGraph();
+    const findings = "- Kustodia: escrow fintech, 1.2% fee\n- Clip: 3.6% + IVA";
+    const output = `# Report\n${"intro ".repeat(60)}\n${SHARED_FINDINGS_HEADING}\n${findings}\n## Next steps\n- nothing`;
+    const trackers = new Map<string, Tracker>([
+      ["g-2", { goalId: "g-2", taskId: "t-2", status: "completed", output }],
+    ]);
+
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+
+    expect(desc).toContain("## Shared findings from completed siblings");
+    expect(desc).toContain("### Build API layer");
+    expect(desc).toContain(findings);
+    // The section body stops at the next H2
+    expect(desc).not.toContain("- nothing");
+  });
+
+  it("emits the Coordination contract only when siblings exist", () => {
+    const graph = makeGraph();
+    const withSiblings = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      new Map(),
+    );
+    expect(withSiblings).toContain("## Coordination");
+    expect(withSiblings).toContain("owned by g-N");
+    expect(withSiblings).toContain(`"${SHARED_FINDINGS_HEADING}" section`);
+    // W5 fold: concurrent siblings' findings are NOT coming — say so.
+    expect(withSiblings).toContain("finished before you started");
+
+    const solo = new GoalGraph();
+    solo.addGoal({ id: "g-only", description: "Only goal" });
+    const alone = buildSubTaskDescription(
+      solo.getGoal("g-only"),
+      solo,
+      new Map(),
+    );
+    expect(alone).not.toContain("## Coordination");
+    expect(alone).not.toContain("Shared findings");
+  });
+
+  it("no shared-findings block when completed siblings did not publish one", () => {
+    const graph = makeGraph();
+    const trackers = new Map<string, Tracker>([
+      [
+        "g-2",
+        { goalId: "g-2", taskId: "t-2", status: "completed", output: "done" },
+      ],
+    ]);
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc).not.toContain("Shared findings from completed siblings");
+  });
+
+  describe("extractSharedFindings", () => {
+    it("returns null without the heading or with an empty section", () => {
+      expect(extractSharedFindings("no section here")).toBeNull();
+      expect(
+        extractSharedFindings(`${SHARED_FINDINGS_HEADING}\n\n`),
+      ).toBeNull();
+    });
+
+    it("caps the body at SHARED_FINDINGS_MAX_CHARS with an ellipsis", () => {
+      const body = "x".repeat(SHARED_FINDINGS_MAX_CHARS + 100);
+      const out = extractSharedFindings(`${SHARED_FINDINGS_HEADING}\n${body}`);
+      expect(out).toHaveLength(SHARED_FINDINGS_MAX_CHARS + 1);
+      expect(out!.endsWith("…")).toBe(true);
+    });
+
+    it("reads to the end when no later H2 exists", () => {
+      expect(
+        extractSharedFindings(`${SHARED_FINDINGS_HEADING}\n- a\n- b`),
+      ).toBe("- a\n- b");
+    });
+  });
+});
+
+describe("shared findings — qa-audit R1 folds (C2 strip, C4 parser, W6 cap, fidelity)", () => {
+  const H = SHARED_FINDINGS_HEADING;
+
+  it("a completed sibling WITH a section gets the section, not the 200-char slice (plan §3.2 'instead of')", () => {
+    const graph = makeGraph();
+    const output = `${"intro ".repeat(50)}\n${H}\n- Clip: 3.6% + IVA`;
+    const trackers = new Map<string, Tracker>([
+      ["g-2", { goalId: "g-2", taskId: "t-2", status: "completed", output }],
+    ]);
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc).toContain(FORWARDED_FINDINGS_HEADING.trim());
+    expect(desc).toContain("- Clip: 3.6% + IVA");
+    expect(desc).not.toContain("Result: ");
+  });
+
+  it("aggregate cap bounds the forwarded block across many siblings", () => {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-0", description: "Receiver" });
+    const trackers = new Map<string, Tracker>();
+    for (let i = 1; i <= 6; i++) {
+      graph.addGoal({ id: `g-${i}`, description: `Sibling ${i}` });
+      trackers.set(`g-${i}`, {
+        goalId: `g-${i}`,
+        taskId: `t-${i}`,
+        status: "completed",
+        output: `${H}\n${"f".repeat(SHARED_FINDINGS_MAX_CHARS)}`,
+      });
+    }
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-0"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    const block = desc
+      .split(FORWARDED_FINDINGS_HEADING.trim())[1]
+      .split("\n## Coordination")[0];
+    expect(block.trim().length).toBe(SHARED_FINDINGS_TOTAL_MAX_CHARS + 1);
+    expect(block.endsWith("…\n") || block.endsWith("…")).toBe(true);
+  });
+
+  describe("extractSharedFindings — heading LINE, last section, fence-blind (C4)", () => {
+    it("ignores a heading inside a fenced code example", () => {
+      const out = extractSharedFindings(
+        `Example:\n\`\`\`markdown\n${H}\n- PLACEHOLDER\n\`\`\`\n${H}\n- real`,
+      );
+      expect(out).toBe("- real");
+      expect(
+        extractSharedFindings(
+          `\`\`\`\n${H}\n- only in fence\n\`\`\`\nno section`,
+        ),
+      ).toBeNull();
+    });
+
+    it("ignores a mid-line mention of the heading", () => {
+      expect(
+        extractSharedFindings(`See the ${H} section below.\n## Next\n- x`),
+      ).toBeNull();
+    });
+
+    it("is case-insensitive, tolerates a trailing colon, takes the LAST section, stops at the next H2 but not H3", () => {
+      const out = extractSharedFindings(
+        `## Shared Findings:\n- first\n## Body\ntext\n${H}\n- last\n### detail\n- more\n## Next steps\n- nothing`,
+      );
+      expect(out).toBe("- last\n### detail\n- more");
+    });
+
+    it("does not prefix-match a longer heading", () => {
+      expect(extractSharedFindings(`${H} and open questions\n- a`)).toBeNull();
+    });
+
+    it("handles CRLF", () => {
+      expect(extractSharedFindings(`${H}\r\n- a\r\n- b`)).toBe("- a\n- b");
+    });
+  });
+
+  describe("stripSharedFindings — the section never reaches the joined final answer (C2)", () => {
+    it("removes the section (to the next H2 or the end) and keeps everything else", () => {
+      const out = stripSharedFindings(
+        `# Report\nbody\n${H}\n- Clip: 3.6%\n### detail\n- x\n## Next steps\n- keep`,
+      );
+      expect(out).toBe("# Report\nbody\n## Next steps\n- keep");
+      expect(stripSharedFindings(`# Report\nbody\n${H}\n- tail`)).toBe(
+        "# Report\nbody",
+      );
+    });
+
+    it("leaves fenced code and mid-line mentions untouched", () => {
+      const text = `See ${H} below.\n\`\`\`\n${H}\n- in fence\n\`\`\`\ndone`;
+      expect(stripSharedFindings(text)).toBe(text);
+    });
+
+    it("is a no-op without a section", () => {
+      expect(stripSharedFindings("plain answer")).toBe("plain answer");
+    });
+  });
+});
+
+describe("shared findings — qa-audit R2 folds (JSON tracker output, fence parity, indented code)", () => {
+  const H = SHARED_FINDINGS_HEADING;
+
+  it("tracker.output is the JSON-stringified tasks.output blob — the section is found INSIDE it and the Result slice is unwrapped (R2 C4/C3)", () => {
+    const graph = makeGraph();
+    const blob = JSON.stringify({
+      text: `## Hallazgos\nLa cobertura es 92.4% a nivel AGEB.\n\n${H}\n- DENUE 2025 tiene 5,412,891 unidades\n`,
+    });
+    const trackers = new Map<string, Tracker>([
+      [
+        "g-2",
+        { goalId: "g-2", taskId: "t-2", status: "completed", output: blob },
+      ],
+    ]);
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc).toContain("- DENUE 2025 tiene 5,412,891 unidades");
+    expect(desc).not.toContain('{"text"');
+    expect(desc).not.toContain("Result: ");
+
+    // Without a section: the slice is the unwrapped deliverable, never raw JSON
+    const plain = JSON.stringify({ text: "## Hallazgos\nCobertura 92.4%." });
+    trackers.set("g-2", {
+      goalId: "g-2",
+      taskId: "t-2",
+      status: "completed",
+      output: plain,
+    });
+    const desc2 = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc2).toContain("Result: ## Hallazgos\nCobertura 92.4%.");
+    expect(desc2).not.toContain('{"text"');
+  });
+
+  it("the Result slice never carries a sibling's own '## Shared findings' section", () => {
+    const graph = makeGraph();
+    const blob = JSON.stringify({ text: `Body.\n${H}\n\n` }); // empty section → no forwarding
+    const trackers = new Map<string, Tracker>([
+      [
+        "g-2",
+        { goalId: "g-2", taskId: "t-2", status: "completed", output: blob },
+      ],
+    ]);
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc).toContain("Result: Body.");
+    expect(desc.split("## Coordination")[0]).not.toContain(
+      `Result: Body.\n${H}`,
+    );
+  });
+
+  it("a section inside a code block is code: a fence pair around it, or an unclosed fence before it, means no section and nothing stripped (R2 W-c, CommonMark)", () => {
+    const paired = `## Analysis\n\`\`\`json\n{"a":1}\n${H}\n- INSIDE 3.6%\n\`\`\`\nend`;
+    expect(extractSharedFindings(paired)).toBeNull();
+    expect(stripSharedFindings(paired)).toBe(paired);
+    const unclosed = `## Analysis\n\`\`\`json\n{"a":1}\n${H}\n- INSIDE 3.6%`;
+    expect(extractSharedFindings(unclosed)).toBeNull();
+    expect(stripSharedFindings(unclosed)).toBe(unclosed);
+    // …and a real section AFTER a closed pair is found and stripped
+    const after = `\`\`\`\ncode\n\`\`\`\n${H}\n- real`;
+    expect(extractSharedFindings(after)).toBe("- real");
+    expect(stripSharedFindings(after)).toBe("\`\`\`\ncode\n\`\`\`");
+  });
+
+  it("prose that spells the old placeholder (' CODE0 ') is never rewritten (R4 W5)", () => {
+    const prose =
+      "| CODE0 | fallo de red |\nEl identificador CODE7 es interno.";
+    expect(stripSharedFindings(prose)).toBe(prose);
+    const withFence = "```\nx\n```\nluego CODE0 aparte";
+    expect(stripSharedFindings(withFence)).toBe(withFence);
+    expect(extractSharedFindings(`${H}\n- ver CODE0 en la tabla`)).toBe(
+      "- ver CODE0 en la tabla",
+    );
+  });
+
+  it("a 4-space continuation inside the section body is forwarded verbatim (placeholders restored)", () => {
+    const body = "- item\n    detail line";
+    expect(extractSharedFindings(`${H}\n${body}`)).toBe(body);
+  });
+
+  it("an indented (4-space) code block is not a section; a 1–3-space heading is (R2 W-d)", () => {
+    const text = `Template:\n\n    ${H}\n    - PLACEHOLDER\n\n ${H}\n- real`;
+    expect(extractSharedFindings(text)).toBe("- real");
+    const stripped = stripSharedFindings(text);
+    expect(stripped).toContain("    - PLACEHOLDER");
+    expect(stripped).not.toContain("- real");
+  });
+
+  it("'##Shared findings' (no space) and a blockquoted heading are not headings — documented, not forwarded", () => {
+    expect(extractSharedFindings(`##${H.slice(3)}\n- a`)).toBeNull();
+    expect(extractSharedFindings(`> ${H}\n- a`)).toBeNull();
+  });
+
+  it("the V8.4 ledger strips the whole runner-authored sibling tail of a real description (R2 C3)", async () => {
+    const { stripForwardedSiblingFindings } = await vi.importActual<
+      typeof import("../lib/v8-4/consumer.js")
+    >("../lib/v8-4/consumer.js");
+    const graph = makeGraph();
+    const trackers = new Map<string, Tracker>([
+      [
+        "g-2",
+        {
+          goalId: "g-2",
+          taskId: "t-2",
+          status: "completed",
+          output: JSON.stringify({
+            text: `Cobertura 92.4%.\n${H}\n- Clip: 3.6%`,
+          }),
+        },
+      ],
+      [
+        "g-3",
+        {
+          goalId: "g-3",
+          taskId: "t-3",
+          status: "completed",
+          output: JSON.stringify({ text: "Kustodia cobra 1.2% por escrow." }),
+        },
+      ],
+    ]);
+    const desc = buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      trackers as Map<string, any>,
+    );
+    expect(desc).toContain("3.6%");
+    expect(desc).toContain("1.2%");
+    const evidence = stripForwardedSiblingFindings(desc);
+    expect(evidence).toBe("Setup database");
+  });
+});
+
+describe("swarm final answer — '## Shared findings' never reaches the operator (R1 C2 / R2 W-b, at the execute() seam)", () => {
+  it("children's sections are forwarded between siblings but stripped from the joined final answer", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Research Clip fees" });
+    graph.addGoal({ id: "g-2", description: "Research Kustodia fees" });
+    mockPlan.mockResolvedValue({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(
+      async () => ({ taskId: `seam-child-${++n}`, agentType: "fast" }) as never,
+    );
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({
+          task_id: id,
+          status: "completed",
+          output: JSON.stringify({
+            text: `Reporte ${id}: comisión 3.6% + IVA.\n\n${SHARED_FINDINGS_HEADING}\n- SECRET-${id}: dato para el hermano`,
+          }),
+        }) as never,
+    );
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "seam-parent",
+      runId: "run-seam",
+      title: "Compare fees",
+      description: "Compare Clip and Kustodia fees",
+    });
+
+    expect(result.success).toBe(true);
+    const out = result.output as Record<string, unknown>;
+    const delivered = JSON.stringify(out);
+    expect(delivered).toContain("comisión 3.6% + IVA");
+    expect(delivered).not.toContain("SECRET-");
+    expect(delivered).not.toContain(SHARED_FINDINGS_HEADING);
   });
 });
 
@@ -877,7 +1254,9 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     g.addGoal({
       id: "p-1",
       description: "gated item",
-      metadata: { gates: [{ criterion: "typecheck", check: "npx tsc --noEmit" }] },
+      metadata: {
+        gates: [{ criterion: "typecheck", check: "npx tsc --noEmit" }],
+      },
     });
     g.addGoal({ id: "p-2", description: "plain item" });
     mockPlan.mockResolvedValue({
@@ -901,7 +1280,12 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     );
     const gated = byTitle.get("[Swarm] gated item")!;
     expect(gated.gates).toEqual([
-      { id: "p-1.1", criterion: "typecheck", check: "npx tsc --noEmit", kind: "shell" },
+      {
+        id: "p-1.1",
+        criterion: "typecheck",
+        check: "npx tsc --noEmit",
+        kind: "shell",
+      },
     ]);
     expect(gated.gatesSource).toBe("plan");
     const plain = byTitle.get("[Swarm] plain item")!;
@@ -918,16 +1302,27 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     } as never);
     let n = 0;
     mockSubmitTask.mockImplementation(
-      async () => ({ taskId: `${parentId}-child-${++n}`, agentType: "fast" }) as never,
+      async () =>
+        ({ taskId: `${parentId}-child-${++n}`, agentType: "fast" }) as never,
     );
     mockGetTask.mockImplementation(
       (id: string) =>
-        ({ task_id: id, status: "completed", output: JSON.stringify({ text: `done ${id}` }) }) as never,
+        ({
+          task_id: id,
+          status: "completed",
+          output: JSON.stringify({ text: `done ${id}` }),
+        }) as never,
     );
     // child-1's ledger fails re-verification; child-2 has no ledger.
     v84.reverify.mockImplementation(async (_parent: string, child: string) =>
       child.endsWith("child-1")
-        ? { verdict: "failed", failed: 1, failedRows: [{ gate_id: "p-1.1" }], pending: 0, abandoned: 0 }
+        ? {
+            verdict: "failed",
+            failed: 1,
+            failedRows: [{ gate_id: "p-1.1" }],
+            pending: 0,
+            abandoned: 0,
+          }
         : null,
     );
     mockReflect.mockResolvedValue({
@@ -940,7 +1335,9 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
       title: "fan-out",
       description: "process items",
     });
-    const goals = (result.goalGraph as { goals: Record<string, { status: string }> }).goals;
+    const goals = (
+      result.goalGraph as { goals: Record<string, { status: string }> }
+    ).goals;
     return { result, goals };
   }
 
@@ -955,7 +1352,9 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     expect(goals["p-1"]!.status).toBe("failed"); // child-1 (goal p-1) demoted by the parent
     expect(goals["p-2"]!.status).toBe("completed");
     const trace = result.trace as Array<{ taskId: string; status: string }>;
-    expect(trace.find((t) => t.taskId === "parent-e-child-1")!.status).toBe("failed");
+    expect(trace.find((t) => t.taskId === "parent-e-child-1")!.status).toBe(
+      "failed",
+    );
   }, 30_000);
 
   it("shadow: the same failing verdict is recorded but nothing is demoted", async () => {
@@ -965,4 +1364,4 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     expect(goals["p-1"]!.status).toBe("completed");
     expect(goals["p-2"]!.status).toBe("completed");
   }, 30_000);
-});;
+});
