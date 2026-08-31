@@ -758,6 +758,20 @@ export async function upsertFact(
  * Fact extraction prompt for Haiku.
  * Returns a JSON array of fact objects.
  */
+/** Identity-inversion guard (2026-08-31). The nightly extractor once turned
+ * Jarvis's OWN Track 1 report of `preferences.jarvis_name` ("Con Fede, Jarvis se
+ * llama Piotr") into jme_facts#307 "Fede prefers to be called Piotr by Jarvis" —
+ * the prompt's anti-echo rule was ignored. A prompt rule is not a guard: a fact
+ * that names FEDE as the one called Piotr is refused before upsertFact. Replayed
+ * over all 327 live facts: hits #307 only; "Fede calls Jarvis Piotr", "Fede wants
+ * Jarvis to sign as Piotr" and "Piotr Wozniak" pass. */
+export const IDENTITY_INVERSION_RE =
+  /\bFede(?:rico)?(?:'s)?\b[^.;]{0,40}?\b(?:(?:prefers|wants|likes|asks|asked|prefiere|quiere|pide)\s+to\s+be\s+(?:called|addressed\s+as|named)|is\s+(?:called|known\s+as|named|addressed\s+as)|se\s+llama|se\s+hace\s+llamar|goes\s+by|(?:also\s+)?known\s+as|conocido\s+como|(?:name|nickname|alias|apodo|nombre)\s+(?:is|es))\b[^.;]{0,20}?\bPiotr\b/i;
+
+export function isIdentityInversion(factText: string): boolean {
+  return IDENTITY_INVERSION_RE.test(factText);
+}
+
 const CONSOLIDATOR_EXTRACT_PROMPT = `You are a fact extractor for a personal assistant memory system.
 Given a conversation, extract a compact list of durable facts about the user.
 
@@ -766,6 +780,7 @@ Rules:
 - Only extract facts that would still be useful weeks from now.
 - Skip greetings, filler, one-off operational details, and temporary states.
 - Extract ONLY from what Fede (the user) states. NEVER extract from Jarvis's replies: Jarvis often restates facts it already remembers, and re-extracting those would create duplicates. Jarvis turns are context for understanding Fede, not a fact source.
+- Names: the user is Fede (Federico). Fede addresses the assistant as "Piotr" — in Fede's messages "Piotr" ALWAYS refers to Jarvis, never to Fede, unless Fede is clearly naming a different, third person. Never record what Fede calls Jarvis as Fede's own name, his nickname, or a preference about HIM.
 - Categories: "decision" | "preference" | "event" | "emotion" | "project"
 - Confidence: 0.0–1.0 (how confident you are this is a lasting fact)
 - Every "preference" fact carries "inferred": true or false. Inferred = you derived it from Fede correcting the FORMAT, LENGTH or DEPTH of a Jarvis reply ("muy largo", "dame la tabla", "profundiza", a follow-up that reframes the answer); phrase it as how he wants replies ("Fede prefers ...") with confidence at most 0.7. Stated = Fede said it himself; keep the normal confidence. A preference without the field is treated as inferred.
@@ -935,6 +950,14 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
         (
           ["decision", "preference", "event", "emotion", "project"] as const
         ).find((c) => c === f.category) ?? "decision";
+
+      if (isIdentityInversion(f.factText)) {
+        console.warn(
+          `[jme] consolidateAll: identity-inversion guard dropped "${f.factText.slice(0, 120)}"`,
+        );
+        result.factsSkipped++;
+        continue;
+      }
 
       try {
         // Track 2: an INFERRED preference is capped at 0.7 here, not just in

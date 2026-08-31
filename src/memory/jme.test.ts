@@ -290,6 +290,9 @@ describe("JME — preference signals + injection order (memory plan v2.0, Track 
     expect(system).toMatch(/FORMAT, LENGTH or DEPTH/);
     expect(system).toMatch(/confidence at most 0\.7/);
     expect(system).toMatch(/treated as inferred/);
+    // Identity fix 2026-08-31: the extractor once inverted "Jarvis se llama
+    // Piotr" into "Fede prefers to be called Piotr" (jme_facts#307).
+    expect(system).toMatch(/"Piotr" ALWAYS refers to Jarvis, never to Fede/);
   });
 
   it("caps an INFERRED preference at 0.7 server-side, even when Haiku omits or inflates confidence", async () => {
@@ -349,6 +352,45 @@ describe("JME — preference signals + injection order (memory plan v2.0, Track 
       INFERRED_PREFERENCE_MAX_CONFIDENCE,
       0.99,
     ]);
+  });
+
+  it("identity-inversion guard refuses a fact naming FEDE as the one called Piotr, keeps the legit twin", async () => {
+    const { consolidateAll, isIdentityInversion } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("t-id", "user", "Gracias Piotr", "telegram", Date.now() - 31 * 60_000);
+    inferMock.mockResolvedValueOnce({
+      content: JSON.stringify([
+        {
+          factText: "Fede prefers to be called Piotr by Jarvis",
+          category: "preference",
+          confidence: 0.9,
+          inferred: false,
+        },
+        {
+          factText: "Fede calls Jarvis Piotr",
+          category: "preference",
+          confidence: 0.9,
+          inferred: false,
+        },
+      ]),
+    });
+
+    const result = await consolidateAll();
+
+    const rows = mockDb
+      .prepare(`SELECT fact_text FROM jme_facts ORDER BY id`)
+      .all() as Array<{ fact_text: string }>;
+    expect(rows.map((r) => r.fact_text)).toEqual(["Fede calls Jarvis Piotr"]);
+    expect(result.factsSkipped).toBe(1);
+    // Shapes the guard must and must not catch (replayed over 327 live facts:
+    // #307 only).
+    expect(isIdentityInversion("Fede se llama Piotr")).toBe(true);
+    expect(isIdentityInversion("Fede's name is Piotr")).toBe(true);
+    expect(isIdentityInversion("Fede wants Jarvis to sign as Piotr")).toBe(false);
+    expect(isIdentityInversion("Fede is working with Piotr Wozniak on SM2")).toBe(false);
   });
 
   it("orderForInjection puts preferences first and keeps the rest in recall order", async () => {

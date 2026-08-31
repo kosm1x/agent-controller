@@ -441,7 +441,7 @@ describe("identitySection — WhatsApp dormant (operator ruling 2026-08-22)", ()
     delete process.env.WHATSAPP_ENABLED;
     const text = identitySection();
     expect(text).not.toContain("Grupos de WhatsApp");
-    expect(text).not.toContain("Piotr");
+    expect(text).not.toContain("Tu nombre en WhatsApp es Piotr");
     expect(text).toContain("Además de Telegram, te pueden escribir por correo");
     expect(text).toContain("igual que en Telegram.");
   });
@@ -452,5 +452,36 @@ describe("identitySection — WhatsApp dormant (operator ruling 2026-08-22)", ()
     expect(text).toContain("## Grupos de WhatsApp");
     expect(text).toContain("Tu nombre en WhatsApp es Piotr");
     expect(text).toContain("Además de WhatsApp y Telegram");
+  });
+});
+
+describe("identitySection — Piotr is Jarvis's OWN name (identity fix 2026-08-31)", () => {
+  // Jarvis mirrored the vocative "Gracias Piotr" back at Fede as HIS name twice
+  // (08-28, 08-31): the production prompt never said who Piotr is — the only
+  // mention lived in the compiled-out WhatsApp group block, and the user_facts
+  // bullet `preferences.jarvis_name` sits in the last-tier profile list.
+  const prev = process.env.WHATSAPP_ENABLED;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.WHATSAPP_ENABLED;
+    else process.env.WHATSAPP_ENABLED = prev;
+  });
+
+  it.each([
+    ["dormant", undefined],
+    ["enabled", "true"],
+  ])("names Piotr as Jarvis, never as Fede — WhatsApp %s", (_label, wa) => {
+    if (wa === undefined) delete process.env.WHATSAPP_ENABLED;
+    else process.env.WHATSAPP_ENABLED = wa;
+    const text = identitySection();
+    expect(text).toContain("Fede te llama **Piotr**: Piotr eres TÚ");
+    expect(text).toContain("nunca llames Piotr a Fede");
+    // The rule sits in the P1 identity paragraph, before the first channel
+    // block (the WhatsApp group block when enabled, email otherwise).
+    const firstChannelBlock =
+      wa === "true" ? "## Grupos de WhatsApp" : "## Correo electrónico";
+    expect(text.indexOf(firstChannelBlock)).toBeGreaterThan(0);
+    expect(text.indexOf("Piotr eres TÚ")).toBeLessThan(
+      text.indexOf(firstChannelBlock),
+    );
   });
 });

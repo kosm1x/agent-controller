@@ -159,6 +159,17 @@ describe("shouldExtract", () => {
 });
 
 describe("extractFacts", () => {
+  it("tells the extractor who Piotr is — a vocative is not the user's name (identity fix 2026-08-31)", async () => {
+    mockInfer.mockResolvedValueOnce({ content: "NONE" });
+    await extractFacts("Gracias Piotr", "De nada, Fede.", []);
+    const req = mockInfer.mock.calls[0][0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(req.messages[0].content).toMatch(
+      /"Piotr" refers to the assistant, never to the user/,
+    );
+  });
+
   it("parses multi-line LLM output into fact array", async () => {
     mockInfer.mockResolvedValueOnce({
       content:
