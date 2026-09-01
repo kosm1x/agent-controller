@@ -831,6 +831,20 @@ export function recordNanoclawImageMissing(): void {
   nanoclawImageMissingTotal.inc();
 }
 
+// Fires when a container runner's pre-flight finds the runner image was built
+// from a different package-lock.json than the host dist/ it mounts
+// (container.ts imageLockDrift, 2026-09-01). scripts/deploy.sh rebuilds the
+// image on drift, so a non-zero count means a deploy bypassed deploy.sh —
+// rebuild with scripts/build-mc-image.sh.
+const nanoclawImageDriftTotal = new client.Counter({
+  name: "mc_nanoclaw_image_lock_drift_total",
+  help: "Times a container runner pre-flight refused to spawn because the runner image's package-lock label differs from the host lockfile.",
+});
+
+export function recordNanoclawImageDrift(): void {
+  nanoclawImageDriftTotal.inc();
+}
+
 export function recordWhatsappDisconnect(
   reasonCode: number | string | undefined,
 ): void {

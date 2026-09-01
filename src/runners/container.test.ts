@@ -3,11 +3,22 @@
  * Tests name generation and sentinel output parsing.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   generateContainerName,
   parsePayload,
   buildDockerRunArgs,
+  volumeRefusal,
+  RUNTIME_CODE_MOUNTS,
+  MC_ROOT,
+  imageLockDrift,
+  hostLockfileSha256,
+  missingHostDistAssets,
+  HOST_DIST_REQUIRED_ASSETS,
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
 } from "./container.js";
@@ -175,17 +186,21 @@ describe("buildDockerRunArgs — H5 hardening", () => {
     expect(joined).toContain("MC_DB_PATH=/tmp/mc.db");
   });
 
-  it("still enforces the volume host-path allowlist", () => {
+  it("still enforces the volume host-path allowlist (and, since 2026-09-01, read-only)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const args = buildDockerRunArgs({
       ...base,
       volumes: [
-        "/tmp/ok:/work:rw", // allowed
+        "/tmp/ok:/work:ro", // allowed
+        "/tmp/ok:/work:rw", // blocked — writable mounts are refused
         "/etc/passwd:/x:ro", // blocked — outside allowlist
       ],
     });
     const joined = args.join(" ");
-    expect(joined).toContain("/tmp/ok:/work:rw");
+    expect(joined).toContain("/tmp/ok:/work:ro");
+    expect(joined).not.toContain("/tmp/ok:/work:rw");
     expect(joined).not.toContain("/etc/passwd");
+    warn.mockRestore();
   });
 
   it("appends image last, before any command", () => {
@@ -197,5 +212,182 @@ describe("buildDockerRunArgs — H5 hardening", () => {
     expect(imageIdx).toBeGreaterThan(-1);
     expect(args[imageIdx + 1]).toBe("node");
     expect(args[imageIdx + 2]).toBe("dist/runners/heavy-worker.js");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nanoclaw upstream review 2026-09-01 — --init, read-only mount gate,
+// host-code mounts, image ↔ lockfile coupling
+// ---------------------------------------------------------------------------
+
+describe("buildDockerRunArgs — --init (nanoclaw upstream v2.1.54 #2748)", () => {
+  it("runs the container under Docker's init so SIGTERM reaches node as PID 1", () => {
+    const args = buildDockerRunArgs({
+      image: "mission-control:latest",
+      name: "mc-init-test",
+    });
+    expect(args).toContain("--init");
+    // Still `docker run … <image>` — the flag sits before the image.
+    expect(args.indexOf("--init")).toBeLessThan(
+      args.indexOf("mission-control:latest"),
+    );
+  });
+});
+
+describe("volumeRefusal — allow-listed host path AND read-only, one gate for both doors", () => {
+  it.each([
+    "/root/claude/mission-control:/root/claude/mission-control:ro",
+    "/root/claude/mission-control/dist:/app/dist:ro",
+    "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
+    "/root/.config/gh:/root/.config/gh:ro",
+    "/root/.config/gh/hosts.yml:/x/hosts.yml:ro",
+    "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+    "/root/claude//mission-control:/x:ro", // `//` normalizes to an allowed sub-path
+    "/root/claude/./mission-control/dist:/app/dist:ro",
+  ])("accepts %s", (spec) => {
+    expect(volumeRefusal(spec)).toBeNull();
+  });
+
+  it.each([
+    ["/root/claude/mission-control:/w:rw", "not read-only"],
+    ["/root/claude/mission-control:/w", "not read-only"],
+    ["/tmp/jarvis-downloads:/tmp/jarvis-downloads:RO", "not read-only"],
+    ["/root/claude/mission-control:/w:ro,z", "not read-only"],
+    ["/etc/passwd:/x:ro", "outside allowed paths"],
+    ["/root/claude:/x:ro", "outside allowed paths"], // prefix is `/root/claude/`
+    ["/root/.config/gh-evil:/x:ro", "outside allowed paths"], // boundary
+    ["/root/.claude/.credentials.json.bak:/x:ro", "outside allowed paths"],
+    ["/root:/x:ro", "outside allowed paths"],
+    ["/root/claude/../.ssh:/x:ro", "outside allowed paths"], // `..` judged normalized (R1 W1)
+    ["/root/claude/mission-control/../../.ssh:/x:ro", "outside allowed paths"],
+    ["/tmp/../root/.ssh:/x:ro", "outside allowed paths"],
+    ["/tmp/:/tmp:ro", "outside allowed paths"], // a directory prefix admits only a sub-path
+    ["/root/claude/:/x:ro", "outside allowed paths"],
+    ["dist:/app/dist:ro", "must be absolute"], // relative = docker NAMED volume
+    ["./dist:/app/dist:ro", "must be absolute"],
+    ["nonsense", "malformed"],
+    ["", "malformed"],
+    [":/x:ro", "malformed"],
+  ])("refuses %s (%s)", (spec, reason) => {
+    expect(volumeRefusal(spec)).toContain(reason);
+  });
+
+  it("buildDockerRunArgs drops every refused mount, keeps the :ro ones, warns per refusal", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const args = buildDockerRunArgs({
+      image: "mission-control:latest",
+      name: "mc-vol-test",
+      volumes: [
+        "/root/claude/mission-control/dist:/app/dist:ro",
+        "/root/claude/mission-control:/w:rw",
+        "/etc/passwd:/x:ro",
+      ],
+    });
+    expect(args.filter((a) => a === "-v")).toHaveLength(1);
+    expect(args).toContain("/root/claude/mission-control/dist:/app/dist:ro");
+    const joined = args.join(" ");
+    expect(joined).not.toContain(":rw");
+    expect(joined).not.toContain("/etc/passwd");
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("not read-only"),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("outside allowed paths"),
+    );
+    warn.mockRestore();
+  });
+});
+
+describe("RUNTIME_CODE_MOUNTS — the sandbox executes the host's deployed code", () => {
+  it("mounts dist/ and prompt_modules/ over /app read-only", () => {
+    expect(RUNTIME_CODE_MOUNTS).toEqual([
+      `${MC_ROOT}/dist:/app/dist:ro`,
+      `${MC_ROOT}/prompt_modules:/app/prompt_modules:ro`,
+    ]);
+    expect(MC_ROOT).toBe("/root/claude/mission-control");
+  });
+
+  it("every entry passes the gate both backends enforce", () => {
+    for (const m of RUNTIME_CODE_MOUNTS) expect(volumeRefusal(m)).toBeNull();
+  });
+});
+
+describe("imageLockDrift — image node_modules must come from the host lockfile", () => {
+  const host = "a".repeat(64);
+
+  it("null when the image label equals the host lockfile sha", () => {
+    expect(imageLockDrift("img", { host, readLabel: () => host })).toBeNull();
+  });
+
+  it("reports drift when the label differs", () => {
+    const other = "b".repeat(64);
+    expect(imageLockDrift("img", { host, readLabel: () => other })).toEqual({
+      host,
+      image: other,
+    });
+  });
+
+  it("reports drift (image: null) when the image carries no label — pre-2026-09-01 build or bare `docker build`", () => {
+    expect(imageLockDrift("img", { host, readLabel: () => null })).toEqual({
+      host,
+      image: null,
+    });
+  });
+
+  it("asks the label reader about the image it was given", () => {
+    const readLabel = vi.fn((_image: string) => host);
+    imageLockDrift("mission-control:latest", { host, readLabel });
+    expect(readLabel).toHaveBeenCalledWith("mission-control:latest");
+  });
+
+  it("hostLockfileSha256 is sha256 hex of the file bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mc-lock-"));
+    const p = join(dir, "package-lock.json");
+    writeFileSync(p, '{"lockfileVersion":3}');
+    try {
+      expect(hostLockfileSha256(p)).toBe(
+        createHash("sha256").update('{"lockfileVersion":3}').digest("hex"),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("missingHostDistAssets — the mounted host dist/ must be a full `npm run build`, not bare tsc (qa R2 W-C)", () => {
+  it("names schema.sql and seed-cases.json as the build-copied assets", () => {
+    expect(HOST_DIST_REQUIRED_ASSETS).toEqual([
+      "dist/db/schema.sql",
+      "dist/tuning/seed-cases.json",
+    ]);
+  });
+
+  it("empty when every asset exists under the root", () => {
+    const seen: string[] = [];
+    expect(
+      missingHostDistAssets("/srv/mc", (p) => {
+        seen.push(p);
+        return true;
+      }),
+    ).toEqual([]);
+    expect(seen).toEqual([
+      "/srv/mc/dist/db/schema.sql",
+      "/srv/mc/dist/tuning/seed-cases.json",
+    ]);
+  });
+
+  it("lists exactly the missing ones (a tsc-only build leaves schema.sql out)", () => {
+    expect(
+      missingHostDistAssets("/srv/mc", (p) => !p.endsWith("schema.sql")),
+    ).toEqual(["dist/db/schema.sql"]);
+    expect(missingHostDistAssets("/srv/mc", () => false)).toEqual([
+      "dist/db/schema.sql",
+      "dist/tuning/seed-cases.json",
+    ]);
+  });
+
+  it("the live host dist/ is complete right now (deploy.sh ran `npm run build`)", () => {
+    expect(missingHostDistAssets()).toEqual([]);
   });
 });

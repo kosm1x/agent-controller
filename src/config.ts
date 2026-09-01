@@ -78,7 +78,9 @@ export interface Config {
    * Sandbox runtime backend for container runners (nanoclaw, containerized
    * heavy). `docker` = the in-tree `docker run` path (container.ts);
    * `opensandbox` = the OpenSandbox lifecycle server (execd + optional egress
-   * sidecar) via opensandbox-backend.ts. Unknown values resolve to `docker`.
+   * sidecar) via opensandbox-backend.ts. Unset = `docker`; any other value
+   * REFUSES at boot (parseSandboxBackend) — a typo must never silently
+   * downgrade every sandbox to the unrestricted-egress docker path.
    * Env: SANDBOX_BACKEND. Adopted 2026-08-16 (docs/planning/opensandbox-adoption.md).
    */
   sandboxBackend: "docker" | "opensandbox";
@@ -189,6 +191,24 @@ function float(key: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+/**
+ * SANDBOX_BACKEND → backend. Unset/empty = `docker`; anything but the two
+ * known values REFUSES at boot (nanoclaw upstream v2.3.0: "An unknown
+ * `NANOCLAW_RUNTIME_DRIVER` aborts startup"). Before 2026-09-01 an unknown
+ * value silently resolved to `docker`; with the OpenSandbox egress
+ * allow-list live, a typo would have silently downgraded every sandbox to
+ * unrestricted egress.
+ */
+export function parseSandboxBackend(
+  raw: string | undefined,
+): "docker" | "opensandbox" {
+  if (raw === undefined || raw === "" || raw === "docker") return "docker";
+  if (raw === "opensandbox") return "opensandbox";
+  throw new Error(
+    `SANDBOX_BACKEND must be "docker" or "opensandbox" (got "${raw}")`,
+  );
+}
+
 export function loadConfig(): Config {
   const provider: "openai" | "claude-sdk" =
     process.env.INFERENCE_PRIMARY_PROVIDER === "claude-sdk"
@@ -249,8 +269,7 @@ export function loadConfig(): Config {
       process.env.HEAVY_RUNNER_IMAGE ?? "mission-control:latest",
     heavyRunnerTimeoutMs: int("HEAVY_RUNNER_TIMEOUT_MS", 900_000),
 
-    sandboxBackend:
-      process.env.SANDBOX_BACKEND === "opensandbox" ? "opensandbox" : "docker",
+    sandboxBackend: parseSandboxBackend(process.env.SANDBOX_BACKEND),
     opensandboxUrl: process.env.OPENSANDBOX_URL ?? "127.0.0.1:8098",
     opensandboxApiKey: optional("OPENSANDBOX_API_KEY"),
     sandboxEgressAllow: (process.env.SANDBOX_EGRESS_ALLOW ?? "")

@@ -21,6 +21,16 @@ vi.mock("./container.js", () => ({
   // Default to TRUE so existing tests continue to exercise the spawn path.
   // Individual pre-flight tests override with mockReturnValueOnce(false).
   imageExistsLocally: vi.fn(() => true),
+  // Default to NO lockfile drift so existing tests exercise the spawn path;
+  // the drift pre-flight test overrides with mockReturnValueOnce({...}).
+  imageLockDrift: vi.fn(() => null),
+  // Default: host dist/ complete; the assets pre-flight test overrides once.
+  missingHostDistAssets: vi.fn((): string[] => []),
+  IMAGE_LOCK_LABEL: "mc.lock-sha256",
+  RUNTIME_CODE_MOUNTS: [
+    "/root/claude/mission-control/dist:/app/dist:ro",
+    "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
+  ],
   OUTPUT_START_MARKER: "---NANOCLAW_OUTPUT_START---",
   OUTPUT_END_MARKER: "---NANOCLAW_OUTPUT_END---",
 }));
@@ -33,6 +43,7 @@ vi.mock("../lib/event-bus.js", () => ({
 
 vi.mock("../observability/prometheus.js", () => ({
   recordNanoclawImageMissing: vi.fn(),
+  recordNanoclawImageDrift: vi.fn(),
 }));
 
 import { nanoclawRunner } from "./nanoclaw-runner.js";
@@ -40,13 +51,21 @@ import { getConfig } from "../config.js";
 import {
   spawnContainer,
   imageExistsLocally,
+  imageLockDrift,
+  missingHostDistAssets,
 } from "./container.js";
-import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import {
+  recordNanoclawImageDrift,
+  recordNanoclawImageMissing,
+} from "../observability/prometheus.js";
 
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
 const mockImageExistsLocally = vi.mocked(imageExistsLocally);
+const mockImageLockDrift = vi.mocked(imageLockDrift);
+const mockMissingHostDistAssets = vi.mocked(missingHostDistAssets);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
+const mockRecordNanoclawImageDrift = vi.mocked(recordNanoclawImageDrift);
 
 function makeConfig() {
   return {
@@ -115,6 +134,10 @@ describe("nanoclawRunner", () => {
           MC_DB_PATH: "/tmp/mc.db",
         }),
         volumes: [
+          // Deployed code first (2026-09-01): the sandbox executes the host
+          // dist/, never the image's baked copy.
+          "/root/claude/mission-control/dist:/app/dist:ro",
+          "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
           "/root/claude/mission-control:/root/claude/mission-control:ro",
           "/root/.config/gh:/root/.config/gh:ro",
           "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
@@ -454,6 +477,51 @@ describe("nanoclawRunner", () => {
       expect(mockSpawnContainer).not.toHaveBeenCalled();
       // durationMs is computed and non-negative even on early return.
       expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    // 2026-09-01 (nanoclaw upstream review): the sandbox runs the HOST dist/
+    // on the IMAGE's node_modules, so an image built from another lockfile
+    // must refuse before spawn — same contract as the missing-image guard.
+    it("refuses to spawn on package-lock drift — names the label, the host sha and the rebuild line", async () => {
+      mockImageLockDrift.mockReturnValueOnce({
+        host: "a".repeat(64),
+        image: null,
+      });
+
+      const result = await nanoclawRunner.execute({
+        taskId: "task-lock-drift",
+        runId: "run-lock-drift",
+        title: "Drift",
+        description: "Image built from another package-lock.json",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(
+        "was built from a different package-lock.json",
+      );
+      expect(result.error).toContain("mc.lock-sha256=<absent>");
+      expect(result.error).toContain(`host sha256 ${"a".repeat(12)}`);
+      expect(result.error).toContain("scripts/build-mc-image.sh");
+      expect(mockImageLockDrift).toHaveBeenCalledWith("mission-control:latest");
+      expect(mockRecordNanoclawImageDrift).toHaveBeenCalledTimes(1);
+      expect(mockRecordNanoclawImageMissing).not.toHaveBeenCalled();
+      expect(mockSpawnContainer).not.toHaveBeenCalled();
+    });
+
+    it("refuses to spawn when the host dist/ lacks the `npm run build` assets (qa R2 W-C)", async () => {
+      mockMissingHostDistAssets.mockReturnValueOnce(["dist/db/schema.sql"]);
+
+      const result = await nanoclawRunner.execute({
+        taskId: "task-tsc-only",
+        runId: "run-tsc-only",
+        title: "Bare tsc",
+        description: "Host dist built without npm run build",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("missing build assets (dist/db/schema.sql)");
+      expect(result.error).toContain("npm run build");
+      expect(mockSpawnContainer).not.toHaveBeenCalled();
     });
 
     it("proceeds to container spawn when pre-flight passes", async () => {

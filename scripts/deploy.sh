@@ -69,6 +69,22 @@ fi
 echo "[deploy] Building..."
 npm run build
 
+# Sandbox image lockfile gate (2026-09-01, nanoclaw upstream review). The
+# sandbox executes the HOST dist/ (read-only mount) on top of the IMAGE's
+# node_modules, so the image must have been built from the same
+# package-lock.json. The runners refuse to spawn on drift (imageLockDrift);
+# rebuilding here keeps that state transient. Lockfile changes are rare
+# (3 days in the last 3 months), so this costs minutes only when deps change.
+SANDBOX_IMAGE="mission-control:latest"
+HOST_LOCK=$(sha256sum package-lock.json | cut -d' ' -f1)
+IMAGE_LOCK=$(docker image inspect "$SANDBOX_IMAGE" --format '{{ index .Config.Labels "mc.lock-sha256" }}' 2>/dev/null || echo "")
+if [[ "$IMAGE_LOCK" != "$HOST_LOCK" ]]; then
+  echo "[deploy] Sandbox image lockfile drift (image=${IMAGE_LOCK:-<none>} host=${HOST_LOCK:0:12}…) — rebuilding $SANDBOX_IMAGE..."
+  bash scripts/build-mc-image.sh
+else
+  echo "[deploy] Sandbox image lockfile matches host (${HOST_LOCK:0:12}…)."
+fi
+
 # Pre-restart guard — 2026-05-25 fix for the "Service shutdown" recurring
 # blocker. Older behaviour just printed a WARN and proceeded; in-flight chats
 # died silently. Now we BLOCK on `running` (mid-execution, has side effects)

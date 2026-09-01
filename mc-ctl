@@ -169,6 +169,18 @@ cmd_stop() {
   echo -e "${GREEN}Service stopped.${NC}"
 }
 
+# Sandbox image ↔ host lockfile state (2026-09-01). The sandbox executes the
+# HOST dist/ on the IMAGE's node_modules; the runners REFUSE to spawn when the
+# image's mc.lock-sha256 label differs from sha256(package-lock.json). Only
+# scripts/deploy.sh rebuilds on drift — a plain restart does not (qa R1 W4), so
+# surface the state here. Prints "ok <sha12>" or "drift <image-label-or-none>".
+sandbox_image_lock_state() {
+  local host image
+  host="$(sha256sum "$PROJECT_DIR/package-lock.json" 2>/dev/null | cut -d' ' -f1)"
+  image="$(docker image inspect mission-control:latest --format '{{ index .Config.Labels "mc.lock-sha256" }}' 2>/dev/null || echo "")"
+  if [[ -n "$host" && "$image" == "$host" ]]; then echo "ok ${host:0:12}"; else echo "drift ${image:-none}"; fi
+}
+
 cmd_restart() {
   # `systemctl restart` is async — MainPID can flip within seconds while the
   # OLD pid keeps serving traffic for minutes (see feedback_mc_systemctl_restart_async).
@@ -182,6 +194,10 @@ cmd_restart() {
     if [[ "${running:-0}" -gt 0 ]]; then
       echo -e "${YELLOW}WARN${NC}: $running task(s) currently running — restart will kill any in-flight work."
     fi
+  fi
+  local lock_state; lock_state="$(sandbox_image_lock_state)"
+  if [[ "$lock_state" == drift* ]]; then
+    echo -e "${YELLOW}WARN${NC}: sandbox image lockfile drift (${lock_state#drift }) — nanoclaw/heavy-container tasks will REFUSE to spawn until the image is rebuilt. A restart does not fix this; run: $PROJECT_DIR/scripts/deploy.sh"
   fi
 
   old_pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo "0")
@@ -3110,6 +3126,12 @@ cmd_sandboxes() {
   fi
   echo -e "${BOLD}Sandbox backend (live mission-control pid ${pid}):${NC} ${backend}"
   echo -e "${BOLD}Egress allow-list set:${NC} ${egress}"
+  local lock_state; lock_state="$(sandbox_image_lock_state)"
+  if [[ "$lock_state" == ok* ]]; then
+    echo -e "${BOLD}Image lock (mc.lock-sha256 vs package-lock.json):${NC} matches (${lock_state#ok })"
+  else
+    echo -e "${BOLD}Image lock (mc.lock-sha256 vs package-lock.json):${NC} ${RED}DRIFT${NC} (image=${lock_state#drift }) — container tasks refuse to spawn; run $PROJECT_DIR/scripts/deploy.sh"
+  fi
   echo ""
   echo -e "${BOLD}opensandbox-server:${NC} $(systemctl is-active opensandbox-server 2>/dev/null) · health=$(curl -fsS -m 3 http://127.0.0.1:8098/health >/dev/null 2>&1 && echo ok || echo DOWN) · guard=$(systemctl is-active opensandbox-fw 2>/dev/null)"
   if command -v iptables >/dev/null 2>&1; then

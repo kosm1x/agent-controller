@@ -136,9 +136,13 @@ lifecycle, and in-sandbox verification capability.
   version pinned in the installer. Bump deliberately, re-run the e2e.
 - execd `mode` = octal digits in a decimal int (`600`, not `0o600`) — a `0o600`
   upload 500s (found by the e2e).
-- Egress default-deny + allow-list is **off by default** (parity). Recommended
-  starter list once nanoclaw runs on the backend for a week:
-  `*.anthropic.com,github.com,api.github.com,*.githubusercontent.com,registry.npmjs.org`
+- Egress default-deny + allow-list is **off by default** (parity). **Probed 2026-09-01
+  (flip pending the operator)** after the observation week (16 d, 5/5 completions) with the list
+  corrected from SDK evidence (`platform.claude.com` is what the vendored CLI
+  talks to for OAuth):
+  `*.anthropic.com,*.claude.com,github.com,api.github.com,*.githubusercontent.com,registry.npmjs.org`
+  — wildcard + lookalike-deny probed live before the flip
+  (`docs/planning/nanoclaw-upstream-review-2026-09-01.md` §6).
   (`*.anthropic.com` covers `api` + `mcp-proxy`, both reached by the Claude
   Agent SDK). Deny → in-sandbox DNS NXDOMAIN; tasks that legitimately fetch
   other hosts will fail there, visibly.
@@ -179,8 +183,10 @@ lifecycle, and in-sandbox verification capability.
   TTL/heartbeat invariant comment, property-style SDK types, timer clear after
   final drain); rec 5 (Prometheus counter on renew failure) deferred.
 - The e2e's egress probe (3/3) ran in a one-off `systemd-run` with
-  `SANDBOX_EGRESS_ALLOW` exported; the **live service runs without an
-  allow-list** (egress unrestricted, docker parity) until the observation week.
+  `SANDBOX_EGRESS_ALLOW` exported; the live service ran without an allow-list
+  (egress unrestricted, docker parity); on **2026-09-01** the line below was
+  prepared (with `*.claude.com` added) — the operator uncomments it (auto-mode
+  cannot edit `/etc`); one-liner in the nanoclaw review note §6.
 
 ## 7. Flip / rollback (drop-in, one key at a time)
 
@@ -189,7 +195,7 @@ lifecycle, and in-sandbox verification capability.
 [Service]
 EnvironmentFile=-/etc/opensandbox/api.env
 Environment=SANDBOX_BACKEND=opensandbox
-# Environment=SANDBOX_EGRESS_ALLOW=*.anthropic.com,github.com,api.github.com,*.githubusercontent.com,registry.npmjs.org
+# Environment=SANDBOX_EGRESS_ALLOW=*.anthropic.com,*.claude.com,github.com,api.github.com,*.githubusercontent.com,registry.npmjs.org
 ```
 
 `sudo systemctl daemon-reload && sudo systemctl restart mission-control && ./mc-ctl sandboxes`.
@@ -202,4 +208,5 @@ docker path is untouched.
   (needs the backend to expose `exec()` on the handle + hold the sandbox until
   the ledger is evaluated).
 - Sandbox metrics (`execd /metrics`) into the task trace.
-- Egress allow-list ON after the observation week; then decide gVisor.
+- Egress allow-list ON after the observation week — **probes PASS 2026-09-01, operator flips** (one-liner in `nanoclaw-upstream-review-2026-09-01.md` §6); then decide gVisor.
+- Since 2026-09-01 the sandbox executes the HOST `dist/` (RO mount over `/app/dist`) on the image's `node_modules`, pinned by the `mc.lock-sha256` label — see `container.ts` `RUNTIME_CODE_MOUNTS` / `imageLockDrift` and the nanoclaw review note.

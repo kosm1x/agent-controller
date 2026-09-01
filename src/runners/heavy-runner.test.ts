@@ -26,12 +26,22 @@ vi.mock("./container.js", () => ({
   // Default to TRUE so existing tests continue to exercise the spawn path.
   // Pre-flight tests override with mockReturnValueOnce(false).
   imageExistsLocally: vi.fn(() => true),
+  // Default to NO lockfile drift so existing tests exercise the spawn path.
+  imageLockDrift: vi.fn(() => null),
+  // Default: host dist/ complete; the assets pre-flight test overrides once.
+  missingHostDistAssets: vi.fn((): string[] => []),
+  IMAGE_LOCK_LABEL: "mc.lock-sha256",
+  RUNTIME_CODE_MOUNTS: [
+    "/root/claude/mission-control/dist:/app/dist:ro",
+    "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
+  ],
   OUTPUT_START_MARKER: "---NANOCLAW_OUTPUT_START---",
   OUTPUT_END_MARKER: "---NANOCLAW_OUTPUT_END---",
 }));
 
 vi.mock("../observability/prometheus.js", () => ({
   recordNanoclawImageMissing: vi.fn(),
+  recordNanoclawImageDrift: vi.fn(),
 }));
 
 import { heavyRunner } from "./heavy-runner.js";
@@ -40,14 +50,22 @@ import { getConfig } from "../config.js";
 import {
   spawnContainer,
   imageExistsLocally,
+  imageLockDrift,
+  missingHostDistAssets,
 } from "./container.js";
-import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import {
+  recordNanoclawImageDrift,
+  recordNanoclawImageMissing,
+} from "../observability/prometheus.js";
 
 const mockOrchestrate = vi.mocked(orchestrate);
 const mockGetConfig = vi.mocked(getConfig);
 const mockSpawnContainer = vi.mocked(spawnContainer);
 const mockImageExistsLocally = vi.mocked(imageExistsLocally);
+const mockImageLockDrift = vi.mocked(imageLockDrift);
+const mockMissingHostDistAssets = vi.mocked(missingHostDistAssets);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
+const mockRecordNanoclawImageDrift = vi.mocked(recordNanoclawImageDrift);
 
 function makeConfig(containerized = false) {
   return {
@@ -543,6 +561,9 @@ describe("heavyRunner container mode", () => {
           HOME: "/root",
         }),
         volumes: [
+          // Deployed code first (2026-09-01), then the SDK credentials.
+          "/root/claude/mission-control/dist:/app/dist:ro",
+          "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
           "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
         ],
       }),
@@ -629,6 +650,54 @@ describe("heavyRunner container mode — pre-flight image check", () => {
     expect(result.error).toContain("heavy path");
     expect(result.error).toContain("scripts/build-mc-image.sh");
     expect(mockRecordNanoclawImageMissing).toHaveBeenCalledTimes(1);
+    expect(mockSpawnContainer).not.toHaveBeenCalled();
+  });
+
+  // 2026-09-01: heavy sibling of the nanoclaw lockfile-drift pre-flight.
+  it("refuses to spawn on package-lock drift (heavy path), never spawns", async () => {
+    mockImageLockDrift.mockReturnValueOnce({
+      host: "c".repeat(64),
+      image: "d".repeat(64),
+    });
+
+    const result = await heavyRunner.execute({
+      taskId: "task-heavy-lock-drift",
+      runId: "run-heavy-lock-drift",
+      title: "Heavy under drift",
+      description: "Image built from another lockfile",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(
+      "was built from a different package-lock.json",
+    );
+    expect(result.error).toContain(`mc.lock-sha256=${"d".repeat(64)}`);
+    expect(result.error).toContain("heavy path");
+    expect(result.error).toContain("scripts/build-mc-image.sh");
+    expect(mockRecordNanoclawImageDrift).toHaveBeenCalledTimes(1);
+    expect(mockSpawnContainer).not.toHaveBeenCalled();
+    expect(mockOrchestrate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to spawn when the host dist/ lacks the `npm run build` assets (heavy path)", async () => {
+    mockMissingHostDistAssets.mockReturnValueOnce([
+      "dist/db/schema.sql",
+      "dist/tuning/seed-cases.json",
+    ]);
+
+    const result = await heavyRunner.execute({
+      taskId: "task-heavy-tsc-only",
+      runId: "run-heavy-tsc-only",
+      title: "Heavy under bare tsc",
+      description: "Host dist built without npm run build",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(
+      "missing build assets (dist/db/schema.sql, dist/tuning/seed-cases.json)",
+    );
+    expect(result.error).toContain("heavy path");
+    expect(result.error).toContain("npm run build");
     expect(mockSpawnContainer).not.toHaveBeenCalled();
   });
 });

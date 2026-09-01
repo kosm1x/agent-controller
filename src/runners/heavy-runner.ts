@@ -11,9 +11,19 @@ import { orchestrate } from "../prometheus/orchestrator.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { getConfig } from "../config.js";
-import { generateContainerName, imageExistsLocally } from "./container.js";
+import {
+  IMAGE_LOCK_LABEL,
+  RUNTIME_CODE_MOUNTS,
+  generateContainerName,
+  imageExistsLocally,
+  imageLockDrift,
+  missingHostDistAssets,
+} from "./container.js";
 import { spawnSandbox, type SandboxHandle } from "./sandbox-backend.js";
-import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import {
+  recordNanoclawImageDrift,
+  recordNanoclawImageMissing,
+} from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
 
@@ -156,6 +166,39 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       };
     }
 
+    // Pre-flight 2 (2026-09-01): host dist/ runs on the image's node_modules
+    // (RUNTIME_CODE_MOUNTS) — refuse on package-lock drift; see nanoclaw-runner.
+    const drift = imageLockDrift(config.heavyRunnerImage);
+    if (drift) {
+      recordNanoclawImageDrift();
+      const driftMsg =
+        `Docker image '${config.heavyRunnerImage}' was built from a different package-lock.json ` +
+        `(image label ${IMAGE_LOCK_LABEL}=${drift.image ?? "<absent>"}, host sha256 ${drift.host.slice(0, 12)}…). ` +
+        `Pre-flight failed before container spawn (heavy path). ` +
+        `Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh`;
+      console.error(`[heavy-runner] FATAL: ${driftMsg}`);
+      return {
+        success: false,
+        error: driftMsg,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // Pre-flight 3 (qa R2 W-C): host dist/ must be a full `npm run build`.
+    const missingAssets = missingHostDistAssets();
+    if (missingAssets.length > 0) {
+      const assetsMsg =
+        `Host dist/ is missing build assets (${missingAssets.join(", ")}) — the sandbox ` +
+        `executes the host dist/, so it must come from \`npm run build\`, not bare tsc. ` +
+        `Pre-flight failed before container spawn (heavy path). Fix: cd /root/claude/mission-control && npm run build`;
+      console.error(`[heavy-runner] FATAL: ${assetsMsg}`);
+      return {
+        success: false,
+        error: assetsMsg,
+        durationMs: Date.now() - start,
+      };
+    }
+
     const isClaudeSdk = config.inferencePrimaryProvider === "claude-sdk";
     const envVars: Record<string, string> = {
       INFERENCE_PRIMARY_URL: config.inferencePrimaryUrl,
@@ -176,9 +219,16 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       command: ["node", "dist/runners/heavy-worker.js"],
       input: stdinPayload,
       envVars,
-      volumes: isClaudeSdk
-        ? ["/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro"]
-        : undefined,
+      volumes: [
+        // Deployed dist/ + prompt_modules/ over the image's baked copies
+        // (2026-09-01, see container.ts RUNTIME_CODE_MOUNTS).
+        ...RUNTIME_CODE_MOUNTS,
+        ...(isClaudeSdk
+          ? [
+              "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
+            ]
+          : []),
+      ],
       timeoutMs: config.heavyRunnerTimeoutMs,
     });
 

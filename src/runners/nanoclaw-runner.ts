@@ -14,9 +14,19 @@ import { registerRunner } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import { generateContainerName, imageExistsLocally } from "./container.js";
+import {
+  IMAGE_LOCK_LABEL,
+  RUNTIME_CODE_MOUNTS,
+  generateContainerName,
+  imageExistsLocally,
+  imageLockDrift,
+  missingHostDistAssets,
+} from "./container.js";
 import { spawnSandbox, type SandboxHandle } from "./sandbox-backend.js";
-import { recordNanoclawImageMissing } from "../observability/prometheus.js";
+import {
+  recordNanoclawImageDrift,
+  recordNanoclawImageMissing,
+} from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { renderConversationContext } from "./conversation-context.js";
 
@@ -56,6 +66,43 @@ export const nanoclawRunner: Runner = {
         };
       }
 
+      // Pre-flight 2 (2026-09-01): the sandbox executes the HOST dist/ on the
+      // IMAGE's node_modules (RUNTIME_CODE_MOUNTS) — refuse when the image was
+      // built from a different package-lock.json. deploy.sh rebuilds on drift,
+      // so this fires only when a deploy bypassed it.
+      const drift = imageLockDrift(config.heavyRunnerImage);
+      if (drift) {
+        recordNanoclawImageDrift();
+        const driftMsg =
+          `Docker image '${config.heavyRunnerImage}' was built from a different package-lock.json ` +
+          `(image label ${IMAGE_LOCK_LABEL}=${drift.image ?? "<absent>"}, host sha256 ${drift.host.slice(0, 12)}…). ` +
+          `Pre-flight failed before container spawn. ` +
+          `Rebuild: bash /root/claude/mission-control/scripts/build-mc-image.sh`;
+        console.error(`[nanoclaw-runner] FATAL: ${driftMsg}`);
+        return {
+          success: false,
+          error: driftMsg,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      // Pre-flight 3 (qa R2 W-C): the mounted host dist/ must carry the assets
+      // `npm run build` copies beside tsc's output; a bare `tsc` leaves them
+      // out and every container task would ENOENT at initDatabase.
+      const missingAssets = missingHostDistAssets();
+      if (missingAssets.length > 0) {
+        const assetsMsg =
+          `Host dist/ is missing build assets (${missingAssets.join(", ")}) — the sandbox ` +
+          `executes the host dist/, so it must come from \`npm run build\`, not bare tsc. ` +
+          `Pre-flight failed before container spawn. Fix: npm run build`;
+        console.error(`[nanoclaw-runner] FATAL: ${assetsMsg}`);
+        return {
+          success: false,
+          error: assetsMsg,
+          durationMs: Date.now() - start,
+        };
+      }
+
       // Build container input — include tools so the worker knows what to register
       // v8 S1: strip cache-break marker (nanoclaw uses description as a single
       // prompt blob; only fast-runner chat splits for cache-friendly emission).
@@ -87,6 +134,9 @@ export const nanoclawRunner: Runner = {
       // any writes from the container would bypass file_write / shell_exec
       // host-side guards + immutable-core. DB writes go to /tmp/mc.db.
       const volumes = [
+        // Deployed dist/ + prompt_modules/ over the image's baked copies — the
+        // sandbox must execute what the host runs (2026-09-01, see container.ts).
+        ...RUNTIME_CODE_MOUNTS,
         "/root/claude/mission-control:/root/claude/mission-control:ro",
         "/root/.config/gh:/root/.config/gh:ro",
         // Host channels (telegram.ts, gdrive_download) save attachments here;
@@ -103,7 +153,7 @@ export const nanoclawRunner: Runner = {
 
       // Spawn container with worker entrypoint, credentials, and repo mount
       handle = spawnSandbox({
-        image: config.heavyRunnerImage, // mission-control:latest (has compiled dist/)
+        image: config.heavyRunnerImage, // mission-control:latest — node + node_modules; dist/ is mounted from the host (RUNTIME_CODE_MOUNTS)
         name: generateContainerName(`nanoclaw-${input.taskId.slice(0, 8)}`),
         command: ["node", "dist/runners/nanoclaw-worker.js"],
         input: containerInput,

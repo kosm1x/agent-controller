@@ -120,12 +120,16 @@ describe("pure helpers", () => {
     });
   });
 
-  it("toVolumes enforces the shared allow-list and parses :ro", () => {
+  // 2026-09-01: the gate is container.ts volumeRefusal — allow-listed host
+  // path AND `:ro`. A mode-less or `:rw` spec is DROPPED (it used to be
+  // admitted writable), so every accepted Volume is readOnly by construction.
+  it("toVolumes enforces the shared allow-list and refuses non-:ro mounts", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const vols = toVolumes([
       "/root/claude/mission-control:/root/claude/mission-control:ro",
       "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
       "/tmp/jarvis-downloads:/tmp/jarvis-downloads",
+      "/root/claude/mission-control:/workspace:rw",
       "/etc/passwd:/x:ro",
     ]);
     expect(vols).toEqual([
@@ -141,14 +145,54 @@ describe("pure helpers", () => {
         mountPath: "/root/.claude/.credentials.json",
         readOnly: true,
       },
+    ]);
+    expect(vols.every((v) => v.readOnly)).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("/etc/passwd"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("not read-only"),
+    );
+    warn.mockRestore();
+  });
+
+  // qa R1 W2 (2026-09-01): the gate is only worth anything if its output is
+  // what reaches the server — pin the `volumes: toVolumes(opts.volumes)` wiring.
+  it("buildCreateOptions passes exactly toVolumes()' output (refused specs never reach the server)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cc = new ConnectionConfig({
+      domain: "127.0.0.1:8098",
+      protocol: "http",
+    });
+    // Two ACCEPTED specs so a truncating rewrite (`.slice(0, 1)`) also fails (R2 W-B).
+    const specs = [
+      "/root/claude/mission-control/dist:/app/dist:ro",
+      "/root/claude/mission-control:/workspace:rw",
+      "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
+      "/etc/passwd:/x:ro",
+    ];
+    const opts = buildCreateOptions({
+      image: "mission-control:latest",
+      name: "mc-wire",
+      volumes: specs,
+      timeoutMs: 60_000,
+      egressAllow: [],
+      connectionConfig: cc,
+    });
+    expect(opts.volumes).toEqual(toVolumes(specs));
+    expect(opts.volumes).toEqual([
       {
-        name: "v2",
-        host: { path: "/tmp/jarvis-downloads" },
-        mountPath: "/tmp/jarvis-downloads",
-        readOnly: false,
+        name: "v0",
+        host: { path: "/root/claude/mission-control/dist" },
+        mountPath: "/app/dist",
+        readOnly: true,
+      },
+      {
+        name: "v1",
+        host: { path: "/root/claude/mission-control/prompt_modules" },
+        mountPath: "/app/prompt_modules",
+        readOnly: true,
       },
     ]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("/etc/passwd"));
     warn.mockRestore();
   });
 

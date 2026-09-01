@@ -6,6 +6,9 @@
  */
 
 import { spawn, execSync, execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { existsSync, readFileSync } from "fs";
+import { posix } from "path";
 import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
 
@@ -47,6 +50,72 @@ export const VOLUME_ALLOWED_PREFIXES = [
   "/root/.claude/.credentials.json", // Claude Agent SDK auth (read-only, Sonnet runner path)
 ];
 
+/** Host checkout the sandbox executes from (also its `:ro` reference mount). */
+export const MC_ROOT = "/root/claude/mission-control";
+
+/**
+ * The deployed code the sandbox EXECUTES, mounted read-only over the image's
+ * baked copies (Dockerfile `COPY dist/`, `COPY prompt_modules/`).
+ *
+ * Why (nanoclaw upstream review 2026-09-01): the worker ran `/app/dist` from
+ * INSIDE the image, so every host deploy left the sandbox on whatever dist/
+ * the image was built from — the live image was 7 weeks old and lacked the
+ * shell/file/immutable-core guard fixes of 27 commits touching sandbox-
+ * executed paths (111 commits total since that build). Upstream's rule since
+ * nanoclaw v2.0.0: "all groups mount the same agent-runner read-only … Source
+ * is never baked in … Source-only changes never require an image rebuild."
+ * The image now contributes node + system deps + node_modules only; dist/
+ * tracks the host deploy at the next spawn. The baked copies remain the
+ * fallback for a bare `docker run mission-control:latest`.
+ *
+ * Coupling: host dist/ imports the IMAGE's node_modules, so the image must
+ * have been built from the same package-lock.json — see `imageLockDrift`.
+ *
+ * prompt_modules/: live for the heavy path (cwd `/app`, `resolve("prompt_modules")`
+ * in strategic-voice.ts). The nanoclaw worker `chdir()`s into its `/workspace`
+ * clone, whose prompt_modules/ is already HEAD — the mount is a no-op there
+ * (qa R1 W3), kept so both runners carry one list.
+ */
+export const RUNTIME_CODE_MOUNTS: readonly string[] = [
+  `${MC_ROOT}/dist:/app/dist:ro`,
+  `${MC_ROOT}/prompt_modules:/app/prompt_modules:ro`,
+];
+
+/**
+ * Why a `host:container[:mode]` volume spec is refused, or null when allowed.
+ * Shared by the docker path (buildDockerRunArgs) and the OpenSandbox path
+ * (toVolumes) so both doors enforce the same two rules:
+ *   1. the host path is under VOLUME_ALLOWED_PREFIXES;
+ *   2. the mode is `ro` — every mount the runners make is read-only, and a
+ *      writable host mount reachable from inside the sandbox would bypass
+ *      every host-side write guard (nanoclaw upstream v2.1.54 "mount
+ *      allowlists honor readOnly"). A future rw mount is a deliberate change
+ *      here, never a caller-side string.
+ */
+export function volumeRefusal(spec: string): string | null {
+  const [hostPath, mountPath, mode] = spec.split(":");
+  if (!hostPath || !mountPath) return "malformed volume spec";
+  // A relative host path is a docker NAMED volume, not a bind mount — refuse
+  // rather than resolve it against cwd (which would admit `dist:/app/dist`).
+  if (!hostPath.startsWith("/")) return "host path must be absolute";
+  // Judge the NORMALIZED path (`..`, `//` collapsed — the same form the docker
+  // daemon mounts), so `/root/claude/../.ssh` is judged as `/root/.ssh` (qa R1
+  // W1). Symlinks are deliberately not resolved: specs are runner literals,
+  // never model input. Boundary-safe: a directory prefix (`…/`) admits only a
+  // real sub-path (never the whole directory), a file/dir entry without `/`
+  // admits itself or a sub-path — `/root/.config/gh` must not admit
+  // `/root/.config/gh-evil`, `…credentials.json` must not admit `…json.bak`.
+  const norm = posix.normalize(hostPath);
+  const allowed = VOLUME_ALLOWED_PREFIXES.some((p) =>
+    p.endsWith("/")
+      ? norm.startsWith(p) && norm.length > p.length
+      : norm === p || norm.startsWith(`${p}/`),
+  );
+  if (!allowed) return "outside allowed paths";
+  if (mode !== "ro") return "not read-only (only :ro mounts are allowed)";
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -78,7 +147,7 @@ export interface SpawnContainerOptions {
   timeoutMs?: number;
   /** Override the container's default CMD (e.g. ["node", "dist/runners/heavy-worker.js"]). */
   command?: string[];
-  /** Volume mounts (e.g. ["/host/path:/container/path:rw"]). */
+  /** Volume mounts — host path under VOLUME_ALLOWED_PREFIXES and mode MUST be `:ro` (volumeRefusal), e.g. ["/host/path:/container/path:ro"]. */
   volumes?: string[];
 }
 
@@ -123,6 +192,86 @@ export function imageExistsLocally(image: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Image ↔ lockfile coupling
+// ---------------------------------------------------------------------------
+
+/** Label `scripts/build-mc-image.sh` stamps with sha256(package-lock.json). */
+export const IMAGE_LOCK_LABEL = "mc.lock-sha256";
+
+/** sha256 of the host lockfile the mounted dist/ was built against. */
+export function hostLockfileSha256(
+  lockPath = `${MC_ROOT}/package-lock.json`,
+): string {
+  return createHash("sha256").update(readFileSync(lockPath)).digest("hex");
+}
+
+/** The image's lockfile label, or null when absent / image not inspectable. */
+export function imageLockLabel(image: string): string | null {
+  try {
+    const out = execFileSync(
+      "docker",
+      [
+        "image",
+        "inspect",
+        image,
+        "--format",
+        `{{index .Config.Labels "${IMAGE_LOCK_LABEL}"}}`,
+      ],
+      { stdio: "pipe", encoding: "utf8" },
+    ).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Assets `npm run build` copies into dist/ beside the tsc output (package.json
+ * `build`: `tsc && cp src/db/schema.sql … && cp src/tuning/seed-cases.json …`).
+ * The sandbox executes the HOST dist/ (RUNTIME_CODE_MOUNTS) and that mount
+ * shadows the image's baked `dist/db/schema.sql`, so a tsc-only host build
+ * would ENOENT every container task at `initDatabase` — and the lockfile label
+ * cannot see it (qa R2 W-C, 2026-09-01). Checked before spawn.
+ */
+export const HOST_DIST_REQUIRED_ASSETS: readonly string[] = [
+  "dist/db/schema.sql",
+  "dist/tuning/seed-cases.json",
+];
+
+/** Required build assets absent from the host dist/ (empty = complete). */
+export function missingHostDistAssets(
+  root = MC_ROOT,
+  exists: (absPath: string) => boolean = existsSync,
+): string[] {
+  return HOST_DIST_REQUIRED_ASSETS.filter((rel) => !exists(`${root}/${rel}`));
+}
+
+export interface ImageLockDrift {
+  /** sha256 of the host package-lock.json. */
+  host: string;
+  /** What the image carries — null = no label (built before 2026-09-01). */
+  image: string | null;
+}
+
+/**
+ * Pre-flight: the sandbox executes the HOST dist/ (RUNTIME_CODE_MOUNTS) on top
+ * of the IMAGE's node_modules, so an image built from a different lockfile can
+ * lack a module the host code imports — surfacing mid-task as an opaque
+ * `Cannot find module`. Returns null when the two lockfiles match.
+ * `scripts/deploy.sh` rebuilds the image on drift, so a persistent mismatch
+ * means a deploy bypassed it; the caller fails loud with the rebuild line
+ * (same contract as `imageExistsLocally`). `deps` is a test seam.
+ */
+export function imageLockDrift(
+  image: string,
+  deps: { host?: string; readLabel?: (image: string) => string | null } = {},
+): ImageLockDrift | null {
+  const host = deps.host ?? hostLockfileSha256();
+  const found = (deps.readLabel ?? imageLockLabel)(image);
+  return found === host ? null : { host, image: found };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +365,12 @@ export function buildDockerRunArgs(opts: {
     "run",
     "-i",
     "--rm",
+    // PID 1 init (nanoclaw upstream v2.1.54 #2748 "use Docker's init
+    // process"): node as PID 1 never takes SIGTERM's default action, so
+    // `docker stop -t 10` always burned the full grace before SIGKILL
+    // (measured 10.3 s → 0.2 s with --init, 2026-09-01), and zombie children
+    // of the agent's shell were never reaped against --pids-limit.
+    "--init",
     "--name",
     opts.name,
     // H5 safe-set hardening:
@@ -239,14 +394,13 @@ export function buildDockerRunArgs(opts: {
     }
   }
 
-  // Volume mounts (validated: host path must be in the allowlist).
+  // Volume mounts (validated: allow-listed host path + read-only — see
+  // volumeRefusal, shared with the OpenSandbox path).
   if (opts.volumes) {
     for (const vol of opts.volumes) {
-      const hostPath = vol.split(":")[0];
-      if (!VOLUME_ALLOWED_PREFIXES.some((p) => hostPath.startsWith(p))) {
-        console.warn(
-          `[container] Blocked volume mount outside allowed paths: ${vol}`,
-        );
+      const refused = volumeRefusal(vol);
+      if (refused) {
+        console.warn(`[container] Blocked volume mount (${refused}): ${vol}`);
         continue;
       }
       args.push("-v", vol);

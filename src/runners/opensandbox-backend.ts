@@ -34,7 +34,7 @@ import {
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
   SANDBOX_NEUTRALIZED_ENV,
-  VOLUME_ALLOWED_PREFIXES,
+  volumeRefusal,
   generateContainerName,
   parsePayload,
   type ContainerOutput,
@@ -128,26 +128,25 @@ export function shellQuote(argv: string[]): string {
 }
 
 /**
- * `"/host:/ctr[:ro|rw]"` strings → SDK Volume objects, dropping anything
- * outside VOLUME_ALLOWED_PREFIXES with the same warn-and-skip the docker path
- * uses (the server's [storage].allowed_host_paths is the second gate).
+ * `"/host:/ctr:ro"` strings → SDK Volume objects. Same gate as the docker
+ * path (container.ts volumeRefusal: allow-listed host path AND read-only),
+ * same warn-and-skip; the server's [storage].allowed_host_paths is the
+ * second gate. Every accepted mount is read-only by construction.
  */
 export function toVolumes(specs: string[] | undefined): Volume[] {
   const out: Volume[] = [];
   for (const spec of specs ?? []) {
-    const [hostPath, mountPath, mode] = spec.split(":");
-    if (!hostPath || !mountPath) continue;
-    if (!VOLUME_ALLOWED_PREFIXES.some((p) => hostPath.startsWith(p))) {
-      console.warn(
-        `[opensandbox] Blocked volume mount outside allowed paths: ${spec}`,
-      );
+    const refused = volumeRefusal(spec);
+    if (refused) {
+      console.warn(`[opensandbox] Blocked volume mount (${refused}): ${spec}`);
       continue;
     }
+    const [hostPath, mountPath] = spec.split(":");
     out.push({
       name: `v${out.length}`,
       host: { path: hostPath },
       mountPath,
-      readOnly: mode === "ro",
+      readOnly: true,
     });
   }
   return out;
