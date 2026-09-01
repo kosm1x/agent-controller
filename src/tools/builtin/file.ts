@@ -302,7 +302,6 @@ For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned
 
 export const fileWriteTool: Tool = {
   name: "file_write",
-  deferred: true,
   readOnlyHint: false,
   // Silent overwrite of an existing file destroys the prior content; many
   // write paths land outside version control (/tmp/, ad-hoc dirs).

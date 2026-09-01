@@ -192,8 +192,8 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 
 - Tools marked `deferred: true` are NOT loaded into the LLM prompt until scope activates them. This saves ~52% prompt tokens.
 - Scope groups are defined in `src/tools/scope.ts` — regex patterns match user messages to activate tool sets.
-- Rituals with ≤6 tools use `skipDeferral=true` (all tools loaded regardless of deferred flag).
-- If a tool "doesn't exist" at runtime, check: (1) is it deferred? (2) does the scope regex match? (3) is it in the ritual's tools list?
+- Rituals with ≤6 tools use `skipDeferral=true` (all tools loaded regardless of deferred flag) — **OpenAI-compat path only**. On the live claude-sdk path with `TOOL_SEARCH_ENABLED` every `deferred: true` tool is hidden behind the SDK's `ToolSearch` regardless of set size (`alwaysLoad: !deferred` per tool in `claude-sdk.ts`, no count exemption); the model sees it only after a search HIT, and one miss reads as absence (tasks 8958/8961–8963, 2026-09-01: «Necesito `shell_exec`» → BLOCKED with the tool in scope). **A tool at the head of a scope group's call distribution must not be `deferred: true`** — the coding core (`shell_exec`, `file_write`, `file_edit`, `git_status/diff/commit/push`) is pinned always-loaded by `core-coding-always-loaded.test.ts`; re-run `npx tsx scripts/validate-tool-search.ts --run` after changing any `deferred` flag.
+- If a tool "doesn't exist" at runtime, check: (1) is it deferred? (2) does the scope regex match? (3) is it in the ritual's tools list? (4) under `TOOL_SEARCH_ENABLED`, did the model `ToolSearch` for it and how many times (`task_trace_events` `tool='ToolSearch'`)?
 
 ### Database
 

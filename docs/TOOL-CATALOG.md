@@ -137,6 +137,7 @@ Essential tools for every conversation. Not deferred.
 - `task_history` — Jarvis queries its own past executions
 - `jarvis_file_read` — NorthStar visions/goals
 - `jarvis_file_list` — list jarvis_files/
+- `shell_exec` / `file_write` / `file_edit` / `git_status` / `git_diff` / `git_commit` / `git_push` — coding core, not deferred since 2026-09-01 (under `TOOL_SEARCH_ENABLED` a deferred tool is visible only after a `ToolSearch` hit; tasks 8958/8961–8963 searched once, missed, went BLOCKED). Still scope-gated to `coding`; pinned by `core-coding-always-loaded.test.ts`.
 
 ### Google Workspace (scope group: `google`)
 
@@ -197,7 +198,7 @@ Signals ingested from 8 sources, queryable.
 - `gh_repo_create` (pass `cwd`: creates the repo AND wires `origin`) / `gh_create_pr` — GitHub. `git_push` takes `remote` for a repo already on GitHub; `shell_exec` denies `git remote …` (2026-09-01, `337d91f`)
 - `file_write` / `file_edit` / `file_delete` — filesystem mutation
 - `list_dir` / `glob` / `grep` — navigation + search
-- `shell_exec` — sandboxed shell (denylist)
+- `shell_exec` — sandboxed shell (denylist). `shell_exec`, `file_write`, `file_edit` and the four `git_*` tools are always-loaded (not `deferred`) since 2026-09-01; `file_delete`, `gh_*`, `code_search` stay deferred
 - `jarvis_dev` — sandboxed Jarvis self-modification (`action: branch|test|pr|status`)
 - `jarvis_test_run` — run Jarvis's own tests
 

@@ -766,7 +766,6 @@ export function validateShellCommand(command: string): {
 
 export const shellTool: Tool = {
   name: "shell_exec",
-  deferred: true,
   // Annotations: shell may do anything — assume worst case for safety.
   readOnlyHint: false,
   destructiveHint: true,

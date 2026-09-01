@@ -125,11 +125,12 @@ Round 3: Tool executes normally
 
 ### Deferral Exceptions
 
-| Exception       | Behavior                                                              |
-| --------------- | --------------------------------------------------------------------- |
-| `gmail_send`    | `deferred: false` — delivery-critical, can't afford round-trip delay  |
-| ≤6 total tools  | Deferral skipped entirely — scheduled tasks, rituals get full schemas |
-| Trigger phrases | Tools with `triggerPhrases` array get priority expansion              |
+| Exception       | Behavior                                                                                                                                                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gmail_send`    | `deferred: false` — delivery-critical, can't afford round-trip delay                                                                                                                                                                         |
+| ≤6 total tools  | Deferral skipped entirely — scheduled tasks, rituals get full schemas. **OpenAI-compat path only**: under `TOOL_SEARCH_ENABLED` (live since 2026-07-13) the claude-sdk path applies `alwaysLoad: !deferred` per tool with no count exemption |
+| Coding core     | `shell_exec`, `file_write`, `file_edit`, `git_status/diff/commit/push` — `deferred: false` since 2026-09-01 (one ToolSearch miss read as absence, tasks 8958/8961–8963); pinned by `core-coding-always-loaded.test.ts`                       |
+| Trigger phrases | Tools with `triggerPhrases` array get priority expansion                                                                                                                                                                                     |
 
 ### Non-Deferred Tools (full schema always sent when in scope)
 

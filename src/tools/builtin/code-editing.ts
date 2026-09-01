@@ -68,7 +68,6 @@ export const fileEditTool: Tool = {
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {

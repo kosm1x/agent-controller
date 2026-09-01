@@ -159,7 +159,6 @@ export const gitStatusTool: Tool = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -204,7 +203,6 @@ export const gitDiffTool: Tool = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -261,7 +259,6 @@ export const gitCommitTool: Tool = {
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -364,7 +361,6 @@ export const gitPushTool: Tool = {
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
