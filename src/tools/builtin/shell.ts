@@ -269,8 +269,9 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bmkfs\b/, reason: "filesystem format" },
   { pattern: /\bdd\s+/, reason: "disk destroyer" },
   {
-    pattern: /\bgit\s+remote\s+(set-url|add|remove|rename)\b/,
-    reason: "git remote modification blocked — use git tools instead",
+    pattern: /\bgit\s+(?:-C\s+\S+\s+)?remote\s+(set-url|add|remove|rename)\b/,
+    reason:
+      "git remote modification blocked — use gh_repo_create(cwd) for a new repo or git_push(remote) for an existing one",
   },
   {
     pattern: /\bgit\b[^|;&]*\b(push|commit|add)\b/,

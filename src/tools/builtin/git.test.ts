@@ -16,6 +16,7 @@ import {
   gitDiffTool,
   gitCommitTool,
   gitPushTool,
+  ghRepoCreateTool,
   ghCreatePrTool,
 } from "./git.js";
 
@@ -240,6 +241,192 @@ describe("git tools", () => {
       const result = await gitPushTool.execute({});
       expect(result).toContain("detached HEAD");
     });
+
+    // ── no-origin path (trustr dead-end, task 8953, 2026-09-01) ──
+    // shell_exec denies `git remote add` and the old error here said "use
+    // shell_exec to add one" — a circular dead-end that left a brand-new repo
+    // un-pushable. `remote` is the sanctioned way to link an existing GitHub repo.
+
+    it("wires origin from `remote` when the repo has none, only after confirming the GitHub repo exists, then pushes", async () => {
+      mockExecSync.mockClear();
+      mockExecFileSync.mockClear();
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }) // git remote get-url → none
+        .mockReturnValueOnce('{"name":"trustr"}') // gh repo view EurekaMD-net/trustr
+        .mockReturnValueOnce("master") // git branch --show-current (fresh git init)
+        .mockReturnValueOnce(""); // git branch -M main
+      mockExecFileSync
+        .mockReturnValueOnce("") // git remote add origin <url> (runArgs)
+        .mockReturnValueOnce("") // git fetch origin (runArgs)
+        .mockReturnValueOnce("") // git branch -r — empty remote, nothing to rebase (runArgs)
+        .mockReturnValueOnce("") // git status --short (runArgs)
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce("* [new branch]      main -> main"); // git push -u origin main
+      const result = await gitPushTool.execute({
+        cwd: "/root/claude/trustr",
+        remote: "https://github.com/EurekaMD-net/trustr.git",
+      });
+      expect(result).toContain("main -> main");
+      expect(mockExecSync).toHaveBeenCalledWith(
+        expect.stringContaining("gh repo view EurekaMD-net/trustr"),
+        expect.anything(),
+      );
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        "git",
+        [
+          "remote",
+          "add",
+          "origin",
+          "https://github.com/EurekaMD-net/trustr.git",
+        ],
+        expect.objectContaining({
+          cwd: expect.stringContaining("/root/claude/trustr"),
+        }),
+      );
+      // Existence check precedes the write — never a dangling origin.
+      const viewIdx = mockExecSync.mock.calls.findIndex((c) =>
+        String(c[0]).includes("gh repo view"),
+      );
+      const addIdx = mockExecFileSync.mock.calls.findIndex(
+        (c) => Array.isArray(c[1]) && c[1][0] === "remote",
+      );
+      expect(viewIdx).toBeGreaterThanOrEqual(0);
+      expect(addIdx).toBeGreaterThanOrEqual(0);
+      expect(mockExecSync.mock.invocationCallOrder[viewIdx]).toBeLessThan(
+        mockExecFileSync.mock.invocationCallOrder[addIdx],
+      );
+    });
+
+    it("refuses a credential-bearing or non-GitHub `remote` and writes nothing", async () => {
+      mockExecFileSync.mockClear();
+      for (const bad of [
+        "https://TU_TOKEN@github.com/EurekaMD-net/trustr.git",
+        "https://gitlab.com/EurekaMD-net/trustr.git",
+        "git@github.com:EurekaMD-net/trustr.git",
+        "https://github.com/EurekaMD-net/trustr.git; rm -rf /",
+      ]) {
+        mockExecSync
+          .mockReturnValueOnce("✓ Logged in") // gh auth status
+          .mockImplementationOnce(() => {
+            throw new Error("error: No such remote 'origin'");
+          }); // git remote get-url → none
+        const result = await gitPushTool.execute({
+          cwd: "/root/claude/trustr",
+          remote: bad,
+        });
+        expect(JSON.parse(result).error).toContain("plain GitHub HTTPS URL");
+      }
+      expect(mockExecFileSync).not.toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["remote"]),
+        expect.anything(),
+      );
+    });
+
+    it("with no origin and no `remote`, the error names gh_repo_create / git_push — never shell_exec", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }); // git remote get-url → none
+      const result = await gitPushTool.execute({ cwd: "/root/claude/trustr" });
+      const { error } = JSON.parse(result);
+      expect(error).toContain("gh_repo_create");
+      expect(error).toContain("remote=");
+      expect(error).not.toContain("shell_exec");
+    });
+
+    it("ignores `remote` when origin already exists (never rewrites a configured remote)", async () => {
+      mockExecFileSync.mockClear();
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFileSync
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("origin/main") // git branch -r
+        .mockReturnValueOnce("") // git status --porcelain
+        .mockReturnValueOnce("") // git rebase
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
+      const result = await gitPushTool.execute({
+        remote: "https://github.com/EurekaMD-net/other.git",
+      });
+      expect(result).toContain("ba2005e");
+      expect(mockExecFileSync).not.toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["remote"]),
+        expect.anything(),
+      );
+    });
+
+    it("does NOT add origin when the GitHub repo does not exist (qa #5: never a dangling origin)", async () => {
+      mockExecFileSync.mockClear();
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }) // git remote get-url → none
+        .mockImplementationOnce(() => {
+          throw new Error("GraphQL: Could not resolve to a Repository");
+        }); // gh repo view → absent
+      const result = await gitPushTool.execute({
+        cwd: "/root/claude/trustr",
+        remote: "https://github.com/EurekaMD-net/ghost.git",
+      });
+      const { error } = JSON.parse(result);
+      expect(error).toContain("EurekaMD-net/ghost does not exist on GitHub");
+      expect(error).toContain("gh_repo_create");
+      expect(mockExecFileSync).not.toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["remote"]),
+        expect.anything(),
+      );
+    });
+
+    it("accepts dotted repo names in `remote` and checks the FULL name on GitHub (qa #2)", async () => {
+      mockExecSync.mockClear();
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }) // git remote get-url → none
+        .mockReturnValueOnce('{"name":"trustr.io"}') // gh repo view EurekaMD-net/trustr.io
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFileSync
+        .mockReturnValueOnce("") // git remote add origin
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("") // git branch -r — empty
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce("* [new branch]      main -> main"); // git push
+      const result = await gitPushTool.execute({
+        cwd: "/root/claude/trustr",
+        remote: "https://github.com/EurekaMD-net/trustr.io.git",
+      });
+      expect(result).toContain("main -> main");
+      expect(mockExecSync).toHaveBeenCalledWith(
+        expect.stringContaining("gh repo view EurekaMD-net/trustr.io --json"),
+        expect.anything(),
+      );
+    });
+
+    it("a blocked cwd surfaces the path-guard reason, not a bogus 'no origin' (qa #3)", async () => {
+      mockExecSync.mockClear();
+      const result = await gitPushTool.execute({
+        cwd: "/root/claude/mission-control",
+        remote: "https://github.com/EurekaMD-net/x.git",
+      });
+      expect(JSON.parse(result).error).toContain(
+        "primary mission-control checkout",
+      );
+      expect(mockExecSync).not.toHaveBeenCalled(); // guard fired before auth / network
+    });
   });
 
   describe("resolveWorkDir path validation", () => {
@@ -301,6 +488,99 @@ describe("git tools", () => {
         cwd: "/root/claude/mission-control/src",
       });
       expect(result).toContain("blocked");
+    });
+  });
+
+  describe("gh_repo_create", () => {
+    // trustr dead-end (task 8953, 2026-09-01): the tool created the GitHub repo
+    // but never linked the local checkout, and no other tool could add the remote.
+
+    it("with cwd, creates the repo AND wires it as origin via gh --source/--remote", async () => {
+      mockExecFileSync.mockClear();
+      mockExecFileSync
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }) // pre-flight: git remote get-url origin → none (the case this exists for)
+        .mockReturnValue("https://github.com/EurekaMD-net/trustr"); // gh repo create
+      const result = await ghRepoCreateTool.execute({
+        name: "trustr",
+        private: true,
+        description: "Identidad portable del vendedor",
+        cwd: "/root/claude/trustr",
+      });
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        "gh",
+        expect.arrayContaining([
+          "repo",
+          "create",
+          "EurekaMD-net/trustr",
+          "--private",
+          "--source",
+          expect.stringContaining("/root/claude/trustr"),
+          "--remote",
+          "origin",
+        ]),
+        expect.anything(),
+      );
+      expect(result).toContain("https://github.com/EurekaMD-net/trustr");
+      expect(result).toContain("origin");
+      expect(result).toContain("git_push");
+    });
+
+    it("without cwd, creates the GitHub repo only (no --source) and says so", async () => {
+      mockExecFileSync.mockClear();
+      mockExecFileSync.mockReturnValue(
+        "https://github.com/EurekaMD-net/trustr",
+      );
+      const result = await ghRepoCreateTool.execute({ name: "trustr" });
+      const ghArgs = mockExecFileSync.mock.calls[0]?.[1] as string[];
+      expect(ghArgs).toContain("--public");
+      expect(ghArgs).not.toContain("--source");
+      expect(ghArgs).not.toContain("--remote");
+      expect(result).not.toContain("Remote 'origin' configured");
+    });
+
+    it("refuses a cwd outside the allowed project domain before calling gh", async () => {
+      mockExecFileSync.mockClear();
+      const result = await ghRepoCreateTool.execute({
+        name: "trustr",
+        cwd: "/root/claude-backups/trustr",
+      });
+      expect(JSON.parse(result).error).toContain("allowed project path");
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+    });
+
+    it("refuses a cwd that already has an origin WITHOUT calling gh (qa #1: gh creates the repo before checking the local remote)", async () => {
+      mockExecFileSync.mockClear();
+      mockExecFileSync.mockReturnValueOnce(
+        "https://github.com/EurekaMD-net/old.git\n",
+      ); // pre-flight → origin exists
+      const result = await ghRepoCreateTool.execute({
+        name: "trustr",
+        cwd: "/root/claude/trustr",
+      });
+      const { error } = JSON.parse(result);
+      expect(error).toContain(
+        "already has origin=https://github.com/EurekaMD-net/old.git",
+      );
+      expect(error).toContain("git_push");
+      expect(mockExecFileSync).not.toHaveBeenCalledWith(
+        "gh",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("refuses the primary mission-control checkout as cwd before calling gh (qa #4)", async () => {
+      mockExecFileSync.mockClear();
+      const result = await ghRepoCreateTool.execute({
+        name: "x",
+        cwd: "/root/claude/mission-control",
+      });
+      expect(JSON.parse(result).error).toContain(
+        "primary mission-control checkout",
+      );
+      expect(mockExecFileSync).not.toHaveBeenCalled();
     });
   });
 

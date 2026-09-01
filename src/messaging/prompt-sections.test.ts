@@ -206,6 +206,16 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("grep");
   });
 
+  it("codingSection routes git remotes to the tools that can set one (trustr dead-end, task 8953, 2026-09-01)", () => {
+    const s = codingSection();
+    // gh_repo_create must be called WITH cwd so it wires origin.
+    expect(s).toContain("gh_repo_create");
+    expect(s).toContain("cwd=<directorio del proyecto>");
+    // shell_exec is banned for git remote, and the no-origin cases have a named next step.
+    expect(s).toMatch(/NUNCA uses shell_exec para .*git remote/);
+    expect(s).toContain("git_push con remote=<url>");
+  });
+
   it("codingSection includes Karpathy coding principles", () => {
     const s = codingSection();
     expect(s).toContain("ANTES DE CODIFICAR");

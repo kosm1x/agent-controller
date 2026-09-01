@@ -330,6 +330,27 @@ describe("validateShellCommand", () => {
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain("git remote modification");
     });
+
+    it("blocks git remote add and names the tools that CAN set a remote (trustr dead-end, task 8953, 2026-09-01)", () => {
+      // The old reason said "use git tools instead" while git_push said "use
+      // shell_exec to add one" — a circular dead-end. The reason must point at
+      // the actual capability so the LLM has a next step.
+      const result = validateShellCommand(
+        "cd /root/claude/trustr && git branch -m main && git remote add origin https://github.com/EurekaMD-net/trustr.git",
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("gh_repo_create");
+      expect(result.reason).toContain("git_push");
+      expect(result.reason).not.toContain("shell_exec");
+    });
+
+    it("blocks the `git -C <dir> remote set-url` spelling (qa R2: it matched neither git rule before)", () => {
+      const result = validateShellCommand(
+        "git -C /root/claude/trustr remote set-url origin https://github.com/EurekaMD-net/trustr.git",
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("git remote modification");
+    });
   });
 
   describe("write path enforcement", () => {

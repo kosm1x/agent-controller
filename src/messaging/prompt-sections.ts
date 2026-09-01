@@ -504,10 +504,11 @@ GIT Y GITHUB — OBLIGATORIO usar las herramientas de git, NUNCA shell_exec para
 - **git_diff**: Ver cambios antes de commitear
 - **git_commit**: Stagear archivos + crear commit (ÚNICO camino válido para commits)
 - **git_push**: Pushear a GitHub (verifica remote, renombra master→main, rebases automático)
-- **gh_repo_create**: Crear repo nuevo en GitHub (ANTES del primer push)
+- **gh_repo_create**: Crear repo nuevo en GitHub (ANTES del primer push). SIEMPRE con cwd=<directorio del proyecto> para que configure el remote origin — sin cwd el repo local queda sin remote
 - **gh_create_pr**: Crear pull request
 
-⚠️ NUNCA uses shell_exec para git add, git commit, git push, git init, o gh repo create.
+⚠️ NUNCA uses shell_exec para git add, git commit, git push, git init, git remote, o gh repo create.
+Sin remote origin: repo nuevo → gh_repo_create con cwd; repo que ya existe en GitHub → git_push con remote=<url>.
 Los tools de git tienen protecciones (verifican que el remote existe, renombran master→main,
 hacen rebase automático). shell_exec NO tiene estas protecciones y produce errores silenciosos.
 

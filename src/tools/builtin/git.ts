@@ -40,6 +40,9 @@ const SENSITIVE_PATTERNS = [
   "token",
 ];
 const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
+/** git_push `remote`: a plain GitHub HTTPS URL — no credentials, port, or path beyond owner/repo. */
+const GITHUB_HTTPS_REMOTE_RE =
+  /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
 
 // Jarvis's GitHub identity — used for commits, pushes, and PRs on jarvis/* branches.
 // Configured via .env: JARVIS_GH_TOKEN, JARVIS_GH_USER, JARVIS_GH_EMAIL.
@@ -373,6 +376,9 @@ USE WHEN:
 - After creating a PR branch
 
 Verifies GitHub auth before pushing. Pushes current branch to origin.
+If the repo has NO \`origin\` yet: for a NEW project run gh_repo_create with \`cwd\` first
+(it creates the GitHub repo AND wires origin); for a repo that already exists on GitHub
+pass \`remote\`. shell_exec cannot add or change git remotes.
 
 AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       parameters: {
@@ -383,6 +389,11 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
             description:
               "Project directory (default: /root/claude/cuatro-flor). MUST match the repo you committed to.",
           },
+          remote: {
+            type: "string",
+            description:
+              "GitHub HTTPS URL to configure as `origin` when the repo has none yet (https://github.com/<owner>/<repo>.git). Only for a repo that already exists on GitHub but was never linked locally — a NEW project gets its remote from gh_repo_create(cwd). Ignored when origin exists.",
+          },
         },
       },
     },
@@ -391,6 +402,9 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
       const cwd = args.cwd as string | undefined;
+      // Path guard FIRST so a blocked/invalid cwd surfaces its real reason
+      // instead of being swallowed by the "no origin" catch below (qa #3).
+      resolveWorkDir(cwd);
 
       // Verify auth
       try {
@@ -401,25 +415,49 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         });
       }
 
-      // Verify remote exists
+      // Verify remote exists — or wire it from `remote`. shell_exec denies
+      // `git remote add`, so this is the only sanctioned path for a repo that
+      // already exists on GitHub but was never linked locally. Without it the
+      // two tools pointed at each other and a new project was un-pushable
+      // (trustr, task 8953, 2026-09-01).
+      let remote: string;
+      let pendingRemote: string | undefined;
       try {
-        const remote = run("git remote get-url origin 2>&1", 30_000, cwd);
-        if (remote.includes("github.com")) {
-          const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)/);
-          if (match) {
-            try {
-              run(`gh repo view ${match[1]} --json name 2>&1`);
-            } catch {
-              return JSON.stringify({
-                error: `Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`,
-              });
-            }
+        remote = run("git remote get-url origin 2>&1", 30_000, cwd).trim();
+      } catch {
+        const remoteArg = args.remote as string | undefined;
+        if (!remoteArg) {
+          return JSON.stringify({
+            error:
+              "No remote 'origin' configured. New project: call gh_repo_create with cwd=<this repo> (creates the GitHub repo AND wires origin). Repo already on GitHub: retry git_push with remote=https://github.com/<owner>/<repo>.git.",
+          });
+        }
+        if (!GITHUB_HTTPS_REMOTE_RE.test(remoteArg)) {
+          return JSON.stringify({
+            error: `remote must be a plain GitHub HTTPS URL (https://github.com/<owner>/<repo>[.git], no credentials). Got: ${remoteArg}`,
+          });
+        }
+        remote = pendingRemote = remoteArg;
+      }
+      if (remote.includes("github.com")) {
+        // Full owner/repo (dots allowed: "trustr.io"), anchored at the URL end so
+        // nothing but [A-Za-z0-9_.-] ever reaches the gh shell string (qa #2/#8).
+        const match = remote.match(
+          /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/,
+        );
+        if (match) {
+          try {
+            run(`gh repo view ${match[1]} --json name 2>&1`);
+          } catch {
+            return JSON.stringify({
+              error: `Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`,
+            });
           }
         }
-      } catch {
-        return JSON.stringify({
-          error: "No remote 'origin' configured. Use shell_exec to add one.",
-        });
+      }
+      // Only after the GitHub repo is confirmed to exist — never leave a dangling origin.
+      if (pendingRemote) {
+        runArgs("git", ["remote", "add", "origin", pendingRemote], 15_000, cwd);
       }
 
       // Ensure branch is named 'main' (git init defaults to 'master')
@@ -572,6 +610,11 @@ USE WHEN:
 - Before first git_push on a new codebase
 - User asks to "create a repo" or "push to a new repo"
 
+ALWAYS pass \`cwd\` (the local project directory, after git init): the tool then
+creates the repo AND configures it as remote \`origin\` there, so git_push works
+next. Without \`cwd\` only the GitHub repo is created and the local repo has no
+remote — wire it afterwards with git_push(remote=<url>). shell_exec cannot modify
+git remotes.
 Creates the repo under EurekaMD-net org by default. Does NOT push code — use git_push after.`,
       parameters: {
         type: "object",
@@ -588,6 +631,11 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
           private: {
             type: "boolean",
             description: "Create as private repo (default: false = public).",
+          },
+          cwd: {
+            type: "string",
+            description:
+              "Local git repository that has NO remote yet, to link as remote `origin` (e.g. /root/claude/my-project right after git init). Omitting it leaves the local repo without a remote; a repo that already has origin is refused — push it with git_push.",
           },
         },
         required: ["name"],
@@ -608,9 +656,37 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
       if (args.description)
         ghArgs.push("--description", args.description as string);
       ghArgs.push("--confirm");
-
+      // Wire the local repo as `origin` in the same gh call (--source/--remote):
+      // shell_exec denies `git remote add` and git_push needs origin to exist,
+      // so without this a NEW project could never be pushed (trustr, 2026-09-01).
+      const cwd = args.cwd as string | undefined;
+      const sourceDir = cwd ? resolveWorkDir(cwd) : undefined;
+      if (sourceDir) {
+        // gh 2.67 creates the GitHub repo BEFORE it touches the local remote, so
+        // a cwd that already has `origin` would strand an orphan repo (qa #1).
+        let existing = "";
+        try {
+          existing = runArgs(
+            "git",
+            ["remote", "get-url", "origin"],
+            5_000,
+            cwd,
+          ).trim();
+        } catch {
+          // No origin — the case this tool exists for.
+        }
+        if (existing) {
+          return JSON.stringify({
+            error: `${sourceDir} already has origin=${existing}. gh_repo_create(cwd) only links a repo with NO remote — push to the existing origin with git_push instead.`,
+          });
+        }
+        ghArgs.push("--source", sourceDir, "--remote", "origin");
+      }
       const result = runArgs("gh", ghArgs, 30_000);
-      return result || `Created repository ${name}.`;
+      const created = result || `Created repository ${name}.`;
+      return sourceDir
+        ? `${created}\nRemote 'origin' configured in ${sourceDir}. Next: git_push with cwd=${sourceDir}.`
+        : created;
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
     }
