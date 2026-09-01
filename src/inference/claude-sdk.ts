@@ -30,6 +30,7 @@ import type {
   SDKResultError,
   SDKUserMessage,
   SdkMcpToolDefinition,
+  TerminalReason,
   ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -1255,6 +1256,18 @@ export async function queryClaudeSdk(opts: {
  * identically — one warn carries the signal, 172 repeats bury the log.
  */
 /**
+ * The terminal_reason values that mean "a deferred tool never ran". Pinned to
+ * the SDK's TerminalReason union with `satisfies` (qa R1 W3, 0.3.245 bump):
+ * tsc fails the BUILD if a future SDK renames or drops either literal, instead
+ * of the tripwire below going silently dead (test files are excluded from tsc,
+ * so a test-side pin would not be enforced).
+ */
+const DEFERRED_TERMINAL_REASONS = [
+  "tool_deferred",
+  "tool_deferred_unavailable",
+] as const satisfies readonly TerminalReason[];
+
+/**
  * V8.5 Phase 3.2 tripwire: with tool search armed the SDK should
  * load-and-execute deferred tools transparently; a run that ENDS holding a
  * deferred_tool_use (terminal_reason tool_deferred / tool_deferred_unavailable)
@@ -1268,8 +1281,8 @@ function warnIfDeferredToolUnresolved(result: unknown): void {
   };
   if (
     r.deferred_tool_use ||
-    r.terminal_reason === "tool_deferred" ||
-    r.terminal_reason === "tool_deferred_unavailable"
+    (r.terminal_reason !== undefined &&
+      (DEFERRED_TERMINAL_REASONS as readonly string[]).includes(r.terminal_reason))
   ) {
     console.warn(
       `[claude-sdk] run ended with UNRESOLVED deferred tool use (terminal_reason=${r.terminal_reason ?? "n/a"}, tool=${r.deferred_tool_use?.name ?? "n/a"}) — tool search deferral did not resolve`,

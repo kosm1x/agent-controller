@@ -116,6 +116,28 @@ export function volumeRefusal(spec: string): string | null {
   return null;
 }
 
+/**
+ * Boot-time invariant (qa R3 W1, 2026-09-01): every RUNTIME_CODE_MOUNTS entry
+ * must pass the same gate the runners apply per spec. buildDockerRunArgs /
+ * toVolumes warn-and-SKIP a refused mount, so a refused runtime-code mount
+ * would silently leave the sandbox on the image's baked dist/ — the exact
+ * failure this mount list exists to close. Throwing at module load turns that
+ * silent degrade into a boot failure (main().catch → exit 1).
+ */
+export function assertRuntimeCodeMounts(
+  mounts: readonly string[] = RUNTIME_CODE_MOUNTS,
+): void {
+  for (const m of mounts) {
+    const refused = volumeRefusal(m);
+    if (refused) {
+      throw new Error(
+        `[container] RUNTIME_CODE_MOUNTS entry refused by volumeRefusal (${refused}): ${m}`,
+      );
+    }
+  }
+}
+assertRuntimeCodeMounts();
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

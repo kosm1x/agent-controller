@@ -40,9 +40,9 @@ runs `node dist/runners/nanoclaw-worker.js` with `WORKDIR /app` — i.e. the
 image's **baked** `/app/dist`, not the host repo mounted `:ro` alongside it.
 Probed inside the live image: `immutable-core.js` had no
 `STANDING_ORDERS_PROTECTED`, `http.js` no `safeFetch`, the 08-02 `jarvis-dev`
-OOM-containment fix absent — **27 commits touching sandbox-executed paths
+OOM-containment fix absent — **29 commits touching sandbox-executed paths
 (`src/tools`, `src/runners/nanoclaw-*`, `src/prometheus`, `src/inference`,
-`src/lib`; 111 commits total) since the image build never reached the sandbox**, including both
+`src/lib`; 111 commits total — `git log --since=2026-07-14 843202c [-- <paths>]`, recounted by R3; the review first said 27) since the image build never reached the sandbox**, including both
 guards shipped in this morning's Hermes review. `build-mc-image.sh`'s own
 header said rebuilds were needed "rare[ly] — usually only when the container
 worker entrypoint or its deps change", which is exactly the wrong rule when the
@@ -207,11 +207,19 @@ Upstream itself now uses pnpm's `minimumReleaseAge` (3 days) with an `.npmrc`
 
 ## Deferred — with triggers
 
-1. **Claude Agent SDK 0.3.207 → 0.3.252** (upstream on 0.3.238 since 08-21;
-   `latest` 0.3.252). Blast radius is the whole `fast` hot path (787
-   tasks/30 d), not nanoclaw — its own session with `npm run eval:gate -- --run`
-   (~14 min, ~$5.6) + deploy. **Trigger:** before the 2026-10-01 upstream
-   reviews, or the first SDK-attributed failure in `task.failed`.
+(Numbering here is the review's. The queue section "NanoClaw v2.0–v2.3 review
+deferreds (2026-09-01)" renumbers: doc #5 non-root = queue #8 · doc #6
+mid-deploy race = queue #5 · doc #8 egress growth = queue #6; queue-only items:
+0 egress flip (done), 9 Pulso same class, 10 dead `NANOCLAW_IMAGE` config, 11
+`unattended-upgrades` restarting mission-control mid-task — flagged by R3.)
+
+1. ~~**Claude Agent SDK 0.3.207 → 0.3.252**~~ **DONE 2026-09-01 as 0.3.245**
+   (07:10 UTC, pid 1077385) — 0.3.246–0.3.252 were <7 days old and the repo's
+   own `min-release-age=7` refused them (correctly; eligible 09-01…09-07 →
+   queue #19). `eval:gate --run` **PASS** (376 cases, candidate 66.05 vs
+   incumbent 65.75, +0.30, threshold 63.75; 1,029 s, $5.61) ·
+   `validate-tool-search --run` **PASS** · both smokes PASS. Full account in
+   "SDK bump" below — including the live-install incident it caused.
 2. ~~**Host npm upgrade**~~ **DONE 06:53 UTC** — operator ran `npm install -g
    npm@12` → 12.0.2; `min-release-age` → `7`, refusal verified (see #8), tar
    7.5.19 on the host. Every Node project on the box now resolves to ≥7-day-old
@@ -292,7 +300,8 @@ documented with their compensating control.
 ## Audit (multi-round, Tier 1: mounts + egress + config + image — 16 files)
 
 Tier 1 (R1 + R2) — >5 files and a security surface (mounts, egress, boot
-config, image). R2 found 0 new Criticals, so no R3.
+config, image). R2 found 0 new Criticals; an **R3 verdict-verification** ran
+later the same day when the bundle was declared closed (see below).
 
 **R1 — adversarial (qa-auditor): PASS WITH WARNINGS — 0 Critical, 6 Warning.**
 The five highest-risk hypotheses were falsified by live probe: mount shadowing
@@ -318,7 +327,7 @@ four places.
 5 Warning, no R3.** All six R1 folds verified correct (30-spec fuzz of
 `volumeRefusal`: no string passes normalized and mounts elsewhere; `mc-ctl`
 helper safe under `set -euo pipefail` because it is called in `$(…)`; sweep
-loop safe; counts 27/111 confirmed; `parseSandboxBackend` never runs inside
+loop safe; counts 27/111 confirmed as then stated (R3 recounted the scoped figure as 29 with the same pathspec — corrected at the top); `parseSandboxBackend` never runs inside
 the container — `SANDBOX_BACKEND` is in no `envVars`). Warnings:
 W-A `--init` is docker-path-only and the live path is OpenSandbox → verified
 the server exposes no init option; documented (#4) · W-B the W2 pin was
@@ -341,12 +350,17 @@ dropped (1) · unknown backend falls back (8) · normalization removed (3) ·
 absolute rule removed (2) · `toVolumes` wiring cut (2) · assets guard off (1)
 · asset list shortened (1) · wiring truncated `.slice(0,1)` (2).
 
-**Scoreboard:** pre-existing bugs found 5 (baked stale dist · `startsWith`
-prefix boundary · `..`-unsafe prefix · dev deps absent in the image ·
-`.npmrc` key never an npm option) — the real value; bundle-regression catches
-5 (W2/W-B pin quality, W-C asset coupling introduced by the mount, W3/W-A
-documentation, W6 race widening); rounds 2. Verdict **PASS WITH WARNINGS**,
-closure-ready for this bundle; egress flip is the operator's.
+**Scoreboard (arithmetic corrected by R3):** pre-existing defects fixed 5
+(baked stale dist · `startsWith` prefix boundary · `..`-unsafe prefix · dev
+deps absent in the image · `.npmrc` key never an npm option) — 3 surfaced by
+the audits (prefix boundary + `..` via R1 W1, dev deps via R2 W-D), 2 by the
+review itself (stale dist, `.npmrc`). Warnings folded 11 = R1 6 + R2 5: 2
+hardened pre-existing surfaces (W1, W-D — the same two counted above) and 9
+about the bundle's own additions (W2/W-B pin quality · W3/W-A docs · W4
+`mc-ctl restart` bypass · W5 prune escape · W6 race widening · W-C asset
+coupling introduced by the mount · W-E wording) — the cost of shipping
+cleanly, not additional pre-existing finds. Rounds 3 (R1, R2, R3). Verdict
+**PASS WITH WARNINGS**; egress flip was the operator's (done 06:44 UTC).
 
 ## Deploy
 
@@ -356,6 +370,13 @@ closure-ready for this bundle; egress flip is the operator's.
   labels `mc.lock-sha256=08714edc8699…` (= host lockfile) and
   `mc.git-sha=843202c`. The superseded 07-14 image was already gone
   (containerd image store GC); the sweep stays as belt for the classic store.
+  **Superseded 07:09 UTC by the SDK-bump rebuild** (same day, see "SDK bump"
+  below): `mc.lock-sha256=c03d24003c6f…`, `mc.git-sha=b4b4201`, **3.04 GB** —
+  230 MB smaller because npm 12 wrote `libc: [glibc|musl]` onto the lockfile's
+  linux platform entries, so npm 10.9.9 in the image now installs only
+  `claude-agent-sdk-linux-x64` (the musl sibling's 259 MB binary is gone);
+  `deploy.sh` detected the drift and rebuilt automatically — first live proof
+  of the coupling.
 - `./scripts/deploy.sh --drain 300` at 06:33 UTC: migration gate OK
   (`user_version=5`), build, **"Sandbox image lockfile matches host"**, pid
   **825681 → 1002476** (2 s transition, 0 startup errors), health 200, 6
@@ -383,3 +404,73 @@ closure-ready for this bundle; egress flip is the operator's.
   build); `./mc-ctl sandboxes` "Image lock" line; the next real nanoclaw coding
   task under egress — an `ENOTFOUND`/`EAI_AGAIN` names a host to add, one at a
   time.
+
+## SDK bump 0.3.207 → 0.3.245 (same day, 07:06–07:30 UTC)
+
+- **Version by policy, not by `latest`:** `latest` 0.3.252 (published 08-31)
+  is refused by `.npmrc min-release-age=7`; 0.3.245 (08-25) is the newest
+  eligible — a 38-version delta. No `--min-release-age=0` override: nothing
+  urgent justified skipping the guard. 0.3.246+ → queue #19.
+- **Delta read (CHANGELOG 0.3.208–0.3.245):** fixes we wanted (0.3.208 abort
+  during a pending hook callback, spawn-failure resource leak, stdin write after
+  exit; 0.3.211 CLI stderr in process-exit errors; 0.3.221 external MCP servers
+  connected before turn 1) and additive frames (0.3.216 `tool_result_meta`,
+  0.3.223 `system/permission_denied`, 0.3.243 `queued_turn_count`, 0.3.239 the
+  1.1× US-inference cost multiplier, 0.3.234 `bypass_permissions_disabled`
+  removed from `ExitReason` — no branch of ours names it). The adapter's
+  message loop has no terminal `else`, so new frames fall through by
+  construction (R1). The SDK ships its CLI as the optional dep
+  `@anthropic-ai/claude-agent-sdk-linux-x64` — no runtime download, egress
+  list untouched.
+- **Ship checks:** `tsc` clean · 248 scoped tests · `eval:gate --run` **PASS**
+  (376 cases / 187 tool_selection, candidate **66.05** vs incumbent 65.75,
+  +0.30, threshold 63.75; 1,029 s, $5.61 — the script header's "55 cases" is
+  stale) · `validate-tool-search --run` **PASS** (prompt −76 %, core 22/22,
+  deferred retrievable, Bash sealed, inline turn-1; $0.57) · fast smoke 6 s ·
+  sandbox smoke 39 s (task `78d5452b`).
+- **Deploy:** `deploy.sh` detected the lockfile drift and rebuilt the image
+  automatically (3.04 GB, `mc.lock-sha256=c03d24003c6f…`, `mc.git-sha=b4b4201`;
+  image SDK 0.3.245 / CLI 2.1.245; only the glibc platform package — npm 12's
+  `libc` lockfile fields drop the musl sibling); pid 1034295 → **1077385** at
+  07:10:25, 0 startup errors, `mc-ctl sandboxes` → Image lock matches.
+- **Incident (mine): the install ran under the live service.** Memory
+  `feedback_live_service_dep_swap` (07-12) says stop the service first; I
+  checked `mc-ctl status` (0 running tasks) and did not. The 07:00 UTC
+  overnight-tuning ritual was mid-baseline: while npm rewrote the 259 MB CLI
+  binary (07:07:13–18) the adapter logged `claude-sdk claude-sonnet-4-6 failed
+  (spawn ETXTBSY), retrying with Haiku` **85×** — a silent quality fallback —
+  so run `tune-1788246000451` computed a contaminated baseline (61.1 vs
+  65.3–66.3 clean) and the deploy restart then killed it at experiment 3/25,
+  leaving `tune_runs` row 83 `running` (no boot reconciliation exists).
+  Remediation: closed through the app's `updateRun()` → `aborted` with the
+  cause in `report` ($5.86 wasted, nothing promoted); queue #12
+  (reconciliation) · memory updated with the recurrence + a hot MEMORY.md
+  pointer · rule added to `infrastructure.md`. No task was affected (0 task
+  rows in the window; `EPIPE` / `exited with code` 0).
+- **npm 12 `allowScripts`:** npm 12 blocks and silently skips dependency
+  install scripts; `package.json` now approves `better-sqlite3`, `esbuild`,
+  `sharp` (name-only — a pinned entry lapses silently on the next bump) and
+  denies `@whiskeysockets/baileys`, `protobufjs` (no-op scripts). Host-only:
+  the image's npm 10.9.9 ignores the field. Three other trees on the box are
+  exposed → queue #20.
+- **Audit R1 on the bump (qa-auditor): PASS WITH WARNINGS — 0 Critical, no
+  ship-blockers.** W1 budget windows at 89.7 % of $50/day before arming
+  enforcement under the 1.1× multiplier → queue #13 · W2 classifier cost
+  literal → #14 · W3 tripwire literals test-unpinned → **folded**:
+  `DEFERRED_TERMINAL_REASONS … as const satisfies readonly TerminalReason[]`
+  in `claude-sdk.ts` (tsc excludes test files, so the pin lives in source;
+  mutation → tsc RED) · W4 `allowScripts` unenforced in the image →
+  documented · W5 unanchored `/aborted/i` vs stderr-in-errors, not firing → #15.
+- **Audit R3 on the nanoclaw bundle (verdict verification, qa-auditor): code
+  clean — all 13 checklist items PASS — "Closure-ready: NO" solely because the
+  SDK bump was uncommitted and both planning docs still listed it as pending;
+  resolved by this commit.** W1 warn-and-skip on a refused `RUNTIME_CODE_MOUNTS`
+  entry (silent degrade to the baked dist) → **folded**:
+  `assertRuntimeCodeMounts()` throws at module load (+test, two negative cases
+  RED). Info → queue #16 (e2e script spawns ungated), #17 (builder bare `tsc`;
+  a Dockerfile-only edit does not trigger the rebuild), #18 (`mountPath`
+  unvalidated). Standards → fixed in this doc: scoreboard arithmetic,
+  deferred-numbering map, "27" → 29 commits (with the command), the "no R3"
+  line; the pre-commit full-run count is in the commit message.
+- **Unchanged by the bump:** `npm audit` 23 vulnerabilities identical
+  before/after (queue #21).

@@ -14,6 +14,7 @@ import {
   buildDockerRunArgs,
   volumeRefusal,
   RUNTIME_CODE_MOUNTS,
+  assertRuntimeCodeMounts,
   MC_ROOT,
   imageLockDrift,
   hostLockfileSha256,
@@ -310,6 +311,16 @@ describe("RUNTIME_CODE_MOUNTS — the sandbox executes the host's deployed code"
 
   it("every entry passes the gate both backends enforce", () => {
     for (const m of RUNTIME_CODE_MOUNTS) expect(volumeRefusal(m)).toBeNull();
+  });
+
+  it("assertRuntimeCodeMounts fails loud on a refused entry (qa R3 W1) and passes on the live list", () => {
+    expect(() => assertRuntimeCodeMounts()).not.toThrow();
+    expect(() => assertRuntimeCodeMounts([`${MC_ROOT}/dist:/app/dist:rw`])).toThrow(
+      /RUNTIME_CODE_MOUNTS entry refused .*not read-only/,
+    );
+    expect(() => assertRuntimeCodeMounts(["/etc/dist:/app/dist:ro"])).toThrow(
+      /outside allowed paths/,
+    );
   });
 });
 
