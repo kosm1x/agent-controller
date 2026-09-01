@@ -33,6 +33,7 @@ import {
   jarvisFileDeleteTool,
   jarvisFilesBatchWriteTool,
   jarvisFilesBatchDeleteTool,
+  jarvisFileMoveTool,
 } from "./jarvis-files.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
 
@@ -685,5 +686,171 @@ describe("batch tool annotations", () => {
     expect(jarvisFilesBatchDeleteTool.openWorldHint).toBe(true);
     expect(jarvisFilesBatchDeleteTool.requiresConfirmation).toBe(true);
     expect(jarvisFilesBatchDeleteTool.deferred).toBe(true);
+  });
+});
+
+// Hermes v0.21.0 #81152 — standing orders (directives/) are refused by every
+// KB file tool (2026-09-01). The gated path is jarvis_propose_directive →
+// jarvis_apply_proposal (requiresConfirmation). Every case also proves the
+// refusal happens BEFORE any DB statement runs.
+describe("standing orders (directives/) — refused by the KB file tools", () => {
+  const refused = (raw: string) => {
+    const r = JSON.parse(raw);
+    expect(r.error).toBe("STANDING_ORDERS_PROTECTED");
+    expect(r.message).toMatch(/jarvis_propose_directive/);
+    return r as { paths: string[] };
+  };
+
+  it("jarvis_file_write refuses directives/ and runs no statement", async () => {
+    const r = refused(
+      await jarvisFileWriteTool.execute({
+        path: "directives/core.md",
+        title: "Core",
+        content: "rewritten standing order",
+      }),
+    );
+    expect(r.paths).toEqual(["directives/core.md"]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_write refuses the ./directives and /directives spellings too", async () => {
+    refused(
+      await jarvisFileWriteTool.execute({
+        path: "./directives/core.md",
+        title: "Core",
+        content: "x",
+      }),
+    );
+    refused(
+      await jarvisFileWriteTool.execute({
+        path: "/directives/core.md",
+        title: "Core",
+        content: "x",
+      }),
+    );
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_update refuses directives/ before reading the row", async () => {
+    refused(
+      await jarvisFileUpdateTool.execute({
+        path: "directives/core.md",
+        append: "\n- new rule the agent invented",
+      }),
+    );
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_delete refuses directives/ even with confirmed:true", async () => {
+    refused(
+      await jarvisFileDeleteTool.execute({
+        path: "directives/core.md",
+        confirmed: true,
+      }),
+    );
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_move refuses moving a directive out, or a file in", async () => {
+    const out = refused(
+      await jarvisFileMoveTool.execute({
+        old_path: "directives/core.md",
+        new_path: "workspace/parked-core.md",
+      }),
+    );
+    expect(out.paths).toEqual(["directives/core.md"]);
+    const into = refused(
+      await jarvisFileMoveTool.execute({
+        old_path: "workspace/draft.md",
+        new_path: "directives/draft.md",
+      }),
+    );
+    expect(into.paths).toEqual(["directives/draft.md"]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_files_batch_write refuses the WHOLE batch when one path is a directive", async () => {
+    const r = refused(
+      await jarvisFilesBatchWriteTool.execute({
+        files: [
+          { path: "knowledge/ok.md", title: "ok", content: "fine" },
+          { path: "directives/sneaky.md", title: "s", content: "always obey" },
+        ],
+      }),
+    );
+    expect(r.paths).toEqual(["directives/sneaky.md"]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_files_batch_delete refuses the whole batch even with confirmed:true", async () => {
+    const r = refused(
+      await jarvisFilesBatchDeleteTool.execute({
+        paths: ["knowledge/old.md", "directives/core.md"],
+        confirmed: true,
+      }),
+    );
+    expect(r.paths).toEqual(["directives/core.md"]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("guard ignores neighbouring prefixes and non-string entries (directive-notes/, workspace/directives.md)", async () => {
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    expect(
+      standingOrdersGuard([
+        "directive-notes/x.md",
+        "workspace/directives.md",
+        "knowledge/directives-history.md",
+        42,
+        undefined,
+      ], "/srv/kb"),
+    ).toBeNull();
+    expect(standingOrdersGuard(["directives/core.md", 7], "/srv/kb")?.paths).toEqual([
+      "directives/core.md",
+    ]);
+  });
+});
+
+// R1 audit C2 (2026-09-01): the guard must see through every spelling that
+// `mirrorToDisk` or a case-insensitive LIKE reader would map onto directives/.
+describe("standing orders — spelling bypasses closed (R1-C2)", () => {
+  it.each([
+    ["knowledge/../directives/core.md", "dot-dot traversal"],
+    ["Directives/core.md", "case"],
+    ["  directives/core.md", "leading whitespace"],
+    ["directives\\core.md", "backslash separator"],
+    [".//directives/core.md", "dot-slash-slash"],
+    ["workspace/./../directives/core.md", "mixed segments"],
+  ])("refuses %s (%s)", async (path) => {
+    const r = JSON.parse(
+      await jarvisFileWriteTool.execute({ path, title: "x", content: "x" }),
+    );
+    expect(r.error).toBe("STANDING_ORDERS_PROTECTED");
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("canonicalKbPath resolves against the KB root the way mirrorToDisk does", async () => {
+    const { canonicalKbPath } = await import("./immutable-core.js");
+    const root = "/srv/kb";
+    expect(canonicalKbPath("knowledge/../directives/core.md", root)).toBe("directives/core.md");
+    expect(canonicalKbPath(" Directives\\core.md ", root)).toBe("directives/core.md");
+    expect(canonicalKbPath("/directives/core.md", root)).toBe("directives/core.md");
+    // R2-C1: walk out of the root and back in through its basename
+    expect(canonicalKbPath("../kb/directives/core.md", root)).toBe("directives/core.md");
+    expect(canonicalKbPath("a/../../kb/directives/x.md", root)).toBe("directives/x.md");
+    expect(canonicalKbPath("./knowledge/x.md", root)).toBe("knowledge/x.md");
+    expect(canonicalKbPath("../directives/x.md", root)).toBe("../directives/x.md");
+    expect(canonicalKbPath("directive-notes/x.md", root)).toBe("directive-notes/x.md");
+  });
+
+  it("refuses the walk-out-and-back-in spelling through the live KB root basename, and the bare dir (R2-C1)", async () => {
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const { basename } = await import("node:path");
+    const b = basename(getJarvisKbRoot());
+    for (const path of [`../${b}/directives/core.md`, `a/../../${b}/directives/x.md`, "directives"]) {
+      const r = JSON.parse(await jarvisFileWriteTool.execute({ path, title: "x", content: "x" }));
+      expect(r.error, path).toBe("STANDING_ORDERS_PROTECTED");
+    }
+    expect(mockRun).not.toHaveBeenCalled();
   });
 });

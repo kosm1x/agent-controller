@@ -113,9 +113,11 @@ export function syncDeleteFromKbMirror(path: string): void {
 /** Mirror a file to the filesystem for human inspection. Non-fatal. */
 export function mirrorToDisk(path: string, content: string): void {
   try {
-    const mirrorDir = getMirrorDir();
-    const fullPath = join(mirrorDir, path);
-    if (!fullPath.startsWith(mirrorDir)) return;
+    const mirrorAbs = resolve(getMirrorDir());
+    const fullPath = resolve(join(mirrorAbs, path));
+    // Trailing slash matters: `../jarvis-kb-evil/x.md` shares the prefix but
+    // is outside the mirror (audit R2-W4; mirrors syncDeleteFromKbMirror).
+    if (!fullPath.startsWith(mirrorAbs + "/")) return;
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, content, "utf-8");
   } catch (err) {

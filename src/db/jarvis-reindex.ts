@@ -25,8 +25,15 @@ import { upsertFile } from "./jarvis-fs.js";
  * under here that is not on COMMIT is, by definition, a stale orphan. Letting
  * kb-reindex resurrect them creates the 2026-05-12 loop where wipes are undone
  * within the hour.
+ *
+ * `directives/` — standing orders. Authority is the proposal flow
+ * (`jarvis_propose_directive` → `jarvis_apply_proposal`) or an operator-side
+ * `upsertFile`; the model-facing file tools refuse the prefix
+ * (`standingOrdersGuard`). A disk-only file here is therefore either a stale
+ * orphan or a write that dodged the guard (shell / editor) — importing it would
+ * turn that into a live standing order (audit R1-C3, 2026-09-01).
  */
-export const MANAGED_NAMESPACES = ["NorthStar/"];
+export const MANAGED_NAMESPACES = ["NorthStar/", "directives/"];
 
 export interface ReindexResult {
   /** Files on disk under the mirror root. */

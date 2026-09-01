@@ -213,9 +213,11 @@ describe("gemini_upload", () => {
   });
 
   it("downloads URL before uploading", async () => {
-    // Mock URL download
+    // Mock URL download (safeFetch reads status + headers for its redirect loop)
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      status: 200,
+      headers: new Headers(),
       arrayBuffer: async () => new ArrayBuffer(100),
     });
     // Phase 1: start session
@@ -256,7 +258,7 @@ describe("gemini_upload", () => {
   });
 
   it("handles URL download failure", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() });
 
     const result = JSON.parse(
       await geminiUploadTool.execute({

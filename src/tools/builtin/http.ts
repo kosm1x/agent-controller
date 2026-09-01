@@ -5,7 +5,7 @@
  */
 
 import type { Tool } from "../types.js";
-import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
+import { safeFetch, validateOutboundUrlResolved } from "../../lib/url-safety.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
@@ -104,7 +104,7 @@ BOUNDARIES:
         method !== "GET" && method !== "DELETE" ? body : undefined;
 
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-        const response = await fetch(currentUrl, {
+        const response = await safeFetch(currentUrl, {
           method: currentMethod,
           headers,
           body: currentBody,

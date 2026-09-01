@@ -15,7 +15,7 @@ import { join, basename, extname } from "node:path";
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { getUserFacts } from "../../db/user-facts.js";
 import {
@@ -277,7 +277,7 @@ EDGE CASES:
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-        const resp = await fetch(source, { signal: controller.signal });
+        const resp = await safeFetch(source, { signal: controller.signal });
         clearTimeout(timer);
         if (!resp.ok) {
           return JSON.stringify({
@@ -383,7 +383,7 @@ EDGE CASES:
       }
 
       // Phase 2: upload bytes + finalize in one POST
-      const resp = await fetch(uploadUrl, {
+      const resp = await safeFetch(uploadUrl, {
         method: "POST",
         headers: {
           "Content-Length": String(fileBuffer.length),

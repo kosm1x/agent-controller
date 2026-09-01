@@ -2,8 +2,26 @@
  * Tests for URL safety validation — SSRF protection.
  */
 
-import { describe, it, expect } from "vitest";
-import { validateOutboundUrl, validateArgsUrls } from "./url-safety.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { Agent } from "undici";
+import {
+  validateOutboundUrl,
+  validateArgsUrls,
+  filterSafeAddresses,
+  makeSafeLookup,
+  safeDispatcher,
+  safeFetch,
+  SsrfBlockedError,
+  MAX_SAFE_REDIRECTS,
+  type LookupAllFn,
+} from "./url-safety.js";
+import { lookup as dnsLookupP } from "node:dns/promises";
+
+// Ubuntu ships `ip6-localhost` → ::1 in /etc/hosts; the connect-time e2e case
+// needs a loopback NAME that is not in BLOCKED_HOSTS. Skip cleanly elsewhere.
+const HAS_IP6_LOCALHOST = await dnsLookupP("ip6-localhost", { all: true })
+  .then((a) => a.some((x) => x.address === "::1"))
+  .catch(() => false);
 
 describe("validateOutboundUrl", () => {
   // --- Should BLOCK ---
@@ -439,5 +457,281 @@ describe("validateArgsUrls", () => {
       url: ["./page1", "./page2", "search query"],
     });
     expect(result).toBeNull();
+  });
+});
+
+// Hermes v0.20.0 #70193 — connect-time guard (2026-09-01). The validator above
+// checks the NAME before fetch; these pin the lookup the socket actually uses.
+describe("connect-time SSRF guard (makeSafeLookup / safeDispatcher / safeFetch)", () => {
+  const A = (address: string, family: 4 | 6 = 4) => ({ address, family });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("filterSafeAddresses splits blocked from public, incl. mapped-v4 loopback", () => {
+    const { safe, blocked } = filterSafeAddresses([
+      A("10.0.0.5"),
+      A("93.184.216.34"),
+      A("::ffff:127.0.0.1", 6),
+      A("2606:2800:21f:cb07:6820:80da:af6b:8b2c", 6),
+    ]);
+    expect(safe.map((a) => a.address)).toEqual([
+      "93.184.216.34",
+      "2606:2800:21f:cb07:6820:80da:af6b:8b2c",
+    ]);
+    expect(blocked.map((a) => a.address)).toEqual([
+      "10.0.0.5",
+      "::ffff:127.0.0.1",
+    ]);
+  });
+
+  it("safe lookup drops private records and keeps public ones (all:true and single-address shapes)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const resolver: LookupAllFn = (_h, _o, cb) =>
+      cb(null, [A("10.0.0.5"), A("93.184.216.34")]);
+    const lookup = makeSafeLookup(resolver);
+    const all = await new Promise<unknown>((res) =>
+      lookup("example.com", { all: true }, (err, addrs) => res(err ?? addrs)),
+    );
+    expect(all).toEqual([A("93.184.216.34")]);
+    const one = await new Promise<unknown>((res) =>
+      lookup("example.com", {}, (err, addr, fam) => res(err ?? [addr, fam])),
+    );
+    expect(one).toEqual(["93.184.216.34", 4]);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/connect-time SSRF guard: example\.com → blocked 10\.0\.0\.5/),
+    );
+  });
+
+  it("safe lookup fails the connect with ERR_SSRF_BLOCKED when only blocked records remain (rebinding flip)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const resolver: LookupAllFn = (_h, _o, cb) =>
+      cb(null, [A("127.0.0.1"), A("::1", 6)]);
+    const err = await new Promise<unknown>((res) =>
+      makeSafeLookup(resolver)("evil.example", { all: true }, (e) => res(e)),
+    );
+    expect(err).toBeInstanceOf(SsrfBlockedError);
+    expect((err as SsrfBlockedError).code).toBe("ERR_SSRF_BLOCKED");
+    expect((err as Error).message).toMatch(/evil\.example.*127\.0\.0\.1, ::1/);
+  });
+
+  it("resolver errors pass through unchanged (ENOTFOUND stays fetch's own failure)", async () => {
+    const enotfound = Object.assign(new Error("getaddrinfo ENOTFOUND nope.invalid"), {
+      code: "ENOTFOUND",
+    });
+    const resolver: LookupAllFn = (_h, _o, cb) => cb(enotfound, []);
+    const err = await new Promise<unknown>((res) =>
+      makeSafeLookup(resolver)("nope.invalid", { all: true }, (e) => res(e)),
+    );
+    expect(err).toBe(enotfound);
+  });
+
+  it("safeDispatcher is one shared undici Agent", () => {
+    const d = safeDispatcher();
+    expect(d).toBeInstanceOf(Agent);
+    expect(safeDispatcher()).toBe(d);
+  });
+
+  it.runIf(HAS_IP6_LOCALHOST)("safeFetch refuses a name that resolves to loopback AT CONNECT TIME (no network needed)", async () => {
+    // `ip6-localhost` is an Ubuntu /etc/hosts alias for ::1 that is NOT in
+    // BLOCKED_HOSTS, so the sync validator passes it and only the connect-time
+    // lookup can refuse it — the rebinding shape, offline.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = await safeFetch("http://ip6-localhost:65530/").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    const cause = (err as Error).cause as SsrfBlockedError;
+    expect(cause).toBeInstanceOf(SsrfBlockedError);
+    expect(cause.code).toBe("ERR_SSRF_BLOCKED");
+    expect(cause.hostname).toBe("ip6-localhost");
+    expect(cause.message).toMatch(/resolves only to private\/reserved address\(es\) ::1/);
+  });
+});
+
+// `net.connect` never consults `lookup` for IP-literal hosts, so safeFetch
+// follows redirects itself and re-validates every hop.
+describe("safeFetch redirect handling — every hop re-validated", () => {
+  const redirect = (status: number, location: string) =>
+    new Response(null, { status, headers: { location } });
+  const ok = () => new Response("ok", { status: 200 });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("refuses a redirect to a private IP literal (the lookup-bypass case)", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(302, "http://127.0.0.1:8888/v1/default/banks"));
+    vi.stubGlobal("fetch", mock);
+    const err = await safeFetch("https://public.example/start").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    const cause = (err as Error).cause as SsrfBlockedError;
+    expect(cause).toBeInstanceOf(SsrfBlockedError);
+    expect(cause.hostname).toBe("127.0.0.1");
+    expect(cause.message).toMatch(/redirect hop 1 → http:\/\/127\.0\.0\.1:8888/);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a redirect to a blocked scheme or metadata host", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(redirect(301, "http://169.254.169.254/latest/meta-data/")),
+    );
+    const err = await safeFetch("https://public.example/a").catch((e: unknown) => e);
+    expect(((err as Error).cause as SsrfBlockedError).code).toBe("ERR_SSRF_BLOCKED");
+  });
+
+  it("follows a public redirect with redirect:'manual' underneath and resolves relative Locations", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(302, "/moved"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock);
+    const res = await safeFetch("https://public.example/start", {
+      headers: { "x-test": "1" },
+    });
+    expect(res.status).toBe(200);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(mock.mock.calls[1][0]).toBe("https://public.example/moved");
+    for (const call of mock.mock.calls) {
+      expect(call[1].redirect).toBe("manual");
+      expect(Object.fromEntries(call[1].headers)).toEqual({ "x-test": "1" });
+      expect(call[1].dispatcher).toBe(safeDispatcher());
+    }
+  });
+
+  it("rewrites POST→GET and drops the body on 303 (fetch-spec parity)", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(303, "https://public.example/done"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock);
+    await safeFetch("https://public.example/form", { method: "POST", body: "a=1" });
+    expect(mock.mock.calls[0][1].method).toBe("POST");
+    expect(mock.mock.calls[1][1].method).toBe("GET");
+    expect(mock.mock.calls[1][1].body).toBeUndefined();
+  });
+
+  it("redirect:'manual' returns the 3xx untouched (http_fetch / citations keep their own hop loops)", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(302, "http://127.0.0.1:8888/"));
+    vi.stubGlobal("fetch", mock);
+    const res = await safeFetch("https://public.example/x", { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("http://127.0.0.1:8888/");
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("redirect:'error' rejects on the first 3xx", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(redirect(302, "https://public.example/y")));
+    await expect(
+      safeFetch("https://public.example/x", { redirect: "error" }),
+    ).rejects.toMatchObject({ message: "fetch failed" });
+  });
+
+  it("gives up after MAX_SAFE_REDIRECTS hops", async () => {
+    const mock = vi.fn().mockResolvedValue(redirect(302, "https://public.example/loop"));
+    vi.stubGlobal("fetch", mock);
+    const err = await safeFetch("https://public.example/loop").catch((e: unknown) => e);
+    expect(((err as Error).cause as Error).message).toMatch(/too many redirects/);
+    expect(mock).toHaveBeenCalledTimes(MAX_SAFE_REDIRECTS + 1);
+  });
+});
+
+// R1 audit folds (2026-09-01): C1 FetchLike parity, W4 hex-mapped v4, W6 header
+// hygiene across hops, W8 warn-once.
+describe("safeFetch — R1 audit folds", () => {
+  const redirect = (status: number, location: string) =>
+    new Response(null, { status, headers: { location } });
+  const ok = () => new Response("ok", { status: 200 });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("C1: tolerates a FetchLike response without headers (citations contract)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce({ status: 200, text: async () => "body" }),
+    );
+    const res = await safeFetch("https://public.example/no-headers");
+    expect(res.status).toBe(200);
+  });
+
+  it("W4: hex-mapped IPv4 (::ffff:7f00:1, ::ffff:a00:1) is blocked like the dotted form", () => {
+    const { blocked, safe } = filterSafeAddresses([
+      { address: "::ffff:7f00:1", family: 6 },
+      { address: "::ffff:a00:1", family: 6 },
+      { address: "::ffff:5db8:d822", family: 6 }, // 93.184.216.34
+    ]);
+    expect(blocked.map((a) => a.address)).toEqual(["::ffff:7f00:1", "::ffff:a00:1"]);
+    expect(safe.map((a) => a.address)).toEqual(["::ffff:5db8:d822"]);
+  });
+
+  it("W6: strips credentials on a cross-origin hop, keeps them same-origin", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(302, "https://public.example/same"))
+      .mockResolvedValueOnce(redirect(302, "https://other.example/cross"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock);
+    await safeFetch("https://public.example/start", {
+      headers: { authorization: "Bearer t", cookie: "a=b", "x-keep": "1" },
+    });
+    const h = (i: number) => Object.fromEntries(mock.mock.calls[i][1].headers);
+    expect(h(1)).toEqual({ authorization: "Bearer t", cookie: "a=b", "x-keep": "1" });
+    expect(h(2)).toEqual({ "x-keep": "1" });
+  });
+
+  it("W6: 303 drops the body AND its describing headers; HEAD stays HEAD", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(303, "https://public.example/done"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock);
+    await safeFetch("https://public.example/form", {
+      method: "POST",
+      body: "a=1",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-keep": "1" },
+    });
+    expect(mock.mock.calls[1][1].method).toBe("GET");
+    expect(mock.mock.calls[1][1].body).toBeUndefined();
+    expect(Object.fromEntries(mock.mock.calls[1][1].headers)).toEqual({ "x-keep": "1" });
+
+    const mock2 = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(303, "https://public.example/done"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock2);
+    await safeFetch("https://public.example/probe", { method: "HEAD" });
+    expect(mock2.mock.calls[1][1].method).toBe("HEAD");
+  });
+
+  it("W6: the caller's headers object is never mutated", async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(redirect(302, "https://other.example/x"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", mock);
+    const mine = { authorization: "Bearer t" };
+    await safeFetch("https://public.example/start", { headers: mine });
+    expect(mine).toEqual({ authorization: "Bearer t" });
+  });
+
+  it("W8: a mixed public+private record warns once per hostname", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const resolver: LookupAllFn = (_h, _o, cb) =>
+      cb(null, [{ address: "10.0.0.5", family: 4 }, { address: "93.184.216.34", family: 4 }]);
+    const lookup = makeSafeLookup(resolver);
+    const once = () =>
+      new Promise<void>((res) => lookup("mixed.example", { all: true }, () => res()));
+    await once();
+    await once();
+    await once();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

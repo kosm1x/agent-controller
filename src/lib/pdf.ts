@@ -10,6 +10,7 @@ import { convert } from "@opendataloader/pdf";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { safeFetch } from "./url-safety.js";
 
 const DEFAULT_MAX_CHARS = 50_000;
 
@@ -73,7 +74,7 @@ export async function extractPdfFromUrl(
   const tmpPath = join(tmpDir, "download.pdf");
 
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
     });
 

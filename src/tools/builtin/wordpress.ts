@@ -14,7 +14,7 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Tool } from "../types.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { getSiteNames, resolveSite, wpFetch } from "./wp-client.js";
 
@@ -778,7 +778,7 @@ DO NOT fabricate media_ids — you MUST call this tool to get a real one.`,
       const controller = new AbortController();
       const dlTimeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
       try {
-        const imgResponse = await fetch(imageUrl, {
+        const imgResponse = await safeFetch(imageUrl, {
           signal: controller.signal,
         });
         if (!imgResponse.ok) {

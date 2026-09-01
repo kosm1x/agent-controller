@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../../lib/url-safety.js", () => ({
   validateOutboundUrl: vi.fn(),
+  // safeFetch delegates to the (stubbed) global fetch here — the connect-time
+  // SSRF guard itself is covered in url-safety.test.ts.
+  safeFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
 }));
 
 import { seoRobotsAuditTool, _testonly } from "./seo-robots-audit.js";

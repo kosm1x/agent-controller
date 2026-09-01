@@ -481,3 +481,42 @@ describe("isPreciousPath", () => {
     }
   });
 });
+
+// Audit R1-C3 (2026-09-01): the disk-side twin of standingOrdersGuard used by
+// file_write / code_edit so an editor write cannot reach jarvis-kb/directives/.
+describe("isStandingOrdersDiskPath", () => {
+  const root = "/srv/kb";
+
+  it("refuses every spelling that resolves under <kbRoot>/directives/", async () => {
+    const { isStandingOrdersDiskPath } = await import("./immutable-core.js");
+    for (const p of [
+      "/srv/kb/directives/core.md",
+      "/srv/kb/knowledge/../directives/core.md",
+      "/srv/kb/Directives/core.md",
+      "/srv/kb//directives/./core.md",
+      "/srv/kb/directives", // the directory itself — rmSync would take the tree (R2-C2)
+      "/srv/kb/knowledge/../directives",
+    ]) {
+      expect(isStandingOrdersDiskPath(p, root), p).toBe(true);
+    }
+  });
+
+  it("lets neighbours and escapes through (they are judged by the other guards)", async () => {
+    const { isStandingOrdersDiskPath } = await import("./immutable-core.js");
+    for (const p of [
+      "/srv/kb/knowledge/directives-history.md",
+      "/srv/kb/directive-notes/x.md",
+      "/srv/kb-other/directives/core.md",
+      "/srv/kb/../kb2/directives/core.md",
+      "/tmp/directives/core.md",
+    ]) {
+      expect(isStandingOrdersDiskPath(p, root), p).toBe(false);
+    }
+  });
+
+  it("tolerates a kbRoot with a trailing slash or relative segments", async () => {
+    const { isStandingOrdersDiskPath } = await import("./immutable-core.js");
+    expect(isStandingOrdersDiskPath("/srv/kb/directives/x.md", "/srv/kb/")).toBe(true);
+    expect(isStandingOrdersDiskPath("/srv/kb/directives/x.md", "/srv/other/../kb")).toBe(true);
+  });
+});

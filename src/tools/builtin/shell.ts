@@ -377,6 +377,16 @@ const RITUAL_WRITABLE_DOCS = ["docs/EVOLUTION-LOG.md"];
 
 const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
+    // Standing orders on disk (audit R2-C2): the KB root is on the write
+    // allow-list, so the directives tree is denied here like file_write /
+    // code_edit deny it. Basename-bound on purpose — the guard sees command
+    // text, not a resolved path; relative writes after a `cd` stay a known
+    // residual (queue).
+    pattern: /\/jarvis-kb\/directives(?:\/|$)/i,
+    reason:
+      "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive",
+  },
+  {
     pattern: /\/root\/claude\/mission-control\//,
     reason: "Jarvis cannot modify its own source code via shell_exec",
     // Dynamic override: allowed on jarvis/* branches (checked at runtime)

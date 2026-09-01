@@ -468,7 +468,9 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "skill invocation contract + arg-validation rules",
     },
     jarvis_file_write: {
-      maxLen: 2300,
+      // 2026-09-01: +63 for the standing-orders refusal line (directives/ is
+      // refused here — use jarvis_propose_directive). Eval gate PASS 64.38.
+      maxLen: 2413,
       reason:
         "KB write policy + tag conventions + path rules + provenance rule (usability Phase 3.2)",
     },
@@ -486,7 +488,9 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "batch write contract + cap + partial-error policy",
     },
     jarvis_files_batch_delete: {
-      maxLen: 1648,
+      // 2026-09-01: +48 — directives/ dropped from the precious list and named
+      // as refused outright (STANDING_ORDERS_PROTECTED).
+      maxLen: 1746,
       reason: "batch delete contract + confirmation + precious-path scan",
     },
     gemini_research: {

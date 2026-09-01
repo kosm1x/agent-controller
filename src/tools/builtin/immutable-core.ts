@@ -7,7 +7,7 @@
  * Checked in all write paths: file_write, file_edit, file_delete, shell_exec.
  */
 
-import { resolve } from "path";
+import { posix, resolve } from "path";
 import { realpathSync } from "fs";
 
 const MC_ROOT = "/root/claude/mission-control/";
@@ -367,4 +367,97 @@ export function isPreciousPath(jarvisPath: string): {
     }
   }
   return { precious: false };
+}
+
+// ---------------------------------------------------------------------------
+// Standing orders (directives/) — agent-side file tools refuse the prefix
+// (Hermes v0.21.0 #81152 "protected agent-instruction files require write
+// approval", adopted 2026-09-01)
+// ---------------------------------------------------------------------------
+//
+// `directives/*.md` are Jarvis's standing orders (qualifier enforce /
+// always-read / conditional). Until 2026-09-01 the KB file tools guarded them
+// with description text ("DO NOT create new ones without user approval") plus
+// a model-settable `confirmed:true` on delete — and `upsertFile` replaces the
+// content AND resets the qualifier on conflict, so one prompt-injected
+// `jarvis_file_write` could silently rewrite or disable a standing order.
+// The gated path already exists: `jarvis_propose_directive` (add / modify /
+// remove) → `jarvis_apply_proposal` (`requiresConfirmation` → the real
+// operator unlock in task-executor). The file tools now refuse the prefix
+// outright and point there. Operator-side writers (`upsertFile` from mc-ctl /
+// scripts, the proposal tool itself) don't go through the file tools and are
+// unaffected.
+export const STANDING_ORDERS_PREFIX = "directives/";
+
+export interface StandingOrdersRefusal {
+  error: "STANDING_ORDERS_PROTECTED";
+  message: string;
+  paths: string[];
+}
+
+/**
+ * Canonical, root-relative spelling of a KB path for prefix checks. String
+ * normalisation is not enough: `mirrorToDisk` does `join(kbRoot, path)`, so
+ * `knowledge/../directives/x` AND `../<kb-basename>/directives/x` both land on
+ * the live file (audit R1-C2, R2-C1). We therefore resolve the path exactly the
+ * way the mirror will — against `kbRoot` — and take the relative remainder:
+ * trimmed, backslashes folded, a leading `/` read as KB-root-relative (that is
+ * what `join` does with it), lower-cased because SQLite `LIKE 'directives/%'`
+ * readers are case-insensitive. A path that escapes the root keeps its leading
+ * `../` (the mirror refuses it; it is not a standing order).
+ */
+export function canonicalKbPath(p: string, kbRoot: string): string {
+  const cleaned = p
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  const root = posix.resolve(kbRoot);
+  return posix.relative(root, posix.resolve(root, cleaned)).toLowerCase();
+}
+
+/**
+ * Returns a refusal when any path targets `directives/` — the tree or the
+ * directory itself — in any spelling (`canonicalKbPath`), else null. Non-string
+ * entries are ignored — the callers validate shape. `kbRoot` is passed in
+ * (callers hold `getJarvisKbRoot()`) to keep this module free of db imports.
+ */
+export function standingOrdersGuard(
+  paths: ReadonlyArray<unknown>,
+  kbRoot: string,
+): StandingOrdersRefusal | null {
+  const dir = STANDING_ORDERS_PREFIX.slice(0, -1);
+  const hits = paths.filter((p): p is string => {
+    if (typeof p !== "string") return false;
+    const rel = canonicalKbPath(p, kbRoot);
+    return rel === dir || rel.startsWith(STANDING_ORDERS_PREFIX);
+  });
+  if (hits.length === 0) return null;
+  return {
+    error: "STANDING_ORDERS_PROTECTED",
+    message:
+      `${STANDING_ORDERS_PREFIX} holds Jarvis's standing orders. They change ONLY ` +
+      "through jarvis_propose_directive (change_type add | modify | remove) → " +
+      "operator approval via jarvis_apply_proposal. Direct write/update/delete/move " +
+      "is refused here — do not retry with confirmed:true; propose the change instead.",
+    paths: hits,
+  };
+}
+
+/**
+ * Disk-side twin of `standingOrdersGuard` for the absolute-path tools
+ * (`file_write`, `file_delete`, `code_edit`). The KB mirror's `directives/` is
+ * the operator-facing copy (synced to Drive) and kb-reindex used to import
+ * disk-only paths as rows, so an editor write or a recursive delete there was
+ * another door into the standing orders (audit R1-C3, R2-C2). Matches the tree
+ * AND the directory itself. Callers pass a symlink-resolved path where they
+ * can (`realResolve`); `kbRoot` is passed in to keep this module db-free.
+ */
+export function isStandingOrdersDiskPath(
+  absolutePath: string,
+  kbRoot: string,
+): boolean {
+  const root = resolve(kbRoot).toLowerCase();
+  const target = resolve(absolutePath).toLowerCase();
+  const dir = `${root}/${STANDING_ORDERS_PREFIX.slice(0, -1)}`;
+  return target === dir || target.startsWith(`${dir}/`);
 }

@@ -168,3 +168,44 @@ describe("file_read — Session 114 large-file behavior", () => {
     expect(parsed.slice_capped).toBe(true);
   });
 });
+
+// Audit R2-C2 / R3-W1 (2026-09-01): the disk-side standing-orders guard is
+// pinned at its CALL SITES, not only on the helper — deleting the wiring in
+// file.ts must go RED here. `file_delete` runs its own gate chain (never
+// isWriteAllowed) and the KB root is on the allow-list, so both tools are pinned.
+describe("standing orders on disk (jarvis-kb/directives/) — file_write / file_delete refuse", () => {
+  it("file_write refuses a path under the KB directives tree", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/directives/core.md",
+        content: "rewritten",
+      }),
+    );
+    expect(String(r.error)).toMatch(/standing order/);
+  });
+
+  it("file_delete refuses the directory itself and any spelling under it, FIRST", async () => {
+    const { fileDeleteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const root = getJarvisKbRoot();
+    for (const p of [
+      root + "/directives",
+      root + "/directives/core.md",
+      root + "/knowledge/../directives/core.md",
+    ]) {
+      const r = JSON.parse(await fileDeleteTool.execute({ path: p }));
+      expect(String(r.error), p).toMatch(/standing order/);
+    }
+  });
+
+  it("file_delete leaves neighbours to the other guards", async () => {
+    const { fileDeleteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileDeleteTool.execute({ path: getJarvisKbRoot() + "/directive-notes/x.md" }),
+    );
+    expect(String(r.error ?? "")).not.toMatch(/standing order/);
+  });
+});

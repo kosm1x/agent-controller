@@ -8,6 +8,7 @@ import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isStandingOrdersDiskPath,
   validatePathSafety,
   isDangerousRemovalPath,
 } from "./immutable-core.js";
@@ -102,6 +103,15 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
     return {
       allowed: false,
       reason: `Write blocked: ${resolved} is operator config (Claude Code settings/hooks, MCP config, or umbrella CLAUDE.md), not project content.`,
+    };
+  }
+  // Standing orders on disk (audit R1-C3): refuse jarvis-kb/directives/ exactly
+  // like the KB file tools do — the disk copy is operator-facing and used to be
+  // re-imported as a live row by the hourly kb-reindex.
+  if (isStandingOrdersDiskPath(resolved, getJarvisKbRoot())) {
+    return {
+      allowed: false,
+      reason: `Write blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
     };
   }
   for (const deny of DENY_WRITE_PREFIXES) {
@@ -431,6 +441,17 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const rawPath = (args.path ?? args.file_path) as string;
     if (!rawPath) return JSON.stringify({ error: "path is required" });
+
+    // Standing orders on disk (audit R2-C2): file_delete runs its own gate
+    // chain and never reaches isWriteAllowed, and the KB root is on its
+    // allow-list — so the directives tree (or the directory itself, which
+    // rmSync would take recursively) is refused FIRST, symlink-resolved,
+    // before any check that depends on filesystem state.
+    if (isStandingOrdersDiskPath(realResolve(rawPath), getJarvisKbRoot())) {
+      return JSON.stringify({
+        error: `Deletion blocked: ${resolve(rawPath)} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+      });
+    }
 
     // Path safety pipeline + dangerous removal check (Claude Code pattern)
     const safety = validatePathSafety(rawPath, "delete");

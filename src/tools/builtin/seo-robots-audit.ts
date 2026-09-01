@@ -13,7 +13,7 @@
 
 import type { Tool } from "../types.js";
 import { AI_BOTS, type AIBot } from "./ai-bots.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 
 interface RobotsGroup {
   userAgents: string[]; // possibly multiple "User-agent:" lines before directives
@@ -241,7 +241,7 @@ NOT FOR: general robots.txt validation, sitemap extraction, page crawling. Use s
     };
 
     try {
-      const res = await fetch(robotsUrl, {
+      const res = await safeFetch(robotsUrl, {
         signal: AbortSignal.timeout(10_000),
         redirect: "follow",
       });

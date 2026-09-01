@@ -144,3 +144,19 @@ describe("file_edit", () => {
     );
   });
 });
+
+// Audit R2-C2 / R3-W1 (2026-09-01): call-site pin for the disk-side
+// standing-orders guard in file_edit (symlink-resolved path).
+describe("file_edit — standing orders on disk refused", () => {
+  it("refuses an edit under jarvis-kb/directives/ before touching the file", async () => {
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileEditTool.execute({
+        path: getJarvisKbRoot() + "/directives/core.md",
+        old_string: "a",
+        new_string: "b",
+      }),
+    );
+    expect(String(r.error)).toMatch(/standing order/);
+  });
+});

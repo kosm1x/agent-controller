@@ -18,7 +18,7 @@
  */
 
 import type { Tool } from "../types.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 
 const MAX_URLS_PER_CLUSTER = 50;
 const MAX_CLUSTERS = 20;
@@ -40,7 +40,7 @@ async function fetchText(url: string): Promise<string | null> {
   // robots.txt Sitemap: directive pointing at http://localhost/ must be blocked.
   if (validateOutboundUrl(url)) return null;
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       redirect: "follow",
     });

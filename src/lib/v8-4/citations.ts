@@ -16,7 +16,7 @@
  * enforce); shadow records the verdicts without touching the text.
  */
 
-import { validateOutboundUrlResolved } from "../url-safety.js";
+import { safeFetch, validateOutboundUrlResolved } from "../url-safety.js";
 
 export type CitationKind = "doi" | "arxiv" | "url" | "title";
 export type Verdict = "resolved" | "missing" | "unreachable";
@@ -468,7 +468,7 @@ export async function checkCitations(
 ): Promise<CitationReport | null> {
   const citations = extractCitations(text);
   if (citations.length === 0) return null;
-  const f = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const f = opts.fetchImpl ?? (safeFetch as unknown as FetchLike);
   const start = Date.now();
   const verdicts = await withTimeout(
     Promise.all(citations.map((c) => resolveCitation(c, f))),

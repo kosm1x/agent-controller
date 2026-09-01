@@ -17,7 +17,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, resolve } from "path";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath, validatePathSafety } from "./immutable-core.js";
+import {
+  isImmutableCorePath,
+  isStandingOrdersDiskPath,
+  validatePathSafety,
+} from "./immutable-core.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import { realResolve } from "./write-guard.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -130,6 +136,12 @@ RULES:
     if (immCheck.immutable) {
       return JSON.stringify({
         error: `Edit blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
+      });
+    }
+    // Standing orders on disk (audit R1-C3) — same refusal as file_write.
+    if (isStandingOrdersDiskPath(realResolve(path), getJarvisKbRoot())) {
+      return JSON.stringify({
+        error: `Edit blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
       });
     }
     const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));

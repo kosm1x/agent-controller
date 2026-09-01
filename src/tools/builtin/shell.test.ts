@@ -165,6 +165,11 @@ describe("validateShellCommand", () => {
 
     const blocked: [string, string][] = [
       ["rm -rf /", "command 'rm' is blocked"],
+      // R2-C2 (2026-09-01): the KB root is on the write allow-list; the directives
+      // tree is denied by DENY_WRITE_PATTERNS like file_write / code_edit deny it.
+      ["echo pwned > /root/claude/jarvis-kb/directives/core.md", "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive"],
+      ["tee /root/claude/jarvis-kb/directives/new.md < /tmp/x", "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive"],
+      ["cp /tmp/x /root/claude/jarvis-kb/directives/core.md", "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive"],
       ["rm file.txt", "command 'rm' is blocked"],
       ["shutdown now", "command 'shutdown' is blocked"],
       ["reboot", "command 'reboot' is blocked"],

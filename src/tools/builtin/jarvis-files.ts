@@ -17,6 +17,7 @@ import {
   listFiles,
   moveFile,
   searchFiles,
+  getJarvisKbRoot,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
 import { currentRunTaskId } from "../rule-of-two.js";
@@ -240,7 +241,7 @@ USE WHEN:
 - Decision records → logs/decisions/
 
 PATHS — follow the hierarchy:
-- "directives/*.md" — standing orders (enforce). DO NOT create new ones without user approval.
+- "directives/*.md" — standing orders. REFUSED by this tool (STANDING_ORDERS_PROTECTED): create, modify or remove them ONLY via jarvis_propose_directive → operator approval.
 - "NorthStar/**/*.md" — visions, goals, objectives, tasks. Leave \`COMMIT_ID:\` empty for new items; the next northstar_sync run POSTs them to COMMIT and fills in the generated UUID. For goals/objectives/tasks, include a parent reference line (\`Vision: <title|uuid>\`, \`Goal: <title|uuid>\`, \`Objective: <title|uuid>\`) — sync resolves the parent before POSTing. COMMIT and NorthStar are peers; local writes stay local until the user invokes northstar_sync — do NOT call it automatically after every write.
 - "projects/{slug}/*.md" — project-specific files. README.md in each project.
 - "knowledge/people/*.md" — contacts, relationships
@@ -324,6 +325,11 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     const condition = (args.condition as string) ?? null;
     const priority = (args.priority as number) ?? 50;
     const relatedTo = (args.related_to as string[]) ?? [];
+
+    // Standing orders are never written here — see immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
 
     // Prevent LLM from self-promoting files to enforce — reserved for user
     if (qualifier === "enforce") {
@@ -441,6 +447,11 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
     let qualifier = args.qualifier as string | undefined;
     const priority = args.priority as number | undefined;
 
+    // Standing orders are never updated here — see immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
+
     // Prevent LLM from self-promoting files to enforce — reserved for user
     if (qualifier === "enforce") {
       qualifier = "reference";
@@ -531,7 +542,7 @@ NAVIGATION GUIDE — use these prefixes:
 - "NorthStar/visions/" / "NorthStar/goals/" / "NorthStar/objectives/" / "NorthStar/tasks/" — goal hierarchy
 - "knowledge/people/" — contacts and relationships
 - "knowledge/procedures/" — SOPs
-- "directives/" — enforce rules (don't modify)
+- "directives/" — standing orders (read-only for the file tools; changes go through jarvis_propose_directive)
 
 TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search instead — it searches content, not just paths.`,
       parameters: {
@@ -599,7 +610,7 @@ USE WHEN:
 - A file is outdated and no longer relevant
 - You're cleaning up workspace files after completing a task
 
-CAUTION: Files in knowledge/, projects/, NorthStar/, directives/ require user confirmation.
+CAUTION: Files in knowledge/, projects/, NorthStar/ require user confirmation. directives/ (standing orders) cannot be deleted here — use jarvis_propose_directive with change_type "remove".
 First call returns CONFIRMATION_REQUIRED — present the file to the user, ask to confirm.
 After user confirms, call again with confirmed:true to proceed.`,
       parameters: {
@@ -623,6 +634,11 @@ After user confirms, call again with confirmed:true to proceed.`,
   async execute(args: Record<string, unknown>): Promise<string> {
     const path = args.path as string;
     const confirmed = args.confirmed === true;
+
+    // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
 
     // S5: Precious path protection — require confirmation for valuable KB content
     if (!confirmed) {
@@ -688,6 +704,11 @@ For batch moves, call this tool multiple times (one per file).`,
     const newPath = args.new_path as string;
     if (!oldPath || !newPath)
       return JSON.stringify({ error: "old_path and new_path are required" });
+
+    // Standing orders are never moved in or out — see immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard([oldPath, newPath], getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
 
     const moved = moveFile(oldPath, newPath);
     if (!moved) {
@@ -884,6 +905,12 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
       files.push(f);
     }
 
+    // Standing orders are never written here — the whole batch is refused
+    // before any write so a mixed batch cannot half-apply. See immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard(files.map((f) => f.path), getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
+
     const results: Array<{ path: string; status: string; error?: string }> = [];
     let ok = 0;
     let errors = 0;
@@ -1020,7 +1047,7 @@ DO NOT USE FOR:
 - Single files (call jarvis_file_delete directly)
 - More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
 
-CONFIRMATION FLOW: Files in knowledge/, projects/, NorthStar/, directives/, logs/day-logs/ are precious and require user confirmation. In INTERACTIVE tasks, the runner intercepts the first call and asks the operator regardless of precious-path membership (the standard pendingConfirmation flow); the tool's own CONFIRMATION_REQUIRED response with the precious_paths list only surfaces on retries / non-interactive paths. The router auto-injects confirmed:true on the operator-accepted retry, so the LLM does NOT need to set it manually — only set confirmed:true explicitly when responding to a tool-level CONFIRMATION_REQUIRED message that you've already shown to the user.
+CONFIRMATION FLOW: Files in knowledge/, projects/, NorthStar/, logs/day-logs/ are precious and require user confirmation. directives/ (standing orders) are refused outright (STANDING_ORDERS_PROTECTED) — use jarvis_propose_directive. In INTERACTIVE tasks, the runner intercepts the first call and asks the operator regardless of precious-path membership (the standard pendingConfirmation flow); the tool's own CONFIRMATION_REQUIRED response with the precious_paths list only surfaces on retries / non-interactive paths. The router auto-injects confirmed:true on the operator-accepted retry, so the LLM does NOT need to set it manually — only set confirmed:true explicitly when responding to a tool-level CONFIRMATION_REQUIRED message that you've already shown to the user.
 
 ERROR POLICY: partial. One item's failure (not_found, error) does NOT abort the batch. Response includes per-item status. After a partial-failure response, re-issue ONLY the failed items. Duplicate paths within the same call are de-duplicated up front (only the first occurrence is attempted).
 
@@ -1075,6 +1102,11 @@ RESPONSE SHAPE: {success, total, ok, not_found, errors, results: [{path, status,
       }
       paths.push(p);
     }
+
+    // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
+    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const soRefused = standingOrdersGuard(paths, getJarvisKbRoot());
+    if (soRefused) return JSON.stringify(soRefused);
 
     // Precious-path pre-scan: if any path is precious and the operator hasn't
     // confirmed, return the full precious list at once so the operator can
