@@ -194,7 +194,7 @@ Signals ingested from 8 sources, queryable.
 ### Coding (scope group: `coding`)
 
 - `git_status` / `git_diff` / `git_commit` / `git_push` — git ops
-- `gh_repo_create` / additional `gh` ops via shell — GitHub
+- `gh_repo_create` (pass `cwd`: creates the repo AND wires `origin`) / `gh_create_pr` — GitHub. `git_push` takes `remote` for a repo already on GitHub; `shell_exec` denies `git remote …` (2026-09-01, `337d91f`)
 - `file_write` / `file_edit` / `file_delete` — filesystem mutation
 - `list_dir` / `glob` / `grep` — navigation + search
 - `shell_exec` — sandboxed shell (denylist)
