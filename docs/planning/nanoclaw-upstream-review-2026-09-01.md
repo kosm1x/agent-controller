@@ -52,7 +52,7 @@ provided by a shared read-only bind mount at runtime … Source-only changes
 never require an image rebuild"*, and pins the image to its lockfile with a
 `dev.nanoclaw.agent-runner-lock-sha256` label checked before retag.
 
-## Shipped (7) + 1 prepared for the operator
+## Shipped (8)
 
 ### 1. The sandbox executes the host's deployed `dist/` — nanoclaw v2.0.0 "source is never baked in"
 
@@ -112,7 +112,7 @@ typo (`opensandbox ` with a trailing space) would have silently downgraded
 every sandbox to unrestricted egress. `sandbox-backend.ts`'s own fallback for
 an unknown *config value* stays as defence in depth.
 
-### 6. Egress allow-list — PROBED and PREPARED; the flip is the operator's line — nanoclaw v2.1.17 #2713 "egress lockdown (opt-in) … outbound network calls outside the allowlist fail closed"
+### 6. Egress allow-list ON — nanoclaw v2.1.17 #2713 "egress lockdown (opt-in) … outbound network calls outside the allowlist fail closed"
 
 Our analog (`SANDBOX_EGRESS_ALLOW` → OpenSandbox `networkPolicy`
 default-deny, shipped 08-16) had been left OFF "until the observation week is
@@ -126,20 +126,22 @@ have failed). Live probes before the flip: a wildcard probe
 `api.anthropic.com`, `platform.claude.com`, `raw.githubusercontent.com`,
 `github.com`, `registry.npmjs.org` resolve; `example.org` and the lookalike
 `evil-anthropic.com` do not; the documented `scripts/opensandbox-e2e.ts` PASS
-1–3 with the full list. **Not flipped by this session:** the drop-in lives
-under `/etc/systemd/…` and the auto-mode classifier refused the edit (Bash and
-Edit) — a system-config write is the operator's call, so the exact line is
-handed over instead of worked around. Population: nanoclaw only (6 tasks/30 d).
-Rollback afterwards: comment the line + restart.
+1–3 with the full list. The auto-mode classifier first refused the `/etc`
+drop-in edit (Bash and Edit); the operator answered "run it" in-session, the
+edit went through, and the flip was deployed at 06:44 UTC (pid 1034295):
+`mc-ctl sandboxes` → `Egress allow-list set: yes`; `mc-ctl smoke sandbox`
+PASS 42 s (task `b3053a69`) with the egress sidecar attached — inference
+through `*.anthropic.com` / `*.claude.com` from inside the box is the
+end-to-end wildcard proof. Population: nanoclaw only (6 tasks/30 d).
+Rollback: comment the line + restart.
 
-**Operator copy-paste (one line):**
+**The line that was run (for the record):**
 
 ```bash
 sed -i 's|^# Environment=SANDBOX_EGRESS_ALLOW=.*$|Environment=SANDBOX_EGRESS_ALLOW=*.anthropic.com,*.claude.com,github.com,api.github.com,*.githubusercontent.com,registry.npmjs.org|' /etc/systemd/system/mission-control.service.d/opensandbox.conf && ./scripts/deploy.sh --drain 900 && ./mc-ctl sandboxes && ./mc-ctl smoke sandbox
 ```
 
-The smoke at the end is the end-to-end proof for wildcards (inference goes
-through `*.anthropic.com` / `*.claude.com` from inside the sandbox).
+(The trailing smoke is what proved the wildcards end-to-end.)
 
 ### 7. Image npm 10.9.9 — nanoclaw v2.2.0 #3207 tar GHSA-23hp-3jrh-7fpw
 
@@ -261,8 +263,8 @@ our image is built locally from local source).
 | Purpose | persistent per-group agent containers behind messaging channels | fire-and-forget coding-task sandbox inside the Prometheus orchestrator |
 | Runtime seam | `src/drivers/` session driver (Docker built-in), admission-checked `SessionSpec` | `sandbox-backend.ts` seam: `docker` \| `opensandbox` (OpenSandbox lifecycle server, live since 08-16) |
 | Code delivery into the box | agent-runner source mounted RO; image = deps; lockfile-sha label checked before retag | **now the same**: host `dist/` + `prompt_modules/` mounted RO; `mc.lock-sha256` label; runners refuse on drift; `deploy.sh` rebuilds |
-| Credentials | OneCLI vault; admission refuses credential VALUES in env on every lane | `MC_API_KEY` stubbed; inference key + `:ro` SDK credentials enter the box; compensated by egress default-deny (probed, operator flips) |
-| Egress | opt-in lockdown via `--internal` network + gateway, fail-closed | OpenSandbox sidecar default-deny + FQDN/wildcard allow-list — probed PASS, one operator line from ON |
+| Credentials | OneCLI vault; admission refuses credential VALUES in env on every lane | `MC_API_KEY` stubbed; inference key + `:ro` SDK credentials enter the box; compensated by egress default-deny (**ON**) |
+| Egress | opt-in lockdown via `--internal` network + gateway, fail-closed | OpenSandbox sidecar default-deny + FQDN/wildcard allow-list, **ON** for nanoclaw (2026-09-01) |
 | Hardening | cap-drop ALL, no-new-privileges, `--init`, pids 2048 (configurable), non-root `--user` | cap-drop ALL, no-new-privileges, **`--init` (new)**, pids 512, `--memory 4g --cpus 2`; root by design |
 | Mounts | allow-list file, `readOnly` honoured, group-folder label admission | `VOLUME_ALLOWED_PREFIXES` boundary-safe + **`:ro`-only gate on both doors (new)** |
 | Liveness | heartbeat file mtime + absolute ceiling; host-sweep with wake grace | 60 s stdout sentinels reset an inactivity timer; OpenSandbox TTL renewed per sentinel |
@@ -271,8 +273,7 @@ our image is built locally from local source).
 | Supply chain | pnpm `minimumReleaseAge` 3 d; digest-pinned images with attestations (opt-in); npm 10.9.9 | `.npmrc` `min-release-age=7` (inert until npm ≥ 11.10 on host); locally built image; **npm 10.9.9 in image (new)**; **devDependencies now in the image** so `npx vitest` inside the sandbox is real |
 
 Net: after this bundle the runner matches upstream on the container-runtime
-axis it shares (code delivery, lock coupling, mounts, init; egress once the
-operator flips the prepared line); the
+axis it shares (code delivery, lock coupling, mounts, init, egress); the
 remaining divergences (credential vault, non-root) are deliberate and
 documented with their compensating control.
 
@@ -356,8 +357,14 @@ closure-ready for this bundle; egress flip is the operator's.
   (`user_version=5`), build, **"Sandbox image lockfile matches host"**, pid
   **825681 → 1002476** (2 s transition, 0 startup errors), health 200, 6
   schedules, Telegram polling up.
-- `./mc-ctl sandboxes`: backend `opensandbox` · egress `no` (operator flip
-  pending) · **Image lock … matches (08714edc8699)** · server ok · guard 4/4.
+- `./mc-ctl sandboxes`: backend `opensandbox` · egress `no` at that point ·
+  **Image lock … matches (08714edc8699)** · server ok · guard 4/4.
+- **Egress flip, 06:44 UTC** (operator: "run it"): drop-in line active →
+  `./scripts/deploy.sh --drain 900` → pid **1034295**, health 200 →
+  `Egress allow-list set: yes` → `./mc-ctl smoke sandbox 600` **PASS 42 s**
+  (task `b3053a69`, `Gates: 1/1 met`, reported `9ba2ce3` · `v22.23.2`); the
+  watcher saw `sandbox-egress-c8bd991c…` created/started by the server and the
+  same `/app/dist` / `/app/prompt_modules` RO mounts.
 - `./mc-ctl smoke sandbox 600` → **PASS in 48 s** (task `0cc7c217`, `Gates:
   1/1 met`, reported `843202c` · `v22.23.2`). A watcher inspected the live
   sandbox container `sandbox-317411dd…` during the run:
@@ -370,6 +377,6 @@ closure-ready for this bundle; egress flip is the operator's.
   `sandbox-*` leftovers after the run.
 - Watches: `journalctl -u mission-control -o cat | grep -E "different package-lock|missing build assets"`
   must stay empty (a hit = a deploy bypassed `deploy.sh` or a bare `tsc`
-  build); `./mc-ctl sandboxes` "Image lock" line; the first nanoclaw task after
-  the operator flips egress (queue item 0) — an `ENOTFOUND`/`EAI_AGAIN` names
-  a host to add, one at a time.
+  build); `./mc-ctl sandboxes` "Image lock" line; the next real nanoclaw coding
+  task under egress — an `ENOTFOUND`/`EAI_AGAIN` names a host to add, one at a
+  time.
