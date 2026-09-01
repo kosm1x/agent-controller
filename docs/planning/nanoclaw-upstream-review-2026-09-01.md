@@ -471,6 +471,6 @@ cleanly, not additional pre-existing finds. Rounds 3 (R1, R2, R3). Verdict
   a Dockerfile-only edit does not trigger the rebuild), #18 (`mountPath`
   unvalidated). Standards → fixed in this doc: scoreboard arithmetic,
   deferred-numbering map, "27" → 29 commits (with the command), the "no R3"
-  line; the pre-commit full-run count is in the commit message.
+  line. Pre-commit full run on `5e4700a` (the bump commit): **7,883 passed, 1 skipped, 439 + 1 skipped test files** — the 7,882 of the bundle commit `9ba2ce3` plus the new `assertRuntimeCodeMounts` case.
 - **Unchanged by the bump:** `npm audit` 23 vulnerabilities identical
   before/after (queue #21).
