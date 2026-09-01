@@ -216,3 +216,32 @@ hex-mapped v4) · bundle-regression catches 6 Criticals-or-Warnings (R1-C1
 headers, R1-C2 spellings, R2-C1 round-trip, message interpolation, code_edit
 resolve, header hygiene) · rounds 3 · eval gate PASS 64.38 vs 65.75
 (Δ −1.37, threshold 63.75).
+
+## How mission-control compares to Hermes v0.21 (positioning, 2026-09-01)
+
+Different products sharing an agent loop. Hermes is a general-purpose open-source
+agent platform (22+ messaging platforms, desktop/TUI/web, plugin SDK, skills
+hub, 20+ providers, MoA, Bot Mode multi-agent society; ~2 minors/month from
+dozens of contributors). mission-control is a single-operator orchestrator that
+trades that breadth for governance. View is from release notes + repo tree, not
+from running Hermes.
+
+| Dimension | Hermes v0.21 | mission-control | Read |
+| --- | --- | --- | --- |
+| Surface | 22+ platforms, desktop/TUI/web, plugins, skills hub, MoA, Bot Mode | Telegram + WhatsApp (+email), `mc-ctl`, 257 tools, SDK primary + one fallback | Deliberate asymmetry: smaller prompt, smaller attack surface |
+| Loop robustness | doom-loop/convergence, 413 recompress, empty-response guards, TTFB watchdog, turn-reaper stack dumps | same guards (several came from Hermes ≤v0.14); hot path delegated to the Claude Agent SDK; richer `exitReason` taxonomy | parity; they diagnose stalls better, we lean on the SDK |
+| Context management | 439 KB compressor: per-turn micro-compaction, N-user-tail guarantee, per-model absolute thresholds, ghost-skill sentinels, lean-tail default, recall eval harness | L0–L3 cascade + PRESERVE+ADD + focusTopic — fires only on the OpenAI fallback (~6×/30 d); the SDK compacts the 787/831 fast-path runs | Hermes ahead, where our traffic is not |
+| Verified completion | v0.18 `/goal` completion contracts, verification evidence ledger, `pre_verify` hook; verify-on-stop gated OFF for messaging | V8.4 Honest Done (gates before work, harness-run checks, FAILED demotes), read-back gates, provenance/claim detector, citation validation — enforced ON messaging | convergent; ours deeper and live where theirs is off |
+| Memory | pluggable providers (Honcho/Supermemory/mem0/OpenViking), atomic batch memory ops, curator, cron memory; provider-actions + DCP engine reverted | in-house JME (episodic + semantic + FTS5, consolidator, dedup/supersede, preference signals) + KB registry; `recall_audit` utility measurement | different bets; we measure utility, they optimise ecosystem |
+| Security | DNS-pinned SSRF (v0.20), redaction sweeps, protected instruction files (v0.21), LLM-reviewed approvals, deny rules + `/deny <reason>`, consecutive-denial breaker, credential-injection egress proxy | both v0.20/v0.21 items shipped here today; Rule of Two structural risk tiers, shell/write guards, immutable core, sandbox egress default-deny | converged — ours structural, theirs ergonomic |
+| Delegation | `delegate_task` background fan-out, durable ledger, live transcripts, mid-flight steer, stop-early-keep-partial, schema-validated output | swarm via goal-graph — 2 runs in 30 d; per-sub-task retry a known gap | Hermes ahead; not worth chasing at our volume |
+| Scheduling | cron memory + continuity, monitor-mode dedup, self-heal, fail-closed on drift | rituals: delivery policy, sent-before ledger, 5/1400 budget, heartbeats + alerts, `[PAUSAR-SCHEDULE]` | we lead on delivery hygiene, they on job continuity |
+| Cost / observability | usage reporting + bounded tool metrics (v0.21), per-task aux accounting (v0.19) | cost ledger with per-model attribution, Prom metrics, task traces, `mc-ctl audit-claim` | parity; ours audit-oriented |
+| Eval / QA | Composio evals, compaction recall harness | 376-case eval gate before any prompt/tool-description change, 7.8k tests, multi-round audits | ours gates more strictly |
+
+Implications: keep cherry-picking monthly on triggers (compaction engineering if
+fallback traffic grows; delegation ergonomics if swarm volume grows; denial-reason
+relay if shell denials appear); never import the breadth (platforms, UI, MoA,
+providers, profiles, Bot Mode); the two things we do that they do not are
+honest-done enforcement on the phone surface and memory judged by measured
+utility rather than by provider.
