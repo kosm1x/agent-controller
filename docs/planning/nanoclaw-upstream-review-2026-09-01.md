@@ -162,8 +162,12 @@ installed". Host and sandbox now install the same lockfile set. **The host's npm
 min-release-age` → `undefined` on 10.9.8; npm's definition is
 `min-release-age`, unit **days**, and it lands in npm 11.10.0 (`min-release-age-exclude` in 12.0.0) —
 `npm/cli workspaces/config/lib/definitions/definitions.js`). Fixed to
-`min-release-age=7`. Still inert on the host until npm is upgraded
-(`verification_that_cannot_fail` class: the 04-14 adoption was never probed).
+`min-release-age=7`. **Live since 06:53 UTC** — the operator ran
+`npm install -g npm@12` (12.0.2); verified by refusal: a dry-run install of
+`@anthropic-ai/claude-agent-sdk@0.3.252` fails with "No matching version
+found … with a date before 8/25/2026" and resolves with `--min-release-age=0`
+(`verification_that_cannot_fail` class: the 04-14 adoption was never probed;
+this one was).
 Upstream itself now uses pnpm's `minimumReleaseAge` (3 days) with an `.npmrc`
 `minReleaseAge=3d` fallback that npm would also ignore.
 
@@ -208,11 +212,10 @@ Upstream itself now uses pnpm's `minimumReleaseAge` (3 days) with an `.npmrc`
    tasks/30 d), not nanoclaw — its own session with `npm run eval:gate -- --run`
    (~14 min, ~$5.6) + deploy. **Trigger:** before the 2026-10-01 upstream
    reviews, or the first SDK-attributed failure in `task.failed`.
-2. **Host npm upgrade** so #8 becomes live: `npm install -g npm@12`
-   (npm 12.0.2 requires node ^22.22.2 — host has 22.23.2). Also clears the
-   host's tar 7.5.11 (GHSA-23hp-3jrh-7fpw). Operator-level toolchain change
-   (affects every Node project on the box). **Trigger:** operator's next
-   maintenance window. Verify: `npm config get min-release-age` → `7`.
+2. ~~**Host npm upgrade**~~ **DONE 06:53 UTC** — operator ran `npm install -g
+   npm@12` → 12.0.2; `min-release-age` → `7`, refusal verified (see #8), tar
+   7.5.19 on the host. Every Node project on the box now resolves to ≥7-day-old
+   versions; a same-day fix needs `--min-release-age=0` on that one command.
 3. **systemd restart backoff** (the circuit-breaker analog):
    `printf '[Service]\nRestartSteps=6\nRestartMaxDelaySec=15min\n' > /etc/systemd/system/mission-control.service.d/restart-backoff.conf && systemctl daemon-reload`.
    **Trigger:** first `NRestarts > 3` within an hour.
@@ -270,7 +273,7 @@ our image is built locally from local source).
 | Liveness | heartbeat file mtime + absolute ceiling; host-sweep with wake grace | 60 s stdout sentinels reset an inactivity timer; OpenSandbox TTL renewed per sentinel |
 | Restart semantics | adopt running sessions; claim fence; orphan reaper by install label | refuse-to-restart over running tasks (`--drain`); TTL reaps host-death orphans; boot reconciles tasks |
 | Completion truth | task delivery "one door"; errored batch logged | V8.4 Honest Done ledger; `G-landing` verified on the host against origin |
-| Supply chain | pnpm `minimumReleaseAge` 3 d; digest-pinned images with attestations (opt-in); npm 10.9.9 | `.npmrc` `min-release-age=7` (inert until npm ≥ 11.10 on host); locally built image; **npm 10.9.9 in image (new)**; **devDependencies now in the image** so `npx vitest` inside the sandbox is real |
+| Supply chain | pnpm `minimumReleaseAge` 3 d; digest-pinned images with attestations (opt-in); npm 10.9.9 | `.npmrc` `min-release-age=7` **live** (host npm 12.0.2); locally built image; **npm 10.9.9 in image (new)**; **devDependencies now in the image** so `npx vitest` inside the sandbox is real |
 
 Net: after this bundle the runner matches upstream on the container-runtime
 axis it shares (code delivery, lock coupling, mounts, init, egress); the
