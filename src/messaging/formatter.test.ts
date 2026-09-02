@@ -114,6 +114,76 @@ describe("formatForTelegram", () => {
       expect(chunk.length).toBeLessThanOrEqual(4096);
     }
   });
+
+  // Task 8964 (2026-09-01): a ```bash block with "# 1. …" comment lines reached
+  // Telegram as ``<code>bash … <b>1. …</b> … </code>`` — the fence paired with
+  // the closing fence as ONE inline span and the header rule ran inside it.
+  describe("code spans are literal", () => {
+    it("renders a fenced block as <pre> with the fence and language tag dropped", () => {
+      const [out] = formatForTelegram("Run:\n```bash\nls -la\n```\ndone");
+      expect(out).toBe("Run:\n<pre>ls -la</pre>\ndone");
+    });
+
+    it("runs no markdown rule inside a fenced block", () => {
+      const [out] = formatForTelegram(
+        "```bash\n# 1. Instalar el service:\ncp a b && systemctl enable --now x\n**not bold** *.ts ~~keep~~\n```",
+      );
+      expect(out).toBe(
+        "<pre># 1. Instalar el service:\ncp a b &amp;&amp; systemctl enable --now x\n**not bold** *.ts ~~keep~~</pre>",
+      );
+      expect(out).not.toContain("`");
+      expect(out).not.toContain("<b>");
+    });
+
+    it("escapes HTML inside a fenced block exactly once", () => {
+      const [out] = formatForTelegram("```\na < b && c > d\n```");
+      expect(out).toBe("<pre>a &lt; b &amp;&amp; c &gt; d</pre>");
+    });
+
+    it("keeps a Caddy block with braces and a systemd [Unit] header intact", () => {
+      const [out] = formatForTelegram(
+        "```\n[Unit]\nDescription=Trustr API\n```\n```\napi.example.com {\n    reverse_proxy localhost:3010\n}\n```",
+      );
+      expect(out).toBe(
+        "<pre>[Unit]\nDescription=Trustr API</pre>\n<pre>api.example.com {\n    reverse_proxy localhost:3010\n}</pre>",
+      );
+    });
+
+    it("does not italicize or bold inside inline code", () => {
+      const [out] = formatForTelegram("Edit `src/*.ts` and `**/*.js` now");
+      expect(out).toBe(
+        "Edit <code>src/*.ts</code> and <code>**/*.js</code> now",
+      );
+    });
+
+    it("still converts markdown around the code spans", () => {
+      const [out] = formatForTelegram(
+        "## Deploy\n\n**Step** `npm run build`\n```\nx\n```\n*done*",
+      );
+      expect(out).toBe(
+        "<b>Deploy</b>\n\n<b>Step</b> <code>npm run build</code>\n<pre>x</pre>\n<i>done</i>",
+      );
+    });
+
+    it("closes and reopens <pre> when a fenced block straddles the 4096 split", () => {
+      const line = "x".repeat(80) + "\n";
+      const chunks = formatForTelegram("```\n" + line.repeat(70) + "```");
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const c of chunks) {
+        expect(c.length).toBeLessThanOrEqual(4096);
+        expect((c.match(/<pre>/g) ?? []).length).toBe(
+          (c.match(/<\/pre>/g) ?? []).length,
+        );
+      }
+      expect(chunks[0].endsWith("</pre>")).toBe(true);
+      expect(chunks[1].startsWith("<pre>")).toBe(true);
+    });
+
+    it("leaves an unclosed fence alone instead of pairing it across lines", () => {
+      const [out] = formatForTelegram("```bash\nls\nno closing fence");
+      expect(out).toBe("```bash\nls\nno closing fence");
+    });
+  });
 });
 
 describe("formatForEmail", () => {

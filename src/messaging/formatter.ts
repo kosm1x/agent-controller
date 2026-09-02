@@ -7,6 +7,9 @@
 
 const TG_MAX_LENGTH = 4096;
 
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 /**
  * Convert standard markdown to WhatsApp formatting.
  * - `**bold**` → `*bold*`
@@ -55,10 +58,22 @@ export function formatForTelegram(text: string): string[] {
   // Strip spurious backslash escapes from LLM output (Qwen/GLM artifact)
   let result = text.replace(/\\([_*\[\]()~>#+\-=|{}.!`])/g, "$1");
 
-  // Escape HTML entities first (before adding our own tags)
-  result = result.replace(/&/g, "&amp;");
-  result = result.replace(/</g, "&lt;");
-  result = result.replace(/>/g, "&gt;");
+  // Code spans are literal: lift fenced blocks and inline code out BEFORE any
+  // markdown rule runs, restore them last. Without this a ```bash fence paired
+  // with the closing fence as one inline span and "# …" lines inside became
+  // <b> headers (task 8964, 2026-09-01). Placeholders use NUL, which LLM text
+  // never contains.
+  const spans: string[] = [];
+  const hold = (html: string): string => `\u0000${spans.push(html) - 1}\u0000`;
+  result = result.replace(/```[^\n`]*\n([\s\S]*?)\n?```/g, (_m, body: string) =>
+    hold(`<pre>${escapeHtml(body)}</pre>`),
+  );
+  result = result.replace(/`([^`\n]+)`/g, (_m, code: string) =>
+    hold(`<code>${escapeHtml(code)}</code>`),
+  );
+
+  // Escape HTML entities (before adding our own tags)
+  result = escapeHtml(result);
 
   // Headers: ## Header → <b>Header</b>
   // Strip any **bold** markers inside the header to avoid double-bolding
@@ -74,13 +89,28 @@ export function formatForTelegram(text: string): string[] {
   // Only match single * that aren't part of <b> tags or bullet points
   result = result.replace(/(?<![<\/b])\*(?!\*|  )(.+?)\*(?!\*)/g, "<i>$1</i>");
 
-  // Inline code: `code` → <code>code</code>
-  result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
-
   // Strikethrough: ~~text~~ → <s>text</s>
   result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
 
-  return splitMessage(result, TG_MAX_LENGTH);
+  // Restore the code spans held above.
+  result = result.replace(
+    /\u0000(\d+)\u0000/g,
+    (_m, i: string) => spans[Number(i)],
+  );
+
+  // A fenced block straddling a split leaves an unclosed <pre>, which Telegram
+  // rejects — close it at the cut and reopen in the next chunk (the 6 chars of
+  // headroom keep the closing tag inside the limit).
+  const chunks = splitMessage(result, TG_MAX_LENGTH - 6);
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const opens = (chunks[i].match(/<pre>/g) ?? []).length;
+    const closes = (chunks[i].match(/<\/pre>/g) ?? []).length;
+    if (opens > closes) {
+      chunks[i] += "</pre>";
+      chunks[i + 1] = "<pre>" + chunks[i + 1];
+    }
+  }
+  return chunks;
 }
 
 /**
