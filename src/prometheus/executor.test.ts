@@ -44,6 +44,7 @@ vi.mock("../tools/registry.js", () => ({
 }));
 
 import { executeGoal, executeGraph, selfAssess } from "./executor.js";
+import { IterationBudget } from "./budget.js";
 import { infer, inferWithTools } from "../inference/adapter.js";
 
 const mockInfer = vi.mocked(infer);
@@ -233,6 +234,61 @@ describe("executeGoal", () => {
 });
 
 describe("executeGraph", () => {
+  it("a goal starved of iteration budget stays IN_PROGRESS (unfinished), never FAILED (task c4c6ae63, 2026-09-03)", async () => {
+    mockInferWithTools.mockImplementation(async () => ({
+      content: "Done",
+      messages: [{ role: "assistant", content: "Done" }],
+      toolRepairs: [],
+      totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
+    }));
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Goal A" });
+    graph.addGoal({ id: "g-2", description: "Goal B" });
+
+    // One iteration for two parallel goals: the second is refused before it
+    // runs — that is not a verdict on its work.
+    const result = await executeGraph(graph, undefined, new IterationBudget(1));
+
+    const statuses = [graph.getGoal("g-1").status, graph.getGoal("g-2").status];
+    expect(statuses).toContain(GoalStatus.COMPLETED);
+    expect(statuses).toContain(GoalStatus.IN_PROGRESS); // the resume path resets this to PENDING
+    expect(statuses).not.toContain(GoalStatus.FAILED);
+    const starved = Object.values(result.goalResults).find((r) => !r.ok);
+    expect(starved?.error).toBe("Iteration budget exhausted");
+  });
+
+  it("a goal cut by the global abort signal stays IN_PROGRESS (unfinished), never FAILED", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      mockInferWithTools.mockImplementation(async () => {
+        // The global timeout fires while the goal is in flight; the SDK
+        // throws, the executor schedules a retry, and the retry sees the
+        // aborted signal.
+        controller.abort();
+        throw new Error("Operation aborted");
+      });
+      const graph = new GoalGraph();
+      graph.addGoal({ id: "g-1", description: "Slow goal" });
+
+      const pending = executeGraph(
+        graph,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+      );
+      await vi.advanceTimersByTimeAsync(60_000); // drain the retry back-off
+      const result = await pending;
+
+      expect(graph.getGoal("g-1").status).toBe(GoalStatus.IN_PROGRESS);
+      expect(result.goalResults["g-1"]?.ok).toBe(false);
+      expect(result.goalResults["g-1"]?.error).toMatch(/abort/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("should execute goals in dependency order", async () => {
     const callOrder: string[] = [];
 

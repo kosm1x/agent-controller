@@ -63,6 +63,54 @@ const fakeExec =
   };
 
 describe("runCheck", () => {
+  it("a command that does not exist (exit 127 + not found) is NOT RUNNABLE — abandoned with the reason, never FAILED (task c4c6ae63, 2026-09-03)", async () => {
+    const exec = fakeExec({
+      "gdocs_read 1cOi | grep -c Fase": {
+        output: "/bin/sh: 1: gdocs_read: not found\n0",
+        exitCode: 127,
+      },
+      "grep -q Fase /tmp/doc.txt": { output: "", exitCode: 0 },
+    });
+    const missing = await runCheck(
+      { check_cmd: "gdocs_read 1cOi | grep -c Fase", expect: "11" },
+      { timeoutMs: 1000, exec },
+    );
+    expect(missing).toMatchObject({
+      ok: false,
+      notRunnable: true,
+      exitCode: 127,
+    });
+    expect(missing.evidence).toMatch(/observes nothing.*gdocs_read: not found/);
+
+    declareGates(
+      "t-nf",
+      [
+        {
+          criterion: "Doc has the 11 phases",
+          check: "gdocs_read 1cOi | grep -c Fase",
+          expect: "11",
+        },
+        {
+          criterion: "local copy mentions Fase",
+          check: "grep -q Fase /tmp/doc.txt",
+        },
+      ],
+      "plan",
+    );
+    const v = await evaluateLedger({ taskId: "t-nf", exec, timeoutMs: 1000 });
+    const rows = Object.fromEntries(
+      listGates("t-nf").map((r) => [r.gate_id, r]),
+    );
+    expect(rows["G1"]).toMatchObject({
+      state: "abandoned",
+      abandon_reason: expect.stringContaining("gdocs_read: not found"),
+    });
+    expect(rows["G2"]!.state).toBe("met");
+    expect(v.verdict).toBe("met"); // the missing binary did not fail the ledger
+    expect(v.abandonedNow).toBe(1);
+    expect(v.failed).toBe(0);
+  });
+
   it("EXPECT decides even when the command exits non-zero; no EXPECT ⇒ exit code decides", async () => {
     const exec = fakeExec({
       grep: { output: "3/3 tiers ok", exitCode: 1 },
@@ -318,7 +366,10 @@ describe("guard parity (qa C1)", () => {
       "cat /root/claude/mission-control/.env",
       "sqlite3 data/mc.db 'DELETE FROM tasks'",
     ]) {
-      const r = await runCheck({ check_cmd: cmd, expect: null }, { timeoutMs: 1000, exec });
+      const r = await runCheck(
+        { check_cmd: cmd, expect: null },
+        { timeoutMs: 1000, exec },
+      );
       expect(r.ok, cmd).toBe(false);
       expect(r.evidence, cmd).toMatch(/^check rejected by shell guard: /);
     }
@@ -341,9 +392,15 @@ describe("guard parity (qa C1)", () => {
 
   it("evidence is secret-redacted before it is recorded", async () => {
     const exec = fakeExec({
-      leak: { output: "token=sk-abcdefghijklmnopqrstuvwxyz0123 done", exitCode: 0 },
+      leak: {
+        output: "token=sk-abcdefghijklmnopqrstuvwxyz0123 done",
+        exitCode: 0,
+      },
     });
-    const r = await runCheck({ check_cmd: "leak", expect: null }, { timeoutMs: 1000, exec });
+    const r = await runCheck(
+      { check_cmd: "leak", expect: null },
+      { timeoutMs: 1000, exec },
+    );
     expect(r.ok).toBe(true);
     expect(r.evidence).not.toContain("sk-abcdefghijklmnopqrstuvwxyz0123");
     expect(r.evidence).toContain("done");
@@ -371,7 +428,9 @@ describe("regex deadline (qa C2)", () => {
     expect(expectMatches("ALL MET", huge)).toBe(true);
     expect(expectMatches("/ALL MET$/", huge)).toBe(true);
     // A marker only in the head (older than 64KB) is outside the window.
-    expect(expectMatches("HEAD-ONLY", "HEAD-ONLY" + "y".repeat(100_000))).toBe(false);
+    expect(expectMatches("HEAD-ONLY", "HEAD-ONLY" + "y".repeat(100_000))).toBe(
+      false,
+    );
   });
 });
 
@@ -424,7 +483,11 @@ describe("container shell-skip (qa W1) + ledger budget (qa W5) + env guards", ()
     const v = await evaluateLedger({ taskId: "b1", exec, budgetMs: 10 });
     expect(v.ran).toBe(1); // first gate starts inside the budget
     expect(v.budgetExhausted).toBe(2);
-    expect(listGates("b1").map((r) => r.state)).toEqual(["met", "pending", "pending"]);
+    expect(listGates("b1").map((r) => r.state)).toEqual([
+      "met",
+      "pending",
+      "pending",
+    ]);
     expect(v.verdict).toBe("unverified"); // never FAILED by a slow ledger
   });
 
@@ -448,7 +511,10 @@ describe("container shell-skip (qa W1) + ledger budget (qa W5) + env guards", ()
     expect(seenTask).toBe("e1");
     expect(seenTimeout).toBe(60_000);
     // Real subprocess sees MC_TASK_ID.
-    const real = await runShellCheck('echo "task=$MC_TASK_ID"', { timeoutMs: 5000, taskId: "e1" });
+    const real = await runShellCheck('echo "task=$MC_TASK_ID"', {
+      timeoutMs: 5000,
+      taskId: "e1",
+    });
     expect(real.output).toContain("task=e1");
   });
 });

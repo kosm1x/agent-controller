@@ -750,6 +750,20 @@ export async function executeGoal(
  * Execute all goals in dependency order.
  * Ready goals run concurrently via Promise.allSettled.
  */
+/**
+ * A not-ok result that is not a verdict on the work: the run was aborted
+ * (global timeout) or starved of iteration budget before/while the goal ran.
+ */
+function isUnfinishedResult(
+  result: GoalResult,
+  signal: AbortSignal | undefined,
+): boolean {
+  if (result.ok) return false;
+  const error = result.error ?? "";
+  if (error === "Iteration budget exhausted") return true;
+  return signal?.aborted === true && /abort/i.test(error);
+}
+
 export async function executeGraph(
   graph: GoalGraph,
   toolNames?: string[],
@@ -864,6 +878,15 @@ export async function executeGraph(
 
       if (goalResult.ok) {
         graph.updateStatus(goal.id, GoalStatus.COMPLETED);
+      } else if (isUnfinishedResult(goalResult, signal)) {
+        // The goal never got a verdict — the global timeout aborted it or
+        // the iteration budget ran out. Leave it IN_PROGRESS ("interrupted
+        // mid-execution": the snapshot resume path resets exactly this state
+        // to PENDING) so the orchestrator counts it as unfinished (exitReason
+        // + unfinishedGoals), not as a failure of the work (2026-09-03, task
+        // c4c6ae63: 5/6 goals done, the 6th "Aborted" by the 10-min budget,
+        // and the finished Doc went out as a failed task).
+        graph.updateStatus(goal.id, GoalStatus.IN_PROGRESS);
       } else {
         graph.updateStatus(goal.id, GoalStatus.FAILED);
       }

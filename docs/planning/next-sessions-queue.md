@@ -1093,3 +1093,18 @@ From `docs/planning/nanoclaw-upstream-review-2026-09-01.md` (memory `reference_n
 2. **Consolidation child prompt is ~1M tokens per turn.** `[executor] KB injection at 143222 chars — enforce+always-read files may be too large` + three sibling outputs (26/36/24 kB) → 11-turn calls at 220–290 s, 91–95 % cache. Trim the enforce/always-read KB set injected into swarm children, or have the swarm pass sibling outputs by KB path instead of inline. This is WHY the goal cap bites; raising caps only buys time.
 3. **`ORCHESTRATOR_TIMEOUT_MS` is now a live knob** (was dead like `GOAL_TIMEOUT_MS`). Default 600 s; a two-goal consolidation at 250 s/goal + plan + reflect ≈ 10.5 min. Decide per (2) before raising.
 4. **Dead-knob sweep**: grep every `int("…_MS"` / `bool("…")` in `src/config.ts` for a consumer outside `config.ts`; a knob with none is a ruling that never happened. Candidates seen today: `orchestratorTimeoutMs` (fixed), `goalTimeoutMs` (fixed); others unaudited.
+
+## 2026-09-03c — Second re-run (task 9060): goal cap live, work delivered; consolidation lost to an abort-as-failure + not-found gates
+
+**Observed:** root 21:34→21:52; three analyses in 4–7 min; consolidation child (c4c6ae63) planned 6 goals, 5 completed, Doc `1cOiGrAq…` created with all 11 phases (read-back MET), goal 6 "verify and report the link" aborted by the 600 s budget → recorded FAILED → no promotion → reflection 0.75 < 0.8 → root 3/4 score 0.55 `failed`. Router (453dc44) delivered the 3 analyses as 22 chunks with the honest caveat; the Doc id was ABSENT from the delivered text (failed goals are excluded from `collectFinalAnswer`). Five plan gates FAILED on `gdocs_read: not found`; g-4.1 (echo) was abandoned at declaration as designed.
+
+**Shipped (this commit):** `executor.ts` — abort/budget results leave the goal IN_PROGRESS (unfinished), not FAILED · `gate-check.ts` — exit 127 + "not found" ⇒ ABANDONED with reason (`notRunnable`), counted in `abandonedNow` · planner rule: /bin/sh only, tools are not commands, Docs/Sheets ⇒ plain-string criteria.
+
+**Watch after deploy:** re-send; expect the consolidation child `completed`/`completed_with_concerns` (concern naming any unfinished goal), root `completed`/`completed_with_concerns` 4/4, and the Doc link in the Telegram reply. Journal: `abandoned N plan gate(s) of unfinished goals` may appear (fine); NO `gdocs_read: not found` as a FAILED gate.
+
+**Deferreds:**
+
+1. **600 s total budget is one goal short** for a 6-goal consolidation at 50–230 s/goal. `ORCHESTRATOR_TIMEOUT_MS` is live since 453dc44; `Environment=ORCHESTRATOR_TIMEOUT_MS=900000` in `goal-timeout.conf` would let the 6th goal finish. Operator's call — the swarm's 30-min ceiling still fits (1.5 + ≤15 + ≤15 only barely). Prefer the prompt-size fix (2026-09-03b #2) first.
+2. **The planner's "verify and report the link" scaffolding goal** costs a full round after the deliverable is done. A consolidation goal should return the link in the same round that writes the Doc; consider a planner rule ("the goal that creates an artifact reports its URL in its own answer") instead of a separate verification goal — the harness read-back already verifies.
+3. **Telegram flood**: 22 chunks (~86 kB) for a partial delivery. When a deliverable exceeds ~6 chunks, write it to the KB / a Doc and send the pointer + the first chunk (same pointer-followable rule as [[feedback_pointer_followable_from_delivery_surface]]).
+4. **Retry-until-abort masks genuine failures**: after the global signal fires, every goal still retrying reports "Aborted" (now unfinished) — a goal that had already thrown a genuine error twice is indistinguishable from an interrupted one. Acceptable (the run WAS interrupted), noted for the reflector's benefit.

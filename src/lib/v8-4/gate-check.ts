@@ -52,6 +52,12 @@ export interface CheckOutcome {
   evidence: string;
   exitCode: number | null;
   timedOut: boolean;
+  /**
+   * The check command does not exist on the host (exit 127 + "not found"):
+   * it observed nothing, so the ledger records ABANDONED with the reason,
+   * never FAILED — a missing binary is not evidence against the criterion.
+   */
+  notRunnable?: boolean;
 }
 
 /** Nested/adjacent quantifiers — the catastrophic-backtracking shapes. Rejected outright. */
@@ -196,6 +202,19 @@ export async function runCheck(
       timedOut: true,
     };
   }
+  // exit 127 + "not found": the command is not on the host. The planner
+  // writes Jarvis tool names (gdocs_read, jarvis_file_read) as shell
+  // commands (2026-09-03, task c4c6ae63: five gates FAILED on
+  // `gdocs_read: not found` around a Doc whose read-back was MET).
+  if (res.exitCode === 127 && /not found/i.test(res.output)) {
+    return {
+      ok: false,
+      notRunnable: true,
+      evidence: `check command not found — observes nothing: ${evidenceTail(res.output, 200)}`,
+      exitCode: res.exitCode,
+      timedOut: false,
+    };
+  }
   // With an EXPECT the match decides (a check may exit non-zero by design);
   // without one, the exit code decides.
   const ok = row.expect
@@ -337,12 +356,18 @@ export async function evaluateLedger(
         taskId: opts.taskId,
       });
       ran++;
+      if (outcome.notRunnable) abandonedNow++;
       recordGateResult(
         opts.taskId,
         row.gate_id,
-        outcome.ok
-          ? { state: "met", evidence: outcome.evidence }
-          : { state: "failed", evidence: outcome.evidence },
+        outcome.notRunnable
+          ? {
+              state: "abandoned",
+              reason: outcome.evidence.slice(0, MAX_EVIDENCE),
+            }
+          : outcome.ok
+            ? { state: "met", evidence: outcome.evidence }
+            : { state: "failed", evidence: outcome.evidence },
         db,
       );
     } else if (row.check_kind === "landing") {

@@ -50,6 +50,7 @@ Rules:
 - Top-level goals have parent_id=null and depends_on=[].
 - Use the object form of a completion criterion whenever a shell command can prove it (a test, a typecheck, a curl, a file check); plain strings for outcomes only a reader can judge.
 - A "check" must OBSERVE the artifact (read the file, query the table, curl the URL, run the test). A command whose only data source is a literal — echo, printf, true — proves nothing and is discarded; if no real command can prove the criterion, use the plain-string form.
+- Checks run in /bin/sh on the host: only real binaries (grep, curl, sqlite3, test, jq, node, npx). Your tools (gdocs_read, gsheets_read, jarvis_file_read, web_read…) are NOT shell commands — a check that names one dies as "not found". For Google Docs/Sheets/Drive/KB deliverables use the plain-string form: the harness read-back proves every write.
 - Use depends_on to express ordering constraints between goals.
 - Keep the graph to at most 3 levels deep and 15 goals max.
 - Each goal should have 1-3 completion criteria.
