@@ -1122,3 +1122,16 @@ From `docs/planning/nanoclaw-upstream-review-2026-09-01.md` (memory `reference_n
 1. **`SANDBOX_TOOL_NAMES` mirrors `nanoclaw-worker.ts` by hand** — add a test that imports the worker's registration list (needs the worker's registrations factored out of its entrypoint) so the two cannot drift.
 2. **Swarm children should carry the root's `messaging` tag or an explicit `agentType`** — routing a child by re-classifying its generated description is inherently brittle; the tool guard removes the dangerous outcome, not the brittleness.
 3. **Telegram chunk cap** (see 2026-09-03c #3) — now also on the SUCCESS path once a swarm completes.
+
+## 2026-09-03e — Fourth re-run (task 9069): swarm COMPLETED 5/5 — and the reply was abandoned at 11 min
+
+**Observed:** 22:35:58 → 22:48:54 (12.9 min). Reader 1.1 min · analyses 3.7 / 4.4 / 8.1 min (one goal retried under the 300 s cap) · consolidation 2.9 min, score 0.95 · root 5/5 score 1.00 · Doc `1VAKYmvxHKWQ0PDkRVOaxsaBGz5SKkRLJOll3q9y1kac` read-back MET · `[telegram-stream] Finalized … msgId=22500` at 22:47 = "Se agotó el tiempo" · NO send after completion. Layers 1–4 all held (no watchdog kill, 300 s cap applied, all children heavy, ledger closed on the read-back alone).
+
+**Shipped (this commit):** `router.ts` — the abandon timer defers to a still-running task row (nudge + re-arm) and abandons only a terminal/missing one; `taskStillRunning()`; regression test with the late-result delivery.
+
+**Watch after deploy:** re-send once more; the reply must arrive in Telegram (journal `[telegram] Sent N chunk(s)` right after `[swarm] … complete — 5/5`). Expect ~13 chunks for the joined answer — the chunk-cap item (2026-09-03c #3) is now the top UX deferral.
+
+**Deferreds:**
+
+1. **`handleTaskCompleted` returns silently when no pending entry exists** (`if (!pending) return;`). Even with the abandon fix, any future path that loses the entry drops the result without a trace. Minimum: log `[router] completed task <id> has no pending reply — result not delivered` so silence is never mistaken for success; better: persist `channel`/`to` on the task row at submission and deliver from there.
+2. **Exit criterion for "finished" must include the outbound send**, not the task status — add to `mc-ctl` or the watch script: after `task.completed`, assert a `[telegram] Sent`/`Finalized` line within 60 s for chat-routed roots.

@@ -152,7 +152,7 @@ import {
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
-const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → give up (past SDK 15min timeout with grace)
+const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → abandon ONLY if the task is no longer running (armPendingTimers)
 const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
 const LOOP_NUDGE_MS = 600_000; // /loop: no abandon — a "sigo" line every 10 min instead
 
@@ -3547,22 +3547,58 @@ export class MessageRouter {
     const abandonMs = isCodingTask
       ? TASK_TIMEOUT_ABANDON_CODING_MS
       : TASK_TIMEOUT_ABANDON_MS;
-    const abandonTimer = setTimeout(() => {
+    const armedAt = Date.now();
+    const fireAbandon = (): void => {
       const pending = this.pendingReplies.get(taskId);
-      if (pending) {
-        this.pendingReplies.delete(taskId);
-        const line = "Se agotó el tiempo. Puedes intentar de nuevo.";
-        // A re-run owns the ⏳ placeholder — close it instead of leaving it.
-        if (opts.stream) {
-          opts.stream.finalize(line).catch(() => {
-            this.sendToChannel(channel, to, line);
-          });
-        } else {
-          this.sendToChannel(channel, to, line);
-        }
+      if (!pending) return;
+      // A task that is still RUNNING is not lost. Swarm and heavy roots
+      // legitimately run 13-25 min (swarm ceiling 30 min, heavy 15 min), and
+      // the liveness-based stuck watchdog (reactions/manager.ts) is the one
+      // authority that declares a running task dead — it fails the row and
+      // task.failed releases this entry through handleTaskFailed. Giving up
+      // here dropped a completed 5/5 swarm on the floor (2026-09-03, task
+      // 1088d73d: "Se agotó el tiempo" at 11 min, result at 12.9 min, no
+      // pending → handleTaskCompleted returned silently). Say so, re-arm.
+      if (this.taskStillRunning(taskId)) {
+        const min = Math.round((Date.now() - armedAt) / 60_000);
+        this.sendToChannel(
+          channel,
+          to,
+          `Sigo trabajando — ${min} min. Te aviso cuando termine.`,
+        );
+        pending.abandonTimer = setTimeout(fireAbandon, abandonMs);
+        return;
       }
-    }, abandonMs);
+      this.pendingReplies.delete(taskId);
+      const line = "Se agotó el tiempo. Puedes intentar de nuevo.";
+      // A re-run owns the ⏳ placeholder — close it instead of leaving it.
+      if (opts.stream) {
+        opts.stream.finalize(line).catch(() => {
+          this.sendToChannel(channel, to, line);
+        });
+      } else {
+        this.sendToChannel(channel, to, line);
+      }
+    };
+    const abandonTimer = setTimeout(fireAbandon, abandonMs);
     return { interimTimer, finalTimer, abandonTimer };
+  }
+
+  /** The task row is still in flight (a terminal or missing row ⇒ false). */
+  private taskStillRunning(taskId: string): boolean {
+    try {
+      const row = getDatabase()
+        .prepare("SELECT status FROM tasks WHERE task_id = ?")
+        .get(taskId) as { status: string | null } | undefined;
+      return (
+        row?.status === "running" ||
+        row?.status === "queued" ||
+        row?.status === "pending" ||
+        row?.status === "classifying"
+      );
+    } catch {
+      return false;
+    }
   }
 
   private scopeOptions() {

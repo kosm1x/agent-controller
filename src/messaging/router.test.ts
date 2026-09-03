@@ -3323,6 +3323,60 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     expect(texts.some((t) => t.startsWith("Sigo en /loop"))).toBe(true);
   });
 
+  it("a task still RUNNING at 11 min is NOT abandoned — nudge, re-arm, and the late result is delivered (swarm task 1088d73d, 2026-09-03)", async () => {
+    vi.useFakeTimers();
+    dbStatusGet.mockReturnValue({ status: "running" });
+    try {
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "Analiza el flujo operativo en un swarm y elabora un plan",
+        timestamp: new Date(),
+      });
+      await vi.advanceTimersByTimeAsync(12 * 60_000);
+      const pending = (
+        router as unknown as { pendingReplies: Map<string, unknown> }
+      ).pendingReplies;
+      expect(pending.has("test-task-123")).toBe(true);
+      let texts = waAdapter.sentMessages.map((m) => m.text);
+      expect(texts.some((t) => t.startsWith("Se agotó el tiempo"))).toBe(false);
+      expect(texts.some((t) => t.startsWith("Sigo trabajando — 11 min"))).toBe(
+        true,
+      );
+
+      // Still running at 22 min → second nudge, still held.
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      expect(pending.has("test-task-123")).toBe(true);
+      texts = waAdapter.sentMessages.map((m) => m.text);
+      expect(texts.some((t) => t.startsWith("Sigo trabajando — 22 min"))).toBe(
+        true,
+      );
+
+      // The result arrives at minute 23 — it must reach the operator.
+      router.startEventListeners();
+      const completedHandler = findHandler("task.completed");
+      completedHandler!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "swarm",
+          result: {
+            content: "reflector summary",
+            finalAnswer:
+              "Plan de Acción por Fase — https://docs.google.com/document/d/1VAKYm/edit",
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      texts = waAdapter.sentMessages.map((m) => m.text);
+      expect(
+        texts.some((t) => t.includes("docs.google.com/document/d/1VAKYm")),
+      ).toBe(true);
+      expect(pending.has("test-task-123")).toBe(false);
+    } finally {
+      dbStatusGet.mockReturnValue(undefined);
+    }
+  });
+
   it("a normal task still abandons at 11 min (the registry entry is released)", async () => {
     vi.useFakeTimers();
     await router.handleInbound({
