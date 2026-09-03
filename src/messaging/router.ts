@@ -3333,12 +3333,15 @@ export class MessageRouter {
           failMsg = runnerText;
           deliveredRunnerText = true;
         }
-      } else if (data.agent_id === "heavy") {
+      } else if (data.agent_id === "heavy" || data.agent_id === "swarm") {
         // Plain `failed` with a produced deliverable (task e6f3dfa0,
         // 2026-07-27): a reflection-graded heavy failure still carried the
         // full report in result.finalAnswer, and the generic line discarded
         // 7 minutes of work. Deliver what was produced, honestly framed as
-        // incomplete. Heavy-only: nanoclaw failures can carry structural
+        // incomplete. Swarm joins the same class (2026-09-03, task 0b8c7576:
+        // 3/4 goals — three full phase analyses — reached the operator as
+        // "No pude completar eso"); its finalAnswer is the joined output of
+        // heavy children. Not nanoclaw: those failures can carry structural
         // sentinels (TARGET_NOT_IN_SANDBOX) or guard-suppressed substitute
         // work that must NOT reach the operator (qa-audit W3). `content` is
         // excluded — on heavy it's the reflector's meta-summary ("Heuristic

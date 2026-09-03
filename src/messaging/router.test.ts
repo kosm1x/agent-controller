@@ -1492,6 +1492,55 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("delivers a failed SWARM root's joined answer with the same caveat (task 0b8c7576, 2026-09-03)", async () => {
+      // 3/4 goals completed — three full phase analyses in finalAnswer — and
+      // the operator received "No pude completar eso". Swarm's finalAnswer is
+      // the joined output of heavy children: same trust class as heavy.
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: analiza el flujo",
+        status: "failed",
+      });
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "analiza el flujo",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const failedHandler = findHandler("task.failed");
+        failedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "swarm",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: {
+              content: "The swarm analyzed Fases 1-11 but the Doc failed",
+              finalAnswer:
+                "Fase 1 — Captación: riesgo alto en el primer contacto…",
+              score: 0.6,
+              goalSummary: { completed: 3, failed: 1, total: 4 },
+            },
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toContain(
+          "no se completó al 100%",
+        );
+        expect(waAdapter.sentMessages[1].text).toContain("Fase 1 — Captación");
+        expect(waAdapter.sentMessages[1].text).not.toContain(
+          "The swarm analyzed Fases 1-11",
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
     it("keeps the generic line on plain `failed` for non-heavy agents (qa-audit W3)", async () => {
       // nanoclaw failures can carry structural sentinels or guard-suppressed
       // substitute work — never deliver those as a partial answer.

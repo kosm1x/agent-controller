@@ -29,6 +29,7 @@ import { renderConversationContext } from "./conversation-context.js";
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
+  const config = getConfig();
 
   try {
     // Check for resumable snapshot from a prior early exit
@@ -56,7 +57,15 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       // message as the last conversationHistory turn — append it or the
       // agent's instruction is just the truncated title.
       `${input.title}\n\n${input.description.replace(CACHE_BREAK_MARKER, "\n")}${renderConversationContext(input.conversationHistory)}`,
-      undefined,
+      // Operator knobs (GOAL_TIMEOUT_MS / ORCHESTRATOR_TIMEOUT_MS) reach the
+      // orchestrator only through this argument — with `undefined` it ran on
+      // its compiled defaults and the 2026-06-24 drop-in raising the goal
+      // cap to 300 s was dead for ten weeks (task 2b170ca6, 2026-09-03: a
+      // 220-290 s Doc-writing goal "timed out after 120000ms" three times).
+      {
+        goalTimeoutMs: config.goalTimeoutMs,
+        timeoutMs: config.orchestratorTimeoutMs,
+      },
       input.tools,
       snapshot,
     );

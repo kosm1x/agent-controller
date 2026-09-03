@@ -406,10 +406,31 @@ describe("heavyRunner", () => {
     expect(mockOrchestrate).toHaveBeenCalledWith(
       "task-4",
       "With tools\n\nNeeds shell",
-      undefined,
+      { goalTimeoutMs: 120_000, timeoutMs: 600_000 },
       ["shell", "file"],
       undefined,
     );
+  });
+
+  it("passes the operator's GOAL_TIMEOUT_MS / ORCHESTRATOR_TIMEOUT_MS to orchestrate — the knobs were dead with `undefined` (task 2b170ca6, 2026-09-03)", async () => {
+    mockGetConfig.mockReturnValue({
+      ...makeConfig(),
+      goalTimeoutMs: 300_000,
+      orchestratorTimeoutMs: 900_000,
+    } as ReturnType<typeof getConfig>);
+    mockOrchestrate.mockResolvedValueOnce(makeOrchestratorResult());
+
+    await heavyRunner.execute({
+      taskId: "task-knobs",
+      runId: "run-knobs",
+      title: "Knobs",
+      description: "Operator-tuned caps",
+    });
+
+    expect(mockOrchestrate.mock.calls[0]![2]).toEqual({
+      goalTimeoutMs: 300_000,
+      timeoutMs: 900_000,
+    });
   });
 
   it("should NOT call spawnContainer when not containerized", async () => {

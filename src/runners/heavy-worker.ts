@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   };
 
   // Minimal init (mirrors src/index.ts)
-  loadConfig();
+  const config = loadConfig();
   const db = initDatabase(process.env.MC_DB_PATH ?? "/tmp/mc.db");
   initEventBus(db);
 
@@ -61,7 +61,11 @@ async function main(): Promise<void> {
     const result = await orchestrate(
       input.taskId ?? "container-task",
       input.prompt,
-      undefined,
+      // Same operator knobs as the in-process path (heavy-runner.ts).
+      {
+        goalTimeoutMs: config.goalTimeoutMs,
+        timeoutMs: config.orchestratorTimeoutMs,
+      },
       input.tools,
     );
 
