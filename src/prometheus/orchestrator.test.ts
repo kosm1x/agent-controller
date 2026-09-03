@@ -27,25 +27,38 @@ vi.mock("./snapshot.js", () => ({
   clearSnapshot: vi.fn(),
 }));
 
-vi.mock("../lib/event-bus.js", () => ({
-  eventBus: {
-    emit: vi.fn(() => true),
-    broadcast: vi.fn(),
-    on: vi.fn(),
-  },
+vi.mock("../lib/event-bus.js", () => {
+  // The orchestrator must emit through the PersistentEventBus door
+  // (`emitEvent`) — `subscribe()` handlers never see the EventEmitter
+  // facade's `emit` (qa R2 #1, 2026-09-03).
+  const bus = { emitEvent: vi.fn() };
+  return {
+    getEventBus: () => bus,
+    eventBus: { emit: vi.fn(() => true), broadcast: vi.fn(), on: vi.fn() },
+  };
+});
+
+vi.mock("../lib/v8-4/gates.js", () => ({
+  declareGates: vi.fn(() => 0),
+  gateSpecsFromGoal: vi.fn(() => []),
+  abandonPlanGatesForGoals: vi.fn(() => 0),
 }));
 
 import { orchestrate } from "./orchestrator.js";
 import { plan, replan } from "./planner.js";
 import { executeGraph } from "./executor.js";
 import { reflect } from "./reflector.js";
-import { eventBus } from "../lib/event-bus.js";
+import { getEventBus, eventBus } from "../lib/event-bus.js";
+import { abandonPlanGatesForGoals } from "../lib/v8-4/gates.js";
+import type { IterationBudget } from "./budget.js";
 
 const mockPlan = vi.mocked(plan);
 const mockReplan = vi.mocked(replan);
 const mockExecuteGraph = vi.mocked(executeGraph);
 const mockReflect = vi.mocked(reflect);
-const mockEventBusEmit = vi.mocked(eventBus.emit);
+const mockEmitEvent = vi.mocked(getEventBus().emitEvent);
+const mockFacadeEmit = vi.mocked(eventBus.emit);
+const mockAbandonPlanGates = vi.mocked(abandonPlanGatesForGoals);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -174,6 +187,141 @@ describe("orchestrate", () => {
 
     expect(result.success).toBe(false);
     expect(result.completedWithConcerns).toBe(true);
+    expect(result.exitReason).toBeUndefined();
+  });
+
+  it("flags completedWithConcerns on an early exit when every FINISHED goal completed — timeout/budget shape (task cbc9e3fa, 2026-09-03)", async () => {
+    // 2 goals done, 1 still in progress when the orchestrator ran out of
+    // budget; nothing failed. The deliverable exists (provenance + readback
+    // MET on the real task) — it must be promoted, and the exit must be
+    // named so the runner never reports an empty error.
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Goal 2",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-3",
+      description: "Goal 3",
+      status: GoalStatus.IN_PROGRESS,
+      dependsOn: ["g-2"],
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    // The executor drains the iteration budget — that is what makes the
+    // label "budget_exhausted" true (a mocked pass that consumed nothing
+    // would be "aborted").
+    mockExecuteGraph.mockImplementationOnce(async (...args) => {
+      const budget = args[2] as IterationBudget;
+      while (budget.consume()) {
+        /* drain */
+      }
+      return makeExecResult();
+    });
+    mockReflect.mockResolvedValueOnce({
+      result: {
+        ...makeReflection(),
+        success: false,
+        score: 0.0,
+        summary: "timed out",
+      },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-early-exit", "Test task");
+
+    expect(result.success).toBe(false);
+    expect(result.completedWithConcerns).toBe(true);
+    expect(result.exitReason).toBe("budget_exhausted");
+    expect(result.unfinishedGoals).toEqual(["g-3"]);
+    // The plan gates of the goal that never ran are surrendered, so neither
+    // the child's own ledger nor the parent's re-verify can fail them.
+    expect(mockAbandonPlanGates).toHaveBeenCalledWith(
+      "task-early-exit",
+      ["g-3"],
+      expect.stringContaining("budget_exhausted"),
+    );
+  });
+
+  it("does NOT flag completedWithConcerns on an early exit when a goal FAILED (guards the failed === 0 clause)", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Goal 2",
+      status: GoalStatus.FAILED,
+    });
+    graph.addGoal({
+      id: "g-3",
+      description: "Goal 3",
+      status: GoalStatus.PENDING,
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: {
+        ...makeReflection(),
+        success: false,
+        score: 0.2,
+        summary: "g-2 failed",
+      },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-early-exit-failed", "Test task");
+
+    expect(result.completedWithConcerns).toBe(false);
+    // Nothing consumed the budget and no timeout fired: the loop left for
+    // another reason — labelled "aborted", never a fake budget event.
+    expect(result.exitReason).toBe("aborted");
+    expect(result.unfinishedGoals).toEqual(["g-3"]);
+  });
+
+  it("does NOT promote an early exit below the completion floor — 1 of 4 goals is not a deliverable (qa R2 #3)", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+    });
+    for (const id of ["g-2", "g-3", "g-4"]) {
+      graph.addGoal({
+        id,
+        description: id,
+        status: GoalStatus.PENDING,
+        dependsOn: ["g-1"],
+      });
+    }
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 100, completionTokens: 50 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: { ...makeReflection(), success: false, score: 0.1 },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    const result = await orchestrate("task-early-exit-floor", "Test task");
+
+    expect(result.completedWithConcerns).toBe(false);
+    expect(result.exitReason).toBe("aborted");
+    expect(result.unfinishedGoals).toEqual(["g-2", "g-3", "g-4"]);
   });
 
   it("does NOT flag completedWithConcerns when a goal actually failed (qa-audit W4 mutation hole)", async () => {
@@ -225,11 +373,18 @@ describe("orchestrate", () => {
 
     await orchestrate("task-2", "Test task");
 
-    // Should have emitted multiple progress events
-    const progressCalls = mockEventBusEmit.mock.calls.filter(
+    // Should have emitted multiple progress events — through emitEvent (the
+    // door the stuck-watchdog liveness subscriber listens on), never the
+    // EventEmitter facade.
+    const progressCalls = mockEmitEvent.mock.calls.filter(
       (call) => call[0] === "task.progress",
     );
     expect(progressCalls.length).toBeGreaterThanOrEqual(4); // plan start/end, execute start/end, reflect
+    expect(progressCalls[0]![1]).toMatchObject({
+      task_id: "task-2",
+      agent_id: "heavy",
+    });
+    expect(mockFacadeEmit).not.toHaveBeenCalled();
   });
 
   it("should throw when planning fails", async () => {

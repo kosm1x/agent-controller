@@ -60,12 +60,14 @@ function parseTaskMeta(
 
 export class ReactionManager {
   private subscription: Subscription | null = null;
+  private progressSubscription: Subscription | null = null;
   private stuckCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   // Cached prepared statements for hot-path queries
   private stmtStuckTasks!: Database.Statement;
   private stmtMarkStuck!: Database.Statement;
   private stmtMarkStuckRun!: Database.Statement;
+  private stmtTouchProgress!: Database.Statement;
 
   constructor(private readonly db: Database.Database) {}
 
@@ -77,7 +79,13 @@ export class ReactionManager {
     this.stmtStuckTasks = this.db.prepare(
       `SELECT task_id, title FROM tasks
        WHERE status = 'running'
-       AND started_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')
+       -- Liveness is updated_at, not started_at. Runners that report progress
+       -- (task.progress → stmtTouchProgress) keep a long-but-live task alive;
+       -- checkout stamps both columns together, so a runner that never
+       -- reports still dies 15 min after start. 2026-09-03: swarm roots with
+       -- sequential heavy phases legitimately run 16-21 min and were killed
+       -- at minute 15 while their children were still delivering (9036/9043).
+       AND updated_at < datetime('now', '-${STUCK_THRESHOLD_MINUTES} minutes')
        -- /loop tasks (tag "loop") run unbounded by operator instruction; "Para" stops them.
        AND (metadata IS NULL OR metadata NOT LIKE '%"loop"%')`,
     );
@@ -91,6 +99,22 @@ export class ReactionManager {
     this.stmtMarkStuckRun = this.db.prepare(
       `UPDATE runs SET status = 'failed', error = ?, completed_at = datetime('now')
        WHERE task_id = ? AND status = 'running'`,
+    );
+    // Progress heartbeat — the only mid-run writer of tasks.progress. Scoped
+    // to 'running' so a late event can never touch a terminal row. A NULL
+    // percentage (heartbeat without a number, e.g. a container sentinel)
+    // refreshes liveness and keeps the last progress.
+    this.stmtTouchProgress = this.db.prepare(
+      `UPDATE tasks SET progress = COALESCE(?, progress), updated_at = datetime('now')
+       WHERE task_id = ? AND status = 'running'`,
+    );
+
+    this.progressSubscription = getEventBus().subscribe<"task.progress">(
+      "task.progress",
+      (event) => {
+        const data = event.data as { task_id: string; progress: number };
+        this.touchProgress(data.task_id, data.progress);
+      },
     );
 
     this.subscription = getEventBus().subscribe<"task.failed">(
@@ -115,6 +139,10 @@ export class ReactionManager {
     if (this.subscription) {
       this.subscription.unsubscribe();
       this.subscription = null;
+    }
+    if (this.progressSubscription) {
+      this.progressSubscription.unsubscribe();
+      this.progressSubscription = null;
     }
     if (this.stuckCheckInterval) {
       clearInterval(this.stuckCheckInterval);
@@ -325,7 +353,19 @@ export class ReactionManager {
     }
   }
 
-  /** Check for stuck tasks (running >15min with no progress). */
+  /** Persist a runner's progress report as the task's liveness stamp. */
+  private touchProgress(taskId: string, progress: number): void {
+    try {
+      const pct = Number.isFinite(progress)
+        ? Math.min(100, Math.max(0, Math.round(progress)))
+        : null;
+      this.stmtTouchProgress.run(pct, taskId);
+    } catch (err) {
+      console.error("[reactions] Error persisting task progress:", err);
+    }
+  }
+
+  /** Check for stuck tasks (running with no progress report for >15min). */
   private checkStuckTasks(): void {
     try {
       const stuckTasks = this.stmtStuckTasks.all() as {

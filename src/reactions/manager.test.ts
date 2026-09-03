@@ -343,9 +343,10 @@ describe("ReactionManager", () => {
   });
 
   it("checkStuckTasks cascades ONLY the stuck task's run to failed (scoped, not blanket)", () => {
-    // Stuck task: started 20 min ago (> 15 min threshold), still running.
+    // Stuck task: started 20 min ago and never reported progress since
+    // (updated_at = started_at > 15 min threshold), still running.
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at) VALUES (?, 'running', ?, datetime('now','-20 minutes'))`,
+      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
     ).run("stuck-1", "Stuck one");
     db.prepare(
       `INSERT INTO runs (run_id, task_id, status) VALUES ('run-stuck', 'stuck-1', 'running')`,
@@ -376,7 +377,7 @@ describe("ReactionManager", () => {
 
   it('a /loop task (tag "loop" in metadata) is NEVER marked stuck — operator-instructed unbounded run', () => {
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at, metadata) VALUES (?, 'running', ?, datetime('now','-3 hours'), ?)`,
+      `INSERT INTO tasks (task_id, status, title, started_at, updated_at, metadata) VALUES (?, 'running', ?, datetime('now','-3 hours'), datetime('now','-3 hours'), ?)`,
     ).run(
       "loop-1",
       "Loop one",
@@ -396,5 +397,84 @@ describe("ReactionManager", () => {
       .get() as { status: string };
     expect(task.status).toBe("running");
     expect(run.status).toBe("running");
+  });
+
+  it("a long-running task that keeps reporting progress is NOT stuck — liveness is updated_at, not started_at (2026-09-03 swarm roots 9036/9043)", () => {
+    // Swarm root: started 25 min ago, last progress report 1 min ago.
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-25 minutes'), datetime('now','-1 minute'))`,
+    ).run("live-long", "Swarm root");
+    // Same age, but silent for 16 min — that one IS stuck.
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-25 minutes'), datetime('now','-16 minutes'))`,
+    ).run("silent-long", "Silent");
+
+    (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
+
+    const status = (id: string) =>
+      (
+        db.prepare("SELECT status FROM tasks WHERE task_id=?").get(id) as {
+          status: string;
+        }
+      ).status;
+    expect(status("live-long")).toBe("running");
+    expect(status("silent-long")).toBe("failed");
+  });
+
+  it("task.progress persists progress and refreshes the liveness stamp — only while running", () => {
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, progress, started_at, updated_at) VALUES (?, 'running', ?, 0, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
+    ).run("prog-1", "Running");
+    db.prepare(
+      `INSERT INTO tasks (task_id, status, title, progress, started_at, updated_at, completed_at) VALUES (?, 'completed', ?, 100, datetime('now','-20 minutes'), datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
+    ).run("done-1", "Done");
+
+    const handler = capturedHandlers.get("task.progress");
+    expect(handler).toBeDefined();
+    const emit = (task_id: string, progress: number) =>
+      handler!({
+        id: "evt-p",
+        type: "task.progress",
+        data: {
+          task_id,
+          agent_id: "swarm",
+          progress,
+          phase: "execute",
+          message: "x",
+        },
+      });
+    const row = (id: string) =>
+      db
+        .prepare(
+          "SELECT progress, (updated_at > datetime('now','-1 minute')) AS fresh FROM tasks WHERE task_id=?",
+        )
+        .get(id) as { progress: number; fresh: number };
+
+    emit("prog-1", 42.6); // rounded — the column is INTEGER
+    expect(row("prog-1")).toEqual({ progress: 43, fresh: 1 });
+    emit("prog-1", -5); // clamped low
+    expect(row("prog-1").progress).toBe(0);
+    emit("prog-1", 250); // clamped high, never violates the 0..100 CHECK
+    expect(row("prog-1").progress).toBe(100);
+    // A heartbeat without a percentage (container sentinel) refreshes
+    // liveness and keeps the last progress.
+    db.prepare(
+      "UPDATE tasks SET updated_at = datetime('now','-20 minutes') WHERE task_id='prog-1'",
+    ).run();
+    emit("prog-1", Number.NaN);
+    expect(row("prog-1")).toEqual({ progress: 100, fresh: 1 });
+    // Terminal row untouched by a late event.
+    emit("done-1", 5);
+    expect(row("done-1")).toEqual({ progress: 100, fresh: 0 });
+
+    // The refreshed task is no longer a watchdog candidate.
+    (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
+    expect(
+      (
+        db.prepare("SELECT status FROM tasks WHERE task_id='prog-1'").get() as {
+          status: string;
+        }
+      ).status,
+    ).toBe("running");
   });
 });

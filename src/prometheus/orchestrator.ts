@@ -21,10 +21,14 @@ import { executeGraph } from "./executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 import { reflect } from "./reflector.js";
 import { resolveUseOpus } from "./model-tier.js";
-import { eventBus } from "../lib/event-bus.js";
+import { getEventBus } from "../lib/event-bus.js";
 import type { PrometheusSnapshot } from "./snapshot.js";
 import { errMsg } from "../lib/err-msg.js";
-import { declareGates, gateSpecsFromGoal } from "../lib/v8-4/gates.js";
+import {
+  abandonPlanGatesForGoals,
+  declareGates,
+  gateSpecsFromGoal,
+} from "../lib/v8-4/gates.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -402,10 +406,47 @@ export async function orchestrate(
 
     // --- SNAPSHOT on early exit ---
     const postExecSummary = graph.summary();
-    if (postExecSummary.pending > 0 || postExecSummary.in_progress > 0) {
-      const exitReason = timeoutController.signal.aborted
-        ? "timeout"
-        : "budget_exhausted";
+    // "aborted" = the loop left for another reason (replan threw, deferred
+    // vote with nothing to re-run) — not a budget event; the label is
+    // load-bearing now (heavy-runner turns it into the error / concern).
+    const exitReason: "timeout" | "budget_exhausted" | "aborted" | undefined =
+      postExecSummary.pending > 0 || postExecSummary.in_progress > 0
+        ? timeoutController.signal.aborted
+          ? "timeout"
+          : budget.remaining <= 0
+            ? "budget_exhausted"
+            : "aborted"
+        : undefined;
+    const unfinishedGoals = exitReason
+      ? graph
+          .getAll()
+          .filter(
+            (g) =>
+              g.status === GoalStatus.PENDING ||
+              g.status === GoalStatus.IN_PROGRESS,
+          )
+          .map((g) => g.id)
+      : [];
+    if (exitReason) {
+      // Surrender the plan gates of goals that never ran: left pending they
+      // FAIL at completion and again at the parent's re-verify, demoting a
+      // promoted partial for work that was never attempted (qa R2 #4).
+      try {
+        const n = abandonPlanGatesForGoals(
+          taskId,
+          unfinishedGoals,
+          `goal unfinished — orchestrator ${exitReason}`,
+        );
+        if (n > 0) {
+          console.log(
+            `[orchestrator] Task ${taskId}: abandoned ${n} plan gate(s) of unfinished goals (${exitReason})`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[orchestrator] Task ${taskId}: plan gates of unfinished goals not abandoned: ${errMsg(err)}`,
+        );
+      }
       try {
         const { saveSnapshot } = await import("./snapshot.js");
         saveSnapshot({
@@ -430,7 +471,7 @@ export async function orchestrate(
           taskDescription,
           toolNames: toolNames ?? null,
           config: config ?? null,
-          exitReason: exitReason as "timeout" | "budget_exhausted",
+          exitReason,
           createdAt: new Date().toISOString(),
         });
         traceRecord(trace, "snapshot_saved", {
@@ -511,24 +552,38 @@ export async function orchestrate(
       }
     }
 
-    // Grading-vs-execution split: when every goal completed but reflection
-    // scored below the success gate (best-effort discount, convergence
-    // penalty), the deliverable exists — flag it so the runner promotes to
-    // DONE_WITH_CONCERNS instead of discarding the answer as "failed".
+    // Grading-vs-execution split: when every goal that finished completed
+    // (none failed or blocked) but reflection scored below the success gate
+    // (best-effort discount, convergence penalty), the deliverable exists —
+    // flag it so the runner promotes to DONE_WITH_CONCERNS instead of
+    // discarding the answer as "failed". Covers the early-exit shape too
+    // (`exitReason`: the remaining goals ran out of time/budget, none
+    // failed) — with a floor: at least half the goals completed. A 1-of-8
+    // partial is not a deliverable, and the swarm maps the child's
+    // completed_with_concerns to a COMPLETED goal (qa R2 #3).
     const finalSummary = graph.summary();
     const completedWithConcerns =
       !reflection.success &&
       finalSummary.total > 0 &&
-      finalSummary.completed === finalSummary.total;
+      finalSummary.completed > 0 &&
+      finalSummary.failed === 0 &&
+      finalSummary.blocked === 0 &&
+      (finalSummary.completed === finalSummary.total ||
+        (exitReason !== undefined &&
+          finalSummary.completed * 2 >= finalSummary.total));
 
     console.log(
       `[orchestrator] Task ${taskId}: complete — success=${reflection.success} score=${reflection.score.toFixed(2)} tokens=${totalPromptTokens + totalCompletionTokens} iterations=${budget.consumed}` +
-        (completedWithConcerns ? " (all goals completed → concerns)" : ""),
+        (exitReason
+          ? ` (${exitReason}: ${unfinishedGoals.join(", ")} unfinished)`
+          : "") +
+        (completedWithConcerns ? " (finished goals completed → concerns)" : ""),
     );
 
     return {
       success: reflection.success,
       completedWithConcerns,
+      ...(exitReason && { exitReason, unfinishedGoals }),
       goalGraph: graph.toJSON(),
       executionResults,
       reflection,
@@ -682,7 +737,10 @@ function emitProgress(
   message: string,
 ): void {
   try {
-    eventBus.emit("task.progress", {
+    // emitEvent, not the EventEmitter facade: `subscribe()` handlers (the
+    // stuck-watchdog liveness stamp in reactions/manager.ts) only see events
+    // that go through broadcast — `eventBus.emit` never reached them (qa R2 #1).
+    getEventBus().emitEvent("task.progress", {
       task_id: taskId,
       agent_id: "heavy",
       progress,

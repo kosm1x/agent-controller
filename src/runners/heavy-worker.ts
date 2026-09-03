@@ -73,6 +73,10 @@ async function main(): Promise<void> {
       // Graded-down completion flag — host-side heavy-runner promotes this
       // shape to DONE_WITH_CONCERNS (see executeInContainer).
       completedWithConcerns: result.completedWithConcerns ?? false,
+      // Early-exit reason + what was left; host-side heavy-runner turns it
+      // into the error (not promoted) or a concern (promoted).
+      exitReason: result.exitReason,
+      unfinishedGoals: result.unfinishedGoals,
       content: result.reflection.summary,
       score: result.reflection.score,
       learnings: result.reflection.learnings,

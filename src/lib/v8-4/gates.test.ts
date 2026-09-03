@@ -5,10 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, initDatabase } from "../../db/index.js";
 import {
+  abandonPlanGatesForGoals,
   declareGates,
   formatLedgerBlock,
   freezeGates,
   gateSpecsFromGoal,
+  isLiteralSourcedCheck,
   gatesMode,
   hasGates,
   ledgerSummaryJson,
@@ -362,9 +364,123 @@ describe("gateSpecsFromGoal", () => {
 
   it("produced ids are declarable (id charset) even for odd goal ids", () => {
     const specs = gateSpecsFromGoal("goal with spaces!", {
-      gates: [{ criterion: "c", check: "true" }],
+      gates: [{ criterion: "c", check: "test -f README.md" }],
     });
     expect(specs[0]!.id).toBe("goal-with-spaces-.1");
     expect(declareGates("t8", specs, "plan")).toBe(1);
+  });
+
+  it("refuses literal-sourced checks — the planner's echo gates of 2026-09-03 (task e63ac8dc) observe nothing", () => {
+    const literal = [
+      "echo 'verify via gdocs_read on returned doc id'",
+      "echo 'verify via gdocs_read' | grep -q 'gdocs_read' && echo 'Plan de Acción'",
+      "printf 'ok\n'",
+      "true",
+      "false",
+      ":",
+      "FOO=1 echo done",
+      "  echo;",
+      "(echo x)",
+      "{ echo x; }",
+      "bash -c 'echo x'",
+      'sh -c "echo ok"',
+      "/bin/echo x",
+      "/usr/bin/printf ok",
+      "command echo x",
+      "builtin echo x",
+    ];
+    for (const check of literal) {
+      expect(isLiteralSourcedCheck(check), check).toBe(true);
+    }
+    const observing = [
+      "grep -q 'Plan de Acción' /root/claude/jarvis-kb/projects/x.md",
+      "curl -sf https://example.com | grep -q ok",
+      "test -f README.md && echo ok",
+      "npx vitest run src/x.test.ts",
+      'sqlite3 data/mc.db "SELECT count(*) FROM tasks"',
+      "cat out.txt",
+      "echoing=1 cat out.txt", // not a bare `echo`
+    ];
+    for (const check of observing) {
+      expect(isLiteralSourcedCheck(check), check).toBe(false);
+    }
+
+    const specs = gateSpecsFromGoal("g-5", {
+      gates: [
+        {
+          criterion: "Doc reachable",
+          check: "echo 'verify via gdocs_read'",
+          expect: "Plan de Acción",
+        },
+        { criterion: "Doc has title", check: "grep -q 'Plan' /tmp/doc.txt" },
+      ],
+    });
+    expect(specs.map((s) => s.id)).toEqual(["g-5.1", "g-5.2"]);
+    // Refused visibly: the row is declared ABANDONED with the reason, so the
+    // ledger lists the surrender instead of a gap (doctrine 3).
+    expect(specs[0]).toMatchObject({
+      kind: "manual",
+      abandonReason: expect.stringContaining("literal-sourced"),
+    });
+    expect(specs[0]!.check).toBeUndefined();
+    expect(specs[1]).toMatchObject({ kind: "shell" });
+
+    expect(declareGates("t9", specs, "plan")).toBe(2);
+    const rows = listGates("t9");
+    expect(rows.find((r) => r.gate_id === "g-5.1")).toMatchObject({
+      state: "abandoned",
+      abandon_reason: expect.stringContaining("echo 'verify via gdocs_read'"),
+      check_cmd: null,
+    });
+    const v = ledgerVerdict(rows);
+    expect(v).toMatchObject({ total: 2, abandoned: 1, pending: 1, failed: 0 });
+    expect(v.verdict).toBe("unverified"); // never "none": the surrender counts
+
+    // The API / ritual door refuses the same shape outright.
+    expect(() =>
+      parseGateSpecs([{ criterion: "x", check: "echo ok", expect: "ok" }]),
+    ).toThrow(/literal-sourced/);
+    expect(
+      parseGateSpecs([{ criterion: "x", check: "test -f README.md" }]),
+    ).toHaveLength(1);
+  });
+
+  it("abandonPlanGatesForGoals surrenders only the pending PLAN gates of the named goals (early exit, qa R2 #4)", () => {
+    declareGates(
+      "t10",
+      [
+        { id: "g-1.1", criterion: "a", check: "test -f a" },
+        { id: "g-10.1", criterion: "b", check: "test -f b" }, // prefix cousin
+        { id: "g-2.1", criterion: "c", check: "test -f c" },
+        { id: "g-2.2", criterion: "d", check: "test -f d" },
+        { id: "g_3.1", criterion: "e", check: "test -f e" }, // LIKE wildcard in id
+      ],
+      "plan",
+    );
+    declareGates(
+      "t10",
+      [{ id: "S1", criterion: "op", check: "test -f s" }],
+      "submission",
+    );
+    recordGateResult("t10", "g-2.2", { state: "met", evidence: "seen" });
+
+    expect(
+      abandonPlanGatesForGoals(
+        "t10",
+        ["g-2", "g_3", "g-9"],
+        "goal unfinished — orchestrator timeout",
+      ),
+    ).toBe(2); // g-2.1 (pending) + g_3.1; g-2.2 already met, g-9 has none
+    const by = Object.fromEntries(listGates("t10").map((r) => [r.gate_id, r]));
+    expect(by["g-2.1"]).toMatchObject({
+      state: "abandoned",
+      abandon_reason: "goal unfinished — orchestrator timeout",
+    });
+    expect(by["g_3.1"]!.state).toBe("abandoned");
+    expect(by["g-2.2"]!.state).toBe("met");
+    expect(by["g-1.1"]!.state).toBe("pending");
+    expect(by["g-10.1"]!.state).toBe("pending"); // "g-1." must not match "g-10."
+    expect(by["S1"]!.state).toBe("pending"); // submission gates are never touched
+    expect(abandonPlanGatesForGoals("t10", [], "x")).toBe(0);
   });
 });

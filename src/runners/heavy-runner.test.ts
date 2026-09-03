@@ -320,6 +320,61 @@ describe("heavyRunner", () => {
     expect(result.success).toBe(false);
     expect(result.status).toBeUndefined();
     expect(result.concerns).toBeUndefined();
+    // The failure channel is never empty: no exit reason ⇒ the reflection
+    // verdict is the error (qa R2 #8), not "Unknown error" downstream.
+    expect(result.error).toBe(
+      "Reflection below success gate (score 0.30): Goal g-1 failed",
+    );
+  });
+
+  it('an early exit that is NOT promoted carries the exit reason as the error — never "Unknown error" (task cbc9e3fa, 2026-09-03)', async () => {
+    mockOrchestrate.mockResolvedValueOnce(
+      makeOrchestratorResult({
+        success: false,
+        completedWithConcerns: false,
+        exitReason: "timeout",
+        unfinishedGoals: ["g-3"],
+        reflection: { success: false, score: 0.0, learnings: [], summary: "x" },
+      }),
+    );
+
+    const result = await heavyRunner.execute({
+      taskId: "task-timeout",
+      runId: "run-timeout",
+      title: "Timed out",
+      description: "Global timeout with a failed goal",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(
+      "Orchestrator global timeout before every goal finished — unfinished: g-3",
+    );
+  });
+
+  it("a promoted early exit names the unfinished goals as the first concern", async () => {
+    mockOrchestrate.mockResolvedValueOnce(
+      makeOrchestratorResult({
+        success: false,
+        completedWithConcerns: true,
+        exitReason: "budget_exhausted",
+        unfinishedGoals: ["g-3"],
+        reflection: { success: false, score: 0.0, learnings: [], summary: "x" },
+      }),
+    );
+
+    const result = await heavyRunner.execute({
+      taskId: "task-timeout-promoted",
+      runId: "run-timeout-promoted",
+      title: "Partial",
+      description: "2/3 done, budget exhausted",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.error).toBeUndefined();
+    expect(result.concerns).toEqual([
+      "Orchestrator iteration budget exhausted before every goal finished — unfinished: g-3",
+    ]);
   });
 
   it("should catch thrown errors and return failure", async () => {

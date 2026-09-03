@@ -68,6 +68,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
     // "[Task failed] Unknown error"). Same promote-to-deliver precedent as
     // fast-runner's needs-context text handling.
     const promoted = !result.success && result.completedWithConcerns === true;
+    const exitNote = exitNoteOf(result.exitReason, result.unfinishedGoals);
     const unverifiedGoals = promoted
       ? Object.values(result.executionResults.goalResults)
           .filter((gr) => gr.criteriaMet === false)
@@ -79,13 +80,26 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
 
     return {
       success: result.success || promoted,
+      // Preserve the failure channel: a non-promoted early exit reached the
+      // dispatcher as "Unknown error" and swarm-retry as terminal
+      // unknown_failure (2026-09-03, task cbc9e3fa).
+      ...(!result.success &&
+        !promoted && {
+          error:
+            exitNote ??
+            `Reflection below success gate (score ${result.reflection.score.toFixed(2)}): ${result.reflection.summary.slice(0, 200)}`,
+        }),
       ...(promoted && {
         status: "DONE_WITH_CONCERNS" as const,
-        concerns: unverifiedGoals.length
-          ? unverifiedGoals
-          : [
-              `Reflection score ${result.reflection.score.toFixed(2)} below success gate`,
-            ],
+        concerns: [
+          ...(exitNote ? [exitNote] : []),
+          ...unverifiedGoals,
+          ...(!exitNote && unverifiedGoals.length === 0
+            ? [
+                `Reflection score ${result.reflection.score.toFixed(2)} below success gate`,
+              ]
+            : []),
+        ],
       }),
       output: {
         content: result.reflection.summary,
@@ -129,6 +143,25 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       durationMs: Date.now() - start,
     };
   }
+}
+
+/**
+ * One line naming why the orchestrator stopped early and which goals it left
+ * unfinished — the error when the task is not promoted, the first concern
+ * when it is. `undefined` when every goal finished.
+ */
+function exitNoteOf(
+  exitReason: "timeout" | "budget_exhausted" | "aborted" | undefined,
+  unfinishedGoals: string[] | undefined,
+): string | undefined {
+  if (!exitReason) return undefined;
+  const why =
+    exitReason === "timeout"
+      ? "Orchestrator global timeout"
+      : exitReason === "budget_exhausted"
+        ? "Orchestrator iteration budget exhausted"
+        : "Orchestrator stopped early";
+  return `${why} before every goal finished — unfinished: ${unfinishedGoals?.join(", ") || "unknown"}`;
 }
 
 async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
@@ -246,6 +279,8 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     const parsed = JSON.parse(containerOutput.result ?? "{}") as {
       success?: boolean;
       completedWithConcerns?: boolean;
+      exitReason?: "timeout" | "budget_exhausted" | "aborted";
+      unfinishedGoals?: string[];
       content?: string;
       score?: number;
       learnings?: string[];
@@ -280,15 +315,28 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     // generic line.
     const containerPromoted =
       parsed.success === false && parsed.completedWithConcerns === true;
+    const containerExitNote = exitNoteOf(
+      parsed.exitReason,
+      parsed.unfinishedGoals,
+    );
     // V8.4 (2026-08-16): a blob with NO `success` field is a protocol gap,
     // not a success — deliver, but as completed_with_concerns.
     const selfAttested = typeof parsed.success === "boolean";
 
     return {
       success: (selfAttested ? parsed.success === true : true) || containerPromoted,
+      ...(parsed.success === false &&
+        !containerPromoted && {
+          error:
+            containerExitNote ??
+            `Reflection below success gate (score ${typeof parsed.score === "number" ? parsed.score.toFixed(2) : "?"}): ${(parsed.content ?? "").slice(0, 200)}`,
+        }),
       ...((containerPromoted || !selfAttested) && {
         status: "DONE_WITH_CONCERNS" as const,
         concerns: [
+          ...(containerPromoted && containerExitNote
+            ? [containerExitNote]
+            : []),
           containerPromoted
             ? "Success criteria not fully verified (best-effort goals)"
             : "container worker returned no `success` field — completion not self-attested",

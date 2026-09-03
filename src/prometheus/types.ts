@@ -232,14 +232,25 @@ export interface RunTrace {
 export interface OrchestratorResult {
   success: boolean;
   /**
-   * Every goal completed (0 failed/blocked/pending) but reflection graded
-   * below the success gate — e.g. best-effort goals discounted the score.
+   * Every goal that finished completed (0 failed/blocked) — all of them, or
+   * the rest ran out of time/budget (`exitReason`) — but reflection graded
+   * below the success gate, e.g. best-effort goals discounted the score.
    * The deliverable exists; the heavy runner promotes this shape to
    * DONE_WITH_CONCERNS instead of failing the task (2026-07-27: task
    * e6f3dfa0 delivered a full PDF-verification report as "[Task failed]
-   * Unknown error").
+   * Unknown error"; 2026-09-03: task cbc9e3fa hit the global timeout with
+   * 2/3 goals done, provenance + readback MET, and failed with an empty error).
    */
   completedWithConcerns?: boolean;
+  /**
+   * Set when execution stopped before every goal finished: global timeout,
+   * iteration budget, or `aborted` (the loop left for another reason — a
+   * replan threw, a deferred vote had nothing to re-run). `unfinishedGoals`
+   * names what was left; the runner surfaces both as the error, or as a
+   * concern when promoted.
+   */
+  exitReason?: "timeout" | "budget_exhausted" | "aborted";
+  unfinishedGoals?: string[];
   goalGraph: { goals: Record<string, Goal> };
   executionResults: ExecutionResult;
   reflection: ReflectionResult;

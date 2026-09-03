@@ -734,6 +734,13 @@ export const swarmRunner: Runner = {
         ) {
           await sleep(POLL_INTERVAL_MS);
           child = getTask(demoted.taskId);
+          // Liveness stamp for the stuck watchdog while the heavy child runs
+          // (same class as the fan-out poll loop below; qa R2 #2).
+          emitSwarmProgress(
+            input.taskId,
+            20,
+            "Chain plan — heavy sub-task running",
+          );
         }
         const childStatus = child?.status ?? "unknown";
         const childSucceeded =

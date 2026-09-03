@@ -44,6 +44,12 @@ export interface GateSpec {
   expect?: string;
   /** `shell` (has `check`) · `landing` (harness probes the remote) · `manual` (no runnable proof). */
   kind?: GateCheckKind;
+  /**
+   * Declare the row already surrendered (`state: abandoned`, this reason).
+   * Used when the resolver refuses a check: the gate still appears in every
+   * ledger listing instead of vanishing (doctrine 3, "surrender is visible").
+   */
+  abandonReason?: string;
 }
 
 export interface GateRow {
@@ -111,6 +117,11 @@ export function parseGateSpecs(raw: unknown): GateSpec[] {
         throw new Error(`gates[${i}]: check must be 1..${MAX_CHECK} chars`);
       }
       spec.check = o.check.trim();
+      if (isLiteralSourcedCheck(spec.check)) {
+        throw new Error(
+          `gates[${i}]: check must observe the artifact — a literal-sourced command (echo/printf/true/false) proves nothing`,
+        );
+      }
     }
     if (o.expect !== undefined) {
       if (typeof o.expect !== "string" || o.expect.length > MAX_EXPECT) {
@@ -139,23 +150,99 @@ export function parseGateSpecs(raw: unknown): GateSpec[] {
  * object-form criteria). Ids are `<goalId>.<n>` so a task ledger built from a
  * whole graph stays unique and traceable to its goal.
  */
+/**
+ * A check whose only data source is a literal proves nothing about the
+ * artifact: `echo 'verify via gdocs_read' | grep -q gdocs_read && echo ok`
+ * is met by construction, and `echo '<prose>'` against an EXPECT can never
+ * be met. The planner emitted both shapes (2026-09-03, task e63ac8dc: gate
+ * g-5.1 failed on a bare echo and the parent re-verification demoted a
+ * finished 43 kB deliverable). Refused at the resolver — the first command
+ * of the pipeline must be something that observes (cat/grep FILE, curl,
+ * sqlite3, test -f, a test runner…). Leading VAR=value assignments are
+ * skipped so `FOO=1 echo` is still caught.
+ */
+const LITERAL_SOURCE_RE =
+  /^\s*[({]?\s*(?:(?:ba|z|da)?sh\s+-c\s+['"]?)?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:command\s+|builtin\s+)?(?:\/(?:usr\/)?bin\/)?(?:echo|printf|true|false|:)(?=\s|$|[;|&)}'"])/;
+
+/**
+ * First-command anchor: also catches `(echo x)`, `{ echo x; }`, `sh -c
+ * 'echo x'`, `/bin/echo`, `command echo`. Known residual: a literal AFTER a
+ * real command (`cd /tmp && echo ok`, `test -z '' && echo ok`) passes — the
+ * planner rule and the operator's read of the ledger cover that shape.
+ */
+export function isLiteralSourcedCheck(check: string): boolean {
+  return LITERAL_SOURCE_RE.test(check);
+}
+
+/** Plan gate ids are `<goal>.<n>`; the goal part is sanitised like this. */
+function planGateIdPrefix(goalId: string): string {
+  return `${goalId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 24)}.`;
+}
+
+/**
+ * Surrender the still-pending plan gates of goals that never ran (orchestrator
+ * early exit). Left pending they FAIL at completion and again at the parent's
+ * re-verify, demoting a promoted partial for work that was never attempted.
+ * Abandoned rows are skipped by evaluation and listed by every consumer.
+ * Returns the number of rows changed.
+ */
+export function abandonPlanGatesForGoals(
+  taskId: string,
+  goalIds: readonly string[],
+  reason: string,
+  db: Database.Database = getDatabase(),
+): number {
+  if (goalIds.length === 0) return 0;
+  const stmt = db.prepare(
+    `UPDATE task_gates
+        SET state = 'abandoned', abandon_reason = ?, checked_at = datetime('now')
+      WHERE task_id = ? AND source = 'plan' AND state = 'pending'
+        AND gate_id LIKE ? ESCAPE '\\'`,
+  );
+  let changed = 0;
+  const tx = db.transaction(() => {
+    for (const goalId of goalIds) {
+      const prefix = planGateIdPrefix(goalId).replace(/[\\%_]/g, "\\$&");
+      changed += stmt.run(reason.slice(0, MAX_EVIDENCE), taskId, `${prefix}%`)
+        .changes;
+    }
+  });
+  tx();
+  return changed;
+}
+
 export function gateSpecsFromGoal(
   goalId: string,
   metadata: Record<string, unknown> | undefined,
 ): GateSpec[] {
   const raw = metadata?.gates;
   if (!Array.isArray(raw)) return [];
-  const safeGoal = goalId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 24);
+  const prefix = planGateIdPrefix(goalId);
   const out: GateSpec[] = [];
   raw.forEach((item, i) => {
     if (!item || typeof item !== "object") return;
     const o = item as { criterion?: unknown; check?: unknown; expect?: unknown };
     if (typeof o.criterion !== "string" || !o.criterion.trim()) return;
     if (typeof o.check !== "string" || !o.check.trim()) return;
+    const check = o.check.trim();
+    if (isLiteralSourcedCheck(check)) {
+      // Refused, but visibly: the row lands ABANDONED with the reason, so
+      // the ledger shows the surrender instead of a gap (doctrine 3).
+      console.warn(
+        `[gates] ${goalId}: plan gate ${i + 1} abandoned — check is literal-sourced, observes nothing: ${check.slice(0, 80)}`,
+      );
+      out.push({
+        id: `${prefix}${i + 1}`,
+        criterion: o.criterion.trim().slice(0, MAX_CRITERION),
+        kind: "manual",
+        abandonReason: `check is literal-sourced — observes nothing: ${check.slice(0, 120)}`,
+      });
+      return;
+    }
     out.push({
-      id: `${safeGoal}.${i + 1}`,
+      id: `${prefix}${i + 1}`,
       criterion: o.criterion.trim().slice(0, MAX_CRITERION),
-      check: o.check.trim().slice(0, MAX_CHECK),
+      check: check.slice(0, MAX_CHECK),
       ...(typeof o.expect === "string" && o.expect && {
         expect: o.expect.slice(0, MAX_EXPECT),
       }),
@@ -184,8 +271,8 @@ export function declareGates(
   if (specs.length === 0) return 0;
   const insert = db.prepare(
     `INSERT OR IGNORE INTO task_gates
-       (task_id, gate_id, criterion, check_kind, check_cmd, expect, source)
-     VALUES (@taskId, @gateId, @criterion, @kind, @check, @expect, @source)`,
+       (task_id, gate_id, criterion, check_kind, check_cmd, expect, source, state, abandon_reason)
+     VALUES (@taskId, @gateId, @criterion, @kind, @check, @expect, @source, @state, @abandonReason)`,
   );
   const existingIds = db
     .prepare(`SELECT gate_id FROM task_gates WHERE task_id = ?`)
@@ -228,6 +315,8 @@ export function declareGates(
             : null,
         expect: kind === "shell" ? (spec.expect ?? null) : null,
         source,
+        state: spec.abandonReason ? "abandoned" : "pending",
+        abandonReason: spec.abandonReason?.slice(0, MAX_EVIDENCE) ?? null,
       });
       if (info.changes > 0) {
         inserted++;

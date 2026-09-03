@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "fs";
 import { posix } from "path";
 import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
+import { getEventBus } from "../lib/event-bus.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -450,6 +451,26 @@ export function buildDockerRunArgs(opts: {
  */
 export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   const config = getConfig();
+  // The worker's 60 s progress sentinel resets the inactivity timer below;
+  // surface it as task liveness too (no percentage — the stuck watchdog in
+  // reactions/manager.ts keys on updated_at). Without this a nanoclaw or
+  // containerized heavy run working past 15 min is killed as "stuck".
+  const heartbeatTaskId =
+    typeof opts.input.taskId === "string" ? opts.input.taskId : undefined;
+  const emitHeartbeat = (): void => {
+    if (!heartbeatTaskId) return;
+    try {
+      getEventBus().emitEvent("task.progress", {
+        task_id: heartbeatTaskId,
+        agent_id: "container",
+        progress: Number.NaN,
+        phase: "execute",
+        message: "Container heartbeat",
+      });
+    } catch {
+      // Best-effort — the bus may be uninitialised (tests).
+    }
+  };
   // Fallback to the real, present image (mission-control:latest). The former
   // `nanoclawImage` default ("nanoclaw-agent:latest") never existed on the host,
   // so an image-less call silently exit-125'd — the same drift that broke the
@@ -578,6 +599,7 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
         const parsed = parsePayload(jsonStr);
         if (parsed.kind === "progress") {
           resetTimer();
+          emitHeartbeat();
           continue;
         }
         if (parsed.output) {
