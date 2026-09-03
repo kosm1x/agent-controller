@@ -1108,3 +1108,17 @@ From `docs/planning/nanoclaw-upstream-review-2026-09-01.md` (memory `reference_n
 2. **The planner's "verify and report the link" scaffolding goal** costs a full round after the deliverable is done. A consolidation goal should return the link in the same round that writes the Doc; consider a planner rule ("the goal that creates an artifact reports its URL in its own answer") instead of a separate verification goal — the harness read-back already verifies.
 3. **Telegram flood**: 22 chunks (~86 kB) for a partial delivery. When a deliverable exceeds ~6 chunks, write it to the KB / a Doc and send the pointer + the first chunk (same pointer-followable rule as [[feedback_pointer_followable_from_delivery_surface]]).
 4. **Retry-until-abort masks genuine failures**: after the global signal fires, every goal still retrying reports "Aborted" (now unfinished) — a goal that had already thrown a genuine error twice is indistinguishable from an interrupted one. Acceptable (the run WAS interrupted), noted for the reflector's benefit.
+
+## 2026-09-03d — Third re-run (task 9065): 0/4 on sandbox routing; two more gate shapes caught by offline replay
+
+**Observed:** root 22:14→22:22; all three children `nanoclaw` ("coding task → nanoclaw", score 4), each ~5 min / 64 tool calls hunting for `gdocs_read` inside a sandbox that registers only shell/file/grep/glob/code-search/jarvis_dev tools. Root 0/4, score 0.00. Earlier runs' children went heavy by luck (goal text named a registered project → `referencesForeignProject` bypass).
+
+**Shipped (this commit):** `classifier.ts` — `tools` on `ClassificationInput`, `hostOnlyTools()` allow-by-membership vs the sandbox's 11 registered tools, guard on BOTH nanoclaw exits; `dispatcher.ts` passes `submission.tools` · `gate-check.ts` — not-found detection keyed on the shell diagnostic LINE (real pipelines exit 1, not 127) + `undefinedShellVars()` (a check reading `$DOC_ID` that nobody defines is NOT RUNNABLE). Replays: 5/5 real children → heavy; 5/5 real gate rows of c4c6ae63 → abandoned, 0 failed.
+
+**Residual risk for the next run (stated, not hidden):** (a) the swarm reflector is an LLM score — 4/4 completed can still grade < 0.8 (then the router delivers the joined answer with the caveat, Doc link included since the consolidation child is `completed`/`completed_with_concerns`); (b) a consolidation child with >6 goals at ~2–4 min each can exceed 900 s → promoted partial with the unfinished goal named; (c) success delivery of 4 joined heavy answers is ~100 kB → 25+ Telegram chunks (flood, not failure); (d) the planner can invent a gate shape not covered by literal/not-found/undefined-var (e.g. `curl` to a URL that needs auth) — it FAILS honestly and demotes; the read-back still proves the write.
+
+**Deferreds:**
+
+1. **`SANDBOX_TOOL_NAMES` mirrors `nanoclaw-worker.ts` by hand** — add a test that imports the worker's registration list (needs the worker's registrations factored out of its entrypoint) so the two cannot drift.
+2. **Swarm children should carry the root's `messaging` tag or an explicit `agentType`** — routing a child by re-classifying its generated description is inherently brittle; the tool guard removes the dangerous outcome, not the brittleness.
+3. **Telegram chunk cap** (see 2026-09-03c #3) — now also on the SUCCESS path once a swarm completes.

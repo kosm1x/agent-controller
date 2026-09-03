@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   classify,
+  hostOnlyTools,
   isCodingTask,
   referencesExternalWebTarget,
   needsHeavyReasoning,
@@ -29,6 +30,49 @@ describe("classifier", () => {
     expect(result.agentType).toBe("fast");
     expect(result.score).toBeLessThan(3);
     expect(result.explicit).toBe(false);
+  });
+
+  it("a task whose toolset is host-only never routes to the nanoclaw sandbox — coding text or not (swarm task c5e6b0f9, 2026-09-03)", () => {
+    // Swarm child: the planner's goal text tripped the coding heuristic
+    // ("create/write … document/file"), the child inherited the root's
+    // Google Workspace + KB toolset, and the sandbox has none of it.
+    const hostTools = ["gdocs_read_full", "gdocs_write", "jarvis_file_write"];
+    const codingShaped = {
+      title: "[Swarm] Write the action plan file for fases 9-11",
+      description:
+        "Create the document from the source Google Doc and write the file with the plan.",
+    };
+    expect(classify(codingShaped).agentType).toBe("nanoclaw"); // baseline: text alone
+    const guarded = classify({ ...codingShaped, tools: hostTools });
+    expect(guarded.agentType).not.toBe("nanoclaw");
+    expect(guarded.explicit).toBe(false);
+
+    // Score-path exit (isolation keywords) is guarded too.
+    const isolation = {
+      title: "Run in container",
+      description:
+        "Execute this task in a sandbox environment with proper isolation",
+    };
+    expect(classify(isolation).agentType).toBe("nanoclaw");
+    expect(classify({ ...isolation, tools: hostTools }).agentType).toBe(
+      "heavy",
+    );
+
+    // A toolset the sandbox DOES register keeps the sandbox route.
+    expect(
+      classify({ ...codingShaped, tools: ["shell_exec", "file_edit", "grep"] })
+        .agentType,
+    ).toBe("nanoclaw");
+  });
+
+  it("hostOnlyTools is allow-by-membership — an unknown tool is host-only (safe direction)", () => {
+    expect(hostOnlyTools(undefined)).toEqual([]);
+    expect(hostOnlyTools(["shell_exec", "file_read", "jarvis_dev"])).toEqual(
+      [],
+    );
+    expect(
+      hostOnlyTools(["shell_exec", "gdocs_read", "brand_new_tool"]),
+    ).toEqual(["gdocs_read", "brand_new_tool"]);
   });
 
   it("should classify isolation keywords as nanoclaw", () => {

@@ -61,6 +61,29 @@ export interface CheckOutcome {
 }
 
 /** Nested/adjacent quantifiers — the catastrophic-backtracking shapes. Rejected outright. */
+// dash: "/bin/sh: 1: gdocs_read: not found" · bash: "bash: gdocs_read: command
+// not found" / "/bin/bash: line 1: gdocs_read: command not found".
+const COMMAND_NOT_FOUND_RE =
+  /^(?:\S*\/)?(?:ba|da)?sh: (?:line )?(?:\d+: )?\S+: (?:command )?not found\s*$/m;
+
+/**
+ * Shell variables a check reads that nobody defines at evaluation time. The
+ * planner writes `test -n "$DOC_ID" && curl …` (task c4c6ae63 g-1.1) — the
+ * variable lived inside the goal's own run; in the bare /bin/sh the harness
+ * spawns it is empty, so the check observes nothing and must not FAIL the
+ * criterion. `$?`, `$1`, `$$` are not names and are left alone.
+ */
+export function undefinedShellVars(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const names = new Set<string>();
+  for (const m of command.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)) {
+    if (env[m[1]!] === undefined) names.add(m[1]!);
+  }
+  return [...names];
+}
+
 const NESTED_QUANTIFIER_RE = /\([^)]*[+*}][^)]*\)\s*[+*{]|[+*]\s*[+*]/;
 
 /**
@@ -189,6 +212,16 @@ export async function runCheck(
       timedOut: false,
     };
   }
+  const missingVars = undefinedShellVars(row.check_cmd);
+  if (missingVars.length > 0) {
+    return {
+      ok: false,
+      notRunnable: true,
+      evidence: `check references undefined variable(s) ${missingVars.map((v) => `$${v}`).join(", ")} — observes nothing`,
+      exitCode: null,
+      timedOut: false,
+    };
+  }
   const res = await opts.exec(row.check_cmd, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
@@ -202,11 +235,13 @@ export async function runCheck(
       timedOut: true,
     };
   }
-  // exit 127 + "not found": the command is not on the host. The planner
-  // writes Jarvis tool names (gdocs_read, jarvis_file_read) as shell
-  // commands (2026-09-03, task c4c6ae63: five gates FAILED on
-  // `gdocs_read: not found` around a Doc whose read-back was MET).
-  if (res.exitCode === 127 && /not found/i.test(res.output)) {
+  // The shell's own "command not found" diagnostic: the command is not on the
+  // host, so the check observed nothing. Keyed on the diagnostic LINE, not on
+  // exit 127 — the planner writes pipelines (`gdocs_read … | grep -c Fase`)
+  // whose exit status is the last stage's (grep → 1), verified against a real
+  // /bin/sh run of the gate from task c4c6ae63 (2026-09-03: five gates FAILED
+  // on `gdocs_read: not found` around a Doc whose read-back was MET).
+  if (COMMAND_NOT_FOUND_RE.test(res.output)) {
     return {
       ok: false,
       notRunnable: true,

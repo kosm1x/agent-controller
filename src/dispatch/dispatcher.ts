@@ -391,6 +391,9 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     // Sibling projects named (not just path-referenced) keep a coding task off
     // the mission-control-only nanoclaw sandbox. Resolved fresh per submission.
     foreignProjectNames: getForeignProjectNames(db),
+    // The requested toolset decides sandbox-capability (swarm children inherit
+    // the root's Google Workspace/KB tools — none exist in the sandbox).
+    tools: submission.tools,
   });
 
   // Insert task. retry_count defaults to 0 for fresh submissions; the

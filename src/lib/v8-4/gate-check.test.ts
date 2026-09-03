@@ -14,6 +14,7 @@ import {
   runCheck,
   runShellCheck,
   type CheckExecutor,
+  undefinedShellVars,
 } from "./gate-check.js";
 import type { LandingExec } from "./landing.js";
 
@@ -63,14 +64,58 @@ const fakeExec =
   };
 
 describe("runCheck", () => {
-  it("a command that does not exist (exit 127 + not found) is NOT RUNNABLE — abandoned with the reason, never FAILED (task c4c6ae63, 2026-09-03)", async () => {
+  it("a command that does not exist (the shell's not-found diagnostic) is NOT RUNNABLE — abandoned with the reason, never FAILED (task c4c6ae63, 2026-09-03)", async () => {
     const exec = fakeExec({
+      // Real shape: a pipeline — exit status is grep's (1), NOT 127; only the
+      // shell's diagnostic line says the command is missing.
       "gdocs_read 1cOi | grep -c Fase": {
         output: "/bin/sh: 1: gdocs_read: not found\n0",
+        exitCode: 1,
+      },
+      "bash-shape": {
+        output: "/bin/bash: line 1: gsheets_read: command not found",
         exitCode: 127,
       },
       "grep -q Fase /tmp/doc.txt": { output: "", exitCode: 0 },
+      // A check whose OUTPUT merely says "not found" is a real verdict.
+      "grep -c 'not found' /tmp/log.txt": {
+        output: "3 not found",
+        exitCode: 0,
+      },
     });
+    expect(
+      await runCheck(
+        { check_cmd: "bash-shape", expect: null },
+        { timeoutMs: 1000, exec },
+      ),
+    ).toMatchObject({ ok: false, notRunnable: true });
+    const verdictNotFound = await runCheck(
+      { check_cmd: "grep -c 'not found' /tmp/log.txt", expect: null },
+      { timeoutMs: 1000, exec },
+    );
+    expect(verdictNotFound.ok).toBe(true);
+    expect(verdictNotFound.notRunnable).toBeUndefined();
+
+    // A check that reads a variable nobody defines here (the planner's
+    // `$DOC_ID` from the goal's own run) never spawns and is NOT RUNNABLE.
+    const execSpy: CheckExecutor = async () => {
+      throw new Error("must not spawn");
+    };
+    const undefinedVar = await runCheck(
+      {
+        check_cmd:
+          'test -n "$DOC_ID" && curl -s "https://docs.google.com/document/d/$DOC_ID"',
+        expect: "200",
+      },
+      { timeoutMs: 1000, exec: execSpy },
+    );
+    expect(undefinedVar).toMatchObject({ ok: false, notRunnable: true });
+    expect(undefinedVar.evidence).toContain("$DOC_ID");
+    expect(undefinedShellVars("echo $HOME $PATH ${HOME} $? $1 $$")).toEqual([]);
+    expect(undefinedShellVars("x=$NOPE_A; y=${NOPE_B}", {})).toEqual([
+      "NOPE_A",
+      "NOPE_B",
+    ]);
     const missing = await runCheck(
       { check_cmd: "gdocs_read 1cOi | grep -c Fase", expect: "11" },
       { timeoutMs: 1000, exec },
@@ -78,7 +123,7 @@ describe("runCheck", () => {
     expect(missing).toMatchObject({
       ok: false,
       notRunnable: true,
-      exitCode: 127,
+      exitCode: 1,
     });
     expect(missing.evidence).toMatch(/observes nothing.*gdocs_read: not found/);
 

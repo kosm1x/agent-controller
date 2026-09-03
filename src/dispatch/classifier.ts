@@ -75,6 +75,14 @@ export interface ClassificationInput {
    * feedback_truncated_title_pr_misroute.
    */
   detectionText?: string;
+  /**
+   * Tools the submitter wants the task to run with (swarm children inherit
+   * the root's list; rituals pass a curated set). The nanoclaw sandbox
+   * registers a fixed, small tool set — a task that needs anything outside
+   * it (Google Workspace, KB, mail, web…) cannot run there and stays on a
+   * host runner. See `hostOnlyTools`.
+   */
+  tools?: string[];
 }
 
 export interface ClassificationResult {
@@ -232,6 +240,35 @@ const CODING_VERB =
 // strong signal (git/refactor/filename). "branch"/"rama" stay — they're code-only.
 const CODING_NOUN =
   /\b(function|funci[oó]n|method|m[eé]todo|class|clase|file|archivo|script|module|m[oó]dulo|component|componente|endpoint|api|route|ruta|tests?|prueba|bug|branch|rama|migration|migraci[oó]n|schema|esquema|feature|funcionalidad|patch|parche|dependenc\w*|service|servicio|flow|flujo|column|columna|field|campo|hook|handler|query|consulta|validation|validaci[oó]n|regex|import|config|configuraci[oó]n|table|tabla|interface|interfaz|enum|constant\w*|constante|variable|helper|util\w*|hash|webhook|linter|pipeline|vulnerabilit\w*)\b/i;
+
+/**
+ * Every tool the nanoclaw sandbox registers — MUST mirror the
+ * `toolRegistry.register(...)` block in src/runners/nanoclaw-worker.ts.
+ * Allow-by-membership: a tool not in this set is host-only, and a task that
+ * asks for one cannot be routed to the sandbox (2026-09-03, swarm task
+ * c5e6b0f9: three children whose whole toolset was Google Workspace + KB were
+ * auto-routed "coding task → nanoclaw", burned 64 tool calls each hunting for
+ * gdocs_read, and the swarm ended 0/4). Same class as the KB-save and
+ * foreign-repo guards above: the sandbox cannot reach it, so a host runner.
+ */
+const SANDBOX_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "shell_exec",
+  "file_read",
+  "file_write",
+  "file_edit",
+  "grep",
+  "glob",
+  "list_dir",
+  "code_search",
+  "jarvis_dev",
+  "jarvis_diagnose",
+  "jarvis_test_run",
+]);
+
+/** The requested tools the nanoclaw sandbox does not have (empty ⇒ sandbox-capable). */
+export function hostOnlyTools(tools: readonly string[] | undefined): string[] {
+  return (tools ?? []).filter((t) => !SANDBOX_TOOL_NAMES.has(t));
+}
 
 /** True when the user's text is a coding task (→ sandboxed nanoclaw). */
 export function isCodingTask(text: string): boolean {
@@ -468,9 +505,14 @@ export function classify(input: ClassificationInput): ClassificationResult {
   // Prometheus PER + repo mount + coding tools). Takes precedence over the
   // messaging/score routing below so coding can never land on an in-process
   // runner. Messaging is gated by the kill switch.
+  // A task that asks for tools the sandbox does not register (Google
+  // Workspace, KB, mail, web…) cannot run there whatever its text says —
+  // host runner, same as the foreign-repo/project guards.
+  const needsHost = hostOnlyTools(input.tools).length > 0;
   if (
     (!isMessaging || advancedRouting) &&
     isCodingTask(detectText) &&
+    !needsHost &&
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames) &&
@@ -609,6 +651,7 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "heavy";
   } else if (
     score >= 3 &&
+    !needsHost &&
     !referencesExternalWebTarget(detectText) &&
     !targetsForeignRepo(detectText) &&
     !referencesForeignProject(detectText, input.foreignProjectNames) &&
@@ -617,9 +660,10 @@ export function classify(input: ClassificationInput): ClassificationResult {
     agentType = "nanoclaw";
   } else if (score >= 3) {
     // A task that scored into the sandbox range but targets a sibling
-    // repo/project (by path OR name) must NOT land in the mission-control-only
-    // nanoclaw sandbox — the same single-check gap the coding gate above had,
-    // closed on the score path too (qa W1, 2026-06-24). Keep it on a HOST runner.
+    // repo/project (by path OR name) — or asks for host-only tools — must NOT
+    // land in the mission-control-only nanoclaw sandbox — the same single-check
+    // gap the coding gate above had, closed on the score path too (qa W1,
+    // 2026-06-24). Keep it on a HOST runner.
     agentType = "heavy";
   } else {
     agentType = "fast";
