@@ -2,7 +2,7 @@
  * Tests for scope-classifier — CIRICD-based semantic scope classification.
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseScopeGroups,
   withDeterministicGroups,
@@ -119,5 +119,59 @@ describe("finance routing (usability Phase 3.4)", () => {
         new Set(["destructive", "jarvis_write"]),
       ).has("finance"),
     ).toBe(false);
+  });
+});
+
+describe("SCOPE_CLASSIFIER_TIMEOUT_MS (2026-09-05: budget vs the claude-sdk floor)", () => {
+  afterEach(() => {
+    vi.doUnmock("../inference/adapter.js");
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it("defaults to 8 s — above the measured p50 4.0 s wall time of a claude-sdk classifier call", async () => {
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "");
+    vi.resetModules();
+    const mod = await import("./scope-classifier.js");
+    expect(mod.SCOPE_CLASSIFIER_TIMEOUT_MS).toBe(8_000);
+  });
+
+  it("honors the SCOPE_CLASSIFIER_TIMEOUT_MS drop-in and falls back to the default on garbage", async () => {
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "12000");
+    vi.resetModules();
+    expect((await import("./scope-classifier.js")).SCOPE_CLASSIFIER_TIMEOUT_MS).toBe(12_000);
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "abc");
+    vi.resetModules();
+    expect((await import("./scope-classifier.js")).SCOPE_CLASSIFIER_TIMEOUT_MS).toBe(8_000);
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "-5");
+    vi.resetModules();
+    expect((await import("./scope-classifier.js")).SCOPE_CLASSIFIER_TIMEOUT_MS).toBe(8_000);
+  });
+
+  it("wiring: an infer() slower than the budget yields null (regex fallback) and logs the timeout", async () => {
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "20");
+    vi.resetModules();
+    vi.doMock("../inference/adapter.js", () => ({
+      infer: () => new Promise(() => {}), // never resolves — models a slow SDK boot
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { classifyScopeGroups } = await import("./scope-classifier.js");
+    await expect(classifyScopeGroups("corre el SQL contra DENUE")).resolves.toBeNull();
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).includes("regex fallback: scope classifier timeout")),
+    ).toBe(true);
+  });
+
+  it("wiring: an infer() inside the budget returns the parsed groups", async () => {
+    vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "500");
+    vi.resetModules();
+    vi.doMock("../inference/adapter.js", () => ({
+      infer: async () => ({ content: '["coding"]' }),
+    }));
+    const { classifyScopeGroups } = await import("./scope-classifier.js");
+    const groups = await classifyScopeGroups("corre el SQL contra DENUE");
+    expect(groups).not.toBeNull();
+    expect(groups!.has("coding")).toBe(true);
   });
 });

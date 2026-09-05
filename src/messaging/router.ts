@@ -2141,7 +2141,8 @@ export class MessageRouter {
     }
 
     // v6.4 CL1.1: Semantic scope classification — LLM understands intent,
-    // replaces brittle regex matching. 3s timeout, regex fallback on failure.
+    // replaces brittle regex matching. SCOPE_CLASSIFIER_TIMEOUT_MS budget
+    // (default 8 s since 2026-09-05), regex fallback on failure.
     const recentContext = conversationHistory
       .slice(-2)
       .map((t) => `${t.role}: ${t.content.slice(0, 150)}`)
@@ -2149,7 +2150,7 @@ export class MessageRouter {
 
     // Context enrichment (embedding + recall) and scope classification (LLM
     // call) are independent — neither consumes the other's output. Awaiting
-    // them sequentially added the classifier's full latency (up to its 3s
+    // them sequentially added the classifier's full latency (up to its
     // timeout) on top of enrichment on EVERY non-fast-path message.
     const [enrichment, semanticGroups] = await Promise.all([
       enrichContext(msg.text, msg.channel),

@@ -10,7 +10,24 @@
  * the LLM understands intent, not keywords.
  */
 
-const SCOPE_CLASSIFIER_TIMEOUT_MS = 3_000;
+/**
+ * Wall-clock budget for one classifier call. The original 3 s (2026-04-07) was
+ * calibrated for the HTTP provider path; since the 2026-05-10 claude-sdk
+ * cutover every infer() boots the Claude Code CLI first. Measured 2026-09-05
+ * on the live box: classifier wall time p10 3.0 s / p50 4.0 s (≈1.9 s CLI
+ * boot + MCP handshake before the SDK's own timer, then a 1.5–2.3 s Sonnet
+ * turn) — 0 of 30 calls fit 3 s, and all 223 "Classify failed" journal lines
+ * since 08-30 were timeouts, so ~95% of chat turns silently ran on the regex
+ * fallback (semantic 7 vs fallback 112 in 24 h). withTimeout only races — the
+ * SDK call still completes and is billed, its result discarded. Default 8 s
+ * covers the median with load headroom; operator override via the
+ * SCOPE_CLASSIFIER_TIMEOUT_MS drop-in (direct env read, same pattern as
+ * AUX_HAIKU_ENABLED below — no config singleton in test contexts).
+ */
+export const SCOPE_CLASSIFIER_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.SCOPE_CLASSIFIER_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 8_000;
+})();
 
 /** All valid scope group names the classifier can return. Exported for the
  *  scope-miss resolver (scope-miss.ts), which maps a requested tool back to
