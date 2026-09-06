@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { detectScopeMiss, groupsForTool } from "./scope-miss.js";
+import {
+  detectScopeMiss,
+  groupsForTool,
+  looksLikeScopeAsk,
+} from "./scope-miss.js";
 
 const KNOWN = [
   "shell_exec",
@@ -153,5 +157,22 @@ describe("groupsForTool", () => {
   });
   it("returns [] for an unknown tool", () => {
     expect(groupsForTool("no_such_tool", opts)).toEqual([]);
+  });
+});
+
+describe("looksLikeScopeAsk — streaming guard (2026-09-06)", () => {
+  it("fires on the bare ask that streamed to Telegram before every silent re-run", () => {
+    expect(looksLikeScopeAsk("Necesito `shell_exec` para esto.")).toBe(true);
+  });
+  it("fires once the identifier is complete, not while it is still streaming", () => {
+    expect(looksLikeScopeAsk("Leo el CSS actual:\n\nNecesito `shell")).toBe(false);
+    expect(looksLikeScopeAsk("Leo el CSS actual:\n\nNecesito `shell_exec")).toBe(
+      true,
+    );
+  });
+  it("does not fire on a reply that merely mentions a tool", () => {
+    expect(
+      looksLikeScopeAsk("Corrí shell_exec y el journal ya está publicado."),
+    ).toBe(false);
   });
 });

@@ -145,6 +145,7 @@ import {
   isPoisonedExchange,
   threadImageLive,
   _testSeedThread,
+  holdScopeAsks,
 } from "./router.js";
 import {
   pinFromExchange,
@@ -766,7 +767,7 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[1].text).toContain("Publicado");
     });
 
-    it("usability Phase 1.2 on Telegram (R1 audit C1): the streamed ask is wiped and the re-run answers IN the same placeholder", async () => {
+    it("usability Phase 1.2 on Telegram (R1 audit C1): the streamed ask never reaches the placeholder and the re-run answers IN the same placeholder", async () => {
       // A telegram adapter whose getBot() returns a fake grammy api — this is
       // what makes the router create a TelegramStreamController.
       const edits: { messageId: number; text: string }[] = [];
@@ -800,7 +801,9 @@ describe("MessageRouter", () => {
         timestamp: new Date(),
       });
       router.startEventListeners();
-      // The first run streamed the ask live (what the operator saw on screen).
+      // The first run streams the ask — 2026-09-06: the router holds it back
+      // (holdScopeAsks), so the operator never sees «no está en el scope»;
+      // the placeholder stays ⏳ until the re-run answers in it.
       const firstCall = mocked.mock.calls.at(-1)![0] as {
         onTextChunk?: (c: string) => void;
       };
@@ -808,7 +811,8 @@ describe("MessageRouter", () => {
         '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
       );
       vi.advanceTimersByTime(2000);
-      expect(edits.at(-1)?.text).toContain("tweet_post");
+      expect(edits.every((e) => !e.text.includes("tweet_post"))).toBe(true);
+      expect(edits.at(-1)?.text).toBe("⏳");
 
       mocked.mockResolvedValueOnce({
         taskId: "tg-task-rerun",
@@ -854,16 +858,11 @@ describe("MessageRouter", () => {
       router.unregisterChannel("telegram");
       expect(edits.at(-1)?.messageId).toBe(777);
       expect(edits.at(-1)?.text).toContain("Publicado");
-      // The ask WAS on screen before the reset (that is the C1 defect)…
-      const resetIdx = edits.findIndex((e) => e.text === "⏳");
-      expect(resetIdx).toBeGreaterThan(0);
-      expect(
-        edits.slice(0, resetIdx).some((e) => e.text.includes("usa tweet_post")),
-      ).toBe(true);
-      // …and never again after it.
-      expect(
-        edits.slice(resetIdx).some((e) => e.text.includes("usa tweet_post")),
-      ).toBe(false);
+      // 2026-09-06: the ask never reached the screen — not before the reset
+      // (holdScopeAsks wiped the placeholder the moment the ask took shape)
+      // and not after it.
+      expect(edits.some((e) => e.text.includes("usa tweet_post"))).toBe(false);
+      expect(edits.some((e) => e.text === "⏳")).toBe(true);
     });
 
     it("usability Phase 1.2 (R2 audit C2): a hallucinated ask — tool already in scope — is re-run with a correction note, never delivered (corpus 12465)", async () => {
@@ -3392,5 +3391,50 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     expect(pending.has("test-task-123")).toBe(false);
     const texts = waAdapter.sentMessages.map((m) => m.text);
     expect(texts.some((t) => t.startsWith("Se agotó el tiempo"))).toBe(true);
+  });
+});
+
+describe("holdScopeAsks — streaming guard (2026-09-06)", () => {
+  function fakeStream() {
+    const calls: string[] = [];
+    return {
+      calls,
+      appendChunk: (t: string) => calls.push(`append:${t}`),
+      reset: (p = "⏳") => calls.push(`reset:${p}`),
+    };
+  }
+
+  it("ordinary chunks stream through untouched", () => {
+    const s = fakeStream();
+    const feed = holdScopeAsks(s);
+    feed("Publicado: ");
+    feed("thewilliamsradar.com/w34 responde 200 OK.");
+    expect(s.calls).toEqual([
+      "append:Publicado: ",
+      "append:thewilliamsradar.com/w34 responde 200 OK.",
+    ]);
+  });
+
+  it("an ask wipes the placeholder once and holds every following chunk of the ask", () => {
+    const s = fakeStream();
+    const feed = holdScopeAsks(s);
+    feed("Necesito `shell_");
+    feed("exec` para esto.");
+    feed(" Pídeme con \"usa shell_exec\".");
+    expect(s.calls).toEqual(["append:Necesito `shell_", "reset:⏳"]);
+  });
+
+  it("qa-audit W1: a reply that asked and then kept going streams again in full once the ask scrolls out", () => {
+    const s = fakeStream();
+    const feed = holdScopeAsks(s);
+    feed("Necesito `shell_exec` para localizar el journal.");
+    expect(s.calls.at(-1)).toBe("reset:⏳");
+    const filler = "Aquí el teaser para Twitter. ".repeat(30); // > 700-char tail window
+    feed(filler);
+    expect(s.calls.at(-1)).toBe(
+      `append:Necesito \`shell_exec\` para localizar el journal.${filler}`,
+    );
+    feed("Fin.");
+    expect(s.calls.at(-1)).toBe("append:Fin.");
   });
 });

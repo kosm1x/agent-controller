@@ -10,6 +10,33 @@
 /** Maximum number of markdown headings to surface in the outline. */
 const MAX_OUTLINE_HEADINGS = 30;
 
+/**
+ * Maximum timestamped log entries (`- [HH:MM:SS] **WHO**: …`) surfaced in the
+ * outline. Day-logs are flat lists under ONE heading, so a headings-only
+ * outline gave the model nothing to navigate by: on 2026-09-06 it read the
+ * 2026-09-05 log twice, guessed a slice, and reported «no hay entrada a las
+ * 11:45» while L31 was exactly that entry. Each entry costs ~70 chars, so
+ * 150 entries ≈ 10 KB — still well under a 20–50 KB log.
+ */
+const MAX_OUTLINE_ENTRIES = 150;
+
+/** Chars of entry text kept after the timestamp/speaker in an outline entry. */
+const ENTRY_SNIPPET_CHARS = 60;
+
+/**
+ * Snippet shapes that are probably a credential (a pasted session token, a
+ * «Pswd: …» line) — the outline shows a placeholder instead (qa-audit W2:
+ * 106 such snippets across the live day-logs would otherwise surface on
+ * every large-file read, not only when that range is requested).
+ */
+const SECRET_SHAPED_SNIPPET =
+  /(?:^|[\s"'`(=:;,])[A-Za-z0-9%+/=_-]{32,}(?=$|[\s"'`);,.])|\{[0-9A-Fa-f-]{32,}\}|\b(?:pswd|passwd|password|contrase[ñn]a|api[_ -]?key|secret|token)\b\s*[:=]/i;
+const MASKED_SNIPPET = "[contenido omitido — posible credencial]";
+
+/** Timestamped log entry: `- [11:45:00] **USER**: text` (speaker optional). */
+const LOG_ENTRY_RE =
+  /^-\s+\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(?:\*\*([^*]+)\*\*:?\s*)?(.*)$/;
+
 /** Maximum total lines that can be requested via the lines parameter. */
 const MAX_LINES_PER_REQUEST = 2_000;
 
@@ -149,6 +176,9 @@ export function buildOutline(content: string): string[] {
   const lines = content.split(/\r?\n/);
   const outline: string[] = [];
   let inFence = false;
+  let headings = 0;
+  let entries = 0;
+  let lastEntryLine = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -160,9 +190,32 @@ export function buildOutline(content: string): string[] {
     if (inFence) continue;
 
     const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
-    if (!m) continue;
-    outline.push(`L${i + 1}: ${m[1]} ${m[2]}`);
-    if (outline.length >= MAX_OUTLINE_HEADINGS) break;
+    if (m) {
+      if (headings < MAX_OUTLINE_HEADINGS) {
+        outline.push(`L${i + 1}: ${m[1]} ${m[2]}`);
+        headings++;
+      }
+      continue;
+    }
+
+    // Timestamped log entries (day-log shape) — see MAX_OUTLINE_ENTRIES.
+    const e = LOG_ENTRY_RE.exec(line);
+    if (!e) continue;
+    entries++;
+    if (entries > MAX_OUTLINE_ENTRIES) continue;
+    lastEntryLine = i + 1;
+    const speaker = e[2] ? ` ${e[2].trim()}:` : "";
+    const text = e[3].replace(/\s+/g, " ").trim();
+    const snippet = SECRET_SHAPED_SNIPPET.test(text)
+      ? MASKED_SNIPPET
+      : text.slice(0, ENTRY_SNIPPET_CHARS);
+    outline.push(`L${i + 1}: [${e[1]}]${speaker} ${snippet}`.trimEnd());
+  }
+
+  if (entries > MAX_OUTLINE_ENTRIES) {
+    outline.push(
+      `… +${entries - MAX_OUTLINE_ENTRIES} more timestamped entries after L${lastEntryLine} (read them with lines='${lastEntryLine + 1}-${lines.length}')`,
+    );
   }
 
   return outline;

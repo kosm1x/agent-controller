@@ -112,6 +112,12 @@ export class TelegramStreamController {
    * answer lands in place, and accept chunks again.
    */
   reset(placeholder = "⏳"): void {
+    // 2026-09-06 (qa-audit R2 W2): a reset after finalize() would un-finalize
+    // the message and replace a DELIVERED reply with the placeholder — a late
+    // chunk draining after «/stop» reaches holdScopeAsks() once the reply is
+    // already «🛑 Detenido.». Delivered is final; the re-run path only ever
+    // resets a controller that has not finalized.
+    if (this.finalized) return;
     if (this.editTimer) {
       clearTimeout(this.editTimer);
       this.editTimer = null;

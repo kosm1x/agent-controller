@@ -160,6 +160,89 @@ describe("buildOutline", () => {
     expect(out).toEqual(["L1: # Title", "L2: ## Section A"]);
     expect(out.every((h) => !h.includes("\r"))).toBe(true);
   });
+
+  it("2026-09-06: surfaces timestamped log entries (day-log shape) with line, speaker and snippet", () => {
+    const rows: string[] = ["# Day Log: 2026-09-05", ""];
+    for (let i = 0; i < 40; i++) {
+      const hh = String(9 + Math.floor(i / 4)).padStart(2, "0");
+      const mm = String((i % 4) * 15).padStart(2, "0");
+      const who = i % 2 ? "JARVIS" : "USER";
+      rows.push(
+        `- [${hh}:${mm}:00] **${who}**: entry ${i} ${"palabra ".repeat(12)}`,
+      );
+    }
+    rows.push("- [19:00] nota sin hablante");
+    const out = buildOutline(rows.join("\n"));
+    expect(out[0]).toBe("L1: # Day Log: 2026-09-05");
+    expect(out).toHaveLength(1 + 40 + 1);
+    // i=11 → line 14, 11:45 — the entry the live model could not find.
+    expect(out[12]).toBe(
+      "L14: [11:45:00] JARVIS: entry 11 palabra palabra palabra palabra palabra palabra pal",
+    );
+    expect(out[41]).toBe("L43: [19:00] nota sin hablante");
+  });
+
+  it("caps timestamped entries at 150 and points past the cap", () => {
+    const rows = Array.from(
+      { length: 160 },
+      (_, i) => `- [10:${String(i % 60).padStart(2, "0")}:00] **USER**: e${i}`,
+    );
+    const out = buildOutline(rows.join("\n"));
+    expect(out).toHaveLength(151);
+    expect(out[150]).toBe(
+      "… +10 more timestamped entries after L150 (read them with lines='151-160')",
+    );
+  });
+
+  it("qa-audit W2: credential-shaped entry text is masked in the outline", () => {
+    const md = [
+      "- [11:45:00] **USER**: AEC1XBabcdefghijklmnopqrstuvwxyz0123456789%2Babc",
+      "- [09:59:10] **USER**: Usuario: fede Pswd: hunter22",
+      "- [11:48:20] **JARVIS**: Perfecto — tengo ambas cookies. Las guardo.",
+    ].join("\n");
+    const out = buildOutline(md);
+    expect(out[0]).toBe(
+      "L1: [11:45:00] USER: [contenido omitido — posible credencial]",
+    );
+    expect(out[1]).toBe(
+      "L2: [09:59:10] USER: [contenido omitido — posible credencial]",
+    );
+    expect(out[2]).toBe(
+      "L3: [11:48:20] JARVIS: Perfecto — tengo ambas cookies. Las guardo.",
+    );
+    expect(out.join("\n")).not.toContain("hunter22");
+    expect(out.join("\n")).not.toContain("AEC1XB");
+  });
+
+  it("qa-audit R2 W3: cookie pairs, brace GUIDs and backticked tokens are masked; a dotted URL is not", () => {
+    const md = [
+      "- [11:24:08] **JARVIS**: El SWID correcto es: **`{579da47e-9208-4fca-8c96-e08572bdcb57}`**",
+      "- [11:50:00] **JARVIS**: Cookie: espn_s2=AEC1XBabcdefghijklmnopqrstuvwxyz0123456789; SWID={579da47e-9208-4fca-8c96-e08572bdcb57}",
+      "- [11:51:00] **JARVIS**: token `AEC1XBabcdefghijklmnopqrstuvwxyz0123456789`.",
+      "- [12:00:00] **JARVIS**: Doc listo: https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit",
+    ].join("\n");
+    const out = buildOutline(md);
+    expect(out[0]).toContain("[contenido omitido — posible credencial]");
+    expect(out[1]).toContain("[contenido omitido — posible credencial]");
+    expect(out[2]).toContain("[contenido omitido — posible credencial]");
+    expect(out[3]).toMatch(
+      /^L4: \[12:00:00\] JARVIS: Doc listo: https:\/\/docs\.google\.com\/document\/d\/1AbC/,
+    );
+    expect(out[3]).not.toContain("omitido");
+    expect(out.join("\n")).not.toContain("579da47e");
+  });
+
+  it("ignores plain bullets, non-time brackets and entries inside fences", () => {
+    const md = [
+      "- plain bullet",
+      "- [proyecto] Plan 2027",
+      "- [2026-09-05] dated, not timed",
+      "```",
+      "- [10:00:00] **USER**: inside a fence",
+      "```",
+    ].join("\n");
+    expect(buildOutline(md)).toEqual([]);
+  });
 });
 
 describe("countLines", () => {

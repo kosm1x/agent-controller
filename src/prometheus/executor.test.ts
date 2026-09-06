@@ -85,6 +85,30 @@ describe("executeGoal", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+  it("2026-09-06: the goal prompt fixes the reply language to Spanish (heavy chat replies were English)", async () => {
+    mockInferWithTools.mockResolvedValueOnce({
+      content: "Listo",
+      messages: [
+        { role: "system", content: "..." },
+        { role: "user", content: "..." },
+        { role: "assistant", content: "Listo" },
+      ],
+      toolRepairs: [],
+      totalUsage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    await executeGoal(makeGoal(), "");
+
+    const messages = mockInferWithTools.mock.calls[0][0] as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messages[0].role).toBe("system");
+    expect(messages[0].content).toContain(
+      "write the summary in Spanish (Mexico)",
+    );
+    expect(messages[0].content).toContain("verbatim quotes unchanged");
+  });
   it("should return success with result from LLM", async () => {
     mockInferWithTools.mockResolvedValueOnce({
       content: "Goal achieved successfully",

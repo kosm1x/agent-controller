@@ -139,5 +139,104 @@ describe("user-facts", () => {
       expect(block).toContain("### health");
       expect(block).toContain("**diet**: high protein");
     });
+
+    it("2026-09-06: always-inject facts do not consume the scored budget", () => {
+      // Live regression: `personal` alone was 3,726 chars, so every scored
+      // fact (all 197 `projects` rows) was skipped on every turn since 05-24.
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "personal",
+            key: "bio",
+            value: "x".repeat(3_100),
+            source: "conversation",
+            updated_at: "2026-05-24",
+          },
+          {
+            category: "projects",
+            key: "fantasy_espn_s2",
+            value: "cookie-value",
+            source: "conversation",
+            updated_at: "2026-09-05",
+          },
+        ]),
+      });
+
+      const block = formatUserFactsBlock(
+        "Revisa que puedes entrar al Fantasy de Espn vía API",
+      );
+
+      expect(block).toContain("**bio**:");
+      expect(block).toContain("**fantasy_espn_s2**: cookie-value");
+    });
+
+    it("2026-09-06 qa-audit C1: a fact with no keyword overlap is never injected on an unrelated message", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "projects",
+            key: "fantasy_espn_s2",
+            value: "cookie-value",
+            source: "conversation",
+            updated_at: "2026-09-05",
+          },
+          {
+            category: "projects",
+            key: "doctoralia_password",
+            value: "secret-value",
+            source: "conversation",
+            updated_at: "2026-09-04",
+          },
+        ]),
+      });
+
+      const block = formatUserFactsBlock("Cómo está la ofensiva de SEA?");
+
+      expect(block).toContain("Perfil del usuario");
+      expect(block).not.toContain("cookie-value");
+      expect(block).not.toContain("secret-value");
+    });
+
+    it("qa-audit R2: a message with no scorable word injects no scored fact (no recency fallback)", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "projects",
+            key: "fantasy_espn_s2",
+            value: "cookie-value",
+            source: "conversation",
+            updated_at: "2026-09-05",
+          },
+        ]),
+      });
+
+      expect(formatUserFactsBlock("?")).not.toContain("cookie-value");
+    });
+
+    it("scored facts still respect their own budget (newest relevant first)", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "projects",
+            key: "fantasy_one",
+            value: "a".repeat(2_000),
+            source: "conversation",
+            updated_at: "2026-09-05",
+          },
+          {
+            category: "projects",
+            key: "fantasy_two",
+            value: "b".repeat(2_000),
+            source: "conversation",
+            updated_at: "2026-09-04",
+          },
+        ]),
+      });
+
+      const block = formatUserFactsBlock("fantasy");
+
+      expect(block).toContain("**fantasy_one**:");
+      expect(block).not.toContain("**fantasy_two**:");
+    });
   });
 });

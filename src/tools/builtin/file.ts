@@ -178,10 +178,10 @@ export const fileReadTool: Tool = {
 LARGE FILE BEHAVIOR (>${LARGE_FILE_THRESHOLD} chars):
 When the file is large AND you don't pass \`lines\`, this tool returns a structured envelope
 INSTEAD of the full content:
-  { truncated: true, total_chars, total_lines, outline: [...headings with line numbers...],
+  { truncated: true, total_chars, total_lines, outline: [...headings AND timestamped log entries ("- [HH:MM:SS] **WHO**: …", e.g. day-logs) with line numbers...],
     preview: <first ~${PREVIEW_CHARS} chars>, next_steps: [...] }
 The preview is the first ~${PREVIEW_CHARS} chars only — DO NOT infer the file's content from it.
-Read the outline (each heading is prefixed with its line number, e.g. "L42: # Section"),
+Read the outline (each entry is prefixed with its line number, e.g. "L42: # Section" or "L31: [11:45:00] USER: …"),
 decide which sections matter, then call again with \`lines='42-90'\` for each one.
 
 WORKFLOW for large files:

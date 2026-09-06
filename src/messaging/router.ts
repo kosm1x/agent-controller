@@ -137,6 +137,7 @@ import {
   detectScopeMiss,
   groupsForTool,
   scopeMissFallbackLine,
+  looksLikeScopeAsk,
 } from "./scope-miss.js";
 import {
   pinFromExchange,
@@ -635,6 +636,45 @@ interface ScopeRerunSpec {
   /** This turn's own classification — what the sticky prior is built from. */
   baseGroups: string[];
   isCodingTask: boolean;
+}
+
+/**
+ * Streaming guard for scope asks (2026-09-06). The Telegram placeholder was
+ * edited with the raw reply as it streamed, so «Necesito `shell_exec` para
+ * esto.» was on the operator's screen for the seconds before the scope-miss
+ * re-run wiped it — the ask the Phase 1.2 filter exists to hide. Once the
+ * accumulated text reads as an ask, wipe the placeholder and hold chunks;
+ * the re-run's reset() or the final finalize() writes the real reply
+ * (finalize always rewrites the whole message, so no content is lost).
+ *
+ * The hold is re-evaluated per chunk, not latched (qa-audit W1: a latch cost
+ * 3.3% of replies their streaming — «necesito que me digas…» mid-answer).
+ * When the ask scrolls out of the predicate's tail window the whole
+ * accumulation is re-appended (reset() emptied the controller), so a reply
+ * that asked and then kept going streams again.
+ */
+export function holdScopeAsks(stream: {
+  appendChunk(text: string): void;
+  reset(placeholder?: string): void;
+}): (chunk: string) => void {
+  let accumulated = "";
+  let holding = false;
+  return (chunk: string) => {
+    accumulated += chunk;
+    if (looksLikeScopeAsk(accumulated)) {
+      if (!holding) {
+        holding = true;
+        stream.reset("⏳");
+      }
+      return;
+    }
+    if (holding) {
+      holding = false;
+      stream.appendChunk(accumulated);
+      return;
+    }
+    stream.appendChunk(chunk);
+  };
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -2389,7 +2429,7 @@ export class MessageRouter {
       // both seams stratify on one key. `undefined` for non-operator senders.
       threadId: this.operatorThreadKey(msg, tk),
       onTextChunk: streamController
-        ? (chunk: string) => streamController!.appendChunk(chunk)
+        ? holdScopeAsks(streamController)
         : undefined,
       abortController: taskAbort,
     });
@@ -3724,9 +3764,7 @@ export class MessageRouter {
       conversationHistory: history,
       tags: [...spec.tags, "scope-rerun"],
       threadId: spec.threadId,
-      onTextChunk: stream
-        ? (chunk: string) => stream.appendChunk(chunk)
-        : undefined,
+      onTextChunk: stream ? holdScopeAsks(stream) : undefined,
       abortController: abort,
     })
       .then((result) => {

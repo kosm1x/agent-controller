@@ -78,7 +78,14 @@ const ALWAYS_INJECT_CATEGORIES = new Set([
   "preferences",
 ]);
 
-/** Max total chars for the facts block to prevent prompt bloat. */
+/**
+ * Max total chars for the SCORED part of the facts block (prompt-bloat cap).
+ * Always-inject categories are NOT counted against it: on 2026-05-24 the
+ * `personal` facts alone crossed 3,000 chars and every scored fact — all 197
+ * `projects` rows, credentials included — was silently skipped on every chat
+ * turn for three months (found 2026-09-06: «no tenemos guardado el espn_s2»
+ * with three copies of it in user_facts).
+ */
 const MAX_FACTS_CHARS = 3_000;
 
 /**
@@ -101,6 +108,13 @@ function scoreFact(fact: UserFact, messageWords: Set<string>): number {
  * Other categories: scored by keyword overlap with the current message,
  * top-N included up to MAX_FACTS_CHARS budget. Long signal digests and
  * ephemeral intelligence reports don't bloat every prompt.
+ *
+ * Relevance floor (2026-09-06 qa-audit C1): when a message is given, a fact
+ * with score 0 is never injected — otherwise the sort collapses to recency
+ * and the budget fills with the newest rows on EVERY unrelated turn (live:
+ * three session tokens, a password and an auth token). Only a call WITHOUT
+ * a message (none in production — the router always passes msg.text) keeps
+ * recency order; a message with no scorable word («?») injects nothing.
  */
 export function formatUserFactsBlock(currentMessage?: string): string {
   const facts = getUserFacts();
@@ -132,21 +146,23 @@ export function formatUserFactsBlock(currentMessage?: string): string {
     return (b.fact.updated_at ?? "").localeCompare(a.fact.updated_at ?? "");
   });
 
-  // Build output within budget
+  // Build output: always-inject unconditionally, then scored facts within
+  // their own budget (see MAX_FACTS_CHARS).
   const byCategory = new Map<string, string[]>();
   let totalChars = 0;
 
-  // Always-inject first
+  // Always-inject first — not counted against the scored budget
   for (const f of alwaysFacts) {
     const line = `- **${f.key}**: ${f.value}`;
     const list = byCategory.get(f.category) ?? [];
     list.push(line);
     byCategory.set(f.category, list);
-    totalChars += line.length;
   }
 
-  // Then scored facts up to budget
-  for (const { fact: f } of scoredFacts) {
+  // Then scored facts up to budget — relevant ones only when a message is known
+  const requireRelevance = currentMessage !== undefined;
+  for (const { fact: f, score } of scoredFacts) {
+    if (requireRelevance && score === 0) continue;
     const line = `- **${f.key}**: ${f.value}`;
     if (totalChars + line.length > MAX_FACTS_CHARS) continue;
     const list = byCategory.get(f.category) ?? [];

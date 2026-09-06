@@ -311,6 +311,12 @@ async function buildGoalPrompt(
     `## Instructions\n` +
     `- Use tools to accomplish the goal.\n` +
     `- When all completion criteria are met, respond with a summary of what you achieved.\n` +
+    // 2026-09-06: collectFinalAnswer() joins these summaries VERBATIM into the
+    // chat reply (finalAnswer is the canonical deliverable) and the goals the
+    // planner writes are English, so 5/5 heavy chat replies since 09-05 reached
+    // the operator in English. The router's deliverable-filter only flags
+    // english_leading; the language has to be right at the source.
+    `- Language: write the summary in Spanish (Mexico) — it is delivered to the operator's chat as-is. Keep code, commands, file paths, tool names, URLs and verbatim quotes unchanged; switch language only if the goal itself asks for another one.\n` +
     `- If you cannot complete the goal, explain what went wrong.`
   );
 }

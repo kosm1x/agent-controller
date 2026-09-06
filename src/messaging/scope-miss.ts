@@ -122,6 +122,19 @@ export function detectScopeMiss(
 }
 
 /**
+ * Streaming-time predicate: does the reply accumulated SO FAR read as a
+ * scope ask? Same phrase set and tail window as detectScopeMiss, minus the
+ * known-tool check (the identifier may still be mid-token while streaming).
+ * The router uses it to stop editing the Telegram placeholder once an ask
+ * appears — the silent re-run's reset()/finalize() writes what the user
+ * should see (2026-09-06: «Necesito `shell_exec` para esto.» sat on screen
+ * for the seconds before every one of the 12 silent re-runs of 09-04/09-05).
+ */
+export function looksLikeScopeAsk(text: string): boolean {
+  return SCOPE_ASK_RE.test(text.slice(-TAIL_WINDOW));
+}
+
+/**
  * Which scope group(s) would have put `tool` in the list? Computed against
  * the real assembly function so it cannot drift from scope.ts: activate one
  * group at a time and look for the tool.
