@@ -134,7 +134,7 @@ const ISOLATION_PATTERNS = [
  */
 const CAPABLE_MSG_PATTERNS = [
   /\b(architect|redesign|review|design|audit|anali[zs]|investigar?|research)\b/i,
-  /\b(compara|evalúa|estrategia|planifica)\b/i,
+  /\b(compara|evalúa|estrateg\w*|strateg\w*|roadmap|hoja de ruta|planifica)\b/i,
 ];
 
 function computeMessagingTier(title: string, _description: string): ModelTier {
@@ -421,16 +421,211 @@ export function referencesExternalWebTarget(text: string): boolean {
 // keyword): a bare "investiga X" / "analiza Y" stays on fast — only architecture,
 // strategy, deep/comprehensive work, or explicit multi-step "analyze→recommend" /
 // "compare options" reasoning escalates the RUNNER. Bilingual EN/ES.
+// Bound by name so the relay/readback guard below cannot drift on array order.
+const STRATEGY_NOUN =
+  /\bstrateg\w*\b|\bestrateg\w*\b|\broadmap\b|\bhoja de ruta\b/i;
 const HEAVY_REASONING_PATTERNS: readonly RegExp[] = [
   /\barchitect\w*\b|\barquitect\w*\b/i,
   /\bredesign\b|\bredise[ñn]\w*\b/i,
   /\bdeep[- ]?(dive|analysis|research)\b|\bcomprehensive\b|\bexhaustiv\w*\b|\bthorough(ly)?\b|\ba fondo\b|\ben profundidad\b/i,
-  /\bstrateg\w*\b|\bestrateg\w*\b|\broadmap\b|\bhoja de ruta\b/i,
+  STRATEGY_NOUN,
   // multi-step: "analyze/research X and recommend/synthesize/decide/prioritize"
   /\b(analy[sz]e|anali[zc]a|evaluate|eval[uú]a|research|investiga|assess|val[oó]ra)\b[^.!?]*\b(and|y|then|luego|para)\b[^.!?]*\b(recommend|recomienda|propose|propon|decide|synthesi\w*|sinteti\w*|conclu\w*|prioriti\w*|prioriza)\b/i,
   // "compare/evaluate options/approaches/alternatives/trade-offs"
   /\b(compare|compara|evaluate|eval[uú]a|weigh|sopesa)\b[^.!?]*\b(options|opciones|approaches|enfoques|alternativ\w*|trade[- ]?offs?)\b/i,
 ];
+
+// The strategy/roadmap NOUN alone is the weakest cue in the list: it fires on
+// "escribe la estrategia en un google doc" and "cuál es la estrategia de draft"
+// (tasks 9246/9244, 2026-09-05 — 4.3 and 3.6 min on heavy at $3.43/$4.31 to relay a
+// strategy that already sat in the KB). Those are READ-AND-RELAY requests about an
+// EXISTING strategy. Five qa-audit rounds (2026-09-05) showed that a deny-list of
+// design/rework verbs never converges (each round found more: reformula, pule,
+// tweak, "cuando la mejores"…), so the guard is ALLOW-BY-SHAPE: the head clause
+// must be consumed ENTIRELY by one of two shapes whose every slot is a closed
+// class (a word list or a morphological form) — anything else keeps the status
+// quo, heavy. Rounds 9–10 showed WHY every slot and both ends must be bound: a
+// free "up to two words" slack or an open tail let "dame riesgos de la
+// estrategia", "escribe en el doc mejoras a la estrategia", "ponla al día en el
+// doc, la estrategia" and "escribe la estrategia con mejoras en el doc" ride in.
+//   1. READBACK: [lead-in] opener ("cuál es", "muéstrame", "what's", "how is")
+//      [one closed adverb] STRATEGY_NP TAIL.
+//   2. RELAY: [lead-in] [STRATEGY_NP ,] relay verb ("escribe/pon/guarda/manda/
+//      put/send…") [pronoun] [destination] STRATEGY_NP TAIL — or a relay verb
+//      carrying the object as a clitic ("guárdala", "mándamela") [politeness]
+//      TAIL, the noun then fronted or an appositive fragment — plus a destination
+//      somewhere in the sentence ("en un google doc", "al KB", "by email") or the
+//      requester as destination ("mándame", "send me").
+//   STRATEGY_NP = definite determiner [existence adjective] noun [participle or
+//   existence adjective] [topic phrase "de precios / para ganar el draft / for
+//   week 1" [quantified "con 10 jugadores / con los mejores jugadores"]]{0,2}.
+//   TAIL = any number of: destination [de X], capitalised recipient ("a Javier"),
+//   consumption purpose ("para revisarla [después]", "for [final] review"), a
+//   closed adverb ("primero", "first", "hoy", "going", "por favor").
+//   Blockers (closed classes): a second sentence, a conjunction/coordinator or
+//   subordinator (y/o/and/or/pero/cuando/si/para que/después de…), a comma
+//   fragment that is not an appositive STRATEGY_NP / politeness / participle /
+//   short prepositional phrase, a gerund ("…ando/iendo"), "desde cero / from
+//   scratch", an evaluative adjective glued to the noun ("la mejor / la
+//   estrategia óptima"), an indefinite or bare noun ("una/qué estrategia"), a
+//   future opener ("cuál será", "cómo va a ser").
+// Accepted limits: definiteness is a proxy for existence ("escribe la estrategia
+// de draft para 10 equipos en un doc" demotes — fast can write it); a third-party
+// readback ("cuál es la estrategia de Meta 2027") demotes like any bare research
+// question does by design; coordination ("… y el arma secreta") stays heavy; a
+// change NOUN inside an admitted phrase is not seen ("la estrategia de precios
+// con los cambios", "…, con mejoras" as a comma fragment) — nouns are an open
+// class and the shapes deliberately do not list them.
+const STRATEGY_HEAD = String.raw`(?:estrateg\w*|strateg\w*|roadmap|hoja\s+de\s+ruta)`;
+// One EXISTENCE adjective may sit between determiner and noun ("la última /
+// the updated estrategia"); evaluative ones ("la mejor", "la nueva") do not — they
+// ask to formulate (allow-by-membership).
+const EXISTING_ADJ = String.raw`(?:(?:[uú]ltima|actual|actualizada|vigente|existente|misma|final|updated|current|latest|existing|same)\s+)?`;
+const DEFINITE_DET = String.raw`(?:la|el|las|los|nuestr[ao]s?|mi|mis|tu|tus|su|sus|es[ae]|est[ae]|the|our|my|your|this|that)`;
+const DEFINITE_NP = String.raw`${DEFINITE_DET}\s+${EXISTING_ADJ}${STRATEGY_HEAD}`;
+const DEFINITE_STRATEGY = new RegExp(String.raw`\b${DEFINITE_NP}`, "i");
+// Evaluative adjective right after the noun ⇒ formulate ("la estrategia óptima").
+const EVALUATIVE_AFTER_NOUN = new RegExp(
+  String.raw`\b${STRATEGY_HEAD}\s+(?:[oó]ptim[ao]s?|ideal(?:es)?|perfect[ao]s?|ganador[ae]s?|correct[ao]s?|adecuad[ao]s?|apropiad[ao]s?|nuev[ao]s?|mejor(?:es)?|optimal|ideal|perfect|winning|right|correct|best|new)\b`,
+  "i",
+);
+// Relay verbs — stem + `\w*` so clitics survive JS's ASCII-only `\b` ("envíame",
+// "guárdala"; accent moves under a clitic: "compártela", "pégala").
+const RELAY_VERB_SRC = String.raw`(?:escr[ií]b\w*|env[ií]\w*|m[aá]nd\w*|gu[aá]rd\w*|s[uú]b[ea]\w*|comp[aá]rt\w*|p[eé]g[aá]\w*|c[oó]pi[aá]\w*|p[aá]sa\w*|exp[oó]rt\w*|vu[eé]lc\w*|transcr[ií]b\w*|p[oó]n(?:l[ao]s?|me|mel[ao]|ga|gan|e|er)?|write|put|copy|paste|save|upload|send|share|forward|pass|dump|drop)\b`;
+// A relay verb carrying its direct object as a clitic ("guárdala", "compártela",
+// "mándamela", "ponla") — the object IS the noun phrase named elsewhere.
+const RELAY_VERB_DO_CLITIC = String.raw`(?:escr[ií]b|env[ií]|m[aá]nd|gu[aá]rd|s[uú]b|comp[aá]rt|p[eé]g|c[oó]pi|p[aá]s|exp[oó]rt|vu[eé]lc|transcr[ií]b|p[oó]n)\p{L}*?(?:l[ao]s?|mel[ao]s?|sel[ao]s?|nosl[ao]s?)\b`;
+const RELAY_DEST_SRC = String.raw`(?:en|a|al|por|para|to|into|in|onto|on|by|via|al\s+(?:final|principio|inicio)\s+del)\s+(?:un\s+|una\s+|el\s+|la\s+|los\s+|las\s+|mi\s+|my\s+|the\s+|a\s+|an\s+)?(?:google\s*|g)?(?:docs?\b|documento|sheets?\b|hoja\s+de\s+c[aá]lculo|hoja\b(?!\s+de\s+ruta)|kb\b|base\s+de\s+conocimiento|correo|e-?mail|mail|telegram|nota|archivo|repo|readme|drive|slides?\b|presentaci[oó]n)`;
+const RELAY_DESTINATION = new RegExp(String.raw`\b${RELAY_DEST_SRC}`, "i");
+
+// ---- Slots. Each is a closed class; the shapes below are anchored at both ends
+// of the head clause so nothing unlisted can sit between or after the slots.
+// A clitic-bearing verb form ("ajústala", "ponla", "hazla", "mándamela") — regular
+// imperatives end in a vowel before the clitic, irregular ones are a finite list.
+// `\p{L}` not `\w`: JS `\w` is ASCII-only even under the `u` flag ("ajústala").
+const CLITIC_VERB = String.raw`(?:\p{L}+[aáeé]|\p{L}+[aei]d|pon|haz|rehaz|deshaz|ten|ven|di|sal)(?:l[aeo]s?|me|nos|te|se|mel[aeo]s?|sel[aeo]s?)`;
+// An infinitive + clitic ("mejorarla", "revisarla") is a purpose acting ON the
+// noun — only the consumption purposes in PURPOSE are relay-neutral.
+const INF_CLITIC = String.raw`\p{L}+[aeií]r(?:l[aeo]s?|me|nos|te|se|mel[aeo]s?|sel[aeo]s?)`;
+// A token inside a noun complement: no verb form with a clitic, no accompaniment
+// or relative opener (those start a change: "con mejoras", "que propongas"), no
+// English object pronoun ("… rewrite it" — the EN spelling of a clitic).
+const TOK = String.raw`(?!(?:${CLITIC_VERB}|${INF_CLITIC}|con|with|sin|without|m[aá]s|menos|plus|minus|including|incluyendo|que|which|that|it|them|him|her)\b)[^,\s]+`;
+const ANY_DET = String.raw`(?:el|la|los|las|un|una|unos|unas|mi|mis|tu|tus|su|sus|nuestr[ao]s?|the|a|an|my|our|your)`;
+// Complements of the strategy noun. Topic/name phrase ("de precios", "del draft",
+// "para ganar el draft", "for week 1"), each optionally followed by a QUANTIFIED
+// or definite "con" phrase ("con 10 jugadores", "con los mejores jugadores");
+// ONE post-nominal participle or existence adjective ("la estrategia corregida /
+// completa / actualizada", "the strategy update / changes"). A "con/with" phrase
+// right on the noun, or a possessive one, reads as accompaniment = a change
+// request ("con tus cambios", "with fixes", "con mejoras") and is not admitted.
+const TOPIC_PP = String.raw`(?:de|del|of|for|para)\s+(?:${ANY_DET}\s+)?${TOK}(?:\s+${TOK}){0,2}`;
+const CON_PP = String.raw`(?:con|with)\s+(?:\d+|el|la|los|las|the)(?:\s+${TOK}){1,2}`;
+const NP_ADJ = String.raw`(?:\p{L}+(?:ad[ao]s?|id[ao]s?)|complet[ao]s?|enter[ao]s?|final|actual|vigente|existente|full|whole|complete|updated|current|latest|update|changes|docs?|document|summary|notes|file|text|version)`;
+const NP_TAIL = String.raw`(?:\s+${NP_ADJ})?(?:\s+${TOPIC_PP}(?:\s+${CON_PP})?){0,2}(?:\s+${NP_ADJ})?`;
+const STRATEGY_NP = String.raw`${DEFINITE_NP}${NP_TAIL}`;
+// Tail elements after the object, any order: a destination ("en un google doc
+// [de precios]", "by email"), a recipient — a capitalised name or e-mail marked
+// as "§" by RECIPIENT_NAME below, or a closed group —, a consumption purpose
+// ("para revisarla [después]", "for [a] [final] review"), a closed adverb.
+const DEST_PHRASE = String.raw`${RELAY_DEST_SRC}(?:\s+(?:de|del|of)\s+(?:${ANY_DET}\s+)?${TOK}(?:\s+${TOK})?)?`;
+const RECIPIENT = String.raw`(?:(?:a|to)\s+§|al\s+equipo|a\s+todos|to\s+the\s+team|to\s+everyone|to\s+all)`;
+const PURPOSE = String.raw`(?:para|for)\s+(?:${ANY_DET}\s+)?(?:(?:final|later|quick|r[aá]pida|[uú]ltima)\s+)?(?:review|reference|reading|records?|the\s+record|later|revisi[oó]n|referencia|lectura|consulta|revisar|leer|ver|consultar|checar|chequear|tener|guardar|compartir|presentar|imprimir|archivar|read|check|keep|share|print|file|archive)(?:l[ao]s?|me|nos|te|mel[ao]s?)?(?:\s+(?:despu[eé]s|later|ma[ñn]ana|tomorrow|hoy|today|ahora|now))?`;
+const TAIL_ADV = String.raw`(?:primero|first|despu[eé]s|later|ahora|now|hoy|today|ma[ñn]ana|tomorrow|ya|urgente|urgent|asap|cuanto\s+antes|por\s+favor|please|gracias|thanks|going|so\s+far|hasta\s+ahora|por\s+ahora|actualmente|currently)`;
+// Trailing punctuation/emoji is not text; letters or digits after the last slot are.
+const TAIL = String.raw`(?:\s+(?:${DEST_PHRASE}|${RECIPIENT}|${PURPOSE}|${TAIL_ADV}))*[^\p{L}\p{N}]*$`;
+// Case-SENSITIVE (no `i`): "a Javier", "to Ana" → "a §". Brand destinations are
+// excluded so "a Google Docs" / "a Telegram" stay destinations. An e-mail address
+// never gets here: its dot splits the sentence upstream (⇒ heavy, status quo).
+// Known residual (R11-W2): a mid-sentence capitalised infinitive ("a Mejorar")
+// is marked too; not a typing pattern (Title-Case/ALL-CAPS replays: 0/140 flip),
+// and excluding -ar/-er/-ir would drop real names (Javier, Pilar, Omar).
+const RECIPIENT_NAME =
+  /\b(a|to)\s+(?!(?:Google|Drive|Docs?|Sheets?|Slides?|Telegram|KB|Notion|Gmail)\b)\p{Lu}\p{L}*(?=\s|$|[,.!?;:])/gu;
+// Shape 2 (relay) over the WHOLE head clause. "Send me your recommendation on the
+// strategy" has another object (R9-C1); "escribe en el doc mejoras a la
+// estrategia", "ponla al día en el doc" and "escribe la estrategia con mejoras
+// en el doc" have unlisted material in a slot (R10-C1..C3) ⇒ not relays.
+const RELAY_SHAPE = new RegExp(
+  String.raw`^\W*(?:${RELAY_VERB_SRC}(?:\s+(?:me|nos|te|us|it|please|por\s+favor))?(?:\s+${DEST_PHRASE})?\s+${STRATEGY_NP}|${RELAY_VERB_DO_CLITIC}(?:\s+(?:por\s+favor|please))?)${TAIL}`,
+  "iu",
+);
+// Greeting / vocative / politeness / pleasantry lead-in stripped before the
+// anchored tests ("Hola Jarvis, cuál es…", "Can you show me…", "Gracias. Dame…").
+const READBACK_LEAD_IN =
+  /^\W*(?:(?:hola|hey|hi|hello|oye|buen[oa]s(?:\s+(?:d[ií]as|tardes|noches))?|jarvis|piotr|por\s+favor|please|can\s+you|could\s+you|would\s+you|podr[ií]as|puedes|me\s+puedes|ok|okay|bueno|entonces|ahora|now|so|primero|first(?:\s+of\s+all)?|antes\s+que\s+nada|ya|gracias|thanks|thank\s+you|perfecto|genial|vale|listo|de\s+acuerdo|entendido|perfect|great|got\s+it)\b[\s,.!¡¿?:;-]*)*/i;
+// Shape 1 opener: "cuál es / muéstrame / dame / resume / explícame / cómo va /
+// what's / show me / how is". Deliberately excludes "cuál será/sería" and the
+// periphrastic future "cómo va A SER", "how is … going to" — those FORMULATE.
+const READBACK_OPENER_SRC = String.raw`(?:cu[aá]l(?:es)?\s+(?:es|son|era|eran|fue|fueron)|qu[eé]\s+(?:es|dice|contiene)|mu[eé]strame|ens[eé][ñn]ame|dame|dime|p[aá]same|res[uú]me(?:me|lo|la)?|recu[eé]rdame|rep[ií]te(?:me|lo|la)?|expl[ií]came|(?:en\s+qu[eé]|c[oó]mo)\s+(?:va|vamos|est[aá])(?!\s+a\s+\w)|how\s+is(?!\s+.*\bgoing\s+to\b)|how'?s\s+the(?!\s+.*\bgoing\s+to\b)|what(?:'s|\s+is|\s+was|\s+are|\s+does)|show\s+me|give\s+me|tell\s+me|summari[sz]e|remind\s+me|recap|read\s+(?:me\s+)?back)`;
+// One closed adverb may sit between opener and noun ("muéstrame en general la
+// estrategia"); a noun there ("dame riesgos de la estrategia") is analysis (R10-C1).
+const RB_ADV = String.raw`(?:en\s+general|otra\s+vez|de\s+nuevo|again|ahora|now|r[aá]pido|quickly|brevemente|briefly|please|por\s+favor|ya|nom[aá]s|just|solo|s[oó]lo|me|nos|us)`;
+// Shape 1 (readback) over the WHOLE head clause.
+const READBACK_SHAPE = new RegExp(
+  String.raw`^\W*${READBACK_OPENER_SRC}\b(?:\s+${RB_ADV})?\s+${STRATEGY_NP}${TAIL}`,
+  "iu",
+);
+// A second action in the same clause — closed classes only: conjunctions and
+// subordinators (EN/ES) and the Spanish gerund. "para revisarla" (purpose
+// infinitive) and "después" as a bare adverb are NOT blocked.
+const SECOND_ACTION =
+  /\b(?:y|and|or|nor|ni|pero|but|luego|then|cuando|when|si|if|aunque|although|mientras|while|tras|once|una\s+vez|ya\s+que|para\s+que|so\s+that|despu[eé]s\s+de|antes\s+de|after|before|tambi[eé]n|also|adem[aá]s|plus|sino|en\s+cuanto|tan\s+pronto|apenas|hasta\s+que|siempre\s+que|a\s+menos\s+que|en\s+caso\s+de|desde\s+cero|de\s+cero|a\s+partir\s+de\s+cero|from\s+scratch)\b|,\s*(?:de\s+paso|por\s+cierto|al\s+final(?!\s+del?\b)|para\s+empezar|para\s+terminar|a\s+la\s+vez|al\s+mismo\s+tiempo|por\s+[uú]ltimo|finalmente|by\s+the\s+way|in\s+addition|on\s+top|as\s+well|lastly|finally|first|primero)\b|\bo\b(?!\/)|\be\s+(?=[ih])|\bu\s+(?=o)|\b(?!cuando\b|segundo\b|fondo\b|mundo\b|comando\b|redondo\b)\w{3,}[aei]ndo\b/i;
+// Comma fragments other than the head clause must be benign — a closed set: an
+// appositive STRATEGY_NP ("…, la estrategia [de precios]"), politeness ("…, por
+// favor"), a bare participle ("…, revisada,"), a consumption purpose ("…, para
+// revisarla después") or a short prepositional phrase ("…, por correo", "…, a
+// Javier": optional determiner + at most two tokens, none a clitic-bearing verb
+// form — R7-C1/R8-C1). Anything else after a comma is a second action ("…,
+// mejora los precios primero" — R6-C1); a discourse marker right after a comma
+// ("…, de paso ajusta") is blocked by SECOND_ACTION.
+const BENIGN_FRAGMENT = new RegExp(
+  String.raw`^\s*(?:${STRATEGY_NP}|por\s+favor|please|gracias|thanks|\p{L}+(?:ad[ao]s?|id[ao]s?|ed)|${PURPOSE}|(?:en|a|al|por|para|to|into|in|by|via|for|con|with|de|del|of)\s+(?:${ANY_DET}\s+)?${TOK}(?:\s+${TOK})?)\s*$`,
+  "iu",
+);
+// "La estrategia de precios, mándamela por correo" — the leading noun phrase is
+// part of the head clause, not a fragment. Bound to STRATEGY_NP so "La estrategia
+// con mejoras, mándamela" is not silently accepted as a fronted object.
+const NP_FIRST_PREFIX = new RegExp(
+  String.raw`^\W*${STRATEGY_NP}\s*[,:]\s*`,
+  "iu",
+);
+// "Mándame / envíame / pásame la estrategia", "send me the strategy" — the
+// requester IS the destination.
+const RELAY_TO_ME =
+  /^\W*(?:(?:m[aá]nd[ae]|env[ií][ae]|p[aá]s[ae]|comp[aá]rt[ae])me(?:l[ao]s?)?|(?:send|share|forward|pass)\s+me)\b/i;
+
+/**
+ * True when an EXISTING strategy is asked to be relayed somewhere or read back —
+ * one clause, entirely one of the two allowed shapes, no second action. Exported
+ * for tests.
+ */
+export function isStrategyRelayOrReadback(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
+  if (!STRATEGY_NOUN.test(t)) return false;
+  if (!DEFINITE_STRATEGY.test(t)) return false; // "una/qué estrategia" ⇒ formulate
+  if (EVALUATIVE_AFTER_NOUN.test(t)) return false; // "la estrategia óptima" ⇒ formulate
+  const hasText = (c: string) => /[\p{L}\p{N}]/u.test(c);
+  const sentences = t
+    .replace(READBACK_LEAD_IN, "")
+    .split(/[.!?;:\n]+/)
+    .filter(hasText);
+  if (sentences.length !== 1) return false; // a second sentence is unknown work
+  const sentence = sentences[0];
+  if (SECOND_ACTION.test(sentence)) return false;
+  const main = sentence.replace(NP_FIRST_PREFIX, "");
+  const [rawHead, ...fragments] = main.split(",");
+  if (fragments.some((f) => hasText(f) && !BENIGN_FRAGMENT.test(f)))
+    return false;
+  // The recipient is the one slot that is not a word list — mark a capitalised
+  // name or e-mail case-sensitively before the case-blind shape tests.
+  const head = rawHead.replace(RECIPIENT_NAME, "$1 §");
+  if (READBACK_SHAPE.test(head)) return true;
+  return (
+    RELAY_SHAPE.test(head) &&
+    (RELAY_DESTINATION.test(sentence) || RELAY_TO_ME.test(head))
+  );
+}
 
 /**
  * True when a NON-coding request is challenging enough to need heavy's PER loop.
@@ -438,7 +633,18 @@ const HEAVY_REASONING_PATTERNS: readonly RegExp[] = [
  */
 export function needsHeavyReasoning(text: string): boolean {
   const t = text.replace(/^Chat:\s*/, "");
-  return HEAVY_REASONING_PATTERNS.some((p) => p.test(t));
+  const matched = HEAVY_REASONING_PATTERNS.filter((p) => p.test(t));
+  if (matched.length === 0) return false;
+  // Only the strategy noun fired, and the request relays/reads back an existing
+  // strategy rather than designing one → fast can do it (2026-09-05).
+  if (
+    matched.length === 1 &&
+    matched[0] === STRATEGY_NOUN &&
+    isStrategyRelayOrReadback(t)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 // Fan-out detection (2026-06-20): a chat that asks to PRODUCE one artifact PER
@@ -570,10 +776,16 @@ export function classify(input: ClassificationInput): ClassificationResult {
         modelTier: "capable",
       };
     }
+    // Scoreable demotion: a strategy relay/readback that would have been heavy
+    // before 2026-09-05 carries its own reason so the saving is measurable in `tasks`.
+    const relayDemoted =
+      advancedRouting && isStrategyRelayOrReadback(messagingText);
     return {
       agentType: "fast",
       score: 0,
-      reason: "messaging task → fast",
+      reason: relayDemoted
+        ? "messaging task → fast (strategy relay/readback)"
+        : "messaging task → fast",
       explicit: false,
       modelTier: computeMessagingTier(messagingText, input.description),
     };

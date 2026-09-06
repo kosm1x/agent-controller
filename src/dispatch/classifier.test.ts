@@ -10,6 +10,7 @@ import {
   isCodingTask,
   referencesExternalWebTarget,
   needsHeavyReasoning,
+  isStrategyRelayOrReadback,
   targetsForeignRepo,
   referencesForeignProject,
   referencesJarvisSelfDev,
@@ -320,6 +321,351 @@ describe("classifier", () => {
     });
     expect(result.agentType).toBe("heavy");
     expect(result.reason).toContain("challenging");
+  });
+
+  // ----- Strategy noun as the SOLE heavy cue: relay/readback stays on fast (2026-09-05) -----
+  // Tasks 9246 ("Escribe la estrategia en un google doc para revisarla") and 9244
+  // ("Cual es la estrategia de draft con 10 jugadores?") ran on heavy for 4.3/3.6 min
+  // ($3.43/$4.31) to relay a strategy already in the KB. Genuine design still escalates.
+  // Cases marked qa-* come from the 2026-09-05 qa-auditor FAIL (C1–C3, W1–W5, R3).
+  describe("strategy relay/readback (2026-09-05)", () => {
+    const chat = (title: string) =>
+      classify({
+        title,
+        description: "You are Jarvis, a strategic AI assistant...",
+        tags: ["messaging"],
+      });
+
+    it.each([
+      "Chat: Escribe la estrategia en un google doc para revisarla",
+      "Chat: Cual es la estrategia de draft con 10 jugadores?",
+      "Chat: Pon la estrategia en el KB",
+      "Chat: Manda la estrategia por email a Javier",
+      "Chat: Resume la estrategia del draft",
+      "Chat: Guarda la estrategia de precios en un doc",
+      "Chat: Put the roadmap into a Google Doc for review",
+      "Chat: What's the strategy for week 1?",
+      // qa-W1: greeting / vocative / politeness lead-in, opener in a later clause
+      "Chat: Hola Jarvis, cual es la estrategia de draft con 10 jugadores?",
+      "Chat: Buenos días. Cuál es la estrategia de draft?",
+      "Chat: Can you show me the strategy for week 1?",
+      "Chat: por favor dame la estrategia",
+      // qa-W2: clitic suffixes past JS's ASCII-only \b
+      "Chat: Envíame la estrategia por email",
+      "Chat: Mándame la estrategia por correo",
+      "Chat: Guárdala en el KB, la estrategia",
+      // qa-W3: "en general" / "el desarrollo" are not design verbs
+      "Chat: Muéstrame en general la estrategia del draft",
+      // qa-W4: EN "by"
+      "Chat: Send me the roadmap by email",
+      // R2-C3: accent moves under a clitic — every relay stem in its real spelling
+      "Chat: Compártela por telegram, la estrategia",
+      "Chat: Pégala en el doc, la estrategia",
+      "Chat: Cópiala al KB, la estrategia",
+      "Chat: Expórtala a un doc, la estrategia",
+      "Chat: Transcríbela en una nota, la estrategia",
+      "Chat: Vuélcala en el doc, la estrategia",
+      "Chat: Súbela al drive, la estrategia",
+      // R2-C1/W3: "Envía la" and a destination's own article are not indefinite nouns
+      "Chat: Envía la estrategia por correo a Javier",
+      "Chat: Envía la estrategia al KB",
+      "Chat: Escribe en un doc la estrategia de precios",
+      "Chat: Guárdala en un doc, la estrategia",
+      "Chat: Jarvis, muéstrame la estrategia",
+      // purpose infinitive / "for review" are not rework requests
+      "Chat: Escribe la estrategia en un doc para revisarla después",
+      "Chat: Put the strategy into a doc for review",
+      // R3-W2/W3/W4: noun/adjective homographs of rework verbs are not work requests
+      "Chat: Dame la estrategia de draft con los mejores jugadores",
+      "Chat: Manda la estrategia de mejora continua por correo",
+      "Chat: Send me the strategy update by email",
+      "Chat: Send me the strategy changes by email",
+      "Chat: Put the updated strategy in the doc", // existence adjective allowed
+      "Chat: Mándame la última estrategia por correo",
+      "Chat: Put the roadmap into a doc for final review",
+      "Chat: Save the strategy in the doc for later review",
+      // R3-W5: punctuation/emoji-only first clause after the lead-in strip
+      "Chat: Hola Jarvis 👋. Dame la estrategia",
+      "Chat: Gracias. Dame la estrategia",
+      // R3 info: status questions are readbacks
+      "Chat: Cómo va la estrategia del draft?",
+      "Chat: How is the strategy going?",
+      // participles / non-evaluative adjectives after the noun are still relays
+      "Chat: Mándame la estrategia completa por correo",
+      "Chat: Manda la estrategia actualizada por correo",
+      "Chat: Pon la estrategia corregida en el doc",
+      "Chat: Send me the strategy update by email, please",
+      // noun phrase first, then the relay verb
+      "Chat: La estrategia de precios, mándamela por correo",
+      "Chat: Dame la estrategia para ganar el draft",
+      // benign comma fragments: participle, recipient, politeness, appositive
+      "Chat: Manda la estrategia, revisada, por correo",
+      "Chat: Manda la estrategia por correo, a Javier",
+      "Chat: Send me the strategy by email, thanks",
+      "Chat: Manda la estrategia por e-mail", // "e" is only a conjunction before i-/hi-
+      // the requester is the destination
+      "Chat: Mándame la estrategia de contenido para Instagram",
+      "Chat: Envíame la estrategia",
+      // prepositional fragments within the two-token cap stay benign
+      "Chat: Manda la estrategia por correo, con los precios actualizados",
+      "Chat: Manda la estrategia por correo, para revisarla después",
+      "Chat: Pon la estrategia en el doc, en PDF",
+      "Chat: Pon la estrategia al final del doc",
+      // R8-W2: sequencing adverbs outside the post-comma slot are not second actions
+      "Chat: Manda la estrategia por correo primero",
+      "Chat: Primero mándame la estrategia por correo",
+      "Chat: Send me the strategy first",
+      "Chat: Pon la estrategia primero en el doc",
+      // R9-W1/W2: every lead-in / requester / idiom member pinned
+      "Chat: Ya mándame la estrategia por correo",
+      "Chat: Antes que nada mándame la estrategia",
+      "Chat: First of all, send me the strategy",
+      "Chat: Share me the strategy",
+      "Chat: Forward me the strategy by email",
+      "Chat: Pass me the strategy by email",
+      "Chat: Pon la estrategia al principio del doc",
+      // object after a pronoun or after the destination phrase
+      "Chat: Escribe en un google doc la estrategia de precios",
+      "Chat: Send us the strategy by email",
+      // R11: every slot closed, head anchored at both ends — these exercise the slots
+      "Chat: Pon la estrategia en el doc de precios", // destination + "de X"
+      "Chat: Muéstrame de nuevo la estrategia", // closed adverb between opener and noun
+      "Chat: Show me again the strategy",
+      "Chat: Manda la estrategia a Telegram", // brand = destination, not a recipient
+      "Chat: Send the strategy to Google Docs",
+      "Chat: Dame la estrategia 🙏", // trailing emoji is not text
+      "Chat: Put the roadmap into a Google Doc for a final review", // purpose with det + adjective
+      "Chat: Send me the strategy summary by email", // EN compound noun after the head
+    ])(
+      "relay/readback of an EXISTING strategy stays on fast, capable tier: %s",
+      (title) => {
+        expect(isStrategyRelayOrReadback(title)).toBe(true);
+        expect(needsHeavyReasoning(title)).toBe(false);
+        const r = chat(title);
+        expect(r.agentType).toBe("fast");
+        expect(r.reason).toContain("strategy relay/readback"); // qa-R2: scoreable
+        expect(r.modelTier).toBe("capable"); // qa-W5: never flash on a demoted readback
+      },
+    );
+
+    it.each([
+      "Chat: Diseña una estrategia de draft para 10 equipos",
+      "Chat: Crea una nueva estrategia de contenido para TikTok",
+      "Chat: Escribe una estrategia de contenido para TikTok", // indefinite → formulate
+      "Chat: Redacta la hoja de ruta 2027 del producto", // redactar = compose
+      "Chat: Compara la estrategia A con la estrategia B",
+      "Chat: Cuál será nuestra estrategia para el draft?", // future tense = formulate
+      "Chat: El premio de este Fantasy es de 10k USD. Necesito que establezcas un plan para generar la mayor diferencia competitiva. ¿Cuál será nuestra estrategia?",
+      "Chat: analiza nuestra estrategia comercial y recomienda pasos",
+      // qa-C1: a destination is not an intent — indefinite noun + destination = design
+      "Chat: Escribe una estrategia de contenido para TikTok en un google doc",
+      "Chat: Haz una estrategia de draft y ponla en el KB",
+      "Chat: Redacta la hoja de ruta 2027 del producto en un doc",
+      // qa-C2: readback openers with an indefinite / undetermined noun = formulate
+      "Chat: Dame una estrategia para ganar el draft",
+      "Chat: Give me a strategy to win the league",
+      "Chat: Muéstrame una estrategia para el draft",
+      "Chat: Dime qué estrategia deberíamos seguir para el draft",
+      "Chat: Dame la mejor estrategia para el draft", // evaluative adjective = formulate
+      "Chat: Escribe la nueva estrategia en un doc",
+      // qa-C3: design verb + relay destination in ONE message — pins DESIGN_TARGETS_STRATEGY
+      "Chat: Diseña la estrategia y ponla en un doc",
+      "Chat: Define la estrategia y guárdala en el KB",
+      // qa-R3: "hoja de ruta" is the noun, not a destination sheet
+      "Chat: Pon la estrategia del 2027 en la hoja de ruta",
+      // R2-W1: a benign first clause must not license the real work in the second
+      "Chat: Muéstrame la estrategia de precios y compárala con la de la competencia",
+      "Chat: What is our strategy for Q4 and how should we adapt it?",
+      "Chat: Dame la estrategia y dime qué deberíamos cambiar para el draft",
+      "Chat: Resume la estrategia y luego arma el plan de ejecución",
+      // R2-W2: rework verbs are design, whatever the destination
+      "Chat: Ajusta la estrategia de precios y ponla en el doc",
+      "Chat: Revisa la estrategia y mándamela por correo",
+      "Chat: Optimiza la estrategia y súbela al drive",
+      "Chat: Actualiza la estrategia con los nuevos datos y ponla en el doc",
+      "Chat: Muéstrame opciones de estrategia y recomienda una",
+      // R3-W1: pins first-clause-only readback — an unlisted design verb opens sentence 1,
+      // a readback-shaped sentence 2 must not license the demotion
+      "Chat: Rehaz la estrategia desde cero. Dame el doc con lo que salga",
+      // R3-W2/W3: the same homographs in imperative position ARE work requests
+      "Chat: Cambia la estrategia y ponla en el doc",
+      "Chat: Mejora la estrategia y guárdala en el KB",
+      "Chat: Review the strategy and send it by email",
+      "Chat: Update the strategy with the new data and put it in the doc",
+      // R4-C1: an adverb/object between the imperative homograph and its article
+      "Chat: Revisa bien la estrategia y mándamela por correo",
+      "Chat: Mejora un poco la estrategia y ponla en el doc",
+      "Chat: Ajusta un par de cosas en la estrategia y mándamela por correo",
+      "Chat: Cambia todo en la estrategia y ponla en el doc",
+      "Chat: Review carefully the strategy and send it by email",
+      "Chat: Update pricing in the strategy and put it in the doc",
+      // R4-W1: rework verbs that were missing from the list
+      "Chat: Rehaz la estrategia desde cero y ponla en el doc",
+      "Chat: Corrige la estrategia y mándamela por correo",
+      "Chat: Reescribe la estrategia y guárdala en el KB",
+      "Chat: Simplifica la estrategia y ponla en el doc",
+      "Chat: Agrega dos jugadores a la estrategia y ponla en el doc",
+      "Chat: Rewrite the strategy and put it in the doc",
+      "Chat: Expand the strategy and save it to the KB",
+      // R4-W2: periphrastic future is a formulate request, like "cuál será"
+      "Chat: Cómo va a ser la estrategia del draft?",
+      "Chat: Cómo va a quedar la estrategia de precios?",
+      "Chat: How is the strategy going to change for Q4?",
+      // R4-W3: "pero adaptada" asks for the adaptation
+      "Chat: Dame la misma estrategia pero adaptada al draft de 2027",
+      // first-clause-only readback, pinned with an UNLISTED verb in clause 1
+      "Chat: Descarta la estrategia actual. Dame la estrategia",
+      // allow-by-shape (R5): coordination and subordination are unknown work
+      "Chat: Pon la estrategia y el arma secreta en el doc",
+      "Chat: Manda la estrategia por correo cuando la mejores",
+      "Chat: Pon la estrategia en el doc si la cambias",
+      "Chat: Manda la estrategia por correo una vez que la completes",
+      "Chat: Manda la estrategia por correo, pero primero mejora precios",
+      "Chat: Send me the strategy after tweaking it",
+      // allow-by-shape (R5): an unlisted verb in first position is unknown work
+      "Chat: Reformula la estrategia y ponla en el doc",
+      "Chat: Replantea la estrategia y mándamela por correo",
+      "Chat: Pule la estrategia y mándamela por correo",
+      "Chat: Vuelve a hacer la estrategia y ponla en el doc",
+      "Chat: Rethink the strategy and put it in the doc",
+      "Chat: Please double-check the strategy and send it by email",
+      "Chat: Tweak the strategy and save it to the KB",
+      "Chat: La estrategia, revísala y mándamela por correo",
+      "Chat: Redesign the strategy and put it in the doc",
+      // evaluative adjective glued to the noun ⇒ formulate
+      "Chat: Dame la estrategia óptima para el draft",
+      "Chat: Dame la estrategia ganadora para el draft",
+      "Chat: Give me the winning strategy for the draft",
+      // gerund = second action
+      "Chat: Manda la estrategia por correo mejorando los precios",
+      // R8-W4: a bare "del" names the SOURCE, not a destination
+      "Chat: Escribe la estrategia del doc",
+      // R9-C1: the object is not the strategy itself ⇒ analysis, not readback/relay
+      "Chat: Send me your best thinking on the strategy",
+      "Chat: Send me your recommendation on the strategy",
+      "Chat: Share me your view on the strategy",
+      "Chat: Mándame tu opinión sobre la estrategia por correo",
+      "Chat: Dame tu recomendación sobre la estrategia",
+      "Chat: Tell me what you would change in the strategy",
+      "Chat: Give me your read on the strategy",
+      "Chat: Show me the gaps in the strategy",
+      "Chat: Dame los riesgos de la estrategia",
+      "Chat: Dime cuál es el desarrollo de la estrategia", // object = "el desarrollo" (was a fast pin until R9)
+      // R6-C1: a comma-joined second imperative is a second action
+      "Chat: Manda la estrategia por correo, mejora los precios primero",
+      "Chat: Pon la estrategia en el doc, agrégale dos jugadores",
+      "Chat: Mándame la estrategia por correo, ponle los precios nuevos",
+      "Chat: Escribe la estrategia en un doc, hazla desde cero",
+      "Chat: Dame la estrategia, arma el plan de precios",
+      "Chat: Send me the strategy by email, add the new prices",
+      "Chat: Put the strategy in the doc, rewrite the pricing section",
+      // R6-C2: disjunctive / copulative coordinators
+      "Chat: Dame la estrategia o arma el plan de precios",
+      "Chat: Give me the strategy or draft a new one",
+      "Chat: Manda la estrategia por correo e incluye precios nuevos",
+      "Chat: Manda la estrategia por correo ni bien la termines",
+      // R6-W1: pins the single-sentence check (clause 1 alone would pass the shape)
+      "Chat: Dame la estrategia. Rehaz el plan de precios.",
+      // R6-W2: pins RELAY_SHAPE's start anchor
+      "Chat: Rehaz la estrategia, mándamela por correo",
+      // R6-W3: "from scratch" is a closed two-token formulate marker
+      "Chat: Escribe la estrategia desde cero en un doc",
+      "Chat: Write the strategy from scratch in a doc",
+      // R7-C1: a discourse-marker-led second imperative after a comma
+      "Chat: Manda la estrategia por correo, de paso ajusta precios",
+      "Chat: Mándame la estrategia por correo, de paso actualiza los precios",
+      "Chat: Pon la estrategia en el doc, al final agrégale los precios",
+      "Chat: Dame la estrategia, por cierto arma el plan de precios",
+      "Chat: Dame la estrategia, para empezar arma el plan",
+      "Chat: Manda la estrategia por correo, al final rehazla",
+      "Chat: Manda la estrategia por correo, con precios nuevos ponla al día",
+      "Chat: Send me the strategy by email, by the way add prices",
+      "Chat: Put the strategy in the doc, in addition rewrite pricing",
+      // R7-C1: a clitic-bearing imperative hides behind an innocent preposition
+      "Chat: Manda la estrategia por correo, en serio ajústala",
+      "Chat: Manda la estrategia por correo, en serio hazla bien",
+      // R8-C1: the appositive fragment carries the same cap
+      "Chat: Manda la estrategia por correo, la estrategia de precios ponla al día",
+      "Chat: Pon la estrategia en el doc, la estrategia del 2027 rehazla",
+      "Chat: Send me the strategy by email, the strategy for pricing rewrite it",
+      // R8-W1: pins the discourse-marker class (only the marker blocks this one)
+      "Chat: Manda la estrategia por correo, de paso ajusta",
+      // R8-W3: vosotros imperative + clitic
+      "Chat: Manda la estrategia por correo, en serio revisadla",
+      // R10-C1: a noun in the opener slack is analysis, not a readback
+      "Chat: Dame riesgos de la estrategia",
+      "Chat: Show me risks in the strategy",
+      "Chat: What's wrong with the strategy?",
+      "Chat: Tell me alternatives to the strategy",
+      // R10-C2: the object after a fronted destination must be the strategy itself
+      "Chat: Escribe en el doc mejoras a la estrategia",
+      "Chat: Write in the doc improvements to the strategy",
+      "Chat: Manda por correo cambios a la estrategia",
+      // R10-C3: the clitic branch is anchored — only politeness + tail may follow
+      "Chat: Ponla al día en el doc, la estrategia",
+      "Chat: Escríbela de nuevo en el doc, la estrategia",
+      "Chat: Pásala a limpio en el doc, la estrategia",
+      "Chat: Mándamela por correo con los cambios a la estrategia",
+      // R11: the tail after the noun is closed — accompaniment reads as a change
+      "Chat: Escribe la estrategia con mejoras en el doc",
+      "Chat: Manda la estrategia con tus cambios por correo",
+      "Chat: Manda la estrategia con el ajuste de precios por correo", // was a fast pin R3–R10
+      "Chat: Send the strategy with fixes to the doc",
+      "Chat: Dame la estrategia con mejoras",
+      "Chat: Cuál es la estrategia sin los riesgos",
+      "Chat: Escribe la estrategia en el doc con mis comentarios",
+      // R11: a purpose infinitive must be consumption ("para revisarla" is a fast pin)
+      "Chat: Escribe la estrategia en el doc para mejorarla",
+      "Chat: Escribe la estrategia para mejorarla en el doc",
+      // R11: the fronted noun phrase is bound to the same shape
+      "Chat: La estrategia con mejoras, mándamela por correo",
+      // R11: a "con" phrase inside the topic needs a number or a definite article
+      "Chat: Escribe la estrategia de precios con tus cambios en el doc",
+      "Chat: Escribe la estrategia de precios con mejoras en el doc",
+      // R11: a relative clause on the noun is not a complement (closes the R7 queue item)
+      "Chat: Envíame la estrategia que propongas",
+      "Chat: Manda la estrategia de precios que propongas por correo",
+      // R11: a recipient is a capitalised name, not any token ("a limpio", "a mejorar")
+      "Chat: Manda la estrategia a mejorar por correo",
+      // R11: an unlisted word after the destination is unknown ⇒ heavy (conservative)
+      "Chat: Escribe en el doc nuevo la estrategia",
+    ])("design / reasoning still escalates to heavy: %s", (title) => {
+      expect(isStrategyRelayOrReadback(title)).toBe(false);
+      expect(needsHeavyReasoning(title)).toBe(true);
+      const r = chat(title);
+      expect(r.agentType).toBe("heavy");
+      expect(r.reason).toContain("challenging");
+    });
+
+    it("the guard only applies when the strategy noun is the SOLE cue", () => {
+      // strategy noun + "a fondo" (deep) → two cues → heavy even with a relay destination
+      expect(
+        needsHeavyReasoning(
+          "Chat: Escribe a fondo la estrategia en un google doc",
+        ),
+      ).toBe(true);
+      // no strategy noun at all → guard is inert, ordinary fast reason
+      expect(
+        isStrategyRelayOrReadback("Chat: Escribe el resumen en un google doc"),
+      ).toBe(false);
+      expect(chat("Chat: Escribe el resumen en un google doc").reason).toBe(
+        "messaging task → fast",
+      );
+    });
+
+    it("kill switch: MESSAGING_HEAVY_ESCALATION=false sends everything to fast with the plain reason", () => {
+      vi.stubEnv("MESSAGING_HEAVY_ESCALATION", "false");
+      try {
+        expect(chat("Chat: Diseña una estrategia de draft").agentType).toBe(
+          "fast",
+        );
+        expect(chat("Chat: Pon la estrategia en el KB").reason).toBe(
+          "messaging task → fast",
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 
   it("keeps a bare 'commit and push' chat on fast (host git op, not authoring)", () => {
