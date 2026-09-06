@@ -60,6 +60,15 @@ tier) with the scoreable reason `messaging task → fast (strategy relay/readbac
 - Definiteness is a proxy for existence: «escribe la estrategia de draft para 10
   equipos en un doc» demotes; fast can write it.
 
+**First live residual (2026-09-06, task 1b276d1d):** the operator pasted a
+prior Jarvis reply («Ayer a las 11:45 am contestaste esto: …», 2.5 k chars) and
+the quote carried «Estrategia completa en projects/…» → heavy, Opus, 5 goals,
+1.66 M tokens, English. Exactly the class above (noun inside quoted text); a
+QUOTE shape (`contestaste|dijiste|respondiste|escribiste esto:` → score the text
+BEFORE the marker only) is queued in `next-sessions-queue.md` §2026-09-06, to be
+audited like the guard before it ships. Note the guard itself has 0 production
+hits so far: the live «estrategia» turns since deploy were quotes or lists.
+
 ## How to extend
 
 - A new destination/adverb/purpose/existence word: add it to the matching closed
