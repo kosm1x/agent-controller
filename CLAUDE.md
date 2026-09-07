@@ -143,7 +143,7 @@ Metrics: `utility | cache-hit | latency | cost`. Stratify by `bank`, `source`, `
 Source edits to mission-control have **NO effect** until deployed. The service runs compiled JS from `dist/`, not source.
 
 ```bash
-./scripts/deploy.sh          # build + restart + verify (preferred)
+./scripts/deploy.sh          # build + restart + verify (preferred; OPERATOR-RUN — the mc-guard hook denies Claude executing it)
 # or manually:
 npm run build && systemctl restart mission-control
 ```
@@ -201,7 +201,7 @@ This applies to dev mode (`npm run dev`) and any tsx-based service.
 
 - SQLite at `data/mc.db` — contains Jarvis memories, conversations, embeddings, task history
 - **NEVER delete or reset** without explicit user approval — memories are irreplaceable
-- Additive schema changes (new tables/indexes) apply live: `sqlite3 ./data/mc.db < ddl.sql`
+- Additive schema changes (new tables/indexes) apply live: `sqlite3 ./data/mc.db < ddl.sql` — operator-run: since 2026-09-07 the `mc-guard` PreToolUse hook denies non-readonly `sqlite3` on `mc.db` from Claude's shell (reads use `sqlite3 -readonly`)
 - All DB access goes through `getDatabase()` singleton — no raw `sqlite3` CLI in tools
 
 ### FS-mirror managed namespaces
