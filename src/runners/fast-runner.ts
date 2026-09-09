@@ -70,6 +70,27 @@ export function splitSystemMessagesByCache(messages: ChatMessage[]): {
  * from training data. See feedback_jarvis_kb_directive_loading.md for the
  * 2026-05-06 incident chain that drove this fix.
  */
+/**
+ * Text the DENUE high-stakes guard signal is evaluated on. For a chat task
+ * the description is the persona/system prompt and the user's words live
+ * ONLY in the last `conversationHistory` turn; the title is the message cut
+ * at 60 chars. Checking title+description alone silently skipped the guard
+ * for every chat whose trigger sat past the cut ("…hasta nivel municipio y
+ * dame el top 10" — tasks 9447/9457, 2026-09-09: the recipe was never
+ * injected, so Jarvis explored the schema and joined on names). Same class
+ * the classifier fixed with `detectionText` (2026-07-06).
+ */
+export function highStakesSignalText(input: {
+  title: string;
+  description: string;
+  conversationHistory?: readonly { role: string; content: string }[];
+}): string {
+  const lastUser = [...(input.conversationHistory ?? [])]
+    .reverse()
+    .find((t) => t.role === "user");
+  return `${input.title}\n${input.description}\n${lastUser?.content ?? ""}`;
+}
+
 export function highStakesGuardVariant(
   tools: readonly string[] | undefined,
 ): "advisory" | "full" {
@@ -1008,7 +1029,7 @@ export const fastRunner: Runner = {
     //   - jarvis-kb/directives/denue-patterns.md (12 patterns, intent → path)
     //   - jarvis-kb/directives/denue-analyzer-granularities.md (schema reference)
     //   - feedback_data_authoring_no_verification.md (anti-pattern catalog)
-    if (hasHighStakesDataSignal(`${input.title}\n${input.description}`)) {
+    if (hasHighStakesDataSignal(highStakesSignalText(input))) {
       // Fix D (2026-05-06 follow-up): if scope didn't grant shell_exec OR
       // http_fetch, the long routing recipe below is useless — Jarvis can't
       // hit the API (no header support in browser/web_read) and can't run

@@ -5,9 +5,11 @@ import {
   classifyToolError,
   WRITE_TOOLS,
   highStakesGuardVariant,
+  highStakesSignalText,
   splitSystemMessagesByCache,
 } from "./fast-runner.js";
 import type { ChatMessage } from "../inference/adapter.js";
+import { hasHighStakesDataSignal } from "../dispatch/classifier.js";
 
 describe("detectsHallucinatedExecution", () => {
   // --- Layer 1: Full hallucination (zero tools) ---
@@ -1225,6 +1227,48 @@ describe("classifyToolError", () => {
     expect(classifyToolError('{"error":"Something unexpected happened"}')).toBe(
       "transient",
     );
+  });
+});
+
+describe("highStakesSignalText (2026-09-09 — chat guard must see the user turn)", () => {
+  const msg =
+    "Háblame de densidad de dentistas por habitante hasta nivel municipio y dame el top 10";
+  const title = `Chat: ${msg.slice(0, 60)}...`;
+  const description = "## Identidad — regla absoluta\nNO eres Claude…";
+
+  it("includes the last user turn, so a trigger past the 60-char title cut fires", () => {
+    const text = highStakesSignalText({
+      title,
+      description,
+      conversationHistory: [
+        { role: "user", content: "hola" },
+        { role: "assistant", content: "hola" },
+        { role: "user", content: `[Hoy es 2026-09-09]\n\n${msg}` },
+      ],
+    });
+    expect(hasHighStakesDataSignal(text)).toBe(true);
+  });
+
+  it("title+description alone miss the same message (the pre-fix shape)", () => {
+    expect(hasHighStakesDataSignal(`${title}\n${description}`)).toBe(false);
+  });
+
+  it("uses the LAST user turn, not an earlier one, and tolerates no history", () => {
+    const text = highStakesSignalText({
+      title: "Chat: gracias",
+      description,
+      conversationHistory: [
+        { role: "user", content: "ranking de farmacias en Jalisco" },
+        { role: "assistant", content: "…" },
+        { role: "user", content: "gracias" },
+      ],
+    });
+    expect(hasHighStakesDataSignal(text)).toBe(false);
+    expect(
+      hasHighStakesDataSignal(
+        highStakesSignalText({ title: "Task: x", description: "scoring de AGEBs" }),
+      ),
+    ).toBe(true);
   });
 });
 
