@@ -2090,3 +2090,79 @@ The ESPN API authentication friction (WAF, OAuth2/CAPTCHA, `espn_s2` cookie hunt
 
 ### Research notes
 Day 34 conversations is the lowest volume of the week, consistent with a recreational/planning day rather than a production sprint. The Fantasy Football thread is notable as the first purely personal-entertainment project to receive full KB scaffolding and multi-artifact output — suggesting the user's relationship with Jarvis is expanding beyond professional work into high-stakes leisure decisions. The ESPN authentication wall is a candidate recurring friction node to track: if the integration remains unresolved by draft day (Sep 7), it will be a measurable capability gap under time pressure.
+
+## 2026-09-06
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 41 (telegram: 41) |
+| Streak days | — |
+
+### Interactions summary
+A three-block day with distinct themes per session. The morning was dominated by **Fantasy ESPN** — verifying API access, locating and storing the `espn_s2` cookie credential, and auditing cron job coverage for the fantasy project (discrepancy found: Fantasy cron jobs were absent from the 6 active system schedules). Midday through afternoon was an intensive **Trustr.mx** sprint: competitive research on Mercati, Ogilvy-style slogan development, a full adversarial audit of the demo, UI corrections (P1 hero unification, T2 email validation, P2 social proof counter, P4 CTA), a commit to the repo, KB sync, IMPI trademark search for "Trustr," and Etapa 1 launch planning. The day closed with a one-off **longevity/nutrition** request: anti-inflammatory superfood recipes converted to a Google Doc.
+
+### What Jarvis learned
+The `espn_s2` credential was stored in the KB by end-of-session, resolving the multi-day ESPN authentication friction — a clear forward step on a recurring gap. The Trustr demo audit pattern (adversarial P1–P4 / T1–T2 classification, immediate code fix, commit, KB sync in sequence) is becoming a repeatable workflow Fede executes efficiently with Jarvis. No new behavioral directives were issued today, suggesting the protocols from earlier in the week (status-reporting, healing-loop) held.
+
+### Friction points
+- **`espn_s2` not found in KB at session open:** Jarvis failed to locate the cookie that had been provided previously, requiring the user to supply it again before it could be stored correctly.
+- **Yesterday's day-log entry (11:45 AM) not locatable:** Jarvis could not find the specific entry; user had to cite the content from memory directly.
+- **Trustr demo URL absent from KB:** URL was not stored; user had to point Jarvis to the Caddy/nip.io path and `/root/claude/previews/` directory.
+- **Slogans skill file not found:** Jarvis proceeded without the skill file, substituting conversational context — functional but not ideal.
+
+### Research notes
+Today is a textbook multi-project coordination day: three distinct domains (fantasy sports tooling, startup launch prep, personal health) handled sequentially with no cross-contamination. The Trustr thread is now the most KB-rich and operationally mature project of the week, with a full audit-to-commit cycle completed in a single session. The persistent credential and URL-location failures (both resolved today by storing) suggest that KB hygiene — rather than reasoning or tool gaps — is the dominant friction driver in this phase of the collaboration.
+
+## 2026-09-07
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 69 (telegram: 69) |
+| Streak days | — |
+
+### Interactions summary
+A high-density day (~50+ exchanges) split across three well-defined blocks: morning Fantasy NFL prep (liga ESPN `#160656642`, Bad Ostrich Team ID 5, API verification), afternoon analytical work on TMN (trade marketing market sizing, financial modeling in Google Sheets, gross margin logic correction), and evening a live round-by-round NFL draft (20:31–21:00 CDMX) assisted via image analysis, followed by a new-business sprint on a Doctoralia/dentist scraper and outreach pipeline. Secondary threads included Pulso Aura KB updates, FTC vs. Amazon informational query, and domain availability check for `redlightinsider.com`. The most-used tools were KB reads/writes, API calls (ESPN, GitHub), and shell/file operations.
+
+### What Jarvis learned
+The live draft assistance via image analysis worked well as a real-time collaboration mode — Jarvis adapted round-by-round without friction, suggesting image-based ad-hoc workflows are a stable interaction pattern for Fede. The TMN financial modeling session surfaced a meaningful conceptual correction (retailer prize as cost, not revenue) that Jarvis caught and propagated to both the Sheet and the KB — a positive instance of analytical trust. The Doctoralia scraper sprint (adversarial search → strategy → Google Sheets export in one session) confirms Fede's pattern of compressing full new-business cycles into single-evening sprints.
+
+### Friction points
+- **ESPN rival roster API (Rabadilla):** First two attempts failed; required additional cookies and still returned limited data.
+- **Doctoralia GitHub repo returned 403:** Jarvis redirected to local repo as fallback — functional but required an unplanned pivot.
+- **Fantasy strategy file not found by exact name:** Jarvis reported the miss transparently rather than assuming — correct behavior, but added a lookup round-trip.
+- **X (Twitter) post inaccessible without auth:** Blocked without login; topic dropped by user with no impact.
+- **Draft strategy completeness caveat (21:10):** Jarvis flagged it had not verified all roster criteria — appropriate transparency but noted as a session-limit signal.
+
+### Research notes
+69 conversations marks the highest single-day volume recorded to date, driven by a live real-time event (NFL draft) that demanded sustained, low-latency back-and-forth over ~30 minutes. The session demonstrates that the collaboration is now operating across both professional (TMN, Doctoralia) and high-stakes leisure (Fantasy) domains simultaneously — a phase expansion from earlier weeks where work and personal projects were temporally separated. The Doctoralia pipeline (scrape → analyze → prospect → export) executed end-to-end in one evening, reinforcing the pattern of compressed full-cycle business development as a signature Fede workflow.
+
+## 2026-09-08
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 35 (telegram: 35) |
+| Streak days | — |
+
+### Interactions summary
+An intense, wide-ranging day (~27 exchanges) distributed across four blocks (09:15–14:45, 22:09, 23:19–23:28). The morning was dominated by a KB sync sweep — Doctoralia Scraper (4 new commits), Trustr, Pulso Aura (5 commits), Agent-Controller, and the creation and sync of the new PromoVideoAgent project — interspersed with Fantasy Football waiver/roster work for the Bad Ostrich team. The afternoon turned toward content creation: three Google Docs produced (FAST/CTV forum guide, personal fasting protocol, PromoVideoAgent cost analysis). The evening closed with a geopolitical query on Ukraine and a DENUE database exploration (73,315 dental clinics; 41,210 with phone).
+
+### What Jarvis learned
+The `(sin verificar)` provenance protocol was formally calibrated today: the tag applies only to data that cannot be traced to a tool result from the current thread — not to query-verified figures. This is a meaningful epistemic precision gain that will carry forward. A second pattern confirmed: Fede drives multi-project KB syncs as a recurring "state-of-the-world" ritual at the start of work sessions, treating KB freshness as a prerequisite before deeper analytical work.
+
+### Friction points
+- **PromoVideoAgent BD creation left pending one full sub-session:** Jarvis created the KB but did not register the project in the DB until the user explicitly followed up 30 minutes later.
+- **ESPN view names returned empty data twice:** `mRoster` and `kona_player_info` both required a fallback view switch before returning usable rosters.
+- **`(sin verificar)` incorrectly applied to a verified DENUE query result:** Caught and corrected in-session by the user; formalized as a rule.
+- **Google Doc link for PromoVideoAgent costs missed by user on first delivery** — re-shared without friction.
+
+### Research notes
+Today's session is a clear example of Fede's "maintenance + creation" day pattern: a structured KB sweep across five projects (housekeeping) followed by net-new deliverables (three Google Docs, one new project registered). The PromoVideoAgent arc — local KB creation → GH 404 fallback → BD registration lag → sync → cost doc — illustrates a recurring workflow where project onboarding spans multiple sub-sessions rather than completing atomically; this is worth tracking as a potential process improvement vector.
