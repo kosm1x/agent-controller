@@ -131,6 +131,15 @@ export function mirrorToDisk(path: string, content: string): void {
   }
 }
 
+/**
+ * `content` is TEXT NOT NULL in the schema, but SQLite affinity does not
+ * convert a BLOB insert: 2 live rows came back as Buffer and every string
+ * op downstream (`countLines`, `split`, `slice`) threw — task 9493,
+ * 2026-09-09. Coerce at the accessor boundary, once, for all ~30 consumers.
+ */
+const asText = (v: unknown): string =>
+  typeof v === "string" ? v : v == null ? "" : String(v);
+
 /** Upsert a file. SQLite write + filesystem mirror. */
 export function upsertFile(
   path: string,
@@ -143,6 +152,9 @@ export function upsertFile(
   relatedTo: string[] = [],
   opts: UpsertFileOptions = {},
 ): void {
+  // Write-side guard (audit W7): a Buffer stored here is what produced the
+  // 2 BLOB rows — coerce so the TEXT contract holds at the source too.
+  content = asText(content);
   const db = getDatabase();
   // Sync-driven writes (skipUserEdit=true) must not bump user_edit_time.
   // Real user edits (default) bump both updated_at and user_edit_time.
@@ -210,11 +222,11 @@ export function upsertFile(
 /** Get a file by path. Returns null if not found. */
 export function getFile(path: string): JarvisFile | null {
   const db = getDatabase();
-  return (
-    (db.prepare("SELECT * FROM jarvis_files WHERE path = ?").get(path) as
-      | JarvisFile
-      | undefined) ?? null
-  );
+  const row = db.prepare("SELECT * FROM jarvis_files WHERE path = ?").get(path) as
+    | JarvisFile
+    | undefined;
+  if (!row) return null;
+  return { ...row, content: asText(row.content) };
 }
 
 /** Get files by qualifier, ordered by priority. Used by auto-injection. */
@@ -223,7 +235,7 @@ export function getFilesByQualifier(
 ): JarvisFileSummary[] {
   const db = getDatabase();
   const placeholders = qualifiers.map(() => "?").join(",");
-  return db
+  const rows = db
     .prepare(
       `SELECT path, title, content, qualifier, condition, priority
        FROM jarvis_files
@@ -231,6 +243,7 @@ export function getFilesByQualifier(
        ORDER BY priority ASC, created_at ASC`,
     )
     .all(...qualifiers) as JarvisFileSummary[];
+  return rows.map((r) => ({ ...r, content: asText(r.content) }));
 }
 
 /** Append content to a file. Returns false if file not found. */
@@ -238,10 +251,10 @@ export function appendToFile(path: string, content: string): boolean {
   const db = getDatabase();
   const existing = db
     .prepare("SELECT content FROM jarvis_files WHERE path = ?")
-    .get(path) as { content: string } | undefined;
+    .get(path) as { content: unknown } | undefined;
   if (!existing) return false;
 
-  const newContent = `${existing.content}\n\n${content}`;
+  const newContent = `${asText(existing.content)}\n\n${content}`;
   db.prepare(
     "UPDATE jarvis_files SET content = ?, updated_at = datetime('now') WHERE path = ?",
   ).run(newContent, path);
@@ -497,8 +510,6 @@ export function locateMatch(
   return anyHit ?? { line: null, section: null };
 }
 
-const asText = (v: unknown): string =>
-  typeof v === "string" ? v : v == null ? "" : String(v);
 
 /**
  * Search files by tokenized full-text. Returns paths + matching snippet.

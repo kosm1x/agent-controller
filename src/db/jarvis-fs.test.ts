@@ -7,6 +7,9 @@ import {
   upsertFile,
   searchFiles,
   locateMatch,
+  getFile,
+  getFilesByQualifier,
+  appendToFile,
   deleteFile,
   syncDeleteFromKbMirror,
   listFiles,
@@ -259,6 +262,23 @@ describe("searchFiles — citation (line + section) per hit (paper plan A.2, 202
     const hits = searchFiles("protocolo", 10);
     expect(hits.map((h) => h.path).sort()).toEqual(["knowledge/blob.md", "knowledge/text.md"]);
     expect(hits.find((h) => h.path === "knowledge/blob.md")).toMatchObject({ line: 3, section: "Blob" });
+  });
+
+  it("getFile / getFilesByQualifier / appendToFile coerce a BLOB content row to string (task 9493)", () => {
+    upsertFile("directives/blobby.md", "Blobby", "# Blobby\n\nline two\n", [], "always-read");
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET content = ? WHERE path = ?")
+      .run(Buffer.from("# Blobby\n\nline two\n", "utf8"), "directives/blobby.md");
+    expect(getFile("directives/nope.md")).toBeNull();
+    expect(typeof getFile("directives/blobby.md")!.content).toBe("string");
+    expect(getFile("directives/blobby.md")!.content).toContain("line two");
+    const inj = getFilesByQualifier("always-read").find((f) => f.path === "directives/blobby.md")!;
+    expect(typeof inj.content).toBe("string");
+    expect(appendToFile("directives/blobby.md", "line three")).toBe(true);
+    expect(getFile("directives/blobby.md")!.content).toMatch(/line two\n\n\nline three$/);
+    // Write-side guard: a Buffer handed to upsertFile is stored as TEXT.
+    upsertFile("directives/buf.md", "Buf", Buffer.from("# Buf\n", "utf8") as unknown as string);
+    expect(getDatabase().prepare("SELECT typeof(content) t FROM jarvis_files WHERE path='directives/buf.md'").get()).toEqual({ t: "text" });
   });
 
   it("LIKE fallback path (single-char query) cites the substring hit", () => {
