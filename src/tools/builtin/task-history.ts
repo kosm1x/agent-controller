@@ -12,6 +12,20 @@ import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
 
+/** ~200 chars around the first case-insensitive occurrence of `query` in
+ * `text`; undefined when absent (title/ID matched, not the output). */
+export function matchSnippet(text: string, query: string): string | undefined {
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx < 0) return undefined;
+  const start = Math.max(0, idx - 100);
+  const end = Math.min(text.length, idx + query.length + 100);
+  return (
+    (start > 0 ? "…" : "") +
+    text.slice(start, end).replace(/\s+/g, " ") +
+    (end < text.length ? "…" : "")
+  );
+}
+
 export const taskHistoryTool: Tool = {
   name: "task_history",
   readOnlyHint: true,
@@ -28,6 +42,7 @@ USE WHEN:
 - User asks "what did the schedule do?" or "did you complete X?"
 - You need to verify what actually happened in a past execution
 - You want to check if a scheduled task ran and what its output was
+- User asks what you FOUND or CONCLUDED in an earlier task ("¿qué encontraste sobre X?", "el análisis que hiciste de X") — set search_output: true; the returned taskId is your citation
 
 DO NOT USE WHEN:
 - You need real-time data (use web_search, shell_exec)
@@ -52,6 +67,11 @@ Returns the last N executions matching the query, with: title, status, tools cal
             description:
               "If true, only return scheduled task executions (filters out chat tasks). Default false.",
           },
+          search_output: {
+            type: "boolean",
+            description:
+              "If true, ALSO match the query against each task's OUTPUT text (what you wrote or found), not only the title/ID. Each hit adds outputMatch (~200 chars around the first occurrence in the text). Matching is case-insensitive for ASCII only — write accented terms as they appear ('Juárez', not 'JUÁREZ'). Use to recall a past analysis or finding; cite the taskId. Default false.",
+          },
         },
         required: ["query"],
       },
@@ -62,14 +82,25 @@ Returns the last N executions matching the query, with: title, status, tools cal
     const query = args.query as string;
     const limit = Math.min((args.limit as number) ?? 3, 10);
     const scheduledOnly = (args.scheduled_only as boolean) ?? false;
+    const searchOutput = args.search_output === true;
 
     const db = getDatabase();
 
     // Search by title OR task_id prefix — prevents false negatives when
-    // querying by ID fragment (e.g. from "🤖 Agente lanzado" notifications)
-    const titleFilter = scheduledOnly
-      ? "t.title LIKE '%[Scheduled]%' AND (t.title LIKE @query OR t.task_id LIKE @query)"
+    // querying by ID fragment (e.g. from "🤖 Agente lanzado" notifications).
+    // One row per task: the LEFT JOIN pins ONE run (runs.task_id is not
+    // unique; a re-run task used to eat the whole LIMIT — qa-audit W4). With
+    // search_output the pinned run is the one whose output MATCHED, else the
+    // latest — otherwise a finding in an earlier retry was unfindable (W7).
+    // search_output (2026-09-09, filesystem-memory paper plan A.1): the run
+    // output is the verbatim episode log; without this the LLM could only
+    // find a past finding if the TITLE happened to name it.
+    const matchCols = searchOutput
+      ? "(t.title LIKE @query OR t.task_id LIKE @query OR r.output LIKE @query)"
       : "(t.title LIKE @query OR t.task_id LIKE @query)";
+    const titleFilter = scheduledOnly
+      ? `t.title LIKE '%[Scheduled]%' AND ${matchCols}`
+      : matchCols;
 
     const rows = db
       .prepare(
@@ -84,7 +115,10 @@ Returns the last N executions matching the query, with: title, status, tools cal
            r.status AS run_status,
            r.error
          FROM tasks t
-         LEFT JOIN runs r ON r.task_id = t.task_id
+         LEFT JOIN runs r ON r.id = (
+           SELECT id FROM runs WHERE task_id = t.task_id
+           ORDER BY ${searchOutput ? "(output LIKE @query) DESC, " : ""}created_at DESC, id DESC LIMIT 1
+         )
          WHERE ${titleFilter}
          ORDER BY t.created_at DESC
          LIMIT @limit`,
@@ -117,6 +151,7 @@ Returns the last N executions matching the query, with: title, status, tools cal
       let roundsCompleted: number | undefined;
       let maxRounds: number | undefined;
       let outputPreview: string | undefined;
+      let outputText: string | undefined;
 
       if (row.output) {
         try {
@@ -126,16 +161,26 @@ Returns the last N executions matching the query, with: title, status, tools cal
           roundsCompleted = parsed.roundsCompleted;
           maxRounds = parsed.maxRounds;
           if (parsed.text) {
+            outputText = String(parsed.text);
             outputPreview =
-              parsed.text.length > 500
-                ? parsed.text.slice(0, 500) + "..."
-                : parsed.text;
+              outputText.length > 500
+                ? outputText.slice(0, 500) + "..."
+                : outputText;
           }
         } catch {
           // old format — output is raw text
+          outputText = row.output;
           outputPreview = row.output.slice(0, 500);
         }
       }
+
+      // Only the human-readable text is quotable; a hit inside the JSON
+      // envelope (toolCalls, exitReason) stays undefined rather than showing
+      // machinery as prose (qa-audit W5).
+      const outputMatch =
+        searchOutput && outputText !== undefined
+          ? matchSnippet(outputText, query)
+          : undefined;
 
       return {
         taskId: row.task_id,
@@ -151,6 +196,7 @@ Returns the last N executions matching the query, with: title, status, tools cal
         roundsCompleted,
         maxRounds,
         outputPreview,
+        ...(outputMatch !== undefined ? { outputMatch } : {}),
       };
     });
 

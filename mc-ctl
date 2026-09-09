@@ -2000,6 +2000,7 @@ usage() {
   echo -e "  ${GREEN}memory${NC}              Memory backend status"
   echo -e "  ${GREEN}jme-stats${NC}           JME utility dashboard — facts, recall rate, verdict runway"
   echo -e "  ${GREEN}jme-preferences${NC}     Preference facts (stated/inferred) + correction-signal rate; --confirm <id> | --reject <id>"
+  echo -e "  ${GREEN}kb-health${NC}           KB taxonomy report — near-duplicate siblings, single-file folders, size (read-only)"
   echo ""
   echo -e "  ${BOLD}Hindsight${NC}"
   echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
@@ -3021,6 +3022,13 @@ cmd_rule_of_two() {
   ( cd "$PROJECT_DIR" && MC_API_KEY="$key" API_URL="$API_URL" npx --no-install tsx scripts/rule-of-two-audit.ts "$@" )
 }
 
+cmd_kb_health() {
+  # mc-ctl kb-health — read-only KB taxonomy report (filesystem-memory paper
+  # plan B.3): same-folder near-duplicate names (P1), single-file folders
+  # (P5), registry size vs the 15 MB search-cost inflection. Never writes.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/kb-health.ts "$@" )
+}
+
 cmd_gates() {
   # mc-ctl gates <task_id>                       — V8.4 ledger rows for a task
   # mc-ctl gates summary [days]                  — gates.evaluated verdicts + hook blocks (trace), last N days (default 7)
@@ -3246,6 +3254,7 @@ case "$cmd" in
   stats)             cmd_stats ;;
   jme-stats)         cmd_jme_stats ;;
   jme-preferences)   cmd_jme_preferences "$@" ;;
+  kb-health)         cmd_kb_health "$@" ;;
 
   validation)        cmd_validation "$@" ;;
 

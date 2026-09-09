@@ -6,6 +6,7 @@ import { initDatabase, closeDatabase, getDatabase } from "./index.js";
 import {
   upsertFile,
   searchFiles,
+  locateMatch,
   deleteFile,
   syncDeleteFromKbMirror,
   listFiles,
@@ -205,5 +206,64 @@ describe("listFiles — corrupt tags resilience", () => {
 
     const filtered = listFiles({ tags: ["target"] });
     expect(filtered.map((f) => f.path)).toContain("knowledge/match.md");
+  });
+});
+
+describe("searchFiles — citation (line + section) per hit (paper plan A.2, 2026-09-09)", () => {
+  it("locateMatch returns the first matching line and its nearest heading, diacritic-folded", () => {
+    const content = [
+      "# Título",
+      "intro sin match",
+      "## Sección Farmacias",
+      "texto",
+      "Las farmacias de Oaxaca crecieron.",
+      "## Otra",
+      "farmacias otra vez",
+    ].join("\n");
+    expect(locateMatch(content, ["farmacias"])).toEqual({ line: 3, section: "Sección Farmacias" });
+    expect(locateMatch(content, ["oaxaca"])).toEqual({ line: 5, section: "Sección Farmacias" });
+    // Query without accent still hits the accented body (FTS5 unicode61 parity).
+    expect(locateMatch(content, ["seccion"])).toEqual({ line: 3, section: "Sección Farmacias" });
+    expect(locateMatch(content, ["nomatch"])).toEqual({ line: null, section: null });
+    expect(locateMatch(content, [])).toEqual({ line: null, section: null });
+  });
+
+  it("FTS path: hit carries line + section; title-only hit carries line=null", () => {
+    upsertFile(
+      "knowledge/denue.md",
+      "DENUE notes",
+      "# DENUE notes\n\nfiller\n\n## Densidad\n\nEl JOIN con censo_iter usa area_geo.\n",
+    );
+    upsertFile("knowledge/other.md", "censo_iter overview", "Body without the term.");
+    const hits = searchFiles("censo_iter", 10);
+    const denue = hits.find((h) => h.path === "knowledge/denue.md");
+    const other = hits.find((h) => h.path === "knowledge/other.md");
+    expect(denue).toMatchObject({ line: 7, section: "Densidad" });
+    expect(other).toMatchObject({ line: null, section: null });
+  });
+
+  it("multi-token query cites the first line holding ALL tokens, not the first partial hit (audit W3)", () => {
+    const content = "# Doc\n\ndocker kill on deploy\n\n## Firewall\n\nDocker published ports bypass UFW.\n";
+    expect(locateMatch(content, ["docker", "ufw", "bypass"])).toEqual({ line: 7, section: "Firewall" });
+    // No line has every token → first partial hit is still better than nothing.
+    expect(locateMatch(content, ["docker", "zzz"])).toEqual({ line: 3, section: "Doc" });
+  });
+
+  it("BLOB content rows (2 live rows, audit C1) are coerced — the FTS result set is NOT muted", () => {
+    upsertFile("knowledge/blob.md", "Blob row", "# Blob\n\nprotocolo de publicacion aqui\n");
+    upsertFile("knowledge/text.md", "Text row", "protocolo normal\n");
+    // Simulate the affinity gap: TEXT column holding a BLOB value.
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET content = ? WHERE path = ?")
+      .run(Buffer.from("# Blob\n\nprotocolo de publicacion aqui\n", "utf8"), "knowledge/blob.md");
+    const hits = searchFiles("protocolo", 10);
+    expect(hits.map((h) => h.path).sort()).toEqual(["knowledge/blob.md", "knowledge/text.md"]);
+    expect(hits.find((h) => h.path === "knowledge/blob.md")).toMatchObject({ line: 3, section: "Blob" });
+  });
+
+  it("LIKE fallback path (single-char query) cites the substring hit", () => {
+    upsertFile("knowledge/sym.md", "Symbols", "line one\n## Ops\n a & b\n");
+    const hits = searchFiles("&", 10);
+    expect(hits[0]).toMatchObject({ path: "knowledge/sym.md", line: 3, section: "Ops" });
   });
 });

@@ -736,9 +736,9 @@ USE WHEN:
 - User asks "qué sabes sobre X?" or "dónde hay info de X?"
 - PREFER THIS over jarvis_file_list when you know WHAT you want but not WHERE it is
 
-Returns: matching file paths + short snippet around the match. Does NOT return full content — use jarvis_file_read on specific results to get details.
+Returns: matching file paths + short snippet around the match, plus a citation per hit: \`L<n>\` = 1-indexed line of the first line holding the query terms, \`§ <heading>\` = the section it sits in, and a ready-made \`lines='N-M'\` range around it. Does NOT return full content — use jarvis_file_read on specific results to get details.
 
-WORKFLOW: search → pick best match → jarvis_file_read to get full content. Never narrate from snippet alone.`,
+WORKFLOW: search → pick best match → jarvis_file_read(path, lines=<the range printed on the hit, verbatim>) to jump straight to the cited section (skip the outline round-trip). Never narrate from snippet alone.`,
       parameters: {
         type: "object",
         properties: {
@@ -770,7 +770,13 @@ WORKFLOW: search → pick best match → jarvis_file_read to get full content. N
 
     const lines = [`🔍 ${results.length} files matching "${query}":`, ""];
     for (const r of results) {
-      lines.push(`[${r.path}] (${r.size} bytes)`);
+      // Range is pre-computed so the model never does the arithmetic:
+      // `L-20` is < 1 for 63% of live hits (qa-audit W1).
+      const cite =
+        r.line != null
+          ? ` — L${r.line}${r.section ? ` · § ${r.section}` : ""} · lines='${Math.max(1, r.line - 20)}-${r.line + 40}'`
+          : "";
+      lines.push(`[${r.path}] (${r.size} bytes)${cite}`);
       lines.push(`  ${r.snippet}`);
       lines.push("");
     }

@@ -439,16 +439,66 @@ export function listFiles(filters?: {
  * unhelpful matches. Returns null if no usable tokens remain.
  */
 function buildFtsMatch(query: string): string | null {
-  const tokens = query
-    .toLowerCase()
-    .split(/[\s,;:!?¡¿"'`()[\]{}<>—–\-]+/)
-    .map((t) => t.replace(/[^a-z0-9_áéíóúüñ]/gi, ""))
-    .filter((t) => t.length >= 2);
+  const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return null;
   // Quote each token so FTS5 treats it as a literal (no operator parsing).
   // Append `*` to enable prefix matching ("uncharted" matches "uncharted_v2").
   return tokens.map((t) => `"${t}"*`).join(" ");
 }
+
+/** Query tokenizer shared by buildFtsMatch and locateMatch, so the cited
+ * line is found with exactly the tokens FTS5 matched on. */
+export function tokenizeQuery(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[\s,;:!?¡¿"'`()[\]{}<>—–\-]+/)
+    .map((t) => t.replace(/[^a-z0-9_áéíóúüñ]/gi, ""))
+    .filter((t) => t.length >= 2);
+}
+
+const foldDiacritics = (s: string): string =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+/**
+ * Citation for a search hit (2026-09-09, filesystem-memory paper plan A.2):
+ * 1-indexed line of the FIRST line containing any query token (lowercased +
+ * diacritic-folded, substring match ⊇ FTS5 unicode61 prefix match) and the
+ * nearest markdown heading at or above it. The caller can jump straight to
+ * `jarvis_file_read(path, lines="N-M")` instead of re-reading the outline.
+ * line=null when no token appears in the body (title/path-only hit).
+ */
+export function locateMatch(
+  content: unknown,
+  tokens: readonly string[],
+): { line: number | null; section: string | null } {
+  const needles = tokens.map((t) => foldDiacritics(t.toLowerCase()));
+  if (needles.length === 0) return { line: null, section: null };
+  // `content` is TEXT NOT NULL in the schema, but SQLite affinity does not
+  // convert a BLOB insert: 2 live rows come back as Buffer (qa-audit C1,
+  // 2026-09-09) — coerce, never assume.
+  const lines = asText(content).split("\n");
+  let section: string | null = null;
+  // Prefer the first line that holds ALL tokens (what FTS5 AND-matched);
+  // fall back to the first line with ANY token (qa-audit W3: for multi-word
+  // queries the any-token line was a partial hit 62% of the time).
+  let anyHit: { line: number; section: string | null } | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const heading = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(raw);
+    if (heading) section = heading[1];
+    const folded = foldDiacritics(raw.toLowerCase());
+    if (needles.every((n) => folded.includes(n))) {
+      return { line: i + 1, section };
+    }
+    if (anyHit === null && needles.some((n) => folded.includes(n))) {
+      anyHit = { line: i + 1, section };
+    }
+  }
+  return anyHit ?? { line: null, section: null };
+}
+
+const asText = (v: unknown): string =>
+  typeof v === "string" ? v : v == null ? "" : String(v);
 
 /**
  * Search files by tokenized full-text. Returns paths + matching snippet.
@@ -465,9 +515,24 @@ function buildFtsMatch(query: string): string | null {
 export function searchFiles(
   query: string,
   limit: number = 20,
-): Array<{ path: string; title: string; snippet: string; size: number }> {
+): Array<{
+  path: string;
+  title: string;
+  snippet: string;
+  size: number;
+  line: number | null;
+  section: string | null;
+}> {
   const db = getDatabase();
   const match = buildFtsMatch(query);
+  const tokens = tokenizeQuery(query);
+  let ftsRows: Array<{
+    path: string;
+    title: string;
+    content: unknown;
+    size: number;
+    snip: string;
+  }> | null = null;
 
   if (match) {
     try {
@@ -484,21 +549,25 @@ export function searchFiles(
         .all(match, limit) as Array<{
         path: string;
         title: string;
-        content: string;
+        content: unknown;
         size: number;
         snip: string;
       }>;
-      if (rows.length > 0) {
-        return rows.map((r) => ({
-          path: r.path,
-          title: r.title,
-          snippet: r.snip || r.title,
-          size: r.size,
-        }));
-      }
+      if (rows.length > 0) ftsRows = rows;
     } catch {
       // FTS5 may reject tokens that look like operators after sanitization;
       // fall through to LIKE so the caller still gets results.
+    }
+    // Post-process OUTSIDE the catch: a per-row defect must never mute the
+    // whole FTS result set into the LIKE fallback (qa-audit C1).
+    if (ftsRows) {
+      return ftsRows.map((r) => ({
+        path: r.path,
+        title: r.title,
+        snippet: r.snip || r.title,
+        size: r.size,
+        ...locateMatch(r.content, tokens),
+      }));
     }
   }
 
@@ -524,20 +593,28 @@ export function searchFiles(
       `%${escaped}%`,
       `%${escaped}%`,
       limit,
-    ) as Array<{ path: string; title: string; content: string; size: number }>;
+    ) as Array<{ path: string; title: string; content: unknown; size: number }>;
 
   return rows.map((r) => {
-    const idx = r.content.toLowerCase().indexOf(query.toLowerCase());
+    const content = asText(r.content);
+    const idx = content.toLowerCase().indexOf(query.toLowerCase());
     const start = Math.max(0, idx - 50);
-    const end = Math.min(r.content.length, idx + query.length + 50);
+    const end = Math.min(content.length, idx + query.length + 50);
     const snippet =
       idx >= 0
         ? (start > 0 ? "..." : "") +
-          r.content.slice(start, end).replace(/\n/g, " ") +
-          (end < r.content.length ? "..." : "")
+          content.slice(start, end).replace(/\n/g, " ") +
+          (end < content.length ? "..." : "")
         : r.title;
 
-    return { path: r.path, title: r.title, snippet, size: r.size };
+    return {
+      path: r.path,
+      title: r.title,
+      snippet,
+      size: r.size,
+      // Same needle the LIKE filter used, so the cited line is the LIKE hit.
+      ...locateMatch(content, [query]),
+    };
   });
 }
 
