@@ -1075,6 +1075,22 @@ ORDER BY pct DESC LIMIT N;
 Columnas comunes: \`pob65_mas\`, \`p_60ymas\`, \`pob85_mas\`, \`p_18a24\`, \`p_25a59\`, \`pobfem\`, \`pobmas\`, \`psinder\`, \`pder_imss\`, \`vph_inter\`, \`vph_autom\`, \`graproes\`.
 ⛔ \`mun_polygons\` es geometría sólo — NO demografía. \`censo_municipios\` es vista 17-col — NO tiene \`pob65_mas\`.
 
+**Pattern: Establishment density per municipio** ("densidad de [vertical] por habitante", "[vertical] por cada 10k habitantes", "top N munis por [vertical] per cápita"):
+JOIN \`establecimientos\` × \`censo_iter\` on \`area_geo\` (= \`entidad||mun\`). \`establecimientos\` has NO \`cve_mun\` column — do not guess one. One query, no schema exploration (verified 2026-09-09: 621211 dentistas → 73,280 rows join).
+\`\`\`sql
+SELECT c.entidad, c.mun, c.nom_ent, c.nom_mun,
+       COUNT(*) AS n_estab,
+       c.pobtot::int AS pob_total,
+       ROUND(COUNT(*)::numeric / NULLIF(c.pobtot::int, 0) * 10000, 2) AS por_10k_hab
+FROM establecimientos e
+JOIN censo_iter c ON c.entidad || c.mun = e.area_geo AND c.loc = '0000'
+WHERE e.clase_actividad_id = '<SCIAN6>' AND c.pobtot::int >= 10000
+GROUP BY c.entidad, c.mun, c.nom_ent, c.nom_mun, c.pobtot
+ORDER BY por_10k_hab DESC LIMIT N;
+\`\`\`
+Caveat: ~35 establecimientos (0.05%) sit in post-2020 municipios with no census row and drop out of the join silently.
+For a single state, \`/api/analytics/municipios?entidad=NN\` already returns \`poblacion\` + \`establecimientos\` + \`farmacias\` per municipio (API path, no SQL).
+
 **\`establecimientos\` table — schema cheatsheet** (cast carefully; some fields are \`text\` even when numeric):
 - \`entidad\` (2-char state code, INDEXED) — use this for state-only filters: \`WHERE entidad='09'\`
 - \`area_geo\` (5-char concat = entidad+mun, INDEXED) — use this for muni-level filters: \`WHERE area_geo='09014'\` ← **NOTE: column is \`area_geo\` NOT \`cve_mun\`**

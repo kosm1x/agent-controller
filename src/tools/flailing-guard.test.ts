@@ -66,6 +66,33 @@ describe("flailing-guard", () => {
       expect(result!.strikes).toBeGreaterThanOrEqual(3);
     });
 
+    it("exempts read-only psql from enforcement but keeps recording strikes (2026-09-09 DENUE lockout)", () => {
+      const t0 = 1_000_000;
+      const q = (sql: string) =>
+        `docker exec supabase-db psql -U postgres -d postgres -c "${sql}"`;
+      // The incident shape: a guessed column, a failed join, a grep miss.
+      recordCall(q("SELECT e.cve_mun FROM establecimientos e"), 1, t0);
+      recordCall(
+        q("SELECT * FROM establecimientos e JOIN censo_iter c ON e.cve_mun=c.mun"),
+        1,
+        t0 + 1000,
+      );
+      recordCall(q("\\dt") + " 2>&1 | grep -i pobl", 1, t0 + 2000);
+      // The next READ runs — including the novel describe that was blocked.
+      expect(checkFlailing(q("\\d establecimientos"), t0 + 3000)).toBeNull();
+      expect(
+        checkFlailing(q("SELECT count(*) FROM establecimientos"), t0 + 3000),
+      ).toBeNull();
+      // Mutation check: a write-class variation on the same boilerplate is
+      // still struck — the three failures were recorded.
+      const hit = checkFlailing(
+        q("INSERT INTO establecimientos_tmp SELECT 1"),
+        t0 + 3000,
+      );
+      expect(hit).not.toBeNull();
+      expect(hit!.strikes).toBe(3);
+    });
+
     it("does NOT block when prior calls succeeded", () => {
       const t0 = 1_000_000;
       recordCall("node /tmp/tweet4_v1.cjs", 0, t0);
@@ -429,6 +456,124 @@ describe("read-only diagnostic exemption (Phase 4, ant-colony incident)", () => 
       ["journalctl -xeu caddy", true],
       ["journalctl --disk-usage", true],
       ["journalctl -f -u mission-control", true],
+      // Read-only psql (2026-09-09 DENUE dentist-density lockout): the SQL
+      // body may hold `>`, `;` and newlines; only the remainder is judged.
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT count(*) FROM establecimientos WHERE pobtot::int > 0"',
+        true,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "\nSELECT c.entidad, COUNT(*)\nFROM establecimientos e\nJOIN censo_iter c ON c.entidad||c.mun = e.area_geo\nGROUP BY 1;\n"',
+        true,
+      ],
+      ['docker exec supabase-db psql -U postgres -d postgres -Atc "select 1"', true],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "\\d establecimientos" 2>&1 | head -50',
+        true,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "\\dt" 2>&1 | grep -i pobl',
+        true,
+      ],
+      // EXPLAIN is not admitted: EXPLAIN ANALYZE executes the statement.
+      [
+        'docker exec -i supabase-db psql -U postgres -d postgres -c "EXPLAIN SELECT 1"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "EXPLAIN ANALYZE DELETE FROM t"',
+        false,
+      ],
+      // Multi-statement bodies: every statement must be a read.
+      ['docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1; SELECT 2"', true],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1; DELETE FROM t"',
+        false,
+      ],
+      ['docker exec supabase-db psql -U postgres -d postgres -c "\\x\nSELECT 1;\n\\dt"', true],
+      ['docker exec supabase-db psql -U postgres -d postgres -c "\\dt\nDELETE FROM t"', false],
+      // psql meta-commands that leave the read-only world.
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1 \\! rm -rf /tmp/x"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1 \\g /tmp/out"',
+        false,
+      ],
+      [
+        "docker exec supabase-db psql -U postgres -d postgres -c \"\\copy t TO '/tmp/x'\"",
+        false,
+      ],
+      ['docker exec supabase-db psql -U postgres -d postgres -c "\\o /tmp/out\nSELECT 1"', false],
+      ['docker exec supabase-db psql -U postgres -d postgres -c "\\i /tmp/script.sql"', false],
+      ['docker exec supabase-db psql -U postgres -d postgres --command="SELECT 1"', false],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1" -c "DROP TABLE t"',
+        false,
+      ],
+      ["psql -U postgres -d postgres -c 'SELECT 1'", true],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "INSERT INTO t VALUES (1)"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "DROP TABLE establecimientos"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "WITH x AS (DELETE FROM t RETURNING 1) SELECT 1"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1" > /tmp/out.csv',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1"; docker restart supabase-db',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1" && rm -rf /tmp/x',
+        false,
+      ],
+      ["docker exec supabase-db psql -U postgres -d postgres -f /tmp/migration.sql", false],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "SELECT $(cat /tmp/x)"',
+        false,
+      ],
+      // R1 audit W1/W2: psql flags before -c are allow-listed — -f runs a
+      // script and -o/-L write files even when the body is a SELECT.
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -f /tmp/migration.sql -c "SELECT 1"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -o /tmp/psqlout.txt -c "SELECT 333"',
+        false,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -L /tmp/log -c "SELECT 1"',
+        false,
+      ],
+      // R1 audit W4: live-corpus shapes that must stay exempt.
+      [
+        'docker exec supabase-db psql -U postgres -d postgres \\\n  -c "SELECT 1"',
+        true,
+      ],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "\n-- Paso 1: conteo\nSELECT count(*) FROM establecimientos"',
+        true,
+      ],
+      ['timeout 30 docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1"', true],
+      ["PGPASSWORD=x psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c 'SELECT 1'", true],
+      ['sudo -u postgres psql -d postgres -c "SELECT 1"', true],
+      [
+        'docker exec supabase-db psql -U postgres -d postgres -c "WITH x AS (SELECT 1) SELECT * FROM x"',
+        false,
+      ],
+      // Unterminated body — refuse rather than guess.
+      ['docker exec supabase-db psql -U postgres -d postgres -c "SELECT 1', false],
     ];
     for (const [cmd, expected] of rows) {
       it(`${JSON.stringify(cmd)} → ${expected}`, () => {

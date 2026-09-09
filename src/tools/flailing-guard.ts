@@ -446,15 +446,93 @@ const DIAG_SUBCOMMANDS: Record<string, Set<string>> = {
  *  shell_exec's own guard, not a security boundary: validateShellCommand
  *  still screens every command first. */
 export function isReadOnlyDiagnostic(command: string): boolean {
+  // Command substitution runs an inner command this parser never sees —
+  // refuse (validateShellCommand also blocks these upstream; belt+braces).
+  if (/\$\(|`/.test(command)) return false;
+  // A read-only psql query is judged on what FOLLOWS its SQL body (the body
+  // itself legitimately holds `>`, `;` and newlines); the remainder may be
+  // empty or a read-only pipeline.
+  const afterSql = readOnlyPsqlRemainder(command);
+  if (afterSql !== null) return segmentsAreDiagnostic(afterSql, true);
+  return segmentsAreDiagnostic(command, false);
+}
+
+/** Read-only psql invocation (2026-09-09 DENUE dentist-density lockout).
+ *  Every DENUE SQL call opens with `docker exec supabase-db psql -U postgres
+ *  -d postgres`, so three failed queries inside one 5-min window (a guessed
+ *  column that does not exist, a `\dt | grep` with no match) struck every
+ *  later query on the shared "docker" token — novel `\d table` reads
+ *  included — across four chat turns, and Jarvis handed the SQL back to the
+ *  operator. Same class as the diagnostic exemption above: blocking the
+ *  next READ converts "stop flailing" into "stop querying".
+ *
+ *  Allow-by-membership inside the `-c` body: EVERY `;`-separated statement
+ *  must open with SELECT or a psql describe/display meta-command, and
+ *  EVERY backslash meta-command in the body must be on PSQL_META_ALLOW
+ *  (`\!` runs a shell, `\copy`/`\o`/`\g file` write files, `\i` reads a
+ *  script). `WITH` is absent (a CTE can wrap DELETE/UPDATE); `EXPLAIN` is
+ *  absent (`EXPLAIN ANALYZE` executes the statement). The psql flags
+ *  between `psql` and `-c` are allow-listed too (R1 audit W1/W2:
+ *  `-f file` runs a script and `-o`/`-L file` write files while the body
+ *  is a SELECT). `--command=`, a second `-c` and heredoc bodies stay
+ *  enforced — the parser cannot see them. Returns the text after the
+ *  closing quote of the `-c` body, or null when the command is not a
+ *  read-only psql call. ENFORCEMENT-only, like the rest of this function:
+ *  recordCall still logs the outcome, so a write-class variation is still
+ *  struck. A SELECT is not a proof of read-only-ness — `SELECT … INTO`,
+ *  `nextval()`, `lo_export()` and any VOLATILE function write; the
+ *  connection role and validateShellCommand are the real boundary. */
+const PSQL_FLAG_LETTERS = "UdhpAtqXwxzFRPvEebnasS1";
+const PSQL_C_BODY_RE = new RegExp(
+  "^\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+(?:-u\\s+\\S+\\s+)?)?(?:timeout\\s+\\d\\S*\\s+)?" +
+    "(?:docker\\s+exec\\s+(?:-\\S+\\s+)*\\S+\\s+)?psql" +
+    `(?:\\s+-[${PSQL_FLAG_LETTERS}]+(?:\\s+[^\\s"'-]\\S*)?)*\\s+-[${PSQL_FLAG_LETTERS}]*c\\s*(["'])`,
+);
+const PSQL_META_ALLOW = /^(?:d\w*|l|x|t|a|timing|pset|echo)$/;
+
+function isReadOnlySqlBody(body: string): boolean {
+  // psql recognises an unquoted backslash anywhere a command may start
+  // (`SELECT 1 \g /tmp/out` writes a file mid-line) — membership on all.
+  for (const m of body.matchAll(/\\([A-Za-z]+|[!?])/g)) {
+    if (!PSQL_META_ALLOW.test(m[1])) return false;
+  }
+  for (const stmt of body.split(";")) {
+    // First line that is not blank, not a meta-command and not a `--`
+    // comment opens the SQL (the KB recipes open with `-- Paso 1:`).
+    const first = stmt
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "" && !l.startsWith("\\") && !l.startsWith("--"));
+    if (first === undefined) continue; // blank or meta-only piece
+    if (!/^select\b/i.test(first)) return false;
+  }
+  return true;
+}
+
+function readOnlyPsqlRemainder(rawCommand: string): string | null {
+  // Shell line continuation (`\` + newline) is whitespace to /bin/sh.
+  const command = rawCommand.replace(/\\\n/g, " ");
+  const m = PSQL_C_BODY_RE.exec(command);
+  if (!m) return null;
+  const quote = m[1];
+  const open = m.index + m[0].length;
+  const close = command.indexOf(quote, open);
+  // Unterminated body — refuse rather than guess (fail toward enforced).
+  if (close === -1) return null;
+  if (!isReadOnlySqlBody(command.slice(open, close))) return null;
+  return command.slice(close + 1);
+}
+
+/** True when every top-level segment of `text` is a read-only diagnostic.
+ *  `allowEmpty` admits a blank remainder (a psql call with nothing after
+ *  its body); a bare command must contain at least one real segment. */
+function segmentsAreDiagnostic(text: string, allowEmpty: boolean): boolean {
   // Strip harmless redirects, then refuse any remaining `>` (file writes
   // via `awk … > out`, `tee`, etc. are not diagnostics).
-  const stripped = command
+  const stripped = text
     .replace(/2>&1/g, " ")
     .replace(/[12&]?>>?\s*\/dev\/null/g, " ");
   if (stripped.includes(">")) return false;
-  // Command substitution runs an inner command this parser never sees —
-  // refuse (validateShellCommand also blocks these upstream; belt+braces).
-  if (/\$\(|`/.test(stripped)) return false;
 
   // Segment split must mirror /bin/sh -c: NEWLINE, `;` and single `&`
   // (background) are all top-level separators (R1 C2 + R2 C1 —
@@ -507,7 +585,7 @@ export function isReadOnlyDiagnostic(command: string): boolean {
     }
     return false;
   }
-  return realSegments > 0;
+  return allowEmpty || realSegments > 0;
 }
 
 /** Inspect the current command against history. Returns the shared token

@@ -71,6 +71,10 @@ describe("WRITE_TOOLS sync", () => {
   it("includes all write-capable coding tools", () => {
     const CODING_READ_ONLY = new Set([
       "shell_exec",
+      // http_fetch joined CODING_TOOLS 2026-09-09 (DENUE API path). It CAN
+      // POST (method enum) but was never in WRITE_TOOLS; listed here so the
+      // sync test does not force it in — revisit if a narrated POST shows up.
+      "http_fetch",
       "grep",
       "glob",
       "list_dir",

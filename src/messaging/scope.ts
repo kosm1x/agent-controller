@@ -68,6 +68,12 @@ export const GOOGLE_TOOLS = [
 /** Coding/file tools — only when code/files are the topic. */
 export const CODING_TOOLS = [
   "shell_exec",
+  // 2026-09-09: DENUE chat turns classify as `coding`, but the analyzer
+  // recipe's API path (X-Api-Key header) needs http_fetch, which only
+  // `specialty`/`research` granted — so every DENUE question went through
+  // `docker exec … psql` and schema exploration (dentist-density lockout,
+  // tasks 9447–9451). Operator ruling: grant it here.
+  "http_fetch",
   "file_write",
   "file_edit",
   "file_delete",
