@@ -13,6 +13,7 @@ import { getMemoryService } from "../memory/index.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 import { getSkill, type SkillRow } from "../db/skills.js";
 import { retrieveSkills } from "../skills/retrieval.js";
+import { closeOpenFence } from "../messaging/kb-injection.js";
 
 export interface EnrichmentResult {
   contextBlock: string;
@@ -69,16 +70,25 @@ export async function enrichContext(
       })
       .then((results) => {
         if (results.length > 0) {
-          const lines = results.map((m) => `- ${m.content}`).join("\n");
+          // Same per-row cap as the operational bank: 89.7 % of mc-jarvis
+          // rows exceed 400 chars, 329 exceed the whole 5,000-char budget
+          // (qa R2 W3).
+          const lines = results
+            .map((m) => `- ${m.content.slice(0, 400)}${m.content.length > 400 ? "…" : ""}`)
+            .join("\n");
           sections.push(`## Contexto relevante del usuario\n${lines}`);
         }
       })
       .catch(() => {}),
   );
 
-  // Operational learnings recall (async, Hindsight only)
-  if (memory.backend === "hindsight") {
-    recallPromises.push(
+  // Operational learnings recall (async). Used to be gated on the Hindsight
+  // backend, which has been demoted since 2026-05-15 — the branch never ran
+  // on a chat turn (design audit D8). SQLite serves mc-operational fine.
+  // Rows are capped: 56 of the bank's rows are raw transcripts averaging
+  // ~10 K chars, which alone would fill the 5,000-char enrichment budget
+  // and starve the user-context section (qa W3).
+  recallPromises.push(
       memory
         .recall(messageText, {
           bank: "mc-operational",
@@ -86,13 +96,14 @@ export async function enrichContext(
         })
         .then((results) => {
           if (results.length > 0) {
-            const lines = results.map((m) => `- ${m.content}`).join("\n");
+            const lines = results
+              .map((m) => `- ${m.content.slice(0, 400)}${m.content.length > 400 ? "…" : ""}`)
+              .join("\n");
             sections.push(`## Aprendizajes previos\n${lines}`);
           }
         })
         .catch(() => {}),
-    );
-  }
+  );
 
   // v6.4 G1.5: Query expansion runs IN PARALLEL with Hindsight recalls,
   // NOT inside the pgvector race block (audit fix: 5s LLM call inside 2s
@@ -257,7 +268,9 @@ export async function enrichContext(
   let contextBlock = sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
   if (contextBlock.length > MAX_ENRICHMENT_CHARS) {
     contextBlock =
-      contextBlock.slice(0, MAX_ENRICHMENT_CHARS) +
+      // 10.7 % of mc-jarvis rows carry ``` fences: an arbitrary cut can leave
+      // one open and swallow the rest of the prompt (qa R2 W4) — close it.
+      closeOpenFence(contextBlock.slice(0, MAX_ENRICHMENT_CHARS)) +
       "\n...(contexto adicional omitido para conservar espacio)";
   }
 

@@ -366,15 +366,21 @@ function buildJarvisSystemPrompt(
         },
       },
     ];
+    const dropped: string[] = [];
     for (const { arr, recompute } of tiers) {
       while (arr.length > 0 && combinedLength > budget) {
-        arr.pop();
+        const section = arr.pop()!;
+        dropped.push(
+          (section.trim().split("\n")[0] ?? "").slice(0, 48) || "(enrichment)",
+        );
         recompute();
         combinedLength = stable.length + variable.length;
       }
     }
+    // Name the casualties: a bare "truncated" line hid that P4 was dropped on
+    // every turn for months (reliability audit R1).
     console.warn(
-      `[prompt] System prompt truncated: ${Math.round(combinedLength / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET})`,
+      `[prompt] System prompt truncated: ${Math.round(combinedLength / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET}); dropped ${dropped.length}: ${dropped.join(" | ")}`,
     );
   }
 

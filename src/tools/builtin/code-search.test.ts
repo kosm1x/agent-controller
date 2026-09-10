@@ -56,6 +56,20 @@ describe("grep", () => {
     expect(result.matches).toContain("c.py");
   });
 
+  it("a glob with a directory part narrows to that directory (logic audit F25 / qa W1)", async () => {
+    mkdirSync(`${TEST_DIR}/src/inner`, { recursive: true });
+    mkdirSync(`${TEST_DIR}/other`, { recursive: true });
+    writeFileSync(`${TEST_DIR}/src/inner/a.txt`, "needle here");
+    writeFileSync(`${TEST_DIR}/other/b.txt`, "needle here");
+    const result = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: TEST_DIR, include_glob: "src/**/*.txt", output_mode: "files" }),
+    );
+    // files mode returns the matched paths as a newline-joined string
+    const files = String(result.matches);
+    expect(files).toContain("src/inner/a.txt");
+    expect(files).not.toContain("other/b.txt");
+  });
+
   it("should return empty for no matches", async () => {
     const result = JSON.parse(
       await grepTool.execute({ pattern: "zzzznonexistent", path: TEST_DIR }),

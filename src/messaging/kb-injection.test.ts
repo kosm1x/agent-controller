@@ -127,8 +127,9 @@ describe("detectProjectInMessage", () => {
     );
   });
 
-  it("aliases bare 'crm' to crm-azteca", () => {
-    expect(detectProjectInMessage("status del CRM")).toBe("crm-azteca");
+  it("aliases bare 'crm' (and 'pulso') to pulso-aura-upfront — crm-azteca was cut over 2026-06-20", () => {
+    expect(detectProjectInMessage("status del CRM")).toBe("pulso-aura-upfront");
+    expect(detectProjectInMessage("cómo va pulso")).toBe("pulso-aura-upfront");
   });
 
   it("aliases bare 'williams' to williams-radar", () => {
@@ -512,5 +513,44 @@ describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
     const calls = vi.mocked(getFile).mock.calls.map((c) => c[0]);
     expect(calls).not.toContain("knowledge/Rumi/INDEX.md");
     expect(variable).toBeNull();
+  });
+});
+
+describe("capStableContent (design audit D1 — the mandatory layer had no ceiling)", () => {
+  it("keeps the head AND the newest tail of an append-only doc, closes an open fence, and points to jarvis_file_read (qa C1)", async () => {
+    const { capStableContent, STABLE_FILE_CHAR_CAP } = await import("./kb-injection.js");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(capStableContent("a.md", "short", "t")).toBe("short");
+    // An append-only status log: title first, a July snapshot, then months of
+    // updates, the CURRENT state last — with a code fence opened near the cut.
+    const lines = ["# Agent Controller — Estado Actual", "| HEAD | `6486327` (2026-07-20) |"];
+    for (let i = 0; i < 3000; i++) lines.push(`## Update ${i}: filler filler filler filler filler`);
+    lines.push("```", "some code that must not swallow the rest", "```");
+    lines.push("## Estado al 2026-09-09", "| HEAD | `0cfc55a` |", "| deploy.sh | OPERATOR-RUN |");
+    const big = lines.join("\n");
+    const capped = capStableContent("projects/x/README.md", big, "t");
+    expect(capped.length).toBeLessThan(STABLE_FILE_CHAR_CAP + 400);
+    expect(capped.startsWith("# Agent Controller — Estado Actual")).toBe(true);
+    expect(capped).toContain("## Estado al 2026-09-09");
+    expect(capped).toContain("| deploy.sh | OPERATOR-RUN |");
+    expect(capped).toContain('jarvis_file_read("projects/x/README.md")');
+    expect(capped).not.toContain("## Update 1500:");
+    // fences balance in the injected text
+    expect((capped.match(/^```/gm) ?? []).length % 2).toBe(0);
+
+    // A fence OPENED in the omitted middle and CLOSED in the tail: the tail's
+    // orphan close is dropped, the newest lines are NOT rendered as code (qa R2 W1).
+    const lines2 = ["# Title"];
+    for (let i = 0; i < 2500; i++) lines2.push(`## Update ${i}: filler filler filler filler filler`);
+    lines2.push("```", "opened in the middle");
+    for (let i = 0; i < 300; i++) lines2.push(`code line ${i} still inside the block padding padding`);
+    lines2.push("```", "## Estado final", "current fact A");
+    const capped2 = capStableContent("x.md", lines2.join("\n"), "t");
+    expect(capped2).toContain("## Estado final");
+    expect((capped2.match(/^```/gm) ?? []).length % 2).toBe(0);
+    const tailPart = capped2.slice(capped2.indexOf("omitidos"));
+    expect(tailPart.trim().endsWith("current fact A")).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("projects/x/README.md"));
+    warn.mockRestore();
   });
 });

@@ -23,19 +23,15 @@ export interface PromptToolFlags {
 }
 
 export function detectToolFlags(tools: string[]): PromptToolFlags {
+  // Design audit D3 (2026-09-10): these flags used to key on tools that are
+  // in EVERY turn's scope (file_read/list_dir in CORE_TOOLS, browser__goto in
+  // MISC_TOOLS), so a bare "hola" built the 7 KB coding rules and the browser
+  // rules — which the budget then truncated. Key on the scope-GATED tools.
   return {
-    hasBrowser: tools.some((t) => t.startsWith("browser__")),
+    hasBrowser: tools.some((t) => t.startsWith("playwright__")),
     hasWordpress: tools.some((t) => t.startsWith("wp_")),
     hasCoding: tools.some((t) =>
-      [
-        "file_read",
-        "file_edit",
-        "file_write",
-        "grep",
-        "glob",
-        "list_dir",
-        "shell_exec",
-      ].includes(t),
+      ["file_edit", "file_write", "shell_exec", "git_commit", "grep", "glob"].includes(t),
     ),
     hasGoogle: tools.some((t) =>
       ["gmail_send", "calendar_list", "gdrive_list"].includes(t),

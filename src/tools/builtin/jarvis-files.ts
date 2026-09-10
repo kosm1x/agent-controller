@@ -569,6 +569,11 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
             items: { type: "string" },
             description: "Filter by tags (ANY match)",
           },
+          limit: {
+            type: "integer",
+            description:
+              "Max files to list (default 100, max 500). A bare call over the whole KB is ~1,000 paths — narrow with prefix instead of raising this.",
+          },
         },
       },
     },
@@ -582,11 +587,20 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
     });
     // Pre-formatted: file listing with path, size, qualifier
     if (results.length === 0) return "📂 No files found.";
+    // Every sibling clamps its output; this one dumped the whole index
+    // (~1,077 rows, ~20K tokens) on a bare call (logic audit F25).
+    const limit = Math.min(Math.max(Number(args.limit) || 100, 1), 500);
+    const shown = results.slice(0, limit);
     const lines = [`📂 **${results.length} files**`];
-    for (const f of results) {
+    for (const f of shown) {
       const sizeStr =
         f.size > 1024 ? `${(f.size / 1024).toFixed(1)}K` : `${f.size}B`;
       lines.push(`  ${f.path} (${sizeStr}, ${f.qualifier})`);
+    }
+    if (results.length > shown.length) {
+      lines.push(
+        `  … ${results.length - shown.length} more — narrow with prefix (e.g. "projects/") or raise limit`,
+      );
     }
     return lines.join("\n");
   },

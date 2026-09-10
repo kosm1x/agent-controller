@@ -97,7 +97,6 @@ const PROJECT_SLUGS = [
   "obsidian-brain",
   "pipesong",
   "presencia-digital-eurekamd",
-  "reddit-scraper-tool",
   "vlmp",
   "williams-radar",
 ];
@@ -110,7 +109,9 @@ export function detectProjectInMessage(text: string): string | null {
       return slug;
     }
   }
-  if (/\bcrm\b/i.test(text)) return "crm-azteca";
+  // crm-azteca was cut over to pulso-aura-upfront on 2026-06-20 — the old
+  // slug resolved to no README for months (logic audit F15).
+  if (/\bcrm\b|\bpulso\b/i.test(text)) return "pulso-aura-upfront";
   if (/\bvlmp\b/i.test(text)) return "vlmp";
   if (/\bpipesong\b/i.test(text)) return "pipesong";
   // "Williams" alone always refers to the Williams Entry Radar in this
@@ -159,13 +160,12 @@ export function buildKnowledgeBaseSection(
       }
 
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
-      const section = `### ${prefix}${f.title}\n${f.content}`;
+      const mandatory = f.qualifier === "enforce" || f.qualifier === "always-read";
+      const section = `### ${prefix}${f.title}\n${
+        mandatory ? capStableContent(f.path, f.content, logTag) : f.content
+      }`;
 
-      if (
-        f.qualifier !== "enforce" &&
-        f.qualifier !== "always-read" &&
-        totalChars + section.length > KB_CHAR_BUDGET
-      ) {
+      if (!mandatory && totalChars + section.length > KB_CHAR_BUDGET) {
         continue;
       }
       sections.push(section);
@@ -180,10 +180,9 @@ export function buildKnowledgeBaseSection(
         try {
           const readme = getFile(`projects/${projectSlug}/README.md`);
           if (readme) {
-            sections.push(
-              `### Project Context: ${readme.title}\n${readme.content}`,
-            );
-            totalChars += readme.content.length;
+            const projectSection = `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
+            sections.push(projectSection);
+            totalChars += projectSection.length;
             console.log(
               `[${logTag}] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars, totalChars now ${totalChars})`,
             );
@@ -206,6 +205,52 @@ export function buildKnowledgeBaseSection(
   } catch {
     return null;
   }
+}
+
+/**
+ * Per-file ceiling for the MANDATORY layer (design audit D1, 2026-09-10).
+ * `enforce`/`always-read` files bypassed every budget: 180 KB (~45K tokens)
+ * rode into every task prompt, 85 % of it one 153 KB project README that
+ * grew ~5 KB/day — ~$0.13 per turn in cache-creation tokens. A file over the
+ * cap is injected as HEAD + TAIL with a pointer to the full text: the head
+ * carries the title/front-matter, the tail the newest state — the live
+ * README is an append-only log whose current facts (HEAD commit, operator
+ * guardrails) all sit at the bottom (qa C1: a head-only cut froze a July
+ * snapshot that read as current). An odd number of line-start fences in the
+ * kept text is closed before the marker so a truncated code block cannot
+ * swallow the rest of the prompt.
+ */
+export const STABLE_FILE_CHAR_CAP = 24_000;
+const STABLE_HEAD_CHARS = 6_000;
+
+export function closeOpenFence(text: string): string {
+  const fences = (text.match(/^```/gm) ?? []).length;
+  return fences % 2 === 1 ? `${text}\n\`\`\`` : text;
+}
+
+/** The tail may START inside a fenced block (opened in the omitted middle):
+ *  its first fence is then an orphan CLOSE, not an open — drop it instead
+ *  of appending another (qa R2 W1), then balance what remains. */
+function balanceTailFences(content: string, tailStart: number, tail: string): string {
+  const fencesBefore = (content.slice(0, tailStart).match(/^```/gm) ?? []).length;
+  const t = fencesBefore % 2 === 1 ? tail.replace(/^```[^\n]*\n?/m, "") : tail;
+  return closeOpenFence(t);
+}
+
+export function capStableContent(path: string, content: string, logTag: string): string {
+  if (content.length <= STABLE_FILE_CHAR_CAP) return content;
+  const headCut = content.lastIndexOf("\n", STABLE_HEAD_CHARS);
+  const head = content.slice(0, headCut > STABLE_HEAD_CHARS / 2 ? headCut : STABLE_HEAD_CHARS);
+  const tailLen = STABLE_FILE_CHAR_CAP - head.length;
+  const tailStartRaw = content.length - tailLen;
+  const tailCut = content.indexOf("\n", tailStartRaw);
+  const tailStart = tailCut > 0 && tailCut < tailStartRaw + tailLen / 2 ? tailCut + 1 : tailStartRaw;
+  const tail = content.slice(tailStart);
+  const omitted = content.length - head.length - tail.length;
+  console.warn(
+    `[${logTag}] KB stable file ${path} is ${content.length} chars — injected head ${head.length} + tail ${tail.length}; read the rest with jarvis_file_read`,
+  );
+  return `${closeOpenFence(head)}\n\n[… omitidos ${omitted} caracteres del medio — el archivo completo se lee con jarvis_file_read("${path}")]\n\n${balanceTailFences(content, tailStart, tail)}`;
 }
 
 /**
@@ -241,7 +286,9 @@ export function buildKnowledgeBaseSections(
     const stableSections: string[] = [];
     for (const f of stableFiles) {
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
-      stableSections.push(`### ${prefix}${f.title}\n${f.content}`);
+      stableSections.push(
+        `### ${prefix}${f.title}\n${capStableContent(f.path, f.content, logTag)}`,
+      );
     }
 
     const variableSections: string[] = [];
@@ -265,10 +312,9 @@ export function buildKnowledgeBaseSections(
         try {
           const readme = getFile(`projects/${projectSlug}/README.md`);
           if (readme) {
-            variableSections.push(
-              `### Project Context: ${readme.title}\n${readme.content}`,
-            );
-            variableChars += readme.content.length;
+            const projectSection = `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
+            variableSections.push(projectSection);
+            variableChars += projectSection.length;
             console.log(
               `[${logTag}] Project README injected into variable layer: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
             );

@@ -233,6 +233,21 @@ export const BROWSER_TOOLS = [
   "playwright__browser_evaluate",
   "playwright__browser_type",
   "playwright__browser_close",
+  // 2026-09-10 (usefulness audit U8): registered by the MCP bridge but in no
+  // scope group — unreachable from any turn.
+  "playwright__browser_console_messages",
+  "playwright__browser_drag",
+  "playwright__browser_file_upload",
+  "playwright__browser_handle_dialog",
+  "playwright__browser_hover",
+  "playwright__browser_navigate_back",
+  "playwright__browser_network_requests",
+  "playwright__browser_resize",
+  // NOT scoped: playwright__browser_run_code_unsafe — upstream documents it
+  // as "executes arbitrary JavaScript in the Playwright server process,
+  // RCE-equivalent"; neither the rule-of-two prefix default (A only) nor the
+  // MCP bridge's URL pre-flight covers a `code` argument. Unreachable IS the
+  // control (qa C2, 2026-09-10).
 ];
 
 /** Video production tools — scope-gated: only when video/clip keywords detected. */
@@ -424,6 +439,7 @@ export const XPOZ_TOOLS = [
   "xpoz__xpoz_get_topics",
   "xpoz__xpoz_get_digest",
   "xpoz__xpoz_get_history",
+  "xpoz__xpoz_get_job_status", // 2026-09-10 (U8): was registered but unscoped
 ];
 
 /**

@@ -28,10 +28,19 @@ import type { CohortMember } from "../cohort/self-defining.js";
 // ---------------------------------------------------------------------------
 
 describe("detectToolFlags", () => {
-  it("detects browser tools by prefix", () => {
-    const flags = detectToolFlags(["browser__goto", "browser__markdown"]);
+  it("detects browser tools by the scope-GATED playwright prefix — the always-on lightpanda pair no longer builds the browser rules for every turn (design audit D3)", () => {
+    expect(detectToolFlags(["browser__goto", "browser__markdown"]).hasBrowser).toBe(false);
+    const flags = detectToolFlags(["playwright__browser_navigate", "browser__goto"]);
     expect(flags.hasBrowser).toBe(true);
     expect(flags.hasWordpress).toBe(false);
+  });
+
+  it("a bare chat turn (CORE + MISC tools only) builds neither the coding nor the browser rules (D3)", () => {
+    const bare = ["file_read", "list_dir", "web_search", "jarvis_file_read", "browser__goto", "user_fact_set"];
+    const flags = detectToolFlags(bare);
+    expect(flags.hasCoding).toBe(false);
+    expect(flags.hasBrowser).toBe(false);
+    expect(flags.hasWebResearch).toBe(true);
   });
 
   it("detects wordpress tools by prefix", () => {
@@ -40,9 +49,10 @@ describe("detectToolFlags", () => {
     expect(flags.hasBrowser).toBe(false);
   });
 
-  it("detects coding tools by name match", () => {
-    const flags = detectToolFlags(["file_read", "grep"]);
-    expect(flags.hasCoding).toBe(true);
+  it("detects coding tools by name match (scope-gated ones; file_read alone is CORE)", () => {
+    expect(detectToolFlags(["file_read", "grep"]).hasCoding).toBe(true);
+    expect(detectToolFlags(["shell_exec"]).hasCoding).toBe(true);
+    expect(detectToolFlags(["file_read", "list_dir"]).hasCoding).toBe(false);
   });
 
   it("detects google tools by name match", () => {

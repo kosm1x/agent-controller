@@ -57,7 +57,7 @@ TIPS:
           include_glob: {
             type: "string",
             description:
-              'File pattern filter, e.g. "*.ts", "*.py", "src/**/*.js"',
+              'File pattern filter, e.g. "*.ts", "*.py", "src/**/*.js" (a directory part narrows to that directory).',
           },
           output_mode: {
             type: "string",
@@ -108,8 +108,21 @@ TIPS:
         break;
     }
 
+    // rg's --glob is path-aware — pass the glob verbatim. Only grep's
+    // --include is basename-only; the fallback below narrows its search root
+    // to the glob's leading directory instead (logic audit F25 / qa W1).
     if (includeGlob) {
       flags.push("--glob", includeGlob);
+    }
+    let grepSearchPath = searchPath;
+    let grepNameGlob = includeGlob;
+    if (includeGlob && includeGlob.includes("/")) {
+      const firstSlash = includeGlob.indexOf("/");
+      const dir = includeGlob.slice(0, firstSlash);
+      grepNameGlob = includeGlob.slice(includeGlob.lastIndexOf("/") + 1);
+      if (dir && dir !== "**" && !dir.includes("*")) {
+        grepSearchPath = searchPath === "." ? dir : `${searchPath}/${dir}`;
+      }
     }
 
     // Limit output (per file). Not in count mode: --max-count caps the per-file
@@ -130,7 +143,14 @@ TIPS:
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
         });
-      } catch {
+      } catch (rgErr) {
+        // rg exit 1 = "no matches" (rg present, nothing found) — that is an
+        // answer, not a failure; falling through to grep re-ran the search
+        // under different glob semantics (qa R2 W2).
+        const e = rgErr as { status?: number; stderr?: string; code?: string };
+        if (e.status === 1 && !e.stderr?.trim() && e.code !== "ENOENT") {
+          return JSON.stringify({ matches: [], total: 0, message: "No matches found" });
+        }
         // rg not found or failed — fall back to grep
         // Bounded like the rg path: without these the default path "."
         // walks node_modules (707 MB) and dies on the 20 s timeout or
@@ -145,10 +165,10 @@ TIPS:
           ...(caseInsensitive ? ["-i"] : []),
           mode === "files" ? "-l" : mode === "count" ? "-c" : "-n",
           "--fixed-strings",
-          ...(includeGlob ? [`--include=${includeGlob}`] : []),
+          ...(grepNameGlob ? [`--include=${grepNameGlob}`] : []),
           "--",
           pattern,
-          searchPath,
+          grepSearchPath,
         ];
         output = execFileSync("grep", grepArgs, {
           timeout: 20_000,

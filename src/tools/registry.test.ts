@@ -626,13 +626,9 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       // V8.3 gated-capability backing tool (lib/v8-3/seed.ts), dormant by
       // design behind V83_ENABLED.
       skill_run: "V8.3 gated capability backing; dormant by design",
-      // KNOWN GAPS surfaced by the 2026-07-05 efficiency audit — kept green
-      // here so the invariant protects FUTURE tools; resolving these is a
-      // deliberate scope/product decision, not test hygiene:
-      // - skill_describe/skill_load: the v7.7 Spine 3 L1/L2 dispatch surface
-      //   shipped registered+deferred but NO scope group ever wired them.
-      skill_describe: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
-      skill_load: "AUDIT GAP 2026-07-05: dispatch surface never scoped",
+      // (skill_describe / skill_load were listed here as 2026-07-05 audit
+      // gaps; they are scoped via SKILL_DISPATCH_TOOLS since 2026-07-05 —
+      // stale entries removed 2026-09-10.)
     };
     const universe = getAllAvailableTools({
       hasGoogle: true,

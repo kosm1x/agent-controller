@@ -854,3 +854,25 @@ describe("standing orders — spelling bypasses closed (R1-C2)", () => {
     expect(mockRun).not.toHaveBeenCalled();
   });
 });
+
+describe("jarvis_file_list limit (logic audit F25 — a bare call dumped the whole index)", () => {
+  it("caps the listing at `limit` (default 100) and says how many more exist", async () => {
+    const rows = Array.from({ length: 120 }, (_, i) => ({
+      path: `bulk/f${String(i).padStart(3, "0")}.md`,
+      title: `F${i}`,
+      tags: "[]",
+      qualifier: "reference",
+      priority: 0,
+      size: 10,
+      updated_at: "2026-09-10",
+    }));
+    mockAll.mockReturnValueOnce(rows);
+    const out = await jarvisFileListTool.execute({ prefix: "bulk/" });
+    expect(out).toContain("120 files");
+    expect(out.split("\n").filter((l) => l.includes("bulk/f")).length).toBe(100);
+    expect(out).toContain("20 more");
+    mockAll.mockReturnValueOnce(rows);
+    const five = await jarvisFileListTool.execute({ prefix: "bulk/", limit: 5 });
+    expect(five.split("\n").filter((l) => l.includes("bulk/f")).length).toBe(5);
+  });
+});
