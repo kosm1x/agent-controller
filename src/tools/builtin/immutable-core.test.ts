@@ -309,6 +309,34 @@ describe("validatePathSafety", () => {
     }
   });
 
+  describe(".env files are read-blocked by SHAPE, allow-by-membership (security audit SEC-03)", () => {
+    for (const p of [
+      "/root/claude/mission-control/.env",
+      "/root/claude/mission-control/.env.bak-20260520-200844",
+      "/root/claude/Pulso-Aura-Upfront/.env",
+      "/root/claude/trustr/.env",
+      "/root/claude/eurekams-intelligence-ui/server/.env.longevidad",
+      "/root/claude/mission-control/.env-prod",
+      "/root/claude/mission-control/.env.secrets.json",
+    ]) {
+      it(`blocks read of ${p}`, () => {
+        const r = validatePathSafety(p, "read");
+        expect(r.safe).toBe(false);
+        expect(r.reason).toMatch(/secrets file|read-blocked secret file/);
+      });
+    }
+    it("allows the documented DENUE .env and template files", () => {
+      expect(
+        validatePathSafety(
+          "/root/claude/projects/data-intelligence/denue-data-analysis/.env",
+          "read",
+        ).safe,
+      ).toBe(true);
+      expect(validatePathSafety("/root/claude/vlved/.env.example", "read").safe).toBe(true);
+      expect(validatePathSafety("/root/claude/vlved/.environment", "read").safe).toBe(true);
+    });
+  });
+
   describe("dangerous directories", () => {
     it("blocks write to .git/", () => {
       const result = validatePathSafety("/root/project/.git/config", "write");

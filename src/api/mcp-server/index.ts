@@ -30,6 +30,7 @@ import { logger } from "../../lib/logger.js";
 import { logMcpCall } from "./audit.js";
 import { mcpAuth } from "./auth.js";
 import { mcpRateLimit } from "./rate-limit.js";
+import { apiRateLimit } from "../rate-limit.js";
 import { registerJarvisTools } from "./tools.js";
 import type { McpDeps } from "./types.js";
 import { errMsg } from "../../lib/err-msg.js";
@@ -48,6 +49,11 @@ export function createMcpRouter(deps: McpDeps): Hono {
   // override with an explicit allow-list.
   router.use("/*", cors({ origin: () => null, credentials: false }));
 
+  // IP-keyed limiter BEFORE auth: :8080 is internet-reachable, so an
+  // unauthenticated caller must not get unmetered SHA-256 + SQLite lookups
+  // (SEC-08). The per-TOKEN limiter below needs the auth context and stays
+  // after mcpAuth (qa C1: it 500s without it).
+  router.use("/*", apiRateLimit({ windowMs: 60_000, maxPerWindow: 120 }));
   // Health check — still behind auth so we don't leak any state publicly.
   router.use("/*", mcpAuth());
   router.use(

@@ -17,6 +17,7 @@ import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import {
   IMAGE_LOCK_LABEL,
   RUNTIME_CODE_MOUNTS,
+  SANDBOX_NEUTRALIZED_ENV,
   generateContainerName,
   imageExistsLocally,
   imageLockDrift,
@@ -121,7 +122,9 @@ export const nanoclawRunner: Runner = {
         INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
         INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
         INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
-        MC_API_KEY: config.apiKey,
+        // Never the real key: the container reaches host-gateway:8080, and a
+        // backend that forgot the neutralization map would inherit it (SEC-16).
+        MC_API_KEY: SANDBOX_NEUTRALIZED_ENV.get("MC_API_KEY")!,
         MC_DB_PATH: "/tmp/mc.db",
         // Operator orchestrator knobs (drop-in goal-timeout.conf) — the worker
         // ran on compiled defaults (120 s goal / 600 s total) without these.
@@ -134,15 +137,17 @@ export const nanoclawRunner: Runner = {
         envVars.HOME = "/root";
       }
 
-      // Sec3 round-1 fix: mission-control source is mounted read-only.
-      // nanoclaw-worker.ts only reads compiled `dist/` + `package.json` —
-      // any writes from the container would bypass file_write / shell_exec
-      // host-side guards + immutable-core. DB writes go to /tmp/mc.db.
+      // Sec3 round-1 fix: mission-control is mounted read-only. 2026-09-10
+      // (security audit SEC-02): ONLY the git history — the worker clones it
+      // into /workspace, so the sandbox sees committed content and nothing
+      // else. The former whole-checkout mount put `.env`, every `.env.bak-*`
+      // and `data/mc.db` inside a container that runs as root by design.
+      // DB writes go to /tmp/mc.db.
       const volumes = [
         // Deployed dist/ + prompt_modules/ over the image's baked copies — the
         // sandbox must execute what the host runs (2026-09-01, see container.ts).
         ...RUNTIME_CODE_MOUNTS,
-        "/root/claude/mission-control:/root/claude/mission-control:ro",
+        "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
         "/root/.config/gh:/root/.config/gh:ro",
         // Host channels (telegram.ts, gdrive_download) save attachments here;
         // without this mount an attachment-bearing task is unwinnable in the

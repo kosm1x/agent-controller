@@ -134,6 +134,32 @@ const READ_BLOCKED_PATHS = [
   "/opt/supabase/volumes/api/kong.yml",
 ];
 
+/**
+ * `.env` files are secrets by shape, not by path. The previous exact-path
+ * entry blocked ONE file and let every sibling backup (`.env.bak-*`) and every
+ * other project's `.env` through (security audit SEC-03) — Pulso's declares
+ * the control-plane key. Allow-by-membership: the documented legitimate read
+ * (the DENUE analyzer's API key, which fast-runner tells the agent to grep)
+ * and template files are the only exceptions. Shared with shell_exec.
+ */
+export const ENV_FILE_BASENAME_RE = /^\.env(?:[._-][\w.-]+)?$/;
+export const ENV_TEMPLATE_BASENAME_RE = /^\.env\.(?:example|sample|template)$/;
+export const ENV_READ_ALLOWLIST = new Set([
+  "/root/claude/projects/data-intelligence/denue-data-analysis/.env",
+]);
+
+/** True when `absPath` names a `.env`-shaped file that tools must not read. */
+export function isBlockedEnvFile(absPath: string): boolean {
+  const base = absPath.split("/").pop() ?? "";
+  if (!ENV_FILE_BASENAME_RE.test(base)) return false;
+  if (ENV_TEMPLATE_BASENAME_RE.test(base)) return false;
+  // `.env.d.ts` (ambient typings) is the one evidenced non-secret shape
+  // (qa R1 W8). Anything else — `.env.secrets.json`, `.env.bak.txt` — is a
+  // secret with a data extension (qa R4 C1).
+  if (/\.d\.ts$/.test(base)) return false;
+  return !ENV_READ_ALLOWLIST.has(absPath);
+}
+
 /** Filenames that should never be read by tool path regardless of directory. */
 const READ_BLOCKED_BASENAMES = new Set([
   ".credentials.json",
@@ -278,6 +304,12 @@ export function validatePathSafety(
       return {
         safe: false,
         reason: `'${probeBase}' is a read-blocked sensitive filename`,
+      };
+    }
+    if (isBlockedEnvFile(probe)) {
+      return {
+        safe: false,
+        reason: `'${probeBase}' is a secrets file — .env files are not readable by tools (only the DENUE analyzer's .env is allow-listed)`,
       };
     }
   }

@@ -381,11 +381,15 @@ export class TelegramAdapter implements ChannelAdapter {
   private setupHandlers(): void {
     if (!this.bot) return;
 
+    // Owner-only like every other handler (SEC-17): a stranger who finds the
+    // bot must get silence, not a liveness oracle.
     this.bot.command("ping", (ctx) => {
+      if (String(ctx.chat.id) !== OWNER_CHAT_ID) return;
       ctx.reply("Mission Control online.");
     });
 
     this.bot.command("chatid", (ctx) => {
+      if (String(ctx.chat.id) !== OWNER_CHAT_ID) return;
       ctx.reply(`Chat ID: ${ctx.chat.id}`);
     });
 

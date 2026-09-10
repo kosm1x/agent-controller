@@ -8,7 +8,8 @@
 import { exec, execFileSync, spawn } from "child_process";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath } from "./immutable-core.js";
+import { isImmutableCorePath, isBlockedEnvFile } from "./immutable-core.js";
+import { resolve as resolvePath } from "path";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 import {
@@ -242,7 +243,39 @@ const DENY_COMMANDS = new Set([
   "parted",
   "crontab",
   "sqlite3", // SG4: all DB access goes through getDatabase() — no raw SQL bypass
+  // Destructive equivalents of rm the verb list missed (security audit SEC-11).
+  "truncate",
+  "shred",
+  "unlink",
 ]);
+
+/**
+ * Leading keywords/wrappers and their flags a base-command check must look
+ * through: `for … do systemctl …`, `sudo -n systemctl …`, `env -i bash`,
+ * `timeout 5 pkill`, `(cd /x && …`. Returns "" when nothing remains.
+ * Strictly ADDITIVE to the first-token check (only ever finds more verbs).
+ */
+const COMMAND_WRAPPERS = new Set([
+  "env", "sudo", "nohup", "command", "exec", "time", "timeout", "nice",
+  "ionice", "stdbuf", "setsid", "do", "then", "else", "elif", "!",
+]);
+export function effectiveBaseCommand(segment: string): string {
+  const tokens = segment.trim().replace(/^[({]+\s*/, "").split(/\s+/);
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    const base = t.replace(/^.*\//, "");
+    if (/^[A-Za-z_]\w*=/.test(t)) { i++; continue; } // VAR=x prefix
+    if (COMMAND_WRAPPERS.has(base)) {
+      i++;
+      // every wrapper: skip its flags and `--`; numeric args for timeout/nice
+      while (i < tokens.length && /^(?:-\S*|\d+(?:\.\d+)?[smhd]?)$/.test(tokens[i]!)) i++;
+      continue;
+    }
+    return base;
+  }
+  return "";
+}
 
 /** Patterns checked against the full command string. */
 const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
@@ -278,60 +311,109 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     reason:
       "git operations blocked in shell_exec — use git_commit/git_push tools",
   },
-  // Sec7 round-2 fix: block reads of credential-bearing files via shell
-  // reader commands (cat/head/tail/less/more/xxd/od/strings/awk/sed/grep/nl/
-  // file/base64/md5sum/sha256sum). Without this, an LLM could bypass the
-  // file_read READ_BLOCKED_PATHS denylist by running
-  // `shell_exec("cat /root/.claude/.credentials.json")`.
+  // Destructive rm-equivalents via find (SEC-11).
   {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.claude\/\.credentials\.json\b/,
-    reason: "read of credentials.json blocked",
-  },
-  {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.ssh\//,
-    reason: "read of /root/.ssh/ blocked",
-  },
-  {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/\.(gnupg|aws|docker|kube|config\/gh)\b/,
-    reason: "read of secret dotfile directory blocked",
-  },
-  {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/etc\/(shadow|gshadow|sudoers|ssh)\b/,
-    reason: "read of system secret blocked",
-  },
-  {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/proc\/self\/(environ|mem)\b/,
-    reason: "read of /proc/self/environ or mem blocked",
-  },
-  {
-    pattern:
-      /\b(cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev)\b[^|;&]*\/root\/(\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/,
-    reason: "read of dotfile credential blocked",
-  },
-  {
-    // Block reads of mission-control's OWN .env (the crown jewels: Telegram bot
-    // token, Anthropic keys) via shell reader commands. Nothing legitimate reads
-    // it through the shell — code reads process.env. Without this, an LLM bypasses
-    // the env sandbox: the overnight-tuning agent ran
-    // `grep TELEGRAM_BOT_TOKEN /root/claude/mission-control/.env` to lift the bot
-    // token and shell out a raw Telegram send (2026-06-20).
-    // Scope is deliberately mission-control's .env ONLY — project .envs are lower-
-    // stakes AND have documented legit reads (the DENUE analyzer's API key lives in
-    // /root/claude/projects/.../denue-data-analysis/.env and fast-runner.ts tells
-    // the agent to grep it). A blanket .env block would break authenticated DENUE
-    // queries. Order-independent lookaheads (NOT an adjacent `[^|;&]*` span) because
-    // a grep alternation arg ("A\|B") contains a `|` that truncates an adjacent
-    // match before the path. `.env.<suffix>` is covered; `.environment` is not.
-    pattern:
-      /(?=[\s\S]*\b(?:cat|head|tail|less|more|xxd|od|strings|awk|sed|grep|nl|file|base64|md5sum|sha256sum|sha512sum|sha1sum|hexdump|tac|rev|cut|tr|paste)\b)(?=[\s\S]*\/root\/claude\/mission-control\/\.env(?:\.[A-Za-z0-9_-]+)?\b)/,
-    reason: "read of mission-control .env (secrets) blocked",
+    pattern: /\bfind\b[^|;&]*\s-(?:delete|exec(?:dir)?\s+(?:rm|shred|unlink|truncate)\b)/,
+    reason: "find -delete / -exec rm is blocked",
   },
 ];
+
+/**
+ * Secret-bearing paths: any command text that NAMES one is refused, whatever
+ * the verb (security audit SEC-01, 2026-09-10). The former rules keyed on a
+ * list of reader commands (cat/head/…), which any interpreter
+ * (`python3 -c "open(...)"`), unlisted coreutil (`sort`, `cp`, `install`),
+ * redirect (`done < …`) or uploader (`curl --data-binary @…`) walked around.
+ * Matched against the command with quotes removed and `~`/`$HOME` expanded,
+ * so `"/root/.ssh"/id_rsa` and `$HOME/.ssh/id_rsa` are the same spelling.
+ *
+ * Deliberately TEXT-shaped and absolute-path only. Deferred (documented
+ * false NEGATIVES — HEAD allowed them too): relative spellings after `cd`
+ * and `..`-headed paths, `$VAR` indirection, globs/brace expansion, a bare
+ * `.env` inside an interpreter-fed heredoc, `.env_prod`-style names, and
+ * recursive read-outs / archives that never NAME the secret (`grep -rn KEY
+ * <dir>`, `tar czf … <dir>`, `rsync`, `ls -R`) — those belong to the
+ * sandbox/allow-list layers. Three audit rounds showed a token/cwd pipeline
+ * does not converge; the residual class needs a shell-word normal form
+ * (queued 2026-09-10). The wrapper list in effectiveBaseCommand is
+ * non-exhaustive by design (verb/flag lists never converge).
+ *
+ * Accepted false POSITIVES (a one-line workaround exists for each): a bare
+ * `.env` mentioned as text in mission-control's cwd (`jq '.env'`, `echo 'set
+ * .env'`, `cp x/.env.example x/.env`) and a secret DIRECTORY named in prose
+ * (`echo "see /root/.ssh/config"`). `.env.example|sample|template` are
+ * readable — a relaxation of the old shell rule, matching file_read.
+ */
+const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
+  { pattern: /\/root\/\.claude\/\.credentials\.json\b/, reason: "credentials.json is off-limits to the shell" },
+  { pattern: /\/root\/\.ssh(?:\/|\b)/, reason: "/root/.ssh is off-limits to the shell" },
+  { pattern: /\/root\/\.(?:gnupg|aws|docker|kube|config\/gh)\b/, reason: "secret dotfile directory is off-limits to the shell" },
+  { pattern: /\/etc\/(?:shadow|gshadow|sudoers|ssh)\b/, reason: "system secret is off-limits to the shell" },
+  { pattern: /\/proc\/(?:self|\d+)\/(?:environ|mem)\b/, reason: "/proc/<pid>/environ and mem are off-limits to the shell" },
+  { pattern: /\/root\/(?:\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/, reason: "dotfile credential is off-limits to the shell" },
+  { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
+  { pattern: /(?<![\w/])data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
+  { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },
+];
+
+/** `.env`-shaped filenames: absolute, `~`/`$HOME`-headed, or a standalone
+ *  bare `.env` (the shell's default cwd IS mission-control). Same allow-by-
+ *  membership rule as file_read (isBlockedEnvFile). A regex-escaped `\.env`
+ *  is a pattern, not a path. */
+const ENV_ABS_RE = /(?<![\w.\\-])(\/[\w.\/-]*\/\.env(?:[._-][\w.-]+)?)(?!\w)/g;
+const ENV_BARE_RE = /(?<![\w.\/\\$@-])(?:\.\/)?(\.env(?:[._-][\w.-]+)?)(?![\w\/])/g;
+
+/** Unquoted heredoc bodies as index ranges. A bare `.env` inside one is
+ *  skipped REGARDLESS of receiver — prose piped to `cat`/`tee` is data, and an
+ *  interpreter-fed body naming a bare `.env` is a deferred residual (absolute
+ *  secret paths are still refused anywhere, including inside bodies). */
+function heredocBodyRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /<<-?\s*(\w+)[^\n]*\n([\s\S]*?)\n\t*\1(?=\s|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const bodyStart = m.index + m[0].indexOf("\n") + 1;
+    ranges.push([bodyStart, bodyStart + m[2]!.length]);
+  }
+  return ranges;
+}
+
+function checkSecretPaths(sanitized: string): { allowed: boolean; reason?: string } {
+  // Quote splicing (`"/root/.ssh"/id_rsa`) and `~`/`$HOME` heads collapse to
+  // one spelling before matching.
+  const normalized = sanitized
+    .replace(/(?<!\\)["']/g, "")
+    .replace(/\$\{HOME\}|\$HOME/g, "/root")
+    .replace(/(?<![\w/])~(?=\/)/g, "/root");
+  for (const { pattern, reason } of SECRET_PATH_PATTERNS) {
+    const hit = normalized.match(pattern);
+    if (hit) return { allowed: false, reason: `'${hit[0]}': ${reason}` };
+  }
+  let m: RegExpExecArray | null;
+  ENV_ABS_RE.lastIndex = 0;
+  while ((m = ENV_ABS_RE.exec(normalized)) !== null) {
+    if (isBlockedEnvFile(m[1]!)) {
+      return {
+        allowed: false,
+        reason: `'${m[1]}' is a secrets file — .env files are off-limits to the shell (only the DENUE analyzer's .env is allow-listed)`,
+      };
+    }
+  }
+  const bodies = heredocBodyRanges(normalized);
+  ENV_BARE_RE.lastIndex = 0;
+  while ((m = ENV_BARE_RE.exec(normalized)) !== null) {
+    const at = m.index;
+    if (bodies.some(([a, b]) => at >= a && at < b)) continue;
+    const abs = resolvePath(process.cwd(), m[1]!);
+    if (isBlockedEnvFile(abs)) {
+      return {
+        allowed: false,
+        reason: `'${m[1]}' resolves to ${abs} — .env files are off-limits to the shell (only the DENUE analyzer's .env is allow-listed)`,
+      };
+    }
+  }
+  return { allowed: true };
+}
 
 /** Safe path prefixes for write operations.
  *  Jarvis can read anything but writes are restricted to project dirs.
@@ -630,8 +712,10 @@ export function validateShellCommand(command: string): {
     };
   }
 
-  // Split on shell separators to check each segment
-  const segments = sanitized.split(/\s*(?:\||\|\||&&|;)\s*/);
+  // Split on shell separators to check each segment. A newline is a
+  // separator too — a multi-line command used to be judged by line 1 only
+  // (security audit, qa R1 C4).
+  const segments = sanitized.split(/\s*(?:\|\||&&|\||;|&(?!&)|\n)\s*/);
 
   for (const segment of segments) {
     const trimmed = segment.trim();
@@ -640,9 +724,19 @@ export function validateShellCommand(command: string): {
     // Extract base command (first token), strip any path prefix
     const firstToken = trimmed.split(/\s/)[0];
     const baseName = firstToken.replace(/^.*\//, ""); // /usr/bin/rm → rm
+    // …and the verb behind leading keywords/wrappers (`do systemctl`,
+    // `sudo -n systemctl`, `env -i bash`). Additive: checked as well as, not
+    // instead of, the first token.
+    const effective = effectiveBaseCommand(trimmed);
 
-    if (DENY_COMMANDS.has(baseName)) {
-      return { allowed: false, reason: `command '${baseName}' is blocked` };
+    if (DENY_COMMANDS.has(baseName) || DENY_COMMANDS.has(effective)) {
+      const verb = DENY_COMMANDS.has(baseName) ? baseName : effective;
+      // An unquoted heredoc body is scanned line by line (its text may be a
+      // program); literal file content goes through a QUOTED heredoc.
+      const hint = /<<-?\s*\w+/.test(sanitized)
+        ? " — if this is literal file content, use a quoted heredoc (<<'EOF') or file_write"
+        : "";
+      return { allowed: false, reason: `command '${verb}' is blocked${hint}` };
     }
 
     // Resource guard: unscoped full-suite test runs (2026-07-12 incident).
@@ -666,6 +760,10 @@ export function validateShellCommand(command: string): {
       return { allowed: false, reason };
     }
   }
+
+  // Secret paths by PATH, not by reader verb (SEC-01 / SEC-03).
+  const secretVerdict = checkSecretPaths(sanitized);
+  if (!secretVerdict.allowed) return secretVerdict;
 
   // Check write paths — if command writes to absolute paths, verify they're safe.
   // Use `sanitized` so the only `>` redirect we see is the heredoc opener's

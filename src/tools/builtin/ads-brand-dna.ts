@@ -17,7 +17,7 @@ import { infer } from "../../inference/adapter.js";
 import { parseJsonFromLlm } from "../../lib/llm-json.js";
 import { webReadTool } from "./web-read.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 
 const MAX_REFERENCE_CHARS = 6000;
 
@@ -250,7 +250,7 @@ OUTPUT: a JSON brand profile + brief_id you can pass to ads_creative_gen.`,
     let domain = "manual";
 
     if (url) {
-      const urlError = validateOutboundUrl(url);
+      const urlError = await validateOutboundUrlResolved(url);
       if (urlError) {
         return JSON.stringify({ error: urlError, url });
       }

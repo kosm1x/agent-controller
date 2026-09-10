@@ -14,6 +14,7 @@ import { getConfig } from "../config.js";
 import {
   IMAGE_LOCK_LABEL,
   RUNTIME_CODE_MOUNTS,
+  SANDBOX_NEUTRALIZED_ENV,
   generateContainerName,
   imageExistsLocally,
   imageLockDrift,
@@ -248,7 +249,9 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       INFERENCE_PRIMARY_KEY: config.inferencePrimaryKey,
       INFERENCE_PRIMARY_MODEL: config.inferencePrimaryModel,
       INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
-      MC_API_KEY: config.apiKey,
+      // Never the real key: the container reaches host-gateway:8080, and a
+      // backend that forgot the neutralization map would inherit it (SEC-16).
+      MC_API_KEY: SANDBOX_NEUTRALIZED_ENV.get("MC_API_KEY")!,
       MC_DB_PATH: "/tmp/mc.db",
       // Operator orchestrator knobs (drop-in goal-timeout.conf) — the worker
       // ran on compiled defaults (120 s goal / 600 s total) without these.

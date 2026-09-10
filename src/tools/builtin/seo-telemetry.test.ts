@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../../lib/url-safety.js", () => ({
   validateOutboundUrl: vi.fn(),
+  // The tool now uses the DNS-resolving check (SEC-04 / qa R2 W1).
+  validateOutboundUrlResolved: vi.fn(async () => null),
 }));
 
 vi.mock("../../google/auth.js", () => ({
@@ -167,9 +169,9 @@ describe("seo_telemetry — graceful degradation", () => {
     expect(raw).toContain("url parameter is required");
   });
 
-  it("rejects SSRF-unsafe URLs when validateOutboundUrl returns an error", async () => {
-    const { validateOutboundUrl } = await import("../../lib/url-safety.js");
-    vi.mocked(validateOutboundUrl).mockReturnValueOnce(
+  it("rejects SSRF-unsafe URLs when validateOutboundUrlResolved returns an error", async () => {
+    const { validateOutboundUrlResolved } = await import("../../lib/url-safety.js");
+    vi.mocked(validateOutboundUrlResolved).mockResolvedValueOnce(
       "Blocked private/reserved IP: 127.0.0.1",
     );
     const raw = await seoTelemetryTool.execute({

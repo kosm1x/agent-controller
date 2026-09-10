@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { infer } from "../../inference/adapter.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
 import { errMsg } from "../../lib/err-msg.js";
+import { apiRateLimit } from "../rate-limit.js";
 
 const jarvisPull = new Hono();
 
@@ -34,7 +35,15 @@ const ROLE_MAX_TOKENS: Record<CrmRole, number> = {
   vp: 2000,
 };
 
-jarvisPull.post("/jarvis-pull", async (c) => {
+// Denial-of-wallet ceiling: this route triggers an LLM call per request and
+// the budget gate is observability-only (SEC-09). The /api-wide 300/min is
+// sized for dashboard polling, not for inference.
+jarvisPull.post(
+  "/jarvis-pull",
+  // 30/min: the agentic-crm host process, the dashboard and scripts all
+  // share the loopback bucket (qa W9).
+  apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }),
+  async (c) => {
   let body: { query: string; role?: CrmRole; context?: string };
   try {
     body = await c.req.json();

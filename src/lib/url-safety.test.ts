@@ -34,6 +34,38 @@ describe("validateOutboundUrl", () => {
     expect(validateOutboundUrl("http://127.0.0.1/")).toMatch(/Blocked/);
   });
 
+  it("blocks the host's own interface addresses — a fetch to them traverses lo and bypasses UFW (SEC-04)", async () => {
+    const { networkInterfaces } = await import("node:os");
+    const own = Object.values(networkInterfaces())
+      .flat()
+      .filter((i): i is NonNullable<typeof i> => !!i && !i.internal && i.family === "IPv4")
+      .map((i) => i.address);
+    for (const addr of own) {
+      expect(validateOutboundUrl(`http://${addr}:7462/`)).toMatch(/Blocked/);
+    }
+  });
+
+  it("the host's own address on 80/443 (Caddy vhosts — the operator's public sites) stays fetchable", async () => {
+    const { networkInterfaces } = await import("node:os");
+    const own = Object.values(networkInterfaces())
+      .flat()
+      .filter((i): i is NonNullable<typeof i> => !!i && !i.internal && i.family === "IPv4")
+      .map((i) => i.address);
+    // Docker bridges are RFC1918 and blocked outright; only the routable
+    // public interface exercises the port rule.
+    const isPrivate = (a: string) => /^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/.test(a);
+    for (const addr of own.filter((a) => !isPrivate(a))) {
+      expect(validateOutboundUrl(`https://${addr}/`)).toBeNull();
+      expect(validateOutboundUrl(`http://${addr}:8080/health`)).toMatch(/Blocked/);
+    }
+  });
+
+  it("blocks the CGNAT range 100.64/10", () => {
+    expect(validateOutboundUrl("http://100.64.0.1/")).toMatch(/Blocked/);
+    expect(validateOutboundUrl("http://100.127.255.254/")).toMatch(/Blocked/);
+    expect(validateOutboundUrl("http://100.128.0.1/")).toBeNull();
+  });
+
   it("blocks 10.x private range", () => {
     expect(validateOutboundUrl("http://10.0.0.1/admin")).toMatch(/Blocked/);
   });

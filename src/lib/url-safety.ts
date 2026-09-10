@@ -10,6 +10,7 @@
  */
 
 import { lookup as dnsLookup } from "node:dns";
+import { networkInterfaces } from "node:os";
 import type { LookupAddress, LookupAllOptions, LookupOptions } from "node:dns";
 import type { LookupFunction } from "node:net";
 import { Agent } from "undici";
@@ -22,6 +23,7 @@ const BLOCKED_IP_PATTERNS = [
   /^192\.168\./, // RFC 1918 Class C
   /^169\.254\./, // Link-local / cloud metadata
   /^0\./, // Current network
+  /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT 100.64/10
   /^::1$/, // IPv6 loopback
   // v7.6.2 C2: IPv6 unspecified address — routes to loopback on Linux.
   // Previously missed by `::1` pattern. Covers ::, ::0, ::00, etc.
@@ -32,6 +34,39 @@ const BLOCKED_IP_PATTERNS = [
   /^f[cd][0-9a-f]{0,2}:/i,
   /^fe80:/i, // IPv6 link-local
 ];
+
+/**
+ * The machine's OWN interface addresses. A fetch to the host's public IP
+ * traverses `lo`, so UFW's default-deny never sees it — all-interface
+ * listeners the operator treats as internal (Pulso's credential proxy :7462,
+ * agentic-crm :3000, very-light-cms :3344) were reachable from a fetched URL
+ * (security audit SEC-04). Enumerated lazily, once.
+ */
+let ownAddresses: Set<string> | null = null;
+let ownAddressesAt = 0;
+const OWN_ADDRESSES_TTL_MS = 10 * 60_000;
+function isOwnInterfaceAddress(addr: string): boolean {
+  if (!ownAddresses || Date.now() - ownAddressesAt > OWN_ADDRESSES_TTL_MS) {
+    ownAddresses = new Set();
+    ownAddressesAt = Date.now();
+    for (const list of Object.values(networkInterfaces())) {
+      for (const iface of list ?? []) {
+        ownAddresses.add(iface.address.toLowerCase().split("%")[0]!);
+      }
+    }
+  }
+  return ownAddresses.has(addr.toLowerCase().split("%")[0]!);
+}
+
+/** The operator's own public sites sit behind Caddy on 80/443 and resolve to
+ *  this host — those stay fetchable. Every OTHER port on the host's own
+ *  address is an internal listener (Pulso proxy :7462, agentic-crm :3000,
+ *  very-light-cms :3344, the control plane :8080) and is refused (qa W6). */
+function isOwnAddressOnInternalPort(addr: string, parsed: URL): boolean {
+  const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  if (port === "80" || port === "443") return false;
+  return isOwnInterfaceAddress(addr);
+}
 
 /** Hostnames that should never be fetched. */
 const BLOCKED_HOSTS = new Set([
@@ -98,6 +133,9 @@ export function validateOutboundUrl(url: string): string | null {
     if (pattern.test(checkHost)) {
       return `Blocked private/reserved IP: ${hostname}`;
     }
+  }
+  if (isIpLiteral(checkHost) && isOwnAddressOnInternalPort(checkHost, parsed)) {
+    return `Blocked: ${hostname}:${parsed.port} is an internal listener on this host`;
   }
 
   // Cloud metadata endpoint (catches IP and hostname variants)
@@ -171,9 +209,13 @@ export async function validateOutboundUrlResolved(
   try {
     const { lookup } = await import("node:dns/promises");
     const addrs = await lookup(hostname, { all: true, verbatim: true });
+    const parsedUrl = new URL(url);
     for (const { address } of addrs) {
       if (isBlockedAddress(address)) {
         return `Blocked: ${hostname} resolves to private/reserved address ${address}`;
+      }
+      if (isOwnAddressOnInternalPort(address, parsedUrl)) {
+        return `Blocked: ${hostname} resolves to this host (${address}) on internal port ${parsedUrl.port}`;
       }
     }
   } catch {

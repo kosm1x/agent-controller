@@ -31,6 +31,9 @@ vi.mock("./container.js", () => ({
   // Default: host dist/ complete; the assets pre-flight test overrides once.
   missingHostDistAssets: vi.fn((): string[] => []),
   IMAGE_LOCK_LABEL: "mc.lock-sha256",
+  SANDBOX_NEUTRALIZED_ENV: new Map([
+    ["MC_API_KEY", "sandbox-no-control-plane-access"],
+  ]),
   RUNTIME_CODE_MOUNTS: [
     "/root/claude/mission-control/dist:/app/dist:ro",
     "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
@@ -534,7 +537,8 @@ describe("heavyRunner container mode", () => {
           INFERENCE_PRIMARY_KEY: "sk-test",
           INFERENCE_PRIMARY_MODEL: "gpt-4",
           INFERENCE_PRIMARY_PROVIDER: "openai",
-          MC_API_KEY: "test-key",
+          // Never the real key — the placeholder is built at the call site (SEC-16).
+          MC_API_KEY: "sandbox-no-control-plane-access",
           MC_DB_PATH: "/tmp/mc.db",
         }),
         timeoutMs: 900_000,

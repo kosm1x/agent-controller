@@ -13,7 +13,7 @@
 
 import type { Tool } from "../types.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 import { getAccessToken } from "../../google/auth.js";
 
 const PSI_URL = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
@@ -304,7 +304,7 @@ NOT FOR: on-page audits (use seo_page_audit), keyword research (seo_keyword_rese
     if (!url) {
       return JSON.stringify({ error: "url parameter is required" });
     }
-    const urlError = validateOutboundUrl(url);
+    const urlError = await validateOutboundUrlResolved(url);
     if (urlError) {
       return JSON.stringify({ error: `URL rejected: ${urlError}` });
     }

@@ -15,11 +15,13 @@ import {
   cancelTask,
 } from "../../dispatch/dispatcher.js";
 import { parseGateSpecs, type GateSpec } from "../../lib/v8-4/gates.js";
+import { apiRateLimit } from "../rate-limit.js";
 
 const tasks = new Hono();
 
 // Submit a new task
-tasks.post("/", async (c) => {
+// Denial-of-wallet ceiling: every accepted submission runs a task (SEC-09).
+tasks.post("/", apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }), async (c) => {
   const body = await c.req.json().catch(() => null);
   if (!body) {
     return c.json({ error: "Invalid JSON body" }, 400);

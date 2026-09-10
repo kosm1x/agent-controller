@@ -136,7 +136,9 @@ Serve via: GET /dashboard/{id}`,
     if (!question) return JSON.stringify({ error: "question is required" });
 
     const title = (args.title as string) || question.slice(0, 60);
-    const dashId = randomUUID().slice(0, 8);
+    // Full UUID: the route is unauthenticated and unmetered, so the id IS the
+    // capability — 32 bits was guessable (SEC-12).
+    const dashId = randomUUID();
 
     try {
       const { infer } = await import("../../inference/adapter.js");

@@ -16,7 +16,7 @@ describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
 
   it("read-only branch states it cannot commit", () => {
     const note = buildEnvironmentNote(null);
-    expect(note).toContain("READ-ONLY");
+    expect(note).toContain("read-only git history");
     expect(note).toContain("cannot commit");
   });
 

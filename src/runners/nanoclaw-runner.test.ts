@@ -27,6 +27,9 @@ vi.mock("./container.js", () => ({
   // Default: host dist/ complete; the assets pre-flight test overrides once.
   missingHostDistAssets: vi.fn((): string[] => []),
   IMAGE_LOCK_LABEL: "mc.lock-sha256",
+  SANDBOX_NEUTRALIZED_ENV: new Map([
+    ["MC_API_KEY", "sandbox-no-control-plane-access"],
+  ]),
   RUNTIME_CODE_MOUNTS: [
     "/root/claude/mission-control/dist:/app/dist:ro",
     "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
@@ -130,7 +133,8 @@ describe("nanoclawRunner", () => {
           INFERENCE_PRIMARY_KEY: "sk-test",
           INFERENCE_PRIMARY_MODEL: "qwen-test",
           INFERENCE_PRIMARY_PROVIDER: "openai",
-          MC_API_KEY: "test-key",
+          // Never the real key — the placeholder is built at the call site (SEC-16).
+          MC_API_KEY: "sandbox-no-control-plane-access",
           MC_DB_PATH: "/tmp/mc.db",
         }),
         volumes: [
@@ -138,7 +142,7 @@ describe("nanoclawRunner", () => {
           // dist/, never the image's baked copy.
           "/root/claude/mission-control/dist:/app/dist:ro",
           "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
-          "/root/claude/mission-control:/root/claude/mission-control:ro",
+          "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
           "/root/.config/gh:/root/.config/gh:ro",
           "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
         ],
@@ -225,7 +229,7 @@ describe("nanoclawRunner", () => {
         }),
         volumes: expect.arrayContaining([
           "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
-          "/root/claude/mission-control:/root/claude/mission-control:ro",
+          "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
           "/root/.config/gh:/root/.config/gh:ro",
         ]),
       }),

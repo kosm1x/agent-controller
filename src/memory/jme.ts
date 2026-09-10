@@ -997,9 +997,10 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
 
     // 6. Delete EXACTLY the processed turns (an empty [] extraction is a
     // valid consumption — the window held nothing durable).
-    const ids = turns.map((t) => t.id).join(",");
+    const ids = turns.map((t) => t.id);
+    const placeholders = ids.map(() => "?").join(",");
     writeWithRetry(() => {
-      db.prepare(`DELETE FROM jme_turns WHERE id IN (${ids})`).run();
+      db.prepare(`DELETE FROM jme_turns WHERE id IN (${placeholders})`).run(...ids);
     });
   } catch (err) {
     console.error(`[jme] consolidateAll: unhandled error: ${errMsg(err)}`);

@@ -16,7 +16,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type { Tool } from "../types.js";
 import { extractPdfToMarkdown, extractPdfFromUrl } from "../../lib/pdf.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 
 const INLINE_THRESHOLD = 10_000; // chars — return full content if under this
@@ -148,7 +148,7 @@ TIPS:
 
       if (isUrl) {
         // Sec1 round-2 fix: validate outbound URL (SSRF guard)
-        const urlError = validateOutboundUrl(source);
+        const urlError = await validateOutboundUrlResolved(source);
         if (urlError) {
           return JSON.stringify({ error: `Blocked source URL: ${urlError}` });
         }

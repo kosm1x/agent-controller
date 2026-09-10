@@ -27,3 +27,5 @@ logs/
 
 # Phase-closure tooling drafts (mc-ctl close-phase) — operator-review artifacts
 *.md.draft
+# operator scratch probes (2026-09-06)
+tmp_*.cjs

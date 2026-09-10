@@ -12,7 +12,7 @@
 import { join } from "path";
 import { mkdirSync, readFileSync } from "fs";
 import type { Tool } from "../types.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 import { describeImage } from "../../inference/vision.js";
 
 const SCREENSHOT_DIR = "/tmp/screenshots";
@@ -110,7 +110,7 @@ WORKFLOW for "see this image":
     // validation window). Playwright's own protocol allowlist catches
     // file:// but NOT http://localhost:* / RFC1918 ranges, which would
     // let an LLM with screenshot access hit Grafana / Prometheus / etc.
-    const urlError = validateOutboundUrl(url);
+    const urlError = await validateOutboundUrlResolved(url);
     if (urlError) {
       return JSON.stringify({ error: urlError, url });
     }

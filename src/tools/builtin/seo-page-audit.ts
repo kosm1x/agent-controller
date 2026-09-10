@@ -11,7 +11,7 @@
 import type { Tool } from "../types.js";
 import { webReadTool } from "./web-read.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
-import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { validateOutboundUrlResolved } from "../../lib/url-safety.js";
 
 interface ParsedPage {
   title?: string;
@@ -671,7 +671,7 @@ Returns score, prioritized issues (critical first), and a list of what's already
       return JSON.stringify({ error: "url is required" });
     }
 
-    const urlError = validateOutboundUrl(url);
+    const urlError = await validateOutboundUrlResolved(url);
     if (urlError) {
       return JSON.stringify({ error: urlError, url });
     }

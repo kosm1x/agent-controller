@@ -61,7 +61,8 @@ function setupCodingWorkspace(): string | null {
     execFileSync(cmd, args, { stdio: "pipe", encoding: "utf8" });
   try {
     // Writable clone of the current host repo (local path → fast, no network).
-    run("git", ["clone", "--no-hardlinks", "--quiet", RO_REPO, WORKSPACE]);
+    // Only `.git` is mounted (SEC-02) — a gitdir is a valid clone source.
+    run("git", ["clone", "--no-hardlinks", "--quiet", `${RO_REPO}/.git`, WORKSPACE]);
     // Symlink the image's installed node_modules so `npx vitest`/tsc work.
     run("ln", ["-sfn", "/app/node_modules", `${WORKSPACE}/node_modules`]);
     // Repoint origin from the local clone path to the real GitHub remote.
