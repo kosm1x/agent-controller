@@ -281,6 +281,25 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     expect(ledger().at(-1)).toMatchObject({ delivered: 0, reason: "budget" });
   });
 
+  it("a FAILURE notice (structural verdict line, judged on the pre-cap text) is never deferred by the reading budget (usefulness audit U7 / qa C1-C2)", () => {
+    fillBudget(PUSH_CAP - 2);
+    // The real deferred row (id 64, 2026-09-09): 179 words, verdict line at top.
+    const notice =
+      "### Resultado: ❌ Error al publicar\n\n- **cuenta:** @MexicoNecesario\n- **error:** `post failed on all backends`\n- **detalle:** code 226 (flagged_automated)\n\n" +
+      Array.from({ length: 70 }, (_, i) => `contexto ${i}`).join(" "); // ≈170 words, like the real row
+    const d = applyRitualDeliveryPolicy("schedule:tweet", "t-fail", notice, { now: NOW });
+    expect(d).toMatchObject({ deliver: true, reason: "default" });
+    expect(deferrals()).toEqual([]);
+    // A success digest that merely narrates "failed" in prose (id 47) stays budgeted.
+    const digest =
+      "✅ **Inteligencia del día completada — 2026-09-04**\n12 fuentes escaneadas · 9 señales encontradas · 8 retenidas.\n" +
+      "The digest storage failed because \"intelligence\" isn't a valid category — I'll store it under \"projects\" instead. " +
+      Array.from({ length: 100 }, (_, i) => `señal ${i}`).join(" ");
+    const d2 = applyRitualDeliveryPolicy("signal-intelligence", "t-digest", digest, { now: NOW });
+    expect(d2.deliver).toBe(false);
+    expect(d2.reason).toBe("budget");
+  });
+
   it(`a Telegram-only push over ${TELEGRAM_PUSH_WORD_CAP} words is cut with a phone handle; the full text is stored and NOT folded (R1 C2 / R2 C2)`, () => {
     const post = Array.from({ length: 120 }, (_, i) => `línea ${i} con seis palabras aquí`).join("\n");
     const a = applyRitualDeliveryPolicy("schedule:williams", "t1", post, { displayName: "Williams Journal", scheduleId: "williams", now: NOW });

@@ -97,7 +97,17 @@ export class ToolSourceManager {
       }
     }
 
-    return { initialized, failed, totalTools };
+    // The registry is the truth: per-source arrays double-count when two
+    // sources register concurrently and one reports a registry DIFF
+    // (usefulness audit U10: "258 tools" was really 231). The delta is the
+    // diagnostic, so log it instead of the inflated sum.
+    const registered = registry.list().length;
+    if (totalTools !== registered) {
+      console.log(
+        `[mc] Tool sources reported ${totalTools} tools; registry holds ${registered} (concurrent-diff double count)`,
+      );
+    }
+    return { initialized, failed, totalTools: registered };
   }
 
   /** Run health checks on all sources. */

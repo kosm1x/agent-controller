@@ -236,3 +236,20 @@ describe("admin routes", () => {
     });
   });
 });
+
+describe("GET /admin/tools (usefulness audit U16 — mc-ctl tools called a route that never existed)", () => {
+  it("lists the live registry grouped by name family", async () => {
+    const { toolRegistry } = await import("../../tools/registry.js");
+    const before = toolRegistry.list().length;
+    toolRegistry.register({ name: "zz_alpha", definition: { type: "function", function: { name: "zz_alpha", description: "t", parameters: { type: "object", properties: {} } } }, execute: async () => "" } as never);
+    toolRegistry.register({ name: "zz_beta", definition: { type: "function", function: { name: "zz_beta", description: "t", parameters: { type: "object", properties: {} } } }, execute: async () => "" } as never);
+    toolRegistry.register({ name: "mcp__thing", definition: { type: "function", function: { name: "mcp__thing", description: "t", parameters: { type: "object", properties: {} } } }, execute: async () => "" } as never);
+    const res = await createTestApp().request("http://x/admin/tools");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { total: number; tools: string[]; byPrefix: Record<string, number> };
+    expect(body.total).toBe(before + 3);
+    expect(body.tools).toEqual([...body.tools].sort());
+    expect(body.byPrefix.zz).toBe(2);
+    expect(body.byPrefix.mcp).toBe(1);
+  });
+});

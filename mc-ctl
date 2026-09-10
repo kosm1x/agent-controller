@@ -481,10 +481,10 @@ cmd_schedule_delete() {
 # ---------------------------------------------------------------------------
 
 cmd_tools() {
-  echo -e "${BOLD}=== Registered Tools ===${NC}"
+  echo -e "${BOLD}=== Registered Tools (registry, grouped by name family) ===${NC}"
   echo ""
   local result
-  if result=$(api GET "/api/tools/sources" 2>/dev/null); then
+  if result=$(api GET "/api/admin/tools" 2>/dev/null); then
     echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
   else
     # Fallback: try health endpoint for basic info

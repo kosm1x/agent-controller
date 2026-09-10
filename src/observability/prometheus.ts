@@ -381,6 +381,8 @@ export function recordRetainOutcome(
  * Refresh all custom metrics from in-memory singletons + SQLite.
  * Called before each /metrics scrape.
  */
+let embedCountSampledAt = 0;
+
 export function collectMetrics(): void {
   // Provider metrics
   const providerStats = providerMetrics.getAllStats();
@@ -482,10 +484,17 @@ export function collectMetrics(): void {
       .get() as { cnt: number };
     conversationsTotal.set(convCount.cnt);
 
-    const embedCount = db
-      .prepare("SELECT COUNT(*) as cnt FROM conversation_embeddings")
-      .get() as { cnt: number };
-    embeddingsTotal.set(embedCount.cnt);
+    // conversation_embeddings is the largest table (6 KB BLOB rows, no
+    // covering index) — a full-scan COUNT(*) on every 30 s scrape evicted the
+    // page cache the recall path depends on (design audit D13). Sample it
+    // every 10 minutes instead; the gauge is informational.
+    if (Date.now() - embedCountSampledAt > 10 * 60_000) {
+      const embedCount = db
+        .prepare("SELECT COUNT(*) as cnt FROM conversation_embeddings")
+        .get() as { cnt: number };
+      embedCountSampledAt = Date.now();
+      embeddingsTotal.set(embedCount.cnt);
+    }
   } catch {
     // DB not ready — metrics will be zero
   }

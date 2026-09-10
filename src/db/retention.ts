@@ -88,6 +88,45 @@ export interface RetentionReport {
 }
 
 /**
+ * Telemetry tables with no retention policy (design audit D5, 2026-09-10):
+ * `scope_telemetry` (+1.8 MB/mo) and `recall_audit` (+2.8 MB/mo). Pure
+ * per-turn instrumentation, not memories (`conversations` /
+ * `conversation_embeddings` are untouched). Windows differ by consumer:
+ * scope_telemetry's readers take a `days` parameter (case-miner, mc-ctl
+ * scope stats) → 90 d; recall_audit is read ALL-TIME by `mc-ctl
+ * recall-modes`, `jme-stats` and `jme-signals` (whose success criterion is
+ * "vs the first 4 weeks", jme rows since 2026-07-14) → 180 d, which keeps
+ * that baseline until the overdue JME verdict is ruled (qa C3). Both
+ * DELETEs use the created_at index (114 ms measured on a live copy).
+ */
+const SCOPE_TELEMETRY_RETENTION_DAYS = 90;
+const RECALL_AUDIT_RETENTION_DAYS = 180;
+
+function cutoffFor(now: Date, days: number): string {
+  return new Date(now.getTime() - days * 86_400_000)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+}
+
+export function pruneTelemetry(now = new Date()): { scopeTelemetry: number; recallAudit: number } {
+  const db = getDatabase();
+  let scopeTelemetry = 0;
+  let recallAudit = 0;
+  writeWithRetry(() => {
+    scopeTelemetry = db
+      .prepare("DELETE FROM scope_telemetry WHERE created_at < ?")
+      .run(cutoffFor(now, SCOPE_TELEMETRY_RETENTION_DAYS)).changes;
+  });
+  writeWithRetry(() => {
+    recallAudit = db
+      .prepare("DELETE FROM recall_audit WHERE created_at < ?")
+      .run(cutoffFor(now, RECALL_AUDIT_RETENTION_DAYS)).changes;
+  });
+  return { scopeTelemetry, recallAudit };
+}
+
+/**
  * Run one retention sweep. Returns counts; writes the archive file only when
  * there is something to delete. Exported for tests and the daily cron.
  */

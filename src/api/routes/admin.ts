@@ -107,6 +107,20 @@ admin.get("/tool-annotations", (c) => {
  *
  * Returns current state of autonomous improvement.
  */
+/**
+ * Registered tools by prefix — the backend `mc-ctl tools` always needed
+ * (it called a never-implemented /api/tools/sources; usefulness audit U16).
+ */
+admin.get("/tools", (c) => {
+  const names = toolRegistry.list().sort();
+  const byPrefix: Record<string, number> = {};
+  for (const n of names) {
+    const prefix = n.includes("__") ? n.split("__")[0]! : n.split("_")[0]!;
+    byPrefix[prefix] = (byPrefix[prefix] ?? 0) + 1;
+  }
+  return c.json({ total: names.length, byPrefix, tools: names });
+});
+
 admin.get("/autonomous-status", (c) => {
   return c.json({
     autonomous_improvement_enabled:

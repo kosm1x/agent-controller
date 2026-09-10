@@ -315,6 +315,24 @@ export interface BudgetUsed {
 }
 
 /** Pushes and words already delivered on the given MX day — anchors included (plan-literal). */
+/**
+ * A ritual's FAILURE notice is the one output that must reach the phone
+ * regardless of the reading budget — the MexicoNecesario tweet failure
+ * (`### Resultado: ❌ Error al publicar … code 226`) sat in `ritual_deferrals`
+ * behind the word cap while the automation stayed broken (usefulness audit
+ * U7). The discriminator is STRUCTURAL — a verdict line at line start
+ * (`Resultado: ❌`, a line beginning with ❌, or an upper-case `ERROR` line),
+ * never a word anywhere in prose: a success digest narrating "the storage
+ * failed, stored elsewhere" is not a failure notice (qa C1). Evaluated on
+ * the PRE-cap text with a generous bound: a bound at the cap value is inert
+ * downstream of the cap (qa C2 — 120 words was exactly EMAILED_PUSH_WORD_CAP).
+ */
+const FAILURE_VERDICT_RE =
+  /^\s*(?:#{1,4}\s*)?(?:\*{0,2}(?:Resultado|Result|Estado|Status)\*{0,2}\s*:\s*)?❌|^\s*(?:[-*]\s*)?\*{0,2}ERROR\b/m;
+export function isFailureNotice(rawText: string): boolean {
+  return countWords(rawText) <= 300 && FAILURE_VERDICT_RE.test(rawText);
+}
+
 export function budgetUsed(day: string): BudgetUsed {
   return getDatabase()
     .prepare(
@@ -473,7 +491,7 @@ export function applyRitualDeliveryPolicy(
         emailed &&
         (used.emailedPushes >= EMAILED_SHARE.pushes ||
           used.emailedWords + words > EMAILED_SHARE.words);
-      if (overPushes || overWords || overEmailedShare) {
+      if ((overPushes || overWords || overEmailedShare) && !isFailureNotice(rawText)) {
         const cause = [overPushes && "push-cap", overWords && "word-cap", overEmailedShare && "emailed-share"]
           .filter(Boolean)
           .join("+");

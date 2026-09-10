@@ -8,7 +8,7 @@
 import { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
 
-import { runTasksRetention } from "./retention.js";
+import { runTasksRetention, pruneTelemetry } from "./retention.js";
 import { pruneTraceEvents } from "../observability/task-trace.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -76,5 +76,14 @@ export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
   const traceRemoved = pruneTraceEvents();
   if (traceRemoved > 0) {
     log.info("trace retention", { eventsDeleted: traceRemoved });
+  }
+  // Design audit D5: per-turn telemetry tables ride the same tick.
+  try {
+    const t = pruneTelemetry();
+    if (t.scopeTelemetry + t.recallAudit > 0) {
+      log.info("telemetry retention", t);
+    }
+  } catch (err) {
+    log.warn("telemetry retention failed", { error: errMsg(err) });
   }
 }

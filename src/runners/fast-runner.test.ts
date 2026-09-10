@@ -1343,14 +1343,17 @@ describe("splitSystemMessagesByCache (cache-aware routing helper)", () => {
         content: "task description (varies)",
         cacheable: false,
       },
-      { role: "system", content: "deferred tool catalog" },
+      // Design audit D6 (2026-09-10): the catalog is per-SCOPE — it is pushed
+      // with cacheable:false so a scope change cannot bust the KB prefix.
+      { role: "system", content: "deferred tool catalog", cacheable: false },
       { role: "system", content: "precedent (varies)", cacheable: false },
     ]);
-    // Stable: essentials + deferred tool catalog (joined later as systemPrompt)
-    expect(result.stable).toEqual(["essentials", "deferred tool catalog"]);
-    // Variable: task description + precedent (prepended later to userPrompt)
+    // Stable: essentials only (joined later as systemPrompt)
+    expect(result.stable).toEqual(["essentials"]);
+    // Variable: task description + catalog + precedent (prepended later to userPrompt)
     expect(result.variable).toEqual([
       "task description (varies)",
+      "deferred tool catalog",
       "precedent (varies)",
     ]);
   });

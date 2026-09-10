@@ -1003,9 +1003,15 @@ export const fastRunner: Runner = {
         // Non-fatal — JME must never block the runner
       }
 
-      // Inject deferred tool catalog (names + descriptions only, no schemas)
+      // Inject deferred tool catalog (names + descriptions only, no schemas).
+      // Per-SCOPE content: tagged cacheable:false so a scope change does not
+      // invalidate the stable prefix that carries the KB block (design audit D6).
       if (deferredCatalog) {
-        messages.push({ role: "system", content: deferredCatalog });
+        messages.push({
+          role: "system",
+          content: deferredCatalog,
+          cacheable: false,
+        });
       }
 
       for (const turn of input.conversationHistory) {

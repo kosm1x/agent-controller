@@ -26,7 +26,7 @@ vi.mock("./index.js", () => ({
   writeWithRetry: <T>(fn: () => T): T => fn(),
 }));
 
-import { runTasksRetention } from "./retention.js";
+import { runTasksRetention, pruneTelemetry } from "./retention.js";
 
 const NOW = new Date("2026-07-05T12:00:00Z");
 const OLD = "2026-01-01 00:00:00"; // far past the 90d cutoff
@@ -229,5 +229,26 @@ describe("runTasksRetention", () => {
     insertTask("old-done-2", "completed", OLD);
     runTasksRetention(dataDir, NOW);
     expect(existsSync(staleFile)).toBe(false);
+  });
+});
+
+describe("pruneTelemetry (design audit D5)", () => {
+  it("drops scope_telemetry older than 90 d and recall_audit older than 180 d (all-time mc-ctl readers keep their baseline), nothing else", () => {
+    db.exec(`
+      CREATE TABLE scope_telemetry (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
+      CREATE TABLE recall_audit (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
+    `);
+    const D120 = "2026-03-07 00:00:00"; // 120 d before NOW: past 90, inside 180
+    for (const t of [OLD, D120, RECENT]) {
+      db.prepare("INSERT INTO scope_telemetry (created_at) VALUES (?)").run(t);
+      db.prepare("INSERT INTO recall_audit (created_at) VALUES (?)").run(t);
+    }
+    const r = pruneTelemetry(NOW);
+    expect(r).toEqual({ scopeTelemetry: 2, recallAudit: 1 });
+    expect(db.prepare("SELECT created_at FROM scope_telemetry").all()).toEqual([{ created_at: RECENT }]);
+    expect(db.prepare("SELECT created_at FROM recall_audit ORDER BY created_at").all()).toEqual([
+      { created_at: D120 },
+      { created_at: RECENT },
+    ]);
   });
 });
