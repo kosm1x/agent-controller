@@ -65,6 +65,7 @@ async function main(): Promise<void> {
       {
         goalTimeoutMs: config.goalTimeoutMs,
         timeoutMs: config.orchestratorTimeoutMs,
+        maxIterations: config.orchestratorMaxIterations,
       },
       input.tools,
     );

@@ -414,6 +414,45 @@ describe("dispatchTask Rule-of-Two run context (V8.5 Phase 5.2, qa W3)", () => {
   });
 });
 
+// Reliability audit R4 (2026-09-10): cancelTask() flipped the rows but never
+// aborted the runner — the SDK call kept running (and billing) and a
+// container task kept its slot until it exited on its own.
+describe("cancelTask aborts the running runner (reliability audit R4)", () => {
+  it("the RunnerInput.signal is aborted when the task is cancelled", async () => {
+    let seenSignal: AbortSignal | undefined;
+    let finished = false;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seenSignal = input.signal;
+        await new Promise<void>((resolve) => {
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        finished = true;
+        return { success: false, error: "aborted" } as RunnerOutput;
+      },
+    });
+    const { taskId } = await submitTask({
+      title: "cancel me",
+      description: "long running chat",
+    });
+    await vi.waitFor(() => {
+      if (!seenSignal) throw new Error("runner not yet executed");
+    });
+    expect(seenSignal!.aborted).toBe(false);
+    expect(finished).toBe(false);
+
+    mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+    mockAll.mockReturnValueOnce([]); // no subtasks
+    expect(cancelTask(taskId)).toBe(true);
+
+    expect(seenSignal!.aborted).toBe(true);
+    await vi.waitFor(() => {
+      if (!finished) throw new Error("runner did not return after abort");
+    });
+  });
+});
+
 // Seam origin wiring (qa W2 2026-08-17): the store is tested in rule-of-two;
 // THIS pins the dispatcher's wiring point — delete the 3rd argument at the
 // enterRunToolContext site and the operator label silently reverts to

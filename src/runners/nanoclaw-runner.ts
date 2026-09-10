@@ -181,8 +181,19 @@ export const nanoclawRunner: Runner = {
         // Best-effort
       }
 
+      // Cancellation: cancelTask() aborts the signal; kill the container so
+      // the slot and the LLM spend end with the task, not 15 min later.
+      const spawned = handle;
+      const onAbort = (): void => spawned.kill();
+      input.signal?.addEventListener("abort", onAbort, { once: true });
+
       // Wait for result
-      const containerOutput = await handle.result;
+      let containerOutput: Awaited<typeof spawned.result>;
+      try {
+        containerOutput = await spawned.result;
+      } finally {
+        input.signal?.removeEventListener("abort", onAbort);
+      }
       const durationMs = Date.now() - start;
 
       if (containerOutput.status === "error") {

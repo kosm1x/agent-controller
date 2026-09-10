@@ -16,6 +16,11 @@ vi.mock("../config.js", () => ({
   getConfig: () => ({ inferencePrimaryProvider: "openai" }),
 }));
 
+const mockRecall = vi.fn(async () => [] as Array<{ content: string }>);
+vi.mock("../memory/index.js", () => ({
+  getMemoryService: () => ({ recall: mockRecall, retain: vi.fn() }),
+}));
+
 vi.mock("../db/knowledge-maps.js", () => ({
   searchMaps: vi.fn(() => []),
   getNodes: vi.fn(() => []),
@@ -78,6 +83,30 @@ describe("plan", () => {
     expect(graph.getGoal("g-2").dependsOn).toEqual(["g-1"]);
     expect(usage.promptTokens).toBe(100);
     expect(usage.completionTokens).toBe(50);
+  });
+
+  it("recalls prior learnings under the tag the reflector actually writes (mc-operational returned 0/804 on 'planning' alone)", async () => {
+    mockRecall.mockResolvedValueOnce([
+      { content: "Always call evolution_get_data before analysing skills" },
+    ]);
+    mockInfer.mockResolvedValueOnce({
+      content: JSON.stringify({ goals: [{ id: "g-1", description: "x", completion_criteria: [], parent_id: null, depends_on: [] }] }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+    await plan("Audit recent skills");
+    expect(mockRecall).toHaveBeenCalledWith(
+      "Audit recent skills",
+      expect.objectContaining({
+        bank: "mc-operational",
+        tags: expect.arrayContaining(["reflection"]),
+      }),
+    );
+    const prompt = JSON.stringify(mockInfer.mock.calls[0][0]);
+    expect(prompt).toContain("Prior learnings");
+    expect(prompt).toContain("evolution_get_data");
   });
 
   it("system prompt carries the workload-sizing rules (2026-07-27: split large tasks across rounds)", async () => {

@@ -21,6 +21,7 @@ import { emitTraceEvent } from "../observability/task-trace.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
+import { getRouter } from "../messaging/index.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";
 import {
@@ -238,6 +239,14 @@ interface QueuedContainerTask {
 }
 
 const containerQueue: QueuedContainerTask[] = [];
+
+/**
+ * Abort controllers of tasks currently executing in a runner, keyed by
+ * taskId. `cancelTask()` used to flip the DB rows only — the runner kept
+ * running (and billing) and a container task kept its slot until it exited
+ * on its own (reliability audit R4).
+ */
+const activeAborts = new Map<string, AbortController>();
 
 /**
  * V8.3 seam origin for a submission: `operator` iff the submitter named the
@@ -649,6 +658,9 @@ async function dispatchWithSlot(
     return;
   }
 
+  const abortController = submission.abortController ?? new AbortController();
+  activeAborts.set(taskId, abortController);
+
   const input: RunnerInput = {
     taskId,
     runId,
@@ -660,7 +672,7 @@ async function dispatchWithSlot(
     modelTier: getModelTierFromTask(taskId),
     conversationHistory: submission.conversationHistory,
     onTextChunk: submission.onTextChunk,
-    signal: submission.abortController?.signal,
+    signal: abortController.signal,
     interactive: submission.interactive,
     unlimited: submission.unlimited,
   };
@@ -916,9 +928,18 @@ async function dispatchWithSlot(
           // sees retry_count>=MAX_RETRIES_PER_GOAL(=1) and gives up.
           retryCount: 1,
         };
-        submitTask(retrySubmission).catch((err) => {
-          log.error({ err, taskId }, "required-tool retry failed");
-        });
+        submitTask(retrySubmission)
+          .then((retry) => {
+            // The ritual scheduler registered its completion watch on the
+            // ORIGINAL taskId; without re-registering here the retry's
+            // output is produced and never broadcast (reliability audit R5).
+            if (submission.ritualId) {
+              getRouter()?.watchRitualTask(retry.taskId, submission.ritualId);
+            }
+          })
+          .catch((err) => {
+            log.error({ err, taskId }, "required-tool retry failed");
+          });
         // Mark original as failed with clear reason
         updateTaskStatus(
           taskId,
@@ -1099,6 +1120,7 @@ async function dispatchWithSlot(
       attrs: { error: errorMsg.slice(0, 300), thrown: true },
     });
   } finally {
+    activeAborts.delete(taskId);
     taskCompleted(agentType);
     // V8.4: free the numbers-provenance corpus on every exit path (the
     // consumer already took it on the normal path; this covers early returns
@@ -1391,6 +1413,13 @@ export function cancelTask(taskId: string): boolean {
       cancelTask(sub.task_id);
     }
   })();
+
+  // Stop the work, not just the bookkeeping: a queued container task must
+  // never be dispatched, and a running one is aborted so the runner returns
+  // (releasing its container slot in dispatchWithSlot's finally).
+  const queued = containerQueue.findIndex((q) => q.taskId === taskId);
+  if (queued >= 0) containerQueue.splice(queued, 1);
+  activeAborts.get(taskId)?.abort();
 
   try {
     getEventBus().emitEvent("task.cancelled", {

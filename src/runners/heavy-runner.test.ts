@@ -406,7 +406,7 @@ describe("heavyRunner", () => {
     expect(mockOrchestrate).toHaveBeenCalledWith(
       "task-4",
       "With tools\n\nNeeds shell",
-      { goalTimeoutMs: 120_000, timeoutMs: 600_000 },
+      { goalTimeoutMs: 120_000, timeoutMs: 600_000, maxIterations: 90 },
       ["shell", "file"],
       undefined,
     );
@@ -417,6 +417,7 @@ describe("heavyRunner", () => {
       ...makeConfig(),
       goalTimeoutMs: 300_000,
       orchestratorTimeoutMs: 900_000,
+      orchestratorMaxIterations: 120,
     } as ReturnType<typeof getConfig>);
     mockOrchestrate.mockResolvedValueOnce(makeOrchestratorResult());
 
@@ -430,6 +431,9 @@ describe("heavyRunner", () => {
     expect(mockOrchestrate.mock.calls[0]![2]).toEqual({
       goalTimeoutMs: 300_000,
       timeoutMs: 900_000,
+      // ORCHESTRATOR_MAX_ITERATIONS was parsed by config.ts but consumed by
+      // nothing (reliability audit R7) — it now reaches the IterationBudget.
+      maxIterations: 120,
     });
   });
 

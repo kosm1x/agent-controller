@@ -264,9 +264,13 @@ async function recallLearnings(
   limit: number,
 ): Promise<string[]> {
   try {
+    // Tag filter is OR-semantics. No writer has ever tagged rows "execution";
+    // the reflector persists learnings under "reflection" — filtering on
+    // "execution" alone returned 0 rows on every recall since the SQLite
+    // primary path went live (2026-05-09 → 09-10: 804/804 empty).
     const memories = await getMemoryService().recall(goalDescription, {
       bank: "mc-operational",
-      tags: ["execution"],
+      tags: ["execution", "reflection"],
       maxResults: limit,
     });
     return memories.map((m) => m.content);

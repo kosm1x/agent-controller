@@ -128,8 +128,14 @@ export function startIntelCollectors(): void {
   // Daily signal pruning (30-day retention)
   const pruneTimer = setInterval(
     () => {
-      const deleted = pruneOldSignals(30);
-      if (deleted > 0) console.log(`[intel] Pruned ${deleted} old signals`);
+      try {
+        const deleted = pruneOldSignals(30);
+        if (deleted > 0) console.log(`[intel] Pruned ${deleted} old signals`);
+      } catch (err) {
+        // writeWithRetry rethrows after its retries; an uncaught throw here
+        // would take the whole service down via the uncaughtException handler.
+        console.warn(`[intel] Signal pruning failed (non-fatal): ${String(err)}`);
+      }
     },
     24 * 60 * 60_000,
   );

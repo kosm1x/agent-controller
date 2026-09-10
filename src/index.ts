@@ -9,6 +9,8 @@ import { registerReadbackVerifiers } from "./lib/v8-4/readback-verifiers.js";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
 import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
+import { withTimeout } from "./lib/with-timeout.js";
+import { setMaxContainers } from "./dispatch/dispatcher.js";
 import { isTriageMonitorEnabled } from "./lib/self-healing/flags.js";
 import { isXProbeEnabled } from "./lib/x-poster/config.js";
 import { getConfig } from "./config.js";
@@ -88,6 +90,9 @@ const log = createLogger("mc");
 
 async function main(): Promise<void> {
   const config = getConfig();
+  // MAX_CONCURRENT_CONTAINERS was parsed but never applied — the dispatcher
+  // ran on its hard-coded 5 regardless of the env (reliability audit R6).
+  setMaxContainers(config.maxConcurrentContainers);
 
   // Initialize database
   const db = initDatabase(config.dbPath);
@@ -174,9 +179,14 @@ async function main(): Promise<void> {
       // it through the existing continuation seam (#07-12 03:23: a restart
       // mid-task dropped the request with no way back).
       try {
+        // `tasks` has no `tags` column — tags live in `metadata` JSON
+        // (see reactions/manager.ts). The old `SELECT title, tags` threw
+        // at prepare time, so this checkpoint had never been written.
         const row = db
-          .prepare(`SELECT title, tags FROM tasks WHERE task_id = ?`)
-          .get(taskId) as { title: string; tags: string | null } | undefined;
+          .prepare(`SELECT title, metadata FROM tasks WHERE task_id = ?`)
+          .get(taskId) as
+          | { title: string; metadata: string | null }
+          | undefined;
         if (row?.title?.startsWith("Chat: ")) {
           // Best-effort thread stamp (R3 audit W3): tags are
           // ["messaging", <channel>, ...] for chat tasks. A channel-level
@@ -184,7 +194,10 @@ async function main(): Promise<void> {
           // stop cross-CHANNEL leaks; the runner writers stamp nothing.
           let channel: string | undefined;
           try {
-            const tags = JSON.parse(row.tags ?? "[]") as string[];
+            const meta = JSON.parse(row.metadata ?? "{}") as {
+              tags?: unknown;
+            };
+            const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : [];
             if (tags[0] === "messaging" && typeof tags[1] === "string") {
               channel = tags[1];
             }
@@ -316,10 +329,15 @@ async function main(): Promise<void> {
     },
     (info) => {
       log.info({ port: info.port }, "Mission Control listening");
+      // timeoutMs/maxRetries are consumed only by the openai adapter; on the
+      // claude-sdk provider the effective ceiling is SDK_TIMEOUT_MS inside
+      // inference/claude-sdk.ts (reliability audit R8).
       log.info(
         {
+          provider: config.inferencePrimaryProvider,
           timeoutMs: config.inferenceTimeoutMs,
           maxRetries: config.inferenceMaxRetries,
+          appliesTo: config.inferencePrimaryProvider === "openai" ? "primary" : "openai-adapter-only",
         },
         "inference config",
       );
@@ -584,11 +602,21 @@ async function main(): Promise<void> {
       // Non-fatal
     }
 
-    // 4. Flush messaging channels
-    await shutdownMessaging();
+    // 4. Flush messaging channels. Bounded: systemd SIGKILLs at
+    // TimeoutStopSec (90 s) and the drain above may already have used 30 s;
+    // a hung channel must not starve steps 6-7 (task marking + WAL checkpoint).
+    try {
+      await withTimeout(shutdownMessaging(), 15_000, "shutdownMessaging");
+    } catch (err) {
+      log.warn({ err }, "messaging shutdown did not finish in time");
+    }
 
-    // 5. Teardown MCP + tool sources
-    await sourceManager.teardownAll();
+    // 5. Teardown MCP + tool sources (bounded, same reason)
+    try {
+      await withTimeout(sourceManager.teardownAll(), 15_000, "teardownAll");
+    } catch (err) {
+      log.warn({ err }, "tool-source teardown did not finish in time");
+    }
 
     // 6. Mark remaining running tasks as failed
     try {

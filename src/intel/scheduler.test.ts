@@ -75,6 +75,19 @@ describe("intel scheduler", () => {
     vi.restoreAllMocks();
   });
 
+  it("a throwing pruner is contained (writeWithRetry rethrows; an uncaught throw here would exit the process)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockPruneOldSignals.mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    startIntelCollectors();
+    expect(() => vi.advanceTimersByTime(24 * 60 * 60_000 + 1)).not.toThrow();
+    expect(mockPruneOldSignals).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Signal pruning failed"),
+    );
+  });
+
   it("starts collectors and reports running", () => {
     startIntelCollectors();
     expect(isRunning()).toBe(true);

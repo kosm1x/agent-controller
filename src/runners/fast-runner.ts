@@ -151,6 +151,7 @@ import {
 } from "../config/constants.js";
 import { errMsg } from "../lib/err-msg.js";
 import { withTimeout } from "../lib/with-timeout.js";
+import { getEventBus } from "../lib/event-bus.js";
 
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
@@ -725,6 +726,26 @@ export const fastRunner: Runner = {
 
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
+    // Liveness heartbeat. The stuck watchdog (reactions/manager.ts) keys on
+    // tasks.updated_at, which only task.progress refreshes; fast tasks emitted
+    // none, so any run past 15 min was failed as "stuck" while still working
+    // and its finished answer was then discarded by the terminal-status
+    // guard (3 on record, 3.3-4.0 KB each). Mirrors the 60 s container
+    // heartbeat in container.ts.
+    const heartbeat = setInterval(() => {
+      try {
+        getEventBus().emitEvent("task.progress", {
+          task_id: input.taskId,
+          agent_id: "fast",
+          progress: Number.NaN,
+          phase: "execute",
+          message: "Fast-runner heartbeat",
+        });
+      } catch {
+        // Best-effort — the bus may be uninitialised (tests).
+      }
+    }, 60_000);
+    heartbeat.unref();
 
     // Get tool definitions for requested tools (or all if none specified).
     // Tool deferral pattern (OpenClaude): deferred tools are NOT included
@@ -2351,6 +2372,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         durationMs: Date.now() - start,
       };
     } finally {
+      clearInterval(heartbeat);
       // TaskExecutionContext is GC'd with the task — no global cleanup needed
     }
   },

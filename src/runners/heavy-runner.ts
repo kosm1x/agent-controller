@@ -65,6 +65,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
       {
         goalTimeoutMs: config.goalTimeoutMs,
         timeoutMs: config.orchestratorTimeoutMs,
+        maxIterations: config.orchestratorMaxIterations,
       },
       input.tools,
       snapshot,
@@ -274,7 +275,16 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       timeoutMs: config.heavyRunnerTimeoutMs,
     });
 
-    const containerOutput = await handle.result;
+    // Cancellation: see nanoclaw-runner — kill the container on abort.
+    const spawned = handle;
+    const onAbort = (): void => spawned.kill();
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    let containerOutput: Awaited<typeof spawned.result>;
+    try {
+      containerOutput = await spawned.result;
+    } finally {
+      input.signal?.removeEventListener("abort", onAbort);
+    }
 
     if (containerOutput.status === "error") {
       return {

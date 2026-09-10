@@ -175,9 +175,11 @@ export async function plan(
   taskDescription: string,
   useOpus = true,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
+  // OR-semantics tag filter; "reflection" is the tag the reflector actually
+  // writes (no row has ever carried "planning" — see executor.recallLearnings).
   const memories = await getMemoryService().recall(taskDescription, {
     bank: "mc-operational",
-    tags: ["planning"],
+    tags: ["planning", "reflection"],
     maxResults: 5,
   });
   const learnings = memories.map((m) => m.content);

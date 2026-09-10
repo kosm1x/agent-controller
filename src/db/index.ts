@@ -1393,8 +1393,10 @@ export function writeWithRetry<T>(fn: () => T): T {
             WRITE_RETRY_MIN_MS +
               Math.random() * (WRITE_RETRY_MAX_MS - WRITE_RETRY_MIN_MS),
           );
-          // Atomics.wait on a SharedArrayBuffer: non-busy synchronous sleep
-          // that doesn't block the event loop like a spin-wait does
+          // Atomics.wait on a SharedArrayBuffer: a synchronous sleep that
+          // DOES block the event loop (better-sqlite3 is synchronous, so the
+          // caller is blocked anyway) — but without burning CPU like a
+          // spin-wait. Bounded by WRITE_MAX_RETRIES x WRITE_RETRY_MAX_MS.
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, jitter);
         }
         continue;
