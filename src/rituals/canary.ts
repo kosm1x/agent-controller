@@ -49,7 +49,13 @@ export function runCanaryCheck(): CanaryResult {
   const alerts: string[] = [];
 
   // 1. Task success rate (last 24h)
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // created_at is datetime('now') = "YYYY-MM-DD HH:MM:SS"; a raw ISO string
+  // ("…T…Z") sorts ABOVE every same-day row, collapsing the window to "since
+  // UTC midnight" (79 real rows → 5 matched, logic audit F6).
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
   const taskStats = db
     .prepare(
       `SELECT

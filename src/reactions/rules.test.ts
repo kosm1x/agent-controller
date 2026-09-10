@@ -202,9 +202,21 @@ describe("reaction rules", () => {
       expect(result!.action).toBe("escalate");
     });
 
-    it("does not escalate when retries remain", () => {
-      const ctx = makeContext({ previousAttempts: 1 });
+    it("does not escalate on the first attempt (adjusted_retry owns it)", () => {
+      const ctx = makeContext({ previousAttempts: 0 });
       expect(escalateRule.evaluate(ctx)).toBeNull();
+    });
+
+    it("a NON-transient failure on a retry escalates — it used to match no rule and dead-end silently (logic audit F23)", () => {
+      const ctx = makeContext({ previousAttempts: 1, error: "[claude-sdk] Circuit breaker OPEN" });
+      const d = escalateRule.evaluate(ctx);
+      expect(d?.action).toBe("escalate");
+      expect(d?.reason).toContain("non-transient");
+    });
+
+    it("evaluateRules: the chain never dead-ends after a first retry", () => {
+      const ctx = makeContext({ previousAttempts: 1, error: "Circuit breaker OPEN" });
+      expect(evaluateRules(DEFAULT_RULES, ctx)?.decision.action).toBe("escalate");
     });
   });
 

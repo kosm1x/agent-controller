@@ -72,9 +72,13 @@ function jsonPropToZod(prop: Record<string, unknown>): ZodType {
   switch (prop.type) {
     case "string":
       return z.string().describe(desc);
+    // Coerce like the registry validator (schema-validator.ts) — the model's
+    // most common arg drift is `"5"` for a numeric field, and this is the
+    // validator on the live path (logic audit F5).
     case "number":
+      return z.coerce.number().describe(desc);
     case "integer":
-      return z.number().describe(desc);
+      return z.coerce.number().int().describe(desc);
     case "boolean":
       return z.boolean().describe(desc);
     case "array":

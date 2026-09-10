@@ -168,7 +168,14 @@ export async function runConsolidation(): Promise<ConsolidationReport> {
   if (duplicatesRemoved + pruned > 0) {
     try {
       db.exec("VACUUM");
-      console.log("[consolidation] VACUUM complete");
+      // Both FTS tables are external-content (content='…'); jarvis_files has
+      // a TEXT PK so its rowids are implicit and VACUUM may renumber them —
+      // the count-based self-heal in db/index.ts cannot see that (logic
+      // audit F20). Rebuild right after, while we are already off the hot path.
+      // (conversations_fts is keyed on conversations.id, an INTEGER PRIMARY
+      // KEY rowid alias that VACUUM cannot renumber — no rebuild needed.)
+      db.exec("INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')");
+      console.log("[consolidation] VACUUM + FTS rebuild complete");
     } catch {
       // Non-fatal — WAL mode may prevent VACUUM
     }

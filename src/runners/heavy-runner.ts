@@ -250,6 +250,11 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
       MC_API_KEY: config.apiKey,
       MC_DB_PATH: "/tmp/mc.db",
+      // Operator orchestrator knobs (drop-in goal-timeout.conf) — the worker
+      // ran on compiled defaults (120 s goal / 600 s total) without these.
+      GOAL_TIMEOUT_MS: String(config.goalTimeoutMs),
+      ORCHESTRATOR_TIMEOUT_MS: String(config.orchestratorTimeoutMs),
+      ORCHESTRATOR_MAX_ITERATIONS: String(config.orchestratorMaxIterations),
     };
     if (isClaudeSdk) {
       // Claude Agent SDK reads ~/.claude/.credentials.json via os.homedir() → HOME.
@@ -272,7 +277,10 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
             ]
           : []),
       ],
-      timeoutMs: config.heavyRunnerTimeoutMs,
+      timeoutMs: Math.max(
+        config.heavyRunnerTimeoutMs,
+        config.orchestratorTimeoutMs + 60_000,
+      ),
     });
 
     // Cancellation: see nanoclaw-runner — kill the container on abort.

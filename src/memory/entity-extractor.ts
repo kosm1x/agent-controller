@@ -8,6 +8,8 @@
  * Adapted from mempalace's entity_detector.py + general_extractor.py patterns.
  */
 
+import { nowMexIsoDate } from "../lib/timezone.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -140,7 +142,7 @@ export function extractEntities(text: string): ExtractedTriple[] {
       addUnique({
         subject: projectName.toLowerCase(),
         predicate: "mentioned_in_conversation",
-        object: new Date().toISOString().slice(0, 10),
+        object: nowMexIsoDate(),
       });
     }
   }
@@ -191,7 +193,7 @@ export function extractEntities(text: string): ExtractedTriple[] {
       addUnique({
         subject: name.toLowerCase(),
         predicate: "mentioned_in_conversation",
-        object: new Date().toISOString().slice(0, 10),
+        object: nowMexIsoDate(),
       });
     }
   }

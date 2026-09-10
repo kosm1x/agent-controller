@@ -46,22 +46,6 @@ const MAX_SELF_ASSESS = 2;
 const CONTEXT_MAX_GOALS = 8;
 const CONTEXT_MAX_CHARS = 2000;
 
-const TRANSIENT_PATTERNS = [
-  "timeout",
-  "timed out",
-  "rate limit",
-  "429",
-  "503",
-  "connection reset",
-  "connection refused",
-  "eagain",
-  // Dim-4 round-2 C-RES-4 fix: when the claude-sdk breaker is HALF_OPEN,
-  // exactly one concurrent caller wins the probe slot and the others throw
-  // "Circuit breaker OPEN". Prometheus fan-out (executeGraph Promise.allSettled)
-  // hits this pattern on every post-outage recovery. Treat it as transient so
-  // the losing goals retry instead of escalating to permanent failure.
-  "circuit breaker",
-];
 
 /** Error fragment marking a breaker OPEN rejection — matched for backoff sizing. */
 const BREAKER_OPEN_TOKEN = "circuit breaker open";
@@ -70,14 +54,23 @@ const BREAKER_OPEN_TOKEN = "circuit breaker open";
 // Error classification
 // ---------------------------------------------------------------------------
 
-function classifyError(
+/**
+ * A goal that hit its own `goalTimeoutMs` is oversized, not flaky: re-running
+ * it whole times out again (3× goalTimeoutMs = the whole orchestrator budget
+ * on one goal — journal 2026-09-03 task 2b170ca6). The replanner must SPLIT
+ * it, so these escalate immediately. Aborts are operator/cancel intent.
+ */
+const NON_RETRYABLE_PATTERNS = [/^goal \S+ timed out after \d+ms/];
+
+export function classifyError(
   error: string,
   attempt: number,
   maxAttempts: number,
 ): ErrorStrategy {
   const lower = error.toLowerCase();
-  const isTransient = TRANSIENT_PATTERNS.some((p) => lower.includes(p));
-  if (isTransient && attempt < maxAttempts - 1) return ErrorStrategy.RETRY;
+  if (NON_RETRYABLE_PATTERNS.some((p) => p.test(lower))) {
+    return ErrorStrategy.ESCALATE;
+  }
   if (attempt < maxAttempts - 1) return ErrorStrategy.RETRY;
   return ErrorStrategy.ESCALATE;
 }
@@ -536,6 +529,12 @@ export async function executeGoal(
           break;
         }
         criteriaMet = false; // verdict so far — loop continues to retry
+
+        // The last round's retry would never be assessed (the loop exits
+        // right after it): its output was returned but its verdict was
+        // recorded as "not met" regardless (logic audit F11). Stop here —
+        // this trades one unjudged content attempt for an honest verdict.
+        if (round === MAX_SELF_ASSESS - 1) break;
 
         selfAssessRounds++;
         console.log(

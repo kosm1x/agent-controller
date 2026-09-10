@@ -25,6 +25,18 @@ describe("cronMatchesAt", () => {
     expect(cronMatchesAt("0 8 * * 0", mon0800mx, MX)).toBe(false);
   });
 
+  it("day-of-week 7, names and ranges ending in 7 match Sunday/Friday-Sunday (logic audit F24)", () => {
+    // 2026-09-13 is a Sunday; 09:00 America/Mexico_City = 15:00 UTC (CST, no DST)
+    const sunday = new Date("2026-09-13T15:00:00Z");
+    const friday = new Date("2026-09-11T15:00:00Z");
+    expect(cronMatchesAt("0 9 * * 7", sunday, "America/Mexico_City")).toBe(true);
+    expect(cronMatchesAt("0 9 * * SUN", sunday, "America/Mexico_City")).toBe(true);
+    expect(cronMatchesAt("0 9 * * 5-7", sunday, "America/Mexico_City")).toBe(true);
+    expect(cronMatchesAt("0 9 * * 5-7", friday, "America/Mexico_City")).toBe(true);
+    expect(cronMatchesAt("0 9 * * MON-FRI", sunday, "America/Mexico_City")).toBe(false);
+    expect(cronMatchesAt("0 9 * * 0", sunday, "America/Mexico_City")).toBe(true);
+  });
+
   it("rejects malformed expressions", () => {
     expect(cronMatchesAt("0 8 *", mon0800mx, MX)).toBe(false);
   });

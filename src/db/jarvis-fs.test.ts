@@ -208,6 +208,15 @@ describe("listFiles — corrupt tags resilience", () => {
       .run("\x01binary", "knowledge/corrupt.md");
 
     const filtered = listFiles({ tags: ["target"] });
+    // logic audit F19: the prefix filter escapes `_`/`%` but had no ESCAPE
+    // clause, so SQLite read the backslash literally and matched nothing.
+    upsertFile("feedback_session/a.md", "A", "content a");
+    upsertFile("feedbackXsession/b.md", "B", "content b");
+    const byPrefix = listFiles({ prefix: "feedback_session/" });
+    expect(byPrefix.map((f) => f.path)).toEqual(["feedback_session/a.md"]);
+    // qa C1: a literal backslash in the query must stay literal under ESCAPE.
+    upsertFile("notes/regex.md", "R", "the pattern \\d+ matches digits");
+    expect(searchFiles("\\d+").map((r) => r.path)).toContain("notes/regex.md");
     expect(filtered.map((f) => f.path)).toContain("knowledge/match.md");
   });
 });

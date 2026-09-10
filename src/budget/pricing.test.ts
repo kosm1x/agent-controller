@@ -6,6 +6,19 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { calculateCost, getPricing, loadPricingOverride } from "./pricing.js";
 
 describe("pricing", () => {
+  describe("claude-* fallback rows carry list rates (logic audit F7)", () => {
+    it("a claude row without a cost override is not booked at $0", () => {
+      expect(calculateCost("claude-sonnet-4-6", 1000, 1000)).toBeCloseTo(0.018, 6);
+      expect(calculateCost("claude-opus-4-8", 1000, 0)).toBeCloseTo(0.005, 6);
+      expect(calculateCost("claude-haiku-4-5", 0, 1000)).toBeCloseTo(0.005, 6);
+    });
+    it("prompt_tokens is inclusive of cache tokens — reads 0.1x, creation 1.25x (qa C2)", () => {
+      // 1000 prompt of which 800 cache-read, 100 cache-creation, 100 uncached
+      const usd = calculateCost("claude-sonnet-4-6", 1000, 0, 800, 100);
+      expect(usd).toBeCloseTo(0.1 * 0.003 + 0.8 * 0.003 * 0.1 + 0.1 * 0.003 * 1.25, 9);
+    });
+  });
+
   describe("getPricing", () => {
     it("should return exact match for known model", () => {
       const p = getPricing("qwen3.5-plus");

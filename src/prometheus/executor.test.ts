@@ -43,7 +43,21 @@ vi.mock("../tools/registry.js", () => ({
   },
 }));
 
-import { executeGoal, executeGraph, selfAssess } from "./executor.js";
+import { executeGoal, executeGraph, selfAssess, classifyError } from "./executor.js";
+import { ErrorStrategy } from "./types.js";
+
+describe("classifyError (logic audit F8)", () => {
+  it("a goal that hit its own goalTimeoutMs escalates immediately — re-running it whole times out again", () => {
+    expect(classifyError("Goal g-1 timed out after 120000ms", 0, 3)).toBe(ErrorStrategy.ESCALATE);
+    // A fetch-level abort ("The operation was aborted") is transient — retries.
+    expect(classifyError("The operation was aborted", 0, 3)).toBe(ErrorStrategy.RETRY);
+  });
+  it("other errors still retry until the attempt budget is spent", () => {
+    expect(classifyError("connection reset", 0, 3)).toBe(ErrorStrategy.RETRY);
+    expect(classifyError("some parse error", 1, 3)).toBe(ErrorStrategy.RETRY);
+    expect(classifyError("some parse error", 2, 3)).toBe(ErrorStrategy.ESCALATE);
+  });
+});
 import { IterationBudget } from "./budget.js";
 import { infer, inferWithTools } from "../inference/adapter.js";
 
@@ -667,9 +681,12 @@ describe("executeGoal self-assessment integration", () => {
     const result = await executeGoal(goal, "");
 
     expect(result.ok).toBe(true); // Still returns ok — best effort
-    expect(result.selfAssessRounds).toBe(2); // Capped at MAX_SELF_ASSESS
+    // MAX_SELF_ASSESS=2: round 0 assess → retry; round 1 assess → not met →
+    // STOP. The old loop ran a second retry whose output nobody assessed
+    // (logic audit F11), so rounds was 2 and inferWithTools 3.
+    expect(result.selfAssessRounds).toBe(1);
     // 1 initial + 2 retry rounds = 3 inferWithTools calls
-    expect(mockInferWithTools).toHaveBeenCalledTimes(3);
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     // 2026-05-26 fix: best-effort goals now carry criteriaMet=false so the
     // reflector can discount their contribution to the score. Pre-fix they
     // were indistinguishable from criteria-verified goals.

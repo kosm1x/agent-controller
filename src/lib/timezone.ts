@@ -67,6 +67,13 @@ export function toIsoUtc(
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/** Bare Mexico-City calendar date `YYYY-MM-DD` — the key for day-scoped files
+ * and ledgers. `new Date().toISOString().slice(0, 10)` is the UTC date, which
+ * is already "tomorrow" from 18:00 local (the unit runs TZ=America/Mexico_City). */
+export function nowMexIsoDate(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+}
+
 /**
  * Current Mexico-City date for the LLM's `[Hoy: …]` block — ISO `YYYY-MM-DD`
  * plus the Spanish weekday in parens, e.g. "2026-05-22 (viernes)".

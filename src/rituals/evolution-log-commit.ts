@@ -23,6 +23,7 @@
  */
 
 import { execFileSync } from "child_process";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 const MC_DIR = "/root/claude/mission-control";
 const LOG_REL = "docs/EVOLUTION-LOG.md";
@@ -52,7 +53,7 @@ export function commitEvolutionLogIfDirty(): EvolutionLogCommitResult {
     return { committed: false, reason: "clean" };
   }
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = nowMexIsoDate();
   const message = `docs(evolution-log): weekly durability commit (${date})`;
 
   // Stage the one file (pathspec-scoped). Redundant for the normal modified case

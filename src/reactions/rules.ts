@@ -110,6 +110,15 @@ export const escalateRule: ReactionRule = {
         reason: `${ctx.previousAttempts} retries exhausted — escalating to human`,
       };
     }
+    // Terminal catch-all: a NON-transient failure on a retry (adjusted_retry
+    // only fires on the first attempt) used to match no rule at all and
+    // dead-ended silently — 9 such chains on record (logic audit F23).
+    if (ctx.previousAttempts > 0) {
+      return {
+        action: "escalate",
+        reason: `retry ${ctx.previousAttempts} failed again (non-transient) — escalating to human`,
+      };
+    }
     return null;
   },
 };

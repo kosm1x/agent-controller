@@ -10,6 +10,7 @@
 
 import { upsertFile, listFiles, getFile } from "../db/jarvis-fs.js";
 import { infer } from "../inference/adapter.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 const PATTERNS_PREFIX = "knowledge/execution-patterns/";
 const MAX_PATTERNS = 50; // cap to prevent bloat
@@ -69,7 +70,7 @@ export async function extractPattern(opts: {
 
     // Store the pattern
     const slug = opts.taskId.slice(0, 8);
-    const date = new Date().toISOString().slice(0, 10);
+    const date = nowMexIsoDate();
     const path = `${PATTERNS_PREFIX}${date}-${slug}.md`;
 
     const content = [

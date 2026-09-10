@@ -211,7 +211,12 @@ export class ReactionManager {
 
     // Evaluate rules
     const match = evaluateRules(DEFAULT_RULES, ctx);
-    if (!match) return;
+    if (!match) {
+      console.log(
+        `[reactions] Task ${taskId}: no rule matched (attempts=${ctx.previousAttempts})`,
+      );
+      return;
+    }
 
     const { rule, decision } = match;
     console.log(

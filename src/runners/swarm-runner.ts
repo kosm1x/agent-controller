@@ -834,7 +834,10 @@ export const swarmRunner: Runner = {
       Date.now() - pollStart < MAX_POLL_DURATION_MS ||
       // Fix 1 (task 7466): never abandon RUNNING children at the soft wall —
       // keep polling while any child is active, up to the hard ceiling.
-      (countActive(trackers) > 0 &&
+      // Un-submitted READY goals have no tracker yet: once the last level-1
+      // child finished past the soft wall, level-2 goals were never submitted
+      // and never reported abandoned (logic audit F12).
+      ((countActive(trackers) > 0 || graph.getReady().length > 0) &&
         Date.now() - pollStart < SWARM_HARD_CEILING_MS)
     ) {
       // Update blocked statuses

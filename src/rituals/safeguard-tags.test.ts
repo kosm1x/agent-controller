@@ -25,6 +25,7 @@ vi.mock("../config.js", () => ({
 }));
 
 import { createPreCycleTag, pruneOldTags } from "./scheduler.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 describe("SG5: Pre-cycle git tags", () => {
   beforeEach(() => {
@@ -38,7 +39,8 @@ describe("SG5: Pre-cycle git tags", () => {
 
   describe("createPreCycleTag", () => {
     it("creates tag with correct name format", () => {
-      const date = new Date().toISOString().slice(0, 10);
+      // Tag names carry the Mexico-City calendar date (logic audit F21).
+      const date = nowMexIsoDate();
       // First call: tag -l (check existing) returns empty
       // Second call: tag -a (create)
       mockExecFileSync

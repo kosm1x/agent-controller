@@ -55,12 +55,18 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // don't double-book phantom API spend against the Max subscription. If a
   // user ever routes Sonnet through metered API, override via
   // BUDGET_PRICING_JSON with the real per-M rates.
-  "claude-sonnet-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
-  "claude-sonnet-4-6": { promptCostPer1k: 0, completionCostPer1k: 0 },
-  "claude-sonnet-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
-  "claude-opus-4-7": { promptCostPer1k: 0, completionCostPer1k: 0 },
-  "claude-opus-4-8": { promptCostPer1k: 0, completionCostPer1k: 0 },
-  "claude-haiku-4-5": { promptCostPer1k: 0, completionCostPer1k: 0 },
+  // 2026-09-10 (logic audit F7): the SDK reports total_cost_usd at LIST rates
+  // and recordCost prefers it, so the ledger is a list-price-equivalent usage
+  // metric — 18,136 rows/60d carry it. Paths that omit the override (v82:*,
+  // audit:critic, some fast rows) booked 14.1 M tokens at $0.00 next to them,
+  // under-reporting every budget window. Same list rates here, so the ledger
+  // is one currency; genuine $0 SDK reports still win via costUsdOverride.
+  "claude-sonnet-5": { promptCostPer1k: 0.002, completionCostPer1k: 0.01 },
+  "claude-sonnet-4-6": { promptCostPer1k: 0.003, completionCostPer1k: 0.015 },
+  "claude-sonnet-4-5": { promptCostPer1k: 0.003, completionCostPer1k: 0.015 },
+  "claude-opus-4-7": { promptCostPer1k: 0.005, completionCostPer1k: 0.025 },
+  "claude-opus-4-8": { promptCostPer1k: 0.005, completionCostPer1k: 0.025 },
+  "claude-haiku-4-5": { promptCostPer1k: 0.001, completionCostPer1k: 0.005 },
 };
 
 /** Fallback for unknown models. */
@@ -112,10 +118,22 @@ export function calculateCost(
   model: string,
   promptTokens: number,
   completionTokens: number,
+  cacheReadTokens = 0,
+  cacheCreationTokens = 0,
 ): number {
   const pricing = getPricing(model);
+  // `prompt_tokens` is INCLUSIVE of cache reads/creation (the SDK's own
+  // total_cost_usd discounts them: a live row priced 2.06 M prompt tokens with
+  // 1.92 M cache reads at $1.63, not $6.17). List convention: cache read
+  // 0.1x, cache creation 1.25x, the uncached remainder 1x (qa C2).
+  const uncached = Math.max(
+    0,
+    promptTokens - cacheReadTokens - cacheCreationTokens,
+  );
   return (
-    (promptTokens / 1000) * pricing.promptCostPer1k +
+    (uncached / 1000) * pricing.promptCostPer1k +
+    (cacheReadTokens / 1000) * pricing.promptCostPer1k * 0.1 +
+    (cacheCreationTokens / 1000) * pricing.promptCostPer1k * 1.25 +
     (completionTokens / 1000) * pricing.completionCostPer1k
   );
 }

@@ -21,6 +21,16 @@ beforeEach(() => {
 });
 afterEach(() => closeDatabase());
 
+describe("task_history limit clamp (logic audit F22)", () => {
+  it("limit:-1 is not 'unbounded' and limit:0 is not 'no results'", async () => {
+    const neg = JSON.parse(await taskHistoryTool.execute({ query: "Chat", limit: -1 }));
+    expect(neg.returned).toBeGreaterThanOrEqual(1);
+    expect(neg.returned).toBeLessThanOrEqual(10);
+    const zero = JSON.parse(await taskHistoryTool.execute({ query: "Chat", limit: 0 }));
+    expect(zero.returned).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("task_history search_output (paper plan A.1 — output is the episode log)", () => {
   it("output matching is ON by default: a term that lives only in the output is found and tagged matchedIn:'output' (task 9495)", async () => {
     const res = JSON.parse(await taskHistoryTool.execute({ query: "Oaxaca" }));

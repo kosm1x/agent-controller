@@ -102,6 +102,32 @@ describe("glob", () => {
     );
   });
 
+  it("honours max_results and reports truncated only when something was cut (logic audit F4)", async () => {
+    const result = JSON.parse(
+      await globTool.execute({ pattern: "*.tsx", path: TEST_DIR, max_results: 1 }),
+    );
+    expect(result.files).toHaveLength(1);
+    expect(result.total).toBe(2);
+    expect(result.truncated).toBe(true);
+    const exact = JSON.parse(
+      await globTool.execute({ pattern: "*.tsx", path: TEST_DIR, max_results: 2 }),
+    );
+    expect(exact.truncated).toBe(false);
+  });
+
+  it("keeps the glob's directory part and prunes node_modules (logic audit F4)", async () => {
+    mkdirSync(`${TEST_DIR}/node_modules/dep`, { recursive: true });
+    writeFileSync(`${TEST_DIR}/node_modules/dep/x.tsx`, "");
+    mkdirSync(`${TEST_DIR}/other`, { recursive: true });
+    writeFileSync(`${TEST_DIR}/other/y.tsx`, "");
+    const result = JSON.parse(
+      await globTool.execute({ pattern: "src/**/*.tsx", path: TEST_DIR }),
+    );
+    expect(result.files.every((f: string) => f.includes("/src/"))).toBe(true);
+    expect(result.files.some((f: string) => f.includes("node_modules"))).toBe(false);
+    expect(result.total).toBe(2);
+  });
+
   it("should find specific filenames", async () => {
     const result = JSON.parse(
       await globTool.execute({ pattern: "package.json", path: TEST_DIR }),

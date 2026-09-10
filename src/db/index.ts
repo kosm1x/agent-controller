@@ -506,6 +506,12 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_kt_pred ON knowledge_triples(predicate)",
   );
+  // addTriple's supersede UPDATE filters on LOWER(subject)/LOWER(predicate)
+  // — non-sargable against the plain indexes: full scan per triple, inside
+  // the per-task extraction loop (logic audit F18).
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_kt_subj_pred_lower ON knowledge_triples(LOWER(subject), LOWER(predicate))",
+  );
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_kt_valid ON knowledge_triples(valid_from, valid_to)",
   );

@@ -123,6 +123,11 @@ export const nanoclawRunner: Runner = {
         INFERENCE_PRIMARY_PROVIDER: config.inferencePrimaryProvider,
         MC_API_KEY: config.apiKey,
         MC_DB_PATH: "/tmp/mc.db",
+        // Operator orchestrator knobs (drop-in goal-timeout.conf) — the worker
+        // ran on compiled defaults (120 s goal / 600 s total) without these.
+        GOAL_TIMEOUT_MS: String(config.goalTimeoutMs),
+        ORCHESTRATOR_TIMEOUT_MS: String(config.orchestratorTimeoutMs),
+        ORCHESTRATOR_MAX_ITERATIONS: String(config.orchestratorMaxIterations),
       };
       if (isClaudeSdk) {
         // Claude Agent SDK reads ~/.claude/.credentials.json via os.homedir() → HOME.
@@ -165,7 +170,12 @@ export const nanoclawRunner: Runner = {
         // Now config-driven (NANOCLAW_TIMEOUT_MS, default 900_000).
         // Worker emits 60s heartbeat sentinels so this acts as inactivity
         // guard, not wall-clock cap.
-        timeoutMs: config.nanoclawTimeoutMs,
+        // Host ceiling stays ABOVE the in-container orchestrator budget so the
+        // worker can time out gracefully and write a partial result (qa W7).
+        timeoutMs: Math.max(
+          config.nanoclawTimeoutMs,
+          config.orchestratorTimeoutMs + 60_000,
+        ),
       });
 
       // Emit progress

@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   };
 
   // Minimal init (mirrors heavy-worker.ts)
-  loadConfig();
+  const config = loadConfig();
   const db = initDatabase(process.env.MC_DB_PATH ?? "/tmp/mc.db");
   initEventBus(db);
 
@@ -167,7 +167,13 @@ async function main(): Promise<void> {
     const result = await orchestrate(
       input.taskId ?? "container-task",
       input.prompt + envNote,
-      undefined,
+      // Same operator knobs as heavy-worker.ts — `undefined` ran the
+      // compiled defaults (120 s goal) under a 900 s host timeout.
+      {
+        goalTimeoutMs: config.goalTimeoutMs,
+        timeoutMs: config.orchestratorTimeoutMs,
+        maxIterations: config.orchestratorMaxIterations,
+      },
       input.tools,
     );
 

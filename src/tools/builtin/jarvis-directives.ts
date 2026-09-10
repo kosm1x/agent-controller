@@ -14,6 +14,7 @@ import {
   listFiles,
 } from "../../db/jarvis-fs.js";
 import { getDatabase } from "../../db/index.js";
+import { nowMexIsoDate } from "../../lib/timezone.js";
 
 const PROPOSALS_PREFIX = "knowledge/proposals/";
 const DECISIONS_PREFIX = "logs/decisions/";
@@ -133,7 +134,7 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .slice(0, 50);
-    const date = new Date().toISOString().slice(0, 10);
+    const date = nowMexIsoDate();
     const proposalPath = `${PROPOSALS_PREFIX}${date}-${slug}.md`;
 
     const content = [
@@ -335,7 +336,7 @@ NEVER call this without explicit user approval in the current message.`,
       }
 
       // Log the decision
-      const date = new Date().toISOString().slice(0, 10);
+      const date = nowMexIsoDate();
       const decisionPath = `${DECISIONS_PREFIX}${date}-${slug}.md`;
       upsertFile(
         decisionPath,

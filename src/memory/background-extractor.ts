@@ -30,6 +30,7 @@ import {
   contentHash,
 } from "../db/pgvector.js";
 import { errMsg } from "../lib/err-msg.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // Extraction trigger gate
@@ -158,7 +159,7 @@ export async function storeFacts(
       } else {
         // New fact — generate embedding and store
         const embedding = await generateEmbedding(fact);
-        const date = new Date().toISOString().slice(0, 10);
+        const date = nowMexIsoDate();
         const shortHash = hash.slice(0, 16);
         const path = `extracted/${date}-${shortHash}.md`;
 
@@ -344,7 +345,7 @@ async function storeLessons(
         reinforced++;
       } else {
         const embedding = await generateEmbedding(lesson);
-        const date = new Date().toISOString().slice(0, 10);
+        const date = nowMexIsoDate();
         const shortHash = hash.slice(0, 16);
         const path = `lessons/${date}-${shortHash}.md`;
 

@@ -97,14 +97,16 @@ export async function enrichContext(
   // v6.4 G1.5: Query expansion runs IN PARALLEL with Hindsight recalls,
   // NOT inside the pgvector race block (audit fix: 5s LLM call inside 2s
   // timeout = dead on arrival). Results cached for use in pgvector search.
-  let expandedQueries: string[] = [];
-  recallPromises.push(
-    expandQuery(messageText)
-      .then((expansions) => {
-        expandedQueries = expansions;
-      })
-      .catch(() => {}),
-  );
+  // The expansion's only consumer is the pgvector leg below; with pgvector off
+  // (no COMMIT_DB_KEY) this was a billed LLM call per turn whose result was
+  // discarded (logic audit F13 / design audit D7). As a sibling promise it
+  // also always resolved AFTER the leg had read it, so even with pgvector on
+  // the expansion was never used — the leg now awaits this promise itself
+  // (inside its own 4 s race), so nothing else on the turn waits for it.
+  const pgvectorMod = await import("../db/pgvector.js");
+  const expansionPromise: Promise<string[]> = pgvectorMod.isPgvectorEnabled()
+    ? expandQuery(messageText).catch(() => [])
+    : Promise.resolve([]);
 
   // v6.2 M0.5 + v6.4 G1.5: pgvector semantic search with expanded queries.
   // Runs IN PARALLEL with Hindsight recalls. 4s timeout to accommodate
@@ -123,7 +125,7 @@ export async function enrichContext(
 
           if (!isPgvectorEnabled()) return;
 
-          // Use cached expansion results (populated by parallel promise above)
+          const expandedQueries = await expansionPromise;
           const queries = [messageText, ...expandedQueries];
 
           // Run all queries in parallel, collect unique results by path

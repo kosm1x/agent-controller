@@ -94,7 +94,7 @@ Returns the last N executions matching the query (tasks still running sort last)
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const query = args.query as string;
-    const limit = Math.min((args.limit as number) ?? 3, 10);
+    const limit = Math.min(Math.max(Number(args.limit) || 3, 1), 10);
     const scheduledOnly = (args.scheduled_only as boolean) ?? false;
     const db = getDatabase();
 

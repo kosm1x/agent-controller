@@ -33,6 +33,7 @@ import { createPmDailyRebalance } from "./pm-daily-rebalance.js";
 import { isNyseTradingDay } from "../finance/market-calendar.js";
 import { getConfig } from "../config.js";
 import { errMsg } from "../lib/err-msg.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 const scheduledJobs: ScheduledTask[] = [];
 
@@ -417,7 +418,7 @@ const MC_DIR = "/root/claude/mission-control";
 
 /** Create an annotated git tag before autonomous improvement. Non-fatal. */
 export function createPreCycleTag(): void {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = nowMexIsoDate();
   const tagName = `pre-auto-${date}`;
 
   try {

@@ -464,6 +464,7 @@ export async function queryMemory(
            JOIN jme_facts f ON f.id = jme_facts_fts.rowid
            WHERE jme_facts_fts MATCH ?
              AND (f.expires_at IS NULL OR f.expires_at > ?)
+           ORDER BY bm25(jme_facts_fts)
            LIMIT 100`,
         )
         .all(ftsQuery, now) as Array<{ id: number; bm25_score: number }>;

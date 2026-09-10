@@ -533,7 +533,10 @@ const RECIPIENT = String.raw`(?:(?:a|to)\s+§|al\s+equipo|a\s+todos|to\s+the\s+t
 const PURPOSE = String.raw`(?:para|for)\s+(?:${ANY_DET}\s+)?(?:(?:final|later|quick|r[aá]pida|[uú]ltima)\s+)?(?:review|reference|reading|records?|the\s+record|later|revisi[oó]n|referencia|lectura|consulta|revisar|leer|ver|consultar|checar|chequear|tener|guardar|compartir|presentar|imprimir|archivar|read|check|keep|share|print|file|archive)(?:l[ao]s?|me|nos|te|mel[ao]s?)?(?:\s+(?:despu[eé]s|later|ma[ñn]ana|tomorrow|hoy|today|ahora|now))?`;
 const TAIL_ADV = String.raw`(?:primero|first|despu[eé]s|later|ahora|now|hoy|today|ma[ñn]ana|tomorrow|ya|urgente|urgent|asap|cuanto\s+antes|por\s+favor|please|gracias|thanks|going|so\s+far|hasta\s+ahora|por\s+ahora|actualmente|currently)`;
 // Trailing punctuation/emoji is not text; letters or digits after the last slot are.
-const TAIL = String.raw`(?:\s+(?:${DEST_PHRASE}|${RECIPIENT}|${PURPOSE}|${TAIL_ADV}))*[^\p{L}\p{N}]*$`;
+// Bounded: the four alternatives overlap, and an unbounded `*` anchored to `$`
+// backtracked exponentially — ~4× per 60 chars, 1 s at 686 chars, synchronous
+// inside submitTask (logic audit F1). Real relays carry ≤3 tail slots.
+const TAIL = String.raw`(?:\s+(?:${DEST_PHRASE}|${RECIPIENT}|${PURPOSE}|${TAIL_ADV})){0,4}[^\p{L}\p{N}]*$`;
 // Case-SENSITIVE (no `i`): "a Javier", "to Ana" → "a §". Brand destinations are
 // excluded so "a Google Docs" / "a Telegram" stay destinations. An e-mail address
 // never gets here: its dot splits the sentence upstream (⇒ heavy, status quo).
@@ -602,6 +605,9 @@ const RELAY_TO_ME =
  */
 export function isStrategyRelayOrReadback(text: string): boolean {
   const t = text.replace(/^Chat:\s*/, "");
+  // A relay/read-back request is one short sentence; skip every regex below
+  // on long text (the shape regexes were exponential — logic audit F1).
+  if (t.length > 600) return false;
   if (!STRATEGY_NOUN.test(t)) return false;
   if (!DEFINITE_STRATEGY.test(t)) return false; // "una/qué estrategia" ⇒ formulate
   if (EVALUATIVE_AFTER_NOUN.test(t)) return false; // "la estrategia óptima" ⇒ formulate
@@ -620,6 +626,9 @@ export function isStrategyRelayOrReadback(text: string): boolean {
   // The recipient is the one slot that is not a word list — mark a capitalised
   // name or e-mail case-sensitively before the case-blind shape tests.
   const head = rawHead.replace(RECIPIENT_NAME, "$1 §");
+  // A relay/read-back request is short; the shape regexes are the costly
+  // part, so never run them on a long head (see TAIL).
+  if (head.length > 300) return false;
   if (READBACK_SHAPE.test(head)) return true;
   return (
     RELAY_SHAPE.test(head) &&

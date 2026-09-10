@@ -407,8 +407,11 @@ export function listFiles(filters?: {
   const params: unknown[] = [];
 
   if (filters?.prefix) {
-    conditions.push("path LIKE ?");
-    const escaped = filters.prefix.replace(/%/g, "\\%").replace(/_/g, "\\_");
+    conditions.push("path LIKE ? ESCAPE '\\'");
+    const escaped = filters.prefix
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
     params.push(`${escaped}%`);
   }
   if (filters?.qualifier) {
@@ -584,15 +587,20 @@ export function searchFiles(
 
   // Fallback: LIKE substring (preserves previous behavior for short/punct
   // queries and unblocks any FTS5 edge case).
-  const escaped = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
+  // Escape the escape char FIRST: with ESCAPE '\' declared, a literal
+  // backslash in the query would otherwise be read as an escape (qa C1).
+  const escaped = query
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
   const rows = db
     .prepare(
       `SELECT path, title, content, LENGTH(content) AS size
        FROM jarvis_files
-       WHERE content LIKE ? OR title LIKE ? OR path LIKE ?
+       WHERE content LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\'
        ORDER BY
-         CASE WHEN path LIKE ? THEN 0
-              WHEN title LIKE ? THEN 1
+         CASE WHEN path LIKE ? ESCAPE '\\' THEN 0
+              WHEN title LIKE ? ESCAPE '\\' THEN 1
               ELSE 2 END,
          path ASC
        LIMIT ?`,

@@ -522,10 +522,13 @@ export class SqliteMemoryBackend implements MemoryService {
         });
       }
 
-      // Apply decay, filter by minimum relevance, and sort
+      // Filter by minimum relevance on the MERGED score, then apply decay and
+      // sort. The floor used to be applied after decay, and the decay weight
+      // alone (≥0.16 for every row in the DB) exceeded it — the filter was
+      // dead and zero-relevance rows were injected (logic audit F17).
       const scored = [...allResults.values()]
-        .map((r) => applyDecay(r, r.mergedScore))
-        .filter((r) => r._score >= MIN_RELEVANCE_SCORE);
+        .filter((r) => r.mergedScore >= MIN_RELEVANCE_SCORE)
+        .map((r) => applyDecay(r, r.mergedScore));
       scored.sort((a, b) => b._score - a._score);
 
       if (scored.length === 0 && allResults.size > 0) {

@@ -20,6 +20,8 @@
  * the operator reviews and promotes by hand.
  */
 
+import { nowMexIsoDate } from "./timezone.js";
+
 export interface SpineRow {
   /** Column 1 verbatim, e.g. "1 — S2: Self-audit before reporting". */
   spine: string;
@@ -161,7 +163,7 @@ export function extractOpenQueueItems(queueMarkdown: string): string[] {
  * scoreboard, the patterns, the residual triggers) before tagging.
  */
 export function draftClosureDoc(phase: string, rows: SpineRow[]): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nowMexIsoDate();
   const closed = rows.filter((r) => /closed/i.test(r.status)).length;
 
   const spineSections = rows
@@ -221,7 +223,7 @@ ${spineSections}
  * `openItems` is the caller-extracted list of still-open queue lines.
  */
 export function draftWatchlist(phase: string, openItems: string[]): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nowMexIsoDate();
   const body =
     openItems.length > 0
       ? openItems.map((i) => `- ${i}`).join("\n")

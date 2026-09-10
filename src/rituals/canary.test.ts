@@ -39,6 +39,23 @@ describe("runCanaryCheck", () => {
     expect(result.alerts[0]).toContain("50%");
   });
 
+  it("counts same-day rows: the 24 h window is not 'since UTC midnight' (logic audit F6)", () => {
+    const db = getDatabase();
+    for (let i = 0; i < 6; i++) {
+      // 30 min ago and 20 h ago — both inside 24 h, both would be missed by an
+      // ISO-format cutoff on the same calendar day.
+      db.prepare(
+        "INSERT INTO tasks (task_id, title, description, status, created_at) VALUES (?, ?, ?, ?, datetime('now', ?))",
+      ).run(`same-day-${i}`, `T${i}`, "test", "failed", i % 2 ? "-30 minutes" : "-20 hours");
+    }
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status, created_at) VALUES (?, ?, ?, ?, datetime('now', '-2 days'))",
+    ).run("old", "old", "test", "failed");
+    const result = runCanaryCheck();
+    expect(result.totalTasks).toBe(6);
+    expect(result.taskSuccessRate).toBe(0);
+  });
+
   it("does not alert when success rate is above threshold", () => {
     const db = getDatabase();
     for (let i = 0; i < 10; i++) {

@@ -68,6 +68,24 @@ export function fieldMatches(
   return false;
 }
 
+const DOW_NAMES: Record<string, string> = {
+  sun: "0", mon: "1", tue: "2", wed: "3", thu: "4", fri: "5", sat: "6",
+};
+
+/**
+ * Day-of-week field with standard cron forms `cron.validate` accepts but a
+ * numeric 0-6 match never hit: `7` (= Sunday), three-letter names, and ranges
+ * that end in 7 (`5-7`). Such schedules were created "active" and never fired
+ * (logic audit F24).
+ */
+export function dowMatches(field: string, dow: number): boolean {
+  const normalized = field
+    .toLowerCase()
+    .replace(/[a-z]{3}/g, (m) => DOW_NAMES[m] ?? m);
+  if (fieldMatches(normalized, dow, 0, 7)) return true;
+  return dow === 0 && fieldMatches(normalized, 7, 0, 7);
+}
+
 /** True when the 5-field cron expression matches the wall-clock minute of `at` in `timeZone`. */
 export function cronMatchesAt(
   cronExpr: string,
@@ -89,7 +107,7 @@ export function cronMatchesAt(
     fieldMatches(parts[1], hour, 0, 23) &&
     fieldMatches(parts[2], dom, 1, 31) &&
     fieldMatches(parts[3], month, 1, 12) &&
-    fieldMatches(parts[4], dow, 0, 6)
+    dowMatches(parts[4], dow)
   );
 }
 
@@ -135,7 +153,7 @@ export function describeCron(cronExpr: string): string {
   const hhmm = `${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
   if (dow === "*") return `diario ${hhmm}`;
   if (dow === "1-5") return `L-V ${hhmm}`;
-  if (/^\d$/.test(dow)) return `${DOW_ES[Number(dow)]} ${hhmm}`;
+  if (/^\d$/.test(dow)) return `${DOW_ES[Number(dow) % 7]} ${hhmm}`;
   return `${dow} ${hhmm}`;
 }
 

@@ -5,7 +5,7 @@
  * with sentinel-delimited output parsing, and activity-aware timeouts.
  */
 
-import { spawn, execSync, execFileSync } from "child_process";
+import { spawn, execSync, execFile, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { posix } from "path";
@@ -625,20 +625,20 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
  * Attempts graceful stop first, falls back to SIGKILL.
  */
 export function killContainer(handle: ContainerHandle): void {
-  try {
-    execSync(
-      `docker stop -t ${Math.floor(GRACEFUL_STOP_TIMEOUT_MS / 1000)} ${handle.name}`,
-      {
-        timeout: GRACEFUL_STOP_TIMEOUT_MS + 5_000,
-        stdio: "ignore",
-      },
-    );
-  } catch {
-    // Container may already be stopped; try force kill
-    try {
-      handle.process.kill("SIGKILL");
-    } catch {
-      // Already dead
-    }
-  }
+  // Asynchronous on purpose: the former execSync froze the whole event loop
+  // (HTTP, Telegram, every other task) for up to 15 s per kill (logic audit F9).
+  execFile(
+    "docker",
+    ["stop", "-t", String(Math.floor(GRACEFUL_STOP_TIMEOUT_MS / 1000)), handle.name],
+    { timeout: GRACEFUL_STOP_TIMEOUT_MS + 5_000 },
+    (err) => {
+      if (!err) return;
+      // Container may already be stopped; try force kill
+      try {
+        handle.process.kill("SIGKILL");
+      } catch {
+        // Already dead
+      }
+    },
+  );
 }

@@ -12,6 +12,7 @@ import { getMemoryService } from "./index.js";
 import { upsertFile } from "../db/jarvis-fs.js";
 import { safeSlice } from "../lib/unicode-safe.js";
 import { getOutcomeTag } from "./outcome-tag.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -212,7 +213,7 @@ export async function autoPersistConversation(
 
   // Also persist to jarvis_files with meaningful topic-based paths (v6.2 S4)
   try {
-    const date = new Date().toISOString().slice(0, 10);
+    const date = nowMexIsoDate();
     const topicSlug = deriveTopicSlug(userText);
     const path = `workspace/${topicSlug}-${date}.md`;
     upsertFile(

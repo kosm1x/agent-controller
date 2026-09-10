@@ -1152,6 +1152,15 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
     delete process.env.MESSAGING_SWARM_ESCALATION;
   });
 
+  it("isStrategyRelayOrReadback is bounded on a long single-sentence message (logic audit F1: 1 s at 686 chars, ~4x per 60 chars)", () => {
+    const text = "escribe la estrategia" + " en el doc para revision ahora".repeat(24) + " zzqq";
+    const t0 = performance.now();
+    const out = isStrategyRelayOrReadback(text);
+    const ms = performance.now() - t0;
+    expect(out).toBe(false);
+    expect(ms).toBeLessThan(100);
+  });
+
   it("isCodingTask: code authoring → true; host git ops / prose / strategy → false", () => {
     expect(isCodingTask("Chat: refactoriza el módulo")).toBe(true);
     expect(isCodingTask("implement the endpoint and write a test")).toBe(true);

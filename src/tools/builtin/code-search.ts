@@ -112,8 +112,11 @@ TIPS:
       flags.push("--glob", includeGlob);
     }
 
-    // Limit output
-    flags.push("--max-count", String(mode === "files" ? 1 : maxResults));
+    // Limit output (per file). Not in count mode: --max-count caps the per-file
+    // count itself and corrupts the tool's only output (qa W2).
+    if (mode !== "count") {
+      flags.push("--max-count", String(mode === "files" ? 1 : maxResults));
+    }
 
     // execFileSync: args as array — no shell interpolation, immune to injection
     const rgArgs = [...flags, "--", pattern, searchPath];
@@ -129,8 +132,16 @@ TIPS:
         });
       } catch {
         // rg not found or failed — fall back to grep
+        // Bounded like the rg path: without these the default path "."
+        // walks node_modules (707 MB) and dies on the 20 s timeout or
+        // maxBuffer before returning anything (logic audit F3).
         const grepArgs = [
           "-r",
+          "--exclude-dir=node_modules",
+          "--exclude-dir=.git",
+          ...(mode !== "count"
+            ? ["--max-count", String(mode === "files" ? 1 : maxResults)]
+            : []),
           ...(caseInsensitive ? ["-i"] : []),
           mode === "files" ? "-l" : mode === "count" ? "-c" : "-n",
           "--fixed-strings",
@@ -272,7 +283,7 @@ TIPS:
             "--type",
             "f",
             "--max-results",
-            String(maxResults),
+            String(maxResults + 1), // +1 so `truncated` can be detected (qa W3)
           ],
           {
             timeout: 20_000,
@@ -283,13 +294,21 @@ TIPS:
           },
         );
       } catch {
-        // fd not found — fall back to find
-        const findPattern = pattern.includes("/")
-          ? (pattern.split("/").pop() ?? pattern)
-          : pattern;
+        // fd not found — fall back to find. Keep the glob's directory part
+        // (`-path` lets `*` span slashes, so `src/**/*.ts` → `./src/*.ts`),
+        // and prune node_modules/.git (logic audit F4: 5,126 of 6,793 hits
+        // were under node_modules).
+        const findArgs = pattern.includes("/")
+          ? ["-path", `./${pattern.replace(/\*\*\//g, "*").replace(/\*\*/g, "*")}`]
+          : ["-name", pattern];
         output = execFileSync(
           "find",
-          [".", "-type", "f", "-name", findPattern, "-maxdepth", "10"],
+          [
+            ".",
+            "-maxdepth", "10",
+            "(", "-name", "node_modules", "-o", "-name", ".git", ")", "-prune",
+            "-o", "-type", "f", ...findArgs, "-print",
+          ],
           {
             timeout: 20_000,
             maxBuffer: 2 * 1024 * 1024,
@@ -308,11 +327,14 @@ TIPS:
         });
       }
 
-      const files = output.trim().split("\n").filter(Boolean);
+      const all = output.trim().split("\n").filter(Boolean);
+      // The find fallback has no limit of its own — apply max_results here
+      // (the handler never sliced; `truncated` claimed a cut that never happened).
+      const files = all.slice(0, maxResults);
       return JSON.stringify({
         files,
-        total: files.length,
-        truncated: files.length >= maxResults,
+        total: all.length,
+        truncated: all.length > maxResults,
       });
     } catch (err) {
       const error = err as { stderr?: string; message?: string };

@@ -71,7 +71,13 @@ export function recordCost(record: CostRecord): void {
   const db = getDatabase();
   const costUsd =
     record.costUsdOverride ??
-    calculateCost(record.model, record.promptTokens, record.completionTokens);
+    calculateCost(
+      record.model,
+      record.promptTokens,
+      record.completionTokens,
+      record.cacheReadTokens ?? 0,
+      record.cacheCreationTokens ?? 0,
+    );
 
   db.prepare(
     `INSERT INTO cost_ledger
@@ -176,7 +182,10 @@ export function getMonthlySpend(): number {
   const db = getDatabase();
   const row = db
     .prepare(
-      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_ledger WHERE created_at >= strftime('%Y-%m-01', 'now')",
+      // Month boundary in the unit's TZ (America/Mexico_City), expressed back in
+      // UTC to compare with created_at; the bare UTC boundary misfiled the
+      // last 6 h of every month (logic audit F21).
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_ledger WHERE created_at >= datetime(strftime('%Y-%m-01 00:00:00', 'now', 'localtime'), 'utc')",
     )
     .get() as { total: number };
   return row.total;
