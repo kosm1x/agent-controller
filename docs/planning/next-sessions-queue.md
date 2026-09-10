@@ -1209,3 +1209,35 @@ From `docs/planning/nanoclaw-upstream-review-2026-09-01.md` (memory `reference_n
 - **P3 — KB hygiene from the first `mc-ctl kb-health` run:** 1 basename collision (`directives/northstar-recurring-tasks.md` vs `northstar_recurring_tasks.md`); 53 single-file folders, several with absolute paths registered as KB paths (`/root/claude/knowledge/`, `/workspace/`, `VPS/`, `notes/`). Operator decision — the script never writes.
 - **Deferred plan items (see KB doc §6):** A.3 guidance synthesis (after A.2 utility numbers exist — `recall_audit` baseline: mc-operational 356 recalls / 0 used in 30 d), C.1 skill producer (constraint: only V8.4-gated successes write positive procedures), D.1/D.2. B.1/B.2 rejected (JME is not a KB reorganizer).
 - **Bookkeeping:** 11 untracked `tmp_*.cjs` read-only mc.db probes at the repo root (09-06) — delete or gitignore.
+
+## 2026-09-10 — five-agent audit (logic · reliability · design/perf · security · usefulness) follow-ups
+
+Five parallel adversarial audits over the whole codebase; 4 code commits shipped the same day (`c15de65` reliability, `6835c3b` logic/SQL, `4b353ac` security, `18d5261` perf/usefulness) plus the eval-gated prompt bundle `8c09fd5`. Reports live in the session scratchpad only; qa-auditor round notes at `.claude/agent-memory/qa-auditor/security-batch-sec01-18-r{1..4}-audit.md`. What did NOT ship, by owner:
+
+### P1 — shell_exec guard: shell-word normal form (structural, needs a spec + operator go)
+Four qa rounds on `src/tools/builtin/shell.ts` proved the text/regex/token pipeline does not converge: each fix opened the neighbouring axis (heredoc strip → receiver → pipeline; wrapper → flag; token → quote; `cd` → `cd -`). Shipped: a strictly ADDITIVE rule set (0 loosenings vs HEAD on a 95-spelling twin probe). Deferred false negatives, all HEAD-allowed too: relative spellings after `cd` and `..`-headed paths, `$VAR/` indirection (`P=/root; cat $P/.ssh/id_rsa`), globs/brace expansion (`/root/.s*/id_rsa`), a bare `.env` inside an interpreter-fed heredoc, `.env_prod` names, recursive read-outs/archives that never NAME the secret (`grep -rn KEY <dir>`, `tar czf … <dir>`), unlisted wrappers (`watch`, `flock`, `xargs`). The convergent design: lex the command ONCE into shell words (quotes, `$VAR` with known assignments, `~`, separators incl. `\n`/`&`, pipelines, redirects, heredoc bodies with their real receiver, `cd` cwd), then run every rule against that normal form. ~250-300 LOC + a twin-probe corpus; ship behind a shadow flag and compare verdicts on 30 d of real commands first. Accepted false positives meanwhile: a bare `.env` as TEXT in mc's cwd (`jq '.env'`, `cp x/.env.example x/.env`), a secret DIRECTORY named in prose.
+
+### Operator decisions (proposed by the usefulness/security audits — not decided)
+- **SEC-05** control plane in cleartext on UFW-open :8080 (dashboard login + `X-Api-Key` cross the internet; a key holder gets `POST /api/tasks` with `tools:["shell_exec"]`). Fix = bind `MC_BIND_HOST=127.0.0.1`, add a Caddy TLS vhost, `ufw delete allow 8080`, then rotate `MC_API_KEY` and sweep holders (mc `.env`, Pulso `JARVIS_API_KEY`). Also consider ignoring caller `tools[]` on inbound submissions.
+- **SEC-13** `npm audit --omit=dev`: 21 advisories (2 critical in the dormant WhatsApp/baileys path; live: `hono` 4.12.29 DoS-class on the public port). Bump `hono` ≥4.13.5 / `@hono/node-server` ≥1.19.15 **with the service stopped** (`systemctl stop mission-control` → `npm install --min-release-age=0 …` → `./scripts/deploy.sh`).
+- **rg/fd missing on the box** (logic F3): `apt install ripgrep fd-find` — the `grep`/`glob` tools always take the bounded fallback today.
+- **Self-tuning** (U2 + F16): $156.68/30 d, 57 experiments, 0 wins (all-time $455 / 337 / 2 wins); the eval grades `detectActiveGroups` (a regex mirror carrying ~15 % of live turns) yet a winning variant mutates production `DEFAULT_SCOPE_PATTERNS`. Proposal: pause `TUNING_ENABLED` or add a win-rate kill gate.
+- **JME** (U6): 45 days past its own verdict date at 11.3 % utility vs the declared ≥39 % keep line (+191 ms/turn). Rule keep/cut.
+- **skill-evolution ritual** (U4): $84.80/30 d, delivered 2 of 18 days; **day-narrative + evolution-log** (U15): 60 runs, 0 deliveries (KB-write-only by design?).
+- **Dead tool families** (U9): 127 of 231 tools never called in 90 d — propose removing `video_*` (16, `video_jobs` last row 2026-04-25), `graphify-code__*` (7), `xpoz__*` (5), `ads_*` (3). Removal changes the registry → eval gate.
+- **drift_alerts** (U11): 33 rows, 0 delivered/acked, repeat in every morning brief (no ack path). **projects.status** (U12): 20 of 33 active projects last touched Jun–Jul → `idle_detect` never converges. **reflection_followups** (U13): 0 rows ever; V8.3 gate depends on it. **signal_alerts** ROUTINE (U17): 23/26 never delivered.
+- **README always-read** (D1 root cause, queue N2): `projects/agent-controller/README.md` is 153 KB and always-read; the code cap (24 KB head) is a stopgap — either trim it or change its qualifier to `conditional`.
+- **loop guards dead under claude-sdk** (F14): `inference/guards.ts` + adapter-openai escalation only run on the OpenAI path (0 live traffic). Port to the SDK loop or stop documenting them as live.
+- **TimeoutStopSec** (R11): `MC_SHUTDOWN_GRACE_MS` clamps to 300 s but systemd kills at 90 s; clamp to 80 s or raise `TimeoutStopSec`.
+- **conversation_embeddings retention** (D5b): 72 MB, +10 MB/mo, no policy; DB crosses the 500 MB watchdog alarm in ~4.7 months. Proposal: age out tier-2 vectors >180 d (text kept), or VACUUM after the next consolidation.
+
+### P2 — code follow-ups (not started)
+- `task_history` `supersededBy` marker (from 09-09) — still queued.
+- `tasks.description` + `runs.input` persist the same 15 KB prompt twice (98 MB = 28 % of the DB) — store once (migration).
+- `db/index.ts` fan-in 157 / 9 import cycles; 148 raw `process.env` reads outside config.ts (D11/D12/D14) — refactor, not a bug.
+- `jsonSchemaToZod` divergence (F5): only numeric coercion ported to the SDK path; arrays/nested objects still unvalidated there.
+- `knowledge_triples` `LOWER()` is ASCII-only vs JS `toLowerCase()` — non-ASCII subjects never supersede (qa N3 on `6835c3b`).
+- `events/retrieval.ts:442,449` day/week bucket keys still UTC (left out of the F21 sweep — verify intent first).
+- `isReadOnlyTask` can never be true (18 of 33 bare-turn tools are not read-only) → the enforce-only KB branch is dead (logic list).
+- hallucinated tool-refusal residual (U3): 91 turns/30 d answered "Necesito `shell_exec`", 19 with the tool in scope; `a644847` fixed the scope half — the executor-prompt half needs an eval-gated prompt change.
+- mc-ctl `tools` shows the registry by name family; per-SOURCE status needs `ToolSourceManager` exposed to the API.
