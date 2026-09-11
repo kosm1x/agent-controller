@@ -100,6 +100,18 @@ Deferred tool, scope group `utility` (regex covers ES/EN verbs + plurals, "exist
 "limpia/depura la lista", "bounce"/"are dead", address-literal + "existe/es real", and the `email_verify` name; 28 positive and 28 negative phrases
 pinned in `scope.test.ts`). Rule-of-Two class **A** (server free text in, no private data), `readOnlyHint`.
 
+## Reachability (why "deployed" was not "usable" on 2026-09-11)
+
+`email_verify` is `deferred: true` in scope group `utility`. A deferred tool reaches the model
+only when its group is active, and the group is chosen by the **semantic classifier**
+(`src/messaging/scope-classifier.ts`), not by the regex in `scope.ts` (fallback only). Three
+gates had to be opened: the classifier prompt had no `utility` line (`f703565`), the parser
+whitelist `VALID_GROUPS` lacked it (`c6ae8a5`), and `src/tuning/activation.ts` replaced the
+whole scope-pattern array at every boot with a variant from 2026-04-07 (`9d356c5`, now merged by
+group). Verified by a live Telegram turn: `Scope groups (semantic): utility` → `email_verify`
+→ safe/deliverable. eval:gate PASS 66.95 vs 65.75. If the tool ever "disappears" again, check
+those three places in that order, then the boot line `[tuning] scope patterns: …`.
+
 ## Programmatic use
 
 ```ts

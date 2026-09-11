@@ -238,8 +238,9 @@ Jarvis-authored conversation memory, LIVE since PR #27/#28 (migration v3: `jme_t
 1. Create handler in `src/tools/builtin/` — new tools use `defineTool()` from `src/tools/define-tool.ts` (name declared once); failure returns are `{error}` JSON, never `"Error:"` strings or `success:false`
 2. Add to the appropriate `ToolSource` adapter in `src/tools/sources/` (or create a new one implementing `ToolSource` interface), AND add its Rule-of-Two row to `RULE_OF_TWO_CLASSIFICATION` in `src/tools/rule-of-two.ts` (the coverage test fails otherwise)
 3. Write tool descriptions following ACI principles above (describe edge cases, use enums, add `.describe()` to all params)
-4. Test with a real model call to verify the description guides correct usage
-5. Add test in `src/tools/registry.test.ts`
+4. **Make it reachable.** A `deferred` tool is visible only when its scope group is active, and the group is chosen by the SEMANTIC classifier (`src/messaging/scope-classifier.ts`): the group must have a `- group:` line in `CLASSIFIER_SYSTEM_PROMPT` AND be in `VALID_GROUPS` (parity test `scope-classifier.test.ts` enforces both); the regex in `scope.ts` only runs when the classifier fails. Then verify with ONE live chat turn and read `[router] Scope groups (semantic): …` in the journal — the registry count proves registration, not reachability (2026-09-11: `email_verify` sat unreachable behind three gates, incl. the tuning variant that replaced the scope patterns at boot until `9d356c5`).
+5. Test with a real model call to verify the description guides correct usage; prompt/description changes go through `npm run eval:gate -- --run`
+6. Add test in `src/tools/registry.test.ts`
 
 ### Adding a new tool source
 
