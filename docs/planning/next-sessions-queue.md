@@ -1260,6 +1260,6 @@ Jarvis answered "verifica si <addr>@gmail.com existe" with a shell `dig` and "no
 - **Disposable-domain data file**: today ~60 hand-picked domains + `EMAIL_VERIFY_EXTRA_DISPOSABLE`; upstream embeds 55k. Load from `data/disposable-domains.txt` if present.
 - **Persist the daily probe counter** (in-memory today: a deploy resets the 500/day cap). Candidate: `api_call_budget` table via `finance/budget.ts`.
 - **Doctoralia dogfood**: script over the 1,007 enriched addresses (`doctoralia-scraper`), ~2 days at the default cap; feed `invalid` back into the scraper DB before any eurekams-mail campaign.
-- **eval:gate on the new description** (`npm run eval:gate -- --run`, ~$5, operator) per CLAUDE.md §"Adding a new tool" step 4; `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
+- ~~eval:gate on the new description~~ — PASS 2026-09-11 (66.95 vs 65.75 incumbent, threshold 63.75, 408 cases, $5.67; also covers the classifier `utility` line). Still optional: `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
 - Optional: one SMTP session per domain for up to 5 RCPT TO (halves connections on same-domain batches; some hosts count RCPTs, so gate behind a rule).
 
