@@ -7,6 +7,7 @@ import {
   parseScopeGroups,
   withDeterministicGroups,
   CLASSIFIER_SYSTEM_PROMPT,
+  VALID_GROUPS,
 } from "./scope-classifier.js";
 import { DEFAULT_SCOPE_PATTERNS } from "./scope.js";
 
@@ -212,6 +213,16 @@ describe("classifier prompt ↔ scope-group parity (2026-09-11)", () => {
     // The allowlist must not go stale in the other direction either.
     const fixed = [...KNOWN_MISSING_FROM_PROMPT].filter((g) => promptGroups.has(g));
     expect(fixed, `now in the prompt — drop from KNOWN_MISSING_FROM_PROMPT: ${fixed.join(", ")}`).toEqual([]);
+  });
+
+  it("every group the prompt describes survives the parser whitelist (VALID_GROUPS)", () => {
+    // The model can only return what the prompt lists; the parser must not drop it.
+    // 2026-09-11: "utility" was added to the prompt but VALID_GROUPS still lacked it,
+    // so ["utility"] parsed to [] and the turn fell to the regex path.
+    const promptGroups = [...CLASSIFIER_SYSTEM_PROMPT.matchAll(/^- ([a-z_]+):/gm)].map((m) => m[1]);
+    const dropped = promptGroups.filter((g) => !VALID_GROUPS.has(g));
+    expect(dropped, `prompt groups the parser would discard: ${dropped.join(", ")}`).toEqual([]);
+    expect(parseScopeGroups('["utility"]')).toEqual(new Set(["utility"]));
   });
 
   it("utility is described with email-verification vocabulary", () => {

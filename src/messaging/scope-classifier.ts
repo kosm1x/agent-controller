@@ -57,6 +57,9 @@ export const VALID_GROUPS = new Set([
   "xpoz",
   "projects",
   "finance",
+  // 2026-09-11: the parser dropped ["utility"] even after the prompt learned the
+  // group — a second gate with the same blind spot (see parity test).
+  "utility",
 ]);
 
 /**
