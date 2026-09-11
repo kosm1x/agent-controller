@@ -38,10 +38,19 @@ export function activateBestVariant(): ActivationResult {
 
   // Apply scope pattern overrides (replace array contents in-place)
   if (config.scopePatternOverrides?.length) {
+    // Merge BY GROUP: a variant replaces only the groups it carries; every
+    // other group keeps the code default. Before 2026-09-11 this wiped the
+    // whole array, so the gen-0 variant from 2026-04-07 (17 groups) silently
+    // removed every group added since — utility, seo, ads, chart, finance,
+    // xpoz, projects, jarvis_write, … — from the regex fallback at each boot.
+    const overridden = new Set(config.scopePatternOverrides.map((p) => p.group));
+    const kept = DEFAULT_SCOPE_PATTERNS.filter((p) => !overridden.has(p.group));
+    const keptGroups = new Set(kept.map((p) => p.group));
     DEFAULT_SCOPE_PATTERNS.length = 0;
-    for (const p of config.scopePatternOverrides) {
-      DEFAULT_SCOPE_PATTERNS.push(p);
-    }
+    DEFAULT_SCOPE_PATTERNS.push(...kept, ...config.scopePatternOverrides);
+    console.log(
+      `[tuning] scope patterns: ${overridden.size} group(s) from variant, ${keptGroups.size} group(s) kept from code defaults`,
+    );
   }
 
   markVariantActivated(variant.variant_id);
