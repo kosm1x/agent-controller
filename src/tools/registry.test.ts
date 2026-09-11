@@ -383,7 +383,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-07-05: 195 → 194 (efficiency-audit Phase 1 — jarvis_init one-shot removed).
     // 2026-07-05: 194 → 191 (hardening sweep — SOCIAL_PUBLISH stub removed: 3 tools).
     // 2026-08-23: 191 → 192 (usability Phase 3.1 — data_summarize core tool).
-    expect(ALL_TOOLS.length).toBe(192);
+    // 2026-09-11: 192 → 193 (email_verify — TS closed-box SMTP mailbox verifier).
+    expect(ALL_TOOLS.length).toBe(193);
   });
 
   // ──────────────────────────────────────────────────────────────────

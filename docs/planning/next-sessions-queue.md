@@ -1241,3 +1241,19 @@ Four qa rounds on `src/tools/builtin/shell.ts` proved the text/regex/token pipel
 - `isReadOnlyTask` can never be true (18 of 33 bare-turn tools are not read-only) → the enforce-only KB branch is dead (logic list).
 - hallucinated tool-refusal residual (U3): 91 turns/30 d answered "Necesito `shell_exec`", 19 with the tool in scope; `a644847` fixed the scope half — the executor-prompt half needs an eval-gated prompt change.
 - mc-ctl `tools` shows the registry by name family; per-SOURCE status needs `ToolSourceManager` exposed to the API.
+
+## 2026-09-11 — `email_verify` (TS closed-box port of reacherhq/check-if-email-exists)
+
+Shipped as a deferred builtin tool (`src/email-verify/` engine + `src/tools/builtin/email-verify.ts`, doc `docs/EMAIL-VERIFY.md`). Zero new deps; 125 new tests (118 engine + 7 tool) incl. integration against an in-process scripted SMTP server; two qa-auditor rounds (R1 FAIL: breaker latch + sender-side 5.7.x read as invalid — both fixed and pinned); live smoke from the box PASS (Gmail/Hotmail 550 on fake users, real Gmail 250). Note: IPv4:25 egress to Google flapped for ~20 min during the session (IPv6 fine) — the client now Happy-Eyeballs across families.
+
+### Operator prerequisites (before the doctoralia dogfood)
+- **Create `postmaster@eurekams.net` in Stalwart** (RFC 5321 §4.5.1 requires it; checked 2026-09-11: `550 5.1.2 Mailbox does not exist`). It is the tool's default `MAIL FROM`; until it exists, cPanel/Exim sender-callout hosts answer `blocked` and strike the breaker. Alternative: set `EMAIL_VERIFY_FROM=<existing mailbox>` in the mission-control drop-in.
+- **IPv4 port-25 egress flaps on this VPS** (2026-09-11 20:10–21:10 UTC: Google, Outlook and Hostinger MX all timed out over IPv4 while IPv6:25 and the same hosts minutes earlier succeeded). Same signature as the 2026-07-10 note. It also affects Stalwart's outbound delivery to IPv4-only MX (Outlook has no AAAA). Worth a Hostinger ticket or an outbound-SMTP relay decision; the verifier Happy-Eyeballs across families so dual-stack hosts still work.
+
+### P2 — follow-ups
+- **Disposable-domain data file**: today ~60 hand-picked domains + `EMAIL_VERIFY_EXTRA_DISPOSABLE`; upstream embeds 55k. Load from `data/disposable-domains.txt` if present.
+- **Persist the daily probe counter** (in-memory today: a deploy resets the 500/day cap). Candidate: `api_call_budget` table via `finance/budget.ts`.
+- **Doctoralia dogfood**: script over the 1,007 enriched addresses (`doctoralia-scraper`), ~2 days at the default cap; feed `invalid` back into the scraper DB before any eurekams-mail campaign.
+- **eval:gate on the new description** (`npm run eval:gate -- --run`, ~$5, operator) per CLAUDE.md §"Adding a new tool" step 4; `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
+- Optional: one SMTP session per domain for up to 5 RCPT TO (halves connections on same-domain batches; some hosts count RCPTs, so gate behind a rule).
+

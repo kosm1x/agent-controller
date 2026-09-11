@@ -1,6 +1,6 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-04-23 (Session 101 close)
+> **Last updated**: 2026-09-11 (email_verify added; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` = 232)
 > **Source of truth for tool registration**: `src/tools/sources/builtin.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
@@ -281,6 +281,7 @@ MCP bridges to two browser stacks.
 - `file_convert` — format bridge (ebooks, office, images, doc↔doc via pandoc, video frames via ffmpeg)
 - `hf_generate` / `hf_spaces` — HuggingFace
 - `vps_status` / `vps_logs` / `vps_deploy` — VPS management
+- `email_verify` — SMTP mailbox verification without sending (syntax → MX → RCPT TO probe; daily cap + circuit breaker; `docs/EMAIL-VERIFY.md`, 2026-09-11)
 
 ### Social (scope group: `social`)
 

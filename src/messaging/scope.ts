@@ -289,6 +289,8 @@ export const UTILITY_TOOLS = [
   "weather_forecast",
   "currency_convert",
   "geocode_address",
+  // 2026-09-11: email_verify — SMTP mailbox probe (list cleaning before a campaign).
+  "email_verify",
   // v7.10: file_convert — dispatches to FLOSS CLI tools (calibre,
   // libreoffice, pandoc, imagemagick, ffmpeg). Scope activates on
   // conversion verbs + format nouns.
@@ -847,7 +849,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(clima|weather|temperatura|temperature|lluvia|rain|pron[oó]stico|forecast|moneda|currency|convert|tipo\s+de\s+cambio|d[oó]lar|exchange\s+rate|coordenadas|coordinates|direcci[oó]n.*geocod|geocod|ubicaci[oó]n\s+de)\b/i,
+      /\b(clima|weather|temperatura|temperature|lluvia|rain|pron[oó]stico|forecast|moneda|currency|convert|tipo\s+de\s+cambio|d[oó]lar|exchange\s+rate|coordenadas|coordinates|direcci[oó]n.*geocod|geocod|ubicaci[oó]n\s+de|(verific\w*|valid\w*|verify|validate)\s+(\S+\s+){0,3}?(correos?|e-?mails?|direcci[oó]n(es)?\s+de\s+(correo|e-?mail)|e-?mail\s+address(es)?|lista\s+de\s+correos)|(check|chec\w*|revis\w*)\s+(\S+\s+){0,2}?(e-?mail\s+address(es)?|if\s+(this|the|an?)\s+e-?mail\s+(exists|is\s+(valid|real))|si\s+(este|el|los|estos)\s+(correos?|e-?mails?)\s+(existen?|es\s+(v[aá]lido|real)|son\s+(v[aá]lidos|reales)|rebotan?))|(correos?|e-?mails?)\s+(es|son|is|are)\s+(v[aá]lid[oa]s?|reales?|valid|real)(?=\s*(\?|$))|(correos?|e-?mails?)\s+existen?(?=\s*(\?|$)|\s+o\s)|[\w.+-]+@[\w-]+\.[\w.-]+\s+exist(?=\s*(\?|$))|(validate|verify|checa\w*|verifica\w*)\s+[\w.+-]+@[\w-]+\.[\w.-]+|(correos?|e-?mails?)\s+(exists?|are\s+valid|is\s+valid)(?=\s*(\?|$))|(are|is)\s+(these|this|the|those)\s+(e-?mails?|correos?)\s+(valid|real)(?=\s*(\?|$))|son\s+v[aá]lidos\s+(estos|los)\s+correos|(si|whether|if)\s+(estos|los|these|the)\s+(correos?|e-?mails?)\s+(existen?|exist|rebotan|bounce)|existen?\s+(este|estos|el|los)\s+(correos?|e-?mails?)|(limpia\w*|depura\w*)\s+(la\s+|esta\s+)?lista\s+(de\s+(correos?|e-?mails?|contactos?)|antes\s+de\s+enviar)|clean\s+(the\s+|this\s+)?(e-?mail\s+|mailing\s+|contact\s+)list|[\w.+-]+@[\w-]+\.[\w.-]+\s+(existe|exists|es\s+(v[aá]lid[oa]|real)|is\s+(valid|real)|a\s+real|rebota|bounces)|is\s+[\w.+-]+@[\w-]+\.[\w.-]+\s+(a\s+)?(real|valid)|(correos?|e-?mails?)\s+(que\s+)?rebot\w*|rebot\w*\s+(el\s+|los\s+|un\s+|este\s+|estos\s+)?(correos?|e-?mails?)|(cu[aá]ntos|cu[aá]les|which|what)\s+(\S+\s+){0,5}?(rebotan|rebotar[ií]an|bounce|will\s+bounce|van\s+a\s+rebotar|are\s+dead|est[aá]n\s+muertos)|bounce\s+(rate|list|check)|(e-?mails?|correos?)\s+(\S+\s+){0,3}?(are\s+dead|est[aá]n\s+muertos)|email_verify)\b/i,
     group: "utility",
   },
   {

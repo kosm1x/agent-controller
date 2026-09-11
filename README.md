@@ -102,7 +102,7 @@ POST /api/tasks           POST /a2a (JSON-RPC)
 
 Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 35 rounds (coding) / 10 default. Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
 
-257 tools across 4 ToolSources — builtin (160, incl. Google-Workspace, WordPress, memory, CRM, teaching, video, coding), MCP-bridge (70, registered dynamically: xpoz, browser, playwright, supabase), Google (22), Skills (5). New tools declare their name ONCE via `defineTool()` (src/tools/define-tool.ts) and fail with `{error}` JSON (2026-07-05 convention converge). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
+232 tools across 4 ToolSources (live registry 231 on 2026-09-10 + `email_verify` 2026-09-11; per-source breakdown in `docs/TOOL-CATALOG.md`) — builtin (incl. Google-Workspace, WordPress, memory, CRM, teaching, video, coding), MCP-bridge (registered dynamically: xpoz, browser, playwright, supabase), Google (22), Skills (5). New tools declare their name ONCE via `defineTool()` (src/tools/define-tool.ts) and fail with `{error}` JSON (2026-07-05 convention converge). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
 
 ### NanoClaw runner
 
@@ -372,7 +372,7 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ## Current status
 
-**Development state (2026-07-05): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` post system-hardening sweep (`34fbb4f`+`bed561f`, `docs/planning/system-hardening-sweep-2026-07-05.md`; prior: efficiency refactor net −4.3k lines). **257 tools** live across 4 ToolSources (builtin 160, MCP-bridge 70, Google 22, Skills 5; static enumeration 191 after the SOCIAL_PUBLISH stub removal); **6672 tests** passing (391 test files); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
+**Development state (2026-07-05): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` post system-hardening sweep (`34fbb4f`+`bed561f`, `docs/planning/system-hardening-sweep-2026-07-05.md`; prior: efficiency refactor net −4.3k lines). **232 tools** live across 4 ToolSources (231 verified 2026-09-10 + `email_verify` 2026-09-11; static enumeration 193 after the SOCIAL_PUBLISH stub removal); **6672 tests** passing (391 test files); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
 
 **Current capability layer — V8 ("Jarvis as colleague"):**
 
@@ -412,7 +412,7 @@ See `docs/V7-ROADMAP.md` + `docs/V8-VISION.md` for the active roadmap and `docs/
 
 Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
 
-- **257 tools across 4 ToolSources** (builtin 160 incl. Google-Workspace/WordPress/memory/CRM/teaching/video/coding, MCP-bridge 70, Google 22, Skills 5). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
+- **232 tools across 4 ToolSources** (231 verified 2026-09-10 + `email_verify` 2026-09-11; builtin incl. Google-Workspace/WordPress/memory/CRM/teaching/video/coding, MCP-bridge, Google, Skills — breakdown in `docs/TOOL-CATALOG.md`). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
 - **Tool deferral** — most tools deferred (name+desc only, full schema on first call). ~52% prompt token reduction
 - **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
 - **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)

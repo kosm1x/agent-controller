@@ -238,6 +238,8 @@ describe("WRITE_TOOLS sync", () => {
       "weather_forecast",
       "currency_convert",
       "geocode_address",
+      // 2026-09-11: email_verify probes a remote MX (SMTP RCPT TO) and writes nothing.
+      "email_verify",
     ]);
     const utilityWriteTools = UTILITY_TOOLS.filter(
       (t) => !UTILITY_READ_ONLY.has(t),

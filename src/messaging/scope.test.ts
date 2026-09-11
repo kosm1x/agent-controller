@@ -1222,6 +1222,82 @@ describe("scope pattern matching", () => {
   // shortcuts, frame-extraction phrasing, and explicit file-format anchors.
   // ---------------------------------------------------------------------------
 
+  // 2026-09-11 utility — email_verify (SMTP mailbox probe). Audit W10: plurals,
+  // ES/EN verbs, tool-name shortcut and every declared triggerPhrase must match.
+  it("utility activates on email-verification vocab and includes email_verify", () => {
+    for (const msg of [
+      "verifica este correo",
+      "¿existe este email?",
+      "valida esta lista de correos",
+      "check if this email exists",
+      "limpia la lista antes de enviar",
+      "verifica los correos de la lista",
+      "verifica estos correos",
+      "verify these emails",
+      "check these email addresses",
+      "email_verify ana@x.mx",
+      "revisa si ana@x.mx existe",
+      "¿este correo es válido?",
+      "which of these will bounce?",
+      "cuántos rebotan de esta lista",
+      // Audit R3 W-7
+      "checa si ana@clinic.mx es real",
+      "is contacto@clinica.mx a real address?",
+      "depura la lista de correos antes del envío",
+      "tell me which emails in this list are dead",
+      "¿este correo existe o va a rebotar?",
+      "are these emails valid?",
+      "validate these email addresses please",
+      "corre email_verify sobre la lista de doctores",
+      // Audit R5 W-3
+      "¿son válidos estos correos?",
+      "quiero saber si estos correos existen antes de la campaña",
+      "puedes checar si rebotan estos correos",
+      "validate ana@clinic.mx before I send",
+      "does contacto@clinica.mx exist?",
+      "¿cuáles de estos correos van a rebotar?",
+    ]) {
+      const tools = scope(msg);
+      expect(tools, `email_verify missing for "${msg}"`).toContain("email_verify");
+    }
+    // Audit R2 W-D: ordinary uses of rebotar / dirección / revisar el correo must NOT pull an outbound-SMTP tool.
+    for (const msg of [
+      "qué hora es",
+      "el cheque rebotó",
+      "la pelota rebotó dos veces",
+      "limpia la lista de tareas",
+      "clean the list of pending items",
+      "verifica la dirección del consultorio",
+      "valida la dirección fiscal del cliente",
+      "check the address of the new office",
+      "revisa la dirección de la clínica en Polanco",
+      "revisa el correo que te mandé ayer",
+      "resume la reunión de ayer",
+      // Audit R3
+      "revisa si el correo de ayer tiene el adjunto",
+      "revisa mi correo de hoy y dime qué llegó",
+      "mándale un correo a ana@clinic.mx con la propuesta",
+      "cuántos cheques rebotaron el mes pasado",
+      "verifica que el pago se haya aplicado",
+      "check the numbers in the August report",
+      "dame la dirección de correo de Ana",
+      "archiva los correos viejos",
+      // Audit R4
+      "revisa estos correos y respóndeles",
+      "necesito emails reales de clientes en Monterrey",
+      "los correos son reales, no es spam",
+      "¿el correo existe en la carpeta de spam?",
+      "revisa los correos que llegaron anoche",
+      "valida los datos de esta lista de contactos",
+      // Audit R5 W-2
+      "are these emails valid for the invoice?",
+      "is this email valid for the newsletter signup form",
+      "these emails are valid, do not worry",
+    ]) {
+      expect(scope(msg), `email_verify wrongly active for "${msg}"`).not.toContain("email_verify");
+    }
+  });
+
   it("utility activates on file-conversion vocab and includes file_convert", () => {
     for (const msg of [
       "convert this .epub to txt",

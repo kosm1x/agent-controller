@@ -80,6 +80,8 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   ads_audit: A,
   ads_brand_dna: A,
   ads_creative_gen: NONE,
+  // email_verify: SMTP servers answer in free text (reason strings), no private data.
+  email_verify: A,
   ai_overview_track: A,
   seo_content_brief: A,
   seo_keyword_research: A,

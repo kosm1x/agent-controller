@@ -19,6 +19,7 @@ import { webSearchTool } from "../builtin/web-search.js";
 import { webReadTool } from "../builtin/web-read.js";
 import { weatherForecastTool } from "../builtin/weather.js";
 import { currencyConvertTool } from "../builtin/currency.js";
+import { emailVerifyTool } from "../builtin/email-verify.js";
 import { geocodeAddressTool } from "../builtin/geocoding.js";
 import { chartGenerateTool } from "../builtin/chart.js";
 import { rssReadTool } from "../builtin/rss.js";
@@ -232,6 +233,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   webReadTool,
   weatherForecastTool,
   currencyConvertTool,
+  emailVerifyTool,
   geocodeAddressTool,
   chartGenerateTool,
   rssReadTool,
