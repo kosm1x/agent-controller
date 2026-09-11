@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseScopeGroups,
   withDeterministicGroups,
+  CLASSIFIER_SYSTEM_PROMPT,
 } from "./scope-classifier.js";
+import { DEFAULT_SCOPE_PATTERNS } from "./scope.js";
 
 describe("parseScopeGroups", () => {
   it("parses valid JSON array", () => {
@@ -173,5 +175,49 @@ describe("SCOPE_CLASSIFIER_TIMEOUT_MS (2026-09-05: budget vs the claude-sdk floo
     const groups = await classifyScopeGroups("corre el SQL contra DENUE");
     expect(groups).not.toBeNull();
     expect(groups!.has("coding")).toBe(true);
+  });
+});
+
+// 2026-09-11 — the semantic classifier is the live path (193 semantic vs 60
+// regex-fallback turns in the prior 7 days). A scope group that is absent
+// from its prompt can never activate, whatever the regex says: `utility`
+// (weather, currency, geocode, file_convert, email_verify) had activated 0
+// times in 7 days for exactly that reason. This test pins prompt/scope
+// parity so a group cannot be born invisible again. Groups already missing
+// when the guard landed are listed explicitly — remove an entry when its
+// prompt line is added (queued for the operator in next-sessions-queue.md).
+describe("classifier prompt ↔ scope-group parity (2026-09-11)", () => {
+  const KNOWN_MISSING_FROM_PROMPT = new Set([
+    "alpha",
+    "backtest",
+    "diagram",
+    "graph",
+    "kb_ingest",
+    "market_ritual",
+    "paper",
+    "pm_alpha",
+    "pm_paper",
+    "skills",
+  ]);
+
+  it("every scope group is either described to the classifier or explicitly listed as known-missing", () => {
+    const promptGroups = new Set(
+      [...CLASSIFIER_SYSTEM_PROMPT.matchAll(/^- ([a-z_]+):/gm)].map((m) => m[1]),
+    );
+    const scopeGroups = new Set(DEFAULT_SCOPE_PATTERNS.map((p) => p.group));
+    const invisible = [...scopeGroups].filter(
+      (g) => !promptGroups.has(g) && !KNOWN_MISSING_FROM_PROMPT.has(g),
+    );
+    expect(invisible, `groups the classifier is never told about: ${invisible.join(", ")}`).toEqual([]);
+    // The allowlist must not go stale in the other direction either.
+    const fixed = [...KNOWN_MISSING_FROM_PROMPT].filter((g) => promptGroups.has(g));
+    expect(fixed, `now in the prompt — drop from KNOWN_MISSING_FROM_PROMPT: ${fixed.join(", ")}`).toEqual([]);
+  });
+
+  it("utility is described with email-verification vocabulary", () => {
+    const line = CLASSIFIER_SYSTEM_PROMPT.split("\n").find((l) => l.startsWith("- utility:")) ?? "";
+    for (const token of ["email_verify", "verifica si", "existe este correo", "bounce", "file_convert"]) {
+      expect(line, token).toContain(token);
+    }
   });
 });

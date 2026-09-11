@@ -106,7 +106,7 @@ export function withDeterministicGroups(
   return out;
 }
 
-const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
+export const CLASSIFIER_SYSTEM_PROMPT = `You are a scope classifier for Jarvis, an AI agent. Given a user message, return which capability groups are needed.
 
 GROUPS (return only the ones that apply):
 - northstar_read: reading tasks, goals, objectives, visions, NorthStar, pendientes, sync with db.mycommit
@@ -125,6 +125,7 @@ GROUPS (return only the ones that apply):
 - video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration
 - social: publish to Instagram/Facebook/TikTok/YouTube, social media posts, redes sociales
 - meta: list tools, capabilities, diagnostics, herramientas disponibles
+- utility: weather/clima, currency conversion/tipo de cambio, geocoding/coordenadas, file conversion (pdf/epub/docx/ffmpeg/pandoc, "convierte el archivo"), and EMAIL VERIFICATION — checking whether an address or a list of addresses exists / is valid / will bounce WITHOUT sending: "verifica si ana@x.mx existe", "¿existe este correo?", "valida esta lista de correos", "limpia la lista antes de enviar", "check if this email exists", "which of these will bounce", "cuáles rebotan". NOT reading/sending mail (that is google). Tools: weather_forecast, currency_convert, geocode_address, file_convert, email_verify.
 - specialty: charts, RSS, images, text humanization, dashboards, KPI, batch processing, research tools
 - research: deep analysis, study guides, podcasts, PDF analysis, document research
 - seo: SEO audits, keyword research, meta tags, schema markup (JSON-LD), rankings, SERP, PageSpeed, Core Web Vitals, content briefs, E-E-A-T, AI overviews / generative engine optimization (GEO), Open Graph, Twitter cards
@@ -150,6 +151,7 @@ RESPOND with JSON array only. No explanation. Examples:
 ["coding"]
 ["coding"]   // for "verifica y corre un query en SQL para confirmar la distribución"
 ["coding"]   // for "corre el SQL contra DENUE y dame el top 10"
+["utility"]  // for "verifica si ana@clinica.mx existe"
 []`;
 
 /**
