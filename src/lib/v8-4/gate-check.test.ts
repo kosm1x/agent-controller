@@ -4,7 +4,7 @@
  * touches manual gates, and only re-runs met gates on `rerun`.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeDatabase, initDatabase } from "../../db/index.js";
+import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
   evaluateLedger,
@@ -62,6 +62,72 @@ const fakeExec =
       timedOut: r.timedOut ?? false,
     };
   };
+
+describe("expectMatches — comparators read the last line as a number", () => {
+  it("passes and fails by the comparator, never by substring", () => {
+    expect(expectMatches("gt 0", "header\n3\n")).toBe(true);
+    expect(expectMatches("gt 0", "0")).toBe(false);
+    expect(expectMatches("gte 3", "2")).toBe(false);
+    expect(expectMatches("eq 200", "200")).toBe(true);
+    expect(expectMatches("between 2 4", "4")).toBe(true);
+    expect(expectMatches("lte 0", "0")).toBe(true);
+  });
+
+  it("a non-numeric last line never passes a comparator", () => {
+    expect(expectMatches("gt 0", "5 rows")).toBe(false);
+    expect(expectMatches("gt 0", "")).toBe(false);
+    expect(expectMatches("gt 0", "3\nerror: boom")).toBe(false);
+  });
+
+  it("regex and substring behave exactly as before", () => {
+    expect(expectMatches("/[0-9]/", "0")).toBe(true); // legacy rows still evaluate; new ones are refused at write time
+    expect(expectMatches("200", "HTTP 200 OK")).toBe(true);
+  });
+});
+
+describe("legacy ledger rows keep evaluating after the write-time rule (read path unchanged)", () => {
+  it("a row declared before 2026-09-12 with /[0-9]/ still runs and still matches", async () => {
+    // Inserted directly: declareGates would now abandon this shape.
+    getDatabase()
+      .prepare(
+        `INSERT INTO task_gates (task_id, gate_id, criterion, check_kind, check_cmd, expect, source, state)
+         VALUES ('t-legacy', 'L1', 'legacy count', 'shell', 'grep -c x f', '/[0-9]/', 'plan', 'pending')`,
+      )
+      .run();
+    const exec: CheckExecutor = async () => ({ output: "0\n", exitCode: 0, timedOut: false });
+    const v = await evaluateLedger({ taskId: "t-legacy", exec, timeoutMs: 1000 });
+    expect(v.ran).toBe(1);
+    expect(listGates("t-legacy")[0]).toMatchObject({ state: "met", evidence: "0" });
+  });
+});
+
+describe("runCheck — comparator evidence", () => {
+  it("a comparator against a non-numeric last line FAILS and says so; a numeric miss fails plainly", async () => {
+    const exec: CheckExecutor = async (cmd) => ({
+      output: cmd.includes("rows") ? "5 rows\n" : "0\n",
+      exitCode: 0,
+      timedOut: false,
+    });
+    const notNumber = await runCheck(
+      { check_cmd: "printme rows", expect: "gt 0" },
+      { timeoutMs: 1000, exec },
+    );
+    expect(notNumber.ok).toBe(false);
+    expect(notNumber.notRunnable).toBeUndefined();
+    expect(notNumber.evidence).toMatch(/^not a number: 5 rows/);
+    const miss = await runCheck(
+      { check_cmd: "printme count", expect: "gt 0" },
+      { timeoutMs: 1000, exec },
+    );
+    expect(miss.ok).toBe(false);
+    expect(miss.evidence).toBe("0 (exit 0)");
+    const hit = await runCheck(
+      { check_cmd: "printme count", expect: "lte 0" },
+      { timeoutMs: 1000, exec },
+    );
+    expect(hit).toMatchObject({ ok: true, evidence: "0" });
+  });
+});
 
 describe("runCheck", () => {
   it("a command that does not exist (the shell's not-found diagnostic) is NOT RUNNABLE — abandoned with the reason, never FAILED (task c4c6ae63, 2026-09-03)", async () => {

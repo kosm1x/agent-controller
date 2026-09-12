@@ -39,7 +39,7 @@ Respond ONLY with a JSON object:
     {
       "id": "g-1",
       "description": "what this goal achieves",
-      "completion_criteria": ["testable assertion 1", {"criterion": "testable assertion 2", "check": "shell command that proves it", "expect": "substring or /regex/ its output must contain"}],
+      "completion_criteria": ["testable assertion 1", {"criterion": "testable assertion 2", "check": "shell command that proves it", "expect": "gt 0 | gte N | lte N | lt N | eq N | neq N | between A B (the check prints the number as its last line), a substring, or a /regex/ naming a word"}],
       "parent_id": null,
       "depends_on": []
     }
@@ -50,6 +50,7 @@ Rules:
 - Top-level goals have parent_id=null and depends_on=[].
 - Use the object form of a completion criterion whenever a shell command can prove it (a test, a typecheck, a curl, a file check); plain strings for outcomes only a reader can judge.
 - A "check" must OBSERVE the artifact (read the file, query the table, curl the URL, run the test). A command whose only data source is a literal — echo, printf, true — proves nothing and is discarded; if no real command can prove the criterion, use the plain-string form.
+- An "expect" must be able to FAIL. For a count (grep -c, wc -l, COUNT(*)) use a comparator — gt 0, gte 3, eq 200 — and make the check print that number as its LAST line ('wc -l < f', not 'wc -l f'; add 2>/dev/null if the command warns; grep -c on ONE file, since several print name:count lines). gte 0 cannot fail and is refused. A /regex/ must name a word; digit-only patterns (/[0-9]/, /[1-9]/, /\d+/) are satisfied by any count, including 0, and are refused.
 - Checks run in /bin/sh on the host: only real binaries (grep, curl, sqlite3, test, jq, node, npx). Your tools (gdocs_read, gsheets_read, jarvis_file_read, web_read…) are NOT shell commands — a check that names one dies as "not found". For Google Docs/Sheets/Drive/KB deliverables use the plain-string form: the harness read-back proves every write.
 - Use depends_on to express ordering constraints between goals.
 - Keep the graph to at most 3 levels deep and 15 goals max.

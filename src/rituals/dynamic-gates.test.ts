@@ -34,6 +34,36 @@ beforeEach(() => {
 afterEach(() => closeDatabase());
 
 describe("scheduled_tasks.gates", () => {
+  it("a STORED gate whose expect can never fail comes back ABANDONED, not dropped — the live tweet ritual of 2026-09-12 (qa C1)", () => {
+    getDatabase()
+      .prepare(
+        `INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr, tools, delivery, gates)
+         VALUES ('s-live', 'MexicoNecesario — Tweet Diario', 'd', '0 13 * * *', '["tweet_post"]', 'telegram', ?)`,
+      )
+      .run(
+        JSON.stringify([
+          {
+            criterion: "tweet_post was actually invoked in THIS run",
+            id: "G1",
+            check: "./mc-ctl db \"SELECT COUNT(*) AS n FROM task_trace_events WHERE task_id='$MC_TASK_ID' AND tool='tweet_post'\"",
+            expect: "/^[1-9][0-9]*$/m",
+          },
+        ]),
+      );
+    const specs = scheduleGates(getSchedule("s-live")!);
+    expect(specs).toHaveLength(1);
+    expect(specs[0]).toMatchObject({
+      id: "G1",
+      expect: "/^[1-9][0-9]*$/m",
+      abandonReason: expect.stringMatching(/^expect cannot fail — .*names only digits/),
+    });
+    // A genuinely malformed column still degrades to ungated, as before.
+    getDatabase()
+      .prepare(`UPDATE scheduled_tasks SET gates = '[{"check":"x"}]' WHERE schedule_id = 's-live'`)
+      .run();
+    expect(scheduleGates(getSchedule("s-live")!)).toEqual([]);
+  });
+
   it("createSchedule persists validated gates; scheduleGates reads them back", () => {
     createSchedule({
       scheduleId: "s1",

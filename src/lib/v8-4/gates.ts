@@ -26,6 +26,8 @@
  */
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
+import { isUnsettleableExpect } from "./expect.js";
+import { countGateRefusal } from "./gate-metrics.js";
 import { isReadbackCheck } from "./ledger-lines.js";
 
 export type GateSource = "submission" | "ritual" | "plan" | "harness";
@@ -85,7 +87,22 @@ export function gatesMode(env: NodeJS.ProcessEnv = process.env): GatesMode {
  * Validate an untrusted gates payload (ritual column JSON, API body). Throws
  * on the first malformed entry — callers decide whether to skip or fail.
  */
-export function parseGateSpecs(raw: unknown): GateSpec[] {
+export interface ParseGateSpecsOptions {
+  /**
+   * What to do with an `expect` that can never fail (src/lib/v8-4/expect.ts).
+   * `throw` (default) is the write-time door — API, `mc-ctl gates set-ritual`.
+   * `abandon` is for re-reading a STORED payload (a schedule's gates column):
+   * the gate is kept as a visibly ABANDONED spec so the ritual still runs
+   * with a ledger row instead of ungated (qa 2026-09-12 C1).
+   */
+  onUnsettleableExpect?: "throw" | "abandon";
+}
+
+export function parseGateSpecs(
+  raw: unknown,
+  options: ParseGateSpecsOptions = {},
+): GateSpec[] {
+  const onUnsettleable = options.onUnsettleableExpect ?? "throw";
   const value: unknown =
     typeof raw === "string" ? (raw.trim() ? JSON.parse(raw) : []) : raw;
   if (value === null || value === undefined) return [];
@@ -118,6 +135,7 @@ export function parseGateSpecs(raw: unknown): GateSpec[] {
       }
       spec.check = o.check.trim();
       if (isLiteralSourcedCheck(spec.check)) {
+        countGateRefusal("spec", "literal_check");
         throw new Error(
           `gates[${i}]: check must observe the artifact — a literal-sourced command (echo/printf/true/false) proves nothing`,
         );
@@ -127,7 +145,17 @@ export function parseGateSpecs(raw: unknown): GateSpec[] {
       if (typeof o.expect !== "string" || o.expect.length > MAX_EXPECT) {
         throw new Error(`gates[${i}]: expect must be ≤${MAX_EXPECT} chars`);
       }
+      // A blank expect means "exit code decides" (unchanged); anything else
+      // must be able to fail — see src/lib/v8-4/expect.ts.
+      const why = o.expect.trim() ? isUnsettleableExpect(o.expect) : null;
+      if (why && onUnsettleable === "throw") {
+        countGateRefusal("spec", "unsettleable_expect");
+        throw new Error(`gates[${i}]: ${why}`);
+      }
       spec.expect = o.expect;
+      // Stored payload: no metric tick (it would count the same stale row on
+      // every run), the surrender shows in the ledger instead.
+      if (why) spec.abandonReason = `expect cannot fail — ${why}`;
     }
     if (o.kind !== undefined) {
       if (o.kind !== "shell" && o.kind !== "landing" && o.kind !== "manual") {
@@ -231,6 +259,7 @@ export function gateSpecsFromGoal(
       console.warn(
         `[gates] ${goalId}: plan gate ${i + 1} abandoned — check is literal-sourced, observes nothing: ${check.slice(0, 80)}`,
       );
+      countGateRefusal("plan", "literal_check");
       out.push({
         id: `${prefix}${i + 1}`,
         criterion: o.criterion.trim().slice(0, MAX_CRITERION),
@@ -239,13 +268,36 @@ export function gateSpecsFromGoal(
       });
       return;
     }
+    const expect =
+      typeof o.expect === "string" && o.expect.trim() ? o.expect : undefined;
+    // Slicing a 500+ char /regex/ would cut its closing slash and turn it into
+    // a substring that never matches (qa W3) — refuse instead.
+    const why =
+      expect === undefined
+        ? null
+        : expect.length > MAX_EXPECT
+          ? `expect is longer than ${MAX_EXPECT} chars`
+          : isUnsettleableExpect(expect);
+    if (why) {
+      // Same visible surrender as a literal check: the gate could never
+      // fail, so it is ABANDONED with the reason instead of recorded MET.
+      console.warn(
+        `[gates] ${goalId}: plan gate ${i + 1} abandoned — expect cannot fail: ${why.slice(0, 160)}`,
+      );
+      countGateRefusal("plan", "unsettleable_expect");
+      out.push({
+        id: `${prefix}${i + 1}`,
+        criterion: o.criterion.trim().slice(0, MAX_CRITERION),
+        kind: "manual",
+        abandonReason: `expect cannot fail — ${why}`,
+      });
+      return;
+    }
     out.push({
       id: `${prefix}${i + 1}`,
       criterion: o.criterion.trim().slice(0, MAX_CRITERION),
       check: check.slice(0, MAX_CHECK),
-      ...(typeof o.expect === "string" && o.expect && {
-        expect: o.expect.slice(0, MAX_EXPECT),
-      }),
+      ...(expect !== undefined && { expect }),
       kind: "shell",
     });
   });
@@ -298,6 +350,16 @@ export function declareGates(
         throw new Error(`gate id ${JSON.stringify(gateId)} is reserved for harness read-backs`);
       }
       const kind = resolveKind(spec);
+      // Structural floor: whatever producer reaches this door, a shell gate
+      // whose expect can never fail lands ABANDONED, never pending → MET.
+      let abandonReason = spec.abandonReason;
+      if (!abandonReason && kind === "shell" && spec.expect?.trim()) {
+        const why = isUnsettleableExpect(spec.expect);
+        if (why) {
+          countGateRefusal("declare", "unsettleable_expect");
+          abandonReason = `expect cannot fail — ${why}`;
+        }
+      }
       const info = insert.run({
         taskId,
         gateId,
@@ -315,8 +377,8 @@ export function declareGates(
             : null,
         expect: kind === "shell" ? (spec.expect ?? null) : null,
         source,
-        state: spec.abandonReason ? "abandoned" : "pending",
-        abandonReason: spec.abandonReason?.slice(0, MAX_EVIDENCE) ?? null,
+        state: abandonReason ? "abandoned" : "pending",
+        abandonReason: abandonReason?.slice(0, MAX_EVIDENCE) ?? null,
       });
       if (info.changes > 0) {
         inserted++;

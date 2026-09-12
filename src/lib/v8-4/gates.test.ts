@@ -4,6 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, initDatabase } from "../../db/index.js";
+import { gateRefusalsTotal } from "./gate-metrics.js";
 import {
   abandonPlanGatesForGoals,
   declareGates,
@@ -28,6 +29,11 @@ beforeEach(() => {
 afterEach(() => {
   closeDatabase();
 });
+
+async function refusals(source: string, reason: string): Promise<number> {
+  const m = await gateRefusalsTotal.get();
+  return m.values.find((v) => v.labels.source === source && v.labels.reason === reason)?.value ?? 0;
+}
 
 describe("gatesMode", () => {
   it("defaults to off and treats unknown values as off (dormant is the safe direction)", () => {
@@ -66,6 +72,29 @@ describe("parseGateSpecs", () => {
     expect(() => parseGateSpecs([{ criterion: "c", check: "" }])).toThrow(
       /check/,
     );
+  });
+
+  it("refuses an expect that cannot fail, names the fix, and keeps the grammar + blank expect", () => {
+    expect(() =>
+      parseGateSpecs([{ criterion: "c", check: "grep -c x f", expect: "/[0-9]/" }]),
+    ).toThrow(/names only digits.*gt 0/);
+    expect(() =>
+      parseGateSpecs([{ criterion: "c", check: "wc -l f", expect: "/^[1-9][0-9]*$/m" }]),
+    ).toThrow(/names only digits/);
+    expect(() =>
+      parseGateSpecs([{ criterion: "c", check: "wc -l f", expect: "gte ten" }]),
+    ).toThrow(/not a test/);
+    expect(
+      parseGateSpecs([
+        { criterion: "c", check: "grep -c x f", expect: "gt 0" },
+        { criterion: "d", check: "curl -s u", expect: "/[0-9a-f]{7}/" },
+        { criterion: "e", check: "test -f f", expect: "" },
+      ]),
+    ).toEqual([
+      { criterion: "c", check: "grep -c x f", expect: "gt 0" },
+      { criterion: "d", check: "curl -s u", expect: "/[0-9a-f]{7}/" },
+      { criterion: "e", check: "test -f f", expect: "" },
+    ]);
   });
 });
 
@@ -360,6 +389,104 @@ describe("gateSpecsFromGoal", () => {
     ]);
     expect(gateSpecsFromGoal("g", undefined)).toEqual([]);
     expect(gateSpecsFromGoal("g", { gates: "nope" })).toEqual([]);
+  });
+
+  it("abandons a plan gate whose expect cannot fail (live ledger 2026-09-12: /[0-9]/ on grep -c was MET by 0) and keeps comparators", () => {
+    const specs = gateSpecsFromGoal("g-7", {
+      gates: [
+        { criterion: "model output present", check: "grep -c 'MODEL OUTPUT' w37.md", expect: "/[0-9]/" },
+        { criterion: "model output present", check: "grep -c 'MODEL OUTPUT' w37.md", expect: "gt 0" },
+        { criterion: "titles exist", check: "grep -h '^title' w3*.md", expect: "/[1-9]/" },
+        { criterion: "blank expect still means exit code", check: "test -f w37.md", expect: "  " },
+        { criterion: "oversize regex", check: "grep x f", expect: "/" + "a".repeat(600) + "/" },
+      ],
+    });
+    expect(specs).toEqual([
+      {
+        id: "g-7.1",
+        criterion: "model output present",
+        kind: "manual",
+        abandonReason: expect.stringMatching(/^expect cannot fail — expect \/\[0-9\]\/ names only digits/),
+      },
+      { id: "g-7.2", criterion: "model output present", check: "grep -c 'MODEL OUTPUT' w37.md", expect: "gt 0", kind: "shell" },
+      {
+        id: "g-7.3",
+        criterion: "titles exist",
+        kind: "manual",
+        abandonReason: expect.stringMatching(/names only digits/),
+      },
+      { id: "g-7.4", criterion: "blank expect still means exit code", check: "test -f w37.md", kind: "shell" },
+      {
+        id: "g-7.5",
+        criterion: "oversize regex",
+        kind: "manual",
+        abandonReason: "expect cannot fail — expect is longer than 500 chars",
+      },
+    ]);
+    // The abandoned row lands in the ledger as a visible surrender, never MET.
+    expect(declareGates("t-expect", specs, "plan")).toBe(5);
+    const rows = listGates("t-expect");
+    expect(rows.map((r) => [r.gate_id, r.state])).toEqual([
+      ["g-7.1", "abandoned"],
+      ["g-7.2", "pending"],
+      ["g-7.3", "abandoned"],
+      ["g-7.4", "pending"],
+      ["g-7.5", "abandoned"],
+    ]);
+    expect(rows[0]!.abandon_reason).toMatch(/expect cannot fail/);
+    // Verdict level: abandoned rows neither pass nor demote; pending ones keep it unverified.
+    expect(ledgerVerdict(rows)).toMatchObject({ verdict: "unverified", met: 0, failed: 0 });
+    // Pre-existing semantics, now reached more often: a ledger whose ONLY gates were
+    // refused reports met with met:0 — pinned so a change here is deliberate.
+    expect(ledgerVerdict(rows.filter((r) => r.state === "abandoned"))).toMatchObject({
+      verdict: "met",
+      met: 0,
+    });
+  });
+
+  it("declareGates is the floor: a producer that skips validation still cannot land a can't-fail expect as pending", async () => {
+    const before = await refusals("declare", "unsettleable_expect");
+    expect(
+      declareGates(
+        "t-floor",
+        [
+          { criterion: "raw", check: "grep -c x f", expect: "/[0-9]/" },
+          { criterion: "fine", check: "grep -c x f", expect: "gt 0" },
+        ],
+        "submission",
+      ),
+    ).toBe(2);
+    expect(listGates("t-floor").map((r) => [r.gate_id, r.state])).toEqual([
+      ["G1", "abandoned"],
+      ["G2", "pending"],
+    ]);
+    expect(listGates("t-floor")[0]!.abandon_reason).toMatch(/expect cannot fail/);
+    expect(await refusals("declare", "unsettleable_expect")).toBe(before + 1);
+  });
+
+  it("the refusal counter ticks at the write-time doors, not on a stored re-parse", async () => {
+    const specBefore = await refusals("spec", "unsettleable_expect");
+    const planBefore = await refusals("plan", "unsettleable_expect");
+    expect(() =>
+      parseGateSpecs([{ criterion: "c", check: "wc -l f", expect: "/[1-9]/" }]),
+    ).toThrow();
+    expect(await refusals("spec", "unsettleable_expect")).toBe(specBefore + 1);
+    gateSpecsFromGoal("g-m", { gates: [{ criterion: "c", check: "wc -l f", expect: "/[1-9]/" }] });
+    expect(await refusals("plan", "unsettleable_expect")).toBe(planBefore + 1);
+    // Stored payload (a schedule's gates column) degrades to an abandoned spec, silently for the metric.
+    const stored = parseGateSpecs(
+      [{ criterion: "c", check: "wc -l f", expect: "/[1-9]/" }],
+      { onUnsettleableExpect: "abandon" },
+    );
+    expect(stored).toEqual([
+      {
+        criterion: "c",
+        check: "wc -l f",
+        expect: "/[1-9]/",
+        abandonReason: expect.stringMatching(/^expect cannot fail/),
+      },
+    ]);
+    expect(await refusals("spec", "unsettleable_expect")).toBe(specBefore + 1);
   });
 
   it("produced ids are declarable (id charset) even for odd goal ids", () => {

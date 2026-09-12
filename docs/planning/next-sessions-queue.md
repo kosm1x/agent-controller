@@ -1263,6 +1263,25 @@ Jarvis answered "verifica si <addr>@gmail.com existe" with a shell `dig` and "no
 - ~~eval:gate on the new description~~ — PASS 2026-09-11 (66.95 vs 65.75 incumbent, threshold 63.75, 408 cases, $5.67; also covers the classifier `utility` line). Still optional: `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
 - Optional: one SMTP session per domain for up to 5 RCPT TO (halves connections on same-domain batches; some hosts count RCPTs, so gate behind a rule).
 
+## 2026-09-12b — settleable gate `expect` (YOINK idea adopted; spec §15)
+
+Shipped: comparator grammar (`gt 0 · gte N · eq N · between A B`, last line must be a bare number) + write-time refusal of expectations that cannot fail (digit-only regex, `0`, failure-output matches, look-alikes) at the API/CLI door (throw), the plan door (ABANDONED row) and the `declareGates` floor; stored ritual payloads degrade to an ABANDONED spec, never to "ungated". Replay: 34 of the 61 predicate-bearing live rows would be refused, 0 false refusals. Plan `docs/planning/gate-settleable-expect-plan.md`.
+
+### Operator step (do once after deploy)
+- **Re-set the tweet ritual's gate** — until then every nightly run of "MexicoNecesario — Tweet Diario" carries one ABANDONED row (`expect cannot fail`) instead of a graded one:
+  `cd /root/claude/mission-control && ./mc-ctl gates set-ritual 9e06a237-a13d-47fe-99a1-a903005429a2 docs/planning/gates/mexiconecesario-tweet-diario.gates.json`
+  (same check, `expect: gt 0`; validated through `scripts/gates-validate.ts`). Verify next morning: `sqlite3 -readonly data/mc.db "SELECT state, evidence, abandon_reason FROM task_gates WHERE source='ritual' ORDER BY created_at DESC LIMIT 1"` → `met` with a numeric evidence, or `failed` on a no-tweet day.
+
+### Operator decision
+- **All-refused ledger reports `met` with `met: 0`** (pre-existing `ledgerVerdict` semantics, now pinned in `gates.test.ts`). A plan goal whose only gates were refused therefore completes "met". Options: leave (abandoned ≠ failed doctrine) · treat `met: 0 && abandoned > 0` as `unverified` (would block promotion on such goals).
+
+### Queued follow-ups
+- **Labelled-count residual**: `/n: [0-9]+/` names a literal and passes the probe, yet matches `n: 0`. 0 live instances. If the planner ever writes it, extend the failure-output set with labelled zero shapes or require comparators whenever the check is a count (`grep -c`, `wc -l`, `COUNT(`).
+- **Head-keeping output cap**: `runShellCheck` keeps the first 256 KB, so a comparator whose check prints the number after >256 KB of noise FAILS (`not a number:` evidence). Keep the tail when truncating, or leave it and rely on the prompt ("print the number last").
+- **`schedule_task` has no `gates` parameter** — `createSchedule`'s gates write path has no caller; ritual gates are CLI-only. Decide whether Jarvis should be able to author ritual gates (then its description must carry the grammar).
+- **Watch the counter** `mc_gate_refusals_total{source,reason}` for a week; a steady `plan/unsettleable_expect` rate after the prompt change means the planner is not reading the rule.
+- Optional: extend the corpus replay to `scheduled_tasks.gates` (today it replays `task_gates` only; the ritual column was the R1 Critical).
+
 ## 2026-09-12 — agents-best-practices gap bundle (8 gaps shipped; operator decisions + queued follow-ups)
 
 Bundle: `685d313` scanner set from Rule-of-Two · `a4a55d0` termination_reason + cache gauges · `5192508` not-for ratchet · `54c64bc` memory_forget · `fd0c2e1` durable approvals · `de3d7e7` variant fingerprint · `62517d2` safety invariants · `641f09a` R1 folds · `1f03a4f` R2 folds · `01f8d7a` memory source without Hindsight (post-deploy). DEPLOYED PID 2725281, registry 234. Review memo: memory `reference_agents_best_practices`. Skill installed at `~/.claude/skills/agents-best-practices` (`git pull` to refresh).

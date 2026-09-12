@@ -201,12 +201,14 @@ export function createSchedule(params: CreateScheduleParams): void {
 /**
  * V8.4: a schedule's acceptance gates, or [] when unset/malformed (a bad
  * gates column must never stop the ritual from running — it runs ungated
- * and the parse error is logged once per submission).
+ * and the parse error is logged once per submission). A stored gate whose
+ * `expect` can never fail (rule added 2026-09-12) is NOT a parse error: it
+ * comes back as an ABANDONED spec, so the run keeps a visible ledger row.
  */
 export function scheduleGates(schedule: ScheduledTaskRow): GateSpec[] {
   if (!schedule.gates) return [];
   try {
-    return parseGateSpecs(schedule.gates);
+    return parseGateSpecs(schedule.gates, { onUnsettleableExpect: "abandon" });
   } catch (err) {
     console.error(
       `[schedules] "${schedule.name}": invalid gates column — running ungated: ${errMsg(err)}`,

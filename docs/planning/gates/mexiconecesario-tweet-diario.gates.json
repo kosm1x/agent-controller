@@ -1,0 +1,8 @@
+[
+  {
+    "id": "G1",
+    "criterion": "tweet_post was actually invoked in THIS run (a task_trace_events row for this task) — on a day with no scheduled tweet, ABANDON this gate with the reason instead of skipping silently",
+    "check": "./mc-ctl db \"SELECT COUNT(*) AS n FROM task_trace_events WHERE task_id='$MC_TASK_ID' AND tool='tweet_post'\"",
+    "expect": "gt 0"
+  }
+]

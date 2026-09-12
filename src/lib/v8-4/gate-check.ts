@@ -19,7 +19,6 @@
  * so a pathological pattern cannot wedge the event loop (qa C2).
  */
 import { spawn } from "node:child_process";
-import vm from "node:vm";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
 import { validateShellCommand } from "../../tools/builtin/shell.js";
@@ -35,6 +34,14 @@ import {
   type GateRow,
   type LedgerVerdict,
 } from "./gates.js";
+import {
+  compareNumber,
+  isComparatorExpect,
+  lastNumber,
+  parseExpect,
+  safeRegexTest,
+} from "./expect.js";
+export { safeRegexTest } from "./expect.js";
 import { probeLanding, type LandingExec } from "./landing.js";
 import { isReadbackRow, runReadback } from "./readback.js";
 
@@ -44,7 +51,6 @@ export const DEFAULT_LEDGER_BUDGET_MS = 120_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 /** EXPECT is matched against the LAST 64KB of output — the deciding lines live there. */
 const MATCH_WINDOW_BYTES = 64 * 1024;
-const REGEX_DEADLINE_MS = 250;
 
 export interface CheckOutcome {
   ok: boolean;
@@ -84,40 +90,25 @@ export function undefinedShellVars(
   return [...names];
 }
 
-const NESTED_QUANTIFIER_RE = /\([^)]*[+*}][^)]*\)\s*[+*{]|[+*]\s*[+*]/;
-
 /**
- * Regex test with a hard deadline: compiled and executed inside a fresh vm
- * context whose `timeout` terminates a runaway match. Any throw — bad
- * pattern, timeout — is a non-match, never a hang.
+ * Comparator (`gte N`, `between A B`) ⇒ the last non-empty line must be a bare
+ * number that satisfies it; `/regex/flags` ⇒ RegExp test; anything else ⇒
+ * substring match. Regex and substring run on the tail window.
  */
-export function safeRegexTest(
-  pattern: string,
-  flags: string,
-  haystack: string,
-): boolean {
-  if (NESTED_QUANTIFIER_RE.test(pattern)) return false;
-  try {
-    const result: unknown = vm.runInNewContext(
-      "new RegExp(pattern, flags).test(haystack)",
-      { pattern, flags, haystack },
-      { timeout: REGEX_DEADLINE_MS },
-    );
-    return result === true;
-  } catch {
-    return false;
-  }
-}
-
-/** `/regex/flags` ⇒ RegExp test; anything else ⇒ substring match. Both on the tail window. */
 export function expectMatches(expect: string, output: string): boolean {
+  const parsed = parseExpect(expect);
+  if (parsed.kind === "cmp" || parsed.kind === "between") {
+    const n = lastNumber(output);
+    return n !== null && compareNumber(parsed, n);
+  }
   const window =
     output.length > MATCH_WINDOW_BYTES
       ? output.slice(-MATCH_WINDOW_BYTES)
       : output;
-  const rx = expect.match(/^\/(.+)\/([a-z]*)$/);
-  if (rx) return safeRegexTest(rx[1], rx[2], window);
-  return window.includes(expect);
+  if (parsed.kind === "regex") {
+    return safeRegexTest(parsed.pattern, parsed.flags, window);
+  }
+  return window.includes(parsed.text);
 }
 
 /** The last two non-empty lines, joined and secret-redacted — enough to see WHY, never a log dump. */
@@ -256,9 +247,18 @@ export async function runCheck(
     ? expectMatches(row.expect, res.output)
     : res.exitCode === 0;
   const tail = evidenceTail(res.output);
+  // A comparator against a non-numeric last line is a FAILED gate that says
+  // so — never a pass, never a silent skip (the fix is in the check command).
+  const notANumber =
+    !ok &&
+    !!row.expect &&
+    isComparatorExpect(row.expect) &&
+    lastNumber(res.output) === null;
   return {
     ok,
-    evidence: ok ? tail : `${tail} (exit ${res.exitCode ?? "?"})`,
+    evidence: ok
+      ? tail
+      : `${notANumber ? "not a number: " : ""}${tail} (exit ${res.exitCode ?? "?"})`,
     exitCode: res.exitCode,
     timedOut: false,
   };
