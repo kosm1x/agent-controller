@@ -1,6 +1,6 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-09-12 (`memory_forget` added, CORE + confirm-gated; every tool description now passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` 2026-09-11 + `memory_forget` = 233)
+> **Last updated**: 2026-09-12 (`memory_forget` added, CORE + confirm-gated; every tool description now passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` 2026-09-11 + `memory_kg_query` & `memory_forget` 2026-09-12 = 234; the memory source registers its KG/pgvector tools without Hindsight since `01f8d7a`)
 > **Source of truth for tool registration**: `src/tools/sources/builtin.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
