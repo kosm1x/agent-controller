@@ -1,6 +1,6 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-09-11 (email_verify added; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` = 232)
+> **Last updated**: 2026-09-12 (`memory_forget` added, CORE + confirm-gated; every tool description now passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` 2026-09-11 + `memory_forget` = 233)
 > **Source of truth for tool registration**: `src/tools/sources/builtin.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
@@ -207,7 +207,8 @@ Signals ingested from 8 sources, queryable.
 - `web_search` / `web_read` / `exa_search` (also core)
 - `gemini_research` — Gemini-powered research with URL + local file support
 - `output_citation` — structured citation output
-- `memory_search` / `memory_store` — Hindsight memory
+- `memory_search` / `memory_store` — Hindsight memory (gated by `hasMemory`, false in production while Hindsight is off)
+- `memory_forget` — 2026-09-12, CORE (deferred), confirm-gated: invalidates the active knowledge-graph facts of a subject (temporal, history kept) and/or deletes ONE correction-loop entry `corrections/<12 hex>.md` from the pgvector KB via `pgDelete`; NOT for personal facts (`user_fact_delete`) or KB files (`jarvis_file_delete`)
 
 ### Browser automation (scope group: `browser`)
 

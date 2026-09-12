@@ -1263,3 +1263,23 @@ Jarvis answered "verifica si <addr>@gmail.com existe" with a shell `dig` and "no
 - ~~eval:gate on the new description~~ — PASS 2026-09-11 (66.95 vs 65.75 incumbent, threshold 63.75, 408 cases, $5.67; also covers the classifier `utility` line). Still optional: `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
 - Optional: one SMTP session per domain for up to 5 RCPT TO (halves connections on same-domain batches; some hosts count RCPTs, so gate behind a rule).
 
+## 2026-09-12 — agents-best-practices gap bundle (8 gaps shipped; operator decisions + queued follow-ups)
+
+Bundle: `685d313` scanner set from Rule-of-Two · `a4a55d0` termination_reason + cache gauges · `5192508` not-for ratchet · `54c64bc` memory_forget · `fd0c2e1` durable approvals · `de3d7e7` variant fingerprint · `62517d2` safety invariants · `641f09a` R1 folds · `1f03a4f` R2 folds. Review memo: memory `reference_agents_best_practices`. Skill installed at `~/.claude/skills/agents-best-practices` (`git pull` to refresh).
+
+### Operator decisions
+- **April tuning variant is now BLOCKED at boot** (no `code_fingerprint`; structural-safety default). Effect: the regex-fallback scope path runs the code patterns for every group (the 14 April regexes that replaced current code patterns across 11 groups — `coding` 3→1, `google` 2→1, `northstar_write` 7→6 — are gone). Options: (a) leave it (recommended; `tune_runs` shows 0 wins since 09-08), (b) `TUNING_ALLOW_LEGACY_VARIANTS=true` in the unit drop-in to run it unverified, (c) regenerate: the overnight loop now seeds from `CODE_SCOPE_PATTERNS`, so the next winning run produces a fingerprinted variant. Do (c) only after (a) has run a few days — a regenerated variant before `641f09a` would have laundered the April regexes.
+- **`activateBestVariant()` runs inside `initDatabase` BEFORE any tool source registers** (`src/index.ts:98` vs `:274`), so `toolDescriptionOverrides` have never applied at boot — only scope patterns are live. Decide: move activation after `sourceManager` (makes description tuning real for the first time — then it needs its own fingerprint) or drop the `tool_description` surface from the tuner. Verified 2026-09-12, documented in `activation.ts`, not changed.
+- **`memory_search` / `memory_store` / `memory_reflect` are unreachable in production**: gated on `hasMemory = backend === "hindsight"`, false since `HINDSIGHT_ENABLED=false`; 0 calls in 9,975 traced tool rows. Either gate on the SQLite backend too or accept that the KG/pgvector paths (`memory_kg_query`, `memory_forget`, tool search) are the memory surface.
+
+### Queued follow-ups
+- **Post-activation observed probe** (gap 2b): after a variant activates, run N frozen `tune_test_cases` against the LIVE registry (reuse `runEvaluation` + `compareToBaseline`); composite below baseline − ε ⇒ `invalidateVariant` + restore defaults + Telegram line. Needs a ritual slot (boot must not run inference).
+- **Held-out split** (gap 2c): tag 20 % of mined cases `holdout=1`, exclude from the meta-agent prompt, score the activation decision on them only.
+- **LLM-behaviour safety cases for the billed gate** (gap 4b): injection-compliance through `web_read`, approval-bypass phrasing on a HIGH tool, compaction-preserves-pending-confirmation — scored cases, separate 100 % threshold. The harness invariants are already deterministic in `safety-invariants.test.ts`.
+- **mc-prometheus alert rule** for `mc_inference_cache_read_ratio_24h{model=~"claude.*"} == 0` for > 2 h.
+- **Scanner parity hole**: `isUntrustedTool` resolves by NAME (`resolveRuleOfTwo({ name })`), ignoring a tool's own `untrustedInputHint`. Zero impact today (only `memory_forget` declares one, `false`, consistent with its row); a registry-aware lookup closes it.
+- **claude-sdk tool-error frame is unsanitized**: `claude-sdk.ts` catch returns `Error: ${msg}` raw while the openai path sanitizes after the catch. Minor; align.
+- **97 legacy tools without a not-for section** (`description-lint.test.ts` `LEGACY_WITHOUT_NOT_FOR`): backfill by family when a tool is touched (market ×13, video ×14, wp ×9, vps ×4, learning ×5 …). Skills and MCP tools are outside the static lint by design.
+- **`task_trace_events.attrs` truncation** replaces the whole object with `{truncated}` past 2,000 chars — `termination_reason` is lost on the longest events. Keep a reserved-keys prefix when truncating.
+- Optional: `npx tsx scripts/validate-tool-search.ts --run` now that `memory_forget` is in the deferred catalog.
+

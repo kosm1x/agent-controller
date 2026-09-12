@@ -241,6 +241,7 @@ Jarvis-authored conversation memory, LIVE since PR #27/#28 (migration v3: `jme_t
 4. **Make it reachable.** A `deferred` tool is visible only when its scope group is active, and the group is chosen by the SEMANTIC classifier (`src/messaging/scope-classifier.ts`): the group must have a `- group:` line in `CLASSIFIER_SYSTEM_PROMPT` AND be in `VALID_GROUPS` (parity test `scope-classifier.test.ts` enforces both); the regex in `scope.ts` only runs when the classifier fails. Then verify with ONE live chat turn and read `[router] Scope groups (semantic): …` in the journal — the registry count proves registration, not reachability (2026-09-11: `email_verify` sat unreachable behind three gates, incl. the tuning variant that replaced the scope patterns at boot until `9d356c5`).
 5. Test with a real model call to verify the description guides correct usage; prompt/description changes go through `npm run eval:gate -- --run`
 6. Add test in `src/tools/registry.test.ts`
+7. **Say when NOT to use it.** `src/tools/description-lint.test.ts` fails a new tool whose description has no `DO NOT USE WHEN:` (or `NOT FOR:` / `use X instead`) section, and fails any not-for line that names a sibling that is not a registered tool (2026-09-12: a backfilled `northstar_index` fuzzy-repaired into the destructive `northstar_sync`). The legacy list in that file only shrinks — backfill a tool, delete its name.
 
 ### Adding a new tool source
 
