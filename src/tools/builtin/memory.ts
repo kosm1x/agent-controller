@@ -15,7 +15,10 @@ import {
   queryTriples,
   getEntityHistory,
   formatTriples,
+  invalidateTriple,
 } from "../../memory/knowledge-graph.js";
+import { defineTool } from "../define-tool.js";
+import { isPgvectorEnabled, pgDelete } from "../../db/pgvector.js";
 
 const BANK_MAP: Record<string, MemoryBank> = {
   operational: "mc-operational",
@@ -338,3 +341,112 @@ export const memoryKgQueryTool: Tool = {
     return `Knowledge graph for "${subject}" (${triples.length} facts):\n${formatTriples(triples)}`;
   },
 };
+
+// ---------------------------------------------------------------------------
+// memory_forget (2026-09-12, agents-best-practices gap 7)
+// ---------------------------------------------------------------------------
+
+/** Only correction-loop entries may be deleted here; other KB paths go through jarvis_file_delete. */
+export const CORRECTION_PATH_RE = /^corrections\/[0-9a-f]{12}\.md$/;
+
+export const memoryForgetTool: Tool = defineTool({
+  name: "memory_forget",
+  description: `Retract a wrong memory: invalidate the ACTIVE knowledge-graph facts about a subject and/or delete a rephrase-correction entry from the KB so it is never injected again.
+
+USE WHEN:
+- The user says a remembered fact is wrong ("eso no es así", "olvida eso", "borra ese recuerdo") and names the subject.
+- A correction stored by the correction loop (path corrections/<hash>.md) is wrong. Until now removing one needed a manual database delete.
+
+DO NOT USE WHEN:
+- The fact is a personal fact about the user (name, birthday, preference) → use user_fact_delete.
+- The user wants to delete a KB note or file → use jarvis_file_delete.
+- The fact is outdated rather than wrong → use memory_store with the new value; the graph supersedes the old one automatically.
+
+Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept). Correction deletion is permanent. Always confirm with the user first.`,
+  parameters: {
+    type: "object",
+    properties: {
+      subject: {
+        type: "string",
+        description:
+          "Knowledge-graph subject whose active facts to invalidate (case-insensitive, e.g. 'cuatro flor'). Add predicate to narrow to one relation.",
+      },
+      predicate: {
+        type: "string",
+        description:
+          "Optional relation filter (e.g. 'status_is'). Without it EVERY active fact about the subject is invalidated.",
+      },
+      correction_path: {
+        type: "string",
+        description:
+          "KB path of the correction entry to delete, exactly 'corrections/<12 hex chars>.md' as shown by memory_search.",
+      },
+      reason: {
+        type: "string",
+        description: "One line saying why the memory is wrong. Logged with the retraction.",
+      },
+    },
+    required: ["reason"],
+  },
+  requiresConfirmation: true,
+  riskTier: "high",
+  deferred: true,
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
+  untrustedInputHint: false,
+  sensitiveAccessHint: true,
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const subject = typeof args.subject === "string" ? args.subject.trim() : "";
+    const predicate =
+      typeof args.predicate === "string" && args.predicate.trim()
+        ? args.predicate.trim()
+        : undefined;
+    const correctionPath =
+      typeof args.correction_path === "string" ? args.correction_path.trim() : "";
+    const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+
+    if (!subject && !correctionPath) {
+      return JSON.stringify({
+        error: "Provide subject (knowledge-graph facts) and/or correction_path (KB correction entry).",
+      });
+    }
+    if (correctionPath && !CORRECTION_PATH_RE.test(correctionPath)) {
+      return JSON.stringify({
+        error: `correction_path must match corrections/<12 hex>.md — got '${correctionPath.slice(0, 80)}'. Other KB paths: use jarvis_file_delete.`,
+      });
+    }
+
+    const result: Record<string, unknown> = { reason };
+
+    if (subject) {
+      const active = queryTriples({ subject, predicate, activeOnly: true, limit: 200 });
+      for (const t of active) invalidateTriple(t.id);
+      result.subject = subject;
+      if (predicate) result.predicate = predicate;
+      result.invalidated = active.length;
+      result.invalidated_facts = active
+        .slice(0, 20)
+        .map((t) => `${t.subject} ${t.predicate} ${t.object}`);
+    }
+
+    if (correctionPath) {
+      if (!isPgvectorEnabled()) {
+        result.correction_deleted = false;
+        result.correction_error = "pgvector KB is not enabled in this deployment";
+      } else {
+        const ok = await pgDelete(correctionPath);
+        result.correction_path = correctionPath;
+        result.correction_deleted = ok;
+        if (!ok) result.correction_error = "delete request failed (see logs)";
+      }
+    }
+
+    console.log(
+      `[memory_forget] ${subject ? `subject=${subject} invalidated=${String(result.invalidated)}` : ""}${correctionPath ? ` correction=${correctionPath} deleted=${String(result.correction_deleted)}` : ""} reason=${reason.slice(0, 80)}`,
+    );
+    return JSON.stringify(result);
+  },
+});

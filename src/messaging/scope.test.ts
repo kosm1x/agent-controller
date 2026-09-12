@@ -2408,13 +2408,14 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
     }
   });
 
-  it("memory tools are gated by hasMemory (3 tools, not 2 — pre-fix off-by-one)", () => {
+  it("memory tools are gated by hasMemory (4 tools: search/store/reflect/forget)", () => {
     const noMemory = getAllAvailableTools({ ...ALL_ON, hasMemory: false });
     const withMemory = getAllAvailableTools(ALL_ON);
-    expect(withMemory.size - noMemory.size).toBe(3);
+    expect(withMemory.size - noMemory.size).toBe(4);
     expect(withMemory.has("memory_search")).toBe(true);
     expect(withMemory.has("memory_store")).toBe(true);
     expect(withMemory.has("memory_reflect")).toBe(true);
+    expect(withMemory.has("memory_forget")).toBe(true);
   });
 
   it("CRM is in the universe when hasCrm=true (was missing from old fullCount)", () => {
@@ -2433,11 +2434,12 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
       hasCrm: false,
     });
     const max = getAllAvailableTools(ALL_ON);
-    // Gated contributions: GOOGLE_TOOLS + WORDPRESS_TOOLS + CRM_TOOLS_SCOPE + 3
-    // memory tools. WordPress also adds humanize_text but that is unconditional
-    // in the universe (already in min), so the delta does NOT include it.
+    // Gated contributions: GOOGLE_TOOLS + WORDPRESS_TOOLS + CRM_TOOLS_SCOPE + 4
+    // memory tools (search/store/reflect/forget — 2026-09-12). WordPress also
+    // adds humanize_text but that is unconditional in the universe (already
+    // in min), so the delta does NOT include it.
     const expectedDelta =
-      GOOGLE_TOOLS.length + WORDPRESS_TOOLS.length + CRM_TOOLS_SCOPE.length + 3;
+      GOOGLE_TOOLS.length + WORDPRESS_TOOLS.length + CRM_TOOLS_SCOPE.length + 4;
     expect(max.size - min.size).toBe(expectedDelta);
   });
 

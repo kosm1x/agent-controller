@@ -1546,7 +1546,12 @@ export function scopeToolsForMessage(
     tools.push(...SKILL_DISPATCH_TOOLS);
   }
   if (options.hasMemory) {
-    tools.push("memory_search", "memory_store", "memory_reflect");
+    tools.push(
+      "memory_search",
+      "memory_store",
+      "memory_reflect",
+      "memory_forget",
+    );
   }
 
   // Deduplicate: multiple scope groups can push the same tool
@@ -1637,6 +1642,7 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     all.add("memory_search");
     all.add("memory_store");
     all.add("memory_reflect");
+    all.add("memory_forget");
   }
   universeCache.set(cacheKey, all);
   return all;

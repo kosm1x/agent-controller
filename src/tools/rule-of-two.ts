@@ -204,6 +204,7 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   memory_kg_query: B,
   memory_search: B,
   memory_store: B,
+  memory_forget: B,
   memory_reflect: B,
   user_fact_set: B,
   user_fact_list: B,

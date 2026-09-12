@@ -13,7 +13,7 @@ export class MemoryToolSource implements ToolSource {
   readonly manifest: ToolSourceManifest = {
     name: "memory",
     version: "1.0.0",
-    description: "Hindsight memory tools (search, store, reflect)",
+    description: "Hindsight memory tools (search, store, reflect, kg_query, forget)",
   };
 
   async initialize(): Promise<void> {
@@ -26,6 +26,7 @@ export class MemoryToolSource implements ToolSource {
       memoryStoreTool,
       memoryReflectTool,
       memoryKgQueryTool,
+      memoryForgetTool,
     } = await import("../builtin/memory.js");
 
     const tools = [
@@ -33,6 +34,7 @@ export class MemoryToolSource implements ToolSource {
       memoryStoreTool,
       memoryReflectTool,
       memoryKgQueryTool,
+      memoryForgetTool,
     ];
     for (const tool of tools) {
       registry.register(tool);
