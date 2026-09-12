@@ -203,7 +203,13 @@ export async function runCheck(
       timedOut: false,
     };
   }
-  const missingVars = undefinedShellVars(row.check_cmd);
+  // The child shell always carries MC_TASK_ID (injected at spawn); the guard
+  // must see the same, or every check that names it is abandoned before it
+  // runs — the tweet ritual's gate was, nightly, 2026-09-04 → 09-11.
+  const missingVars = undefinedShellVars(row.check_cmd, {
+    ...process.env,
+    MC_TASK_ID: opts.taskId ?? "",
+  });
   if (missingVars.length > 0) {
     return {
       ok: false,

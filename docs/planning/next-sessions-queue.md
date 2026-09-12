@@ -1270,7 +1270,7 @@ Shipped: comparator grammar (`gt 0 · gte N · eq N · between A B`, last line m
 ### Operator step (do once after deploy)
 - **Re-set the tweet ritual's gate** — until then every nightly run of "MexicoNecesario — Tweet Diario" carries one ABANDONED row (`expect cannot fail`) instead of a graded one:
   `cd /root/claude/mission-control && ./mc-ctl gates set-ritual 9e06a237-a13d-47fe-99a1-a903005429a2 docs/planning/gates/mexiconecesario-tweet-diario.gates.json`
-  (same check, `expect: gt 0`; validated through `scripts/gates-validate.ts`). Verify next morning: `sqlite3 -readonly data/mc.db "SELECT state, evidence, abandon_reason FROM task_gates WHERE source='ritual' ORDER BY created_at DESC LIMIT 1"` → `met` with a numeric evidence, or `failed` on a no-tweet day.
+  DONE by the operator 17:5x UTC 09-12. **The gate was ALSO dead for another reason** — the 09-03 `undefinedShellVars` guard abandoned it nightly since 09-04 (`$MC_TASK_ID` read from `process.env`, injected only into the child); fixed the same evening, needs the deploy below. Verify next morning: `sqlite3 -readonly data/mc.db "SELECT state, evidence, abandon_reason FROM task_gates WHERE source='ritual' ORDER BY created_at DESC LIMIT 1"` → `met` with a numeric evidence, or `failed` on a no-tweet day.
 
 ### Operator decision
 - **All-refused ledger reports `met` with `met: 0`** (pre-existing `ledgerVerdict` semantics, now pinned in `gates.test.ts`). A plan goal whose only gates were refused therefore completes "met". Options: leave (abandoned ≠ failed doctrine) · treat `met: 0 && abandoned > 0` as `unverified` (would block promotion on such goals).

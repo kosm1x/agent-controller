@@ -101,6 +101,35 @@ describe("legacy ledger rows keep evaluating after the write-time rule (read pat
   });
 });
 
+describe("runCheck — $MC_TASK_ID is defined for the guard exactly as for the child", () => {
+  it("the tweet ritual's check (task_id='$MC_TASK_ID') runs instead of being abandoned as undefined (nightly 2026-09-04 → 09-11)", async () => {
+    let calls = 0;
+    const exec: CheckExecutor = async () => {
+      calls++;
+      return { output: "n\n-\n1\n", exitCode: 0, timedOut: false };
+    };
+    const row = {
+      check_cmd:
+        "./mc-ctl db \"SELECT COUNT(*) AS n FROM task_trace_events WHERE task_id='$MC_TASK_ID' AND tool='tweet_post'\"",
+      expect: "gt 0",
+    };
+    const withTask = await runCheck(row, { timeoutMs: 1000, exec, taskId: "t-ritual" });
+    expect(withTask).toMatchObject({ ok: true, evidence: "- | 1" });
+    expect(withTask.notRunnable).toBeUndefined();
+    // No task id: the child still gets MC_TASK_ID="" (defined), so the guard must agree.
+    const withoutTask = await runCheck(row, { timeoutMs: 1000, exec });
+    expect(withoutTask.notRunnable).toBeUndefined();
+    expect(calls).toBe(2);
+    // A variable nobody defines is still caught.
+    const other = await runCheck(
+      { check_cmd: 'test -n "$DOC_ID"', expect: null },
+      { timeoutMs: 1000, exec, taskId: "t-ritual" },
+    );
+    expect(other).toMatchObject({ ok: false, notRunnable: true });
+    expect(calls).toBe(2);
+  });
+});
+
 describe("runCheck — comparator evidence", () => {
   it("a comparator against a non-numeric last line FAILS and says so; a numeric miss fails plainly", async () => {
     const exec: CheckExecutor = async (cmd) => ({
