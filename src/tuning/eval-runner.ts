@@ -22,10 +22,7 @@ import {
   scoreClassification,
   computeCompositeScore,
 } from "./scorer.js";
-import {
-  detectActiveGroups,
-  DEFAULT_SCOPE_PATTERNS,
-} from "../messaging/scope.js";
+import { detectActiveGroups, CODE_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { classify, type ClassificationInput } from "../dispatch/classifier.js";
 import type { ChatMessage, ToolDefinition } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
@@ -78,7 +75,9 @@ async function evalToolSelection(
   const message = tc.input.message;
 
   // Build scoped tools (use override patterns if provided, else defaults)
-  const patterns = sandbox.scopePatternOverrides ?? DEFAULT_SCOPE_PATTERNS;
+  // Baseline = the PRISTINE code patterns (same reference the overnight loop
+  // seeds from), never the live activation-mutated array — qa-audit R2 W-N3.
+  const patterns = sandbox.scopePatternOverrides ?? [...CODE_SCOPE_PATTERNS];
   const recentMessages = (tc.input.conversationHistory ?? [])
     .filter((t) => t.role === "user")
     .map((t) => t.content);
@@ -135,7 +134,9 @@ async function evalToolSelection(
  * Evaluate a scope_accuracy case (deterministic, no LLM call).
  */
 function evalScopeAccuracy(tc: TestCase, sandbox: SandboxConfig): CaseScore {
-  const patterns = sandbox.scopePatternOverrides ?? DEFAULT_SCOPE_PATTERNS;
+  // Baseline = the PRISTINE code patterns (same reference the overnight loop
+  // seeds from), never the live activation-mutated array — qa-audit R2 W-N3.
+  const patterns = sandbox.scopePatternOverrides ?? [...CODE_SCOPE_PATTERNS];
   const recentMessages = (tc.input.conversationHistory ?? [])
     .filter((t) => t.role === "user")
     .map((t) => t.content);

@@ -145,8 +145,10 @@ describe("tool descriptions — not-for section ratchet", () => {
   it("every snake_case sibling named in a DO NOT USE block is a registered tool", () => {
     const bad: string[] = [];
     for (const t of ALL) {
+      // From the first not-for phrase (any spelling) to the next ALL-CAPS
+      // heading line or the end — multi-paragraph blocks included (R2 W-N4).
       const block = desc(t).match(
-        /\b(?:DO NOT USE|DON'T USE|DO NOT CALL)\b[\s\S]*?(?=\n\s*\n|$)/i,
+        /(?:\b(?:DO NOT USE|DON'T USE|DO NOT CALL)\b|^\s*(?:NOT FOR|AVOID WHEN)\b|\bUSE (?!IT\b)[^\n]* INSTEAD\b)[\s\S]*?(?=\n[A-Z][A-Z /()-]{3,}:|$)/im,
       );
       if (!block) continue;
       const params = Object.keys(

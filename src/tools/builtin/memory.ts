@@ -351,7 +351,9 @@ export const CORRECTION_PATH_RE = /^corrections\/[0-9a-f]{12}\.md$/;
 
 export const memoryForgetTool: Tool = defineTool({
   name: "memory_forget",
-  description: `Retract a wrong memory: invalidate the ACTIVE knowledge-graph facts about a subject and/or delete a rephrase-correction entry from the KB so it is never injected again.
+  description: `Retract a WRONG memory — KG facts by subject and/or ONE corrections/<hash>.md; confirm first; not for user facts or files.
+
+Invalidates the ACTIVE knowledge-graph facts about a subject and/or deletes a rephrase-correction entry from the KB so it is never injected again.
 
 USE WHEN:
 - The user says a remembered fact is wrong ("eso no es así", "olvida eso", "borra ese recuerdo") and names the subject.

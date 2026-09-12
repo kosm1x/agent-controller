@@ -630,12 +630,21 @@ export function detectInjection(
  */
 export function sanitizeToolResult(toolName: string, content: string): string {
   const result = analyzeInjection(toolName, content);
-  // qa-audit 2026-09-12 A C-1: "low" is reachable by a lone high-entropy
-  // structural flag (UUIDs, hashes, base64, minified HTML) — a property of
-  // structured data, not of injection. Corpus replay: 100 % of HTML pages,
-  // 37 % of KB files, 20 % of CRM JSON got the banner. Low = telemetry only;
-  // the result reaches the model untouched. Medium and above still frame.
-  if (result.risk === "none" || result.risk === "low") return content;
+  // qa-audit 2026-09-12 A C-1 / R2 W-N1: a lone high-entropy structural
+  // flag (UUIDs, hashes, base64, minified HTML) is a property of structured
+  // data, not of injection — corpus replay: 100 % of HTML pages, 379/1,096
+  // KB files got the banner on that flag alone. That ONE detection passes
+  // through untouched (no journal line either: it is noise, not signal).
+  // The other low-band flag, suspicious_formatting ("---\nignore …"), is a
+  // real heuristic and still frames.
+  if (result.risk === "none") return content;
+  if (
+    result.risk === "low" &&
+    result.detections.length === 1 &&
+    result.detections[0] === "structural:high_entropy"
+  ) {
+    return content;
+  }
 
   const riskLabel = result.risk.toUpperCase();
   console.warn(
