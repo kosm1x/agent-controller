@@ -53,6 +53,9 @@ const providerRequestCount = new client.Gauge({
 // system prompt) was invisible until the bill arrived. Ratio = cache-read /
 // total prompt tokens over the trailing 24 h, per model. A long-prefix model
 // sitting at 0 for hours is the alarm condition (Prometheus-side rule).
+// Models whose provider reports no cache fields at all (openai-compatible
+// path: both columns stay at their DEFAULT 0) are NOT exported, so the rule
+// cannot fire forever on a provider that simply has no cache telemetry.
 const inferenceCacheReadTokens24h = new client.Gauge({
   name: "mc_inference_cache_read_tokens_24h",
   help: "Prompt tokens served from the provider prompt cache, trailing 24h, per model",
@@ -480,7 +483,8 @@ export function collectMetrics(): void {
                 SUM(prompt_tokens) as prompt_total,
                 SUM(completion_tokens) as completion_total,
                 SUM(cost_usd) as cost_total,
-                SUM(cache_read_tokens) as cache_read_total
+                SUM(cache_read_tokens) as cache_read_total,
+                SUM(cache_creation_tokens) as cache_creation_total
          FROM cost_ledger
          WHERE created_at >= datetime('now', '-1 day')
          GROUP BY model`,
@@ -491,16 +495,19 @@ export function collectMetrics(): void {
       completion_total: number;
       cost_total: number;
       cache_read_total: number;
+      cache_creation_total: number;
     }>;
     for (const row of tokenStats) {
       tokensPromptTotal.set({ model: row.model }, row.prompt_total);
       tokensCompletionTotal.set({ model: row.model }, row.completion_total);
       costTotalUsd.set({ model: row.model }, row.cost_total);
-      inferenceCacheReadTokens24h.set({ model: row.model }, row.cache_read_total);
-      inferenceCacheReadRatio24h.set(
-        { model: row.model },
-        row.prompt_total > 0 ? row.cache_read_total / row.prompt_total : 0,
-      );
+      if (row.cache_read_total + row.cache_creation_total > 0) {
+        inferenceCacheReadTokens24h.set({ model: row.model }, row.cache_read_total);
+        inferenceCacheReadRatio24h.set(
+          { model: row.model },
+          row.prompt_total > 0 ? row.cache_read_total / row.prompt_total : 0,
+        );
+      }
     }
 
     // Memory stats

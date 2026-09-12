@@ -308,6 +308,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       return {
         success: false,
         error: containerOutput.error ?? "Container execution failed",
+        terminationReason: "error",
         durationMs: Date.now() - start,
       };
     }
@@ -343,6 +344,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       return {
         success: false,
         error: parsed.error,
+        terminationReason: "error",
         durationMs: Date.now() - start,
       };
     }
@@ -360,8 +362,15 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     // not a success — deliver, but as completed_with_concerns.
     const selfAttested = typeof parsed.success === "boolean";
 
+    const containerSuccess =
+      (selfAttested ? parsed.success === true : true) || containerPromoted;
     return {
-      success: (selfAttested ? parsed.success === true : true) || containerPromoted,
+      success: containerSuccess,
+      terminationReason: terminationFromExit(
+        parsed.exitReason,
+        undefined,
+        containerSuccess,
+      ),
       ...(parsed.success === false &&
         !containerPromoted && {
           error:

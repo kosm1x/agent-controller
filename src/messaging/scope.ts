@@ -18,6 +18,7 @@ export const CORE_TOOLS = [
   "user_fact_set",
   "user_fact_list",
   "user_fact_delete",
+  "memory_forget", // deferred (one catalog line); NOT under hasMemory — that gate is false in prod (Hindsight off) — qa-audit 2026-09-12
   "web_search",
   "web_read",
   "exa_search",
@@ -1556,12 +1557,7 @@ export function scopeToolsForMessage(
     tools.push(...SKILL_DISPATCH_TOOLS);
   }
   if (options.hasMemory) {
-    tools.push(
-      "memory_search",
-      "memory_store",
-      "memory_reflect",
-      "memory_forget",
-    );
+    tools.push("memory_search", "memory_store", "memory_reflect");
   }
 
   // Deduplicate: multiple scope groups can push the same tool
@@ -1652,7 +1648,6 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     all.add("memory_search");
     all.add("memory_store");
     all.add("memory_reflect");
-    all.add("memory_forget");
   }
   universeCache.set(cacheKey, all);
   return all;

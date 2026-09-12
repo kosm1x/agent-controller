@@ -39,7 +39,7 @@ export const screenshotElementTool: Tool = {
       description: `Capture a web page element as a HiDPI PNG screenshot, optionally with a vision description.
 
 DO NOT USE WHEN:
-- You need the page's TEXT or data → use web_read (cheaper, no browser).
+- You need the page's TEXT or data → use web_read (cheaper — no screenshot pipeline).
 - The page needs a login the browser session does not have → report the auth wall instead of retrying.
 
 USE WHEN:

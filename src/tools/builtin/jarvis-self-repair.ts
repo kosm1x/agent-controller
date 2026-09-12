@@ -51,7 +51,7 @@ export const jarvisDiagnoseTool: Tool = {
       description: `Diagnose recent errors in your own system (mission-control).
 
 DO NOT USE WHEN:
-- The failing service is NOT mission-control (agentic-crm, caddy, stalwart, supabase) → use vps_logs.
+- The failing service is NOT mission-control (agentic-crm, caddy, stalwart) → use vps_logs; supabase is a Docker stack → shell_exec with docker logs <container>.
 - You already know the cause and need to ship a fix → use jarvis_dev.
 
 USE WHEN:

@@ -43,29 +43,36 @@ function gauge(name: string, model: string): number | undefined {
   return Object.values(data).find((e) => e.labels.model === model)?.value;
 }
 
-function ledgerRow(model: string, prompt: number, cacheRead: number): void {
+function ledgerRow(model: string, prompt: number, cacheRead: number, cacheCreation = 0): void {
   getDatabase()
     .prepare(
-      `INSERT INTO cost_ledger (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd, cache_read_tokens)
-       VALUES (@run, @task, 'fast', @model, @prompt, 10, 0.01, @cache)`,
+      `INSERT INTO cost_ledger (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
+       VALUES (@run, @task, 'fast', @model, @prompt, 10, 0.01, @cache, @creation)`,
     )
-    .run({ run: `r-${Math.random()}`, task: "t1", model, prompt, cache: cacheRead });
+    .run({ run: `r-${Math.random()}`, task: "t1", model, prompt, cache: cacheRead, creation: cacheCreation });
 }
 
 describe("mc_inference_cache_read_* gauges", () => {
   it("exports cache-read tokens and the hit ratio per model over 24h", () => {
     ledgerRow("claude-sonnet-5", 8_000, 6_000);
     ledgerRow("claude-sonnet-5", 2_000, 2_000);
-    ledgerRow("qwen3", 5_000, 0);
+    ledgerRow("claude-cold", 4_000, 0, 4_000); // cache written, nothing read yet
     collectMetrics();
     expect(gauge("mc_inference_cache_read_tokens_24h", "claude-sonnet-5")).toBe(8_000);
     expect(gauge("mc_inference_cache_read_ratio_24h", "claude-sonnet-5")).toBeCloseTo(0.8, 5);
-    expect(gauge("mc_inference_cache_read_ratio_24h", "qwen3")).toBe(0);
+    expect(gauge("mc_inference_cache_read_ratio_24h", "claude-cold")).toBe(0);
   });
 
-  it("reports ratio 0 (never NaN) when a model has no prompt tokens", () => {
-    ledgerRow("empty-model", 0, 0);
+  it("does not export a model whose provider reports no cache telemetry (no permanent-0 alarm)", () => {
+    ledgerRow("qwen3", 5_000, 0);
     collectMetrics();
-    expect(gauge("mc_inference_cache_read_ratio_24h", "empty-model")).toBe(0);
+    expect(gauge("mc_inference_cache_read_ratio_24h", "qwen3")).toBeUndefined();
+    expect(gauge("mc_inference_cache_read_tokens_24h", "qwen3")).toBeUndefined();
+  });
+
+  it("reports ratio 0 (never NaN) when prompt tokens are 0 but cache fields are present", () => {
+    ledgerRow("odd-model", 0, 5);
+    collectMetrics();
+    expect(gauge("mc_inference_cache_read_ratio_24h", "odd-model")).toBe(0);
   });
 });

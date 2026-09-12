@@ -11,8 +11,9 @@
  *   2. a high-risk tool never executes on an interactive task without the
  *      confirmation round-trip (and the non-interactive bypass stays pinned
  *      so a change to it is visible);
- *   3. every tool call returns a result — unknown tool and throwing tool
- *      both yield a JSON error, never a rejected promise;
+ *   3. every tool call returns a result to the model loop — an unknown tool
+ *      yields a JSON error from the registry; a throwing tool rethrows there
+ *      (metrics) and each inference loop converts it to an error result;
  *   4. a confirmation binds to the exact args: a tampered pending op is
  *      refused and nothing runs;
  *   5. termination reasons form a closed set.
@@ -128,13 +129,22 @@ describe("3. every tool call gets a result", () => {
 
     // The conversion lives one layer up. Pin the two catch sites so a
     // refactor that lets a rejection escape to the model loop is visible.
+    // Binding name free; body must reach the error frame with NO throw/rethrow
+    // in between (qa-audit C W-3: the old pin broke on a rename and passed a
+    // `throw err` mutant).
     const sdk = readFileSync(new URL("../inference/claude-sdk.ts", import.meta.url), "utf8");
-    const sdkSite = sdk.slice(sdk.indexOf("await toolRegistry.execute("));
-    expect(sdkSite.slice(0, 1200)).toMatch(/catch \(err\) \{[\s\S]*isError: true/);
+    const sdkStart = sdk.indexOf("await toolRegistry.execute(");
+    expect(sdkStart).toBeGreaterThan(0);
+    expect(sdk.slice(sdkStart, sdkStart + 1200)).toMatch(
+      /catch\s*\(\s*\w+\s*\)\s*\{(?:(?!\bthrow\b)[\s\S])*?isError: true/,
+    );
 
     const oai = readFileSync(new URL("../inference/adapter-openai.ts", import.meta.url), "utf8");
-    const oaiSite = oai.slice(oai.indexOf("result = await executor(toolName, args);"));
-    expect(oaiSite.slice(0, 600)).toMatch(/catch \(err\) \{[\s\S]*result = JSON\.stringify\(\{ error: message \}\)/);
+    const oaiStart = oai.indexOf("result = await executor(toolName, args);");
+    expect(oaiStart).toBeGreaterThan(0);
+    expect(oai.slice(oaiStart, oaiStart + 600)).toMatch(
+      /catch\s*\(\s*\w+\s*\)\s*\{(?:(?!\bthrow\b)[\s\S])*?result = JSON\.stringify\(\{ error: message \}\)/,
+    );
   });
 });
 

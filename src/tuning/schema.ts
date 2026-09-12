@@ -442,18 +442,6 @@ export function insertVariant(v: TuneVariant): void {
   );
 }
 
-export function getBestVariant(): TuneVariant | null {
-  const db = getDatabase();
-  const row = db
-    .prepare(
-      `SELECT * FROM tune_variants WHERE valid = 1
-       ORDER BY composite_score DESC LIMIT 1`,
-    )
-    .get() as (Omit<TuneVariant, "valid"> & { valid: number }) | undefined;
-  if (!row) return null;
-  return { ...row, valid: row.valid === 1 };
-}
-
 export function getLatestVariant(): TuneVariant | null {
   const db = getDatabase();
   const row = db

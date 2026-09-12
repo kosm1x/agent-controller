@@ -69,7 +69,12 @@ export function argsSha256(args: Record<string, unknown>): string {
 function dbWrite<T>(fn: () => T): T | undefined {
   try {
     return fn();
-  } catch {
+  } catch (err) {
+    // Fail open on purpose (the map keeps working) but never silently: a
+    // missing approval record must be visible in the journal (qa-audit W-3).
+    console.warn(
+      `[confirmations] approval record not written: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return undefined;
   }
 }
@@ -180,6 +185,15 @@ function rehydrateFromDb(threadKey: string): PendingConfirmation | null {
     approvalId: row.id,
   };
   pendingConfirmations.set(threadKey, pending);
+  // Re-arm expiry for the remaining TTL so a silent thread still closes the row.
+  expiryTimers.set(
+    threadKey,
+    setTimeout(() => {
+      pendingConfirmations.delete(threadKey);
+      expiryTimers.delete(threadKey);
+      markThreadRows(threadKey, "expired");
+    }, Math.max(0, CONFIRMATION_TTL_MS - (Date.now() - requestedAt))),
+  );
   return pending;
 }
 
@@ -219,13 +233,24 @@ export function resolvePendingConfirmation(
     clearPendingConfirmation(threadKey, "superseded");
     return null;
   }
+  // Pin the decision to the ONE row the user saw (qa-audit W-2: a thread
+  // predicate stamped every pending row, including one the user never saw
+  // when an earlier supersede write was lost). Thread fallback only when the
+  // durable insert itself failed and there is no id.
   dbWrite(() =>
-    getDatabase()
-      .prepare(
-        `UPDATE tool_approvals SET decision = ?, approver = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-         WHERE thread_key = ? AND decision = 'pending'`,
-      )
-      .run(decision, approver.slice(0, 200), threadKey),
+    pending.approvalId !== undefined
+      ? getDatabase()
+          .prepare(
+            `UPDATE tool_approvals SET decision = ?, approver = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ? AND decision = 'pending'`,
+          )
+          .run(decision, approver.slice(0, 200), pending.approvalId)
+      : getDatabase()
+          .prepare(
+            `UPDATE tool_approvals SET decision = ?, approver = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE thread_key = ? AND decision = 'pending'`,
+          )
+          .run(decision, approver.slice(0, 200), threadKey),
   );
   clearInMemory(threadKey);
   return decision === "confirmed" ? pending : null;

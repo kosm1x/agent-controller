@@ -52,7 +52,7 @@ export const pmPaperRebalanceTool: Tool = {
       description: `Executes a Polymarket paper-trading rebalance from the latest \`pm_alpha_run\` output.
 
 DO NOT USE WHEN:
-- The user means the equities paper book (tickers, Alpaca-style) → use paper_trade / paper_portfolio.
+- The user means the equities paper book (tickers, Alpaca-style) → use paper_rebalance / paper_portfolio.
 - No pm_alpha_run has produced signals yet → run pm_alpha_run first.
 
 Pipeline:

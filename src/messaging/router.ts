@@ -1923,7 +1923,11 @@ export class MessageRouter {
       if (confResponse === "confirm") {
         // Record who approved what (tool_approvals) and re-check the args
         // hash; null means nothing valid is pending — execute NOTHING.
-        const approved = resolvePendingConfirmation(tk, "confirmed", msg.from);
+        // Approver = the PERSON (group sender JID), not the room (msg.from is
+        // the group JID on WhatsApp groups) — qa-audit W-1.
+        const approver =
+          (msg.metadata?.senderJid as string | undefined) ?? msg.from;
+        const approved = resolvePendingConfirmation(tk, "confirmed", approver);
         if (!approved) {
           const stale =
             "La confirmación pendiente ya no es válida. Pídemelo de nuevo.";
@@ -1978,7 +1982,11 @@ export class MessageRouter {
         return true;
       } else if (confResponse === "decline") {
         console.log(`[router] Confirmation declined: ${pendingConf.toolName}`);
-        resolvePendingConfirmation(tk, "declined", msg.from);
+        resolvePendingConfirmation(
+          tk,
+          "declined",
+          (msg.metadata?.senderJid as string | undefined) ?? msg.from,
+        );
         this.sendToChannel(msg.channel, msg.from, "Cancelado.");
         // USER line already day-logged at the top of handleInbound.
         appendDayLog("JARVIS", "Cancelado.");

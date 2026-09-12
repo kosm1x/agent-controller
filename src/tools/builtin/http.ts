@@ -27,7 +27,7 @@ export const httpTool: Tool = {
 
 DO NOT USE WHEN:
 - You want the readable text of a web page → use web_read (clean Markdown, no headers noise).
-- The endpoint needs a stored credential or an internal service → use the dedicated tool (gmail_*, gdocs_*, crm_query, wp_*); this tool sends no secrets.
+- The endpoint needs a stored credential (OAuth, API key) → use the dedicated tool (gmail_*, gdocs_*, crm_query, wp_*); this tool sends no secrets.
 
 WHEN TO USE:
 - Calling a JSON API without a dedicated tool (small internal service, webhook test, an ad-hoc REST endpoint)

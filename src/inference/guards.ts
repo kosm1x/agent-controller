@@ -630,7 +630,12 @@ export function detectInjection(
  */
 export function sanitizeToolResult(toolName: string, content: string): string {
   const result = analyzeInjection(toolName, content);
-  if (result.risk === "none") return content;
+  // qa-audit 2026-09-12 A C-1: "low" is reachable by a lone high-entropy
+  // structural flag (UUIDs, hashes, base64, minified HTML) — a property of
+  // structured data, not of injection. Corpus replay: 100 % of HTML pages,
+  // 37 % of KB files, 20 % of CRM JSON got the banner. Low = telemetry only;
+  // the result reaches the model untouched. Medium and above still frame.
+  if (result.risk === "none" || result.risk === "low") return content;
 
   const riskLabel = result.risk.toUpperCase();
   console.warn(

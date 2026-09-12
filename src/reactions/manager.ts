@@ -399,7 +399,10 @@ export class ReactionManager {
         emitTraceEvent({
           taskId: stuck.task_id,
           name: "task.watchdog_failed",
-          attrs: { threshold_minutes: STUCK_THRESHOLD_MINUTES },
+          attrs: {
+            termination_reason: "aborted",
+            threshold_minutes: STUCK_THRESHOLD_MINUTES,
+          },
         });
 
         try {

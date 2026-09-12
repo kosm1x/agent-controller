@@ -1610,6 +1610,19 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             statusSource: parsed.statusSource,
           },
           toolCalls: sdkResult.toolCalls,
+          // qa-audit 2026-09-12 C-2: this branch returned before the field
+          // was set, so 100 % of live (claude-sdk) traffic reported a turn or
+          // dollar cap as "completed". The SDK surfaces caps as text markers.
+          terminationReason: /\[error_max_turns\b/.test(sdkResult.text)
+            ? "max_rounds"
+            : /\[error_max_budget_usd\b/.test(sdkResult.text)
+              ? "budget_exhausted"
+              : terminationFromExit(
+                  "stop",
+                  parsed.status,
+                  parsed.status === "DONE" ||
+                    parsed.status === "DONE_WITH_CONCERNS",
+                ),
           tokenUsage: {
             promptTokens: sdkResult.usage.promptTokens,
             completionTokens: sdkResult.usage.completionTokens,

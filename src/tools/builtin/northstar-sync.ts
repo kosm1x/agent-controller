@@ -953,7 +953,7 @@ export const northstarSyncTool: Tool = {
       description: `Reconciliation between NorthStar files (Jarvis local) and COMMIT (db.mycommit.net app). NorthStar and COMMIT are PEER data stores, not master-mirror. Changes on either side stay local until THIS tool is invoked.
 
 DO NOT USE WHEN:
-- The user only wants to READ a NorthStar file or status → use jarvis_file_read / northstar_index.
+- The user only wants to READ a NorthStar file or status → use jarvis_file_read (e.g. NorthStar/INDEX.md).
 - The user asks about a single project's state → use the projects tools; sync touches both stores.
 
 STRICT-MIRROR INVARIANT (LWW mode, 2nd sync onward): after a successful run, every local NorthStar record has a matching COMMIT record by id and vice versa. The 4-phase architecture enforces this:

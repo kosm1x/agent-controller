@@ -473,6 +473,30 @@ describe("tool_approvals durability", () => {
     expect(rows(tk)[0].decision).toBe("superseded");
   });
 
+  it("a decision stamps only the row the user saw, even if an older row is still pending (W-2)", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s1");
+    // Simulate a lost supersede write: force the first row back to pending.
+    getDatabase().prepare("UPDATE tool_approvals SET decision = 'pending' WHERE thread_key = ?").run(tk);
+    storePendingConfirmation(tk, "jarvis_file_delete", { path: "NorthStar/vision.md" }, "s2");
+    getDatabase().prepare("UPDATE tool_approvals SET decision = 'pending' WHERE thread_key = ?").run(tk);
+    const approved = resolvePendingConfirmation(tk, "confirmed", "operator");
+    expect(approved?.toolName).toBe("jarvis_file_delete");
+    const r = rows(tk);
+    expect(r.map((x) => [x.tool, x.decision])).toEqual([
+      ["gmail_send", "pending"],
+      ["jarvis_file_delete", "confirmed"],
+    ]);
+  });
+
+  it("a failed durable write is visible in the journal, never silent (W-3)", () => {
+    closeDatabase();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("approval record not written"));
+    expect(getPendingConfirmation(tk)?.approvalId).toBeUndefined();
+    initDatabase(":memory:"); // afterEach closes it
+  });
+
   it("a new pending for the same thread supersedes the previous row", () => {
     storePendingConfirmation(tk, "gmail_send", args, "s1");
     storePendingConfirmation(tk, "jarvis_file_delete", { path: "x.md" }, "s2");

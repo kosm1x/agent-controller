@@ -422,7 +422,9 @@ Knowledge-graph invalidation is temporal (valid_to is stamped, history is kept).
     const result: Record<string, unknown> = { reason };
 
     if (subject) {
-      const active = queryTriples({ subject, predicate, activeOnly: true, limit: 200 });
+      // No practical cap: a subject has ≤ 7 active facts today; 10 000 keeps
+      // "invalidated: n" truthful if that ever grows.
+      const active = queryTriples({ subject, predicate, activeOnly: true, limit: 10_000 });
       for (const t of active) invalidateTriple(t.id);
       result.subject = subject;
       if (predicate) result.predicate = predicate;

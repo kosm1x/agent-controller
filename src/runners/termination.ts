@@ -7,7 +7,9 @@
  * regex archaeology over reply text. Runners now set
  * `RunnerOutput.terminationReason`; the dispatcher derives a fallback for
  * runners that do not and persists it as `attrs.termination_reason` on the
- * terminal trace event. Consumers: `mc-ctl trace`, the eval gate, Honest Done.
+ * terminal trace event. Readers today: the `task_trace_events.attrs` JSON
+ * (`mc-ctl trace` prints it; queries by `json_extract(attrs,'$.termination_reason')`).
+ * No automated consumer yet — the eval gate and Honest Done are candidates.
  */
 
 import type { RunnerOutput } from "./types.js";
@@ -25,8 +27,18 @@ export const TERMINATION_REASONS = [
   "max_rounds",
   /** Token budget exhausted. */
   "token_budget",
-  /** Orchestrator iteration budget exhausted (heavy / swarm). */
+  /** Iteration or cost budget exhausted (heavy / swarm orchestrator, SDK max_budget_usd). */
   "budget_exhausted",
+  /** Context compaction could not free enough room to continue (openai path). */
+  "compaction_exhausted",
+  /** Extended-thinking budget exhausted (openai path). */
+  "think_exhaustion",
+  /** Escalation wrap-up turn ended the run (openai path). */
+  "escalation_wrapup",
+  /** Escalation aborted the run (openai path). */
+  "escalation_abort",
+  /** Task row found running after a non-graceful restart (startup reconcile). */
+  "orphaned_restart",
   /** Wall-clock deadline (goal or orchestrator timeout). */
   "timeout",
   /** Inference provider failed mid-run. */
@@ -47,8 +59,8 @@ const KNOWN = new Set<string>(TERMINATION_REASONS);
 
 /**
  * Map a runner's raw `exitReason` string plus its structured status to the
- * closed set. `"natural"` (the loop stopped on its own) resolves through the
- * status: a clarifying question is `needs_context`, a blocker is `blocked`, a
+ * closed set. `"natural"` (openai loop) and `"stop"` (claude-sdk loop) both
+ * mean the loop stopped on its own and resolve through the status: a clarifying question is `needs_context`, a blocker is `blocked`, a
  * delivered answer is `completed`, and a natural stop that still failed is
  * `error`. Unknown strings fold to `error` so the enum stays closed.
  */
@@ -57,7 +69,7 @@ export function terminationFromExit(
   status: RunnerStatus | undefined,
   success: boolean,
 ): TerminationReason {
-  if (exitReason !== undefined && exitReason !== "natural") {
+  if (exitReason !== undefined && exitReason !== "natural" && exitReason !== "stop") {
     return KNOWN.has(exitReason) ? (exitReason as TerminationReason) : "error";
   }
   if (status === "NEEDS_CONTEXT") return "needs_context";

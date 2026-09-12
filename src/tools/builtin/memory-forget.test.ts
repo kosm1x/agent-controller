@@ -75,6 +75,10 @@ describe("memory_forget", () => {
     expect(pg.pgDelete).toHaveBeenCalledWith("corrections/3386ce090f4b.md");
     expect(CORRECTION_PATH_RE.test("corrections/3386ce090f4b.md")).toBe(true);
     expect(CORRECTION_PATH_RE.test("corrections/../x.md")).toBe(false);
+    // Anchoring pins (qa-audit W-4: an unanchored mutant passed the suite).
+    expect(CORRECTION_PATH_RE.test("evil/corrections/3386ce090f4b.md")).toBe(false);
+    expect(CORRECTION_PATH_RE.test("corrections/3386ce090f4b.md/../../directives/core.md")).toBe(false);
+    expect(CORRECTION_PATH_RE.test("corrections/3386ce090f4b.md\nnotes/secret.md")).toBe(false);
   });
 
   it("reports a disabled KB instead of pretending to delete", async () => {

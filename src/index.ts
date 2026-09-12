@@ -158,8 +158,18 @@ async function main(): Promise<void> {
   if (orphanedTaskIds.length > 0) {
     const { getEventBus } = await import("./lib/event-bus.js");
     const { writeCheckpoint } = await import("./runners/checkpoint.js");
+    const { emitTraceEvent } = await import("./observability/task-trace.js");
     const bus = getEventBus();
     for (const taskId of orphanedTaskIds) {
+      // Terminal trace row with a reason — the dispatcher never ran for these.
+      emitTraceEvent({
+        taskId,
+        name: "task.failed",
+        attrs: {
+          termination_reason: "orphaned_restart",
+          error: "Orphaned across non-graceful restart",
+        },
+      });
       try {
         bus.emitEvent("task.failed", {
           task_id: taskId,

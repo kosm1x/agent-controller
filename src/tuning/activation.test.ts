@@ -22,7 +22,7 @@ beforeEach(() => {
   getValidVariants.mockReturnValue([]);
   markVariantActivated.mockReset();
   deserializeSandbox.mockReset();
-  delete process.env.TUNING_REQUIRE_FINGERPRINT;
+  delete process.env.TUNING_ALLOW_LEGACY_VARIANTS;
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -38,7 +38,7 @@ describe("activateBestVariant — scope pattern overrides merge by group (2026-0
     expect(codeGroups.has("utility")).toBe(true);
     expect(codeGroups.has("google")).toBe(true);
 
-    getValidVariants.mockReturnValue([{ variant_id: "v1", generation: 0, composite_score: 79.2, config_json: "{}" }]);
+    getValidVariants.mockReturnValue([{ variant_id: "v1", generation: 0, composite_score: 79.2, config_json: "{}", code_fingerprint: scopeFingerprint(["google", "coding"]) }]);
     deserializeSandbox.mockReturnValue({
       scopePatternOverrides: [
         { pattern: /\bgmail-from-variant\b/i, group: "google" },
@@ -68,7 +68,7 @@ describe("activateBestVariant — scope pattern overrides merge by group (2026-0
   it("the April-2026 shape (17 groups, no utility) no longer hides email_verify's group", () => {
     const aprilGroups = ["browser", "coding", "crm", "destructive", "google", "intel", "meta", "northstar_journal",
       "northstar_read", "northstar_write", "research", "schedule", "social", "specialty", "teaching", "video", "wordpress"];
-    getValidVariants.mockReturnValue([{ variant_id: "var-tune-1775545200807", generation: 0, composite_score: 79.2, config_json: "{}" }]);
+    getValidVariants.mockReturnValue([{ variant_id: "var-tune-1775545200807", generation: 0, composite_score: 79.2, config_json: "{}", code_fingerprint: scopeFingerprint(aprilGroups) }]);
     deserializeSandbox.mockReturnValue({ scopePatternOverrides: aprilGroups.map((g) => ({ pattern: new RegExp(`\\b${g}-only\\b`, "i"), group: g })) });
     activateBestVariant();
     const utility = DEFAULT_SCOPE_PATTERNS.filter((p) => p.group === "utility");
@@ -121,27 +121,40 @@ describe("activateBestVariant — code fingerprint drift (2026-09-12)", () => {
     expect(DEFAULT_SCOPE_PATTERNS.map((p) => String(p.pattern))).toEqual(snapshot.map((p) => String(p.pattern)));
   });
 
-  it("a legacy row (no fingerprint) activates with a warning by default and is blocked by TUNING_REQUIRE_FINGERPRINT=true", () => {
+  it("a legacy row (no fingerprint) is BLOCKED by default and activates only under TUNING_ALLOW_LEGACY_VARIANTS=true", () => {
     const legacy = { variant_id: "april", generation: 0, composite_score: 79, config_json: "{}", code_fingerprint: null };
     getValidVariants.mockReturnValue([legacy]);
     deserializeSandbox.mockReturnValue({ scopePatternOverrides: overrides });
+    const blocked = activateBestVariant();
+    expect(blocked).toEqual({ activated: false, skippedStale: ["april"] });
+    expect(markVariantActivated).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("not activated"));
+    expect(DEFAULT_SCOPE_PATTERNS.map((p) => String(p.pattern))).toEqual(snapshot.map((p) => String(p.pattern)));
+
+    process.env.TUNING_ALLOW_LEGACY_VARIANTS = "true";
     expect(activateBestVariant().activated).toBe(true);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("UNVERIFIED"));
+  });
 
-    DEFAULT_SCOPE_PATTERNS.length = 0;
-    DEFAULT_SCOPE_PATTERNS.push(...snapshot);
-    markVariantActivated.mockReset();
-    process.env.TUNING_REQUIRE_FINGERPRINT = "true";
+  it("an unreadable archived config is skipped instead of aborting boot", () => {
+    getValidVariants.mockReturnValue([
+      { variant_id: "corrupt", generation: 3, composite_score: 95, config_json: "{not json", code_fingerprint: "x" },
+      { variant_id: "fresh", generation: 1, composite_score: 80, config_json: "{}", code_fingerprint: scopeFingerprint(["google"]) },
+    ]);
+    deserializeSandbox.mockImplementation((json: string) => {
+      if (json === "{not json") throw new SyntaxError("Unexpected token");
+      return { scopePatternOverrides: overrides };
+    });
     const r = activateBestVariant();
-    expect(r).toEqual({ activated: false, skippedStale: ["april"] });
-    expect(markVariantActivated).not.toHaveBeenCalled();
+    expect(r.variantId).toBe("fresh");
+    expect(r.skippedStale).toEqual(["corrupt"]);
   });
 
   it("fingerprintVerdict: a variant with no scope surface always matches", () => {
-    expect(fingerprintVerdict({ code_fingerprint: null }, [], true)).toBe("match");
-    expect(fingerprintVerdict({ code_fingerprint: null }, ["google"], false)).toBe("legacy");
-    expect(fingerprintVerdict({ code_fingerprint: null }, ["google"], true)).toBe("legacy_blocked");
-    expect(fingerprintVerdict({ code_fingerprint: scopeFingerprint(["google"]) }, ["google"], true)).toBe("match");
-    expect(fingerprintVerdict({ code_fingerprint: "x" }, ["google"], true)).toBe("stale");
+    expect(fingerprintVerdict({ code_fingerprint: null }, [], false)).toBe("match");
+    expect(fingerprintVerdict({ code_fingerprint: null }, ["google"], true)).toBe("legacy");
+    expect(fingerprintVerdict({ code_fingerprint: null }, ["google"], false)).toBe("legacy_blocked");
+    expect(fingerprintVerdict({ code_fingerprint: scopeFingerprint(["google"]) }, ["google"], false)).toBe("match");
+    expect(fingerprintVerdict({ code_fingerprint: "x" }, ["google"], false)).toBe("stale");
   });
 });

@@ -30,7 +30,7 @@ import {
 import { CostTracker } from "./cost-tracker.js";
 import { generateReport } from "./report.js";
 import { computeCompositeScore } from "./scorer.js";
-import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
+import { CODE_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { overriddenGroups, scopeFingerprint } from "./fingerprint.js";
 import { toolRegistry } from "../tools/registry.js";
 import { serializeSandbox } from "./variant-store.js";
@@ -82,7 +82,9 @@ function getCurrentValue(mutation: Mutation): string {
       return tool?.definition.function.description ?? "(not found)";
     }
     case "scope_rule": {
-      const pattern = DEFAULT_SCOPE_PATTERNS.find(
+      // Pristine code defaults, NOT the live array (which activation mutates
+      // in place at boot): the experiment's original_value must be the code.
+      const pattern = CODE_SCOPE_PATTERNS.find(
         (p) => p.group === mutation.target,
       );
       return pattern?.pattern.source ?? "(not found)";
@@ -116,8 +118,12 @@ function applySandbox(
     }
     case "scope_rule": {
       // Build new patterns array with the mutated regex
+      // qa-audit 2026-09-12 C-1: seed from the PRISTINE code patterns, never
+      // from DEFAULT_SCOPE_PATTERNS — that array already carries the active
+      // variant's overrides, so a new variant would snapshot stale regexes
+      // and its fingerprint would certify them as fresh.
       const basePatterns = sandbox.scopePatternOverrides ?? [
-        ...DEFAULT_SCOPE_PATTERNS,
+        ...CODE_SCOPE_PATTERNS,
       ];
       try {
         const newRegex = new RegExp(mutation.mutated_value, "i");

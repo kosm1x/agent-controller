@@ -432,8 +432,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
       reason: "HTML/CSS composition rules + render policy",
     },
     northstar_sync: {
-      // 2026-09-12: +166 for the DO NOT USE WHEN block (agents-best-practices gap 8).
-      maxLen: 3144,
+      // 2026-09-12: +166 for the DO NOT USE WHEN block (agents-best-practices gap 8), +50 slack.
+      maxLen: 3194,
       reason:
         "4-phase sync architecture + LWW + safety abort (2026-05-12 incident)",
     },
