@@ -100,6 +100,18 @@ export function ensureTuningTables(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_tune_variants_score
       ON tune_variants(composite_score DESC);
+  `);
+
+  // 2026-09-12: code fingerprint of the scope groups a variant overrides
+  // (src/tuning/fingerprint.ts). NULL on rows generated before the column
+  // existed — activation treats those as legacy (see activation.ts).
+  const variantCols = db
+    .prepare("PRAGMA table_info(tune_variants)")
+    .all() as Array<{ name: string }>;
+  if (!variantCols.some((c) => c.name === "code_fingerprint")) {
+    db.exec("ALTER TABLE tune_variants ADD COLUMN code_fingerprint TEXT");
+  }
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tune_variants_valid
       ON tune_variants(valid);
 
@@ -414,8 +426,8 @@ export function insertVariant(v: TuneVariant): void {
   db.prepare(
     `INSERT INTO tune_variants
        (variant_id, parent_id, run_id, generation, config_json,
-        composite_score, subscores_json, valid, activated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        composite_score, subscores_json, valid, activated_at, code_fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     v.variant_id,
     v.parent_id,
@@ -426,6 +438,7 @@ export function insertVariant(v: TuneVariant): void {
     v.subscores_json,
     v.valid ? 1 : 0,
     v.activated_at,
+    v.code_fingerprint ?? null,
   );
 }
 

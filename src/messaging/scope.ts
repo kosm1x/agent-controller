@@ -1134,6 +1134,16 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   // scopeToolsForMessage() and detectActiveGroups() handles follow-ups correctly.
 ];
 
+/**
+ * Pristine copy of the code defaults, captured at module load BEFORE
+ * tuning activation mutates DEFAULT_SCOPE_PATTERNS in place. The variant
+ * fingerprint (src/tuning/fingerprint.ts) hashes THIS on both sides —
+ * generation and activation — so a variant generated while an older
+ * variant was live still compares against the code, never against itself.
+ */
+export const CODE_SCOPE_PATTERNS: ReadonlyArray<Readonly<ScopePattern>> =
+  Object.freeze(DEFAULT_SCOPE_PATTERNS.map((p) => Object.freeze({ ...p })));
+
 // ---------------------------------------------------------------------------
 // Pure scoping function
 // ---------------------------------------------------------------------------

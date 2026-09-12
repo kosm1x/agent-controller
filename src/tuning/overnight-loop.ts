@@ -31,6 +31,7 @@ import { CostTracker } from "./cost-tracker.js";
 import { generateReport } from "./report.js";
 import { computeCompositeScore } from "./scorer.js";
 import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
+import { overriddenGroups, scopeFingerprint } from "./fingerprint.js";
 import { toolRegistry } from "../tools/registry.js";
 import { serializeSandbox } from "./variant-store.js";
 import { getDatabase } from "../db/index.js";
@@ -636,6 +637,9 @@ export async function runOvernightTuning(
         valid: true,
         activated_at: null,
         created_at: new Date().toISOString(),
+        code_fingerprint: scopeFingerprint(
+          overriddenGroups(bestSandbox.scopePatternOverrides),
+        ),
       });
       updateRun(runId, {
         best_score: bestScore,

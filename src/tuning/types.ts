@@ -178,6 +178,11 @@ export interface TuneVariant {
   valid: boolean;
   activated_at: string | null;
   created_at: string;
+  /**
+   * sha256 of the pristine code scope patterns for the groups this variant
+   * overrides, taken at generation (fingerprint.ts). NULL = legacy row.
+   */
+  code_fingerprint?: string | null;
 }
 
 // ---------------------------------------------------------------------------
