@@ -74,6 +74,10 @@ export const fileEditTool: Tool = {
       name: "file_edit",
       description: `Edit a file by replacing an exact string match with new content. Preferred over file_write for modifying existing files — produces minimal diffs and prevents accidental truncation.
 
+DO NOT USE WHEN:
+- The file does not exist yet → use file_write.
+- The file is a knowledge-base note (jarvis-kb) → use jarvis_file_write so the registry stays in sync.
+
 WORKFLOW:
 1. Use file_read to see the current content
 2. Copy the exact text you want to change into old_string (whitespace-sensitive)

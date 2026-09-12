@@ -25,6 +25,10 @@ export const httpTool: Tool = {
       name: "http_fetch",
       description: `Make an HTTP request to a public URL and return the response (status + headers + truncated body).
 
+DO NOT USE WHEN:
+- You want the readable text of a web page → use web_read (clean Markdown, no headers noise).
+- The endpoint needs a stored credential or an internal service → use the dedicated tool (gmail_*, gdocs_*, crm_query, wp_*); this tool sends no secrets.
+
 WHEN TO USE:
 - Calling a JSON API without a dedicated tool (small internal service, webhook test, an ad-hoc REST endpoint)
 - POSTing to a form or webhook the user supplies

@@ -52,6 +52,10 @@ export const humanizeTextTool: Tool = {
       name: "humanize_text",
       description: `Detect and remove AI writing patterns from text.
 
+DO NOT USE WHEN:
+- The user wants a translation, a summary or a rewrite for a different audience → do that directly; this tool only strips AI tells.
+- The text is code, a table or structured data.
+
 USE WHEN:
 - User asks to "humanize", "clean up", or "make it sound natural"
 - Before publishing content to WordPress, social media, or email

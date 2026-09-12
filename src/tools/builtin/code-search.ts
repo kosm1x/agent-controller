@@ -28,6 +28,10 @@ export const grepTool: Tool = {
       name: "grep",
       description: `Search file contents for a text pattern. Uses fixed-string matching (not regex) for reliability.
 
+DO NOT USE WHEN:
+- You are looking for a note in the knowledge base → use jarvis_file_search.
+- You want a symbol (function, class, type) in mission-control by name → use code_search.
+
 WHEN TO USE:
 - Find where a function, class, variable, or string is used
 - Locate error messages, config keys, or API endpoints
@@ -243,6 +247,10 @@ export const globTool: Tool = {
       name: "glob",
       description: `Find files matching a glob pattern. Use this to discover project structure, locate files by extension, or find specific filenames.
 
+DO NOT USE WHEN:
+- You want to search file CONTENTS → use grep.
+- You are looking for knowledge-base notes → use jarvis_file_search.
+
 WHEN TO USE:
 - "What TypeScript files are in src/?" → glob pattern="src/**/*.ts"
 - "Find all test files" → glob pattern="**/*.test.*"
@@ -381,6 +389,10 @@ export const listDirTool: Tool = {
       name: "list_dir",
       description: `List the contents of a directory. Shows files and subdirectories with type indicators.
 
+DO NOT USE WHEN:
+- You already know the filename pattern → use glob (recursive, one call).
+- You want to read a file → use file_read.
+
 WHEN TO USE:
 - Explore project structure before making changes
 - Check what files exist in a directory
@@ -493,6 +505,10 @@ export const codeSearchTool: Tool = {
     function: {
       name: "code_search",
       description: `Search your own codebase (mission-control) for functions, classes, types, constants by name or keyword.
+
+DO NOT USE WHEN:
+- The repo is not mission-control → use grep with a path.
+- You need arbitrary text (a log line, a string literal) → use grep.
 
 USE WHEN:
 - You need to find where a function is defined before fixing it

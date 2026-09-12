@@ -44,6 +44,10 @@ export const kbIngestPdfStructuredTool: Tool = {
       name: "kb_ingest_pdf_structured",
       description: `Ingest a local PDF into the pgvector KB with structure preserved.
 
+DO NOT USE WHEN:
+- The user just wants to READ or summarise a PDF → use pdf_read; ingestion is a durable write to the knowledge base.
+- The source is a web page or a Google Doc → use web_read / gdocs_read and store a note instead.
+
 USE WHEN:
 - User wants to ingest 10-K / earnings / research PDFs for later retrieval
 - Need tables + section hierarchy preserved (not flattened to plain text)
@@ -164,6 +168,10 @@ export const kbBatchInsertTool: Tool = {
     function: {
       name: "kb_batch_insert",
       description: `Batch-insert pre-parsed KB entries into pgvector.
+
+DO NOT USE WHEN:
+- You have a single fact or note → use memory_store or jarvis_file_write.
+- The entries are not yet parsed into path/title/content rows → use kb_ingest_pdf_structured for PDFs.
 
 USE WHEN:
 - Caller already has structured content (Obsidian Drive ingest, custom scrapers,

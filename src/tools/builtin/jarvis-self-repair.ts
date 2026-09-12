@@ -50,6 +50,10 @@ export const jarvisDiagnoseTool: Tool = {
       name: "jarvis_diagnose",
       description: `Diagnose recent errors in your own system (mission-control).
 
+DO NOT USE WHEN:
+- The failing service is NOT mission-control (agentic-crm, caddy, stalwart, supabase) → use vps_logs.
+- You already know the cause and need to ship a fix → use jarvis_dev.
+
 USE WHEN:
 - User reports a bug in your behavior
 - Overnight tuning detects a regression
@@ -217,6 +221,10 @@ export const jarvisTestRunTool: Tool = {
     function: {
       name: "jarvis_test_run",
       description: `Run typecheck and test suite on mission-control. Use BEFORE opening a PR to verify your fix.
+
+DO NOT USE WHEN:
+- The code under test is another repo → run its own test command via shell_exec.
+- You only want to know whether the service is healthy → use jarvis_diagnose.
 
 USE WHEN:
 - After making code changes via file_edit on a jarvis/* branch

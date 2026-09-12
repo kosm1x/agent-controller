@@ -22,6 +22,10 @@ export const calendarListTool: Tool = {
       name: "calendar_list",
       description: `List upcoming events from Google Calendar.
 
+DO NOT USE WHEN:
+- The user asks about Jarvis's OWN recurring jobs (reports, monitors, rituals) → use list_schedules.
+- The user wants to create or change an event → use calendar_create / calendar_update.
+
 USE WHEN:
 - The user asks about their schedule, meetings, or events
 - You need to check availability before creating an event
@@ -109,6 +113,10 @@ export const calendarCreateTool: Tool = {
     function: {
       name: "calendar_create",
       description: `Create a new event in Google Calendar.
+
+DO NOT USE WHEN:
+- The user wants Jarvis to DO something on a schedule (send a report every Monday) → use schedule_task; calendar events do not run tasks.
+- The event already exists and needs a change → use calendar_update.
 
 USE WHEN:
 - The user asks to schedule a meeting, event, or reminder
@@ -216,6 +224,10 @@ export const calendarUpdateTool: Tool = {
     function: {
       name: "calendar_update",
       description: `Update or cancel a Google Calendar event.
+
+DO NOT USE WHEN:
+- The thing to cancel is a Jarvis scheduled task, not a calendar event → use delete_schedule.
+- The event does not exist yet → use calendar_create.
 
 WORKFLOW: Call calendar_list first to find the event ID, then update it here.
 To cancel an event, set status to "cancelled".`,

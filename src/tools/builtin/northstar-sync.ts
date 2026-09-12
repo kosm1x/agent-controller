@@ -952,6 +952,10 @@ export const northstarSyncTool: Tool = {
       name: "northstar_sync",
       description: `Reconciliation between NorthStar files (Jarvis local) and COMMIT (db.mycommit.net app). NorthStar and COMMIT are PEER data stores, not master-mirror. Changes on either side stay local until THIS tool is invoked.
 
+DO NOT USE WHEN:
+- The user only wants to READ a NorthStar file or status → use jarvis_file_read / northstar_index.
+- The user asks about a single project's state → use the projects tools; sync touches both stores.
+
 STRICT-MIRROR INVARIANT (LWW mode, 2nd sync onward): after a successful run, every local NorthStar record has a matching COMMIT record by id and vice versa. The 4-phase architecture enforces this:
   * Phase 0 — sanitization: \`Due: <non-date>\` and \`Target: <non-date>\` lines (e.g. \`Due: none\`, \`Target: TBD\`) are stripped from local files before sync. Sentinels can never reach COMMIT or live on locally.
   * Phase 1 — push-new: local files without a COMMIT_ID are POSTed. Validation 4xx (bad date, NULL violation, parent unresolvable) results in the LOCAL FILE BEING DELETED — surfaced under \`Dropped:\` with the PG SQLSTATE. Transport failures (HTTP 401/403/5xx) abort the sync without deleting (retry when upstream recovers).

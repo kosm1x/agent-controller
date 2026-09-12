@@ -705,6 +705,8 @@ export const jarvisDevTool: Tool = {
       name: "jarvis_dev",
       description: `Jarvis's self-improvement tool — create branches, run tests, and open PRs on your own codebase (mission-control).
 
+DO NOT USE WHEN: the repo is not mission-control (shell_exec / file_edit) or the cause is unknown (jarvis_diagnose first).
+
 USE WHEN:
 - User asks you to fix a bug in your own code ("fix your scope regex", "add a new adapter")
 - User asks you to write a new tool or feature for yourself

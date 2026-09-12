@@ -51,6 +51,10 @@ export const pmPaperRebalanceTool: Tool = {
       name: "pm_paper_rebalance",
       description: `Executes a Polymarket paper-trading rebalance from the latest \`pm_alpha_run\` output.
 
+DO NOT USE WHEN:
+- The user means the equities paper book (tickers, Alpaca-style) → use paper_trade / paper_portfolio.
+- No pm_alpha_run has produced signals yet → run pm_alpha_run first.
+
 Pipeline:
   pm_alpha_latest → per-token |weight| × total_equity sizing → diff vs current
   PM positions → sells-first ordering → synthetic fills at midpoint × (1 ± 20 bps
@@ -236,6 +240,10 @@ export const pmPaperPortfolioTool: Tool = {
       name: "pm_paper_portfolio",
       description: `Current Polymarket paper portfolio: positions (market + outcome + shares + avg_cost + market_value + unr P&L), USDC cash, total equity.
 
+DO NOT USE WHEN:
+- The user asks about the equities paper book → use paper_portfolio.
+- The user wants fills / trade history → use pm_paper_history.
+
 USE WHEN operator asks "pm portfolio", "polymarket positions", "posiciones polymarket".
 NOT WHEN asking for trade history (use \`pm_paper_history\`) or equity positions (use \`paper_portfolio\`).
 
@@ -296,6 +304,10 @@ export const pmPaperHistoryTool: Tool = {
     function: {
       name: "pm_paper_history",
       description: `Recent Polymarket paper fills. Filter by market_id (Polymarket condition_id UUID), outcome, since-date, limit.
+
+DO NOT USE WHEN:
+- The user asks for equities fills → use paper_history.
+- The user wants current positions or equity → use pm_paper_portfolio.
 
 USE WHEN operator asks "pm history", "polymarket fills", "historial de pm paper".
 NOT WHEN asking for current positions (use \`pm_paper_portfolio\`) or equity (use \`paper_history\`).

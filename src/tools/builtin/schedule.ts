@@ -40,6 +40,8 @@ export const scheduleTaskTool: Tool = {
     function: {
       name: "schedule_task",
       description: `Create a recurring scheduled task that runs automatically on a cron schedule.
+
+DO NOT USE WHEN: the user wants a calendar appointment or reminder → calendar_create (a schedule runs Jarvis tasks; it is not a calendar event).
 Use this when the user asks for recurring reports, daily summaries, periodic checks, or any task that should repeat on a schedule.
 
 The task will be executed autonomously — you write the task description (what to do), specify the tools needed, and choose the delivery method (telegram, email, or both).
@@ -197,6 +199,9 @@ export const listSchedulesTool: Tool = {
     function: {
       name: "list_schedules",
       description: `List all active recurring scheduled tasks (reports, monitors, syncs). Shows: name, cron schedule, delivery method, and last run time.
+
+DO NOT USE WHEN:
+- The user asks about their agenda, meetings or events → use calendar_list.
 
 USE WHEN:
 - User asks "qué tareas tengo programadas", "mis schedules", "tareas recurrentes"
