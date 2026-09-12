@@ -62,6 +62,8 @@ export interface RunnerInput {
  * in ad-hoc orders. New runners: populate `finalAnswer` or `text`, never
  * only `content`.
  */
+import type { TerminationReason } from "./termination.js";
+
 export interface RunnerStructuredOutput {
   text?: string;
   content?: string;
@@ -117,6 +119,11 @@ export interface RunnerOutput {
   trace?: unknown[];
   /** Tool names called during execution (for requiredTools validation). */
   toolCalls?: string[];
+  /**
+   * Why the runner stopped (closed set, `termination.ts`). Runners that omit
+   * it get a dispatcher-derived fallback from the mapped task status.
+   */
+  terminationReason?: TerminationReason;
 }
 
 /** Interface that all runners implement. */

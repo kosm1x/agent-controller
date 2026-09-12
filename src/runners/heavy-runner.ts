@@ -26,6 +26,7 @@ import {
   recordNanoclawImageMissing,
 } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { terminationFromExit } from "./termination.js";
 import { renderConversationContext } from "./conversation-context.js";
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
@@ -122,6 +123,11 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         finalAnswer: collectFinalAnswer(result.executionResults),
       },
       toolCalls: result.executionResults.totalToolNames,
+      terminationReason: terminationFromExit(
+        result.exitReason,
+        undefined,
+        result.success || promoted,
+      ),
       tokenUsage: {
         promptTokens: result.tokenUsage.promptTokens,
         completionTokens: result.tokenUsage.completionTokens,
@@ -151,6 +157,7 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
     return {
       success: false,
       error: errMsg(err),
+      terminationReason: "error",
       durationMs: Date.now() - start,
     };
   }

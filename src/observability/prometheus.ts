@@ -47,6 +47,24 @@ const providerRequestCount = new client.Gauge({
   labelNames: ["provider"] as const,
 });
 
+// --- Prompt-cache hit ratio (2026-09-12, agents-best-practices gap 6) ---
+// cost_ledger already carries cache_read_tokens per run (v8 S4) but nothing
+// exported it, so prefix fragmentation (a volatile line creeping into the
+// system prompt) was invisible until the bill arrived. Ratio = cache-read /
+// total prompt tokens over the trailing 24 h, per model. A long-prefix model
+// sitting at 0 for hours is the alarm condition (Prometheus-side rule).
+const inferenceCacheReadTokens24h = new client.Gauge({
+  name: "mc_inference_cache_read_tokens_24h",
+  help: "Prompt tokens served from the provider prompt cache, trailing 24h, per model",
+  labelNames: ["model"] as const,
+});
+
+const inferenceCacheReadRatio24h = new client.Gauge({
+  name: "mc_inference_cache_read_ratio_24h",
+  help: "cache_read_tokens / prompt_tokens over the trailing 24h, per model (0-1)",
+  labelNames: ["model"] as const,
+});
+
 // --- Budget (three-window) ---
 const budgetDailySpend = new client.Gauge({
   name: "mc_budget_daily_spend_usd",
@@ -461,7 +479,8 @@ export function collectMetrics(): void {
         `SELECT model,
                 SUM(prompt_tokens) as prompt_total,
                 SUM(completion_tokens) as completion_total,
-                SUM(cost_usd) as cost_total
+                SUM(cost_usd) as cost_total,
+                SUM(cache_read_tokens) as cache_read_total
          FROM cost_ledger
          WHERE created_at >= datetime('now', '-1 day')
          GROUP BY model`,
@@ -471,11 +490,17 @@ export function collectMetrics(): void {
       prompt_total: number;
       completion_total: number;
       cost_total: number;
+      cache_read_total: number;
     }>;
     for (const row of tokenStats) {
       tokensPromptTotal.set({ model: row.model }, row.prompt_total);
       tokensCompletionTotal.set({ model: row.model }, row.completion_total);
       costTotalUsd.set({ model: row.model }, row.cost_total);
+      inferenceCacheReadTokens24h.set({ model: row.model }, row.cache_read_total);
+      inferenceCacheReadRatio24h.set(
+        { model: row.model },
+        row.prompt_total > 0 ? row.cache_read_total / row.prompt_total : 0,
+      );
     }
 
     // Memory stats

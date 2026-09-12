@@ -21,6 +21,7 @@ import {
 } from "../intelligence/scope-telemetry.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { isReadOnlyTool } from "../inference/guards.js";
+import { terminationFromExit } from "./termination.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import {
   buildKnowledgeBaseSection,
@@ -2356,6 +2357,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           }),
         },
         toolCalls: toolsCalled,
+        terminationReason: terminationFromExit(
+          result.exitReason,
+          parsed.status,
+          parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
+        ),
         tokenUsage: {
           promptTokens: result.totalUsage.prompt_tokens,
           completionTokens: result.totalUsage.completion_tokens,
@@ -2375,6 +2381,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       return {
         success: false,
         error: errMsg(err),
+        terminationReason: "error",
         durationMs: Date.now() - start,
       };
     } finally {

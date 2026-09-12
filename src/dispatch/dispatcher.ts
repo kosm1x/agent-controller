@@ -18,6 +18,7 @@ import {
 } from "../budget/service.js";
 import { taskStarted, taskCompleted } from "../observability/prometheus.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { terminationFromTaskStatus } from "../runners/termination.js";
 import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
@@ -902,6 +903,7 @@ async function dispatchWithSlot(
             name: "task.failed",
             latencyMs: durationMs,
             attrs: {
+              termination_reason: "required_tools_missing",
               error: `required tools missing after retry: ${missing.join(", ")}`,
             },
           });
@@ -953,6 +955,7 @@ async function dispatchWithSlot(
           name: "task.failed",
           latencyMs: durationMs,
           attrs: {
+            termination_reason: "required_tools_missing",
             error: `required tools missing (auto-retrying): ${missing.join(", ")}`,
           },
         });
@@ -1071,6 +1074,9 @@ async function dispatchWithSlot(
       }),
       attrs: {
         status: taskStatus,
+        termination_reason:
+          result.terminationReason ??
+          terminationFromTaskStatus(taskStatus, result.success),
         agent_type: effectiveAgentType,
         tool_calls: result.toolCalls?.length ?? 0,
         ...(result.error && { error: result.error.slice(0, 300) }),
@@ -1117,7 +1123,11 @@ async function dispatchWithSlot(
       taskId,
       runId,
       name: "task.failed",
-      attrs: { error: errorMsg.slice(0, 300), thrown: true },
+      attrs: {
+        termination_reason: "error",
+        error: errorMsg.slice(0, 300),
+        thrown: true,
+      },
     });
   } finally {
     activeAborts.delete(taskId);
