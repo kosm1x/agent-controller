@@ -1281,5 +1281,7 @@ Bundle: `685d313` scanner set from Rule-of-Two · `a4a55d0` termination_reason +
 - **claude-sdk tool-error frame is unsanitized**: `claude-sdk.ts` catch returns `Error: ${msg}` raw while the openai path sanitizes after the catch. Minor; align.
 - **97 legacy tools without a not-for section** (`description-lint.test.ts` `LEGACY_WITHOUT_NOT_FOR`): backfill by family when a tool is touched (market ×13, video ×14, wp ×9, vps ×4, learning ×5 …). Skills and MCP tools are outside the static lint by design.
 - **`task_trace_events.attrs` truncation** replaces the whole object with `{truncated}` past 2,000 chars — `termination_reason` is lost on the longest events. Keep a reserved-keys prefix when truncating.
+- **Live KG path of `memory_forget` still unexercised** (the 14:13 UTC test turn correctly routed a KB-file fact AWAY from the tool). Run once: «Olvida los hechos del knowledge graph sobre current_task, están obsoletos» → expect one `tool_approvals` row `confirmed` with the sender id, 5 `knowledge_triples` rows with `valid_to`, history still visible via `memory_kg_query include_history`.
+- **Hallucinated-ask re-run on a tool already in scope** (task 067687dd → ebd8e59a): the model asked for `memory_forget`/`user_fact_delete` while both were in its list; the router's silent re-run fixed it at the cost of one extra fast task. Same class as the U3 residual (queue §2026-09-06); worth counting per week before any change.
 - Optional: `npx tsx scripts/validate-tool-search.ts --run` now that `memory_forget` is in the deferred catalog.
 
