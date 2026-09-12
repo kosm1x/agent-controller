@@ -363,3 +363,129 @@ describe("detectConfirmationResponse", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Durable approval records (2026-09-12) — real :memory: DB, not mocked.
+// ---------------------------------------------------------------------------
+
+import { beforeEach, vi } from "vitest";
+import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
+import {
+  _resetPendingConfirmationsForTests,
+  argsSha256,
+  resolvePendingConfirmation,
+} from "./confirmations.js";
+
+interface Row {
+  id: number;
+  tool: string;
+  args_sha256: string;
+  decision: string;
+  approver: string | null;
+  decided_at: string | null;
+  requested_at: string;
+}
+
+function rows(tk: string): Row[] {
+  return getDatabase()
+    .prepare(
+      "SELECT id, tool, args_sha256, decision, approver, decided_at, requested_at FROM tool_approvals WHERE thread_key = ? ORDER BY id",
+    )
+    .all(tk) as Row[];
+}
+
+describe("tool_approvals durability", () => {
+  const tk = "telegram:12345";
+  const args = { to: "a@b.mx", subject: "Hola", body: "x" };
+
+  beforeEach(() => {
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  it("writes a pending row bound to the args hash", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "gmail_send(to: a@b.mx)");
+    const r = rows(tk);
+    expect(r).toHaveLength(1);
+    expect(r[0].decision).toBe("pending");
+    expect(r[0].args_sha256).toBe(argsSha256(args));
+    expect(getPendingConfirmation(tk)?.approvalId).toBe(r[0].id);
+  });
+
+  it("argsSha256 is key-order insensitive and value sensitive", () => {
+    expect(argsSha256({ a: 1, b: [1, { c: 2 }] })).toBe(argsSha256({ b: [1, { c: 2 }], a: 1 }));
+    expect(argsSha256({ to: "a@b.mx" })).not.toBe(argsSha256({ to: "a@b.mx " }));
+  });
+
+  it("confirming records approver + decided_at and returns the exact operation", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    const approved = resolvePendingConfirmation(tk, "confirmed", "sender-42");
+    expect(approved?.toolName).toBe("gmail_send");
+    expect(approved?.args).toEqual(args);
+    const [r] = rows(tk);
+    expect(r.decision).toBe("confirmed");
+    expect(r.approver).toBe("sender-42");
+    expect(r.decided_at).not.toBeNull();
+    expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("declining closes the row and returns null", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    expect(resolvePendingConfirmation(tk, "declined", "sender-42")).toBeNull();
+    expect(rows(tk)[0].decision).toBe("declined");
+    expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("survives a restart: the map is empty but the pending row rehydrates", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    _resetPendingConfirmationsForTests(); // simulate process restart
+    const p = getPendingConfirmation(tk);
+    expect(p?.toolName).toBe("gmail_send");
+    expect(p?.args).toEqual(args);
+    const approved = resolvePendingConfirmation(tk, "confirmed", "sender-42");
+    expect(approved?.args).toEqual(args);
+    expect(rows(tk)[0].decision).toBe("confirmed");
+  });
+
+  it("an expired row does not rehydrate and is closed as expired", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET requested_at = '2026-01-01T00:00:00.000Z' WHERE thread_key = ?")
+      .run(tk);
+    _resetPendingConfirmationsForTests();
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(rows(tk)[0].decision).toBe("expired");
+  });
+
+  it("a mutated pending op never executes: hash mismatch → null + superseded", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    const pending = getPendingConfirmation(tk)!;
+    (pending.args as Record<string, unknown>).to = "attacker@evil.mx"; // tamper in place
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolvePendingConfirmation(tk, "confirmed", "sender-42")).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    expect(rows(tk)[0].decision).toBe("superseded");
+  });
+
+  it("a new pending for the same thread supersedes the previous row", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s1");
+    storePendingConfirmation(tk, "jarvis_file_delete", { path: "x.md" }, "s2");
+    const r = rows(tk);
+    expect(r.map((x) => [x.tool, x.decision])).toEqual([
+      ["gmail_send", "superseded"],
+      ["jarvis_file_delete", "pending"],
+    ]);
+  });
+
+  it("clearPendingConfirmation with no decision closes the row as superseded", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    clearPendingConfirmation(tk);
+    expect(rows(tk)[0].decision).toBe("superseded");
+  });
+});

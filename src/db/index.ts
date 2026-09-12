@@ -423,6 +423,28 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_trace_task ON task_trace_events(task_id, id)",
   );
+
+  // Durable approval records (2026-09-12, agents-best-practices gap 3).
+  // Writer/reader: src/messaging/confirmations.ts. One row per pending
+  // high-risk tool call; decision ∈ pending|confirmed|declined|expired|
+  // superseded, approver = the inbound sender that decided. args_sha256
+  // binds the approval to the exact action (a mutated pending op cannot
+  // reuse the verbal yes) and the row survives a restart.
+  _db.exec(`CREATE TABLE IF NOT EXISTS tool_approvals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_key   TEXT NOT NULL,
+    tool         TEXT NOT NULL,
+    args_sha256  TEXT NOT NULL,
+    args_json    TEXT NOT NULL,
+    summary      TEXT,
+    requested_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    decided_at   TEXT,
+    decision     TEXT NOT NULL DEFAULT 'pending',
+    approver     TEXT
+  )`);
+  _db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_tool_approvals_thread ON tool_approvals(thread_key, id)",
+  );
   _db.exec("CREATE INDEX IF NOT EXISTS idx_trace_ts ON task_trace_events(ts)");
 
   // v5.0 S5b: Knowledge maps for Prometheus

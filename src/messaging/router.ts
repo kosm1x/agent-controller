@@ -61,6 +61,7 @@ import { reRunJudgment } from "../lib/v8-2/produce.js";
 import {
   getPendingConfirmation,
   clearPendingConfirmation,
+  resolvePendingConfirmation,
   storePendingConfirmation,
   detectConfirmationResponse,
 } from "./confirmations.js";
@@ -1920,10 +1921,19 @@ export class MessageRouter {
         strict: isDestructive,
       });
       if (confResponse === "confirm") {
+        // Record who approved what (tool_approvals) and re-check the args
+        // hash; null means nothing valid is pending — execute NOTHING.
+        const approved = resolvePendingConfirmation(tk, "confirmed", msg.from);
+        if (!approved) {
+          const stale =
+            "La confirmación pendiente ya no es válida. Pídemelo de nuevo.";
+          this.sendToChannel(msg.channel, msg.from, stale);
+          appendDayLog("JARVIS", stale);
+          return true;
+        }
         console.log(
-          `[router] Confirmation accepted: ${pendingConf.toolName} — executing directly`,
+          `[router] Confirmation accepted: ${approved.toolName} — executing directly (approval ${approved.approvalId ?? "n/a"})`,
         );
-        clearPendingConfirmation(tk);
         try {
           // Tools with handler-level precious-path / precious-target re-checks
           // (jarvis_file_delete, jarvis_files_batch_delete, etc.) ALSO read a
@@ -1937,8 +1947,8 @@ export class MessageRouter {
           // V8.3 L1-L2: route operator-confirmed gated capabilities through the
           // decision ledger (dormant/passthrough unless V83_ENABLED + canary).
           const result = await executeGatedCapability(
-            pendingConf.toolName,
-            { ...pendingConf.args, confirmed: true },
+            approved.toolName,
+            { ...approved.args, confirmed: true },
             { threadId: tk },
           );
           // Format result for user — human-readable confirmation
@@ -1949,26 +1959,26 @@ export class MessageRouter {
               userResponse = `Error: ${parsed.error}`;
             } else {
               userResponse = formatConfirmationResult(
-                pendingConf.toolName,
-                pendingConf.args,
+                approved.toolName,
+                approved.args,
                 parsed,
               );
             }
           } catch {
-            userResponse = `✅ ${pendingConf.toolName} ejecutado.`;
+            userResponse = `✅ ${approved.toolName} ejecutado.`;
           }
           this.sendToChannel(msg.channel, msg.from, userResponse);
           // USER line already day-logged at the top of handleInbound.
           appendDayLog("JARVIS", userResponse);
           pushToThread(tk, `User: ${msg.text}\nJarvis: ${userResponse}`);
         } catch (err) {
-          const errText = `Error ejecutando ${pendingConf.toolName}: ${errMsg(err)}`;
+          const errText = `Error ejecutando ${approved.toolName}: ${errMsg(err)}`;
           this.sendToChannel(msg.channel, msg.from, errText);
         }
         return true;
       } else if (confResponse === "decline") {
         console.log(`[router] Confirmation declined: ${pendingConf.toolName}`);
-        clearPendingConfirmation(tk);
+        resolvePendingConfirmation(tk, "declined", msg.from);
         this.sendToChannel(msg.channel, msg.from, "Cancelado.");
         // USER line already day-logged at the top of handleInbound.
         appendDayLog("JARVIS", "Cancelado.");
