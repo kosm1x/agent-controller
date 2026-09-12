@@ -6,6 +6,7 @@
  */
 
 import type { ToolCall } from "./adapter.js";
+import { resolveRuleOfTwo } from "../tools/rule-of-two.js";
 
 // ---------------------------------------------------------------------------
 // READ_ONLY_TOOLS set
@@ -210,24 +211,18 @@ export interface InjectionResult {
   detections: string[];
 }
 
-/** Tools whose output comes from untrusted external sources. */
-const UNTRUSTED_TOOLS = new Set([
-  "web_read",
-  "web_search",
-  "exa_search",
-  "gmail_read",
-  "gmail_search",
-  "rss_read",
-  "browser__goto",
-  "browser__markdown",
-  "browser__click",
-  "browser__fill",
-  "browser__evaluate",
-  "browser__scroll",
-]);
-
+/**
+ * Tools whose output comes from untrusted external sources.
+ *
+ * Derived from the Rule-of-Two classification ([A] = processes untrusted
+ * input) so the injection scanner and the permission model agree on ONE list.
+ * Until 2026-09-12 this was a private 12-name set; Rule-of-Two marked 42 tools
+ * as untrusted-ingest, so 30 of them (email_verify, http_fetch, pdf_read,
+ * gdocs_read, crm_query, …) bypassed the scanner entirely. Names the
+ * classification does not know resolve to untrusted (the safe default).
+ */
 export function isUntrustedTool(name: string): boolean {
-  return UNTRUSTED_TOOLS.has(name);
+  return resolveRuleOfTwo({ name }).untrustedInput;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,7 +574,7 @@ export function analyzeInjection(
   toolName: string,
   content: string,
 ): InjectionResult {
-  if (!UNTRUSTED_TOOLS.has(toolName)) return { risk: "none", detections: [] };
+  if (!isUntrustedTool(toolName)) return { risk: "none", detections: [] };
 
   // Normalize and sample
   const sample = normalizeForDetection(content.slice(0, 5000));
