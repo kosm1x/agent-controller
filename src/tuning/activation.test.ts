@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getValidVariants, markVariantActivated, deserializeSandbox } = vi.hoisted(() => ({
+const { getValidVariants, markVariantActivated, clearVariantActivation, deserializeSandbox } = vi.hoisted(() => ({
   getValidVariants: vi.fn(),
   markVariantActivated: vi.fn(),
+  clearVariantActivation: vi.fn(),
   deserializeSandbox: vi.fn(),
 }));
-vi.mock("./schema.js", () => ({ getValidVariants, markVariantActivated }));
+vi.mock("./schema.js", () => ({ getValidVariants, markVariantActivated, clearVariantActivation }));
 vi.mock("./variant-store.js", () => ({ deserializeSandbox }));
 vi.mock("../tools/registry.js", () => ({ toolRegistry: { get: () => undefined } }));
 
@@ -118,6 +119,7 @@ describe("activateBestVariant — code fingerprint drift (2026-09-12)", () => {
     const r = activateBestVariant();
     expect(r).toEqual({ activated: false, skippedStale: ["stale"] });
     expect(markVariantActivated).not.toHaveBeenCalled();
+    expect(clearVariantActivation).toHaveBeenCalledTimes(1);
     expect(DEFAULT_SCOPE_PATTERNS.map((p) => String(p.pattern))).toEqual(snapshot.map((p) => String(p.pattern)));
   });
 

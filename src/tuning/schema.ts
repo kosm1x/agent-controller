@@ -465,6 +465,11 @@ export function getValidVariants(limit = 50): TuneVariant[] {
   return rows.map((r) => ({ ...r, valid: r.valid === 1 }));
 }
 
+/** No variant is live this boot: drop any stale activation stamp. */
+export function clearVariantActivation(): void {
+  getDatabase().prepare(`UPDATE tune_variants SET activated_at = NULL`).run();
+}
+
 export function markVariantActivated(variantId: string): void {
   const db = getDatabase();
   // Clear any previous activation

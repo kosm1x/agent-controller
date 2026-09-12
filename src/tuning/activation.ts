@@ -20,7 +20,11 @@
  * tool and never apply at boot. Only scope-pattern overrides are live.
  */
 
-import { getValidVariants, markVariantActivated } from "./schema.js";
+import {
+  clearVariantActivation,
+  getValidVariants,
+  markVariantActivated,
+} from "./schema.js";
 import { deserializeSandbox } from "./variant-store.js";
 import { toolRegistry } from "../tools/registry.js";
 import { DEFAULT_SCOPE_PATTERNS } from "../messaging/scope.js";
@@ -93,6 +97,13 @@ export function activateBestVariant(): ActivationResult {
     };
   }
 
+  // Nothing activated this boot — a stale activated_at from an earlier boot
+  // must not make the archive claim a variant is live.
+  try {
+    clearVariantActivation();
+  } catch {
+    /* best-effort */
+  }
   return { activated: false, ...(skippedStale.length && { skippedStale }) };
 }
 
