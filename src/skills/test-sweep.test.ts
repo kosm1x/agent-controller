@@ -3,12 +3,20 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
-import { runSkillsTestSweep, SweepLog } from "./test-sweep.js";
+import { runSkillsTestSweep, SweepLog, SWEEP_TEST_TIMEOUT_MS } from "./test-sweep.js";
 import { infer } from "../inference/adapter.js";
+import { runSkillTests } from "./test-runner.js";
 
 vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
 }));
+
+vi.mock("./test-runner.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./test-runner.js")>();
+  return { ...mod, runSkillTests: vi.fn(mod.runSkillTests) };
+});
+
+const mockRunSkillTests = vi.mocked(runSkillTests);
 
 const mockInfer = vi.mocked(infer);
 
@@ -24,6 +32,7 @@ beforeEach(() => {
   process.env.JARVIS_KB_MIRROR_DIR = testKbDir;
   initDatabase(":memory:");
   mockInfer.mockReset();
+  mockRunSkillTests.mockClear();
 });
 
 afterEach(() => {
@@ -89,6 +98,14 @@ describe("runSkillsTestSweep", () => {
       .prepare("SELECT is_certified FROM skills WHERE skill_id = ?")
       .get(skillId) as { is_certified: number };
     expect(skill.is_certified).toBe(1);
+    // 2026-09-12: the sweep must not run at the mini-runner's 30 s default —
+    // a structured skill measured 26.5 s there and a timeout decertifies.
+    expect(mockRunSkillTests).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      expect.objectContaining({ timeoutMs: SWEEP_TEST_TIMEOUT_MS }),
+    );
+    expect(SWEEP_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 
   it("decertifies a skill whose tests now fail", async () => {

@@ -46,6 +46,9 @@ const DEFAULT_LOG: SweepLog = {
   warn: (msg, fields) => moduleLog.warn(fields ?? {}, msg),
 };
 
+/** Per-test LLM wall for the sweep; 3x the mini-runner default (see runSkillTests). */
+export const SWEEP_TEST_TIMEOUT_MS = 90_000;
+
 /**
  * Register the skill test sweep cron. Returns true if newly registered,
  * false if already registered.
@@ -124,9 +127,13 @@ export async function runSkillsTestSweep(
   for (const skill of candidates) {
     result.examined++;
     try {
+      // Structured skills with multi-beat outputs (2026-09-12 screenwriting
+      // set) run 25-27 s on Sonnet against the mini-runner's 30 s default;
+      // a timeout here is not "pass" and would decertify a healthy skill.
       const outcome = await runSkillTests(
         skill.skill_id,
         skill.current_version_id,
+        { timeoutMs: SWEEP_TEST_TIMEOUT_MS },
       );
       if (outcome.outcomes.length === 0) {
         result.skipped++;

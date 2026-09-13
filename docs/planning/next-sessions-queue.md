@@ -1263,6 +1263,29 @@ Jarvis answered "verifica si <addr>@gmail.com existe" with a shell `dig` and "no
 - ~~eval:gate on the new description~~ — PASS 2026-09-11 (66.95 vs 65.75 incumbent, threshold 63.75, 408 cases, $5.67; also covers the classifier `utility` line). Still optional: `npx tsx scripts/validate-tool-search.ts --run` for the deferred flag.
 - Optional: one SMTP session per domain for up to 5 RCPT TO (halves connections on same-domain batches; some hosts count RCPTs, so gate behind a rule).
 
+## 2026-09-12c — screenwriting corpus adopted (jtydhr88/screenwriting-skills → 15 KB docs + 5 certified skills)
+
+Shipped: 12 English distillations of the English-origin craft skills (method only, bilingual-verified: 143 claims sampled, 0 invented, every misattribution/distortion fixed) + 2 authored short-form docs + index under `knowledge/screenwriting/`, and five certified skills (`short-form-script`, `logline-premise-test`, `scene-value-turn-diagnostic`, `dialogue-on-the-nose-pass`, `series-engine-test`) at v1.1.1 after 3 parallel R1 audits (A FAIL, B PASS-WITH-WARNINGS, C FAIL — all Criticals folded). Plan `docs/planning/screenwriting-corpus-adoption-plan.md`; log `screenwriting-distill-log.md`; briefs `screenwriting-eval-briefs.md`; seed `scripts/seed-screenwriting.ts`.
+
+### Operator steps
+- **Deploy** (recommended defense-in-depth, not a blocker: the 6-hourly skill sweep's per-test wall goes 30 s → 90 s and the test runner passes 4,096 max tokens; the trimmed `short-form-script` body already measures ≤ 21.8 s against the 30 s default, and the token cap only affects the OpenAI-compat path): `cd /root/claude/mission-control && ./scripts/deploy.sh`
+- **The §14 activation gate sits exactly at its threshold** (5 certified active skills, all five from this bundle; the phase-5 Spanish five are `is_certified=0`). One decertification on a 6-hourly tick drops it to 4 — read a future sweep failure as a gate event, not a skill event.
+- **Phase 4 eval** (≈1 h): run the six briefs in `docs/planning/screenwriting-eval-briefs.md` twice each (A/B, slots shuffled by a helper), fill the sheet. Gate: median ≥ 4 and A ≥ B on ≥ 5 of 6. Below gate → revise doc 13 + the `short-form-script` body first.
+- **Live retrieval probe** (plan Phase 1 exit, not yet observed): three English chat turns ("fix this on-the-nose scene", "test this logline", "break this 30 s spot into beats") and confirm the journal shows `knowledge/screenwriting/…` read or a skill run.
+
+### Operator decisions
+- **Verb-led skill names**: the critic rubric wants `write-short-form-script` / `test-logline-premise` / `diagnose-scene-value-turn` / `fix-on-the-nose-dialogue` / `test-series-engine`; the five shipped as noun phrases (critic passed them; `use_count` 0). A rename now costs one re-seed + a registry cleanup; after first use it costs history. Leave or rename?
+- **Skill retrieval is English-embedded**: descriptions are English with 2 Spanish trigger examples each (folded from R1); if Spanish task contexts still miss, add a Spanish description sentence.
+
+### Queued follow-ups
+- **Decertification is silent** (`src/skills/test-sweep.ts` logs a warn only; no `recordRitualFailure`, no Telegram) — pre-existing; the R1 finding that made the timeout a Critical. Wire the sweep's decertify branch to the ritual-failure path.
+- **pgvector embedding clips at 8,000 chars** (`src/db/pgvector-sync.ts`): 9 of the 15 docs are longer, so the semantic vector covers ~40–60 % of them (FTS and reads are complete). Chunked embeddings or a per-doc summary line for the vector.
+- **`INDEX.md` groups by top-level dir only** — `knowledge/screenwriting/` shows as a count on the `knowledge` line; `00-index.md` is the entry point but nothing always-read points at it. Consider one line in the always-read KB README.
+- **Phase-5 seed precedent** (`scripts/skills-seed-phase5.ts`) still upserts the body BEFORE the critic and has no MODE validation, and two of its fixtures (`clasificar-prioridad-tarea` `missing_title`, `planificar-proyecto-por-fases` `missing_idea`) omit the required field so the dispatcher's schema rejects them before the body — switch to empty strings and port the two script fixes when those skills are next touched (all five are `is_certified=0`, so the sweep never runs them).
+- **Untested skill branches**: `series-engine-test` `format: limited` + `episodes`; `language: es-419` on all five; `must_say`/`must_not_say`. Add fixtures when the first real Spanish or limited-series use appears.
+- **The `[PROOF NEEDED: …]` placeholder** reaches the user unfiltered (verified against `deliverable-filter.ts`) — intended; if a client-facing surface should never show it, add a line-anchored rule with a corpus replay.
+- **Spanish / telenovela layer**: separate doc set when a Spanish-market script project appears (out of scope by design 09-12).
+
 ## 2026-09-12b — settleable gate `expect` (YOINK idea adopted; spec §15)
 
 Shipped: comparator grammar (`gt 0 · gte N · eq N · between A B`, last line must be a bare number) + write-time refusal of expectations that cannot fail (digit-only regex, `0`, failure-output matches, look-alikes) at the API/CLI door (throw), the plan door (ABANDONED row) and the `declareGates` floor; stored ritual payloads degrade to an ABANDONED spec, never to "ungated". Replay: 34 of the 61 predicate-bearing live rows would be refused, 0 false refusals. Plan `docs/planning/gate-settleable-expect-plan.md`.

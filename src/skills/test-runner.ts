@@ -94,6 +94,9 @@ export interface RunSkillTestsResult {
   outcomes: TestRunOutcome[];
 }
 
+/** max_tokens for a test execution; structured skills return up to ~1.3k tokens of JSON. */
+export const TEST_MAX_TOKENS = 4096;
+
 export interface RunSkillTestsOptions {
   /** Cap individual test LLM call latency. Default 30s. */
   timeoutMs?: number;
@@ -215,6 +218,9 @@ async function runOneTest(
     timeoutMs: options.timeoutMs,
     providerName: options.providerName,
     signal: options.signal,
+    // Structured outputs (beat tables, flagged-line lists) exceed the
+    // 1024 default on the OpenAI-compat path; the claude-sdk path ignores it.
+    maxTokens: TEST_MAX_TOKENS,
   });
 
   const expectedJson = JSON.stringify(test.expect ?? test.expect_error ?? null);

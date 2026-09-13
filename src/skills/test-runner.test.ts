@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
-import { runSkillTests } from "./test-runner.js";
+import { runSkillTests, TEST_MAX_TOKENS } from "./test-runner.js";
 import { infer } from "../inference/adapter.js";
 
 vi.mock("../inference/adapter.js", () => ({
@@ -86,6 +86,12 @@ describe("runSkillTests — happy path", () => {
     expect(result.certified).toBe(true);
     expect(result.outcomes).toHaveLength(1);
     expect(result.outcomes[0].result).toBe("pass");
+    // 2026-09-12: structured skills return ~1.3k tokens of JSON; the
+    // mini-runner's 1024 default truncates them on the OpenAI-compat path.
+    expect(mockInfer).toHaveBeenCalledWith(
+      expect.objectContaining({ max_tokens: TEST_MAX_TOKENS }),
+      expect.anything(),
+    );
 
     const db = getDatabase();
     const run = db
