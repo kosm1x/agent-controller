@@ -123,9 +123,9 @@ Primero califica el logline (veredicto, elemento más débil, logline reescrito)
 
 ### Verificación de que el brazo A usó las skills (después de los seis A)
 ```
-sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT task_id, tool, created_at FROM task_trace_events WHERE tool IN ('skill_run','skill_load') AND created_at >= datetime('now','-2 hours') ORDER BY created_at"
+sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT task_id, tool, ts FROM task_trace_events WHERE tool IN ('skill_run','skill_load') AND ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-3 hours') ORDER BY ts"
 ```
-Seis filas o más: las skills corrieron. Cero filas: el brazo A fue en realidad un brazo B y la evaluación no vale; revisa primero que el grupo `skills` sea alcanzable desde el clasificador (queue §2026-09-12c).
+Seis filas o más: las skills se usaron (`skill_load` cuenta: el modelo carga el cuerpo de la skill y lo aplica en contexto; `skill_run` la ejecuta como llamada aparte — ambas valen). Cero filas: el brazo A fue en realidad un brazo B y la evaluación no vale. Primera prueba en vivo 2026-09-13 01:41 UTC (S1-A, tarea `a11489a9`): clasificador semántico → `skills, coding`; llamadas `ToolSearch → jarvis_file_read (00-index) → skill_load (short-form-script) → jarvis_file_read (doc 13) → file_write`; `short-form-script.use_count` 7 → 8.
 
 ### Barajar y calificar
 Un ayudante (o Jarvis en un hilo nuevo) lanza una moneda por brief y renombra el par a `S1-slot1.txt` / `S1-slot2.txt`, guardando el mapa aparte. Califica cada slot 1–5 en: usable sin editar (5 = a producción tal cual, 3 = una pasada de edición, 1 = reescribir) · gancho (5 = detiene el pulgar en 3 s, 1 = abre con marca o saludo) · voz (5 = suena al cliente y pasa cover-the-names, 1 = cualquier competidor podría usarlo) · afirmaciones (5 = todo hecho trazable o placeholder, 1 = una cifra o promesa inventada). Revela el mapa, llena la hoja de arriba, aplica la puerta: mediana de A ≥ 4 y A ≥ B en ≥ 5 de 6.
