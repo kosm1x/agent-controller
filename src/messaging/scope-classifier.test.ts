@@ -198,7 +198,6 @@ describe("classifier prompt ↔ scope-group parity (2026-09-11)", () => {
     "paper",
     "pm_alpha",
     "pm_paper",
-    "skills",
   ]);
 
   it("every scope group is either described to the classifier or explicitly listed as known-missing", () => {
@@ -223,6 +222,28 @@ describe("classifier prompt ↔ scope-group parity (2026-09-11)", () => {
     const dropped = promptGroups.filter((g) => !VALID_GROUPS.has(g));
     expect(dropped, `prompt groups the parser would discard: ${dropped.join(", ")}`).toEqual([]);
     expect(parseScopeGroups('["utility"]')).toEqual(new Set(["utility"]));
+  });
+
+  it("skills is described with the certified skills' task vocabulary (2026-09-13)", () => {
+    // The five screenwriting skills are reached through skill_run, which is
+    // pushed only when the classifier returns "skills" — a task-shaped message
+    // ("write a 30 second spot") must activate it without the word "skill".
+    // `?? ""` is deliberate: deleting the prompt line empties `line` and every
+    // toContain below fails, so the pin survives a revert even if "skills" is
+    // re-added to KNOWN_MISSING_FROM_PROMPT. Tokens are anchored in the skills'
+    // real trigger_examples, not in prose.
+    const line = CLASSIFIER_SYSTEM_PROMPT.split("\n").find((l) => l.startsWith("- skills:")) ?? "";
+    for (const token of ["skill_run", "spot", "logline", "escena", "diálogos", "serie"]) {
+      expect(line, token).toContain(token);
+    }
+    expect(VALID_GROUPS.has("skills")).toBe(true);
+    expect(parseScopeGroups('["skills"]')).toEqual(new Set(["skills"]));
+    // A script is a text deliverable: the video line must hand it to skills and
+    // the RULES must say so, or "60 second testimonial video script" → ["video"].
+    const video = CLASSIFIER_SYSTEM_PROMPT.split("\n").find((l) => l.startsWith("- video:")) ?? "";
+    expect(video).toContain("that is skills");
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('"escribe un spot de 30 segundos", "guion de un promo vertical de 20s"');
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('["skills"]   // for');
   });
 
   it("utility is described with email-verification vocabulary", () => {

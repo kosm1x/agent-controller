@@ -60,6 +60,9 @@ export const VALID_GROUPS = new Set([
   // 2026-09-11: the parser dropped ["utility"] even after the prompt learned the
   // group — a second gate with the same blind spot (see parity test).
   "utility",
+  // 2026-09-13: skill_describe/load/run were reachable only via the regex
+  // fallback on the literal word "skill" (screenwriting skills eval).
+  "skills",
 ]);
 
 /**
@@ -125,7 +128,7 @@ GROUPS (return only the ones that apply):
 - crm: CRM, Azteca, customer management (only when explicitly mentioned)
 - intel: intelligence alerts and signal digests, earthquake, cyber, threats, treasury (NOT stock/crypto prices or tickers — those are finance)
 - finance: stock / ETF / crypto prices and quotes, tickers ($AAPL, BSX, SPY), "precio de X", "cuánto vale X", "cómo está el mercado", valuación, market cap, P/E, prospecto/perfil de una acción, watchlist, technical indicators (RSI, MACD), macro (VIX, CPI, fed funds). Any request whose answer contains a market price or valuation figure needs finance.
-- video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration
+- video: video creation, clips, TikTok, YouTube, reels, screenshots, overlay, narration. NOT writing the script/guion itself — that is skills.
 - social: publish to Instagram/Facebook/TikTok/YouTube, social media posts, redes sociales
 - meta: list tools, capabilities, diagnostics, herramientas disponibles
 - utility: weather/clima, currency conversion/tipo de cambio, geocoding/coordenadas, file conversion (pdf/epub/docx/ffmpeg/pandoc, "convierte el archivo"), and EMAIL VERIFICATION — checking whether an address or a list of addresses exists / is valid / will bounce WITHOUT sending: "verifica si ana@x.mx existe", "¿existe este correo?", "valida esta lista de correos", "limpia la lista antes de enviar", "check if this email exists", "which of these will bounce", "cuáles rebotan". NOT reading/sending mail (that is google). Tools: weather_forecast, currency_convert, geocode_address, file_convert, email_verify.
@@ -137,6 +140,7 @@ GROUPS (return only the ones that apply):
 - teaching: pedagogical sequences — learning plans, adaptive quizzes, spaced-repetition review, Socratic explain-back. "teach me React hooks", "enséñame kubernetes", "explícame bond duration desde cero", "quiero aprender Go", "quiz me on SOLID principles", "review today", "what's due to review", "explain back". NOT a one-off explanation ("¿qué es X?" stays as a normal reply). NOT code review ("review the PR") and NOT ML model training ("teach the model").
 - xpoz: Xpoz Reddit Intelligence Pipeline tasks — running the pipeline on a seed to cluster Reddit discussion into topics, reading the last digest, or pulling run history. "Lanza Xpoz pipeline", "corre el xpoz con la semilla X", "dame el digest de xpoz", "historial de Xpoz", "xpoz pipeline manager", "run the reddit scraper on r/wallstreetbets", "top Reddit signals", "última corrida de Xpoz". Brand anchor is 'xpoz' (case-insensitive). Also fires on 'reddit' + intel-verb compounds (reddit scraper/signals/pipeline/digest/topics/monitor) and bare 'subreddit(s)' or 'r/<slug>' mentions. NOT any 'pipeline' by itself (ML/CI/data pipelines are 'coding'). Tools: xpoz_trigger_run, xpoz_get_topics, xpoz_get_digest, xpoz_get_history.
 - projects: project entity operations — reactivating, activating, archiving, pausing, completing, creating, or updating a project; setting project status; adding/updating project credentials, URLs, or config; reading project details. "reactiva el proyecto X", "archiva proyecto Y", "actualiza el status del proyecto Z a active", "crea un proyecto nuevo", "guarda credenciales del proyecto W", "muestra detalles del proyecto V". Projects are entities with their own lifecycle and credentials, DISTINCT from NorthStar goals/tasks/objectives. A project MAY link to a NorthStar goal via commit_goal_id, but project status changes are 'projects', NOT 'northstar_write'. Tools: project_get, project_update (project_list is always available).
+- skills: running, loading or describing a stored skill (skill_run / skill_load / skill_describe), and the tasks the certified skills cover — writing a commercial, spot, promo, explainer, testimonial or listing video script (6–90 s), testing a logline or premise, diagnosing a scene that feels flat, fixing on-the-nose or interchangeable dialogue, testing whether a series concept has legs. "usa la skill short-form-script", "corre la habilidad", "escribe un spot de 30 segundos para la clínica", "guion de un promo vertical de 20 segundos", "evalúa este logline", "esta escena se siente plana", "mis diálogos son demasiado explícitos", "¿esta idea de serie tiene motor?", "write a 30 second spot", "test this logline", "does this series idea have legs". NOT rendering, editing or voicing an actual video file (that is video). Tools: skill_describe, skill_load, skill_run (skill_list and skill_save are always available).
 
 RULES:
 - Return ONLY groups needed. Empty array [] for greetings/small talk.
@@ -144,6 +148,7 @@ RULES:
 - "publica en el blog" → wordpress (NOT social). "publica en Instagram" → social.
 - "livingjoyfully" without .art/.com → NOT wordpress (it's a project name).
 - Journal/editorial authoring is coding, NOT jarvis_write: "agrega el comentario editorial al Journal", "completa el deep dive del Radar", "escribe el manager note de la W23", "publica/reedita la edición" → ["coding"] (the Journal is a real-filesystem .md, needs file_write/file_edit + git push). Merely reading it ("resúmeme el journal", "dame los resultados de la W23") needs no special group.
+- A script is a text deliverable, not a video: "escribe un spot de 30 segundos", "guion de un promo vertical de 20s", "60 second testimonial video script", "15 second explainer" → ["skills"]. Only producing the video file itself ("hazme el video", "renderiza el clip", "ponle voz/narración") → ["video"]. Both only when the user asks for the script AND the finished video.
 - VPS/server status questions need NO special group (vps_status is always available).
 - Short follow-ups ("dale", "procede", "sí") → return [].
 - Imperative SQL/data-query verbs are NOT short follow-ups even when brief — "verifica y corre un query en SQL", "corre el SQL contra DENUE", "ejecuta la consulta en supabase", "psql -c '...'", "cómo están distribuidas? corre el query" → ["coding"]. The presence of SQL/database/DENUE/scoring/shell_exec/file_write/file_edit/psql tokens overrides the short-follow-up rule.
@@ -155,6 +160,7 @@ RESPOND with JSON array only. No explanation. Examples:
 ["coding"]   // for "verifica y corre un query en SQL para confirmar la distribución"
 ["coding"]   // for "corre el SQL contra DENUE y dame el top 10"
 ["utility"]  // for "verifica si ana@clinica.mx existe"
+["skills"]   // for "escribe un spot de 30 segundos para la clínica"
 []`;
 
 /**
