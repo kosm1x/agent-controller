@@ -1,6 +1,6 @@
 # Screenwriting corpus — evaluation briefs (Phase 4)
 
-**Status:** drafted 2026-09-12 from the public sites (operator ruling: draft from public copy). Scoring is the operator's.
+**Status:** drafted 2026-09-12 from the public sites (operator ruling: draft from public copy); B arm sent by the operator 2026-09-13 ~00:5x UTC, A arm after the 45-min scope window. Scoring is the operator's; results go in the sheet below and in PROJECT-STATUS.
 **Protocol:** each brief is run twice with the same model — **A** = Jarvis with the KB docs + the `short-form-script` / craft skills; **B** = Jarvis told in the brief "do not use any skill or screenwriting knowledge doc". B is an instruction, not an exclusion (the skills stay active), so this is a labelled comparison, not a blind one: before scoring, a helper shuffles the two outputs of each brief into slots 1/2 by coin flip and reveals the mapping only after the sheet is filled. Score each output 1–5 on: usable without edits · hook strength · voice · claims stay inside the proof points. Gate: median ≥ 4 and A ≥ B on ≥ 5 of 6 briefs.
 **Proof points** below are the only facts the script may state; anything else must appear as `[PROOF NEEDED: …]`. Nothing here is legal or compliance review; that stays with the operator.
 
