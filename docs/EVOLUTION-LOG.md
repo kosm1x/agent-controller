@@ -2238,3 +2238,25 @@ Three distinct friction events: (1) Jarvis used wrong domain `eurekaMD.net` for 
 
 ### Research notes
 Day illustrates the operator's expanding use of Jarvis as a multi-domain execution layer: the same session touched sports data APIs, server infrastructure, generative image pipelines, and brand strategy — with no context switching overhead visible in the transcript. The formal skill capture of `brand_framework_amir` marks a new pattern: operator-as-curator, deliberately encoding external frameworks into the agent's working vocabulary for persistent reuse.
+
+## 2026-09-12
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 48 (telegram: 48) |
+| Streak days | — |
+
+### Interactions summary
+A dense, multidisciplinary day spanning ~40 exchanges across seven sessions from 02:00 to past midnight. Topics ranged from financial pipeline post-mortems (Williams Radar W37 retrospective, ALNY investor prospectus, RNAi science and longevity), to creative writing (11 short-form video scripts with and without the `short-form-script` skill, evaluated via `logline-premise-test` and `series-engine-test`), to event preparation (NXT Media Days Mexico interview talking points). The most-touched projects were **agent-controller** (KB synced three times: +10, +9, +3 commits), **williams-entry-radar**, and **trustr.mx** (brand framework applied, HTML updated).
+
+### What Jarvis learned
+A `memory_forget` command does not erase persisted KB files — Fede confirmed the test was intentional (names: Togo and Kami), and the behaviour is now documented. The user's preferred mode for structured interview prep is strict adherence to a predefined script, question by question; Jarvis was corrected once for improvising an extra question outside the guión. Skill-augmented script writing (with `short-form-script` loaded) was explicitly preferred for a second creative batch after an initial skills-free run, suggesting the user uses contrast runs to benchmark skill value.
+
+### Friction points
+Three friction events logged: (1) wrong week number — user requested W38 summary, Jarvis clarified the last scan was W37 before proceeding; (2) script deviation at NXT prep — Jarvis added a question not in the source doc and had to be corrected; (3) file not found — `docs/LEARNINGS-2026-09-12-W37-REISSUE.md` did not exist at the expected path and Jarvis had to locate the correct document. Minor but consistent pattern: path ambiguity and scope creep under open-ended prompts.
+
+### Research notes
+Day 2026-09-12 shows the most topic diversity of any recent session — biotechnology (RNAi/ALNY), quantitative finance, creative writing, branding, and live-event preparation all in one day. This breadth-in-a-single-day pattern signals Fede is using Jarvis as a generalist cognitive co-pilot rather than a domain-specific tool, consistent with the co-evolution paper's "integrated assistant" phase hypothesis. The three agent-controller KB syncs within one day also mark a new per-day record, reflecting active infrastructure iteration running in parallel with high-level creative and analytical work.
