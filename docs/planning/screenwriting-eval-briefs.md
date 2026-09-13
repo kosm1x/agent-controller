@@ -51,3 +51,81 @@
 | B2 | | | | | | | | | |
 
 Below the gate → revise 13-short-form-commercial.md and the `short-form-script` body first; the distilled corpus is not the first suspect.
+
+## Appendix — mensajes para Jarvis (Telegram DM, uno por mensaje)
+
+Orden: los seis mensajes **B** primero; después espera 45 min (el scope es pegajoso por hilo) o cambia de canal; luego los seis **A**. Los guiones se piden en inglés porque los clientes son angloparlantes; la instrucción a Jarvis va en español. Guarda cada respuesta como `S1-A.txt`, `S1-B.txt`, … antes de barajar.
+
+**Prefijo B (brazo sin corpus):** `Sin skills y sin documentos de screenwriting del KB: escribe el guion tú mismo.`
+**Prefijo A (brazo con corpus):** `Usa la skill short-form-script y los documentos de knowledge/screenwriting/ (empieza por 00-index.md).` — la palabra «skill» activa el grupo de herramientas.
+
+### S1 — Solera Properties, spot 30 s (9:16)
+```
+[PREFIJO]
+Escribe en inglés el guion de un spot de 30 segundos, vertical 9:16, para Solera Properties.
+Audiencia: compradores de Norteamérica que consideran una segunda casa o una inversión en la costa de Riviera Nayarit.
+Objetivo: que descarguen el "Nayarit Investment Brief 2026". Tono: calmado, directo, con datos.
+Solo puedes afirmar estos hechos: precio promedio por m² en Riviera Nayarit 1,800–2,800 USD frente a 4,800–6,200 USD en Los Cabos; más de 40 rutas directas desde EE. UU. y Canadá a PVR; 7.4 millones de pasajeros en PVR en 2024, +12 % anual; cada llamada, documento y negociación en inglés; los asesores presentan notarios, abogados y administradores con los que ya han trabajado.
+Prohibido decir: guaranteed return, appreciation guarantee.
+Entrega: tabla de beats con tiempo, plano, VO, super y CTA.
+```
+
+### S2 — Solera Properties, explicativo de objeción 60 s (16:9)
+```
+[PREFIJO]
+Escribe en inglés el guion de un video de 60 segundos, horizontal 16:9, para Solera Properties, que responda la objeción "¿es seguro y es legal comprar ahí?".
+Audiencia: los mismos compradores, en la etapa de duda legal y de seguridad.
+Objetivo: agendar una llamada. Tono: llano, sin prisa.
+Solo puedes afirmar: fideicomiso, título de condominio y ejido se explican en inglés claro antes de cualquier decisión; la pregunta de seguridad se responde con datos (fuentes: SESNSP 2024, Departamento de Estado de EE. UU.); cinco zonas, cinco perfiles de comprador; administración de la propiedad y renta después del cierre.
+Debe decir: "in plain English".
+Entrega: tabla de beats con tiempo, plano, VO, super y CTA.
+```
+
+### M1 — Meridian Bariatrics, testimonial 30 s (9:16)
+```
+[PREFIJO]
+Escribe en inglés el guion de un video testimonial de 30 segundos, vertical 9:16, para Meridian Bariatrics.
+Audiencia: adultos de EE. UU. y Canadá a quienes su seguro negó o retrasó una cirugía bariátrica.
+Objetivo: agendar una videoconsulta. Tono: cálido, factual.
+Solo puedes afirmar: la experiencia de UNA paciente (atribúyela, no la generalices): de la primera llamada a la cirugía en 19 días tras dos años peleando con su seguro; seguimiento por telemedicina de 12 meses incluido; cirujanos certificados y con fellowship, y el paciente conoce a su cirujano antes de operarse; un coordinador responde en 24 horas.
+Prohibido decir: cure, guaranteed weight loss, cualquier cifra de libras perdidas.
+Entrega: tabla de beats con tiempo, plano, VO, super y CTA.
+```
+
+### M2 — Meridian Bariatrics, "cómo funciona" 60 s (9:16)
+```
+[PREFIJO]
+Escribe en inglés el guion de un video explicativo de 60 segundos, vertical 9:16, para Meridian Bariatrics, sobre cómo es el proceso.
+Audiencia: los mismos pacientes, investigando qué pasaría paso a paso.
+Objetivo: que hagan el cuestionario "Am I a candidate?". Tono: calmado, ordenado.
+Solo puedes afirmar: tres pasos: primer contacto sin compromiso, videoconsulta con el equipo quirúrgico, cirugía en Ciudad de México con traslados al aeropuerto; el paquete todo incluido cubre honorarios de cirujano y anestesiólogo, estancia hospitalaria, laboratorios preoperatorios, traslados y 12 meses de telemedicina; el precio final se confirma en la consulta virtual. NO afirmes nada sobre HIPAA ni sobre cumplimiento normativo.
+Debe decir: "no commitment".
+Entrega: tabla de beats con tiempo, plano, VO, super y CTA.
+```
+
+### B1 — Broadcaster, promo para fuerza de ventas 20 s (9:16, es-419)
+```
+[PREFIJO]
+Escribe el guion de una pieza promo de 20 segundos, vertical 9:16, en español latino, para la fuerza de ventas de una televisora, sobre la serie "Serie del Rey".
+Audiencia: los vendedores de publicidad de la televisora, no el público.
+Objetivo: que presenten a sus clientes el horario del jueves a las 21:00 esta semana.
+No te doy ratings ni perfil de audiencia a propósito: donde falte un dato escribe [PROOF NEEDED: …] y no inventes ninguna cifra.
+Prohibido decir: cualquier cifra de rating.
+Entrega: tabla de beats con tiempo, plano, VO, super, CTA y una columna de fuente.
+```
+
+### B2 — Broadcaster, logline + motor de serie (texto)
+```
+[PREFIJO — en A: "Usa las skills logline-premise-test y series-engine-test."]
+Evalúa en inglés esta idea de serie de una hora: "A former customs inspector in Manzanillo runs a two-truck freight firm with her brother, who wants out; each week a shipper with a problem the port authority will not touch, and a rival operator who owns the inspectors she used to work with and wants her routes."
+Primero califica el logline (veredicto, elemento más débil, logline reescrito). Después prueba el motor de la serie: los cuatro elementos, el contrato tácito, tres episodios de muestra distintos, si aguanta 100 episodios, tipo de piloto con su razón y el elemento más débil.
+```
+
+### Verificación de que el brazo A usó las skills (después de los seis A)
+```
+sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT task_id, tool, created_at FROM task_trace_events WHERE tool IN ('skill_run','skill_load') AND created_at >= datetime('now','-2 hours') ORDER BY created_at"
+```
+Seis filas o más: las skills corrieron. Cero filas: el brazo A fue en realidad un brazo B y la evaluación no vale; revisa primero que el grupo `skills` sea alcanzable desde el clasificador (queue §2026-09-12c).
+
+### Barajar y calificar
+Un ayudante (o Jarvis en un hilo nuevo) lanza una moneda por brief y renombra el par a `S1-slot1.txt` / `S1-slot2.txt`, guardando el mapa aparte. Califica cada slot 1–5 en: usable sin editar (5 = a producción tal cual, 3 = una pasada de edición, 1 = reescribir) · gancho (5 = detiene el pulgar en 3 s, 1 = abre con marca o saludo) · voz (5 = suena al cliente y pasa cover-the-names, 1 = cualquier competidor podría usarlo) · afirmaciones (5 = todo hecho trazable o placeholder, 1 = una cifra o promesa inventada). Revela el mapa, llena la hoja de arriba, aplica la puerta: mediana de A ≥ 4 y A ≥ B en ≥ 5 de 6.
