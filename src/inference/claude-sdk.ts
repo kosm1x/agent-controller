@@ -32,6 +32,7 @@ import type {
   SdkMcpToolDefinition,
   TerminalReason,
   ModelUsage,
+  ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
@@ -333,6 +334,34 @@ export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
 export const OPUS_MODEL_ID = "claude-opus-4-8";
 
 /**
+ * Benchmark-only override seam (2026-09-15, Opus-tier A/B harness
+ * `scripts/benchmark-opus-tier.ts`). Lets an OFFLINE harness process point
+ * the Opus tier at a candidate model / thinking / effort shape and observe
+ * every raw SDK result, WITHOUT any env knob or signature change on the
+ * production planner/executor/reflector. Never set in the service: the
+ * override is process-local state that only the harness calls; when unset
+ * (always, in production) every branch below is the unchanged default.
+ */
+export interface OpusTierBenchmarkOverride {
+  /** Model the Opus tier calls instead of OPUS_MODEL_ID. */
+  opusModel?: string;
+  /** SDK thinking config instead of the hard-coded `{ type: "disabled" }`. */
+  thinking?: ThinkingConfig;
+  /** Effort applied when the caller passed none (SDK default otherwise). */
+  effort?: "low" | "medium" | "high" | "max";
+  /** Surface an Opus failure instead of masking it with the Sonnet retry. */
+  noFallback?: boolean;
+  /** Observes every raw SDK result (text, usage, model, turns, duration). */
+  tap?: (result: ClaudeSdkResult) => void;
+}
+let benchmarkOverride: OpusTierBenchmarkOverride | undefined;
+export function setOpusTierBenchmarkOverride(
+  override: OpusTierBenchmarkOverride | undefined,
+): void {
+  benchmarkOverride = override;
+}
+
+/**
  * Opus→Sonnet fallback wrapper for Prometheus complex paths.
  *
  * Heavy/swarm tasks call planner/executor/reflector with Opus, but Opus access
@@ -354,8 +383,9 @@ export async function queryClaudeSdkComplexWithFallback<T>(
   call: (model: string) => Promise<T>,
 ): Promise<T> {
   try {
-    return await call(OPUS_MODEL_ID);
+    return await call(benchmarkOverride?.opusModel ?? OPUS_MODEL_ID);
   } catch (err) {
+    if (benchmarkOverride?.noFallback) throw err;
     // 2026-05-13 R3-3: this abort branch is defensive belt-and-suspenders.
     // `queryClaudeSdk` catches AbortError internally (see claude-sdk.ts catch
     // block ~line 543) and returns a degraded `ClaudeSdkResult` whose `text`
@@ -741,7 +771,9 @@ export async function queryClaudeSdk(opts: {
     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
     // cached prompt prefix. Omitted when unset so the SDK default ("high")
     // applies — matters because effort semantics may drift across SDK bumps.
-    ...(opts.effort && { effort: opts.effort }),
+    ...((opts.effort ?? benchmarkOverride?.effort) && {
+      effort: opts.effort ?? benchmarkOverride?.effort,
+    }),
     // Task-budget pacing (V8.5 Phase 3.4): request-level like effort, no
     // cache-prefix impact. Only forwarded when a caller passed a value —
     // the flag gate lives at the call sites (inferWithTools seam).
@@ -758,7 +790,7 @@ export async function queryClaudeSdk(opts: {
     }),
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
-    thinking: { type: "disabled" },
+    thinking: benchmarkOverride?.thinking ?? { type: "disabled" },
     env: {
       ...process.env,
       CLAUDE_AGENT_SDK_CLIENT_APP: "mission-control/1.0.0",
@@ -1241,7 +1273,7 @@ export async function queryClaudeSdk(opts: {
     }
   }
 
-  return {
+  const result: ClaudeSdkResult = {
     text: resultText,
     toolCalls: toolCallNames,
     toolCallsWithArgs,
@@ -1252,6 +1284,8 @@ export async function queryClaudeSdk(opts: {
     costAuthoritative,
     durationMs,
   };
+  benchmarkOverride?.tap?.(result);
+  return result;
 }
 
 /**

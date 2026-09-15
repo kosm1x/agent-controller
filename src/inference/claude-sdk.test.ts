@@ -2269,6 +2269,45 @@ describe("effort wiring (V8.5 Phase 2.3)", () => {
     expect("effort" in opts).toBe(false);
   });
 
+  // Opus-tier benchmark seam (2026-09-15): production shape is pinned here so
+  // the override's default branch can never drift.
+  it("queryClaudeSdk sends thinking disabled by default (benchmark override unset)", async () => {
+    mockMessages.value = successResult();
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as { thinking?: unknown };
+    expect(opts.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("benchmark override routes thinking/effort into SDK options and taps the result; reset restores defaults", async () => {
+    const { setOpusTierBenchmarkOverride } = await import("./claude-sdk.js");
+    const tapped: unknown[] = [];
+    setOpusTierBenchmarkOverride({
+      thinking: { type: "adaptive" },
+      effort: "medium",
+      tap: (r) => tapped.push(r),
+    });
+    try {
+      mockMessages.value = successResult();
+      const result = await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+      const opts = lastQueryArgs.value?.options as { thinking?: unknown; effort?: string };
+      expect(opts.thinking).toEqual({ type: "adaptive" });
+      expect(opts.effort).toBe("medium");
+      expect(tapped).toEqual([result]);
+      // caller-supplied effort still wins over the override
+      mockMessages.value = successResult();
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [], effort: "low" });
+      expect((lastQueryArgs.value?.options as { effort?: string }).effort).toBe("low");
+    } finally {
+      setOpusTierBenchmarkOverride(undefined);
+    }
+    mockMessages.value = successResult();
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect(opts.thinking).toEqual({ type: "disabled" });
+    expect("effort" in opts).toBe(false);
+    expect(tapped).toHaveLength(2); // both override-time calls tapped; the post-reset call did not
+  });
+
   it("queryClaudeSdkAsInferWithTools threads options.effort through to the SDK", async () => {
     mockMessages.value = successResult();
     await queryClaudeSdkAsInferWithTools(
