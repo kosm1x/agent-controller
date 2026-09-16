@@ -110,6 +110,7 @@ vi.mock("./checkpoint.js", () => ({
 // Retry-outcome counter: spied on by Test C.
 vi.mock("../observability/prometheus.js", () => ({
   recordFastRetryOutcome: vi.fn(),
+  recordMemoryInjection: vi.fn(),
 }));
 
 // Precedent: mock for the bytes-stable test (R-3) which exercises the

@@ -7,6 +7,10 @@
  */
 
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
+import {
+  recordMemoryInjection,
+  recordPromptSectionDropped,
+} from "../observability/prometheus.js";
 import { toolRegistry } from "../tools/registry.js";
 import { executeGatedCapability } from "../lib/v8-3/trigger.js";
 import { SYSTEM_PROMPT_TOKEN_BUDGET } from "../config/constants.js";
@@ -347,20 +351,23 @@ function buildJarvisSystemPrompt(
   // CCP6: Truncate from lowest priority tier first, then next tier up.
   // Drain P4 completely before touching P3, P3 before P2. Never touch P1.
   if (combinedLength > budget) {
-    const tiers: { arr: string[]; recompute: () => void }[] = [
+    const tiers: { tier: string; arr: string[]; recompute: () => void }[] = [
       {
+        tier: "p4",
         arr: p4,
         recompute: () => {
           variable = [...p3, ...p4].join("\n\n");
         },
       },
       {
+        tier: "p3",
         arr: p3,
         recompute: () => {
           variable = [...p3, ...p4].join("\n\n");
         },
       },
       {
+        tier: "p2",
         arr: p2,
         recompute: () => {
           stable = [...p1, ...p2].join("\n\n");
@@ -368,12 +375,13 @@ function buildJarvisSystemPrompt(
       },
     ];
     const dropped: string[] = [];
-    for (const { arr, recompute } of tiers) {
+    for (const { tier, arr, recompute } of tiers) {
       while (arr.length > 0 && combinedLength > budget) {
         const section = arr.pop()!;
         dropped.push(
           (section.trim().split("\n")[0] ?? "").slice(0, 48) || "(enrichment)",
         );
+        recordPromptSectionDropped(tier);
         recompute();
         combinedLength = stable.length + variable.length;
       }
@@ -384,6 +392,14 @@ function buildJarvisSystemPrompt(
       `[prompt] System prompt truncated: ${Math.round(combinedLength / 4)} tokens (budget: ${SYSTEM_PROMPT_TOKEN_BUDGET}); dropped ${dropped.length}: ${dropped.join(" | ")}`,
     );
   }
+  // Memory tax (5-layer plan P0): only blocks that SURVIVED the budget loop
+  // were injected — a dropped enrichment block (36 turns / 30 d live) is
+  // counted by mc_prompt_section_dropped_total, not here (qa R2 W-3).
+  // Empty blocks pass through (the recorder drops ≤ 0) so the call site is
+  // observable in tests; only a block the loop popped is skipped.
+  const survived = (block: string) => !block || p4.includes(block);
+  if (survived(userFactsBlock)) recordMemoryInjection("user_facts", userFactsBlock.length);
+  if (survived(enrichmentBlock)) recordMemoryInjection("enrichment", enrichmentBlock.length);
 
   console.log(
     `[prompt] System prompt: ${Math.round(combinedLength / 4)} tokens, ${p1.length + p2.length + p3.length + p4.length} sections (stable=${p1.length + p2.length}, variable=${p3.length + p4.length})`,

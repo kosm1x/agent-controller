@@ -80,8 +80,12 @@ vi.mock("./community-reply-gate.js", () => ({
   COMMUNITY_REPLY_FALLBACK: "FALLBACK_TEXT_FOR_TEST",
 }));
 
+import { recordMemoryInjection } from "../observability/prometheus.js";
 vi.mock("../observability/prometheus.js", () => ({
   recordCommunityGateVerdict: vi.fn(),
+  // agent-memory P0 memory-tax telemetry (router + kb-injection call sites)
+  recordMemoryInjection: vi.fn(),
+  recordPromptSectionDropped: vi.fn(),
 }));
 
 // 2026-07-11 briefing-verdict intercept: mock the resolver + pending-brief
@@ -3160,6 +3164,10 @@ describe("usability Phase 5.5 — /rituales intercept", () => {
       timestamp: new Date(),
     });
     expect(ritualesMocks.handleRitualesCommand).not.toHaveBeenCalled();
+    // Memory-tax wiring (agent-memory P0): this turn builds the Jarvis system
+    // prompt; delete the recordMemoryInjection call in buildJarvisSystemPrompt
+    // and this goes red (qa R2 W-6).
+    expect(vi.mocked(recordMemoryInjection)).toHaveBeenCalledWith("enrichment", expect.any(Number));
   });
 });
 

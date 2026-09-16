@@ -587,17 +587,23 @@ cmd_recall_utility() {
   echo -e "${BOLD}=== Recall Utility (last ${since_arg}) ===${NC}"
   echo ""
 
-  local total marked unmarked
-  total=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause};" 2>/dev/null || echo "0")
-  marked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NOT NULL;" 2>/dev/null || echo "0")
-  unmarked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NULL;" 2>/dev/null || echo "0")
+  # Shadow rows (source precedents-shadow — computed, never injected) stay out
+  # of the headline; they appear in the by-source / by-bank tables below.
+  local total marked unmarked shadow marked_all
+  local not_shadow="AND COALESCE(source,'') <> 'precedents-shadow'"
+  total=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} ${not_shadow};" 2>/dev/null || echo "0")
+  marked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NOT NULL ${not_shadow};" 2>/dev/null || echo "0")
+  unmarked=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NULL ${not_shadow};" 2>/dev/null || echo "0")
+  shadow=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND source = 'precedents-shadow';" 2>/dev/null || echo "0")
+  marked_all=$(sql_raw "SELECT COUNT(*) FROM recall_audit WHERE created_at >= ${since_clause} AND was_used IS NOT NULL;" 2>/dev/null || echo "0")
 
   echo -e "  Total recalls:    ${total}"
   echo -e "  Matched (marked): ${marked}"
   echo -e "  Pending (NULL):   ${unmarked}"
+  echo -e "  Shadow (excluded): ${shadow}  (precedents, observe-only)"
   echo ""
 
-  if [ "${marked:-0}" -gt 0 ]; then
+  if [ "${marked_all:-0}" -gt 0 ]; then
     echo -e "${BOLD}Utility by source:${NC}"
     sql_raw "SELECT source,
                     COUNT(*) AS n,
@@ -2001,6 +2007,7 @@ usage() {
   echo -e "  ${GREEN}jme-stats${NC}           JME utility dashboard — facts, recall rate, verdict runway"
   echo -e "  ${GREEN}jme-preferences${NC}     Preference facts (stated/inferred) + correction-signal rate; --confirm <id> | --reject <id>"
   echo -e "  ${GREEN}kb-health${NC}           KB taxonomy report — near-duplicate siblings, single-file folders, size (read-only)"
+  echo -e "  ${GREEN}memory-checklist${NC}    Agent-memory playbook 10-item checklist from live data; --stale lists user_facts > 90 d (read-only)"
   echo ""
   echo -e "  ${BOLD}Hindsight${NC}"
   echo -e "  ${GREEN}hindsight-status${NC}    Container + API health"
@@ -3029,6 +3036,13 @@ cmd_kb_health() {
   ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/kb-health.ts "$@" )
 }
 
+cmd_memory_checklist() {
+  # mc-ctl memory-checklist — the agent-memory 5-layer playbook's 10-item
+  # production checklist read from mc.db (read-only handle) + /metrics.
+  # --stale lists user_facts untouched > 90 d; --json for machines. Never writes.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/memory-checklist.ts "$@" )
+}
+
 cmd_gates() {
   # mc-ctl gates <task_id>                       — V8.4 ledger rows for a task
   # mc-ctl gates summary [days]                  — gates.evaluated verdicts + hook blocks (trace), last N days (default 7)
@@ -3255,6 +3269,7 @@ case "$cmd" in
   jme-stats)         cmd_jme_stats ;;
   jme-preferences)   cmd_jme_preferences "$@" ;;
   kb-health)         cmd_kb_health "$@" ;;
+  memory-checklist)  cmd_memory_checklist "$@" ;;
 
   validation)        cmd_validation "$@" ;;
 

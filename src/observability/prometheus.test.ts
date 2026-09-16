@@ -11,6 +11,8 @@ import client from "prom-client";
 import {
   _resetRitualHeartbeats,
   getRitualStaleness,
+  recordMemoryInjection,
+  recordPromptSectionDropped,
   recordRecallOutcomes,
   recordRetainOutcome,
   recordRitualSuccess,
@@ -397,5 +399,41 @@ describe("recordRitualSuccess / getRitualStaleness", () => {
 
   it("empty heartbeat map (fresh boot) reports healthy", () => {
     expect(getRitualStaleness()).toEqual({ healthy: true, rituals: [] });
+  });
+});
+
+// Agent-memory 5-layer plan P0: memory-tax telemetry. Both helpers keep the
+// label set CLOSED so a typo'd block/tier can never mint a new series.
+describe("recordMemoryInjection / recordPromptSectionDropped", () => {
+  beforeEach(() => {
+    client.register.resetMetrics();
+  });
+
+  function histogramCount(block: string): number {
+    const m = client.register.getSingleMetric("mc_memory_injection_tokens");
+    const data = (m as unknown as { hashMap: Record<string, { count: number; labels: Record<string, string> }> }).hashMap;
+    for (const e of Object.values(data)) if (e.labels.block === block) return e.count;
+    return 0;
+  }
+
+  it("observes chars/4 as tokens under a known block label", () => {
+    recordMemoryInjection("user_facts", 400);
+    expect(histogramCount("user_facts")).toBe(1);
+  });
+
+  it("drops unknown blocks and non-positive sizes without minting a series", () => {
+    recordMemoryInjection("not-a-block", 400);
+    recordMemoryInjection("jme", 0);
+    expect(histogramCount("not-a-block")).toBe(0);
+    expect(histogramCount("jme")).toBe(0);
+  });
+
+  it("folds an unknown tier to 'unknown' and counts known tiers", () => {
+    recordPromptSectionDropped("p4");
+    recordPromptSectionDropped("p4");
+    recordPromptSectionDropped("p9");
+    expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "p4" })).toBe(2);
+    expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "unknown" })).toBe(1);
+    expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "p9" })).toBe(0);
   });
 });

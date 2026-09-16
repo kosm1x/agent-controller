@@ -322,7 +322,11 @@ interface LogRecallInput {
     | "circuit-open"
     | "bank-disabled"
     | "rerank-opt-out"
-    | "jme";
+    | "jme"
+    /** Agent-memory plan P1 shadow: precedents were computed + logged, NOT
+     * injected. A `was_used` hit here means the reply re-derived what the
+     * precedent already said — relevance evidence, not usage. */
+    | "precedents-shadow";
   /** Results AFTER the outcome filter has run. result_count and snippets in
    * the audit row reflect what the agent saw, not what the vendor returned. */
   results: MemoryItem[];

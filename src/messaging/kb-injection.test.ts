@@ -24,6 +24,11 @@ vi.mock("../db/jarvis-fs.js", () => ({
 }));
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
 
+vi.mock("../observability/prometheus.js", () => ({
+  recordMemoryInjection: vi.fn(),
+}));
+import { recordMemoryInjection } from "../observability/prometheus.js";
+
 describe("conditionMatches (KB injection conditional matcher)", () => {
   it("matches coding when shell_exec is scoped", () => {
     expect(conditionMatches("coding", ["shell_exec", "file_read"])).toBe(true);
@@ -552,5 +557,40 @@ describe("capStableContent (design audit D1 — the mandatory layer had no ceili
     expect(tailPart.trim().endsWith("current fact A")).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("projects/x/README.md"));
     warn.mockRestore();
+  });
+});
+
+// Agent-memory P0 memory-tax telemetry: every KB builder reports the bytes it
+// injects. Delete a `recordMemoryInjection(...)` call in kb-injection.ts and
+// the matching assertion goes red (wiring test at the fail-open point).
+describe("memory-tax telemetry wiring", () => {
+  const always = {
+    path: "always.md",
+    title: "Always",
+    content: "AC",
+    qualifier: "always-read",
+    condition: null,
+    priority: 0,
+  };
+
+  beforeEach(() => {
+    vi.mocked(recordMemoryInjection).mockClear();
+    vi.mocked(getFilesByQualifier).mockReturnValue([always]);
+  });
+
+  it("singular builder reports block `kb` with the rendered length — from the fast-runner only", () => {
+    const result = buildKnowledgeBaseSection([], false, undefined, "fast-runner");
+    expect(result).not.toBeNull();
+    expect(recordMemoryInjection).toHaveBeenCalledWith("kb", result!.length);
+    vi.mocked(recordMemoryInjection).mockClear();
+    expect(buildKnowledgeBaseSection([], false, undefined, "planner")).not.toBeNull();
+    expect(recordMemoryInjection).not.toHaveBeenCalled();
+  });
+
+  it("split builder reports `kb_stable` and `kb_variable` with each layer's length (0 when empty)", () => {
+    const { stable, variable } = buildKnowledgeBaseSections([], false);
+    expect((stable?.length ?? 0) + (variable?.length ?? 0)).toBeGreaterThan(0);
+    expect(recordMemoryInjection).toHaveBeenCalledWith("kb_stable", stable?.length ?? 0);
+    expect(recordMemoryInjection).toHaveBeenCalledWith("kb_variable", variable?.length ?? 0);
   });
 });

@@ -312,11 +312,15 @@ export function fetchUtilitySamples(
   assertAllowedColumn(stratifyBy, UTILITY_COLS, "utility");
   const db = getDatabase();
   const col = stratifyBy ? `, COALESCE(${stratifyBy}, '(null)') AS bucket` : "";
+  // Shadow rows (agent-memory P1: computed, never injected) are excluded from
+  // the unstratified headline — they measure relevance, not delivered utility.
+  // Stratified views keep them as their own bucket.
+  const shadow = stratifyBy ? "" : " AND COALESCE(source,'') <> 'precedents-shadow'";
   const rows = db
     .prepare(
       `SELECT was_used AS value${col}
        FROM recall_audit
-       WHERE created_at >= datetime('now', ?) AND was_used IS NOT NULL`,
+       WHERE created_at >= datetime('now', ?) AND was_used IS NOT NULL${shadow}`,
     )
     .all(window.modifier) as Array<{ value: number; bucket?: string }>;
   return rows.map((r) => ({
@@ -366,7 +370,9 @@ export function fetchLatencySamples(
     .prepare(
       `SELECT latency_ms AS value${col}
        FROM recall_audit
-       WHERE created_at >= datetime('now', ?) AND latency_ms IS NOT NULL`,
+       WHERE created_at >= datetime('now', ?) AND latency_ms IS NOT NULL${
+         stratifyBy ? "" : " AND COALESCE(source,'') <> 'precedents-shadow'"
+       }`,
     )
     .all(window.modifier) as Array<{ value: number; bucket?: string }>;
   return rows.map((r) => ({ bucket: r.bucket, value: r.value }));

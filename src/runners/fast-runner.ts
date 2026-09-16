@@ -19,7 +19,10 @@ import {
   recordToolExecution,
   recordToolRepairs,
 } from "../intelligence/scope-telemetry.js";
-import { recordFastRetryOutcome } from "../observability/prometheus.js";
+import {
+  recordFastRetryOutcome,
+  recordMemoryInjection,
+} from "../observability/prometheus.js";
 import { isReadOnlyTool } from "../inference/guards.js";
 import { terminationFromExit } from "./termination.js";
 import { writeCheckpoint } from "./checkpoint.js";
@@ -995,6 +998,7 @@ export const fastRunner: Runner = {
             estimatedTokens <= JME_INJECTION_BUDGET_TOKENS
               ? factsText
               : factsText.slice(0, JME_INJECTION_BUDGET_TOKENS * 4);
+          recordMemoryInjection("jme", block.length);
           messages.push({
             role: "system",
             content: `[JME MEMORY — facts from prior conversations]\n${block}`,

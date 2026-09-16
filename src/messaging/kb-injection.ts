@@ -16,6 +16,7 @@
  */
 
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+import { recordMemoryInjection } from "../observability/prometheus.js";
 import {
   CRM_TOOLS_SCOPE,
   GOOGLE_TOOLS,
@@ -201,7 +202,11 @@ export function buildKnowledgeBaseSection(
       );
     }
 
-    return `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
+    const block = `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
+    // Memory tax is per chat TURN: the planner/executor callers (>100 calls
+    // a week live) would swamp the histogram (qa R2 W-4).
+    if (logTag === "fast-runner") recordMemoryInjection("kb", block.length);
+    return block;
   } catch {
     return null;
   }
@@ -364,6 +369,8 @@ export function buildKnowledgeBaseSections(
         ? `[JARVIS KNOWLEDGE BASE — task-specific]\n\n${variableSections.join("\n\n---\n\n")}`
         : null;
 
+    recordMemoryInjection("kb_stable", stable?.length ?? 0);
+    recordMemoryInjection("kb_variable", variable?.length ?? 0);
     return { stable, variable };
   } catch {
     return { stable: null, variable: null };

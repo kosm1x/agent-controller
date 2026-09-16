@@ -10,6 +10,7 @@
  */
 
 import { getMemoryService } from "../memory/index.js";
+import { precedentsMode, shadowLogPrecedents } from "../memory/precedents.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 import { getSkill, type SkillRow } from "../db/skills.js";
 import { retrieveSkills } from "../skills/retrieval.js";
@@ -40,6 +41,12 @@ export async function enrichContext(
   // Recall context + tool hints IN PARALLEL (saves 100-300ms)
   const memory = getMemoryService();
   const recallPromises: Promise<void>[] = [];
+
+  // Agent-memory 5-layer plan P1, SHADOW: precedent lookup over past task
+  // records is computed + logged to recall_audit (bank `precedents`) and NOT
+  // injected. Scheduled via setImmediate inside — nothing here awaits it, so
+  // the turn's latency is unchanged. `MEMORY_PRECEDENTS_MODE=off` disables.
+  if (precedentsMode() !== "off") shadowLogPrecedents(messageText);
 
   // Skill matching works on SQLite — no Hindsight required. Joined to the
   // parallel batch below: its embed round-trip was previously awaited to

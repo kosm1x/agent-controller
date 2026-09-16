@@ -337,7 +337,15 @@ const retainOutcomeTotal = new client.Counter({
 // W4 audit fix (queue #7 part 3): bound the bank label cardinality so a
 // typo'd producer can't accumulate dead label sets in prom-client memory
 // until process restart. Unknown banks fold to "unknown".
-const KNOWN_BANKS = new Set(["mc-jarvis", "mc-operational", "mc-system"]);
+const KNOWN_BANKS = new Set([
+  "mc-jarvis",
+  "mc-operational",
+  "mc-system",
+  // Agent-memory 5-layer plan P1 (2026-09-16): precedent retrieval logs its
+  // shadow rows under this bank so `audit-claim utility --stratify-by=bank`
+  // measures it beside the conversation banks.
+  "precedents",
+]);
 function safeBank(bank: string): string {
   return KNOWN_BANKS.has(bank) ? bank : "unknown";
 }
@@ -707,6 +715,48 @@ const KNOWN_GATE_VERDICTS = new Set(["pass", "fail", "error"]);
 export function recordCommunityGateVerdict(verdict: string): void {
   const bucket = KNOWN_GATE_VERDICTS.has(verdict) ? verdict : "error";
   communityGateVerdictTotal.inc({ verdict: bucket });
+}
+
+// Agent-memory 5-layer plan P0 (2026-09-16): the "memory tax". Every block of
+// remembered material injected into a turn is measured in estimated tokens
+// (chars / 4, the same estimate the prompt builder logs) so the readout can
+// put injection cost next to recall utility per bank. Closed label set.
+const memoryInjectionTokens = new client.Histogram({
+  name: "mc_memory_injection_tokens",
+  help: "Estimated tokens of memory material injected per turn, by block",
+  labelNames: ["block"] as const,
+  buckets: [50, 100, 250, 500, 1000, 2000, 4000, 8000],
+});
+
+const KNOWN_MEMORY_BLOCKS = new Set([
+  "user_facts",
+  "enrichment",
+  "kb",
+  "kb_stable",
+  "kb_variable",
+  "jme",
+]);
+
+export function recordMemoryInjection(block: string, chars: number): void {
+  if (!KNOWN_MEMORY_BLOCKS.has(block) || !(chars > 0)) return;
+  memoryInjectionTokens.observe({ block }, Math.round(chars / 4));
+}
+
+// P0 companion: which prompt tier the budget loop drops. Before this the
+// only evidence was a console.warn line, so "P4 dropped on every turn for
+// months" (reliability audit R1) was invisible to monitoring.
+const promptSectionDroppedTotal = new client.Counter({
+  name: "mc_prompt_section_dropped_total",
+  help: "System-prompt sections dropped by the token budget, by tier",
+  labelNames: ["tier"] as const,
+});
+
+const KNOWN_PROMPT_TIERS = new Set(["p2", "p3", "p4"]);
+
+export function recordPromptSectionDropped(tier: string): void {
+  promptSectionDroppedTotal.inc({
+    tier: KNOWN_PROMPT_TIERS.has(tier) ? tier : "unknown",
+  });
 }
 
 // v7.7 Spine 3 Phase 2 Bundle 2: skill test outcomes bucketed by result.
