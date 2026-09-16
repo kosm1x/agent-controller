@@ -344,6 +344,10 @@ Plan: `jarvis-kb/projects/agent-controller/jarvis-memory-architecture-plan.md` (
 8. **Knowingly unpinned wiring:** `orderForInjection` is applied at its single production site, `src/runners/fast-runner.ts` (JME block); no test asserts the ordering there (R2/R4 W4, accepted — ordering only). A refactor that drops the wrapper is a regression, not a cleanup.
 9. **Identity inversion by the extractor (2026-08-31).** `jme_facts#307` «Fede prefers to be called Piotr by Jarvis» came from Jarvis's OWN Track 1 report (anti-echo rule violated, subject inverted) and survived a live correction because the 08-29 run extracted no identity fact. Prompt now carries a Names rule and `consolidateAll` refuses the "Fede … is called Piotr" shape (`isIdentityInversion`, warn + skip); if an inverted identity fact reappears in another shape, the structural fix is to withhold Jarvis turns from the extractor input (keep them as context only via a summary) — and note a correction twin scores 0.944 vs the wrong fact, 0.006 under the 0.95 SKIP line: consider lowering SKIP or exempting corrections. Consumer: `./mc-ctl jme-preferences` (Rejected section).
 
+## Agent-memory 5-layer plan (2026-09-16)
+
+Plan: `docs/planning/agent-memory-5-layer-plan-2026-09-16.md` (paper "Agent Memory — The 5-Layer Playbook"). Verdict: adopt as spine + test suite, not new storage. Baseline 30 d: `mc-operational` 4/565 recalls used, JME 62/1,396, `mc-jarvis` 154/919; 0 memory_search/store/reflect calls ever. Phases: P0 `mc-ctl memory-checklist` + `mc_memory_injection_tokens` + amnesia/isolation/staleness/contradiction tests → P1 precedent retrieval over tasks⋈task_outcomes⋈task_gates with `supersededBy` (replaces the operational-bank slot) → P2 ontology registry + `user_facts` status/superseded_by + nightly `memory-conflicts` → P3 compaction→memory handoff → P4 gated skill producer (is_certified stays operator-only) + rollback + one skill store → P5 one forgetting entrypoint. Operator decisions in plan §6 (hasMemory gate, conflict surfacing, TTLs, certification).
+
 ## Updates log
 
 | Date | Change |
