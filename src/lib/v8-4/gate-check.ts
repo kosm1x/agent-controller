@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
-import { validateShellCommand } from "../../tools/builtin/shell.js";
+import { pmShimMissing, validateShellCommand, withPmShimPath } from "../../tools/builtin/shell.js";
 import { redactSecrets } from "../../api/mcp-server/redact.js";
 import {
   MAX_EVIDENCE,
@@ -129,17 +129,24 @@ export type CheckExecutor = (
 /** Default executor: /bin/sh -c in its own process group, killed whole on timeout. */
 export const runShellCheck: CheckExecutor = (command, opts) =>
   new Promise((resolve) => {
+    // Same fail-closed rule as shell_exec: no shim, no child (qa R4 W-1).
+    const shimMissing = pmShimMissing();
+    if (shimMissing) {
+      resolve({ output: shimMissing, exitCode: 126, timedOut: false });
+      return;
+    }
     const child = spawn("/bin/sh", ["-c", command], {
       cwd: opts.cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
+      // Same package-manager shim as shell_exec — a check may not do what the tool may not do.
+      env: withPmShimPath({
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         HOME: process.env.HOME ?? "/root",
         LANG: process.env.LANG ?? "C.UTF-8",
         TZ: process.env.TZ ?? "UTC",
         MC_TASK_ID: opts.taskId ?? "",
-      },
+      }),
     });
     let buf = "";
     let timedOut = false;

@@ -32,7 +32,7 @@ const IMMUTABLE_FILES: string[] = [
 ];
 
 /** Directory prefixes (relative to mission-control root) — all files under these are immutable. */
-const IMMUTABLE_PREFIXES: string[] = ["src/api/"];
+const IMMUTABLE_PREFIXES: string[] = ["src/api/", "src/tools/builtin/pm-shim/"];
 
 /**
  * Check if an absolute path is in the immutable core.

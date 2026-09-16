@@ -44,6 +44,12 @@ describe("isImmutableCorePath", () => {
       expect(result.reason).toContain("src/api/");
     });
 
+    it("blocks the package-manager shim directory (dependency trust audit 2026-09-16)", () => {
+      const result = isImmutableCorePath(`${MC}src/tools/builtin/pm-shim/pm-shim.sh`);
+      expect(result.immutable).toBe(true);
+      expect(result.reason).toContain("src/tools/builtin/pm-shim/");
+    });
+
     it("blocks src/api/routes/health.ts", () => {
       const result = isImmutableCorePath(`${MC}src/api/routes/health.ts`);
       expect(result.immutable).toBe(true);

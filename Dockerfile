@@ -52,6 +52,8 @@ RUN npm ci
 # so a host deploy never leaves the sandbox on stale code. node_modules IS the
 # image's contribution — hence the lockfile label at the end of this file.
 COPY --from=builder /app/dist/ ./dist/
+# The package-manager shim is shell source, not tsc output (dependency trust audit 2026-09-16).
+COPY src/tools/builtin/pm-shim/ ./dist/tools/builtin/pm-shim/
 COPY src/db/schema.sql ./dist/db/schema.sql
 COPY public/ ./public/
 # V8.2 §10: strategic-voice prompt module is a runtime asset (NOT compiled into

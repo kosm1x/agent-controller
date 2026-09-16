@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && cp src/tuning/seed-cases.json dist/tuning/seed-cases.json && bash scripts/build-docs.sh",
+    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && cp src/tuning/seed-cases.json dist/tuning/seed-cases.json && rm -rf dist/tools/builtin/pm-shim && cp -a src/tools/builtin/pm-shim dist/tools/builtin/pm-shim && bash scripts/build-docs.sh",
     "docs": "bash scripts/build-docs.sh",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "audit:deps": "tsx scripts/dep-trust-audit.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "tune:baseline": "tsx src/tuning/baseline.ts --seed",

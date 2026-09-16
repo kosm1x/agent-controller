@@ -6,10 +6,12 @@
  */
 
 import { exec, execFileSync, spawn } from "child_process";
+import { existsSync, readFileSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath, isBlockedEnvFile } from "./immutable-core.js";
-import { resolve as resolvePath } from "path";
+import { dirname, resolve as resolvePath } from "path";
+import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 import {
@@ -213,6 +215,30 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
   return scrubbed;
 }
 
+/**
+ * Package-manager PATH shim (dependency trust audit 2026-09-16). The directory
+ * ships next to this module in src/ and dist/ (build copies it), and in the
+ * sandbox through the read-only dist mount. Every package-manager name in it is
+ * a symlink to pm-shim.sh, which passes read-only verbs to the real binary and
+ * refuses installs, registry/auth changes and registry execution — in every
+ * shell spelling, because name lookup happens after expansion. The string gate
+ * below stays as the second layer for absolute-path literals.
+ */
+export const PM_SHIM_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), "pm-shim");
+
+/** PATH with the shim directory first (and nowhere else). */
+export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
+  return { ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") };
+}
+
+/** Fail closed: a dist/ built without the shim must not hand the child install authority. */
+export function pmShimMissing(dir: string = PM_SHIM_DIR): string | null {
+  return existsSync(resolvePath(dir, "npm"))
+    ? null
+    : `[pm-shim] missing: ${dir}/npm — the package-manager shim was not built into this tree (run \`npm run build\`); shell_exec refuses to run without it`;
+}
+
 // ---------------------------------------------------------------------------
 // Command validation guard
 // ---------------------------------------------------------------------------
@@ -259,13 +285,38 @@ const COMMAND_WRAPPERS = new Set([
   "env", "sudo", "nohup", "command", "exec", "time", "timeout", "nice",
   "ionice", "stdbuf", "setsid", "do", "then", "else", "elif", "!",
 ]);
+/** A redirection operator at the start of a token: `2>/dev/null`, `>`, `>|`, `<in`, `2>&1`, `2>&-`, `&>`, `>>log`, `<<<str`, `<>`. */
+const REDIRECTION_RE = /^\d*(?:>>?\|?|<<<|<>|<<?|&>>?)(?:&[\d-]*)?/;
+/** Tokens a redirection at `i` occupies: 2 when the target is detached (`2> /dev/null`), else 1. */
+function redirectionSpan(tokens: string[], i: number): number {
+  const op = REDIRECTION_RE.exec(tokens[i]!)![0];
+  return op === tokens[i] && !/&[\d-]*$/.test(op) && i + 1 < tokens.length ? 2 : 1;
+}
+/** Bash splits words on `<` and `>`, not only on whitespace: `cp>/tmp/zz npm zz` is `cp npm zz >/tmp/zz` and
+ *  `cat<npm>zz` copies npm. Every tokenizer below sees the operator as its own word, and a named fd (`{fd}>`)
+ *  is dropped like a numeric one (qa R13 C13-1). Idempotent, one linear pass. */
+function spaceRedirections(text: string): string {
+  // The space goes right before the operator: `sqlite3>o` is the word `sqlite3` (qa R14 C14-3 — an earlier
+  // `\d*` in the lookahead split its digit off); a digit run is an fd only when it is the whole word
+  // (` 2>&1` stays, `cp2>o` is the word `cp2`) — a word starts after whitespace OR a delimiter: `(2>/dev/null rm`
+  // and `true;2>/dev/null rm` are fd redirections too (qa R15 C15-1). Lookahead first so the lookbehinds run only at operators.
+  return text.replace(/\{\w+\}(?=&?[<>])/g, "").replace(/(?=&>|[<>])(?<=[^\s<>&|])(?<!(?:^|[\s();&|])\d+)/g, " ");
+}
+/** Shell separators. The `&` of `2>&1`/`>&2`/`&>f` and the `|` of `>|` are not separators — splitting there
+ *  put `cp 2>&1 npm zz` in two segments whose second began with `1` (qa R12 C12-1, R13 C13-1). Single
+ *  characters, so the first `&` of `&&>f` still separates and `&>f` opens the next segment. */
+const SEGMENT_SPLIT_RE = /[\n;]|(?<![<>])\||(?<![<>])&(?!>)/;
 export function effectiveBaseCommand(segment: string): string {
-  const tokens = segment.trim().replace(/^[({]+\s*/, "").split(/\s+/);
+  const tokens = spaceRedirections(segment.trim()).replace(/^[({]+\s*/, "").split(/\s+/);
   let i = 0;
   while (i < tokens.length) {
-    const t = tokens[i]!;
+    // A subshell/group can open at any command position and close on the command word itself:
+    // `do (rm …` runs rm, `(reboot)` runs reboot (qa R16 W16-2, pre-existing).
+    const t = (tokens[i] = tokens[i]!.replace(/^[({]+/, "").replace(/[)}]+$/, ""));
+    if (!t) { i++; continue; }
     const base = t.replace(/^.*\//, "");
     if (/^[A-Za-z_]\w*=/.test(t)) { i++; continue; } // VAR=x prefix
+    if (REDIRECTION_RE.test(t)) { i += redirectionSpan(tokens, i); continue; } // `2>/dev/null rm …` runs rm (qa R12 C12-1)
     if (COMMAND_WRAPPERS.has(base)) {
       i++;
       // every wrapper: skip its flags and `--`; numeric args for timeout/nice
@@ -292,7 +343,7 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     // string, pipe/semicolon/&) so adversarial suffixes like `/dev/null.bak`
     // or `/dev/null/foo` still hit the deny path with a clear reason.
     pattern:
-      />\s*\/(?:etc|boot|usr|proc|sys)\/|>\s*\/dev\/(?!(?:null|stderr|stdout)(?:\s|[|;&]|$))/,
+      />\|?\s*\/(?:etc|boot|usr|proc|sys)\/|>\|?\s*\/dev\/(?!(?:null|stderr|stdout)(?:\s|[|;&]|$))/, // `>|` too (qa R14 C14-4)
     reason: "redirect to system directory",
   },
   {
@@ -352,7 +403,7 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/proc\/(?:self|\d+)\/(?:environ|mem)\b/, reason: "/proc/<pid>/environ and mem are off-limits to the shell" },
   { pattern: /\/root\/(?:\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/, reason: "dotfile credential is off-limits to the shell" },
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
-  { pattern: /(?<![\w/])data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
+  { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
   { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },
 ];
 
@@ -368,12 +419,34 @@ const ENV_BARE_RE = /(?<![\w.\/\\$@-])(?:\.\/)?(\.env(?:[._-][\w.-]+)?)(?![\w\/]
  *  interpreter-fed body naming a bare `.env` is a deferred residual (absolute
  *  secret paths are still refused anywhere, including inside bodies). */
 function heredocBodyRanges(text: string): Array<[number, number]> {
+  // Line by line, one pass: the tags of a line open bodies in order on the lines that follow, each closed
+  // by the first line that is `\t*TAG` (qa R13 W13-1: a regex with `[^\n]*` re-scanned the line at every
+  // `<<`, quadratic on `<<<x` repeats). An unterminated body runs to the end and is not ranged.
   const ranges: Array<[number, number]> = [];
-  const re = /<<-?\s*(\w+)[^\n]*\n([\s\S]*?)\n\t*\1(?=\s|$)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const bodyStart = m.index + m[0].indexOf("\n") + 1;
-    ranges.push([bodyStart, bodyStart + m[2]!.length]);
+  const lineEnd = (p: number): number => { const e = text.indexOf("\n", p); return e === -1 ? text.length : e; };
+  let pos = 0;
+  while (pos < text.length) {
+    const end = lineEnd(pos);
+    const tags = [...text.slice(pos, end).matchAll(/<<-?\s*(\w+)/g)].map((m) => m[1]!);
+    pos = end + 1;
+    for (const tag of tags) {
+      if (pos >= text.length) return ranges;
+      const bodyStart = pos;
+      let closed = false;
+      while (pos < text.length) {
+        const e = lineEnd(pos);
+        const line = text.slice(pos, e);
+        const m = /^\t*(\w+)/.exec(line);
+        if (m && m[1] === tag && (line.length === m[0].length || /\s/.test(line[m[0].length]!))) {
+          if (pos > bodyStart) ranges.push([bodyStart, pos - 1]);
+          pos = e + 1;
+          closed = true;
+          break;
+        }
+        pos = e + 1;
+      }
+      if (!closed) return ranges;
+    }
   }
   return ranges;
 }
@@ -478,7 +551,7 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
 
 /** Heuristic tokens that indicate a write to a path. */
 const WRITE_INDICATORS =
-  /(?:>\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/[^\s]+)/g;
+  /(?:>\|?\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/[^\s]+)/g; // `>|` is a plain truncating write (qa R14 C14-4)
 
 /** Count unescaped `"` chars in `s` (for quote-context detection).
  *  Skips over the contents of single-quoted strings — bash single quotes do
@@ -605,6 +678,537 @@ export function checkUnscopedTestRun(segment: string): string | null {
 }
 
 /**
+ * Dependency-trust gate (2026-09-16 dependency trust audit). shell_exec runs
+ * on the HOST with mission-control as cwd and nothing above blocked a package
+ * manager: `npm install <pkg>` rewrites the live node_modules under the
+ * running service (that class crashed it 2026-07-12 and 2026-09-01; the
+ * operator-side mc-guard hook never sees this path) and adds every
+ * transitive the package declares to the lockfile. `npx <pkg>` is the same
+ * authority in one step — with stdin not a TTY npm assumes `--yes`, fetches
+ * the package from the registry into its cache and runs it (`man npm-exec`).
+ * `npm config set registry …` redirects every later fetch. A dependency or
+ * registry change is an operator decision: the shell may run bins that are
+ * ALREADY installed under the cwd's node_modules/.bin and nothing else.
+ *
+ * Allowed: `npm run <script>`, `npm ls/view/outdated/audit`,
+ * `npm install-scripts ls`, `npm config get/list`, `npx tsx|tsc|vitest …`.
+ *
+ * @internal exported for tests
+ */
+const NODE_PM_RE = /^(?:npm|pnpm|yarn|bun)$/;
+const NODE_PM_MUTATING = new Set([
+  "install", "i", "add", "ci", "install-ci-test", "cit", "install-test", "it",
+  "update", "up", "upgrade", "uninstall", "unlink", "remove", "rm", "un", "r",
+  "link", "ln", "dedupe", "ddp", "prune", "rebuild", "rb", "init", "create",
+  "config", "set", "login", "adduser", "publish", "token",
+  // qa R4 C-2: verbs the shim refuses that the string layer let through when
+  // the shim was stripped from PATH — registry-side mutations and cache/pack.
+  "unpublish", "deprecate", "star", "unstar", "pack", "owner", "access",
+  "dist-tag", "hook", "org", "team", "profile", "edit", "explore", "logout",
+  "cache", "patch", "patch-commit", "patch-remove", "import", "fetch", "store",
+  "setup", "self-update", "policies", "plugin", "pm", "exec-env",
+]);
+/** `<verb> <arg>` pairs where only the ARG makes it a mutation (`npm audit fix`, `npm version patch`). */
+const NODE_PM_MUTATING_PAIRS: Record<string, (arg: string) => boolean> = {
+  audit: (a) => a === "fix",
+  version: (a) => a !== "",
+  pkg: (a) => a !== "get",
+  "install-scripts": (a) => a !== "ls" && a !== "list",
+};
+const NODE_PM_REMOTE_EXEC = new Set(["exec", "x", "dlx"]);
+const PY_PM_RE = /^(?:pip|pip3|pipx|uv|poetry|pipenv|conda)$/;
+const PY_PM_MUTATING = new Set([
+  "install", "uninstall", "add", "remove", "sync", "lock", "run", "venv",
+  "update", "upgrade", "download", "wheel", "self", "publish", "build", "init",
+  "export", "create", "clean", "rename", "clone", "pack", "update-shell",
+]);
+/** `uv pip|tool|python <sub>`: the SUB-verb decides (`uv pip list` is a read, qa R4 W-2). */
+const UV_MUTATING_SUBS: Record<string, Set<string>> = {
+  pip: new Set(["install", "uninstall", "sync", "compile", "download"]),
+  tool: new Set(["run", "install", "uninstall", "upgrade", "update-shell", "uvx"]),
+  python: new Set(["install", "uninstall", "pin", "upgrade"]),
+  cache: new Set(["clean", "prune"]),
+};
+/** Always fetch-and-run a registry package (or download a package manager). */
+const REMOTE_EXEC_BINS = new Set(["bunx", "uvx", "corepack"]);
+const NPX_REMOTE_FLAG_RE = /^(?:-y|--yes|-p|--package(?:=.*)?|-c|--call(?:=.*)?)$/;
+/** Flags whose VALUE is the next token — skipped so the verb is the first real positional. */
+const PM_VALUE_FLAGS = new Set([
+  "--prefix", "--registry", "-w", "--workspace", "-C", "--cwd", "--dir",
+  "--loglevel", "--userconfig", "--cache", "--scope", "--tag", "--otp",
+  "--filter", "--project", "--python",
+]);
+/** Shells that re-enter the parser on a string argument: the string is validated as a command of its own (qa R1 C1). */
+const SHELL_REENTRY = new Set(["bash", "sh", "zsh", "dash", "ksh", "eval"]);
+/** Every command word the gate has an opinion about (the flat walk starts a check at each). */
+const PM_WORD_RE = /^(?:npm|pnpm|yarn|bun|npx|bunx|uvx|corepack|pip|pip3|pipx|uv|poetry|pipenv|conda|python|python3)$/;
+const CD_WORD_RE = /^(?:cd|pushd|popd)$/;
+/** A package manager named by its entry file instead of its PATH name (`node /usr/lib/node_modules/npm/bin/npm-cli.js`). */
+const PM_ENTRY_RE = /(?:^|\/)(?:(npm|npx)-cli\.js|(pip3?)\/__main__\.py)$/;
+function pmWord(token: string): string {
+  const m = PM_ENTRY_RE.exec(token);
+  return m ? (m[1] ?? m[2])! : token.replace(/^.*\//, "");
+}
+const HEREDOC_INTERPRETERS = /^(?:bash|sh|zsh|dash|ksh|eval|xargs|node|nodejs|python3?|perl|ruby|php|deno|bun|tsx)$/;
+/**
+ * The PATH shim (pm-shim/) is reached by NAME through PATH. Two things defeat
+ * it (qa R4 C-1/C-2): replacing the child's PATH/environment before the
+ * package manager runs, and copying the real binary under another name. Both
+ * are refused as spelled; the shell has no legitimate need for either.
+ */
+const ENV_RESET_WORDS = new Set([
+  "sudo", "su", "runuser", "setpriv", "chroot", "systemd-run", "at", "batch",
+  "machinectl", "nsenter", "unshare", "capsh", "enable", "builtin", "doas",
+]);
+const LOGIN_SHELL_FLAG_RE = /^(?:--login|-[a-zA-Z]*l[a-zA-Z]*)$/;
+const PATH_ASSIGN_RE = /(?:^|\.)PATH\s*[:=]/;
+/** Wrappers beyond COMMAND_WRAPPERS that run their last argument as a command (util-linux / coreutils). */
+const MORE_WRAPPERS = new Set(["xargs", "busybox", "toybox", "flock", "watch", "chrt", "taskset", "script", "unbuffer"]);
+/** Commands whose arguments are DATA: a `"PATH":` key in a JSON body is not an env dict (qa R6 W6-3). */
+const DATA_WORDS = new Set(["curl", "wget", "http", "jq", "gh", "git", "grep", "sed", "awk", "echo", "printf"]);
+/** Commands that copy, move or splice a file: fed a package-manager binary they mint an unshimmed alias. */
+const COPY_WORDS = new Set([
+  "ln", "cp", "mv", "install", "rsync", "cat", "tee", "head", "tail", "sed",
+  "awk", "tar", "cpio",
+]);
+/** Reads of a binary path that mint nothing (`ls -l /usr/bin/npm`, `test -x …`). */
+const READ_WORDS = new Set([
+  "ls", "file", "stat", "readlink", "realpath", "which", "type", "test", "[", "[[",
+  "grep", "du", "wc", "md5sum", "sha256sum", "find", "namei", "basename", "dirname", "diff", "cmp",
+]);
+/** `/usr/bin/npm`, `…/npm-cli.js`, `/usr/lib/node_modules/npm` (the package dir), `/root/.local/bin/uvx` — not `node_modules/npm/package.json`. */
+function isPmBinaryPath(token: string): boolean {
+  if (!token.includes("/")) return false;
+  return PM_WORD_RE.test(pmWord(token.replace(/\/+$/, "")));
+}
+/** The flag tokens directly after `tokens[i]` (before the first positional). */
+function leadingFlags(tokens: string[], i: number): string[] {
+  const out: string[] = [];
+  for (let k = i + 1; k < tokens.length && tokens[k]!.startsWith("-"); k++) out.push(tokens[k]!);
+  return out;
+}
+
+/** @internal exported for tests */
+function isWrapper(word: string): boolean {
+  return COMMAND_WRAPPERS.has(word) || MORE_WRAPPERS.has(word);
+}
+/** Words this rule set knows as commands — the only ones that become `cmdWord` behind a wrapper. */
+function isKnownCommand(word: string): boolean {
+  return READ_WORDS.has(word) || COPY_WORDS.has(word) || DATA_WORDS.has(word) || ENV_RESET_WORDS.has(word) ||
+    SHELL_REENTRY.has(word) || /^(?:env|hash|command|alias|export|unset|declare|typeset|readonly|node|nodejs|python3?)$/.test(word);
+}
+export function checkEnvReset(segment: string): string | null {
+  // Parentheses/brackets/commas split too, so a literal path inside an interpreter
+  // program (`symlinkSync('/usr/bin/npm', …)`) is its own token. A shell GLOB naming a
+  // manager binary (`cp /usr/bin/np? zz`) is deliberately not modelled here: three audit
+  // rounds (R6–R8) each found a grammar the string layer got wrong (`[!]]`, POSIX classes,
+  // brace ranges) or a cost it could not bound; the rename class belongs to the structural
+  // closer queued in docs/planning/next-sessions-queue.md, not to a second shell parser.
+  const raw = spaceRedirections(normalizeShellText(segment.trim())).split(/[\s(),[\]{}]+/).filter(Boolean);
+  // A redirection is not a word: `2>/dev/null cp npm zz` runs cp and `<npm cat >zz` copies npm (qa R12
+  // C12-1). Each one (with a detached target: `2> /dev/null`) moves to the END of the token list with
+  // its operator stripped, so command position survives it and its target is checked as an argument.
+  const tokens: string[] = [];
+  const redirected: string[] = [];
+  for (let k = 0; k < raw.length; k++) {
+    const a = raw[k]!;
+    const op = REDIRECTION_RE.exec(a)?.[0];
+    if (op === undefined) { tokens.push(a); continue; }
+    const target = redirectionSpan(raw, k) === 2 ? raw[++k]! : a.slice(op.length);
+    if (target) redirected.push(target);
+  }
+  tokens.push(...redirected);
+  const why = (what: string): string =>
+    `\`${what}\` replaces the child PATH/environment, which removes the package-manager shim — run it with the inherited environment (shell_exec already runs as root); anything that needs another environment is an operator decision (dependency trust audit 2026-09-16)`;
+  const copies = (what: string): string =>
+    `\`${what}\` copies or references a package-manager binary under another name, which bypasses the shim — ${OPERATOR}`;
+  // One hoisted pass: the LAST index of a `PATH` token, an `=` token and a manager binary/name
+  // token. Every lookahead below is then O(1) and unbounded in reach — a windowed lookahead was
+  // padded through with 64 `-v` flags (qa R11 C11-1), and an unbounded per-token scan was
+  // quadratic (qa R10 C10-1).
+  let lastPath = -1;
+  let lastEq = -1;
+  let lastPm = -1;
+  for (let k = 0; k < tokens.length; k++) {
+    const a = tokens[k]!;
+    if (/^PATH(?:=|$)/.test(a)) lastPath = k;
+    if (a.includes("=")) lastEq = k;
+    if (isPmBinaryPath(a) || PM_WORD_RE.test(a)) lastPm = k;
+  }
+  // Command position: the first token, and every token after a wrapper, `xargs`, `busybox`,
+  // `-exec`, a leading assignment or a leading flag (`env -i bash`). Behind a wrapper it is
+  // STICKY for the rest of the segment and every rule below is UNCONDITIONAL there: a wrapper's
+  // option values (`timeout -s KILL 5`, `flock /var/lock/ls`, `xargs -I ls`) are not enumerated
+  // and cannot be told from the command they precede, so any attempt to decide "have we passed
+  // the real command word yet" was decoyed (qa R9 C9-1, R10 W10-1/W10-2, R11 C11-2 — three
+  // rounds, 3-strike stop). The accepted cost, disclosed in the audit doc §5: behind a wrapper,
+  // an admin word (`sudo`, `su`, `at`, …) or a copy word followed by a manager name anywhere in
+  // the segment is refused even as prose (`timeout 5 echo look at this`); 0 corpus rows start
+  // with a wrapper.
+  let cmdPos = true;
+  let sticky = false;
+  let cmdWord = "";
+  let lastKnown = ""; // behind a wrapper: the last KNOWN command word, for the data/entry exemptions
+  let readSeen = false; // behind a wrapper: a read word has appeared …
+  let otherSeen = false; // … and a known non-read word has appeared
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    const word = t.replace(/^.*\//, "");
+    // `PATH=/x npm …`, `process.env.PATH='/x'`, `os.environ["PATH"]=…`, `env={"PATH": …}` — anywhere.
+    if (PATH_ASSIGN_RE.test(t) || (t === "PATH" && /^[:=]/.test(tokens[i + 1] ?? ""))) {
+      // `PATH:` (a dict/JSON key) counts only where it could be an env dict — not in a curl body (qa R6 W6-3).
+      if (!/PATH\s*:/.test(`${t}${tokens[i + 1] ?? ""}`) || !DATA_WORDS.has(sticky ? lastKnown : cmdWord)) return why(t);
+    }
+    // A manager's binary path as an ARGUMENT of anything but a read (`fs.symlinkSync('/usr/bin/npm', …)`,
+    // `shutil.copy('/usr/bin/npm', …)`, `busybox cp /usr/bin/npm zz`) — qa R5 W5-2. Behind a wrapper the
+    // read exemption holds only while READ words alone have been seen (a decoy `flock /var/lock/ls` cannot
+    // buy it for a later `node`/`cp`/`dd`; an unknown word buys nothing either — qa R11 C11-2).
+    if (isPmBinaryPath(t)) {
+      const entry = PM_ENTRY_RE.test(t) && /^(?:node|nodejs|python3?)$/.test(sticky ? lastKnown : cmdWord); // `node …/npm-cli.js <verb>` stays with the verb rules
+      if (!sticky && !cmdPos && !READ_WORDS.has(cmdWord) && !entry) return copies(`${cmdWord} ${t}`);
+      if (sticky && !(readSeen && !otherSeen) && !entry) return copies(`${lastKnown || cmdWord} ${t}`);
+    }
+    if (cmdPos && t.startsWith("-")) continue; // a leading flag is read from its command word above, and keeps command position
+    if (cmdPos) {
+      if (!sticky) cmdWord = word;
+      else if (isKnownCommand(word)) {
+        lastKnown = word;
+        if (READ_WORDS.has(word)) readSeen = true;
+        else otherSeen = true;
+      }
+      const flags = leadingFlags(tokens, i);
+      if (ENV_RESET_WORDS.has(word)) return why(word);
+      if (/^(?:export|unset|declare|typeset|readonly)$/.test(word) && lastPath > i) return why(`${word} PATH`);
+      if (word === "env") {
+        const flag = flags.find((a) => /^(?:-[a-zA-Z]*[iu][a-zA-Z]*|--ignore-environment|--unset(?:=.*)?|-S|--split-string(?:=.*)?)$/.test(a));
+        if (flag) return why(`env ${flag}`);
+      }
+      if ((word === "hash" || word === "command") && flags.some((a) => /^-[a-zA-Z]*p/.test(a))) return why(`${word} -p`);
+      if (word === "alias" && lastEq > i) return why("alias");
+      if (SHELL_REENTRY.has(word) && word !== "eval" && flags.some((a) => LOGIN_SHELL_FLAG_RE.test(a))) return why(`${word} --login`);
+      // `cp /usr/bin/npm zz`, and the bare name after `cd /usr/bin` (`cp npm zz`) — anywhere later in the segment.
+      if (COPY_WORDS.has(word) && lastPm > i) return copies(`${word} ${tokens[lastPm]}`);
+    }
+    const wrapper = isWrapper(word);
+    if (cmdPos && wrapper) sticky = true;
+    cmdPos = sticky || wrapper || /^-exec(?:dir)?$/.test(t) || /^[A-Za-z_]\w*=/.test(t);
+  }
+  return null;
+}
+
+/** `cd -` / `cd $VAR`: the directory is unknowable here, so `npx` cannot prove a local bin. */
+const UNKNOWN_CWD = "/nonexistent/unknown-cwd";
+const OPERATOR =
+  "a dependency or registry change is an operator decision (dependency trust audit 2026-09-16) — report the exact command for the operator instead";
+
+/** Where a `cd` segment leaves the shell (relative paths resolve against the current cwd, qa R2 H-2). */
+function nextCwd(segment: string, cwd: string): string {
+  // Only a segment that IS a cd/pushd/popd moves the cwd (`echo 'cd x'` does not, qa R3 N-5).
+  const m = /^\(*\s*(cd|pushd|popd)(?:\s+([^)]*?))?\s*\)*$/.exec(segment);
+  if (!m) return cwd;
+  if (m[1] === "popd") return UNKNOWN_CWD;
+  const target = (m[2] ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .find((t) => t !== "--" && !/^-[PLe@]+$/.test(t)) // `cd -- /x`, `cd -P /x`
+    ?.replace(/["']/g, "")
+    .replace(/\$\{?HOME\}?/g, process.env.HOME ?? "/root");
+  if (target === undefined) return m[1] === "pushd" ? UNKNOWN_CWD : (process.env.HOME ?? "/root");
+  if (target === "-" || target.includes("$")) return UNKNOWN_CWD;
+  if (target === "~" || target.startsWith("~/")) return resolvePath(process.env.HOME ?? "/root", target.slice(2));
+  return resolvePath(cwd === UNKNOWN_CWD ? "/" : cwd, target);
+}
+
+/** Bodies of quoted heredocs fed to an interpreter — code, not prose (qa R1 C2). */
+function interpreterHeredocBodies(command: string): string {
+  const out: string[] = [];
+  const re = /^([^\n]*?)<<-?\s*['"]([^'"\s]+)['"]([^\n]*)\n([\s\S]*?)\n\t*\2(?=\s|$)/gm;
+  for (const m of command.matchAll(re)) {
+    // The body reaches an interpreter through ANY stage of the receiver line:
+    // `bash <<'EOF'`, `cat <<'EOF' | bash`, `tee x <<'EOF' | sh` (qa R3 N-1).
+    const stages = `${m[1]} ${m[3]}`.split(/\|\||&&|\||;|&/);
+    if (stages.some((st) => HEREDOC_INTERPRETERS.test(effectiveBaseCommand(st.trim())))) out.push(m[4]!);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Shell spellings that are no-ops to the shell but blind a string scanner
+ * (qa R1 C3, R2 C-3): `$'npm'`, `"npm"`, `n\pm`, `P=npm; $P install`. Every
+ * substitution is a linear regex (no nested quantifiers).
+ */
+function normalizeShellText(text: string): string {
+  const vars = new Map<string, string>([["HOME", process.env.HOME ?? "/root"]]);
+  for (const m of text.matchAll(/(?:^|[\s;&|(])([A-Za-z_]\w*)=([^\s;&|]+)/g)) {
+    vars.set(m[1]!, m[2]!.replace(/["'\\]/g, ""));
+  }
+  let out = text.replace(/\$'((?:[^'\\]|\\.)*)'/g, "$1");
+  // `${P:-npm}` `${P-npm}` `${P:=npm}` `${P:+npm}` `${P:?x}` (qa R3 N-2): the
+  // expansion is the variable when known, else the default word — innermost
+  // first so `${A:-${B:-npm}}` folds in two passes.
+  for (let pass = 0; pass < 8; pass++) {
+    const next = out.replace(
+      /\$\{([A-Za-z_]\w*)(:?[-=+?])([^{}]*)\}/g,
+      (_all, n: string, op: string, word: string) =>
+        op.endsWith("+") ? word : (vars.get(n) ?? (op.endsWith("?") ? "" : word)),
+    );
+    if (next === out) break;
+    out = next;
+  }
+  return (
+    out
+      // `$P` / `${P}`: known value, else empty — so `npm${X}` / `npm$X` read as `npm`.
+      .replace(/\$\{?([A-Za-z_]\w*)\}?/g, (_all, n: string) => vars.get(n) ?? "")
+      .replace(/["'\\]/g, "")
+  );
+}
+
+/**
+ * Wrapper-proof layer of the dependency-trust gate (qa R1 C1–C4, R2 C-1..C-4).
+ * The per-segment walk is defeated by anything that re-enters a shell
+ * (`bash -c "…"`, `xargs`, `node -e "execSync('…')"`), by quoted-heredoc bodies
+ * (stripped before the segment scan) and by quoting the command word. So the
+ * whole command — normalized, plus the bodies of quoted heredocs whose
+ * receiver is an interpreter (prose piped to `cat`/`tee` stays data) — is
+ * flattened into one token stream and the SAME token rules run from every
+ * position that names a package manager, tracking `cd` on the way. A flat
+ * walk is linear: no regex over the command text, so no backtracking (qa R2
+ * C-4 — the previous regex layer wedged the event loop for 29 s on 229 chars).
+ * @internal exported for tests
+ */
+export function checkPackageManagerRaw(command: string, cwd: string = process.cwd()): string | null {
+  const scan = spaceRedirections(normalizeShellText(`${stripQuotedHeredocs(command)}\n${interpreterHeredocBodies(command)}`));
+  // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
+  // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
+  // rules see the whole segment from each package-manager word onward
+  // (bounded by positionals, not raw tokens, so flag padding buys nothing).
+  // Environment/PATH rewrites and binary copies, per line (parentheses are
+  // tokenized inside checkEnvReset, so an interpreter call keeps its arguments).
+  for (const line of scan.split(SEGMENT_SPLIT_RE)) {
+    const envReset = checkEnvReset(line);
+    if (envReset) return envReset;
+  }
+  const stack: string[] = [];
+  for (const part of scan.split(/([()])|[\n;]|(?<![<>])\||(?<![<>])&(?!>)/)) {
+    if (!part) continue;
+    if (part === "(") {
+      stack.push(cwd);
+      continue;
+    }
+    if (part === ")") {
+      cwd = stack.pop() ?? cwd;
+      continue;
+    }
+    const tokens = part.split(/[\s,[\]{}`$]+/).filter(Boolean);
+    if (tokens.length === 0) continue;
+    if (CD_WORD_RE.test(tokens[0]!.replace(/^.*\//, ""))) {
+      cwd = nextCwd(tokens.join(" "), cwd);
+      continue;
+    }
+    for (let i = 0; i < tokens.length; i++) {
+      if (!PM_WORD_RE.test(pmWord(tokens[i]!))) continue;
+      const verdict = checkPackageManagerMutation(verbWindow(tokens, i).join(" "), cwd, { flat: i !== 0 });
+      if (verdict) return verdict;
+    }
+  }
+  return null;
+}
+
+/** Tokens from `start` until 8 positionals are collected; flags beyond 64 are dropped, not counted. */
+function verbWindow(tokens: string[], start: number): string[] {
+  const out: string[] = [];
+  let positionals = 0;
+  let flags = 0;
+  for (let k = start; k < tokens.length && positionals < 8; k++) {
+    const t = tokens[k]!;
+    if (k > start && REDIRECTION_RE.test(t)) { k += redirectionSpan(tokens, k) - 1; continue; } // `npm >/tmp/o install x` (qa R13)
+    if (t.startsWith("-") && k > start) {
+      if (flags++ < 64) out.push(t);
+      continue;
+    }
+    positionals++;
+    out.push(t);
+  }
+  return out;
+}
+
+function findUp(cwd: string, rel: string): boolean {
+  if (cwd === UNKNOWN_CWD) return false;
+  for (let dir = cwd; ; dir = resolvePath(dir, "..")) {
+    if (existsSync(resolvePath(dir, rel))) return true;
+    if (dir === resolvePath(dir, "..")) return false;
+  }
+}
+
+/**
+ * `npm run <name>` executes `scripts[<name>]` (plus `pre<name>`/`post<name>`)
+ * from the nearest package.json as a shell command: the body is validated
+ * like a command typed into the tool (qa R4 C-3 — a script body
+ * `PATH=/usr/bin npm install x` reached the real npm). The lookup mirrors
+ * npm's: `--prefix`/`-C`/`--cwd` move the root; a workspace flag or an
+ * unknowable cwd cannot be resolved and is refused; no package.json = nothing
+ * to run. Only the dependency-trust rules apply to the body (a repo's own
+ * `rm -rf dist` build step is not this gate's business). Depth-bounded so
+ * `a: npm run b` / `b: npm run a` terminates.
+ */
+let scriptDepth = 0;
+function checkPackageJsonScript(pm: string, name: string, rest: string[], cwd: string): string | null {
+  if (!name) return null; // `npm run` lists scripts
+  let root = cwd;
+  for (let k = 0; k < rest.length; k++) {
+    const t = rest[k]!;
+    const m = /^(--prefix|-C|--cwd|--dir)(?:=(.*))?$/.exec(t);
+    if (m) root = resolvePath(root === UNKNOWN_CWD ? "/" : root, m[2] ?? rest[k + 1] ?? "");
+    if (/^(?:-w|--workspaces?|--filter|-r|--recursive)(?:=|$)/.test(t)) {
+      return `\`${pm} run ${name}\` with a workspace flag runs script bodies this gate cannot resolve — ${OPERATOR}`;
+    }
+  }
+  if (root === UNKNOWN_CWD) return `\`${pm} run ${name}\` from an unknowable cwd cannot be checked against its package.json — ${OPERATOR}`;
+  let scripts: Record<string, unknown> | undefined;
+  for (let dir = root; ; dir = resolvePath(dir, "..")) {
+    const file = resolvePath(dir, "package.json");
+    if (existsSync(file)) {
+      try {
+        scripts = (JSON.parse(readFileSync(file, "utf-8")) as { scripts?: Record<string, unknown> }).scripts;
+      } catch {
+        return `\`${pm} run ${name}\`: ${file} is not readable JSON, so its script body cannot be checked — ${OPERATOR}`;
+      }
+      break;
+    }
+    if (dir === resolvePath(dir, "..")) break;
+  }
+  if (!scripts || typeof scripts !== "object") return null;
+  if (name === "t" || name === "tst") name = "test";
+  if (scriptDepth >= 4) return `\`${pm} run ${name}\` nests package.json scripts more than 4 deep — ${OPERATOR}`;
+  // npm synthesizes `restart` as `npm stop --if-present && npm start` when no restart script exists (qa R5 C5-1).
+  const names = name === "restart" && typeof scripts.restart !== "string" ? ["stop", "start", "restart"] : [name];
+  scriptDepth++;
+  try {
+    for (const key of names.flatMap((n) => [`pre${n}`, n, `post${n}`])) {
+      const body = scripts[key];
+      if (typeof body !== "string" || !body.trim()) continue;
+      const verdict = checkPackageManagerRaw(body, root);
+      if (verdict) return `inside package.json script \`${key}\` (${body.trim().slice(0, 80)}): ${verdict}`;
+    }
+  } finally {
+    scriptDepth--;
+  }
+  return null;
+}
+
+export function checkPackageManagerMutation(
+  segment: string,
+  cwd: string,
+  opts: { flat?: boolean } = {},
+): string | null {
+  const tokens = normalizeShellText(segment.trim()).split(/\s+/);
+  let i = 0;
+  while (
+    i < tokens.length &&
+    (COMMAND_WRAPPERS.has(tokens[i]!.replace(/^.*\//, "")) ||
+      /^[A-Za-z_]\w*=/.test(tokens[i]!) ||
+      /^(?:-\S*|\d+(?:\.\d+)?[smhd]?)$/.test(tokens[i]!))
+  ) {
+    i++;
+  }
+  let base = tokens[i] ? pmWord(tokens[i]!) : "";
+  if (!base) return null;
+  let rest = tokens.slice(i + 1);
+  // `python3 -m pip install x` — the module is the package manager (qa R1 C4).
+  if (/^python3?$/.test(base)) {
+    const m = rest.indexOf("-m");
+    if (m !== -1 && rest[m + 1] && PY_PM_RE.test(rest[m + 1]!)) {
+      base = rest[m + 1]!;
+      rest = rest.slice(m + 2);
+    }
+  }
+  // Verb = first positional after flags and the values of value-taking flags
+  // (`npm --prefix /x install y`). An argument that merely EQUALS a verb
+  // (`npm ls i`) is not the verb (qa R1 W3).
+  let sub = "";
+  for (let k = 0; k < rest.length; k++) {
+    const t = rest[k]!;
+    if (t.startsWith("-")) {
+      // `-w`/`--workspace` take a value for npm only (pnpm/bun: boolean, qa R4 W-5).
+      if (PM_VALUE_FLAGS.has(t) && !(/^(?:-w|--workspace)$/.test(t) && base !== "npm")) k++;
+      continue;
+    }
+    sub = t;
+    break;
+  }
+
+  if (SHELL_REENTRY.has(base) && !opts.flat) {
+    // `bash -c "…"` / `eval …`: validate the string as its own command.
+    const inner = rest.filter((t) => base === "eval" || !/^-[a-z]+$/.test(t)).join(" ");
+    if (inner.trim()) {
+      const verdict = validateShellCommand(inner);
+      if (!verdict.allowed) return `inside \`${base}\`: ${verdict.reason}`;
+    }
+    return null;
+  }
+  if (REMOTE_EXEC_BINS.has(base)) {
+    return `\`${base}\` fetches and runs a registry package — ${OPERATOR}`;
+  }
+  // The positional after the verb (`npm audit FIX`, `uv pip INSTALL`).
+  const arg = rest.slice(rest.indexOf(sub) + 1).find((t) => !t.startsWith("-")) ?? "";
+  if (NODE_PM_RE.test(base)) {
+    // Repo-defined scripts are the sanctioned entry point (build, typecheck, …)
+    // — but the script BODY runs as a shell command, so it is validated too (qa R4 C-3).
+    if (sub === "run" || sub === "run-script") return checkPackageJsonScript(base, arg, rest, cwd);
+    if (/^(?:test|t|tst|start|stop|restart)$/.test(sub)) return checkPackageJsonScript(base, sub, rest, cwd);
+    if (base === "yarn" && !opts.flat && rest.length === 0) return `bare \`yarn\` installs — ${OPERATOR}`;
+    // `yarn workspace <name> add x` (qa R2 M-1): the verb follows the workspace name.
+    if (base === "yarn" && sub === "workspace") sub = rest[rest.indexOf("workspace") + 2] ?? "";
+    if (NODE_PM_REMOTE_EXEC.has(sub)) {
+      return `\`${base} ${sub}\` fetches and runs a registry package — ${OPERATOR}`;
+    }
+    if (sub === "config" || sub === "c") {
+      return /^(?:get|list|ls)$/.test(arg)
+        ? null
+        : `\`${base} config ${arg}\` changes the registry/auth setup — ${OPERATOR}`;
+    }
+    if (NODE_PM_MUTATING.has(sub) || NODE_PM_MUTATING_PAIRS[sub]?.(arg)) {
+      return `\`${base} ${sub}${arg ? ` ${arg}` : ""}\` mutates node_modules/lockfile, package.json or the registry — ${OPERATOR}`;
+    }
+    // `pnpm build` / `yarn build` / `bun build`: shorthand for `run build` (qa R5 W5-1).
+    if (base !== "npm" && sub) return checkPackageJsonScript(base, sub, rest, cwd);
+    return null;
+  }
+  if (PY_PM_RE.test(base)) {
+    const uvSub = base === "uv" ? UV_MUTATING_SUBS[sub] : undefined;
+    if (PY_PM_MUTATING.has(sub) || uvSub?.has(arg)) {
+      return `\`${base} ${sub}${uvSub ? ` ${arg}` : ""}\` installs Python packages — ${OPERATOR}`;
+    }
+    return null;
+  }
+  if (base === "npx") {
+    const remoteFlag = rest.find((t) => NPX_REMOTE_FLAG_RE.test(t));
+    if (remoteFlag) {
+      return `\`npx ${remoteFlag}\` fetches a registry package — ${OPERATOR}`;
+    }
+    if (!sub) return null;
+    // An explicit version spec (`tsx@latest`, `tsx@9.9.9`) is never satisfied
+    // by the local bin: npm resolves it against the registry (qa R1 C5).
+    if (/^(?:@[^/]+\/)?[^@]+@/.test(sub)) {
+      return `\`npx ${sub}\` carries a version spec — npm resolves that against the registry, not the local bin; ${OPERATOR}`;
+    }
+    // Scoped: the PACKAGE must be installed (`@evil/tsx` would otherwise pass
+    // on the unscoped bin name, qa R1 C6). Unscoped: the bin must exist. A
+    // `./node_modules/.bin/x` path is checked as written.
+    // npx looks in every ancestor node_modules, so `cd scripts && npx tsx` is local (qa R3 N-4).
+    const local = sub.startsWith("@")
+      ? /^@[\w.-]+\/[\w.-]+$/.test(sub) && findUp(cwd, `node_modules/${sub}`)
+      : /^(?:\.\/)?node_modules\/\.bin\/[\w.-]+$/.test(sub)
+        ? existsSync(resolvePath(cwd, sub))
+        : /^[\w.-]+$/.test(sub) && findUp(cwd, `node_modules/.bin/${sub}`);
+    if (!local) {
+      return `\`npx ${sub}\` is not installed under ${cwd}/node_modules — npm would fetch it from the registry and run it (non-TTY stdin assumes --yes); ${OPERATOR}`;
+    }
+  }
+  return null;
+}
+
+/**
  * P1 (2026-07-12): mutating git on the PRIMARY mission-control checkout is
  * blocked at the shell layer too — it is shared with live operator sessions
  * (Jarvis's staging/checkouts contaminated two operator commits and flipped
@@ -715,11 +1319,28 @@ export function validateShellCommand(command: string): {
   // Split on shell separators to check each segment. A newline is a
   // separator too — a multi-line command used to be judged by line 1 only
   // (security audit, qa R1 C4).
-  const segments = sanitized.split(/\s*(?:\|\||&&|\||;|&(?!&)|\n)\s*/);
+  const segments = spaceRedirections(sanitized).split(/\s*(?:\|\||&&|(?<![<>])\||;|(?<![<>])&(?!&|>)|\n)\s*/); // `2>&1` and `>|` are not separators (qa R12 C12-1, R13 C13-1); spaced AFTER the process-substitution check, which `x=>(1)` would trip
+
+  // cwd as the package-manager gate sees it: an absolute `cd` earlier in the
+  // command moves it; otherwise shell_exec's default cwd (the primary checkout).
+  let segmentCwd = process.cwd();
+  const cwdStack: string[] = []; // `(cd /tmp && ls) && npx …` — the subshell's cd does not leak (qa R3 N-5)
+  let pendingPops = 0;
+
+  // Dependency-trust gate, raw-string layer (wrapper/heredoc/quote-proof).
+  const pmRawViolation = checkPackageManagerRaw(command);
+  if (pmRawViolation) {
+    return { allowed: false, reason: pmRawViolation };
+  }
 
   for (const segment of segments) {
     const trimmed = segment.trim();
     if (!trimmed) continue;
+
+    for (; pendingPops > 0; pendingPops--) segmentCwd = cwdStack.pop() ?? segmentCwd;
+    for (let k = 0; k < (/^\(+/.exec(trimmed)?.[0].length ?? 0); k++) cwdStack.push(segmentCwd);
+    segmentCwd = nextCwd(trimmed, segmentCwd);
+    pendingPops = /\)+$/.exec(trimmed)?.[0].length ?? 0; // the subshell closes AFTER this segment runs
 
     // Extract base command (first token), strip any path prefix
     const firstToken = trimmed.split(/\s/)[0];
@@ -743,6 +1364,12 @@ export function validateShellCommand(command: string): {
     const testRunViolation = checkUnscopedTestRun(trimmed);
     if (testRunViolation) {
       return { allowed: false, reason: testRunViolation };
+    }
+
+    // Dependency-trust gate: no package installs / registry execs from the shell.
+    const pmViolation = checkEnvReset(trimmed) ?? checkPackageManagerMutation(trimmed, segmentCwd);
+    if (pmViolation) {
+      return { allowed: false, reason: pmViolation };
     }
 
     // Worktree guard: mutating git on the shared primary checkout (P1).
@@ -830,7 +1457,7 @@ export function validateShellCommand(command: string): {
             const p = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const isAppend = new RegExp(`>>\\s*${p}(?:\\s|$)`).test(sanitized);
             const hasOverwrite = new RegExp(
-              `(?:^|[^>])>\\s*${p}(?:\\s|$)`,
+              `(?:^|[^>])>\\|?\\s*${p}(?:\\s|$)`, // `>|` clobbers too (qa R15 N15-1)
             ).test(sanitized);
             if (isAppend && !hasOverwrite) {
               continue;
@@ -955,13 +1582,20 @@ RESTRICTIONS:
 
     const timeout = resolveShellTimeout(command, args.timeout_ms);
 
+    const shimMissing = pmShimMissing();
+    if (shimMissing) {
+      console.error(shimMissing);
+      return JSON.stringify({ exit_code: -1, stdout: "", stderr: shimMissing });
+    }
+
     try {
       const { stdout, stderr } = await execGroupKill(command, {
         timeout,
         maxBuffer: 1024 * 1024, // 1MB
         // H1: hand the child a scrubbed env so `env`/`printenv`/`echo $VAR`
         // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
-        env: buildScrubbedEnv(),
+        // PATH starts with the package-manager shim (see PM_SHIM_DIR).
+        env: withPmShimPath(buildScrubbedEnv()),
       });
 
       const trimmed =

@@ -3,7 +3,14 @@
  * evidence and kill the process group, evaluateLedger honors ABANDON, never
  * touches manual gates, and only re-runs met gates on `rerun`.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// qa R5 W5-3: the shim-missing branch of runShellCheck is pinned by flipping the probe.
+const shimProbe = vi.hoisted(() => ({ missing: null as string | null }));
+vi.mock("../../tools/builtin/shell.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../tools/builtin/shell.js")>();
+  return { ...actual, pmShimMissing: (dir?: string) => shimProbe.missing ?? actual.pmShimMissing(dir) };
+});
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
@@ -303,6 +310,15 @@ describe("runCheck", () => {
 });
 
 describe("runShellCheck (real subprocess)", () => {
+  it("fails closed when the package-manager shim is missing: no child spawns (qa R4 W-1)", async () => {
+    shimProbe.missing = "[pm-shim] missing: /nowhere/npm — test";
+    try {
+      const r = await runShellCheck("echo CHILD-RAN", { timeoutMs: 5000 });
+      expect(r).toEqual({ output: "[pm-shim] missing: /nowhere/npm — test", exitCode: 126, timedOut: false });
+    } finally {
+      shimProbe.missing = null;
+    }
+  });
   it("captures output and exit code, and kills a hung process group on timeout", async () => {
     const ok = await runShellCheck("echo hello; echo world >&2", {
       timeoutMs: 5000,

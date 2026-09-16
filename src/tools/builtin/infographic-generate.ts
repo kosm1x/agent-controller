@@ -341,7 +341,7 @@ Output is SVG unless format=png. Raw DSL bypasses the LLM; structured \`data\` a
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return JSON.stringify({
-        error: `@antv/infographic not available: ${msg}. Run \`npm install @antv/infographic@0.2.17\`.`,
+        error: `@antv/infographic not available: ${msg}. Report it — the operator installs it (\`npm install @antv/infographic@0.2.17\`, then deploy); shell_exec refuses package installs.`,
       });
     }
 
