@@ -865,6 +865,21 @@ describe("shellTool exec contract", () => {
     expect(parsed.stderr).toBeUndefined();
   });
 
+  it("writes a journal line when the child's stderr carries a package-manager shim refusal", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const parsed = JSON.parse(await shellTool.execute({ command: "echo '[pm-shim] refused: probe' >&2; exit 1" }));
+      expect(parsed.exit_code).toBe(1);
+      expect(parsed.stderr).toContain("[pm-shim] refused: probe");
+      expect(spy.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringMatching(/^\[pm-shim\] refused \(shell_exec\): echo/));
+      spy.mockClear();
+      await shellTool.execute({ command: "echo plain >&2; exit 1" });
+      expect(spy.mock.calls.map((c) => String(c[0])).some((l) => l.includes("[pm-shim] refused"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("surfaces non-empty stderr even on a zero-exit command", async () => {
     const parsed = JSON.parse(
       await shellTool.execute({ command: "echo diag >&2" }),

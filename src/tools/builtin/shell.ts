@@ -1643,6 +1643,9 @@ RESTRICTIONS:
       const stderr = timedOut
         ? `command timed out after ${timeout}ms (signal ${error.signal ?? "SIGTERM"})\n${baseStderr}`
         : baseStderr;
+      // The shim's refusal is the gate's only live signal: put it in the journal (console.error, like
+      // `[pm-shim] missing`) so the operator can watch `grep -c 'pm-shim\] refused'` without reading turns.
+      if (stderr.includes("[pm-shim] refused:")) console.error(`[pm-shim] refused (shell_exec): ${redactSecrets(command).slice(0, 300)}`);
       return JSON.stringify({
         exit_code: exitCode,
         stdout: (error.stdout ?? "").slice(0, MAX_OUTPUT),

@@ -179,6 +179,8 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      // Same journal line as shell_exec: the shim's refusal is the gate's only live signal.
+      if (buf.includes("[pm-shim] refused:")) console.error(`[pm-shim] refused (check_cmd): ${redactSecrets(command).slice(0, 300)}`);
       resolve({ output: buf, exitCode: code, timedOut });
     });
   });

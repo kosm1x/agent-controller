@@ -319,6 +319,19 @@ describe("runShellCheck (real subprocess)", () => {
       shimProbe.missing = null;
     }
   });
+  it("writes a journal line when the check's output carries a package-manager shim refusal", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const r = await runShellCheck("echo '[pm-shim] refused: probe' >&2; exit 1", { timeoutMs: 5000 });
+      expect(r.exitCode).toBe(1);
+      expect(spy.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringMatching(/^\[pm-shim\] refused \(check_cmd\): echo/));
+      spy.mockClear();
+      await runShellCheck("echo plain >&2; exit 1", { timeoutMs: 5000 });
+      expect(spy.mock.calls.map((c) => String(c[0])).some((l) => l.includes("[pm-shim] refused"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
   it("captures output and exit code, and kills a hung process group on timeout", async () => {
     const ok = await runShellCheck("echo hello; echo world >&2", {
       timeoutMs: 5000,
