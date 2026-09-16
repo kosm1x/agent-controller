@@ -1,8 +1,9 @@
 # Opus-tier benchmark — claude-opus-4-8 vs claude-opus-5 (2026-09-15)
 
-Status: **DESIGNED, NOT RUN.** Harness `scripts/benchmark-opus-tier.ts` + seam
-`setOpusTierBenchmarkOverride` (claude-sdk.ts) are in the tree; zero API spend
-so far. Each stage is a separate operator go/no-go. qa-auditor 09-15: seam
+Status: **STAGE 1 RUN 2026-09-16 (operator-side, $9.99, 124/124 rows OK) —
+see §9. Verdict: NO SWAP on stage-1 evidence; stage 2 optional.** Harness
+`scripts/benchmark-opus-tier.ts` + seam `setOpusTierBenchmarkOverride`
+(claude-sdk.ts) are in the tree. Each stage is a separate operator go/no-go. qa-auditor 09-15: seam
 PASS (production shape pinned by tests: thinking disabled, effort unset,
 Opus→Sonnet fallback); harness criticals (spend gate, fail-open allow-list,
 NaN cap) fixed the same day.
@@ -142,3 +143,59 @@ cost line; revert = the same constant(s).
 
 Sonnet 5 (ruled out 07-12), Fable 5 (parked), the Sonnet main loop, the Haiku
 classifier, budget hard-caps (closed by operator ruling).
+
+## 9. Stage 1 results (run 2026-09-16 05:44–06:17 UTC, `data/opus-bench/stage1-2026-09-16-05-44`)
+
+124 rows, 13 tasks, 4 arms, $9.99 (cap 20), 33 min. `claude-opus-5` is
+reachable under the `max` subscription (first 5/A plan call succeeded, no
+fallback).
+
+| phase · arm | ok | bare JSON | leaks | prompt tok | cache-read | compl tok | $/call | s/call | quality |
+|---|---|---|---|---|---|---|---|---|---|
+| plan · 4-8/A | 13/13 | 100 % | 0 | 10074 | 54 % | 838 | 0.074 | 10.9 | goals 2.3 (stored 2.8) · criteria 5.6 · gates 2.0 |
+| plan · 4-8/B | 13/13 | 92 % | 0 | 10074 | 50 % | 870 | 0.079 | 11.4 | goals 2.1 · criteria 4.8 · gates 1.5 |
+| plan · 5/A | 13/13 | 100 % | 0 | 10074 | 50 % | 1285 | 0.089 | 15.2 | goals 3.7 · criteria 8.8 · gates 2.5 |
+| plan · 5/B | 13/13 | 100 % | 0 | 10074 | 50 % | 1119 | 0.085 | 13.3 | goals 3.5 · criteria 7.9 · gates 2.5 |
+| reflect · 4-8/A | 13/13 | — | 0 | 6103 | 0 % | 1039 | 0.092 | 15.4 | score 0.90 (stored 0.92) · success agree 92 % |
+| reflect · 4-8/B | 13/13 | — | 0 | 6103 | 0 % | 1156 | 0.094 | 17.9 | 0.87 · 85 % |
+| reflect · 5/A | 13/13 | — | 0 | 6103 | 13 % | 1438 | 0.094 | 20.1 | 0.83 · 77 % |
+| reflect · 5/B | 13/13 | — | 0 | 6103 | 13 % | 1475 | 0.095 | 20.0 | 0.82 · 77 % |
+| assess · 4-8/A,B | 5/5 | — | 0 | 2971 | 0 % | 456/481 | 0.044 | 7.3 | met 100 % |
+| assess · 5/A,B | 5/5 | — | 0 | 2971 | 20 % | 521/547 | 0.040 | 6.8/7.5 | met 100 % |
+
+Against the §7 rule:
+
+1. **Contract — PASS.** Zero `<thinking>` leaks, zero tool-call-in-text, zero
+   empty completions on all 124 rows. 5/A and 5/B emitted bare JSON on 13/13
+   plans; the only fenced plan was 4-8/B. The production shape (thinking
+   disabled, effort unset) survives on Opus 5 for these single-turn calls.
+2. **Tokens — PASS.** Prompt tokens identical across all four arms on every phase
+   (tokenizer parity confirmed). Cache-read ratio not lower (plan 50 % vs 54 %
+   is interleave order: the first arm per model pays the creation).
+3. **Quality — NOT comparable.**
+   - Opus 5 over-decomposes: 3.7 goals/plan vs 2.3 (4.8) and 2.8 stored.
+     Concentrated on single-goal swarm children (stored 1 goal → 5/A gave 2, 2,
+     3, 4, 4; 5/B gave 3, 2, 4, 4, 5) and the long strategy briefs (4.8
+     collapses to 1 goal, Opus 5 gives 3). Each extra goal is one more executor
+     tool loop in production, i.e. the cost driver is downstream of the plan
+     call, not in it.
+   - Opus 5 grades harder as reflector: 0.83 vs 0.90; 3 of 13 tasks the stored
+     run passed dropped below the 0.8 success threshold (e71f51d5 1.0 → 0.75,
+     7ab38110 0.9 → 0.75, 613df433 0.82 → 0.73). The reflect input is a proxy
+     (placeholder text on non-final goals), so stricter may be more honest —
+     but under V8.4 a sub-0.8 reflect demotes, so a swap would change the
+     pass rate of the same work.
+   - Assess: identical (100 % met), Opus 5 slightly cheaper and faster.
+4. **Cost — worse.** Plan +20 % $/call and +40 % wall time (Opus 5 writes
+   ~50 % more completion tokens for the same prompt); reflect equal $ but
+   +30 % wall time. Config B (adaptive thinking + medium effort) bought
+   nothing on either model: 4-8/B was worse than 4-8/A on every quality
+   column, 5/B ≈ 5/A.
+
+**Verdict:** Opus 5 is a safe drop-in at the contract level but not a better
+one at the plan/reflect level, and it would raise executor spend through goal
+inflation. `OPUS_MODEL_ID` stays `claude-opus-4-8`. Stage 2 (executor,
+$22–30) is the only remaining unknown; it isolates the executor on the STORED
+graphs (identical goals across arms), so it cannot offset the planner
+finding — it can only show whether Opus 5's tool loop is cheaper or better
+per goal. Not recommended unless that specific answer is wanted.
