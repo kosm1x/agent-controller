@@ -74,7 +74,7 @@ async function main(): Promise<void> {
             target: "coding",
             mutation_type: "adjust",
             mutated_value:
-              "\\b(c[oó]digo|code|archivos?|files?|docker|containers?|scripts?|deploy|edita|grep|busca(r)?\\s+en|estructura|directori|carpetas?|servers?|servidores?|git|npm|build|test|lint|bug|error|fix|debug)",
+              "\\b(c[oó]digo|code|archivos?|files?|docker|containers?|scripts?|deploy|edita|grep|busca(r)?\\s+en|estructura|directori|carpetas?|servers?|servidor(?:es)?|git|npm|build|test|lint|bug|error|fix|debug)",
             hypothesis: "Add docker/container keywords to coding scope pattern",
           }),
           tokensUsed: 500,

@@ -131,9 +131,9 @@ Modify a scope pattern regex to include/exclude keywords that should activate a 
 ## Few-shot Examples
 
 Example 1 (scope_rule):
-The test case "Revisa los containers de Docker" expected scope group "coding" but it wasn't activated.
-Mutation: Add "docker|container" to the coding scope pattern.
-{"surface":"scope_rule","target":"coding","mutation_type":"adjust","mutated_value":"\\\\b(c[oó]digo|code|archivos?|files?|docker|containers?|scripts?|deploy)\\\\i","hypothesis":"Docker/container queries should activate coding tools"}
+The test case "Lista los pods de Kubernetes" expected scope group "coding" but it wasn't activated.
+Mutation: Add "kubernetes|pods?" to the coding scope pattern.
+{"surface":"scope_rule","target":"coding","mutation_type":"adjust","mutated_value":"\\\\b(c[oó]digo|code|archivos?|files?|kubernetes|pods?|scripts?|deploy)\\\\i","hypothesis":"Kubernetes/pod queries should activate coding tools"}
 
 Example 2 (tool_description):
 web_search had 60% accuracy on price queries — the LLM wasn't calling it for "cuánto cuesta" messages.

@@ -436,7 +436,7 @@ Audit during P2-C found the same prefix-match defect class on ~12 other bare alt
 | `rutina`                                    | "mi rutina diaria"                                      | non-coding     |
 | `funci[oó]n`                                | "la función de teatro"                                  | non-coding     |
 | `estructura`                                | "la estructura organizacional"                          | non-coding     |
-| `directori`, `carpetas?`, `servidores?`     | physical org references                                 | non-coding     |
+| `directori`, `carpetas?`, `servidor(?:es)?` | physical org references                                 | non-coding     |
 | `commit`, `code`, `repositori`, `archivos?` | English "commitment"/"committee", ES "archivos físicos" | non-coding     |
 
 Cleanest fix: append `\b` to the closing `)/i` of the outer group. Likely 1-line change + 4 regression tests. Same shape as the google-regex `\b` close shipped in Session 111 — pair them naturally if you want continuity on the regex hygiene lane.

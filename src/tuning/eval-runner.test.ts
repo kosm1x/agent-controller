@@ -130,27 +130,29 @@ describe("runEvaluation", () => {
   });
 
   it("handles scope pattern overrides in sandbox", async () => {
-    // Test case expects "coding" group for "Docker containers"
+    // Test case expects "coding" group for "Kubernetes pods". (Was "Docker
+    // containers" until 2026-09-18, when bare `docker` joined the coding
+    // regex — the fixture must be a word the default patterns truly miss.)
     insertTestCase(
       makeScopeCase({
-        case_id: "sc-docker",
-        input: { message: "Lista los Docker containers" },
+        case_id: "sc-kubernetes",
+        input: { message: "Lista los pods de Kubernetes" },
         expected: { scope_groups: ["coding"] },
       }),
     );
 
-    // Default patterns don't include "docker" → should fail
+    // Default patterns don't include "kubernetes" → should fail
     const resultDefault = await runEvaluation(
       {},
       { category: "scope_accuracy" },
     );
-    expect(resultDefault.perCase[0].score).toBe(0); // "docker" not in coding regex
+    expect(resultDefault.perCase[0].score).toBe(0); // "kubernetes" not in coding regex
 
-    // Override with pattern that includes docker → should pass
+    // Override with pattern that includes kubernetes → should pass
     const resultOverride = await runEvaluation(
       {
         scopePatternOverrides: [
-          { pattern: /\b(docker|code|archivos?)/i, group: "coding" },
+          { pattern: /\b(kubernetes|code|archivos?)/i, group: "coding" },
         ],
       },
       { category: "scope_accuracy" },

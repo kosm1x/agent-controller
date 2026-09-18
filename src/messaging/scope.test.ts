@@ -1939,6 +1939,55 @@ describe("wordpress positive", () => {
   });
 });
 
+// --- 2026-09-18: the three chronic tune_test_cases scope misses, fixed by hand ---
+// sc-server-scope-01: `servidores?` could never match the bare singular
+// "servidor" (the `?` only made the trailing `s` optional). sc-docker-scope-01:
+// only `docker exec` counted as coding; a bare `docker` mention did not.
+// sc-wordpress-01: the publish alternation accepted "publica en el blog" but
+// not "publica el artículo …" without a WP/blog noun.
+describe("chronic scope misses (2026-09-18)", () => {
+  const detect = (msg: string) =>
+    detectActiveGroups(msg, [], DEFAULT_SCOPE_PATTERNS);
+
+  it("'Cuánta RAM tiene el servidor?' activates coding", () => {
+    expect(detect("Cuánta RAM tiene el servidor?").has("coding")).toBe(true);
+  });
+
+  it("'Revisa los containers de Docker que están corriendo' activates coding", () => {
+    expect(
+      detect("Revisa los containers de Docker que están corriendo").has(
+        "coding",
+      ),
+    ).toBe(true);
+  });
+
+  it("'Publica el artículo sobre tendencias de marketing' activates wordpress, NOT social", () => {
+    const groups = detect("Publica el artículo sobre tendencias de marketing");
+    expect(groups.has("wordpress")).toBe(true);
+    expect(groups.has("social")).toBe(false);
+  });
+
+  it("social publish phrasings do not leak into wordpress", () => {
+    expect(detect("Publica esto en Instagram").has("wordpress")).toBe(false);
+    expect(
+      detect("publica un tweet sobre el lanzamiento").has("wordpress"),
+    ).toBe(false);
+  });
+
+  it("'publica el artículo en <platform>' stays social-only (qa 2026-09-18)", () => {
+    for (const msg of [
+      "Publica el artículo en Instagram",
+      "Publica el artículo en Facebook mañana",
+      "publica el artículo en X",
+      "Publica la entrada en TikTok",
+    ]) {
+      const groups = detect(msg);
+      expect(groups.has("wordpress"), msg).toBe(false);
+      expect(groups.has("social"), msg).toBe(true);
+    }
+  });
+});
+
 describe("wordpress negative (false-positive guards)", () => {
   // These keep the broader lexicon from over-firing WP scope.
 
