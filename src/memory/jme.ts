@@ -39,11 +39,19 @@ import { detectPreferenceSignal, signalSnippet } from "./preference-signals.js";
 export const TEMPORAL_DEDUP_THRESHOLD = 0.85;
 
 /**
- * When jme_facts with embeddings exceeds this count, the nightly consolidator
- * emits a warn log. LIMIT 500 in queryMemory() starts being a bottleneck at
- * ~400 rows. (Phase 3, Pieza 2)
+ * Newest LIVE facts the vector scan in queryMemory() reads per recall (one
+ * embedding is 6 KB, so 1,500 rows ≈ 9 MB and a few ms of cosine). Expired
+ * rows never count against it. (Phase 4, 2026-09-18 — was a literal 500 with
+ * 386 live rows and ~8.6 new facts/day.)
  */
-export const VECTOR_CEILING_WARN = 400;
+export const VECTOR_SCAN_LIMIT = 1500;
+
+/**
+ * When LIVE jme_facts with embeddings exceed this count, the nightly
+ * consolidator emits a warn log — 80 % of VECTOR_SCAN_LIMIT, so there is
+ * runway before the oldest facts fall out of vector recall. (Phase 3, Pieza 2)
+ */
+export const VECTOR_CEILING_WARN = Math.floor(VECTOR_SCAN_LIMIT * 0.8);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -337,10 +345,10 @@ function extractKeywords(query: string): string[] {
  * Algorithm is O(n²) over the recall set — acceptable because k ≤ 20 and
  * this runs entirely in-process with pre-loaded Float32Arrays.
  *
- * @param results   Already-ranked recall results (best first)
- * @param queryVec  Query embedding used during the original vector search;
- *                  used to re-compute inter-fact similarities. If null, no
- *                  deduplication is performed (FTS5-only path).
+ * @param results        Already-ranked recall results (best first)
+ * @param factEmbeddings Fact embeddings stashed by the vector search, keyed by
+ *                       fact id; a result without one is kept as-is (the
+ *                       FTS5-only path passes an empty map, so nothing clusters).
  * @returns Filtered results with at most one representative per cluster,
  *          preserving the original ranking order among survivors.
  */
@@ -394,7 +402,12 @@ export function deduplicateFacts(
 
 export async function queryMemory(
   query: string,
-  options: { k?: number; minScore?: number } = {},
+  options: {
+    k?: number;
+    minScore?: number;
+    /** Caller-supplied embedding of `query` — skips the embed() call. */
+    queryVec?: Float32Array | null;
+  } = {},
 ): Promise<JmeRecallResult[]> {
   const { k = 8, minScore = 0.25 } = options;
   const db = getDatabase();
@@ -416,11 +429,15 @@ export async function queryMemory(
   // Phase 3 Pieza 1: stash deserialized embeddings for temporal dedup below
   const factEmbeddings = new Map<number, Float32Array>();
 
-  let queryVec: Float32Array | null = null;
-  try {
-    queryVec = await embed(query);
-  } catch {
-    // ignore — will use FTS5 only
+  // A caller that already embedded the text (upsertFact) passes it in — the
+  // nightly consolidator used to pay Gemini twice per fact (P3 follow-up).
+  let queryVec: Float32Array | null = options.queryVec ?? null;
+  if (!queryVec) {
+    try {
+      queryVec = await embed(query);
+    } catch {
+      // ignore — will use FTS5 only
+    }
   }
 
   if (queryVec) {
@@ -431,9 +448,9 @@ export async function queryMemory(
          WHERE embedding IS NOT NULL
            AND (expires_at IS NULL OR expires_at > ?)
          ORDER BY ts DESC
-         LIMIT 500`,
+         LIMIT ?`,
       )
-      .all(now) as DbFactRow[];
+      .all(now, VECTOR_SCAN_LIMIT) as DbFactRow[];
 
     for (const row of rows) {
       if (!row.embedding) continue;
@@ -568,8 +585,14 @@ export async function queryMemory(
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 /**
- * Prune expired facts and low-confidence facts older than 30 days.
- * Safe to call on a schedule (weekly).
+ * Prune expired facts and low-confidence facts older than 30 days. Runs
+ * nightly from the jme-consolidate cron (Phase 4, wired 2026-09-18 once the
+ * population was real: 112 expired rows). A row the operator REJECTED
+ * (`mc-ctl jme-preferences --reject` = category `preference` + confidence 0 +
+ * expired) is kept: it is the marker the Rejected list and the re-inference
+ * stop rule read. The marker is preference-scoped on purpose — `upsertFact`
+ * clamps the extractor's confidence to [0, 1], so a non-preference row at 0
+ * is an extractor artefact and is pruned like any other (qa R1 W2).
  */
 export function pruneExpiredFacts(): number {
   const db = getDatabase();
@@ -579,8 +602,9 @@ export function pruneExpiredFacts(): number {
   const result = db
     .prepare(
       `DELETE FROM jme_facts
-       WHERE (expires_at IS NOT NULL AND expires_at < ?)
-          OR (confidence < 0.4 AND ts < ?)`,
+       WHERE NOT (confidence = 0 AND category = 'preference')
+         AND ((expires_at IS NOT NULL AND expires_at < ?)
+           OR (confidence < 0.4 AND ts < ?))`,
     )
     .run(now, thirtyDaysAgo);
 
@@ -606,12 +630,17 @@ export function jmeStats(): {
   const factsTotal = (
     db.prepare("SELECT COUNT(*) as n FROM jme_facts").get() as { n: number }
   ).n;
+  // LIVE rows only — the vector scan filters expired rows, so they never
+  // count against VECTOR_SCAN_LIMIT (112 expired rows inflated this to 498
+  // against 386 live on 2026-09-18).
   const factsWithEmbedding = (
     db
       .prepare(
-        "SELECT COUNT(*) as n FROM jme_facts WHERE embedding IS NOT NULL",
+        `SELECT COUNT(*) as n FROM jme_facts
+         WHERE embedding IS NOT NULL
+           AND (expires_at IS NULL OR expires_at > ?)`,
       )
-      .get() as { n: number }
+      .get(now) as { n: number }
   ).n;
   // W6: only count facts expiring within the *next* 7 days — the window is
   // BETWEEN now AND now+7d, so already-expired facts are excluded.
@@ -695,6 +724,7 @@ export async function upsertFact(
   const candidates = await queryMemory(trimmedText, {
     k: 3,
     minScore: DEDUP_CANDIDATE_MIN_SCORE,
+    queryVec: incomingVec,
   });
 
   let bestSim = 0;
@@ -856,19 +886,13 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       content: string;
     }>;
     // Phase 3 Pieza 2: vector ceiling surveillance.
-    // When jme_facts with embeddings approaches the LIMIT 500 in queryMemory(),
-    // recall quality degrades (oldest facts get cut off). Warn early at 400 so
-    // there's runway before it becomes a problem. Phase 4 will add auto-pruning.
-    const embeddingCount = (
-      db
-        .prepare(
-          "SELECT COUNT(*) as n FROM jme_facts WHERE embedding IS NOT NULL",
-        )
-        .get() as { n: number }
-    ).n;
+    // When LIVE jme_facts with embeddings approach VECTOR_SCAN_LIMIT in
+    // queryMemory(), recall quality degrades (oldest facts get cut off). Warn
+    // at 80 % so there is runway; expired rows are pruned nightly (Phase 4).
+    const embeddingCount = jmeStats().factsWithEmbedding;
     if (embeddingCount >= VECTOR_CEILING_WARN) {
       console.warn(
-        `[jme] consolidateAll: vector ceiling warning — ${embeddingCount} facts with embeddings (warn threshold=${VECTOR_CEILING_WARN}, query LIMIT=500). Consider pruning low-confidence facts.`,
+        `[jme] consolidateAll: vector ceiling warning — ${embeddingCount} live facts with embeddings (warn threshold=${VECTOR_CEILING_WARN}, scan limit=${VECTOR_SCAN_LIMIT}). Raise VECTOR_SCAN_LIMIT or tighten category TTLs.`,
       );
     }
 

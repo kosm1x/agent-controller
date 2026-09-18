@@ -537,6 +537,39 @@ describe("JME — lifecycle", () => {
     expect(pruned).toBe(0);
     expect(jmeStats().factsTotal).toBe(1);
   });
+
+  it("pruneExpiredFacts keeps an operator-REJECTED preference (confidence 0 + expired) — the Rejected-list marker", async () => {
+    const { pruneExpiredFacts, jmeStats } = await getJme();
+    const sixtyDaysAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence, expires_at)
+         VALUES ('t1', ?, 'Fede prefers to be called Piotr by Jarvis', 'preference', 0, ?)`,
+      )
+      .run(sixtyDaysAgo, Date.now() - 1000);
+
+    // Expired AND stale-low-confidence — both prune clauses match, the
+    // rejected marker (confidence 0) still wins.
+    expect(pruneExpiredFacts()).toBe(0);
+    expect(jmeStats().factsTotal).toBe(1);
+  });
+
+  it("pruneExpiredFacts prunes an expired NON-preference row at confidence 0 (extractor clamp, not a reject marker) and the FTS index follows", async () => {
+    const { pruneExpiredFacts, jmeStats } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts (source_task, ts, fact_text, category, confidence, expires_at)
+         VALUES ('t1', ?, 'clampedzero event happened', 'event', 0, ?)`,
+      )
+      .run(Date.now(), Date.now() - 1000);
+
+    expect(pruneExpiredFacts()).toBe(1);
+    expect(jmeStats().factsTotal).toBe(0);
+    const fts = mockDb
+      .prepare(`SELECT COUNT(*) AS n FROM jme_facts_fts WHERE jme_facts_fts MATCH 'clampedzero'`)
+      .get() as { n: number };
+    expect(fts.n).toBe(0);
+  });
 });
 
 describe("JME — stats", () => {
@@ -555,6 +588,93 @@ describe("JME — stats", () => {
     expect(stats.turnsTotal).toBe(2);
     expect(stats.factsTotal).toBe(1);
     expect(stats.factsWithEmbedding).toBe(0); // embed() returns null in tests
+  });
+
+  it("factsWithEmbedding counts LIVE rows only — expired rows never reach the vector scan", async () => {
+    const { jmeStats } = await getJme();
+    const blob = Buffer.from(new Float32Array([1, 0, 0]).buffer);
+    const ins = mockDb.prepare(
+      `INSERT INTO jme_facts (source_task, ts, fact_text, category, embedding, confidence, expires_at)
+       VALUES ('t1', ?, ?, 'event', ?, 0.9, ?)`,
+    );
+    ins.run(Date.now(), "live fact", blob, null);
+    ins.run(Date.now(), "expired fact", blob, Date.now() - 1000);
+
+    const stats = jmeStats();
+    expect(stats.factsTotal).toBe(2);
+    expect(stats.factsWithEmbedding).toBe(1);
+  });
+});
+
+describe("JME — queryMemory (caller-supplied queryVec)", () => {
+  it("does not call embed() when the caller passes queryVec (upsertFact double-embed fix)", async () => {
+    const { queryMemory } = await getJme();
+    const { embed: embedMock } = await import("./embeddings.js");
+    vi.mocked(embedMock).mockClear();
+
+    const results = await queryMemory("anything", {
+      queryVec: new Float32Array([1, 0, 0]),
+    });
+
+    expect(Array.isArray(results)).toBe(true);
+    expect(embedMock).not.toHaveBeenCalled();
+  });
+
+  it("vector scan reads exactly the newest VECTOR_SCAN_LIMIT live rows — older matches are invisible, both window edges survive", async () => {
+    const { queryMemory, VECTOR_SCAN_LIMIT, VECTOR_CEILING_WARN } = await getJme();
+    expect(VECTOR_CEILING_WARN).toBe(Math.floor(VECTOR_SCAN_LIMIT * 0.8));
+    // The module mock pins cosineSimilarity to 0; this test needs the real thing.
+    const { cosineSimilarity } = await import("./embeddings.js");
+    vi.mocked(cosineSimilarity).mockImplementation((a, b) => {
+      let dot = 0;
+      let na = 0;
+      let nb = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot += a[i]! * b[i]!;
+        na += a[i]! * a[i]!;
+        nb += b[i]! * b[i]!;
+      }
+      return na && nb ? dot / Math.sqrt(na * nb) : 0;
+    });
+
+    const match = Buffer.from(new Float32Array([1, 0, 0]).buffer);
+    const other = Buffer.from(new Float32Array([0, 1, 0]).buffer);
+    const ins = mockDb.prepare(
+      `INSERT INTO jme_facts (id, source_task, ts, fact_text, category, embedding, confidence)
+       VALUES (?, 't1', ?, ?, 'event', ?, 1.0)`,
+    );
+    const total = VECTOR_SCAN_LIMIT + 2;
+    const base = Date.now() - total * 2000;
+    // ids 1 and 2 are the two OLDEST rows and the only vector matches; the
+    // query word never appears in fact_text, so FTS cannot rescue them.
+    for (let i = 1; i <= total; i++) {
+      ins.run(i, base + i * 1000, `zzfact ${i}`, i <= 2 ? match : other);
+    }
+    const q = { queryVec: new Float32Array([1, 0, 0]), k: 5 };
+
+    const ids = (await queryMemory("qqq", q)).map((r) => r.id);
+    expect(ids).not.toContain(1);
+    expect(ids).not.toContain(2);
+
+    // Control on both window edges: the oldest row INSIDE the window (id 3 =
+    // the VECTOR_SCAN_LIMIT-th newest) and the newest row are both found.
+    const setVec = mockDb.prepare(`UPDATE jme_facts SET embedding = ? WHERE id = ?`);
+    setVec.run(match, 3);
+    setVec.run(match, total);
+    const again = (await queryMemory("qqq", q)).map((r) => r.id);
+    // Both edges are scanned (temporal dedup then keeps the newest of the two
+    // identical vectors, so id 3 proves itself by being absorbed into `total`
+    // rather than by appearing: with LIMIT smaller than the window the pair
+    // would not cluster and only `total` would surface — assert via the raw
+    // scores instead of the deduped list).
+    expect(again).toContain(total);
+    expect(again).not.toContain(2);
+    const rawScores = await queryMemory("qqq", { ...q, k: 5, minScore: 0.5 });
+    expect(rawScores.map((r) => r.id)).toEqual([total]);
+    setVec.run(other, total);
+    const edge = (await queryMemory("qqq", q)).map((r) => r.id);
+    expect(edge).toEqual([3]);
+    vi.mocked(cosineSimilarity).mockReturnValue(0);
   });
 });
 

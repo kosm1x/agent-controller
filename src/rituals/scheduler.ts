@@ -908,7 +908,8 @@ function scheduleNoVerdictReminder(): void {
  * JME nightly consolidation — Phase 2 (2026-07-14, audit C3 operator ruling:
  * nightly batch, NOT per-message). One Haiku extraction over the day's
  * episodic turns (>30 min settled, capped 400) → cosine-dedup upsert into
- * jme_facts → delete exactly the consumed turns; then the 7d orphan sweep.
+ * jme_facts → delete exactly the consumed turns; then the 7d orphan sweep and
+ * the expired-fact prune (Phase 4, 2026-09-18).
  * consolidateAll never throws and emits its own recordRitualFailure — the
  * catch here covers the import + the sweep.
  */
@@ -918,12 +919,15 @@ function scheduleJmeConsolidation(): void {
     "45 2 * * *",
     async () => {
       try {
-        const { consolidateAll, pruneStaleTurns } =
+        const { consolidateAll, pruneStaleTurns, pruneExpiredFacts } =
           await import("../memory/jme.js");
         const result = await consolidateAll();
         const pruned = pruneStaleTurns();
+        // Phase 4: expired + stale low-confidence facts leave the table
+        // nightly; operator-rejected preferences (confidence 0) are kept.
+        const expired = pruneExpiredFacts();
         console.log(
-          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned`,
+          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned, ${expired} expired facts pruned`,
         );
       } catch (err) {
         console.error("[rituals] jme-consolidate failed:", err);

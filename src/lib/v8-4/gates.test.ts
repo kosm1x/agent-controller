@@ -289,6 +289,16 @@ describe("ledgerVerdict", () => {
     );
   });
 
+  it("an all-ABANDONED ledger is unverified (met: 0), never met", () => {
+    const v = ledgerVerdict([
+      row({ state: "abandoned", abandon_reason: "check rejected by shell guard" }),
+      row({ gate_id: "H", state: "abandoned", abandon_reason: "undefined $X" }),
+    ]);
+    expect(v.verdict).toBe("unverified");
+    expect(v.met).toBe(0);
+    expect(v.abandoned).toBe(2);
+  });
+
   it("met WITHOUT evidence counts as pending (unmet), never as met", () => {
     const v = ledgerVerdict([row({ state: "met", evidence: "" })]);
     expect(v.verdict).toBe("unverified");
@@ -436,11 +446,13 @@ describe("gateSpecsFromGoal", () => {
     expect(rows[0]!.abandon_reason).toMatch(/expect cannot fail/);
     // Verdict level: abandoned rows neither pass nor demote; pending ones keep it unverified.
     expect(ledgerVerdict(rows)).toMatchObject({ verdict: "unverified", met: 0, failed: 0 });
-    // Pre-existing semantics, now reached more often: a ledger whose ONLY gates were
-    // refused reports met with met:0 — pinned so a change here is deliberate.
+    // A ledger whose ONLY gates were refused proved nothing: unverified with
+    // met:0 (was "met" with met:0 until 2026-09-18 — changed deliberately when
+    // guard-rejected checks started abandoning instead of failing, qa W4).
     expect(ledgerVerdict(rows.filter((r) => r.state === "abandoned"))).toMatchObject({
-      verdict: "met",
+      verdict: "unverified",
       met: 0,
+      abandoned: 3,
     });
   });
 

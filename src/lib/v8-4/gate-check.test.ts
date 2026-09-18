@@ -523,7 +523,7 @@ describe("evaluateLedger", () => {
 import { safeRegexTest } from "./gate-check.js";
 
 describe("guard parity (qa C1)", () => {
-  it("a check the shell_exec guard would block never spawns and is FAILED with the reason", async () => {
+  it("a check the shell_exec guard would block never spawns and is ABANDONED (notRunnable) with the reason", async () => {
     let spawned = 0;
     const exec: CheckExecutor = async () => {
       spawned++;
@@ -540,6 +540,8 @@ describe("guard parity (qa C1)", () => {
         { timeoutMs: 1000, exec },
       );
       expect(r.ok, cmd).toBe(false);
+      // Observes nothing → abandoned, never a FAILED gate that demotes the task.
+      expect(r.notRunnable, cmd).toBe(true);
       expect(r.evidence, cmd).toMatch(/^check rejected by shell guard: /);
     }
     expect(spawned).toBe(0);

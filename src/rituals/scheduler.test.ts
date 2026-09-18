@@ -38,6 +38,16 @@ vi.mock("../db/index.js", () => ({
   getDatabase: () => ({ prepare: mockPrepare }),
 }));
 
+// JME Phase 4 (2026-09-18): the nightly callback dynamic-imports jme.js; the
+// mock lets a test RUN the callback and pin the prune call (qa R1 W1 — the
+// call site was the only line that made Phase 4 live and nothing executed it).
+const mockJme = vi.hoisted(() => ({
+  consolidateAll: vi.fn(),
+  pruneStaleTurns: vi.fn(),
+  pruneExpiredFacts: vi.fn(),
+}));
+vi.mock("../memory/jme.js", () => mockJme);
+
 vi.mock("../dispatch/dispatcher.js", () => ({
   submitTask: mockSubmitTask,
 }));
@@ -702,5 +712,34 @@ describe("usability Phase 5.5 — paused rituals", () => {
     mockIsRitualPaused.mockReturnValue(false);
     await callback();
     expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("jme-consolidate cron (JME Phase 4 wiring)", () => {
+  it("runs consolidateAll → pruneStaleTurns → pruneExpiredFacts and logs the expired count", async () => {
+    mockGet.mockReturnValue(undefined);
+    mockJme.consolidateAll.mockResolvedValue({
+      turnsProcessed: 3,
+      factsExtracted: 2,
+      factsInserted: 1,
+      factsSkipped: 1,
+      factsSuperseded: 0,
+    });
+    mockJme.pruneStaleTurns.mockReturnValue(4);
+    mockJme.pruneExpiredFacts.mockReturnValue(7);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    startRitualScheduler();
+    const call = mockSchedule.mock.calls.find((c) => c[0] === "45 2 * * *");
+    expect(call).toBeDefined();
+    await (call![1] as () => Promise<void>)();
+
+    expect(mockJme.consolidateAll).toHaveBeenCalledTimes(1);
+    expect(mockJme.pruneStaleTurns).toHaveBeenCalledTimes(1);
+    expect(mockJme.pruneExpiredFacts).toHaveBeenCalledTimes(1);
+    expect(
+      logSpy.mock.calls.some((c) => String(c[0]).includes("4 stale pruned, 7 expired facts pruned")),
+    ).toBe(true);
+    logSpy.mockRestore();
   });
 });

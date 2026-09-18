@@ -493,7 +493,9 @@ export interface LedgerVerdict {
 /**
  * Pure adjudication. `met` needs every non-abandoned gate met WITH evidence;
  * any failed check ⇒ `failed`; otherwise something is still unproven ⇒
- * `unverified` (never silently `met`).
+ * `unverified` (never silently `met`). A ledger whose every gate was
+ * ABANDONED proved nothing ⇒ `unverified`, not `met` (qa 2026-09-18 W4 —
+ * guard-rejected checks now abandon instead of fail, so this shape is real).
  */
 export function ledgerVerdict(rows: readonly GateRow[]): LedgerVerdict {
   const failedRows: GateRow[] = [];
@@ -512,7 +514,7 @@ export function ledgerVerdict(rows: readonly GateRow[]): LedgerVerdict {
       ? "none"
       : failedRows.length > 0
         ? "failed"
-        : pendingRows.length > 0
+        : pendingRows.length > 0 || met === 0
           ? "unverified"
           : "met";
   return {

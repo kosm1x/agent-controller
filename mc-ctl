@@ -1788,15 +1788,22 @@ cmd_jme_stats() {
   echo -e "${BOLD}Fact store:${NC}"
   local facts_total facts_emb facts_expiring
   facts_total=$(sql_raw "SELECT COUNT(*) FROM jme_facts;" 2>/dev/null || echo "0")
-  facts_emb=$(sql_raw "SELECT COUNT(*) FROM jme_facts WHERE embedding IS NOT NULL;" 2>/dev/null || echo "0")
+  # LIVE rows only — expired rows are filtered out of the vector scan (and
+  # pruned nightly since Phase 4, 2026-09-18). The limit is READ from
+  # src/memory/jme.ts so the dashboard cannot desync from the code; the warn
+  # line is the same 80 % as VECTOR_CEILING_WARN.
+  vec_limit=$(grep -oE 'VECTOR_SCAN_LIMIT = [0-9]+' "${PROJECT_DIR}/src/memory/jme.ts" 2>/dev/null | grep -oE '[0-9]+$')
+  vec_limit=${vec_limit:-1500}
+  vec_warn=$(( vec_limit * 80 / 100 ))
+  facts_emb=$(sql_raw "SELECT COUNT(*) FROM jme_facts WHERE embedding IS NOT NULL AND (expires_at IS NULL OR expires_at > ${now_ms});" 2>/dev/null || echo "0")
   facts_expiring=$(sql_raw "SELECT COUNT(*) FROM jme_facts WHERE expires_at IS NOT NULL AND expires_at BETWEEN ${now_ms} AND ${now_ms} + 604800000;" 2>/dev/null || echo "0")
 
   echo -e "  Facts total:        ${facts_total}"
-  echo -e "  With embeddings:    ${facts_emb}  (vector query LIMIT=500, ceiling warn=400)"
+  echo -e "  With embeddings:    ${facts_emb}  (live; vector scan limit=${vec_limit}, ceiling warn=${vec_warn})"
   echo -e "  Expiring in 7d:     ${facts_expiring}"
 
-  if [ "$facts_emb" -ge 400 ] 2>/dev/null; then
-    echo -e "  ${YELLOW}⚠️  Vector ceiling approaching — consider pruning low-confidence facts${NC}"
+  if [ "$facts_emb" -ge "$vec_warn" ] 2>/dev/null; then
+    echo -e "  ${YELLOW}⚠️  Vector ceiling approaching — raise VECTOR_SCAN_LIMIT or tighten category TTLs${NC}"
   fi
 
   echo ""
