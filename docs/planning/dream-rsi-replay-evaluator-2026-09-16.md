@@ -64,7 +64,7 @@ With Phase 0d and Phase 1 numbers: (a) extend the replay objective to group → 
 ## 5. Operator decisions this plan needs
 1. Approve Phase 0 (read-only, $0). Recommended.
 2. `tool_description` surface: fix activation order or drop it (queue 2026-09-12; blocks any tuner win from being real).
-3. Whether the tuner stays enabled while Phase 0/1 run (0 wins since 09-08 at ~$8/night; a kill gate is in Phase 1 either way).
+3. Whether the tuner stays enabled while Phase 0/1 run (0 wins since 09-08 at ~$8/night; a kill gate is in Phase 1 either way). **RULED 2026-09-18: OFF** (`TUNING_ENABLED=false`, operator-applied); the three chronic scope cases were hand-fixed in `aa9e609`.
 
 ## 6. Phase 0 results
 _(to be filled by the session that runs it; numbers only, with the reproducing command)_
