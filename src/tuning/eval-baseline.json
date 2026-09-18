@@ -1,15 +1,15 @@
 {
-  "overall": 65.7533,
+  "overall": 68.3483,
   "epsilon": 2,
   "subscores": {
-    "toolSelection": 35.4334,
-    "scopeAccuracy": 93.4555,
+    "toolSelection": 36.6966,
+    "scopeAccuracy": 100,
     "classification": 100
   },
   "model": "INFERENCE_PRIMARY_PROVIDER=claude-sdk",
-  "capturedAt": "2026-07-12T23:29:26.129Z",
-  "nCases": 531,
-  "toolSelectionCases": 172,
-  "source": "Re-baselined 2026-07-12T23:29Z on the Phase 4.3 ENLARGED corpus (531 cases; tool_selection 55\u2192172: 39 seed + 132 positive-mined @0.6 + 1 flywheel @1.0). toolSelection 35.43 is NOT comparable to the prior 53.59 incumbent \u2014 positive-mined cases replay context-dependent production tool sets without thread context, a harder and noisier yardstick (weight 0.6 discounts them). The gate remains RELATIVE: candidate vs THIS incumbent on THIS corpus. Run-to-run variance on the enlarged corpus is UNMEASURED (~$5.16/run) \u2014 before tightening epsilon below 2.0, take 2-3 repeat runs; larger n should reduce variance vs the \u00b12.2 seen at 55 cases. Supersedes the 2026-07-12T05:17Z decontamination baseline (74.79/53.59).",
+  "capturedAt": "2026-09-18T06:27:09.864Z",
+  "nCases": 263,
+  "toolSelectionCases": 188,
+  "source": "Captured by eval-gate --update-baseline (builtin-only registry). Gate-native incumbent.",
   "note": "Refresh with `npm run eval:gate -- --run --update-baseline` after a confirmed-good model swap. epsilon is composite points on the 0-100 scale."
 }
