@@ -96,6 +96,22 @@ describe("backtestRunTool", () => {
     expect(out).toMatch(/no weekly bars found|insufficient bars/);
   });
 
+  it("counts WEEKS, not rows: mid-week partial bars do not add history depth (weekly-periods wiring)", async () => {
+    const dates = seedWeekly(20);
+    const insertPartial = db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
+       VALUES ('AAPL', 'alpha_vantage', 'weekly', ?, 1, 1, 1, 1, 1)`,
+    );
+    // 10 Wednesday partials inside already-seeded weeks: 30 distinct dates, still 20 weeks.
+    for (const friday of dates.slice(0, 10)) {
+      const d = new Date(friday + "T12:00:00Z");
+      d.setUTCDate(d.getUTCDate() - 2);
+      insertPartial.run(d.toISOString().slice(0, 10));
+    }
+    const out = (await backtestRunTool.execute({})) as string;
+    expect(out).toContain("found 20 distinct weeks");
+  });
+
   it("returns insufficient-bars error when below threshold", async () => {
     seedWeekly(10);
     const out = (await backtestRunTool.execute({})) as string;

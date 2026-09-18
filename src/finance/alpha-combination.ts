@@ -37,7 +37,6 @@ import {
 import {
   computeIsqAll,
   computePerSignalIC,
-  todayInNewYork,
   type IsqDimensions,
 } from "./alpha-isq.js";
 
@@ -86,8 +85,6 @@ export interface RunAlphaOpts {
   minFiringsForIc?: number;
   /** Optional UUID; auto-generated if not provided. */
   runId?: string;
-  /** Injected for determinism in tests (today-in-NY computation). */
-  now?: Date;
 }
 
 export interface AlphaRunSignalResult {
@@ -443,10 +440,13 @@ export function runAlphaCombination(opts: RunAlphaOpts): AlphaRunResult {
   const NEffective = sumSq > F7_DEFAULTS.nEffectiveEpsilon ? 1 / sumSq : 0;
 
   // ---- ISQ per active signal ----
+  // Timeliness = fired in the LATEST period of the axis. It used to compare
+  // against today's calendar day, which a weekly axis can never equal (period
+  // keys are past Fridays) — the dimension would be a constant 0.5.
   const firedTodayFlag = new Array<boolean>(N).fill(false);
-  const today = todayInNewYork(opts.now);
+  const latestPeriod = periods[periods.length - 1]!;
   for (const f of opts.firings) {
-    if (f.triggered_at.slice(0, 10) === today) {
+    if (f.triggered_at.slice(0, 10) === latestPeriod) {
       const key = signalKey(f.signal_type, f.symbol);
       const i = keyToIndex.get(key);
       if (i != null) firedTodayFlag[i] = true;

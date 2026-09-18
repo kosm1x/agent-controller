@@ -93,7 +93,6 @@ const result = runAlphaCombination({
   horizon: 1,
   minFiringsForIc: 5,
   runId: "fixed-golden",
-  now: new Date("2026-04-17T15:00:00Z"),
 });
 
 const golden = {

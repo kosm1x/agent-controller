@@ -113,7 +113,42 @@ describe("buildReturnMatrix", () => {
     expect(r.R[4]).toBe(0);
     expect(r.flags.length).toBe(1);
     expect(r.flags[0]!.reason).toBe("out_of_window_forward");
-    // Single firing attempt, single flag → 100% flag ratio → excluded
+    // A forward close that does not exist yet is not missing DATA: the
+    // firing is neutral and the signal is not dropped for having fired last.
+    expect(r.excludePremature.has(0)).toBe(false);
+  });
+
+  it("clean history + a last-period firing → kept (the pending firing is not a flag)", () => {
+    const firings: FiringRow[] = [
+      makeFiring({ triggered_at: "2026-04-08" }),
+      makeFiring({ triggered_at: "2026-04-12" }), // last period
+    ];
+    const bars: BarRow[] = [
+      makeBar({ timestamp: "2026-04-08", close: 100 }),
+      makeBar({ timestamp: "2026-04-09", close: 101 }),
+      makeBar({ timestamp: "2026-04-12", close: 104 }),
+    ];
+    const r = buildReturnMatrix({ firings, bars, periods });
+    expect(r.R[0]).toBeCloseTo(0.01, 10);
+    expect(r.excludePremature.size).toBe(0);
+  });
+
+  it("a last-period firing does not dilute the missing-data ratio either", () => {
+    // 2 scorable firings, 1 with a missing forward close (50% > 5%) + 1 pending.
+    const firings: FiringRow[] = [
+      makeFiring({ triggered_at: "2026-04-08" }),
+      makeFiring({ triggered_at: "2026-04-10" }),
+      makeFiring({ triggered_at: "2026-04-12" }), // last period
+    ];
+    const bars: BarRow[] = [
+      makeBar({ timestamp: "2026-04-08", close: 100 }),
+      makeBar({ timestamp: "2026-04-09", close: 101 }),
+      makeBar({ timestamp: "2026-04-10", close: 102 }),
+      // 2026-04-11 missing
+      makeBar({ timestamp: "2026-04-12", close: 104 }),
+    ];
+    const r = buildReturnMatrix({ firings, bars, periods, flagThreshold: 0.4 });
+    // 1 flagged / 2 scorable = 0.5 > 0.4 → excluded; /3 would be 0.33 → kept.
     expect(r.excludePremature.has(0)).toBe(true);
   });
 

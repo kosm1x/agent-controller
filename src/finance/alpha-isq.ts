@@ -4,7 +4,7 @@
  * Per signal, per run, five quality dimensions in [0, 1] (higher = better):
  *
  *   efficiency   — share of raw weight that survived normalization
- *   timeliness   — 1.0 if signal fired today (NY), 0.5 otherwise
+ *   timeliness   — 1.0 if signal fired in the latest period of the axis, 0.5 otherwise
  *   coverage     — fraction of watchlist the signal's type has fired on
  *   stability    — 1 − (std(IC) / |mean(IC)|) measured across sub-windows
  *   forward_ic   — IC remapped from [−0.15, +0.15] → [0, 1]

@@ -35,6 +35,7 @@ import {
   readLatestAlphaRun,
 } from "../../finance/alpha-persist.js";
 import { todayInNewYork } from "../../finance/alpha-isq.js";
+import { toWeeklyPeriods } from "../../finance/weekly-periods.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -239,8 +240,13 @@ Probability mode is reserved for F6.5.x; returns mode is the only v1 path.`,
     start.setUTCDate(start.getUTCDate() - padDays);
     const windowStart = start.toISOString().slice(0, 10);
 
-    const firings = loadFiringsInWindow(windowStart);
-    const bars = loadBarsInWindow(windowStart);
+    // The period is the WEEK: raw `weekly` rows include mid-week partials and
+    // firings land on any weekday — see weekly-periods.ts.
+    const { bars, firings } = toWeeklyPeriods(
+      loadBarsInWindow(windowStart),
+      loadFiringsInWindow(windowStart),
+      asOf,
+    );
     const watchlistSize = countWatchlist();
 
     // Regime derivation is deferred to F9 rituals (which load the full

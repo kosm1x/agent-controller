@@ -33,6 +33,7 @@ export interface BarRow {
 }
 
 export interface ReturnMatrixInput {
+  /** Ascending by `triggered_at`: the LAST firing of a key in a period wins (direction included). */
   firings: FiringRow[];
   bars: BarRow[];
   /** Ordered list of M ISO date strings (YYYY-MM-DD). Must be strictly increasing calendar days. */
@@ -160,6 +161,7 @@ export function buildReturnMatrix(
   const R = new Float64Array(N * M);
   const flags: ReturnMatrixFlag[] = [];
   const flagCount = new Array<number>(N).fill(0);
+  const pendingCount = new Array<number>(N).fill(0);
 
   for (let i = 0; i < N; i++) {
     const key = signalKeys[i]!;
@@ -176,7 +178,11 @@ export function buildReturnMatrix(
       if (forwardS >= M) {
         R[i * M + s] = 0;
         flags.push({ i, s, reason: "out_of_window_forward" });
-        flagCount[i]!++;
+        // Not a data-quality issue: the forward close does not exist YET.
+        // Counting it dropped exactly the signals that fired most recently
+        // (alpha_run 2026-09-18: a firing in the last completed week →
+        // 1/7 flagged → whole signal `missing_data`).
+        pendingCount[i]!++;
         continue;
       }
 
@@ -222,7 +228,8 @@ export function buildReturnMatrix(
     for (let s = 0; s < M; s++) {
       if (firingByKeyDay.has(keyPrefix + periods[s]!)) firingAttempts++;
     }
-    if (firingAttempts === 0) continue; // no firings → already neutral, no exclusion
+    firingAttempts -= pendingCount[i]!;
+    if (firingAttempts === 0) continue; // no scorable firings → already neutral, no exclusion
     if (flagCount[i]! / firingAttempts > flagThreshold) {
       excludePremature.add(i);
     }

@@ -30,6 +30,7 @@ import {
   readLatestBacktest,
 } from "../../finance/backtest-persist.js";
 import { todayInNewYork } from "../../finance/alpha-isq.js";
+import { toWeeklyPeriods } from "../../finance/weekly-periods.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -349,14 +350,19 @@ Operator can override via override_ship: true (logged).`,
       return `backtest_run: no weekly bars found in market_data. Seed data first with market_watchlist_add or scripts/seed-watchlist-weekly.ts.`;
     }
 
-    const bars = loadWeeklyBars(startDate, endDate);
+    // Same week canonicalization as alpha_run (weekly-periods.ts): one bar per
+    // symbol-week, firings bucketed to their week, in-progress week dropped.
+    const { bars, firings } = toWeeklyPeriods(
+      loadWeeklyBars(startDate, endDate),
+      loadFirings(startDate, endDate),
+      endDate,
+    );
     // Count unique week-level timestamps — measuring HISTORY DEPTH, not total
     // rows. 3 symbols × 10 weeks = 30 rows but only 10 weeks of usable depth.
     const uniqueWeeks = new Set(bars.map((b) => b.timestamp.slice(0, 10))).size;
     if (uniqueWeeks < MIN_BARS_FOR_BACKTEST) {
       return `backtest_run: insufficient bars (found ${uniqueWeeks} distinct weeks, need ≥ ${MIN_BARS_FOR_BACKTEST}). Seed more history first.`;
     }
-    const firings = loadFirings(startDate, endDate);
     const watchlistSize = countActiveWatchlist();
 
     // Walk-forward

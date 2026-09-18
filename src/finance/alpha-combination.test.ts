@@ -31,7 +31,6 @@ function baseOpts(over: Partial<RunAlphaOpts> = {}): RunAlphaOpts {
     windowD: 10,
     horizon: 1,
     minFiringsForIc: 5, // smaller for test determinism
-    now: new Date("2026-04-17T15:00:00Z"),
     ...over,
   };
 }
@@ -69,6 +68,55 @@ describe("runAlphaCombination — empty input paths", () => {
     }));
     const r = runAlphaCombination(baseOpts({ bars }));
     expect(r.N).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISQ timeliness wiring
+// ---------------------------------------------------------------------------
+
+describe("runAlphaCombination — timeliness is the latest PERIOD, not today's date", () => {
+  it("a weekly axis of past Fridays still yields timeliness 1.0 for the signal that fired last", () => {
+    // Friday-keyed weeks ending well before any real "today".
+    const weeks: string[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date("2025-06-27T12:00:00Z");
+      d.setUTCDate(d.getUTCDate() - i * 7);
+      weeks.push(d.toISOString().slice(0, 10));
+    }
+    const bars: BarRow[] = [];
+    const firings: FiringRow[] = [];
+    for (const symbol of ["AAPL", "TSLA"]) {
+      weeks.forEach((w, i) => {
+        const wobble = symbol === "AAPL" ? Math.sin(i) : Math.cos(i * 1.7);
+        bars.push({ symbol, timestamp: w, close: 100 + i + wobble * 3 });
+      });
+      for (let i = 0; i < 20; i += 2) {
+        firings.push({
+          symbol,
+          signal_type: "ma_crossover",
+          direction: "long",
+          strength: 0.7,
+          triggered_at: weeks[i]!,
+        });
+      }
+    }
+    firings.push({
+      symbol: "AAPL",
+      signal_type: "ma_crossover",
+      direction: "long",
+      strength: 0.7,
+      triggered_at: weeks[29]!,
+    });
+    firings.sort((a, b) => a.triggered_at.localeCompare(b.triggered_at));
+
+    const r = runAlphaCombination(
+      baseOpts({ bars, firings, asOf: "2025-06-27", windowM: 30 }),
+    );
+    const isq = (key: string) =>
+      r.signals.find((s) => s.signalKey === key && !s.excluded)?.isq;
+    expect(isq("ma_crossover:AAPL")?.timeliness).toBe(1.0);
+    expect(isq("ma_crossover:TSLA")?.timeliness).toBe(0.5);
   });
 });
 
@@ -656,7 +704,6 @@ describe("runAlphaCombination — golden fixture regression test", () => {
       horizon: golden.inputs.horizon,
       minFiringsForIc: golden.inputs.minFiringsForIc,
       runId: "fixed-golden",
-      now: new Date("2026-04-17T15:00:00Z"),
     });
 
     expect(r.N).toBe(golden.expected.N);

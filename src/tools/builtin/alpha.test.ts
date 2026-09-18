@@ -34,18 +34,18 @@ function makeDays(asOf: string, count: number): string[] {
   const base = new Date(asOf + "T12:00:00Z");
   const days: string[] = [];
   for (let i = count - 1; i >= 0; i--) {
-    const d = new Date(base.getTime() - i * 86400000);
+    const d = new Date(base.getTime() - i * 7 * 86400000);
     days.push(d.toISOString().slice(0, 10));
   }
   return days;
 }
 
-function seedBarsAndFirings(daysBack = 30) {
+function seedBarsAndFirings(daysBack = 25) {
   const asOf = "2026-04-17";
   const days = makeDays(asOf, daysBack);
   // F7 runs on weekly bars (operator lock 2026-04-18). This helper seeds
-  // synthetic weekly bars with the test's relative dates — spacing doesn't
-  // matter for the pipeline (it groups by date), interval label must match.
+  // synthetic weekly bars on Fridays — alpha_run buckets bars and firings
+  // by week (weekly-periods.ts), so daily spacing would collapse to ~4 periods.
   const insertBar = db.prepare(
     `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
      VALUES (?, 'alpha_vantage', 'weekly', ?, ?, ?, ?, ?, 100000)`,
@@ -95,6 +95,43 @@ describe("alphaRunTool", () => {
       .prepare("SELECT COUNT(*) AS n FROM signal_isq")
       .get() as { n: number };
     expect(isqRows.n).toBeGreaterThan(0);
+  });
+
+  it("scores mid-week firings and ignores mid-week partial bars (weekly-periods wiring)", async () => {
+    const { days } = seedBarsAndFirings();
+    const shift = (day: string, n: number) => {
+      const d = new Date(day + "T12:00:00Z");
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    // Production shape: the daily scan fires on a Wednesday, and a mid-week
+    // fetch left a partial "weekly" row behind for ONE symbol only.
+    db.prepare(
+      `UPDATE market_signals SET triggered_at = ? WHERE symbol = 'AAPL' AND triggered_at = ?`,
+    ).run(shift(days[8]!, -2) + "T00:00:00-04:00", days[8]!);
+    db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
+       VALUES ('TSLA', 'alpha_vantage', 'weekly', ?, 1, 1, 1, 1, 1)`,
+    ).run(shift(days[10]!, -3) + "T16:00:00-04:00");
+
+    // A firing in the LAST scored week has no forward return yet — that is
+    // not missing data (it used to drop the signal: 1/16 flagged > 5%).
+    db.prepare(
+      `INSERT INTO market_signals (symbol, signal_type, direction, strength, triggered_at)
+       VALUES ('NVDA', 'ma_crossover', 'long', 0.7, ?)`,
+    ).run(days[days.length - 1]!);
+
+    await alphaRunTool.execute({
+      as_of: "2026-04-17",
+      window_m: 20,
+      window_d: 10,
+    });
+    const missing = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM signal_weights WHERE exclude_reason = 'missing_data'`,
+      )
+      .get() as { n: number };
+    expect(missing.n).toBe(0);
   });
 
   it("returns structured empty message when no signals available", async () => {
