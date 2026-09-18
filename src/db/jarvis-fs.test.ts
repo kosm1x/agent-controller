@@ -13,6 +13,8 @@ import {
   deleteFile,
   syncDeleteFromKbMirror,
   listFiles,
+  getJarvisKbRoot,
+  mirrorToDisk,
 } from "./jarvis-fs.js";
 import { existsSync, writeFileSync } from "node:fs";
 
@@ -28,6 +30,21 @@ afterEach(() => {
   closeDatabase();
   rmSync(testKbDir, { recursive: true, force: true });
   delete process.env.JARVIS_KB_MIRROR_DIR;
+});
+
+describe("getJarvisKbRoot — vitest never resolves to the live KB (2026-09-18)", () => {
+  it("falls back to a throwaway dir when JARVIS_KB_MIRROR_DIR is unset under vitest", () => {
+    delete process.env.JARVIS_KB_MIRROR_DIR;
+    const root = getJarvisKbRoot();
+    expect(root).not.toBe("/root/claude/jarvis-kb");
+    expect(root.startsWith(tmpdir())).toBe(true);
+    mirrorToDisk("logs/day-logs/1999-01-01.md", "# fake\n");
+    expect(existsSync(join(root, "logs/day-logs/1999-01-01.md"))).toBe(true);
+    expect(existsSync("/root/claude/jarvis-kb/logs/day-logs/1999-01-01.md")).toBe(
+      false,
+    );
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("searchFiles — FTS5 tokenized search", () => {

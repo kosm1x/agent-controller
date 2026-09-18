@@ -12,6 +12,7 @@
 import { getDatabase } from "./index.js";
 import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 import type { DriveMetadata } from "./drive-sync.js";
 import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
@@ -23,8 +24,20 @@ import { errMsg } from "../lib/err-msg.js";
 // existed, the northstar-sync test suite was leaving 200+ stale `*--new.md`
 // fixtures in the live KB, polluting Jarvis's view of his own files.
 const DEFAULT_MIRROR_DIR = "/root/claude/jarvis-kb";
+// Under vitest the live KB is NEVER a valid mirror target (2026-09-18):
+// router.test.ts exercised appendDayLog without the env override and
+// truncated the real MX-date day-log to one fake turn on every full run.
+// Tests that need a mirror set JARVIS_KB_MIRROR_DIR; every other test lands
+// in one throwaway dir per worker fork instead of the operator's KB. A pure
+// path, not mkdtemp: eleven test files partially mock `fs`, and a new fs call
+// at resolve time throws inside them (qa R1 C1); mirrorToDisk mkdirs anyway.
 function getMirrorDir(): string {
-  return process.env.JARVIS_KB_MIRROR_DIR ?? DEFAULT_MIRROR_DIR;
+  const override = process.env.JARVIS_KB_MIRROR_DIR;
+  if (override !== undefined) return override;
+  if (process.env.VITEST) {
+    return join(tmpdir(), `jarvis-kb-vitest-${process.pid}`);
+  }
+  return DEFAULT_MIRROR_DIR;
 }
 
 /**

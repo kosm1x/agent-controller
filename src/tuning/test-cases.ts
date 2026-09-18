@@ -5,7 +5,7 @@
 import { readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import type { TestCase } from "./types.js";
+import type { TestCase, TestCaseExpected } from "./types.js";
 import {
   insertTestCase,
   countTestCases,
@@ -26,6 +26,34 @@ interface SeedCase {
   source: string;
 }
 
+const KNOWN_EXPECTED_KEYS: ReadonlySet<keyof TestCaseExpected> = new Set([
+  "tools",
+  "not_tools",
+  "agent_type",
+  "scope_groups",
+  "not_scope_groups",
+]);
+
+/**
+ * The scorers read only the keys declared on `TestCaseExpected`; any other
+ * spelling is silently ignored and the case scores as "no checks" (= 1).
+ * Three seeded cases carried `forbidden_groups` for months that way
+ * (2026-09-18). Refuse at seed time instead.
+ */
+export function assertKnownExpectedKeys(
+  caseId: string,
+  expected: Record<string, unknown>,
+): void {
+  const unknown = Object.keys(expected).filter(
+    (k) => !KNOWN_EXPECTED_KEYS.has(k as keyof TestCaseExpected),
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `[tuning] seed case ${caseId}: unknown expected key(s) ${unknown.join(", ")} — the scorer reads only ${[...KNOWN_EXPECTED_KEYS].join(", ")}`,
+    );
+  }
+}
+
 /**
  * Seed test cases from the JSON file into the database.
  * Uses INSERT OR REPLACE — safe to call multiple times.
@@ -38,6 +66,7 @@ export function seedTestCases(): number {
 
   let seeded = 0;
   for (const c of cases) {
+    assertKnownExpectedKeys(c.case_id, c.expected);
     const tc: TestCase = {
       case_id: c.case_id,
       category: c.category as TestCase["category"],

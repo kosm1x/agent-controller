@@ -1039,7 +1039,7 @@
     },
     "expected": {
       "scope_groups": [],
-      "forbidden_groups": [
+      "not_scope_groups": [
         "wordpress"
       ]
     },
@@ -1098,7 +1098,7 @@
       "scope_groups": [
         "wordpress"
       ],
-      "forbidden_groups": [
+      "not_scope_groups": [
         "social"
       ]
     },
@@ -1113,7 +1113,7 @@
     },
     "expected": {
       "scope_groups": [],
-      "forbidden_groups": [
+      "not_scope_groups": [
         "specialty"
       ]
     },

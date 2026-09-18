@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { getDatabase } from "./index.js";
-import { upsertFile } from "./jarvis-fs.js";
+import { upsertFile, getJarvisKbRoot } from "./jarvis-fs.js";
 
 /**
  * Path prefixes (relative to kbRoot) whose authority lies elsewhere and must
@@ -98,10 +98,9 @@ function deriveQualifier(path: string): string {
  */
 export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
   const start = Date.now();
-  const kbRoot =
-    opts?.kbRoot ??
-    process.env.JARVIS_KB_MIRROR_DIR ??
-    "/root/claude/jarvis-kb";
+  // Same resolver as the mirror (env override → vitest throwaway → live KB);
+  // a second hardcoded live path here bypassed the test guard (qa R1 W2).
+  const kbRoot = opts?.kbRoot ?? getJarvisKbRoot();
 
   const fsFiles = walkKbDir(kbRoot);
   const fsRel = new Set(
