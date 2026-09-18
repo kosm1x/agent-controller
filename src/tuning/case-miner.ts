@@ -4,8 +4,7 @@
  * Runs nightly (before the self-tuning loop). Reads scope_telemetry
  * for the last 24h and generates:
  *   1. Scope miss cases (tool was repaired → scope pattern too narrow)
- *   2. Scope waste cases (group activated but tools never used)
- *   3. Negative feedback cases (user said "no"/"mal" → tools were wrong)
+ *   2. Negative feedback cases (user said "no"/"mal" → tools were wrong)
  *
  * Mined cases are inserted into mined_test_cases table and automatically
  * picked up by getActiveTestCases() in the eval runner.
@@ -13,10 +12,10 @@
 
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/index.js";
+import { assertScorableCase } from "./test-cases.js";
 import {
   getTelemetryWithRepairs,
   getTelemetryWithNegativeFeedback,
-  getRecentTelemetry,
 } from "../intelligence/scope-telemetry.js";
 
 /**
@@ -135,62 +134,6 @@ function mineScopeMisses(hours: number = 24): MinedCase[] {
         input: { message: row.message },
         expected: { scope_groups: [neededGroup] },
         mined_from: `scope_miss:${repair.original}→${repair.repaired}`,
-      });
-    }
-  }
-
-  return cases;
-}
-
-// ---------------------------------------------------------------------------
-// Mine scope waste (groups activated but tools never called)
-// ---------------------------------------------------------------------------
-
-function mineScopeWaste(hours: number = 24): MinedCase[] {
-  const rows = getRecentTelemetry(hours);
-  if (rows.length < 5) return [];
-
-  // Count group activations and tool usage
-  const groupActivations = new Map<string, number>();
-  const groupToolUsage = new Map<string, Set<string>>();
-
-  for (const row of rows) {
-    const groups: string[] = JSON.parse(row.active_groups);
-    const called: string[] = JSON.parse(row.tools_called);
-
-    for (const group of groups) {
-      groupActivations.set(group, (groupActivations.get(group) ?? 0) + 1);
-      if (!groupToolUsage.has(group)) groupToolUsage.set(group, new Set());
-    }
-
-    for (const tool of called) {
-      const group = groupForTool(tool);
-      if (group && groupToolUsage.has(group)) {
-        groupToolUsage.get(group)!.add(tool);
-      }
-    }
-  }
-
-  const cases: MinedCase[] = [];
-
-  for (const [group, count] of groupActivations) {
-    if (count < 5) continue;
-    const usage = groupToolUsage.get(group);
-    if (usage && usage.size > 0) continue; // Group's tools were used at least once
-
-    // Find a representative message that activated this group
-    const representative = rows.find((r) => {
-      const groups: string[] = JSON.parse(r.active_groups);
-      return groups.includes(group);
-    });
-
-    if (representative) {
-      cases.push({
-        case_id: `mined-scope-waste-${group}-${hashMessage(representative.message)}`,
-        category: "scope_accuracy",
-        input: { message: representative.message },
-        expected: { not_scope_groups: [group] },
-        mined_from: `scope_waste:${group}(${count}x activated, 0 tools used)`,
       });
     }
   }
@@ -410,7 +353,11 @@ export function mineTestCases(): {
 
   const allCases = [
     ...mineScopeMisses(),
-    ...mineScopeWaste(),
+    // Scope-waste mining removed 2026-09-18: "group activated, 0 of its tools
+    // called" is not evidence the activation was wrong (a tweet message
+    // activating `social` is right even when the turn needed no tool), and
+    // the 149 `mined-scope-waste-*` rows it produced asserted exactly that.
+    // Operator deactivates the rows; the eval corpus shrinks accordingly.
     ...mineNegativeFeedback(),
     ...mineTierMismatches(),
     // V8.5 Phase 4.3: breadth for the 50%-weight tool_selection axis
@@ -427,6 +374,9 @@ export function mineTestCases(): {
 
   for (const c of allCases) {
     try {
+      // Same refusal as seeding: a miner that emits an empty check set would
+      // inflate the corpus with free 1.0s (2026-09-18).
+      assertScorableCase(c.case_id, c.category, c.expected);
       const result = insertStmt.run(
         c.case_id,
         c.category,

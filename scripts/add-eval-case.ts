@@ -25,6 +25,7 @@
 
 import { loadConfig } from "../src/config.js";
 import { getDatabase, initDatabase } from "../src/db/index.js";
+import { assertScorableCase } from "../src/tuning/test-cases.js";
 
 interface Args {
   message?: string;
@@ -117,6 +118,9 @@ function main(): void {
   }
 
   const caseId = `flywheel-${args.id}`;
+  // Category validity is not shape validity: a scope_accuracy case with
+  // {tools} scores 1 unconditionally (scorer reads scope_groups only).
+  assertScorableCase(caseId, args.category, expected);
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO mined_test_cases

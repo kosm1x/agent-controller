@@ -55,6 +55,40 @@ export function assertKnownExpectedKeys(
 }
 
 /**
+ * A case whose check set is empty scores 1 for free (`scorer.ts`
+ * `totalChecks === 0` → "no checks"; `agent_type` defaults to "fast"). Same
+ * defect class as the unknown-key case, one layer down (2026-09-18). Refuse
+ * it at seed time so a `{"scope_groups": []}` case can never inflate a score.
+ */
+export function assertScorableCase(
+  caseId: string,
+  category: string,
+  expected: Record<string, unknown>,
+): void {
+  assertKnownExpectedKeys(caseId, expected);
+  const len = (k: keyof TestCaseExpected): number =>
+    Array.isArray(expected[k]) ? (expected[k] as unknown[]).length : 0;
+  const empty =
+    category === "scope_accuracy"
+      ? len("scope_groups") + len("not_scope_groups") === 0
+      : category === "tool_selection"
+        ? len("tools") + len("not_tools") === 0
+        : category === "classification"
+          ? typeof expected.agent_type !== "string"
+          : null;
+  if (empty === null) {
+    throw new Error(
+      `[tuning] seed case ${caseId}: unknown category "${category}" — it would be stored active and never scored`,
+    );
+  }
+  if (empty) {
+    throw new Error(
+      `[tuning] seed case ${caseId} (${category}): empty check set — it would score 1 unconditionally`,
+    );
+  }
+}
+
+/**
  * Seed test cases from the JSON file into the database.
  * Uses INSERT OR REPLACE — safe to call multiple times.
  */
@@ -66,7 +100,7 @@ export function seedTestCases(): number {
 
   let seeded = 0;
   for (const c of cases) {
-    assertKnownExpectedKeys(c.case_id, c.expected);
+    assertScorableCase(c.case_id, c.category, c.expected);
     const tc: TestCase = {
       case_id: c.case_id,
       category: c.category as TestCase["category"],
