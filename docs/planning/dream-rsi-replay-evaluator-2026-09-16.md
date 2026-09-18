@@ -64,7 +64,7 @@ With Phase 0d and Phase 1 numbers: (a) extend the replay objective to group → 
 ## 5. Operator decisions this plan needs
 1. ~~Approve Phase 0 (read-only, $0).~~ RUN 2026-09-18 — exit gate INCONCLUSIVE (leans the paid eval's way, p = 0.071 knife-edge, 5/5 experiment ties); Phase 1 not built, thread parked (§6).
 2. `tool_description` surface: fix activation order or drop it (queue 2026-09-12; blocks any tuner win from being real). Moot while the tuner is OFF; still open if it is ever re-armed.
-4. **NEW (from §6 0d):** membership audit — prune never-called tools from the `browser` / `video` / `finance` / `wordpress` / `specialty` / `seo` group lists (estimate 16.0 % of all tool slots, 17.5 % of router-turn slots, 31.0 % of group-marginal slots; `meta` excluded by design). Prompt content ⇒ `npm run eval:gate -- --run` before shipping. Approve / decline.
+4. ~~**NEW (from §6 0d):** membership audit — prune never-called tools from the `browser` / `video` / `finance` / `wordpress` / `specialty` / `seo` group lists (estimate 16.0 % of all tool slots, 17.5 % of router-turn slots, 31.0 % of group-marginal slots; `meta` excluded by design). Prompt content ⇒ `npm run eval:gate -- --run` before shipping.~~ **RULED 2026-09-18: DECLINED — never-called tools remain in their groups unless the operator names a specific tool for removal.** "Not called in 90 d" is not evidence a capability is unwanted. The 0d estimate stays on record as a cost figure, not a to-do.
 3. Whether the tuner stays enabled while Phase 0/1 run (0 wins since 09-08 at ~$8/night; a kill gate is in Phase 1 either way). **RULED 2026-09-18: OFF** (`TUNING_ENABLED=false`, operator-applied); the three chronic scope cases were hand-fixed in `aa9e609`.
 
 ## 6. Phase 0 results
