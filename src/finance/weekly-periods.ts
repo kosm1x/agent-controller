@@ -21,6 +21,7 @@
  * detected on, so daily- and weekly-bar detections share one signal key.
  */
 import { todayInNewYork } from "./alpha-isq.js";
+import { isNyseTradingDay, prevTradingDay } from "./market-calendar.js";
 import type { BarRow, FiringRow } from "./alpha-matrix.js";
 
 /** Friday (YYYY-MM-DD) of the Monday–Sunday week containing `iso`. */
@@ -29,6 +30,112 @@ export function weekEndKey(iso: string): string {
   const sinceMonday = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - sinceMonday + 4);
   return d.toISOString().slice(0, 10);
+}
+
+/** Friday of the newest week that is over — the `week < today` rule below. */
+export function lastCompletedWeekKey(today: string = todayInNewYork()): string {
+  const week = weekEndKey(today);
+  if (week < today) return week;
+  const d = new Date(week + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 7);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * A weekly bar dated inside [last NYSE session, Friday] of the newest completed
+ * week is that week's CLOSE: AV dates a holiday week by its last session,
+ * Polygon rows are re-keyed to the Friday. An earlier date in that week is a
+ * mid-week partial; a later one belongs to the week still in progress.
+ */
+export function isCompletedWeekClose(
+  iso: string,
+  today: string = todayInNewYork(),
+): boolean {
+  const friday = lastCompletedWeekKey(today);
+  const lastSession = isNyseTradingDay(friday)
+    ? friday
+    : prevTradingDay(friday);
+  const day = iso.slice(0, 10);
+  return day >= lastSession && day <= friday;
+}
+
+export interface WeeklySourceRow {
+  symbol: string;
+  provider: string;
+  timestamp: string;
+  close: number;
+  adjusted_close: number | null;
+}
+
+/**
+ * One row per (symbol, week), continuous in price, grouped by symbol and
+ * ascending by week within each (consumers re-sort: `toWeeklyPeriods`).
+ *
+ * The two providers disagree on basis: Polygon closes are split-adjusted, AV
+ * `close` is RAW (XLE 2:1 2025-12 → av 88.76 vs polygon 44.38 for the same
+ * week; NVDA 10:1 2024-06 is a fake −89 % week in raw closes). A week takes
+ * its Polygon row when there is one (scale 1), else its newest AV row priced
+ * at `adjusted_close` and rescaled by polygon/AV-adjusted at the nearest
+ * later week both providers closed (else the newest such week), so the series
+ * is continuous across the seam. `scale` multiplies the row's prices.
+ *
+ * Continuous, not identical in measure: AV `adjusted_close` also folds in
+ * dividends, Polygon adjusts for splits only — returns in the AV stretch
+ * (older than Polygon's ~2y) are total returns, newer ones price returns.
+ */
+export function stitchWeekly<T extends WeeklySourceRow>(
+  rows: T[],
+): Array<{ row: T; scale: number }> {
+  const bySymbol = new Map<string, Map<string, { poly?: T; av?: T }>>();
+  for (const r of rows) {
+    let weeks = bySymbol.get(r.symbol);
+    if (!weeks) bySymbol.set(r.symbol, (weeks = new Map()));
+    const week = weekEndKey(r.timestamp);
+    let slot = weeks.get(week);
+    if (!slot) weeks.set(week, (slot = {}));
+    if (r.provider === "polygon") slot.poly = r;
+    else if (
+      !slot.av ||
+      r.timestamp.slice(0, 10) >= slot.av.timestamp.slice(0, 10)
+    )
+      slot.av = r;
+  }
+
+  const adjusted = (r: T) =>
+    r.adjusted_close && r.adjusted_close > 0 ? r.adjusted_close : r.close;
+  const out: Array<{ row: T; scale: number }> = [];
+  for (const weeks of bySymbol.values()) {
+    const desc = [...weeks].sort(([a], [b]) => b.localeCompare(a));
+    // Only a Thursday/Friday AV row is that week's close (Thursday: Good Friday).
+    const ratio = ([week, { poly, av }]: (typeof desc)[number]) => {
+      if (!poly || !av || adjusted(av) <= 0) return undefined;
+      const thursday = new Date(week + "T12:00:00Z");
+      thursday.setUTCDate(thursday.getUTCDate() - 1);
+      return av.timestamp.slice(0, 10) >= thursday.toISOString().slice(0, 10)
+        ? poly.close / adjusted(av)
+        : undefined;
+    };
+    let k = desc.map(ratio).find((v) => v !== undefined) ?? 1;
+    const stitched: Array<{ row: T; scale: number }> = [];
+    for (const entry of desc) {
+      k = ratio(entry) ?? k;
+      const { poly, av } = entry[1];
+      if (poly) stitched.push({ row: poly, scale: 1 });
+      else if (av && av.close > 0)
+        stitched.push({ row: av, scale: (adjusted(av) / av.close) * k });
+    }
+    out.push(...stitched.reverse());
+  }
+  return out;
+}
+
+/** `stitchWeekly` as the `BarRow[]` the weekly pipelines consume. */
+export function stitchedCloses(rows: WeeklySourceRow[]): BarRow[] {
+  return stitchWeekly(rows).map(({ row, scale }) => ({
+    symbol: row.symbol,
+    timestamp: row.timestamp,
+    close: row.close * scale,
+  }));
 }
 
 export function toWeeklyPeriods(

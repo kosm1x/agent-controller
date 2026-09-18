@@ -3,7 +3,7 @@
  * error surface.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -27,7 +27,12 @@ vi.mock("./data-layer.js", () => ({
   getDataLayer: () => ({ getWeekly: mockGetWeekly }),
 }));
 
-import { seedSymbol, formatSeedResult } from "./watchlist-seed.js";
+import {
+  seedSymbol,
+  formatSeedResult,
+  refreshWeeklyWatchlist,
+} from "./watchlist-seed.js";
+import { __resetForTests, recordCall } from "./rate-limit.js";
 import type { MarketBar } from "./types.js";
 
 function makeWeekly(symbol: string, n: number, startPrice = 100): MarketBar[] {
@@ -64,10 +69,36 @@ function seedRows(symbol: string, n: number): void {
   }
 }
 
+// makeWeekly(_, 350) ends Fri 2026-09-11; Wed 09-16 makes that the last completed week.
+const WEEK_OF_350 = new Date("2026-09-16T15:00:00Z");
+
 describe("seedSymbol", () => {
   beforeEach(() => {
     db = freshDb();
     mockGetWeekly.mockReset();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WEEK_OF_350);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("enough rows is not enough: a series that stops before the last completed week is re-fetched", async () => {
+    seedRows("SPY", 350);
+    vi.setSystemTime(new Date("2026-09-23T15:00:00Z")); // completed week is now 09-18
+    mockGetWeekly.mockResolvedValue({ bars: [], provider: "polygon" });
+    const result = await seedSymbol("SPY", { minBars: 300 });
+    expect(result.skipped).toBe(false);
+    expect(mockGetWeekly).toHaveBeenCalledTimes(1);
+  });
+
+  it("a mid-week partial of the completed week does not count as its close", async () => {
+    seedRows("SPY", 349); // ends Fri 09-04
+    db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
+       VALUES ('SPY', 'alpha_vantage', 'weekly', '2026-09-09T16:00:00-04:00', 1, 2, 0.5, 1, 1)`,
+    ).run();
+    mockGetWeekly.mockResolvedValue({ bars: [], provider: "polygon" });
+    const result = await seedSymbol("SPY", { minBars: 300 });
+    expect(result.skipped).toBe(false);
   });
 
   it("skips when the symbol already has ≥ minBars weekly rows", async () => {
@@ -170,5 +201,45 @@ describe("formatSeedResult", () => {
         error: "boom",
       }),
     ).toMatch(/seed error — boom/);
+  });
+});
+
+describe("refreshWeeklyWatchlist", () => {
+  beforeEach(() => {
+    db = freshDb();
+    mockGetWeekly.mockReset();
+    mockGetWeekly.mockResolvedValue({ bars: [], provider: "polygon" });
+    __resetForTests();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WEEK_OF_350);
+    const add = db.prepare(
+      `INSERT INTO watchlist (symbol, asset_class, active) VALUES (?, ?, ?)`,
+    );
+    add.run("SPY", "etf", 1); // current
+    add.run("QQQ", "etf", 1); // stale
+    add.run("AAPL", "equity", 1); // no rows at all
+    add.run("XLE", "etf", 0); // inactive
+    add.run("VIXCLS", "macro", 1); // not a weekly-bar symbol
+    seedRows("SPY", 350);
+    seedRows("QQQ", 340);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("fetches only the active equity/ETF symbols that lack the last completed week", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const results = await refreshWeeklyWatchlist(sleep);
+    expect(mockGetWeekly.mock.calls.map((c) => c[0])).toEqual(["AAPL", "QQQ"]);
+    expect(results.map((r) => r.symbol)).toEqual(["AAPL", "QQQ"]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("waits for the Polygon limiter (≤65 s a wait) before fetching a symbol", async () => {
+    for (let i = 0; i < 4; i++) recordCall("polygon");
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    await refreshWeeklyWatchlist(sleep);
+    expect(sleep).toHaveBeenCalled();
+    const waited = sleep.mock.calls[0]![0] as number;
+    expect(waited).toBeGreaterThan(0);
+    expect(waited).toBeLessThanOrEqual(65_000);
   });
 });

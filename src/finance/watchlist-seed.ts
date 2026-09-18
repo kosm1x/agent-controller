@@ -4,7 +4,9 @@
  * Fires on `market_watchlist_add` and on `market_watchlist_reseed`. Fetches a
  * minimum history of weekly OHLCV bars via DataLayer, persists them, then runs
  * full signal detection over the fetched series and persists the resulting
- * firings. Idempotent: skips the fetch if enough fresh rows already exist.
+ * firings. Idempotent: skips the fetch if enough rows exist AND the last
+ * completed week is among them (a row count alone froze 6 of 10 symbols at the
+ * 04-17 seed for five months). `refreshWeeklyWatchlist` is the weekly caller.
  *
  * This exists because F7 (alpha combination) and F7.5 (backtester) both assume
  * every active watchlist symbol has ≥ minBars of weekly history and non-empty
@@ -15,6 +17,8 @@
 import { getDatabase } from "../db/index.js";
 import { detectAllSignals, persistSignals } from "./signals.js";
 import { getDataLayer } from "./data-layer.js";
+import { msUntilAvailable } from "./rate-limit.js";
+import { isCompletedWeekClose } from "./weekly-periods.js";
 import { errMsg } from "../lib/err-msg.js";
 
 export interface SeedOptions {
@@ -50,12 +54,24 @@ function countWeeklyBars(symbol: string): number {
   return row.n;
 }
 
+function hasCompletedWeek(symbol: string): boolean {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT timestamp FROM market_data
+       WHERE symbol = ? AND interval = 'weekly'
+       ORDER BY timestamp DESC LIMIT 5`,
+    )
+    .all(symbol) as { timestamp: string }[];
+  return rows.some((r) => isCompletedWeekClose(r.timestamp));
+}
+
 /**
  * Seed a single symbol's weekly bars + detected signals.
  *
  * Behavior:
- *  - If `countWeeklyBars(symbol) >= minBars`: return `{ skipped: true }`
- *    without touching the provider.
+ *  - If `countWeeklyBars(symbol) >= minBars` and the last completed week is
+ *    stored: return `{ skipped: true }` without touching the provider.
  *  - Otherwise: fetch via `DataLayer.getWeekly({ lookback })`, then run
  *    `detectAllSignals()` over the returned bars and persist each firing.
  *  - Any provider-side error is captured in the result and returned — the
@@ -78,7 +94,7 @@ export async function seedSymbol(
   let signalsInserted = 0;
   try {
     before = countWeeklyBars(symbol);
-    if (before >= minBars) {
+    if (before >= minBars && hasCompletedWeek(symbol)) {
       return {
         symbol,
         skipped: true,
@@ -128,6 +144,33 @@ export async function seedSymbol(
       error: errorMsg,
     };
   }
+}
+
+/**
+ * Bring every active equity/ETF watchlist symbol up to the last completed
+ * week. Symbols already current cost one DB read. Bounded by the watchlist.
+ */
+export async function refreshWeeklyWatchlist(
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((r) => setTimeout(r, ms)),
+): Promise<SeedResult[]> {
+  const symbols = getDatabase()
+    .prepare(
+      `SELECT symbol FROM watchlist
+       WHERE active = 1 AND asset_class IN ('equity', 'etf')
+       ORDER BY symbol`,
+    )
+    .all() as { symbol: string }[];
+  const results: SeedResult[] = [];
+  for (const { symbol } of symbols) {
+    if (hasCompletedWeek(symbol)) continue;
+    // Polygon is 4 req/min: wait for a slot rather than spill the refresh
+    // onto Alpha Vantage's 22/day.
+    const wait = msUntilAvailable("polygon");
+    if (wait > 0) await sleep(Math.min(wait, 65_000));
+    results.push(await seedSymbol(symbol, { minBars: 1 }));
+  }
+  return results;
 }
 
 export function formatSeedResult(r: SeedResult): string {

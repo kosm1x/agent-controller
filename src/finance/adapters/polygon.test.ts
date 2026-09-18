@@ -2,7 +2,7 @@
  * Polygon adapter tests — daily, intraday, rate-limit, URL shape, host override.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -223,6 +223,84 @@ describe("PolygonAdapter", () => {
     // lookback + 50 returned ~2 hour bars for a 60min scan.
     expect(url).toContain("limit=50000");
     expect(bars.map((b) => b.close)).toEqual([2_000, 3_000]);
+  });
+
+  describe("fetchWeekly", () => {
+    afterEach(() => vi.useRealTimers());
+
+    // Live shape 2026-09-18: bars stamped Sunday 04:00Z (00:00 ET); the 04-12
+    // bar closed at AV's Fri 04-17 close, the 03-29 bar is Good Friday's week.
+    const sunday = (iso: string, c: number) => ({
+      v: 1000,
+      o: c,
+      h: c + 1,
+      l: c - 1,
+      c,
+      t: Date.parse(iso + "T04:00:00Z"),
+    });
+    const body = {
+      status: "OK",
+      results: [
+        sunday("2026-04-12", 710.14),
+        sunday("2026-04-05", 679.46),
+        sunday("2026-03-29", 655.83),
+      ],
+    };
+
+    it("re-keys each Sunday-stamped bar to the Friday close of the week it covers", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-04-25T15:00:00Z"));
+      const fakeFetch = vi
+        .fn()
+        .mockResolvedValue(okResponse(body)) as unknown as typeof fetch;
+      const adapter = new PolygonAdapter("key", "https://x/v2", fakeFetch);
+      const bars = await adapter.fetchWeekly("SPY", { lookback: 520 });
+      expect(bars.map((b) => [b.timestamp, b.close])).toEqual([
+        ["2026-04-03T16:00:00-04:00", 655.83],
+        ["2026-04-10T16:00:00-04:00", 679.46],
+        ["2026-04-17T16:00:00-04:00", 710.14],
+      ]);
+      expect(bars.every((b) => b.interval === "weekly")).toBe(true);
+      const url = (fakeFetch as any).mock.calls[0][0] as string;
+      expect(url).toContain("/range/1/week/");
+    });
+
+    it("always asks for the full 2y window, whatever the lookback", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-04-25T15:00:00Z"));
+      const fakeFetch = vi
+        .fn()
+        .mockResolvedValue(okResponse(body)) as unknown as typeof fetch;
+      const adapter = new PolygonAdapter("key", "https://x/v2", fakeFetch);
+      const bars = await adapter.fetchWeekly("SPY", { lookback: 1 });
+      expect(bars.map((b) => b.timestamp.slice(0, 10))).toEqual(["2026-04-17"]);
+      const url = (fakeFetch as any).mock.calls[0][0] as string;
+      const from = url.match(/week\/(\d{4}-\d{2}-\d{2})\//)![1]!;
+      const days = (Date.parse("2026-04-25") - Date.parse(from)) / 86400000;
+      expect(days).toBeGreaterThanOrEqual(104 * 7);
+    });
+
+    it("drops the week still in progress — Friday itself included", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const fakeFetch = vi
+        .fn()
+        .mockImplementation(async () =>
+          okResponse(body),
+        ) as unknown as typeof fetch;
+      const adapter = new PolygonAdapter("key", "https://x/v2", fakeFetch);
+      // Wed 04-15 and Fri 04-17 (after the close): the 04-12 bar is not final.
+      for (const now of ["2026-04-15T15:00:00Z", "2026-04-17T21:00:00Z"]) {
+        vi.setSystemTime(new Date(now));
+        const bars = await adapter.fetchWeekly("SPY", { lookback: 10 });
+        expect(bars.map((b) => b.timestamp.slice(0, 10))).toEqual([
+          "2026-04-03",
+          "2026-04-10",
+        ]);
+      }
+      vi.setSystemTime(new Date("2026-04-18T15:00:00Z"));
+      const bars = await adapter.fetchWeekly("SPY", { lookback: 10 });
+      expect(bars.at(-1)!.timestamp.slice(0, 10)).toBe("2026-04-17");
+    });
   });
 
   it("honors POLYGON_BASE_URL override (legacy api.polygon.io)", async () => {

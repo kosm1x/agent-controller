@@ -30,7 +30,11 @@ import {
   readLatestBacktest,
 } from "../../finance/backtest-persist.js";
 import { todayInNewYork } from "../../finance/alpha-isq.js";
-import { toWeeklyPeriods } from "../../finance/weekly-periods.js";
+import {
+  stitchedCloses,
+  toWeeklyPeriods,
+  type WeeklySourceRow,
+} from "../../finance/weekly-periods.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -64,20 +68,17 @@ function loadFirings(windowStart: string, windowEnd: string): FiringRow[] {
 
 function loadWeeklyBars(windowStart: string, windowEnd: string): BarRow[] {
   const db = getDatabase();
-  return db
+  const rows = db
     .prepare(
-      `SELECT symbol, timestamp, close
+      `SELECT symbol, provider, timestamp, close, adjusted_close
          FROM market_data
          WHERE interval = 'weekly'
            AND substr(timestamp, 1, 10) >= ?
            AND substr(timestamp, 1, 10) <= ?
          ORDER BY timestamp ASC`,
     )
-    .all(windowStart, windowEnd) as Array<{
-    symbol: string;
-    timestamp: string;
-    close: number;
-  }>;
+    .all(windowStart, windowEnd) as WeeklySourceRow[];
+  return stitchedCloses(rows);
 }
 
 function countActiveWatchlist(): number {

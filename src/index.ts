@@ -448,6 +448,22 @@ async function main(): Promise<void> {
       );
     });
 
+  // Saturday refresh of the weekly bars alpha_run / backtest_run read. Nothing
+  // else writes them on a schedule (frozen 04-17 → 09-18). Non-fatal.
+  import("./finance/weekly-refresh-cron.js")
+    .then(({ registerWeeklyRefreshCron }) =>
+      registerWeeklyRefreshCron({
+        info: (msg, fields) => log.info(fields ?? {}, msg),
+        warn: (msg, fields) => log.warn(fields ?? {}, msg),
+      }),
+    )
+    .catch((err) => {
+      log.warn(
+        { err },
+        "[weekly-refresh] cron registration failed (non-fatal)",
+      );
+    });
+
   // Daily tasks/runs retention (04:30 local, 90d window — operator-approved
   // 2026-07-05). Archives to data/archive/*.jsonl.gz then deletes in batched
   // transactions; in-flight tasks and parents with surviving children are

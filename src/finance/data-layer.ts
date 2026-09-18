@@ -28,10 +28,16 @@ import {
   SymbolError,
 } from "./types.js";
 import { AlphaVantageAdapter } from "./adapters/alpha-vantage.js";
-import { PolygonAdapter } from "./adapters/polygon.js";
+import { PolygonAdapter, POLYGON_WEEKLY_MAX_BARS } from "./adapters/polygon.js";
 import { FredAdapter } from "./adapters/fred.js";
 import { validateMarketBar } from "./validation.js";
 import { canCall } from "./rate-limit.js";
+import {
+  isCompletedWeekClose,
+  lastCompletedWeekKey,
+  stitchWeekly,
+  weekEndKey,
+} from "./weekly-periods.js";
 import {
   AV_TIER1_DAILY_CEILING,
   projectedDailyAvCalls,
@@ -49,12 +55,27 @@ const DAILY_TTL_MS = 24 * 60 * 60 * 1000;
 // Weekly bars refresh Friday after close. A 5-day TTL guarantees the cache
 // expires before the next Friday no matter when it was populated (audit W4).
 const WEEKLY_TTL_MS = 5 * 24 * 60 * 60 * 1000;
+/** A cached weekly series that still lacks the last completed week is re-fetched at most this often. */
+const WEEKLY_RETRY_MS = 6 * 60 * 60 * 1000;
 /** L2 freshness floor: accept stored rows if within 5% of the requested lookback. */
 const WEEKLY_L2_FRESHNESS_FLOOR = 0.95;
 const INTRADAY_TTL_MS = 10 * 60 * 1000;
 const MACRO_TTL_MS = 6 * 60 * 60 * 1000;
 /** Max L1 entries. Evicts oldest insert (FIFO) on overflow to bound memory. */
 const L1_MAX_ENTRIES = 500;
+
+interface DbBarRow {
+  symbol: string;
+  provider: Provider;
+  interval: "daily" | "weekly" | "monthly";
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  adjusted_close: number | null;
+}
 
 export class DataLayer {
   private readonly l1 = new Map<string, CacheEntry>();
@@ -239,8 +260,17 @@ export class DataLayer {
   ): Promise<FetchResult<MarketBar>> {
     const symbol = normalizeSymbol(rawSymbol, "equity");
     const key = `weekly:${symbol}:${opts.lookback}`;
+    // Fresh = the last completed week's close is present. The age of the newest
+    // row proved nothing: a mid-week partial kept a series "fresh" while whole
+    // weeks were missing behind it (6 of 10 symbols frozen 04-17 → 09-18).
+    const current = (bars: MarketBar[]) =>
+      bars.slice(-2).some((b) => isCompletedWeekClose(b.timestamp));
+    const cachedAt = this.l1.get(key)?.ts ?? 0;
     const cached = this.l1Lookup(key, WEEKLY_TTL_MS);
-    if (cached) {
+    if (
+      cached &&
+      (current(cached) || Date.now() - cachedAt < WEEKLY_RETRY_MS)
+    ) {
       return { bars: cached, provider: cached[0]?.provider ?? "alpha_vantage" };
     }
 
@@ -249,13 +279,9 @@ export class DataLayer {
     // Exact-match-only would force a re-fetch for every call when DB is short
     // by a single row — thrashes AV + burns through rate limit.
     const l2Floor = Math.floor(opts.lookback * WEEKLY_L2_FRESHNESS_FLOOR);
-    if (dbRows.length >= l2Floor) {
-      const newest = dbRows[dbRows.length - 1]!;
-      const age = Date.now() - Date.parse(newest.timestamp);
-      if (age < WEEKLY_TTL_MS) {
-        this.l1Set(key, dbRows);
-        return { bars: dbRows, provider: newest.provider };
-      }
+    if (dbRows.length >= l2Floor && current(dbRows)) {
+      this.l1Set(key, dbRows);
+      return { bars: dbRows, provider: dbRows[dbRows.length - 1]!.provider };
     }
 
     const existing = this.inflight.get(key);
@@ -291,31 +317,76 @@ export class DataLayer {
   ): Promise<MarketBar[]> {
     const attempts: { provider: Provider; reason: string }[] = [];
 
-    if (this.av?.fetchWeekly && canCall("alpha_vantage")) {
-      try {
-        const bars = await this.av.fetchWeekly(symbol, { lookback });
-        this.persistBars(bars);
-        return bars;
-      } catch (err) {
+    const tryAv = async (): Promise<MarketBar[] | null> => {
+      if (this.av?.fetchWeekly && canCall("alpha_vantage")) {
+        try {
+          const bars = await this.av.fetchWeekly(symbol, { lookback });
+          if (bars.length > 0) {
+            // Answer from the DB like the Polygon leg: AV closes are RAW, the
+            // stitched read is what signal detection and quotes must see.
+            this.persistBars(bars);
+            const merged = this.dbBars(symbol, "weekly", lookback);
+            return merged.length > 0 ? merged : bars;
+          }
+          attempts.push({ provider: "alpha_vantage", reason: "no bars" });
+        } catch (err) {
+          attempts.push({
+            provider: "alpha_vantage",
+            reason: errMsg(err),
+          });
+        }
+      } else if (this.av?.fetchWeekly) {
+        attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
+      } else {
         attempts.push({
           provider: "alpha_vantage",
-          reason: errMsg(err),
+          reason: "weekly endpoint not supported",
         });
       }
-    } else if (this.av?.fetchWeekly) {
-      attempts.push({ provider: "alpha_vantage", reason: "rate limited" });
-    } else {
-      attempts.push({
-        provider: "alpha_vantage",
-        reason: "weekly endpoint not supported",
-      });
-    }
+      return null;
+    };
 
-    // Polygon weekly fallback is not implemented at F1 — skip.
-    attempts.push({
-      provider: "polygon",
-      reason: "weekly endpoint not supported",
-    });
+    // Polygon serves 2y of weeks: after persisting, answer from the DB so a
+    // deeper lookback keeps the AV-seeded history behind the refreshed tail.
+    const tryPolygon = async (): Promise<MarketBar[] | null> => {
+      if (this.polygon && canCall("polygon")) {
+        try {
+          // The whole 2y window, replacing what is stored: Polygon re-bases
+          // every bar after a split, so a kept old row would be a fake −50 %
+          // week against the new ones. An empty answer (HTTP 200, a ticker it
+          // does not carry) is a failed attempt, not a success.
+          const bars = await this.polygon.fetchWeekly(symbol, {
+            lookback: POLYGON_WEEKLY_MAX_BARS,
+          });
+          if (bars.length > 0) {
+            this.persistBars(bars, { replace: true });
+            const merged = this.dbBars(symbol, "weekly", lookback);
+            return merged.length > 0 ? merged : bars.slice(-lookback);
+          }
+          attempts.push({ provider: "polygon", reason: "no bars" });
+        } catch (err) {
+          attempts.push({ provider: "polygon", reason: errMsg(err) });
+        }
+      } else if (this.polygon) {
+        attempts.push({ provider: "polygon", reason: "rate limited" });
+      } else {
+        attempts.push({ provider: "polygon", reason: "not configured" });
+      }
+      return null;
+    };
+
+    // Polygon first (AV is 25 req/day since 2026-07-14) whenever it can answer:
+    // the request fits its 2y, or the deep history is already seeded and only
+    // the tail is stale. A first deep seed goes to AV — one call, full history.
+    const polygonFirst =
+      lookback <= POLYGON_WEEKLY_MAX_BARS ||
+      dbFallback.length > POLYGON_WEEKLY_MAX_BARS;
+    for (const attempt of polygonFirst
+      ? [tryPolygon, tryAv]
+      : [tryAv, tryPolygon]) {
+      const bars = await attempt();
+      if (bars) return bars;
+    }
 
     if (dbFallback.length > 0) return dbFallback;
     throw new DataUnavailableError(attempts);
@@ -615,6 +686,36 @@ export class DataLayer {
     lookback: number,
   ): MarketBar[] {
     const db = getDatabase();
+    if (interval === "weekly") {
+      // One bar per WEEK on one price basis — see stitchWeekly.
+      const all = db
+        .prepare(
+          `SELECT symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close
+           FROM market_data WHERE symbol=? AND interval='weekly'
+           ORDER BY timestamp ASC`,
+        )
+        .all(symbol) as DbBarRow[];
+      // A weekly bar is a week that is over: AV's mid-week partial of the week
+      // in progress would otherwise be the newest "bar" (and, at lookback 1,
+      // the only one — never fresh, refetched every 6h).
+      const lastWeek = lastCompletedWeekKey();
+      return stitchWeekly(
+        all.filter((r) => weekEndKey(r.timestamp) <= lastWeek),
+      )
+        .slice(-lookback)
+        .map(({ row: r, scale }) => ({
+          symbol: r.symbol,
+          provider: r.provider,
+          interval: r.interval,
+          timestamp: r.timestamp,
+          open: r.open * scale,
+          high: r.high * scale,
+          low: r.low * scale,
+          close: r.close * scale,
+          volume: r.volume,
+          adjustedClose: r.adjusted_close ?? undefined,
+        }));
+    }
     const rows = db
       .prepare(
         `SELECT symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close
@@ -630,18 +731,7 @@ export class DataLayer {
          ORDER BY timestamp DESC
          LIMIT ?`,
       )
-      .all(symbol, interval, lookback) as {
-      symbol: string;
-      provider: Provider;
-      interval: "daily" | "weekly" | "monthly";
-      timestamp: string;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-      volume: number;
-      adjusted_close: number | null;
-    }[];
+      .all(symbol, interval, lookback) as DbBarRow[];
     return rows
       .map((r) => ({
         symbol: r.symbol,
@@ -658,11 +748,15 @@ export class DataLayer {
       .reverse();
   }
 
-  private persistBars(bars: MarketBar[]): void {
+  private persistBars(
+    bars: MarketBar[],
+    opts: { replace?: boolean } = {},
+  ): void {
     if (bars.length === 0) return;
     const db = getDatabase();
+    // `replace` is for COMPLETED bars only — a partial bar must never overwrite.
     const insert = db.prepare(
-      `INSERT OR IGNORE INTO market_data
+      `INSERT ${opts.replace ? "OR REPLACE" : "OR IGNORE"} INTO market_data
         (symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );

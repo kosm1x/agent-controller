@@ -4,7 +4,9 @@
  * Free tier: 5 req/min, 2y historical, REST. Rate limiter ceiling: 4/min (80%).
  * Host: api.massive.com (primary, post-2026 rebrand). Legacy alias api.polygon.io.
  *
- * F1 scope: daily + intraday only. No FX (AV handles that). No macro (FRED only).
+ * Scope: daily + intraday + weekly (2026-09-18: weekly had stayed on Alpha
+ * Vantage after the 07-14 cutover and nothing refreshed it). No FX (AV handles
+ * that). No macro (FRED only).
  * F10 will add WebSocket real-time for crypto.
  */
 
@@ -17,7 +19,9 @@ import {
   type MarketDataAdapter,
   type FetchOpts,
 } from "../types.js";
-import { fromPolygonUnixMs } from "../timezone.js";
+import { fromAlphaVantageDaily, fromPolygonUnixMs } from "../timezone.js";
+import { toNyDate } from "../market-calendar.js";
+import { weekEndKey } from "../weekly-periods.js";
 import { canCall, recordCall } from "../rate-limit.js";
 import { recordBudget } from "../budget.js";
 import { errMsg } from "../../lib/err-msg.js";
@@ -41,6 +45,9 @@ interface PolygonAggBar {
   t: number; // unix ms UTC
   n?: number; // trade count
 }
+
+/** Weeks one weekly call returns: the free tier clamps any older `from` to 2y, silently. */
+export const POLYGON_WEEKLY_MAX_BARS = 104;
 
 export class PolygonAdapter implements MarketDataAdapter {
   readonly provider = "polygon" as const;
@@ -69,6 +76,37 @@ export class PolygonAdapter implements MarketDataAdapter {
     return this.fetchAggregates(symbol, 1, "day", opts.lookback, "daily");
   }
 
+  /**
+   * Week bars arrive stamped Sunday 00:00 ET for the Mon–Fri that FOLLOWS
+   * (verified live 2026-09-18: the 04-12 bar closes at AV's Fri 04-17 close).
+   * They are re-keyed to that Friday's 16:00 ET close — the key AV weekly rows
+   * carry — and the week still in progress is dropped: `INSERT OR IGNORE`
+   * would freeze a partial bar under the finished week's key.
+   *
+   * Always FETCHES the full window, whatever `lookback` asks for — it is one
+   * call either way; the data layer asks for all of it, so older gaps heal and
+   * a post-split re-basing replaces every stored week at once.
+   */
+  async fetchWeekly(symbol: string, opts: FetchOpts): Promise<MarketBar[]> {
+    const raw = await this.fetchAggregates(
+      symbol,
+      1,
+      "week",
+      POLYGON_WEEKLY_MAX_BARS + 2,
+      "weekly",
+    );
+    const today = toNyDate(new Date());
+    const bars: MarketBar[] = [];
+    for (const b of raw) {
+      const monday = new Date(b.timestamp.slice(0, 10) + "T12:00:00Z");
+      monday.setUTCDate(monday.getUTCDate() + 1);
+      const week = weekEndKey(monday.toISOString());
+      if (week >= today) continue;
+      bars.push({ ...b, timestamp: fromAlphaVantageDaily(week) });
+    }
+    return bars.slice(-opts.lookback);
+  }
+
   async fetchIntraday(
     symbol: string,
     interval: IntradayInterval,
@@ -93,7 +131,7 @@ export class PolygonAdapter implements MarketDataAdapter {
     multiplier: number,
     timespan: string,
     lookback: number,
-    interval: "daily" | IntradayInterval,
+    interval: "daily" | "weekly" | IntradayInterval,
   ): Promise<MarketBar[]> {
     if (!canCall("polygon")) {
       throw new RateLimitedError("polygon");
@@ -114,7 +152,12 @@ export class PolygonAdapter implements MarketDataAdapter {
       timespan === "day"
         ? lookback
         : Math.ceil((lookback * minutesPerBar) / 390);
-    fromDate.setDate(fromDate.getDate() - Math.ceil(sessionsNeeded * 1.5) - 7);
+    fromDate.setDate(
+      fromDate.getDate() -
+        (timespan === "week"
+          ? lookback * 7
+          : Math.ceil(sessionsNeeded * 1.5) + 7),
+    );
     const from = formatDate(fromDate);
 
     // limit caps BASE aggregates (1-minute bars for hour / N-minute spans), not

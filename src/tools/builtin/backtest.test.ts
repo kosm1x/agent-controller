@@ -146,6 +146,36 @@ describe("backtestRunTool", () => {
     expect(overfit.n).toBe(1);
   });
 
+  it("a raw split in AV closes does not move the CPCV result (stitchWeekly wiring)", async () => {
+    const dates = seedWeekly(80);
+    const grid = {
+      trial_grid: JSON.stringify({
+        windowM: [26],
+        windowD: [4],
+        corrThreshold: [0.95],
+      }),
+    };
+    const latest = () =>
+      db
+        .prepare(
+          `SELECT cpcv_sharpe_mean, cpcv_sharpe_std FROM backtest_runs ORDER BY id DESC LIMIT 1`,
+        )
+        .get() as { cpcv_sharpe_mean: number; cpcv_sharpe_std: number };
+    await backtestRunTool.execute(grid);
+    const before = latest();
+
+    db.prepare(
+      `UPDATE market_data SET adjusted_close = close, close = close * 2
+        WHERE symbol = 'AAPL' AND substr(timestamp, 1, 10) < ?`,
+    ).run(dates[50]!);
+    await backtestRunTool.execute(grid);
+    const after = latest();
+
+    expect(before.cpcv_sharpe_std).toBeGreaterThan(0);
+    expect(after.cpcv_sharpe_mean).toBeCloseTo(before.cpcv_sharpe_mean, 10);
+    expect(after.cpcv_sharpe_std).toBeCloseTo(before.cpcv_sharpe_std, 10);
+  });
+
   it("rejects invalid trial_grid JSON", async () => {
     seedWeekly(80);
     const out = (await backtestRunTool.execute({

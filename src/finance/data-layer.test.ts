@@ -5,7 +5,7 @@
  * persist/query paths run against real SQL, not a mock.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -405,5 +405,256 @@ describe("DataLayer", () => {
     const ff = await layer.getMacro("FEDFUNDS");
     expect(ff[0].value).toBe(5.25);
     expect(av.fetchMacro).toHaveBeenCalled();
+  });
+});
+
+// Weekly dispatch since 2026-09-18: Polygon refreshes, AV only seeds depth.
+describe("DataLayer.getWeekly — Polygon weekly", () => {
+  // Wed 2026-04-22 → the last completed week closed Fri 04-17.
+  const NOW = new Date("2026-04-22T15:00:00Z");
+  const friday = (day: string, provider: MarketBar["provider"], close = 500) =>
+    makeBar({
+      timestamp: `${day}T16:00:00-04:00`,
+      interval: "weekly",
+      provider,
+      open: close - 1,
+      high: close + 2,
+      low: close - 2,
+      close,
+    });
+  const insertWeekly = (b: MarketBar) =>
+    db
+      .prepare(
+        `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume)
+         VALUES (?, ?, 'weekly', ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        b.symbol,
+        b.provider,
+        b.timestamp,
+        b.open,
+        b.high,
+        b.low,
+        b.close,
+        b.volume,
+      );
+  const stubs = (polyBars: MarketBar[], avBars: MarketBar[] | Error) => {
+    const av = Object.create(AlphaVantageAdapter.prototype);
+    av.provider = "alpha_vantage";
+    av.fetchWeekly =
+      avBars instanceof Error
+        ? vi.fn().mockRejectedValue(avBars)
+        : vi.fn().mockResolvedValue(avBars);
+    const poly = Object.create(PolygonAdapter.prototype);
+    poly.provider = "polygon";
+    poly.fetchWeekly = vi.fn().mockResolvedValue(polyBars);
+    return { av, poly };
+  };
+
+  beforeEach(() => {
+    __resetForTests();
+    db = freshDb();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("a request that fits 2y goes to Polygon, never AV, and comes back one row per week", async () => {
+    insertWeekly(friday("2026-04-02", "alpha_vantage", 655.83)); // Good Friday week, AV dates it Thu
+    insertWeekly(friday("2026-04-08", "alpha_vantage", 670)); // mid-week partial
+    insertWeekly(friday("2026-04-10", "alpha_vantage", 679.46));
+    const { av, poly } = stubs(
+      [
+        friday("2026-04-03", "polygon", 655.83),
+        friday("2026-04-10", "polygon", 679.46),
+        friday("2026-04-17", "polygon", 710.14),
+      ],
+      [],
+    );
+    const layer = new DataLayer(av, poly, null);
+    const res = await layer.getWeekly("SPY", { lookback: 10 });
+    expect(av.fetchWeekly).not.toHaveBeenCalled();
+    expect(res.bars.map((b) => [b.timestamp.slice(0, 10), b.provider])).toEqual(
+      [
+        ["2026-04-03", "polygon"],
+        ["2026-04-10", "polygon"],
+        ["2026-04-17", "polygon"],
+      ],
+    );
+  });
+
+  it("a deeper lookback keeps the AV-seeded history behind the Polygon tail", async () => {
+    // 110 seeded AV weeks ending 04-10: deep history present, tail stale.
+    const last = Date.parse("2026-04-10T12:00:00Z");
+    for (let i = 0; i < 110; i++) {
+      const day = new Date(last - i * 7 * 86400000).toISOString().slice(0, 10);
+      insertWeekly(friday(day, "alpha_vantage", 400 + i));
+    }
+    const { av, poly } = stubs([friday("2026-04-17", "polygon", 710.14)], []);
+    const layer = new DataLayer(av, poly, null);
+    const res = await layer.getWeekly("SPY", { lookback: 520 });
+    expect(av.fetchWeekly).not.toHaveBeenCalled();
+    expect(res.bars).toHaveLength(111);
+    expect(res.bars.at(-1)!.timestamp.slice(0, 10)).toBe("2026-04-17");
+    expect(res.bars[0]!.provider).toBe("alpha_vantage");
+  });
+
+  it("AV raw history is rescaled onto Polygon's split-adjusted basis — prices, not just close", async () => {
+    // AV stored RAW closes (a later 2:1 split): 04-03 = 100, 04-10 = 104.
+    for (const [day, close] of [
+      ["2026-04-03", 100],
+      ["2026-04-10", 104],
+    ] as const) {
+      insertWeekly(friday(day, "alpha_vantage", close));
+      db.prepare(
+        `UPDATE market_data SET adjusted_close = ? WHERE provider='alpha_vantage' AND timestamp LIKE ?`,
+      ).run(close / 2, `${day}%`);
+    }
+    const { av, poly } = stubs(
+      [
+        friday("2026-04-10", "polygon", 52),
+        friday("2026-04-17", "polygon", 53),
+      ],
+      [],
+    );
+    const res = await new DataLayer(av, poly, null).getWeekly("SPY", {
+      lookback: 3,
+    });
+    expect(res.bars.map((b) => b.close)).toEqual([50, 52, 53]);
+    expect(res.bars[0]).toMatchObject({
+      provider: "alpha_vantage",
+      open: 49.5,
+      high: 51,
+      low: 49,
+    });
+  });
+
+  it("an EMPTY Polygon answer is a failed attempt: AV is tried, and stale rows stay flagged stale", async () => {
+    insertWeekly(friday("2026-04-03", "alpha_vantage", 500));
+    // Polygon answers 200 with no results for a ticker it does not carry.
+    const first = stubs([], [friday("2026-04-17", "alpha_vantage", 510)]);
+    const res = await new DataLayer(first.av, first.poly, null).getWeekly(
+      "SPY",
+      { lookback: 10 },
+    );
+    expect(first.av.fetchWeekly).toHaveBeenCalledTimes(1);
+    expect(res.bars.at(-1)!.timestamp.slice(0, 10)).toBe("2026-04-17");
+    expect(res.stale).toBeUndefined();
+
+    // Both providers empty → the stored series, flagged stale.
+    const both = stubs([], []);
+    const stale = await new DataLayer(both.av, both.poly, null)
+      .getWeekly("QQQ", { lookback: 10 })
+      .catch((e) => e);
+    expect(stale).toBeInstanceOf(DataUnavailableError);
+    insertWeekly({
+      ...friday("2026-04-03", "alpha_vantage", 400),
+      symbol: "QQQ",
+    });
+    const kept = await new DataLayer(both.av, both.poly, null).getWeekly(
+      "QQQ",
+      { lookback: 10 },
+    );
+    expect(kept.stale).toBe(true);
+    expect(kept.bars).toHaveLength(1);
+  });
+
+  it("the AV leg answers from the stitched DB read too — never the adapter's raw closes", async () => {
+    const raw = {
+      ...friday("2026-04-17", "alpha_vantage", 100),
+      adjustedClose: 50,
+    };
+    const { av } = stubs([], [raw]);
+    const res = await new DataLayer(av, null, null).getWeekly("SPY", {
+      lookback: 5,
+    });
+    expect(res.bars.map((b) => b.close)).toEqual([50]);
+  });
+
+  it("a Polygon refetch REPLACES stored weeks (post-split re-basing) and always asks for the full window", async () => {
+    insertWeekly(friday("2026-04-10", "polygon", 100));
+    const { av, poly } = stubs(
+      [
+        friday("2026-04-10", "polygon", 50),
+        friday("2026-04-17", "polygon", 51),
+      ],
+      [],
+    );
+    const res = await new DataLayer(av, poly, null).getWeekly("SPY", {
+      lookback: 1,
+    });
+    expect(poly.fetchWeekly).toHaveBeenCalledWith("SPY", { lookback: 104 });
+    expect(res.bars.map((b) => b.close)).toEqual([51]);
+    const stored = db
+      .prepare(
+        `SELECT close FROM market_data WHERE provider='polygon' ORDER BY timestamp`,
+      )
+      .all() as Array<{ close: number }>;
+    expect(stored.map((r) => r.close)).toEqual([50, 51]);
+  });
+
+  it("the week in progress is not a weekly bar: lookback 1 is fresh on the completed week, no refetch", async () => {
+    insertWeekly(friday("2026-04-17", "polygon", 510));
+    insertWeekly({ ...friday("2026-04-21", "alpha_vantage", 515) }); // Tuesday partial
+    const { av, poly } = stubs([], []);
+    const res = await new DataLayer(av, poly, null).getWeekly("SPY", {
+      lookback: 1,
+    });
+    expect(poly.fetchWeekly).not.toHaveBeenCalled();
+    expect(av.fetchWeekly).not.toHaveBeenCalled();
+    expect(res.bars.map((b) => b.timestamp.slice(0, 10))).toEqual([
+      "2026-04-17",
+    ]);
+  });
+
+  it("a first deep seed goes to AV (one call, full history); Polygon is the fallback", async () => {
+    const seeded = stubs([], [friday("2026-04-17", "alpha_vantage")]);
+    await new DataLayer(seeded.av, seeded.poly, null).getWeekly("SPY", {
+      lookback: 520,
+    });
+    expect(seeded.av.fetchWeekly).toHaveBeenCalledTimes(1);
+    expect(seeded.poly.fetchWeekly).not.toHaveBeenCalled();
+
+    db = freshDb();
+    const down = stubs(
+      [friday("2026-04-17", "polygon", 710.14)],
+      new Error("AV 500"),
+    );
+    const res = await new DataLayer(down.av, down.poly, null).getWeekly("QQQ", {
+      lookback: 520,
+    });
+    expect(down.poly.fetchWeekly).toHaveBeenCalledTimes(1);
+    expect(res.bars.at(-1)!.close).toBe(710.14);
+  });
+
+  it("fresh means the last completed week is stored — not that the newest row is young", async () => {
+    // Newest row is 1 day old (a partial of the week in progress); 04-17 is missing.
+    insertWeekly(friday("2026-04-10", "alpha_vantage"));
+    insertWeekly(friday("2026-04-21", "alpha_vantage"));
+    const { av, poly } = stubs([friday("2026-04-17", "polygon", 710.14)], []);
+    const layer = new DataLayer(av, poly, null);
+    await layer.getWeekly("SPY", { lookback: 2 });
+    expect(poly.fetchWeekly).toHaveBeenCalledTimes(1);
+
+    // A second layer (cold L1) now finds 04-17 in the DB and does not fetch.
+    const again = stubs([], []);
+    await new DataLayer(again.av, again.poly, null).getWeekly("SPY", {
+      lookback: 2,
+    });
+    expect(again.poly.fetchWeekly).not.toHaveBeenCalled();
+    expect(again.av.fetchWeekly).not.toHaveBeenCalled();
+  });
+
+  it("a cached series still missing the completed week is retried, but not more than every 6h", async () => {
+    insertWeekly(friday("2026-04-10", "alpha_vantage"));
+    // Provider has not published 04-17 yet.
+    const { av, poly } = stubs([friday("2026-04-10", "polygon")], []);
+    const layer = new DataLayer(av, poly, null);
+    await layer.getWeekly("SPY", { lookback: 2 });
+    await layer.getWeekly("SPY", { lookback: 2 });
+    expect(poly.fetchWeekly).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date(NOW.getTime() + 7 * 60 * 60 * 1000));
+    await layer.getWeekly("SPY", { lookback: 2 });
+    expect(poly.fetchWeekly).toHaveBeenCalledTimes(2);
   });
 });

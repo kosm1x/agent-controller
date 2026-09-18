@@ -134,6 +134,35 @@ describe("alphaRunTool", () => {
     expect(missing.n).toBe(0);
   });
 
+  it("a raw split in AV closes does not move the result — bars are stitched to one basis (stitchWeekly wiring)", async () => {
+    const { days } = seedBarsAndFirings();
+    const sigmas = () =>
+      db
+        .prepare(
+          `SELECT signal_key, sigma FROM signal_weights
+            WHERE run_id = (SELECT run_id FROM signal_weights ORDER BY id DESC LIMIT 1)
+            ORDER BY signal_key`,
+        )
+        .all() as Array<{ signal_key: string; sigma: number }>;
+    const args = { as_of: "2026-04-17", window_m: 20, window_d: 10 };
+    await alphaRunTool.execute(args);
+    const before = sigmas();
+
+    // Same prices as AV stores them around a 2:1 split: RAW close doubles
+    // before the split week, adjusted_close carries the true series.
+    db.prepare(
+      `UPDATE market_data SET adjusted_close = close, close = close * 2
+        WHERE symbol = 'AAPL' AND substr(timestamp, 1, 10) < ?`,
+    ).run(days[10]!);
+    await alphaRunTool.execute(args);
+    const after = sigmas();
+
+    expect(after.map((r) => r.signal_key)).toEqual(
+      before.map((r) => r.signal_key),
+    );
+    after.forEach((r, i) => expect(r.sigma).toBeCloseTo(before[i]!.sigma, 10));
+  });
+
   it("returns structured empty message when no signals available", async () => {
     // Watchlist but no firings / bars
     db.prepare(
