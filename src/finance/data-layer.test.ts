@@ -209,6 +209,68 @@ describe("DataLayer", () => {
     expect(result.stale).toBe(true);
   });
 
+  it("L2 returns one bar per session when both providers stored it (polygon T00:00 vs AV T16:00)", async () => {
+    const ins = db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    // 2020-01-02 only AV · 01-03 and 01-06 both · 01-07 only polygon
+    for (const [provider, day, close] of [
+      ["alpha_vantage", "2020-01-02T16:00:00-05:00", 101],
+      ["alpha_vantage", "2020-01-03T16:00:00-05:00", 102],
+      ["polygon", "2020-01-03T00:00:00-05:00", 102],
+      ["alpha_vantage", "2020-01-06T16:00:00-05:00", 103],
+      ["polygon", "2020-01-06T00:00:00-05:00", 103],
+      ["polygon", "2020-01-07T00:00:00-05:00", 104],
+    ] as [string, string, number][]) {
+      ins.run("SPY", provider, "daily", day, close, close, close, close, 1000);
+    }
+    const av = Object.create(AlphaVantageAdapter.prototype);
+    av.provider = "alpha_vantage";
+    av.fetchDaily = vi.fn().mockRejectedValue(new Error("AV down"));
+    const layer = new DataLayer(av as AlphaVantageAdapter, null, null);
+    const result = await layer.getDaily("SPY", { lookback: 4 });
+    expect(result.bars.map((b) => b.timestamp.slice(0, 10))).toEqual([
+      "2020-01-02",
+      "2020-01-03",
+      "2020-01-06",
+      "2020-01-07",
+    ]);
+    expect(result.bars.map((b) => b.provider)).toEqual([
+      "alpha_vantage",
+      "polygon",
+      "polygon",
+      "polygon",
+    ]);
+  });
+
+  it("L2 'enough history' gate counts sessions — two fresh rows of ONE session do not satisfy lookback 2", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const ins = db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    ins.run("SPY", "polygon", "daily", `${day}T00:00:00.000Z`, 1, 1, 1, 1, 1);
+    ins.run(
+      "SPY",
+      "alpha_vantage",
+      "daily",
+      `${day}T00:00:01.000Z`,
+      1,
+      1,
+      1,
+      1,
+      1,
+    );
+    const av = makeAvStub([
+      makeBar(),
+      makeBar({ timestamp: `${day}T00:00:02.000Z` }),
+    ]);
+    const layer = new DataLayer(av, null, null);
+    await layer.getDaily("SPY", { lookback: 2 });
+    // Row-counting L2 would have hit (2 rows, fresh) and never fetched.
+    expect((av.fetchDaily as any).mock.calls.length).toBe(1);
+    expect(layer.stats().l2Hits).toBe(0);
+  });
+
   it("both-unavailable with no DB rows throws DataUnavailableError", async () => {
     const av = Object.create(AlphaVantageAdapter.prototype);
     av.provider = "alpha_vantage";

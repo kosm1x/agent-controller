@@ -599,6 +599,15 @@ export class DataLayer {
    * that check the L2 freshness floor (getWeekly) rely on this to guarantee
    * the most recent bar is present whenever the returned length clears the
    * floor. Do not change the ORDER clause without updating those callers.
+   *
+   * Population invariant: ONE row per session date, so `lookback` and the
+   * callers' length gates (`getDaily` ===, `getWeekly` floor) count SESSIONS,
+   * not rows. The table is unique per PROVIDER and the two daily conventions
+   * differ (polygon T00:00, AV T16:00 NY), so a session is stored twice
+   * wherever provider ranges overlap — a plain LIMIT returned 40 rows / 30
+   * sessions for SPY and every indicator ran on repeated bars (2026-09-18).
+   * Polygon wins a tie (the daily workhorse); the series can still cross
+   * providers where only one of them holds a session.
    */
   private dbBars(
     symbol: string,
@@ -609,8 +618,15 @@ export class DataLayer {
     const rows = db
       .prepare(
         `SELECT symbol, provider, interval, timestamp, open, high, low, close, volume, adjusted_close
-         FROM market_data
-         WHERE symbol=? AND interval=?
+         FROM (
+           SELECT *, ROW_NUMBER() OVER (
+             PARTITION BY substr(timestamp, 1, 10)
+             ORDER BY (provider = 'polygon') DESC, timestamp DESC
+           ) AS rn
+           FROM market_data
+           WHERE symbol=? AND interval=?
+         )
+         WHERE rn = 1
          ORDER BY timestamp DESC
          LIMIT ?`,
       )
