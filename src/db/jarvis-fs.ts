@@ -35,7 +35,12 @@ function getMirrorDir(): string {
   const override = process.env.JARVIS_KB_MIRROR_DIR;
   if (override !== undefined) return override;
   if (process.env.VITEST) {
-    return join(tmpdir(), `jarvis-kb-vitest-${process.pid}`);
+    // vitest.global-setup.ts provides one dir per run and removes it at
+    // teardown; the per-fork path is the fallback when a runner skips it.
+    return (
+      process.env.JARVIS_KB_VITEST_FALLBACK ??
+      join(tmpdir(), `jarvis-kb-vitest-${process.pid}`)
+    );
   }
   return DEFAULT_MIRROR_DIR;
 }

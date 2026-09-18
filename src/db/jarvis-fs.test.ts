@@ -38,12 +38,16 @@ describe("getJarvisKbRoot — vitest never resolves to the live KB (2026-09-18)"
     const root = getJarvisKbRoot();
     expect(root).not.toBe("/root/claude/jarvis-kb");
     expect(root.startsWith(tmpdir())).toBe(true);
+    // vitest.global-setup.ts hands every worker the same run-scoped dir.
+    if (process.env.JARVIS_KB_VITEST_FALLBACK) {
+      expect(root).toBe(process.env.JARVIS_KB_VITEST_FALLBACK);
+    }
     mirrorToDisk("logs/day-logs/1999-01-01.md", "# fake\n");
     expect(existsSync(join(root, "logs/day-logs/1999-01-01.md"))).toBe(true);
     expect(existsSync("/root/claude/jarvis-kb/logs/day-logs/1999-01-01.md")).toBe(
       false,
     );
-    rmSync(root, { recursive: true, force: true });
+    rmSync(join(root, "logs/day-logs/1999-01-01.md"), { force: true });
   });
 });
 

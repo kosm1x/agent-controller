@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
+    // One shared throwaway KB mirror per run, removed at teardown (see file).
+    globalSetup: ["./vitest.global-setup.ts"],
     testTimeout: 30_000,
     hookTimeout: 10_000,
     // Cap worker fan-out (2026-07-05 hardening sweep). A bare `vitest run` across
