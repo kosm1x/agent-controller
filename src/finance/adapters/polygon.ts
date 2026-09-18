@@ -101,24 +101,27 @@ export class PolygonAdapter implements MarketDataAdapter {
     const start = Date.now();
     recordCall("polygon");
 
-    // Build window: from = today - lookback days (generous for daily).
-    // For intraday, use tighter window based on lookback * interval-minutes.
+    // Build window. `lookback` counts BARS (trading sessions), the URL takes
+    // CALENDAR dates: ~252 sessions per 365 days, so a 1:1 window comes back
+    // ~30 % short (lookback 40 → 33 bars → market_signals skipped every
+    // symbol as "insufficient bars", 2026-09-17). ×1.5 + 7 covers weekends
+    // and holiday clusters. An hour bar is 60 minutes, not `multiplier` (1).
     const now = new Date();
     const to = formatDate(now);
     const fromDate = new Date(now);
-    if (timespan === "day") {
-      fromDate.setDate(fromDate.getDate() - lookback - 7);
-    } else {
-      // Intraday: estimate calendar days needed; include weekends buffer.
-      const minutesPerBar = multiplier;
-      const minsNeeded = lookback * minutesPerBar;
-      fromDate.setDate(fromDate.getDate() - Math.ceil(minsNeeded / 390 + 3));
-    }
+    const minutesPerBar = timespan === "hour" ? multiplier * 60 : multiplier;
+    const sessionsNeeded =
+      timespan === "day"
+        ? lookback
+        : Math.ceil((lookback * minutesPerBar) / 390);
+    fromDate.setDate(fromDate.getDate() - Math.ceil(sessionsNeeded * 1.5) - 7);
     const from = formatDate(fromDate);
 
+    // limit caps BASE aggregates (1-minute bars for hour / N-minute spans), not
+    // returned bars — lookback + 50 yielded ~2 hour bars. 50000 is the maximum.
     const url =
       `${this.baseUrl}/aggs/ticker/${encodeURIComponent(symbol)}/range/` +
-      `${multiplier}/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=${lookback + 50}` +
+      `${multiplier}/${timespan}/${from}/${to}?adjusted=true&sort=desc&limit=50000` +
       `&apiKey=${encodeURIComponent(this.apiKey)}`;
 
     let res: Response;
@@ -193,7 +196,12 @@ export class PolygonAdapter implements MarketDataAdapter {
       responseTimeMs,
     });
 
-    const results = (body.results ?? []).slice(-lookback);
+    // Requested newest-first (a capped response then loses the OLDEST bars,
+    // never the newest — williams-entry-radar 2026-W37); callers want ascending.
+    const results = (body.results ?? [])
+      .slice()
+      .sort((a, b) => a.t - b.t)
+      .slice(-lookback);
     return results.map((r) => ({
       symbol,
       timestamp: fromPolygonUnixMs(r.t),
