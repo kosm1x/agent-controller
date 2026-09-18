@@ -40,6 +40,7 @@ export type TraceEventName =
   | "gates.evaluated"
   | "gates.readback"
   | "gates.parent_reverified"
+  | "gates.hook_allowed"
   | "gates.hook_blocked"
   | "gates.hook_released"
   | "numbers.audited"

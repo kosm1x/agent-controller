@@ -91,6 +91,25 @@ export function makeGatesStopHook(
     }
   };
 
+  // An EVALUATED allow is recorded too: block/release alone left an armed wall
+  // indistinguishable from an unwired one until a gate FAILED (2026-09-18).
+  // Still silent by design when no runnable gate exists (nothing evaluated) —
+  // e.g. a recovery leg whose only rows are mid-run RB-* read-backs.
+  function allowed(res: EvaluateResult): HookJSONOutput {
+    stateByTask.delete(taskId);
+    emitTraceEvent({
+      taskId,
+      name: "gates.hook_allowed",
+      attrs: {
+        total: res.total,
+        met: res.met,
+        failed: res.failed,
+        abandoned: res.abandoned,
+      },
+    });
+    return {};
+  }
+
   async function decide(input: HookInput): Promise<HookJSONOutput> {
     const rows = listGates(taskId);
     if (!hasRunnableGates(rows)) return {};
@@ -103,20 +122,14 @@ export function makeGatesStopHook(
           ? input.last_assistant_message
           : "",
     });
-    if (res.failed === 0) {
-      stateByTask.delete(taskId);
-      return {};
-    }
+    if (res.failed === 0) return allowed(res);
     // Read-back rows are completion-time proofs rendered as Spanish lines;
     // they never wall the model (it cannot "fix" a harness re-read mid-run
     // except by redoing the write, which the deliverable line already asks).
     const blocking = res.failedRows.filter(
       (r) => !isReadbackCheck(r.check_kind, r.check_cmd),
     );
-    if (blocking.length === 0) {
-      stateByTask.delete(taskId);
-      return {};
-    }
+    if (blocking.length === 0) return allowed(res);
     const failedIds = blocking.map((r) => r.gate_id).sort();
     const hash = failedIds.join(",");
     const prev = stateByTask.get(taskId);

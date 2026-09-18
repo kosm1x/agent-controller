@@ -3070,7 +3070,7 @@ cmd_gates() {
            GROUP BY 1,2 ORDER BY n DESC;"
       echo ""
       sql "SELECT name, COUNT(*) AS n FROM task_trace_events
-           WHERE name IN ('gates.hook_blocked','gates.hook_released','gates.parent_reverified','numbers.audited')
+           WHERE name IN ('gates.hook_allowed','gates.hook_blocked','gates.hook_released','gates.parent_reverified','numbers.audited')
              AND ts >= datetime('now', '-${days} days') GROUP BY name;"
       echo ""
       sql "SELECT COUNT(DISTINCT task_id) AS tasks_with_gates, COUNT(*) AS gates,

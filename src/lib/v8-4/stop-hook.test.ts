@@ -111,7 +111,9 @@ describe("blocking", () => {
       signal: new AbortController().signal,
     });
     expect(allowed).toEqual({});
-    expect(traces("t1")).toEqual(["gates.hook_blocked"]);
+    // The allow is recorded too — an armed wall must be tellable from an
+    // unwired one without waiting for a gate to FAIL.
+    expect(traces("t1")).toEqual(["gates.hook_blocked", "gates.hook_allowed"]);
   });
 
   it("never blocks on manual-only ledgers (unwinnable by construction) and ignores non-Stop events", async () => {
@@ -131,6 +133,52 @@ describe("blocking", () => {
         },
       ),
     ).toEqual({});
+    // No runnable gate ⇒ nothing was evaluated ⇒ nothing to record.
+    expect(traces("t2")).toEqual([]);
+  });
+
+  it("a FAILED read-back row never walls the model — allowed, and recorded with failed > 0", async () => {
+    declareGates(
+      "t5",
+      [{ criterion: "tests green", check: "true" }],
+      "submission",
+    );
+    const hook = makeGatesStopHook("t5", {
+      env: ARMED,
+      evaluate: async () => {
+        const rb = {
+          ...listGates("t5")[0],
+          gate_id: "RB-1",
+          check_kind: "manual" as const,
+          check_cmd: 'readback:{"tool":"jarvis_file_write"}',
+          state: "failed" as const,
+        };
+        return {
+          verdict: "failed",
+          total: 2,
+          met: 1,
+          failed: 1,
+          pending: 0,
+          abandoned: 0,
+          failedRows: [rb],
+          pendingRows: [],
+          abandonedRows: [],
+          ran: 1,
+          abandonedNow: 0,
+          rows: [...listGates("t5"), rb],
+        };
+      },
+    })!;
+    expect(
+      await hook(stopInput("Listo."), undefined, {
+        signal: new AbortController().signal,
+      }),
+    ).toEqual({});
+    const row = getDatabase()
+      .prepare(`SELECT name, attrs FROM task_trace_events WHERE task_id = 't5'`)
+      .all() as Array<{ name: string; attrs: string }>;
+    expect(row.map((r) => r.name)).toEqual(["gates.hook_allowed"]);
+    expect(JSON.parse(row[0].attrs)).toMatchObject({ failed: 1, total: 2 });
   });
 
   it("honors ABANDON in the last assistant message (real evaluate) → allow", async () => {
@@ -156,6 +204,7 @@ describe("blocking", () => {
       state: "abandoned",
       abandon_reason: "no sandbox network",
     });
+    expect(traces("t3")).toEqual(["gates.hook_blocked", "gates.hook_allowed"]);
   });
 
   it(`releases after ${MAX_HOOK_BLOCKS} blocked stops with the same failing set, and records it; progress resets the counter`, async () => {
