@@ -837,6 +837,9 @@ export async function queryClaudeSdk(opts: {
   let refusalCategory: string | null = null;
   /** Catch-path crash with zero content — outranks the refusal override. */
   let crashedWithoutContent = false;
+  /** Typed error class the CLI stamps on its synthetic error assistant
+   *  message (`authentication_failed`, `overloaded`, …). */
+  let assistantErrorClass: string | null = null;
   let usage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -888,6 +891,9 @@ export async function queryClaudeSdk(opts: {
           sawRefusal = true;
           refusalCategory = stopMeta.stop_details?.category ?? null;
         }
+        // Per turn, not latched: a recovered early error must not label the
+        // terminal one (qa W3).
+        assistantErrorClass = message.error ?? null;
         // Accumulate per-turn usage so abort/timeout paths capture partial
         // spend instead of writing $0/0-tokens to cost_ledger. The `result`
         // message at end carries the SDK's authoritative cumulative total
@@ -1040,6 +1046,41 @@ export async function queryClaudeSdk(opts: {
           const dominant = dominantModel(success.modelUsage ?? {});
           if (dominant) {
             actualModel = dominant;
+          }
+          // `subtype: "success"` + `is_error: true` is the SDK's shape for a
+          // turn that ENDED on an API error (dead login, 401/403, overload
+          // after retries): `result` is the error text, not an answer. Until
+          // 2026-09-19 this counted as a provider success — an expired OAuth
+          // login logged `Completed … tokens=0` and its error string became
+          // the task output. Same two-way split as the error subtypes below.
+          if (success.is_error) {
+            const rawErrText = resolvedResult.trim();
+            const errText = rawErrText || "unknown";
+            const marker = `[error_api_response — ${assistantErrorClass ?? "unknown"}, status ${success.api_error_status ?? "n/a"}: ${errText}]`;
+            console.warn(`[claude-sdk] result is_error: ${marker}`);
+            // The CLI streams the same error text as a synthetic assistant
+            // message — that is not content. Strip every copy, and only a
+            // real error text (never the "unknown" placeholder).
+            const partial = (
+              rawErrText ? streamingText.split(rawErrText).join("") : streamingText
+            ).trim();
+            if (partial) {
+              resultText =
+                `${marker} Partial response below — the turn ended on an API error.\n\n${partial}\n\n` +
+                `STATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial and the task did not formally complete.`;
+            } else {
+              // Request-shaped classes say nothing about provider health —
+              // one bad caller must not open the shared breaker (same
+              // reasoning as the refusal override below).
+              const requestFault =
+                assistantErrorClass === "invalid_request" ||
+                assistantErrorClass === "max_output_tokens" ||
+                assistantErrorClass === "model_not_found";
+              if (!requestFault) providerOutcome = "failure";
+              resultText =
+                `${marker} No content produced.\n\n` +
+                `STATUS: BLOCKED — SDK reported an API error with zero streamed output.`;
+            }
           }
         } else {
           // SDK reported a non-success terminal result (error_max_turns,

@@ -414,6 +414,36 @@ describe("dispatchTask Rule-of-Two run context (V8.5 Phase 5.2, qa W3)", () => {
   });
 });
 
+// 2026-09-19: a dead model login failed the PM rebalance as "Required tools
+// not called: pm_paper_rebalance" — the runner's reason never reached the row.
+describe("dispatchTask required-tools failure names the runner's reason", () => {
+  it("appends the runner's first concern to the task error", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({
+          success: true,
+          status: "DONE_WITH_CONCERNS",
+          concerns: ["fallo de autenticación, tarea no ejecutada."],
+          output: "x",
+          toolCalls: [],
+        }) as RunnerOutput,
+    });
+    await submitTask({
+      title: "PM daily rebalance",
+      description: "rebalance",
+      requiredTools: ["pm_paper_rebalance"],
+      _isRequiredToolRetry: true,
+    });
+    const expected =
+      "Required tools not called after retry: pm_paper_rebalance — runner: fallo de autenticación, tarea no ejecutada.";
+    await vi.waitFor(() => {
+      if (!mockRun.mock.calls.some((c) => c.includes(expected)))
+        throw new Error("failed-status write not seen yet");
+    });
+  });
+});
+
 // Reliability audit R4 (2026-09-10): cancelTask() flipped the rows but never
 // aborted the runner — the SDK call kept running (and billing) and a
 // container task kept its slot until it exited on its own.

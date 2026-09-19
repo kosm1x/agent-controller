@@ -145,10 +145,15 @@ export function detectImprovements(
   try {
     const missed = db
       .prepare(
-        `SELECT error, COUNT(*) as cnt FROM tasks
+        // The dispatcher may append ` — runner: <reason>` (free text) —
+        // group on the tool list before it.
+        `SELECT CASE WHEN instr(error, ' — runner:') > 0
+                  THEN substr(error, 1, instr(error, ' — runner:') - 1)
+                  ELSE error END AS error,
+                COUNT(*) as cnt FROM tasks
          WHERE error LIKE 'Required tools not called:%'
            AND created_at > datetime('now', ? || ' hours')
-         GROUP BY error
+         GROUP BY 1
          HAVING cnt >= 2
          ORDER BY cnt DESC
          LIMIT 3`,

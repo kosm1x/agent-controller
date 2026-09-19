@@ -170,9 +170,11 @@ const CONFIRM_PATTERN = buildConfirmRegex("strict");
 
 /** Phase 4.3: auth-class provider failures — expired/revoked OAuth or API
  *  key. Matched against the run's final content, which carries the SDK's
- *  error marker on the error path. */
+ *  error marker on the error path. `authentication_failed` is the SDK's typed
+ *  class and `OAuth session expired` the CLI's dead-login text — the 09-19
+ *  outage matched neither of the older alternatives. */
 const AUTH_ERROR_RE =
-  /\b401\b|authentication_error|invalid x-api-key|OAuth token.{0,40}(expired|revoked)|token (expirad|revocad)/i;
+  /\b401\b|authentication_error|authentication_failed|invalid x-api-key|OAuth token.{0,40}(expired|revoked)|OAuth session expired|token (expirad|revocad)/i;
 
 /** Maximum tokens of JME facts injected into the system prompt per turn. */
 const JME_INJECTION_BUDGET_TOKENS = 1500;
@@ -1516,7 +1518,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             } else {
               sdkResult = {
                 ...mergeSdkLegs(sdkResult, authLeg),
-                text: "⚠️ Credenciales del proveedor de inferencia inválidas o revocadas (401). Reintenté una vez sin éxito — no reintentaré más. Necesitas rotar el token (operator).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
+                text: "⚠️ Credenciales del proveedor de inferencia inválidas, expiradas o revocadas. Reintenté una vez sin éxito — no reintentaré más. Operador: `claude /login` en el VPS (o rotar el token).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
               };
               console.warn(
                 `[recovery] auth retry still failing — escalating (task ${input.taskId})`,

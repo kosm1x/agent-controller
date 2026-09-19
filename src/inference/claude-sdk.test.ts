@@ -1988,6 +1988,143 @@ describe("queryClaudeSdk provider metrics", () => {
     spy.mockRestore();
   });
 
+  // 2026-09-19: an expired claude.ai login arrives as subtype "success" +
+  // is_error true, the error text in BOTH the synthetic assistant message and
+  // `result`. It was recorded as a provider success with the text as output.
+  const DEAD_LOGIN =
+    "Failed to authenticate: OAuth session expired and could not be refreshed";
+
+  it("treats a success result with is_error as a provider failure (dead login)", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "assistant",
+        error: "authentication_failed",
+        message: { content: [{ type: "text", text: DEAD_LOGIN }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        api_error_status: 401,
+        result: DEAD_LOGIN,
+        num_turns: 1,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+
+    expect(spy.mock.calls[0][1].success).toBe(false);
+    expect(result.text).toContain(
+      `[error_api_response — authentication_failed, status 401: ${DEAD_LOGIN}]`,
+    );
+    expect(result.text).toContain("STATUS: BLOCKED");
+    spy.mockRestore();
+    // this describe never resets the breaker; one more recorded failure would
+    // open it for the abort spec below
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+  });
+
+  it("keeps real streamed work when a later turn ends on an API error", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hallazgos parciales." }] },
+      },
+      {
+        type: "assistant",
+        error: "overloaded",
+        message: { content: [{ type: "text", text: "API Error: 529" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "API Error: 529",
+        num_turns: 2,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+
+    expect(spy.mock.calls[0][1].success).toBe(true);
+    expect(result.text).toContain("overloaded, status n/a: API Error: 529]");
+    expect(result.text).toContain("Hallazgos parciales.");
+    expect(result.text).toContain("STATUS: DONE_WITH_CONCERNS");
+    // the error text appears once (the marker), not again as "content"
+    expect(result.text.split("API Error: 529").length - 1).toBe(1);
+    spy.mockRestore();
+  });
+
+  it("a request-shaped API error (invalid_request) does not count against the breaker", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "assistant",
+        error: "invalid_request",
+        message: { content: [{ type: "text", text: "API Error: 400 prompt is too long" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        api_error_status: 400,
+        result: "API Error: 400 prompt is too long",
+        num_turns: 1,
+      },
+    ];
+
+    const result = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+
+    expect(spy.mock.calls[0][1].success).toBe(true);
+    expect(result.text).toContain("[error_api_response — invalid_request, status 400:");
+    expect(result.text).toContain("STATUS: BLOCKED");
+    spy.mockRestore();
+  });
+
+  it("labels the marker with the terminal turn's class, strips every copy, and never strips the placeholder", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        error: "authentication_failed", // recovered early error — must not label the end
+        message: { content: [{ type: "text", text: "API Error: 529" }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "El estado es unknown." }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "API Error: 529" }] },
+      },
+      { type: "result", subtype: "success", is_error: true, result: "API Error: 529", num_turns: 3 },
+    ];
+    const withText = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    expect(withText.text).toContain("[error_api_response — unknown, status n/a: API Error: 529]");
+    expect(withText.text).not.toContain("authentication_failed");
+    expect(withText.text.split("API Error: 529").length - 1).toBe(1);
+
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "El estado es unknown." }] },
+      },
+      { type: "result", subtype: "success", is_error: true, result: "", num_turns: 1 },
+    ];
+    const noText = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    expect(noText.text).toContain("El estado es unknown.");
+  });
+
   it("records a failure metric when the SDK terminal result errors with zero output", async () => {
     const spy = vi.spyOn(providerMetrics, "record");
     mockMessages.value = [

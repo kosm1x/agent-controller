@@ -1045,6 +1045,30 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(result.output?.text).not.toContain("authentication_error");
   });
 
+  // Each alternative alone: the SDK's typed class with other wording, and the
+  // CLI's dead-login wording when the class did not arrive.
+  it.each([
+    "authentication_failed, status n/a: Please run /login",
+    "unknown, status n/a: Failed to authenticate: OAuth session expired and could not be refreshed",
+  ])("the 09-19 dead-login marker is an auth-class failure: %s", async (detail) => {
+    const deadLogin = () =>
+      makeSdkResult({
+        text: `[error_api_response — ${detail}] No content produced.\n\nSTATUS: BLOCKED — SDK reported an API error with zero streamed output.`,
+      });
+    mockQuerySdk.mockResolvedValueOnce(deadLogin());
+    mockQuerySdk.mockResolvedValueOnce(deadLogin());
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth-3",
+      runId: "run-sdk-auth-3",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.output?.text).toContain("claude /login");
+    expect(result.output?.text).not.toContain("error_api_response");
+  });
+
   it("R2 C2: leg-1's streamed work survives when leg-2 returns only a thin closer", async () => {
     const longBody =
       "Análisis del corpus: " + "hallazgo relevante. ".repeat(20);

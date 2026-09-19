@@ -875,6 +875,11 @@ async function dispatchWithSlot(
         (t) => !calledTools.includes(t),
       );
       if (missing.length > 0) {
+        // The runner's own stated reason (2026-09-19: a dead model login read
+        // only "Required tools not called" here — the cause sat in the output).
+        const why = result.concerns?.[0]
+          ? ` — runner: ${result.concerns[0].replace(/\s+/g, " ").slice(0, 200)}`
+          : "";
         if (submission._isRequiredToolRetry) {
           // Retry also failed — alert and give up
           log.error(
@@ -884,7 +889,7 @@ async function dispatchWithSlot(
           try {
             getEventBus().emitEvent("notification.warning", {
               title: "Required tools not called",
-              message: `Task "${submission.title}" completed without calling: ${missing.join(", ")} (even after retry)`,
+              message: `Task "${submission.title}" completed without calling: ${missing.join(", ")} (even after retry)${why}`,
               source: "dispatcher",
               context: { taskId, missing },
             });
@@ -895,7 +900,7 @@ async function dispatchWithSlot(
             taskId,
             "failed",
             result.output,
-            `Required tools not called after retry: ${missing.join(", ")}`,
+            `Required tools not called after retry: ${missing.join(", ")}${why}`,
           );
           emitTraceEvent({
             taskId,
@@ -947,7 +952,7 @@ async function dispatchWithSlot(
           taskId,
           "failed",
           result.output,
-          `Required tools not called: ${missing.join(", ")}`,
+          `Required tools not called: ${missing.join(", ")}${why}`,
         );
         emitTraceEvent({
           taskId,

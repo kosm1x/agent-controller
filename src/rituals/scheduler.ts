@@ -382,6 +382,7 @@ export function startRitualScheduler(): void {
   scheduleStaleArtifactPrune();
   scheduleHindsightCostPull();
   schedulePrometheusAlertPoller();
+  scheduleModelLoginWatch();
   scheduleNoVerdictReminder();
   scheduleJmeConsolidation();
 
@@ -994,6 +995,37 @@ function schedulePrometheusAlertPoller(): void {
   scheduledJobs.push(job);
   console.log(
     `[rituals] prometheus-alert-notifier: scheduled (*/2 * * * *, tz=${RITUALS_TIMEZONE})`,
+  );
+}
+
+/**
+ * Model-login expiry watch — see ./model-login-watch.ts. Only the claude-sdk
+ * provider authenticates through the claude.ai login file.
+ */
+function scheduleModelLoginWatch(): void {
+  if (getConfig().inferencePrimaryProvider !== "claude-sdk") return;
+  const job = scheduleCron(
+    "model-login-watch",
+    "7 * * * *",
+    async () => {
+      try {
+        const { runModelLoginWatch } = await import("./model-login-watch.js");
+        const summary = await runModelLoginWatch();
+        if (summary.state !== "ok") {
+          console.log(
+            `[rituals] model-login-watch: state=${summary.state} sent=${summary.sent}`,
+          );
+        }
+      } catch (err) {
+        console.error(`[rituals] model-login-watch failed: ${errMsg(err)}`);
+        recordRitualFailure("model-login-watch", err, "execute");
+      }
+    },
+    { timezone: RITUALS_TIMEZONE },
+  );
+  scheduledJobs.push(job);
+  console.log(
+    `[rituals] model-login-watch: scheduled (7 * * * *, tz=${RITUALS_TIMEZONE})`,
   );
 }
 

@@ -52,10 +52,16 @@ vi.mock("../dispatch/dispatcher.js", () => ({
   submitTask: mockSubmitTask,
 }));
 
+const mockConfig = vi.hoisted(
+  () => ({ tuningEnabled: false }) as Record<string, unknown>,
+);
 vi.mock("../config.js", () => ({
-  getConfig: () => ({
-    tuningEnabled: false,
-  }),
+  getConfig: () => mockConfig,
+}));
+
+const mockRunModelLoginWatch = vi.hoisted(() => vi.fn());
+vi.mock("./model-login-watch.js", () => ({
+  runModelLoginWatch: mockRunModelLoginWatch,
 }));
 
 // Event bus mock — test that ritual failures emit schedule.run_failed events
@@ -164,6 +170,40 @@ describe("startRitualScheduler", () => {
         delete process.env.HINDSIGHT_COST_PULL_ENABLED;
       }
     }
+  });
+});
+
+describe("model-login-watch wiring", () => {
+  const loginWatchCall = () =>
+    mockSchedule.mock.calls.find((c) => c[2]?.name === "model-login-watch");
+
+  afterEach(() => {
+    delete mockConfig.inferencePrimaryProvider;
+  });
+
+  it("registers hourly only when claude-sdk is the primary provider", () => {
+    startRitualScheduler();
+    expect(loginWatchCall()).toBeUndefined();
+    stopRitualScheduler();
+
+    mockConfig.inferencePrimaryProvider = "claude-sdk";
+    startRitualScheduler();
+    expect(loginWatchCall()?.[0]).toBe("7 * * * *");
+  });
+
+  it("a throwing watch is recorded as a ritual failure", async () => {
+    mockConfig.inferencePrimaryProvider = "claude-sdk";
+    mockRunModelLoginWatch.mockRejectedValueOnce(new Error("not delivered"));
+    startRitualScheduler();
+    await (loginWatchCall()?.[1] as () => Promise<void>)();
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        ritual_id: "model-login-watch",
+        phase: "execute",
+        error: expect.stringContaining("not delivered"),
+      }),
+    );
   });
 });
 
