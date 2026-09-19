@@ -751,6 +751,18 @@ describe("buildKnowledgeBaseSection — conditional rows reach heavy/swarm goals
     expect(close).toContain("preview-removed-<nombre>");
   });
 
+  it("logs the variable layer under the caller's tag — the goal prompt is persisted nowhere", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    serve(hog, sop, preview);
+    buildKnowledgeBaseSection(["shell_exec"], false, "refactor the adapter", "executor");
+    // hog fits (### hog.md\n + 7980 = 7991); sop and preview go to the pointer
+    expect(log).toHaveBeenCalledWith("[executor] KB variable layer: 1 conditional row(s) in budget, 7991 chars, 2 in pointer");
+    log.mockClear();
+    buildKnowledgeBaseSection(["shell_exec"], true, "refactor the adapter", "planner");
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("KB variable layer"));
+    log.mockRestore();
+  });
+
   it("enforceOnly stays enforce-only: no always-read, no conditional row, no guardrail", () => {
     serve(sop, preview);
     const kb = buildKnowledgeBaseSection(["shell_exec"], true, "Cierra el preview de Bimaso", "fast-runner");

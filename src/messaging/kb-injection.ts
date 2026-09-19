@@ -176,6 +176,11 @@ function collectVariableSections(
     variableSections.push(section);
     variableChars += section.length;
   }
+  // The goal prompt is persisted nowhere, so this line is the only direct
+  // evidence that conditional rows reached a heavy/swarm goal (2026-09-19).
+  console.log(
+    `[${logTag}] KB variable layer: ${variableSections.length} conditional row(s) in budget, ${variableChars} chars, ${budgetSkipped.length} in pointer`,
+  );
   // A row that APPLIES to this turn but did not fit must not vanish silently:
   // with coding in scope ~6.2k chars of earlier rows push every later
   // directive out, so Jarvis closed a Caddy preview with no recipe (task
