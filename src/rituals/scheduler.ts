@@ -257,14 +257,69 @@ function alreadyRanToday(ritual: RitualDefinition): boolean {
   return row !== undefined;
 }
 
-async function executeRitual(ritual: RitualDefinition): Promise<void> {
+/**
+ * One delayed same-day re-run for a ritual whose attempts ALL failed.
+ * The reaction engine and the dispatcher's required-tools retry both fire
+ * within seconds, so an outage that outlasts them (2026-09-19 dead login,
+ * 2026-09-02 restart mid-run) cost the whole day: `alreadyRanToday` counts a
+ * failed task as ran. A task still in flight at the check is left alone and
+ * not re-checked; the timer does not survive a restart. `nightly-close`
+ * (23:50) and `evolution-log` (23:59) are never retried: +20 min is tomorrow.
+ */
+const RITUAL_RETRY_DELAY_MS = 20 * 60_000;
+const FAILED_STATUSES = new Set(["failed", "blocked", "needs_context"]);
+const retryTimers = new Set<NodeJS.Timeout>();
+
+function everyAttemptFailed(ritual: RitualDefinition, date: string): boolean {
+  const rows = getDatabase()
+    .prepare("SELECT status FROM tasks WHERE title = ? AND status != 'cancelled'")
+    .all(`${ritual.title} — ${date}`) as Array<{ status: string }>;
+  return rows.length > 0 && rows.every((r) => FAILED_STATUSES.has(r.status));
+}
+
+function armDelayedRetry(ritual: RitualDefinition, date: string): void {
+  const timer = setTimeout(() => {
+    retryTimers.delete(timer);
+    void executeRitual(ritual, date).catch((err) => {
+      console.error(`[rituals] ${ritual.id}: delayed retry failed —`, err);
+      recordRitualFailure(ritual.id, err, "execute");
+    });
+  }, RITUAL_RETRY_DELAY_MS);
+  timer.unref();
+  retryTimers.add(timer);
+  console.log(`[rituals] ${ritual.id}: delayed-retry check armed for ${date}`);
+}
+
+/** `retryOfDate` set = the delayed re-run of that day's failed attempts. */
+async function executeRitual(
+  ritual: RitualDefinition,
+  retryOfDate?: string,
+): Promise<void> {
   // Phase 5.5: `/rituales pausa <id>` — the run is skipped entirely (no
   // tokens), unlike a mute which defers the delivery only.
   if (isRitualPaused(ritual.id)) {
     console.log(`[rituals] ${ritual.id}: paused via /rituales, skipping`);
     return;
   }
-  if (alreadyRanToday(ritual)) {
+  if (retryOfDate) {
+    // Past midnight the template would carry tomorrow's date and claim
+    // tomorrow's run.
+    if (todayLabel(ritual.timezone) !== retryOfDate) {
+      console.log(
+        `[rituals] ${ritual.id}: delayed-retry check skipped — ${retryOfDate} is over`,
+      );
+      return;
+    }
+    if (!everyAttemptFailed(ritual, retryOfDate)) {
+      console.log(
+        `[rituals] ${ritual.id}: delayed-retry check — no retry needed (${retryOfDate})`,
+      );
+      return;
+    }
+    console.log(
+      `[rituals] ${ritual.id}: every attempt failed today (${retryOfDate}) — one delayed retry`,
+    );
+  } else if (alreadyRanToday(ritual)) {
     console.log(
       `[rituals] ${ritual.id}: already ran today (${todayLabel(ritual.timezone)}), skipping`,
     );
@@ -299,9 +354,13 @@ async function executeRitual(ritual: RitualDefinition): Promise<void> {
   // ritualContext, exempting the ritual's legitimate SELECT/curl chains from
   // the flailing-guard. See P1+P2 in feedback_evolution_log_misattribution.
   template.ritualId = ritual.id;
+  // Marks the re-run in tasks.metadata so its frequency/outcome is countable.
+  if (retryOfDate) template.tags = [...(template.tags ?? []), "ritual-retry"];
+  const date = todayLabel(ritual.timezone);
 
   try {
     const result = await submitTask(template);
+    if (!retryOfDate) armDelayedRetry(ritual, date);
     console.log(
       `[rituals] ${ritual.id}: submitted task ${result.taskId} (agent: ${result.agentType}) at ${new Date().toISOString()}`,
     );
@@ -1034,6 +1093,8 @@ export function stopRitualScheduler(): void {
     job.stop();
   }
   scheduledJobs.length = 0;
+  for (const timer of retryTimers) clearTimeout(timer);
+  retryTimers.clear();
   stopCanary();
   console.log("[rituals] All jobs stopped");
 }

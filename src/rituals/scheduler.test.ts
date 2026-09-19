@@ -276,6 +276,89 @@ describe("idempotency", () => {
   });
 });
 
+describe("delayed same-day retry of a failed ritual", () => {
+  const DELAY = 20 * 60_000;
+  const fire = async (statuses: string[], at = "2026-09-19T18:00:00Z") => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(at));
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+    startRitualScheduler();
+    (mockSchedule.mock.calls[0][1] as () => void)();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    mockAll.mockReturnValue(statuses.map((status) => ({ status })));
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    mockIsRitualPaused.mockReturnValue(false);
+  });
+
+  it("re-runs once when every attempt failed, and never a second time", async () => {
+    await fire(["failed", "blocked"]);
+    await vi.advanceTimersByTimeAsync(DELAY - 1);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+    expect(mockSubmitTask.mock.calls[1][0].title).toBe(
+      mockSubmitTask.mock.calls[0][0].title,
+    );
+    expect(mockSubmitTask.mock.calls[0][0].tags ?? []).not.toContain(
+      "ritual-retry",
+    );
+    expect(mockSubmitTask.mock.calls[1][0].tags).toContain("ritual-retry");
+    await vi.advanceTimersByTimeAsync(DELAY * 3);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["one attempt succeeded", ["failed", "completed_with_concerns"]],
+    ["an attempt is still in flight", ["failed", "running"]],
+    ["the only task was cancelled (no rows)", []],
+  ])("does not re-run when %s", async (_label, statuses) => {
+    await fire(statuses);
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-run past midnight (the title would claim tomorrow's run)", async () => {
+    await fire(["failed"], "2026-09-20T05:50:00Z"); // 23:50 America/Mexico_City
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("a paused ritual is not re-run", async () => {
+    await fire(["failed"]);
+    mockIsRitualPaused.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("a crash on the timer path is recorded as a ritual failure", async () => {
+    await fire(["failed"]);
+    mockAll.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    await vi.advanceTimersByTimeAsync(DELAY);
+    mockAll.mockReset();
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        phase: "execute",
+        error: expect.stringContaining("SQLITE_BUSY"),
+      }),
+    );
+  });
+
+  it("stopRitualScheduler cancels a pending retry", async () => {
+    await fire(["failed"]);
+    stopRitualScheduler();
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ritual failure events (Dim-4 R5 fix)", () => {
   it("emits schedule.run_failed when submitTask throws", async () => {
     mockGet.mockReturnValue(undefined); // alreadyRanToday = false
