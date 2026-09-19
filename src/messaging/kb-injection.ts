@@ -126,6 +126,129 @@ export function detectProjectInMessage(text: string): string | null {
   return null;
 }
 
+/** Project README for an explicitly mentioned project slug — bypasses every
+ *  budget (silently dropping it leaves the runner blind to the asked-about
+ *  project). */
+function projectReadmeSection(
+  messageText: string | undefined,
+  logTag: string,
+): string | null {
+  if (!messageText) return null;
+  const projectSlug = detectProjectInMessage(messageText);
+  if (!projectSlug) return null;
+  try {
+    const readme = getFile(`projects/${projectSlug}/README.md`);
+    if (!readme) return null;
+    console.log(
+      `[${logTag}] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
+    );
+    return `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
+  } catch {
+    return null; // Project README not found — non-fatal
+  }
+}
+
+/**
+ * The per-turn KB sections, shared by both builders: `conditional` rows that
+ * match the scope (own 8000-char budget, a pointer line for each one that did
+ * not fit), the project README, and the preview / Rumi guardrails.
+ */
+function collectVariableSections(
+  scopedTools: string[],
+  messageText: string | undefined,
+  logTag: string,
+): string[] {
+  const variableFiles = getFilesByQualifier("conditional");
+
+  const variableSections: string[] = [];
+  const budgetSkipped: string[] = [];
+  let variableChars = 0;
+  const KB_CHAR_BUDGET = 8000;
+  for (const f of variableFiles) {
+    if (f.condition && !conditionMatches(f.condition, scopedTools)) {
+      continue;
+    }
+    const section = `### ${f.title}\n${f.content}`;
+    if (variableChars + section.length > KB_CHAR_BUDGET) {
+      budgetSkipped.push(`- ${f.path} — ${f.title}`);
+      continue;
+    }
+    variableSections.push(section);
+    variableChars += section.length;
+  }
+  // A row that APPLIES to this turn but did not fit must not vanish silently:
+  // with coding in scope ~6.2k chars of earlier rows push every later
+  // directive out, so Jarvis closed a Caddy preview with no recipe (task
+  // b1583f19, qa R2 W1). One line per skipped row keeps it reachable for any
+  // phrasing, at ~100 chars instead of the row's full text.
+  if (budgetSkipped.length > 0) {
+    variableSections.push(
+      `### Directivas que aplican a este turno pero no cupieron — léelas con jarvis_file_read ANTES de actuar en su tema\n${budgetSkipped.join("\n")}`,
+    );
+  }
+
+  const readme = projectReadmeSection(messageText, logTag);
+  if (readme) variableSections.push(readme);
+
+  if (messageText) {
+    // Preview guardrail: the publish/close recipe must reach any turn that
+    // talks about a Caddy preview. As a plain conditional row it never did:
+    // priority 70 puts it behind ~6.2k chars of coding-scope rows, so the
+    // 8000 budget skipped it every time (qa R1 C1, 2026-09-19) — and without
+    // it Jarvis tried `rm` (blocked) and told the operator to hand-edit a
+    // GENERATED Caddy file (task b1583f19). Same budget bypass as Rumi below.
+    if (
+      PREVIEW_SITE_RE.test(messageText) &&
+      conditionMatches("coding", scopedTools)
+    ) {
+      try {
+        const preview = getFile(PREVIEW_DIRECTIVE_PATH);
+        const section = preview && `### ${preview.title}\n${preview.content}`;
+        if (section && !variableSections.includes(section)) {
+          variableSections.push(section);
+          console.log(
+            `[${logTag}] Preview guardrail: injected ${PREVIEW_DIRECTIVE_PATH} (${preview.content.length} chars)`,
+          );
+        }
+      } catch {
+        console.warn(
+          `[${logTag}] Preview guardrail: could not inject ${PREVIEW_DIRECTIVE_PATH}`,
+        );
+      }
+    }
+
+    // Rumi SOP guardrail: force-inject Index + SOP on any Rumi/poem request.
+    // Without this, the LLM answers from training memory and bypasses the SOP,
+    // causing duplicate poems to be served (3 documented incidents: 2026-04-06,
+    // 2026-05-19, 2026-05-23).
+    if (detectRumiRequest(messageText)) {
+      const rumiPaths = [
+        "knowledge/Rumi/INDEX.md",
+        "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
+      ];
+      for (const rumiPath of rumiPaths) {
+        try {
+          const rumiFile = getFile(rumiPath);
+          if (rumiFile) {
+            const section = `### ${rumiFile.title}\n${rumiFile.content}`;
+            // Bypasses budget — these are mandatory context for correctness
+            variableSections.push(section);
+            console.log(
+              `[${logTag}] Rumi SOP guardrail: injected ${rumiPath} (${rumiFile.content.length} chars)`,
+            );
+          }
+        } catch {
+          // non-fatal — log and continue
+          console.warn(
+            `[${logTag}] Rumi SOP guardrail: could not inject ${rumiPath}`,
+          );
+        }
+      }
+    }
+  }
+  return variableSections;
+}
+
 /**
  * Build the [JARVIS KNOWLEDGE BASE] section.
  *
@@ -146,63 +269,36 @@ export function buildKnowledgeBaseSection(
   logTag = "runner",
 ): string | null {
   try {
-    const files = enforceOnly
-      ? getFilesByQualifier("enforce")
-      : getFilesByQualifier("always-read", "enforce", "conditional");
-    if (files.length === 0) return null;
+    // Conditional rows go through collectVariableSections(): counting them
+    // against a budget the mandatory rows had already spent (9.5k chars before
+    // the first conditional row) made every one of them unreachable for
+    // heavy/swarm goals — 42 of 42 executor prompts in 7 days carried none
+    // (2026-09-19).
+    const files = getFilesByQualifier(
+      ...(enforceOnly ? ["enforce"] : ["always-read", "enforce"]),
+    );
 
     const sections: string[] = [];
-    let totalChars = 0;
-    const KB_CHAR_BUDGET = 8000;
-
     for (const f of files) {
-      if (
-        f.qualifier === "conditional" &&
-        f.condition &&
-        !conditionMatches(f.condition, scopedTools)
-      ) {
-        continue;
-      }
-
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
-      const mandatory = f.qualifier === "enforce" || f.qualifier === "always-read";
-      const section = `### ${prefix}${f.title}\n${
-        mandatory ? capStableContent(f.path, f.content, logTag) : f.content
-      }`;
-
-      if (!mandatory && totalChars + section.length > KB_CHAR_BUDGET) {
-        continue;
-      }
-      sections.push(section);
-      totalChars += section.length;
+      sections.push(
+        `### ${prefix}${f.title}\n${capStableContent(f.path, f.content, logTag)}`,
+      );
     }
 
-    // Project README auto-injection: explicit project mention bypasses budget
-    // (silently dropping it leaves the runner blind to the asked-about project).
-    if (messageText) {
-      const projectSlug = detectProjectInMessage(messageText);
-      if (projectSlug) {
-        try {
-          const readme = getFile(`projects/${projectSlug}/README.md`);
-          if (readme) {
-            const projectSection = `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
-            sections.push(projectSection);
-            totalChars += projectSection.length;
-            console.log(
-              `[${logTag}] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars, totalChars now ${totalChars})`,
-            );
-          }
-        } catch {
-          // Project README not found — non-fatal
-        }
-      }
-    }
+    const mandatoryChars = sections.reduce((n, sec) => n + sec.length, 0);
 
+    if (enforceOnly) {
+      const readme = projectReadmeSection(messageText, logTag);
+      if (readme) sections.push(readme);
+    } else {
+      sections.push(...collectVariableSections(scopedTools, messageText, logTag));
+    }
     if (sections.length === 0) return null;
 
-    if (totalChars > 6000) {
+    if (mandatoryChars > 6000) {
       console.warn(
-        `[${logTag}] KB injection at ${totalChars} chars — enforce+always-read files may be too large`,
+        `[${logTag}] KB injection at ${mandatoryChars} chars — enforce+always-read files may be too large`,
       );
     }
 
@@ -290,8 +386,6 @@ export function buildKnowledgeBaseSections(
 ): { stable: string | null; variable: string | null } {
   try {
     const stableFiles = getFilesByQualifier("enforce", "always-read");
-    const variableFiles = getFilesByQualifier("conditional");
-
     const stableSections: string[] = [];
     for (const f of stableFiles) {
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
@@ -300,107 +394,11 @@ export function buildKnowledgeBaseSections(
       );
     }
 
-    const variableSections: string[] = [];
-    const budgetSkipped: string[] = [];
-    let variableChars = 0;
-    const KB_CHAR_BUDGET = 8000;
-    for (const f of variableFiles) {
-      if (f.condition && !conditionMatches(f.condition, scopedTools)) {
-        continue;
-      }
-      const section = `### ${f.title}\n${f.content}`;
-      if (variableChars + section.length > KB_CHAR_BUDGET) {
-        budgetSkipped.push(`- ${f.path} — ${f.title}`);
-        continue;
-      }
-      variableSections.push(section);
-      variableChars += section.length;
-    }
-    // A row that APPLIES to this turn but did not fit must not vanish silently:
-    // with coding in scope ~6.2k chars of earlier rows push every later
-    // directive out, so Jarvis closed a Caddy preview with no recipe (task
-    // b1583f19, qa R2 W1). One line per skipped row keeps it reachable for any
-    // phrasing, at ~100 chars instead of the row's full text.
-    if (budgetSkipped.length > 0) {
-      variableSections.push(
-        `### Directivas que aplican a este turno pero no cupieron — léelas con jarvis_file_read ANTES de actuar en su tema\n${budgetSkipped.join("\n")}`,
-      );
-    }
-
-    // Project README belongs in variable — explicit project mention is a
-    // per-message signal. Bypasses budget for the same reason as before.
-    if (messageText) {
-      const projectSlug = detectProjectInMessage(messageText);
-      if (projectSlug) {
-        try {
-          const readme = getFile(`projects/${projectSlug}/README.md`);
-          if (readme) {
-            const projectSection = `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
-            variableSections.push(projectSection);
-            variableChars += projectSection.length;
-            console.log(
-              `[${logTag}] Project README injected into variable layer: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
-            );
-          }
-        } catch {
-          // non-fatal
-        }
-      }
-
-      // Preview guardrail: the publish/close recipe must reach any turn that
-      // talks about a Caddy preview. As a plain conditional row it never did:
-      // priority 70 puts it behind ~6.2k chars of coding-scope rows, so the
-      // 8000 budget skipped it every time (qa R1 C1, 2026-09-19) — and without
-      // it Jarvis tried `rm` (blocked) and told the operator to hand-edit a
-      // GENERATED Caddy file (task b1583f19). Same budget bypass as Rumi below.
-      if (PREVIEW_SITE_RE.test(messageText)) {
-        try {
-          const preview = getFile(PREVIEW_DIRECTIVE_PATH);
-          const section = preview && `### ${preview.title}\n${preview.content}`;
-          if (section && !variableSections.includes(section)) {
-            variableSections.push(section);
-            variableChars += section.length;
-            console.log(
-              `[${logTag}] Preview guardrail: injected ${PREVIEW_DIRECTIVE_PATH} (${preview.content.length} chars)`,
-            );
-          }
-        } catch {
-          console.warn(
-            `[${logTag}] Preview guardrail: could not inject ${PREVIEW_DIRECTIVE_PATH}`,
-          );
-        }
-      }
-
-      // Rumi SOP guardrail: force-inject Index + SOP on any Rumi/poem request.
-      // Without this, the LLM answers from training memory and bypasses the SOP,
-      // causing duplicate poems to be served (3 documented incidents: 2026-04-06,
-      // 2026-05-19, 2026-05-23).
-      if (detectRumiRequest(messageText)) {
-        const rumiPaths = [
-          "knowledge/Rumi/INDEX.md",
-          "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
-        ];
-        for (const rumiPath of rumiPaths) {
-          try {
-            const rumiFile = getFile(rumiPath);
-            if (rumiFile) {
-              const section = `### ${rumiFile.title}\n${rumiFile.content}`;
-              // Bypasses budget — these are mandatory context for correctness
-              variableSections.push(section);
-              variableChars += section.length;
-              console.log(
-                `[${logTag}] Rumi SOP guardrail: injected ${rumiPath} (${rumiFile.content.length} chars)`,
-              );
-            }
-          } catch {
-            // non-fatal — log and continue
-            console.warn(
-              `[${logTag}] Rumi SOP guardrail: could not inject ${rumiPath}`,
-            );
-          }
-        }
-      }
-    }
+    const variableSections = collectVariableSections(
+      scopedTools,
+      messageText,
+      logTag,
+    );
 
     const stable =
       stableSections.length > 0

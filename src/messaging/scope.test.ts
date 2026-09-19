@@ -295,6 +295,19 @@ describe("scope pattern matching", () => {
     expect(followUp).toContain("file_delete");
   });
 
+  it("a named preview after a close verb still pulls coding — the message/document lookahead is narrow", () => {
+    for (const msg of [
+      "cierra el preview de Bimaso",
+      "cierra el preview del diesel",
+      "tumba el preview",
+      // a preview NAMED after a blocked noun is still a preview (qa W3)
+      "apaga el preview del video-demo",
+      "cierra el preview de archivos.trustr.mx",
+    ]) {
+      expect(scope(msg), msg).toContain("shell_exec");
+    }
+  });
+
   it("preview rule fires on unambiguous tokens only — everyday demo/preview chat does NOT pull coding (qa R1 C2)", () => {
     for (const msg of [
       "qué te pareció el demo de ayer?",
@@ -303,6 +316,10 @@ describe("scope pattern matching", () => {
       "cierra la demo con el cliente",
       "quita el preview del correo",
       "mándame un preview del correo",
+      "cierra el preview del correo",
+      "cierra la preview del mensaje",
+      "apaga el preview de la imagen",
+      "cierra el preview del correo.",
     ]) {
       expect(scope(msg), msg).not.toContain("shell_exec");
       expect(scope(msg), msg).not.toContain("file_delete");

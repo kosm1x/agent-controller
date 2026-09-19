@@ -581,12 +581,16 @@ const BUILD_AUTHORING_RE =
 // coding scope and sticks ~4 turns through the prior-message scans, so "demo"
 // is never a trigger ("publica el demo en Instagram", "baja el demo de la
 // canción", "cierra la demo con el cliente" — qa R1 C2) and "preview" only
-// after a close verb. Fuzzy phrasings ("cierra el sitio de X", "tumba la
+// after a close verb, and not when it is the preview OF a message/document
+// ("cierra el preview del correo"; corpus replay 2026-09-19: 32 hits in 3,679
+// recorded messages, all infra, 0 flipped by the lookahead). The noun must END
+// there: a preview NAMED `video-demo` or `docs.trustr.mx` still hits (qa W3).
+// Fuzzy phrasings ("cierra el sitio de X", "tumba la
 // infografía") are the LLM classifier's job. Shared by the
 // DEFAULT_SCOPE_PATTERNS rule, the coding safety net and the KB preview
 // guardrail (kb-injection.ts), like the two above.
 export const PREVIEW_SITE_RE =
-  /\b(?:caddy|vhosts?|despublic\w+)\b|\bnip\.io\b|\/previews\/|\b(?:c(?:ie|e)rr\w*|tumb\w*|apag\w*)\s+(?:\S+\s+){0,2}previews?\b/i;
+  /\b(?:caddy|vhosts?|despublic\w+)\b|\bnip\.io\b|\/previews\/|\b(?:c(?:ie|e)rr\w*|tumb\w*|apag\w*)\s+(?:\S+\s+){0,2}previews?\b(?!\s+(?:de(?:l|\s+l[ao]s?)?\s+)?(?:correos?|e-?mails?|mails?|mensajes?|documentos?|docs?|pdfs?|v[ií]deos?|im[aá]gen(?:es)?|fotos?|links?|enlaces?|archivos?|notas?|tweets?|posts?)(?![\w-]|\.\w))/i;
 
 // Send/forward verb + an explicit recipient email ADDRESS → google (gmail_send)
 // intent, even with NO email noun ("correo"/"gmail"). Shared — one source of

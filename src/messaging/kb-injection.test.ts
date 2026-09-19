@@ -194,7 +194,7 @@ describe("buildKnowledgeBaseSection", () => {
   });
 
   it("includes always-read + matching-conditional + skips non-matching conditional", () => {
-    vi.mocked(getFilesByQualifier).mockReturnValue([
+    const rows = [
       {
         path: "always.md",
         title: "Always",
@@ -219,11 +219,15 @@ describe("buildKnowledgeBaseSection", () => {
         condition: "teaching",
         priority: 0,
       },
-    ]);
+    ];
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      rows.filter((r) => (quals as string[]).includes(r.qualifier)) as never,
+    );
     const result = buildKnowledgeBaseSection(["shell_exec"], false);
     expect(result).toContain("Always");
     expect(result).toContain("Code SOP");
     expect(result).not.toContain("TC");
+    expect(result?.split("### Always").length).toBe(2);
   });
 
   it("falls through gracefully on DB error (returns null, no throw)", () => {
@@ -261,7 +265,7 @@ describe("buildKnowledgeBaseSection", () => {
   });
 
   it("auto-injects project README when message mentions a known slug", () => {
-    vi.mocked(getFilesByQualifier).mockReturnValue([
+    const rows = [
       {
         path: "always.md",
         title: "Always",
@@ -270,7 +274,10 @@ describe("buildKnowledgeBaseSection", () => {
         condition: null,
         priority: 0,
       },
-    ]);
+    ];
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      rows.filter((r) => (quals as string[]).includes(r.qualifier)) as never,
+    );
     vi.mocked(getFile).mockReturnValue({
       id: "r",
       path: "projects/vlmp/README.md",
@@ -286,6 +293,7 @@ describe("buildKnowledgeBaseSection", () => {
       user_edit_time: null,
     });
     const result = buildKnowledgeBaseSection([], false, "tell me about vlmp");
+    expect(result?.split("### Always").length).toBe(2);
     expect(result).toContain("Project Context: VLMP");
     expect(result).toContain("Very Light Media Player");
   });
@@ -594,13 +602,16 @@ describe("memory-tax telemetry wiring", () => {
 
   beforeEach(() => {
     vi.mocked(recordMemoryInjection).mockClear();
-    vi.mocked(getFilesByQualifier).mockReturnValue([always]);
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      (quals as string[]).includes(always.qualifier) ? ([always] as never) : [],
+    );
   });
 
   it("singular builder reports block `kb` with the rendered length — from the fast-runner only", () => {
     const result = buildKnowledgeBaseSection([], false, undefined, "fast-runner");
     expect(result).not.toBeNull();
     expect(recordMemoryInjection).toHaveBeenCalledWith("kb", result!.length);
+    expect(result!.split("### Always").length).toBe(2);
     vi.mocked(recordMemoryInjection).mockClear();
     expect(buildKnowledgeBaseSection([], false, undefined, "planner")).not.toBeNull();
     expect(recordMemoryInjection).not.toHaveBeenCalled();
@@ -673,11 +684,79 @@ describe("buildKnowledgeBaseSections — preview guardrail (2026-09-19)", () => 
     expect(variable?.split("### Publicar y cerrar previews").length).toBe(2);
   });
 
+  it("needs a coding tool in scope — a caddy mention on a tool-less turn is not worth 3.4k chars", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional") ? [hog, directive] : [],
+    );
+    const { variable } = buildKnowledgeBaseSections(["gmail_send"], "cierra el Caddy");
+    expect(variable ?? "").not.toContain("preview-removed");
+  });
+
   it("stays out of turns that are not about a preview", () => {
     vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
       quals.includes("conditional") ? [hog, directive] : [],
     );
     const { variable } = buildKnowledgeBaseSections(["shell_exec"], "publica el demo en Instagram");
     expect(variable).not.toContain("preview-removed");
+  });
+});
+
+describe("buildKnowledgeBaseSection — conditional rows reach heavy/swarm goals (2026-09-19)", () => {
+  const row = (path: string, qualifier: string, content: string, condition: string | null = null) => ({
+    id: path,
+    path,
+    title: path,
+    content,
+    tags: "[]",
+    qualifier,
+    condition,
+    priority: 50,
+    related_to: "[]",
+    created_at: "",
+    updated_at: "",
+    user_edit_time: null,
+  });
+  // The live shape: the mandatory layer alone is past the 8000 budget before
+  // the first conditional row (9.5k chars on 2026-09-19).
+  const mandatory = [row("index.md", "always-read", "i".repeat(6000)), row("auth.md", "enforce", "a".repeat(4000))];
+  const sop = row("sop.md", "conditional", "SOP-BODY", "coding");
+  const hog = row("hog.md", "conditional", "x".repeat(7980), "coding");
+  const preview = row("directives/preview-publishing.md", "conditional", "preview-removed-<nombre>", "coding — previews");
+  const serve = (...conditional: ReturnType<typeof row>[]) =>
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      [...mandatory, ...conditional].filter((r) => (quals as string[]).includes(r.qualifier)) as never,
+    );
+
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFile).mockReset();
+    vi.mocked(getFile).mockImplementation((path: string) => (path === preview.path ? (preview as never) : undefined));
+  });
+
+  it("a matching conditional row is delivered although the mandatory layer is past 8000 chars", () => {
+    serve(sop);
+    const kb = buildKnowledgeBaseSection(["shell_exec"], false, "refactor the adapter", "executor");
+    expect(kb).toContain("SOP-BODY");
+    expect(kb).toContain("### MANDATORY: auth.md");
+    // and a row of another scope still stays out
+    expect(buildKnowledgeBaseSection(["gmail_send"], false, "x", "executor")).not.toContain("SOP-BODY");
+  });
+
+  it("carries the pointer for budget-skipped rows and the preview guardrail, like the split builder", () => {
+    serve(hog, sop, preview);
+    const other = buildKnowledgeBaseSection(["shell_exec"], false, "refactor the adapter", "executor");
+    expect(other).toContain("- sop.md — sop.md");
+    expect(other).not.toContain("preview-removed");
+    const close = buildKnowledgeBaseSection(["shell_exec"], false, "Cierra el preview de Bimaso", "executor");
+    expect(close).toContain("preview-removed-<nombre>");
+  });
+
+  it("enforceOnly stays enforce-only: no always-read, no conditional row, no guardrail", () => {
+    serve(sop, preview);
+    const kb = buildKnowledgeBaseSection(["shell_exec"], true, "Cierra el preview de Bimaso", "fast-runner");
+    expect(kb).toContain("### MANDATORY: auth.md");
+    expect(kb).not.toContain("index.md");
+    expect(kb).not.toContain("SOP-BODY");
+    expect(kb).not.toContain("preview-removed");
   });
 });

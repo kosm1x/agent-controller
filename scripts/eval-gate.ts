@@ -51,7 +51,7 @@
  *
  * USAGE
  *   npm run eval:gate                        # DRY: free evals only, no spend, exit 3
- *   npm run eval:gate -- --run               # REAL: ~55 LLM calls (~$1.65), PASS/FAIL
+ *   npm run eval:gate -- --run               # REAL: one LLM call per tool-selection case (~$5.60 / ~15 min at 263 cases, measured 2026-09-19), PASS/FAIL
  *   npm run eval:gate -- --run --update-baseline   # set the incumbent to the current score
  *   npm run eval:gate -- --run --epsilon=1.0       # override tolerance for this run
  *
@@ -172,7 +172,7 @@ async function main(): Promise<void> {
       `  Classification:   ${res.subscores.classification.toFixed(2)} / 100  (deterministic)`,
     );
     console.log(
-      "\n[eval-gate] Harness wired OK. Pass --run for the real gate (~$1.65). exit 3.",
+      "\n[eval-gate] Harness wired OK. Pass --run for the real gate (~$5.60, ~15 min — measured 2026-09-19 at 263 cases). exit 3.",
     );
     process.exit(3);
   }
