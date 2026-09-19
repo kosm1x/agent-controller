@@ -28,6 +28,7 @@ import {
 import { getFile, mirrorToDisk } from "../db/jarvis-fs.js";
 import type { Event } from "../lib/events/types.js";
 import type {
+  NotificationPayload,
   TaskCompletedPayload,
   TaskFailedPayload,
   TaskCancelledPayload,
@@ -1391,7 +1392,19 @@ export class MessageRouter {
       },
     );
 
-    this.subscriptions.push(completedSub, failedSub, cancelledSub);
+    const warningSub = bus.subscribe(
+      "notification.warning",
+      (event: Event<"notification.warning">) => {
+        this.handleNotificationWarning(event.data).catch((err) =>
+          console.error(
+            "[router] notification.warning handler failed:",
+            errMsg(err),
+          ),
+        );
+      },
+    );
+
+    this.subscriptions.push(completedSub, failedSub, cancelledSub, warningSub);
 
     // Notify user about tasks killed by service restart.
     // On shutdown, orphaned tasks get status='failed', error='Service shutdown'
@@ -2611,6 +2624,30 @@ export class MessageRouter {
     if (this.interceptPureFeedback(msg, tk)) return;
     if (await this.interceptConversationalFastPath(msg, tk)) return;
     await this.submitInboundTask(msg, tk, feedbackTaskId);
+  }
+
+  /**
+   * Operator alert for `notification.warning` (dispatcher: required tools
+   * still missing after its retry; reaction engine: escalation). Until
+   * 2026-09-19 the only consumer was the dashboard SSE stream, so the
+   * 09-19 PM-rebalance give-up reached nobody. The message carries task
+   * titles and runner text — filtered, never `raw`. The filter can replace
+   * an `API Error: NNN {…}` cause with its user-facing line, so the task id
+   * goes on its own line: the operator can always pull the row.
+   */
+  private async handleNotificationWarning(
+    data: NotificationPayload,
+  ): Promise<void> {
+    const taskId = data.context?.taskId;
+    const { sent } = await this.sendBriefingToOwner(
+      `⚠️ ${data.title}\n${data.message.slice(0, 500)}` +
+        (typeof taskId === "string" ? `\n./mc-ctl task ${taskId}` : ""),
+    );
+    if (sent === 0) {
+      console.error(
+        `[router] notification.warning not delivered to any operator channel: ${data.title} (${data.source})`,
+      );
+    }
   }
 
   /** Watch a ritual task for completion → broadcast result to all channels. */

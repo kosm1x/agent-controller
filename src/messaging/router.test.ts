@@ -1941,6 +1941,67 @@ describe("MessageRouter", () => {
     });
   });
 
+  describe("notification.warning → operator", () => {
+    const warn = (message: string, source = "dispatcher") =>
+      findHandler("notification.warning")!({
+        data: {
+          title: "Required tools not called",
+          message,
+          source,
+          context: { taskId: "t-1" },
+        },
+      });
+
+    it("delivers the dispatcher give-up, runner reason intact, to every owner channel", async () => {
+      const tgAdapter = createMockAdapter("telegram");
+      router.registerChannel(tgAdapter);
+      router.startEventListeners();
+      warn(
+        'Task "PM daily rebalance — 2026-09-19" completed without calling: pm_paper_rebalance (even after retry) — runner: fallo de autenticación, tarea no ejecutada.',
+      );
+      await vi.waitFor(() => expect(tgAdapter.sentMessages).toHaveLength(1));
+      expect(tgAdapter.sentMessages[0].to).toBe("12345");
+      expect(tgAdapter.sentMessages[0].text).toBe(
+        '⚠️ Required tools not called\nTask "PM daily rebalance — 2026-09-19" completed without calling: pm_paper_rebalance (even after retry) — runner: fallo de autenticación, tarea no ejecutada.\n./mc-ctl task t-1',
+      );
+      expect(waAdapter.sentMessages).toHaveLength(1);
+    });
+
+    it("an escalation's API-error cause passes the deliverable filter (never raw); the task id survives it", async () => {
+      router.startEventListeners();
+      warn(
+        'Task "Scan" failed after 2 retries: API Error: 400 {"type":"error","error":{"type":"invalid_request_error"}}',
+        "reaction-engine",
+      );
+      await vi.waitFor(() => expect(waAdapter.sentMessages).toHaveLength(1));
+      const text = waAdapter.sentMessages[0].text;
+      expect(text).not.toContain("invalid_request_error");
+      expect(text).toContain('Task "Scan" failed after 2 retries:');
+      expect(text).toContain("./mc-ctl task t-1");
+    });
+
+    it("caps the message at 500 chars", async () => {
+      router.startEventListeners();
+      warn("x".repeat(600));
+      await vi.waitFor(() => expect(waAdapter.sentMessages).toHaveLength(1));
+      expect(waAdapter.sentMessages[0].text).toContain("x".repeat(500));
+      expect(waAdapter.sentMessages[0].text).not.toContain("x".repeat(501));
+    });
+
+    it("a payload that makes the handler throw is logged, not an unhandled rejection", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      router.startEventListeners();
+      findHandler("notification.warning")!({ data: { title: "t" } });
+      await vi.waitFor(() =>
+        expect(errSpy).toHaveBeenCalledWith(
+          "[router] notification.warning handler failed:",
+          expect.any(String),
+        ),
+      );
+      errSpy.mockRestore();
+    });
+  });
+
   describe("ritual watch", () => {
     it("should broadcast on ritual task completion", () => {
       router.watchRitualTask("ritual-task-1", "morning-briefing");
