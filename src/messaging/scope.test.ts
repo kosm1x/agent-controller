@@ -261,6 +261,54 @@ describe("scope pattern matching", () => {
     expect(tools).toContain("shell_exec");
   });
 
+  it("closing or publishing a static preview pulls coding on BOTH paths (2026-09-19, tasks 0a376e6d/66fc5038)", () => {
+    // Regex-fallback path.
+    for (const msg of [
+      "Gracias. Tema cerrado. Cierra el Caddy",
+      "cierra el preview de Bimaso",
+      "quita el demo del diesel de caddy",
+      "despublica la infografía",
+      "mueve /root/claude/previews/bimaso a otro lado",
+      "exponla en bimaso.187.77.25.101.nip.io",
+    ]) {
+      expect(scope(msg), msg).toContain("file_delete");
+      expect(scope(msg), msg).toContain("shell_exec");
+    }
+    // Semantic path: the classifier said destructive+projects+specialty (what it
+    // really returned) — the safety net must still add coding.
+    const semantic = scopeToolsForMessage(
+      "Cierra el Caddy",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive", "projects", "specialty"]),
+    );
+    expect(semantic).toContain("file_delete");
+    // Follow-up with no signal of its own inherits from the prior user turn.
+    const followUp = scopeToolsForMessage(
+      "Cierra el tema Bimaso y todas sus dependencias",
+      ["Gracias. Tema cerrado. Cierra el Caddy"],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["destructive", "projects", "specialty"]),
+    );
+    expect(followUp).toContain("file_delete");
+  });
+
+  it("preview rule fires on unambiguous tokens only — everyday demo/preview chat does NOT pull coding (qa R1 C2)", () => {
+    for (const msg of [
+      "qué te pareció el demo de ayer?",
+      "publica el demo en Instagram",
+      "baja el demo de la canción",
+      "cierra la demo con el cliente",
+      "quita el preview del correo",
+      "mándame un preview del correo",
+    ]) {
+      expect(scope(msg), msg).not.toContain("shell_exec");
+      expect(scope(msg), msg).not.toContain("file_delete");
+    }
+  });
+
   it("Journal-authoring rule does NOT over-fire on reads / non-journal authoring (qa-W2)", () => {
     // Verb-gated + journal-anchored noun: bare nouns, reads, deletes, and
     // non-journal objects must NOT pull the heavy coding scope.

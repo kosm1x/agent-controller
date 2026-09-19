@@ -246,6 +246,14 @@ describe("classifier prompt ↔ scope-group parity (2026-09-11)", () => {
     expect(CLASSIFIER_SYSTEM_PROMPT).toContain('["skills"]   // for');
   });
 
+  it("previews: closing/publishing a Caddy preview is taught as coding (2026-09-19)", () => {
+    const rule = CLASSIFIER_SYSTEM_PROMPT.split("\n").find((l) => l.startsWith("- Static previews")) ?? "";
+    for (const phrase of ["cierra el Caddy", "despublica", "nip.io", "file_delete", '["coding"]', "destructive alone grants NO file tools"]) {
+      expect(rule, phrase).toContain(phrase);
+    }
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('["coding"]   // for "Gracias. Tema cerrado. Cierra el Caddy"');
+  });
+
   it("utility is described with email-verification vocabulary", () => {
     const line = CLASSIFIER_SYSTEM_PROMPT.split("\n").find((l) => l.startsWith("- utility:")) ?? "";
     for (const token of ["email_verify", "verifica si", "existe este correo", "bounce", "file_convert"]) {

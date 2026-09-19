@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   conditionMatches,
   detectProjectInMessage,
@@ -30,6 +31,24 @@ vi.mock("../observability/prometheus.js", () => ({
 import { recordMemoryInjection } from "../observability/prometheus.js";
 
 describe("conditionMatches (KB injection conditional matcher)", () => {
+  it("the preview directive's condition carries a group keyword — prose alone never injects (2026-09-19)", () => {
+    // The 08-23 wording, verbatim: no group keyword → unreachable in every scope.
+    expect(
+      conditionMatches(
+        "El usuario pide publicar/servir un preview o demo estático (HTML, Three.js, dashboard) o menciona nip.io, o una publicación de preview está fallando",
+        [...CODING_TOOLS],
+      ),
+    ).toBe(false);
+    const script = readFileSync(
+      new URL("../../scripts/kb-preview-directive.mjs", import.meta.url),
+      "utf8",
+    );
+    const condition = script.split("\n").find((l) => l.trim().startsWith('"coding —')) ?? "";
+    expect(condition).toContain("cerrar");
+    expect(conditionMatches(condition, ["shell_exec"])).toBe(true);
+    expect(conditionMatches(condition, ["gmail_send"])).toBe(false);
+  });
+
   it("matches coding when shell_exec is scoped", () => {
     expect(conditionMatches("coding", ["shell_exec", "file_read"])).toBe(true);
   });
@@ -592,5 +611,73 @@ describe("memory-tax telemetry wiring", () => {
     expect((stable?.length ?? 0) + (variable?.length ?? 0)).toBeGreaterThan(0);
     expect(recordMemoryInjection).toHaveBeenCalledWith("kb_stable", stable?.length ?? 0);
     expect(recordMemoryInjection).toHaveBeenCalledWith("kb_variable", variable?.length ?? 0);
+  });
+});
+
+describe("buildKnowledgeBaseSections — preview guardrail (2026-09-19)", () => {
+  const directive = {
+    id: "pv",
+    path: "directives/preview-publishing.md",
+    title: "Publicar y cerrar previews",
+    content: "mv /root/claude/previews/<nombre> /tmp/preview-removed-<nombre>",
+    tags: "[]",
+    qualifier: "conditional",
+    condition: "coding — previews",
+    priority: 70,
+    related_to: "[]",
+    created_at: "",
+    updated_at: "",
+    user_edit_time: null,
+  };
+  // The live shape: coding-scope rows ahead of it eat the 8000 budget.
+  const hog = { ...directive, path: "hog.md", title: "Hog", content: "x".repeat(7900), priority: 10 };
+
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFile).mockReset();
+    vi.mocked(getFile).mockImplementation((path: string) =>
+      path === directive.path ? directive : undefined,
+    );
+  });
+
+  it("reaches a close-the-preview turn even when the budget already skipped it", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional") ? [hog, directive] : [],
+    );
+    const { variable } = buildKnowledgeBaseSections(
+      ["shell_exec"],
+      "Gracias. Tema cerrado. Cierra el Caddy",
+    );
+    expect(variable).toContain("### Hog");
+    expect(variable).toContain("preview-removed-<nombre>");
+  });
+
+  it("a budget-skipped row that applies leaves a one-line pointer — any phrasing, no regex (qa R2 W1)", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional") ? [hog, directive] : [],
+    );
+    const { variable } = buildKnowledgeBaseSections(["shell_exec"], "Usa Shell y cierra el tema Bimaso");
+    expect(variable).not.toContain("preview-removed");
+    expect(variable).toContain("- directives/preview-publishing.md — Publicar y cerrar previews");
+    expect(variable).toContain("jarvis_file_read");
+    // A row whose condition does NOT match is not advertised.
+    const other = buildKnowledgeBaseSections(["gmail_send"], "Usa Shell y cierra el tema Bimaso");
+    expect(other.variable ?? "").not.toContain("preview-publishing");
+  });
+
+  it("is injected once when the budget let the conditional row through", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional") ? [directive] : [],
+    );
+    const { variable } = buildKnowledgeBaseSections(["shell_exec"], "cierra el Caddy");
+    expect(variable?.split("### Publicar y cerrar previews").length).toBe(2);
+  });
+
+  it("stays out of turns that are not about a preview", () => {
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional") ? [hog, directive] : [],
+    );
+    const { variable } = buildKnowledgeBaseSections(["shell_exec"], "publica el demo en Instagram");
+    expect(variable).not.toContain("preview-removed");
   });
 });

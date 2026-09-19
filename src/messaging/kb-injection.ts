@@ -27,6 +27,7 @@ import {
   RESEARCH_TOOLS,
   TEACHING_TOOLS,
   SOCIAL_TOOLS,
+  PREVIEW_SITE_RE,
 } from "./scope.js";
 
 /**
@@ -87,6 +88,9 @@ export function detectRumiRequest(text: string): boolean {
   // Fire on bare "rumi" mention OR poem-request-with-rumi context
   return hasRumi || (hasPoem && hasRumi);
 }
+
+/** KB row written by scripts/kb-preview-directive.mjs (operator-run). */
+const PREVIEW_DIRECTIVE_PATH = "directives/preview-publishing.md";
 
 /** Known project slugs for README auto-injection. */
 const PROJECT_SLUGS = [
@@ -297,6 +301,7 @@ export function buildKnowledgeBaseSections(
     }
 
     const variableSections: string[] = [];
+    const budgetSkipped: string[] = [];
     let variableChars = 0;
     const KB_CHAR_BUDGET = 8000;
     for (const f of variableFiles) {
@@ -304,9 +309,22 @@ export function buildKnowledgeBaseSections(
         continue;
       }
       const section = `### ${f.title}\n${f.content}`;
-      if (variableChars + section.length > KB_CHAR_BUDGET) continue;
+      if (variableChars + section.length > KB_CHAR_BUDGET) {
+        budgetSkipped.push(`- ${f.path} — ${f.title}`);
+        continue;
+      }
       variableSections.push(section);
       variableChars += section.length;
+    }
+    // A row that APPLIES to this turn but did not fit must not vanish silently:
+    // with coding in scope ~6.2k chars of earlier rows push every later
+    // directive out, so Jarvis closed a Caddy preview with no recipe (task
+    // b1583f19, qa R2 W1). One line per skipped row keeps it reachable for any
+    // phrasing, at ~100 chars instead of the row's full text.
+    if (budgetSkipped.length > 0) {
+      variableSections.push(
+        `### Directivas que aplican a este turno pero no cupieron — léelas con jarvis_file_read ANTES de actuar en su tema\n${budgetSkipped.join("\n")}`,
+      );
     }
 
     // Project README belongs in variable — explicit project mention is a
@@ -326,6 +344,30 @@ export function buildKnowledgeBaseSections(
           }
         } catch {
           // non-fatal
+        }
+      }
+
+      // Preview guardrail: the publish/close recipe must reach any turn that
+      // talks about a Caddy preview. As a plain conditional row it never did:
+      // priority 70 puts it behind ~6.2k chars of coding-scope rows, so the
+      // 8000 budget skipped it every time (qa R1 C1, 2026-09-19) — and without
+      // it Jarvis tried `rm` (blocked) and told the operator to hand-edit a
+      // GENERATED Caddy file (task b1583f19). Same budget bypass as Rumi below.
+      if (PREVIEW_SITE_RE.test(messageText)) {
+        try {
+          const preview = getFile(PREVIEW_DIRECTIVE_PATH);
+          const section = preview && `### ${preview.title}\n${preview.content}`;
+          if (section && !variableSections.includes(section)) {
+            variableSections.push(section);
+            variableChars += section.length;
+            console.log(
+              `[${logTag}] Preview guardrail: injected ${PREVIEW_DIRECTIVE_PATH} (${preview.content.length} chars)`,
+            );
+          }
+        } catch {
+          console.warn(
+            `[${logTag}] Preview guardrail: could not inject ${PREVIEW_DIRECTIVE_PATH}`,
+          );
         }
       }
 

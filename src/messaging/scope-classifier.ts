@@ -149,6 +149,7 @@ RULES:
 - "livingjoyfully" without .art/.com → NOT wordpress (it's a project name).
 - Journal/editorial authoring is coding, NOT jarvis_write: "agrega el comentario editorial al Journal", "completa el deep dive del Radar", "escribe el manager note de la W23", "publica/reedita la edición" → ["coding"] (the Journal is a real-filesystem .md, needs file_write/file_edit + git push). Merely reading it ("resúmeme el journal", "dame los resultados de la W23") needs no special group.
 - A script is a text deliverable, not a video: "escribe un spot de 30 segundos", "guion de un promo vertical de 20s", "60 second testimonial video script", "15 second explainer" → ["skills"]. Only producing the video file itself ("hazme el video", "renderiza el clip", "ponle voz/narración") → ["video"]. Both only when the user asks for the script AND the finished video.
+- Static previews / demo sites are directories on the real filesystem (/root/claude/previews/<name>, served by Caddy at <name>.187.77.25.101.nip.io). Publishing, exposing, closing, taking down or unpublishing one is coding (needs file_write / file_delete / shell_exec): "publica el demo", "exponla en su propio espacio", "cierra el Caddy", "cierra el preview de Bimaso", "cierra el sitio de bimaso", "tumba el preview", "apaga el demo del diesel", "quita el demo de caddy", "despublica la infografía" → ["coding"]. Also "cierra el tema X y todas sus dependencias" when the recent context shows X has a preview or site on the server. destructive alone grants NO file tools — add coding when the thing being removed is a preview, a vhost or a path on the server disk (NOT a Drive/Gmail item, a NorthStar item or a KB note — those keep their own groups).
 - VPS/server status questions need NO special group (vps_status is always available).
 - Short follow-ups ("dale", "procede", "sí") → return [].
 - Imperative SQL/data-query verbs are NOT short follow-ups even when brief — "verifica y corre un query en SQL", "corre el SQL contra DENUE", "ejecuta la consulta en supabase", "psql -c '...'", "cómo están distribuidas? corre el query" → ["coding"]. The presence of SQL/database/DENUE/scoring/shell_exec/file_write/file_edit/psql tokens overrides the short-follow-up rule.
@@ -160,6 +161,7 @@ RESPOND with JSON array only. No explanation. Examples:
 ["coding"]   // for "verifica y corre un query en SQL para confirmar la distribución"
 ["coding"]   // for "corre el SQL contra DENUE y dame el top 10"
 ["utility"]  // for "verifica si ana@clinica.mx existe"
+["coding"]   // for "Gracias. Tema cerrado. Cierra el Caddy"
 ["skills"]   // for "escribe un spot de 30 segundos para la clínica"
 []`;
 
