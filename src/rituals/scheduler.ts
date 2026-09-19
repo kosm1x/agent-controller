@@ -263,18 +263,53 @@ function alreadyRanToday(ritual: RitualDefinition): boolean {
  * within seconds, so an outage that outlasts them (2026-09-19 dead login,
  * 2026-09-02 restart mid-run) cost the whole day: `alreadyRanToday` counts a
  * failed task as ran. A task still in flight at the check is left alone and
- * not re-checked; the timer does not survive a restart. `nightly-close`
- * (23:50) and `evolution-log` (23:59) are never retried: +20 min is tomorrow.
+ * not re-checked in the same process. `nightly-close` (23:50) and `evolution-log` (23:59) are
+ * never retried: +20 min is tomorrow. The timers die with the process, so
+ * boot re-arms the check (`armRetryCheckAtBoot`); the `ritual-retry` tag on
+ * a task row is what keeps it to one re-run per day across restarts (an
+ * operator who CANCELS that row re-opens the day: cancelled rows don't count).
  */
 const RITUAL_RETRY_DELAY_MS = 20 * 60_000;
 const FAILED_STATUSES = new Set(["failed", "blocked", "needs_context"]);
 const retryTimers = new Set<NodeJS.Timeout>();
 
-function everyAttemptFailed(ritual: RitualDefinition, date: string): boolean {
-  const rows = getDatabase()
-    .prepare("SELECT status FROM tasks WHERE title = ? AND status != 'cancelled'")
-    .all(`${ritual.title} — ${date}`) as Array<{ status: string }>;
-  return rows.length > 0 && rows.every((r) => FAILED_STATUSES.has(r.status));
+type Attempt = { status: string; metadata?: string | null };
+
+function attemptsOn(ritual: RitualDefinition, date: string): Attempt[] {
+  return getDatabase()
+    .prepare(
+      "SELECT status, metadata FROM tasks WHERE title = ? AND status != 'cancelled'",
+    )
+    .all(`${ritual.title} — ${date}`) as Attempt[];
+}
+
+const wasRetried = (rows: Attempt[]): boolean =>
+  rows.some((r) => r.metadata?.includes('"ritual-retry"'));
+
+/**
+ * A restart drops the pending timers (2026-09-02: a deploy killed the retry
+ * of a failed Market EOD scan, and the shutdown handler fails whatever was
+ * in flight). Re-arm for a ritual that has a failed attempt today, no
+ * completed one and no re-run yet; the check re-reads the rows when it fires.
+ * Not `market-morning-scan`: a boot can be hours late and its output is
+ * titled "pre-mercado" — the in-process +20 min retry (08:20 ET) still runs.
+ */
+function armRetryCheckAtBoot(ritual: RitualDefinition): void {
+  if (ritual.id === "market-morning-scan") return;
+  try {
+    const date = todayLabel(ritual.timezone);
+    const rows = attemptsOn(ritual, date);
+    if (
+      rows.some((r) => FAILED_STATUSES.has(r.status)) &&
+      !rows.some((r) => r.status.startsWith("completed")) &&
+      !wasRetried(rows)
+    ) {
+      armDelayedRetry(ritual, date);
+    }
+  } catch (err) {
+    console.error(`[rituals] ${ritual.id}: boot retry check failed —`, err);
+    recordRitualFailure(ritual.id, err, "execute");
+  }
 }
 
 function armDelayedRetry(ritual: RitualDefinition, date: string): void {
@@ -310,9 +345,13 @@ async function executeRitual(
       );
       return;
     }
-    if (!everyAttemptFailed(ritual, retryOfDate)) {
+    const rows = attemptsOn(ritual, retryOfDate);
+    if (
+      wasRetried(rows) ||
+      !(rows.length > 0 && rows.every((r) => FAILED_STATUSES.has(r.status)))
+    ) {
       console.log(
-        `[rituals] ${ritual.id}: delayed-retry check — no retry needed (${retryOfDate})`,
+        `[rituals] ${ritual.id}: delayed-retry check — ${wasRetried(rows) ? "already re-run" : "no retry needed"} (${retryOfDate})`,
       );
       return;
     }
@@ -429,6 +468,7 @@ export function startRitualScheduler(): void {
 
     scheduledJobs.push(job);
     console.log(`[rituals] ${ritual.id}: scheduled (${ritual.cron}, tz=${tz})`);
+    armRetryCheckAtBoot(ritual);
   }
 
   // Mechanical backups + autonomous improvement + safeguards + canary + consolidation

@@ -278,6 +278,8 @@ describe("idempotency", () => {
 
 describe("delayed same-day retry of a failed ritual", () => {
   const DELAY = 20 * 60_000;
+  const PLAIN = '{"tools":["a"],"ritualId":"x"}'; // every real ritual row
+  const RETRIED = '{"tags":["ritual-retry"],"ritualId":"x"}';
   const fire = async (statuses: string[], at = "2026-09-19T18:00:00Z") => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(at));
@@ -356,6 +358,86 @@ describe("delayed same-day retry of a failed ritual", () => {
     stopRitualScheduler();
     await vi.advanceTimersByTimeAsync(DELAY);
     expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("never re-runs a day that already carries a ritual-retry task", async () => {
+    await fire(["failed"]);
+    mockAll.mockReturnValue([
+      { status: "failed", metadata: PLAIN },
+      { status: "failed", metadata: RETRIED },
+    ]);
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+  });
+
+  // A restart drops the timers: boot re-arms the check from the task rows.
+  const boot = (rows: Array<{ status: string; metadata?: string }>) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-19T18:00:00Z"));
+    mockAll.mockReturnValueOnce(rows); // first ritual only; the rest see []
+    startRitualScheduler();
+  };
+
+  it.each([
+    ["every attempt failed", [{ status: "failed", metadata: PLAIN }]],
+    [
+      "a reaction retry was still in flight at boot",
+      [{ status: "failed" }, { status: "pending" }],
+    ],
+  ])("boot re-arms the check when %s", async (_label, rows) => {
+    boot(rows);
+    mockAll.mockReturnValue([
+      { status: "failed", metadata: PLAIN },
+      { status: "failed", metadata: PLAIN },
+    ]);
+    await vi.advanceTimersByTimeAsync(DELAY - 1);
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    expect(mockSubmitTask.mock.calls[0][0].tags).toContain("ritual-retry");
+    // The once-mock lands on the first enabled ritual; a config reorder fails here.
+    expect(mockSubmitTask.mock.calls[0][0].ritualId).toBe(
+      "signal-intelligence",
+    );
+  });
+
+  it("boot never re-arms market-morning-scan (a late 'pre-mercado' scan is wrong-by-time)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-18T18:00:00Z")); // a Friday, NYSE open
+    mockAll.mockImplementation((title: string) =>
+      title.startsWith("Market morning scan") ? [{ status: "failed" }] : [],
+    );
+    startRitualScheduler();
+    await vi.advanceTimersByTimeAsync(DELAY);
+    mockAll.mockReset();
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an attempt completed", [{ status: "failed" }, { status: "completed" }]],
+    ["the day was already re-run", [{ status: "failed", metadata: RETRIED }]],
+    ["nothing failed", [{ status: "running" }]],
+    ["the ritual has not run today", []],
+  ])("boot does not re-arm when %s", async (_label, rows) => {
+    boot(rows);
+    mockAll.mockReturnValue([{ status: "failed" }]);
+    await vi.advanceTimersByTimeAsync(DELAY);
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+  });
+
+  it("a DB error in the boot check is recorded and does not stop scheduling", () => {
+    mockAll.mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    startRitualScheduler();
+    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        phase: "execute",
+        error: expect.stringContaining("SQLITE_BUSY"),
+      }),
+    );
   });
 });
 

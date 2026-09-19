@@ -178,6 +178,18 @@ describe("submitTask", () => {
     expect(parsed.tools).toEqual(["evolution_get_data"]);
   });
 
+  it("persists tags as the text the ritual scheduler's once-per-day probe reads", async () => {
+    // src/rituals/scheduler.ts `wasRetried` does metadata.includes('"ritual-retry"').
+    await submitTask({
+      title: "PM daily rebalance — 2026-09-19",
+      description: "Ritual re-run",
+      agentType: "fast",
+      ritualId: "pm-daily-rebalance",
+      tags: ["ritual-retry"],
+    });
+    expect(mockRun.mock.calls[0][0].metadata).toContain('"ritual-retry"');
+  });
+
   it("leaves metadata null when none of tags/tools/ritualId are set", async () => {
     await submitTask({
       title: "Bare submission",
