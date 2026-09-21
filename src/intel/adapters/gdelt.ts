@@ -40,7 +40,9 @@ export const gdeltAdapter: CollectorAdapter = {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        console.warn(`[gdelt] collect failed: HTTP ${res.status}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+        console.warn(
+          `[gdelt] collect failed: HTTP ${res.status}${body ? ` — ${body.slice(0, 200)}` : ""}`,
+        );
         return [];
       }
 
@@ -85,7 +87,10 @@ export const gdeltAdapter: CollectorAdapter = {
 
       return signals;
     } catch (err) {
-      console.warn("[gdelt] collect failed:", err instanceof Error ? err.message : err);
+      console.warn(
+        "[gdelt] collect failed:",
+        err instanceof Error ? err.message : err,
+      );
       return [];
     } finally {
       clearTimeout(timeout);

@@ -239,6 +239,41 @@ describe("gdelt adapter", () => {
     expect(article).toBeDefined();
     expect(article!.valueText).toContain("Conflict");
   });
+
+  // GDELT answers an unparenthesized OR query with HTTP 200 and a plain-text
+  // error, which left the source at 0 signals from 2026-08-18 to 2026-09-21.
+  it("parenthesizes the OR'd query terms", async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    await gdeltAdapter.collect();
+    const url = decodeURIComponent(String(mockFetch.mock.calls[0][0]));
+    expect(url).toContain("query=(conflict OR crisis OR sanctions)&");
+  });
+
+  it("logs a 200 whose body is not JSON instead of swallowing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => JSON.parse("Queries containing OR'd terms must be…"),
+    });
+    expect(await gdeltAdapter.collect()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[gdelt] collect failed:",
+      expect.stringContaining("JSON"),
+    );
+  });
+
+  it("logs the status and body of a non-2xx response", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => "Please limit requests to one every 5 seconds",
+    });
+    expect(await gdeltAdapter.collect()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[gdelt] collect failed: HTTP 429 — Please limit requests to one every 5 seconds",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
