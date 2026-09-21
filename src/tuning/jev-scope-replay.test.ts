@@ -347,6 +347,30 @@ describe("judge", () => {
 });
 
 describe("looksSensitive", () => {
+  it("drops a login block whatever the secret's label is spelled like", () => {
+    // Corpus replay 2026-09-21: "Pswd:" got past the keyword list and was sent.
+    const secret = "Xy" + "7" + "kQ9" + "zz";
+    expect(looksSensitive(`Login: alguien\n\nPswd:  ${secret}`)).toBe(true);
+    expect(
+      looksSensitive(`entra a mi liga\n\nLogin: alguien\n\nPswd: ${secret}`),
+    ).toBe(true);
+    expect(looksSensitive(`usuario = pedro`)).toBe(true);
+    expect(looksSensitive(`psw ${secret}`)).toBe(true);
+  });
+
+  it("drops any label: value line whose value is one opaque token", () => {
+    const secret = "Xy" + "7" + "kQ9" + "zz";
+    expect(looksSensitive(`PIN del portal: ${secret}`)).toBe(true);
+    expect(looksSensitive(`nota\nLlave=${secret}\nfin`)).toBe(true);
+    // Not opaque: prose, a URL, a path, a date, a plain number.
+    expect(looksSensitive("Tema: cierre del trimestre")).toBe(false);
+    expect(looksSensitive("Fuente: https://example.com/a1b2c3")).toBe(false);
+    expect(looksSensitive("Archivo: /root/claude/x1/notes.md")).toBe(false);
+    expect(looksSensitive("Fecha: 2026-09-21")).toBe(false);
+    expect(looksSensitive("leagueId: 123456789")).toBe(false);
+    expect(looksSensitive("Proyecto: uncharted")).toBe(false);
+  });
+
   it.each([
     "usa este token: abcd1234efgh",
     "mi clave es Verano2026",

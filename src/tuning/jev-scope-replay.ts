@@ -171,7 +171,15 @@ export function looksSensitive(text: string): boolean {
     ) ||
     // "palabras clave" is SEO talk; "la clave es …" / "clave Verano2026" is a secret.
     /(?<!palabras?\s)\bclave\s*(de acceso\s*)?(es\b|[:=]|\S{6,})/i.test(text) ||
-    /\b(pass|pwd)\b|\b(la|mi|su|tu) contra\b/i.test(text) ||
+    /\b(pass|pwd|pswd?|passw\w*)\b|\b(la|mi|su|tu) contra\b/i.test(text) ||
+    // A login block, however the secret next to it is spelled ("Pswd:", "PIN:").
+    /\b(log-?in|usuario|user(name)?|usr|acceso)\s*[:=]/i.test(text) ||
+    // Structural: a "label: value" line whose value is one opaque token —
+    // letters plus digits or symbols, no spaces, not a URL or a path. Keyword
+    // lists miss spellings (twice so far); this does not depend on the label.
+    /^[ \t]*[\p{L} _-]{2,20}[:=][ \t]*(?!https?:\/\/|\/)(?=\S*\p{L})(?=\S*[\d!@#$%^&*])\S{6,}[ \t]*$/mu.test(
+      text,
+    ) ||
     /(\b(AKIA|ASIA)[A-Z0-9]{12,}|xox[bap]-|gh[pousr]_|github_pat_|\bsk-|-----BEGIN|:\/\/[^\s/:@]+:[^\s/@]+@)/.test(
       text,
     ) ||
