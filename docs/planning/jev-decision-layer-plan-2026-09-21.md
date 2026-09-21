@@ -1,6 +1,6 @@
 # Jev decision layer — plan (2026-09-21, rev 2)
 
-**Status:** DRAFT rev 2 — nothing built. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
+**Status:** DRAFT rev 2.1 — nothing built. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
 **Goal:** let Jarvis use TypeSafe's Jev for small typed decisions **next to** the Claude models, without touching how Claude generates, plans or calls tools.
 
 ## 1. What Jev is
@@ -112,6 +112,23 @@ One consumer goes live behind its flag, with a 14-day watch on the metric it fee
 1. Second vendor for closed decisions under the 09-15 Claude-only ruling — allowed or not? (Hermes upstream made the same split: judgment provider yes, chat backend never.)
 2. User message text leaving the box to TypeSafe (no zero-retention on the self-serve tier; DPA to be read first).
 3. API key for Phase B, added to `.env` by the operator.
+
+## 8. Paper review — "Jev Engineering for Coding Agents" (unofficial synthesis of TypeSafe founder notes, Sept 2026)
+
+Read 2026-09-21. Evidence grade: **low** — a third-party compilation of unpublished notes; its only numbers are list-price arithmetic, an "illustrative" token-share table and one Microsoft figure (reading + searching = 46.5 % of main-agent tokens). No Jev harness is measured anywhere in it. Idea grade: useful, mostly for things that need no Jev.
+
+**What it changes here**
+
+1. **Jev `state` sensitivity rule (new, binding on §4).** The paper's §IX routes work by the sensitivity of the files it touches and keeps secrets/infra on first-party frontier models only. Applied to Jev itself — a weeks-old vendor with no self-serve zero-retention — `state` may carry the user's message text and our own labels, and never file contents, command output, env values or KB bodies. This also removes the paper's permission gate and chunk-scoring ideas for us, since both need exactly that content.
+2. **The prelude is a free latency window.** Rev 2 found the classifier is not the slower branch; the converse is that any Jev call running inside the same `Promise.all` and finishing before `expandQuery` costs the turn nothing. Phase A's timings size that window. New Phase C candidate, ahead of the others: **KB conditional-row relevance** — today `conditionMatches` (`src/messaging/kb-injection.ts`) is keyword-gated, the class behind the 09-19 "directive written is not injected" incident; one `noul` per conditional row ("does this directive apply to this message?", row *conditions* only — not bodies — in `state`), shadowed against the keyword result. This is the paper's §VIII "conditional instructions" in the one place Jarvis already has them.
+3. **Confirms two exclusions.** Its own routing arithmetic (pure Opus 4.15 vs Opus→Sonnet→Opus 6.19, checked) says tier routing loses unless the helper gets a small purpose-built context — which Prometheus's economy executor already does; a Jev tier router adds nothing. And its headline "meta-attention" (score every context chunk per query, rebuild the cache) requires owning the inner loop; the paper says so itself ("cannot be delivered as a plugin"). Jarvis's inner loop, transcript, cache and compaction belong to the Claude Agent SDK. We own the per-turn prelude only.
+
+**For Jarvis's code tasks — none of it needs Jev**
+
+- Our own mix, coding-scope turns since 08-07 (646 turns, 4,839 tool calls): `shell_exec` 35 %, `ToolSearch` 11 %, `file_edit` 7 %, `file_read` 7 %, `grep` 1.5 %. Reads and searches run through the shell, so command output — the paper's "balloons on failure" bucket — is our largest lever, and tiered tool disclosure already exists and already costs one call in nine.
+- **Per-directory footguns files, loaded by condition.** Only a `Stop` hook is wired in `claude-sdk.ts` today. A `PreToolUse` hook on `file_edit`/`file_write` that injects `<dir>/GOTCHAS.md` by path is deterministic, survives SDK compaction, and targets the defects seen in PR #36 (a log line added to a swallowed error instead of feeding the caller's failure path; `git stash` in the worktree). Candidate for the queue, separate from Jev.
+- Structural search / output compressors (ast-grep, rtk, headroom, fff): new dependencies — discuss after a measurement of shell-output tokens per coding task, not before.
+- Not adopted: intent-to-tool routing with harness-built arguments (Jev cannot generate arguments), allow/ask/deny by Jev (no measurement; vendor's own limits page says adversarial content moves the answer), lock-based mass parallelism.
 
 ## Sources
 
