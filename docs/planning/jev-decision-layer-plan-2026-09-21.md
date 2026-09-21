@@ -137,6 +137,24 @@ Harness: `scripts/validate-jev-scope-chain.ts` + `src/tuning/jev-scope-chain.ts`
 
 **Data leaving the box.** Wider than the first replay and than §8 allows for live use: besides user message text, `recent_context` carries up to 150 chars of the previous thread turn (usually Jarvis's reply), and every request carries the classifier RULES/examples/descriptions, which name internal projects and hosts. Approved for this one offline run by the operator's choice of the context retest; it does NOT settle ruling 2 for live traffic. The results file (0600, git-ignored) holds the sent text and the answers only — thread history is dropped and the text of withheld turns is nulled. Cost ≈ $0.23 (946 requests × ≈ 5.8k tokens), not the ~$0.10 quoted in (b) — the rules/examples block and the longer window doubled it.
 
+#### Phase B retest — RESULT 2026-09-21 20:37 UTC: FAIL (harness `27f2af5`, registered and pushed before the run)
+
+946/946 answered · p50 187 ms · p95 254 ms · max 532 ms · billed 5,518,402 input tokens ≈ $0.232. Six of seven checks pass; the one that fails is the one that matters:
+
+| Check | Result |
+| --- | --- |
+| run completed, answer rate ≥ 90 %, p95 ≤ 800 ms | ok (100 %, 254 ms) |
+| threshold = largest grid value with first-half coverage ≥ 95 % | **0.70** — 97.4 % (186/191) |
+| ≥ 80 scored second-half turns | ok (219) |
+| **second-half coverage ≥ 95 %** | **FAIL — 89.5 % (196/219)** |
+| second-half mean groups ≤ live through the same chain + 1 | ok — 3.17 vs 4.05 |
+
+**Reading, without rescue.** Equal inputs moved Jev a long way: 62.6 % message-alone → 89.5 % on held-out turns, 12.8 points over the no-classifier control (76.7 %) and at a NARROWER scope than live (3.17 vs 4.05 groups). It still leaves a called tool out of scope on 1 turn in 10, against a live path that — by construction of this test — leaves none. The confound of the first replay is gone; the FAIL stands on equal inputs.
+
+Two things the tables show that do NOT count, stated so nobody rediscovers them as a rescue: (1) the first half passed at EVERY threshold, so the registered "largest passing" rule picked the narrowest scope (0.70); on the second half only 0.30 (and below) would have cleared the bar — 209/219 = 95.4 % at 4.62 groups, the minimum passing count; 0.35 prints as 95.0 % but is 208/219 = 94.98 %, under it. A one-turn margin at a threshold chosen after seeing the answers is exactly what the registration forbids. (2) Coverage fell 7.9 points from the first half to the second at the same threshold (97.4 % → 89.5 %): a threshold tuned on one month does not hold on the next, which is its own argument against shipping a fixed one. Informational rows: without omitted-context turns 89.4 % (178/199) — the privacy redaction did not cause the miss; on the 27 turns live's own first run could not cover, Jev covers 15 at 0.70; English/other 74.0 % (37/50); restart sensitivity no effect (96.9 % both ways on the 09-16→ window, 65 turns).
+
+**Consequence per this plan.** A Phase B FAIL ends the Jev *scope classifier* work: no Phase C consumer is built on it. The vendor itself measured well twice (1,346 requests, 100 % answered, p95 < 300 ms, $0.33 total), so the ruling that Jev MAY be a second vendor stands for a future closed decision with a cheaper failure mode than dropping a tool from scope; none is proposed here. Delete `data/jev-scope-replay-*.json` and `data/jev-scope-chain-*.json` (0600, git-ignored, hold message text) once the operator closes this.
+
 ### Phase C — client + first async consumer (shadow)
 
 Build `src/inference/jev.ts` with mutation-verified tests (happy path, non-2xx, timeout, malformed body, circuit, no-key = no fetch). First consumer is chosen by Phase A/B evidence, from decisions that today are **regex because a model call was too dear, and that nobody waits on**:
