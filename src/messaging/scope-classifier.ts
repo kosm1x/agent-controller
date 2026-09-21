@@ -173,6 +173,26 @@ export async function classifyScopeGroups(
   recentContext?: string,
 ): Promise<Set<string> | null> {
   try {
+    // Jev first when enabled (operator ruling 2026-09-21); any non-answer —
+    // error, timeout, withheld text — falls through to Sonnet below. Its own
+    // try: a failure here must reach Sonnet, not the outer catch's regex.
+    try {
+      const jev = await import("./scope-classifier-jev.js");
+      if (jev.jevScopeEnabled()) {
+        const groups = await jev.classifyScopeGroupsWithJev(
+          message,
+          recentContext,
+          CLASSIFIER_SYSTEM_PROMPT,
+          VALID_GROUPS,
+        );
+        if (groups) return withDeterministicGroups(message, groups);
+      }
+    } catch (err) {
+      console.warn(
+        `[scope-classifier] jev path failed → sonnet: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     const { infer } = await import("../inference/adapter.js");
     const { withTimeout } = await import("../lib/with-timeout.js");
 

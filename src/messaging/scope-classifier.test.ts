@@ -154,6 +154,7 @@ describe("SCOPE_CLASSIFIER_TIMEOUT_MS (2026-09-05: budget vs the claude-sdk floo
 
   it("wiring: an infer() slower than the budget yields null (regex fallback) and logs the timeout", async () => {
     vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "20");
+    vi.stubEnv("TYPESAFE_API_KEY", ""); // these pin the Sonnet path; never reach the vendor
     vi.resetModules();
     vi.doMock("../inference/adapter.js", () => ({
       infer: () => new Promise(() => {}), // never resolves — models a slow SDK boot
@@ -168,6 +169,7 @@ describe("SCOPE_CLASSIFIER_TIMEOUT_MS (2026-09-05: budget vs the claude-sdk floo
 
   it("wiring: an infer() inside the budget returns the parsed groups", async () => {
     vi.stubEnv("SCOPE_CLASSIFIER_TIMEOUT_MS", "500");
+    vi.stubEnv("TYPESAFE_API_KEY", ""); // these pin the Sonnet path; never reach the vendor
     vi.resetModules();
     vi.doMock("../inference/adapter.js", () => ({
       infer: async () => ({ content: '["coding"]' }),
