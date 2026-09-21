@@ -155,6 +155,10 @@ Two things the tables show that do NOT count, stated so nobody rediscovers them 
 
 **Consequence per this plan.** A Phase B FAIL ends the Jev *scope classifier* work: no Phase C consumer is built on it. The vendor itself measured well twice (1,346 requests, 100 % answered, p95 < 300 ms, $0.33 total), so the ruling that Jev MAY be a second vendor stands for a future closed decision with a cheaper failure mode than dropping a tool from scope; none is proposed here. Delete `data/jev-scope-replay-*.json` and `data/jev-scope-chain-*.json` (0600, git-ignored, hold message text) once the operator closes this.
 
+#### Operator ruling 2026-09-21 (after the retest): ENABLE at 89.5 % — shipped `3c33771`
+
+"Enable JEV in the Jarvis' classifier. 89.5% is enough for me." This overrides the consequence written above (a FAIL ends the scope-classifier work); the FAIL against the registered 95 % bar stands as measured. Shipped as: Jev first at the registered 0.70 threshold with the retest's exact request, Sonnet as the fallback on every non-answer, regex last; `SCOPE_CLASSIFIER_PROVIDER=sonnet` is the kill switch. With this the operator also rules on §8 for this consumer: live message text + ≤ 150 chars of the previous turn + the classifier prompt leave the box on every turn, minus credential-shaped text, bare opaque tokens and e-mail addresses (those turns stay on Sonnet). What to expect live: ≈ 1 tool-using Spanish turn in 10 starts without a needed tool (the scope-miss re-run is the net), English turns worse (74 %, n=50), classifier latency ≈ 0.25 s instead of ≈ 4 s. Open after ship: a provider column on `scope_telemetry` so the live rate is measurable without the journal; Jev spend (≈ $0.00025/turn) is in no cost ledger while `aux:scope-classifier` spend drops — that drop is not a saving of the same size.
+
 ### Phase C — client + first async consumer (shadow)
 
 Build `src/inference/jev.ts` with mutation-verified tests (happy path, non-2xx, timeout, malformed body, circuit, no-key = no fetch). First consumer is chosen by Phase A/B evidence, from decisions that today are **regex because a model call was too dear, and that nobody waits on**:
