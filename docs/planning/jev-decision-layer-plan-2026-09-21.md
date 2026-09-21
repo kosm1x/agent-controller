@@ -1,6 +1,6 @@
 # Jev decision layer — plan (2026-09-21, rev 2)
 
-**Status:** DRAFT rev 2.2 — Phase B harness built (`1fd0f1a`), audited twice and dry-run; the operator's key answers (09-21 one-question probe: HTTP 200 in 0.32 s, 313 input tokens billed); the 400-message replay has NOT run; nothing in the live path. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
+**Status:** DRAFT rev 2.2 — Phase B harness built (`1fd0f1a`), audited twice and dry-run; the operator's key answers (09-21 one-question probe: HTTP 200 in 0.32 s, 313 input tokens billed); the 400-message replay RAN 09-21 19:09 UTC: **FAIL** (62.6 % coverage at live-sized scope vs a 95 % bar; misses are almost all the `coding` group, and the harness withheld conversation state the live path has — see "Phase B result"); nothing in the live path. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
 **Goal:** let Jarvis use TypeSafe's Jev for small typed decisions **next to** the Claude models, without touching how Claude generates, plans or calls tools.
 
 ## 1. What Jev is
@@ -82,6 +82,29 @@ Worth running even if Phase A rules out the latency case, because it prices Jev'
 - Report split es / en: coverage, mean groups and tools per threshold (live tool count printed beside it; tool-count bloat is reported, not gated), latency p50/p95/max from this host measured to the parsed answer, errors/429s, the rank question's hit rate, and the input tokens the vendor actually billed. The $0.09 is a chars/4 floor: the 09-21 probe billed 313 input tokens for ~50 tokens of text, so there is a fixed overhead of unknown shape (per request ≈ +$0.004; per question ≈ +$0.12). A fixed-vs-broke count against the live groups is NOT reported — live scores 100 % by construction, so it could only ever show "broke".
 - **PASS** (Spanish turns, held-out half): ≥ 90 % of sent requests answered · p95 over **every** sent request ≤ 800 ms (a timeout is a slow answer, not a missing one) · ≥ 80 scored held-out rows · coverage ≥ 95 % · mean groups after the scoper's injections ≤ live + 1 (live mean is 3.78, so this is a loose bar) · the run did not stop early (a 401 or a < 50 % answer rate after 40 requests stops it, and a stopped run never passes). A FAIL ends the Jev work; record the numbers. `--run` writes the replayed message text and raw vendor bodies to `data/jev-scope-replay-*.json` (git-ignored, 0600) — delete it once the numbers are recorded.
 
+#### Phase B result — 2026-09-21 19:09 UTC: **FAIL** (pre-registered rule), with a confound in the harness
+
+Operator ruled the same day: Jev MAY be a second vendor for closed decisions (ruling 1), and ordered the replay (ruling 2). 400 sent · 400 answered · 0 errors · p50 183 ms · p95 298 ms · max 647 ms · billed 2,378,720 input tokens = **$0.100** (estimate $0.094; the probe's overhead is per request, not per question).
+
+| Spanish, 243 scored turns | coverage | mean groups | mean tools |
+| --- | --- | --- | --- |
+| live (Sonnet + recent context + sticky scope) | 100 % by construction | 3.78 | 80 |
+| Jev T=0.20 | 77.0 % | 8.92 | 107 |
+| Jev T=0.30 | 62.6 % | 4.09 | 76 |
+| Jev T=0.50 | 47.3 % | 1.83 | 58 |
+| production regex detector, message alone (control) | 37.4 % | — | 46 |
+| `coding` alone, no classifier (control) | 61.3 % | 1 | 56 |
+| Jev T=0.30 + `coding` always on (post-hoc) | 92.6 % | — | 89 |
+| Jev T=0.20 + `coding` always on (post-hoc) | 95.1 % | — | 116 |
+
+No threshold reaches 95 % on the tune half, so the verdict is FAIL and it stands as recorded. English rows (n=28 scored) are worse: 57 % at T=0.20. The rank question alone hits 52 %.
+
+**What the FAIL does and does not show.** The misses are one group: `coding` was needed on 183 of 243 scored turns and Jev gave it ≥ 0.30 on 92 (median 0.31); `google` 47/65, every other group near-complete. Live carries `coding` on 266 of 349 Spanish rows — far more than the message text supports (the regex detector finds a coding signal in 61 of those) — because the live scope is NOT a function of the message alone: the classifier also reads the last two conversation turns (`recentContext`, `router.ts`), and the router unions in the previous turn's groups within the sticky TTL (`previousScopeGroups`). The harness sent Jev the message alone and then scored it against tools that were callable only because of that conversation state. The ceiling check could not see this: it replays the live groups, which already contain the inherited ones. CLASS: a ceiling built from the incumbent's outputs inherits the incumbent's inputs — check that the candidate is given the same inputs, not only that the measure is reachable.
+
+So: on the message alone Jev beats the regex fallback by 25 points and is nowhere near the live path; how it compares with Sonnet on EQUAL inputs is unmeasured. The post-hoc rows are exploratory (chosen after seeing the data, not held out) and cannot turn the FAIL into a PASS.
+
+**Decision for the operator.** (a) Stop here — the plan said a FAIL ends the Jev scope work, and rev 2 already showed the classifier is not the turn's critical path, so the upside was cost, not latency. (b) One fair retest (~$0.10): `state` = message + the same two-turn `recentContext`, sticky union simulated from thread-ordered telemetry, same PASS rule, registered before the run. Needs a thread key joined onto `scope_telemetry` (it has `task_id`, no thread). The raw answers are kept in `data/jev-scope-replay-2026-09-21T19-09-03-213Z.json` (0600, git-ignored, holds message text) so message-alone re-analysis needs no new spend — delete it once (a) or (b) is chosen.
+
 ### Phase C — client + first async consumer (shadow)
 
 Build `src/inference/jev.ts` with mutation-verified tests (happy path, non-2xx, timeout, malformed body, circuit, no-key = no fetch). First consumer is chosen by Phase A/B evidence, from decisions that today are **regex because a model call was too dear, and that nobody waits on**:
@@ -112,8 +135,8 @@ One consumer goes live behind its flag, with a 14-day watch on the metric it fee
 
 ## 7. Open rulings (operator) — block Phase B onward, not Phase A
 
-1. Second vendor for closed decisions under the 09-15 Claude-only ruling — allowed or not? (Hermes upstream made the same split: judgment provider yes, chat backend never.)
-2. User message text leaving the box to TypeSafe (no zero-retention on the self-serve tier; DPA to be read first).
+1. ~~Second vendor for closed decisions under the 09-15 Claude-only ruling~~ — RULED 09-21: allowed ("we can have Jev as a second vendor for Jarvis and not claude-only"). Original question: allowed or not? (Hermes upstream made the same split: judgment provider yes, chat backend never.)
+2. (Operator ordered the Phase B replay on 09-21 with the send described; a STANDING answer for live traffic is still open.) User message text leaving the box to TypeSafe (no zero-retention on the self-serve tier; DPA to be read first).
 3. ~~API key for Phase B~~ — DONE 09-21: operator added `TYPESAFE_API_KEY` to `.env`; a synthetic one-question probe returned HTTP 200. Rulings 1–2 stay open: running `--run` IS the decision on both.
 
 ## 8. Paper review — "Jev Engineering for Coding Agents" (unofficial synthesis of TypeSafe founder notes, Sept 2026)
