@@ -7,7 +7,7 @@ import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
 
 const API_URL =
-  "https://api.gdeltproject.org/api/v2/doc/doc?query=conflict%20OR%20crisis%20OR%20sanctions&mode=ArtList&format=json&maxrecords=50";
+  "https://api.gdeltproject.org/api/v2/doc/doc?query=(conflict%20OR%20crisis%20OR%20sanctions)&mode=ArtList&format=json&maxrecords=50";
 const TIMEOUT_MS = 15_000;
 
 interface GDELTArticle {
@@ -38,7 +38,11 @@ export const gdeltAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn(`[gdelt] collect failed: HTTP ${res.status}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+        return [];
+      }
 
       const data = (await res.json()) as GDELTResponse;
       const articles = data.articles ?? [];
@@ -80,7 +84,8 @@ export const gdeltAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
+    } catch (err) {
+      console.warn("[gdelt] collect failed:", err instanceof Error ? err.message : err);
       return [];
     } finally {
       clearTimeout(timeout);
