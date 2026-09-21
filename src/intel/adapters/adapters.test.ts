@@ -1,6 +1,6 @@
 /**
  * Adapter contract tests — verify each adapter produces valid Signal[] shapes
- * and handles errors gracefully.
+ * and reports every failure by throwing.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -39,22 +39,49 @@ function testAdapterContract(adapter: CollectorAdapter): void {
       expect(adapter.defaultInterval).toBeGreaterThanOrEqual(0);
     });
 
-    it("returns empty array on HTTP error", async () => {
-      mockFetch.mockResolvedValue({ ok: false, status: 500 });
-      const signals = await adapter.collect();
-      expect(signals).toEqual([]);
+    // A failure must reach the scheduler as a throw: `[]` is recorded as a
+    // successful poll, which hid a dead GDELT source for a month.
+    it("throws on HTTP error, with the status and the start of the body", async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "upstream exploded",
+      });
+      await expect(adapter.collect()).rejects.toThrow(
+        "HTTP 500 — upstream exploded",
+      );
     });
 
-    it("returns empty array on network error", async () => {
+    it("throws on network error", async () => {
       mockFetch.mockRejectedValue(new Error("network error"));
-      const signals = await adapter.collect();
-      expect(signals).toEqual([]);
+      await expect(adapter.collect()).rejects.toThrow("network error");
     });
 
-    it("returns empty array on timeout", async () => {
+    it("throws on timeout", async () => {
       mockFetch.mockRejectedValue(new DOMException("aborted", "AbortError"));
-      const signals = await adapter.collect();
-      expect(signals).toEqual([]);
+      await expect(adapter.collect()).rejects.toThrow("aborted");
+      expect(mockFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("keeps an upstream error page to one bounded line", async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () => `<html>\n<h1>Bad\tGateway</h1>\n${"x".repeat(500)}`,
+      });
+      const err: Error = await adapter.collect().catch((e) => e);
+      expect(err.message).toMatch(
+        /^HTTP 502 — <html> <h1>Bad Gateway<\/h1> x+$/,
+      );
+      expect(err.message.length).toBe("HTTP 502 — ".length + 200);
+    });
+
+    it("throws on a 200 whose body is not JSON", async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => JSON.parse("Queries containing OR'd terms must be…"),
+      });
+      await expect(adapter.collect()).rejects.toThrow(/JSON/);
     });
   });
 }
@@ -248,32 +275,6 @@ describe("gdelt adapter", () => {
     const url = decodeURIComponent(String(mockFetch.mock.calls[0][0]));
     expect(url).toContain("query=(conflict OR crisis OR sanctions)&");
   });
-
-  it("logs a 200 whose body is not JSON instead of swallowing it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => JSON.parse("Queries containing OR'd terms must be…"),
-    });
-    expect(await gdeltAdapter.collect()).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      "[gdelt] collect failed:",
-      expect.stringContaining("JSON"),
-    );
-  });
-
-  it("logs the status and body of a non-2xx response", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 429,
-      text: async () => "Please limit requests to one every 5 seconds",
-    });
-    expect(await gdeltAdapter.collect()).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      "[gdelt] collect failed: HTTP 429 — Please limit requests to one every 5 seconds",
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -383,6 +384,33 @@ describe("treasury adapter", () => {
 
 describe("google-news adapter", () => {
   beforeEach(() => mockFetch.mockReset());
+
+  // rss2json reports its own failures (rate limit, bad feed) inside a 200.
+  it("throws on a 200 whose payload reports an error", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "error", message: "rate limit exceeded" }),
+    });
+    await expect(googleNewsAdapter.collect()).rejects.toThrow(
+      'rss2json status "error" — rate limit exceeded',
+    );
+  });
+
+  it("throws on an ok payload without an items array, and accepts an empty one", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok" }),
+    });
+    await expect(googleNewsAdapter.collect()).rejects.toThrow(
+      "without an items array",
+    );
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", items: [] }),
+    });
+    await expect(googleNewsAdapter.collect()).resolves.toBeDefined();
+  });
 
   it("produces article signals from RSS feed", async () => {
     mockFetch.mockResolvedValue({

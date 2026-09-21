@@ -85,10 +85,10 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
     console.warn(
       `[intel] ${adapter.source} failed (${h.consecutiveFailures}x): ${msg}`,
     );
+  } finally {
+    health.set(adapter.source, h);
+    collecting.delete(adapter.source);
   }
-
-  health.set(adapter.source, h);
-  collecting.delete(adapter.source);
 }
 
 /**

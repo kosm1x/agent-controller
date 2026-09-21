@@ -11,18 +11,20 @@ vi.mock("./adapters/index.js", () => ({
       source: "test_source",
       domain: "test",
       defaultInterval: 60_000,
-      collect: vi.fn().mockResolvedValue([
-        {
-          source: "test_source",
-          domain: "test",
-          signalType: "numeric",
-          key: "test_metric",
-          valueNumeric: 42,
-        },
-      ]),
+      collect: () => mockCollect(),
     },
   ],
 }));
+const SIGNALS = [
+  {
+    source: "test_source",
+    domain: "test",
+    signalType: "numeric",
+    key: "test_metric",
+    valueNumeric: 42,
+  },
+];
+const mockCollect = vi.fn().mockResolvedValue(SIGNALS);
 
 // Mock signal store and delta engine
 const mockInsertSignals = vi.fn().mockReturnValue(1);
@@ -63,6 +65,9 @@ describe("intel scheduler", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     stopIntelCollectors();
+    mockCollect.mockResolvedValue(SIGNALS);
+    mockInsertSignals.mockReturnValue(1);
+    mockPruneOldSignals.mockReturnValue(0);
     mockProcessSignals.mockReturnValue([]);
     mockEvaluateDeltas.mockReturnValue([]);
     mockShouldSuppress.mockReturnValue(false);
@@ -108,6 +113,26 @@ describe("intel scheduler", () => {
     expect(healths).toHaveLength(1);
     expect(healths[0].source).toBe("test_source");
     expect(healths[0].lastAttempt).toBeTruthy();
+  });
+
+  // `intel_status` reads this record: a dead source must not look like a quiet one.
+  it("records a throwing collector as a failure, not as a successful empty poll", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockCollect.mockRejectedValue(new Error("HTTP 429 — slow down"));
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const [h] = getCollectorHealth();
+    expect(h.consecutiveFailures).toBe(1);
+    expect(h.lastSuccess).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      "[intel] test_source failed (1x): HTTP 429 — slow down",
+    );
+
+    mockCollect.mockResolvedValue([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getCollectorHealth()[0].consecutiveFailures).toBe(0);
+    expect(getCollectorHealth()[0].lastSuccess).toBeTruthy();
   });
 
   it("does not duplicate collectors on double start", () => {

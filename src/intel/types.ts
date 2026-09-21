@@ -57,6 +57,10 @@ export interface CollectorAdapter {
   readonly source: string;
   readonly domain: string;
   readonly defaultInterval: number; // ms between polls (0 = stream-based)
+  /**
+   * Throws on any failure (non-2xx, unparseable body, timeout): the scheduler
+   * counts and logs it. `[]` means the source answered and had nothing to report.
+   */
   collect(): Promise<Signal[]>;
 }
 

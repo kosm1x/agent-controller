@@ -5,6 +5,7 @@
 
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
+import { httpError } from "./http-error.js";
 
 const RSS_URL =
   "https://news.google.com/rss/search?q=breaking+OR+crisis+OR+emergency&hl=en-US&gl=US&ceid=US:en";
@@ -22,6 +23,7 @@ interface RssItem {
 
 interface RssResponse {
   status: string;
+  message?: string;
   items?: RssItem[];
 }
 
@@ -44,10 +46,17 @@ export const googleNewsAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as RssResponse;
-      if (data.status !== "ok" || !data.items) return [];
+      if (data.status !== "ok") {
+        throw new Error(
+          `rss2json status "${data.status}"${data.message ? ` — ${data.message}` : ""}`,
+        );
+      }
+      if (!Array.isArray(data.items)) {
+        throw new Error("rss2json answered ok without an items array");
+      }
 
       const signals: Signal[] = [];
 
@@ -70,8 +79,6 @@ export const googleNewsAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }

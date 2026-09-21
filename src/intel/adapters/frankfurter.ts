@@ -4,6 +4,7 @@
  */
 
 import type { CollectorAdapter, Signal } from "../types.js";
+import { httpError } from "./http-error.js";
 
 const API_URL =
   "https://api.frankfurter.dev/v1/latest?base=USD&symbols=MXN,EUR,GBP,JPY,CAD,BRL";
@@ -29,7 +30,7 @@ export const frankfurterAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as FrankfurterResponse;
       const signals: Signal[] = [];
@@ -47,8 +48,6 @@ export const frankfurterAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }

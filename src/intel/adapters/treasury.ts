@@ -4,6 +4,7 @@
  */
 
 import type { CollectorAdapter, Signal } from "../types.js";
+import { httpError } from "./http-error.js";
 
 const API_URL =
   "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/avg_interest_rates?sort=-record_date&page[size]=10&fields=record_date,avg_interest_rate_amt,security_desc";
@@ -33,7 +34,7 @@ export const treasuryAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as TreasuryResponse;
       const signals: Signal[] = [];
@@ -59,8 +60,6 @@ export const treasuryAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }

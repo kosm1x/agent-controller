@@ -5,6 +5,7 @@
 
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
+import { httpError } from "./http-error.js";
 
 const FEED_URL =
   "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson";
@@ -47,7 +48,7 @@ export const usgsAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as USGSResponse;
       const signals: Signal[] = [];
@@ -88,8 +89,6 @@ export const usgsAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }

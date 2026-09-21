@@ -4,6 +4,7 @@
  */
 
 import type { CollectorAdapter, Signal } from "../types.js";
+import { httpError } from "./http-error.js";
 
 const API_URL =
   "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
@@ -30,7 +31,7 @@ export const coingeckoAdapter: CollectorAdapter = {
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as CoinGeckoResponse;
       const signals: Signal[] = [];
@@ -47,8 +48,6 @@ export const coingeckoAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }

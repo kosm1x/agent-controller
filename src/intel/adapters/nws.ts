@@ -5,6 +5,7 @@
 
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
+import { httpError } from "./http-error.js";
 
 const FEED_URL = "https://api.weather.gov/alerts/active?status=actual";
 const TIMEOUT_MS = 10_000;
@@ -45,7 +46,7 @@ export const nwsAdapter: CollectorAdapter = {
           "User-Agent": "mission-control/1.0 (intel-depot)",
         },
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as NWSResponse;
       const signals: Signal[] = [];
@@ -86,8 +87,6 @@ export const nwsAdapter: CollectorAdapter = {
       }
 
       return signals;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeout);
     }
