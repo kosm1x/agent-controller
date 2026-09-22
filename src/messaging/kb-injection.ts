@@ -153,7 +153,7 @@ function projectReadmeSection(
  * match the scope (own 8000-char budget, a pointer line for each one that did
  * not fit), the project README, and the preview / Rumi guardrails.
  */
-const KB_CHAR_BUDGET = 8000;
+export const KB_CHAR_BUDGET = 8000;
 
 /** A conditional row, as far as packing needs it. */
 export interface ConditionalRow {

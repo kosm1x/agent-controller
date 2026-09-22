@@ -228,6 +228,11 @@ describe("shadow calls", () => {
     await settle();
     expect(sentBody().state.follow_up).toHaveLength(500);
     expect(sentBody().state.previous_message).toHaveLength(500);
+    expect(rows().map((r) => [r.item, r.noul])).toEqual([
+      ["_cut", null],
+      ["correction", 0.5],
+      ["restatement", 0.5],
+    ]);
   });
 
   it("kb: a row whose path names an Object member does not cost the turn its scores", async () => {

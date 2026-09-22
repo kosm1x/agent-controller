@@ -38,7 +38,11 @@ export function shadowArmed(consumer: ShadowConsumer): boolean {
 export interface ShadowRow {
   consumer: "scope" | ShadowConsumer;
   ref: string | null;
-  /** What was judged; `_withheld` / `_failed` mark a request with no answer. */
+  /**
+   * What was judged; `_withheld` / `_failed` mark a request with no answer,
+   * `_cut` that a state text exceeded `MESSAGE_CHARS` (Jev read less than the
+   * caller did) — recorded beside the answers, never alone.
+   */
   item: string;
   noul: number | null;
   latencyMs: number | null;
@@ -96,6 +100,8 @@ async function ask(
   const rows = items
     .filter((i) => !sendable.includes(i))
     .map((i) => row(i.item, null, null, i.incumbent));
+  if (Object.values(state).some((v) => v.length > MESSAGE_CHARS))
+    rows.push(row("_cut", null, null, null));
   if (sendable.length > 0) {
     const questions: Record<string, JevQuestion> = {};
     sendable.forEach((i, n) => {

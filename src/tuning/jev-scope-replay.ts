@@ -163,30 +163,44 @@ export function selectGroups(
 /**
  * Messages that may carry a credential never leave the box (plan §8). Biased
  * toward dropping: a lost row costs nothing, a sent secret cannot be recalled.
+ * One name per rule, so a replay can say WHICH rule withheld a turn without
+ * printing the turn (`scripts/validate-jev-withheld.ts`).
  */
-export function looksSensitive(text: string): boolean {
-  return (
-    /(api[_-]?key|token|password|passwd|secret|contrase[nñ]a|credencial|bearer)/i.test(
-      text,
-    ) ||
-    // "palabras clave" is SEO talk; "la clave es …" / "clave Verano2026" is a secret.
-    /(?<!palabras?\s)\bclave\s*(de acceso\s*)?(es\b|[:=]|\S{6,})/i.test(text) ||
-    /\b(pass|pwd|pswd?|passw\w*)\b|\b(la|mi|su|tu) contra\b/i.test(text) ||
-    // A login block, however the secret next to it is spelled ("Pswd:", "PIN:").
-    /\b(log-?in|usuario|user(name)?|usr|acceso)\s*[:=]/i.test(text) ||
-    // Structural: a "label: value" line whose value is one opaque token —
-    // letters plus digits or symbols, no spaces, not a URL or a path. Keyword
-    // lists miss spellings (twice so far); this does not depend on the label.
-    /^[ \t]*[\p{L} _-]{2,20}[:=][ \t]*(?!https?:\/\/|\/)(?=\S*\p{L})(?=\S*[\d!@#$%^&*])\S{6,}[ \t]*$/mu.test(
-      text,
-    ) ||
-    /(\b(AKIA|ASIA)[A-Z0-9]{12,}|xox[bap]-|gh[pousr]_|github_pat_|\bsk-|-----BEGIN|:\/\/[^\s/:@]+:[^\s/@]+@)/.test(
-      text,
-    ) ||
-    /[A-Za-z0-9+/_-]{32,}/.test(text) ||
-    // 13–19 digits, contiguous or in card-style groups of four.
-    /\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}\b/.test(text)
+const SENSITIVE_RULES: ReadonlyArray<readonly [name: string, re: RegExp]> = [
+  [
+    "keyword",
+    /(api[_-]?key|token|password|passwd|secret|contrase[nñ]a|credencial|bearer)/i,
+  ],
+  // "palabras clave" is SEO talk; "la clave es …" / "clave Verano2026" is a secret.
+  ["clave", /(?<!palabras?\s)\bclave\s*(de acceso\s*)?(es\b|[:=]|\S{6,})/i],
+  ["pass_contra", /\b(pass|pwd|pswd?|passw\w*)\b|\b(la|mi|su|tu) contra\b/i],
+  // A login block, however the secret next to it is spelled ("Pswd:", "PIN:").
+  ["login_label", /\b(log-?in|usuario|user(name)?|usr|acceso)\s*[:=]/i],
+  // Structural: a "label: value" line whose value is one opaque token —
+  // letters plus digits or symbols, no spaces, not a URL or a path. Keyword
+  // lists miss spellings (twice so far); this does not depend on the label.
+  [
+    "label_value",
+    /^[ \t]*[\p{L} _-]{2,20}[:=][ \t]*(?!https?:\/\/|\/)(?=\S*\p{L})(?=\S*[\d!@#$%^&*])\S{6,}[ \t]*$/mu,
+  ],
+  [
+    "known_prefix",
+    /(\b(AKIA|ASIA)[A-Z0-9]{12,}|xox[bap]-|gh[pousr]_|github_pat_|\bsk-|-----BEGIN|:\/\/[^\s/:@]+:[^\s/@]+@)/,
+  ],
+  ["long_run", /[A-Za-z0-9+/_-]{32,}/],
+  // 13–19 digits, contiguous or in card-style groups of four.
+  ["card_digits", /\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}\b/],
+];
+
+/** The names of every rule above that fires on `text`; empty = clean. */
+export function sensitiveReasons(text: string): string[] {
+  return SENSITIVE_RULES.filter(([, re]) => re.test(text)).map(
+    ([name]) => name,
   );
+}
+
+export function looksSensitive(text: string): boolean {
+  return sensitiveReasons(text).length > 0;
 }
 
 /** Crude on purpose: the split only has to separate es-MX chat from English. */

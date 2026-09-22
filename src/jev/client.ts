@@ -8,7 +8,7 @@
  */
 
 import {
-  looksSensitive,
+  sensitiveReasons,
   type JevQuestion,
 } from "../tuning/jev-scope-replay.js";
 
@@ -18,12 +18,22 @@ const MODEL = "jev-1.13.0";
 /** A line that is nothing but one opaque token: a pasted code or short key. */
 const BARE_TOKEN =
   /^[ \t]*(?!https?:\/\/|\/)(?=\S*\p{L})(?=\S*[\d!@#$%^&*])\S{6,}[ \t]*$/mu;
+const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+
+/**
+ * The names of every rule that keeps `text` in the box: credential-shaped
+ * text (`sensitiveReasons`), a bare token, a third party's e-mail address.
+ * Names only, so a replay can count them without printing the text.
+ */
+export const withholdReasons = (text: string): string[] => [
+  ...sensitiveReasons(text),
+  ...(BARE_TOKEN.test(text) ? ["bare_token"] : []),
+  ...(EMAIL.test(text) ? ["email"] : []),
+];
 
 /** Credential-shaped text, and third parties' e-mail addresses, stay here. */
 export const mustNotLeave = (text: string): boolean =>
-  looksSensitive(text) ||
-  BARE_TOKEN.test(text) ||
-  /[\w.+-]+@[\w-]+\.[\w.-]+/.test(text);
+  withholdReasons(text).length > 0;
 
 export const jevKey = (): string | undefined =>
   process.env.TYPESAFE_API_KEY || undefined;
