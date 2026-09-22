@@ -118,9 +118,13 @@ const READ_BLOCKED_PATHS = [
   "/root/.netrc",
   "/root/.gitconfig",
   "/root/.git-credentials",
+  "/root/.claude.json",
+  "/root/.docker/",
   // Linux system secrets
   "/etc/shadow",
   "/etc/gshadow",
+  "/etc/shadow-", // shadow-utils backups (audit 2026-09-22)
+  "/etc/gshadow-",
   "/etc/sudoers",
   "/etc/sudoers.d/",
   "/etc/ssh/",
@@ -132,7 +136,18 @@ const READ_BLOCKED_PATHS = [
   // Co-located infra secrets on this VPS
   "/opt/supabase/docker/.env",
   "/opt/supabase/volumes/api/kong.yml",
+  "/etc/opensandbox/",
 ];
+
+/**
+ * Process-state files that expose a process's secrets. The exact
+ * `/proc/self/environ` entry above missed every other spelling of the same
+ * file: realpath turns `self` into the pid, and `thread-self`, `<pid>` and
+ * `task/<tid>` all name it too (audit 2026-09-22) — file_read runs in-process,
+ * so any of them returned mission-control's whole env. Refuse by shape.
+ */
+const PROC_SECRET_RE =
+  /^\/proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/(?:environ|mem|cmdline|auxv)$/;
 
 /**
  * `.env` files are secrets by shape, not by path. The previous exact-path
@@ -278,9 +293,25 @@ export function validatePathSafety(
     } catch {
       // File doesn't exist yet or lstat failed; only resolve-check applies.
     }
+    // Callers read the RAW path. If trimming/unquoting changed it, a raw
+    // name like "lnk " can be a symlink the trimmed name never resolves
+    // (audit 2026-09-22 R3) — check the raw target too.
+    if (rawPath !== path) {
+      try {
+        candidates.push(realpathSync(resolve(rawPath)));
+      } catch {
+        // Raw spelling does not exist; the reader will fail on it too.
+      }
+    }
   }
 
   for (const probe of candidates) {
+    if (PROC_SECRET_RE.test(probe)) {
+      return {
+        safe: false,
+        reason: `'${probe}' is a read-blocked process-state file`,
+      };
+    }
     for (const blocked of READ_BLOCKED_PATHS) {
       // Exact-file blocklist: probe === blocked OR probe starts with blocked+"/"
       // (prefix semantics only for entries ending in "/"). Avoids the

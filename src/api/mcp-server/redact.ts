@@ -20,6 +20,13 @@
  * everything" blast radius.
  */
 
+// Loose 32+ char hex blobs (SHA/HMAC/long random). Named so
+// redactCredentials can skip it by identity, not by array position.
+const HEX_BLOB_RULE: [RegExp, string] = [
+  /\b[A-Fa-f0-9]{40,}\b/g,
+  "[REDACTED_HEX]",
+];
+
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   // Authorization headers (Bearer, Basic, Token)
   [
@@ -51,15 +58,32 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
     /"(password|passphrase|secret|api_?key|apikey|client_secret|access_token|refresh_token|id_token|bearer_token|private_key|token_hash)"\s*:\s*"[^"]+"/gi,
     '"$1":"[REDACTED]"',
   ],
-  // Loose 32+ char hex blobs (SHA/HMAC/long random)
-  [/\b[A-Fa-f0-9]{40,}\b/g, "[REDACTED_HEX]"],
+  HEX_BLOB_RULE,
 ];
+
+/** The hex-blob rule, which a credential-only pass leaves out. */
+const HEX_BLOB_PATTERN = HEX_BLOB_RULE[0];
 
 /** Apply redaction patterns to a string. Returns a new string. */
 export function redactSecrets(input: string | null | undefined): string {
   if (input == null) return "";
   let out = input;
   for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+/**
+ * Credential shapes only — every pattern above except the loose hex-blob rule.
+ * For output the agent must keep working with (shell stdout, where 40-char git
+ * SHAs are ordinary data), so the hex rule would break it.
+ */
+export function redactCredentials(input: string | null | undefined): string {
+  if (input == null) return "";
+  let out = input;
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    if (pattern === HEX_BLOB_PATTERN) continue;
     out = out.replace(pattern, replacement);
   }
   return out;

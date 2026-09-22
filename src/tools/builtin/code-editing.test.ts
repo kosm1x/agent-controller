@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from "fs";
+import {
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+} from "fs";
 import { fileEditTool } from "./code-editing.js";
 
 const TEST_DIR = "/tmp/mc-test-code-editing";
@@ -158,5 +164,27 @@ describe("file_edit — standing orders on disk refused", () => {
       }),
     );
     expect(String(r.error)).toMatch(/standing order/);
+  });
+});
+
+// audit 2026-09-22 R4: the "write" check does not follow symlinks, but an
+// edit reads the file first — a link to a read-blocked file must be refused.
+describe("file_edit — symlink to a read-blocked file", () => {
+  it("refuses before reading the target", async () => {
+    const dir = "/tmp/mc-test-code-editing-link";
+    mkdirSync(dir, { recursive: true });
+    try {
+      symlinkSync("/etc/shadow", `${dir}/ak`);
+      const r = JSON.parse(
+        await fileEditTool.execute({
+          path: `${dir}/ak`,
+          old_string: "root:",
+          new_string: "x",
+        }),
+      );
+      expect(String(r.error)).toMatch(/Edit blocked/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

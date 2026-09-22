@@ -658,6 +658,23 @@ describe("V8.4 ledger wiring: declare at submit → render at run → consumer a
     expect(runIdx === -1 || ledgerIdx < runIdx).toBe(true);
   });
 
+  it("runs.input stores title + description length, not a second copy of the description (audit 2026-09-22)", async () => {
+    mockRun.mockReturnValue({ changes: 1 });
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, output: "ok" }) as RunnerOutput,
+    });
+    const description = "x".repeat(5000);
+    await submitTask({ title: "dup-check", description });
+    const runInsert = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, unknown> | undefined)
+      .find((a) => a && typeof a.runId === "string" && "input" in a);
+    expect(runInsert).toBeDefined();
+    const stored = JSON.parse(runInsert!.input as string);
+    expect(stored).toEqual({ title: "dup-check", descriptionChars: 5000 });
+    expect((runInsert!.input as string).length).toBeLessThan(100);
+  });
+
   it("a task WITH a ledger sees the gates block in its description; ungated tasks are byte-for-byte unchanged", async () => {
     mockRun.mockReturnValue({ changes: 1 });
     mockAll.mockImplementation(() => [] as unknown[]);

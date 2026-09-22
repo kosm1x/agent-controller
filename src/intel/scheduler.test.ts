@@ -29,6 +29,20 @@ const mockCollect = vi.fn().mockResolvedValue(SIGNALS);
 // Mock signal store and delta engine
 const mockInsertSignals = vi.fn().mockReturnValue(1);
 const mockPruneOldSignals = vi.fn().mockReturnValue(0);
+const cronJobs: Array<{
+  id: string;
+  expr: string;
+  fn: () => void;
+  opts: unknown;
+}> = [];
+const mockCronStop = vi.fn();
+vi.mock("../lib/cron.js", () => ({
+  scheduleCron: (id: string, expr: string, fn: () => void, opts: unknown) => {
+    cronJobs.push({ id, expr, fn, opts });
+    return { stop: mockCronStop };
+  },
+}));
+
 vi.mock("./signal-store.js", () => ({
   insertSignals: (...args: unknown[]) => mockInsertSignals(...args),
   pruneOldSignals: (...args: unknown[]) => mockPruneOldSignals(...args),
@@ -86,11 +100,31 @@ describe("intel scheduler", () => {
       throw new Error("SQLITE_BUSY: database is locked");
     });
     startIntelCollectors();
-    expect(() => vi.advanceTimersByTime(24 * 60 * 60_000 + 1)).not.toThrow();
+    const prune = cronJobs.filter((j) => j.id === "intel-signal-prune").at(-1)!;
+    expect(() => prune.fn()).not.toThrow();
     expect(mockPruneOldSignals).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("Signal pruning failed"),
     );
+  });
+
+  it("pruner is a wall-clock daily cron, stopped on shutdown (a boot-relative 24 h interval rarely fired)", () => {
+    startIntelCollectors();
+    const prune = cronJobs.filter((j) => j.id === "intel-signal-prune").at(-1)!;
+    expect(prune.id).toBe("intel-signal-prune");
+    expect(prune.expr).toBe("15 4 * * *");
+    expect(prune.opts).toEqual({ timezone: "America/Mexico_City" });
+    // No setInterval-based pruner remains: a day of fake time prunes nothing.
+    vi.advanceTimersByTime(24 * 60 * 60_000 + 1);
+    expect(mockPruneOldSignals).not.toHaveBeenCalled();
+    mockCronStop.mockClear();
+    stopIntelCollectors();
+    expect(mockCronStop).toHaveBeenCalledTimes(1);
+    // A second start replaces the job instead of stacking a second pruner.
+    startIntelCollectors();
+    mockCronStop.mockClear();
+    startIntelCollectors();
+    expect(mockCronStop).toHaveBeenCalledTimes(1);
   });
 
   it("starts collectors and reports running", () => {

@@ -41,6 +41,9 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.pragma("cache_size = -64000"); // 64MB
   _db.pragma("busy_timeout = 1000"); // Short: surface contention fast, retry at app level
   _db.pragma("foreign_keys = ON");
+  // Cap the WAL file left behind after a checkpoint (it otherwise keeps its
+  // high-water size on disk).
+  _db.pragma("journal_size_limit = 67108864"); // 64MB
 
   // Apply schema
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -303,8 +306,9 @@ export function initDatabase(dbPath: string): Database.Database {
   // and silently desync this external-content FTS index. If VACUUM is ever
   // run, follow it with:
   //   INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')
-  // We don't VACUUM anywhere in this codebase today, but the constraint is
-  // here for whoever adds it later.
+  // Nothing in this codebase VACUUMs automatically (consolidation's VACUUM
+  // was removed in the 2026-09-22 audit); the manual `VACUUM INTO` hint in
+  // scripts/watchdog.sh carries this rebuild step.
   _db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS jarvis_files_fts USING fts5(
     title,
     content,

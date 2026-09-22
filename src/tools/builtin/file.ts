@@ -353,6 +353,14 @@ AFTER WRITING: Report the file path written.`,
     let content: string;
 
     if (contentFile) {
+      // Same read denylist as file_read: content_file copied /proc/self/environ
+      // or .env into a readable file (audit 2026-09-22).
+      const readSafety = validatePathSafety(contentFile, "read");
+      if (!readSafety.safe) {
+        return JSON.stringify({
+          error: `content_file blocked: ${readSafety.reason}`,
+        });
+      }
       try {
         content = readFileSync(contentFile, "utf-8");
       } catch {

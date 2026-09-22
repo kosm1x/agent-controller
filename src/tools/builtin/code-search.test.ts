@@ -89,6 +89,53 @@ describe("grep", () => {
 
     expect(result.total).toBeGreaterThanOrEqual(2);
   });
+
+  // audit 2026-09-22: grep read credential files the file_read denylist blocks.
+  it("refuses read-blocked paths", async () => {
+    for (const p of ["/root/.claude.json", "/proc/self/environ", "/root/.docker/config.json"]) {
+      const result = JSON.parse(await grepTool.execute({ pattern: "a", path: p, output_mode: "count" }));
+      expect(String(result.error), p).toMatch(/path blocked/);
+    }
+  });
+
+  it("drops records from denylisted files inside an allowed directory (R2)", async () => {
+    // /etc passes the path check; /etc/shadow inside it must not come back.
+    const ctl = JSON.parse(
+      await grepTool.execute({ pattern: "root", path: "/etc", include_glob: "passwd", output_mode: "files" }),
+    );
+    expect(ctl.matches).toContain("/etc/passwd");
+    // include_glob still narrows (GNU grep: --include must precede --exclude).
+    for (const f of String(ctl.matches).split("\n")) expect(f.split("/").at(-1)).toBe("passwd");
+    for (const mode of ["files", "content", "count"]) {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "root", path: "/etc", include_glob: "shadow", output_mode: mode }),
+      );
+      expect(JSON.stringify(r), mode).not.toContain("/etc/shadow");
+      expect(r.total, mode).toBe(0);
+    }
+  });
+
+  it("a newline inside a file name cannot re-attribute a record (R3)", async () => {
+    const odd = `${TEST_DIR}/sub/nl\nx.txt`;
+    writeFileSync(odd, "hello-nl\n");
+    const r = JSON.parse(await grepTool.execute({ pattern: "hello-nl", path: TEST_DIR, output_mode: "content" }));
+    expect(r.total).toBe(1);
+    expect(r.matches).toBe(`${odd}:1:hello-nl`);
+  });
+
+  it("content mode keeps file:line:text shape through the NUL parse", async () => {
+    const r = JSON.parse(await grepTool.execute({ pattern: "bar", path: TEST_DIR, output_mode: "content" }));
+    expect(r.matches).toBe(`${TEST_DIR}/a.ts:2:const bar = 2;`);
+  });
+
+  it("redacts credential shapes in matched lines", async () => {
+    writeFileSync(`${TEST_DIR}/cfg.ts`, "const k = \"" + "sk-" + "ant" + "A1b2C3d4E5f6G7h8J9k0" + "\";\n");
+    const result = JSON.parse(
+      await grepTool.execute({ pattern: "const k", path: TEST_DIR, output_mode: "content" }),
+    );
+    expect(result.matches).toContain("cfg.ts");
+    expect(result.matches).not.toContain("A1b2C3d4E5f6G7h8J9k0");
+  });
 });
 
 describe("glob", () => {

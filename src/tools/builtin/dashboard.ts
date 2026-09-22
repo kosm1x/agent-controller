@@ -62,12 +62,14 @@ const C = {{CONFIG}};
 
 // Render KPIs
 const kpiGrid = document.getElementById('kpis');
+// LLM-authored strings reach innerHTML — escape them (audit 2026-09-22).
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => '&#' + ch.charCodeAt(0) + ';');
 (C.kpis || []).forEach(k => {
-  const isPos = (k.delta || '').startsWith('+');
-  kpiGrid.innerHTML += '<div class="kpi"><div class="kpi-value">' + k.value +
-    '</div><div class="kpi-label">' + k.label +
+  const isPos = String(k.delta || '').startsWith('+');
+  kpiGrid.innerHTML += '<div class="kpi"><div class="kpi-value">' + esc(k.value) +
+    '</div><div class="kpi-label">' + esc(k.label) +
     '</div><div class="kpi-delta ' + (isPos ? 'positive' : 'negative') + '">' +
-    k.delta + '</div></div>';
+    esc(k.delta) + '</div></div>';
 });
 
 // Render charts
@@ -75,7 +77,7 @@ const chartsDiv = document.getElementById('charts');
 (C.charts || []).forEach((c, i) => {
   const id = 'chart-' + i;
   chartsDiv.innerHTML += '<div class="chart-container"><div class="chart-title">' +
-    c.title + '</div><div class="chart" id="' + id + '"></div></div>';
+    esc(c.title) + '</div><div class="chart" id="' + id + '"></div></div>';
   setTimeout(() => {
     const chart = echarts.init(document.getElementById(id), 'dark');
     chart.setOption(c.option || {});
@@ -85,6 +87,35 @@ const chartsDiv = document.getElementById('charts');
 </script>
 </body>
 </html>`;
+
+/**
+ * Assemble the dashboard page. Script-embedded JSON escapes `<` so a
+ * `</script>` inside data/config cannot close the block, and the function
+ * replacer keeps `$&`-style sequences literal (audit 2026-09-22).
+ */
+export function renderDashboardHtml(
+  title: string,
+  data: string,
+  config: unknown,
+): string {
+  const safeTitle = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const scriptJson = (v: unknown) =>
+    (JSON.stringify(v) ?? "null").replace(/</g, "\\u003c");
+  // Single pass: a title or data string containing "{{CONFIG}}" can't be
+  // re-substituted by a later replace.
+  const fills: Record<string, () => string> = {
+    TITLE: () => safeTitle,
+    DATA: () => scriptJson(data),
+    CONFIG: () => scriptJson(config),
+  };
+  return HTML_TEMPLATE.replace(/\{\{(TITLE|DATA|CONFIG)\}\}/g, (_, k: string) =>
+    fills[k]!(),
+  );
+}
 
 export const dashboardGenerateTool: Tool = {
   name: "dashboard_generate",
@@ -172,14 +203,7 @@ Serve via: GET /dashboard/{id}`,
 
       // Assemble HTML (C2 audit fix: escape title to prevent XSS)
       mkdirSync(DASHBOARD_DIR, { recursive: true });
-      const safeTitle = title
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-      const html = HTML_TEMPLATE.replace(/\{\{TITLE\}\}/g, safeTitle)
-        .replace("{{DATA}}", JSON.stringify(data))
-        .replace("{{CONFIG}}", JSON.stringify(config));
+      const html = renderDashboardHtml(title, data, config);
 
       const outputPath = join(DASHBOARD_DIR, `${dashId}.html`);
       writeFileSync(outputPath, html, "utf-8");

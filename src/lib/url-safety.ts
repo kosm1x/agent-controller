@@ -203,8 +203,9 @@ export async function validateOutboundUrlResolved(
     return "Invalid URL";
   }
 
-  // IP literals were already fully checked by the sync path.
-  if (isIpLiteral(hostname)) return null;
+  // IP literals were already fully checked by the sync path; an empty host
+  // has nothing to resolve.
+  if (!hostname || isIpLiteral(hostname)) return null;
 
   try {
     const { lookup } = await import("node:dns/promises");
@@ -343,6 +344,27 @@ export function validateArgsUrls(
 }
 
 /**
+ * `validateArgsUrls` plus the DNS check: each URL that passes the string
+ * checks is resolved, and a name pointing at a private/loopback address is
+ * refused (audit 2026-09-22 — `localtest.me` → ::1 passed the string check and
+ * sent lightpanda/Playwright to internal services). First hop only: redirects
+ * and in-page navigation inside the browser are not seen here.
+ */
+export async function validateArgsUrlsResolved(
+  args: unknown,
+  opts: { maxDepth?: number } = {},
+): Promise<string | null> {
+  const found: { value: string; path: string }[] = [];
+  const syncErr = walk(args, "", opts.maxDepth ?? 3, found);
+  if (syncErr) return syncErr;
+  for (const { value, path } of found) {
+    const err = await validateOutboundUrlResolved(value);
+    if (err) return `${path}: ${err}`;
+  }
+  return null;
+}
+
+/**
  * Validate a single string that we already know is under a URL-convention
  * key. Returns an error message with the supplied path, or null if clean.
  *
@@ -351,10 +373,26 @@ export function validateArgsUrls(
  * `vbscript:`, `file:` and other schemes that lack `//` — they all
  * parse and then fail the scheme check in `validateOutboundUrl`.
  */
-function validateUrlString(value: string, path: string): string | null {
-  if (!URL.canParse(value)) return null;
+function validateUrlString(
+  value: string,
+  path: string,
+  found?: { value: string; path: string }[],
+): string | null {
+  if (!URL.canParse(value)) {
+    // Browser MCPs prefix a bare host ("localtest.me/admin") with a scheme
+    // and navigate; validate what they will load (audit 2026-09-22). The URL
+    // parser drops tab/CR/LF and edge whitespace, so strip them the same way.
+    const bare = value.replace(/[\t\n\r]/g, "").trim();
+    // Short bare integers ("2", "10") are page numbers under broad keys
+    // (target/page) and map to unroutable 0.0.0.N; dotted values and "0"
+    // are real addresses and go through validation (R3).
+    if (/\s/.test(bare) || /^[1-9]\d{0,3}$/.test(bare)) return null;
+    if (!URL.canParse(`https://${bare}`)) return null;
+    value = `https://${bare}`;
+  }
   const err = validateOutboundUrl(value);
   if (err) return `${path}: ${err}`;
+  found?.push({ value, path });
   return null;
 }
 
@@ -362,6 +400,7 @@ function walk(
   value: unknown,
   path: string,
   remainingDepth: number,
+  found?: { value: string; path: string }[],
 ): string | null {
   if (remainingDepth < 0) return null;
   if (value === null || value === undefined) return null;
@@ -373,7 +412,7 @@ function walk(
     for (let i = 0; i < value.length; i++) {
       const item = value[i];
       if (typeof item === "object" && item !== null) {
-        const err = walk(item, `${path}[${i}]`, remainingDepth - 1);
+        const err = walk(item, `${path}[${i}]`, remainingDepth - 1, found);
         if (err) return err;
       }
     }
@@ -387,7 +426,7 @@ function walk(
 
       if (isUrlKey && typeof v === "string") {
         // Direct string under a URL-convention key.
-        const err = validateUrlString(v, nextPath);
+        const err = validateUrlString(v, nextPath, found);
         if (err) return err;
         continue;
       }
@@ -399,10 +438,10 @@ function walk(
           const item = v[i];
           const itemPath = `${nextPath}[${i}]`;
           if (typeof item === "string") {
-            const err = validateUrlString(item, itemPath);
+            const err = validateUrlString(item, itemPath, found);
             if (err) return err;
           } else if (typeof item === "object" && item !== null) {
-            const err = walk(item, itemPath, remainingDepth - 1);
+            const err = walk(item, itemPath, remainingDepth - 1, found);
             if (err) return err;
           }
         }
@@ -412,7 +451,7 @@ function walk(
       // Not a URL-key string/array — recurse in case there are nested
       // URL params (e.g. `{config: {target_url: "..."}}`).
       if (typeof v === "object" && v !== null) {
-        const err = walk(v, nextPath, remainingDepth - 1);
+        const err = walk(v, nextPath, remainingDepth - 1, found);
         if (err) return err;
       }
     }

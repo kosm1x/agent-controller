@@ -131,6 +131,13 @@ RULES:
     if (!safety.safe) {
       return JSON.stringify({ error: `Edit blocked: ${safety.reason}` });
     }
+    // An edit READS the file first. The "write" check does not follow
+    // symlinks, so a link to a read-blocked file needs the read denylist too
+    // (audit 2026-09-22 R4).
+    const readSafety = validatePathSafety(path, "read");
+    if (!readSafety.safe) {
+      return JSON.stringify({ error: `Edit blocked: ${readSafety.reason}` });
+    }
 
     // Enforce write boundaries
     const resolved = resolve(path);

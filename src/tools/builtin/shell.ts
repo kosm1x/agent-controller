@@ -19,7 +19,7 @@ import {
   checkFlailing,
   recordCall,
 } from "../flailing-guard.js";
-import { redactSecrets } from "../../api/mcp-server/redact.js";
+import { redactCredentials, redactSecrets } from "../../api/mcp-server/redact.js";
 
 /**
  * Async command runner. Uses child_process.exec (not execSync) so it does NOT
@@ -401,6 +401,8 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/root\/\.(?:gnupg|aws|docker|kube|config\/gh)\b/, reason: "secret dotfile directory is off-limits to the shell" },
   { pattern: /\/etc\/(?:shadow|gshadow|sudoers|ssh)\b/, reason: "system secret is off-limits to the shell" },
   { pattern: /\/proc\/(?:self|\d+)\/(?:environ|mem)\b/, reason: "/proc/<pid>/environ and mem are off-limits to the shell" },
+  // Any spelling of a process env under /proc — glob (`/proc/*/environ`), thread-self, task/<tid> (audit 2026-09-22).
+  { pattern: /\/proc\/\S*environ/, reason: "/proc/<pid>/environ is off-limits to the shell" },
   { pattern: /\/root\/(?:\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/, reason: "dotfile credential is off-limits to the shell" },
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
   { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
@@ -1598,11 +1600,17 @@ RESTRICTIONS:
         env: withPmShimPath(buildScrubbedEnv()),
       });
 
+      // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret
+      // fields) that reach stdout past the text guard above (audit 2026-09-22:
+      // globs, cd-relative paths, interpreter one-liners). Encoded output
+      // (base64, xxd) and unrecognised names still pass — the process-level
+      // defence is buildScrubbedEnv. Redact before the cut so a key is never split.
+      const safeOut = redactCredentials(stdout);
       const trimmed =
-        stdout.length > MAX_OUTPUT
-          ? stdout.slice(0, MAX_OUTPUT) +
-            `\n... (truncated, ${stdout.length} total chars)`
-          : stdout;
+        safeOut.length > MAX_OUTPUT
+          ? safeOut.slice(0, MAX_OUTPUT) +
+            `\n... (truncated, ${safeOut.length} total chars)`
+          : safeOut;
 
       recordCall(command, 0);
       const result: { stdout: string; exit_code: number; stderr?: string } = {
@@ -1611,7 +1619,7 @@ RESTRICTIONS:
       };
       // Surface non-empty stderr even on success — many tools (npm, tsc, git,
       // curl -v) write progress/diagnostics there. Dropping it blinds the agent.
-      if (stderr) result.stderr = stderr.slice(0, MAX_OUTPUT);
+      if (stderr) result.stderr = redactCredentials(stderr).slice(0, MAX_OUTPUT);
       return JSON.stringify(result);
     } catch (err: unknown) {
       // promisify(exec) rejects with the exit code on `code` (number) — unlike
@@ -1648,8 +1656,8 @@ RESTRICTIONS:
       if (stderr.includes("[pm-shim] refused:")) console.error(`[pm-shim] refused (shell_exec): ${redactSecrets(command).slice(0, 300)}`);
       return JSON.stringify({
         exit_code: exitCode,
-        stdout: (error.stdout ?? "").slice(0, MAX_OUTPUT),
-        stderr: stderr.slice(0, MAX_OUTPUT),
+        stdout: redactCredentials(error.stdout ?? "").slice(0, MAX_OUTPUT),
+        stderr: redactCredentials(stderr).slice(0, MAX_OUTPUT),
       });
     }
   },

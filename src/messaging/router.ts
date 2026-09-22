@@ -950,6 +950,10 @@ function pushToThread(
     }
   }
   const thread = conversationThreads.get(channel)!;
+  // Only the newest entry's image is ever replayed (threadImageLive), so
+  // older base64 data URLs are dead weight — up to 15 per channel held for
+  // the thread TTL (audit 2026-09-22). Drop them as a new entry lands.
+  for (const entry of thread) delete entry.imageUrl;
   thread.push({ text: exchange, imageUrl });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
   // Phase 4.1: every exchange that enters the thread buffer also feeds the
@@ -1085,6 +1089,20 @@ export function _testSeedThread(
   hydratedChannels.add(channel);
   conversationThreads.set(channel, [...entries]);
   threadLastAccess.set(channel, Date.now());
+}
+
+/** Test-only: drive the production push seam and read the raw buffer. */
+export function _testPushToThread(
+  channel: string,
+  exchange: string,
+  imageUrl?: string,
+): void {
+  pushToThread(channel, exchange, imageUrl);
+}
+export function _testThreadEntries(
+  channel: string,
+): Array<{ text: string; imageUrl?: string }> {
+  return [...(conversationThreads.get(channel) ?? [])];
 }
 
 function getThreadTurns(channel: string): ConversationTurn[] {

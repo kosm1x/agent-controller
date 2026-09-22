@@ -249,6 +249,9 @@ describe("validateShellCommand", () => {
         "cat /root/'.ssh'/id_rsa",
         "cat /root/claude/mission-control/.e\"nv\"",
         "cat /proc/435678/environ",
+        "cat /proc/*/environ", // glob spelling (audit 2026-09-22)
+        "cat /proc/thread-self/environ",
+        "tr '\\0' '\\n' < /proc/self/task/1/environ",
         "cp /root/claude/mission-control/data/mc.db /tmp/",
         `python3 -c "import sqlite3; sqlite3.connect('data/mc.db')"`,
         "ls /root/.ssh",
@@ -907,6 +910,22 @@ describe("shellTool exec contract", () => {
     );
     expect(parsed.exit_code).toBe(0);
     expect(parsed.stdout).toContain("truncated");
+  });
+
+  it("redacts credential shapes in stdout and stderr, success and failure alike (audit 2026-09-22)", async () => {
+    // Assembled at runtime so the key shape never sits in the source.
+    const key = "sk-" + "ant" + "A1b2C3d4E5f6G7h8J9k0";
+    const sha = "0123456789abcdef".repeat(2) + "01234567"; // 40-hex: a git SHA stays readable
+    const ok = JSON.parse(await shellTool.execute({ command: `printf '%s %s\\n' ${key} ${sha}; printf 'X_API_KEY=abc123\\n' >&2` }));
+    expect(ok.exit_code).toBe(0);
+    expect(ok.stdout).not.toContain(key);
+    expect(ok.stdout).toContain("[REDACTED_KEY]");
+    expect(ok.stdout).toContain(sha);
+    expect(ok.stderr).toContain("X_API_KEY=[REDACTED]");
+    const bad = JSON.parse(await shellTool.execute({ command: `printf '%s\\n' ${key}; printf '%s\\n' ${key} >&2; exit 2` }));
+    expect(bad.exit_code).toBe(2);
+    expect(bad.stdout).not.toContain(key);
+    expect(bad.stderr).not.toContain(key);
   });
 
   it("flags a timed-out command distinctly (exit_code -2), not as a generic failure", async () => {

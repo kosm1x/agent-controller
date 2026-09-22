@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync, symlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   isImmutableCorePath,
   validatePathSafety,
@@ -382,6 +385,48 @@ describe("validatePathSafety", () => {
       const result = validatePathSafety("/tmp/scratch/id_rsa", "read");
       expect(result.safe).toBe(false);
       expect(result.reason).toContain("id_rsa");
+    });
+
+    it("blocks every spelling of a process env/mem file (audit 2026-09-22)", () => {
+      for (const p of [
+        "/proc/self/environ",
+        "/proc/thread-self/environ",
+        "/proc/1/environ",
+        "/proc/self/task/1/environ",
+        "/proc/2829385/mem",
+        "/proc/12/task/34/cmdline",
+      ]) {
+        expect(validatePathSafety(p, "read").safe, p).toBe(false);
+      }
+      // A process's other state stays readable (status, stat, …).
+      expect(validatePathSafety("/proc/self/status", "read").safe).toBe(true);
+      expect(validatePathSafety("/proc/meminfo", "read").safe).toBe(true);
+    });
+
+    it("blocks the co-located credential files (audit 2026-09-22)", () => {
+      for (const p of [
+        "/etc/opensandbox/api.env",
+        "/root/.claude.json",
+        "/root/.docker/config.json",
+        "/etc/shadow-",
+        "/etc/gshadow-",
+      ]) {
+        expect(validatePathSafety(p, "read").safe, p).toBe(false);
+      }
+      expect(validatePathSafety("/root/.claude.json.bak", "read").safe).toBe(
+        true,
+      );
+    });
+
+    it("checks the RAW spelling's symlink target, not only the trimmed one (R3)", () => {
+      const dir = mkdtempSync(join(tmpdir(), "vps-raw-"));
+      try {
+        const raw = join(dir, "lnk ");
+        symlinkSync("/etc/shadow", raw);
+        expect(validatePathSafety(raw, "read").safe).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     it("does not block /root/.ssh-backup/ via prefix bug (poka-yoke)", () => {

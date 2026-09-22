@@ -171,6 +171,7 @@ import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
+import { toolRegistry } from "../tools/registry.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
@@ -1280,5 +1281,44 @@ describe("/loop — unlimited task on the claude-sdk path (2026-08-27)", () => {
     const args = mockQuerySdk.mock.calls[0][0];
     expect(args.maxTurns).toBeLessThan(1_000);
     expect(args.unlimited).toBeFalsy();
+  });
+});
+
+// audit 2026-09-22: the 60 s heartbeat was started before early returns
+// (no tools) and pre-try throws, so those paths never cleared it.
+describe("fastRunner heartbeat lifecycle", () => {
+  it("every 60 s heartbeat is cleared, including the no-tools early return", async () => {
+    const setSpy = vi.spyOn(globalThis, "setInterval");
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      vi.mocked(toolRegistry.getDefinitions).mockReturnValueOnce([]);
+      const noTools = await fastRunner.execute({
+        taskId: "task-hb0",
+        runId: "run-hb0",
+        title: "t",
+        description: "d",
+      });
+      expect(noTools.success).toBe(false);
+
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "STATUS: DONE\nok", messages: [] }),
+      );
+      await fastRunner.execute({
+        taskId: "task-hb1",
+        runId: "run-hb1",
+        title: "t",
+        description: "d",
+      });
+
+      const heartbeats = setSpy.mock.results
+        .filter((_, i) => setSpy.mock.calls[i][1] === 60_000)
+        .map((r) => r.value);
+      expect(heartbeats.length).toBe(1);
+      const cleared = new Set(clearSpy.mock.calls.map((c) => c[0]));
+      for (const h of heartbeats) expect(cleared.has(h)).toBe(true);
+    } finally {
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
   });
 });

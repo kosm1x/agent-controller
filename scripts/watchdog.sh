@@ -155,7 +155,7 @@ if [ -f "$MC_DB" ]; then
   MC_DB_MB=$(du -m "$MC_DB" | cut -f1)
   if [ "$MC_DB_MB" -ge 500 ]; then
     maybe_alert /var/lib/mc-watchdog-db-alert \
-      "mc.db at ${MC_DB_MB} MB. Retention auto-prunes tasks/runs at 90d, but freelist dead pages accumulate — reclaim with: sqlite3 ${MC_DB} \"VACUUM INTO '/tmp/mc-vacuumed.db'\" then swap it in during a restart window. No auto-VACUUM (rewrites the whole DB, needs 2x disk)."
+      "mc.db at ${MC_DB_MB} MB. Retention auto-prunes tasks/runs at 90d, but freelist dead pages accumulate — reclaim with: sqlite3 ${MC_DB} \"VACUUM INTO '/tmp/mc-vacuumed.db'\" then sqlite3 /tmp/mc-vacuumed.db \"INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')\" (VACUUM can renumber jarvis_files rowids) and swap it in during a restart window. No auto-VACUUM (rewrites the whole DB, needs 2x disk)."
   fi
 fi
 

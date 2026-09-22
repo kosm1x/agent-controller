@@ -8,6 +8,8 @@
 
 import { execFileSync } from "child_process";
 import type { Tool } from "../types.js";
+import { validatePathSafety } from "./immutable-core.js";
+import { redactCredentials } from "../../api/mcp-server/redact.js";
 
 const MAX_RESULTS = 100;
 const MAX_OUTPUT = 15_000; // chars
@@ -15,6 +17,50 @@ const MAX_OUTPUT = 15_000; // chars
 // ---------------------------------------------------------------------------
 // grep — content search
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse NUL-delimited rg/grep output and drop every record whose file the
+ * read denylist refuses. A directory path passes validatePathSafety, so the
+ * per-file check is what keeps `grep -r /etc` or `/root/.claude` from
+ * returning shadow lines or credential files (audit 2026-09-22 R2).
+ *
+ * Records are `name\0` (files mode, `-l --null`) or `name\0text\n`
+ * (content/count). Match text never holds a newline but a file NAME can, so
+ * the split is on NUL: each chunk's text runs to its first newline and the
+ * remainder is the next record's name (R3).
+ */
+function dropBlockedFiles(output: string, filesOnly: boolean): string[] {
+  const verdicts = new Map<string, boolean>();
+  const allowed = (file: string): boolean => {
+    let ok = verdicts.get(file);
+    if (ok === undefined) {
+      // Fail closed: a name holding a newline is checked whole and per line.
+      ok = [file, ...file.split("\n")].every(
+        (f) => !!f && validatePathSafety(f, "read").safe,
+      );
+      verdicts.set(file, ok);
+    }
+    return ok;
+  };
+  const kept: string[] = [];
+  const chunks = output.split("\0");
+  if (filesOnly) {
+    for (const name of chunks) {
+      const file = name.replace(/^\n+|\n+$/g, "");
+      if (file && allowed(file)) kept.push(file);
+    }
+    return kept;
+  }
+  let file = chunks[0] ?? "";
+  for (let i = 1; i < chunks.length; i++) {
+    const chunk = chunks[i]!;
+    const nl = chunk.indexOf("\n");
+    const text = nl === -1 ? chunk : chunk.slice(0, nl);
+    if (file && allowed(file)) kept.push(`${file}:${text}`);
+    file = nl === -1 ? "" : chunk.slice(nl + 1);
+  }
+  return kept;
+}
 
 export const grepTool: Tool = {
   name: "grep",
@@ -88,6 +134,12 @@ TIPS:
     if (!pattern) return JSON.stringify({ error: "pattern is required" });
 
     const searchPath = (args.path as string) || ".";
+    // Same read denylist as file_read: grep over /root/.claude.json or a
+    // .env returned its lines verbatim (audit 2026-09-22).
+    const safety = validatePathSafety(searchPath, "read");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `path blocked: ${safety.reason}` });
+    }
     const includeGlob = args.include_glob as string | undefined;
     const mode = (args.output_mode as string) || "files";
     const caseInsensitive = args.case_insensitive === true;
@@ -97,7 +149,14 @@ TIPS:
     );
 
     // Build ripgrep command (available on most Linux systems, falls back to grep)
-    const flags: string[] = ["--fixed-strings", "--no-heading"];
+    // --with-filename + --null: every output record starts with "<file>\0",
+    // so each line can be checked against the read denylist below.
+    const flags: string[] = [
+      "--fixed-strings",
+      "--no-heading",
+      "--with-filename",
+      "--null",
+    ];
     if (caseInsensitive) flags.push("--ignore-case");
 
     switch (mode) {
@@ -161,15 +220,27 @@ TIPS:
         // maxBuffer before returning anything (logic audit F3).
         const grepArgs = [
           "-r",
+          "-H",
+          "-Z",
+          // --include must come FIRST: GNU grep includes a file matching no
+          // pattern unless the first --include/--exclude was an --include.
+          ...(grepNameGlob ? [`--include=${grepNameGlob}`] : []),
           "--exclude-dir=node_modules",
           "--exclude-dir=.git",
+          // Recursive searches skip credential stores (rg skips dotfiles by
+          // default; grep does not).
+          "--exclude-dir=.ssh",
+          "--exclude-dir=.docker",
+          "--exclude-dir=.gnupg",
+          "--exclude=.env*",
+          "--exclude=.claude.json",
+          "--exclude=.git-credentials",
           ...(mode !== "count"
             ? ["--max-count", String(mode === "files" ? 1 : maxResults)]
             : []),
           ...(caseInsensitive ? ["-i"] : []),
           mode === "files" ? "-l" : mode === "count" ? "-c" : "-n",
           "--fixed-strings",
-          ...(grepNameGlob ? [`--include=${grepNameGlob}`] : []),
           "--",
           pattern,
           grepSearchPath,
@@ -190,14 +261,21 @@ TIPS:
         });
       }
 
-      let lines = output.trim().split("\n");
+      let lines = dropBlockedFiles(output, mode === "files");
+      if (lines.length === 0) {
+        return JSON.stringify({
+          matches: [],
+          total: 0,
+          message: "No matches found",
+        });
+      }
       const total = lines.length;
 
       if (lines.length > maxResults) {
         lines = lines.slice(0, maxResults);
       }
 
-      const result = lines.join("\n");
+      const result = redactCredentials(lines.join("\n"));
       const trimmed =
         result.length > MAX_OUTPUT
           ? result.slice(0, MAX_OUTPUT) +

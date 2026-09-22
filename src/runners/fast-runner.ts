@@ -735,27 +735,6 @@ export const fastRunner: Runner = {
 
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
-    // Liveness heartbeat. The stuck watchdog (reactions/manager.ts) keys on
-    // tasks.updated_at, which only task.progress refreshes; fast tasks emitted
-    // none, so any run past 15 min was failed as "stuck" while still working
-    // and its finished answer was then discarded by the terminal-status
-    // guard (3 on record, 3.3-4.0 KB each). Mirrors the 60 s container
-    // heartbeat in container.ts.
-    const heartbeat = setInterval(() => {
-      try {
-        getEventBus().emitEvent("task.progress", {
-          task_id: input.taskId,
-          agent_id: "fast",
-          progress: Number.NaN,
-          phase: "execute",
-          message: "Fast-runner heartbeat",
-        });
-      } catch {
-        // Best-effort — the bus may be uninitialised (tests).
-      }
-    }, 60_000);
-    heartbeat.unref();
-
     // Get tool definitions for requested tools (or all if none specified).
     // Tool deferral pattern (OpenClaude): deferred tools are NOT included
     // as full schema definitions — only their names + descriptions are sent
@@ -1244,6 +1223,29 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       input.interactive !== false,
     );
     const taskExecutor = createTaskExecutor(toolRegistry, taskContext);
+
+    // Liveness heartbeat. The stuck watchdog (reactions/manager.ts) keys on
+    // tasks.updated_at, which only task.progress refreshes; fast tasks emitted
+    // none, so any run past 15 min was failed as "stuck" while still working
+    // and its finished answer was then discarded by the terminal-status
+    // guard (3 on record, 3.3-4.0 KB each). Mirrors the 60 s container
+    // heartbeat in container.ts. Started right before the try so the
+    // finally always clears it — earlier returns/throws leaked it (audit
+    // 2026-09-22).
+    const heartbeat = setInterval(() => {
+      try {
+        getEventBus().emitEvent("task.progress", {
+          task_id: input.taskId,
+          agent_id: "fast",
+          progress: Number.NaN,
+          phase: "execute",
+          message: "Fast-runner heartbeat",
+        });
+      } catch {
+        // Best-effort — the bus may be uninitialised (tests).
+      }
+    }, 60_000);
+    heartbeat.unref();
 
     try {
       let tokenBudget = hasPlaywright

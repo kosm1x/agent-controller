@@ -12,8 +12,11 @@ import { processSignals } from "./delta-engine.js";
 import { evaluateDeltas, shouldSuppress, createAlert } from "./alert-router.js";
 import { deliverPendingAlerts } from "./alert-delivery.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scheduleCron } from "../lib/cron.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
 const timers = new Map<string, ReturnType<typeof setInterval>>();
+let pruneJob: ReturnType<typeof scheduleCron> | null = null;
 const health = new Map<string, CollectorHealth>();
 const collecting = new Set<string>(); // guards against overlapping cycles
 let broadcastFn: ((text: string) => Promise<void>) | null = null;
@@ -125,8 +128,13 @@ export function startIntelCollectors(): void {
     }
   }
 
-  // Daily signal pruning (30-day retention)
-  const pruneTimer = setInterval(
+  // Daily signal pruning (30-day retention). Wall-clock cron, not a 24 h
+  // setInterval: that one was boot-relative and restarts land more often than
+  // daily, so it rarely fired (audit 2026-09-22).
+  pruneJob?.stop();
+  pruneJob = scheduleCron(
+    "intel-signal-prune",
+    "15 4 * * *",
     () => {
       try {
         const deleted = pruneOldSignals(30);
@@ -137,9 +145,8 @@ export function startIntelCollectors(): void {
         console.warn(`[intel] Signal pruning failed (non-fatal): ${String(err)}`);
       }
     },
-    24 * 60 * 60_000,
+    { timezone: RITUALS_TIMEZONE },
   );
-  timers.set("_pruner", pruneTimer);
 }
 
 /** Stop all collector intervals (for graceful shutdown). */
@@ -149,6 +156,8 @@ export function stopIntelCollectors(): void {
     console.log(`[intel] Stopped collector: ${source}`);
   }
   timers.clear();
+  pruneJob?.stop();
+  pruneJob = null;
 }
 
 /** Get health status for all collectors. */

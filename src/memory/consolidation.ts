@@ -8,7 +8,7 @@
  * 1. Orient — count entries by bank/tier/age
  * 2. Gather — find stale candidates (tier 3-4, old)
  * 3. Consolidate — deduplicate similar entries (same bank+content prefix)
- * 4. Prune — delete aged-out entries, VACUUM
+ * 4. Prune — delete aged-out entries (no VACUUM — it stalls the event loop)
  *
  * Safety: Never deletes tier-1 or tier-2 (verified/inferred).
  * Never deletes bank="mc-system" (directives).
@@ -164,22 +164,9 @@ export async function runConsolidation(): Promise<ConsolidationReport> {
     clearVectorCache();
   }
 
-  // VACUUM to reclaim space
-  if (duplicatesRemoved + pruned > 0) {
-    try {
-      db.exec("VACUUM");
-      // Both FTS tables are external-content (content='…'); jarvis_files has
-      // a TEXT PK so its rowids are implicit and VACUUM may renumber them —
-      // the count-based self-heal in db/index.ts cannot see that (logic
-      // audit F20). Rebuild right after, while we are already off the hot path.
-      // (conversations_fts is keyed on conversations.id, an INTEGER PRIMARY
-      // KEY rowid alias that VACUUM cannot renumber — no rebuild needed.)
-      db.exec("INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')");
-      console.log("[consolidation] VACUUM + FTS rebuild complete");
-    } catch {
-      // Non-fatal — WAL mode may prevent VACUUM
-    }
-  }
+  // No VACUUM here: on the ~380 MB mc.db it held the event loop 23–26 s per
+  // run (audit 2026-09-22). Freed pages are reused by later inserts; a file
+  // shrink stays a manual operator action (see db/retention.ts).
 
   // Final count
   const remaining = (

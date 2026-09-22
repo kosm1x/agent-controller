@@ -640,11 +640,12 @@ async function dispatchWithSlot(
     runId,
     taskId,
     agentType,
-    // v8 S1: persisted input shape stays clean (no marker text). RunnerInput
-    // below preserves marker for the runner's split-on-marker logic.
+    // The full description already lives on tasks.description; copying it
+    // here duplicated ~57 MB (audit 2026-09-22). Keep the length only (no
+    // marker text). RunnerInput below still carries the full description.
     input: JSON.stringify({
       title: submission.title,
-      description: stripCacheMarker(submission.description),
+      descriptionChars: stripCacheMarker(submission.description).length,
     }),
   });
 

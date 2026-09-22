@@ -7,6 +7,7 @@ import { Agent } from "undici";
 import {
   validateOutboundUrl,
   validateArgsUrls,
+  validateArgsUrlsResolved,
   filterSafeAddresses,
   makeSafeLookup,
   safeDispatcher,
@@ -22,6 +23,16 @@ import { lookup as dnsLookupP } from "node:dns/promises";
 const HAS_IP6_LOCALHOST = await dnsLookupP("ip6-localhost", { all: true })
   .then((a) => a.some((x) => x.address === "::1"))
   .catch(() => false);
+
+// DNS is mocked: names under .internal.test resolve to loopback, the rest to
+// a public address, so the resolved-URL check never touches a real resolver.
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async (host: string) =>
+    host.endsWith(".internal.test")
+      ? [{ address: "::1", family: 6 }]
+      : [{ address: "93.184.216.34", family: 4 }],
+  ),
+}));
 
 describe("validateOutboundUrl", () => {
   // --- Should BLOCK ---
@@ -765,5 +776,42 @@ describe("safeFetch — R1 audit folds", () => {
     await once();
     await once();
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// audit 2026-09-22: DNS-resolved arg validation must reach every URL the sync
+// walk accepts — top level, arrays under URL keys, and nested objects.
+describe("validateArgsUrlsResolved", () => {
+  it("passes public names", async () => {
+    expect(await validateArgsUrlsResolved({ url: "https://example.com/x" })).toBeNull();
+  });
+  it("blocks a top-level name resolving to loopback", async () => {
+    expect(await validateArgsUrlsResolved({ url: "http://a.internal.test/" })).toMatch(/url: .*resolves to/);
+  });
+  it("blocks a loopback name inside an array under a URL key", async () => {
+    expect(
+      await validateArgsUrlsResolved({ urls: ["https://example.com", "http://b.internal.test/"] }),
+    ).toMatch(/resolves to/);
+  });
+  it("validates scheme-less hosts the way a browser MCP would load them", async () => {
+    expect(await validateArgsUrlsResolved({ url: "a.internal.test/admin" })).toMatch(/resolves to/);
+    expect(validateArgsUrls({ url: "169.254.169.254/latest" })).toMatch(/url: /);
+    expect(validateArgsUrls({ url: "localhost/x" })).toMatch(/url: /);
+    expect(validateArgsUrls({ url: "example.com/page" })).toBeNull();
+    expect(validateArgsUrls({ url: "not a url" })).toBeNull();
+    // The URL parser drops tab/LF, so they must not smuggle a host past (R2).
+    expect(validateArgsUrls({ url: "localhost/admin\n" })).toMatch(/url: /);
+    expect(validateArgsUrls({ url: "localhost\t/metrics" })).toMatch(/url: /);
+    // Bare numbers under broad keys (target/page) are not IPv4 shorthand.
+    expect(validateArgsUrls({ target: "10", page: "2" })).toBeNull();
+    // ...but bare IP literals are addresses, not page numbers (R3).
+    for (const ip of ["127.0.0.1", "169.254.169.254", "10.0.0.5", "127.1", "0", "2130706433"]) {
+      expect(validateArgsUrls({ url: ip }), ip).toMatch(/url: /);
+    }
+  });
+  it("blocks a loopback name in a nested object", async () => {
+    expect(await validateArgsUrlsResolved({ config: { url: "http://c.internal.test/" } })).toMatch(
+      /config\.url: .*resolves to/,
+    );
   });
 });

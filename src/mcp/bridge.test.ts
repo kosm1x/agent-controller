@@ -10,6 +10,16 @@ import {
   type McpContentItem,
 } from "./bridge.js";
 
+// DNS is mocked: names under .internal.test resolve to loopback, the rest to
+// a public address, so the resolved-URL check never touches a real resolver.
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async (host: string) =>
+    host.endsWith(".internal.test")
+      ? [{ address: "::1", family: 6 }]
+      : [{ address: "93.184.216.34", family: 4 }],
+  ),
+}));
+
 describe("extractText", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -207,6 +217,17 @@ describe("createMcpTool", () => {
       const result = await tool.execute({ url: "file:///etc/passwd" });
       expect(JSON.parse(result).error).toMatch(/Blocked outbound URL/);
       expect(JSON.parse(result).error).toMatch(/Blocked scheme/);
+      expect(callFn).not.toHaveBeenCalled();
+    });
+
+    it("blocks a hostname that RESOLVES to loopback (audit 2026-09-22)", async () => {
+      const callFn: McpCallFn = vi.fn();
+      const tool = createMcpTool("browser", { name: "goto" }, callFn);
+
+      const result = await tool.execute({
+        url: "http://svc.internal.test:8888/health",
+      });
+      expect(JSON.parse(result).error).toMatch(/resolves to/);
       expect(callFn).not.toHaveBeenCalled();
     });
 

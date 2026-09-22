@@ -209,3 +209,17 @@ describe("standing orders on disk (jarvis-kb/directives/) — file_write / file_
     expect(String(r.error ?? "")).not.toMatch(/standing order/);
   });
 });
+
+// audit 2026-09-22: content_file was read with no read guard, so file_write
+// could copy /proc/self/environ or a credential file into /tmp for file_read.
+describe("file_write content_file — read denylist", () => {
+  it("refuses blocked content_file sources before reading them", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    for (const src of ["/proc/self/environ", "/root/.claude.json", "/root/.docker/config.json"]) {
+      mocks.mockReadFileSync.mockClear();
+      const r = JSON.parse(await fileWriteTool.execute({ path: "/tmp/x-copy", content_file: src }));
+      expect(String(r.error), src).toMatch(/content_file blocked/);
+      expect(mocks.mockReadFileSync, src).not.toHaveBeenCalledWith(src, "utf-8");
+    }
+  });
+});

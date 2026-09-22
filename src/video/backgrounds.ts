@@ -11,14 +11,34 @@
 
 import { execFileSync } from "child_process";
 import {
+  createWriteStream,
   existsSync,
   mkdirSync,
   writeFileSync,
   readFileSync,
   readdirSync,
+  rmSync,
 } from "fs";
 import { join } from "path";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+import type { ReadableStream as WebReadableStream } from "stream/web";
 import { errMsg } from "../lib/err-msg.js";
+import { safeFetch } from "../lib/url-safety.js";
+
+/** Model-supplied direct URLs stream to /tmp; bound the disk they can fill. */
+export const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+
+/** Hosts yt-dlp may fetch. Its generic extractor follows any URL and any
+ *  redirect, so everything else is refused (audit 2026-09-22). */
+const YTDLP_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "youtu.be",
+  "vimeo.com",
+  "player.vimeo.com",
+]);
 
 const CACHE_DIR = "/tmp/video-backgrounds";
 const SKIP_SECONDS = 180; // skip first 3 minutes (intros, title cards)
@@ -83,7 +103,17 @@ interface CachedBackground {
   downloadedAt: string;
 }
 
+/**
+ * A background name becomes a directory and a file name under CACHE_DIR, so it
+ * must be a plain slug: `../../etc/x` joined straight through and wrote as root
+ * outside every write-guard (audit 2026-09-22).
+ */
+export const BACKGROUND_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 function getCacheDir(name: string): string {
+  if (!BACKGROUND_NAME_RE.test(name)) {
+    throw new Error(`Invalid background name: ${JSON.stringify(name)}`);
+  }
   return join(CACHE_DIR, name);
 }
 
@@ -95,6 +125,7 @@ function getMetadataPath(name: string): string {
  * Check if a background video is already cached.
  */
 export function isCached(name: string): boolean {
+  if (!BACKGROUND_NAME_RE.test(name)) return false;
   const metaPath = getMetadataPath(name);
   if (!existsSync(metaPath)) return false;
   try {
@@ -159,11 +190,12 @@ function probeDuration(filePath: string): number {
  * Caches the file in /tmp/video-backgrounds/{name}/.
  * Returns the cached metadata on success, null on failure.
  */
-export function downloadBackground(
+export async function downloadBackground(
   name: string,
   url: string,
   credit: string,
-): CachedBackground | null {
+  maxBytes = MAX_DOWNLOAD_BYTES,
+): Promise<CachedBackground | null> {
   // Return cached version if available
   const existing = getCachedMeta(name);
   if (existing && existsSync(existing.filePath)) return existing;
@@ -181,12 +213,48 @@ export function downloadBackground(
       url.includes("pexels.com") || url.match(/\.(mp4|webm|mov)(\?|$)/i);
 
     if (isPexelsOrDirect) {
-      execFileSync(
-        "curl",
-        ["-L", "-o", outputPath, "-s", "--max-time", "120", url],
-        { timeout: 130_000, stdio: "pipe" },
-      );
+      // safeFetch re-validates every redirect hop and pins DNS to the checked
+      // address; curl -L followed a public URL's 302 to loopback/private
+      // hosts (audit 2026-09-22).
+      const res = await safeFetch(url, {
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!res.ok || !res.body) {
+        await res.body?.cancel();
+        console.warn(`[backgrounds] Download HTTP ${res.status}: ${name}`);
+        return null;
+      }
+      const declared = Number(res.headers.get("content-length") ?? 0);
+      if (declared > maxBytes) {
+        await res.body.cancel();
+        console.warn(`[backgrounds] Refused ${declared} B (cap): ${name}`);
+        return null;
+      }
+      let received = 0;
+      try {
+        await pipeline(
+          Readable.fromWeb(res.body as unknown as WebReadableStream),
+          async function* (chunks: AsyncIterable<Buffer>) {
+            for await (const chunk of chunks) {
+              received += chunk.length;
+              if (received > maxBytes) {
+                throw new Error(`download exceeds ${maxBytes} B`);
+              }
+              yield chunk;
+            }
+          },
+          createWriteStream(outputPath),
+        );
+      } catch (err) {
+        rmSync(outputPath, { force: true });
+        throw err;
+      }
     } else {
+      const host = new URL(url).hostname.toLowerCase();
+      if (!YTDLP_HOSTS.has(host)) {
+        console.warn(`[backgrounds] Refused yt-dlp host ${host}: ${name}`);
+        return null;
+      }
       execFileSync(
         "yt-dlp",
         [
@@ -195,7 +263,12 @@ export function downloadBackground(
           "-o",
           outputPath,
           "--no-playlist",
+          // Generic follows any embedded URL/redirect; allow-listed hosts
+          // still route odd paths to it (R2).
+          "--use-extractors",
+          "default,-generic",
           "--quiet",
+          "--",
           url,
         ],
         { timeout: 120_000, stdio: "pipe" },

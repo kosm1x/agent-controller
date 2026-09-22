@@ -78,7 +78,7 @@ describe("runConsolidation", () => {
     expect(report.remaining).toBe(2);
   });
 
-  it("calls VACUUM when entries were removed", async () => {
+  it("never VACUUMs, even when entries were removed", async () => {
     const allFn = vi.fn().mockReturnValue([]);
     const getFn = vi.fn().mockReturnValue({ cnt: 0 });
     const runFn = vi.fn().mockReturnValue({ changes: 0 });
@@ -89,8 +89,10 @@ describe("runConsolidation", () => {
     // dedup (first .run since the 2026-07-05 windowed DELETE): 2 removed
     runFn.mockReturnValueOnce({ changes: 2 });
 
-    await runConsolidation();
-    expect(mockDb.exec).toHaveBeenCalledWith("VACUUM");
+    const report = await runConsolidation();
+    expect(report.duplicatesRemoved).toBe(2);
+    // A 380 MB VACUUM blocked the event loop 23–26 s (audit 2026-09-22).
+    expect(mockDb.exec).not.toHaveBeenCalled();
   });
 
   it("does not VACUUM when nothing removed", async () => {

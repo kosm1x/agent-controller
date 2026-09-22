@@ -39,6 +39,7 @@ import {
   videoTransitionPreviewTool,
   videoBrandApplyTool,
   videoHtmlComposeTool,
+  videoBackgroundDownloadTool,
 } from "./video.js";
 
 describe("video tools", () => {
@@ -494,6 +495,32 @@ describe("video tools", () => {
       const parsed = JSON.parse(result);
       expect(parsed.brand_id).toBe(7);
       expect(parsed.summary.tagline).toBeUndefined();
+    });
+  });
+
+  describe("video_background_download (audit 2026-09-22)", () => {
+    it("refuses a path-shaped name before touching the filesystem", async () => {
+      const parsed = JSON.parse(
+        await videoBackgroundDownloadTool.execute({
+          name: "../../etc/x",
+          url: "https://example.com/a.mp4",
+        }),
+      );
+      expect(parsed.error).toMatch(/slug/);
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+    });
+
+    it("refuses file:// and loopback URLs without downloading", async () => {
+      for (const url of [
+        "file:///etc/hostname#pexels.com",
+        "http://127.0.0.1:8080/x.mp4",
+      ]) {
+        const parsed = JSON.parse(
+          await videoBackgroundDownloadTool.execute({ name: "probe-bg", url }),
+        );
+        expect(parsed.error, url).toBeTruthy();
+      }
+      expect(mockExecFileSync).not.toHaveBeenCalled();
     });
   });
 });

@@ -761,6 +761,7 @@ Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same n
 
     try {
       const {
+        BACKGROUND_NAME_RE,
         BACKGROUND_CATALOG,
         downloadBackground,
         listCachedBackgrounds,
@@ -771,6 +772,20 @@ Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same n
       const catalogEntry = BACKGROUND_CATALOG.find(
         (e: { name: string }) => e.name === name,
       );
+      if (!BACKGROUND_NAME_RE.test(name)) {
+        return JSON.stringify({
+          error: `name must be a lowercase slug (a-z, 0-9, '-'), got ${JSON.stringify(name)}`,
+        });
+      }
+      // A model-supplied URL gets a first-hop SSRF check here; redirects are
+      // re-validated by safeFetch inside downloadBackground, and yt-dlp only
+      // runs for allow-listed hosts (audit 2026-09-22).
+      if (typeof args.url === "string") {
+        const { validateOutboundUrlResolved } =
+          await import("../../lib/url-safety.js");
+        const urlErr = await validateOutboundUrlResolved(args.url);
+        if (urlErr) return JSON.stringify({ error: urlErr });
+      }
       const url = (args.url as string) ?? catalogEntry?.url;
       const credit = catalogEntry?.credit ?? "Custom";
 
@@ -798,7 +813,7 @@ Videos are cached in /tmp/video-backgrounds/ — subsequent calls for the same n
         });
       }
 
-      const result = downloadBackground(name, url, credit);
+      const result = await downloadBackground(name, url, credit);
       if (!result) {
         return JSON.stringify({
           error: `Failed to download background "${name}". Check the URL.`,

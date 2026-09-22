@@ -164,6 +164,8 @@ import {
   isPoisonedExchange,
   threadImageLive,
   _testSeedThread,
+  _testPushToThread,
+  _testThreadEntries,
   holdScopeAsks,
 } from "./router.js";
 import {
@@ -2925,6 +2927,23 @@ describe("Phase 4.2 — thread image expiry", () => {
     expect(
       call.conversationHistory.some((t: any) => /captura/.test(t.content)),
     ).toBe(true);
+  });
+
+  it("pushToThread drops older entries' images — only the newest is retained (audit 2026-09-22)", () => {
+    _testSeedThread("whatsapp", []);
+    _testPushToThread("whatsapp", "User: a\nJarvis: b", "data:image/png;base64,ONE");
+    _testPushToThread("whatsapp", "User: c\nJarvis: d", "data:image/png;base64,TWO");
+    _testPushToThread("whatsapp", "User: e\nJarvis: f");
+    const entries = _testThreadEntries("whatsapp");
+    expect(entries.length).toBe(3);
+    expect(entries.filter((e) => e.imageUrl).length).toBe(0);
+    _testPushToThread("whatsapp", "User: g\nJarvis: h", "data:image/png;base64,NEW");
+    expect(_testThreadEntries("whatsapp").map((e) => e.imageUrl ?? null)).toEqual([
+      null,
+      null,
+      null,
+      "data:image/png;base64,NEW",
+    ]);
   });
 
   it("threadImageLive: only the final index is live", () => {

@@ -102,8 +102,11 @@ export function createApp(): Hono {
   app.get("/dashboard", (c) => c.redirect("/dashboard/"));
   app.use("/dashboard/*", serveStatic({ root: "./public" }));
 
-  // Docs — static HTML index + llms.txt + raw markdown (no auth)
+  // Docs — static HTML index + llms.txt + raw markdown. Same gate as
+  // /metrics: the raw files include CLAUDE.md (architecture, paths, guard
+  // internals) and 8080 is UFW-open (audit 2026-09-22).
   app.get("/docs", (c) => c.redirect("/docs/"));
+  app.use("/docs/*", privateOrApiKeyAuth);
   app.use("/docs/*", serveStatic({ root: "./public" }));
   app.get("/docs/raw/:file", async (c) => {
     const file = c.req.param("file");
@@ -120,7 +123,7 @@ export function createApp(): Hono {
         );
         return c.text(content, 200, {
           "Content-Type": "text/markdown; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
+          "Cache-Control": "private, max-age=3600",
         });
       } catch {
         continue;

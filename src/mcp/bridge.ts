@@ -7,7 +7,7 @@
 
 import type { Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
-import { validateArgsUrls } from "../lib/url-safety.js";
+import { validateArgsUrlsResolved } from "../lib/url-safety.js";
 import { getMcpToolHints } from "./annotations.js";
 import { errMsg } from "../lib/err-msg.js";
 
@@ -96,7 +96,8 @@ export function createMcpTool(
       // that Playwright's UnsupportedProtocol allowlist would miss
       // (http://localhost:*, http://10.x, etc.). See V7-READINESS-CRITERIA.md
       // Known Issues for the full threat model.
-      const urlError = validateArgsUrls(args);
+      // 2026-09-22: resolved — a public name pointing at loopback is refused too.
+      const urlError = await validateArgsUrlsResolved(args);
       if (urlError) {
         console.warn(
           `[mcp] blocked URL-bearing arg on ${namespacedName}: ${urlError}`,
