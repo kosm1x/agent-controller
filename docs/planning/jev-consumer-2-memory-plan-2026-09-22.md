@@ -129,6 +129,7 @@ facts)` with a message longer than 2,000 chars — the assertion is on the
 
 - Phase 2: `enrichContext` legs — return recalled items in
   `EnrichmentResult`, hook in the router beside `shadowFeedback`.
-- Readout harness `scripts/validate-jev-readout.ts` for bars 1–3.
+- ~~Readout harness `scripts/validate-jev-readout.ts` for bars 1–3.~~ DONE
+  09-22c `4625457`.
 - The `looksSensitive` gaps (`clave del wifi`, dot-split token, ≥ 32-run
   rule on paths) — separate change with a corpus-replay fixture.

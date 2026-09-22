@@ -147,8 +147,11 @@ was dropped:
   disagreement table the operator labels (≤ 40 rows, ~10 min).
 - Leaves the box: the follow-up and the previous user message, cut to 500
   chars each. The regex detector reads the same two texts uncut, so on turns
-  longer than 500 chars the comparison is not equal; the readout names how
-  many. The previous reply is NOT sent.
+  longer than 500 chars the comparison is not equal; since `4625457`
+  `ask()` records a `_cut` row (noul null) beside the answers whenever a
+  value exceeded the cut, and the readout marks those disagreements
+  (`atCut`); rows before that deploy are unmarked. The previous reply is
+  NOT sent.
 
 ### Rulings (audit round 4, 09-22) — RESOLVED
 
@@ -189,6 +192,15 @@ on the second half. No post-hoc rescue.
 | 1   | Packing the budget in Jev-score order puts ≥ 90 % of evidence-positive rows in budget AND beats priority order by ≥ 15 points                                                                     | Ends; the row order is fixed by operator ruling instead (two are already pending: coding-SOP priority, 2 unconditioned rows) |
 | 2   | At the threshold that keeps ≥ 95 % of used recalls on the first half: second half keeps ≥ 90 % of used and drops ≥ 40 % of unused (JME leg; a recall = one task, scored by its highest item noul) | Ends; input to the 09-30 5-layer readout either way                                                                          |
 | 3   | On operator-labelled disagreements Jev is right ≥ 70 %; and its corrections have precision ≥ 80 % on a labelled sample of 20                                                                      | Ends                                                                                                                         |
+
+Harness (09-22c `4625457`): `npx tsx scripts/validate-jev-readout.ts
+[--show] [--labels f.json]` computes all three bars with the exclusions above
+and prints INCONCLUSIVE until the gate is met. Bar 3 in the harness needs
+≥ 20 labelled corrections at precision ≥ 80 % — stricter than "a labelled
+sample of 20", since a sample of 20 with fewer corrections cannot show
+80 % precision. Labels file: a JSON object of task id →
+`negative` / `rephrase` / `neutral`; the label threshold 0.5 is frozen in
+`src/jev/readout.ts` (no flag — no post-hoc rescue).
 
 Bar 1, made computable: the 5 unregistered rows are not scored and are not
 re-ordered. The simulation holds them at their current priority position and
