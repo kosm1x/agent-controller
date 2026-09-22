@@ -136,6 +136,18 @@ vi.mock("../messaging/kb-injection.js", () => ({
 
 // Jev shadow: log-only side channel; the wiring test below pins the call site.
 vi.mock("../jev/shadow-kb.js", () => ({ shadowKbRows: vi.fn() }));
+// Safe only because router.js and shadow-kb.js (the other static importers
+// of shadow.js) are mocked in this file too; un-mocking one of them fails
+// here. scope-classifier-jev.js also imports it, but only behind a dynamic
+// import this file never reaches.
+vi.mock("../jev/shadow.js", () => ({ shadowMemoryRecall: vi.fn() }));
+// The JME recall, so the memory shadow's inputs can be read. Empty by
+// default: the block is skipped, as it is today when embed() times out.
+const mockQueryMemory = vi.hoisted(() => vi.fn(async () => []));
+vi.mock("../memory/jme.js", () => ({
+  queryMemory: mockQueryMemory,
+  orderForInjection: <T>(facts: T[]) => facts,
+}));
 
 vi.mock("../memory/essentials.js", () => ({
   getEssentialFacts: vi.fn(() => ""),
@@ -159,6 +171,7 @@ import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
+import { shadowMemoryRecall } from "../jev/shadow.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
@@ -581,6 +594,53 @@ describe("fastRunner.execute() — integration (R-4)", () => {
     it("skips a read-only task: it gets no conditional rows to score", async () => {
       await chatTurn(["file_read"]);
       expect(shadowKbRows).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Jev memory shadow wiring", () => {
+    const facts = [
+      {
+        id: 7,
+        factText: "el demo vive en vlmp-demo",
+        category: "fact",
+        sourceTask: "t0",
+        score: 0.9,
+        ts: 1,
+      },
+    ];
+    // Longer than the JME query cap: the shadow must get the message whole.
+    const long = "publica el demo y avisa cuando quede ".repeat(60).trim();
+    const chatTurn = (tools: string[], message: string) => {
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "STATUS: DONE\nready" }),
+      );
+      return fastRunner.execute({
+        taskId: "task-memory",
+        runId: "run-memory",
+        title: "Test task",
+        description: "Identity preamble###CACHE_BREAK###variable suffix",
+        tools,
+        conversationHistory: [{ role: "user", content: message }],
+      });
+    };
+
+    it("hands the shadow the recalled facts and the user message uncut", async () => {
+      mockQueryMemory.mockResolvedValueOnce(facts);
+      await chatTurn(["file_write"], long);
+      expect(long.length).toBeGreaterThan(2_000);
+      expect(mockQueryMemory).toHaveBeenCalledWith(
+        long.slice(0, 2_000),
+        expect.anything(),
+      );
+      expect(shadowMemoryRecall).toHaveBeenCalledTimes(1);
+      expect(shadowMemoryRecall).toHaveBeenCalledWith("task-memory", long, facts);
+    });
+
+    it("skips a read-only task and a recall with no facts", async () => {
+      mockQueryMemory.mockResolvedValueOnce(facts);
+      await chatTurn(["file_read"], long);
+      await chatTurn(["file_write"], long);
+      expect(shadowMemoryRecall).not.toHaveBeenCalled();
     });
   });
 

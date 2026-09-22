@@ -32,6 +32,7 @@ import {
   conditionMatches,
 } from "../messaging/kb-injection.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
+import { shadowMemoryRecall } from "../jev/shadow.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { getConfig } from "../config.js";
@@ -1011,6 +1012,11 @@ export const fastRunner: Runner = {
             content: `[JME MEMORY — facts from prior conversations]\n${block}`,
             cacheable: false,
           });
+          // Jev shadow (consumer 2), after the block is in: the message goes
+          // WHOLE — `lastMsg` is cut for embed() and the vendor filter must
+          // read past that cut.
+          if (!isReadOnlyTask && typeof lastUserMsg === "string")
+            shadowMemoryRecall(input.taskId, lastUserMsg, jmeFacts);
         }
       } catch {
         // Non-fatal — JME must never block the runner

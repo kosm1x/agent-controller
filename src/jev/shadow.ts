@@ -2,22 +2,18 @@
  * Jev shadow consumers — log Jev's answer beside the live decision, change
  * nothing. Plan: docs/planning/jev-consumers-plan-2026-09-21.md.
  *
- * Ships dormant: `JEV_SHADOW_CONSUMERS` (comma list of kb, feedback) arms
+ * Ships dormant: `JEV_SHADOW_CONSUMERS` (comma list of kb, memory, feedback) arms
  * each consumer, and arming one is the operator's ruling on the text it
  * sends. Every call is deferred with `setImmediate` and never awaited, so no
  * turn waits on the vendor and no failure reaches the caller.
  */
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
+import type { JmeRecallResult } from "../memory/jme.js";
 import type { JevQuestion } from "../tuning/jev-scope-replay.js";
 import { askJev, jevKey, mustNotLeave } from "./client.js";
 
-/**
- * `memory` (consumer 2) is not in this ship — operator ruling A, 2026-09-22,
- * after audit round 4 found the recall query cut upstream of the vendor
- * filter. The table's CHECK keeps the value so it can return additively.
- */
-export type ShadowConsumer = "kb" | "feedback";
+export type ShadowConsumer = "kb" | "memory" | "feedback";
 
 /** Off the turn's path, so generous; the retest's max was 532 ms. */
 const SHADOW_DEADLINE_MS = 5000;
@@ -28,6 +24,8 @@ const SHADOW_DEADLINE_MS = 5000;
  */
 const MESSAGE_CHARS = 500;
 const ITEM_CHARS = 400;
+/** The JME recall's `k`; pinned here so a wider recall cannot widen what leaves. */
+const MAX_MEMORY_ITEMS = 8;
 
 export function shadowArmed(consumer: ShadowConsumer): boolean {
   if (!jevKey()) return false;
@@ -152,6 +150,30 @@ export function deferShadow(
       warn(err);
     }
   });
+}
+
+/**
+ * Consumer 2 — every JME fact the runner injected, against the user message.
+ * Plan: docs/planning/jev-consumer-2-memory-plan-2026-09-22.md. The caller
+ * is the runner, which holds the message WHOLE — never `logRecall`, whose
+ * `query` arrives already cut on this leg (audit round 4). `ref` = task id;
+ * the readout joins `recall_audit.task_id` (written when the reply lands).
+ */
+export function shadowMemoryRecall(
+  taskId: string,
+  message: string,
+  facts: readonly Pick<JmeRecallResult, "id" | "factText" | "category">[],
+): void {
+  deferShadow("memory", taskId, { message }, () =>
+    facts.slice(0, MAX_MEMORY_ITEMS).map((f) => ({
+      item: String(f.id),
+      incumbent: f.category,
+      instructions:
+        "Is the memory quoted in the criteria relevant to answering the user's `message`?",
+      positive: f.factText,
+      negative: "The memory has nothing to do with the message.",
+    })),
+  );
 }
 
 /**

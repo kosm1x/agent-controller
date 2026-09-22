@@ -1,4 +1,4 @@
-# Jev consumers 1–3 — shadow plan (2026-09-21; consumer 2 DEFERRED 09-22)
+# Jev consumers 1–3 — shadow plan (2026-09-21; consumer 2 redesigned 09-22)
 
 Follows `jev-decision-layer-plan-2026-09-21.md`. Jev is live as the first scope
 classifier (`3c33771`, operator ruling). That use replaced a step that already
@@ -10,11 +10,11 @@ Operator request 2026-09-21: "Prepare a plan from 1 thru 3. Then /ship-it".
 
 ## What the code does today (verified 09-21)
 
-| #   | Decision                                                                                                                                     | Today                                                                                                                                             | Problem size                                                                                                                                                                                                                                                                |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Which `conditional` KB rows get the 8,000-char variable budget (`collectVariableSections`, `src/messaging/kb-injection.ts`)                  | Gate = scope GROUP of the row's `condition` (not the message). Rows that pass are packed in `priority ASC` order; the rest become a pointer line. | 12 rows, 39,448 chars. Five rows are `coding` (20,226 chars) and `coding` is in scope on most turns, so the same rows lose every time. By today's order `code-generation-sop` (priority 90) is pointer-only on every coding turn. Nothing records which rows were injected. |
-| 2   | DEFERRED (§2). Which recalled memories are injected (`enrichContext`: `mc-jarvis` 5, `mc-operational` 3, pgvector 5; `fast-runner`: JME k=8) | Similarity floors (0.12 / 0.15 / 0.25)                                                                                                            | `recall_audit` 30 d: 253 used of 1,538 marked = 16.5 % (JME 71/662, `mc-operational` 6/224). Most injected memory text is never used.                                                                                                                                       |
-| 3   | The follow-up message's feedback label (`detectFeedbackSignal`, `src/intelligence/feedback.ts`)                                              | Regex + 40 % word overlap; positive = "excelente" only                                                                                            | 30 d: 5 negative, 6 rephrase, 13 positive in ~1,500 turns. The label feeds the case miner and tier calibration.                                                                                                                                                             |
+| #   | Decision                                                                                                                      | Today                                                                                                                                             | Problem size                                                                                                                                                                                                                                                                |
+| --- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Which `conditional` KB rows get the 8,000-char variable budget (`collectVariableSections`, `src/messaging/kb-injection.ts`)   | Gate = scope GROUP of the row's `condition` (not the message). Rows that pass are packed in `priority ASC` order; the rest become a pointer line. | 12 rows, 39,448 chars. Five rows are `coding` (20,226 chars) and `coding` is in scope on most turns, so the same rows lose every time. By today's order `code-generation-sop` (priority 90) is pointer-only on every coding turn. Nothing records which rows were injected. |
+| 2   | Which recalled memories are injected (`enrichContext`: `mc-jarvis` 5, `mc-operational` 3, pgvector 5; `fast-runner`: JME k=8) | Similarity floors (0.12 / 0.15 / 0.25)                                                                                                            | `recall_audit` 30 d: 253 used of 1,538 marked = 16.5 % (JME 71/662, `mc-operational` 6/224). Most injected memory text is never used.                                                                                                                                       |
+| 3   | The follow-up message's feedback label (`detectFeedbackSignal`, `src/intelligence/feedback.ts`)                               | Regex + 40 % word overlap; positive = "excelente" only                                                                                            | 30 d: 5 negative, 6 rephrase, 13 positive in ~1,500 turns. The label feeds the case miner and tier calibration.                                                                                                                                                             |
 
 Replay on history is **not possible** for any of the three with equal inputs:
 no record of injected KB rows, `recall_audit` keeps 50–80-char snippets instead
@@ -24,8 +24,9 @@ the incumbent). So: **forward shadow**, not replay.
 
 ## Design
 
-One shared client, one shadow table, two consumers that only log (consumer
-2 deferred — see "Rulings" below).
+One shared client, one shadow table, three consumers that only log
+(consumer 2 returned redesigned on 09-22 —
+`docs/planning/jev-consumer-2-memory-plan-2026-09-22.md`).
 
 - `src/jev/client.ts` — `askJev(state, questions, deadlineMs)` → nouls or a
   throw; `mustNotLeave` moves here. The scope classifier uses it (no behaviour
@@ -35,8 +36,8 @@ item, noul, latency_ms, incumbent`. One row per question answered, per
   item dropped, and per request withheld or failed.
 - Every shadow call is `setImmediate` + never awaited + own try/catch. No
   turn waits on it, no prompt changes, no label changes.
-- **Ships dormant.** `JEV_SHADOW_CONSUMERS` (comma list of `kb`, `feedback`;
-  default empty) arms each one. Arming is the operator's ruling on
+- **Ships dormant.** `JEV_SHADOW_CONSUMERS` (comma list of `kb`, `memory`,
+  `feedback`; default empty) arms each one. Arming is the operator's ruling on
   the text listed under "Leaves the box" for that consumer.
 - `mustNotLeave` runs on every string that carries run-time data, **on the
   whole text, before anything is cut** (question wording, state keys and the
@@ -116,9 +117,12 @@ the four always-losing rows are therefore scoreable, two are not.
 Known imprecision: the shadow reads the rows one tick after the prompt was
 built; a KB write in between would label a row set the turn never saw.
 
-### 2 — Memory relevance (`memory`) — DEFERRED (operator ruling A, 09-22)
+### 2 — Memory relevance (`memory`) — REDESIGNED 09-22
 
-Not in this ship. The design stays here for the redesign:
+Binding design: `docs/planning/jev-consumer-2-memory-plan-2026-09-22.md`
+(JME leg only; the runner hands the shadow its uncut message and the facts
+it injected; `ref` = task id). What follows is the first design and why it
+was dropped:
 
 - Question per recalled item: "this memory helps answer the message".
   Criteria = the item text as recalled (filtered whole, then cut to 400
@@ -180,11 +184,11 @@ Readout after **7 days and ≥ 150 scoreable decisions** per consumer; fewer =
 INCONCLUSIVE, not a pass. Threshold picked on the first half by date, judged
 on the second half. No post-hoc rescue.
 
-| #   | PASS needs                                                                                                                                                                      | Otherwise                                                                                                                    |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Packing the budget in Jev-score order puts ≥ 90 % of evidence-positive rows in budget AND beats priority order by ≥ 15 points                                                   | Ends; the row order is fixed by operator ruling instead (two are already pending: coding-SOP priority, 2 unconditioned rows) |
-| 2   | DEFERRED with consumer 2 (ruling A). Was: at the threshold that keeps ≥ 95 % of used recalls on the first half, the second half keeps ≥ 90 % of used and drops ≥ 40 % of unused | Ends; input to the 09-30 5-layer readout either way                                                                          |
-| 3   | On operator-labelled disagreements Jev is right ≥ 70 %; and its corrections have precision ≥ 80 % on a labelled sample of 20                                                    | Ends                                                                                                                         |
+| #   | PASS needs                                                                                                                                                                                        | Otherwise                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Packing the budget in Jev-score order puts ≥ 90 % of evidence-positive rows in budget AND beats priority order by ≥ 15 points                                                                     | Ends; the row order is fixed by operator ruling instead (two are already pending: coding-SOP priority, 2 unconditioned rows) |
+| 2   | At the threshold that keeps ≥ 95 % of used recalls on the first half: second half keeps ≥ 90 % of used and drops ≥ 40 % of unused (JME leg; a recall = one task, scored by its highest item noul) | Ends; input to the 09-30 5-layer readout either way                                                                          |
+| 3   | On operator-labelled disagreements Jev is right ≥ 70 %; and its corrections have precision ≥ 80 % on a labelled sample of 20                                                                      | Ends                                                                                                                         |
 
 Bar 1, made computable: the 5 unregistered rows are not scored and are not
 re-ordered. The simulation holds them at their current priority position and
@@ -198,8 +202,9 @@ own kill switch and operator ruling. Nothing in this plan enforces.
 ## Cost and risk
 
 - Spend: per request ≈ 0.5k tokens (`kb`: the message + up to 7 one-line
-  descriptions), ≈ 0.5k (`feedback`). At ~50 turns a day that is
-  < $0.01/day, < $0.10 for the window. Unledgered, like the scope spend.
+  descriptions), ≈ 1k (`memory`: ≤ 8 facts of ≤ 400 chars), ≈ 0.5k
+  (`feedback`). At ~50 turns and ~22 JME recalls a day that is < $0.02/day,
+  < $0.15 for the window. Unledgered, like the scope spend.
 - Never on a safety boundary (deliverable filter, shell gate, completion
   ledger): the vendor says adversarial text moves the answer.
 - Vendor down = shadow rows missing, turns unaffected.
@@ -213,7 +218,7 @@ own kill switch and operator ruling. Nothing in this plan enforces.
 | ----- | -------------------------------------------------------------------------------- | --------------- |
 | 0     | KB overflow dry run (free)                                                       | this ship       |
 | 1     | Shared client, `jev_shadow` (migration v6, deploy gate → 6), scope telemetry row | this ship       |
-| 2     | Two shadow consumers (`kb`, `feedback`), dormant; evidence predicates committed  | this ship       |
-| 3     | Deploy; arm `kb` → `feedback`                                                    | operator        |
+| 2     | Three shadow consumers, dormant; evidence predicates committed (memory: 09-22)   | this ship       |
+| 3     | Deploy; arm `kb` → `feedback` → `memory`                                         | operator        |
 | 4     | Readout harness run at day 7 against the registered bars                         | next session    |
 | 5     | Enforcement proposal per PASS                                                    | operator ruling |

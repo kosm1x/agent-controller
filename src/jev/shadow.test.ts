@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
+import type { JmeFactCategory } from "../memory/jme.js";
 import { logRecall } from "../memory/recall-utility.js";
 import { classifyScopeGroupsWithJev } from "../messaging/scope-classifier-jev.js";
 import {
@@ -13,7 +14,19 @@ import {
   recordJevShadow,
   shadowArmed,
   shadowFeedback,
+  shadowMemoryRecall,
 } from "./shadow.js";
+
+/** A recalled JME fact as the runner holds it. */
+const fact = (
+  id: number,
+  factText: string,
+  category: JmeFactCategory = "preference",
+) => ({
+  id,
+  factText,
+  category,
+});
 
 // Assembled at runtime: a literal would trip the repo's secret guard.
 const SECRET = "Xy" + "7" + "kQ9" + "zz";
@@ -60,7 +73,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mockFetch);
   vi.stubEnv("TYPESAFE_API_KEY", "test-key");
   // Whitespace and case are normalised: the list is operator-typed.
-  vi.stubEnv("JEV_SHADOW_CONSUMERS", " Kb ,feedback");
+  vi.stubEnv("JEV_SHADOW_CONSUMERS", " Kb ,feedback, memory");
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -91,6 +104,7 @@ describe("arming", () => {
     expect(shadowArmed("kb")).toBe(false);
     shadowFeedback("t1", "no, eso no era", "dame el reporte", "neutral");
     shadowKbRows("t1", "hola", []);
+    shadowMemoryRecall("t1", "hola", [fact(1, "un recuerdo")]);
     await settle();
     expect(mockFetch).not.toHaveBeenCalled();
     expect(rows()).toEqual([]);
@@ -100,7 +114,9 @@ describe("arming", () => {
     vi.stubEnv("JEV_SHADOW_CONSUMERS", "kb");
     expect(shadowArmed("kb")).toBe(true);
     expect(shadowArmed("feedback")).toBe(false);
+    expect(shadowArmed("memory")).toBe(false);
     shadowFeedback("t1", "otra vez", "dame el reporte", "neutral");
+    shadowMemoryRecall("t1", "hola", [fact(1, "un recuerdo")]);
     await settle();
     expect(mockFetch).not.toHaveBeenCalled();
   });
@@ -110,6 +126,7 @@ describe("arming", () => {
     expect(process.env.JEV_SHADOW_CONSUMERS).toBeUndefined();
     expect(shadowArmed("kb")).toBe(false);
     expect(shadowArmed("feedback")).toBe(false);
+    expect(shadowArmed("memory")).toBe(false);
   });
 
   it("stays off without a key", () => {
@@ -246,6 +263,82 @@ describe("shadow calls", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("memory: one question per recalled fact, the fact text as the criterion", async () => {
+    answerAll(0.7);
+    shadowMemoryRecall("t5", "que sabes de denue", [
+      fact(11, "DENUE vive en supabase", "project"),
+      fact(12, "prefiere respuestas cortas"),
+    ]);
+    await settle();
+    const body = sentBody();
+    expect(body.state).toEqual({ message: "que sabes de denue" });
+    expect(Object.keys(body.questions)).toEqual(["q0", "q1"]);
+    // The registered question (plan §Design), pinned: bar 2 thresholds a
+    // relevance number, so the vendor must be asked about relevance.
+    expect(body.questions.q0.instructions).toBe(
+      "Is the memory quoted in the criteria relevant to answering the user's `message`?",
+    );
+    expect(body.questions.q0.criteria).toEqual({
+      true: "DENUE vive en supabase",
+      false: "The memory has nothing to do with the message.",
+    });
+    expect(
+      rows().map((r) => [r.consumer, r.ref, r.item, r.noul, r.incumbent]),
+    ).toEqual([
+      ["memory", "t5", "11", 0.7, "project"],
+      ["memory", "t5", "12", 0.7, "preference"],
+    ]);
+  });
+
+  it("memory: drops a sensitive fact alone and scores the rest", async () => {
+    answerAll(0.6);
+    shadowMemoryRecall("t6", "entra a la liga", [
+      fact(21, `Login: pedro\nPswd: ${SECRET}`),
+      fact(22, "la liga se juega los martes"),
+    ]);
+    await settle();
+    expect(JSON.stringify(sentBody())).not.toContain(SECRET);
+    expect(Object.keys(sentBody().questions)).toEqual(["q0"]);
+    expect(rows().map((r) => [r.item, r.noul])).toEqual([
+      ["21", null],
+      ["22", 0.6],
+    ]);
+  });
+
+  it("memory: never more than 8 facts leave, whatever the recall returned", async () => {
+    answerAll(0.5);
+    shadowMemoryRecall(
+      "t7",
+      "hola",
+      Array.from({ length: 9 }, (_, i) => fact(i + 1, `dato ${i + 1}`)),
+    );
+    await settle();
+    expect(Object.keys(sentBody().questions)).toHaveLength(8);
+    expect(JSON.stringify(sentBody())).not.toContain("dato 9");
+  });
+
+  it("memory: a clean fact leaves cut to 400 chars, the message to 500", async () => {
+    answerAll(0.5);
+    const factText = "regla uno ".repeat(60).trim();
+    const message = "dame la regla ".repeat(50).trim();
+    expect(mustNotLeave(factText)).toBe(false);
+    // Longer than the cuts, or the slices below compare the whole string.
+    expect(factText.length).toBeGreaterThan(400);
+    expect(message.length).toBeGreaterThan(500);
+    shadowMemoryRecall("t9", message, [fact(1, factText)]);
+    await settle();
+    expect(sentBody().questions.q0.criteria.true).toBe(factText.slice(0, 400));
+    expect(sentBody().state.message).toBe(message.slice(0, 500));
+  });
+
+  it("memory: no facts, no request", async () => {
+    answerAll(0.5);
+    shadowMemoryRecall("t8", "hola", []);
+    await settle();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(rows()).toEqual([]);
+  });
+
   it("drops a sensitive item alone, with a null-noul row, and scores the rest", async () => {
     // No shipping consumer builds an item from run-time text; the branch is
     // held for consumer 2's return and pinned here through `deferShadow`.
@@ -326,6 +419,27 @@ describe("the filter reads the text before it is cut", () => {
     ]);
   });
 
+  it("memory: the round-4 reproduction — a keyword past char 2,000 still withholds", async () => {
+    answerAll(0.5);
+    const message = late(2_100);
+    expect(message.length).toBeGreaterThan(2_000);
+    expect(mustNotLeave(message.slice(0, 2_000))).toBe(false);
+    shadowMemoryRecall("t3", message, [fact(1, "un recuerdo limpio")]);
+    await settle();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(rows().map((r) => [r.consumer, r.item])).toEqual([
+      ["memory", "_withheld"],
+    ]);
+  });
+
+  it("memory: a fact whose keyword sits past the 400-char cut is dropped, not sent", async () => {
+    answerAll(0.5);
+    shadowMemoryRecall("t4", "hola", [fact(1, late(500))]);
+    await settle();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(rows().map((r) => [r.item, r.noul])).toEqual([["1", null]]);
+  });
+
   it("kb: the message withholds the request", async () => {
     getDatabase()
       .prepare(
@@ -369,7 +483,7 @@ describe("kb: no KB text leaves", () => {
 });
 
 describe("wiring", () => {
-  it("logRecall reaches no vendor: consumer 2 is not in this ship", async () => {
+  it("logRecall reaches no vendor: consumer 2 reads the runner, never the recall log", async () => {
     vi.stubEnv("JEV_SHADOW_CONSUMERS", "kb,memory,feedback");
     answerAll(0.9);
     logRecall({
