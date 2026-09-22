@@ -143,8 +143,10 @@ export async function runReflection(
     // conversationHistory turns as the exchange — exactly the reflection
     // shape: reflection template = system, the rendered scope = the one turn.
     // PHASE 6 NOTE (audit W3): the chat path also injects mc-jarvis essential
-    // identity facts as a second system message via getEssentialFacts(). The
-    // role-reframe below competes against that. Phase 6 must verify the
+    // identity facts via getEssentialFacts() — since 2026-09-22 (context-01)
+    // as a cacheable:false message, i.e. at the head of the user prompt on
+    // the SDK path, right beside this turn. The role-reframe below competes
+    // against that. Phase 6 must verify the
     // reflector does not collapse into Jarvis's first person.
     description: REFLECTION_SYSTEM_PROMPT,
     conversationHistory: [

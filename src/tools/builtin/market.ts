@@ -73,7 +73,6 @@ export const marketQuoteTool: Tool = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {

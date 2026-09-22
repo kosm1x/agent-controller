@@ -36,6 +36,7 @@ import { shadowMemoryRecall } from "../jev/shadow.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { getConfig } from "../config.js";
+import { toolSearchEnabled } from "../inference/claude-sdk.js";
 
 // Re-export for back-compat with existing imports (e.g. tests).
 export { conditionMatches };
@@ -753,9 +754,16 @@ export const fastRunner: Runner = {
     const definitions = skipDeferral
       ? allDefinitions
       : toolRegistry.getDefinitions(input.tools, true);
-    const deferredCatalog = skipDeferral
-      ? undefined
-      : toolRegistry.getDeferredCatalog(input.tools);
+    // On the claude-sdk path with tool search armed, the SDK advertises the
+    // deferred tools itself; the text catalog duplicated them and told the
+    // model to call them by name (audit 2026-09-22 context-04).
+    const sdkToolSearch =
+      getConfig().inferencePrimaryProvider === "claude-sdk" &&
+      toolSearchEnabled();
+    const deferredCatalog =
+      skipDeferral || sdkToolSearch
+        ? undefined
+        : toolRegistry.getDeferredCatalog(input.tools);
     const deferredCount = totalTools - definitions.length;
     if (deferredCount > 0) {
       console.log(
@@ -787,13 +795,13 @@ export const fastRunner: Runner = {
       // v8 S1: split description on CACHE_BREAK_MARKER (router emits
       // `stable + MARKER + variable + extras`) and emit cache-friendly:
       //   1. STABLE: stable persona + STATUS_SUFFIX
-      //   2. STABLE: essentials
+      //   2. VARIABLE: essentials (cacheable: false)
       //   3. STABLE: enforce + always-read KB rows
       //   4. VARIABLE: variable persona + per-call extras
       //   5. VARIABLE: conditional KB rows + project README
       //   6. precedent (per-conversation)
       //   7. deferredCatalog (per-scope)
-      // The stable prefix (1-3) is the longest cacheable shared content
+      // The stable prefix (1 + 3) is the longest cacheable shared content
       // across tasks — Anthropic's prefix cache hits on those tokens.
       // Without this split, position 1 carried scope-conditional persona
       // sections at the top, busting cache on every scope change.
@@ -889,9 +897,16 @@ export const fastRunner: Runner = {
         `[fast-runner] assembly_ms=${Date.now() - assemblyStart} taskId=${input.taskId}`,
       );
 
-      // 2. STABLE: v6.5 M2 Essential facts — compact identity/context (~150-200 tokens).
+      // 2. VARIABLE: v6.5 M2 Essential facts — compact identity/context
+      // (~150-200 tokens). Recency-ranked, so the set changes about once per
+      // task; as a stable system message it rewrote the whole cached prefix
+      // ahead of the KB (audit 2026-09-22 context-01).
       if (essentials) {
-        messages.push({ role: "system", content: essentials });
+        messages.push({
+          role: "system",
+          content: essentials,
+          cacheable: false,
+        });
       }
 
       // 3. STABLE / KB sections — branching ordering preserved per v8 S1

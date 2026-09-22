@@ -112,26 +112,16 @@ export async function enrichContext(
         .catch(() => {}),
   );
 
-  // v6.4 G1.5: Query expansion runs IN PARALLEL with Hindsight recalls,
-  // NOT inside the pgvector race block (audit fix: 5s LLM call inside 2s
-  // timeout = dead on arrival). Results cached for use in pgvector search.
-  // The expansion's only consumer is the pgvector leg below; with pgvector off
-  // (no COMMIT_DB_KEY) this was a billed LLM call per turn whose result was
-  // discarded (logic audit F13 / design audit D7). As a sibling promise it
-  // also always resolved AFTER the leg had read it, so even with pgvector on
-  // the expansion was never used — the leg now awaits this promise itself
-  // (inside its own 4 s race), so nothing else on the turn waits for it.
-  const pgvectorMod = await import("../db/pgvector.js");
-  const expansionPromise: Promise<string[]> = pgvectorMod.isPgvectorEnabled()
-    ? expandQuery(messageText).catch(() => [])
-    : Promise.resolve([]);
-
-  // v6.2 M0.5 + v6.4 G1.5: pgvector semantic search with expanded queries.
-  // Runs IN PARALLEL with Hindsight recalls. 4s timeout to accommodate
-  // multiple embedding generations from query expansion.
-  const PGVECTOR_TIMEOUT_MS = 4000;
+  // v6.2 M0.5: pgvector semantic search on the raw message, IN PARALLEL with
+  // the Hindsight recalls. The v6.4 G1.5 LLM query expansion is gone: the leg
+  // awaited it (~3.5 s p50 via the SDK) inside a 4 s race, so every enriched
+  // turn waited ~4 s and the section was usually dropped by the timeout
+  // anyway (audit 2026-09-22 speed-01).
+  const PGVECTOR_TIMEOUT_MS = 1500;
   const MAX_RESULTS_PER_SOURCE = 2; // Session diversity cap (v6.4 G1.5)
   let pgTimedOut = false;
+  let pgDone = false;
+  const pgStart = Date.now();
   recallPromises.push(
     Promise.race([
       (async () => {
@@ -143,43 +133,37 @@ export async function enrichContext(
 
           if (!isPgvectorEnabled()) return;
 
-          const expandedQueries = await expansionPromise;
-          const queries = [messageText, ...expandedQueries];
+          const qEmbedding = await generateEmbedding(messageText);
+          if (!qEmbedding || qEmbedding.length === 0) return;
+          const results = await pgHybridSearch(
+            qEmbedding,
+            messageText,
+            3,
+            0.25,
+          );
 
-          // Run all queries in parallel, collect unique results by path
+          // Collect unique results by path
           const seenPaths = new Set<string>();
           const sourceCount = new Map<string, number>();
-          const allResults: Array<{
-            combined_score: number;
-            title: string;
-            content: string;
-            path: string;
-            stale: boolean;
-          }> = [];
-
-          await Promise.all(
-            queries.map(async (q) => {
-              const qEmbedding = await generateEmbedding(q);
-              if (!qEmbedding || qEmbedding.length === 0) return;
-              const results = await pgHybridSearch(qEmbedding, q, 3, 0.25);
-              for (const r of results) {
-                if (seenPaths.has(r.path)) continue;
-                // Session diversity: cap per source_task_id
-                const sourceKey =
-                  (r as { source_task_id?: string }).source_task_id ??
-                  "unknown";
-                const count = sourceCount.get(sourceKey) ?? 0;
-                if (count >= MAX_RESULTS_PER_SOURCE) continue;
-                sourceCount.set(sourceKey, count + 1);
-                seenPaths.add(r.path);
-                allResults.push(r);
-                pgRecordAccess(r.path).catch(() => {});
-              }
-            }),
-          );
+          const allResults: typeof results = [];
+          for (const r of results) {
+            if (seenPaths.has(r.path)) continue;
+            // Session diversity: cap per source_task_id
+            const sourceKey =
+              (r as { source_task_id?: string }).source_task_id ?? "unknown";
+            const count = sourceCount.get(sourceKey) ?? 0;
+            if (count >= MAX_RESULTS_PER_SOURCE) continue;
+            sourceCount.set(sourceKey, count + 1);
+            seenPaths.add(r.path);
+            allResults.push(r);
+            pgRecordAccess(r.path).catch(() => {});
+          }
 
           // Guard: don't mutate sections after timeout (race condition C1)
           if (pgTimedOut) return;
+          console.log(
+            `[enrichment] pgvector: ${results.length} hits in ${Date.now() - pgStart} ms`,
+          );
 
           // Minimal sufficiency: filter low-relevance results, sort, take top 5
           const PG_MIN_RELEVANCE = 0.15;
@@ -195,19 +179,25 @@ export async function enrichContext(
               if (r.stale) line += " ⚠ STALE";
               lines.push(line);
             }
-            const expandNote =
-              queries.length > 1 ? ` (${queries.length} query variants)` : "";
             sections.push(
-              `## Contexto semántico (pgvector${expandNote})\n${lines.join("\n")}`,
+              `## Contexto semántico (pgvector)\n${lines.join("\n")}`,
             );
           }
         } catch {
           // Non-fatal — pgvector search is best-effort
+        } finally {
+          pgDone = true;
         }
       })(),
       new Promise<void>((resolve) =>
         setTimeout(() => {
           pgTimedOut = true;
+          // A dropped section is otherwise silent (qa R1 W2).
+          if (!pgDone) {
+            console.log(
+              `[enrichment] pgvector: timed out (${PGVECTOR_TIMEOUT_MS} ms)`,
+            );
+          }
           resolve();
         }, PGVECTOR_TIMEOUT_MS),
       ),
@@ -287,60 +277,6 @@ export async function enrichContext(
     matchedSkillIds,
     confidence,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Query expansion (v6.4 G1.5)
-// ---------------------------------------------------------------------------
-
-/**
- * Generate 3 reformulations of a user message for diverse KB recall.
- * Uses a cheap, fast LLM call (5s timeout). Returns empty array on failure.
- *
- * Example: "Qué tareas tengo pendientes?" →
- *   ["lista de pendientes y prioridades",
- *    "NorthStar tasks not started",
- *    "objetivos sin completar"]
- */
-export async function expandQuery(messageText: string): Promise<string[]> {
-  // Skip expansion for very short or very long messages
-  if (messageText.length < 15 || messageText.length > 500) return [];
-
-  try {
-    const { infer } = await import("../inference/adapter.js");
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("expand timeout")), 5_000),
-    );
-    const result = await Promise.race([
-      infer({
-        messages: [
-          {
-            role: "system",
-            content:
-              "Generate exactly 3 short search queries (one per line) that rephrase the user's message for knowledge base search. Different angles: synonyms, English/Spanish flip, abstract/concrete. No numbering, no explanation, just 3 lines.",
-          },
-          { role: "user", content: messageText },
-        ],
-        max_tokens: 100,
-      }),
-      deadline,
-    ]);
-
-    const lines = (result.content ?? "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 5 && l.length < 200)
-      .slice(0, 3);
-
-    if (lines.length > 0) {
-      console.log(
-        `[enrichment] Query expansion: ${lines.length} variants generated`,
-      );
-    }
-    return lines;
-  } catch {
-    return [];
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1952,6 +1952,50 @@ describe("wrapToolCached memoization", () => {
   });
 });
 
+describe("wrapToolCached readOnlyHint (audit 2026-09-22 speed-02)", () => {
+  const make = (name: string, readOnlyHint?: boolean) => ({
+    name,
+    ...(readOnlyHint !== undefined && { readOnlyHint }),
+    definition: {
+      type: "function" as const,
+      function: {
+        name,
+        description: "probe",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    execute: async () => "ok",
+  });
+
+  it("passes readOnlyHint so the CLI can run read-only calls concurrently", async () => {
+    const { wrapToolCached } = await import("./claude-sdk.js");
+    const w = wrapToolCached(make("ro_probe", true) as never) as unknown as {
+      annotations?: Record<string, unknown>;
+    };
+    expect(w.annotations).toEqual({ readOnlyHint: true });
+  });
+
+  it("MCP-bridged and serial-listed read tools stay serial (qa R1 C1/W1)", async () => {
+    const { wrapToolCached } = await import("./claude-sdk.js");
+    for (const name of ["browser__goto", "playwright__browser_navigate", "gdrive_download"]) {
+      const w = wrapToolCached(make(name, true) as never) as unknown as {
+        annotations?: Record<string, unknown>;
+      };
+      expect(w.annotations).toEqual({ readOnlyHint: false });
+    }
+  });
+
+  it("write tools and tools with no hint stay serial", async () => {
+    const { wrapToolCached } = await import("./claude-sdk.js");
+    for (const t of [make("rw_probe", false), make("nohint_probe")]) {
+      const w = wrapToolCached(t as never) as unknown as {
+        annotations?: Record<string, unknown>;
+      };
+      expect(w.annotations).toEqual({ readOnlyHint: false });
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Provider-health metrics on the claude-sdk path (Lane D observability, 2026-07-05)
 //

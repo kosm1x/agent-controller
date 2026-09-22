@@ -37,7 +37,8 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
 import { toolRegistry } from "../tools/registry.js";
-import type { Tool } from "../tools/types.js";
+import { getToolAnnotations, type Tool } from "../tools/types.js";
+import { MCP_NAMESPACE_SEP } from "../mcp/types.js";
 import { sanitizeSurrogates, safeSlice } from "../lib/unicode-safe.js";
 import type {
   ChatMessage,
@@ -150,6 +151,25 @@ export function wrapToolCached(t: Tool): ReturnType<typeof wrapTool> {
   return wrapped;
 }
 
+/** Read-only by the risk annotation but NOT safe to run beside another call
+ *  from the same response: gdrive_download writes the file its description
+ *  tells the model to pdf_read next. */
+const SERIAL_READ_TOOLS = new Set(["gdrive_download"]);
+
+/**
+ * Concurrency is decided here, not by editing readOnlyHint (which feeds the
+ * Rule-of-Two resolver). MCP-bridged tools stay serial: the browser server
+ * marks goto/navigate/tabs read-only, and they change the page a following
+ * read in the same response depends on (qa R1 C1, 2026-09-22).
+ */
+function runsConcurrently(t: Tool): boolean {
+  return (
+    getToolAnnotations(t).readOnlyHint &&
+    !t.name.includes(MCP_NAMESPACE_SEP) &&
+    !SERIAL_READ_TOOLS.has(t.name)
+  );
+}
+
 function wrapTool(t: Tool) {
   const params = t.definition.function.parameters as Record<string, unknown>;
   const shape = jsonSchemaToZodShape(params);
@@ -191,6 +211,11 @@ function wrapTool(t: Tool) {
       // long-tail split the OpenAI-path scope system uses. triggerPhrases
       // double as the search hint (they exist to match informal requests).
       alwaysLoad: !t.deferred,
+      // The CLI runs same-response MCP calls concurrently only when
+      // readOnlyHint is true; without it every read ran serially (audit
+      // 2026-09-22 speed-02). destructiveHint stays unset so permission
+      // behaviour does not change.
+      annotations: { readOnlyHint: runsConcurrently(t) },
       ...(t.triggerPhrases &&
         t.triggerPhrases.length > 0 && {
           searchHint: t.triggerPhrases.join(", "),

@@ -33,6 +33,31 @@ vi.mock("../skills/retrieval.js", () => ({
   retrieveSkills: vi.fn().mockResolvedValue([]),
 }));
 
+// pgvector leg: off by default (as in tests without COMMIT_DB_KEY); the
+// speed-01 test below turns it on.
+const pg = vi.hoisted(() => ({
+  enabled: vi.fn(() => false),
+  search: vi.fn(async () => [
+    {
+      combined_score: 0.9,
+      title: "Nota",
+      content: "contenido",
+      path: "a.md",
+      stale: false,
+    },
+  ]),
+}));
+vi.mock("../db/pgvector.js", () => ({
+  isPgvectorEnabled: pg.enabled,
+  pgHybridSearch: pg.search,
+  pgRecordAccess: vi.fn(async () => {}),
+}));
+vi.mock("../inference/embeddings.js", () => ({
+  generateEmbedding: vi.fn(async () => [0.1, 0.2]),
+}));
+const mockInfer = vi.hoisted(() => vi.fn());
+vi.mock("../inference/adapter.js", () => ({ infer: mockInfer }));
+
 import { enrichContext } from "./enrichment.js";
 import { queryOutcomes } from "../db/task-outcomes.js";
 
@@ -116,6 +141,26 @@ describe("enrichment", () => {
     const result = await enrichContext("send follow-up", "telegram");
     expect(result.matchedSkillIds).toEqual(["id-1"]);
     expect(result.contextBlock).toContain("test-skill");
+  });
+
+  it("speed-01: pgvector searches the raw message with no LLM query expansion", async () => {
+    pg.enabled.mockReturnValue(true);
+    try {
+      const result = await enrichContext(
+        "cuáles son los pendientes del proyecto de ventas",
+        "telegram",
+      );
+      expect(mockInfer).not.toHaveBeenCalled();
+      expect(pg.search).toHaveBeenCalledTimes(1);
+      expect(pg.search.mock.calls[0]![1]).toBe(
+        "cuáles son los pendientes del proyecto de ventas",
+      );
+      expect(result.contextBlock).toContain(
+        "## Contexto semántico (pgvector)\n",
+      );
+    } finally {
+      pg.enabled.mockReturnValue(false);
+    }
   });
 
   describe("tool-first guard", () => {

@@ -15,27 +15,27 @@ const DEBOUNCE_MS = 5_000;
 
 /**
  * Regenerate INDEX.md from the current jarvis_files table.
- * Groups files by top-level directory, counts files and bytes.
+ * Lists top-level directories and projects only. No counts, sizes, dates or
+ * recent-files list: this row is always-read inside the cached system prefix,
+ * and those parts changed on every KB write (audit 2026-09-22 context-02).
  */
 export function regenerateIndex(): void {
   try {
     const db = getDatabase();
 
-    // Count files by top-level directory
+    // Top-level directories
     const rows = db
       .prepare(
         `SELECT
            CASE
              WHEN INSTR(path, '/') > 0 THEN SUBSTR(path, 1, INSTR(path, '/') - 1)
              ELSE '(root)'
-           END as dir,
-           COUNT(*) as cnt,
-           SUM(LENGTH(content)) as bytes
+           END as dir
          FROM jarvis_files
          GROUP BY dir
-         ORDER BY cnt DESC`,
+         ORDER BY dir`,
       )
-      .all() as Array<{ dir: string; cnt: number; bytes: number }>;
+      .all() as Array<{ dir: string }>;
 
     // Get active projects (files under projects/)
     const projects = db
@@ -52,19 +52,10 @@ export function regenerateIndex(): void {
       )
       .all() as Array<{ name: string }>;
 
-    const totalFiles = rows.reduce((sum, r) => sum + r.cnt, 0);
-    const totalKB = Math.round(
-      rows.reduce((sum, r) => sum + r.bytes, 0) / 1024,
-    );
-
-    const now = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Mexico_City",
-    });
-
     // Build compact INDEX
     const dirLines = rows
       .filter((r) => r.dir !== "(root)")
-      .map((r) => `- [[${r.dir}/|${r.dir}]] (${r.cnt})`)
+      .map((r) => `- [[${r.dir}/|${r.dir}]]`)
       .join("\n");
 
     const projectLines =
@@ -72,31 +63,13 @@ export function regenerateIndex(): void {
         ? projects.map((p) => `- [[projects/${p.name}/|${p.name}]]`).join("\n")
         : "- (ninguno)";
 
-    // Get recent files for Obsidian dashboard
-    const recentFiles = db
-      .prepare(
-        `SELECT path, title FROM jarvis_files
-         WHERE path != 'INDEX.md'
-         ORDER BY updated_at DESC LIMIT 5`,
-      )
-      .all() as Array<{ path: string; title: string }>;
-
-    const recentLines = recentFiles
-      .map((f) => `- [[${f.path.replace(/\.md$/, "")}|${f.title}]]`)
-      .join("\n");
-
     const content = `# Jarvis Knowledge Base
-
-> [!summary] ${totalFiles} archivos · ${totalKB}KB · Actualizado ${now}
 
 ## Estructura
 ${dirLines}
 
 ## Proyectos Activos
 ${projectLines}
-
-## Recientes
-${recentLines}
 
 ## Cómo navegar
 - jarvis_file_list con prefix="NorthStar/" para metas

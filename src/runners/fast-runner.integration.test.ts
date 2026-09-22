@@ -12,7 +12,7 @@
  * orchestrator with many dependencies. Each mock has a one-line rationale.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatMessage } from "../inference/adapter.js";
 
 // `registerRunner` auto-fires on `fast-runner.ts` import — make it a no-op
@@ -101,6 +101,7 @@ vi.mock("../intelligence/scope-telemetry.js", () => ({
 // Checkpoint: spied on by Test B.
 vi.mock("../inference/claude-sdk.js", () => ({
   queryClaudeSdk: vi.fn(),
+  toolSearchEnabled: () => process.env.TOOL_SEARCH_ENABLED === "true",
 }));
 
 vi.mock("./checkpoint.js", () => ({
@@ -173,6 +174,7 @@ import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
+import { getEssentialFacts } from "../memory/essentials.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
@@ -1320,5 +1322,97 @@ describe("fastRunner heartbeat lifecycle", () => {
       setSpy.mockRestore();
       clearSpy.mockRestore();
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Audit 2026-09-22 batch C — prefix stability
+// ────────────────────────────────────────────────────────────────────
+describe("prompt prefix stability (audit 2026-09-22 batch C)", () => {
+  it("context-01: essentials go in a cacheable:false message, not the stable prefix", async () => {
+    vi.mocked(getEssentialFacts).mockReturnValue("ESSENTIALS-BLOCK" as never);
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute({
+      taskId: "task-ess",
+      runId: "run-ess",
+      title: "t",
+      description: "stable###CACHE_BREAK###variable",
+      conversationHistory: [{ role: "user", content: "hola" }],
+    });
+    const msgs = mockInferWithTools.mock.calls[0]![0] as ChatMessage[];
+    const ess = msgs.filter((m) => m.content === "ESSENTIALS-BLOCK");
+    expect(ess).toHaveLength(1);
+    expect(ess[0]!.cacheable).toBe(false);
+  });
+
+  it("context-01 (claude-sdk path): essentials land in the user prompt, not systemPrompt", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    vi.mocked(getEssentialFacts).mockReturnValue("ESSENTIALS-BLOCK" as never);
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await fastRunner.execute({
+      taskId: "task-ess-sdk",
+      runId: "run-ess-sdk",
+      title: "t",
+      description: "stable###CACHE_BREAK###variable",
+      conversationHistory: [{ role: "user", content: "hola" }],
+    });
+    const args = mockQuerySdk.mock.calls[0]![0] as {
+      prompt: unknown;
+      systemPrompt: string;
+    };
+    expect(args.systemPrompt).not.toContain("ESSENTIALS-BLOCK");
+    expect(JSON.stringify(args.prompt)).toContain("ESSENTIALS-BLOCK");
+  });
+
+  describe("context-04: deferred text catalog", () => {
+    const seven = Array.from({ length: 7 }, (_, i) => ({
+      type: "function" as const,
+      function: {
+        name: `t${i}`,
+        description: "d",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    }));
+    const prev = process.env.TOOL_SEARCH_ENABLED;
+    afterEach(() => {
+      if (prev === undefined) delete process.env.TOOL_SEARCH_ENABLED;
+      else process.env.TOOL_SEARCH_ENABLED = prev;
+    });
+
+    async function runSdk(): Promise<void> {
+      mockGetConfig.mockReturnValue(SDK_CONFIG);
+      vi.mocked(toolRegistry.getDefinitions).mockReturnValue(seven as never);
+      vi.mocked(toolRegistry.getDeferredCatalog).mockReturnValue(
+        "[DEFERRED TOOLS]" as never,
+      );
+      mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+      await fastRunner.execute({
+        taskId: "task-cat",
+        runId: "run-cat",
+        title: "t",
+        description: "d",
+        tools: seven.map((t) => t.function.name),
+      });
+    }
+
+    it("is skipped on the claude-sdk path when tool search is armed", async () => {
+      process.env.TOOL_SEARCH_ENABLED = "true";
+      await runSdk();
+      expect(toolRegistry.getDeferredCatalog).not.toHaveBeenCalled();
+      expect(JSON.stringify(mockQuerySdk.mock.calls[0]![0])).not.toContain(
+        "[DEFERRED TOOLS]",
+      );
+    });
+
+    it("is still built when tool search is off", async () => {
+      delete process.env.TOOL_SEARCH_ENABLED;
+      await runSdk();
+      expect(toolRegistry.getDeferredCatalog).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(mockQuerySdk.mock.calls[0]![0])).toContain(
+        "[DEFERRED TOOLS]",
+      );
+    });
   });
 });

@@ -25,7 +25,6 @@ export const gsheetsReadTool: Tool = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
@@ -450,7 +449,6 @@ export const gdocsReadFullTool: Tool = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-  deferred: true,
   definition: {
     type: "function",
     function: {
