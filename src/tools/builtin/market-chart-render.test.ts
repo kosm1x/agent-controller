@@ -114,9 +114,15 @@ describe("market_chart_render execute", () => {
     expect(out.path).toMatch(/^\/tmp\/chart-[0-9a-f-]+\.png$/);
     expect(execFileMock).toHaveBeenCalledTimes(1);
     expect(execFileMock.mock.calls[0][0]).toBe("convert");
-    // Intermediate SVG was .png.svg; must be cleaned up after success.
+    // Intermediate SVG is a random /tmp/ name (not `<output>.svg`, an
+    // ungated leaf — audit R3 W1); must be cleaned up after success.
     expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
-    expect(unlinkSyncMock.mock.calls[0][0]).toMatch(/\.png\.svg$/);
+    expect(unlinkSyncMock.mock.calls[0][0]).toMatch(
+      /^\/tmp\/chart-[0-9a-f-]{36}\.svg$/,
+    );
+    expect(unlinkSyncMock.mock.calls[0][0]).toBe(
+      execFileMock.mock.calls[0][1][0],
+    );
   });
 
   it("png_convert_failed surfaces when convert errors, cleans up tmp SVG", async () => {

@@ -15,7 +15,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
-import { dirname, resolve } from "path";
+import { dirname } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
@@ -139,8 +139,9 @@ RULES:
       return JSON.stringify({ error: `Edit blocked: ${readSafety.reason}` });
     }
 
-    // Enforce write boundaries
-    const resolved = resolve(path);
+    // Enforce write boundaries. realpath first: writeFileSync follows a
+    // symlink, so the gates must see its target (audit 2026-09-22 R1 C2).
+    const resolved = realResolve(path);
     // SG3: Immutable core — blocked even on jarvis/* branches
     const immCheck = isImmutableCorePath(resolved);
     if (immCheck.immutable) {

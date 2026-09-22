@@ -664,11 +664,15 @@ describe("memory-tax telemetry wiring", () => {
     expect(recordMemoryInjection).not.toHaveBeenCalled();
   });
 
-  it("split builder reports `kb_stable` and `kb_variable` with each layer's length (0 when empty)", () => {
-    const { stable, variable } = buildKnowledgeBaseSections([], false);
+  it("split builder reports `kb_stable` and `kb_variable` with each layer's length (0 when empty) — from the fast-runner only", () => {
+    const { stable, variable } = buildKnowledgeBaseSections([], undefined, "fast-runner");
     expect((stable?.length ?? 0) + (variable?.length ?? 0)).toBeGreaterThan(0);
     expect(recordMemoryInjection).toHaveBeenCalledWith("kb_stable", stable?.length ?? 0);
     expect(recordMemoryInjection).toHaveBeenCalledWith("kb_variable", variable?.length ?? 0);
+    // Executor goals use the split builder since context-05 (R1 W1).
+    vi.mocked(recordMemoryInjection).mockClear();
+    buildKnowledgeBaseSections([], undefined, "executor");
+    expect(recordMemoryInjection).not.toHaveBeenCalled();
   });
 });
 

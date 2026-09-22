@@ -442,8 +442,12 @@ export function buildKnowledgeBaseSections(
         ? `[JARVIS KNOWLEDGE BASE — task-specific]\n\n${variableSections.join("\n\n---\n\n")}`
         : null;
 
-    recordMemoryInjection("kb_stable", stable?.length ?? 0);
-    recordMemoryInjection("kb_variable", variable?.length ?? 0);
+    // Chat turns only, like buildKnowledgeBaseSection: executor goals would
+    // swamp the per-turn histogram (qa R2 W-4; audit 2026-09-22 R1 W1).
+    if (logTag === "fast-runner") {
+      recordMemoryInjection("kb_stable", stable?.length ?? 0);
+      recordMemoryInjection("kb_variable", variable?.length ?? 0);
+    }
     return { stable, variable };
   } catch {
     return { stable: null, variable: null };

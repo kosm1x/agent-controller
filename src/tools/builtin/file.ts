@@ -21,7 +21,11 @@ import {
   PREVIEW_CHARS,
 } from "../../lib/file-slicing.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
-import { realResolve, isOperatorConfigPath } from "./write-guard.js";
+import {
+  realResolve,
+  realResolveParent,
+  isOperatorConfigPath,
+} from "./write-guard.js";
 
 /** Hard cap on a single `file_read` payload — protects against pathological
  *  slice requests (e.g. lines='1-100000' on a giant log). */
@@ -472,7 +476,11 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
       });
     }
 
-    const absPath = resolve(rawPath);
+    // The parent is symlink-resolved: rmSync removes a final symlink itself,
+    // but a symlinked parent directory (or `dir-symlink/..`) would land the
+    // delete somewhere the immutable and allow-prefix checks never saw
+    // (audit 2026-09-22 R1, R2 C2).
+    const absPath = realResolveParent(rawPath);
 
     // SG3: Immutable core — blocked even on jarvis/* branches
     const immCheck = isImmutableCorePath(absPath);

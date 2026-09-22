@@ -89,6 +89,24 @@ const chartsDiv = document.getElementById('charts');
 </html>`;
 
 /**
+ * ECharts sets a string `tooltip.formatter` as innerHTML; the option object
+ * is LLM-authored, so any formatter carrying markup is dropped (the default
+ * formatter escapes). Plain templates like "{b}: {c}" are kept.
+ */
+export function stripHtmlFormatters(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(stripHtmlFormatters);
+  if (v === null || typeof v !== "object") return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (k === "formatter" && typeof val === "string" && val.includes("<")) {
+      continue;
+    }
+    out[k] = stripHtmlFormatters(val);
+  }
+  return out;
+}
+
+/**
  * Assemble the dashboard page. Script-embedded JSON escapes `<` so a
  * `</script>` inside data/config cannot close the block, and the function
  * replacer keeps `$&`-style sequences literal (audit 2026-09-22).
@@ -110,7 +128,7 @@ export function renderDashboardHtml(
   const fills: Record<string, () => string> = {
     TITLE: () => safeTitle,
     DATA: () => scriptJson(data),
-    CONFIG: () => scriptJson(config),
+    CONFIG: () => scriptJson(stripHtmlFormatters(config)),
   };
   return HTML_TEMPLATE.replace(/\{\{(TITLE|DATA|CONFIG)\}\}/g, (_, k: string) =>
     fills[k]!(),

@@ -1032,7 +1032,7 @@ function normalizeArgAliases(args: Record<string, unknown>): void {
  * malformed — the wrap-up infer() runs with NO tools, so arguments are pure
  * context, never re-executed.
  *
- * Exported for direct unit-testing — `buildWrapUpContext` itself is internal.
+ * Exported for direct unit-testing.
  */
 export function truncateMessageForWrapup(
   m: ChatMessage,
@@ -1085,11 +1085,18 @@ export function truncateMessageForWrapup(
   return m;
 }
 
-function buildWrapUpContext(
+/** Exported for unit tests. */
+export function buildWrapUpContext(
   conversation: ChatMessage[],
   instruction: string,
 ): ChatMessage[] {
-  const system = conversation.find((m) => m.role === "system");
+  // Every leading system message: a split prompt (executor, context-05)
+  // carries the goal's criteria and context in the second one.
+  const firstNonSystem = conversation.findIndex((m) => m.role !== "system");
+  const systems = conversation.slice(
+    0,
+    firstNonSystem === -1 ? conversation.length : firstNonSystem,
+  );
 
   // Find the LAST user message before tool calls started — this is the actual
   // current question. In chat tasks, firstUser may be from thread history and
@@ -1116,12 +1123,14 @@ function buildWrapUpContext(
   // successful summary reply and a wrap-up 413 that falls through to
   // `wrapup_failed`. HERMES-W3 (2026-05-22) — the `compaction_exhausted` exit
   // newly exposes the oversized-assistant case.
+  // Starts after the leading system run so a short conversation does not
+  // send them twice.
   const recentMessages = conversation
-    .slice(-6)
+    .slice(Math.max(systems.length, conversation.length - 6))
     .map((m) => truncateMessageForWrapup(m, WRAPUP_TOOL_RESULT_CHARS));
 
   const condensed: ChatMessage[] = [];
-  if (system) condensed.push(system);
+  condensed.push(...systems);
   if (lastUserBeforeTools) condensed.push(lastUserBeforeTools);
   condensed.push(...recentMessages);
   condensed.push({ role: "user", content: instruction });

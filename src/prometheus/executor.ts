@@ -21,7 +21,7 @@ import { IterationBudget } from "./budget.js";
 import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
-import { buildKnowledgeBaseSection } from "../messaging/kb-injection.js";
+import { buildKnowledgeBaseSections } from "../messaging/kb-injection.js";
 import {
   extractProvenance,
   classifySources,
@@ -272,11 +272,19 @@ async function recallLearnings(
   }
 }
 
+/**
+ * The executor system prompt in two parts. `stable` (header, always-read +
+ * enforce KB, instructions) is identical for every goal, so the SDK caches it
+ * across goals and tasks; `variable` (task-specific KB, goal, criteria,
+ * context, learnings) goes in a cacheable:false message — before 2026-09-22
+ * (context-05) the whole prompt was one system message, and a goal-specific
+ * line in it rewrote the cached prefix on every goal.
+ */
 async function buildGoalPrompt(
   goal: Goal,
   context: string,
   toolNames: string[],
-): Promise<string> {
+): Promise<{ stable: string; variable: string }> {
   const criteria =
     goal.completionCriteria.length > 0
       ? goal.completionCriteria.map((c, i) => `  ${i + 1}. ${c}`).join("\n")
@@ -291,20 +299,11 @@ async function buildGoalPrompt(
   // Pull always-read + enforce + scope-conditional KB the same way fast-runner
   // does — heavy/swarm tasks were operating without `enforce` directives like
   // repo-authorization.md until the kb-injection module was extracted.
-  const kbSection = buildKnowledgeBaseSection(
-    toolNames,
-    false,
-    goal.description,
-    "executor",
-  );
+  const kb = buildKnowledgeBaseSections(toolNames, goal.description, "executor");
 
-  return (
+  const stable =
     `You are executing a single goal as part of a larger plan. Use the available tools to achieve the goal.\n\n` +
-    (kbSection ? `${kbSection}\n\n` : "") +
-    `## Goal\n${goal.description}\n\n` +
-    `## Completion Criteria\n${criteria}\n\n` +
-    (context ? `## Context from completed goals\n${context}\n\n` : "") +
-    learningsSection +
+    (kb.stable ? `${kb.stable}\n\n` : "") +
     `## Instructions\n` +
     `- Use tools to accomplish the goal.\n` +
     `- When all completion criteria are met, respond with a summary of what you achieved.\n` +
@@ -314,8 +313,16 @@ async function buildGoalPrompt(
     // the operator in English. The router's deliverable-filter only flags
     // english_leading; the language has to be right at the source.
     `- Language: write the summary in Spanish (Mexico) — it is delivered to the operator's chat as-is. Keep code, commands, file paths, tool names, URLs and verbatim quotes unchanged; switch language only if the goal itself asks for another one.\n` +
-    `- If you cannot complete the goal, explain what went wrong.`
-  );
+    `- If you cannot complete the goal, explain what went wrong.`;
+
+  const variable =
+    (kb.variable ? `${kb.variable}\n\n` : "") +
+    `## Goal\n${goal.description}\n\n` +
+    `## Completion Criteria\n${criteria}` +
+    (context ? `\n\n## Context from completed goals\n${context}` : "") +
+    (learningsSection ? `\n\n${learningsSection.trimEnd()}` : "");
+
+  return { stable, variable };
 }
 
 function buildContextFromResults(results: Record<string, GoalResult>): string {
@@ -385,13 +392,12 @@ export async function executeGoal(
     }
 
     try {
-      const systemPrompt = await buildGoalPrompt(
-        goal,
-        context,
-        toolNames ?? [],
-      );
+      const prompt = await buildGoalPrompt(goal, context, toolNames ?? []);
+      // The self-assessment retry re-sends these messages, so it keeps the
+      // same split.
       const messages: ChatMessage[] = [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: prompt.stable },
+        { role: "system", content: prompt.variable, cacheable: false },
         { role: "user", content: `Execute this goal: ${goal.description}` },
       ];
 

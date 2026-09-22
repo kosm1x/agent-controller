@@ -7,6 +7,7 @@ import { dirname, resolve as resolvePath } from "node:path";
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
 import { validatePathSafety } from "./immutable-core.js";
+import { realResolve } from "./write-guard.js";
 
 /**
  * Output-path whitelist for gdrive_download. Files may only be written under
@@ -33,7 +34,7 @@ const DOWNLOAD_WRITE_ROOTS = ["/tmp/jarvis-downloads/", "/root/claude/inbox/"];
  * Both checks must run AFTER `validatePathSafety` (which catches the prior
  * layer of nasties: $expansion, glob, dangerous filenames, UNC).
  */
-function resolveSafeOutputPath(
+export function resolveSafeOutputPath(
   rawPath: string,
 ): { safe: true; path: string } | { safe: false; reason: string } {
   // Resolve `..` and normalize. resolve() makes the path absolute too.
@@ -76,6 +77,16 @@ function resolveSafeOutputPath(
         reason: `output_path parent check failed: ${code ?? "unknown"}`,
       };
     }
+  }
+
+  // The parent check does not see a symlinked LEAF; writeFileSync follows it
+  // (audit 2026-09-22 R3 sweep).
+  const real = realResolve(resolved);
+  if (!DOWNLOAD_WRITE_ROOTS.some((root) => real.startsWith(root))) {
+    return {
+      safe: false,
+      reason: `output_path symlinks outside the whitelist (resolved to ${real})`,
+    };
   }
 
   return { safe: true, path: resolved };

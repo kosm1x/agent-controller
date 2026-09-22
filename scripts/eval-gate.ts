@@ -38,7 +38,7 @@
  *    => The stored incumbent MUST be captured BY THIS GATE (`--update-baseline`),
  *    not borrowed from the nightly. The committed eval-baseline.json ships
  *    PROVISIONAL until the operator does that once.
- *  - Read-only: scores against the live data/mc.db but only READS cases
+ *  - Never opens the live data/mc.db: it scores against a snapshot copy
  *    (runEvaluation writes nothing). No tune_runs row is written.
  *
  * INCUMBENT SOURCE — a committed JSON, not "latest tune_runs row". Rationale:
@@ -60,7 +60,15 @@
  *   2 = error (no cases / missing baseline / thrown)  |  3 = DRY (no --run)
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -102,12 +110,29 @@ const BASELINE_PATH = fileURLToPath(
   new URL("../src/tuning/eval-baseline.json", import.meta.url),
 );
 
-// 2) Init the LIVE db BEFORE importing any runtime that calls getDatabase().
-//    Read-only usage: runEvaluation only reads test cases; no run row is written.
+// 2) Init a SNAPSHOT of the db BEFORE importing any runtime that calls
+//    getDatabase(). initDatabase() migrates the schema, and the working tree
+//    may carry a migration the live service has not deployed (snapshot
+//    convention, validate-tool-search.ts).
 const { initDatabase } = await import("../src/db/index.js");
 const dbPath =
   process.env.MC_DB_PATH ?? "/root/claude/mission-control/data/mc.db";
-initDatabase(dbPath);
+const snapDir = mkdtempSync(join(tmpdir(), "eval-gate-")); // mode 0700
+// The copy is ~400 MB; every exit path is a process.exit(), and a signal
+// becomes one.
+process.on("exit", () => rmSync(snapDir, { recursive: true, force: true }));
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => process.exit(sig === "SIGINT" ? 130 : 143));
+}
+const snapPath = join(snapDir, "mc.db");
+// VACUUM INTO over a read-only connection: one consistent file. Copying
+// mc.db, -wal and -shm one after another raced the live service's
+// checkpoints (audit 2026-09-22 R1 W5).
+const { default: Database } = await import("better-sqlite3");
+const live = new Database(dbPath, { readonly: true, fileMustExist: true });
+live.prepare("VACUUM INTO ?").run(snapPath);
+live.close();
+initDatabase(snapPath);
 
 const { getActiveTestCases } = await import("../src/tuning/schema.js");
 const { runEvaluation } = await import("../src/tuning/eval-runner.js");
@@ -147,7 +172,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `[eval-gate] livePid=${livePid ?? "?"} db=${dbPath} cases=${nCases} (tool_selection=${nToolSel})`,
+    `[eval-gate] livePid=${livePid ?? "?"} db=${dbPath} (snapshot) cases=${nCases} (tool_selection=${nToolSel})`,
   );
   if (nToolSel < 100) {
     console.log(

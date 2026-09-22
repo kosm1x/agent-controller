@@ -187,4 +187,27 @@ describe("file_edit — symlink to a read-blocked file", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // audit 2026-09-22 R1 C2: the gates checked the literal path, and
+  // writeFileSync follows the link. old_string is absent, so nothing is written
+  // even when the guard is broken.
+  it("gates the symlink target, not the link", async () => {
+    mkdirSync(TEST_DIR, { recursive: true });
+    try {
+      symlinkSync(
+        "/root/claude/mission-control/package.json",
+        `${TEST_DIR}/pj`,
+      );
+      const r = JSON.parse(
+        await fileEditTool.execute({
+          path: `${TEST_DIR}/pj`,
+          old_string: "__never_present_in_package_json__",
+          new_string: "x",
+        }),
+      );
+      expect(String(r.error)).toMatch(/Edit blocked/);
+    } finally {
+      rmSync(TEST_DIR, { recursive: true, force: true });
+    }
+  });
 });

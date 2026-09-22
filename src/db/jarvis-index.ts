@@ -54,7 +54,8 @@ export function regenerateIndex(): void {
 
     // Build compact INDEX
     const dirLines = rows
-      .filter((r) => r.dir !== "(root)")
+      // "" = a path with a leading "/" (rendered as `[[/|]]`).
+      .filter((r) => r.dir !== "(root)" && r.dir !== "")
       .map((r) => `- [[${r.dir}/|${r.dir}]]`)
       .join("\n");
 

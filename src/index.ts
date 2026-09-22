@@ -20,6 +20,7 @@ import {
   closeDatabase,
   reconcileOrphanedTasks,
 } from "./db/index.js";
+import { regenerateIndex } from "./db/jarvis-index.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
 import { startTriggers } from "./triggers/index.js";
@@ -97,6 +98,10 @@ async function main(): Promise<void> {
   // Initialize database
   const db = initDatabase(config.dbPath);
   log.info({ path: config.dbPath }, "database initialized");
+  // INDEX.md is regenerated here, not inside initDatabase(): every script
+  // that opened the live mc.db rewrote the row from its working source
+  // (the eval gate did on every run — audit 2026-09-22).
+  regenerateIndex();
 
   // V8.3 Phase-0 gate: V8.3 is hard-gated on V8.2's consent substrate (§12).
   // Fail loud at boot if the dependency tables are missing — never silently.

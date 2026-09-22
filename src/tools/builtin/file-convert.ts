@@ -23,6 +23,7 @@ import {
 import { resolve, extname, basename, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
+import { realResolve } from "./write-guard.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 const execFileAsync = promisify(execFile);
@@ -257,7 +258,8 @@ function validateInputPath(
   return { ok: true, abs };
 }
 
-function validateOutputPath(
+/** Exported for unit tests. */
+export function validateOutputPath(
   output: string | undefined,
   target: TargetFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
@@ -276,6 +278,11 @@ function validateOutputPath(
       ok: false,
       error: `output_path must be under one of: ${OUTPUT_ALLOW_PREFIXES.join(", ")}`,
     };
+  }
+  // The spelling can pass while a symlink under an allowed prefix sends the
+  // write elsewhere (audit 2026-09-22 R2 sweep).
+  if (!isUnderPrefix(realResolve(abs), OUTPUT_ALLOW_PREFIXES)) {
+    return { ok: false, error: "output_path resolves outside the allow-list" };
   }
   return { ok: true, abs };
 }

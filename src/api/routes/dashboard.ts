@@ -18,7 +18,9 @@ export const DASHBOARD_CSP =
 
 const dashboard = new Hono();
 
-dashboard.get("/:id", (c) => {
+// Ids are hex UUIDs (older ones 8 hex chars). Anything else falls through to
+// the SPA's static assets — `/dashboard/app.js` was answered 404 here.
+dashboard.get("/:id{[0-9a-f-]{8,36}}", (c) => {
   const id = c.req.param("id");
 
   // C1 audit fix: reject path traversal (../, /, \)

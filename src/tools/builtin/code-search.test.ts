@@ -90,6 +90,14 @@ describe("grep", () => {
     expect(result.total).toBeGreaterThanOrEqual(2);
   });
 
+  it("count mode lists only files with matches (grep -c prints zeros)", async () => {
+    const result = JSON.parse(
+      await grepTool.execute({ pattern: "bar", path: TEST_DIR, output_mode: "count" }),
+    );
+    expect(result.total).toBe(1);
+    expect(result.matches).toBe(`${TEST_DIR}/a.ts:1`);
+  });
+
   // audit 2026-09-22: grep read credential files the file_read denylist blocks.
   it("refuses read-blocked paths", async () => {
     for (const p of ["/root/.claude.json", "/proc/self/environ", "/root/.docker/config.json"]) {
@@ -149,6 +157,26 @@ describe("glob", () => {
 
   afterEach(() => {
     rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  // audit 2026-09-22: names are output too — same read denylist as grep.
+  it("hides read-blocked names and refuses a blocked base path", async () => {
+    writeFileSync(`${TEST_DIR}/src/id_rsa`, "");
+    const r = JSON.parse(await globTool.execute({ pattern: "*", path: TEST_DIR }));
+    expect(r.files.some((f: string) => f.endsWith("index.ts"))).toBe(true);
+    expect(r.files.some((f: string) => f.endsWith("id_rsa"))).toBe(false);
+    expect(r.total).toBe(4);
+    // R1 W4: only the denylist hides a name — `$` is an ordinary character.
+    writeFileSync(`${TEST_DIR}/src/$id.tsx`, "");
+    const routes = JSON.parse(
+      await globTool.execute({ pattern: "*.tsx", path: TEST_DIR }),
+    );
+    expect(routes.files.some((f: string) => f.endsWith("$id.tsx"))).toBe(true);
+    writeFileSync(`${TEST_DIR}/.env`, "");
+    const env = JSON.parse(
+      await globTool.execute({ pattern: "*", path: `${TEST_DIR}/.env` }),
+    );
+    expect(String(env.error)).toMatch(/path blocked/);
   });
 
   it("should find files by extension", async () => {
@@ -234,6 +262,27 @@ describe("list_dir", () => {
     expect(result.entries.some((e: string) => e.includes("nested.ts"))).toBe(
       true,
     );
+  });
+
+  // audit 2026-09-22: names are output too — same read denylist as grep.
+  it("hides read-blocked entries and refuses a blocked path", async () => {
+    writeFileSync(`${TEST_DIR}/id_rsa`, "");
+    writeFileSync(`${TEST_DIR}/subdir/.env`, "");
+    const flat = JSON.parse(await listDirTool.execute({ path: TEST_DIR }));
+    expect(flat.entries).toContain("file1.ts");
+    expect(flat.entries).not.toContain("id_rsa");
+    writeFileSync(`${TEST_DIR}/$id.tsx`, "");
+    const again = JSON.parse(await listDirTool.execute({ path: TEST_DIR }));
+    expect(again.entries).toContain("$id.tsx");
+    const deep = JSON.parse(
+      await listDirTool.execute({ path: TEST_DIR, recursive: true }),
+    );
+    expect(deep.entries.some((e: string) => e.includes("nested.ts"))).toBe(true);
+    expect(deep.entries.some((e: string) => /id_rsa|\.env$/.test(e))).toBe(false);
+    const env = JSON.parse(
+      await listDirTool.execute({ path: `${TEST_DIR}/subdir/.env` }),
+    );
+    expect(String(env.error)).toMatch(/path blocked/);
   });
 
   it("should handle non-existent directory", async () => {

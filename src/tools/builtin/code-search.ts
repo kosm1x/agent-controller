@@ -7,8 +7,9 @@
  */
 
 import { execFileSync } from "child_process";
+import { resolve } from "path";
 import type { Tool } from "../types.js";
-import { validatePathSafety } from "./immutable-core.js";
+import { readDenylistReason, validatePathSafety } from "./immutable-core.js";
 import { redactCredentials } from "../../api/mcp-server/redact.js";
 
 const MAX_RESULTS = 100;
@@ -262,6 +263,9 @@ TIPS:
       }
 
       let lines = dropBlockedFiles(output, mode === "files");
+      // grep -c (the fallback when rg is absent, as in the service) prints
+      // every searched file, zero counts included; rg --count does not.
+      if (mode === "count") lines = lines.filter((l) => !l.endsWith(":0"));
       if (lines.length === 0) {
         return JSON.stringify({
           matches: [],
@@ -371,6 +375,12 @@ TIPS:
     if (!pattern) return JSON.stringify({ error: "pattern is required" });
 
     const searchPath = (args.path as string) || ".";
+    // Names are output too: the same read denylist as grep, on the base
+    // directory and on every listed path (audit 2026-09-22).
+    const safety = validatePathSafety(searchPath, "read");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `path blocked: ${safety.reason}` });
+    }
     const maxResults = Math.min(
       typeof args.max_results === "number" ? args.max_results : MAX_RESULTS,
       1000,
@@ -433,14 +443,18 @@ TIPS:
         });
       }
 
-      const all = output.trim().split("\n").filter(Boolean);
+      const listed = output.trim().split("\n").filter(Boolean);
+      const all = listed.filter(
+        (f) => readDenylistReason(resolve(searchPath, f)) === null,
+      );
       // The find fallback has no limit of its own — apply max_results here
       // (the handler never sliced; `truncated` claimed a cut that never happened).
       const files = all.slice(0, maxResults);
       return JSON.stringify({
         files,
         total: all.length,
-        truncated: all.length > maxResults,
+        // Decided on the listing: fd stops at maxResults + 1 BEFORE the filter.
+        truncated: listed.length > maxResults,
       });
     } catch (err) {
       const error = err as { stderr?: string; message?: string };
@@ -501,6 +515,12 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const dirPath = (args.path as string) || ".";
+    // Same read denylist as grep/glob, on the directory and on every entry
+    // (audit 2026-09-22: `list_dir /root/.ssh` named the key files).
+    const safety = validatePathSafety(dirPath, "read");
+    if (!safety.safe) {
+      return JSON.stringify({ error: `path blocked: ${safety.reason}` });
+    }
     const recursive = args.recursive === true;
     const maxDepth = Math.min(
       typeof args.max_depth === "number" ? args.max_depth : 3,
@@ -554,7 +574,18 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
         });
       }
 
-      const entries = output.trim().split("\n").filter(Boolean);
+      // Recursive entries are paths (find prints them from dirPath); `ls`
+      // entries are names, directories suffixed "/".
+      const entries = output
+        .trim()
+        .split("\n")
+        .filter(
+          (e) =>
+            !!e &&
+            readDenylistReason(
+              resolve(recursive ? e : resolve(dirPath, e.replace(/\/$/, ""))),
+            ) === null,
+        );
       return JSON.stringify({ path: dirPath, entries, total: entries.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

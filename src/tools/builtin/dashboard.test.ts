@@ -4,6 +4,7 @@ import {
   dashboardListTool,
   renderDashboardHtml,
 } from "./dashboard.js";
+import { Hono } from "hono";
 import dashboardRoute, { DASHBOARD_CSP } from "../../api/routes/dashboard.js";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { randomUUID } from "crypto";
@@ -76,6 +77,34 @@ describe("dashboard tools", () => {
     expect(esc('"')).toBe("&#34;");
     expect(esc("'&")).toBe("&#39;&#38;");
     expect(esc(null)).toBe("");
+  });
+
+  it("drops markup-bearing ECharts formatters, keeps plain templates", () => {
+    const html = renderDashboardHtml("t", "d", {
+      charts: [
+        {
+          option: {
+            tooltip: { formatter: "<img src=x onerror=alert(1)>{b}" },
+            series: [{ label: { formatter: "{b}: {c}" } }],
+          },
+        },
+      ],
+    });
+    expect(html).not.toContain("onerror");
+    expect(html).toContain('"formatter":"{b}: {c}"');
+  });
+
+  it("non-id paths fall through to the SPA assets", async () => {
+    const app = new Hono();
+    app.route("/dashboard", dashboardRoute);
+    app.get("/dashboard/*", (c) => c.text("static"));
+    for (const asset of ["app.js", "api.js", "index.html"]) {
+      const res = await app.request(`/dashboard/${asset}`);
+      expect(await res.text()).toBe("static");
+    }
+    const miss = await app.request(`/dashboard/${randomUUID()}`);
+    expect(miss.status).toBe(404);
+    expect(await miss.text()).toBe("Dashboard not found");
   });
 
   it("dashboard route serves with a CSP sandbox", async () => {

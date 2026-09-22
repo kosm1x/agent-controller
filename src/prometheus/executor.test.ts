@@ -254,8 +254,12 @@ describe("executeGoal", () => {
       },
     ]);
     let capturedSystem = "";
+    let capturedVariable = "";
+    let capturedCacheable: boolean | undefined;
     mockInferWithTools.mockImplementationOnce(async (messages) => {
       capturedSystem = (messages[0]?.content as string) ?? "";
+      capturedVariable = (messages[1]?.content as string) ?? "";
+      capturedCacheable = messages[1]?.cacheable;
       return {
         content: "ok",
         messages: [{ role: "assistant", content: "ok" }],
@@ -268,6 +272,11 @@ describe("executeGoal", () => {
     expect(capturedSystem).toContain("[JARVIS KNOWLEDGE BASE]");
     expect(capturedSystem).toContain("MANDATORY: Repo Authorization");
     expect(capturedSystem).toContain("Only EurekaMD repos.");
+    // context-05: the goal is in the cacheable:false part, never the cached one.
+    expect(capturedSystem).not.toContain("## Goal");
+    expect(capturedVariable).toContain("## Goal");
+    expect(capturedVariable).toContain("## Completion Criteria");
+    expect(capturedCacheable).toBe(false);
   });
 });
 
@@ -332,7 +341,7 @@ describe("executeGraph", () => {
 
     mockInferWithTools.mockImplementation(async (messages) => {
       // Extract goal ID from the system prompt
-      const sys = messages[0]?.content as string;
+      const sys = messages[1]?.content as string;
       if (sys.includes("First")) callOrder.push("g-1");
       if (sys.includes("Second")) callOrder.push("g-2");
 
@@ -364,7 +373,7 @@ describe("executeGraph", () => {
     const startTimes: Record<string, number> = {};
 
     mockInferWithTools.mockImplementation(async (messages) => {
-      const sys = messages[0]?.content as string;
+      const sys = messages[1]?.content as string;
       const id = sys.includes("Goal A") ? "a" : "b";
       startTimes[id] = Date.now();
 

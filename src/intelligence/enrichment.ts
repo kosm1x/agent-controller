@@ -121,6 +121,7 @@ export async function enrichContext(
   const MAX_RESULTS_PER_SOURCE = 2; // Session diversity cap (v6.4 G1.5)
   let pgTimedOut = false;
   let pgDone = false;
+  let pgTimer: ReturnType<typeof setTimeout> | undefined;
   const pgStart = Date.now();
   recallPromises.push(
     Promise.race([
@@ -187,10 +188,12 @@ export async function enrichContext(
           // Non-fatal — pgvector search is best-effort
         } finally {
           pgDone = true;
+          // The leg always awaits an import first, so the timer is set.
+          clearTimeout(pgTimer);
         }
       })(),
-      new Promise<void>((resolve) =>
-        setTimeout(() => {
+      new Promise<void>((resolve) => {
+        pgTimer = setTimeout(() => {
           pgTimedOut = true;
           // A dropped section is otherwise silent (qa R1 W2).
           if (!pgDone) {
@@ -199,8 +202,8 @@ export async function enrichContext(
             );
           }
           resolve();
-        }, PGVECTOR_TIMEOUT_MS),
-      ),
+        }, PGVECTOR_TIMEOUT_MS);
+      }),
     ]),
   );
 

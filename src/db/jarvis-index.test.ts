@@ -46,6 +46,13 @@ describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
     );
   });
 
+  it("a path with a leading slash adds no empty [[/|]] entry", () => {
+    add("/root/claude/knowledge/x.md");
+    regenerateIndex();
+    expect(state.written[0]).not.toContain("[[/|]]");
+    expect(state.written[0]).toContain("[[knowledge/|knowledge]]");
+  });
+
   it("changes when a new top-level directory or project appears", () => {
     regenerateIndex();
     add("projects/beta/README.md");

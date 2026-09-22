@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, symlinkSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -424,6 +424,32 @@ describe("validatePathSafety", () => {
         const raw = join(dir, "lnk ");
         symlinkSync("/etc/shadow", raw);
         expect(validatePathSafety(raw, "read").safe).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("write/delete resolve a symlinked parent or target (audit 2026-09-22)", () => {
+      const dir = mkdtempSync(join(tmpdir(), "vps-wd-"));
+      try {
+        mkdirSync(join(dir, "repo", ".git"), { recursive: true });
+        symlinkSync(join(dir, "repo", ".git"), join(dir, "lnk"));
+        symlinkSync(join(dir, "repo", ".bashrc"), join(dir, "rc"));
+        const viaDir = join(dir, "lnk", "config");
+        expect(validatePathSafety(viaDir, "write").safe).toBe(false);
+        expect(validatePathSafety(viaDir, "delete").safe).toBe(false);
+        // A write follows a final symlink; unlink removes the link itself.
+        expect(validatePathSafety(join(dir, "rc"), "write").safe).toBe(false);
+        expect(validatePathSafety(join(dir, "rc"), "delete").safe).toBe(true);
+        expect(validatePathSafety(join(dir, "plain.txt"), "write").safe).toBe(
+          true,
+        );
+        // R2 C2: `..` after a directory symlink steps up from its target.
+        mkdirSync(join(dir, "repo", ".git", "sub"));
+        symlinkSync(join(dir, "repo", ".git", "sub"), join(dir, "sub"));
+        const up = join(dir, "sub") + "/../config";
+        expect(validatePathSafety(up, "write").safe).toBe(false);
+        expect(validatePathSafety(up, "delete").safe).toBe(false);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

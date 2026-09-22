@@ -26,6 +26,7 @@ import {
 import { resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
+import { realResolve } from "./write-guard.js";
 import { infer } from "../../inference/adapter.js";
 import { svgHtmlSystemPrompt } from "./diagram-svg-prompt.js";
 
@@ -77,7 +78,8 @@ function isUnderPrefix(abs: string, prefixes: readonly string[]): boolean {
   return prefixes.some((p) => abs.startsWith(p));
 }
 
-function resolveOutputPath(
+/** Exported for unit tests. */
+export function resolveOutputPath(
   outputRaw: string | undefined,
   format: DiagramFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
@@ -97,6 +99,11 @@ function resolveOutputPath(
       ok: false,
       error: `output_path must be under one of: ${OUTPUT_ALLOW_PREFIXES.join(", ")}`,
     };
+  }
+  // The spelling can pass while a symlink under an allowed prefix sends the
+  // write elsewhere (audit 2026-09-22 R2 sweep).
+  if (!isUnderPrefix(realResolve(abs), OUTPUT_ALLOW_PREFIXES)) {
+    return { ok: false, error: "output_path resolves outside the allow-list" };
   }
   return { ok: true, abs };
 }

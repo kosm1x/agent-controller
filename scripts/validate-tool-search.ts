@@ -26,7 +26,8 @@
  * Never opens the live mc.db (snapshot convention, qa-audit W1 2026-07-12).
  */
 
-import { chmodSync, copyFileSync, existsSync, mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import Database from "better-sqlite3";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,13 +57,21 @@ async function main(): Promise<number> {
     return 3;
   }
 
-  const snapDir = mkdtempSync(join(tmpdir(), "tool-search-val-"));
-  const snapPath = join(snapDir, "mc.db");
-  for (const suffix of ["", "-wal", "-shm"]) {
-    const src = join(ROOT, "data", `mc.db${suffix}`);
-    if (existsSync(src)) copyFileSync(src, `${snapPath}${suffix}`);
+  const snapDir = mkdtempSync(join(tmpdir(), "tool-search-val-")); // mode 0700
+  // A ~400 MB copy per run was left in /tmp (audit 2026-09-22).
+  process.on("exit", () => rmSync(snapDir, { recursive: true, force: true }));
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => process.exit(sig === "SIGINT" ? 130 : 143));
   }
-  chmodSync(snapPath, 0o600);
+  const snapPath = join(snapDir, "mc.db");
+  // One consistent file; per-file copies raced the live service's
+  // checkpoints (audit 2026-09-22 R1 W5).
+  const live = new Database(join(ROOT, "data", "mc.db"), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  live.prepare("VACUUM INTO ?").run(snapPath);
+  live.close();
   initDatabase(snapPath);
   const sourceManager = new ToolSourceManager();
   sourceManager.addSource(new BuiltinToolSource());

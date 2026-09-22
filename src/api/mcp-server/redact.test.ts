@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { redactDeep, redactSecrets } from "./redact.js";
+import { redactCredentials, redactDeep, redactSecrets } from "./redact.js";
 
 // Fragment-assembled fake fixtures (see file header).
 const SK = "sk-" + "abcdefghijklmnop1234567890ABCD";
@@ -85,6 +85,46 @@ describe("redactSecrets", () => {
     const out = redactSecrets(`export GEMINI_API_KEY="${AIZA_VALUE}"`);
     expect(out).not.toContain(AIZA_VALUE);
     expect(out).toContain("GEMINI_API_KEY=[REDACTED]");
+  });
+
+  it("redacts secret names with a keyword before an _-suffix, and PASSPHRASE", () => {
+    const v = "zq" + "8Lm2Rt5Wx9Kp3Vn7";
+    for (const name of [
+      "X_AUTH_TOKEN__acct1",
+      "DB_PASSWORD_2",
+      "GPG_PASSPHRASE",
+      "PASSWORD",
+      "TOKEN",
+      "SECRET_2",
+      "PASSWORD_2",
+    ]) {
+      const out = redactSecrets(`${name}=${v}`);
+      expect(out, name).toBe(`${name}=[REDACTED]`);
+      expect(redactCredentials(`${name}=${v}`), name).not.toContain(v);
+    }
+    expect(redactSecrets(`AUTHOR=${v}`)).toBe(`AUTHOR=${v}`);
+    expect(redactSecrets(`KEYBOARD=${v}`)).toBe(`KEYBOARD=${v}`);
+  });
+
+  it("finds a secret name inside another NAME=value's token (R2 C1)", () => {
+    const v = "q8" + "w7Ze5Rt3Yu1Io9Pa";
+    for (const text of [
+      `FOO=bar,API_KEY=${v}`,
+      `https://x.io/cb?a=1&access_token=${v}`,
+      `PATH=/usr/bin:GITHUB_TOKEN=${v}`,
+      `a=b=API_KEY=${v}`,
+    ]) {
+      expect(redactSecrets(text), text).not.toContain(v);
+      expect(redactCredentials(text), text).not.toContain(v);
+    }
+    expect(redactSecrets(`FOO=bar AUTHOR=${v}`)).toBe(`FOO=bar AUTHOR=${v}`);
+    expect(redactSecrets("a=".repeat(25_000))).toBe("a=".repeat(25_000));
+  });
+
+  it("stays linear on a long snake_case run with no '=' (R1 W3)", () => {
+    const t0 = performance.now();
+    redactSecrets("KEY_".repeat(12_500));
+    expect(performance.now() - t0).toBeLessThan(100);
   });
 
   it("redacts Telegram bot tokens", () => {

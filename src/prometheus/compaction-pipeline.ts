@@ -141,16 +141,20 @@ export function compactL1(
 // ---------------------------------------------------------------------------
 
 /**
- * Last resort: keep system message + tail, drop everything in between.
+ * Last resort: keep the leading system messages + tail, drop everything in between.
  * No LLM call — purely deterministic.
  */
 export function compactL3(
   messages: ChatMessage[],
   keepTail: number,
 ): { messages: ChatMessage[]; removedCount: number } {
-  // Preserve the system message (always first)
-  const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
-  const minSize = keepTail + (systemMsg ? 1 : 0);
+  // Preserve the leading system messages: a prompt split into a cached part
+  // and a cacheable:false part (goal, criteria) is more than one message
+  // (context-05, 2026-09-22).
+  let lead = 0;
+  while (lead < messages.length && messages[lead]!.role === "system") lead++;
+  const systemMsgs = messages.slice(0, lead);
+  const minSize = keepTail + systemMsgs.length;
 
   // Nothing to truncate if conversation fits in system + tail
   if (messages.length <= minSize) {
@@ -166,7 +170,7 @@ export function compactL3(
   };
 
   const result: ChatMessage[] = [];
-  if (systemMsg) result.push(systemMsg);
+  result.push(...systemMsgs);
   result.push(marker);
   result.push(...sanitizeToolPairs([...tail]));
 

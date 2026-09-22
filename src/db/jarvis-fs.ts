@@ -729,11 +729,6 @@ Después de una compactación, el contexto anterior se resume. Los datos clave s
         5,
       );
     }
-
-    // Generate INDEX.md on boot
-    import("./jarvis-index.js")
-      .then((m) => m.regenerateIndex())
-      .catch(() => {});
   } catch {
     // DB may not have the table yet on very first init
   }

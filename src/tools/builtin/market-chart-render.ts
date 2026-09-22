@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool } from "../types.js";
+import { realResolve } from "./write-guard.js";
 import { getDataLayer } from "../../finance/data-layer.js";
 import { chartSvg } from "../../finance/chart-svg.js";
 import { sma, ema, bollingerBands, vwap } from "../../finance/indicators.js";
@@ -173,6 +174,13 @@ export function resolveChartOutputPath(
     }
   } catch {
     // Parent doesn't exist yet — we'll mkdir below; re-canonicalize then.
+  }
+  // The parent check does not see a symlinked LEAF; writeFileSync follows it
+  // (audit 2026-09-22 R2 sweep). Gate the path that is written (`abs`), not
+  // the spelling: resolve() already collapsed `dir-symlink/..` as text (R3).
+  const real = realResolve(abs);
+  if (!OUTPUT_ALLOW_PREFIXES.some((prefix) => real.startsWith(prefix))) {
+    return { ok: false, error: "output_path resolves outside the allow-list" };
   }
   return { ok: true, abs };
 }
@@ -400,7 +408,8 @@ Output: file path under /tmp/ or /workspace/. Default /tmp/chart-<uuid>.{svg|png
     if (format === "svg") {
       svgTmp = outputCheck.abs;
     } else {
-      svgTmp = outputCheck.abs + ".svg";
+      // Not `<abs>.svg`: that caller-derived leaf is never gated (R3 W1).
+      svgTmp = resolve("/tmp/", `chart-${randomUUID()}.svg`);
     }
     try {
       writeFileSync(svgTmp, svg);

@@ -7,8 +7,9 @@
  * Checked in all write paths: file_write, file_edit, file_delete, shell_exec.
  */
 
-import { posix, resolve } from "path";
+import { basename as baseOf, posix, resolve } from "path";
 import { realpathSync } from "fs";
+import { realResolve, realResolveParent } from "./write-guard.js";
 
 const MC_ROOT = "/root/claude/mission-control/";
 
@@ -303,49 +304,76 @@ export function validatePathSafety(
         // Raw spelling does not exist; the reader will fail on it too.
       }
     }
+  } else {
+    // Write/delete: a symlinked parent directory (or, for a write, a
+    // symlinked target) lands the op where the string checks above never
+    // looked (audit 2026-09-22). unlink does not follow the final link.
+    // The spelling, not resolve(path): `dir-symlink/..` must be walked on
+    // disk, not collapsed as text (R2 C2).
+    const abs = candidates[0]!;
+    const real =
+      operation === "write" ? realResolve(path) : realResolveParent(path);
+    if (real !== abs) {
+      const realBase = baseOf(real);
+      if (
+        DANGEROUS_FILES_EXACT.has(realBase) ||
+        DANGEROUS_FILE_PREFIXES.some((p) => realBase.startsWith(p))
+      ) {
+        return {
+          safe: false,
+          reason: `'${real}' is a sensitive dotfile (via symlink) -- manual edit required`,
+        };
+      }
+      const matched = DANGEROUS_DIRECTORIES.find((d) => real.includes(d));
+      if (matched) {
+        return {
+          safe: false,
+          reason: `'${matched}' is a protected directory (via symlink) — manual edit required`,
+        };
+      }
+      candidates.push(real);
+    }
   }
 
   for (const probe of candidates) {
-    if (PROC_SECRET_RE.test(probe)) {
-      return {
-        safe: false,
-        reason: `'${probe}' is a read-blocked process-state file`,
-      };
-    }
-    for (const blocked of READ_BLOCKED_PATHS) {
-      // Exact-file blocklist: probe === blocked OR probe starts with blocked+"/"
-      // (prefix semantics only for entries ending in "/"). Avoids the
-      // /root/.ssh-evil matching /root/.ssh class of bug (poka-yoke test).
-      if (blocked.endsWith("/")) {
-        if (probe.startsWith(blocked)) {
-          return {
-            safe: false,
-            reason: `'${blocked}' is a read-blocked secret directory`,
-          };
-        }
-      } else if (probe === blocked) {
-        return {
-          safe: false,
-          reason: `'${blocked}' is a read-blocked secret file`,
-        };
-      }
-    }
-    const probeBase = probe.split("/").pop() ?? "";
-    if (READ_BLOCKED_BASENAMES.has(probeBase)) {
-      return {
-        safe: false,
-        reason: `'${probeBase}' is a read-blocked sensitive filename`,
-      };
-    }
-    if (isBlockedEnvFile(probe)) {
-      return {
-        safe: false,
-        reason: `'${probeBase}' is a secrets file — .env files are not readable by tools (only the DENUE analyzer's .env is allow-listed)`,
-      };
-    }
+    const reason = readDenylistReason(probe);
+    if (reason) return { safe: false, reason };
   }
 
   return { safe: true };
+}
+
+/**
+ * The read denylist alone (secret paths/dirs, sensitive basenames, .env,
+ * process state) for one absolute path; the reason, or null when allowed.
+ * glob/list_dir filter listed NAMES with this: the full validatePathSafety
+ * also refuses `$` and quotes, which hid ordinary files like `routes/$id.tsx`
+ * (audit 2026-09-22 R1 W4).
+ */
+export function readDenylistReason(probe: string): string | null {
+  if (PROC_SECRET_RE.test(probe)) {
+    return `'${probe}' is a read-blocked process-state file`;
+  }
+  for (const blocked of READ_BLOCKED_PATHS) {
+    // Exact-file blocklist: probe === blocked OR probe starts with blocked+"/"
+    // (prefix semantics only for entries ending in "/"). Avoids the
+    // /root/.ssh-evil matching /root/.ssh class of bug (poka-yoke test).
+    if (blocked.endsWith("/")) {
+      if (probe.startsWith(blocked)) {
+        return `'${blocked}' is a read-blocked secret directory`;
+      }
+    } else if (probe === blocked) {
+      return `'${blocked}' is a read-blocked secret file`;
+    }
+  }
+  const probeBase = probe.split("/").pop() ?? "";
+  if (READ_BLOCKED_BASENAMES.has(probeBase)) {
+    return `'${probeBase}' is a read-blocked sensitive filename`;
+  }
+  if (isBlockedEnvFile(probe)) {
+    return `'${probeBase}' is a secrets file — .env files are not readable by tools (only the DENUE analyzer's .env is allow-listed)`;
+  }
+  return null;
 }
 
 /**

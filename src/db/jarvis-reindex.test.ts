@@ -40,6 +40,15 @@ function writeFs(rel: string, content: string): void {
   writeFileSync(full, content, "utf-8");
 }
 
+describe("initDatabase and INDEX.md (audit 2026-09-22)", () => {
+  it("opening a database does not write INDEX.md — the service does it at boot", async () => {
+    // The old boot hook was a dynamic import; let it settle before asserting.
+    await import("./jarvis-index.js");
+    await new Promise((r) => setImmediate(r));
+    expect(getFile("INDEX.md")).toBeNull();
+  });
+});
+
 describe("reindexJarvisKb", () => {
   // initDatabase() calls seedDirectives() which upserts 2 directive files;
   // those land in testKbDir via mirrorToDisk and are also in the DB. Baseline

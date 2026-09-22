@@ -54,6 +54,7 @@ import {
   truncateMessageForWrapup,
 } from "./adapter.js";
 import type { ChatMessage } from "./adapter.js";
+import { buildWrapUpContext } from "./adapter-openai.js";
 
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
@@ -782,6 +783,27 @@ describe("compactionGuardStep", () => {
 // post-`compaction_exhausted` wrap-up infer() doesn't itself 413 on an
 // oversized assistant tail message.
 // ---------------------------------------------------------------------------
+
+// audit 2026-09-22 R1 W2: the executor prompt is split (context-05) — the
+// second system message carries the goal's criteria and context.
+describe("buildWrapUpContext", () => {
+  it("keeps every leading system message", () => {
+    const out = buildWrapUpContext(
+      [
+        { role: "system", content: "stable" },
+        { role: "system", content: "## Goal\nvariable", cacheable: false },
+        { role: "user", content: "Execute this goal: x" },
+        { role: "assistant", content: "working" },
+      ],
+      "wrap up",
+    );
+    const systems = out.filter((m) => m.role === "system");
+    expect(systems.map((m) => m.content)).toEqual([
+      "stable",
+      "## Goal\nvariable",
+    ]);
+  });
+});
 
 describe("truncateMessageForWrapup", () => {
   const MAX = 100;

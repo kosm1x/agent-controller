@@ -251,6 +251,24 @@ describe("compactL3", () => {
     expect(removedCount).toBe(4); // 7 - 1 system - 2 tail
   });
 
+  it("preserves every leading system message (split prompt, context-05)", () => {
+    const messages: ChatMessage[] = [
+      msg("system", "stable prompt"),
+      msg("system", "## Goal\nvariable part"),
+      msg("user", "msg1"),
+      msg("assistant", "msg2"),
+      msg("user", "recent"),
+      msg("assistant", "latest"),
+    ];
+    const { messages: result, removedCount } = compactL3(messages, 2);
+    expect(result.map((m) => m.content).slice(0, 2)).toEqual([
+      "stable prompt",
+      "## Goal\nvariable part",
+    ]);
+    expect(result[2].content).toContain("Emergency truncation");
+    expect(removedCount).toBe(2);
+  });
+
   it("handles no system message", () => {
     const messages: ChatMessage[] = [
       msg("user", "msg1"),

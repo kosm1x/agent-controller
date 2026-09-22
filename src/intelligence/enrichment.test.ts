@@ -163,6 +163,24 @@ describe("enrichment", () => {
     }
   });
 
+  it("clears the 1500 ms pgvector timer once the leg finishes", async () => {
+    pg.enabled.mockReturnValue(true);
+    const setSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      await enrichContext("cuáles son los pendientes del proyecto", "telegram");
+      const timers = setSpy.mock.results
+        .filter((_, i) => setSpy.mock.calls[i]![1] === 1500)
+        .map((r) => r.value);
+      expect(timers).toHaveLength(1);
+      expect(clearSpy.mock.calls.map((c) => c[0])).toContain(timers[0]);
+    } finally {
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+      pg.enabled.mockReturnValue(false);
+    }
+  });
+
   describe("tool-first guard", () => {
     it("should inject reminder for schedule queries", async () => {
       const result = await enrichContext(
