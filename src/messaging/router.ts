@@ -56,6 +56,7 @@ import {
   detectImplicitFeedback,
   isFeedbackMessage,
 } from "../intelligence/feedback.js";
+import { shadowFeedback } from "../jev/shadow.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
 import {
   isExclusivelyBriefVerdict,
@@ -2040,6 +2041,8 @@ export class MessageRouter {
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     if (feedbackTaskId) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
+      // Jev shadow (dormant unless armed): log-only, never awaited.
+      shadowFeedback(feedbackTaskId, msg.text, previousMessages.get(tk), signal);
       if (signal !== "neutral") {
         recordTaskFeedback(feedbackTaskId, signal);
         try {
@@ -2236,8 +2239,8 @@ export class MessageRouter {
     // v6.4 CL1.1: Semantic scope classification — LLM understands intent,
     // replaces brittle regex matching. SCOPE_CLASSIFIER_TIMEOUT_MS budget
     // (default 8 s since 2026-09-05), regex fallback on failure.
-    const recentContext = conversationHistory
-      .slice(-2)
+    const recentTurns = conversationHistory.slice(-2);
+    const recentContext = recentTurns
       .map((t) => `${t.role}: ${t.content.slice(0, 150)}`)
       .join("\n");
 
@@ -2247,7 +2250,11 @@ export class MessageRouter {
     // timeout) on top of enrichment on EVERY non-fast-path message.
     const [enrichment, semanticGroups] = await Promise.all([
       enrichContext(msg.text, msg.channel),
-      classifyScopeGroups(normalizedText, recentContext || undefined),
+      classifyScopeGroups(
+        normalizedText,
+        recentContext || undefined,
+        recentTurns.map((t) => t.content),
+      ),
     ]);
 
     // User profile facts + projects — always injected so the LLM never forgets context

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockInfer = vi.hoisted(() => vi.fn());
 vi.mock("../inference/adapter.js", () => ({ infer: mockInfer }));
+// No database here; the telemetry rows are pinned in src/jev/shadow.test.ts.
+vi.mock("../jev/shadow.js", () => ({ recordJevShadow: vi.fn() }));
 
 import {
   CLASSIFIER_SYSTEM_PROMPT,
@@ -35,13 +37,22 @@ const ok = (json: unknown) => ({
   json: async () => json,
 });
 
-const ask = (message: string, context?: string) =>
+const ask = (message: string, context?: string, wholeTurns?: string[]) =>
   classifyScopeGroupsWithJev(
     message,
     context,
     CLASSIFIER_SYSTEM_PROMPT,
     VALID_GROUPS,
+    wholeTurns,
   );
+
+// The router cuts each context turn to 150 chars. The value sits before the
+// cut, the word that makes the filter object after it.
+const LATE_TURN =
+  `apunta ${SECRET} en el cuaderno. ` +
+  "seguimos con la nota de ayer ".repeat(6) +
+  "esa es mi contraseña del wifi";
+const CUT_CONTEXT = `assistant: ${LATE_TURN.slice(0, 150)}`;
 
 beforeEach(() => {
   vi.stubGlobal("fetch", mockFetch);
@@ -86,6 +97,7 @@ describe("classifyScopeGroupsWithJev", () => {
     const groups = await ask(
       "revisa el deploy",
       "assistant: listo\nuser: revisa el deploy",
+      ["listo", "revisa el deploy"],
     );
     expect([...(groups ?? [])].sort()).toEqual(["coding", "research"]);
     expect(JEV_SCOPE_THRESHOLD).toBe(0.7);
@@ -144,7 +156,10 @@ describe("classifyScopeGroupsWithJev", () => {
   it("does not withhold a turn over the role labels themselves", async () => {
     mockFetch.mockResolvedValue(ok(body(["coding"])));
     expect(
-      await ask("corre los tests", "assistant: hecho\nuser: corre los tests"),
+      await ask("corre los tests", "assistant: hecho\nuser: corre los tests", [
+        "hecho",
+        "corre los tests",
+      ]),
     ).not.toBeNull();
     expect(mustNotLeave("corre los tests")).toBe(false);
   });
@@ -221,6 +236,43 @@ describe("classifyScopeGroups wiring", () => {
     expect(groups?.has("coding")).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("reads the context turns whole: a cut turn that looks clean is still withheld", async () => {
+    mockFetch.mockResolvedValue(ok({ answers: {} }));
+    expect(mustNotLeave(CUT_CONTEXT.replace("assistant: ", ""))).toBe(false);
+    expect(await ask("revisa el deploy", CUT_CONTEXT, [LATE_TURN])).toBeNull();
+    mockInfer.mockResolvedValue({ content: '["coding"]' });
+    const groups = await classifyScopeGroups("revisa el deploy", CUT_CONTEXT, [
+      LATE_TURN,
+    ]);
+    expect(groups?.has("coding")).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("withholds a context whose whole turns were not handed over", async () => {
+    mockFetch.mockResolvedValue(ok(body(["coding"])));
+    expect(await ask("revisa el deploy", "assistant: listo")).toBeNull();
+    expect(await ask("revisa el deploy", "assistant: listo", [])).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(await ask("revisa el deploy")).not.toBeNull();
+  });
+
+  it("gives up on the vendor at 1.5 s and falls through", async () => {
+    let abortedAt = 0;
+    const started = performance.now();
+    mockFetch.mockImplementation(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_, reject) =>
+          init.signal.addEventListener("abort", () => {
+            abortedAt = performance.now() - started;
+            reject(init.signal.reason);
+          }),
+        ),
+    );
+    expect(await ask("revisa el deploy")).toBeNull();
+    expect(abortedAt).toBeGreaterThan(1000);
+    expect(abortedAt).toBeLessThan(2500);
+  }, 4000);
 
   it("goes straight to Sonnet when the kill switch is set", async () => {
     vi.stubEnv("SCOPE_CLASSIFIER_PROVIDER", "sonnet");

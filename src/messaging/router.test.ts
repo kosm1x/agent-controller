@@ -111,6 +111,21 @@ vi.mock("../briefing/promote.js", async (importOriginal) => {
 });
 
 const mockWriteEpisodic = vi.fn().mockResolvedValue(undefined);
+// Feedback window: closed (the real default) unless a test opens it.
+vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../intelligence/outcome-tracker.js")
+  >()),
+  checkFeedbackWindow: vi.fn(() => null),
+}));
+// Jev shadow: log-only side channel; the wiring test pins the call site.
+vi.mock("../jev/shadow.js", () => ({ shadowFeedback: vi.fn() }));
+// The real classifier, wrapped so the router's call can be read.
+vi.mock("./scope-classifier.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./scope-classifier.js")>();
+  return { ...actual, classifyScopeGroups: vi.fn(actual.classifyScopeGroups) };
+});
+
 vi.mock("../memory/jme.js", () => ({
   writeEpisodic: (...args: unknown[]) => mockWriteEpisodic(...args),
   queryMemory: vi.fn().mockResolvedValue([]),
@@ -230,6 +245,50 @@ describe("MessageRouter", () => {
   });
 
   describe("inbound", () => {
+    it("hands a follow-up inside the feedback window to the Jev shadow, beside the regex label", async () => {
+      const { checkFeedbackWindow } =
+        await import("../intelligence/outcome-tracker.js");
+      const { shadowFeedback } = await import("../jev/shadow.js");
+      const turn = (text: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text,
+        timestamp: new Date(),
+      });
+      await router.handleInbound(turn("dame el reporte de ventas"));
+      expect(shadowFeedback).not.toHaveBeenCalled();
+
+      vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-prev");
+      await router.handleInbound(turn("y ahora dime la hora en Tokio"));
+      expect(shadowFeedback).toHaveBeenCalledTimes(1);
+      expect(shadowFeedback).toHaveBeenCalledWith(
+        "task-prev",
+        "y ahora dime la hora en Tokio",
+        "dame el reporte de ventas",
+        "neutral",
+      );
+    });
+
+    it("hands the scope classifier the context turns uncut, beside the 150-char context", async () => {
+      const { classifyScopeGroups } = await import("./scope-classifier.js");
+      const turn = (text: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text,
+        timestamp: new Date(),
+      });
+      const long = "dame el reporte de ventas de la semana ".repeat(8);
+      const reply = "aqui va el reporte, son estas cifras ".repeat(6).trim();
+      _testSeedThread("whatsapp", [{ text: `User: hola\nJarvis: ${reply}` }]);
+      await router.handleInbound(turn(long));
+      const [, context, wholeTurns] =
+        vi.mocked(classifyScopeGroups).mock.calls.at(-1) ?? [];
+      expect(context).toBe(
+        `assistant: ${reply.slice(0, 150)}\nuser: ${long.slice(0, 150)}`,
+      );
+      expect(wholeTurns).toEqual([reply, long]);
+    });
+
     it("should call submitTask with correct shape", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",

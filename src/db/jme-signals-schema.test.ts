@@ -1,7 +1,7 @@
 /**
  * Schema migration v5 — `jme_signals` (memory plan v2.0, Track 2).
  *
- * Runs the REAL initDatabase on a fresh DB (user_version 0 → 5) and on a DB
+ * Runs the REAL initDatabase on a fresh DB (user_version 0 → 6, the current head) and on a DB
  * pinned at v4, asserting the table, its index, the kind CHECK and the final
  * user_version. jme.test.ts hand-copies the DDL into its own fixture, so
  * without this file deleting the migration leaves the suite green
@@ -48,10 +48,10 @@ function signalsShape(db: Database.Database) {
 }
 
 describe("migration v5 — jme_signals", () => {
-  it("fresh DB: user_version ends at 5 with the table, index and kind CHECK", () => {
+  it("fresh DB: user_version ends at the head (6) with the table, index and kind CHECK", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     const { table, index } = signalsShape(db);
     expect(table).toMatch(/kind\s+TEXT NOT NULL CHECK\(kind IN \(/);
     expect(index).toBe("idx_jme_signals_ts");
@@ -92,7 +92,7 @@ describe("migration v5 — jme_signals", () => {
 
     initDatabase(tmpDbPath);
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     expect(signalsShape(db).index).toBe("idx_jme_signals_ts");
   });
 });

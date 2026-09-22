@@ -31,6 +31,7 @@ import {
   buildKnowledgeBaseSections,
   conditionMatches,
 } from "../messaging/kb-injection.js";
+import { shadowKbRows } from "../jev/shadow-kb.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { getConfig } from "../config.js";
@@ -896,6 +897,10 @@ export const fastRunner: Runner = {
             })()
           : Promise.resolve(null),
       ]);
+
+      // Jev shadow (dormant unless armed): log-only, never awaited. Read-only
+      // tasks get no conditional rows, so there is nothing to score.
+      if (!isReadOnlyTask) shadowKbRows(input.taskId, lastUserMsg, scopedTools);
 
       // R-3 metric: assembly-phase wall-clock. Only emit when the parallel
       // pre-fetch ran (i.e., the chat path). Operator can `journalctl |

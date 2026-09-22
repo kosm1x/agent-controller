@@ -134,6 +134,9 @@ vi.mock("../messaging/kb-injection.js", () => ({
   conditionMatches: vi.fn(() => false),
 }));
 
+// Jev shadow: log-only side channel; the wiring test below pins the call site.
+vi.mock("../jev/shadow-kb.js", () => ({ shadowKbRows: vi.fn() }));
+
 vi.mock("../memory/essentials.js", () => ({
   getEssentialFacts: vi.fn(() => ""),
 }));
@@ -155,6 +158,7 @@ import { writeCheckpoint } from "./checkpoint.js";
 import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
+import { shadowKbRows } from "../jev/shadow-kb.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
@@ -546,6 +550,37 @@ describe("fastRunner.execute() — integration (R-4)", () => {
           }
         }
       }
+    });
+  });
+
+  describe("Jev KB shadow wiring", () => {
+    const chatTurn = (tools: string[]) => {
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "STATUS: DONE\nready" }),
+      );
+      return fastRunner.execute({
+        taskId: "task-shadow",
+        runId: "run-shadow",
+        title: "Test task",
+        description: "Identity preamble###CACHE_BREAK###variable suffix",
+        tools,
+        conversationHistory: [{ role: "user", content: "publica el demo" }],
+      });
+    };
+
+    it("hands the chat turn's task id, last user message and scope to the shadow", async () => {
+      await chatTurn(["file_write"]);
+      expect(shadowKbRows).toHaveBeenCalledTimes(1);
+      expect(shadowKbRows).toHaveBeenCalledWith(
+        "task-shadow",
+        "publica el demo",
+        ["file_write"],
+      );
+    });
+
+    it("skips a read-only task: it gets no conditional rows to score", async () => {
+      await chatTurn(["file_read"]);
+      expect(shadowKbRows).not.toHaveBeenCalled();
     });
   });
 

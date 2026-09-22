@@ -1272,6 +1272,25 @@ export function initDatabase(dbPath: string): Database.Database {
           CREATE INDEX IF NOT EXISTS idx_jme_signals_ts ON jme_signals(ts DESC);
         `),
     },
+    {
+      version: 6,
+      description:
+        "jev_shadow — one row per Jev answer logged beside the live decision (consumers scope/kb/memory/feedback); shadow only, nothing reads it on a turn (docs/planning/jev-consumers-plan-2026-09-21.md)",
+      up: (db) =>
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS jev_shadow (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            consumer   TEXT NOT NULL CHECK(consumer IN ('scope','kb','memory','feedback')),
+            ref        TEXT,
+            item       TEXT NOT NULL,
+            noul       REAL,
+            latency_ms INTEGER,
+            incumbent  TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_jev_shadow_consumer ON jev_shadow(consumer, created_at DESC);
+        `),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

@@ -171,6 +171,8 @@ RESPOND with JSON array only. No explanation. Examples:
 export async function classifyScopeGroups(
   message: string,
   recentContext?: string,
+  /** The turns behind `recentContext`, uncut — read by the Jev vendor filter. */
+  wholeTurns?: readonly string[],
 ): Promise<Set<string> | null> {
   try {
     // Jev first when enabled (operator ruling 2026-09-21); any non-answer —
@@ -184,6 +186,7 @@ export async function classifyScopeGroups(
           recentContext,
           CLASSIFIER_SYSTEM_PROMPT,
           VALID_GROUPS,
+          wholeTurns,
         );
         if (groups) return withDeterministicGroups(message, groups);
       }

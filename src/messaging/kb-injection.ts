@@ -153,29 +153,57 @@ function projectReadmeSection(
  * match the scope (own 8000-char budget, a pointer line for each one that did
  * not fit), the project README, and the preview / Rumi guardrails.
  */
+const KB_CHAR_BUDGET = 8000;
+
+/** A conditional row, as far as packing needs it. */
+export interface ConditionalRow {
+  path: string;
+  title: string;
+  content: string;
+  condition?: string | null;
+}
+
+/**
+ * Which conditional rows apply to this scope, and which of those fit the
+ * budget in the order given. Pure: the KB dry run and the Jev shadow read the
+ * same split the prompt gets.
+ */
+export function packConditionalRows<T extends ConditionalRow>(
+  files: readonly T[],
+  scopedTools: readonly string[],
+): { inBudget: T[]; pointer: T[]; chars: number } {
+  const inBudget: T[] = [];
+  const pointer: T[] = [];
+  let chars = 0;
+  for (const f of files) {
+    if (f.condition && !conditionMatches(f.condition, scopedTools)) {
+      continue;
+    }
+    const length = `### ${f.title}\n${f.content}`.length;
+    if (chars + length > KB_CHAR_BUDGET) {
+      pointer.push(f);
+      continue;
+    }
+    inBudget.push(f);
+    chars += length;
+  }
+  return { inBudget, pointer, chars };
+}
+
 function collectVariableSections(
   scopedTools: string[],
   messageText: string | undefined,
   logTag: string,
 ): string[] {
-  const variableFiles = getFilesByQualifier("conditional");
-
-  const variableSections: string[] = [];
-  const budgetSkipped: string[] = [];
-  let variableChars = 0;
-  const KB_CHAR_BUDGET = 8000;
-  for (const f of variableFiles) {
-    if (f.condition && !conditionMatches(f.condition, scopedTools)) {
-      continue;
-    }
-    const section = `### ${f.title}\n${f.content}`;
-    if (variableChars + section.length > KB_CHAR_BUDGET) {
-      budgetSkipped.push(`- ${f.path} — ${f.title}`);
-      continue;
-    }
-    variableSections.push(section);
-    variableChars += section.length;
-  }
+  const packed = packConditionalRows(
+    getFilesByQualifier("conditional"),
+    scopedTools,
+  );
+  const variableSections = packed.inBudget.map(
+    (f) => `### ${f.title}\n${f.content}`,
+  );
+  const budgetSkipped = packed.pointer.map((f) => `- ${f.path} — ${f.title}`);
+  const variableChars = packed.chars;
   // The goal prompt is persisted nowhere, so this line is the only direct
   // evidence that conditional rows reached a heavy/swarm goal (2026-09-19).
   console.log(

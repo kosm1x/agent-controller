@@ -6,6 +6,7 @@ import {
   detectRumiRequest,
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
+  packConditionalRows,
 } from "./kb-injection.js";
 import {
   CODING_TOOLS,
@@ -376,6 +377,52 @@ describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () 
     const { stable, variable } = buildKnowledgeBaseSections(["shell_exec"]);
     expect(stable).toBeTruthy();
     expect(variable).toBeNull();
+  });
+
+  it("a row that lands exactly on the 8000-char budget is still in budget", () => {
+    const row = (path: string, content: string) => ({
+      path,
+      title: "T",
+      content,
+      condition: null,
+    });
+    // "### T\n" is 6 chars: 7994 + 6 = 8000 exactly; one more char overflows.
+    const exact = packConditionalRows([row("a", "x".repeat(7994))], []);
+    expect(exact.inBudget.map((f) => f.path)).toEqual(["a"]);
+    expect(exact.chars).toBe(8000);
+    const over = packConditionalRows([row("a", "x".repeat(7995))], []);
+    expect(over.pointer.map((f) => f.path)).toEqual(["a"]);
+  });
+
+  it("a conditional row past the 8000-char budget becomes a pointer line, not text", () => {
+    const row = (
+      path: string,
+      title: string,
+      fill: string,
+      priority: number,
+    ) => ({
+      path,
+      title,
+      content: fill.repeat(500),
+      qualifier: "conditional",
+      condition: null,
+      priority,
+    });
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      quals.includes("conditional")
+        ? [
+            row("directives/a.md", "Primera", "regla uno ", 10),
+            row("directives/b.md", "Segunda", "regla dos ", 20),
+          ]
+        : [],
+    );
+
+    const { variable } = buildKnowledgeBaseSections([]);
+    expect(variable).toContain("### Primera\nregla uno");
+    expect(variable).not.toContain("regla dos");
+    expect(variable).toMatch(
+      /no cupieron[^\n]*\n- directives\/b\.md — Segunda/,
+    );
   });
 
   it("project README goes into variable layer (per-message signal)", () => {
