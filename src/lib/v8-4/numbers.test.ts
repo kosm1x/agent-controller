@@ -253,6 +253,30 @@ describe("R3/R4 pins", () => {
   });
 });
 
+describe("2026-09-23 corpus pins (694 marks / 30d)", () => {
+  it("a bare zero is not a claim in chat (no corpus lookup can verify it: 39 marks) but stays one in an artifact, where fuente: can source it", () => {
+    const text = "| swarm | 1 | 0 | **0%** |\nPrecio $0 para compradores; extremos $0.00 o $1.00; 0.0% de error; 0,0 % de caída.";
+    expect(auditNumbers(text, []).found).toEqual(["$1.00"]);
+    expect(auditNumbers("$0 de deuda y 0% de morosidad", [], { includeCode: true }).unverified).toEqual(["$0", "0%"]);
+    // Not zero: a leading 0 with a real fraction is still a figure.
+    expect(auditNumbers("cotiza en $0.35 y cae 0.5%", []).unverified).toEqual(["$0.35", "0.5%"]);
+  });
+
+  it("'<integer> B' is a byte size only next to a file cue; otherwise B stays billions", () => {
+    expect(auditNumbers("| `sanofi.svg` | SVG vectorial | 4,758 B |\nlogo.png pesa 20980 B", []).found).toEqual([]);
+    expect(auditNumbers("mide 20980 B (logo.png)", []).found).toEqual([]); // cue after the number
+    // With a file cue: a decimal, a trailing currency word, a count noun, or a cue on another line keep billions.
+    expect(auditNumbers("archivo.pdf: mercado 2.5 B", []).unverified).toEqual(["2.5 B"]);
+    for (const t of ["informe.pdf: 20 B dólares", "informe.pdf: 3 B de usuarios", "ingresos 20 B dólares\nver anexo.pdf"])
+      expect(auditNumbers(t, []).found.length, t).toBe(1);
+    expect(auditNumbers("Plan 2025: $29.9 B; ventas 23.9B KRW; mercado 2.5 B", []).unverified).toEqual(["$29.9 B", "23.9B", "2.5 B"]);
+    // No file cue, or a prefix currency / no space: billions.
+    expect(auditNumbers("capex.pdf: $5 B y 6B", []).unverified).toEqual(["$5 B", "6B"]);
+    for (const t of ["ingresos de 5 B USD", "20 B de dólares", "US$5 B", "3 B de usuarios", "| Ingresos | 12 B |"])
+      expect(auditNumbers(t, []).found.length, t).toBe(1);
+  });
+});
+
 describe("extractFigures / blockAround", () => {
   it("reports positions usable for inline edits", () => {
     const text = "Cap de $10,600 M y 94 filas.";

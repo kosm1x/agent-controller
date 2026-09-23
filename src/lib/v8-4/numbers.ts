@@ -263,11 +263,42 @@ interface Token {
   index: number;
 }
 
-function kindOf(n: Token, before: string, after: string): FigureKind | null {
+/** A currency word after "<int> B": the B is billions ("20 B de dólares"). */
+const CURRENCY_WORD_AFTER_RE =
+  /^[ \t]*(?:de[ \t]+)?(?:USD|MXN|d[oó]lares|pesos|euros)\b/i;
+/** A file name or a byte word near "<int> B": the B is bytes. */
+const BYTES_CUE_RE =
+  /\.(?:png|svg|jpe?g|gif|webp|pdf|zip|json|csv|txt|md|html?|mp[34]|wav|ogg)\b|\b(?:bytes?|pesa)\b/i;
+
+function kindOf(
+  n: Token,
+  before: string,
+  after: string,
+  artifact: boolean,
+): FigureKind | null {
   const { currency, unit, digits } = n;
   if (IDENT_BEFORE_RE.test(before)) return null;
   if (TECH_UNIT_AFTER_RE.test(after)) return null;
   if (/^0\d/.test(digits)) return null; // leading-zero code (zip, folio)
+  // A bare zero ($0, 0%, $0.00) in chat: no corpus lookup can verify it — a
+  // "0" token is in nearly every tool result — so the mark fired on every
+  // zero, true or not (39 of 694 marks / 30d, 2026-09-23). An artifact keeps
+  // it: there `fuente:` / `calc:` can source a zero.
+  if (!artifact && /^0(?:[.,]0+)?$/.test(digits)) return null;
+  // "7,310 B" next to a file name on its line is bytes: an integer, a space,
+  // B, no currency before or after, no count noun. Otherwise ("20 B
+  // dólares", "informe.pdf: 3 B de usuarios") B stays billions.
+  const afterLine = after.split("\n")[0]!;
+  if (
+    unit === "B" &&
+    !currency &&
+    /\sB$/.test(n.whole) &&
+    /^\d{1,3}(?:[.,]\d{3})*$|^\d+$/.test(digits) &&
+    BYTES_CUE_RE.test(before + afterLine) &&
+    !CURRENCY_WORD_AFTER_RE.test(afterLine) &&
+    !COUNT_NOUN_AFTER_RE.test(afterLine)
+  )
+    return null;
   if (currency || (unit && CURRENCY_SUFFIX.test(unit))) return "currency";
   if (unit === "%") {
     if (OPERATOR_BEFORE_RE.test(before)) return null;
@@ -374,7 +405,7 @@ export function extractFigures(text: string, includeCode = false): Figure[] {
     );
     // First half of a range ("$0.00–$0.01", "10–20%"): the second half carries the claim.
     if (/^[ \t]?[–—-][ \t]?[$€£]?\d/.test(after)) continue;
-    const kind = kindOf(n, before, after);
+    const kind = kindOf(n, before, after, includeCode);
     if (!kind) continue;
     const value = parseValue(n.sign, n.digits, n.unit, kind === "count");
     if (!Number.isFinite(value)) continue;
