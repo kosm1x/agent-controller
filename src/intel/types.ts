@@ -94,4 +94,6 @@ export interface CollectorHealth {
   lastAttempt: string | null;
   consecutiveFailures: number;
   totalSignals: number;
+  /** Epoch ms — skip collection until this time (exponential backoff on failure). */
+  backoffUntil?: number;
 }

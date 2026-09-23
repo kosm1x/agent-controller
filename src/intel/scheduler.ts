@@ -18,6 +18,14 @@ const health = new Map<string, CollectorHealth>();
 const collecting = new Set<string>(); // guards against overlapping cycles
 let broadcastFn: ((text: string) => Promise<void>) | null = null;
 
+// ---------------------------------------------------------------------------
+// Exponential backoff config
+// ---------------------------------------------------------------------------
+/** Base delay in ms for the first failure (30 s). */
+const BACKOFF_BASE_MS = 30_000;
+/** Cap backoff at 4 hours regardless of failure count. */
+const BACKOFF_MAX_MS = 4 * 60 * 60_000;
+
 /** Set the broadcast function for alert delivery (called from index.ts after messaging init). */
 export function setIntelBroadcast(fn: (text: string) => Promise<void>): void {
   broadcastFn = fn;
@@ -30,6 +38,11 @@ export function setIntelBroadcast(fn: (text: string) => Promise<void>): void {
 async function runCollector(adapter: CollectorAdapter): Promise<void> {
   // Prevent overlapping cycles if previous collect() is still running
   if (collecting.has(adapter.source)) return;
+
+  // Respect exponential backoff — skip silently until window expires
+  const hPre = health.get(adapter.source);
+  if (hPre?.backoffUntil && Date.now() < hPre.backoffUntil) return;
+
   collecting.add(adapter.source);
 
   const h = health.get(adapter.source) ?? {
@@ -50,6 +63,7 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
 
       h.totalSignals += inserted;
       h.consecutiveFailures = 0;
+      h.backoffUntil = undefined;
       h.lastSuccess = new Date().toISOString();
 
       if (deltas.length > 0) {
@@ -77,13 +91,20 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
       }
     } else {
       h.consecutiveFailures = 0;
+      h.backoffUntil = undefined;
       h.lastSuccess = new Date().toISOString();
     }
   } catch (err) {
     h.consecutiveFailures++;
+    // Exponential backoff: 30s × 2^(failures-1), capped at 4h
+    const backoffMs = Math.min(
+      BACKOFF_BASE_MS * Math.pow(2, h.consecutiveFailures - 1),
+      BACKOFF_MAX_MS,
+    );
+    h.backoffUntil = Date.now() + backoffMs;
     const msg = errMsg(err);
     console.warn(
-      `[intel] ${adapter.source} failed (${h.consecutiveFailures}x): ${msg}`,
+      `[intel] ${adapter.source} failed (${h.consecutiveFailures}x): ${msg} — backing off ${Math.round(backoffMs / 1000)}s`,
     );
   }
 
