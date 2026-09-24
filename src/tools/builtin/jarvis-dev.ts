@@ -537,6 +537,45 @@ async function actionTest(): Promise<string> {
   return JSON.stringify({ branch, ...results, ready_for_pr });
 }
 
+/** Every untracked FILE is listed (not a collapsed "dir/"), so the
+ * SENSITIVE filter sees `newdir/.env` instead of staging it via `newdir/`.
+ * @internal exported for tests */
+export const PR_STATUS_ARGS = [
+  "status",
+  "--porcelain",
+  "-z",
+  "--untracked-files=all",
+];
+
+/** Paths are literal (no globs, no "-name" read as an option).
+ * @internal exported for tests */
+export function prAddArgs(paths: string[]): string[] {
+  return ["--literal-pathspecs", "add", "--", ...paths];
+}
+
+/**
+ * Paths to stage from `git status --porcelain -z` output. Each entry is
+ * "XY <path>"; a rename/copy (X or Y = R|C) is followed by its ORIGINAL path
+ * as a separate entry. An index rename/copy (X) or a worktree copy already
+ * accounts for it — skipped. A worktree rename (Y = R, intent-to-add) leaves
+ * it as a worktree-only deletion — staged too, or the commit keeps the old
+ * file. The old parser sliced trimmed text: the first entry " M src/x.ts"
+ * lost its leading space and became "rc/x.ts".
+ * @internal exported for tests
+ */
+export function changedPathsFromPorcelainZ(out: string): string[] {
+  const entries = out.split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.length < 4) continue;
+    paths.push(entry.slice(3));
+    if ("RC".includes(entry[0]) || entry[1] === "C") i++;
+    else if (entry[1] === "R") paths.push(entries[++i]);
+  }
+  return paths;
+}
+
 async function actionPr(title: string, body: string): Promise<string> {
   const branch = currentBranch();
   console.log(`[jarvis_dev] action=pr branch=${branch} title="${title}"`);
@@ -605,11 +644,16 @@ async function actionPr(title: string, body: string): Promise<string> {
   ];
   try {
     // Get changed files, exclude sensitive ones
-    const changed = run(["status", "--porcelain"])
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => l.slice(3).trim())
-      .filter((f) => !SENSITIVE.some((s) => f.toLowerCase().includes(s)));
+    // Not run(): its trim() eats the first entry's leading status space.
+    const porcelain = execFileSync("git", PR_STATUS_ARGS, {
+      cwd: MC_DIR,
+      timeout: GIT_TIMEOUT_MS,
+      encoding: "utf-8",
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
+    const changed = changedPathsFromPorcelainZ(porcelain).filter(
+      (f) => !SENSITIVE.some((s) => f.toLowerCase().includes(s)),
+    );
     if (changed.length === 0) {
       console.log(
         `[jarvis_dev] action=pr ABORTED — nothing to commit on ${branch} (or only sensitive files)`,
@@ -621,7 +665,7 @@ async function actionPr(title: string, body: string): Promise<string> {
     console.log(
       `[jarvis_dev] action=pr staging ${changed.length} file(s): ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ` (+${changed.length - 5} more)` : ""}`,
     );
-    run(["add", ...changed]);
+    run(prAddArgs(changed));
     // --no-verify: the test gate for this commit already ran above (fresh
     // actionTest or trusted cache, ~line 397) — the pre-commit hook would
     // re-run the same full suite inside GIT_TIMEOUT_MS (60s) and ETIMEDOUT
