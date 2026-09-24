@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { execFileSync } from "child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import {
+  actionBranch,
   buildGateScopeArgs,
   computeDirtyHash,
   describeTestRunFailure,
@@ -263,3 +268,109 @@ describe("jarvis_dev failure classification (audit C1/C2/W4 2026-08-02)", () => 
     );
   });
 });
+
+describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2026-09-24)", () => {
+  // Real repos reproduce the production shape: a linked worktree whose `main`
+  // is held by the primary checkout, HEAD left on an older jarvis/* branch,
+  // and origin/main ahead of the local main.
+  let root: string;
+  let wt: string;
+  // The pre-commit hook runs this suite with GIT_DIR/GIT_INDEX_FILE exported
+  // for the commit being made: inherited, they redirect every fixture call
+  // (config, commit) into the REAL repo. Strip them so git goes by cwd.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+  );
+  const git = (cwd: string, args: string[]) =>
+    execFileSync("git", args, {
+      cwd,
+      env,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+  const inWt = (args: string[]) => git(wt, args);
+  const commit = (cwd: string, file: string, msg: string) => {
+    writeFileSync(join(cwd, file), msg);
+    git(cwd, ["add", file]);
+    git(cwd, ["commit", "-q", "-m", msg]);
+    return git(cwd, ["rev-parse", "HEAD"]);
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "jarvis-dev-branch-"));
+    const origin = join(root, "origin.git");
+    const primary = join(root, "primary");
+    const pusher = join(root, "pusher");
+    wt = join(root, "wt");
+    git(root, ["init", "-q", "--bare", "-b", "main", origin]);
+    for (const dir of [primary, pusher]) {
+      git(root, ["clone", "-q", origin, dir]);
+      git(dir, ["config", "user.email", "t@t"]);
+      git(dir, ["config", "user.name", "t"]);
+    }
+    git(primary, ["checkout", "-q", "-b", "main"]);
+    commit(primary, "a.txt", "A");
+    git(primary, ["push", "-q", "origin", "main"]);
+    git(primary, ["worktree", "add", "-q", "--detach", wt]);
+    inWt(["checkout", "-q", "-b", "jarvis/fix/old"]);
+    commit(wt, "stale.txt", "STALE");
+    git(pusher, ["pull", "-q", "origin", "main"]);
+    commit(pusher, "b.txt", "B");
+    git(pusher, ["push", "-q", "origin", "main"]);
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("cuts a new branch from fresh origin/main, not from the stale HEAD", () => {
+    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+    expect(out).toMatchObject({ success: true, base: "origin/main" });
+    expect(inWt(["branch", "--show-current"])).toBe("jarvis/fix/new-thing");
+    expect(inWt(["rev-parse", "HEAD"])).toBe(
+      inWt(["rev-parse", "origin/main"]),
+    );
+    expect(inWt(["log", "--format=%s"]).split("\n")).toEqual(["B", "A"]);
+    // No upstream: the branch must never track origin/main.
+    expect(() => inWt(["rev-parse", "--abbrev-ref", "@{u}"])).toThrow();
+  });
+
+  it("returns an error and creates nothing when the fetch fails", () => {
+    inWt(["remote", "set-url", "origin", join(root, "missing.git")]);
+    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+    expect(out.error).toMatch(/fetch origin main failed/);
+    expect(inWt(["branch", "--list", "jarvis/fix/new-thing"])).toBe("");
+    expect(inWt(["branch", "--show-current"])).toBe("jarvis/fix/old");
+  });
+
+  it("refuses when leftover changes would ride into the new branch", () => {
+    writeFileSync(join(wt, "leftover.txt"), "x");
+    const out = JSON.parse(actionBranch("feat", "next", inWt));
+    expect(out.error).toMatch(/Uncommitted changes/);
+    expect(out.changed).toEqual(["?? leftover.txt"]);
+    expect(inWt(["branch", "--list", "jarvis/feat/next"])).toBe("");
+  });
+
+  it("resumes an existing branch as-is and lists the commits its PR would ship", () => {
+    inWt(["checkout", "-q", "--detach"]);
+    const out = JSON.parse(actionBranch("fix", "old", inWt));
+    expect(out).toMatchObject({
+      success: true,
+      base: "existing branch (resumed)",
+    });
+    expect(inWt(["branch", "--show-current"])).toBe("jarvis/fix/old");
+    expect(out.commits_not_on_origin_main).toHaveLength(1);
+    expect(out.commits_not_on_origin_main[0]).toMatch(/^[0-9a-f]+ STALE$/);
+  });
+
+  it("a fresh branch carries no resume listing", () => {
+    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+    expect(out).not.toHaveProperty("commits_not_on_origin_main");
+  });
+
+  it("points next_steps at the worktree, not the primary checkout", () => {
+    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+    expect(out.next_steps.join(" ")).toContain(
+      "/root/claude/mission-control-jarvis/",
+    );
+    expect(out.next_steps.join(" ")).not.toMatch(/mission-control\//);
+  });
+}, 20_000);
