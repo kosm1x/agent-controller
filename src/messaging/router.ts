@@ -2363,7 +2363,7 @@ export class MessageRouter {
     // TODO(2026-06-06): if no scope-inheritance failures are observed in 30d,
     // gate this behind `DEBUG_SCOPE_INHERIT=true` to reduce journald volume.
     console.log(
-      `[router] Stored prior scope tk=${tk.slice(-12)}: [${[...activeGroups].join(", ")}]`,
+      `[router] Stored prior scope tk=${tk.slice(-12)}: [${baseGroups.join(", ")}] (turn ran with [${[...activeGroups].join(", ")}])`,
     );
 
     // Scope telemetry — record decision for self-tuning pipeline
@@ -2993,39 +2993,13 @@ export class MessageRouter {
     }
     let extractedText = sanitized?.text || null;
 
-    // Usability Phase 1.2: a scope-ask reply never reaches the user. First
-    // occurrence on a chat turn → widen + silent re-run; a miss on the
-    // re-run itself, a hallucinated ask (tool already in scope), or a
-    // background-agent reply (no rerunSpec — R1 audit W4) → one honest line.
+    // Usability Phase 1.2: a scope-ask reply never reaches the user.
     if (extractedText) {
-      const miss = detectScopeMiss(
-        extractedText,
-        getAllAvailableTools(this.scopeOptions()),
-      );
-      if (miss && pending.rerunSpec && !pending.rerunOf) {
-        const outcome = this.rerunWithWiderScope(
-          taskId,
-          pending,
-          miss.requestedTools,
-          miss.strong,
-        );
-        // W5: the swallowed turn is NOT an outcome — no task_outcomes row, no
-        // skill failure tally; the re-run records its own.
-        if (outcome === "rerun") return;
-        if (outcome === "no_group") {
-          // No scope group supplies the requested tool: nothing to widen.
-          extractedText = scopeMissFallbackLine("no_rerun");
-        }
-      } else if (miss && miss.strong) {
-        // R3 audit W1: only an explicit ask is replaced; a weak scope
-        // MENTION in a re-run's (or background agent's) real answer is content.
-        console.warn(
-          `[router] scope-miss ${pending.rerunOf ? `persisted on re-run ${taskId} (of ${pending.rerunOf})` : `on background task ${taskId}`} tools=[${miss.requestedTools.join(",")}]`,
-        );
-        extractedText = scopeMissFallbackLine(
-          pending.rerunOf ? "rerun_missed" : "no_rerun",
-        );
-      }
+      const resolved = this.resolveScopeAsk(taskId, pending, extractedText);
+      // W5: the swallowed turn is NOT an outcome — no task_outcomes row, no
+      // skill failure tally; the re-run records its own.
+      if (resolved === null) return;
+      extractedText = resolved;
     }
 
     if (extractedText) {
@@ -3473,7 +3447,14 @@ export class MessageRouter {
           ? this.extractResultText(r)
           : null;
         if (runnerText) {
-          failMsg = runnerText;
+          // A scope ask ends the turn with STATUS: BLOCKED far more often
+          // than with DONE: all 34 blocked chat turns 08-24→09-24 delivered
+          // «Necesito `shell_exec` para esto.» verbatim because the Phase 1.2
+          // gate ran only on the completed path. Same gate here; a re-run
+          // returns before any outcome row, as on the completed path (W5).
+          const resolved = this.resolveScopeAsk(taskId, pending, runnerText);
+          if (resolved === null) return;
+          failMsg = resolved;
           deliveredRunnerText = true;
         }
       } else if (data.agent_id === "heavy" || data.agent_id === "swarm") {
@@ -3512,10 +3493,23 @@ export class MessageRouter {
     // community write-gate on public email channels (qa-audit C1; the
     // 2026-07-11 needs_context branch had the same latent gap). The generic
     // line stays on the direct sender: router-authored, safe by construction.
-    if (deliveredRunnerText) {
-      this.sendLLMReplyToChannel(pending.channel, pending.to, failMsg);
+    const sendFresh = () => {
+      if (deliveredRunnerText) {
+        this.sendLLMReplyToChannel(pending.channel, pending.to, failMsg);
+      } else {
+        this.sendToChannel(pending.channel, pending.to, failMsg);
+      }
+    };
+    // Telegram: land the reply in the streamed placeholder, as the completed
+    // path does — sending fresh left the placeholder on «⏳» forever beside
+    // the real reply (the scope-ask hold resets it to «⏳» mid-stream).
+    if (pending.streamController) {
+      const shown = deliveredRunnerText
+        ? this.filterForDelivery(failMsg, "stream:failed")
+        : failMsg;
+      pending.streamController.finalize(shown).catch(sendFresh);
     } else {
-      this.sendToChannel(pending.channel, pending.to, failMsg);
+      sendFresh();
     }
 
     // When the runner's own question was delivered, record the exchange in
@@ -3751,6 +3745,47 @@ export class MessageRouter {
       hasMemory: getMemoryService().backend === "hindsight",
       hasCrm: !!process.env.CRM_API_TOKEN,
     };
+  }
+
+  /**
+   * Usability Phase 1.2 gate for every chat delivery path (completed AND
+   * blocked/needs_context). First scope ask on a chat turn → widen + silent
+   * re-run (returns null: deliver nothing); a miss on the re-run itself, a
+   * hallucinated ask, or a background-agent reply (no rerunSpec — R1 audit
+   * W4) → one honest line; anything else → the text unchanged.
+   */
+  private resolveScopeAsk(
+    taskId: string,
+    pending: PendingReply,
+    text: string,
+  ): string | null {
+    const miss = detectScopeMiss(
+      text,
+      getAllAvailableTools(this.scopeOptions()),
+    );
+    if (miss && pending.rerunSpec && !pending.rerunOf) {
+      const outcome = this.rerunWithWiderScope(
+        taskId,
+        pending,
+        miss.requestedTools,
+        miss.strong,
+      );
+      if (outcome === "rerun") return null;
+      // No scope group supplies the requested tool: nothing to widen.
+      if (outcome === "no_group") return scopeMissFallbackLine("no_rerun");
+      return text;
+    }
+    if (miss && miss.strong) {
+      // R3 audit W1: only an explicit ask is replaced; a weak scope
+      // MENTION in a re-run's (or background agent's) real answer is content.
+      console.warn(
+        `[router] scope-miss ${pending.rerunOf ? `persisted on re-run ${taskId} (of ${pending.rerunOf})` : `on background task ${taskId}`} tools=[${miss.requestedTools.join(",")}]`,
+      );
+      return scopeMissFallbackLine(
+        pending.rerunOf ? "rerun_missed" : "no_rerun",
+      );
+    }
+    return text;
   }
 
   /**

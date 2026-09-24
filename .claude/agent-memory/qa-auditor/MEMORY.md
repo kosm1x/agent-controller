@@ -79,3 +79,5 @@
 - [git-tests-inherit-hook-env](feedback_git_tests_inherit_hook_env.md) — tests spawning git in tmpdir repos must strip GIT_* env: pre-commit hook exports GIT_DIR/GIT_INDEX_FILE, fixture writes land in the REAL repo
 - [skills-versioning-kb-file-r1-audit](skills-versioning-kb-file-r1-audit.md) - SKILL.md via jarvis_file_write -> critic skillSave (09-24): R1 FAIL (new version inherited `is_certified`; reindex imported disk SKILL.md) -> R2 PASS.
 - [skills-autocert-monotonic-r1-audit](skills-autocert-monotonic-r1-audit.md) - skill auto-certify + monotonic trigger (09-24): R1 FAIL -> R2 PASS-W-WARN. Flag flipped by a version-scoped run needs `AND current_version_id=?`; every pointer move must reset is_certified.
+- [scope-miss-blocked-path-r1-audit](scope-miss-blocked-path-r1-audit.md) - Phase 1.2 gate on blocked path (09-24): PASS-W-WARN. CLASS: stream finalize() never rejects, so `.catch(sendFresh)` is dead; messageId null = silent drop.
+- [scope-miss-blocked-path-r2-audit](scope-miss-blocked-path-r2-audit.md) - R2 (09-24): PASS-W-WARN. finalize() fresh-send fold; CLASS: a no-op branch turned into a send makes a non-idempotent 2nd call a duplicate message.
