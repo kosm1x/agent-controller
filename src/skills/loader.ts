@@ -38,7 +38,7 @@ export interface LoaderResult {
   errors: LoaderError[];
 }
 
-const SKILL_PATH_RE = /^skills\/([a-z0-9][a-z0-9-]{0,62}[a-z0-9])\/SKILL\.md$/;
+export const SKILL_PATH_RE = /^skills\/([a-z0-9][a-z0-9-]{0,62}[a-z0-9])\/SKILL\.md$/;
 
 export interface LoaderLog {
   info(msg: string, fields?: Record<string, unknown>): void;

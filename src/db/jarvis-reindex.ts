@@ -35,6 +35,15 @@ import { upsertFile, getJarvisKbRoot } from "./jarvis-fs.js";
  */
 export const MANAGED_NAMESPACES = ["NorthStar/", "directives/"];
 
+/**
+ * Skill definitions (`skills/<name>/SKILL.md`) register only through the
+ * critic-gated `jarvis_file_write` path (src/skills/kb-file.ts). A disk-only
+ * SKILL.md (shell / editor write) imported here would be registered by the
+ * next boot scan with the critic skipped, so the walk never imports one.
+ * Other files under skills/ (REFERENCE.md, …) are imported as usual.
+ */
+export const MANAGED_FILE_RE = /^skills\/[^/]+\/SKILL\.md$/i;
+
 export interface ReindexResult {
   /** Files on disk under the mirror root. */
   fsCount: number;
@@ -106,7 +115,8 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
   const fsRel = new Set(
     fsFiles
       .map((f) => relative(kbRoot, f))
-      .filter((p) => !MANAGED_NAMESPACES.some((ns) => p.startsWith(ns))),
+      .filter((p) => !MANAGED_NAMESPACES.some((ns) => p.startsWith(ns)))
+      .filter((p) => !MANAGED_FILE_RE.test(p)),
   );
 
   const db = getDatabase();

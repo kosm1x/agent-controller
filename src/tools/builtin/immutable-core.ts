@@ -7,7 +7,7 @@
  * Checked in all write paths: file_write, file_edit, file_delete, shell_exec.
  */
 
-import { basename as baseOf, posix, resolve } from "path";
+import { basename as baseOf, posix, relative, resolve } from "path";
 import { realpathSync } from "fs";
 import { realResolve, realResolveParent } from "./write-guard.js";
 
@@ -551,4 +551,18 @@ export function isStandingOrdersDiskPath(
   const target = resolve(absolutePath).toLowerCase();
   const dir = `${root}/${STANDING_ORDERS_PREFIX.slice(0, -1)}`;
   return target === dir || target.startsWith(`${dir}/`);
+}
+
+/**
+ * Disk-side refusal for skill definitions (`<kbRoot>/skills/<name>/SKILL.md`).
+ * The hourly kb-reindex imports a disk-only file as a row and the boot loader
+ * then registers it with the critic SKIPPED, so an editor write there bypasses
+ * the critic-gated `jarvis_file_write` path (src/skills/kb-file.ts).
+ */
+export function isSkillFileDiskPath(
+  absolutePath: string,
+  kbRoot: string,
+): boolean {
+  const rel = relative(resolve(kbRoot), resolve(absolutePath)).toLowerCase();
+  return /^skills\/[^/]+\/skill\.md$/.test(rel);
 }

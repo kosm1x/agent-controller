@@ -27,6 +27,7 @@ import { getDatabase } from "../db/index.js";
 import { recordCost } from "../budget/service.js";
 import { createLogger } from "../lib/logger.js";
 import { recordSkillRun } from "../observability/prometheus.js";
+import { unversionedSkillNote } from "./kb-file.js";
 
 const log = createLogger("skills:dispatcher");
 import { runSkillPrompt, type MiniRunUsage } from "./mini-runner.js";
@@ -228,7 +229,7 @@ export async function runSkill(
       versionId: null,
       output: null,
       errorClass: "no_active_version",
-      errorDetail: `skill "${name}" has no current_version_id (never went through skillSave)`,
+      errorDetail: unversionedSkillNote(name),
       durationMs: Date.now() - t0,
     };
   }

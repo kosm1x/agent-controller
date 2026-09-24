@@ -15,6 +15,7 @@
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { getSkill } from "../../db/skills.js";
+import { unversionedSkillNote } from "../../skills/kb-file.js";
 
 interface SkillLoadArgs {
   name?: string;
@@ -144,11 +145,27 @@ JSON envelope { ok, skill | reason }. On found: full L2 metadata + body markdown
           }
         | undefined;
       if (!ptr?.current_version_id) {
+        // A skill_save procedure: no version row, but its steps are usable.
+        const steps = safeParse<unknown[]>(skill.steps, []);
+        if (Array.isArray(steps) && steps.length > 0) {
+          return JSON.stringify({
+            ok: true,
+            skill: {
+              name: skill.name,
+              description: skill.description,
+              versioned: false,
+              trigger: skill.trigger_text,
+              steps,
+              tools_used: safeParse(skill.tools, []),
+            },
+            note: unversionedSkillNote(skill.name),
+          });
+        }
         return JSON.stringify({
           ok: false,
           reason: "no_active_version",
           name,
-          hint: "skill exists but has no current_version_id; never went through skill_save",
+          hint: unversionedSkillNote(skill.name),
         });
       }
       versionRow = db

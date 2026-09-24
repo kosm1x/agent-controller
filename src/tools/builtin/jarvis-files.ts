@@ -25,6 +25,12 @@ import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
 import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
 import {
+  isSkillFilePath,
+  registerSkillFile,
+  skillFileGuard,
+  type SkillFileRegistrationInfo,
+} from "../../skills/kb-file.js";
+import {
   parseLineRanges,
   extractLineRanges,
   buildOutline,
@@ -351,13 +357,22 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     }
 
     // Usability Phase 3.2: figures written to the KB need provenance.
+    const priorContent = getFile(path)?.content ?? null;
     const provenance = checkArtifactProvenance({
       tool: "jarvis_file_write",
       artifact: `kb:${path}`,
       text: content,
-      priorContent: getFile(path)?.content ?? null,
+      priorContent,
     });
     if (!provenance.ok) return provenance.error!;
+
+    // A SKILL.md is registered (critic-gated) BEFORE it lands — see kb-file.ts.
+    let skill: SkillFileRegistrationInfo | undefined;
+    if (isSkillFilePath(path, getJarvisKbRoot())) {
+      const registration = await registerSkillFile(path, content, priorContent);
+      if (!registration.ok) return JSON.stringify(registration.error);
+      skill = registration.skill;
+    }
 
     upsertFile(
       path,
@@ -379,7 +394,13 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       { path, sha8: sha8(content) },
     );
 
-    return JSON.stringify({ success: true, path, qualifier, priority });
+    return JSON.stringify({
+      success: true,
+      path,
+      qualifier,
+      priority,
+      ...(skill ? { skill } : {}),
+    });
   },
 };
 
@@ -451,6 +472,8 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
     const { standingOrdersGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const skillRefused = skillFileGuard([path], getJarvisKbRoot());
+    if (skillRefused) return JSON.stringify(skillRefused);
 
     // Prevent LLM from self-promoting files to enforce — reserved for user
     if (qualifier === "enforce") {
@@ -653,6 +676,8 @@ After user confirms, call again with confirmed:true to proceed.`,
     const { standingOrdersGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const skillRefused = skillFileGuard([path], getJarvisKbRoot());
+    if (skillRefused) return JSON.stringify(skillRefused);
 
     // S5: Precious path protection — require confirmation for valuable KB content
     if (!confirmed) {
@@ -723,6 +748,8 @@ For batch moves, call this tool multiple times (one per file).`,
     const { standingOrdersGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([oldPath, newPath], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const skillRefused = skillFileGuard([oldPath, newPath], getJarvisKbRoot());
+    if (skillRefused) return JSON.stringify(skillRefused);
 
     const moved = moveFile(oldPath, newPath);
     if (!moved) {
@@ -930,6 +957,8 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
     const { standingOrdersGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard(files.map((f) => f.path), getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const skillRefused = skillFileGuard(files.map((f) => f.path), getJarvisKbRoot());
+    if (skillRefused) return JSON.stringify(skillRefused);
 
     const results: Array<{ path: string; status: string; error?: string }> = [];
     let ok = 0;
@@ -1127,6 +1156,8 @@ RESPONSE SHAPE: {success, total, ok, not_found, errors, results: [{path, status,
     const { standingOrdersGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard(paths, getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const skillRefused = skillFileGuard(paths, getJarvisKbRoot());
+    if (skillRefused) return JSON.stringify(skillRefused);
 
     // Precious-path pre-scan: if any path is precious and the operator hasn't
     // confirmed, return the full precious list at once so the operator can
