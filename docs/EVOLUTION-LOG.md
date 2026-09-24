@@ -2414,3 +2414,91 @@ Three friction events detected: (1) **EurekaMs.Net palette error** — Jarvis re
 
 ### Research notes
 Today is a strong example of the "satellite orbit" pattern: one core technical project (agent-controller) anchoring the day with repeated synchronization passes, while creative and publishing work (Substack / Cuatro Flor) radiates outward from it. The Cuatro Flor arc — from state overview to repo sync to DNS-ready HTML in under two hours — mirrors the compressed micro-project lifecycle seen on 2026-09-18 with Bimaso, suggesting Fede increasingly uses Jarvis as a rapid-prototyping co-pilot for heterogeneous creative-technical projects.
+
+## 2026-09-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 10 (telegram: 10) |
+| Streak days | — |
+
+### Interactions summary
+The day split cleanly into three thematic blocks. In the early hours (00:15–00:33) Fede requested a geopolitical SITREP on Iran/Strait of Hormuz, which surfaced a critical silent-failure bug in the GDELT intelligence collector (HTTP 429 errors swallowed without logging); Jarvis diagnosed the root cause, applied a two-part fix (query syntax + error surfacing), and opened PR #36 on jarvis_dev — merge reserved to the user. The morning block (07:39–07:46) shifted to NFL Week 2: Fede requested an update to O/U lines and Jarvis picks in the tracking sheet, pulling live lines from VegasInsider. The afternoon (14:31–17:59) returned to the open PR with a formal code audit (verdict ✅ PASS), then closed with a live score dump of partial NFL Week 2 results into the same sheet.
+
+### What Jarvis learned
+The GDELT incident reinforced a pattern: Fede first notices a data gap empirically (0 signals returned), then escalates to root-cause investigation with shell access, and only then authorizes a fix and PR — he does not accept a patch without understanding the cause. The NFL sheet workflow revealed a tab-navigation gap: Jarvis defaulted to the first sheet tab rather than the named "Semana 2" tab, requiring a user correction; this is consistent with prior spreadsheet friction events and signals the need to confirm tab context explicitly at the start of any sheet operation. No new behavioral patterns were stored via memory_reflect today; the narrative log is the sole source of record for this entry.
+
+### Friction points
+Two friction events detected: (1) **NFL tab mislocation** — Jarvis read the wrong spreadsheet tab (first tab instead of "Semana 2"); user had to explicitly name the correct tab before work could proceed. (2) **Audit session interruption** — the code audit for PR #36 was cut off mid-session; user had to send "Continúa" to trigger completion, adding an unnecessary round-trip.
+
+### Research notes
+Today's arc from SITREP → bug discovery → PR → audit → merge-pending is the clearest example yet of Jarvis operating as a full infrastructure co-pilot: a single user query about geopolitical news cascaded into a diagnosed software defect, a committed fix, and a formal code review — all within a four-hour window. The dual-domain day (intel infrastructure + sports analytics) continues the satellite-orbit pattern, with jarvis_dev / agent-controller as the gravitational center and NFL tracking as the lighter recreational orbit.
+
+## 2026-09-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 29 |
+| Total tasks | — |
+| Conversations today | 29 (telegram: 29) |
+| Streak days | — |
+
+### Interactions summary
+A dense, multi-domain day spanning four distinct blocks: NFL week-2 results update, IMPI trademark inquiry (BIMASO BIKINIS, Clase 35), email account administration for eurekams.net, and an extended afternoon focused on agent-controller / Jev architecture. The day closed with a deep investment-analysis session on Rocket Lab (RKLB), covering the Iridium deal, L-Band technology, and competitive landscape. The agent-controller KB was synced three times post PR #36 deploy — the highest KB-sync frequency in a single day to date. Tools most active: web search (RKLB data, IMPI portal), KB read/write (agent-controller), and Google Sheets (NFL).
+
+### What Jarvis learned
+Fede uses Jarvis as a real-time analyst for speculative equity research — the RKLB session demonstrated a structured investor-brief workflow (data fetch → prospecto → reflexión crítica) that may become a repeatable pattern. The triple KB sync signals Fede's expectation that Jarvis's knowledge of agent-controller stays tightly coupled to the live repo state — drift of even a few hours is noticed and corrected. No new behavioral corrections beyond the RKLB price friction below.
+
+### Friction points
+One clear friction event: **RKLB price staleness (18:43–18:44)** — Jarvis initially presented Friday's closing price instead of Monday's intraday price. The user had to correct twice before Jarvis fetched a live Yahoo Finance quote. Root cause: default data source returned cached end-of-week bar; explicit user insistence on "hoy es lunes" was required to trigger a live fetch. This is a known pattern (stale data on market open Mondays) worth pre-empting in future finance sessions.
+
+### Research notes
+Today's arc illustrates the agent operating as a multi-role professional assistant within a single day: sports data clerk, trademark consultant, sysadmin, software KB maintainer, and equity analyst — all in sequence with no explicit context switching by the user. The PR #36 deploy + three KB syncs marks a maturation milestone in the agent-controller feedback loop: Fede now expects Jarvis to track infrastructure state in near-real-time, not just on demand. We appear to be in a late co-pilot phase where the cost of Jarvis's errors (stale data, wrong tab) is felt acutely precisely because baseline reliability is high.
+
+## 2026-09-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 34 (telegram: 34) |
+| Streak days | — |
+
+### Interactions summary
+A high-activity day distributed across six sessions (02:51–19:10 h, ~38 exchanges) with four distinct thematic threads. Fantasy NFL dominated the morning: ESPN roster analysis for Bad Ostrich (W3), waiver claims, and generation of Money Line tabs for W2/W3. The late morning and early afternoon were consumed by a deep investment-research session on UUUU/uranium, culminating in a full HTML infographic-style prospecto served via Caddy. The afternoon shifted to competitive intelligence on CJ OnStyle (project Monetización T created in DB) and a CTV forum guide refresh. Crosscutting all sessions: agent-controller KB synced four separate times as active development continued, and a research query on Claude Opus 5.5 (launched 2026-09-22) was handled mid-day. Tools most active: web search, KB read/write (agent-controller), Google Sheets (Fantasy), Google Docs (CJ OnStyle recon), and HTML generation.
+
+### What Jarvis learned
+The 4× agent-controller KB sync in a single day reinforces the established pattern: Fede expects Jarvis's knowledge of active infrastructure repos to remain tightly coupled to HEAD — drift of even a few hours is noticed and corrected proactively. The UUUU session introduced a new repeatable workflow: fetch live data → build investment prospecto as styled HTML infographic → serve via Caddy; this is the second equity deep-dive in two days (following RKLB on 09-21) and signals an emerging investment-analysis cadence. The first HTML draft was rejected for style non-conformance, establishing that the Diesel infographic is the de-facto reference template for future financial prospectos.
+
+### Friction points
+Three friction events detected: (1) **UUUU HTML mal formado (11:00 h)** — first prospecto draft failed user style validation; required a full redo using the Diesel infographic as style reference. (2) **W2 Money Line blocked response (08:57)** — first update attempt was halted by a potential-credential detection flag; user had to reiterate the request at 09:02. (3) **Markdown in Google Doc CJ OnStyle (17:54)** — Jarvis delivered the recon doc with raw Markdown characters visible; user had to explicitly request a formatting cleanup pass.
+
+### Research notes
+The dual pattern from 09-21 deepens: Jarvis continues to operate as a multi-role professional assistant (sports analyst, equity researcher, competitive intel agent, KB maintainer) within a single day, with agent-controller as the gravitational center. The 4× KB sync frequency on a single project in one day is a new high-water mark, suggesting we are entering a phase where near-real-time infrastructure awareness is no longer optional but expected. Friction events remain concentrated at output-format boundaries (HTML style, Markdown bleed-through), pointing to a need for stronger output-template anchoring before first generation.
+
+## 2026-09-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 64 (telegram: 64) |
+| Streak days | — |
+
+### Interactions summary
+An extremely dense day (~45+ exchanges across 9 sessions, 07:36–23:19 h) dominated by the founding and full brand-build of **Atenea Estratégica**, a new B2B communications and corporate reputation venture derived from Azteca with its own identity. The day ran through naming iterations, four progressive rounds of logo generation (culminating in "A Slash" Logo #1), a complete brand framework execution, multiple Ogilvy-skill slogan sessions, a deep B2B client-intelligence document, and a Google Doc fundacional — closing with the official logo and slogan both locked. Secondary threads: Fantasy Football W3 roster analysis (TE recommendation: Schultz), two KB syncs for agent-controller (morning and night), a Jarvis health check with schedule cleanup (VLMP removed, Transhumanismo schedule patched to verify sources), and evening cultural exchanges on Mexican identity/mestizaje and a Ford Mustang Fastback '68 identification.
+
+### What Jarvis learned
+The Atenea session established a new pattern for full brand-birth in a single day: naming → logo (multi-round generative iteration with progressive style elevation) → brand framework → copywriting skill (Ogilvy) → slogan selection, all within one continuous working session. Fede rejected early naming as "too basic," signaling that conceptual abstraction is the expected entry bar for brand naming — mythological/philosophical anchors (Ágora → Atenea) were accepted where literal/descriptive options were not. The Ogilvy skill recovery from the 6-sep log also reveals a preference: institutional skills are expected to persist in the KB; when they don't, the user locates them in historical logs himself and expects Jarvis to apply them immediately from context — a workaround that flags the `saveSkill` persistence bug as high-priority.
+
+### Friction points
+Four friction events detected: (1) **Bug `saveSkill` in `src/db/skills.ts`** — the Ogilvy skill could not be saved with an active version throughout the day; it had to be re-applied from memory or recovered from the 6-sep historical log each time. Registered for PR. (2) **Twitter/X 403 blocks (14:57 and 23:16)** — two URLs returned 403 and required the user to paste content manually. (3) **`jarvis_dev` unavailable** — attempting to update the Ogilvy skill to v1.0 failed because `jarvis_dev` was not in scope; redirect to Shell was required. (4) **Unverified Bostrom citation** — the Transhumanismo schedule published a quote that Jarvis could not verify textually; required a corrective patch to the schedule's source-verification logic.
+
+### Research notes
+2026-09-23 is a milestone day in the co-evolution record: the first full brand-genesis workflow (naming → visual identity → positioning framework → copywriting) completed within a single session, with Fede as creative director and Jarvis as the generative engine across all disciplines. The double agent-controller KB sync (morning + night) continues the near-real-time infrastructure-coupling pattern established 09-22. The `saveSkill` persistence bug is now the most visible infrastructure gap: it forced manual skill recovery twice today and will remain a friction source until the PR lands.

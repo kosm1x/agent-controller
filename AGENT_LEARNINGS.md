@@ -8,6 +8,8 @@
 - Check whether a grid-search pick sits on the grid edge before trusting it.
 - Replay/result files that carry user message text are sensitive: delete them when the readout closes, then check the backup paths too (`scripts/backup-state-bundle.sh` bundles only named `data/` subdirs).
 - For a "no demand today" verdict, write a trigger-gated findings doc (e.g. `docs/planning/seo-capability-findings-2026-09-23.md`) so a later step-up starts from facts.
+- A version/pointer move owns every derived flag (certified, embedded): reset it in the LOWEST shared writer (`pointSkillAtVersion`), not in one caller — the boot scan and seed `skillSave` bypassed a caller-level decertify (#40 qa C1, #41 qa R2 W1). A write-back from a measurement keys on the exact version measured (`AND current_version_id = ?`; #41 qa C1: a slow run of a superseded version certified a failing newer one).
+- Live-test scripts for Jarvis: pin `"agent_type": "fast"` when the task exercises host tools (file-shaped text → nanoclaw, which lacks them; task 9ce19a10); run every verification query once before handing the script over; put cleanup in `trap … EXIT` (an ambiguous-column query under `set -e` skipped the archive, task 0878a62a).
 
 ## 2026-09-23 — Jev walk-forward, open-seo, R2T2 (Jarvis side)
 - **Mistake:** `pkill -f <pattern>` inside a compound Bash command matched its own shell and killed it (exit 144) → `pgrep -f` first, then `kill <pid>` in a separate call.
@@ -34,7 +36,14 @@
 
 ## 2026-09-24 — Jarvis versioned skills (ogilvy "can't store the version")
 - **Mistake:** my first SKILL.md template used `tests_json: '[]'` and pointed the model at `skills/ogilvy-slogan/` — both fail the skill critic (≥2 tests, verb-led name) → read `src/skills/critic.ts` SKILL_CRITIC_SYSTEM_PROMPT before writing any skill template or skill file.
-- **Mistake:** returned `certified` straight from the row; `pointSkillAtVersion` never touches `is_certified`, so a model-registered new body on a certified skill kept serving through retrieval untested (qa R1 C1) → any new write path into a versioned artifact decides the fate of every derived flag (certified, embedded, anti-list), not just the pointer.
 - **Avoid:** guarding only the model's write tools when a scheduled importer (hourly kb-reindex) turns ANY disk write (shell_exec, editor) into a registry row — close the door at the importer (`MANAGED_FILE_RE`), keep tool refusals for the error message.
 - **Better:** settle "already registered" (sha of the body) BEFORE a paid LLM gate — an identical rewrite must not cost, or be failed by, the critic.
 
+
+## 2026-09-24 — skill auto-certify + monotonic versions
+- **Mistake:** ran tests inside the registration step, BEFORE the KB write; a cut-short run left DB and file disagreeing and the identical-rewrite recovery refused (qa R1 W3) → return the slow step as a continuation the caller runs after the durable write.
+- **Avoid:** an unbounded "rewrite to retry" path on a paid gate — a real failure became a flaky pass after 6 identical rewrites (qa R1 W2) → retry only infrastructure outcomes (error/timeout), cap runs per version.
+- **Avoid:** running a mc-ctl copy from a worktree: `PROJECT_DIR` is hard-coded to the LIVE checkout → copy it to scratch with `PROJECT_DIR` sed-replaced; mc-guard also blocks any `rm`/write `sqlite3` on a path ending `mc.db`, so seed scratch DBs through `initDatabase` in a tsx script.
+- **Better:** a DB trigger as the structural backstop (`skills_version_monotonic`) + early refusals in each writer for the clear message; a pre-check before an await is racy, so the record+point pair runs in one transaction that turns the trigger error into a typed refusal.
+- **Avoid:** a queued request can name work already finished (the "check qa, fold, PR" message arrived after #41 merged and its worktree was deleted) → check the branch, worktree and PR state before acting on it.
+- **Mistake:** the status table's test count sat at 9,182 and the README at 8,896 while the headline said 9,326 → when a wrap updates a count, grep every doc that quotes it (`grep -nE "[0-9],[0-9]{3} tests" README.md docs/PROJECT-STATUS.md`).
