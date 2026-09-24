@@ -47,6 +47,27 @@ describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
     },
   );
 
+  // Layer D — host-state guard (task 8542, 2026-08-20). Live-data writes must
+  // stop with the sentinel the worker turns into a hard failure (a write to the
+  // container's scratch DB succeeds silently since SEC-02), while DB-touching
+  // SOURCE work stays in scope, and the agent is never pointed at host tools
+  // the sandbox does not register.
+  it.each([["/workspace"], [null]] as const)(
+    "includes the HOST STATE guard with the structural stop (workspace=%s)",
+    (ws) => {
+      const note = buildEnvironmentNote(ws);
+      const guard = note.slice(note.indexOf("[HOST STATE"));
+      expect(note).toContain("[HOST STATE — NOT IN THIS SANDBOX]");
+      expect(guard).toContain("data/mc.db");
+      expect(guard).toMatch(/SUCCEED but never reach Jarvis/);
+      expect(guard).toMatch(/migrations, schema, queries/);
+      expect(guard).toMatch(/not registered here/);
+      expect(guard).toContain(
+        `${TARGET_NOT_IN_SANDBOX}: this task writes Jarvis's live state`,
+      );
+    },
+  );
+
   // The structural backstop (qa W2): the prompt tells the agent to emit the
   // sentinel, and the worker turns it into a hard failure. These two must use the
   // SAME literal or the backstop silently breaks — assert they stay in sync.
