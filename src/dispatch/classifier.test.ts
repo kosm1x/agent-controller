@@ -76,6 +76,38 @@ describe("classifier", () => {
     ).toEqual(["gdocs_read", "brand_new_tool"]);
   });
 
+  // Task 8542 (2026-08-20): an attachment-ingestion chat reached nanoclaw and
+  // burned its turn cap writing into the read-only mc.db. Routing today keeps
+  // it on a host runner with no dedicated exclusion (chat text alone → fast;
+  // its scoped toolset → host-only). Pin both so a routing change can't
+  // silently reopen the path; the env-note HOST STATE guard is the backstop.
+  it("attachment-ingestion chats stay off the sandbox (task 8542)", () => {
+    for (const title of [
+      "Chat: Analiza el archivo /tmp/jarvis-downloads/AMN_plan_2027.pdf y guarda en KB",
+      "Chat: ingesta del PDF Plan 2027 para vendedores de Azteca",
+    ]) {
+      const chat = { title, description: "", tags: ["messaging"] };
+      expect(classify(chat).agentType).not.toBe("nanoclaw");
+      expect(
+        classify({ ...chat, tools: ["jarvis_file_write"] }).agentType,
+      ).not.toBe("nanoclaw");
+    }
+  });
+
+  it("host-only tools keep a coding-shaped ingest off the sandbox (task 8542)", () => {
+    const chat = {
+      title:
+        "Chat: escribe un script que inserte el PDF /tmp/jarvis-downloads/AMN_plan_2027.pdf en la tabla jarvis_files de mc.db",
+      description: "",
+      tags: ["messaging"],
+    };
+    // Precondition: the text alone WOULD sandbox it — only the tools gate holds.
+    expect(classify(chat).agentType).toBe("nanoclaw");
+    expect(
+      classify({ ...chat, tools: ["jarvis_file_write"] }).agentType,
+    ).not.toBe("nanoclaw");
+  });
+
   it("should classify isolation keywords as nanoclaw", () => {
     const result = classify({
       title: "Run in container",

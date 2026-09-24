@@ -13,7 +13,16 @@
  *   1. SANDBOX SCOPE — only mission-control is here; any other target ⇒ STOP +
  *      report `TARGET_NOT_IN_SANDBOX`, never substitute mc's source.
  *   2. NO EVASION — a guard-BLOCKED command is a hard stop; never bypass it.
- * Both guards apply whether or not a writable workspace was set up.
+ *   3. HOST STATE (2026-08-20, task 8542): an attachment-ingestion chat landed
+ *      here and burned its turn cap scripting SQLite writes into the then
+ *      read-only-mounted `data/mc.db`. Since SEC-02 (4b353ac, 2026-09-10) mc.db
+ *      is not mounted at all and the worker's DB is a container-local
+ *      `/tmp/mc.db`, so the same attempt now SUCCEEDS silently into a throwaway
+ *      copy — a false "done". Changing Jarvis's live data ⇒ same STOP + sentinel
+ *      as guard 1 (the worker fails the task; messaging chats then fall back to
+ *      the fast runner, which has the host write tools). Editing DB-touching
+ *      source and running tests stays allowed.
+ * All guards apply whether or not a writable workspace was set up.
  */
 
 /** Read-only reference mount of the host repo inside the container (never writable). */
@@ -41,5 +50,7 @@ export function buildEnvironmentNote(workspace: string | null): string {
 
   const evasionGuard = `\n\n[GUARD POLICY] If any shell command is BLOCKED by a guard, that is a HARD STOP. NEVER try to bypass a guard — no base64/hex/encoding of the command, no \`env -i\`, no wrapper scripts, no alternate binaries, no retry variations. Report the blocked command verbatim and stop or ask for guidance.`;
 
-  return base + scopeGuard + evasionGuard;
+  const hostStateGuard = `\n\n[HOST STATE — NOT IN THIS SANDBOX] Jarvis's live database (\`data/mc.db\`), knowledge base and Gemini uploads are NOT in this container — only mission-control's git history is. Any SQLite file you find or create here (including \`$MC_DB_PATH\`, the worker's own scratch DB) is a throwaway container-local copy: writes to it SUCCEED but never reach Jarvis and are discarded when the container exits. The host tools that write Jarvis state (jarvis_file_write, gemini_upload, …) are not registered here. Editing mission-control SOURCE that touches the database (migrations, schema, queries) and running tests that open their own temp or in-memory SQLite is normal coding work — do it. But if the task's GOAL is to change Jarvis's live data (save or ingest a document/attachment into the KB, insert or update rows, upload a file to Gemini), you MUST STOP, make NO writes, and reply EXACTLY with: "${TARGET_NOT_IN_SANDBOX}: this task writes Jarvis's live state (mc.db / KB), which is not in the nanoclaw sandbox — it must run on a host runner."`;
+
+  return base + scopeGuard + evasionGuard + hostStateGuard;
 }
