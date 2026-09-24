@@ -175,6 +175,7 @@ import {
   _resetThreadPins,
 } from "./thread-pins.js";
 import { submitTask } from "../dispatch/dispatcher.js";
+import { scopeMissFallbackLine } from "./scope-miss.js";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -1500,6 +1501,323 @@ describe("MessageRouter", () => {
           "No pude completar eso",
         );
         expect(waAdapter.sentMessages[1].text).not.toContain("toolCalls");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("usability Phase 1.2 on the BLOCKED path: a scope ask is not delivered — the turn is re-run with the tool (2026-09-24, task e1ddc360)", async () => {
+      // «Mira la terminación .MX también» ended STATUS: BLOCKED with
+      // «Necesito `shell_exec` para esto.»; the gate ran only on
+      // task.completed, so the ask reached the operator verbatim.
+      const mocked = vi.mocked(submitTask);
+      memoryRetainSpy.mockClear();
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: dominio",
+        status: "blocked",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        const firstCall = mocked.mock.calls.at(-1)![0] as { title: string };
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-blocked-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: "Necesito `shell_exec` para esto.", toolCalls: [] },
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Only the ack reached the channel — never the ask.
+        expect(waAdapter.sentMessages).toHaveLength(1);
+        expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+        const rerun = mocked.mock.calls.at(-1)![0] as {
+          tools: string[];
+          tags: string[];
+          title: string;
+        };
+        expect(rerun.tags).toContain("scope-rerun");
+        expect(rerun.tools).toContain("shell_exec");
+        expect(rerun.title).toBe(firstCall.title);
+        // W5: the swallowed turn is not an outcome — nothing retained for it.
+        expect(memoryRetainSpy).not.toHaveBeenCalled();
+
+        // A second blocked ask on the re-run gets the honest line, not the
+        // ask and not another re-run.
+        const calls = mocked.mock.calls.length;
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-blocked-rerun",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: "Necesito `shell_exec` para esto.", toolCalls: [] },
+          },
+        });
+        await Promise.resolve();
+        expect(mocked.mock.calls.length).toBe(calls);
+        expect(waAdapter.sentMessages).toHaveLength(2);
+        expect(waAdapter.sentMessages[1].text).toBe(
+          scopeMissFallbackLine("rerun_missed"),
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("usability Phase 1.2 on the BLOCKED path: a real blocker that names a tool is delivered unchanged", async () => {
+      const mocked = vi.mocked(submitTask);
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: dominio",
+        status: "blocked",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "transfiere el dominio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        const calls = mocked.mock.calls.length;
+        const reply =
+          "Corrí `shell_exec` con whois: el dominio sigue a nombre del registrante anterior. Necesito el código de autorización para continuar.";
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: reply, toolCalls: ["shell_exec"] },
+          },
+        });
+        await Promise.resolve();
+        expect(mocked.mock.calls.length).toBe(calls);
+        expect(waAdapter.sentMessages).toHaveLength(2);
+        expect(waAdapter.sentMessages[1].text).toBe(reply);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    function telegramWithStream(messageId: number) {
+      const edits: { messageId: number; text: string }[] = [];
+      const fakeBot = {
+        api: {
+          sendMessage: vi.fn().mockResolvedValue({ message_id: messageId }),
+          editMessageText: vi
+            .fn()
+            .mockImplementation(
+              async (_chat: string, id: number, text: string) => {
+                edits.push({ messageId: id, text });
+                return true;
+              },
+            ),
+        },
+      };
+      const tgAdapter = Object.assign(createMockAdapter("telegram"), {
+        getBot: () => fakeBot,
+      });
+      router.registerChannel(tgAdapter as unknown as ChannelAdapter);
+      return { edits, tgAdapter };
+    }
+
+    async function telegramTurnEndingFailed(
+      taskId: string,
+      status: string,
+      result: unknown,
+    ) {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: x",
+        status,
+      });
+      vi.mocked(submitTask).mockResolvedValueOnce({
+        taskId,
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "telegram",
+        from: "12345",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      findHandler("task.failed")!({
+        data: {
+          task_id: taskId,
+          agent_id: "fast",
+          error: status,
+          result,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    it("on Telegram a blocked reply lands IN the streamed placeholder — no «⏳» left behind beside a fresh message", async () => {
+      const { edits, tgAdapter } = telegramWithStream(778);
+      try {
+        await telegramTurnEndingFailed("tg-blocked-1", "blocked", {
+          text: "ESPN pide iniciar sesión otra vez. ¿Me pasas la cookie nueva?",
+        });
+        expect(tgAdapter.sentMessages).toHaveLength(0);
+        expect(edits.at(-1)?.messageId).toBe(778);
+        expect(edits.at(-1)?.text).toContain("cookie nueva");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        router.unregisterChannel("telegram");
+      }
+    });
+
+    it("on Telegram the blocked runner text passes the deliverable filter before it lands in the placeholder (qa-audit W2)", async () => {
+      const { edits } = telegramWithStream(779);
+      try {
+        await telegramTurnEndingFailed("tg-blocked-2", "blocked", {
+          text: 'Aquí va el poema:API Error: 400 {"type":"error","error":{"message":"Output blocked by content filtering policy"}}',
+        });
+        expect(edits.at(-1)?.messageId).toBe(779);
+        expect(edits.at(-1)?.text).toContain("La API devolvió un error 400");
+        expect(edits.some((e) => e.text.includes("content filtering"))).toBe(
+          false,
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        router.unregisterChannel("telegram");
+      }
+    });
+
+    it("on Telegram a plain failure with no runner text puts the generic line IN the placeholder (qa-audit W2)", async () => {
+      const { edits, tgAdapter } = telegramWithStream(780);
+      try {
+        await telegramTurnEndingFailed("tg-failed-3", "failed", {
+          text: "",
+          toolCalls: [],
+        });
+        expect(tgAdapter.sentMessages).toHaveLength(0);
+        expect(edits.at(-1)?.messageId).toBe(780);
+        expect(edits.at(-1)?.text).toContain("No pude completar eso");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        router.unregisterChannel("telegram");
+      }
+    });
+
+    it("on Telegram a blocked scope ask is re-run into the SAME placeholder and never shown (qa-audit W2)", async () => {
+      const { edits, tgAdapter } = telegramWithStream(781);
+      const mocked = vi.mocked(submitTask);
+      try {
+        dbStatusGet.mockReturnValue({
+          spawn_type: "root",
+          title: "Chat: x",
+          status: "blocked",
+        });
+        mocked.mockResolvedValueOnce({
+          taskId: "tg-blocked-4",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "telegram",
+          from: "12345",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "tg-blocked-4-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.failed")!({
+          data: {
+            task_id: "tg-blocked-4",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: "Necesito `shell_exec` para esto." },
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const rerun = mocked.mock.calls.at(-1)![0] as {
+          tags: string[];
+          tools: string[];
+          onTextChunk?: (c: string) => void;
+        };
+        expect(rerun.tags).toContain("scope-rerun");
+        expect(rerun.tools).toContain("shell_exec");
+        expect(rerun.onTextChunk).toBeTypeOf("function");
+        expect(tgAdapter.sentMessages).toHaveLength(0);
+        expect(edits.some((e) => e.text.includes("Necesito"))).toBe(false);
+
+        dbStatusGet.mockReturnValue(undefined);
+        findHandler("task.completed")!({
+          data: {
+            task_id: "tg-blocked-4-rerun",
+            agent_id: "fast",
+            result: "ateneaestrategica.mx está libre (whois: no match).",
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(tgAdapter.sentMessages).toHaveLength(0);
+        expect(edits.at(-1)?.messageId).toBe(781);
+        expect(edits.at(-1)?.text).toContain("está libre");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        router.unregisterChannel("telegram");
+      }
+    });
+
+    it("usability Phase 1.2 on the NEEDS_CONTEXT path: a scope ask is re-run, not delivered (qa-audit W2)", async () => {
+      const mocked = vi.mocked(submitTask);
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: x",
+        status: "needs_context",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-nc-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "needs_context",
+            result: { text: "Necesito `shell_exec` para esto." },
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(waAdapter.sentMessages).toHaveLength(1);
+        const rerun = mocked.mock.calls.at(-1)![0] as { tags: string[] };
+        expect(rerun.tags).toContain("scope-rerun");
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }

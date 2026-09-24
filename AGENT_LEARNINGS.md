@@ -9,6 +9,7 @@
 - Replay/result files that carry user message text are sensitive: delete them when the readout closes, then check the backup paths too (`scripts/backup-state-bundle.sh` bundles only named `data/` subdirs).
 - For a "no demand today" verdict, write a trigger-gated findings doc (e.g. `docs/planning/seo-capability-findings-2026-09-23.md`) so a later step-up starts from facts.
 - A version/pointer move owns every derived flag (certified, embedded): reset it in the LOWEST shared writer (`pointSkillAtVersion`), not in one caller — the boot scan and seed `skillSave` bypassed a caller-level decertify (#40 qa C1, #41 qa R2 W1). A write-back from a measurement keys on the exact version measured (`AND current_version_id = ?`; #41 qa C1: a slow run of a superseded version certified a failing newer one).
+- A "never delivered / never happens" gate lives at the seam EVERY terminal path shares — enumerate each task status → handler (completed, blocked, needs_context, failed, cancelled, timeout) before claiming "never". The scope-ask gate sat on `handleTaskCompleted` only; the model ends a scope ask with STATUS: BLOCKED, so 34/34 real asks (08-24→09-24) went through `handleTaskFailed` verbatim while the invariant said NEVER. Same class as the pointer-move rule above: fix at the lowest shared point, not the caller you looked at.
 - Live-test scripts for Jarvis: pin `"agent_type": "fast"` when the task exercises host tools (file-shaped text → nanoclaw, which lacks them; task 9ce19a10); run every verification query once before handing the script over; put cleanup in `trap … EXIT` (an ambiguous-column query under `set -e` skipped the archive, task 0878a62a).
 
 ## 2026-09-23 — Jev walk-forward, open-seo, R2T2 (Jarvis side)
@@ -47,3 +48,10 @@
 - **Better:** a DB trigger as the structural backstop (`skills_version_monotonic`) + early refusals in each writer for the clear message; a pre-check before an await is racy, so the record+point pair runs in one transaction that turns the trigger error into a typed refusal.
 - **Avoid:** a queued request can name work already finished (the "check qa, fold, PR" message arrived after #41 merged and its worktree was deleted) → check the branch, worktree and PR state before acting on it.
 - **Mistake:** the status table's test count sat at 9,182 and the README at 8,896 while the headline said 9,326 → when a wrap updates a count, grep every doc that quotes it (`grep -nE "[0-9],[0-9]{3} tests" README.md docs/PROJECT-STATUS.md`).
+
+## 2026-09-24 — scope ask delivered on the BLOCKED path ("Necesito `shell_exec`" for a domain check)
+- **Mistake (inherited, 08-23 Phase 1.2):** the scope-miss gate was tested only through `task.completed` → any output gate needs one test per terminal status the model can pick; count the corpus by status first (`tasks.status` × delivered reply) — here 34 of 34 asks were `blocked`.
+- **Avoid:** trusting `[router] Stored prior scope` — it printed the groups the turn RAN with, not the base actually stored; turn 1's stored prior was empty, so the follow-up could not inherit `coding` (log fixed to print both).
+- **Avoid:** reading the 09-05 classifier-timeout fix as closing "blocked turns ask for shell_exec" — it fixed one feeder; the delivery path stayed open and the symptom recurred 13 more times.
+- **Better:** `/diagnose` from the task row (status, tool_calls=0) → `scope_telemetry` (tools_in_scope) → journal scope lines → the handler that the status routes to; then replay the stored replies through the detector (34/34 caught, 0/6 real questions) before writing the fix.
+

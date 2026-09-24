@@ -50,13 +50,29 @@ export class TelegramStreamController {
    * text if hallucination guard fired.
    */
   async finalize(fullText: string): Promise<void> {
+    // Once only: with no placeholder a second call would send a second copy.
+    if (this.finalized) return;
     this.finalized = true;
     if (this.editTimer) {
       clearTimeout(this.editTimer);
       this.editTimer = null;
     }
 
-    if (!this.messageId) return;
+    if (!this.messageId) {
+      // The placeholder never landed (sendPlaceholder swallows its error) and
+      // the router skips its «Recibido» ack whenever a controller exists, so
+      // returning here dropped the reply without a trace. Send it fresh.
+      try {
+        const chunks = formatForTelegram(fullText);
+        await this.sendChunks(chunks, 0);
+        console.log(
+          `[telegram-stream] Placeholder missing — sent ${chunks.length} chunk(s) fresh to ${this.chatId}`,
+        );
+      } catch (err) {
+        console.error("[telegram-stream] Fresh send failed:", err);
+      }
+      return;
+    }
 
     let plainFallbacks = 0;
     try {
@@ -78,18 +94,7 @@ export class TelegramStreamController {
         });
 
       // Send remaining chunks as new messages (for long responses)
-      for (let i = 1; i < chunks.length; i++) {
-        await this.bot.api
-          .sendMessage(this.chatId, chunks[i], { parse_mode: "HTML" })
-          .catch(async () => {
-            plainFallbacks++;
-            const plain = chunks[i].replace(/<[^>]+>/g, "");
-            await this.bot.api.sendMessage(this.chatId, plain);
-          });
-        if (i < chunks.length - 1) {
-          await new Promise((r) => setTimeout(r, 200));
-        }
-      }
+      plainFallbacks += await this.sendChunks(chunks, 1);
 
       console.log(
         `[telegram-stream] Finalized ${chunks.length} chunk(s) to ${this.chatId} (msgId=${this.messageId}${plainFallbacks ? `, ${plainFallbacks} HTML→plain fallback` : ""})`,
@@ -103,6 +108,24 @@ export class TelegramStreamController {
         /* give up */
       }
     }
+  }
+
+  /** Send `chunks[from..]` as new messages; returns the HTML→plain fallback count. */
+  private async sendChunks(chunks: string[], from: number): Promise<number> {
+    let plainFallbacks = 0;
+    for (let i = from; i < chunks.length; i++) {
+      await this.bot.api
+        .sendMessage(this.chatId, chunks[i], { parse_mode: "HTML" })
+        .catch(async () => {
+          plainFallbacks++;
+          const plain = chunks[i].replace(/<[^>]+>/g, "");
+          await this.bot.api.sendMessage(this.chatId, plain);
+        });
+      if (i < chunks.length - 1) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+    return plainFallbacks;
   }
 
   /**
