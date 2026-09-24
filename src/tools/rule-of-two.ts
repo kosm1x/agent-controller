@@ -426,6 +426,12 @@ export interface RunToolContext {
    * degrades to its pre-2026-08-17 label.
    */
   readonly origin: RunOrigin;
+  /**
+   * The run's abort signal (cancelTask aborts it). NOT inherited: a nested
+   * dispatch passes its own. Long in-tool work (skill certification) stops
+   * on it instead of running to its own deadline after a cancel.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** V8.3 seam label for who initiated a run. */
@@ -467,6 +473,7 @@ export function enterRunToolContext<T>(
   taskId: string,
   fn: () => T,
   origin?: RunOrigin,
+  signal?: AbortSignal,
 ): T {
   const parent = runToolContext.getStore();
   return runToolContext.run(
@@ -475,6 +482,7 @@ export function enterRunToolContext<T>(
       taskId,
       // Explicit (root submission) > parent's (nested dispatch) > background.
       origin: origin ?? parent?.origin ?? BACKGROUND_ORIGIN,
+      signal,
     },
     fn,
   );
@@ -508,6 +516,11 @@ export function recordRunTool(name: string): void {
 /** Task id of the current run; `undefined` outside a run. */
 export function currentRunTaskId(): string | undefined {
   return runToolContext.getStore()?.taskId;
+}
+
+/** Abort signal of the current run; `undefined` outside a run. */
+export function currentRunSignal(): AbortSignal | undefined {
+  return runToolContext.getStore()?.signal;
 }
 
 /** Origin of the current run; `BACKGROUND_ORIGIN` outside a run. */

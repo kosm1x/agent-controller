@@ -30,6 +30,8 @@ import { skillSave } from "./lifecycle.js";
 import { loadSkillsFromJarvisFiles } from "./loader.js";
 import { pointSkillAtVersion } from "./storage.js";
 import { runSkillTests } from "./test-runner.js";
+import { registerSkillFile } from "./kb-file.js";
+import { enterRunToolContext } from "../tools/rule-of-two.js";
 
 vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
@@ -426,6 +428,65 @@ describe("auto-certification on registration", () => {
     await write(PATH, skillFile());
     const again = await write(PATH, skillFile());
     expect(String((again.skill as { next: string }).next)).toContain("no valid tests");
+  });
+
+  it("cancelling the task stops the certification run", async () => {
+    const ac = new AbortController();
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockImplementationOnce(async () => {
+        ac.abort(); // cancelTask() aborts the run's controller mid-test
+        return HAPPY;
+      })
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    const r = await enterRunToolContext(
+      "task-cancelled",
+      () => write(PATH, skillFile({ tests: TESTS })),
+      undefined,
+      ac.signal,
+    );
+    expect(mockInfer).toHaveBeenCalledTimes(2); // critic + first test only
+    expect(r.skill).toMatchObject({ certified: false });
+    expect((r.skill as { tests: unknown[] }).tests).toHaveLength(1);
+    expect(certifiedFlag()).toBe(0);
+  });
+
+  it("concurrent identical rewrites run the tests once", async () => {
+    mockInfer.mockResolvedValueOnce(pass).mockRejectedValueOnce(new Error("provider down")).mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS })); // run 1: unfinished
+    mockInfer.mockReset();
+    mockInfer
+      .mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        return HAPPY;
+      })
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    const results = await Promise.all([
+      write(PATH, skillFile({ tests: TESTS })),
+      write(PATH, skillFile({ tests: TESTS })),
+    ]);
+    expect(mockInfer).toHaveBeenCalledTimes(2); // one run of the two tests
+    const nexts = results.map((r) => String((r.skill as { next: string }).next));
+    expect(nexts.filter((n) => n.includes("already running"))).toHaveLength(1);
+    expect(certifiedFlag()).toBe(1);
+  });
+
+  it("re-checks the run cap when certify starts, not only at registration", async () => {
+    mockInfer.mockResolvedValueOnce(pass).mockRejectedValue(new Error("provider down"));
+    await write(PATH, skillFile({ tests: TESTS })); // run 1
+    await write(PATH, skillFile({ tests: TESTS })); // run 2
+    const file = skillFile({ tests: TESTS });
+    const reg = await registerSkillFile(PATH, file, file);
+    expect(reg.ok && reg.certify).toBeTruthy();
+    const db = getDatabase();
+    const v = db
+      .prepare("SELECT skill_id, current_version_id AS id FROM skills WHERE name = 'ogilvy-slogan'")
+      .get() as { skill_id: string; id: number };
+    await runSkillTests(v.skill_id, v.id); // run 3 lands in between
+    mockInfer.mockReset();
+    const info = await (reg as { certify: () => Promise<{ next: string }> }).certify();
+    expect(info.next).toContain("did not finish in 3 runs");
+    expect(mockInfer).not.toHaveBeenCalled();
   });
 
   it("does not re-run the tests of a certified version on an identical rewrite", async () => {

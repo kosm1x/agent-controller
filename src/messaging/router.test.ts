@@ -1874,6 +1874,110 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("usability Phase 1.2 on a plain-failed HEAVY deliverable: a scope ask is re-run, then replaced — never framed as produced work", async () => {
+      const mocked = vi.mocked(submitTask);
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: revisa el servidor",
+        status: "failed",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "revisa el servidor",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-heavy-rerun",
+          agentType: "heavy",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        const failHeavy = (taskId: string) =>
+          findHandler("task.failed")!({
+            data: {
+              task_id: taskId,
+              agent_id: "heavy",
+              error: "Unknown error",
+              recoverable: false,
+              attempts: 1,
+              result: {
+                content: "Reflector meta-summary",
+                finalAnswer: "Necesito `shell_exec` para esto.",
+              },
+            },
+          });
+        failHeavy("test-task-123");
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(waAdapter.sentMessages).toHaveLength(1); // the ack only
+        const rerun = mocked.mock.calls.at(-1)![0] as { tags: string[]; tools: string[] };
+        expect(rerun.tags).toContain("scope-rerun");
+        expect(rerun.tools).toContain("shell_exec");
+
+        failHeavy("test-task-heavy-rerun");
+        await Promise.resolve();
+        expect(waAdapter.sentMessages).toHaveLength(2);
+        expect(waAdapter.sentMessages[1].text).toBe(
+          scopeMissFallbackLine("rerun_missed"),
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("a re-run HEAVY report that ends with a scope ask keeps the work above it; the ask itself is never delivered", async () => {
+      const mocked = vi.mocked(submitTask);
+      dbStatusGet.mockReturnValue({
+        spawn_type: "root",
+        title: "Chat: analiza las fases",
+        status: "failed",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "analiza las fases",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-heavy-rerun2",
+          agentType: "heavy",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        const report =
+          "Fase 1 — Captación: riesgo alto en el primer contacto.\n\n" +
+          "Fase 2 — Cierre: margen estable.\n\n" +
+          "Necesito `shell_exec` para esto.";
+        const failHeavy = (taskId: string) =>
+          findHandler("task.failed")!({
+            data: {
+              task_id: taskId,
+              agent_id: "heavy",
+              error: "Unknown error",
+              recoverable: false,
+              attempts: 1,
+              result: { content: "meta", finalAnswer: report },
+            },
+          });
+        failHeavy("test-task-123");
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(waAdapter.sentMessages).toHaveLength(1); // first run: silent re-run
+        failHeavy("test-task-heavy-rerun2");
+        await Promise.resolve();
+        const sent = waAdapter.sentMessages[1].text;
+        expect(sent).toContain("no se completó al 100%");
+        expect(sent).toContain("Fase 2 — Cierre: margen estable.");
+        expect(sent).not.toContain("Necesito `shell_exec`");
+        expect(sent.endsWith(scopeMissFallbackLine("rerun_missed"))).toBe(true);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
     it("delivers a failed SWARM root's joined answer with the same caveat (task 0b8c7576, 2026-09-03)", async () => {
       // 3/4 goals completed — three full phase analyses in finalAnswer — and
       // the operator received "No pude completar eso". Swarm's finalAnswer is

@@ -731,6 +731,7 @@ async function dispatchWithSlot(
           ? ritualContext.run({ ritualId }, () => runner.execute(input))
           : runner.execute(input),
       runOrigin,
+      abortController.signal,
     );
 
     // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
@@ -804,6 +805,7 @@ async function dispatchWithSlot(
             taskId,
             () => fastRunner.execute(input),
             runOrigin,
+            abortController.signal,
           );
           if (fb.success) {
             result = fb;

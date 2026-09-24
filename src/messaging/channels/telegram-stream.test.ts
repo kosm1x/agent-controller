@@ -111,6 +111,37 @@ describe("TelegramStreamController.finalize()", () => {
     expect(String(bot.api.sendMessage.mock.calls[2][1])).toContain("Línea 149:");
   });
 
+  it("spaces chunks 200 ms apart (Telegram rate limit) and waits after none but the last", async () => {
+    const { bot } = fakeBot();
+    bot.api.sendMessage.mockRejectedValueOnce(new Error("placeholder down"));
+    const ctl = new TelegramStreamController(
+      bot as unknown as ConstructorParameters<typeof TelegramStreamController>[0],
+      "12345",
+    );
+    await ctl.sendPlaceholder("⏳");
+    bot.api.sendMessage.mockClear();
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      const p = ctl.finalize(longText).then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(199);
+      expect(bot.api.sendMessage).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(bot.api.sendMessage).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(bot.api.sendMessage).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(done).toBe(true); // no trailing wait after the last chunk
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("an HTML chunk Telegram rejects is resent as plain text and the later chunks still go out (qa-audit R2 W1)", async () => {
     const { bot } = fakeBot();
     bot.api.sendMessage.mockRejectedValueOnce(new Error("placeholder down"));

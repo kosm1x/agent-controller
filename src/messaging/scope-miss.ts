@@ -89,6 +89,23 @@ const STRONG_ASK_RE =
  * ones that merely mention a tool name in passing — because the ASK phrase
  * must be present, not just the identifier.
  */
+/**
+ * `text` with trailing paragraphs dropped until no scope ask remains in its
+ * tail; null when nothing is left. For a long partial deliverable whose last
+ * lines ask for a tool: the work above the ask can still be delivered.
+ */
+export function stripScopeAskTail(
+  text: string,
+  knownTools: Iterable<string>,
+): string | null {
+  const tools = [...knownTools];
+  const paras = text.split(/\n\s*\n/);
+  while (paras.length > 0 && detectScopeMiss(paras.join("\n\n"), tools)) {
+    paras.pop();
+  }
+  return paras.join("\n\n").trim() || null;
+}
+
 export function detectScopeMiss(
   text: string,
   knownTools: Iterable<string>,
