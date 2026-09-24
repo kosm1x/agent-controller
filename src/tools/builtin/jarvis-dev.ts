@@ -339,7 +339,12 @@ function getFreshPassingCache(branch: string): TestCacheEntry | null {
 // Actions
 // ---------------------------------------------------------------------------
 
-function actionBranch(type: string, slug: string): string {
+/** @internal exported for tests — `git` runs in MC_DIR in production. */
+export function actionBranch(
+  type: string,
+  slug: string,
+  git: (args: string[]) => string = run,
+): string {
   const branchName = `jarvis/${type}/${slug}`;
   if (!["feat", "fix", "refactor"].includes(type)) {
     return JSON.stringify({
@@ -352,35 +357,83 @@ function actionBranch(type: string, slug: string): string {
     });
   }
 
-  // Ensure we're on main and up to date
+  const failure = (what: string, err: unknown) =>
+    JSON.stringify({
+      error: `${what}: ${err instanceof Error ? err.message : err}`,
+    });
+
+  // A new branch is cut from a FRESH origin/main — never from local `main`,
+  // which this linked worktree can't check out (the primary holds it). The
+  // old `checkout main && pull` always threw here and the catch swallowed it,
+  // so every new branch stacked on whatever HEAD was: PRs #33/#37
+  // (2026-09-24) shipped stale commits from earlier jarvis/* branches.
+  // Every git failure below is returned, never swallowed.
+  let dirty: string;
   try {
-    run(["checkout", "main"]);
-    run(["pull", "origin", "main"]);
-  } catch {
-    // pull may fail if no remote — continue anyway
+    dirty = git(["status", "--porcelain"]);
+  } catch (err) {
+    return failure("git status failed", err);
+  }
+  if (dirty) {
+    // `pr` stages every changed file, so leftovers would ride into the new PR.
+    return JSON.stringify({
+      error:
+        `Uncommitted changes in ${MC_DIR} would carry over into ${branchName}. ` +
+        `Finish them on their own branch (jarvis_dev action="pr") or discard them first.`,
+      changed: dirty.split("\n").slice(0, 20),
+    });
   }
 
-  // Create and switch to branch
   try {
-    run(["checkout", "-b", branchName]);
+    git(["fetch", "origin", "main"]);
   } catch (err) {
-    // Branch may already exist
+    return failure(
+      "git fetch origin main failed — not branching from a stale base",
+      err,
+    );
+  }
+
+  let exists = true;
+  try {
+    git(["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`]);
+  } catch {
+    exists = false;
+  }
+  try {
+    if (exists) git(["checkout", branchName]);
+    else git(["checkout", "--no-track", "-b", branchName, "origin/main"]);
+  } catch (err) {
+    return failure(
+      `Failed to ${exists ? "check out" : "create"} ${branchName}`,
+      err,
+    );
+  }
+
+  // A resumed branch keeps its old base — if it was cut from a stale HEAD or
+  // already merged, those commits re-ship in the next PR. Show them.
+  let resumed: { commits_not_on_origin_main: string[]; note: string } | null =
+    null;
+  if (exists) {
     try {
-      run(["checkout", branchName]);
-    } catch {
-      return JSON.stringify({
-        error: `Failed to create branch: ${err instanceof Error ? err.message : err}`,
-      });
+      const log = git(["log", "--format=%h %s", "origin/main..HEAD"]);
+      resumed = {
+        commits_not_on_origin_main: log ? log.split("\n").slice(0, 20) : [],
+        note: "Every commit listed here ships in this branch's PR. If any is not this task's work, start a new branch with a different slug.",
+      };
+    } catch (err) {
+      return failure("git log origin/main..HEAD failed", err);
     }
   }
 
   return JSON.stringify({
     success: true,
     branch: branchName,
+    base: exists ? "existing branch (resumed)" : "origin/main",
+    ...resumed,
     cwd: MC_DIR,
     next_steps: [
-      "Use file_edit/file_write to make changes in /root/claude/mission-control/",
-      "Use shell_exec to run builds/tests in /root/claude/mission-control/",
+      `Use file_edit/file_write to make changes in ${MC_DIR}/`,
+      `Use shell_exec to run builds/tests in ${MC_DIR}/`,
       'When done: jarvis_dev action="test" to verify',
       'Then: jarvis_dev action="pr" to open a pull request',
     ],
@@ -715,7 +768,7 @@ USE WHEN:
 
 WORKFLOW:
 1. jarvis_dev action="branch" type="feat" slug="oilprice-adapter" → creates jarvis/feat/oilprice-adapter
-2. Use file_edit/file_write on /root/claude/mission-control/src/... to make changes
+2. Use file_edit/file_write on /root/claude/mission-control-jarvis/src/... to make changes
 3. jarvis_dev action="test" → runs typecheck + full test suite (~136s)
 4. jarvis_dev action="pr" title="feat: add OilPrice adapter" body="..." → commits, pushes, opens PR
 5. User reviews and merges the PR
@@ -727,7 +780,7 @@ SAFETY:
 - You can ONLY work on jarvis/* branches, NEVER on main
 - Tests MUST pass before a PR can be opened
 - User must merge the PR — you cannot self-merge
-- Only file_edit/file_write/shell_exec work on mission-control while on a jarvis/* branch
+- Edit only your worktree mission-control-jarvis/, never the operator's checkout
 
 AFTER USING: Report the branch name, action taken, and next step.`,
       parameters: {
