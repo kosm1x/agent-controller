@@ -54,4 +54,4 @@
 - **Avoid:** trusting `[router] Stored prior scope` — it printed the groups the turn RAN with, not the base actually stored; turn 1's stored prior was empty, so the follow-up could not inherit `coding` (log fixed to print both).
 - **Avoid:** reading the 09-05 classifier-timeout fix as closing "blocked turns ask for shell_exec" — it fixed one feeder; the delivery path stayed open and the symptom recurred 13 more times.
 - **Better:** `/diagnose` from the task row (status, tool_calls=0) → `scope_telemetry` (tools_in_scope) → journal scope lines → the handler that the status routes to; then replay the stored replies through the detector (34/34 caught, 0/6 real questions) before writing the fix.
-
+- **Avoid:** a `.catch` on a call that never rejects (`TelegramStreamController.finalize()` swallowed its own failures) — the fallback path is dead and a missed placeholder drops the reply silently; fix the shared callee (send fresh when no placeholder landed, run once), which covers every caller at once.
