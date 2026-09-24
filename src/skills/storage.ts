@@ -156,8 +156,8 @@ export function recordVersion(input: RecordVersionInput): RecordVersionOutcome {
  * refresh the metadata fields the loader/lifecycle source from
  * frontmatter. Only called when recordVersion() returns 'inserted'.
  *
- * NOT touched here: `is_certified`. The test harness (Phase 2 Bundle 2)
- * owns that flip after a green test run.
+ * A new current version has passed no test yet, so the skill is
+ * decertified here; the test harness certifies it after a green run.
  */
 export function pointSkillAtVersion(
   skillId: string,
@@ -174,6 +174,7 @@ export function pointSkillAtVersion(
        trigger_examples_json = ?,
        tests_json = ?,
        current_version_id = ?,
+       is_certified = 0,
        updated_at = datetime('now')
      WHERE skill_id = ?`,
   ).run(
@@ -186,4 +187,36 @@ export function pointSkillAtVersion(
     versionId,
     skillId,
   );
+}
+
+/**
+ * Compare two MAJOR.MINOR.PATCH strings numerically (so 1.10.0 > 1.9.0).
+ * Negative when a < b, 0 when equal, positive when a > b.
+ */
+export function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * The version string the named skill currently points at, or null when the
+ * skill does not exist or has no current version. Versions only move up:
+ * a lower version can never become current (the `skills_version_monotonic`
+ * trigger in src/db/index.ts refuses it), so writers check this first to
+ * return a clear refusal instead of a constraint error.
+ */
+export function currentSkillVersion(name: string): string | null {
+  const row = getDatabase()
+    .prepare(
+      `SELECT v.version FROM skills s
+       JOIN skill_versions v ON v.id = s.current_version_id
+       WHERE s.name = ?`,
+    )
+    .get(name) as { version: string } | undefined;
+  return row?.version ?? null;
 }

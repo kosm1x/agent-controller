@@ -19,6 +19,8 @@
 import { getFile, listFiles } from "../db/jarvis-fs.js";
 import { FrontmatterError, parseSkillFile } from "./frontmatter.js";
 import {
+  compareSemver,
+  currentSkillVersion,
   ensureSkillRow,
   pointSkillAtVersion,
   recordVersion,
@@ -27,7 +29,7 @@ import { errMsg } from "../lib/err-msg.js";
 
 export interface LoaderError {
   path: string;
-  kind: "parse" | "drift" | "db";
+  kind: "parse" | "drift" | "db" | "version_not_higher";
   message: string;
 }
 
@@ -83,6 +85,22 @@ export function loadSkillsFromJarvisFiles(log: LoaderLog): LoaderResult {
     }
 
     try {
+      // Versions only move up: a file older than the registered current
+      // version is skipped (and not recorded) instead of becoming current.
+      const current = currentSkillVersion(parsed.frontmatter.name);
+      if (
+        current !== null &&
+        compareSemver(parsed.frontmatter.version, current) < 0
+      ) {
+        const issue: LoaderError = {
+          path: entry.path,
+          kind: "version_not_higher",
+          message: `version ${parsed.frontmatter.version} is lower than the current version ${current}; not registered`,
+        };
+        result.errors.push(issue);
+        log.warn("[skills:loader] version lower than current", { ...issue });
+        continue;
+      }
       const skillId = ensureSkillRow(parsed.frontmatter, entry.path);
       const outcome = recordVersion({
         skillId,

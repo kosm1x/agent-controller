@@ -368,10 +368,12 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
 
     // A SKILL.md is registered (critic-gated) BEFORE it lands — see kb-file.ts.
     let skill: SkillFileRegistrationInfo | undefined;
+    let certifySkill: (() => Promise<SkillFileRegistrationInfo>) | undefined;
     if (isSkillFilePath(path, getJarvisKbRoot())) {
       const registration = await registerSkillFile(path, content, priorContent);
       if (!registration.ok) return JSON.stringify(registration.error);
       skill = registration.skill;
+      certifySkill = registration.certify;
     }
 
     upsertFile(
@@ -393,6 +395,8 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       `KB ${path} escrito y legible`,
       { path, sha8: sha8(content) },
     );
+    // Test the registered version now that the file agrees with it.
+    if (certifySkill) skill = await certifySkill();
 
     return JSON.stringify({
       success: true,

@@ -47,7 +47,12 @@ function seedSkill(testsJson: string): { skillId: string; versionId: number } {
        ) VALUES (?, '1.0.0', '# Steps\n1. Echo the input.', 'sha', '[]', ?, '[]', 'operator', 'pass')`,
     )
     .run(skillId, testsJson);
-  return { skillId, versionId: Number(result.lastInsertRowid) };
+  const versionId = Number(result.lastInsertRowid);
+  db.prepare("UPDATE skills SET current_version_id = ? WHERE skill_id = ?").run(
+    versionId,
+    skillId,
+  );
+  return { skillId, versionId };
 }
 
 const passingTest = JSON.stringify([
@@ -122,6 +127,21 @@ describe("runSkillTests — happy path", () => {
       .prepare("SELECT is_certified FROM skills WHERE skill_id = ?")
       .get(skillId) as { is_certified: number };
     expect(skill.is_certified).toBe(0);
+  });
+});
+
+describe("runSkillTests — expect path rejects error replies", () => {
+  it("fails a test with no output_match when the reply is an error", async () => {
+    const { skillId, versionId } = seedSkill(
+      JSON.stringify([{ name: "happy", input: { msg: "x" }, expect: { output_type: "structured" } }]),
+    );
+    mockInfer.mockResolvedValueOnce({
+      content: '{"error":"BROKEN","detail":"always fails"}',
+      usage: {},
+    } as Awaited<ReturnType<typeof infer>>);
+    const result = await runSkillTests(skillId, versionId);
+    expect(result.outcomes[0].result).toBe("fail");
+    expect(result.certified).toBe(false);
   });
 });
 

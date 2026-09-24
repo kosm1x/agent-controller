@@ -30,6 +30,7 @@
  * helper may wrap this in a retry loop.
  */
 
+import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import {
   runSkillCritic,
@@ -39,8 +40,10 @@ import {
 import { embedAndStoreSkill } from "./embedding.js";
 import type { ParsedSkillFile } from "./frontmatter.js";
 import {
+  compareSemver,
   CreatedBy,
   CriticVerdictColumn,
+  currentSkillVersion,
   ensureSkillRow,
   pointSkillAtVersion,
   recordVersion,
@@ -91,7 +94,12 @@ export type SkillSaveResult =
     }
   | {
       ok: false;
-      kind: "critic_failed" | "critic_error" | "drift" | "unchanged";
+      kind:
+        | "critic_failed"
+        | "critic_error"
+        | "drift"
+        | "unchanged"
+        | "version_not_higher";
       critique: string;
       /** Present on `drift`. The first 8 chars of the existing body sha. */
       existingShaPrefix?: string;
@@ -109,6 +117,19 @@ export async function skillSave(
   parsed: ParsedSkillFile,
   options: SkillSaveOptions = {},
 ): Promise<SkillSaveResult> {
+  // Versions only move up (DB trigger `skills_version_monotonic`). Refuse a
+  // lower version before the paid critic call; an equal version falls
+  // through to the unchanged/drift outcomes below.
+  const { name, version } = parsed.frontmatter;
+  const current = currentSkillVersion(name);
+  if (current !== null && compareSemver(version, current) < 0) {
+    return {
+      ok: false,
+      kind: "version_not_higher",
+      critique: `version ${version} is lower than the current version ${current} of "${name}". Use a version higher than ${current}.`,
+    };
+  }
+
   const critic = await runSkillCritic(parsed, options.critic ?? {});
 
   // Infrastructure failures are distinct from content failures. Caller
@@ -150,14 +171,34 @@ export async function skillSave(
     : "pass";
   const criticCritique = critic.critique || null;
 
-  const outcome = recordVersion({
-    skillId,
-    fm: parsed.frontmatter,
-    body: parsed.body,
-    createdBy,
-    criticVerdict,
-    criticCritique,
-  });
+  // Record + point atomically: a higher version registered by a concurrent
+  // writer during the critic call makes the pointer move fail the
+  // `skills_version_monotonic` trigger, and the version row rolls back with it.
+  let outcome: ReturnType<typeof recordVersion>;
+  try {
+    outcome = getDatabase().transaction(() => {
+      const recorded = recordVersion({
+        skillId,
+        fm: parsed.frontmatter,
+        body: parsed.body,
+        createdBy,
+        criticVerdict,
+        criticCritique,
+      });
+      if (recorded.kind === "inserted") {
+        pointSkillAtVersion(skillId, parsed.frontmatter, recorded.versionId);
+      }
+      return recorded;
+    })();
+  } catch (err) {
+    if (!errMsg(err).includes("SKILL_VERSION_NOT_HIGHER")) throw err;
+    const now = currentSkillVersion(name);
+    return {
+      ok: false,
+      kind: "version_not_higher",
+      critique: `a higher version of "${name}" (${now}) was registered meanwhile. Use a version higher than ${now}.`,
+    };
+  }
 
   if (outcome.kind === "drift") {
     return {
@@ -178,8 +219,6 @@ export async function skillSave(
       critic,
     };
   }
-
-  pointSkillAtVersion(skillId, parsed.frontmatter, outcome.versionId);
 
   // v7.7 Spine 3 Phase 3: re-embed the description on every accepted
   // save. Best-effort — embed() returns null on API failure; the row
