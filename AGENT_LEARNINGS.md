@@ -55,3 +55,10 @@
 - **Avoid:** reading the 09-05 classifier-timeout fix as closing "blocked turns ask for shell_exec" — it fixed one feeder; the delivery path stayed open and the symptom recurred 13 more times.
 - **Better:** `/diagnose` from the task row (status, tool_calls=0) → `scope_telemetry` (tools_in_scope) → journal scope lines → the handler that the status routes to; then replay the stored replies through the detector (34/34 caught, 0/6 real questions) before writing the fix.
 - **Avoid:** a `.catch` on a call that never rejects (`TelegramStreamController.finalize()` swallowed its own failures) — the fallback path is dead and a missed placeholder drops the reply silently; fix the shared callee (send fresh when no placeholder landed, run once), which covers every caller at once.
+
+## 2026-09-24 — #41/#42 open items (sweep recovery, certify cancel + claim, heavy scope gate)
+- **Mistake (inherited, v7.7 sweep):** the 6 h test sweep examined only `is_certified=1`, so ONE 30 s LLM timeout decertified 5 healthy skills for 3+ months → any flag a transient error can clear needs a path that re-evaluates it; query the population the gate can never reach (`is_certified=0` with no `fail` row).
+- **Mistake:** my first retry bound counted unfinished runs "since the version's last pass" — a passing sibling test reset the count every tick, so a skill with one slow test was retried forever (qa R2) → bound per `test_name`, and pin it with a 2-test mixed fixture.
+- **Avoid:** test rows that all share one `datetime('now')` second — the per-version mutant stayed GREEN because every row tied with the last pass; stagger `ran_at` per tick before trusting a time-window predicate's test.
+- **Better:** two runners of the same resource (kb-file certify + sweep) share ONE claim (`claimCertificationRun`) taken with no await after the last check; re-check the cap at claim time, not only at registration.
+- **Better:** when a gate must replace a long partial deliverable, cut only the offending tail (`stripScopeAskTail`, re-checked by the same detector) — replacing the whole report re-created the "7 minutes of work discarded" bug the branch exists to prevent (qa R1 W3).

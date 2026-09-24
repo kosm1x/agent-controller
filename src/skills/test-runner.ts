@@ -487,6 +487,25 @@ function writeTestRun(
  * (returns false) when `versionId` is no longer the current version: a slow
  * run of a superseded version must not certify the version that replaced it.
  */
+/**
+ * Versions whose tests are running for certification (the kb-file write path
+ * or the scheduled sweep). One process: a caller checks and claims with no
+ * await in between, so two runs of one version never overlap and race on the
+ * is_certified flip.
+ */
+const certificationRuns = new Set<number>();
+
+/** Claim `versionId` for a certification run; false when one is in flight. */
+export function claimCertificationRun(versionId: number): boolean {
+  if (certificationRuns.has(versionId)) return false;
+  certificationRuns.add(versionId);
+  return true;
+}
+
+export function releaseCertificationRun(versionId: number): void {
+  certificationRuns.delete(versionId);
+}
+
 function flipCertified(
   skillId: string,
   versionId: number,

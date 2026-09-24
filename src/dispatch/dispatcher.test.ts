@@ -89,6 +89,7 @@ import {
 import {
   BACKGROUND_ORIGIN,
   currentRunOrigin,
+  currentRunSignal,
   priorRunTools,
   recordRunTool,
   type RunOrigin,
@@ -423,6 +424,24 @@ describe("dispatchTask Rule-of-Two run context (V8.5 Phase 5.2, qa W3)", () => {
     expect(seenInside).toEqual([]);
     expect(seenAfterRecord).toEqual(["web_search"]);
     expect(priorRunTools()).toBeUndefined(); // context does not leak out of the run
+  });
+
+  it("the run context carries the task's abort signal — tools stop on cancelTask", async () => {
+    const abortController = new AbortController();
+    let seen: AbortSignal | undefined | "unset" = "unset";
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        seen = currentRunSignal();
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({ title: "signal ctx", description: "abort signal wiring", abortController });
+    await vi.waitFor(() => {
+      if (seen === "unset") throw new Error("runner not yet executed");
+    });
+    expect(seen).toBe(abortController.signal);
+    expect(currentRunSignal()).toBeUndefined();
   });
 });
 

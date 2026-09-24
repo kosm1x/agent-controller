@@ -81,3 +81,4 @@
 - [skills-autocert-monotonic-r1-audit](skills-autocert-monotonic-r1-audit.md) - skill auto-certify + monotonic trigger (09-24): R1 FAIL -> R2 PASS-W-WARN. Flag flipped by a version-scoped run needs `AND current_version_id=?`; every pointer move must reset is_certified.
 - [scope-miss-blocked-path-r1-audit](scope-miss-blocked-path-r1-audit.md) - Phase 1.2 gate on blocked path (09-24): PASS-W-WARN. CLASS: stream finalize() never rejects, so `.catch(sendFresh)` is dead; messageId null = silent drop.
 - [scope-miss-blocked-path-r2-audit](scope-miss-blocked-path-r2-audit.md) - R2 (09-24): PASS-W-WARN. finalize() fresh-send fold; CLASS: a no-op branch turned into a send makes a non-idempotent 2nd call a duplicate message.
+- [open-items-41-42-r1-audit](open-items-41-42-r1-audit.md) - #41/#42 follow-ups R1-R3 (09-24): R3 PASS. CLASS: a "since last pass" retry bound must be per-test, or a sibling pass resets it.

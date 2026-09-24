@@ -3,9 +3,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
-import { runSkillsTestSweep, SweepLog, SWEEP_TEST_TIMEOUT_MS } from "./test-sweep.js";
+import {
+  runSkillsTestSweep,
+  SweepLog,
+  SWEEP_RETEST_RUNS,
+  SWEEP_TEST_TIMEOUT_MS,
+} from "./test-sweep.js";
 import { infer } from "../inference/adapter.js";
-import { runSkillTests } from "./test-runner.js";
+import {
+  claimCertificationRun,
+  releaseCertificationRun,
+  runSkillTests,
+} from "./test-runner.js";
 
 vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
@@ -159,6 +168,136 @@ describe("runSkillsTestSweep", () => {
     expect(result.examined).toBe(2);
     expect(result.reaffirmed).toBe(1);
     expect(result.decertified).toBe(1);
+  });
+
+  it("recertifies a skill decertified only by error runs; a version with a fail stays out", async () => {
+    const db = getDatabase();
+    const errId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const failId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const errVersion = seedCertifiedSkill(errId, "timed-out-once");
+    const failVersion = seedCertifiedSkill(failId, "really-broken");
+    db.prepare("UPDATE skills SET is_certified = 0").run();
+    const run = db.prepare(
+      "INSERT INTO skill_test_runs (skill_id, version_id, test_name, result) VALUES (?, ?, 't1', ?)",
+    );
+    run.run(errId, errVersion, "pass");
+    run.run(errId, errVersion, "error");
+    run.run(failId, failVersion, "fail");
+    mockInfer.mockResolvedValueOnce({
+      content: '{"y":1}',
+      usage: {},
+    } as Awaited<ReturnType<typeof infer>>);
+
+    const result = await runSkillsTestSweep(SILENT);
+    expect(result.examined).toBe(1);
+    expect(result.recertified).toBe(1);
+    expect(result.decertified).toBe(0);
+    expect(mockRunSkillTests).toHaveBeenCalledTimes(1);
+    expect(mockRunSkillTests.mock.calls[0][0]).toBe(errId);
+    const certified = (id: string) =>
+      (
+        db.prepare("SELECT is_certified FROM skills WHERE skill_id = ?").get(id) as {
+          is_certified: number;
+        }
+      ).is_certified;
+    expect(certified(errId)).toBe(1);
+    expect(certified(failId)).toBe(0);
+  });
+
+  it("an uncertified retest that fails again is not counted as decertified", async () => {
+    const skillId = "99999999-9999-4999-8999-999999999999";
+    seedCertifiedSkill(skillId, "still-flaky");
+    getDatabase().prepare("UPDATE skills SET is_certified = 0").run();
+    mockInfer.mockResolvedValueOnce({
+      content: '{"y":2}',
+      usage: {},
+    } as Awaited<ReturnType<typeof infer>>);
+
+    const result = await runSkillsTestSweep(SILENT);
+    expect(result.examined).toBe(1);
+    expect(result.recertified).toBe(0);
+    expect(result.decertified).toBe(0);
+    expect(result.stillUncertified).toBe(1);
+  });
+
+  it("an uncertified retest that errors is counted and retried, up to SWEEP_RETEST_RUNS since the last pass", async () => {
+    const skillId = "88888888-8888-4888-8888-888888888888";
+    seedCertifiedSkill(skillId, "keeps-timing-out");
+    getDatabase().prepare("UPDATE skills SET is_certified = 0").run();
+    mockInfer.mockRejectedValue(new Error("provider down"));
+    for (let tick = 1; tick <= SWEEP_RETEST_RUNS; tick++) {
+      const r = await runSkillsTestSweep(SILENT);
+      expect(r.examined).toBe(1);
+      expect(r.stillUncertified).toBe(1);
+    }
+    const after = await runSkillsTestSweep(SILENT);
+    expect(after.examined).toBe(0); // bounded: no LLM calls every 6 h forever
+    expect(mockRunSkillTests).toHaveBeenCalledTimes(SWEEP_RETEST_RUNS);
+  });
+
+  it("the retry bound is per test: a sibling test's pass does not reset a test that keeps timing out", async () => {
+    const skillId = "55555555-5555-4555-8555-555555555555";
+    const versionId = seedCertifiedSkill(skillId, "one-slow-test");
+    const db = getDatabase();
+    db.prepare("UPDATE skills SET is_certified = 0").run();
+    db.prepare("UPDATE skill_versions SET tests_json = ? WHERE id = ?").run(
+      JSON.stringify([
+        { name: "fast", input: { x: 1 }, expect: { output_match: { y: 1 } } },
+        { name: "slow", input: { x: 2 }, expect: { output_match: { y: 2 } } },
+      ]),
+      versionId,
+    );
+    mockInfer.mockImplementation(async (req) =>
+      JSON.stringify(req).includes('\\"x\\":2')
+        ? Promise.reject(new Error("timeout"))
+        : ({ content: '{"y":1}', usage: {} } as Awaited<ReturnType<typeof infer>>),
+    );
+    for (let tick = 1; tick <= SWEEP_RETEST_RUNS; tick++) {
+      const r = await runSkillsTestSweep(SILENT);
+      expect(r.stillUncertified).toBe(1);
+      // Real ticks are 6 h apart; unixepoch-second rows would all tie.
+      db.prepare("UPDATE skill_test_runs SET ran_at = datetime(ran_at, '-6 hours')").run();
+    }
+    const results = db
+      .prepare("SELECT test_name, result FROM skill_test_runs WHERE version_id = ?")
+      .all(versionId) as Array<{ test_name: string; result: string }>;
+    expect(results.filter((r) => r.test_name === "fast" && r.result === "pass")).toHaveLength(SWEEP_RETEST_RUNS);
+    const after = await runSkillsTestSweep(SILENT);
+    expect(after.examined).toBe(0);
+  });
+
+  it("leaves out an uncertified version with no tests", async () => {
+    const skillId = "77777777-7777-4777-8777-777777777777";
+    const versionId = seedCertifiedSkill(skillId, "no-tests");
+    const db = getDatabase();
+    db.prepare("UPDATE skills SET is_certified = 0").run();
+    db.prepare("UPDATE skill_versions SET tests_json = '[]' WHERE id = ?").run(versionId);
+    const r = await runSkillsTestSweep(SILENT);
+    expect(r.examined).toBe(0);
+  });
+
+  it("skips a version whose certification run is in flight (kb-file write), then releases nothing it did not claim", async () => {
+    const skillId = "66666666-6666-4666-8666-666666666666";
+    const versionId = seedCertifiedSkill(skillId, "being-certified");
+    getDatabase().prepare("UPDATE skills SET is_certified = 0").run();
+    expect(claimCertificationRun(versionId)).toBe(true);
+    try {
+      const r = await runSkillsTestSweep(SILENT);
+      expect(r.examined).toBe(1);
+      expect(r.skipped).toBe(1);
+      expect(mockRunSkillTests).not.toHaveBeenCalled();
+      expect(claimCertificationRun(versionId)).toBe(false); // still the writer's
+    } finally {
+      releaseCertificationRun(versionId);
+    }
+    mockInfer.mockResolvedValueOnce({
+      content: '{"y":1}',
+      usage: {},
+    } as Awaited<ReturnType<typeof infer>>);
+    const next = await runSkillsTestSweep(SILENT);
+    expect(next.recertified).toBe(1);
+    expect(claimCertificationRun(versionId)).toBe(true); // the sweep released its claim
+    releaseCertificationRun(versionId);
   });
 
   it("counts skips when current_version_id is NULL", async () => {

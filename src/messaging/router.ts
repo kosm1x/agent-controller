@@ -142,6 +142,7 @@ import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
   detectScopeMiss,
+  stripScopeAskTail,
   groupsForTool,
   scopeMissFallbackLine,
   looksLikeScopeAsk,
@@ -3482,7 +3483,22 @@ export class MessageRouter {
           ? this.extractResultText(sansContent)
           : null;
         if (runnerText) {
-          failMsg = `⚠️ La tarea no se completó al 100% — esto es lo que alcancé a producir:\n\n${runnerText}`;
+          // Same Phase 1.2 gate as the blocked branch: a partial deliverable
+          // that asks for a tool is re-run. When no re-run is possible, the
+          // work above the ask is still delivered, the ask itself never is.
+          const resolved = this.resolveScopeAsk(taskId, pending, runnerText);
+          if (resolved === null) return;
+          const caveat = (work: string) =>
+            `⚠️ La tarea no se completó al 100% — esto es lo que alcancé a producir:\n\n${work}`;
+          if (resolved === runnerText) {
+            failMsg = caveat(runnerText);
+          } else {
+            const work = stripScopeAskTail(
+              runnerText,
+              getAllAvailableTools(this.scopeOptions()),
+            );
+            failMsg = work ? `${caveat(work)}\n\n${resolved}` : resolved;
+          }
           deliveredRunnerText = true;
         }
       }

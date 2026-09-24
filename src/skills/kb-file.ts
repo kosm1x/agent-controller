@@ -13,12 +13,14 @@
 
 import { getDatabase } from "../db/index.js";
 import { canonicalKbPath } from "../tools/builtin/immutable-core.js";
-import { currentRunTaskId } from "../tools/rule-of-two.js";
+import { currentRunSignal, currentRunTaskId } from "../tools/rule-of-two.js";
 import { FrontmatterError, parseSkillFile } from "./frontmatter.js";
 import { skillSave } from "./lifecycle.js";
 import { SKILL_PATH_RE } from "./loader.js";
 import { compareSemver, currentSkillVersion, sha256 } from "./storage.js";
 import {
+  claimCertificationRun,
+  releaseCertificationRun,
   runSkillTests,
   SkillTestsArraySchema,
   type RunSkillTestsResult,
@@ -227,10 +229,29 @@ export async function registerSkillFile(
     };
   };
 
+  // Why this version may not run its tests again, or null when it may. A
+  // version with a failing test needs a new version; one whose runs only
+  // errored or timed out retries at most MAX_TEST_RUNS times.
+  const retryRefusal = (versionId: number): string | null => {
+    const runs = getDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(result = 'fail'), 0) AS failed FROM skill_test_runs WHERE version_id = ?",
+      )
+      .get(versionId) as { n: number; failed: number };
+    if (runs.failed > 0) {
+      return "this version failed its tests. Fix it and write it again with a higher `version`.";
+    }
+    if (testCount > 0 && runs.n >= MAX_TEST_RUNS * testCount) {
+      return `its tests did not finish in ${MAX_TEST_RUNS} runs. Write it again with a higher \`version\`, or ask the operator to certify it.`;
+    }
+    return null;
+  };
+
   // Certification = the version's own tests all pass (runSkillTests flips
   // is_certified, for the current version only). The caller runs `certify`
   // AFTER the file lands, so the KB file and the registered version agree
-  // even if the run is cut short; the deadline bounds the wait.
+  // even if the run is cut short; the deadline, or cancelling the task,
+  // ends the wait.
   const withTests = (
     status: "registered" | "unchanged",
     skillId: string,
@@ -238,14 +259,29 @@ export async function registerSkillFile(
   ): SkillFileRegistration => ({
     ok: true,
     skill: info(status),
-    certify: async () =>
-      info(
-        status,
-        await runSkillTests(skillId, versionId, {
-          signal: AbortSignal.timeout(CERTIFY_DEADLINE_MS),
-          taskId: currentRunTaskId(),
-        }),
-      ),
+    certify: async () => {
+      // Re-checked here, with no await before the claim: another write (or
+      // the scheduled sweep) may have run or started this version's tests
+      // since registration.
+      const refusal = retryRefusal(versionId);
+      if (refusal) return info(status, undefined, refusal);
+      if (!claimCertificationRun(versionId)) {
+        return info(status, undefined, "its tests are already running. Check the result with skill_load shortly.");
+      }
+      try {
+        const deadline = AbortSignal.timeout(CERTIFY_DEADLINE_MS);
+        const runSignal = currentRunSignal();
+        return info(
+          status,
+          await runSkillTests(skillId, versionId, {
+            signal: runSignal ? AbortSignal.any([deadline, runSignal]) : deadline,
+            taskId: currentRunTaskId(),
+          }),
+        );
+      } finally {
+        releaseCertificationRun(versionId);
+      }
+    },
   });
 
   // The body of this version is already registered. Writing different
@@ -265,25 +301,8 @@ export async function registerSkillFile(
       });
     }
     if (registered && !isCertified()) {
-      const runs = getDatabase()
-        .prepare(
-          "SELECT COUNT(*) AS n, COALESCE(SUM(result = 'fail'), 0) AS failed FROM skill_test_runs WHERE version_id = ?",
-        )
-        .get(registered.versionId) as { n: number; failed: number };
-      if (runs.failed > 0) {
-        return {
-          ok: true,
-          skill: info("unchanged", undefined, "this version failed its tests. Fix it and write it again with a higher `version`."),
-        };
-      }
-      // Checked before the run starts: concurrent identical rewrites can each
-      // pass it (each still bounded by CERTIFY_DEADLINE_MS).
-      if (testCount > 0 && runs.n >= MAX_TEST_RUNS * testCount) {
-        return {
-          ok: true,
-          skill: info("unchanged", undefined, `its tests did not finish in ${MAX_TEST_RUNS} runs. Write it again with a higher \`version\`, or ask the operator to certify it.`),
-        };
-      }
+      const refusal = retryRefusal(registered.versionId);
+      if (refusal) return { ok: true, skill: info("unchanged", undefined, refusal) };
       return withTests("unchanged", registered.skillId, registered.versionId);
     }
     return { ok: true, skill: info("unchanged") };
