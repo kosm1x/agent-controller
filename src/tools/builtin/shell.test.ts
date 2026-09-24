@@ -1655,8 +1655,8 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     allowed(`cd -- ${MC} && npx tsx x.ts`);
     allowed(`cd -P ${MC} && npx tsx x.ts`);
     allowed(`cd -L -- ${MC} && npx tsx x.ts`);
-    allowed('cd "$HOME"/claude/mission-control && npx tsx x.ts');
-    allowed("cd ${HOME}/claude/mission-control && npx tsx x.ts");
+    allowed(`cd "$HOME"/${relative(process.env.HOME ?? "/root", MC)} && npx tsx x.ts`);
+    allowed("cd ${HOME}/" + relative(process.env.HOME ?? "/root", MC) + " && npx tsx x.ts");
     allowed(`cd '${MC}' && npx tsx x.ts`);
     allowed("P=1; ${P:-2}; npm run build");
     allowed("echo ${X:-default}");
