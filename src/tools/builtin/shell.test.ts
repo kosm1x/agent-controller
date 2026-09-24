@@ -1605,7 +1605,8 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     ]) {
       const t = performance.now();
       validateShellCommand(cmd);
-      expect(performance.now() - t, `len=${cmd.length}`).toBeLessThan(500);
+      // Linear worst case ~440 ms on the VPS, ~520 ms on CI; a cheap O(n^2) segment scan is ~1 s.
+      expect(performance.now() - t, `len=${cmd.length}`).toBeLessThan(800);
     }
   });
 
