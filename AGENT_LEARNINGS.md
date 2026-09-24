@@ -14,3 +14,9 @@
 - **Mistake:** deleted a reviewed clone right after the verdict, then had to re-clone it for the findings doc → keep review clones in the scratchpad until the session ends.
 - **Avoid:** putting `git` and `grep` in the same Bash command. The hook-bypass guard scans the whole string → run git commands alone.
 - **Better:** voice-note transcription (`src/inference/transcription.ts`) is batch and Whisper-compatible, and almost unused. Check that call site first before probing any new ASR for Jarvis. Pipesong is the only streaming consumer.
+
+## 2026-09-24 — Jarvis PR review (#37, #33 closed; #32 redone as 9d825dd)
+- **Mistake:** rewrote the nanoclaw env-note guard around the incident's "read-only mc.db mount" without re-reading today's mount list; SEC-02 (4b353ac) had removed that mount, so the guard stated a false fact (qa R1 FAIL) → before writing any prompt text about the sandbox, read `nanoclaw-runner.ts` volumes + `MC_DB_PATH` on the CURRENT base, not the incident report.
+- **Mistake:** put a review worktree under the scratchpad; `shell.test.ts` resolves `cd ..` against the real FS, so the pre-commit full suite failed there only → create temporary worktrees beside the main checkout (`/root/claude/<name>-tmp`) and remove them after the push.
+- **Avoid:** reviewing a Jarvis PR on its own base. Check `git rev-list --count <branch>..origin/main`, trial-merge with `git merge-tree`, and replay its test inputs on main: #32's classifier rule was already redundant (5c279d0), #37's hunk re-added code main had removed.
+- **Better:** measure each PR's premise in live data before judging the code: request rate vs the vendor limit (#37: 1/15 min vs 1/5 s), whether the configured ID still exists (#33: schedule recreated 09-23), and whether the incident has recurred (#32: 0 in 30 days).
