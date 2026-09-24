@@ -1,11 +1,14 @@
 import { execFileSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import {
   actionBranch,
   buildGateScopeArgs,
+  changedPathsFromPorcelainZ,
+  PR_STATUS_ARGS,
+  prAddArgs,
   computeDirtyHash,
   describeTestRunFailure,
   detectRunMutation,
@@ -372,5 +375,87 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
       "/root/claude/mission-control-jarvis/",
     );
     expect(out.next_steps.join(" ")).not.toMatch(/mission-control\//);
+  });
+}, 20_000);
+
+describe("jarvis_dev action=pr — staged paths from porcelain -z", () => {
+  let repo: string;
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+  );
+  const git = (args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      env,
+      encoding: "utf-8",
+      stdio: "pipe",
+    });
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "jarvis-dev-pr-"));
+    git(["init", "-q"]);
+    git(["config", "user.email", "t@t"]);
+    git(["config", "user.name", "t"]);
+    for (const f of ["a.ts", "gone.ts", "old name.ts"])
+      writeFileSync(join(repo, f), f);
+    git(["add", "."]);
+    git(["commit", "-q", "-m", "base"]);
+  });
+
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("keeps the first path whole when it is an unstaged modification (was 'rc/x.ts')", () => {
+    writeFileSync(join(repo, "a.ts"), "changed");
+    const out = git(PR_STATUS_ARGS);
+    expect(out.startsWith(" M ")).toBe(true);
+    expect(changedPathsFromPorcelainZ(out)).toEqual(["a.ts"]);
+  });
+
+  it("handles deletes, spaces, untracked files and a staged rename, and git add accepts every path", () => {
+    writeFileSync(join(repo, "a.ts"), "changed");
+    rmSync(join(repo, "gone.ts"));
+    git(["mv", "old name.ts", "new name.ts"]);
+    writeFileSync(join(repo, "fresh file.ts"), "n");
+    const paths = changedPathsFromPorcelainZ(git(PR_STATUS_ARGS));
+    expect([...paths].sort()).toEqual(
+      ["a.ts", "fresh file.ts", "gone.ts", "new name.ts"].sort(),
+    );
+    git(prAddArgs(paths));
+    expect(git(["status", "--porcelain"])).not.toMatch(/^.[MD?]/m);
+  });
+
+  it("stages BOTH sides of a WORKTREE rename (intent-to-add, Y = R): the new file and the deletion", () => {
+    execFileSync("mv", [join(repo, "a.ts"), join(repo, "a2.ts")]);
+    git(["add", "-N", "a2.ts"]);
+    const out = git(PR_STATUS_ARGS);
+    expect(out.startsWith(" R ")).toBe(true);
+    const paths = changedPathsFromPorcelainZ(out);
+    expect([...paths].sort()).toEqual(["a.ts", "a2.ts"]);
+    git(prAddArgs(paths));
+    expect(git(["status", "--porcelain"])).not.toMatch(/^.[MD?]/m);
+    expect(git(["ls-files"])).not.toMatch(/^a\.ts$/m);
+  });
+
+  it("lists each file inside a new directory, so the SENSITIVE filter can see nested secrets", () => {
+    mkdirSync(join(repo, "newdir"));
+    writeFileSync(join(repo, "newdir", ".env"), "K=v");
+    writeFileSync(join(repo, "newdir", "x.ts"), "x");
+    expect(changedPathsFromPorcelainZ(git(PR_STATUS_ARGS)).sort()).toEqual([
+      "newdir/.env",
+      "newdir/x.ts",
+    ]);
+  });
+
+  it("stages option-like and glob-like names literally, and nothing else", () => {
+    for (const f of ["-dash.ts", "st*r.ts", "stXr.ts"])
+      writeFileSync(join(repo, f), f);
+    git(prAddArgs(["-dash.ts", "st*r.ts"]));
+    expect(
+      git(["diff", "--cached", "--name-only"]).trim().split("\n").sort(),
+    ).toEqual(["-dash.ts", "st*r.ts"]);
+  });
+
+  it("returns nothing for a clean tree", () => {
+    expect(changedPathsFromPorcelainZ(git(PR_STATUS_ARGS))).toEqual([]);
   });
 }, 20_000);

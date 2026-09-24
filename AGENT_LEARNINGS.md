@@ -26,3 +26,8 @@
 - **Mistake:** ran `npm run eval:gate -- --run` from a temp worktree; the inherited live `MC_DB_PATH` is relative and resolved against the worktree (no `data/`) → from a worktree pass `MC_DB_PATH=/root/claude/mission-control/data/mc.db` explicitly.
 - **Avoid:** `try { git checkout main } catch {}` in Jarvis's linked worktree — git refuses (`main` is held by the primary), the swallow hid it, and `checkout -b` stacked every new branch on the previous one → cut branches with `fetch origin main` + `checkout --no-track -b <name> origin/main`, and return every git failure.
 - **Mistake:** rewrote two `jarvis_dev` description lines without checking length; it sat at 1497/1500 (`registry.test.ts` DESC_THRESHOLD), went to 1616 (qa R2) → before editing any tool description, measure its headroom and run `registry.test.ts` scoped; start the paid eval gate only on the FINAL text.
+
+## 2026-09-24 — jarvis_dev action=pr staging paths + node_modules ignore
+- **Avoid:** parsing `git status --porcelain` through a helper that `trim()`s the whole output — the first entry's leading status space vanishes and `slice(3)` eats a path char (`src/x.ts` → `rc/x.ts`) → use raw `status --porcelain -z --untracked-files=all` and `--literal-pathspecs add -- <paths>`.
+- **Avoid:** treating both rename columns alike: an index rename (X=R) must SKIP the original path, a worktree rename (Y=R, intent-to-add) must STAGE it (it's a worktree-only deletion) — qa R2 caught my first fold, which skipped both; assert a clean tree after staging, not just the returned list.
+- **Avoid:** `name/` ignore patterns for a path that can be a symlink — a trailing slash matches directories only; the worktree's `node_modules` symlink was hidden only by `.git/info/exclude`.
