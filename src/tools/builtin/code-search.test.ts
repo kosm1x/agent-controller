@@ -106,7 +106,9 @@ describe("grep", () => {
     }
   });
 
-  it("drops records from denylisted files inside an allowed directory (R2)", async () => {
+  // Root only, like the service: as non-root (CI) /etc/shadow is unreadable anyway, and
+  // grep -r exits 2 on /etc's unreadable dirs, which the tool reports as an error.
+  it.skipIf(process.getuid?.() !== 0)("drops records from denylisted files inside an allowed directory (R2)", async () => {
     // /etc passes the path check; /etc/shadow inside it must not come back.
     const ctl = JSON.parse(
       await grepTool.execute({ pattern: "root", path: "/etc", include_glob: "passwd", output_mode: "files" }),

@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -398,7 +398,8 @@ describe("missingHostDistAssets — the mounted host dist/ must be a full `npm r
     ]);
   });
 
-  it("the live host dist/ is complete right now (deploy.sh ran `npm run build`)", () => {
+  // Only the host has a live dist/ to check; CI checks out elsewhere.
+  it.skipIf(!existsSync(MC_ROOT))("the live host dist/ is complete right now (deploy.sh ran `npm run build`)", () => {
     expect(missingHostDistAssets()).toEqual([]);
   });
 });

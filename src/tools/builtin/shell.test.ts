@@ -6,7 +6,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   shellTool,
   validateShellCommand,
@@ -19,6 +20,11 @@ import {
   buildScrubbedEnv,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
+
+// The checkout under test: the package-manager gate resolves `npx` bins against
+// real node_modules, so the tests must not assume the VPS path (CI checks out
+// elsewhere).
+const MC = fileURLToPath(new URL("../../..", import.meta.url)).replace(/\/$/, "");
 
 describe("resolveShellTimeout — DB ops get a larger budget; cap is a real hard cap", () => {
   const DB = "docker exec supabase-db psql -U postgres -c 'TRUNCATE x CASCADE'";
@@ -1058,7 +1064,7 @@ describe("checkUnscopedTestRun — the shell-tool mirror of vitest-scope-guard",
     expect(blocked.reason).toMatch(/unscoped/);
 
     const ok = validateShellCommand(
-      "cd /root/claude/mission-control && npx vitest run src/db/drive-sync.test.ts",
+      `cd ${MC} && npx vitest run src/db/drive-sync.test.ts`,
     );
     expect(ok.allowed).toBe(true);
   });
@@ -1151,7 +1157,6 @@ describe("checkPrimaryMcGitMutation — shared-worktree protection", () => {
 });
 
 describe("package-manager gate — shell_exec has no install authority (dependency trust audit 2026-09-16)", () => {
-  const MC = "/root/claude/mission-control";
   // Two layers refuse: the per-segment token walk (specific reasons) and the
   // raw-string regex (wrapper/quote/heredoc-proof, generic reason). Every
   // refusal names the operator as the decision-maker.
@@ -1225,7 +1230,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     blocked("uv tool run ruff");
     blocked("pipx run ruff");
     // qa R2 H-2: a relative `cd` moves the cwd; `cd -` makes it unknowable.
-    blocked("cd .. && npx tsx /tmp/x.ts", /not installed under \/root\/claude\/node_modules/);
+    blocked("cd .. && npx tsx /tmp/x.ts", new RegExp(`not installed under ${dirname(MC)}/node_modules`));
     blocked("cd ../.. && npx tsx /tmp/x.ts");
     blocked("cd - && npx tsx x.ts", /unknown-cwd/);
     blocked("cd ~ && npx tsx x.ts");
@@ -1631,8 +1636,8 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     allowed("ls node_modules/.bin | head");
     allowed("npx ./node_modules/.bin/tsx x.ts");
     allowed("cd src && cd .. && npx tsx x.ts"); // relative cd back to the checkout
-    allowed("cd /root/claude && cd mission-control && npx tsx x.ts");
-    allowed("cd ~/claude/mission-control && npx tsx x.ts");
+    allowed(`cd ${dirname(MC)} && cd ${basename(MC)} && npx tsx x.ts`);
+    allowed(`cd ~/${relative(process.env.HOME ?? "/root", MC)} && npx tsx x.ts`);
     allowed("which npm");
     allowed("which yarn"); // a bare `yarn` TOKEN is not a bare `yarn` COMMAND
     allowed("echo yarn");
@@ -1652,7 +1657,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     allowed(`cd -L -- ${MC} && npx tsx x.ts`);
     allowed('cd "$HOME"/claude/mission-control && npx tsx x.ts');
     allowed("cd ${HOME}/claude/mission-control && npx tsx x.ts");
-    allowed("cd '/root/claude/mission-control' && npx tsx x.ts");
+    allowed(`cd '${MC}' && npx tsx x.ts`);
     allowed("P=1; ${P:-2}; npm run build");
     allowed("echo ${X:-default}");
     allowed("cat <<'EOF' > /root/claude/mission-control/jarvis/notes.md\nrun npm install later\nEOF");
