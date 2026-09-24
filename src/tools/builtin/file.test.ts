@@ -210,6 +210,28 @@ describe("standing orders on disk (jarvis-kb/directives/) — file_write / file_
   });
 });
 
+// A SKILL.md registers only through jarvis_file_write (critic-gated).
+describe("skill definitions on disk (jarvis-kb/skills/*/SKILL.md) — file_write refuses", () => {
+  it("file_write refuses a SKILL.md and lets other skill files through the guard", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const blocked = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/skills/x-y/SKILL.md",
+        content: "---",
+      }),
+    );
+    expect(String(blocked.error)).toMatch(/skill definition/);
+    const other = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/skills/x-y/REFERENCE.md",
+        content: "notes",
+      }),
+    );
+    expect(String(other.error ?? "")).not.toMatch(/skill definition/);
+  });
+});
+
 // audit 2026-09-22: content_file was read with no read guard, so file_write
 // could copy /proc/self/environ or a credential file into /tmp for file_read.
 describe("file_write content_file — read denylist", () => {

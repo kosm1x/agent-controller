@@ -11,6 +11,7 @@
 import type { Tool } from "../types.js";
 import { saveSkill, listSkills, type SkillRow } from "../../db/skills.js";
 import { getMemoryService } from "../../memory/index.js";
+import { unversionedSkillNote } from "../../skills/kb-file.js";
 
 // ---------------------------------------------------------------------------
 // skill_save
@@ -118,6 +119,8 @@ WHAT HAPPENS:
         description,
         steps_count: steps.length,
         tools_count: tools.length,
+        versioned: false,
+        note: unversionedSkillNote(name),
       });
     } catch (err) {
       return JSON.stringify({

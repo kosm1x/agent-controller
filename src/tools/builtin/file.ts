@@ -8,6 +8,7 @@ import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isSkillFileDiskPath,
   isStandingOrdersDiskPath,
   validatePathSafety,
   isDangerousRemovalPath,
@@ -116,6 +117,12 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
     return {
       allowed: false,
       reason: `Write blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+    };
+  }
+  if (isSkillFileDiskPath(resolved, getJarvisKbRoot())) {
+    return {
+      allowed: false,
+      reason: `Write blocked: ${resolved} is a skill definition — write skills/<name>/SKILL.md with jarvis_file_write, which runs the skill critic and registers the version`,
     };
   }
   for (const deny of DENY_WRITE_PREFIXES) {

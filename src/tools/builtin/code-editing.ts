@@ -19,6 +19,7 @@ import { dirname } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isSkillFileDiskPath,
   isStandingOrdersDiskPath,
   validatePathSafety,
 } from "./immutable-core.js";
@@ -153,6 +154,11 @@ RULES:
     if (isStandingOrdersDiskPath(realResolve(path), getJarvisKbRoot())) {
       return JSON.stringify({
         error: `Edit blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+      });
+    }
+    if (isSkillFileDiskPath(realResolve(path), getJarvisKbRoot())) {
+      return JSON.stringify({
+        error: `Edit blocked: ${resolved} is a skill definition — write skills/<name>/SKILL.md with jarvis_file_write, which runs the skill critic and registers the version`,
       });
     }
     const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));

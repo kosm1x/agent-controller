@@ -167,6 +167,21 @@ describe("file_edit — standing orders on disk refused", () => {
   });
 });
 
+// A SKILL.md registers only through jarvis_file_write (critic-gated).
+describe("file_edit — skill definitions on disk refused", () => {
+  it("refuses an edit to jarvis-kb/skills/<name>/SKILL.md", async () => {
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileEditTool.execute({
+        path: getJarvisKbRoot() + "/skills/x-y/SKILL.md",
+        old_string: "a",
+        new_string: "b",
+      }),
+    );
+    expect(String(r.error)).toMatch(/skill definition/);
+  });
+});
+
 // audit 2026-09-22 R4: the "write" check does not follow symlinks, but an
 // edit reads the file first — a link to a read-blocked file must be refused.
 describe("file_edit — symlink to a read-blocked file", () => {
