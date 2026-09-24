@@ -19,7 +19,8 @@ import { z } from "zod";
 // Zod schema — validates the parsed map
 // ---------------------------------------------------------------------------
 
-const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+// No leading zeros (semver §2): "1.0.01" would equal "1.0.1" numerically.
+const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
 /**

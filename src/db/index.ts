@@ -732,6 +732,24 @@ export function initDatabase(dbPath: string): Database.Database {
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id)",
   );
+  // A skill's current version only moves up: no writer (lifecycle, boot
+  // loader, `mc-ctl skills revert`, raw SQL) can point a skill at a version
+  // with a lower MAJOR.MINOR.PATCH than the one it points at now. Rolling
+  // back = republishing the old body under a higher version.
+  const semverKey = (v: string) => {
+    const rest = `substr(${v}, instr(${v}, '.') + 1)`;
+    return `CAST(${v} AS INTEGER), CAST(${rest} AS INTEGER), CAST(substr(${rest}, instr(${rest}, '.') + 1) AS INTEGER)`;
+  };
+  _db.exec(`CREATE TRIGGER IF NOT EXISTS skills_version_monotonic
+    BEFORE UPDATE OF current_version_id ON skills
+    WHEN OLD.current_version_id IS NOT NULL
+      AND NEW.current_version_id IS NOT NULL
+      AND NEW.current_version_id != OLD.current_version_id
+    BEGIN
+      SELECT RAISE(ABORT, 'SKILL_VERSION_NOT_HIGHER: a skill cannot point at a lower version than its current one')
+      WHERE (SELECT ${semverKey("version")} FROM skill_versions WHERE id = NEW.current_version_id)
+          < (SELECT ${semverKey("version")} FROM skill_versions WHERE id = OLD.current_version_id);
+    END`);
 
   // skill_test_runs — every test execution. Activation invariant: a skill is
   // is_certified=1 iff every test in tests_json has a 'pass' row for the

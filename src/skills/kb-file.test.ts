@@ -25,7 +25,11 @@ import { skillLoadTool } from "../tools/builtin/skill-load.js";
 import { skillSaveTool } from "../tools/builtin/skills.js";
 import { isSkillFileDiskPath } from "../tools/builtin/immutable-core.js";
 import { runSkill } from "./dispatcher.js";
+import { parseSkillFile } from "./frontmatter.js";
+import { skillSave } from "./lifecycle.js";
 import { loadSkillsFromJarvisFiles } from "./loader.js";
+import { pointSkillAtVersion } from "./storage.js";
+import { runSkillTests } from "./test-runner.js";
 
 vi.mock("../inference/adapter.js", () => ({
   infer: vi.fn(),
@@ -40,10 +44,19 @@ const reject = {
   content: '{"verdict": "fail", "critique": "Steps are too vague."}',
   usage: { cost_usd: 0.001 },
 } as Awaited<ReturnType<typeof infer>>;
+const reply = (content: string) =>
+  ({ content, usage: { cost_usd: 0.001 } }) as Awaited<ReturnType<typeof infer>>;
+const TESTS =
+  '[{"name":"happy_path","input":{"brief":"Despacho contable"},"expect":{"output_match":{"ok":true}}},' +
+  '{"name":"empty_brief","input":{"brief":""},"expect_error":{"class":"INPUT_REQUIRED","detail_contains":"brief"}}]';
+const HAPPY = reply('{"ok":true}');
+const EMPTY_BRIEF = reply('{"error":"INPUT_REQUIRED","detail":"brief es obligatorio"}');
 
 const PATH = "skills/ogilvy-slogan/SKILL.md";
 
-function skillFile(opts: { version?: string; body?: string; description?: string } = {}): string {
+function skillFile(
+  opts: { version?: string; body?: string; description?: string; tests?: string } = {},
+): string {
   return `---
 name: ogilvy-slogan
 description: ${opts.description ?? "Genera 3 opciones de slogan con los 7 principios de Ogilvy."}
@@ -55,7 +68,7 @@ trigger_examples:
   - "Crea un slogan estilo Ogilvy"
 tools_used:
 inputs_json: '[{"name":"brief","type":"string","required":true,"description":"Marca y producto"}]'
-tests_json: '[]'
+tests_json: '${opts.tests ?? "[]"}'
 ---
 
 ${opts.body ?? "# Ogilvy slogan\n\n## Steps\n1. Decodificar la marca.\n2. Escribir 3 opciones."}`;
@@ -101,9 +114,7 @@ describe("jarvis_file_write on skills/<name>/SKILL.md", () => {
       status: "registered",
       certified: false,
     });
-    expect(String((r.skill as { next: string }).next)).toContain(
-      "mc-ctl skills certify ogilvy-slogan",
-    );
+    expect(String((r.skill as { next: string }).next)).toContain("no valid tests");
     expect(getFile(PATH)?.content).toBe(skillFile());
 
     const row = getDatabase()
@@ -231,8 +242,8 @@ describe("jarvis_file_write on skills/<name>/SKILL.md", () => {
     await write(PATH, skillFile());
     await write(PATH, skillFile({ version: "1.1.0", body: "# v2\n\n1. Nuevo." }));
     const r = await write(PATH, skillFile());
-    expect(r.error).toBe("SKILL_VERSION_EXISTS");
-    expect(String(r.message)).toContain("not the current version");
+    expect(r.error).toBe("SKILL_VERSION_NOT_HIGHER");
+    expect(String(r.message)).toContain("current version 1.1.0");
   });
 
   it("decertifies a certified skill when a new version is registered", async () => {
@@ -252,6 +263,308 @@ describe("jarvis_file_write on skills/<name>/SKILL.md", () => {
     expect(r.success).toBe(true);
     expect(r.skill).toBeUndefined();
     expect(mockInfer).not.toHaveBeenCalled();
+  });
+});
+
+describe("auto-certification on registration", () => {
+  function certifiedFlag(): number {
+    return (
+      getDatabase()
+        .prepare("SELECT is_certified FROM skills WHERE name = 'ogilvy-slogan'")
+        .get() as { is_certified: number }
+    ).is_certified;
+  }
+
+  it("certifies a new version whose tests all pass", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    const r = await write(PATH, skillFile({ tests: TESTS }));
+    expect(r.skill).toMatchObject({
+      status: "registered",
+      certified: true,
+      tests: [
+        { name: "happy_path", result: "pass" },
+        { name: "empty_brief", result: "pass" },
+      ],
+    });
+    expect(String((r.skill as { next: string }).next)).toContain("Certified");
+    expect(certifiedFlag()).toBe(1);
+    const runs = getDatabase()
+      .prepare("SELECT COUNT(*) AS n FROM skill_test_runs WHERE result = 'pass'")
+      .get() as { n: number };
+    expect(runs.n).toBe(2);
+  });
+
+  it("registers but does not certify when a test fails, and names the failure", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(reply('{"ok":false}'))
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    const r = await write(PATH, skillFile({ tests: TESTS }));
+    expect(r.success).toBe(true);
+    expect(r.skill).toMatchObject({ status: "registered", certified: false });
+    const next = String((r.skill as { next: string }).next);
+    expect(next).toContain("happy_path (fail");
+    expect(next).toContain("higher `version`");
+    expect(certifiedFlag()).toBe(0);
+  });
+
+  it("a failing new version of a certified skill leaves it uncertified", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    expect(certifiedFlag()).toBe(1);
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(reply('{"error":"OTHER","detail":"x"}'));
+    const r = await write(
+      PATH,
+      skillFile({ version: "1.1.0", body: "# v2\n\n1. Nuevo.", tests: TESTS }),
+    );
+    expect(r.skill).toMatchObject({ version: "1.1.0", certified: false });
+    expect(certifiedFlag()).toBe(0);
+  });
+
+  it("re-runs the tests of an uncertified current version on an identical rewrite", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockRejectedValueOnce(new Error("provider down"))
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    const first = await write(PATH, skillFile({ tests: TESTS }));
+    expect(first.skill).toMatchObject({ certified: false });
+    mockInfer.mockReset();
+    mockInfer.mockResolvedValueOnce(HAPPY).mockResolvedValueOnce(EMPTY_BRIEF);
+    const again = await write(PATH, skillFile({ tests: TESTS }));
+    expect(again.skill).toMatchObject({ status: "unchanged", certified: true });
+    expect(mockInfer).toHaveBeenCalledTimes(2); // the two tests, no critic
+    expect(certifiedFlag()).toBe(1);
+  });
+
+  it("does not re-run a version whose test failed; it needs a new version", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(reply('{"ok":false}'))
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    mockInfer.mockReset();
+    const again = await write(PATH, skillFile({ tests: TESTS }));
+    expect(again.skill).toMatchObject({ status: "unchanged", certified: false });
+    expect(String((again.skill as { next: string }).next)).toContain("failed its tests");
+    expect(mockInfer).not.toHaveBeenCalled();
+  });
+
+  it("stops re-running unfinished tests after 3 runs of a version", async () => {
+    mockInfer.mockResolvedValueOnce(pass).mockRejectedValue(new Error("provider down"));
+    await write(PATH, skillFile({ tests: TESTS })); // run 1
+    await write(PATH, skillFile({ tests: TESTS })); // run 2
+    await write(PATH, skillFile({ tests: TESTS })); // run 3
+    mockInfer.mockReset();
+    const fourth = await write(PATH, skillFile({ tests: TESTS }));
+    expect(fourth.skill).toMatchObject({ certified: false });
+    expect(String((fourth.skill as { next: string }).next)).toContain("did not finish in 3 runs");
+    expect(mockInfer).not.toHaveBeenCalled();
+  });
+
+  it("writes the KB file before running the tests", async () => {
+    let seen: string | undefined;
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockImplementationOnce(async () => {
+        seen = getFile(PATH)?.content;
+        return HAPPY;
+      })
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    expect(seen).toBe(skillFile({ tests: TESTS }));
+  });
+
+  it("a test run of a superseded version cannot certify the current one", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    const db = getDatabase();
+    const old = db
+      .prepare("SELECT skill_id, current_version_id AS id FROM skills WHERE name = 'ogilvy-slogan'")
+      .get() as { skill_id: string; id: number };
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(reply('{"ok":false}'))
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ version: "1.1.0", body: "# v2\n\n1. Nuevo.", tests: TESTS }));
+    expect(certifiedFlag()).toBe(0);
+    mockInfer.mockResolvedValueOnce(HAPPY).mockResolvedValueOnce(EMPTY_BRIEF);
+    const late = await runSkillTests(old.skill_id, old.id);
+    expect(late.certified).toBe(false);
+    expect(certifiedFlag()).toBe(0);
+  });
+
+  it("every pointer move decertifies: boot scan and skillSave of a new version", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    expect(certifiedFlag()).toBe(1);
+    upsertFile(PATH, "Ogilvy slogan", skillFile({ version: "1.1.0", body: "# roto", tests: TESTS }));
+    loadSkillsFromJarvisFiles({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    expect(certifiedFlag()).toBe(0);
+    getDatabase().prepare("UPDATE skills SET is_certified = 1 WHERE name = 'ogilvy-slogan'").run();
+    mockInfer.mockResolvedValueOnce(pass);
+    await skillSave(parseSkillFile(skillFile({ version: "1.2.0", body: "# otro", tests: TESTS })));
+    expect(certifiedFlag()).toBe(0);
+  });
+
+  it("says a no-tests skill has no valid tests on an identical rewrite", async () => {
+    mockInfer.mockResolvedValueOnce(pass);
+    await write(PATH, skillFile());
+    const again = await write(PATH, skillFile());
+    expect(String((again.skill as { next: string }).next)).toContain("no valid tests");
+  });
+
+  it("does not re-run the tests of a certified version on an identical rewrite", async () => {
+    mockInfer
+      .mockResolvedValueOnce(pass)
+      .mockResolvedValueOnce(HAPPY)
+      .mockResolvedValueOnce(EMPTY_BRIEF);
+    await write(PATH, skillFile({ tests: TESTS }));
+    mockInfer.mockReset();
+    const again = await write(PATH, skillFile({ tests: TESTS }));
+    expect(again.skill).toMatchObject({ status: "unchanged", certified: true });
+    expect(mockInfer).not.toHaveBeenCalled();
+  });
+});
+
+describe("versions only move up", () => {
+  function current(): string {
+    return (
+      getDatabase()
+        .prepare(
+          "SELECT v.version FROM skills s JOIN skill_versions v ON v.id = s.current_version_id WHERE s.name = 'ogilvy-slogan'",
+        )
+        .get() as { version: string }
+    ).version;
+  }
+
+  it("kb write: refuses a new lower version before the critic", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile({ version: "1.1.0" }));
+    mockInfer.mockReset();
+    const r = await write(PATH, skillFile({ version: "1.0.5", body: "# old\n\n1. Paso." }));
+    expect(r).toMatchObject({ error: "SKILL_VERSION_NOT_HIGHER", saved: false });
+    expect(String(r.message)).toContain("higher than 1.1.0");
+    expect(mockInfer).not.toHaveBeenCalled();
+    expect(versionCount()).toBe(1);
+    expect(current()).toBe("1.1.0");
+    expect(getFile(PATH)?.content).toBe(skillFile({ version: "1.1.0" }));
+  });
+
+  it("compares versions numerically, not as text", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile({ version: "1.9.0" }));
+    const r = await write(PATH, skillFile({ version: "1.10.0", body: "# v10\n\n1. Paso." }));
+    expect(r.skill).toMatchObject({ version: "1.10.0", status: "registered" });
+    expect(current()).toBe("1.10.0");
+  });
+
+  it("kb write: names a registered-but-not-current higher version", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile());
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO skill_versions (skill_id, version, body, body_sha256, inputs_json, tests_json, tools_used_json, created_by)
+       SELECT skill_id, '2.0.0', 'orphan', 'x', '[]', '[]', '[]', 'operator' FROM skills WHERE name = 'ogilvy-slogan'`,
+    ).run();
+    const r = await write(PATH, skillFile({ version: "2.0.0" }));
+    expect(r.error).toBe("SKILL_VERSION_EXISTS");
+    expect(String(r.message)).toContain("not its current version (1.0.0)");
+  });
+
+  it("skillSave refuses, atomically, when a higher version lands during the critic", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile());
+    mockInfer.mockReset();
+    mockInfer.mockImplementationOnce(async () => {
+      const db = getDatabase();
+      const { skill_id } = db
+        .prepare("SELECT skill_id FROM skills WHERE name = 'ogilvy-slogan'")
+        .get() as { skill_id: string };
+      const id = db
+        .prepare(
+          `INSERT INTO skill_versions (skill_id, version, body, body_sha256, inputs_json, tests_json, tools_used_json, created_by)
+           VALUES (?, '3.0.0', 'x', 'x', '[]', '[]', '[]', 'operator')`,
+        )
+        .run(skill_id).lastInsertRowid;
+      db.prepare("UPDATE skills SET current_version_id = ? WHERE skill_id = ?").run(id, skill_id);
+      return pass;
+    });
+    const r = await skillSave(
+      parseSkillFile(skillFile({ version: "2.0.0", body: "# v2\n\n1. Paso." })),
+    );
+    expect(r).toMatchObject({ ok: false, kind: "version_not_higher" });
+    const versions = getDatabase()
+      .prepare("SELECT version FROM skill_versions ORDER BY id")
+      .all()
+      .map((v) => (v as { version: string }).version);
+    expect(versions).toEqual(["1.0.0", "3.0.0"]);
+    expect(current()).toBe("3.0.0");
+  });
+
+  it("refuses versions with leading zeros", async () => {
+    const r = await write(PATH, skillFile({ version: "1.0.01" }));
+    expect(r.error).toBe("SKILL_FRONTMATTER_INVALID");
+  });
+
+  it("skillSave refuses a lower version without calling the critic", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile({ version: "2.0.0" }));
+    mockInfer.mockReset();
+    const r = await skillSave(parseSkillFile(skillFile({ body: "# v1\n\n1. Paso." })));
+    expect(r).toMatchObject({ ok: false, kind: "version_not_higher" });
+    expect(mockInfer).not.toHaveBeenCalled();
+    expect(versionCount()).toBe(1);
+  });
+
+  it("boot scan skips a KB file older than the current version", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile({ version: "2.0.0" }));
+    upsertFile(PATH, "Ogilvy slogan", skillFile({ version: "1.5.0", body: "# old\n\n1. Paso." }));
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const boot = loadSkillsFromJarvisFiles(log);
+    expect(boot.loaded).toBe(0);
+    expect(boot.errors).toEqual([
+      expect.objectContaining({ path: PATH, kind: "version_not_higher" }),
+    ]);
+    expect(versionCount()).toBe(1);
+    expect(current()).toBe("2.0.0");
+  });
+
+  it("the database refuses pointing a skill at a lower version, whoever writes", async () => {
+    mockInfer.mockResolvedValue(pass);
+    await write(PATH, skillFile());
+    await write(PATH, skillFile({ version: "1.2.0", body: "# v2\n\n1. Paso." }));
+    const db = getDatabase();
+    const { skill_id } = db
+      .prepare("SELECT skill_id FROM skills WHERE name = 'ogilvy-slogan'")
+      .get() as { skill_id: string };
+    const low = db
+      .prepare("SELECT id FROM skill_versions WHERE version = '1.0.0'")
+      .get() as { id: number };
+    expect(() =>
+      db
+        .prepare("UPDATE skills SET current_version_id = ? WHERE skill_id = ?")
+        .run(low.id, skill_id),
+    ).toThrow(/SKILL_VERSION_NOT_HIGHER/);
+    expect(() =>
+      pointSkillAtVersion(skill_id, parseSkillFile(skillFile()).frontmatter, low.id),
+    ).toThrow(/SKILL_VERSION_NOT_HIGHER/);
+    expect(current()).toBe("1.2.0");
   });
 });
 

@@ -13,10 +13,21 @@
 
 import { getDatabase } from "../db/index.js";
 import { canonicalKbPath } from "../tools/builtin/immutable-core.js";
+import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { FrontmatterError, parseSkillFile } from "./frontmatter.js";
 import { skillSave } from "./lifecycle.js";
 import { SKILL_PATH_RE } from "./loader.js";
-import { sha256 } from "./storage.js";
+import { compareSemver, currentSkillVersion, sha256 } from "./storage.js";
+import {
+  runSkillTests,
+  SkillTestsArraySchema,
+  type RunSkillTestsResult,
+} from "./test-runner.js";
+
+/** Wall-clock cap on the certification test run inside one file write. */
+const CERTIFY_DEADLINE_MS = 120_000;
+/** Test runs per version before a retry needs a new version. */
+const MAX_TEST_RUNS = 3;
 
 export const SKILL_FILE_FORMAT = `---
 name: <verb-led-kebab-name, identical to the folder name, e.g. generar-slogan>
@@ -86,11 +97,18 @@ export interface SkillFileRegistrationInfo {
   version: string;
   status: "registered" | "unchanged";
   certified: boolean;
+  /** Per-test results of the certification run, when one ran. */
+  tests?: Array<{ name: string; result: string; detail?: string }>;
   next: string;
 }
 
 export type SkillFileRegistration =
-  | { ok: true; skill: SkillFileRegistrationInfo }
+  | {
+      ok: true;
+      skill: SkillFileRegistrationInfo;
+      /** Runs the version's tests; call it AFTER the file is written. */
+      certify?: () => Promise<SkillFileRegistrationInfo>;
+    }
   | { ok: false; error: Record<string, unknown> };
 
 /**
@@ -136,60 +154,158 @@ export async function registerSkillFile(
     });
   }
 
-  const ok = (status: "registered" | "unchanged"): SkillFileRegistration => {
-    // Retrieval (automatic suggestion) serves certified skills only, and the
-    // test sweep re-tests only certified ones — certification is operator-run.
-    const certified =
-      (
-        getDatabase()
-          .prepare("SELECT is_certified FROM skills WHERE name = ?")
-          .get(name) as { is_certified: number } | undefined
-      )?.is_certified === 1;
+  // Versions only move up (DB trigger `skills_version_monotonic`).
+  const current = currentSkillVersion(name);
+  if (current !== null && compareSemver(version, current) < 0) {
+    return fail({
+      error: "SKILL_VERSION_NOT_HIGHER",
+      message: `version ${version} of "${name}" is lower than its current version ${current}. Versions only go up: write the skill with a version higher than ${current}.`,
+    });
+  }
+
+  const testCount = (() => {
+    try {
+      return SkillTestsArraySchema.parse(JSON.parse(parsed.frontmatter.tests_json)).length;
+    } catch {
+      return 0;
+    }
+  })();
+
+  const isCertified = () =>
+    (
+      getDatabase()
+        .prepare("SELECT is_certified FROM skills WHERE name = ?")
+        .get(name) as { is_certified: number } | undefined
+    )?.is_certified === 1;
+
+  const info = (
+    status: "registered" | "unchanged",
+    tests?: RunSkillTestsResult,
+    notCertifiedWhy?: string,
+  ): SkillFileRegistrationInfo => {
+    const certified = isCertified();
+    const usable = `Usable now by name: skill_load("${name}") to read it, skill_run("${name}", {...inputs}) to execute it.`;
+    const outcomes = tests?.outcomes ?? [];
+    const describe = (o: RunSkillTestsResult["outcomes"][number]) =>
+      `${o.testName} (${o.result}${o.diffSummary ? `: ${o.diffSummary}` : ""})`;
+    const failed = outcomes.filter((o) => o.result === "fail");
+    const unfinished = outcomes.filter((o) => o.result === "error" || o.result === "timeout");
+    let next: string;
+    if (certified) {
+      next = `${usable} Certified (all tests pass), so it is also suggested automatically.`;
+    } else if (notCertifiedWhy) {
+      next = `${usable} Not certified: ${notCertifiedWhy}`;
+    } else if (testCount === 0) {
+      next = `${usable} Not certified: tests_json has no valid tests. Add at least 2 tests and write it again with a higher \`version\`.`;
+    } else if (failed.length > 0) {
+      next =
+        `${usable} Not certified: failing tests: ${failed.map(describe).join("; ")}. ` +
+        "Fix the skill (or its tests) and write it again with a higher `version`.";
+    } else if (tests) {
+      next =
+        `${usable} Not certified: its tests did not finish` +
+        (unfinished.length > 0 ? ` (${unfinished.map(describe).join("; ")})` : "") +
+        `. Write the same file again to re-run them (at most ${MAX_TEST_RUNS} runs per version).`;
+    } else {
+      next = `${usable} Not certified yet: write the same file again to run its tests.`;
+    }
     return {
-      ok: true,
-      skill: {
-        name,
-        version,
-        status,
-        certified,
-        next:
-          `Usable now by name: skill_load("${name}") to read it, skill_run("${name}", {...inputs}) to execute it.` +
-          (certified
-            ? ""
-            : ` Not certified yet, so it is not suggested automatically; the operator certifies it with: mc-ctl skills certify ${name}`),
-      },
+      name,
+      version,
+      status,
+      certified,
+      ...(tests
+        ? {
+            tests: outcomes.map((o) => ({
+              name: o.testName,
+              result: o.result,
+              ...(o.diffSummary ? { detail: o.diffSummary } : {}),
+            })),
+          }
+        : {}),
+      next,
     };
   };
+
+  // Certification = the version's own tests all pass (runSkillTests flips
+  // is_certified, for the current version only). The caller runs `certify`
+  // AFTER the file lands, so the KB file and the registered version agree
+  // even if the run is cut short; the deadline bounds the wait.
+  const withTests = (
+    status: "registered" | "unchanged",
+    skillId: string,
+    versionId: number,
+  ): SkillFileRegistration => ({
+    ok: true,
+    skill: info(status),
+    certify: async () =>
+      info(
+        status,
+        await runSkillTests(skillId, versionId, {
+          signal: AbortSignal.timeout(CERTIFY_DEADLINE_MS),
+          taskId: currentRunTaskId(),
+        }),
+      ),
+  });
 
   // The body of this version is already registered. Writing different
   // frontmatter under the same version would leave the file and the
   // registered row disagreeing, so only an identical (or missing) file is
-  // accepted.
-  const unchanged = (): SkillFileRegistration =>
-    priorContent === null || priorContent === content
-      ? ok("unchanged")
-      : fail({
-          error: "SKILL_VERSION_EXISTS",
-          message: `version ${version} of "${name}" is already registered with this body. Raise \`version\` to change the skill.`,
-        });
+  // accepted. An uncertified current version is re-tested when its runs so
+  // far only errored or timed out, at most MAX_TEST_RUNS times; a version
+  // with a failing test needs a new version.
+  const unchanged = (registered?: {
+    skillId: string;
+    versionId: number;
+  }): SkillFileRegistration => {
+    if (priorContent !== null && priorContent !== content) {
+      return fail({
+        error: "SKILL_VERSION_EXISTS",
+        message: `version ${version} of "${name}" is already registered with this body. Raise \`version\` to change the skill.`,
+      });
+    }
+    if (registered && !isCertified()) {
+      const runs = getDatabase()
+        .prepare(
+          "SELECT COUNT(*) AS n, COALESCE(SUM(result = 'fail'), 0) AS failed FROM skill_test_runs WHERE version_id = ?",
+        )
+        .get(registered.versionId) as { n: number; failed: number };
+      if (runs.failed > 0) {
+        return {
+          ok: true,
+          skill: info("unchanged", undefined, "this version failed its tests. Fix it and write it again with a higher `version`."),
+        };
+      }
+      // Checked before the run starts: concurrent identical rewrites can each
+      // pass it (each still bounded by CERTIFY_DEADLINE_MS).
+      if (testCount > 0 && runs.n >= MAX_TEST_RUNS * testCount) {
+        return {
+          ok: true,
+          skill: info("unchanged", undefined, `its tests did not finish in ${MAX_TEST_RUNS} runs. Write it again with a higher \`version\`, or ask the operator to certify it.`),
+        };
+      }
+      return withTests("unchanged", registered.skillId, registered.versionId);
+    }
+    return { ok: true, skill: info("unchanged") };
+  };
 
   // Settle an already-registered version BEFORE the critic: an identical
   // rewrite or a same-version change must not cost (or be failed by) an LLM
   // call. recordVersion keys on (skill, version) and hashes the body only.
   const registered = getDatabase()
     .prepare(
-      `SELECT v.id, v.body_sha256, s.current_version_id FROM skill_versions v
+      `SELECT v.id, v.skill_id, v.body_sha256, s.current_version_id FROM skill_versions v
        JOIN skills s ON s.skill_id = v.skill_id
        WHERE s.name = ? AND v.version = ?`,
     )
     .get(name, version) as
-    | { id: number; body_sha256: string; current_version_id: number | null }
+    | { id: number; skill_id: string; body_sha256: string; current_version_id: number | null }
     | undefined;
   if (registered) {
     if (registered.current_version_id !== registered.id) {
       return fail({
         error: "SKILL_VERSION_EXISTS",
-        message: `version ${version} of "${name}" is registered but is not the current version. Write the skill with a version higher than the current one.`,
+        message: `version ${version} of "${name}" is already registered but is not its current version${current ? ` (${current})` : ""}. Write the skill with a new version higher than ${version}.`,
       });
     }
     if (registered.body_sha256 !== sha256(parsed.body)) {
@@ -198,18 +314,13 @@ export async function registerSkillFile(
         message: `version ${version} of "${name}" is already registered with a different body. Raise \`version\` to change the skill.`,
       });
     }
-    return unchanged();
+    return unchanged({ skillId: registered.skill_id, versionId: registered.id });
   }
 
   const result = await skillSave(parsed, { createdBy: "refiner", bodyPath: path });
   if (result.ok) {
-    // A new body has passed no test yet: a certified skill loses its
-    // certification (retrieval serves certified skills only) until the
-    // operator re-certifies it.
-    getDatabase()
-      .prepare("UPDATE skills SET is_certified = 0 WHERE skill_id = ?")
-      .run(result.skillId);
-    return ok("registered");
+    // pointSkillAtVersion left it uncertified; it certifies only if its tests pass.
+    return withTests("registered", result.skillId, result.versionId);
   }
 
   switch (result.kind) {
@@ -217,6 +328,8 @@ export async function registerSkillFile(
       return unchanged();
     case "drift":
       return fail({ error: "SKILL_VERSION_EXISTS", message: result.critique });
+    case "version_not_higher": // a concurrent writer raised the version first
+      return fail({ error: "SKILL_VERSION_NOT_HIGHER", message: result.critique });
     case "critic_failed":
       return fail({
         error: "SKILL_CRITIC_FAILED",

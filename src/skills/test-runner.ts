@@ -145,7 +145,7 @@ export async function runSkillTests(
 
   if (!version) {
     // Caller passed a bad pair; surface via empty outcomes + no certify.
-    flipCertified(skillId, false);
+    flipCertified(skillId, versionId, false);
     return { skillId, versionId, certified: false, outcomes: [] };
   }
 
@@ -156,7 +156,7 @@ export async function runSkillTests(
   } catch {
     // Malformed tests_json — not a runtime fail, but caller MUST NOT
     // certify a skill whose tests we couldn't parse.
-    flipCertified(skillId, false);
+    flipCertified(skillId, versionId, false);
     return { skillId, versionId, certified: false, outcomes: [] };
   }
 
@@ -164,7 +164,7 @@ export async function runSkillTests(
     // No tests = cannot certify. Spec §9: "is_certified=1 iff every
     // test has result='pass' ... within 7 days" — vacuously certifying
     // is the wrong default.
-    flipCertified(skillId, false);
+    flipCertified(skillId, versionId, false);
     return { skillId, versionId, certified: false, outcomes: [] };
   }
 
@@ -190,8 +190,10 @@ export async function runSkillTests(
     // is informationally incomplete.
     const db = getDatabase();
     const row = db
-      .prepare("SELECT is_certified FROM skills WHERE skill_id = ?")
-      .get(skillId) as { is_certified: number } | undefined;
+      .prepare(
+        "SELECT is_certified FROM skills WHERE skill_id = ? AND current_version_id = ?",
+      )
+      .get(skillId, versionId) as { is_certified: number } | undefined;
     return {
       skillId,
       versionId,
@@ -201,8 +203,8 @@ export async function runSkillTests(
   }
 
   const allPassed = outcomes.every((o) => o.result === "pass");
-  flipCertified(skillId, allPassed);
-  return { skillId, versionId, certified: allPassed, outcomes };
+  const applied = flipCertified(skillId, versionId, allPassed);
+  return { skillId, versionId, certified: allPassed && applied, outcomes };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +331,18 @@ function judgeOutcome(
   // expect.output_match path
   const expect = test.expect ?? {};
   const expectedJson = JSON.stringify(expect);
+  const errClass = (actual as { error?: unknown }).error;
+  if (errClass !== undefined && errClass !== null) {
+    // A happy-path test must not pass on an error reply.
+    return {
+      testName: test.name,
+      result: "fail",
+      actualJson,
+      expectedJson,
+      diffSummary: `expected a result, got error ${JSON.stringify(errClass)}`,
+      durationMs,
+    };
+  }
   if (!expect.output_match) {
     // expect block with no output_match → treat any non-error JSON as pass.
     // expect.output_type alone is informational; we don't enforce type
@@ -468,9 +482,23 @@ function writeTestRun(
     });
 }
 
-function flipCertified(skillId: string, certified: boolean): void {
+/**
+ * Set the skill's certification from a run of `versionId`'s tests. A no-op
+ * (returns false) when `versionId` is no longer the current version: a slow
+ * run of a superseded version must not certify the version that replaced it.
+ */
+function flipCertified(
+  skillId: string,
+  versionId: number,
+  certified: boolean,
+): boolean {
   const db = getDatabase();
-  db.prepare(
-    `UPDATE skills SET is_certified = ?, updated_at = datetime('now') WHERE skill_id = ?`,
-  ).run(certified ? 1 : 0, skillId);
+  return (
+    db
+      .prepare(
+        `UPDATE skills SET is_certified = ?, updated_at = datetime('now')
+         WHERE skill_id = ? AND current_version_id = ?`,
+      )
+      .run(certified ? 1 : 0, skillId, versionId).changes > 0
+  );
 }
