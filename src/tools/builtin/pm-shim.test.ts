@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PM_SHIM_DIR, pmShimMissing, withPmShimPath } from "./shell.js";
@@ -45,7 +45,12 @@ echo "REAL npm $*"
   writeFileSync(join(proj, "node_modules", ".bin", "tsx"), "#!/bin/sh\necho tsx\n", { mode: 0o755 });
   writeFileSync(join(proj, "package.json"), JSON.stringify({ scripts: { sneaky: "npm i lodash", fine: "npm ls" } }));
   // No host package manager is reachable: the fakes come right after the shim.
-  env = withPmShimPath({ PATH: `${real}:/usr/bin:/bin`, HOME: tmp });
+  // `node` alone, wherever it lives (CI's is not in /usr/bin): the fake npm
+  // needs it, and its directory holds a real npm/npx the fakes must shadow.
+  const nodeBin = join(tmp, "node-bin");
+  mkdirSync(nodeBin);
+  symlinkSync(process.execPath, join(nodeBin, "node"));
+  env = withPmShimPath({ PATH: `${real}:${nodeBin}:/usr/bin:/bin`, HOME: tmp });
 });
 
 afterAll(() => {
