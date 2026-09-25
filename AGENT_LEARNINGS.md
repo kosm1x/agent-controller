@@ -79,3 +79,8 @@
 - **Avoid:** a tool that returns only the upstream status code. Jina's JSON body said "anonymous access to x.com blocked (someone else's abuse)"; `web_read` passed on "403 Forbidden", and the model read it as "this tweet is private" and gave up. Carry the upstream's reason and a next route in the error.
 - **Better:** diagnose "it used to work" from `task_trace_events`: the tool sequence of a working vs a failing task (browser__goto vs web_read) showed the difference in one query, before reading any code. Reproduce with a direct `curl` of the upstream.
 - **Better:** live-verify a deployed tool fix through `/api/tasks` with `agent_type:"fast"` and `tools:[<tool>]`, then read `tasks.output` and the trace's `tool.called` rows.
+
+## 2026-09-25 — google_news RSS failures (#48)
+- **Better:** when a third-party proxy fails, fetch the origin directly from the host before blaming the origin: Google's feed returned 200 from the VPS while rss2json failed, which settled the diagnosis in one curl.
+- **Avoid:** lazy `[\s\S]*?` regex spans in an in-process parser of untrusted input. Each unclosed opener rescans to EOF, so a 5 MB hostile feed blocked the event loop > 90 s. Use indexOf scans that stop at the first unclosed opener.
+- **Avoid:** timing tests sized at the real cap. A quadratic regression then hangs CI and the pre-commit hook instead of failing (vitest cannot interrupt a synchronous parse). Size each adversarial input so the slow code takes seconds, and keep the real-cap test for valid input only.
