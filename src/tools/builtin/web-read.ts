@@ -14,6 +14,7 @@ import {
   stealthFetch,
 } from "../../lib/stealth-browser.js";
 import { validateOutboundUrl } from "../../lib/url-safety.js";
+import { parseTweetId, readTweet } from "./web-read-tweet.js";
 
 const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
@@ -39,6 +40,22 @@ async function extractPdfLocally(url: string): Promise<string> {
       url,
     });
   }
+}
+
+/** Jina's error reason from a non-ok body (JSON or plain text), ≤300 chars. */
+function jinaReason(body: string): string {
+  let reason = "";
+  try {
+    const parsed = JSON.parse(body) as {
+      readableMessage?: unknown;
+      message?: unknown;
+    };
+    const msg = parsed?.readableMessage ?? parsed?.message;
+    if (typeof msg === "string") reason = msg;
+  } catch {
+    if (!body.trimStart().startsWith("<")) reason = body;
+  }
+  return reason.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
 /**
@@ -123,6 +140,7 @@ DO NOT USE WHEN:
 
 Returns clean Markdown with headings, code blocks, and links preserved.
 Works with: GitHub repos, news articles, documentation, blogs, PDFs.
+X/Twitter status links are read directly (text, author, quotes, articles).
 Cloudflare-protected pages are handled automatically via stealth browser fallback.
 For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).
 
@@ -158,6 +176,41 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
       return await extractPdfLocally(url);
     }
 
+    // X/Twitter status links: Jina blocks anonymous x.com reads
+    const tweetId = parseTweetId(url);
+    if (tweetId) {
+      try {
+        const tweet = await readTweet(tweetId);
+        if (tweet) {
+          let trimmed = tweet.content;
+          let evictedFilePath: string | undefined;
+
+          if (tweet.content.length > MAX_CONTENT) {
+            const { preview, filePath } = evictToFile(
+              tweet.content,
+              "web-read-tweet",
+              MAX_CONTENT,
+            );
+            trimmed = preview;
+            evictedFilePath = filePath;
+          }
+
+          return JSON.stringify({
+            url,
+            content: trimmed,
+            chars: tweet.content.length,
+            truncated: tweet.content.length > MAX_CONTENT,
+            source: tweet.source,
+            ...(evictedFilePath && { full_content_path: evictedFilePath }),
+          });
+        }
+      } catch (err) {
+        console.log(
+          `[web-read] tweet path failed for ${url} (${err instanceof Error ? err.message : String(err)}), falling back to Jina`,
+        );
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -184,12 +237,25 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
       }
 
       if (!response.ok) {
+        const body = [403, 429, 451, 503].includes(response.status)
+          ? await response.text().catch(() => "")
+          : "";
         // Cloudflare fallback: if Jina returns 403/503, try stealth browser
-        if (response.status === 403 || response.status === 503) {
-          const body = await response.text().catch(() => "");
-          if (isCloudflareChallenge(body)) {
-            return await stealthFallback(url);
-          }
+        if (
+          (response.status === 403 || response.status === 503) &&
+          isCloudflareChallenge(body)
+        ) {
+          return await stealthFallback(url);
+        }
+        // Jina refused (blocked domain / rate limit): keep its reason and
+        // point the model at the real browser instead of giving up
+        if ([403, 429, 451].includes(response.status)) {
+          const reason = jinaReason(body);
+          return JSON.stringify({
+            error: `Failed to read URL: ${response.status} ${response.statusText}${reason ? ` — ${reason}` : ""}`,
+            url,
+            hint: "Jina Reader refused this URL; the page itself may be fine. Retry with browser__goto on this URL, then browser__markdown.",
+          });
         }
         return JSON.stringify({
           error: `Failed to read URL: ${response.status} ${response.statusText}`,
