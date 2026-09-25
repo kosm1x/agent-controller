@@ -1,5 +1,7 @@
 /**
- * RSS feed reader tool — rss2json API (free, no auth for basic usage).
+ * RSS feed reader tool — fetches the feed directly and parses it locally
+ * (src/lib/feed-parse.ts). Formerly went through the rss2json proxy, which
+ * failed in bursts on feeds the host itself fetched fine.
  *
  * Parses RSS/Atom feeds into structured JSON.
  * Returns feed metadata and recent items.
@@ -7,11 +9,23 @@
 
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
-import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
+import {
+  decodeFeedBody,
+  parseFeed,
+  readCappedBody,
+} from "../../lib/feed-parse.js";
+import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 
-const API_URL = "https://api.rss2json.com/v1/api.json";
 const TIMEOUT_MS = 10_000;
 const MAX_ITEMS = 20;
+
+/** rss2json's date format ("YYYY-MM-DD HH:MM:SS", UTC), kept so output is unchanged. */
+function formatDate(raw: string): string {
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime())
+    ? raw
+    : d.toISOString().replace("T", " ").slice(0, 19);
+}
 
 export const rssReadTool: Tool = {
   name: "rss_read",
@@ -67,64 +81,66 @@ Common feeds: BBC (https://feeds.bbci.co.uk/news/rss.xml), Reuters, TechCrunch, 
       MAX_ITEMS,
     );
 
-    const params = new URLSearchParams({
-      rss_url: feedUrl,
-      count: String(count),
-    });
+    // SSRF protection — the URL is model-supplied and fetched from this host.
+    const urlError = validateOutboundUrl(feedUrl);
+    if (urlError) {
+      return JSON.stringify({ error: urlError, feed_url: feedUrl });
+    }
 
     try {
-      const data = (await fetchJson(`${API_URL}?${params}`, {
-        timeoutMs: TIMEOUT_MS,
-      })) as RssResponse;
-
-      if (data.status !== "ok") {
+      const res = await safeFetch(feedUrl, {
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        headers: {
+          Accept:
+            "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8",
+          "User-Agent": "mission-control/1.0 (rss_read)",
+        },
+      });
+      if (!res.ok) {
+        void res.body?.cancel().catch(() => {});
         return JSON.stringify({
-          error: `RSS parse error: ${data.message ?? "unknown"}`,
+          error: `RSS fetch failed: HTTP ${res.status}`,
           feed_url: feedUrl,
         });
       }
 
-      const items = (data.items ?? []).slice(0, count).map((item) => ({
+      const feed = parseFeed(
+        decodeFeedBody(
+          await readCappedBody(res),
+          res.headers?.get("content-type"),
+        ),
+      );
+      if (!feed) {
+        const type = res.headers?.get("content-type") ?? "unknown type";
+        return JSON.stringify({
+          error: `RSS parse error: not an RSS/Atom feed (${type})`,
+          feed_url: feedUrl,
+        });
+      }
+
+      const items = feed.items.slice(0, count).map((item) => ({
         title: item.title,
         link: item.link,
-        date: item.pubDate,
-        description: item.description?.slice(0, 300) ?? "",
-        author: item.author ?? "",
+        date: formatDate(item.pubDate),
+        description: item.description.slice(0, 300),
+        author: item.author,
       }));
 
       return JSON.stringify({
         feed: {
-          title: data.feed?.title ?? "",
-          description: data.feed?.description ?? "",
-          url: data.feed?.link ?? feedUrl,
+          title: feed.title,
+          description: feed.description,
+          url: feed.link || feedUrl,
         },
         items,
         total: items.length,
       });
     } catch (err) {
-      if (err instanceof HttpStatusError) {
-        return JSON.stringify({
-          error: `RSS API error: ${err.status}`,
-        });
-      }
-      return JSON.stringify({ error: `RSS fetch failed: ${errMsg(err)}` });
+      const cause = err instanceof Error ? err.cause : undefined;
+      const detail = cause instanceof Error ? ` (${cause.message})` : "";
+      return JSON.stringify({
+        error: `RSS fetch failed: ${errMsg(err)}${detail}`,
+      });
     }
   },
 };
-
-interface RssResponse {
-  status: string;
-  message?: string;
-  feed?: {
-    title: string;
-    description: string;
-    link: string;
-  };
-  items?: Array<{
-    title: string;
-    link: string;
-    pubDate: string;
-    description?: string;
-    author?: string;
-  }>;
-}
