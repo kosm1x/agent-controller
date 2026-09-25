@@ -1,31 +1,22 @@
 /**
  * Google News RSS adapter — breaking news headlines.
- * No auth required (uses rss2json free API). Polling: 30 minutes.
+ * No auth required; the feed is fetched directly and parsed locally (the
+ * rss2json proxy it used to go through failed in bursts). Polling: 30 minutes.
  */
 
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
 import { httpError } from "./http-error.js";
+import {
+  decodeFeedBody,
+  parseFeed,
+  readCappedBody,
+} from "../../lib/feed-parse.js";
 
 const RSS_URL =
   "https://news.google.com/rss/search?q=breaking+OR+crisis+OR+emergency&hl=en-US&gl=US&ceid=US:en";
-const RSS2JSON_API = "https://api.rss2json.com/v1/api.json";
 const TIMEOUT_MS = 10_000;
 const MAX_ARTICLES = 10;
-
-interface RssItem {
-  title: string;
-  link: string;
-  pubDate: string;
-  description?: string;
-  author?: string;
-}
-
-interface RssResponse {
-  status: string;
-  message?: string;
-  items?: RssItem[];
-}
 
 export const googleNewsAdapter: CollectorAdapter = {
   source: "google_news",
@@ -37,30 +28,33 @@ export const googleNewsAdapter: CollectorAdapter = {
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      const params = new URLSearchParams({
-        rss_url: RSS_URL,
-        count: String(MAX_ARTICLES),
-      });
-
-      const res = await fetch(`${RSS2JSON_API}?${params}`, {
+      const res = await fetch(RSS_URL, {
         signal: controller.signal,
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+          "User-Agent": "mission-control/1.0 (intel-depot)",
+        },
       });
       if (!res.ok) throw await httpError(res);
 
-      const data = (await res.json()) as RssResponse;
-      if (data.status !== "ok") {
+      const body = decodeFeedBody(
+        await readCappedBody(res),
+        res.headers?.get("content-type"),
+      );
+      const feed = parseFeed(body);
+      if (!feed) {
         throw new Error(
-          `rss2json status "${data.status}"${data.message ? ` — ${data.message}` : ""}`,
+          `not an RSS/Atom feed — ${body.slice(0, 200).replace(/\s+/g, " ").trim().slice(0, 100)}`,
         );
       }
-      if (!Array.isArray(data.items)) {
-        throw new Error("rss2json answered ok without an items array");
+      if (feed.items.length === 0) {
+        throw new Error("feed has no items");
       }
 
       const signals: Signal[] = [];
 
-      for (const item of data.items.slice(0, MAX_ARTICLES)) {
+      for (const item of feed.items.slice(0, MAX_ARTICLES)) {
+        const ts = item.pubDate ? new Date(item.pubDate) : undefined;
         signals.push({
           source: "google_news",
           domain: "news",
@@ -68,12 +62,11 @@ export const googleNewsAdapter: CollectorAdapter = {
           key: "news_article",
           valueText: item.title,
           contentHash: contentHash(item.link),
-          sourceTimestamp: item.pubDate
-            ? new Date(item.pubDate).toISOString()
-            : undefined,
+          sourceTimestamp:
+            ts && !Number.isNaN(ts.getTime()) ? ts.toISOString() : undefined,
           metadata: {
             url: item.link,
-            description: item.description?.slice(0, 200),
+            description: item.description.slice(0, 200),
           },
         });
       }

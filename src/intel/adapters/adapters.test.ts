@@ -13,6 +13,7 @@ import { coingeckoAdapter } from "./coingecko.js";
 import { treasuryAdapter } from "./treasury.js";
 import { googleNewsAdapter } from "./google-news.js";
 import { getAllAdapters } from "./index.js";
+import { contentHash } from "../signal-store.js";
 import type { CollectorAdapter } from "../types.js";
 
 // Mock fetch globally
@@ -27,7 +28,10 @@ afterEach(() => {
 // Shared contract tests
 // ---------------------------------------------------------------------------
 
-function testAdapterContract(adapter: CollectorAdapter): void {
+function testAdapterContract(
+  adapter: CollectorAdapter,
+  format: "json" | "xml" = "json",
+): void {
   describe(`${adapter.source} adapter contract`, () => {
     beforeEach(() => {
       mockFetch.mockReset();
@@ -76,12 +80,17 @@ function testAdapterContract(adapter: CollectorAdapter): void {
       expect(err.message.length).toBe("HTTP 502 — ".length + 200);
     });
 
-    it("throws on a 200 whose body is not JSON", async () => {
+    it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : "JSON"}`, async () => {
+      const body = "Queries containing OR'd terms must be…";
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => JSON.parse("Queries containing OR'd terms must be…"),
+        json: async () => JSON.parse(body),
+        text: async () => body,
+        arrayBuffer: async () => new TextEncoder().encode(body).buffer,
       });
-      await expect(adapter.collect()).rejects.toThrow(/JSON/);
+      await expect(adapter.collect()).rejects.toThrow(
+        format === "xml" ? /not an RSS\/Atom feed/ : /JSON/,
+      );
     });
   });
 }
@@ -94,7 +103,7 @@ testAdapterContract(frankfurterAdapter);
 testAdapterContract(cisaKevAdapter);
 testAdapterContract(coingeckoAdapter);
 testAdapterContract(treasuryAdapter);
-testAdapterContract(googleNewsAdapter);
+testAdapterContract(googleNewsAdapter, "xml");
 
 // ---------------------------------------------------------------------------
 // USGS-specific
@@ -385,54 +394,109 @@ describe("treasury adapter", () => {
 describe("google-news adapter", () => {
   beforeEach(() => mockFetch.mockReset());
 
-  // rss2json reports its own failures (rate limit, bad feed) inside a 200.
-  it("throws on a 200 whose payload reports an error", async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "error", message: "rate limit exceeded" }),
+  const xmlResponse = (body: string | Uint8Array, contentType?: string) =>
+    new Response(body, {
+      headers: contentType ? { "content-type": contentType } : {},
     });
-    await expect(googleNewsAdapter.collect()).rejects.toThrow(
-      'rss2json status "error" — rate limit exceeded',
+  const item = (n: number, pubDate = "Fri, 25 Sep 2026 13:53:48 GMT") =>
+    `<item><title>Headline ${n} &amp; more - Outlet</title><link>https://news.google.com/rss/articles/A${n}?oc=5</link><guid isPermaLink="false">A${n}</guid><pubDate>${pubDate}</pubDate><description>&lt;a href="https://news.google.com/rss/articles/A${n}?oc=5" target="_blank"&gt;Headline ${n}&lt;/a&gt;&amp;nbsp;&amp;nbsp;&lt;font color="#6f6f6f"&gt;Outlet&lt;/font&gt;</description><source url="https://outlet.example">Outlet</source></item>`;
+  const feed = (items: string) =>
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>"breaking OR crisis OR emergency" - Google News</title><link>https://news.google.com/search</link><description>Google News</description>${items}</channel></rss>`;
+
+  it("fetches the Google feed directly, not through a proxy", async () => {
+    mockFetch.mockResolvedValue(xmlResponse(feed(item(1))));
+    await googleNewsAdapter.collect();
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(
+      "https://news.google.com/rss/search?q=breaking+OR+crisis+OR+emergency&hl=en-US&gl=US&ceid=US:en",
     );
+    expect(init.headers.Accept).toContain("application/rss+xml");
   });
 
-  it("throws on an ok payload without an items array, and accepts an empty one", async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "ok" }),
-    });
-    await expect(googleNewsAdapter.collect()).rejects.toThrow(
-      "without an items array",
-    );
-
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "ok", items: [] }),
-    });
-    await expect(googleNewsAdapter.collect()).resolves.toBeDefined();
-  });
-
-  it("produces article signals from RSS feed", async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "ok",
-        items: [
-          {
-            title: "Breaking: Major Event",
-            link: "https://example.com/article1",
-            pubDate: "2026-04-03T12:00:00Z",
-            description: "Details of the event...",
-          },
-        ],
-      }),
-    });
-
+  // Same Signal the rss2json path produced for this item (rss2json handed
+  // back the decoded title/link/description; pubDate is now the feed's own
+  // RFC 822 string, so the timestamp no longer depends on the host TZ).
+  it("produces the same article signal as the rss2json path", async () => {
+    mockFetch.mockResolvedValue(xmlResponse(feed(item(1))));
     const signals = await googleNewsAdapter.collect();
-    expect(signals).toHaveLength(1);
-    expect(signals[0].signalType).toBe("article");
-    expect(signals[0].valueText).toContain("Breaking");
-    expect(signals[0].domain).toBe("news");
+    expect(signals).toEqual([
+      {
+        source: "google_news",
+        domain: "news",
+        signalType: "article",
+        key: "news_article",
+        valueText: "Headline 1 & more - Outlet",
+        contentHash: contentHash(
+          "https://news.google.com/rss/articles/A1?oc=5",
+        ),
+        sourceTimestamp: "2026-09-25T13:53:48.000Z",
+        metadata: {
+          url: "https://news.google.com/rss/articles/A1?oc=5",
+          description:
+            '<a href="https://news.google.com/rss/articles/A1?oc=5" target="_blank">Headline 1</a>&nbsp;&nbsp;<font color="#6f6f6f">Outlet</font>',
+        },
+      },
+    ]);
+  });
+
+  it("caps at 10 articles, trims descriptions to 200 chars, tolerates a bad date", async () => {
+    const items = Array.from({ length: 12 }, (_, i) =>
+      item(i, i === 0 ? "not a date" : undefined),
+    ).join("");
+    const long = `<item><title>L</title><link>https://x.example/l</link><description>${"d".repeat(500)}</description></item>`;
+    mockFetch.mockResolvedValue(xmlResponse(feed(items + long)));
+    const signals = await googleNewsAdapter.collect();
+    expect(signals).toHaveLength(10);
+    expect(signals[0].sourceTimestamp).toBeUndefined();
+
+    mockFetch.mockResolvedValue(xmlResponse(feed(long)));
+    const [one] = await googleNewsAdapter.collect();
+    expect((one.metadata as { description: string }).description).toHaveLength(
+      200,
+    );
+    expect(one.sourceTimestamp).toBeUndefined();
+  });
+
+  it("decodes a non-UTF-8 feed by its declared charset", async () => {
+    // "Café España" in ISO-8859-1: é = 0xE9, ñ = 0xF1
+    const latin1 = Uint8Array.from(
+      Buffer.from(
+        feed(
+          "<item><title>Caf\u00e9 Espa\u00f1a</title><link>https://x.example/1</link></item>",
+        ).replace('encoding="UTF-8"', 'encoding="ISO-8859-1"'),
+        "latin1",
+      ),
+    );
+    mockFetch.mockResolvedValue(xmlResponse(latin1));
+    const [signal] = await googleNewsAdapter.collect();
+    expect(signal.valueText).toBe("Café España");
+  });
+
+  it("throws on a 200 that is an HTML page, not a feed", async () => {
+    mockFetch.mockResolvedValue(
+      xmlResponse("<!DOCTYPE html>\n<html><body>Sorry…</body></html>"),
+    );
+    await expect(googleNewsAdapter.collect()).rejects.toThrow(
+      "not an RSS/Atom feed — <!DOCTYPE html> <html><body>Sorry…",
+    );
+  });
+
+  it("refuses a body over the 5 MB feed cap", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(feed(item(1)), {
+        headers: { "content-length": String(6 * 1024 * 1024) },
+      }),
+    );
+    await expect(googleNewsAdapter.collect()).rejects.toThrow(
+      "feed larger than 5242880 bytes",
+    );
+  });
+
+  it("throws on a feed with no items", async () => {
+    mockFetch.mockResolvedValue(xmlResponse(feed("")));
+    await expect(googleNewsAdapter.collect()).rejects.toThrow(
+      "feed has no items",
+    );
   });
 });
 
