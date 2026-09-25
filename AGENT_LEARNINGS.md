@@ -70,3 +70,7 @@
 - **Mistake:** the first path sweep grepped `/root/claude` and `~/claude` only; the `"$HOME"/claude` and `${HOME}/claude` spellings were missed, and PR CI caught one (vitest stops an `it` at its first failure, so the other was hidden) → sweep every spelling of a root (`/root`, `~`, `$HOME`, `${HOME}`), and reproduce CI locally: a scratch worktree at a non-VPS path plus a fake `HOME=` made main's file fail and the fix pass.
 - **Avoid:** widening a timing bound to whatever passes. 1,500 ms let a cheap O(n²) mutant (~1 s) through; 800 ms passes the real code (≤ 520 ms on CI) and fails the mutant (984 ms). Put the bound between the measured linear worst case and a mutant's time.
 - **Better:** env-coupled tests: derive the checkout from `import.meta.url`, give a fake PATH a node-only symlink dir (the CI toolcache dir also holds a real `npm`), and `it.skipIf` root-only and live-host checks.
+
+## 2026-09-25 — Claude Code role split for this repo (#45, #46)
+- **Avoid:** relying on `CLAUDE_CODE_SUBAGENT_MODEL` for "every subagent on Opus": agent `model:` pins win over it (`inherit` → the Fable main model, `sonnet` → Sonnet). `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` enforces it.
+- **Better:** cloud sessions read only this repo's `.claude/settings.json` (not the VPS `~/.claude`), so the model split and `CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000` live here too. Verify with `claude -p --output-format json` (`modelUsage`) and `/context`.

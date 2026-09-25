@@ -2502,3 +2502,25 @@ Four friction events detected: (1) **Bug `saveSkill` in `src/db/skills.ts`** —
 
 ### Research notes
 2026-09-23 is a milestone day in the co-evolution record: the first full brand-genesis workflow (naming → visual identity → positioning framework → copywriting) completed within a single session, with Fede as creative director and Jarvis as the generative engine across all disciplines. The double agent-controller KB sync (morning + night) continues the near-real-time infrastructure-coupling pattern established 09-22. The `saveSkill` persistence bug is now the most visible infrastructure gap: it forced manual skill recovery twice today and will remain a friction source until the PR lands.
+
+## 2026-09-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 34 (telegram: 34) |
+| Streak days | — |
+
+### Interactions summary
+A dense day (~22 significant exchanges across ~21 hours) dominated by two major threads: **Atenea Estratégica** — a new strategic consulting venture — spanning domain availability check, pricing tier construction, competitive benchmarking, a 14-slide Google Slides deck, and a full market research Google Doc; and **macroeconomic/geopolitical analysis** covering investment theses, México diesel export restriction scenarios, U.S. midterm expectations, and SEO gap-plan validation against a Nicholas Dulait article. A third thread ran in parallel through the early hours: three agent-controller KB syncs integrating PRs #38–#41 (porcelain-z parser fix, `jarvis_file_write` SKILL.md versionado automático, auto-certify). A brief but notable moment: Jarvis's identity (Jarvis/Piotr) was introduced and explained to a third party.
+
+### What Jarvis learned
+Atenea Estratégica (slug: `pr-venture`) crossed from concept to fully scaffolded project in a single day — domain, pricing, deck, and market recon all delivered — establishing a repeatable "zero-to-pitch" workflow. The domain-search friction event (09:28 h) clarified a tool-boundary rule: domain availability lookups require web, not shell; Jarvis corrected course by 10:16. Three KB syncs in one day for agent-controller (following the four-sync high-water mark on 09-22) confirms that near-real-time infrastructure coupling is now a baseline expectation, not an exception.
+
+### Friction points
+Two friction events documented: (1) **Domain search via shell (09:28 h)** — Jarvis attempted to resolve domain availability using shell instead of web; user corrected it and the redo at 10:16 resolved cleanly. (2) **Credential-policy omissions (10:59, 14:53, 16:12 h)** — three sessions were partially redacted by credential-policy filtering, limiting traceability for those intervals; no user-facing correction was required, but longitudinal coverage is incomplete for those windows.
+
+### Research notes
+2026-09-24 extends the brand-genesis pattern from 09-23: Atenea moved from naming (locked on 09-23) to full commercial scaffolding (deck + market recon) in one additional day, suggesting a two-day arc is now the established template for a new venture launch with Jarvis as co-builder. The tool-boundary correction (shell vs. web for domain lookup) is a low-cost calibration event, but its recurrence across days — combined with output-format friction on 09-22/09-23 — points to a persistent gap in pre-generation tool-selection heuristics that warrants a dedicated KB note.
