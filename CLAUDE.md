@@ -6,6 +6,15 @@ Index. Full text per section: `docs/CLAUDE-REFERENCE.md`.
 
 Unified AI agent orchestrator. Routes tasks by complexity to 5 runner types (fast, nanoclaw, heavy, swarm, a2a). Single TypeScript process, Hono HTTP, SQLite.
 
+## Claude Code model roles (this CLI, not Jarvis)
+
+`.claude/settings.json` runs the main session on **Fable** and every subagent on **Opus** (`CLAUDE_CODE_SUBAGENT_MODEL` + `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, which overrides agent `model:` pins such as `inherit`/`sonnet` and the per-call `model` parameter). On the VPS the same keys live in `~/.claude/settings.json`; this file covers cloud sessions and sessions started in this directory. Jarvis's own model routing (`src/inference/claude-sdk.ts`, Prometheus tiers) is unrelated — do not touch it for this.
+
+- **Fable (main session) plans and orchestrates**: read enough to understand the task, write the plan, split it into self-contained briefs, dispatch them, and judge the results. It does not write production code or tests itself.
+- **Opus (subagents) does everything else**: implementation, tests, `typecheck`/`test` runs, fixing failures, and auditing/review. Give each brief the goal, the files, the relevant invariants from this file, and the done-check (`npm run typecheck` plus vitest scoped to the changed test files; the pre-commit hook is the one full-suite run).
+- Audit is a separate Opus subagent from the one that wrote the change. Fable decides what ships from the audit findings; a fix goes back to an Opus subagent.
+- Override for one session: `claude --model <alias>` or `/model`.
+
 ## Development
 
 ```bash
