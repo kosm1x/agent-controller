@@ -74,3 +74,8 @@
 ## 2026-09-25 — Claude Code role split for this repo (#45, #46)
 - **Avoid:** relying on `CLAUDE_CODE_SUBAGENT_MODEL` for "every subagent on Opus": agent `model:` pins win over it (`inherit` → the Fable main model, `sonnet` → Sonnet). `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` enforces it.
 - **Better:** cloud sessions read only this repo's `.claude/settings.json` (not the VPS `~/.claude`), so the model split and `CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000` live here too. Verify with `claude -p --output-format json` (`modelUsage`) and `/context`.
+
+## 2026-09-25 — Jarvis could not read tweets (#47)
+- **Avoid:** a tool that returns only the upstream status code. Jina's JSON body said "anonymous access to x.com blocked (someone else's abuse)"; `web_read` passed on "403 Forbidden", and the model read it as "this tweet is private" and gave up. Carry the upstream's reason and a next route in the error.
+- **Better:** diagnose "it used to work" from `task_trace_events`: the tool sequence of a working vs a failing task (browser__goto vs web_read) showed the difference in one query, before reading any code. Reproduce with a direct `curl` of the upstream.
+- **Better:** live-verify a deployed tool fix through `/api/tasks` with `agent_type:"fast"` and `tools:[<tool>]`, then read `tasks.output` and the trace's `tool.called` rows.
