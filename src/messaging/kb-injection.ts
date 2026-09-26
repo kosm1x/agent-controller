@@ -102,12 +102,19 @@ const PROJECT_SLUGS = [
   "obsidian-brain",
   "pipesong",
   "presencia-digital-eurekamd",
+  "very-light-cms",
   "vlmp",
   "williams-radar",
 ];
 
 /** Match project names in message text (slug or natural name). */
 export function detectProjectInMessage(text: string): string | null {
+  // very-light-cms (VLCMS, the thewilliamsradar.com CMS) and vlmp (the media
+  // player) are unrelated repos. Checked before the slug loop so a message
+  // naming both ("VLCMS is not VLMP") binds to VLCMS, not to the "vlmp" slug.
+  if (/\bvlcms\b|\bvery[ -]light[ -]cms\b/i.test(text)) {
+    return "very-light-cms";
+  }
   const lower = text.toLowerCase();
   for (const slug of PROJECT_SLUGS) {
     if (lower.includes(slug) || lower.includes(slug.replace(/-/g, " "))) {

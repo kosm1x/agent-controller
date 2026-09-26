@@ -85,3 +85,5 @@
 - [web-read-tweet-r1-audit](web-read-tweet-r1-audit.md) - web_read X bypass R1 PASS-W-WARN -> R2 PASS-W-NOTES (09-25). CLASS: new branch before execute()'s try skips Jina fallback; outer catch masks inner-try mutations.
 - [rss-direct-feed-parse-r1-audit](rss-direct-feed-parse-r1-audit.md) - feed-parse.ts (09-25): FAIL. CLASS: lazy `[\s\S]*?` /g regex over a fetched body is O(n^2) on UNCLOSED openers; time 5 MB of each.
 - [rss-direct-feed-parse-r2-audit](rss-direct-feed-parse-r2-audit.md) - R2 (09-25): PASS-W-WARN, linear to 20 MB. CLASS: a charset decoder must let the BOM beat a contradicting header, or the root sniff fails.
+- [wer-journal-w39-wording-r1-audit](wer-journal-w39-wording-r1-audit.md) - WER W39 Journal wording (09-26): PASS-W-NOTES. Latent: 2026 has ISO W53; prevWeek=52 hardcode + W${n+1} break at 2027-W01.
+- [vlcms-project-detect-r1-audit](vlcms-project-detect-r1-audit.md) - VLCMS detect-first (09-26): PASS-W-NOTES. CLASS: a check hoisted above a first-match loop steals from EVERY slug, not just the one it disambiguates.

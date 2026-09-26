@@ -54,7 +54,7 @@ export function buildPrecedentBlock(
 
     // Project names (common ones)
     const projectPatterns =
-      /\b(agent-controller|mission-control|crm-azteca|cuatro-flor|livingjoyfully|vlmp|pipesong|commit-ai)\b/gi;
+      /\b(agent-controller|mission-control|crm-azteca|cuatro-flor|livingjoyfully|very[- ]light[- ]cms|vlcms|vlmp|pipesong|commit-ai)\b/gi;
     const projectMatches = text.match(projectPatterns);
     if (projectMatches) ctx.projects.push(...projectMatches);
 
