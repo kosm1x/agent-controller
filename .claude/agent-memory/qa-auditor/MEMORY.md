@@ -89,3 +89,4 @@
 - [vlcms-project-detect-r1-audit](vlcms-project-detect-r1-audit.md) - VLCMS detect-first (09-26): PASS-W-NOTES. CLASS: a check hoisted above a first-match loop steals from EVERY slug, not just the one it disambiguates.
 - [entity-extractor-registry-slugs-r1-audit](entity-extractor-registry-slugs-r1-audit.md) - registry-driven slugs (09-26): R1 PASS-W-WARN -> R2 PASS. CLASS: single-word routing aliases (williams/journal/radar) ~all FP in extraction; stoplist extractor-side.
 - [docs-refresh-2026-09-26-r1-audit](docs-refresh-2026-09-26-r1-audit.md) - 34-file docs refresh (09-26): PASS-W-WARN. CLASS: header figure refreshed, DERIVED figures in the same doc left stale; `+ ` line = bullet.
+- [codie-checklist-en-r1-audit](codie-checklist-en-r1-audit.md) - EN variant (09-26): PASS-W-WARN. Harness: stub createTransport+fetch; page vs email lever labels drift p5-p7.
