@@ -87,3 +87,4 @@
 - [rss-direct-feed-parse-r2-audit](rss-direct-feed-parse-r2-audit.md) - R2 (09-25): PASS-W-WARN, linear to 20 MB. CLASS: a charset decoder must let the BOM beat a contradicting header, or the root sniff fails.
 - [wer-journal-w39-wording-r1-audit](wer-journal-w39-wording-r1-audit.md) - WER W39 Journal wording (09-26): PASS-W-NOTES. Latent: 2026 has ISO W53; prevWeek=52 hardcode + W${n+1} break at 2027-W01.
 - [vlcms-project-detect-r1-audit](vlcms-project-detect-r1-audit.md) - VLCMS detect-first (09-26): PASS-W-NOTES. CLASS: a check hoisted above a first-match loop steals from EVERY slug, not just the one it disambiguates.
+- [entity-extractor-registry-slugs-r1-audit](entity-extractor-registry-slugs-r1-audit.md) - registry-driven slugs (09-26): R1 PASS-W-WARN -> R2 PASS. CLASS: single-word routing aliases (williams/journal/radar) ~all FP in extraction; stoplist extractor-side.
