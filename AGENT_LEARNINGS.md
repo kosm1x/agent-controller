@@ -84,3 +84,9 @@
 - **Better:** when a third-party proxy fails, fetch the origin directly from the host before blaming the origin: Google's feed returned 200 from the VPS while rss2json failed, which settled the diagnosis in one curl.
 - **Avoid:** lazy `[\s\S]*?` regex spans in an in-process parser of untrusted input. Each unclosed opener rescans to EOF, so a 5 MB hostile feed blocked the event loop > 90 s. Use indexOf scans that stop at the first unclosed opener.
 - **Avoid:** timing tests sized at the real cap. A quadratic regression then hangs CI and the pre-commit hook instead of failing (vitest cannot interrupt a synchronous parse). Size each adversarial input so the slow code takes seconds, and keep the real-cap test for valid input only.
+
+## 2026-09-26 — Jarvis conflated VLCMS with VLMP (#49)
+- **Mistake:** hardcoded project-slug lists (`kb-injection.ts` `PROJECT_SLUGS`, `precedent.ts` `projectPatterns`, `entity-extractor.ts` `PROJECT_SLUGS`) drift from the `projects` registry — a project with no KB README, no slug entry and no registry row gets absorbed by its nearest-named neighbour ("VLCMS is part of VLMP"; the vlmp KB doc was updated instead).
+- **Avoid:** adding a project in only one of the three places (KB README, registry row, slug list). A slug loop that runs `includes()` also lets a contrast mention ("VLCMS is not VLMP") bind to the wrong slug — check the more specific name before the loop.
+- **Better:** new project = KB `projects/<slug>/README.md` + registry row with `config.aliases` (Jarvis can do it via `project_update`, which creates a missing slug) + slug in `PROJECT_SLUGS`; grep `'"vlmp"'` to find the lists.
+- **Open (not fixed):** `entity-extractor.ts:27` comment says "kept in sync with fast-runner PROJECT_SLUGS" — stale (the list lives in `kb-injection.ts`, and the two differ: `crm-azteca`/`eurekamD` vs `pulso`/`williams-radar`/`very-light-cms`).

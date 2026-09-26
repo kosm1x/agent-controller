@@ -30,6 +30,23 @@ describe("buildPrecedentBlock", () => {
     expect(block).toContain("Projects:");
   });
 
+  it("extracts very-light-cms (VLCMS) separately from vlmp", () => {
+    const block = buildPrecedentBlock([
+      { role: "user", content: "Actualiza el KB del VLCMS contra el repo" },
+      { role: "assistant", content: "Revisé very-light-cms; no es vlmp" },
+    ]);
+    expect(block).toContain("VLCMS");
+    expect(block).toContain("very-light-cms");
+    expect(block).toContain("vlmp");
+  });
+
+  it("extracts the spaced name 'very light cms'", () => {
+    const block = buildPrecedentBlock([
+      { role: "user", content: "el very light cms de Williams" },
+    ]);
+    expect(block).toContain("Projects: very light cms");
+  });
+
   it("extracts tool names", () => {
     const block = buildPrecedentBlock([
       {

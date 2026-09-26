@@ -161,6 +161,27 @@ describe("detectProjectInMessage", () => {
     expect(detectProjectInMessage("Williams ranking")).toBe("williams-radar");
   });
 
+  it("detects very-light-cms (VLCMS) by short form, spaced and slug names", () => {
+    expect(detectProjectInMessage("VLCMS")).toBe("very-light-cms");
+    expect(detectProjectInMessage("very light cms")).toBe("very-light-cms");
+    expect(detectProjectInMessage("very-light-cms")).toBe("very-light-cms");
+    expect(
+      detectProjectInMessage("Actualiza el KB del VLCMS contra el repo"),
+    ).toBe("very-light-cms");
+  });
+
+  it("binds VLCMS over vlmp when both are named — unrelated repos", () => {
+    expect(detectProjectInMessage("VLCMS is not VLMP")).toBe("very-light-cms");
+    expect(detectProjectInMessage("very light cms is not vlmp")).toBe(
+      "very-light-cms",
+    );
+  });
+
+  it("still detects vlmp on its own", () => {
+    expect(detectProjectInMessage("update vlmp")).toBe("vlmp");
+    expect(detectProjectInMessage("vlmp-demo")).toBe("vlmp");
+  });
+
   it("returns null when no project mentioned", () => {
     expect(detectProjectInMessage("what time is it")).toBe(null);
   });
