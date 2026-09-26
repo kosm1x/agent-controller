@@ -1,6 +1,6 @@
 # Phase β — Exploration Plan for the Readiness Gate Window
 
-> **Status:** PROPOSED — awaiting operator selection
+> **Status:** PROPOSED — awaiting operator selection · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Window:** 48h readiness gate (until ~2026-04-17 evening)
 > **Purpose:** Productively use the wait time to derisk Phase β bottlenecks BEFORE any F-series session starts. Zero code commits, pure planning + research artifacts.
 
@@ -56,7 +56,7 @@
 **Budget:** ~30 min Explore agent
 **Why:** v7.1 depends on `lightweight-charts` + Puppeteer for PNG generation. Not in Phase β critical path but slots in after F3. Knocking out the dep check early means v7.1 pre-plan has fewer unknowns when it lands.
 **Method:** Explore agent checks `lightweight-charts` current version, Puppeteer headless PNG compatibility, any 2026 breaking changes, alternative chart libraries if the primary has drifted.
-**Deliverable:** `docs/planning/phase-beta/10-v71-chart-deps.md`
+**Deliverable:** `docs/planning/phase-beta/11-v71-chart-deps.md`
 
 ---
 

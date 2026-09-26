@@ -35,6 +35,7 @@ npx tsx scripts/run-triage-monitor.ts --run     # full tick — triage + write a
 ## Arm the live cron (deliberate operator step)
 
 Ships **dormant** — the cron only registers when `SELF_HEALING_TRIAGE_ENABLED=true`.
+Status (2026-09-26): still dormant — no `mission-control.service.d/` drop-in sets the flag.
 Set it via a **systemd drop-in** (NOT `.env` — systemd `Environment` overrides
 dotenv, the V8.2-producer lesson):
 

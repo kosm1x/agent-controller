@@ -1,7 +1,7 @@
 # F1 Data Layer — Implementation Plan
 
 > **Phase:** β (Financial Stack v7.0), S1 of β.
-> **Status:** DRAFT — awaiting operator greenlight before coding.
+> **Status:** DRAFT — awaiting operator greenlight before coding. · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Upstream:** `docs/planning/phase-beta/03-f1-preplan.md` (decisions locked 2026-04-14, credentials provisioned 2026-04-15).
 > **Budget:** ~1.7 sessions (~7 hours focused work).
 > **Branch:** `phase-beta/f1-data-layer` (off current main).

@@ -1,7 +1,7 @@
 # Scope Architecture Rethink — Investigation Scope
 
 **Authored**: 2026-05-07 (queue item #13, P3 deferred)
-**Status**: scope/investigation only. Execution deferred until a 4th scope incident lands or until items #1–#12 are cleared.
+**Status**: VERDICT SHIPPED 2026-05-15 (`c2dd51e`) — Option B; see §Verdict below. (Was: scope/investigation only, execution deferred until a 4th scope incident or items #1–#12 cleared.)
 
 ## Why this exists
 

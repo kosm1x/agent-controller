@@ -4,7 +4,8 @@ Status: merged + multi-mailbox. The channel is **multi-account** — Jarvis runs
 one mailbox per project, each as its own `email:<id>` channel. Code is
 deployed; **activation is operator-pending** — the channel only runs once
 `EMAIL_ENABLED=true` and the per-account `EMAIL_*` credentials are set in `.env`
-(see Activation below). Owner: messaging subsystem.
+(see Activation below). Still not active as of the 2026-09-26 03:21 UTC boot
+(`[messaging] Router active with 1 channel(s)` — Telegram only). Owner: messaging subsystem.
 
 ## Goal
 

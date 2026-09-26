@@ -19,15 +19,17 @@ Behavioral pleas ("don't hallucinate," "relay exactly," "be careful") have zero 
 
 ### Layer 1: Directives (enforce qualifier)
 
-**What:** Markdown files at `directives/*.md` with qualifier `enforce`, priority 0. Injected into every single prompt with "MANDATORY:" prefix.
+**What:** Markdown files at `directives/*.md` with qualifier `enforce` (priorities 0–20 today). Injected into every single prompt with "MANDATORY:" prefix.
 
 **Budget:** ~4,000 chars total. This is expensive real estate — every char here is seen on every message. Keep it tight.
 
-**Currently contains:**
+**Currently contains** (`jarvis_files WHERE qualifier='enforce'`, verified 2026-09-26 — 7,837 chars total, above the ~4,000 budget):
 
-- `directives/core.md` — Persona, 8 SOPs (verify before affirm, no hallucination, use file system, etc.)
-- `directives/repo-authorization.md` — GitHub auth rules
-- `directives/context-management.md` — Context pressure behavior
+- `directives/repo-authorization.md` — GitHub auth rules (priority 0)
+- `directives/user-data-sources.md` — priority 10
+- `directives/exposing-services-externally.md` — priority 20
+
+No longer in this layer: `directives/core.md` (Persona, 8 SOPs) is now qualifier `reference` (priority 50); `directives/context-management.md` (context pressure behavior) is `always-read` (priority 5).
 
 **When to add here:** Only for behaviors that must be enforced on EVERY task, regardless of context. If the rule only applies to coding, or email, or NorthStar — it doesn't belong here.
 
@@ -237,7 +239,7 @@ A case spanning Categories 4 and 5 — worth studying because the symptom pointe
 
 **Symptom:** Jarvis intermittently refused to send mail, telling the user the tool was _"bloqueado en esta sesión (modo 'don't ask')"_ — then sent fine on a reworded retry. Same shape for `mcp__supabase__query`.
 
-**False lead:** looks like a scope bug (tool not activated). It wasn't — `scope_telemetry` showed `gmail_send` was `tools_in_scope` for BOTH the refused turn and the accepted retry. The SDK fast-path runs `permissionMode:"dontAsk"` with `allowedTools` = every scoped tool (`claude-sdk.ts:382`), so anything in scope is auto-approved. There was no permission gate to hit.
+**False lead:** looks like a scope bug (tool not activated). It wasn't — `scope_telemetry` showed `gmail_send` was `tools_in_scope` for BOTH the refused turn and the accepted retry. The SDK fast-path runs `permissionMode:"dontAsk"` with `allowedTools` = every scoped tool (`claude-sdk.ts:771` as of 2026-09-26), so anything in scope is auto-approved. There was no permission gate to hit.
 
 **Root cause — confabulation, not a real block.** The model borrowed the real-but-internal `dontAsk` SDK term (a Claude-Code training prior) as a plausible excuse to dodge an irreversible send, over-applying the Category-4 boundary `gmail_send`: "NEVER send unless explicitly requested" into "I'm not allowed to send." The poison-detector had no pattern for the excuse, so the refusal persisted in the thread buffer and the model re-read its own excuse → recurrence.
 

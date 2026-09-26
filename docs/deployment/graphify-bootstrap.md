@@ -9,8 +9,9 @@ On a **fresh deployment** (new VPS, cloned repo, no prior state) you must bootst
 ```bash
 cd /root/claude/mission-control
 
-# 0. If fresh clone: seed the MCP config. mcp-servers.json is gitignored;
-# the committed example includes the graphify-code block.
+# 0. If fresh clone: seed the MCP config. mcp-servers.json is listed in
+# .gitignore but is tracked in git (2026-09-26), so a clone normally has it;
+# the committed example also includes the graphify-code block.
 [ -f mcp-servers.json ] || cp mcp-servers.example.json mcp-servers.json
 
 # 1. Create an isolated Python venv (Python 3.10–3.12; 3.13+ not supported upstream)
@@ -65,6 +66,6 @@ The v7.2 MVP ships **AST-only** knowledge of `src/` code. The following are deli
 
 - **Codebase semantic extraction** — adds LLM-derived relationships (docstrings, comments, cross-reference inference). Deferred until upstream issue #451 (duplicate nodes from parallel semantic subagents) is confirmed fixed on our 360-file corpus.
 - **Docs/markdown corpus** — graphify has no first-class markdown extractor; would require either upstream extractor work or a semantic LLM pass (cost-heavy).
-- **CRM entity graph** — requires a markdown-export pipeline out of crm-azteca. Scheduled for v7.2.1 after the CRM pilot stabilizes.
+- **CRM entity graph** — requires a markdown-export pipeline out of crm-azteca (renamed `Pulso-Aura-Upfront` 2026-06-20). Scheduled for v7.2.1 after the CRM pilot stabilizes.
 - **Cross-source unified query** — ships after ≥2 graphs exist.
 - **Automatic rebuild cron** — not wired. First stale-graph incident will trigger scheduling.

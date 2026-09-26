@@ -1,6 +1,6 @@
 # Jev decision layer — plan (2026-09-21, rev 2)
 
-**Status:** DRAFT rev 2.2 — Phase B harness built (`1fd0f1a`), audited twice and dry-run; the operator's key answers (09-21 one-question probe: HTTP 200 in 0.32 s, 313 input tokens billed); the 400-message replay RAN 09-21 19:09 UTC: **FAIL** (62.6 % coverage at live-sized scope vs a 95 % bar; misses are almost all the `coding` group, and the harness withheld conversation state the live path has — see "Phase B result"); nothing in the live path. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
+**Status (2026-09-26):** LIVE — operator ruling 09-21 ("89.5% is enough"): Jev is the first scope classifier, Sonnet the fallback (`3c33771`, DEPLOYED 2026-09-21 21:34 UTC PID 2829385); shadow consumers `kb` + `feedback` armed (`JEV_SHADOW_CONSUMERS=kb,feedback`; mc.db `jev_shadow` 2026-09-26: kb 575 · feedback 96 · scope 174 rows), `memory` not armed; readout harness `4625457`, readout due ~2026-09-29. History: DRAFT rev 2.2 — Phase B harness built (`1fd0f1a`), audited twice and dry-run; the operator's key answers (09-21 one-question probe: HTTP 200 in 0.32 s, 313 input tokens billed); the 400-message replay RAN 09-21 19:09 UTC: **FAIL** (62.6 % coverage at live-sized scope vs a 95 % bar; misses are almost all the `coding` group, and the harness withheld conversation state the live path has — see "Phase B result"); nothing in the live path. Rev 1 (`fa3db57`) was reviewed the same day against the Hermes ecosystem and against our own journal; the review **removed rev 1's headline benefit** (§3) and reordered the phases. Supersedes `jarvis-kb/projects/agent-controller/jev-implementation-plan.md` (09-17).
 **Goal:** let Jarvis use TypeSafe's Jev for small typed decisions **next to** the Claude models, without touching how Claude generates, plans or calls tools.
 
 ## 1. What Jev is
@@ -161,7 +161,7 @@ Two things the tables show that do NOT count, stated so nobody rediscovers them 
 
 ### Phase C — client + first async consumer (shadow)
 
-Build `src/inference/jev.ts` with mutation-verified tests (happy path, non-2xx, timeout, malformed body, circuit, no-key = no fetch). First consumer is chosen by Phase A/B evidence, from decisions that today are **regex because a model call was too dear, and that nobody waits on**:
+Build `src/inference/jev.ts` (as built: `src/messaging/scope-classifier-jev.ts`, `3c33771`; shared client `src/jev/client.ts`, `6cf00fe`) with mutation-verified tests (happy path, non-2xx, timeout, malformed body, circuit, no-key = no fetch). First consumer is chosen by Phase A/B evidence, from decisions that today are **regex because a model call was too dear, and that nobody waits on**:
 
 | Candidate | Today | Why it fits |
 | --- | --- | --- |

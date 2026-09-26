@@ -127,11 +127,14 @@ it had been a 200-body error all along.
 
 ## Scheduled posting
 
-`@MexicoNecesario` daily tweet = schedule `63bfd0bd-b859-44ab-a05e-ece2e8f5b171`
-("MexicoNecesario — Tweet Diario", `0 13 * * 1-5`), tools include `tweet_post`.
-It reads `mexiconecesario/calendario-editorial.md`, posts via
-`tweet_post account:"mexiconecesario"`, marks the calendar. Protocol:
-`jarvis-kb/projects/mexico-necesario-ac/docs/protocolo-publicacion.md`.
+`@MexicoNecesario` daily tweet = schedule `9e06a237-a13d-47fe-99a1-a903005429a2`
+("MexicoNecesario — Tweet Diario", `0 13 * * 1-5`, active; tools
+`jarvis_file_read` and `tweet_post`; verified in `scheduled_tasks` 2026-09-26 — the earlier
+`63bfd0bd-…` schedule no longer exists). It reads
+`projects/mexico-necesario-ac/docs/calendario-editorial-ago-sep-2026.md` (calendar
+runs 4 Aug – 30 Sep 2026, Mon–Fri) and posts via
+`tweet_post account:"mexiconecesario"`; a G1 gate checks `tweet_post` was invoked.
+Protocol: `jarvis-kb/projects/mexico-necesario-ac/docs/protocolo-publicacion.md`.
 
 ## Operator scripts (`/root/`)
 

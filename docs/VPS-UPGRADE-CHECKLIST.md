@@ -1,5 +1,7 @@
 # VPS Upgrade Checklist — KVM 2 → KVM 4 (or larger)
 
+> **Status (2026-09-26): upgrade DONE** — the VPS reports 4 vCPU, 15 GiB RAM, 193 GB root disk; 12 containers running (the "11 containers" counts below are the pre-upgrade baseline). Kept as the reference for the next resize.
+
 Estimated total wall time: **~15 minutes** (5–10 min Hostinger resize + 5 min verification).
 
 Run from a stable terminal — not the one inside the VPS, since SSH will drop during the resize.
@@ -114,7 +116,7 @@ You should see the message in your Telegram within seconds.
 
 ### Bump backup retention back to 14 days
 
-We tightened to 7 days when disk was scarce. With 100+ GB of headroom, longer retention is cheap insurance:
+We tightened to 7 days when disk was scarce. With 100+ GB of headroom, longer retention is cheap insurance. (2026-09-26: `/opt/supabase/backup.sh` now reads `-mtime +3`, so the `+7` sed below matches nothing — adjust the pattern first.)
 
 ```bash
 sed -i 's/-mtime +7 -delete/-mtime +14 -delete/' /opt/supabase/backup.sh

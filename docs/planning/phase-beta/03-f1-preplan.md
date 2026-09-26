@@ -2,7 +2,7 @@
 
 > **Phase:** β (Financial Stack v7.0)
 > **Session estimate:** 1.7 sessions (revised from 1.5 after Yahoo replacement)
-> **Status:** PRE-PLAN DRAFT — not approved, not implemented
+> **Status:** PRE-PLAN DRAFT — not approved, not implemented · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Blockers:** Alpha Vantage budget decision + Yahoo replacement decision
 
 ---

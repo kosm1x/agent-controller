@@ -1,6 +1,6 @@
 # Phase β Ordering + Parallelization Map
 
-> **Status:** DRAFT — incorporating reality-check findings
+> **Status:** DRAFT — incorporating reality-check findings · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Purpose:** Validate that the F1→F2→F4→F5→F3→F6→F6.5→F7→F7.5→F8→F9→F10 graph still makes sense post-reality-check, and identify parallelizable pairs to compress calendar time.
 
 ---

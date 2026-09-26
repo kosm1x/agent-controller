@@ -1,6 +1,6 @@
 # Phase β — Financial Stack v7.0 — Planning Document
 
-> **Status:** PRE-IMPLEMENTATION DRAFT — NO CODE COMMITTED, NO SERVICES TOUCHED
+> **Status:** PRE-IMPLEMENTATION DRAFT — NO CODE COMMITTED, NO SERVICES TOUCHED · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Assembled:** 2026-04-14 session 67 wrap+1
 > **Purpose:** Give the operator everything they need to decide whether to start Phase β, when to start it, and what the first 11 sessions actually look like against the current state of the world (not the Feb 2026 spec).
 

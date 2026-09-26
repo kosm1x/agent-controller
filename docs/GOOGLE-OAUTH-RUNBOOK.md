@@ -57,7 +57,7 @@ curl -s -X POST "https://oauth2.googleapis.com/token" \
 
 ## Notes
 
-- All 21 Google Workspace tools (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) share the same token.
+- All 22 Google Workspace tools (Gmail, Drive, Calendar, Sheets, Docs, Slides, Tasks) plus `google_workspace_cli` share the same token (count verified 2026-09-26 against `src/tools/sources/google.ts`).
 - Refresh tokens expire when: revoked manually, unused for 6 months, password changed, OAuth app in "Testing" status (7-day cap), or Google security policy triggers revocation.
 - The 7-day cap applies only to **Testing** status, not to unverified "In production" apps. Production-unverified apps still show the "Google hasn't verified this app" warning (click **Advanced** → continue) but issue durable refresh tokens.
 - Publish status is managed at **Google Auth Platform → Audience** in the newer Google Cloud Console layout (old path: OAuth consent screen → PUBLISH APP).

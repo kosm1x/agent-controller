@@ -2,7 +2,7 @@
 
 > **Phase:** β (Financial Stack v7.0), S2 of β.
 > **Scope:** F2 + F4 bundled per `04-ordering-map.md` Window A (both small, same schema reader, minimal coupling).
-> **Status:** DRAFT — executes immediately post-F1 merge.
+> **Status:** DRAFT — executes immediately post-F1 merge. · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Branch:** `phase-beta/f2-f4-indicators-and-tools`.
 
 F2 ships the pure-math indicator engine. F4 ships the two consumer tools that wrap F2's output into LLM-callable surfaces (`market_indicators`, `market_scan`). Three of F4's original tools (`market_quote`, `market_history`, `market_watchlist_{add,remove,list}`) already shipped in F1 — only `market_indicators` + `market_scan` remain here.

@@ -144,7 +144,7 @@ Exit: 0 unsourced figures in artifacts over 14 days (metrics script greps artifa
 - OAuth expiry → refresh + retry (never deliver `401 … revoked` ×4);
 - `error_max_turns` / 900 s timeout → checkpoint-resume once with the same sticky scope; deliver partial + `¿Sigo?` only if the resume also caps;
 - orphaned-on-restart tasks are re-queued, not silently dropped (#07-12 03:23).
-  **4.4 Hard stop** — `Para|Detente|Cancela|Alto` (standalone or leading) cancels all running tasks for the thread (`src/messaging/cancel.ts` exists) and replies one line `Detenido: <n> tareas canceladas.` Never a clarifying question, never a greeting (#11367–11369).
+  **4.4 Hard stop** — `Para|Detente|Cancela|Alto` (standalone or leading) cancels all running tasks for the thread (no `src/messaging/cancel.ts` exists; as built the hard stop lives in `src/messaging/router.ts`) and replies one line `Detenido: <n> tareas canceladas.` Never a clarifying question, never a greeting (#11367–11369).
   **4.5 Turn budget is the harness's problem** — remove the user's need to say "No agotes tus turnos": long coding tasks route to the sandboxed/heavy runner by classification (`src/dispatch/classifier.ts`), with checkpoint-resume (4.3) as the safety net.
 
 Exit: 0 `No agotes tus turnos` / bare `Continúa` after a failure in 14 days; 3/3 stops honoured in a scripted test + 1 live.

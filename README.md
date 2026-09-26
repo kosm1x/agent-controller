@@ -72,8 +72,7 @@ POST /api/tasks           POST /a2a (JSON-RPC)
       |         score 9+:   swarm
       |         explicit:   a2a (delegate to remote)
       v
-  Dispatcher ── idempotency check
-      |         concurrency guard (max 5 containers)
+  Dispatcher ── concurrency guard (max 5 containers)
       |         create task + run rows
       |
       +──── Fast Runner ──────── in-process tool loop ──── result
@@ -100,9 +99,9 @@ POST /api/tasks           POST /a2a (JSON-RPC)
 
 ### Fast runner
 
-Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 35 rounds (coding) / 10 default. Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
+Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 55 rounds (coding) / 35 (browser) / 30 default (`MAX_ROUNDS_CODING` / `MAX_ROUNDS_BROWSER` / `MAX_ROUNDS_DEFAULT` in `src/config/constants.ts`). Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
 
-234 tools across 4 ToolSources (live registry 231 on 2026-09-10 + `email_verify` 2026-09-11 + `memory_kg_query` & `memory_forget` 2026-09-12 — the memory source was never registered without Hindsight; per-source breakdown in `docs/TOOL-CATALOG.md`) — builtin (incl. Google-Workspace, WordPress, memory, CRM, teaching, video, coding), MCP-bridge (registered dynamically: xpoz, browser, playwright, supabase), Google (22), Skills (5). New tools declare their name ONCE via `defineTool()` (src/tools/define-tool.ts) and fail with `{error}` JSON (2026-07-05 convention converge). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
+234 tools across 5 ToolSources (live registry at the 2026-09-26 03:21 UTC boot: `Tool sources reported 263 tools; registry holds 234` — registry: builtin 162 + MCP 43 + Google 22 + memory 2 + Skills 5; the sources report MCP as 72 before the concurrent-diff double count is dropped; per-source breakdown in `docs/TOOL-CATALOG.md`) — builtin (incl. Google-Workspace, WordPress, memory, CRM, teaching, video, coding), MCP-bridge (registered dynamically from `mcp-servers.json`: browser, playwright, graphify-code, xpoz), Google (22), memory (`memory_kg_query`, `memory_forget` — registered without Hindsight since 2026-09-12), Skills (5). New tools declare their name ONCE via `defineTool()` (src/tools/define-tool.ts) and fail with `{error}` JSON (2026-07-05 convention converge). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
 
 ### NanoClaw runner
 
@@ -148,7 +147,7 @@ MC also acts as an A2A server — external agents can discover MC and submit tas
 
 ### Inference adapter
 
-The current default routes through the **Claude Agent SDK** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`). The OpenAI-compatible path below is the fallback/alternative, selected with `INFERENCE_PRIMARY_PROVIDER=openai` — vendor-agnostic raw HTTP to any `/v1/chat/completions` endpoint, adapted from NanoClaw's production code.
+The live deployment routes through the **Claude Agent SDK** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`; unset, `src/config.ts` falls back to `openai`). The OpenAI-compatible path below is the fallback/alternative, selected with `INFERENCE_PRIMARY_PROVIDER=openai` — vendor-agnostic raw HTTP to any `/v1/chat/completions` endpoint, adapted from NanoClaw's production code.
 
 Configure the OpenAI-compat path via environment:
 
@@ -308,11 +307,7 @@ agent-controller/
 
     lib/                     # Reused infrastructure
       event-bus.ts           # Event bus singleton
-      db.ts                  # Database accessor
-      adapters/              # Plugin adapter system (base, registry, prometheus)
       events/                # Persistent event bus (SQLite-backed)
-      dispatch/
-        idempotency.ts       # Content-hash deduplication
 
   public/
     dashboard/
@@ -348,31 +343,31 @@ Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
 
 ### Environment variables
 
-| Variable                     | Required    | Default                   | Description                                                                            |
-| ---------------------------- | ----------- | ------------------------- | -------------------------------------------------------------------------------------- |
-| `MC_API_KEY`                 | Yes         | —                         | API key for authentication                                                             |
-| `MC_PORT`                    | No          | `8080`                    | Server port                                                                            |
-| `MC_DB_PATH`                 | No          | `./data/mc.db`            | SQLite database path                                                                   |
-| `INFERENCE_PRIMARY_PROVIDER` | No          | `claude-sdk`              | `claude-sdk` (Sonnet via Agent SDK, current default) or `openai` (OpenAI-compat below) |
-| `INFERENCE_PRIMARY_URL`      | If `openai` | —                         | LLM provider base URL (unused under `claude-sdk`)                                      |
-| `INFERENCE_PRIMARY_KEY`      | If `openai` | —                         | LLM provider API key (unused under `claude-sdk`)                                       |
-| `INFERENCE_PRIMARY_MODEL`    | If `openai` | —                         | Model name (unused under `claude-sdk`)                                                 |
-| `INFERENCE_FALLBACK_URL`     | No          | —                         | Fallback provider URL                                                                  |
-| `INFERENCE_FALLBACK_KEY`     | No          | —                         | Fallback provider key                                                                  |
-| `INFERENCE_FALLBACK_MODEL`   | No          | —                         | Fallback model name                                                                    |
-| `INFERENCE_TIMEOUT_MS`       | No          | `30000`                   | LLM call timeout                                                                       |
-| `INFERENCE_MAX_TOKENS`       | No          | `4096`                    | Max tokens per response                                                                |
-| `NANOCLAW_IMAGE`             | No          | `nanoclaw-agent:latest`   | NanoClaw container image                                                               |
-| `MAX_CONCURRENT_CONTAINERS`  | No          | `5`                       | Max simultaneous containers                                                            |
-| `MC_MCP_CONFIG`              | No          | `./mcp-servers.json`      | Path to MCP servers config                                                             |
-| `A2A_AGENT_NAME`             | No          | `Mission Control`         | A2A agent card display name                                                            |
-| `A2A_AGENT_URL`              | No          | `http://localhost:{port}` | A2A agent card base URL                                                                |
+| Variable                     | Required    | Default                   | Description                                                                             |
+| ---------------------------- | ----------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| `MC_API_KEY`                 | Yes         | —                         | API key for authentication                                                              |
+| `MC_PORT`                    | No          | `8080`                    | Server port                                                                             |
+| `MC_DB_PATH`                 | No          | `./data/mc.db`            | SQLite database path                                                                    |
+| `INFERENCE_PRIMARY_PROVIDER` | No          | `openai`                  | `claude-sdk` (Sonnet via Agent SDK, the live setting) or `openai` (OpenAI-compat below) |
+| `INFERENCE_PRIMARY_URL`      | If `openai` | —                         | LLM provider base URL (unused under `claude-sdk`)                                       |
+| `INFERENCE_PRIMARY_KEY`      | If `openai` | —                         | LLM provider API key (unused under `claude-sdk`)                                        |
+| `INFERENCE_PRIMARY_MODEL`    | If `openai` | —                         | Model name (unused under `claude-sdk`)                                                  |
+| `INFERENCE_FALLBACK_URL`     | No          | —                         | Fallback provider URL                                                                   |
+| `INFERENCE_FALLBACK_KEY`     | No          | —                         | Fallback provider key                                                                   |
+| `INFERENCE_FALLBACK_MODEL`   | No          | —                         | Fallback model name                                                                     |
+| `INFERENCE_TIMEOUT_MS`       | No          | `60000`                   | LLM call timeout                                                                        |
+| `INFERENCE_MAX_TOKENS`       | No          | `6144`                    | Max tokens per response                                                                 |
+| `HEAVY_RUNNER_IMAGE`         | No          | `mission-control:latest`  | Container image for the NanoClaw runner and the containerized heavy runner              |
+| `MAX_CONCURRENT_CONTAINERS`  | No          | `5`                       | Max simultaneous containers                                                             |
+| `MC_MCP_CONFIG`              | No          | `./mcp-servers.json`      | Path to MCP servers config                                                              |
+| `A2A_AGENT_NAME`             | No          | `Mission Control`         | A2A agent card display name                                                             |
+| `A2A_AGENT_URL`              | No          | `http://localhost:{port}` | A2A agent card base URL                                                                 |
 
 ---
 
 ## Current status
 
-**Development state (2026-07-05): production, live on a single VPS as "Jarvis" (Telegram + email).** `main` post system-hardening sweep (`34fbb4f`+`bed561f`, `docs/planning/system-hardening-sweep-2026-07-05.md`; prior: efficiency refactor net −4.3k lines). **234 tools** live across 4 ToolSources (231 verified 2026-09-10 + `email_verify` 2026-09-11 + `memory_kg_query` & `memory_forget` 2026-09-12; static enumeration 193 after the SOCIAL_PUBLISH stub removal); **9,441 tests** passing (full-suite pre-commit run 2026-09-26, `ef38723`); zero type errors; 15 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); Groq + DashScope remain as the OpenAI-compat fallback cascade. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
+**Development state (2026-09-26): production, live on a single VPS as "Jarvis" (Telegram; the email channel is wired but not enabled — see `docs/EMAIL-CHANNEL.md`).** deployed build `fb93b31` (#50, entity-extractor project terms from the projects registry; `main` HEAD `b1b15a0` is docs-only), DEPLOYED 2026-09-26 03:21 UTC (PID 189169, includes #49 `56d200c`); earlier baseline: system-hardening sweep 2026-07-05 (`34fbb4f`+`bed561f`, `docs/planning/system-hardening-sweep-2026-07-05.md`). **234 tools** live across 5 ToolSources (registry count from the 2026-09-26 03:21 UTC boot log; static enumeration 194 re-measured 2026-09-26 (builtin 150 + WordPress 10 + CRM 1 + GWS 1 + Google 22 + memory 5 + skills 5)); **9,441 tests** passing (full-suite pre-commit run 2026-09-26, `ef38723`); zero type errors; 18 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary, Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); the OpenAI-compat fallback/tertiary slots (`INFERENCE_FALLBACK_*`, `INFERENCE_TERTIARY_*`) are empty in the live process, so inference is Claude-only. Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
 
 **Current capability layer — V8 ("Jarvis as colleague"):**
 
@@ -412,7 +407,7 @@ See `docs/V7-ROADMAP.md` + `docs/V8-VISION.md` for the active roadmap and `docs/
 
 Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
 
-- **234 tools across 4 ToolSources** (231 verified 2026-09-10 + `email_verify` 2026-09-11 + `memory_kg_query` & `memory_forget` 2026-09-12; builtin incl. Google-Workspace/WordPress/memory/CRM/teaching/video/coding, MCP-bridge, Google, Skills — breakdown in `docs/TOOL-CATALOG.md`). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
+- **234 tools across 5 ToolSources** (live registry at the 2026-09-26 03:21 UTC boot; builtin incl. Google-Workspace/WordPress/memory/CRM/teaching/video/coding, MCP-bridge, Google, memory, Skills — breakdown in `docs/TOOL-CATALOG.md`). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
 - **Tool deferral** — most tools deferred (name+desc only, full schema on first call). ~52% prompt token reduction
 - **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
 - **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)
@@ -430,10 +425,10 @@ Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built o
 - **Hybrid memory** — FTS5 full-text + pgvector semantic search (Supabase) + Ebbinghaus retention decay + background memory extraction
 - **Intel Depot** — 8 signal sources, delta engine, z-score anomaly detection, 4 Jarvis tools
 - **Document research** — Gemini-powered deep analysis, summaries, study guides, quizzes, podcast generation
-- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (21 tools)
+- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (22 tools)
 - **WordPress multi-site** — content management with destruction safeguards (10 tools)
 - **Autonomous improvement** — SG1-SG5 safeguards (diff digest, kill switch, immutable core, directive cooldown, pre-cycle git tags)
-- **Multi-provider inference** — Claude Agent SDK primary (Sonnet 4.6, Haiku 4.5 fallback, Opus→Sonnet heavy-path tiering) → Groq → DashScope OpenAI-compat fallback. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
+- **Multi-provider inference** — Claude Agent SDK primary (Sonnet 4.6, Haiku 4.5 fallback, Opus→Sonnet heavy-path tiering); OpenAI-compat fallback/tertiary slots supported but empty in the live deployment. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
 
 ---
 

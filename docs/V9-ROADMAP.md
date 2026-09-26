@@ -38,6 +38,8 @@ Carried forward from the bibliography's one-page summary. Each is load-bearing; 
 | S1 cache / S2 audit / S3 drift / S4 cost / S5 skills | substrate            | **All shipped** (S1+S4 2026-04-26; S2+S3+S5 + Conway 1–3 2026-05-19/20)                                                   |
 | **V9 Agentic Loop Engineering**                      | (puts V8.x on trial) | **Frontier — scoped here**                                                                                                |
 
+Status (2026-09-26, per `docs/PROJECT-STATUS.md`): V8.1 06:00 brief RETIRED 2026-08-03 (`fb8672b`; the 08:00 Morning Sync is the surface); V8.2 judgments surface via the Sync, producer in shadow; V8.3 Phases 0–7 complete 2026-07-06, seam + reversal 2026-08-08 (`fd60a02`), first L1→L2 promotion (`schedule_task`) 2026-09-18; V8.4 "Honest Done" ENFORCE armed 2026-08-27. No V9 workstream is implemented yet.
+
 V9 does not require V8.3 to ship first. W1 (verify gate) and W3 (eval harness) operate on the existing Prometheus loop and `logs/decisions/`; W4 (self-mod) is the only workstream that hard-depends on V8.3's shadow-Git reversibility.
 
 ---
@@ -53,6 +55,8 @@ Each is a **candidate gated behind its own readiness bar** — none is "decided"
 **Lands**: `src/prometheus/*` (new `verifier.ts` + `Phase.VERIFY` + `VerificationResult`), runner status path.
 **Gate**: executable spec at the level of `v8-capability-*-spec.md` → **done: `docs/planning/v9-capability-1-spec.md`**. Then build behind `PROMETHEUS_VERIFY_GATE_ENABLED` (default off), shadow-measure false-complete catch rate, activate.
 **Status**: **spec authored 2026-06-23 (this session).** Implementation = next code phase.
+
+Status (2026-09-26): NOT implemented — no `src/prometheus/verifier.ts`, no `PROMETHEUS_VERIFY_GATE_ENABLED` in `src/`. The V8.4 completion ledger's `task_gates` is the intended `checks[]` source for W1 (PROJECT-STATUS).
 
 ### W2 — Ralph-loop continuity
 
@@ -90,7 +94,7 @@ Each is a **candidate gated behind its own readiness bar** — none is "decided"
 
 **What**: a standing background-research task that folds the §2 V9/Loop corpus into `reference_*.md` memories on the existing wave cadence, and crawls the frontier (Awesome-Code-as-Agent-Harness-Papers; the self-evolving survey's citation graph).
 **Sources**: github.com/YennNing/Awesome-Code-as-Agent-Harness-Papers + survey citation graph.
-**Lands**: new `reference_*.md` memories; eventually a long-form `docs/AGENTIC-LOOP-ENGINEERING-CORPUS.md` (referenced by the bibliography but **not yet created** — W6 produces it).
+**Lands**: new `reference_*.md` memories; eventually a long-form `docs/AGENTIC-LOOP-ENGINEERING-CORPUS.md` (planned, not yet written — referenced by the bibliography; W6 produces it).
 **Gate**: none; ongoing, low-priority background.
 **Status**: candidate; background.
 
@@ -148,7 +152,7 @@ V9's instrument (W3) is built from these, but the **output is an internal score*
 - `docs/planning/v8-bibliography-synthesis.md` — the long-form V8 synthesis (28 `reference_*.md`, waves 1–5)
 - `docs/planning/v8-capability-3-spec.md` — V8.3 spec (W4 hard-depends on its shadow-Git reversibility)
 - `project_v8_bibliography.md` (memory) — authoritative scoreboard the bibliography indexes
-- **Pending (W6)**: `docs/AGENTIC-LOOP-ENGINEERING-CORPUS.md` — long-form V9 corpus, not yet written
+- **Pending (W6)**: `docs/AGENTIC-LOOP-ENGINEERING-CORPUS.md` (planned, not yet written) — long-form V9 corpus
 
 ---
 

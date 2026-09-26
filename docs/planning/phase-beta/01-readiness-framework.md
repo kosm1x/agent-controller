@@ -1,6 +1,6 @@
 # Phase β Readiness Framework
 
-> **Status:** DRAFT — awaiting reality-check agent findings
+> **Status:** DRAFT — awaiting reality-check agent findings · **Superseded (noted 2026-09-26):** Phase β shipped 12/12 by 2026-04-22 (see `docs/V7.5-CLOSURE.md` §Phase β; v7.5 closed 2026-05-08, tag `v7.5-closed`).
 > **Last updated:** 2026-04-14 session 67 wrap+1
 > **Purpose:** Define what "Jarvis is ready for Phase β" actually means, measurably, before any F-series code ships.
 

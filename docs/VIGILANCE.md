@@ -15,7 +15,7 @@ Run these before interpreting any specific user report. Several audit bugs prese
 3. **Orphan tasks on restart**: `./mc-ctl db "SELECT COUNT(*) FROM tasks WHERE status IN ('pending','queued','running') AND created_at < datetime('now', '-30 minutes')"`. Should be 0 post-fix (`reconcileOrphanedTasks` at boot). If >0 and grows across restarts, the reconcile regressed.
 4. **Circuit breaker state**: grep logs for `Circuit breaker OPEN`. Should appear only transiently; if stuck OPEN while the provider is healthy (curl to provider works), the breaker state-machine regressed.
 5. **Observability truthfulness** (see next section): do the numbers make sense?
-6. **Hindsight status**: `curl -s localhost:8888/healthz` (port 8888, crm-hindsight Docker). If 404/timeout, memory backend has degraded — should have dual-write fallback to SQLite, not silent failure.
+6. **Hindsight status**: `curl -s localhost:8888/health` (port 8888, crm-hindsight Docker; `/healthz` returns 404 — verified 2026-09-26). If it times out, memory backend has degraded — should have dual-write fallback to SQLite, not silent failure. Note (2026-09-26): Hindsight is DEMOTED for mission-control (`HINDSIGHT_ENABLED=false` / `HINDSIGHT_RECALL_ENABLED=false` defaults); the container still serves agentic-crm.
 7. **Recent error patterns**: `./mc-ctl db "SELECT title, error FROM tasks WHERE status='failed' AND completed_at > datetime('now','-1 hour')"`. Any repeated error strings? `completed_with_concerns`? Any "tool X not available" messages in user conversations?
 
 ---

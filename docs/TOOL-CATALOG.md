@@ -1,7 +1,7 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-09-12 (`memory_forget` added, CORE + confirm-gated; every tool description now passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list; counts below are from 2026-04-23 unless dated — live registry is 231 as of 2026-09-10 + `email_verify` 2026-09-11 + `memory_kg_query` & `memory_forget` 2026-09-12 = 234; the memory source registers its KG/pgvector tools without Hindsight since `01f8d7a`)
-> **Source of truth for tool registration**: `src/tools/sources/builtin.ts`
+> **Last updated**: 2026-09-26 (tool surface re-verified against code: static enumeration of the exported tool objects = **194** — builtin 150 + WordPress 10 + CRM 1 + `google_workspace_cli` 1 + Google 22 + memory 5 + skills 5; live registry **234** at the 2026-09-26 03:21 UTC boot. Earlier: `memory_forget` added 2026-09-12, CORE + confirm-gated; every tool description passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list)
+> **Source of truth for tool registration**: `src/tools/sources/builtin.ts` (+ `google.ts`, `memory.ts`, `skills.ts`, `mcp.ts`; wired in `src/index.ts`). **Source of truth for scope groups**: the `*_TOOLS` arrays in `src/messaging/scope.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
 
@@ -9,16 +9,16 @@
 
 ## At-a-glance
 
-| Dimension                       | Value                                                                                                                                                                                        |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runners                         | 5 types: fast, nanoclaw, heavy (Prometheus), swarm, a2a                                                                                                                                      |
-| Total tools available to Jarvis | **246** — per live service log (2026-04-23). Breakdown by source: builtin 154 + mcp 65 + google 21 + memory 4 + skills 2                                                                     |
-| Tools gated by deferral         | 177 (147 builtin + 30 MCP) — saves ~52% prompt tokens                                                                                                                                        |
-| Scope groups                    | 22 (see `DEFAULT_SCOPE_PATTERNS` in `src/messaging/scope.ts`)                                                                                                                                |
-| Core deps                       | 15 + 2 messaging                                                                                                                                                                             |
-| Tests                           | 3733 (239 test files)                                                                                                                                                                        |
-| External services (non-LLM)     | Hindsight, Supabase, Prometheus (observability), Caddy (proxy), Grafana, LightPanda, Playwright MCP, MCP: context7, sequential-thinking, graphify-code, Gmail, Google Calendar, Google Drive |
-| LLM providers                   | Claude Agent SDK (primary, `INFERENCE_PRIMARY_PROVIDER=claude-sdk`), OpenAI-compatible fallback (qwen, kimi via rotation)                                                                    |
+| Dimension                       | Value                                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runners                         | 5 types: fast, nanoclaw, heavy (Prometheus), swarm, a2a                                                                                                                                           |
+| Total tools available to Jarvis | **234** — live registry per service log (2026-09-26 03:21 UTC boot), 5 ToolSources: builtin 162 + mcp 43 + google 22 + memory 2 (KG/pgvector only; Hindsight backend off) + skills 5              |
+| Tools gated by deferral         | 143 of the 194 static tools declare `deferred: true` (2026-09-26); MCP tools not counted                                                                                                          |
+| Scope groups                    | 35 regex groups (`DEFAULT_SCOPE_PATTERNS` in `src/messaging/scope.ts`); 26 classifier groups (`VALID_GROUPS` in `src/messaging/scope-classifier.ts`)                                              |
+| Core deps                       | 18 + 2 messaging (20 in `package.json`, 2026-09-26)                                                                                                                                               |
+| Tests                           | 9,441 (full suite 2026-09-26; 488 `*.test.ts` files under `src/` + `scripts/`)                                                                                                                    |
+| External services (non-LLM)     | Hindsight, Supabase, Prometheus (observability), Caddy (proxy), LightPanda, Playwright MCP, MCP: graphify-code, xpoz, Google Workspace APIs (Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks) |
+| LLM providers                   | Claude Agent SDK (primary, `INFERENCE_PRIMARY_PROVIDER=claude-sdk`), OpenAI-compatible fallback (qwen, kimi via rotation)                                                                         |
 
 ---
 
@@ -125,47 +125,54 @@ Each tool has `deferred: true|false` controlling whether it loads at prompt-cons
 
 ### Always-loaded (core)
 
-Essential tools for every conversation. Not deferred.
+`CORE_TOOLS` + `MISC_TOOLS` in `src/messaging/scope.ts` — in every conversation's tool list regardless of scope.
 
-- `web_search` — EXA-powered web search
-- `web_read` — extract article text from a URL
+- `web_search` — Brave Search API
+- `web_read` — extract article text from a URL (Jina Reader + stealth-browser fallback)
 - `exa_search` — semantic search over Exa's corpus
 - `user_fact_set` / `user_fact_list` / `user_fact_delete` — user profile
+- `memory_forget` — 2026-09-12, deferred, confirm-gated: invalidates the active knowledge-graph facts of a subject (temporal, history kept) and/or deletes ONE correction-loop entry `corrections/<12 hex>.md` from the pgvector KB via `pgDelete`; NOT for personal facts (`user_fact_delete`) or KB files (`jarvis_file_delete`)
 - `skill_save` / `skill_list` — reusable skill vault
 - `file_read` — read `.txt`, `.docx`, downloaded attachments
+- `data_summarize` — deterministic row counts + column statistics over CSV/TSV/JSON/markdown tables (computed, never estimated)
 - `list_dir` — browse VPS filesystem
 - `task_history` — Jarvis queries its own past executions
-- `jarvis_file_read` — NorthStar visions/goals
-- `jarvis_file_list` — list jarvis_files/
+- `jarvis_file_read` / `jarvis_file_list` — read / list the Jarvis knowledge base
+- `jarvis_file_search` / `jarvis_file_write` / `jarvis_file_update` / `jarvis_file_delete` / `jarvis_file_move` / `jarvis_files_batch_write` / `jarvis_files_batch_delete` — KB CRUD (always-on since 2026-05-07)
+- `list_schedules`, `project_list` / `project_get` / `project_update`, `video_status`, `vps_status`, `northstar_sync`, `browser__goto` / `browser__markdown` — the rest of `MISC_TOOLS`
 - `shell_exec` / `file_write` / `file_edit` / `git_status` / `git_diff` / `git_commit` / `git_push` — coding core, not deferred since 2026-09-01 (under `TOOL_SEARCH_ENABLED` a deferred tool is visible only after a `ToolSearch` hit; tasks 8958/8961–8963 searched once, missed, went BLOCKED). Still scope-gated to `coding`; pinned by `core-coding-always-loaded.test.ts`.
 
 ### Google Workspace (scope group: `google`)
 
-- `gdocs_read` / `gdocs_write` — Google Docs
+Registered by the Google ToolSource when `GOOGLE_CLIENT_ID` + `GOOGLE_REFRESH_TOKEN` are set.
+
+- `gdocs_read` / `gdocs_read_full` / `gdocs_write` / `gdocs_replace` — Google Docs
 - `gsheets_read` / `gsheets_write` — Sheets
 - `gslides_read` / `gslides_create` — Slides
-- `gdrive_list` / `gdrive_create` / `gdrive_upload` / `gdrive_move` / `gdrive_share` / `gdrive_delete` — Drive
-- `gmail_search` / `gmail_read` / `gmail_send` — Gmail
+- `gmail_send` / `gmail_search` / `gmail_read` — Gmail
+- `gdrive_list` / `gdrive_create` / `gdrive_share` / `gdrive_delete` / `gdrive_move` / `gdrive_upload` / `gdrive_download` — Drive
 - `calendar_list` / `calendar_create` / `calendar_update` — Calendar
 - `gtasks_create` — Tasks
-- `gws` — dispatcher tool (v7.6) wrapping the above via CLI (preferred for complex multi-step workflows)
-- MCP: `claude_ai_Gmail`, `claude_ai_Google_Calendar`, `claude_ai_Google_Drive` (external MCPs available for supplementary access)
+- `google_workspace_cli` — dispatcher tool (v7.6, the "gws" CLI) for Workspace APIs not covered by a dedicated handler (Chat, etc.); registered only when `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `GOOGLE_REFRESH_TOKEN` are all set
+- The google group also pulls in `pdf_read`, `gemini_upload`, `gemini_research` (2026-07-22: a bare Drive link carries no research keyword)
 
 ### WordPress (scope group: `wordpress`)
+
+Registered only when `WP_SITES` is set.
 
 - `wp_list_posts` / `wp_read_post` — read
 - `wp_publish` — create/update posts
 - `wp_delete` — delete
 - `wp_media_upload` — media library
 - `wp_categories` / `wp_pages` / `wp_plugins` / `wp_settings` / `wp_raw_api` — admin
+- The wordpress group also adds `humanize_text`
 
 ### NorthStar (vision/goals/tasks) (scope groups: `northstar_read` / `northstar_write` / `northstar_journal`)
 
-- `commit__list_objectives` / `commit__list_goals` / `commit__list_tasks` / `commit__list_ideas`
-- `commit__get_hierarchy` / `commit__get_daily_snapshot`
-- `commit__create_objective` / `commit__create_task` / `commit__update_task` / `commit__update_goal` / `commit__update_objective` / `commit__update_status` / `commit__delete_item`
-- `commit__search_journal`
-- `northstar_sync` — bidirectional LWW sync with self-heal
+The `commit__*` MCP tools are gone (no `commit` server in `mcp-servers.json`; no reference in `src/`). NorthStar content lives in the Jarvis KB and is read/written with the always-on `jarvis_file_*` tools.
+
+- `northstar_sync` — bidirectional LWW sync with db.mycommit (self-heal); always-on via `MISC_TOOLS`
+- `northstar_journal` and `destructive` are intent-only groups (they add no tools of their own)
 
 ### Intel Depot (scope group: `intel`)
 
@@ -175,22 +182,25 @@ Signals ingested from 8 sources, queryable.
 - `intel_status` — adapter health
 - `intel_alert_history` — recent alerts
 - `intel_baseline` — compute baseline for a signal
-- Sources behind intel_query: `usgs`, `nws`, `gdelt`, `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`
+- Sources behind intel_query (`src/intel/adapters/`): `usgs`, `nws`, `gdelt`, `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`
 
-### Markets (scope groups: `markets`, `portfolio`, `alpha`)
+### Markets (scope groups: `finance`, `alpha`, `backtest`, `paper`, `pm_alpha`, `pm_paper`, `market_ritual`, `chart`)
 
-- `market_prices` / `market_indicators` / `market_history` — core OHLCV + indicators
-- `market_watchlist_add` / `market_watchlist_list` — watchlist
-- `market_signals` — crossover/divergence detection
-- `market_macro_snapshot` / `market_macro_regime` — FRED + regime
-- `pm_alpha` / `pm_markets` / `pm_trader` — Polymarket (prediction markets)
-- `whale_trades` — large on-chain transfers
-- `sentiment_snapshot` — news/social sentiment
-- `alpha_combine` — Fama-MacBeth scalar β combination
-- `strategy_backtest` — CPCV + PBO + DSR firewall
-- `pm_paper_rebalance` / `pm_paper_portfolio` / `pm_paper_history` — Polymarket paper trading
-- `paper_rebalance` / `paper_portfolio` / `paper_history` — equity paper trading
-- `market_chart_render` / `market_chart_patterns` — SVG charts + pattern detection
+- `market_quote` / `market_history` / `market_indicators` — price snapshot, OHLCV, indicators (`finance`)
+- `market_watchlist_add` / `market_watchlist_list` / `market_watchlist_remove` / `market_watchlist_reseed` — watchlist (`finance`)
+- `market_scan` / `market_signals` — threshold scan + crossover/divergence detection (`finance`)
+- `macro_regime` — FRED + Alpha Vantage regime classifier (`finance`)
+- `market_budget_stats` — Alpha Vantage / Polygon / FRED API budget (`finance`)
+- `prediction_markets` — Polymarket markets (`finance`)
+- `whale_trades` — large on-chain transfers (`finance`)
+- `sentiment_snapshot` — news/social sentiment (`finance`)
+- `alpha_run` / `alpha_latest` / `alpha_explain` — F7 alpha combination engine, Fama-MacBeth scalar β (`alpha`)
+- `backtest_run` / `backtest_latest` / `backtest_explain` — F7.5 backtester, CPCV + PBO + DSR firewall (`backtest`)
+- `paper_rebalance` / `paper_portfolio` / `paper_history` — equity paper trading (`paper`)
+- `pm_alpha_run` / `pm_alpha_latest` — F8.1a Polymarket alpha (`pm_alpha`)
+- `pm_paper_rebalance` / `pm_paper_portfolio` / `pm_paper_history` — Polymarket paper trading (`pm_paper`)
+- `market_calendar` / `alert_budget_status` — NYSE trading-day check + ritual token budget (`market_ritual`)
+- `market_chart_render` / `market_chart_patterns` — SVG charts + pattern detection (`chart`)
 
 ### Coding (scope group: `coding`)
 
@@ -198,41 +208,48 @@ Signals ingested from 8 sources, queryable.
 - `gh_repo_create` (pass `cwd`: creates the repo AND wires `origin`) / `gh_create_pr` — GitHub. `git_push` takes `remote` for a repo already on GitHub; `shell_exec` denies `git remote …` (2026-09-01, `337d91f`)
 - `file_write` / `file_edit` / `file_delete` — filesystem mutation
 - `list_dir` / `glob` / `grep` — navigation + search
+- `http_fetch` / `code_search` — raw HTTP + semantic code search
 - `shell_exec` — sandboxed shell (denylist). `shell_exec`, `file_write`, `file_edit` and the four `git_*` tools are always-loaded (not `deferred`) since 2026-09-01; `file_delete`, `gh_*`, `code_search` stay deferred
 - `jarvis_dev` — sandboxed Jarvis self-modification (`action: branch|test|pr|status`)
 - `jarvis_test_run` — run Jarvis's own tests
+- `jarvis_diagnose` — diagnose recent mission-control errors
+- `vps_deploy` / `vps_backup` / `vps_logs` — VPS management (`vps_backup` copies mc.db to `backups/`)
+- `jarvis_propose_directive` / `jarvis_apply_proposal` — propose / apply (after explicit approval) changes to Jarvis's own directives
 
 ### Research (scope group: `research`)
 
 - `web_search` / `web_read` / `exa_search` (also core)
-- `gemini_research` — Gemini-powered research with URL + local file support
-- `output_citation` — structured citation output
-- `memory_search` / `memory_store` — Hindsight memory (gated by `hasMemory`, false in production while Hindsight is off)
-- `memory_forget` — 2026-09-12, CORE (deferred), confirm-gated: invalidates the active knowledge-graph facts of a subject (temporal, history kept) and/or deletes ONE correction-loop entry `corrections/<12 hex>.md` from the pgvector KB via `pgDelete`; NOT for personal facts (`user_fact_delete`) or KB files (`jarvis_file_delete`)
+- `gemini_upload` / `gemini_research` / `gemini_audio_overview` — Gemini document upload, research with URL + local file support, podcast-style audio overview
+- `knowledge_map` / `knowledge_map_expand` — structured domain knowledge maps
+- The research group also adds `pdf_read` and `http_fetch`
+- `memory_search` / `memory_store` / `memory_reflect` — Hindsight memory; registered and scoped only when the memory backend is `hindsight` (off in production: the memory ToolSource registers only `memory_kg_query` + `memory_forget`)
 
 ### Browser automation (scope group: `browser`)
 
 MCP bridges to two browser stacks.
 
-- `browser__goto` / `browser__evaluate` / `browser__interactiveElements` / `browser__links` / `browser__markdown` — LightPanda (lightweight)
-- `playwright__browser_navigate` / `playwright__browser_click` / `playwright__browser_fill_form` / `playwright__browser_snapshot` / `playwright__browser_take_screenshot` — Playwright MCP (full-browser)
+- `browser__goto` / `browser__markdown` (always-on) + `browser__links` / `browser__click` / `browser__fill` / `browser__scroll` / `browser__evaluate` / `browser__interactiveElements` / `browser__semantic_tree` / `browser__structuredData` — LightPanda (lightweight, 10 tools)
+- `playwright__browser_*` — Playwright MCP (full-browser; 21 tools lazy-registered, 20 in `BROWSER_TOOLS`: navigate, click, fill_form, snapshot, take_screenshot, press_key, select_option, tabs, wait_for, evaluate, type, close, console_messages, drag, file_upload, handle_dialog, hover, navigate_back, network_requests, resize)
 
 ### Scheduling (scope group: `schedule`)
 
 - `schedule_task` — create a one-time or cron scheduled task
-- `list_schedules` / `delete_schedule` — manage
-- Static rituals: morning-briefing, nightly-close, market-open, market-close, pre-market, proactive-scan, autonomous-improvement, kb-backup, stale-artifact-prune, memory-consolidation, diff-digest
+- `list_schedules` (always-on) / `delete_schedule` — manage
+- Static rituals (`src/rituals/scheduler.ts`, 2026-09-26): morning-briefing, nightly-close, evolution-log, market-morning-scan, market-eod-scan, pm-daily-rebalance, signal-intelligence, skill-evolution, weekly-review, day-narrative, overnight-tuning, autonomous-improvement, kb-backup, stale-artifact-prune, memory-consolidation, diff-digest (and others)
 
 ### CRM (scope group: `crm`)
 
-- `crm_query` — bidirectional REST to `agentic-crm` service (port 3000)
+- `crm_query` — bidirectional REST to `agentic-crm` service (port 3000); registered only when `CRM_API_TOKEN` is set
 
 ### SEO + GEO (scope group: `seo`)
 
 - `seo_keyword_research`
 - `seo_page_audit`
 - `seo_content_brief`
-- `seo_serp_snapshot` / `seo_rank_tracker`
+- `seo_meta_generate` / `seo_schema_generate` — meta tags + JSON-LD
+- `seo_robots_audit` / `seo_llms_txt_generate` — AI-bot robots.txt audit + `/llms.txt`
+- `seo_telemetry` — PageSpeed Insights + Search Console
+- `ai_overview_track` — Google AI Overview presence for a query
 
 ### Ads / Digital Marketing Buyer (scope group: `ads`)
 
@@ -243,54 +260,71 @@ MCP bridges to two browser stacks.
 ### Video production (scope group: `video`)
 
 - `video_create` / `video_status` / `video_list_profiles` — video generation
-- `video_script` — script composition
-- `video_tts` — text-to-speech
+- `video_script` / `video_storyboard` — script + scene-by-scene manifest composition
+- `video_tts` / `video_list_voices` — text-to-speech
 - `video_image` — scene images
+- `video_background_download` / `video_transition_preview` / `video_brand_apply` — background footage, transition samples, brand profile
 - `video_compose_manifest` / `video_html_compose` — composition DSLs
+- `video_job_cancel` / `video_job_cleanup` — job hygiene
+- `screenshot_element` — HiDPI element screenshot
 
-### Multimedia / design (scope group: `specialty` / `chart`)
+### Multimedia / design (scope groups: `specialty` / `diagram`)
 
-- `chart_render` / `chart_patterns` — SVG + pattern overlay
-- `diagram_generate` — graphviz `dot` or inline LLM svg_html
+- `chart_generate` — chart image URL from data
+- `rss_read` — RSS/Atom feed to JSON
+- `diagram_generate` — graphviz `dot` or inline LLM svg_html (`diagram`)
 - `infographic_generate` — AntV DSL (276 templates)
 - `gemini_image` — Gemini image gen
-- `hf_generate` — HuggingFace inference
+- `hf_generate` / `hf_spaces` — HuggingFace inference
+- `batch_decompose` — split a large batch task into sequential chunks
+- The specialty group also adds `humanize_text`, `dashboard_generate` / `dashboard_list`, `http_fetch`, `pdf_read`
+
+### Teaching (scope group: `teaching`)
+
+- `learning_plan_create` / `learning_plan_advance` / `learning_plan_quiz` / `learning_plan_explain_back` / `learning_plan_summarize` / `learning_plan_status` — v7.11 learning plans
+- `learner_model_status` — learner-model report (due / mastered / shaky concepts)
+
+### Skills (scope group: `skills`)
+
+- `skill_describe` / `skill_load` / `skill_run` — S5 skill dispatch (metadata, full body, invoke); `skill_save` / `skill_list` are core
 
 ### Messaging / delivery
 
-- Telegram bot (Baileys-based, not a tool — runtime messaging channel)
-- WhatsApp (grammy-based, ditto)
+- Telegram bot (grammy-based, not a tool — runtime messaging channel)
+- WhatsApp (Baileys-based, ditto)
 
 ### Knowledge / graph
 
-- `memory_search` / `memory_store` — Hindsight + SQLite fallback
-- `graphify-code__*` — code knowledge graph (7 tools via external Python MCP)
-- MCP: `context7__query-docs` / `resolve-library-id` — library docs
-- MCP: `sequential-thinking__sequentialthinking` — scratchpad reasoning
+- `memory_kg_query` — knowledge-graph query (memory ToolSource; registered without Hindsight since `01f8d7a`)
+- `kb_ingest_pdf_structured` / `kb_batch_insert` — structured PDF ingestion + batch insert into the pgvector KB (scope group: `kb_ingest`)
+- `graphify-code__*` — code knowledge graph (7 tools via external Python MCP; scope group: `graph`)
+- `xpoz__*` — xpoz-pipeline MCP (5 tools: trigger_run, get_topics, get_digest, get_history, get_job_status; scope group: `xpoz`)
 
 ### Admin / self-management
 
-- `jarvis_propose_directive` — Jarvis can propose changes to its own directives
+- `jarvis_propose_directive` / `jarvis_apply_proposal` — Jarvis can propose changes to its own directives (applied only after operator approval)
 - `jarvis_file_search` / `jarvis_file_update` / `jarvis_file_write` / `jarvis_file_delete` — jarvis_files CRUD
 - `project_list` / `project_get` / `project_update` — project registry
 - `task_history` — Jarvis queries its own task log
+- `submit_report` — validate + audit a draft operator-facing report before delivery (not deferred; unscoped, reached by the runner)
+- `evolution_get_data` / `evolution_deactivate_skill` — skill-evolution ritual data + deactivation (unscoped, ritual-only)
 
 ### Utilities (scope group: `utility`)
 
-- `http_fetch` — generic HTTP request (use dedicated tools when available)
-- `pdf_read` — local PDF extraction
+- `weather_forecast` / `currency_convert` / `geocode_address` — weather, ECB FX rates, geocoding
 - `file_convert` — format bridge (ebooks, office, images, doc↔doc via pandoc, video frames via ffmpeg)
-- `hf_generate` / `hf_spaces` — HuggingFace
-- `vps_status` / `vps_logs` / `vps_deploy` — VPS management
 - `email_verify` — SMTP mailbox verification without sending (syntax → MX → RCPT TO probe; daily cap + circuit breaker; `docs/EMAIL-VERIFY.md`, 2026-09-11)
+- `http_fetch` / `pdf_read` — generic HTTP + local PDF extraction (via the `coding` / `research` / `specialty` groups)
+- `hf_generate` / `hf_spaces` — HuggingFace (via `specialty`)
+- `vps_status` (always-on) / `vps_logs` / `vps_deploy` — VPS management (via `coding`)
 
 ### Social (scope group: `social`)
 
-- Various social content tools (see `src/tools/builtin/social.ts`)
+- `tweet_post` / `tweet_probe` / `tweet_mentions` — X posting, auth health-check, mentions (`src/tools/builtin/x-post.ts`; see `docs/X-POSTING.md`)
 
-### Writing (scope group: `writing`)
+### Writing
 
-- `writing` — writing/editing assistant tool
+- `humanize_text` — detect and remove AI writing patterns (`src/tools/builtin/writing.ts`; added by the `specialty` and `wordpress` groups — there is no `writing` scope group)
 
 ---
 
@@ -298,22 +332,20 @@ MCP bridges to two browser stacks.
 
 Not Jarvis "tools" per se — supporting services that Jarvis talks to.
 
-| Service                     | Where                                | Port                 | Purpose                                  | Stability        |
-| --------------------------- | ------------------------------------ | -------------------- | ---------------------------------------- | ---------------- |
-| mission-control             | systemd, compiled JS                 | 8080                 | Jarvis agent orchestrator (this service) | Primary          |
-| agentic-crm                 | systemd, tsx                         | 3000                 | CRM engine (Azteca)                      | External repo    |
-| Hindsight                   | Docker (`crm-hindsight`)             | 8888, 9999           | Long-term memory                         | Primary backend  |
-| Prometheus (metrics)        | Docker (`mc-prometheus`)             | 9090                 | Metrics scrape target                    | Observability    |
-| Supabase                    | Docker stack                         | 5433, 8100, 3100     | Postgres + API + Studio                  | Shared platform  |
-| Grafana                     | Docker / Caddy                       | 3200 (Caddy-proxied) | Dashboards                               | Observability    |
-| Caddy                       | system binary                        | 80, 443              | Reverse proxy + TLS                      | Edge             |
-| LightPanda                  | binary (`./bin/lightpanda`)          | MCP stdio            | Lightweight browser                      | MCP server       |
-| Playwright MCP              | npx                                  | MCP stdio            | Full-browser automation                  | MCP server       |
-| context7                    | npm                                  | MCP stdio            | Library documentation lookup             | MCP server       |
-| sequential-thinking         | npm                                  | MCP stdio            | Scratchpad reasoning                     | MCP server       |
-| graphify-code               | Python venv + MCP                    | MCP stdio            | Code knowledge graph                     | Env-gated        |
-| Claude Agent SDK            | npm `@anthropic-ai/claude-agent-sdk` | (direct)             | Primary inference                        | Primary provider |
-| OpenAI-compatible providers | HTTPS                                | (direct)             | Fallback inference (qwen, kimi)          | Secondary        |
+| Service                     | Where                                     | Port             | Purpose                                  | Stability                                                                     |
+| --------------------------- | ----------------------------------------- | ---------------- | ---------------------------------------- | ----------------------------------------------------------------------------- |
+| mission-control             | systemd, compiled JS                      | 8080             | Jarvis agent orchestrator (this service) | Primary                                                                       |
+| agentic-crm                 | systemd, tsx                              | 3000             | CRM engine (Pulso)                       | External repo                                                                 |
+| Hindsight                   | Docker (`crm-hindsight`)                  | 8888, 9999       | Long-term memory                         | Off for mission-control (memory backend not `hindsight`); used by agentic-crm |
+| Prometheus (metrics)        | Docker (`mc-prometheus`)                  | 9090             | Metrics scrape target                    | Observability                                                                 |
+| Supabase                    | Docker stack                              | 5433, 8100, 3100 | Postgres + API + Studio                  | Shared platform                                                               |
+| Caddy                       | system binary                             | 80, 443          | Reverse proxy + TLS                      | Edge                                                                          |
+| LightPanda                  | binary (`./bin/lightpanda`)               | MCP stdio        | Lightweight browser                      | MCP server                                                                    |
+| Playwright MCP              | npx                                       | MCP stdio        | Full-browser automation                  | MCP server                                                                    |
+| xpoz-pipeline MCP           | node (`xpoz-pipeline/dist/mcp-server.js`) | MCP stdio        | xpoz topics/digests (5 tools)            | MCP server                                                                    |
+| graphify-code               | Python venv + MCP                         | MCP stdio        | Code knowledge graph                     | Env-gated                                                                     |
+| Claude Agent SDK            | npm `@anthropic-ai/claude-agent-sdk`      | (direct)         | Primary inference                        | Primary provider                                                              |
+| OpenAI-compatible providers | HTTPS                                     | (direct)         | Fallback inference (qwen, kimi)          | Secondary                                                                     |
 
 ---
 
@@ -335,7 +367,7 @@ Per `docs/V7-ROADMAP.md`:
 - **v7.8 P3** (Autoreason tournament, ε) — declined 2026-04-20
 - **v7.13.x** deferrals — deferred
 - **v7.14.1** PNG output / streaming / retry — deferred
-- **xpoz-intelligence-pipeline-manager MCP bridge** — next Jarvis-side integration (pending Jarvis plan)
+- **xpoz-intelligence-pipeline-manager MCP bridge** — SHIPPED: `xpoz` MCP server live (5 `xpoz__*` tools, scope group `xpoz`; boot log 2026-09-26)
 
 ---
 
@@ -344,16 +376,16 @@ Per `docs/V7-ROADMAP.md`:
 1. **Know the name?** `grep -n "name: \"<name>\"" src/tools/builtin/*.ts`
 2. **Know the category?** Find it in this doc by scope group, then read the corresponding `src/tools/builtin/<category>.ts`
 3. **Not sure?** Check `src/tools/sources/builtin.ts:BUILTIN_TOOLS` — the canonical registration array
-4. **Need to add a new one?** NOT during freeze. Post-freeze: `CLAUDE.md` → "Adding a new tool" pattern
+4. **Need to add a new one?** `CLAUDE.md` → "Adding a new tool" pattern (declare the name once via `defineTool()`, `src/tools/define-tool.ts`; the freeze ended 2026-05-22)
 
 ---
 
 ## Scope groups (the deferral control surface)
 
-From `src/messaging/scope.ts:DEFAULT_SCOPE_PATTERNS`:
+From `src/messaging/scope.ts:DEFAULT_SCOPE_PATTERNS` (35 groups, 2026-09-26):
 
-`google`, `wordpress`, `northstar_read`, `northstar_write`, `northstar_journal`, `intel`, `markets`, `portfolio`, `alpha`, `coding`, `research`, `browser`, `schedule`, `crm`, `seo`, `ads`, `video`, `specialty`, `chart`, `graph`, `social`, `writing`, `meta`, `utility`, `destructive`, `jarvis_write`
+`ads`, `alpha`, `backtest`, `browser`, `chart`, `coding`, `crm`, `destructive`, `diagram`, `finance`, `google`, `graph`, `intel`, `jarvis_write`, `kb_ingest`, `market_ritual`, `meta`, `northstar_journal`, `northstar_read`, `northstar_write`, `paper`, `pm_alpha`, `pm_paper`, `projects`, `research`, `schedule`, `seo`, `skills`, `social`, `specialty`, `teaching`, `utility`, `video`, `wordpress`, `xpoz`
 
-Each has a regex triggering on user message; matching groups load their associated tools into the prompt. ~52% token savings vs loading all 246 tools every turn.
+Each has a regex triggering on user message; matching groups load their associated tools into the prompt (the `*_TOOLS` arrays in the same file). ~52% token savings vs loading all 234 tools every turn.
 
-The semantic classifier (`v6.4 CL1.1` — `src/messaging/scope-classifier.ts`) is the primary matcher; the regex patterns are fallback for classifier timeouts. NFC normalization is enforced at both entry points (Dim-5 C-SCP-1 fix).
+The semantic classifier (`v6.4 CL1.1` — `src/messaging/scope-classifier.ts`; Jev runs first when enabled, operator ruling 2026-09-21) is the primary matcher; the regex patterns are fallback for classifier timeouts. NFC normalization is enforced at both entry points (Dim-5 C-SCP-1 fix).

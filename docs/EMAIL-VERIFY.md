@@ -31,8 +31,10 @@ an explicit mailbox phrase ("user unknown", "no existe", …) and no sender-side
 Design, verdict contract, provider rules and the reply-phrase tables are ported from
 [reacherhq/check-if-email-exists](https://github.com/reacherhq/check-if-email-exists)
 (Rust, AGPL-3.0 / commercial dual licence — review memo `reference_check_if_email_exists`).
-mission-control is private and not distributed, so no AGPL obligation attaches today. **If this
-module is ever published or exposed as a service to third parties, revisit the licence first.**
+This doc previously said mission-control is private and not distributed. **Correction
+(2026-09-26): the GitHub repo `kosm1x/agent-controller` is PUBLIC (`gh repo view` →
+`visibility: PUBLIC`), so this module's source is published.** The licence review this
+paragraph calls for on publication is therefore due now (operator decision; open item).
 
 Improvements over the original: structured enhanced-status classification before phrases;
 MX failover across records; RFC 7505 null MX + RFC 5321 implicit MX; per-domain MX and

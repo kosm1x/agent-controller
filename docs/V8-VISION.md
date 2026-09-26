@@ -1,6 +1,7 @@
 # V8 Vision — Autonomía Estratégica + Engineering Substrate
 
 > **Status (updated 2026-06-24)**: substrate S1–S5 shipped; V8.1 **ACTIVE** (§13 gate passed 2026-05-27); V8.2 shipped, shadow-armed (delivery OFF); V8.3 **substrate (Phase 0+1) shipped dormant** — capability-autonomy ledger + seed; v1 pipeline (Phases 2–7) pending. Bilateral-maturity gated.
+> **Status (2026-09-26, per `docs/PROJECT-STATUS.md`)**: V8.1 ACTIVE, but its delivered 06:00 brief was RETIRED 2026-08-03 (`fb8672b`) — the 08:00 Morning Sync is the morning surface. V8.2 judgments now surface inside the Morning Sync (`surfaced_at`); producer stays in shadow. V8.3 Phases 0–7 complete 2026-07-06; seam + reversal shipped 2026-08-08 (`fd60a02`); first L1→L2 promotion (`schedule_task`) 2026-09-18. V8.4 "Honest Done" ENFORCE armed 2026-08-27 (drop-in `v84-gates.conf`), Stop hook armed 2026-09-18. V8.5 platform refresh shipped through Phase 5.2 (`ec8d9dd`, 2026-08-15).
 > **Prerequisite**: v7 stable + 30d hardening window (2026-04-22 → 2026-05-22) cleanly closed.
 > **Authored**: 2026-04-26, consolidating Jarvis-authored vision (`projects/agent-controller/evolucion-v7-beta.md`, `v8-pre-plan.md`, both 2026-04-15) with engineering-substrate findings from the 2026-04-26 P2 hardening session.
 > **Reading order**: skim §1 → read §3 (substrate) → read §4 (capabilities) → §6 (activation gate). The Spanish-language vision (§2) is the _why_; the engineering substrate (§3) is the _how-to-get-there_.
@@ -141,6 +142,8 @@ These are preserved from Jarvis's pre-plan, with §3 substrate items mapped wher
 
 **Status (ACTIVE — §13 gate passed 2026-05-27)** — _Active_; 06:00 cron briefing live (runbook `docs/V8.1-GUIDE.md`). Full design at `docs/planning/v8-capability-1-spec.md`. Composes Letta sleep-time pattern (N-turn trigger + bounded cursor + role-reframe) with Conway SMS Patterns 1+2+3 (general events + self-defining cohort + coherence/correspondence modes). ~18 days post-freeze across 9 phases; Phases 1-3 (Conway-pattern foundations) can ship independently. 7 open questions, none blocking. Reuses S2 critic + S5 skill registration.
 
+Status (2026-09-26): the 06:00 delivered brief is RETIRED since 2026-08-03 (`fb8672b`); the 08:00 Morning Sync scheduled task is the morning surface.
+
 ### V8.2 — Strategic Initiative Layer
 
 **Problem**: today Jarvis only acts when invoked.
@@ -156,6 +159,8 @@ These are preserved from Jarvis's pre-plan, with §3 substrate items mapped wher
 
 **Status (2026-04-30 vision; built 2026-06)** — _Shipped, shadow-armed (delivery OFF)_. Spec reconciled to R2 (`docs/planning/v8-capability-2-spec.md`, 679 lines); built across P0–P9 (`6a6c855`→`0485c92`, 2026-05-31→06-04, then the Phase-9 judgment producer 2026-06-19). The producer runs daily behind `V82_JUDGMENT_PRODUCER_ENABLED`; judgments accrue in shadow toward the §17 activation gate (not yet passed). Composes 11 reference primitives: Anthropic Agentic Research (decomposition contract + CitationAgent) + Perplexity (`[N]` poka-yoke) + Constitutional AI v2 + Sycophancy (strategic-voice principle + `concession_kind` + Sharma 2-turn probe) + RAPID-D (4-role multi-option) + CRITIC + Self-Refine (tool-grounded SQL critic, 2-loop budget, tri-state verdict) + DeepMind Process Supervision (step-tagged drafts) + Devin (confidence-as-control-flow) + Lee & See 2004 (anthropomorphism guard — mechanical confidence). 7 open questions. **V8.2 is the consent layer; V8.3 cannot legitimately fire without it.**
 
+Status (2026-09-26): brief surface RETIRED 2026-08-03 `fb8672b` — one critic-approved judgment/day is surfaced inside the 08:00 Morning Sync (`judgments.surfaced_at`); producer + probe stay armed in shadow.
+
 ### V8.3 — Autonomous Execution Gates
 
 **Problem**: today every action requires explicit invocation.
@@ -170,6 +175,8 @@ These are preserved from Jarvis's pre-plan, with §3 substrate items mapped wher
 **Activation gate**: bilateral list of pre-authorized actions written and signed off. Initial perimeter: ≤5 action types. Expansion is monthly review, never assumed. Per spec: 7-day shadow run on default-L1 capabilities; operator explicitly signs off the first L1→L2 promotion as smoke test.
 
 **Status — substrate (Phase 0+1) shipped dormant 2026-06-24; spec R2 2026-05-30.** The substrate (4-table decision ledger + `audit_decisions` view + 6 capabilities seeded at L1, boot-applied, `src/lib/v8-3/`) is inert by construction — nothing reads it, no decision is ever written; the v1 pipeline (Phases 2–7) and the v2 controller are pending. Full design at `docs/planning/v8-capability-3-spec.md` (500 lines, Revision 2 — reconciled 2026-05-30). ~14-16 days post-V8.2, reordered into v1 (decision-ledger + reversibility wrapping the existing confirm path, runs day one) then v2 (calibration controller, only once a capability earns L≥3 traffic). Composes Anthropic Computer Use (capability tokens + `<external_content trust="untrusted">` envelope + paired `reversal_op`) + LangGraph checkpoints (4-tuple key, super-step granularity, parent-pointer fork) + SAE J3016 + Knight Institute autonomy levels (per-capability L0-L5 + ODD predicates) + ADR + Event Sourcing (MADR-adapted `logs/decisions/<id>.md` + `decision_events`) + Wiener PI controller (`level_adjustment = round(8·e + 2·Σe)`, no D term) + Lee & See asymmetric thresholds (slow promote ≥4 weeks, fast demote >5%) + cline shadow-Git per-workspace 3-mode restore (fills gap LangGraph + ADR missed for filesystem mutations) + PheroPath signal taxonomy + Kasparov L5-expiration test. **R2 deferred shadow-Git per-workspace + checkpoint fork/replay — so file-mutating capabilities stay L≤2 until those ship.** 10 open questions. **Bilateral-maturity gating strongest here**: no L3+ activation without operator signing off per-capability.
+
+Status (2026-09-26): Phases 0–7 COMPLETE 2026-07-06 (§14 v1 gate shipped); seam + reversal SHIPPED 2026-08-08 `fd60a02`; first L1→L2 promotion (`schedule_task`) 2026-09-18. Shadow-Git per-workspace still deferred.
 
 ### Control architecture (preserved from pre-plan)
 
@@ -286,6 +293,8 @@ These are the failure modes most likely to derail v8. Each has a session-history
 | **Activation**                                    | Bilateral-maturity gate         | Stage B today                                                                                                                                                 |
 | **Horizon**                                       | V9 validation period            | Activated by v8 maturity                                                                                                                                      |
 |                                                   | Beta 1.0                        | Activated by v9 evidence                                                                                                                                      |
+
+Status (2026-09-26): V8.1 06:00 brief RETIRED 2026-08-03 (`fb8672b`); V8.2 surfaces via the 08:00 Morning Sync (shadow producer); V8.3 Phases 0–7 complete 2026-07-06, first L1→L2 promotion 2026-09-18 — the V8.2/V8.3 rows above are the 2026-06-24 snapshot.
 
 **[Superseded]** — all five substrate specs were authored and shipped (S1+S4 2026-04-26; S2/S3/S5 + Conway 1-3 2026-05-19/20). V8.1 is active, V8.2 is shipped-in-shadow, V8.3 is specced (R2).
 
