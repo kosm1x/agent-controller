@@ -41,7 +41,7 @@ What the paper adds that Jarvis has no equivalent for:
 ## 2. Layer-by-layer gap map
 
 ### L1 Working memory — PRESENT, one handoff missing
-- Prompt tiers P1–P4, budget `SYSTEM_PROMPT_TOKEN_BUDGET` 12,000 (`config/constants.ts:91`), drop order P4→P3→P2 (`router.ts:338-386`). KB block 8,000 chars + `capStableContent` (`kb-injection.ts:151,211-256`).
+- Prompt tiers P1–P4, budget `SYSTEM_PROMPT_TOKEN_BUDGET` 12,000 (`src/config/constants.ts:91`), drop order P4→P3→P2 (`router.ts:338-386`). KB block 8,000 chars + `capStableContent` (`kb-injection.ts:151,211-256`).
 - Compaction: OpenAI path `compactConversation` L0–L3 (`adapter-openai.ts:1334-1420`, `prometheus/compaction-pipeline.ts:190`); SDK path `CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000` (`claude-sdk.ts:808`), SDK-internal.
 - **Gap G1**: no compaction → memory write. **Gap G2**: user-facts + enrichment live in P4, the first tier dropped; no counter says how often. (09-06 gave user-facts its own budget; whether P4 still drops at 12 k is unmeasured.)
 

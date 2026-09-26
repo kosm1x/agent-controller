@@ -2524,3 +2524,25 @@ Two friction events documented: (1) **Domain search via shell (09:28 h)** — Ja
 
 ### Research notes
 2026-09-24 extends the brand-genesis pattern from 09-23: Atenea moved from naming (locked on 09-23) to full commercial scaffolding (deck + market recon) in one additional day, suggesting a two-day arc is now the established template for a new venture launch with Jarvis as co-builder. The tool-boundary correction (shell vs. web for domain lookup) is a low-cost calibration event, but its recurrence across days — combined with output-format friction on 09-22/09-23 — points to a persistent gap in pre-generation tool-selection heuristics that warrants a dedicated KB note.
+
+## 2026-09-25
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | — |
+| Total tasks | — |
+| Conversations today | 51 (telegram: 51) |
+| Streak days | — |
+
+### Interactions summary
+A very active day (~35 exchanges across 6 sessions, 05:51–past midnight) with three distinct arcs: morning financial analysis (ORCL "Project Jupiter / Force Majeure" crash thesis, UUUU, TV Azteca OFAC context); midday KB maintenance (Agent-Controller ×2, Williams Radar ×2, VLCMS); and an intense evening/night building two new content products — the "Codie Sánchez framework" checklist (deployed to Caddy for preview) and "Vende sin Convencer," an interactive 15-question sales-diagnostic tool architected around Jev + Fireworks/Qwen with email delivery of the verdict. A biographical data error on Ricardo Salinas Pliego's age was caught and corrected in real time. The day closed with scaffolding a new repo and a multi-round script debugging session resolved via key rotation.
+
+### What Jarvis learned
+Two product-naming signals reinforced today: Fede selected "Vende sin Convencer" over more literal alternatives, consistent with the preference for conceptual/benefit-framed titles over descriptive ones (matching the Atenea pattern). A precision editorial preference also surfaced: "Trampa Latam" was replaced with "La trampa" and "latinoamericanos" removed from a subtitle as redundant — signals that brand copy must carry a pan-Hispanic register without explicit geographic labeling. The architecture choice (Jev scorer + Qwen/Fireworks LLM + email delivery) locks in a modular, VPS-hosted interactive-product pattern that may repeat for future digital products.
+
+### Friction points
+Three friction events detected: (1) **Biographical data error (16:26)** — Jarvis reported an incorrect age for Ricardo Salinas Pliego; user caught it and Jarvis corrected after source verification. (2) **Alpha Vantage rate limit (17:38)** — UUUU price lookup hit rate cap; resolved by switching to a direct price read. (3) **Script setup failures (23:13–23:16)** — the project setup script had incorrect directory targeting and required two correction rounds plus an API key rotation before running cleanly.
+
+### Research notes
+2026-09-25 is the first day where two distinct digital products were conceived, named, scaffolded, and partially built within a single session — extending the "zero-to-launch-arc" pattern from brand (09-23/24) into product development. The Jev + Fireworks/Qwen interactive diagnostic architecture represents a new class of deliverable: a self-contained, email-gated lead-gen product built end-to-end with Jarvis as co-engineer. If the pattern holds, a third product arc within the week would confirm that rapid-product-genesis is now a stable workflow mode.

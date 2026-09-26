@@ -88,3 +88,4 @@
 - [wer-journal-w39-wording-r1-audit](wer-journal-w39-wording-r1-audit.md) - WER W39 Journal wording (09-26): PASS-W-NOTES. Latent: 2026 has ISO W53; prevWeek=52 hardcode + W${n+1} break at 2027-W01.
 - [vlcms-project-detect-r1-audit](vlcms-project-detect-r1-audit.md) - VLCMS detect-first (09-26): PASS-W-NOTES. CLASS: a check hoisted above a first-match loop steals from EVERY slug, not just the one it disambiguates.
 - [entity-extractor-registry-slugs-r1-audit](entity-extractor-registry-slugs-r1-audit.md) - registry-driven slugs (09-26): R1 PASS-W-WARN -> R2 PASS. CLASS: single-word routing aliases (williams/journal/radar) ~all FP in extraction; stoplist extractor-side.
+- [docs-refresh-2026-09-26-r1-audit](docs-refresh-2026-09-26-r1-audit.md) - 34-file docs refresh (09-26): PASS-W-WARN. CLASS: header figure refreshed, DERIVED figures in the same doc left stale; `+ ` line = bullet.

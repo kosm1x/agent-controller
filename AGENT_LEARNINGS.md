@@ -104,3 +104,10 @@
 - **Mistake (Jarvis):** printed a freshly created mailbox password into the chat reply (and thus the task ledger) → `stalwart-inbox` writes the cred file; hand the operator the file path, never the value; rotate on leak.
 - **Avoid:** pinning a Fireworks model id from memory (`qwen3p8-flash-next-fp8` → 404); list `/v1/models` with the key first, and for reasoning models send `reasoning_effort: "none"` or the thinking eats `max_tokens`. Parse Jev from `body.answers[id].noul` (mission-control `src/jev/client.ts`), never the top-level keys — a wrong shape silently scores 0.
 - **Better:** one end-to-end POST against the real handler found both the retired model and the zero scores in one run; a setup script that writes `.env` with `>` wipes the other keys (`sed -i` in place, else append).
+
+## 2026-09-26 — codie-checklist-app: teaser UX + Gmail spam placement
+- **Mistake:** named `comunidades@eurekams.net` as the Reply-To mailbox from memory; it does not exist on Stalwart → `stalwart-inbox list` before naming any mailbox in a brief.
+- **Mistake:** accepted three fixture-green versions of the on-screen preview; the live model produced a 77-char opener, a bare heading paragraph and `*italics*` that no fixture had → one live POST through the public host after every build of anything that renders LLM prose.
+- **Avoid:** splitting Spanish LLM prose on `.` — thousands separators (`$15.000`) and decimals (`0.45`) sit inside sentences; cut at a word boundary with `…`.
+- **Avoid:** reading Gmail spam placement through the Gmail MCP connector — it is bound to fede@eurekamd.net and never returns the Spam folder (`in:spam`, `in:anywhere` both empty after five 250-OK deliveries).
+- **Better:** mail-tester.com as the deliverability oracle (address scraped via Playwright, real report sent through the public host): auth stack green in one run, so the spam verdict was reputation, not DNS; code side = multipart text+HTML, `List-Unsubscribe` (mailto only, no `-Post`), `Reply-To`, escaped user HTML.
