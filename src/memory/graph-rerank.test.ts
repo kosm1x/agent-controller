@@ -2,11 +2,22 @@
  * Tests for graph-aware coherence reranker.
  *
  * These tests rely on the real v6.5 entity extractor to build entity bags,
- * so fixtures use real project slug mentions (`cuatro-flor`, `pipesong`,
- * `crm-azteca`) that the extractor is guaranteed to catch.
+ * so fixtures use project slug mentions (`cuatro-flor`, `pipesong`, `vlmp`,
+ * `pulso-aura-upfront`) that the mocked projects registry below makes the
+ * extractor catch.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../db/projects.js", () => ({
+  listProjects: () =>
+    ["cuatro-flor", "pipesong", "vlmp", "pulso-aura-upfront"].map((slug) => ({
+      slug,
+      name: slug,
+      config: {},
+    })),
+}));
+
 import { rerankByCoherence, type RerankableItem } from "./graph-rerank.js";
 
 interface TestItem extends RerankableItem {
@@ -92,7 +103,7 @@ describe("rerankByCoherence", () => {
     });
 
     it("builds coherent clusters from mixed-topic recall", () => {
-      // 6 items: 3 about cuatro-flor (high+mid+low scores), 2 about pipesong, 1 about crm-azteca.
+      // 6 items: 3 about cuatro-flor (high+mid+low scores), 2 about pipesong, 1 about pulso-aura-upfront.
       // Without rerank: top-5 would interleave topics by raw score.
       // With rerank: after seeding with highest, we should see the
       //              cuatro-flor trio grouped and pipesong pair grouped.
@@ -110,7 +121,7 @@ describe("rerankByCoherence", () => {
           0.85,
         ),
         item("ps2", "pipesong Deepgram STT deployed a producción", 0.82),
-        item("ca1", "crm-azteca empezó el módulo de prospectos", 0.8),
+        item("ca1", "pulso-aura-upfront empezó el módulo de prospectos", 0.8),
       ];
       const result = rerankByCoherence(items);
       const orderIds = result.reranked.map((x) => x.id);

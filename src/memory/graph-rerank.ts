@@ -90,7 +90,8 @@ function extractEntityBag(content: string): Set<string> {
 }
 
 /**
- * Rerank retrieval results by graph coherence. Pure function — no I/O.
+ * Rerank retrieval results by graph coherence. Performs a 30 s-cached sync
+ * projects-registry read via the extractor; never throws.
  */
 export function rerankByCoherence<T extends RerankableItem>(
   items: T[],
