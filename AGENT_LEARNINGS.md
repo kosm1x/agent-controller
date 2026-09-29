@@ -141,3 +141,9 @@
 - **Avoid:** `git push` from a session whose cwd is outside the repo, or joined to another command with `|`/`&&` — git-auth-guard evaluates the SESSION cwd's remote and the hook-bypass guard scans the whole string → `cd <repo> && git push origin main` as its own call.
 - **Avoid:** reading mc.db timestamps as UTC — the service runs `TZ=America/Mexico_City`, so `jme_turns.ts` / `jev_shadow` rows are MX local while the journal is UTC; convert before joining a DB row to a log line.
 - **Better:** an audit finding that the vendor's docs page 404s (`migrating-to-v1`) is recorded as "not in `llms.txt`", not skipped — the review states what it could not read.
+
+## 2026-09-29 — Scheduled tasks failed under the Sonnet 5.5 canary (`7d3faa6`)
+- **Mistake:** I first blamed `SONNET_EFFORT=low` and offered "raise effort" as a fix; the failed tasks ran at `medium` (tier `standard` sets effort explicitly, the env knob reaches tier-less callers only) → read `tasks.classification` and the run's reply text BEFORE naming a cause.
+- **Avoid:** treating an instruction the incumbent model ignores as harmless — a model swap executes it. Before a model canary, replay 30 d of stored tasks through every conditional system message and list which populations receive it (114 scheduled/ritual tasks got a chat-only advisory).
+- **Avoid:** restoring a flag on a retry without listing every consumer of that flag — `interactive:false` also lifts the confirm gate, so the retry could resend an email; the audit's per-consumer table caught it.
+- **Better:** canary health = split by task KIND (chat vs scheduled/ritual) and compare each schedule with its own prior days; the aggregate cost/cache table looked fine while 5 of 10 scheduled tasks were not clean.
