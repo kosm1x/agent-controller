@@ -9,6 +9,7 @@
 import type Database from "better-sqlite3";
 import { getEventBus } from "../lib/event-bus.js";
 import { getTask, submitTask } from "../dispatch/dispatcher.js";
+import { toolRegistry } from "../tools/registry.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { getLatestGoalSnapshot } from "../db/reflector-gap.js";
 import type { Subscription } from "../lib/events/types.js";
@@ -52,6 +53,61 @@ function parseTaskMeta(
     );
     return {};
   }
+}
+
+/**
+ * Rituals and scheduled tasks submit `interactive: false`, which
+ * `tasks.metadata` does not persist; their `ritualId` / "scheduled" tag does.
+ * Without this a retry ran as interactive and got the chat-only DENUE
+ * advisory (Pharma schedule retry, 2026-09-29).
+ */
+function isNonInteractiveMeta(meta: {
+  tags?: string[];
+  ritualId?: string;
+}): boolean {
+  return !!meta.ritualId || !!meta.tags?.includes("scheduled");
+}
+
+/**
+ * First high-risk tool (gmail_send, tweet_post, …) the failed attempt already
+ * called, or null. Reads the latest run's `tool_calls` (written on the
+ * dispatcher's task.failed path) UNION the `tool.called` trace rows (written
+ * per call by the fast runner's in-process SDK loop, so a watchdog-killed run
+ * whose `tool_calls` is still NULL is covered). Gap: heavy-runner failure
+ * paths return no toolCalls (recorded as `[]`) and emit no `tool.called`
+ * rows, so a heavy task's prior send is NOT detected. A call that failed
+ * counts as sent: fail toward not duplicating. No record → null (retry as
+ * before).
+ */
+function highRiskCallOf(db: Database.Database, taskId: string): string | null {
+  const names = new Set<string>();
+  try {
+    const row = db
+      .prepare(
+        "SELECT tool_calls FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(taskId) as { tool_calls: string | null } | undefined;
+    const parsed: unknown = row?.tool_calls ? JSON.parse(row.tool_calls) : [];
+    if (Array.isArray(parsed))
+      for (const n of parsed) if (typeof n === "string") names.add(n);
+  } catch {
+    /* unreadable run record — fall through to the trace rows */
+  }
+  try {
+    const rows = db
+      .prepare(
+        "SELECT DISTINCT tool FROM task_trace_events WHERE task_id = ? AND name = 'tool.called' AND tool IS NOT NULL",
+      )
+      .all(taskId) as { tool: string }[];
+    for (const r of rows) names.add(r.tool);
+  } catch {
+    /* no trace table — the run record alone decides */
+  }
+  for (const n of names) {
+    const bare = n.replace(/^mcp__jarvis__/, ""); // same as claude-sdk.ts
+    if (toolRegistry.getEffectiveRiskTier(bare) === "high") return bare;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +274,21 @@ export class ReactionManager {
       return;
     }
 
-    const { rule, decision } = match;
+    const { rule } = match;
+    let { decision } = match;
+    let dedupReason: string | null = null;
+    // A non-interactive retry runs without the confirm gate, so a send the
+    // failed attempt already made would go out twice. Escalate instead.
+    if (
+      (decision.action === "retry" || decision.action === "retry_adjusted") &&
+      isNonInteractiveMeta(parseTaskMeta(taskId, task.metadata))
+    ) {
+      const sent = highRiskCallOf(this.db, taskId);
+      if (sent) {
+        dedupReason = `attempt already called ${sent} — not retrying an irreversible action`;
+        decision = { action: "escalate", reason: dedupReason };
+      }
+    }
     console.log(
       `[reactions] Task ${taskId}: rule "${rule.name}" → ${decision.action} (${decision.reason})`,
     );
@@ -237,6 +307,7 @@ export class ReactionManager {
             agentType: task.agent_type ?? undefined,
             ritualId: meta.ritualId,
             threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
+            ...(isNonInteractiveMeta(meta) && { interactive: false }),
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",
@@ -271,6 +342,7 @@ export class ReactionManager {
             agentType: task.agent_type ?? undefined,
             ritualId: meta.ritualId,
             threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
+            ...(isNonInteractiveMeta(meta) && { interactive: false }),
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",
@@ -324,7 +396,7 @@ export class ReactionManager {
             sourceTaskId: taskId,
             action: "escalate",
             attempt: previousAttempts + 1,
-            metadata: { error, rule: rule.name },
+            metadata: { error, rule: rule.name, reason: decision.reason },
           });
           updateReactionStatus(this.db, reactionId, "completed");
           this.emitReactionEvent("reaction.escalated", {
@@ -340,9 +412,13 @@ export class ReactionManager {
           try {
             getEventBus().emitEvent("notification.warning", {
               title: "Task escalated",
-              message: `Task "${task.title}" failed after ${previousAttempts} retries: ${error}`,
+              message:
+                `Task "${task.title}" failed after ${previousAttempts} retries: ${error}` +
+                (dedupReason
+                  ? ` — ${dedupReason}; re-running it by hand would repeat it`
+                  : ""),
               source: "reaction-engine",
-              context: { taskId, error },
+              context: { taskId, error, ...(dedupReason && { reason: dedupReason }) },
             });
           } catch {
             // Best effort

@@ -184,4 +184,14 @@ describe("filterSentBefore (ledger)", () => {
     expect(block.match(/Tudriqev/g)).toHaveLength(1);
     expect(block).toContain("- - Anthropic lanza");
   });
+
+  it("sentBeforeBlock tells the model to gather today's findings before comparing", () => {
+    // 2026-09-29: Waiver Wire answered "nothing new" from the list alone,
+    // with zero tool calls.
+    recordSentItems("schedule:pharma", "t1", DIGEST_DAY1);
+    const block = sentBeforeBlock("schedule:pharma");
+    expect(block).toContain("Primero reúne los hallazgos de hoy con tus herramientas");
+    expect(block).toContain("Solo si tras esa búsqueda no queda nada nuevo");
+    expect(block.indexOf("Primero reúne")).toBeLessThan(block.indexOf("compáralos"));
+  });
 });

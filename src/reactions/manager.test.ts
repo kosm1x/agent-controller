@@ -14,6 +14,15 @@ import { getReactionsBySourceTask } from "./store.js";
 // Track event subscriptions so we can trigger them in tests
 let capturedHandlers: Map<string, (event: any) => void>;
 
+// Risk tier: gmail_send is the one high-risk tool in these fixtures.
+vi.mock("../tools/registry.js", () => ({
+  toolRegistry: {
+    getEffectiveRiskTier: (name: string) =>
+      name === "gmail_send" ? "high" : "low",
+  },
+}));
+
+const mockEmitEvent = vi.hoisted(() => vi.fn());
 vi.mock("../lib/event-bus.js", () => ({
   getEventBus: () => ({
     subscribe: vi.fn((pattern: string, handler: (event: any) => void) => {
@@ -24,7 +33,7 @@ vi.mock("../lib/event-bus.js", () => ({
         unsubscribe: vi.fn(),
       };
     }),
-    emitEvent: vi.fn(),
+    emitEvent: mockEmitEvent,
   }),
 }));
 
@@ -82,6 +91,24 @@ vi.mock("../dispatch/dispatcher.js", () => ({
             "memory_store",
           ],
           ritualId: "skill-evolution",
+        }),
+      };
+    }
+    // Dynamic scheduled task: persisted tags only (no ritualId).
+    if (taskId === "task-scheduled") {
+      return {
+        task_id: "task-scheduled",
+        spawn_type: "root",
+        title: "[Scheduled] Reporte — 2026-09-29",
+        description: "Schedule description",
+        priority: "medium",
+        status: "failed",
+        error: "Unknown error",
+        classification: JSON.stringify({ agentType: "fast" }),
+        agent_type: "fast",
+        metadata: JSON.stringify({
+          tags: ["scheduled", "schedule:abc"],
+          tools: ["web_search", "gmail_send"],
         }),
       };
     }
@@ -158,11 +185,22 @@ describe("ReactionManager", () => {
         task_id TEXT NOT NULL,
         status TEXT DEFAULT 'running',
         error TEXT,
+        tool_calls TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
         completed_at TEXT
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_trace_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        tool TEXT
       )
     `);
 
     mockSubmitTask.mockClear();
+    mockEmitEvent.mockClear();
     mockGoalSnapshot.mockReset();
     mockGoalSnapshot.mockReturnValue(null); // default: no reflector data
     manager = new ReactionManager(db);
@@ -261,6 +299,11 @@ describe("ReactionManager", () => {
     const reactions = getReactionsBySourceTask(db, "task-1");
     expect(reactions).toHaveLength(1);
     expect(reactions[0].action).toBe("escalate");
+    const note = mockEmitEvent.mock.calls.find(
+      (c) => c[0] === "notification.warning",
+    )?.[1];
+    expect(note.message).toBe('Task "Test task" failed after 2 retries: Still broken');
+    expect(note.context).toEqual({ taskId: "task-1", error: "Still broken" });
   });
 
   it("suppresses when 3+ classification failures in 24h", async () => {
@@ -322,6 +365,96 @@ describe("ReactionManager", () => {
     expect(call.tools).toBeUndefined();
     expect(call.ritualId).toBeUndefined();
     expect(call.tags).toBeUndefined();
+    expect(call.interactive).toBeUndefined();
+  });
+
+  it("retry of a ritual task stays non-interactive (ritualId in metadata)", async () => {
+    await triggerTaskFailed("task-ritual", "Request timeout after 30s");
+    expect(mockSubmitTask.mock.calls[0][0].interactive).toBe(false);
+  });
+
+  it("retry of a scheduled task stays non-interactive ('scheduled' tag)", async () => {
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask.mock.calls[0][0].interactive).toBe(false);
+  });
+
+  // A non-interactive retry skips the confirm gate, so a send the failed
+  // attempt already made would go out twice (round-2 audit W2, 2026-09-29).
+  const recordRun = (taskId: string, toolCalls: string[] | null) =>
+    db
+      .prepare("INSERT INTO runs (run_id, task_id, status, tool_calls) VALUES (?, ?, 'failed', ?)")
+      .run(`run-${taskId}`, taskId, toolCalls ? JSON.stringify(toolCalls) : null);
+
+  it("scheduled task whose attempt called a high-risk tool escalates instead of retrying", async () => {
+    recordRun("task-scheduled", ["web_search", "gmail_send"]);
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    const reactions = getReactionsBySourceTask(db, "task-scheduled");
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0].action).toBe("escalate");
+    expect(JSON.parse(reactions[0].metadata).reason).toBe(
+      "attempt already called gmail_send — not retrying an irreversible action",
+    );
+    // The operator is told the tool already ran (a manual re-run duplicates it).
+    const note = mockEmitEvent.mock.calls.find(
+      (c) => c[0] === "notification.warning",
+    )?.[1];
+    expect(note.message).toContain("attempt already called gmail_send");
+    expect(note.context.reason).toContain("gmail_send");
+  });
+
+  it("a recorded mcp__jarvis__ name is normalized before the tier lookup", async () => {
+    recordRun("task-scheduled", ["mcp__jarvis__gmail_send"]);
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-scheduled")[0].action).toBe("escalate");
+  });
+
+  it("a ritualId-only task (no 'scheduled' tag) that already sent escalates", async () => {
+    recordRun("task-ritual", ["gmail_send"]);
+    await triggerTaskFailed("task-ritual", "Request timeout after 30s");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-ritual")[0].action).toBe("escalate");
+  });
+
+  it("retry_adjusted of a scheduled task that already sent also escalates", async () => {
+    recordRun("task-scheduled", ["gmail_send"]);
+    await triggerTaskFailed("task-scheduled", "Tool xyz not found");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-scheduled")[0].action).toBe("escalate");
+  });
+
+  it("a tool.called trace row counts when the run's tool_calls is still NULL (watchdog kill)", async () => {
+    recordRun("task-scheduled", null);
+    db.prepare(
+      "INSERT INTO task_trace_events (task_id, name, tool) VALUES ('task-scheduled', 'tool.called', 'gmail_send')",
+    ).run();
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-scheduled")[0].action).toBe("escalate");
+  });
+
+  it("scheduled task with only low-risk calls still retries non-interactive", async () => {
+    recordRun("task-scheduled", ["web_search", "web_read"]);
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    expect(mockSubmitTask.mock.calls[0][0].interactive).toBe(false);
+  });
+
+  it("interactive task with a high-risk call retries unchanged (confirm gate still applies)", async () => {
+    recordRun("task-1", ["gmail_send"]);
+    await triggerTaskFailed("task-1", "Request timeout after 30s");
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    expect(mockSubmitTask.mock.calls[0][0].interactive).toBeUndefined();
+  });
+
+  it("retry_adjusted of a scheduled task stays non-interactive ('scheduled' tag)", async () => {
+    // 2026-09-29: the Pharma schedule's retry_adjusted ran as interactive and
+    // got the chat-only DENUE advisory.
+    await triggerTaskFailed("task-scheduled", "Tool xyz not found");
+    const call = mockSubmitTask.mock.calls[0][0];
+    expect(call.description).toContain("[Auto-retry]");
+    expect(call.interactive).toBe(false);
   });
 
   it("skips subtask failures (managed by swarm runner)", async () => {

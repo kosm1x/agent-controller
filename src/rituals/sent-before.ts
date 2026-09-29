@@ -285,7 +285,7 @@ export function sentBeforeBlock(
   const heads = recent.slice(0, BLOCK_MAX_LINES).map((r) => r.head);
   return (
     `\n\n## YA ENVIADO en los últimos ${days} días — NO lo repitas\n` +
-    `Si un hallazgo de hoy es el mismo tema que una línea de abajo, omítelo (o menciónalo en una sola frase SOLO si hay un cambio nuevo y di qué cambió). Si no queda nada nuevo, dilo en una línea en vez de rellenar.\n` +
+    `Primero reúne los hallazgos de hoy con tus herramientas, como pide la tarea; esta lista no sustituye esa búsqueda. Después compáralos: si un hallazgo de hoy es el mismo tema que una línea de abajo, omítelo (o menciónalo en una sola frase SOLO si hay un cambio nuevo y di qué cambió). Solo si tras esa búsqueda no queda nada nuevo, dilo en una línea en vez de rellenar.\n` +
     heads.map((h) => `- ${h}`).join("\n")
   );
 }

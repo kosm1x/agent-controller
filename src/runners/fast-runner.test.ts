@@ -1304,6 +1304,28 @@ describe("highStakesGuardVariant (Fix D — DENUE no-tools advisory)", () => {
   it("returns 'full' when both shell_exec and http_fetch are present", () => {
     expect(highStakesGuardVariant(["shell_exec", "http_fetch"])).toBe("full");
   });
+
+  // 2026-09-29: a scheduled task (interactive:false) got the advisory, obeyed
+  // it on Sonnet 5.5 and failed — no router re-run exists outside chat.
+  it("returns 'none' for a non-interactive task without shell_exec/http_fetch", () => {
+    expect(
+      highStakesGuardVariant(["web_search", "web_read", "gmail_send"], false),
+    ).toBe("none");
+    expect(highStakesGuardVariant(undefined, false)).toBe("none");
+  });
+
+  it("returns 'advisory' for an explicitly interactive task without either tool", () => {
+    expect(highStakesGuardVariant(["web_search"], true)).toBe("advisory");
+  });
+
+  it("treats interactive undefined as interactive ('advisory')", () => {
+    expect(highStakesGuardVariant(["web_search"], undefined)).toBe("advisory");
+  });
+
+  it("returns 'full' for a non-interactive task with shell_exec or http_fetch", () => {
+    expect(highStakesGuardVariant(["shell_exec"], false)).toBe("full");
+    expect(highStakesGuardVariant(["http_fetch"], false)).toBe("full");
+  });
 });
 
 // ---------------------------------------------------------------------------

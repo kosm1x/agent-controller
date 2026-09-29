@@ -98,12 +98,20 @@ export function highStakesSignalText(input: {
   return `${input.title}\n${input.description}\n${lastUser?.content ?? ""}`;
 }
 
+/**
+ * "none" for a non-interactive task (scheduled, ritual) without either tool:
+ * the advisory promises a router re-run that only interactive chat gets, so
+ * there it just turned the task into a one-line failure (Pharma schedule,
+ * 2026-09-29). `interactive` undefined counts as interactive.
+ */
 export function highStakesGuardVariant(
   tools: readonly string[] | undefined,
-): "advisory" | "full" {
+  interactive?: boolean,
+): "advisory" | "full" | "none" {
   const hasShell = !!tools?.includes("shell_exec");
   const hasFetch = !!tools?.includes("http_fetch");
-  return !hasShell && !hasFetch ? "advisory" : "full";
+  if (hasShell || hasFetch) return "full";
+  return interactive === false ? "none" : "advisory";
 }
 
 const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
@@ -1075,7 +1083,8 @@ export const fastRunner: Runner = {
       // hit the API (no header support in browser/web_read) and can't run
       // SQL. He spends 90s thrashing alternatives. Pick the advisory variant
       // that tells him to ask the operator to reformulate immediately.
-      const variant = highStakesGuardVariant(input.tools);
+      // Non-interactive tasks get neither ("none" — no router re-run exists).
+      const variant = highStakesGuardVariant(input.tools, input.interactive);
       if (variant === "advisory") {
         messages.push({
           role: "system",
@@ -1085,7 +1094,7 @@ DO NOT use \`web_search\`, \`web_read\`, \`browser__*\`, \`exa_search\`, or any 
 
 INSTEAD: respond with ONE line that names the missing tool in backticks and stop — exactly: "Necesito \`shell_exec\` para correr este query del DENUE Analyzer." The router widens the scope and re-runs this turn by itself (usability Phase 1.2); do NOT ask the operator to rewrite the message or to type any keyword. Do NOT attempt a partial answer from prior turns.`,
         });
-      } else {
+      } else if (variant === "full") {
         messages.push({
           role: "system",
           content: `⛔ DENUE ANALYZER QUERY DETECTED.

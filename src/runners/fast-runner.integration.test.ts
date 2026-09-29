@@ -1416,3 +1416,37 @@ describe("prompt prefix stability (audit 2026-09-22 batch C)", () => {
     });
   });
 });
+
+describe("DENUE high-stakes guard — interactive flag at the call site (2026-09-29)", () => {
+  // A scheduled task (interactive:false) got the chat-only advisory, obeyed it
+  // on Sonnet 5.5 and failed: no router re-run exists outside chat.
+  const run = async (interactive: boolean | undefined) => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute({
+      taskId: "task-hs",
+      runId: "run-hs",
+      title: "[Scheduled] Reporte diario",
+      description: "Busca oportunidades de negocio en pharma.",
+      tools: ["web_search"],
+      interactive,
+    });
+    const msgs = mockInferWithTools.mock.calls[0]![0] as ChatMessage[];
+    return msgs.map((m) => (typeof m.content === "string" ? m.content : ""));
+  };
+
+  it("interactive:false without shell_exec/http_fetch injects no DENUE guard", async () => {
+    const contents = await run(false);
+    expect(contents.some((c) => c.includes("DENUE ANALYZER"))).toBe(false);
+  });
+
+  it("interactive undefined still injects the advisory", async () => {
+    const contents = await run(undefined);
+    const guard = contents.find((c) => c.includes("DENUE ANALYZER"));
+    expect(guard).toBeDefined();
+    expect(guard).toContain(
+      "Necesito `shell_exec` para correr este query del DENUE Analyzer.",
+    );
+  });
+});
