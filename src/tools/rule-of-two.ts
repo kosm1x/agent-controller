@@ -412,6 +412,12 @@ export interface RunToolContext {
    */
   readonly toolsSoFar: Set<string>;
   /**
+   * The tools THIS task called (2026-09-29). A root run's is the session Set
+   * itself; a nested run (swarm sub-task) gets its own, so a failed child's
+   * record never lists a sibling's calls. Read via `taskRunTools()`.
+   */
+  readonly ownTools: Set<string>;
+  /**
    * The task this run answers (V8.4): NOT shared — each nested dispatch gets
    * its own id even though the tool Set is the session's. Read by the
    * numbers-provenance collector in `ToolRegistry.execute`.
@@ -476,9 +482,11 @@ export function enterRunToolContext<T>(
   signal?: AbortSignal,
 ): T {
   const parent = runToolContext.getStore();
+  const toolsSoFar = parent ? parent.toolsSoFar : new Set<string>();
   return runToolContext.run(
     {
-      toolsSoFar: parent ? parent.toolsSoFar : new Set(),
+      toolsSoFar,
+      ownTools: parent ? new Set() : toolsSoFar,
       taskId,
       // Explicit (root submission) > parent's (nested dispatch) > background.
       origin: origin ?? parent?.origin ?? BACKGROUND_ORIGIN,
@@ -510,7 +518,19 @@ export function priorRunTools(): readonly string[] | undefined {
 }
 
 export function recordRunTool(name: string): void {
-  runToolContext.getStore()?.toolsSoFar.add(name);
+  const store = runToolContext.getStore();
+  store?.toolsSoFar.add(name);
+  store?.ownTools.add(name);
+}
+
+/**
+ * Tools the current task called, for its failure record: the session Set for
+ * a root run (its nested dispatches' calls included), only its own calls for
+ * a nested run (swarm sub-task). `undefined` outside a run.
+ */
+export function taskRunTools(): readonly string[] | undefined {
+  const store = runToolContext.getStore();
+  return store ? Array.from(store.ownTools) : undefined;
 }
 
 /** Task id of the current run; `undefined` outside a run. */

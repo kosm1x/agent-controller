@@ -28,6 +28,24 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 import { terminationFromExit } from "./termination.js";
 import { renderConversationContext } from "./conversation-context.js";
+import { taskRunTools } from "../tools/rule-of-two.js";
+
+/**
+ * Tool names a FAILED in-process run called so far, for the dispatcher's
+ * `runs.tool_calls` (read by the reaction manager's high-risk check and the
+ * swarm retry taint). `totalToolNames` alone under-reports on failure: a
+ * goal that errors or times out records `toolNames: []`, a replan pass
+ * replaces the previous pass's names, and a throw loses them all. The run's
+ * tool context (`ToolRegistry.execute` records every call BEFORE it runs)
+ * fills the gap. Rule: a root heavy task gets the session's calls (its
+ * nested dispatches included); a swarm sub-task (any run entered inside
+ * another run) gets ONLY its own — never a sibling's, which would taint its
+ * retry (`swarm-retry-policy.ts` `findSideEffectTaint`).
+ */
+function calledSoFar(names: readonly string[] = []): string[] {
+  const seen = new Set(names);
+  return [...names, ...(taskRunTools() ?? []).filter((n) => !seen.has(n))];
+}
 
 async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
   const start = Date.now();
@@ -122,7 +140,10 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         // for ritual persistResult so it stores what the agent produced.
         finalAnswer: collectFinalAnswer(result.executionResults),
       },
-      toolCalls: result.executionResults.totalToolNames,
+      toolCalls:
+        result.success || promoted
+          ? result.executionResults.totalToolNames
+          : calledSoFar(result.executionResults.totalToolNames),
       terminationReason: terminationFromExit(
         result.exitReason,
         undefined,
@@ -157,6 +178,8 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
     return {
       success: false,
       error: errMsg(err),
+      // orchestrate() threw: its executionResults are gone; the run context is not.
+      toolCalls: calledSoFar(),
       terminationReason: "error",
       durationMs: Date.now() - start,
     };
@@ -304,6 +327,9 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
       input.signal?.removeEventListener("abort", onAbort);
     }
 
+    // No toolCalls on the three container failures below: the calls ran in
+    // the worker process (no host run context) and a dead or throwing worker
+    // writes no names — unknowable from the host.
     if (containerOutput.status === "error") {
       return {
         success: false,

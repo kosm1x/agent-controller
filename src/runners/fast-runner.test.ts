@@ -5,11 +5,12 @@ import {
   classifyToolError,
   WRITE_TOOLS,
   highStakesGuardVariant,
-  highStakesSignalText,
+  denueGuardText,
+  mentionsDenue,
   splitSystemMessagesByCache,
 } from "./fast-runner.js";
 import type { ChatMessage } from "../inference/adapter.js";
-import { hasHighStakesDataSignal } from "../dispatch/classifier.js";
+import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 
 describe("detectsHallucinatedExecution", () => {
   // --- Layer 1: Full hallucination (zero tools) ---
@@ -1230,45 +1231,111 @@ describe("classifyToolError", () => {
   });
 });
 
-describe("highStakesSignalText (2026-09-09 — chat guard must see the user turn)", () => {
-  const msg =
-    "Háblame de densidad de dentistas por habitante hasta nivel municipio y dame el top 10";
-  const title = `Chat: ${msg.slice(0, 60)}...`;
-  const description = "## Identidad — regla absoluta\nNO eres Claude…";
+describe("denueGuardText + mentionsDenue (2026-09-29 — guard only on a DENUE mention the user wrote)", () => {
+  const persona =
+    "## Identidad\nNO eres Claude…\n## Proyectos activos\n- denue-data-analysis (DENUE Analyzer)";
 
-  it("includes the last user turn, so a trigger past the 60-char title cut fires", () => {
-    const text = highStakesSignalText({
-      title,
-      description,
+  it("mentionsDenue matches the word DENUE only", () => {
+    expect(mentionsDenue("consulta DENUE farmacias en Puebla")).toBe(true);
+    expect(mentionsDenue("el denue dice…")).toBe(true);
+    expect(mentionsDenue("top 5 oportunidades de negocio")).toBe(false);
+    expect(mentionsDenue("scoring de AGEBs, ranking de farmacias")).toBe(false);
+    expect(mentionsDenue("denue-data-analysis")).toBe(true);
+  });
+
+  it("mentionsDenue: 'denue' not preceded by a letter, at most one letter after (2026-09-29)", () => {
+    for (const s of [
+      "DENUE's",
+      "Denue.",
+      "analizador DENUE",
+      "DENUE-Analyzer",
+      "#denue",
+      "/denue",
+      "eurekamd-denue",
+      "DENUE:",
+      "denue_api",
+      "DENUEs",
+      "denue2026",
+      "DENUE",
+    ])
+      expect(mentionsDenue(s), s).toBe(true);
+    for (const s of [
+      "redenue",
+      "denué", // precomposed é
+      "denue\u0301", // e + combining acute (NFD é)
+      "DENÚE",
+      "de nue",
+      // Ordinary Spanish words (round 6, W2).
+      "denuevo",
+      "denuedo",
+      "denuesto",
+      "hazlo denuevo",
+    ])
+      expect(mentionsDenue(s), s).toBe(false);
+  });
+
+  it("an attached file's extracted text is not the user's mention; the caption and a voice transcription are", () => {
+    const file = (caption: string) =>
+      `${caption}\n\n${EXTRACTED_FILE_MARKER} "reporte.pdf" ---\nFuente: DENUE 05/2026\n--- Fin del archivo ---`;
+    const guard = (detectionText: string) =>
+      mentionsDenue(
+        denueGuardText({
+          title: "Chat: x",
+          description: persona,
+          detectionText,
+        }),
+      );
+    expect(guard(file("resúmelo"))).toBe(false);
+    expect(guard(file("cruza esto con el DENUE"))).toBe(true);
+    expect(
+      guard(
+        "[Audio: 7s, 110KB, confianza 93%]\n\nTranscripción:\nconsulta el denue de Puebla",
+      ),
+    ).toBe(true);
+    // Same cut on the last-user-turn fallback.
+    expect(
+      mentionsDenue(
+        denueGuardText({
+          title: "Chat: x",
+          description: persona,
+          conversationHistory: [{ role: "user", content: file("resúmelo") }],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("chat: detectionText (the full inbound) wins over description and title", () => {
+    const text = denueGuardText({
+      title: "Chat: y en Tlaxcala?",
+      description: persona,
+      detectionText: "y en Tlaxcala?",
       conversationHistory: [
-        { role: "user", content: "hola" },
-        { role: "assistant", content: "hola" },
-        { role: "user", content: `[Hoy es 2026-09-09]\n\n${msg}` },
+        { role: "user", content: "consulta DENUE farmacias en Puebla" },
+        { role: "assistant", content: "…" },
+        { role: "user", content: "[Hoy es 2026-09-29]\n\ny en Tlaxcala?" },
       ],
     });
-    expect(hasHighStakesDataSignal(text)).toBe(true);
+    expect(text).toBe("y en Tlaxcala?");
+    expect(mentionsDenue(text)).toBe(false); // literal rule: no repeat, no guard
   });
 
-  it("title+description alone miss the same message (the pre-fix shape)", () => {
-    expect(hasHighStakesDataSignal(`${title}\n${description}`)).toBe(false);
-  });
-
-  it("uses the LAST user turn, not an earlier one, and tolerates no history", () => {
-    const text = highStakesSignalText({
-      title: "Chat: gracias",
-      description,
+  it("without detectionText uses the LAST user turn only, never the description", () => {
+    const text = denueGuardText({
+      title: "Chat: hola",
+      description: persona,
       conversationHistory: [
-        { role: "user", content: "ranking de farmacias en Jalisco" },
+        { role: "user", content: "dame el DENUE de Puebla" },
         { role: "assistant", content: "…" },
         { role: "user", content: "gracias" },
       ],
     });
-    expect(hasHighStakesDataSignal(text)).toBe(false);
+    expect(text).toBe("gracias");
+  });
+
+  it("with neither falls back to title + description (rituals)", () => {
     expect(
-      hasHighStakesDataSignal(
-        highStakesSignalText({ title: "Task: x", description: "scoring de AGEBs" }),
-      ),
-    ).toBe(true);
+      denueGuardText({ title: "Ritual", description: "Consulta el DENUE" }),
+    ).toBe("Ritual\nConsulta el DENUE");
   });
 });
 

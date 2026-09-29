@@ -34,6 +34,9 @@ export interface RunnerInput {
   modelTier?: string;
   /** Prior conversation turns for thread continuity. */
   conversationHistory?: ConversationTurn[];
+  /** Text the user (or the schedule author) wrote, untruncated — from
+   *  `TaskSubmission.detectionText`. The fast runner's DENUE guard reads it. */
+  detectionText?: string;
   /** Streaming callback — receives text chunks as the LLM generates them. */
   onTextChunk?: (text: string) => void;
   /** Abort signal for task cancellation (v6.2 S2). */

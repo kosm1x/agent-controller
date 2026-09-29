@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { OrchestratorResult } from "../prometheus/types.js";
 import type { ContainerOutput, ContainerHandle } from "./container.js";
+import type { RunnerOutput } from "./types.js";
+import { enterRunToolContext, recordRunTool } from "../tools/rule-of-two.js";
 
 vi.mock("../dispatch/dispatcher.js", () => ({
   registerRunner: vi.fn(),
@@ -393,6 +395,87 @@ describe("heavyRunner", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe("Orchestration crashed");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  describe("failure paths return the tools the run already called (2026-09-29)", () => {
+    // The dispatcher runs every runner inside a run-tool context; the
+    // registry records each call there. Simulated with recordRunTool.
+    const run = (fn: () => Promise<RunnerOutput>) =>
+      enterRunToolContext("task-rt", fn);
+    const input = {
+      taskId: "task-rt",
+      runId: "run-rt",
+      title: "Send",
+      description: "Send the report",
+    };
+
+    it("orchestrate() threw after a send → toolCalls names it", async () => {
+      mockOrchestrate.mockImplementationOnce(async () => {
+        recordRunTool("gmail_send");
+        throw new Error("reflect crashed");
+      });
+      const result = await run(() => heavyRunner.execute(input));
+      expect(result.success).toBe(false);
+      expect(result.toolCalls).toEqual(["gmail_send"]);
+    });
+
+    it("a failed goal's send (absent from totalToolNames) is still returned", async () => {
+      mockOrchestrate.mockImplementationOnce(async () => {
+        recordRunTool("web_search");
+        recordRunTool("gmail_send"); // goal then timed out: toolNames []
+        return makeOrchestratorResult({
+          success: false,
+          executionResults: {
+            ...makeOrchestratorResult().executionResults,
+            totalToolNames: ["web_search"],
+          },
+        });
+      });
+      const result = await run(() => heavyRunner.execute(input));
+      expect(result.success).toBe(false);
+      expect(result.toolCalls).toEqual(["web_search", "gmail_send"]);
+    });
+
+    it("a swarm sub-task's failure lists only its own calls, never a sibling's", async () => {
+      mockOrchestrate.mockImplementationOnce(async () => {
+        recordRunTool("web_search");
+        throw new Error("child crashed");
+      });
+      const result = await enterRunToolContext("swarm-parent", async () => {
+        // A concurrent sibling sub-task sent mail in the shared session.
+        await enterRunToolContext("sibling", async () =>
+          recordRunTool("gmail_send"),
+        );
+        return enterRunToolContext("child", () => heavyRunner.execute(input));
+      });
+      expect(result.toolCalls).toEqual(["web_search"]);
+    });
+
+    it("a root heavy task's failure keeps its nested dispatches' calls", async () => {
+      mockOrchestrate.mockImplementationOnce(async () => {
+        await enterRunToolContext("nested", async () =>
+          recordRunTool("gmail_send"),
+        );
+        throw new Error("root crashed");
+      });
+      const result = await run(() => heavyRunner.execute(input));
+      expect(result.toolCalls).toEqual(["gmail_send"]);
+    });
+
+    it("success keeps the orchestrator's own list", async () => {
+      mockOrchestrate.mockImplementationOnce(async () => {
+        recordRunTool("gmail_send");
+        return makeOrchestratorResult({
+          executionResults: {
+            ...makeOrchestratorResult().executionResults,
+            totalToolNames: ["web_search"],
+          },
+        });
+      });
+      const result = await run(() => heavyRunner.execute(input));
+      expect(result.success).toBe(true);
+      expect(result.toolCalls).toEqual(["web_search"]);
+    });
   });
 
   it("should pass tools to orchestrate", async () => {

@@ -30,6 +30,7 @@ import {
   recordRunTool,
   resolveRuleOfTwo,
   ruleOfTwoState,
+  taskRunTools,
 } from "./rule-of-two.js";
 
 /** Every host-defined tool the live registry can hold (all env-gated groups included). */
@@ -407,6 +408,26 @@ describe("Rule of Two — run-level composition (Layer 2)", () => {
     // Sibling contexts started OUTSIDE each other do not share.
     await enterRunToolContext("solo", async () => {
       expect(priorRunTools()).toEqual([]);
+    });
+  });
+
+  it("taskRunTools: undefined outside a run; a root run sees the session (nested calls included); a nested run sees only its own", async () => {
+    expect(taskRunTools()).toBeUndefined();
+    recordRunTool("outside"); // no-op, no throw
+    expect(taskRunTools()).toBeUndefined();
+    await enterRunToolContext("root", async () => {
+      recordRunTool("web_search");
+      await enterRunToolContext("child", async () => {
+        recordRunTool("gmail_send");
+        expect(taskRunTools()).toEqual(["gmail_send"]); // own calls only
+        expect(priorRunTools()).toEqual(["web_search", "gmail_send"]); // session
+      });
+      await enterRunToolContext("sibling", async () => {
+        expect(taskRunTools()).toEqual([]); // not the other child's send
+        expect(priorRunTools()).toEqual(["web_search", "gmail_send"]);
+      });
+      expect(taskRunTools()).toEqual(["web_search", "gmail_send"]);
+      expect(taskRunTools()).toEqual(priorRunTools()); // root = session view
     });
   });
 

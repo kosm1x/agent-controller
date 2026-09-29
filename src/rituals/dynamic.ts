@@ -368,6 +368,8 @@ export async function executeScheduleNow(
   const result = await submitTask({
     title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
     description: `${dateContext}${schedule.description}${extras.text}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
+    // The schedule's own prompt, without the appended blocks (DENUE guard).
+    detectionText: schedule.description,
     agentType: "fast",
     tools,
     gates: scheduleGates(schedule),
@@ -497,6 +499,8 @@ async function checkAndExecuteSchedules(): Promise<void> {
       const result = await submitTask({
         title: `[Scheduled] ${schedule.name} — ${todayLabel}`,
         description: `${dateContext}${schedule.description}${extras.text}${strategic ? `\n${strategic.promptBlock}` : ""}${deliveryInstructions}`,
+        // The schedule's own prompt, without the appended blocks (DENUE guard).
+        detectionText: schedule.description,
         agentType: "fast",
         tools,
         gates: scheduleGates(schedule),
@@ -617,6 +621,8 @@ async function retryScheduledTask(
   const result = await submitTask({
     title: `[Retry] ${schedule.name} — ${todayLabel}`,
     description: `${dateContext}${schedule.description}${extras.text}${deliveryInstructions}`,
+    // The schedule's own prompt, without the appended blocks (DENUE guard).
+    detectionText: schedule.description,
     agentType: "fast",
     tools,
     gates: scheduleGates(schedule),

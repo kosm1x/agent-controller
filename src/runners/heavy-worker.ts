@@ -88,6 +88,8 @@ async function main(): Promise<void> {
       // Agent's actual report (joined per-goal answers), distinct from the
       // reflector meta-summary in `content`. See final-answer.ts.
       finalAnswer: collectFinalAnswer(result.executionResults),
+      // Same as nanoclaw-worker: the host returns it as the run's toolCalls.
+      toolCalls: result.executionResults.totalToolNames,
       tokenUsage: result.tokenUsage,
       goalGraph: result.goalGraph,
       trace: result.trace,

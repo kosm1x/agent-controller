@@ -20,6 +20,7 @@ import {
   transcribeBuffer,
 } from "../../inference/transcription.js";
 import { errMsg } from "../../lib/err-msg.js";
+import { EXTRACTED_FILE_MARKER } from "../extracted-file.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -505,7 +506,7 @@ export class TelegramAdapter implements ChannelAdapter {
           // that extract empty, prescribe nothing (pdf_read on a .docx errors
           // and re-opens the improvisation loop this fix closes).
           const contentBlock = fileContent.trim()
-            ? `\n\n--- Contenido extraído del archivo "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---${pathNote}`
+            ? `\n\n${EXTRACTED_FILE_MARKER} "${fileLabel}" ---\n${fileContent}\n--- Fin del archivo ---${pathNote}`
             : savedPath && isPdf
               ? `\n\n[El archivo "${fileLabel}" no contiene texto extraíble — probablemente escaneado o basado en imágenes. Archivo guardado en ${savedPath}: usa pdf_read con esa ruta, o gemini_upload + gemini_research para análisis visual.]`
               : savedPath

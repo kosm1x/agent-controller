@@ -5,8 +5,21 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+
+// telegram.ts reads the owner chat id at import; the document test needs one.
+const OWNER = vi.hoisted(() => {
+  process.env.TELEGRAM_OWNER_CHAT_ID ??= "4242";
+  return process.env.TELEGRAM_OWNER_CHAT_ID;
+});
+vi.mock("fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("fs/promises")>()),
+  mkdir: vi.fn(async () => undefined),
+  writeFile: vi.fn(async () => undefined),
+}));
+
 import { TelegramAdapter } from "./telegram.js";
 import { sanitizeAttachmentName } from "./telegram.js";
+import { EXTRACTED_FILE_MARKER } from "../extracted-file.js";
 
 describe("sanitizeAttachmentName", () => {
   it("keeps ordinary filenames intact", () => {
@@ -63,5 +76,52 @@ describe("send() failure contract (2026-08-03 — the tally is a consent record)
     await expect(
       adapter.send({ channel: "telegram", to: "1", text: "hola" }),
     ).resolves.toBe("77");
+  });
+});
+
+describe("document handler writes EXTRACTED_FILE_MARKER before the file text (the DENUE guard cuts there)", () => {
+  it("caption, then the marker line, then the extracted content", async () => {
+    const handlers = new Map<string, (ctx: unknown) => Promise<void>>();
+    const adapter = new TelegramAdapter();
+    (adapter as unknown as { bot: unknown }).bot = {
+      command: vi.fn(),
+      catch: vi.fn(),
+      on: vi.fn(
+        (ev: string | string[], fn: (ctx: unknown) => Promise<void>) => {
+          for (const e of [ev].flat()) handlers.set(e, fn);
+        },
+      ),
+    };
+    (adapter as unknown as { setupHandlers(): void }).setupHandlers();
+    const received: string[] = [];
+    adapter.onMessage((m) => received.push(m.text));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Fuente: DENUE 05/2026")),
+    );
+    try {
+      await handlers.get("message:document")!({
+        chat: { id: OWNER },
+        message: {
+          caption: "resúmelo",
+          date: 0,
+          message_id: 1,
+          document: {
+            file_id: "f",
+            file_name: "notas.txt",
+            mime_type: "text/plain",
+          },
+        },
+        api: { getFile: vi.fn(async () => ({ file_path: "p" })) },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(received).toHaveLength(1);
+    const text = received[0]!;
+    const at = text.indexOf(EXTRACTED_FILE_MARKER);
+    expect(at).toBeGreaterThan(-1);
+    expect(text.slice(0, at)).toBe("resúmelo\n\n");
+    expect(text.slice(at)).toContain("Fuente: DENUE 05/2026");
   });
 });

@@ -1428,7 +1428,7 @@ describe("DENUE high-stakes guard — interactive flag at the call site (2026-09
       taskId: "task-hs",
       runId: "run-hs",
       title: "[Scheduled] Reporte diario",
-      description: "Busca oportunidades de negocio en pharma.",
+      description: "Busca oportunidades de negocio en pharma con el DENUE.",
       tools: ["web_search"],
       interactive,
     });
@@ -1448,5 +1448,76 @@ describe("DENUE high-stakes guard — interactive flag at the call site (2026-09
     expect(guard).toContain(
       "Necesito `shell_exec` para correr este query del DENUE Analyzer.",
     );
+  });
+});
+
+describe("DENUE guard fires only on a DENUE mention the user wrote (2026-09-29)", () => {
+  // Operator: "if I don't mention DENUE, the analyzer is not activated."
+  const persona =
+    "## Identidad\nEres Jarvis.\n## Proyectos activos\n- denue-data-analysis — DENUE Analyzer (uncharted)";
+  const guardOf = async (input: Parameters<typeof fastRunner.execute>[0]) => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute(input);
+    const msgs = mockInferWithTools.mock.calls[0]![0] as ChatMessage[];
+    return msgs
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .find((c) => c.includes("DENUE ANALYZER"));
+  };
+  const chat = (userText: string, tools: string[]) => ({
+    taskId: "task-dg",
+    runId: "run-dg",
+    title: `Chat: ${userText.slice(0, 60)}`,
+    description: persona,
+    detectionText: userText,
+    conversationHistory: [
+      { role: "user" as const, content: `[Hoy es 2026-09-29]\n\n${userText}` },
+    ],
+    tools,
+  });
+
+  it("(a) chat without DENUE in the user message: the persona's project list does not fire it", async () => {
+    expect(
+      await guardOf(chat("dame las farmacias de Puebla", ["shell_exec"])),
+    ).toBeUndefined();
+  });
+
+  it("(b) generic high-stakes words without DENUE do not fire it", async () => {
+    expect(
+      await guardOf(chat("top 5 oportunidades de negocio", ["shell_exec"])),
+    ).toBeUndefined();
+  });
+
+  it("(c) DENUE mention with shell_exec → full variant", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    expect(guard).toContain("⛔ DENUE ANALYZER QUERY DETECTED.");
+    expect(guard).toContain("API PATH");
+  });
+
+  it("(d) DENUE mention, interactive, no shell/http → advisory", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["web_search"]),
+    );
+    expect(guard).toContain(
+      "Necesito `shell_exec` para correr este query del DENUE Analyzer.",
+    );
+  });
+
+  it("(e) scheduled: DENUE only in the appended sent-before block → no guard", async () => {
+    const own = "Reporte diario de oportunidades pharma.";
+    expect(
+      await guardOf({
+        taskId: "task-dg-s",
+        runId: "run-dg-s",
+        title: "[Scheduled] Reporte — 2026-09-29",
+        description: `${own}\n\n## YA ENVIADO en los últimos 14 días — NO lo repitas\n- DENUE: 1,200 farmacias en Puebla`,
+        detectionText: own,
+        tools: ["shell_exec"],
+        interactive: false,
+      }),
+    ).toBeUndefined();
   });
 });

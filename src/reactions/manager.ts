@@ -73,11 +73,16 @@ function isNonInteractiveMeta(meta: {
  * called, or null. Reads the latest run's `tool_calls` (written on the
  * dispatcher's task.failed path) UNION the `tool.called` trace rows (written
  * per call by the fast runner's in-process SDK loop, so a watchdog-killed run
- * whose `tool_calls` is still NULL is covered). Gap: heavy-runner failure
- * paths return no toolCalls (recorded as `[]`) and emit no `tool.called`
- * rows, so a heavy task's prior send is NOT detected. A call that failed
- * counts as sent: fail toward not duplicating. No record → null (retry as
- * before).
+ * whose `tool_calls` is still NULL is covered). Heavy in-process failures
+ * (non-promoted result or orchestrate() throw) return the run context's
+ * calls (a swarm sub-task: only its own), so a heavy task's prior send is
+ * detected. Gaps: a WATCHDOG-killed
+ * heavy run (its `tool_calls` is still NULL and heavy emits no
+ * `tool.called` rows); a containerized heavy/nanoclaw run whose worker died
+ * or threw (the calls ran in the worker process and no names came back);
+ * swarm parents (their sub-tasks' calls live on the sub-task rows); a2a
+ * (the remote agent's calls are invisible). A call that failed counts as
+ * sent: fail toward not duplicating. No record → null (retry as before).
  */
 function highRiskCallOf(db: Database.Database, taskId: string): string | null {
   const names = new Set<string>();

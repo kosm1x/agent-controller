@@ -72,6 +72,8 @@ export interface TaskSubmission {
    * coding signal ("precio"→"pr") that misroutes a chat into the nanoclaw sandbox
    * (2026-07-06). Chat callers set this to the raw inbound message; the classifier
    * detects on it instead of the truncated title. See ClassificationInput.
+   * Dynamic schedules set it to their own prompt (explicit agentType, so the
+   * classifier ignores it); the fast runner's DENUE guard reads it.
    */
   detectionText?: string;
   parentTaskId?: string;
@@ -673,6 +675,7 @@ async function dispatchWithSlot(
     parentTaskId: submission.parentTaskId,
     modelTier: getModelTierFromTask(taskId),
     conversationHistory: submission.conversationHistory,
+    detectionText: submission.detectionText,
     onTextChunk: submission.onTextChunk,
     signal: abortController.signal,
     interactive: submission.interactive,

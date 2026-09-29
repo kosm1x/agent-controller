@@ -10,7 +10,6 @@ import { inferWithTools } from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
-import { hasHighStakesDataSignal } from "../dispatch/classifier.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
@@ -35,6 +34,7 @@ import { shadowKbRows } from "../jev/shadow-kb.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
+import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 import { getConfig } from "../config.js";
 import { toolSearchEnabled } from "../inference/claude-sdk.js";
 
@@ -78,24 +78,56 @@ export function splitSystemMessagesByCache(messages: ChatMessage[]): {
  * 2026-05-06 incident chain that drove this fix.
  */
 /**
- * Text the DENUE high-stakes guard signal is evaluated on. For a chat task
- * the description is the persona/system prompt and the user's words live
- * ONLY in the last `conversationHistory` turn; the title is the message cut
- * at 60 chars. Checking title+description alone silently skipped the guard
- * for every chat whose trigger sat past the cut ("…hasta nivel municipio y
- * dame el top 10" — tasks 9447/9457, 2026-09-09: the recipe was never
- * injected, so Jarvis explored the schema and joined on names). Same class
- * the classifier fixed with `detectionText` (2026-07-06).
+ * Text the DENUE guard is evaluated on: only what the user (or the schedule
+ * author) wrote. `detectionText` first — the router sets it to the full,
+ * untruncated inbound message, dynamic schedules to the schedule's own
+ * prompt; else the last user turn; else title+description (rituals and other
+ * system-authored tasks, whose description IS their prompt). A chat's
+ * description is persona + injected context (`## Proyectos activos` names
+ * DENUE — the guard fired on ~100 % of chat turns from 2026-09-10) and a
+ * schedule's carries the run-time sent-before block, so neither may count.
  */
-export function highStakesSignalText(input: {
+export function denueGuardText(input: {
   title: string;
   description: string;
+  detectionText?: string;
   conversationHistory?: readonly { role: string; content: string }[];
 }): string {
+  if (input.detectionText !== undefined)
+    return withoutExtractedFile(input.detectionText);
   const lastUser = [...(input.conversationHistory ?? [])]
     .reverse()
     .find((t) => t.role === "user");
-  return `${input.title}\n${input.description}\n${lastUser?.content ?? ""}`;
+  return lastUser
+    ? withoutExtractedFile(lastUser.content)
+    : `${input.title}\n${input.description}`;
+}
+
+/**
+ * Telegram appends an attached document's extracted text to the caption
+ * after `EXTRACTED_FILE_MARKER` (`src/messaging/channels/telegram.ts`,
+ * `contentBlock`): file content, not the user's words, so the DENUE check
+ * stops there. A voice note's `Transcripción:` block IS the user's words and
+ * is kept.
+ */
+function withoutExtractedFile(text: string): string {
+  const at = text.indexOf(EXTRACTED_FILE_MARKER);
+  return at === -1 ? text : text.slice(0, at);
+}
+
+/**
+ * Operator rule (2026-09-29): "if I don't mention DENUE, the analyzer is not
+ * activated." The guard fires on a literal DENUE mention only — not on the
+ * classifier's broader high-stakes list (oportunidades, top N, scoring…),
+ * which still drives model tier. A follow-up turn that does not repeat the
+ * word gets no guard.
+ */
+export function mentionsDenue(text: string): boolean {
+  // "denue" not preceded by a letter (denue_api, DENUEs, denue2026, #denue);
+  // two or more letters after it make an ordinary Spanish word (denuevo,
+  // denuedo, denuesto) while one plural `s` still counts. `redenue` and an
+  // accented `denué` (either Unicode form) do not match.
+  return /(?<!\p{L})denue(?!\p{M})(?!\p{L}{2})/iu.test(text);
 }
 
 /**
@@ -1077,7 +1109,8 @@ export const fastRunner: Runner = {
     //   - jarvis-kb/directives/denue-patterns.md (12 patterns, intent → path)
     //   - jarvis-kb/directives/denue-analyzer-granularities.md (schema reference)
     //   - feedback_data_authoring_no_verification.md (anti-pattern catalog)
-    if (hasHighStakesDataSignal(highStakesSignalText(input))) {
+    // 2026-09-29: fires only when the user's own text names DENUE.
+    if (mentionsDenue(denueGuardText(input))) {
       // Fix D (2026-05-06 follow-up): if scope didn't grant shell_exec OR
       // http_fetch, the long routing recipe below is useless — Jarvis can't
       // hit the API (no header support in browser/web_read) and can't run

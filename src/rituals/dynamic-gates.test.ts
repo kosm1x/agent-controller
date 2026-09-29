@@ -8,9 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   submitTask: vi.fn(),
   getRouter: vi.fn(() => null),
+  scheduleCron: vi.fn(),
 }));
 vi.mock("../dispatch/dispatcher.js", () => ({ submitTask: mocks.submitTask }));
 vi.mock("../messaging/index.js", () => ({ getRouter: mocks.getRouter }));
+vi.mock("../lib/cron.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/cron.js")>()),
+  scheduleCron: mocks.scheduleCron,
+}));
 
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import {
@@ -18,7 +23,11 @@ import {
   ensureScheduledTasksTable,
   executeScheduleNow,
   getSchedule,
+  handleScheduledTaskResult,
   scheduleGates,
+  startDynamicScheduler,
+  stopDynamicScheduler,
+  watchScheduledTask,
 } from "./dynamic.js";
 
 beforeEach(() => {
@@ -131,6 +140,8 @@ describe("scheduled_tasks.gates", () => {
       gates: [{ criterion: "report mentions the date" }],
       gatesSource: "ritual",
       tags: expect.arrayContaining(["scheduled", "schedule:s4"]),
+      // The schedule's own prompt, without appended blocks (DENUE guard text).
+      detectionText: "d",
     });
 
     getDatabase()
@@ -171,5 +182,43 @@ describe("scheduled_tasks.gates", () => {
     expect(cols).toContain("gates");
     // Idempotent
     ensureScheduledTasksTable();
+  });
+});
+
+// The DENUE guard reads `detectionText`: every submit site must set it to the
+// schedule's own prompt, never the description with the appended blocks.
+describe("schedule submissions carry detectionText (2026-09-29)", () => {
+  afterEach(() => stopDynamicScheduler());
+  const create = (delivery: string) =>
+    createSchedule({
+      scheduleId: "s-dt",
+      name: "DT",
+      description: "d",
+      cronExpr: "* * * * *",
+      tools: [],
+      delivery,
+    });
+
+  it("cron tick", async () => {
+    create("telegram");
+    startDynamicScheduler();
+    const tick = mocks.scheduleCron.mock.calls[0]![2] as () => void;
+    tick();
+    await vi.waitFor(() => expect(mocks.submitTask).toHaveBeenCalledTimes(1));
+    expect(mocks.submitTask.mock.calls[0]![0]).toMatchObject({
+      title: expect.stringMatching(/^\[Scheduled\] DT/),
+      detectionText: "d",
+    });
+  });
+
+  it("delivery-miss retry", async () => {
+    create("email");
+    watchScheduledTask("t-miss", getSchedule("s-dt")!);
+    handleScheduledTaskResult("t-miss", "done", "completed", []);
+    await vi.waitFor(() => expect(mocks.submitTask).toHaveBeenCalledTimes(1));
+    expect(mocks.submitTask.mock.calls[0]![0]).toMatchObject({
+      tags: expect.arrayContaining(["retry"]),
+      detectionText: "d",
+    });
   });
 });

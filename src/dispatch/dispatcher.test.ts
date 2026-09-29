@@ -514,6 +514,31 @@ describe("cancelTask aborts the running runner (reliability audit R4)", () => {
   });
 });
 
+// 2026-09-29: the fast runner's DENUE guard reads ONLY the text the user (or
+// the schedule author) wrote — dropping this forward silently reverts every
+// chat and schedule to the title+description fallback.
+describe("dispatchTask forwards detectionText to the runner", () => {
+  it("submission.detectionText → RunnerInput.detectionText", async () => {
+    let seen: string | undefined = "unset";
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen = input.detectionText;
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({
+      title: "Chat: hola",
+      description: "persona + injected context",
+      detectionText: "consulta DENUE farmacias en Puebla",
+    });
+    await vi.waitFor(() => {
+      if (seen === "unset") throw new Error("runner not yet executed");
+    });
+    expect(seen).toBe("consulta DENUE farmacias en Puebla");
+  });
+});
+
 // Seam origin wiring (qa W2 2026-08-17): the store is tested in rule-of-two;
 // THIS pins the dispatcher's wiring point — delete the 3rd argument at the
 // enterRunToolContext site and the operator label silently reverts to
