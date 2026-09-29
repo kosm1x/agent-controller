@@ -123,3 +123,8 @@
 - **Avoid:** committing benchmark result files — this repo is public and `results/*.md` carry user chat + KB content. Only aggregates go in the plan doc; `benchmarks/` stays gitignored.
 - **Better:** a one-line "Necesito `X` para esto." is the router's scope-miss protocol, not a refusal; exclude those cells (or score them separately) when grading a replay that withholds write tools.
 - **Better:** the cache-read gate needs position-balanced arms; report per-position cache read next to the Σ ratio or the gate reads noise as a regression.
+
+## 2026-09-29 — Sonnet 5.5 fast-path env wiring + eval gate A/C
+- **Avoid:** expecting a `cache_diag … model=` line by default — it is opt-in behind `DEBUG_CACHE_DIAG=true`; set it on the gate command when the model proof is needed.
+- **Avoid:** planning a per-case flip analysis from `eval:gate` — it prints aggregates only and deletes its snapshot on exit; per-case needs an instrumented run decided BEFORE spending.
+- **Better:** count `Completed: … 0 tool calls` lines per run next to the score: C (5.5/adaptive/low) went 20 → 60 zero-call probes for only −1.9 tool-selection points, and one probe hit the Sonnet 5 `[cyber]` safeguard (`result is_error`, no Haiku retry).

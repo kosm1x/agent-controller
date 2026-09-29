@@ -276,3 +276,62 @@ Observed per arm: A leaked narration and stray tool-request lines into finished 
 Caveats: n = 20, drawn mostly from one book-ingestion / product thread (no finance, email or scheduling traffic); the snapshot's KB is newer than the tasks, so grounding partly measures how each arm handled stale context; the cache-read gate is confounded by arm position (B at position 0 averaged 21 % cache read, B at position 2 60 %) — n per cell is 6-7.
 
 **Verdict: C (Sonnet 5.5, adaptive thinking, effort low) is the candidate for the fast path. B is not (cache gate + cost). Neither ships from this run.** Next steps in order: (1) `npm run eval:gate -- --run` with `SONNET_MODEL_ID=claude-sonnet-5-5` + adaptive/low wired through the production path, not the benchmark seam; (2) one live check of the "asks for a write tool the original never needed" pattern (2 of 20 C rows) since production would re-run and write to the KB unasked; (3) canary on a channel for a week, watching `$/task`, cache-read ratio, compaction frequency and empty deliveries — the 06-30 Sonnet 5 revert signals.
+
+## 11. Step 1 — env wiring + eval gate (2026-09-29)
+
+### Env vars (production path, `src/inference/claude-sdk.ts`)
+
+- `SONNET_MODEL_ID` — read once at module load (a restart is required to change it). Trimmed; used only when it matches `/^claude-sonnet-\d/`, else the literal `claude-sonnet-4-6`. When used, one boot line: `[claude-sdk] SONNET_MODEL_ID override: <id>`.
+- Thinking follows the effective model: `claude-(sonnet|opus)-5*` → `{ type: "adaptive" }` (5.x rejects `disabled`); every other model keeps `{ type: "disabled" }`. The benchmark seam's `thinking` still wins.
+- `SONNET_EFFORT` — `low|medium|high|max`, anything else ignored. Read per call and applied only when the effective model is `SONNET_MODEL_ID` (never the Haiku or Opus legs). Order: caller `effort` → benchmark seam `effort` → `SONNET_EFFORT`.
+- Both unset ⇒ request shape identical to before (Sonnet 4.6, thinking disabled, no `effort` key); pinned in `claude-sdk.bench-override.test.ts`.
+
+### Eval gate (`npm run eval:gate -- --run`, 263 cases, 188 tool_selection, stored incumbent 68.35, epsilon 2)
+
+| | Run 1: current config (4.6, thinking off) | Run 2: `SONNET_MODEL_ID=claude-sonnet-5-5 SONNET_EFFORT=low` |
+|---|---|---|
+| Composite (delta vs 68.35) | 68.57 (+0.22) | 67.62 (−0.73) |
+| Tool selection | 37.14 | 35.24 |
+| Scope / classification | 100 / 100 | 100 / 100 |
+| Threshold / verdict / exit | 66.35 / PASS / 0 | 66.35 / PASS / 0 |
+| Per-call SDK $ (sum of 188) | $4.65 | $4.21 |
+| Tokens | 2,731,326 | 3,690,952 (+35 %) |
+| Eval time | 779.9 s | 851.7 s |
+| Mean per-call latency | 2382 ms | 2815 ms |
+| Mean cache read | 80.7 % | 82.5 % |
+| Probes with 0 tool calls | 20 / 188 | 60 / 188 |
+| Errors / 429 / Haiku fallback | 0 / 0 / 0 | 1 / 0 / 0 |
+
+- The one run-2 error was a Sonnet 5 safeguard block (`result is_error … Sonnet 5's safeguards flagged this message … [cyber]`); the call returned 0 tool calls with no Haiku retry.
+- Model proof (`DEBUG_CACHE_DIAG=true`, log-only): run 1 `cache_diag … model=claude-sonnet-4-6` on all 188 calls; run 2 `SONNET_MODEL_ID override: claude-sonnet-5-5` then `cache_diag … model=claude-sonnet-5-5` on all 188.
+- The gate prints aggregates only and deletes its snapshot on exit, so there is no per-case flip list.
+- The gate's `est.cost` ($5.64 both runs) is a fixed per-case constant; the per-call SDK sum above is the measured figure.
+
+**Scorer blind spot.** `scoreToolSelection` (`src/tuning/scorer.ts`) scores hits/expected tools, so a probe that calls no tool and a probe that calls the wrong tool both score 0 when tools are expected; a no-tool answer scores 1.0 only on the cases that expect no tool — 9 of 188 active tool_selection cases (1 of 39 seeded, 8 of 149 mined). The tripling of zero-tool probes (20 → 60) is therefore mostly invisible in the score, and the canary must watch tool calls per task directly.
+
+### Canary reach
+
+Setting `SONNET_MODEL_ID` moves every caller that resolves the Sonnet constant, not just the fast path:
+
+- fast runner (`queryClaudeSdk` with no `opts.model`)
+- the adapter path `infer` / `inferWithTools` (`src/inference/adapter.ts`: eval gate, dispatcher `src/dispatch/dispatcher.ts:1187`)
+- `src/audit/critic.ts:221`
+- `src/lib/v8-2/decompose.ts:189`, `critic.ts:646`, `sycophancy.ts:166` and `:254`, `concession.ts:200`, `author.ts:152`, `multi-option.ts:508`
+- `src/briefing/construct.ts:287`
+- the Sonnet legs of the Opus tier wrappers in `claude-sdk.ts` (`queryClaudeSdkComplexWithFallback` ~460 on Opus failure, `queryClaudeSdkTiered` ~491 for confidently simple Prometheus tasks)
+
+These callers get adaptive thinking under 5.x and `SONNET_EFFORT` whenever they pass no effort of their own. The §10 benchmark measured only the fast path and the gate only the adapter path, so during the canary the critic / audit / briefing rows in `cost_ledger` are watched separately (empty deliveries, `is_error`, $ per row). Vision stays on 4.6: `src/inference/vision.ts` keeps the literal on purpose.
+
+### Operator canary (not applied)
+
+```bash
+sudo tee /etc/systemd/system/mission-control.service.d/sonnet-canary.conf >/dev/null <<'CONF'
+[Service]
+Environment=SONNET_MODEL_ID=claude-sonnet-5-5
+Environment=SONNET_EFFORT=low
+CONF
+systemctl daemon-reload && /root/claude/mission-control/scripts/deploy.sh
+journalctl -u mission-control --since '2 min ago' | grep 'SONNET_MODEL_ID override'
+```
+
+Revert: `rm /etc/systemd/system/mission-control.service.d/sonnet-canary.conf && systemctl daemon-reload && systemctl restart mission-control` (the constant is read at boot, so the restart is required). `.env` is loaded via `EnvironmentFile=`, which wins over a drop-in `Environment=`, so `.env` must not carry either key.

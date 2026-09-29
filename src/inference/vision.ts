@@ -48,6 +48,7 @@ export function resolveVisionModel(): string {
   // OpenAI
   if (primary.startsWith("gpt-")) return "gpt-4o";
   // Claude — claude-sonnet-4-20250514 retired 2026-06-15; 4-6 is vision-capable
+  // Literal on purpose (not SONNET_MODEL_ID): a SONNET_MODEL_ID canary must not move vision.
   if (primary.startsWith("claude-")) return "claude-sonnet-4-6";
 
   return "qwen-vl-max";

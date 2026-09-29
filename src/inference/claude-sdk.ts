@@ -349,8 +349,21 @@ export function buildMcpServer(
  * path is the SDK compaction budget below + maxTurns; INFERENCE_MAX_TOKENS /
  * INFERENCE_CONTEXT_LIMIT govern only the dormant OpenAI-compat revert path
  * (adapter.ts), so there is no 6144 output-cap truncation risk on this engine.
+ * 2026-09-29: env-driven for the Sonnet 5.5 fast-path evaluation
+ * (docs/planning/sonnet-tier-benchmark-2026-09-29.md §10 step 1).
+ * SONNET_MODEL_ID (trimmed, must match /^claude-sonnet-\d/) replaces the
+ * literal; unset or invalid ⇒ claude-sonnet-4-6, unchanged. A 5.x model gets
+ * adaptive thinking (defaultThinkingFor) and SONNET_EFFORT applies to this
+ * leg only (queryClaudeSdk options builder).
  */
-export const SONNET_MODEL_ID = "claude-sonnet-4-6";
+const SONNET_MODEL_ENV = process.env.SONNET_MODEL_ID?.trim();
+export const SONNET_MODEL_ID =
+  SONNET_MODEL_ENV && /^claude-sonnet-\d/.test(SONNET_MODEL_ENV)
+    ? SONNET_MODEL_ENV
+    : "claude-sonnet-4-6";
+if (SONNET_MODEL_ID === SONNET_MODEL_ENV) {
+  console.log(`[claude-sdk] SONNET_MODEL_ID override: ${SONNET_MODEL_ID}`);
+}
 export const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
 // 2026-07-12 (V8.5 Phase 2.1): claude-opus-4-7 → claude-opus-4-8. Same request
 // surface and tokenizer as 4-7 (no Sonnet-5-style cache re-baseline); affects
@@ -370,7 +383,7 @@ export const OPUS_MODEL_ID = "claude-opus-4-8";
 export interface OpusTierBenchmarkOverride {
   /** Model the Opus tier calls instead of OPUS_MODEL_ID. */
   opusModel?: string;
-  /** SDK thinking config instead of the hard-coded `{ type: "disabled" }`. */
+  /** SDK thinking config instead of `defaultThinkingFor(model)`. */
   thinking?: ThinkingConfig;
   /** Effort applied when the caller passed none (SDK default otherwise). */
   effort?: "low" | "medium" | "high" | "max";
@@ -386,6 +399,13 @@ export interface OpusTierBenchmarkOverride {
   tap?: (result: ClaudeSdkResult) => void;
 }
 let benchmarkOverride: OpusTierBenchmarkOverride | undefined;
+
+/** 5.x Sonnet/Opus reject `disabled` thinking; every other model keeps it off. */
+function defaultThinkingFor(model: string): ThinkingConfig {
+  return /^claude-(sonnet|opus)-5/.test(model)
+    ? { type: "adaptive" }
+    : { type: "disabled" };
+}
 export function setOpusTierBenchmarkOverride(
   override: OpusTierBenchmarkOverride | undefined,
 ): void {
@@ -683,6 +703,15 @@ export async function queryClaudeSdk(opts: {
   // benchmark arm is attributed to the model it actually requested.
   const effectiveModel =
     opts.model ?? benchmarkOverride?.defaultModel ?? SONNET_MODEL_ID;
+  const sonnetEffort = process.env.SONNET_EFFORT;
+  const envSonnetEffort =
+    effectiveModel === SONNET_MODEL_ID &&
+    (sonnetEffort === "low" ||
+      sonnetEffort === "medium" ||
+      sonnetEffort === "high" ||
+      sonnetEffort === "max")
+      ? sonnetEffort
+      : undefined;
   let breakerKey = "claude-sdk";
   if (effectiveModel.startsWith("claude-haiku-"))
     breakerKey = "claude-sdk-haiku";
@@ -809,8 +838,10 @@ export async function queryClaudeSdk(opts: {
     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
     // cached prompt prefix. Omitted when unset so the SDK default ("high")
     // applies — matters because effort semantics may drift across SDK bumps.
-    ...((opts.effort ?? benchmarkOverride?.effort) && {
-      effort: opts.effort ?? benchmarkOverride?.effort,
+    // SONNET_EFFORT (2026-09-29) is the last fallback and reaches the Sonnet
+    // leg only — never Haiku (no effort support) or Opus (own ruling).
+    ...((opts.effort ?? benchmarkOverride?.effort ?? envSonnetEffort) && {
+      effort: opts.effort ?? benchmarkOverride?.effort ?? envSonnetEffort,
     }),
     // Task-budget pacing (V8.5 Phase 3.4): request-level like effort, no
     // cache-prefix impact. Only forwarded when a caller passed a value —
@@ -828,7 +859,7 @@ export async function queryClaudeSdk(opts: {
     }),
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),
-    thinking: benchmarkOverride?.thinking ?? { type: "disabled" },
+    thinking: benchmarkOverride?.thinking ?? defaultThinkingFor(effectiveModel),
     env: {
       ...process.env,
       CLAUDE_AGENT_SDK_CLIENT_APP: "mission-control/1.0.0",
