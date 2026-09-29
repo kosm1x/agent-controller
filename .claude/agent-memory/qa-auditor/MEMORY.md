@@ -95,3 +95,5 @@
 - [jev-long-run-slug-r1-audit](jev-long-run-slug-r1-audit.md) - long_run loosening (09-29): R1 FAIL -> R2 PASS-W-WARN. CLASS: score an egress-filter loosening on the LIVE .env key population, names only.
 - [denue-advisory-noninteractive-r1-audit](denue-advisory-noninteractive-r1-audit.md) - DENUE advisory none-variant (09-29): PASS-W-WARN. CLASS: `top \d+` fired on 5 rituals daily; eval:gate never runs fast-runner system msgs.
 - [denue-advisory-noninteractive-r2-audit](denue-advisory-noninteractive-r2-audit.md) - R2 (09-29): PASS-W-WARN. CLASS: exact-map risk lookup (unknown=low) trusts the recorded name form; heavy failures record no tools.
+- [denue-guard-literal-r1-audit](denue-guard-literal-r1-audit.md) - literal DENUE guard + heavy failure toolCalls (09-29): PASS-W-WARN. CLASS: msg.text embeds file content; runToolContext Set is per-SESSION.
+- [denue-guard-literal-r2-audit](denue-guard-literal-r2-audit.md) - R2 (09-29): PASS-W-WARN, 7/7 RED. CLASS: cross-module marker literal (telegram->fast-runner) unpinned by any test.

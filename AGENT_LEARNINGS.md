@@ -1,7 +1,7 @@
 # Agent Learnings — mission-control (Jarvis)
 
 ## Standing rules
-- Measure demand in mc.db before rating any external capability for Jarvis. Examples: 1 voice note since 06-25 (so R2T2 streaming ASR is no use); 0 `seo_*` calls in 30 days (so open-seo is no use).
+- Measure demand in mc.db before rating any external capability for Jarvis. Examples: 1 voice note since 06-25 (so R2T2 streaming ASR is no use); 0 `seo_*` calls in 30 days (so open-seo is no use). Same for a PR's premise: request rate vs the vendor limit (#37: 1/15 min vs 1/5 s), whether the configured ID still exists (#33), whether the incident recurred (#32: 0 in 30 days).
 - `task_trace_events` keeps only ~30 days. For longer horizons use `scope_telemetry` (from 2026-06-25). Run `.tables` + `pragma table_info(<t>)` before the first query.
 - Group activation is not usage. `active_groups LIKE '%seo%'` hit only broad turns that switch every group on, so print sample rows before counting activation as demand.
 - For a threshold re-tune, first reproduce the registered replay number from STORED answers, then walk forward. A fixed threshold that drifts does not mean periodic re-tuning helps: the Jev scope 0.70 walk-forward gave 92.6 % vs 92.0 % fixed, +2 turns of 299.
@@ -25,9 +25,6 @@
 - **Mistake:** deleted a reviewed clone right after the verdict, then had to re-clone it for the findings doc → keep review clones in the scratchpad until the session ends.
 - **Avoid:** putting `git` and `grep` in the same Bash command. The hook-bypass guard scans the whole string → run git commands alone.
 - **Better:** voice-note transcription (`src/inference/transcription.ts`) is batch and Whisper-compatible, and almost unused. Check that call site first before probing any new ASR for Jarvis. Pipesong is the only streaming consumer.
-
-## 2026-09-24 — Jarvis PR review (#37, #33 closed; #32 redone as 9d825dd)
-- **Better:** measure each PR's premise in live data before judging the code: request rate vs the vendor limit (#37: 1/15 min vs 1/5 s), whether the configured ID still exists (#33: schedule recreated 09-23), and whether the incident has recurred (#32: 0 in 30 days).
 
 ## 2026-09-24 — jarvis_dev branch base (root cause of the stale #33/#37 PRs)
 - **Mistake:** wrote git-fixture tests (tmpdir repos) whose helper inherited `process.env`; the pre-commit hook exports `GIT_DIR`/`GIT_INDEX_FILE`, so under the hook every fixture call hit the REAL repo (tests red + `user.email t@t` written to the shared `.git/config`; qa R1 caught it before commit) → any test that spawns git passes an env with every `GIT_*` key stripped; prove it by running the file with `GIT_DIR` pointed at a scratch repo.
@@ -134,16 +131,20 @@
 - **Mistake:** "strip URLs" for a secret rule = strip the query and fragment too; `?key=`, `?sig=`, `/bot<token>/` all live there → strip scheme+host+path only, and give prefixed shapes to `known_prefix`, which runs on the unstripped text.
 - **Avoid:** a "2 alphabetic segments = slug" exemption — random base64url keys hit it 3–16 % of the time; a slug is 3+ segments that are each all-letters, all-digits or ≤ 4 chars (0.6 % miss at 32, 0 at 64+).
 - **Better:** `jev_shadow` withheld share per day is the live symptom (45 % → 90 % on 09-26); `scripts/validate-jev-withheld.ts --days 7` names the rule; the fix is judged on that table with every OTHER rule's counts unchanged.
-- **Open (not this change):** 10 keys under 32 chars with no distinctive shape are not withheld when pasted unlabelled in prose — own ticket.
 
 ## 2026-09-29 — Session wrap: Sonnet 5.5 canary + Jev withhold fix + TypeSafe review
 - **Mistake:** started to "adopt" a vendor skill from its GitHub URL before checking the plugin list → `claude plugin list` (and a byte-diff against upstream) comes BEFORE any install or review of a skill; here it was already installed at 0.5.7.
 - **Avoid:** `git push` from a session whose cwd is outside the repo, or joined to another command with `|`/`&&` — git-auth-guard evaluates the SESSION cwd's remote and the hook-bypass guard scans the whole string → `cd <repo> && git push origin main` as its own call.
-- **Avoid:** reading mc.db timestamps as UTC — the service runs `TZ=America/Mexico_City`, so `jme_turns.ts` / `jev_shadow` rows are MX local while the journal is UTC; convert before joining a DB row to a log line.
-- **Better:** an audit finding that the vendor's docs page 404s (`migrating-to-v1`) is recorded as "not in `llms.txt`", not skipped — the review states what it could not read.
+- **Avoid:** assuming a timezone for an mc.db timestamp column — `tasks`, `jev_shadow` and `cost_ledger` `created_at` are UTC in practice (max row matched UTC now, 09-29) although the service runs `TZ=America/Mexico_City`; compare `max(<col>)` with `date -u` before joining a row to a journal line.
 
 ## 2026-09-29 — Scheduled tasks failed under the Sonnet 5.5 canary (`7d3faa6`)
 - **Mistake:** I first blamed `SONNET_EFFORT=low` and offered "raise effort" as a fix; the failed tasks ran at `medium` (tier `standard` sets effort explicitly, the env knob reaches tier-less callers only) → read `tasks.classification` and the run's reply text BEFORE naming a cause.
 - **Avoid:** treating an instruction the incumbent model ignores as harmless — a model swap executes it. Before a model canary, replay 30 d of stored tasks through every conditional system message and list which populations receive it (114 scheduled/ritual tasks got a chat-only advisory).
 - **Avoid:** restoring a flag on a retry without listing every consumer of that flag — `interactive:false` also lifts the confirm gate, so the retry could resend an email; the audit's per-consumer table caught it.
 - **Better:** canary health = split by task KIND (chat vs scheduled/ritual) and compare each schedule with its own prior days; the aggregate cost/cache table looked fine while 5 of 10 scheduled tasks were not clean.
+
+## 2026-09-29 — DENUE guard on a literal mention + heavy tool record (`6a660e1`)
+- **Avoid:** evaluating a trigger on a composed prompt (title + description) — injected context and appended file text are not the user's words; read the author's text (`detectionText`) and cut producer-appended blocks at a constant the producer imports.
+- **Avoid:** adding a per-task view by reusing a session-shared Set — `toolsSoFar` is shared across a swarm, so a failed child listed a sibling's send; list every reader of a safety module's state before extending it.
+- **Better:** a word rule gets a negative table from the language, not only from the corpus: the 30-day replay had 0 hits for `denuevo`, yet the regex matched it.
+- **Better:** re-audit after a fix round that touches a gate module; R2 found the unlinked marker copy and the Spanish-word matches that R1's fixes introduced.
