@@ -91,3 +91,5 @@
 - [docs-refresh-2026-09-26-r1-audit](docs-refresh-2026-09-26-r1-audit.md) - 34-file docs refresh (09-26): PASS-W-WARN. CLASS: header figure refreshed, DERIVED figures in the same doc left stale; `+ ` line = bullet.
 - [codie-checklist-en-r1-audit](codie-checklist-en-r1-audit.md) - EN variant (09-26): PASS-W-WARN. Harness: stub createTransport+fetch; page vs email lever labels drift p5-p7.
 - [sonnet-tier-benchmark-r1-audit](sonnet-tier-benchmark-r1-audit.md) - Sonnet A/B harness (09-29): FIX FIRST. CLASS: a DB snapshot does not isolate upsertFile (FS mirror + pgvector + Drive sinks); B->C same-model cache carryover.
+- [sonnet-env-canary-r1-audit](sonnet-env-canary-r1-audit.md) - SONNET_MODEL_ID/EFFORT env (09-29): PASS-W-WARN. CLASS: env on the exported CONSTANT moves explicit-model callers the benchmark defaultModel seam never touched.
+- [jev-long-run-slug-r1-audit](jev-long-run-slug-r1-audit.md) - long_run loosening (09-29): R1 FAIL -> R2 PASS-W-WARN. CLASS: score an egress-filter loosening on the LIVE .env key population, names only.

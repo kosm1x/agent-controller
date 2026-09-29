@@ -135,3 +135,9 @@
 - **Avoid:** a "2 alphabetic segments = slug" exemption — random base64url keys hit it 3–16 % of the time; a slug is 3+ segments that are each all-letters, all-digits or ≤ 4 chars (0.6 % miss at 32, 0 at 64+).
 - **Better:** `jev_shadow` withheld share per day is the live symptom (45 % → 90 % on 09-26); `scripts/validate-jev-withheld.ts --days 7` names the rule; the fix is judged on that table with every OTHER rule's counts unchanged.
 - **Open (not this change):** 10 keys under 32 chars with no distinctive shape are not withheld when pasted unlabelled in prose — own ticket.
+
+## 2026-09-29 — Session wrap: Sonnet 5.5 canary + Jev withhold fix + TypeSafe review
+- **Mistake:** started to "adopt" a vendor skill from its GitHub URL before checking the plugin list → `claude plugin list` (and a byte-diff against upstream) comes BEFORE any install or review of a skill; here it was already installed at 0.5.7.
+- **Avoid:** `git push` from a session whose cwd is outside the repo, or joined to another command with `|`/`&&` — git-auth-guard evaluates the SESSION cwd's remote and the hook-bypass guard scans the whole string → `cd <repo> && git push origin main` as its own call.
+- **Avoid:** reading mc.db timestamps as UTC — the service runs `TZ=America/Mexico_City`, so `jme_turns.ts` / `jev_shadow` rows are MX local while the journal is UTC; convert before joining a DB row to a log line.
+- **Better:** an audit finding that the vendor's docs page 404s (`migrating-to-v1`) is recorded as "not in `llms.txt`", not skipped — the review states what it could not read.
