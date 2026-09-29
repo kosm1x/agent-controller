@@ -9,6 +9,8 @@ venv/
 .env
 mcp-servers.json
 scripts/benchmark-*.json
+# benchmark outputs hold private chat text (repo is public)
+benchmarks/
 bin/
 monitoring/grafana/provisioning/alerting/contact-points.yml
 public/docs/

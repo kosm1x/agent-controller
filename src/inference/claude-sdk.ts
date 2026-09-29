@@ -376,6 +376,12 @@ export interface OpusTierBenchmarkOverride {
   effort?: "low" | "medium" | "high" | "max";
   /** Surface an Opus failure instead of masking it with the Sonnet retry. */
   noFallback?: boolean;
+  /**
+   * Model used when the caller passed no `model` (the Sonnet/fast tier);
+   * benchmark-only, never set in the service
+   * (`scripts/benchmark-sonnet-tier.ts`).
+   */
+  defaultModel?: string;
   /** Observes every raw SDK result (text, usage, model, turns, duration). */
   tap?: (result: ClaudeSdkResult) => void;
 }
@@ -671,9 +677,16 @@ export async function queryClaudeSdk(opts: {
   // claude-haiku-3-5-* to claude-haiku-4-5-20251001) and exact-equality would
   // silently collapse a future-bumped Haiku ID to the default 'claude-sdk'
   // bucket — the precise drift this audit was added to prevent.
+  // Effective model: the caller's, else the benchmark default (Sonnet-tier
+  // A/B harness only; unset in the service), else SONNET_MODEL_ID. Feeds the
+  // breaker key, cache_diag, options.model and the actualModel default so a
+  // benchmark arm is attributed to the model it actually requested.
+  const effectiveModel =
+    opts.model ?? benchmarkOverride?.defaultModel ?? SONNET_MODEL_ID;
   let breakerKey = "claude-sdk";
-  if (opts.model?.startsWith("claude-haiku-")) breakerKey = "claude-sdk-haiku";
-  else if (opts.model?.startsWith("claude-opus-"))
+  if (effectiveModel.startsWith("claude-haiku-"))
+    breakerKey = "claude-sdk-haiku";
+  else if (effectiveModel.startsWith("claude-opus-"))
     breakerKey = "claude-sdk-opus";
   const breaker = circuitRegistry.get(breakerKey);
   if (!breaker.allowRequest()) {
@@ -746,7 +759,7 @@ export async function queryClaudeSdk(opts: {
       .digest("hex")
       .slice(0, 8);
     console.log(
-      `[claude-sdk] cache_diag systemPromptHash=${promptHash} toolsHash=${toolsHash} toolsN=${opts.toolNames.length} chars=${safeSystemPromptText.length} model=${opts.model ?? "default"}`,
+      `[claude-sdk] cache_diag systemPromptHash=${promptHash} toolsHash=${toolsHash} toolsN=${opts.toolNames.length} chars=${safeSystemPromptText.length} model=${effectiveModel}`,
     );
   }
 
@@ -759,7 +772,7 @@ export async function queryClaudeSdk(opts: {
     : null;
 
   const options: SdkOptions = {
-    model: opts.model ?? SONNET_MODEL_ID,
+    model: effectiveModel,
     systemPrompt: safeSystemPromptText,
     mcpServers: { jarvis: mcpServer },
     allowedTools,
@@ -877,7 +890,7 @@ export async function queryClaudeSdk(opts: {
   // adapter knows costUsd=0 there is a "no-data" sentinel, not Max-plan $0.
   let costAuthoritative = false;
   let durationMs = 0;
-  let actualModel: string = SONNET_MODEL_ID;
+  let actualModel: string = effectiveModel;
 
   // When images are present, switch to streaming-input mode so the user
   // message can carry Anthropic-format image blocks alongside the text.

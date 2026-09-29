@@ -116,3 +116,10 @@
 - **Mistake:** none in code — the 09-19 `is_error` handling surfaced it correctly (partial kept, DONE_WITH_CONCERNS). The CLASS: the Anthropic API's output-side classifier blocks long verbatim reproduction of published text (2nd hit: 08-21 Rumi poem, 09-29 book page). Retrying the same output fails again.
 - **Avoid:** treating this as a provider/auth outage — cost was billed, login valid, breaker untouched; and never build a path that routes verbatim book text around the filter.
 - **Better:** register paraphrase + short quotes per page; the diagnosis check that settles it is `journalctl … | grep "content filtering"` next to the task output in `tasks` (read-only).
+
+## 2026-09-29 — Sonnet 5.5 fast-path benchmark (A 4.6 / B 5.5 medium / C 5.5 low)
+- **Mistake:** the first harness draft ran arms in a fixed order and inherited the launching shell's env → C always read B's warm cache and checkpoints could reach the live KB mirror/pgvector/Drive. The qa-auditor caught both before `--run`; the check is a DRY run that prints the env-guard line + a per-task rotation column.
+- **Avoid:** reading the runner's self-reported STATUS as quality — A logged 10/20 DONE_WITH_CONCERNS while inventing facts; B/C logged NEEDS_CONTEXT on turns that were correct tool requests. Grade answers, not tags.
+- **Avoid:** committing benchmark result files — this repo is public and `results/*.md` carry user chat + KB content. Only aggregates go in the plan doc; `benchmarks/` stays gitignored.
+- **Better:** a one-line "Necesito `X` para esto." is the router's scope-miss protocol, not a refusal; exclude those cells (or score them separately) when grading a replay that withholds write tools.
+- **Better:** the cache-read gate needs position-balanced arms; report per-position cache read next to the Σ ratio or the gate reads noise as a regression.
