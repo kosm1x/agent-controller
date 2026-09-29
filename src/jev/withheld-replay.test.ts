@@ -32,7 +32,14 @@ describe("withholdReasons", () => {
     expect(sensitiveReasons("usuario: pepe")).toContain("login_label");
     expect(sensitiveReasons("la clave es Verano2026")).toContain("clave");
     expect(sensitiveReasons("mi contra de siempre")).toContain("pass_contra");
-    expect(sensitiveReasons("a".repeat(32))).toEqual(["long_run"]);
+    expect(sensitiveReasons("a1".repeat(16))).toEqual(["long_run"]);
+    expect(sensitiveReasons("QwhRtzPkLmNxVbJyGdSaFeCuHiKoTn")).toEqual([]);
+    expect(sensitiveReasons("QwhRtzPkLmNxVbJyGdSaFeCuHiKoTnWqEr")).toEqual([
+      "long_run",
+    ]);
+    expect(
+      sensitiveReasons("h" + "f_" + "QwhRtzPkLmNxVbJyGdSaFeCuHiKoTn"),
+    ).toEqual(["known_prefix"]);
     expect(sensitiveReasons("palabras clave para SEO")).toEqual([]);
   });
 });

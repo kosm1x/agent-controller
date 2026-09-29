@@ -166,7 +166,9 @@ export function selectGroups(
  * One name per rule, so a replay can say WHICH rule withheld a turn without
  * printing the turn (`scripts/validate-jev-withheld.ts`).
  */
-const SENSITIVE_RULES: ReadonlyArray<readonly [name: string, re: RegExp]> = [
+const SENSITIVE_RULES: ReadonlyArray<
+  readonly [name: string, re: { test(text: string): boolean }]
+> = [
   [
     "keyword",
     /(api[_-]?key|token|password|passwd|secret|contrase[nñ]a|credencial|bearer)/i,
@@ -185,9 +187,38 @@ const SENSITIVE_RULES: ReadonlyArray<readonly [name: string, re: RegExp]> = [
   ],
   [
     "known_prefix",
-    /(\b(AKIA|ASIA)[A-Z0-9]{12,}|xox[bap]-|gh[pousr]_|github_pat_|\bsk-|-----BEGIN|:\/\/[^\s/:@]+:[^\s/@]+@)/,
+    /(\b(AKIA|ASIA)[A-Z0-9]{12,}|xox[bap]-|gh[pousr]_|github_pat_|\bsk-|-----BEGIN|:\/\/[^\s/:@]+:[^\s/@]+@|\bhf_[A-Za-z]{20,}|AIza[0-9A-Za-z_-]{35}|(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])|hooks\.slack\.com\/services\/|[?&#](key|sig|signature|access_key|client_secret|code)=)/,
   ],
-  ["long_run", /[A-Za-z0-9+/_-]{32,}/],
+  // Last-resort catch for a bare, unlabelled key: a run of 32+ of
+  // [A-Za-z0-9+_-] (no "/"; URL scheme+host+path stripped first, query and
+  // fragment kept) that holds a letter AND a digit, or is mixed-case letters
+  // with no "-"/"_", and is not slug-like (3+ "-"/"_" segments, each all
+  // letters, all digits, or 4 chars at most). Catches hex shas, UUIDs, JWT
+  // parts, base64url keys, `?sig=`/`?key=` values; ignores file paths,
+  // Google-Doc links and doc/file slugs. Accepted misses: an unprefixed random
+  // key inside a URL PATH segment, and a bare unlabelled base64 secret
+  // containing "/". Prefixed keys in a path (Telegram `/bot<token>/`, Slack
+  // webhooks) are known_prefix's job; it runs on the unstripped text.
+  [
+    "long_run",
+    {
+      test: (text: string) =>
+        (
+          text
+            .replace(/https?:\/\/[^\s?#]+/g, " ")
+            .match(/[A-Za-z0-9+_-]{32,}/g) ?? []
+        ).some((run) => {
+          const segs = run.split(/[-_]/);
+          const slug =
+            segs.length >= 3 &&
+            segs.every((g) => /^([A-Za-z]+|\d+)$/.test(g) || g.length <= 4);
+          const opaque =
+            (/[A-Za-z]/.test(run) && /\d/.test(run)) ||
+            (/^[A-Za-z]+$/.test(run) && /[a-z]/.test(run) && /[A-Z]/.test(run));
+          return opaque && !slug;
+        }),
+    },
+  ],
   // 13–19 digits, contiguous or in card-style groups of four.
   ["card_digits", /\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}\b/],
 ];

@@ -128,3 +128,10 @@
 - **Avoid:** expecting a `cache_diag … model=` line by default — it is opt-in behind `DEBUG_CACHE_DIAG=true`; set it on the gate command when the model proof is needed.
 - **Avoid:** planning a per-case flip analysis from `eval:gate` — it prints aggregates only and deletes its snapshot on exit; per-case needs an instrumented run decided BEFORE spending.
 - **Better:** count `Completed: … 0 tool calls` lines per run next to the score: C (5.5/adaptive/low) went 20 → 60 zero-call probes for only −1.9 tool-selection points, and one probe hit the Sonnet 5 `[cyber]` safeguard (`result is_error`, no Haiku retry).
+
+## 2026-09-29 — Jev scope withhold: `long_run` matched file paths (90 % of turns withheld)
+- **Mistake:** my first candidate rule passed a hand-written secret/benign list, then the audit showed it missed 3 of the operator's REAL keys in prose and every key inside a `?key=` URL → a secret-filter change is scored against the real `.env` key NAMES in-process (names + rule names printed, never values) and the 7-day replay, before it is called done.
+- **Mistake:** "strip URLs" for a secret rule = strip the query and fragment too; `?key=`, `?sig=`, `/bot<token>/` all live there → strip scheme+host+path only, and give prefixed shapes to `known_prefix`, which runs on the unstripped text.
+- **Avoid:** a "2 alphabetic segments = slug" exemption — random base64url keys hit it 3–16 % of the time; a slug is 3+ segments that are each all-letters, all-digits or ≤ 4 chars (0.6 % miss at 32, 0 at 64+).
+- **Better:** `jev_shadow` withheld share per day is the live symptom (45 % → 90 % on 09-26); `scripts/validate-jev-withheld.ts --days 7` names the rule; the fix is judged on that table with every OTHER rule's counts unchanged.
+- **Open (not this change):** 10 keys under 32 chars with no distinctive shape are not withheld when pasted unlabelled in prose — own ticket.
