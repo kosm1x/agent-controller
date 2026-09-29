@@ -148,3 +148,4 @@
 - **Avoid:** adding a per-task view by reusing a session-shared Set — `toolsSoFar` is shared across a swarm, so a failed child listed a sibling's send; list every reader of a safety module's state before extending it.
 - **Better:** a word rule gets a negative table from the language, not only from the corpus: the 30-day replay had 0 hits for `denuevo`, yet the regex matched it.
 - **Better:** re-audit after a fix round that touches a gate module; R2 found the unlinked marker copy and the Spanish-word matches that R1's fixes introduced.
+- **Mistake:** I handed the operator "Ejecuta ahora el schedule …" as the live proof; no tool runs an existing schedule (`executeScheduleNow` is called only when `schedule_task` creates one), and the deploy had run before `6a660e1` existed → grep the caller of a capability before putting it in a hand-over, and compare `ActiveEnterTimestamp` + a symbol count in `dist/` with the commit time before calling a build live.
