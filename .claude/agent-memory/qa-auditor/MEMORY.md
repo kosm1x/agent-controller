@@ -96,4 +96,5 @@
 - [denue-advisory-noninteractive-r1-audit](denue-advisory-noninteractive-r1-audit.md) - DENUE advisory none-variant (09-29): PASS-W-WARN. CLASS: `top \d+` fired on 5 rituals daily; eval:gate never runs fast-runner system msgs.
 - [denue-advisory-noninteractive-r2-audit](denue-advisory-noninteractive-r2-audit.md) - R2 (09-29): PASS-W-WARN. CLASS: exact-map risk lookup (unknown=low) trusts the recorded name form; heavy failures record no tools.
 - [denue-guard-literal-r1-audit](denue-guard-literal-r1-audit.md) - literal DENUE guard + heavy failure toolCalls (09-29): PASS-W-WARN. CLASS: msg.text embeds file content; runToolContext Set is per-SESSION.
+- [run-schedule-tool-r1-audit](run-schedule-tool-r1-audit.md) - run_schedule (09-29): PASS-W-WARN. CLASS: requiresConfirmation is enforced only on the openai path; claude-sdk prod never gates it.
 - [denue-guard-literal-r2-audit](denue-guard-literal-r2-audit.md) - R2 (09-29): PASS-W-WARN, 7/7 RED. CLASS: cross-module marker literal (telegram->fast-runner) unpinned by any test.

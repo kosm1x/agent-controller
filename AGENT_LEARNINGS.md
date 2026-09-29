@@ -19,11 +19,11 @@
 - Replay the stored corpus old-vs-new through a detector or term list BEFORE writing or trusting it — unit tests cannot see corpus-level false positives (#42: 34/34 asks caught, 0/6 real questions; #50: 34 of 36 alias hits were noise).
 - Prove each new test with a mutant that goes RED: rows sharing one `datetime('now')` second kept a per-version mutant GREEN until `ran_at` was staggered (#43); mutation-check each qa fold (#50).
 - Timing tests: size each adversarial input so the slow (quadratic) code takes seconds instead of hanging CI and the pre-commit hook (vitest cannot interrupt a synchronous parse), keep the real-cap test for valid input only, and put the bound between the measured linear worst case and a mutant's time (#44: 800 ms vs ≤ 520 ms real / 984 ms mutant; #48).
+- Git commands run alone: no `grep` or pipe in the same Bash call (the hook-bypass guard scans the whole string), and `cd <repo> && git push origin main` is its own call (git-auth-guard reads the SESSION cwd's remote). Logged 09-23 and 09-29.
 
 ## 2026-09-23 — Jev walk-forward, open-seo, R2T2 (Jarvis side)
 - **Mistake:** `pkill -f <pattern>` inside a compound Bash command matched its own shell and killed it (exit 144) → `pgrep -f` first, then `kill <pid>` in a separate call.
 - **Mistake:** deleted a reviewed clone right after the verdict, then had to re-clone it for the findings doc → keep review clones in the scratchpad until the session ends.
-- **Avoid:** putting `git` and `grep` in the same Bash command. The hook-bypass guard scans the whole string → run git commands alone.
 - **Better:** voice-note transcription (`src/inference/transcription.ts`) is batch and Whisper-compatible, and almost unused. Check that call site first before probing any new ASR for Jarvis. Pipesong is the only streaming consumer.
 
 ## 2026-09-24 — jarvis_dev branch base (root cause of the stale #33/#37 PRs)
@@ -41,14 +41,12 @@
 - **Avoid:** guarding only the model's write tools when a scheduled importer (hourly kb-reindex) turns ANY disk write (shell_exec, editor) into a registry row — close the door at the importer (`MANAGED_FILE_RE`), keep tool refusals for the error message.
 - **Better:** settle "already registered" (sha of the body) BEFORE a paid LLM gate — an identical rewrite must not cost, or be failed by, the critic.
 
-
 ## 2026-09-24 — skill auto-certify + monotonic versions
 - **Mistake:** ran tests inside the registration step, BEFORE the KB write; a cut-short run left DB and file disagreeing and the identical-rewrite recovery refused (qa R1 W3) → return the slow step as a continuation the caller runs after the durable write.
 - **Better:** a DB trigger as the structural backstop (`skills_version_monotonic`) + early refusals in each writer for the clear message; a pre-check before an await is racy, so the record+point pair runs in one transaction that turns the trigger error into a typed refusal.
 - **Mistake:** the status table's test count sat at 9,182 and the README at 8,896 while the headline said 9,326 → when a wrap updates a count, grep every doc that quotes it (`grep -nE "[0-9],[0-9]{3} tests" README.md docs/PROJECT-STATUS.md`).
 
 ## 2026-09-24 — scope ask delivered on the BLOCKED path ("Necesito `shell_exec`" for a domain check)
-- **Mistake (inherited, 08-23 Phase 1.2):** the scope-miss gate was tested only through `task.completed` → any output gate needs one test per terminal status the model can pick; count the corpus by status first (`tasks.status` × delivered reply) — here 34 of 34 asks were `blocked`.
 - **Avoid:** trusting `[router] Stored prior scope` — it printed the groups the turn RAN with, not the base actually stored; turn 1's stored prior was empty, so the follow-up could not inherit `coding` (log fixed to print both).
 - **Avoid:** reading the 09-05 classifier-timeout fix as closing "blocked turns ask for shell_exec" — it fixed one feeder; the delivery path stayed open and the symptom recurred 13 more times.
 - **Avoid:** a `.catch` on a call that never rejects (`TelegramStreamController.finalize()` swallowed its own failures) — the fallback path is dead and a missed placeholder drops the reply silently; fix the shared callee (send fresh when no placeholder landed, run once), which covers every caller at once.
@@ -64,10 +62,6 @@
 - **Mistake:** the first path sweep grepped `/root/claude` and `~/claude` only; the `"$HOME"/claude` and `${HOME}/claude` spellings were missed, and PR CI caught one (vitest stops an `it` at its first failure, so the other was hidden) → sweep every spelling of a root (`/root`, `~`, `$HOME`, `${HOME}`), and reproduce CI locally: a scratch worktree at a non-VPS path plus a fake `HOME=` made main's file fail and the fix pass.
 - **Better:** env-coupled tests: derive the checkout from `import.meta.url`, give a fake PATH a node-only symlink dir (the CI toolcache dir also holds a real `npm`), and `it.skipIf` root-only and live-host checks.
 
-## 2026-09-25 — Claude Code role split for this repo (#45, #46)
-- **Avoid:** relying on `CLAUDE_CODE_SUBAGENT_MODEL` for "every subagent on Opus": agent `model:` pins win over it (`inherit` → the Fable main model, `sonnet` → Sonnet). `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` enforces it.
-- **Better:** cloud sessions read only this repo's `.claude/settings.json` (not the VPS `~/.claude`), so the model split and `CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000` live here too. Verify with `claude -p --output-format json` (`modelUsage`) and `/context`.
-
 ## 2026-09-25 — Jarvis could not read tweets (#47)
 - **Avoid:** a tool that returns only the upstream status code. Jina's JSON body said "anonymous access to x.com blocked (someone else's abuse)"; `web_read` passed on "403 Forbidden", and the model read it as "this tweet is private" and gave up. Carry the upstream's reason and a next route in the error.
 - **Better:** live-verify a deployed tool fix through `/api/tasks` with `agent_type:"fast"` and `tools:[<tool>]`, then read `tasks.output` and the trace's `tool.called` rows.
@@ -80,10 +74,8 @@
 - **Mistake:** hardcoded project-slug lists (`kb-injection.ts` `PROJECT_SLUGS`, `precedent.ts` `projectPatterns`, `entity-extractor.ts` `PROJECT_SLUGS`) drift from the `projects` registry — a project with no KB README, no slug entry and no registry row gets absorbed by its nearest-named neighbour ("VLCMS is part of VLMP"; the vlmp KB doc was updated instead).
 - **Avoid:** adding a project in only one of the three places (KB README, registry row, slug list). A slug loop that runs `includes()` also lets a contrast mention ("VLCMS is not VLMP") bind to the wrong slug — check the more specific name before the loop.
 - **Better:** new project = KB `projects/<slug>/README.md` + registry row with `config.aliases` (Jarvis can do it via `project_update`, which creates a missing slug) + slug in `PROJECT_SLUGS`; grep `'"vlmp"'` to find the lists.
-- **Resolved in #50:** `entity-extractor.ts` no longer has its own list — terms come from the `projects` registry.
 
 ## 2026-09-26 — entity-extractor slugs from the registry (#50)
-- **Mistake:** the first cut folded every `config.aliases` entry into the extractor. Aliases are tuned for dispatch routing (`williams`, `radar`, `journal`), and a corpus replay showed 34 of their 36 solo hits were NFL surnames or "systemd journal" → replay the last N conversation rows old-vs-new BEFORE trusting a term list; unit tests cannot see corpus-level false positives.
 - **Avoid:** fixing an over-matching alias by editing `projects.config` — the dispatcher (`dispatcher.ts` foreign-project names) routes on the same aliases. Stoplist on the consumer side and leave the data alone.
 - **Avoid:** normalising an existing knowledge-graph subject ("eurekamD" → "eurekamd") — `knowledge_triples` joins and supersede by exact subject string; check `sqlite3 -readonly ... group by subject` and emit the string the rows already use.
 - **Better:** a registry-driven list keeps a static fallback core that covers the registry-read failure path, a log-once warn, and a `_reset…ForTests` hook; mutation-check each fold (empty the stoplist, drop the static entry) so the tests prove the behaviour, not the plumbing.
@@ -134,7 +126,6 @@
 
 ## 2026-09-29 — Session wrap: Sonnet 5.5 canary + Jev withhold fix + TypeSafe review
 - **Mistake:** started to "adopt" a vendor skill from its GitHub URL before checking the plugin list → `claude plugin list` (and a byte-diff against upstream) comes BEFORE any install or review of a skill; here it was already installed at 0.5.7.
-- **Avoid:** `git push` from a session whose cwd is outside the repo, or joined to another command with `|`/`&&` — git-auth-guard evaluates the SESSION cwd's remote and the hook-bypass guard scans the whole string → `cd <repo> && git push origin main` as its own call.
 - **Avoid:** assuming a timezone for an mc.db timestamp column — `tasks`, `jev_shadow` and `cost_ledger` `created_at` are UTC in practice (max row matched UTC now, 09-29) although the service runs `TZ=America/Mexico_City`; compare `max(<col>)` with `date -u` before joining a row to a journal line.
 
 ## 2026-09-29 — Scheduled tasks failed under the Sonnet 5.5 canary (`7d3faa6`)
@@ -149,3 +140,9 @@
 - **Better:** a word rule gets a negative table from the language, not only from the corpus: the 30-day replay had 0 hits for `denuevo`, yet the regex matched it.
 - **Better:** re-audit after a fix round that touches a gate module; R2 found the unlinked marker copy and the Spanish-word matches that R1's fixes introduced.
 - **Mistake:** I handed the operator "Ejecuta ahora el schedule …" as the live proof; no tool runs an existing schedule (`executeScheduleNow` is called only when `schedule_task` creates one), and the deploy had run before `6a660e1` existed → grep the caller of a capability before putting it in a hand-over, and compare `ActiveEnterTimestamp` + a symbol count in `dist/` with the commit time before calling a build live.
+
+## 2026-09-29 — `run_schedule` tool (`14f57d1`) + the confirmation gate that never ran
+- **Mistake:** I wrote "asks for confirmation" into the tool description because `requiresConfirmation: true` was set; the gate lives only in `task-executor.ts` and the production claude-sdk path calls `toolRegistry.execute` directly, so it has never run there (`tool_approvals`: 0 rows ever) → before relying on a guard, find its enforcement point on the PRODUCTION path and count the rows it should have written.
+- **Avoid:** a tool that starts a task and is callable from that task's own kind — schedule A could run B, which runs A. Refuse on `currentRunOrigin().source === "background"` and spawn outside the caller's run context (`outsideRunToolContext`).
+- **Avoid:** Spanish verb stems without an ending list in a scope regex — `corr`/`lanz` matched `correo`, `correcciones`, `lanzamiento`; list the verb forms and replay 30 d of messages (158/158 unchanged) before the paid gate.
+- **Better:** state in the description what a re-run IS (one extra run, not a re-send of an earlier result), so the model does not promise the operator yesterday's report.
