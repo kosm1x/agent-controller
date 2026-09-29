@@ -821,3 +821,14 @@ export function handleScheduledTaskFailure(
 export function isScheduledTask(taskId: string): boolean {
   return pendingScheduled.has(taskId);
 }
+
+/**
+ * Task id of a run of this schedule still awaiting its result (cron, run-now
+ * or delivery-miss retry), or null. `run_schedule` refuses a second run on it.
+ */
+export function inFlightScheduleRun(scheduleId: string): string | null {
+  for (const [taskId, pending] of pendingScheduled.entries()) {
+    if (pending.scheduleId === scheduleId) return taskId;
+  }
+  return null;
+}

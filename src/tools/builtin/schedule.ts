@@ -1,18 +1,26 @@
 /**
- * Schedule tools — let the LLM create, list, and delete recurring scheduled tasks.
+ * Schedule tools — let the LLM create, list, run now, and delete recurring scheduled tasks.
  */
 
 import { randomUUID } from "crypto";
 import type { Tool } from "../types.js";
+import { defineTool } from "../define-tool.js";
 import {
   createSchedule,
   listSchedules,
+  getSchedule,
   deleteSchedule,
   executeScheduleNow,
+  inFlightScheduleRun,
   type ScheduledTaskRow,
 } from "../../rituals/dynamic.js";
 import { toMexTime } from "../../lib/timezone.js";
-import { currentRunTaskId } from "../rule-of-two.js";
+import { errMsg } from "../../lib/err-msg.js";
+import {
+  currentRunOrigin,
+  currentRunTaskId,
+  outsideRunToolContext,
+} from "../rule-of-two.js";
 import {
   declareReadbackGate,
   withdrawReadbackGate,
@@ -157,12 +165,16 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
 
       // v6.4 OH1.5: Execute immediately so the user gets instant feedback
       // that the schedule works. Runs asynchronously — doesn't block the
-      // tool response. Errors are logged, not propagated.
-      executeScheduleNow(scheduleId).catch((err) => {
-        console.error(
-          `[schedule_task] Immediate execution failed: ${err instanceof Error ? err.message : err}`,
-        );
-      });
+      // tool response. Errors are logged, not propagated. Submitted outside
+      // this chat run's context so it runs as a root task like the cron's
+      // (see run_schedule below).
+      outsideRunToolContext(() => executeScheduleNow(scheduleId)).catch(
+        (err) => {
+          console.error(
+            `[schedule_task] Immediate execution failed: ${err instanceof Error ? err.message : err}`,
+          );
+        },
+      );
 
       // CONTRACT: the top-level `schedule_id` field feeds V8.3's delete_inverse
       // completion (CREATION_BY_TOOL in lib/v8-3/gated-execution.ts). Renaming
@@ -208,7 +220,7 @@ USE WHEN:
 - User wants to verify a report is scheduled
 - Before creating/deleting a schedule — check what already exists
 
-RELATED: schedule_task (create), delete_schedule (remove)`,
+RELATED: schedule_task (create), run_schedule (run now), delete_schedule (remove)`,
       parameters: {
         type: "object",
         properties: {
@@ -247,6 +259,142 @@ RELATED: schedule_task (create), delete_schedule (remove)`,
     });
   },
 };
+
+// ---------------------------------------------------------------------------
+// run_schedule
+// ---------------------------------------------------------------------------
+
+/**
+ * Schedules whose run_schedule submission is still being set up. Once
+ * submitted, dynamic.ts tracks the run until its result or failure lands
+ * (`inFlightScheduleRun`), so together they refuse a second run end to end.
+ */
+const runsStarting = new Set<string>();
+
+// No V8.4 read-back gate and no provenance keys: the only claim is "started,
+// task X", that task row is written before this tool returns, and delivery is
+// checked by the spawned task's own ledger (handleScheduledTaskResult).
+export const runScheduleTool: Tool = defineTool({
+  name: "run_schedule",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+  requiresConfirmation: true,
+  triggerPhrases: [
+    "ejecuta ahora el schedule",
+    "corre el reporte ahora",
+    "lanza la rutina",
+    "run the schedule now",
+  ],
+  description: `Run an EXISTING recurring schedule now, on demand, outside its cron time. It is the same run the cron starts (same prompt, tools, gates and delivery: Telegram, email or both), marked as a manual run. It starts in the background and this tool returns at once; the report arrives later through the schedule's own delivery, not in this reply.
+
+USE WHEN:
+- "ejecuta ahora el schedule X", "corre el reporte ahora", "lanza la rutina de pharma", "run the daily report now"
+- The user wants one extra run of a schedule that already exists
+
+DO NOT USE WHEN:
+- The schedule does not exist yet → schedule_task (it also runs once on creation)
+- The user only wants to see the schedules or their last run → list_schedules
+- The user wants to stop or remove a schedule → delete_schedule
+
+Get schedule_id from list_schedules first. If the request does not make clear WHICH schedule, ask the user before calling: the run delivers, possibly an email to a third party. Refused when the id is unknown, the schedule is inactive (paused), a run of it is still in progress (no duplicate deliveries), or the caller is a background task (only a conversation with the user can start a run).
+
+It is an extra run, not a re-send: it leaves out items already sent in earlier runs, and the items it sends count as sent for the next run. It does not re-send the last report.
+
+AFTER STARTING: tell the user the run started and where the result will arrive (delivery, email_to).`,
+  parameters: {
+    type: "object",
+    properties: {
+      schedule_id: {
+        type: "string",
+        description:
+          "The schedule_id of an existing schedule, as returned by list_schedules.",
+      },
+    },
+    required: ["schedule_id"],
+  },
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    // No unbounded loops: a background run (cron, ritual, a run this tool
+    // started) must not start schedules, or schedule A → B → A never ends.
+    // The confirmation gate is skipped for non-interactive tasks, so this is
+    // the only bound. No run context at all = the router's confirmed call.
+    if (currentRunTaskId() && currentRunOrigin().source === "background") {
+      return JSON.stringify({
+        error:
+          "run_schedule solo está disponible en una conversación con el operador; no se puede usar desde una tarea en segundo plano (programada, ritual o automática).",
+      });
+    }
+    const scheduleId =
+      typeof args.schedule_id === "string" ? args.schedule_id.trim() : "";
+    if (!scheduleId) {
+      return JSON.stringify({
+        error: "Falta schedule_id — obtenlo con list_schedules.",
+      });
+    }
+    const schedule = getSchedule(scheduleId);
+    if (!schedule) {
+      return JSON.stringify({
+        error: `No existe el schedule ${scheduleId}. Usa list_schedules para obtener un schedule_id válido.`,
+      });
+    }
+    if (schedule.active !== 1) {
+      return JSON.stringify({
+        error: `El schedule «${schedule.name}» está inactivo (pausado); no lo ejecuté. Reanúdalo con /rituales reanuda ${schedule.name} (o en el host: ./mc-ctl schedule-resume ${scheduleId}) y vuelve a pedirlo.`,
+      });
+    }
+    const runningTaskId = inFlightScheduleRun(scheduleId);
+    if (runsStarting.has(scheduleId) || runningTaskId) {
+      return JSON.stringify({
+        error: `Ya hay una ejecución de «${schedule.name}» en curso${runningTaskId ? ` (task ${runningTaskId})` : ""}; no inicio otra. Su resultado llegará por ${deliveryLabel(schedule)}.`,
+      });
+    }
+
+    runsStarting.add(scheduleId);
+    try {
+      // Submitted OUTSIDE this chat run's context, like the cron poller: a
+      // nested submit would share the chat run's tool set (both runs' Rule of
+      // Two priors and failure records) and ledger the run as `operator` on
+      // the chat thread instead of `background`. submitTask returns once the
+      // task row exists — it does not wait for the report.
+      const taskId = await outsideRunToolContext(() =>
+        executeScheduleNow(scheduleId),
+      );
+      if (!taskId) {
+        return JSON.stringify({
+          error: `No existe el schedule ${scheduleId}. Usa list_schedules para obtener un schedule_id válido.`,
+        });
+      }
+      return JSON.stringify({
+        success: true,
+        schedule_id: scheduleId,
+        task_id: taskId,
+        name: schedule.name,
+        delivery: schedule.delivery,
+        email_to: schedule.email_to,
+        message: `Ejecución de «${schedule.name}» iniciada (task ${taskId}). El resultado llegará por ${deliveryLabel(schedule)} en unos minutos; no viene en esta respuesta.`,
+      });
+    } catch (err) {
+      console.error(
+        `[run_schedule] Failed to start "${schedule.name}" (${scheduleId}): ${errMsg(err)}`,
+      );
+      return JSON.stringify({
+        error: `No pude iniciar «${schedule.name}»: ${errMsg(err)}`,
+      });
+    } finally {
+      runsStarting.delete(scheduleId);
+    }
+  },
+});
+
+/** Where a schedule's result lands, in the words the user reads. */
+function deliveryLabel(schedule: ScheduledTaskRow): string {
+  const email = `email a ${schedule.email_to ?? "el destinatario por defecto"}`;
+  if (schedule.delivery === "email") return email;
+  if (schedule.delivery === "both") return `Telegram y ${email}`;
+  return "Telegram";
+}
 
 // ---------------------------------------------------------------------------
 // delete_schedule

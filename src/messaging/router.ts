@@ -1231,7 +1231,7 @@ function hydrateThreadIfNeeded(tk: string): void {
 // ---------------------------------------------------------------------------
 
 /** Format a human-readable confirmation result based on tool name. */
-function formatConfirmationResult(
+export function formatConfirmationResult(
   toolName: string,
   args: Record<string, unknown>,
   result: Record<string, unknown>,
@@ -1276,6 +1276,9 @@ function formatConfirmationResult(
       return `✅ Deploy ejecutado.`;
     case "schedule_delete":
       return `✅ Schedule eliminado.`;
+    case "run_schedule":
+      // Started, not finished: the tool's message says where the result lands.
+      return `✅ ${result.message ?? "Ejecución iniciada."}`;
     default:
       return `✅ ${toolName} ejecutado correctamente.`;
   }

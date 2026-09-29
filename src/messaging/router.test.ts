@@ -167,6 +167,7 @@ import {
   _testPushToThread,
   _testThreadEntries,
   holdScopeAsks,
+  formatConfirmationResult,
 } from "./router.js";
 import {
   pinFromExchange,
@@ -4005,5 +4006,18 @@ describe("holdScopeAsks — streaming guard (2026-09-06)", () => {
     );
     feed("Fin.");
     expect(s.calls.at(-1)).toBe("append:Fin.");
+  });
+});
+
+describe("formatConfirmationResult — run_schedule", () => {
+  it("echoes the tool's started-and-where message, never a bare 'ejecutado'", () => {
+    const line = formatConfirmationResult(
+      "run_schedule",
+      { schedule_id: "s1" },
+      { success: true, message: "Ejecución de «X» iniciada (task t1). El resultado llegará por Telegram en unos minutos; no viene en esta respuesta." },
+    );
+    expect(line).toBe(
+      "✅ Ejecución de «X» iniciada (task t1). El resultado llegará por Telegram en unos minutos; no viene en esta respuesta.",
+    );
   });
 });

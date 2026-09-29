@@ -33,7 +33,7 @@ export const CORE_TOOLS = [
 ];
 
 /** Scheduling tools — only when reports/automation discussed. */
-export const SCHEDULE_TOOLS = ["schedule_task", "delete_schedule"];
+export const SCHEDULE_TOOLS = ["schedule_task", "run_schedule", "delete_schedule"];
 
 /** Google Workspace tools (added when GOOGLE_CLIENT_ID is set). */
 export const GOOGLE_TOOLS = [
@@ -817,7 +817,7 @@ export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   },
   {
     pattern:
-      /\b(schedules?|delete_schedule|list_schedules|schedule_task|reportes?|programa(r|dos?|ción)?|acci(o|ó)n(es)?\s+programad|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]r?\s+cada|peri[oó]dica(?:mente)?|recordatorio|reminder|av[ií]same\s+(cada|en\s+\d))/i,
+      /\b(schedules?|delete_schedule|list_schedules|schedule_task|reportes?|programa(r|dos?|ción)?|acci(o|ó)n(es)?\s+programad|cron|diarios?|semanal|automat\w*|recurrent|cada\s+\d+\s*(min|hora|h\b)|cada\s+(media\s+hora|hora)|repite\s+cada|repet[ií]r?\s+cada|peri[oó]dica(?:mente)?|recordatorio|reminder|av[ií]same\s+(cada|en\s+\d)|run_schedule|(?:ejec[uú]t(?:a|ar|alo|ala)|c[oó]rr(?:e|er|elo|ela)|l[aá]nz(?:a|ar|alo|ala))\s+(?:\S+\s+){0,3}rutinas?\b)/i,
     group: "schedule",
   },
   {

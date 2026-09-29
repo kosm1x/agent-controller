@@ -26,6 +26,7 @@ import { rssReadTool } from "../builtin/rss.js";
 import {
   scheduleTaskTool,
   listSchedulesTool,
+  runScheduleTool,
   deleteScheduleTool,
 } from "../builtin/schedule.js";
 import {
@@ -239,6 +240,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   rssReadTool,
   scheduleTaskTool,
   listSchedulesTool,
+  runScheduleTool,
   deleteScheduleTool,
   userFactSetTool,
   userFactListTool,

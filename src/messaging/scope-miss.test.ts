@@ -138,6 +138,9 @@ describe("groupsForTool", () => {
   it("maps schedule_task → schedule", () => {
     expect(groupsForTool("schedule_task", opts)).toContain("schedule");
   });
+  it("maps run_schedule → schedule (an ask for it widens by that group)", () => {
+    expect(groupsForTool("run_schedule", opts)[0]).toBe("schedule");
+  });
   it("maps tweet_post → social", () => {
     expect(groupsForTool("tweet_post", opts)).toContain("social");
   });

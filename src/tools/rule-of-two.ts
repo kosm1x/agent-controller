@@ -222,6 +222,9 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   northstar_sync: B,
   schedule_task: B,
   list_schedules: B,
+  // run_schedule: returns the operator's own schedule row (no third-party
+  // text); the spawned run is its own root session with its own composition.
+  run_schedule: B,
   delete_schedule: B,
   learner_model_status: B,
   learning_plan_create: B,

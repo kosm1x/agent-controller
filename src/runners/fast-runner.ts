@@ -325,6 +325,7 @@ export const WRITE_TOOLS = new Set([
   "jarvis_apply_proposal",
   // Other
   "schedule_task",
+  "run_schedule",
   "delete_schedule",
   "user_fact_set",
   "user_fact_delete",

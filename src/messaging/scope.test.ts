@@ -871,6 +871,54 @@ describe("scope pattern matching", () => {
     expect(hasAll(tools, SCHEDULE_TOOLS)).toBe(true);
   });
 
+  it("run-now asks reach run_schedule (regex fallback and classifier group)", () => {
+    expect(SCHEDULE_TOOLS).toContain("run_schedule");
+    for (const msg of [
+      "Ejecuta ahora el schedule Reporte Diario Pharma & Cáncer + EurekaMD",
+      "corre el reporte de pharma ahora",
+      "lanza la rutina de pharma",
+    ]) {
+      expect(scope(msg), msg).toContain("run_schedule");
+    }
+    const viaClassifier = scopeToolsForMessage(
+      "Ejecuta ahora el schedule Reporte Diario Pharma",
+      [],
+      DEFAULT_SCOPE_PATTERNS,
+      ALL_ON,
+      new Set(["schedule"]),
+    );
+    expect(viaClassifier).toContain("run_schedule");
+    expect(scope("Hola, buenos días. Cómo estás?")).not.toContain(
+      "run_schedule",
+    );
+  });
+
+  it("the run-now verb arm matches the verb forms", () => {
+    for (const msg of [
+      "ejecuta la rutina de pharma",
+      "puedes ejecutar la rutina de pharma",
+      "ejecútalo ahora, la rutina de pharma",
+      "corre la rutina de pharma",
+      "córrelo ya, la rutina de pharma",
+      "hay que correr la rutina de pharma",
+      "lanza la rutina de pharma",
+      "puedes lanzar la rutina de pharma",
+      "lánzalo ahora, la rutina de pharma",
+    ]) {
+      expect(scope(msg), msg).toContain("run_schedule");
+    }
+  });
+
+  it("the run-now verb arm skips correo / correcciones / lanzamiento", () => {
+    for (const msg of [
+      "Revisa mi correo sobre la rutina de ejercicio",
+      "Hazme correcciones a mi rutina de ejercicio",
+      "Prepara el lanzamiento de la rutina nueva",
+    ]) {
+      expect(scope(msg), msg).not.toContain("run_schedule");
+    }
+  });
+
   it("meta scope loads ALL groups for diagnostics", () => {
     const tools = scope(
       "Vuelve a hacer el autodiagnostico y lista todas las tools",

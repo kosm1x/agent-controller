@@ -138,6 +138,7 @@ const DELIVERY_TOOLS = new Set([
   "calendar_update",
   "gtasks_create",
   "schedule_task",
+  "run_schedule",
   "shell_exec",
 ]);
 
