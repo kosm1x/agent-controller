@@ -111,3 +111,8 @@
 - **Avoid:** splitting Spanish LLM prose on `.` — thousands separators (`$15.000`) and decimals (`0.45`) sit inside sentences; cut at a word boundary with `…`.
 - **Avoid:** reading Gmail spam placement through the Gmail MCP connector — it is bound to fede@eurekamd.net and never returns the Spam folder (`in:spam`, `in:anywhere` both empty after five 250-OK deliveries).
 - **Better:** mail-tester.com as the deliverability oracle (address scraped via Playwright, real report sent through the public host): auth stack green in one run, so the spam verdict was reputation, not DNS; code side = multipart text+HTML, `List-Unsubscribe` (mailto only, no `-Post`), `Reply-To`, escaped user HTML.
+
+## 2026-09-29 — "Output blocked by content filtering policy" on book-page transcription
+- **Mistake:** none in code — the 09-19 `is_error` handling surfaced it correctly (partial kept, DONE_WITH_CONCERNS). The CLASS: the Anthropic API's output-side classifier blocks long verbatim reproduction of published text (2nd hit: 08-21 Rumi poem, 09-29 book page). Retrying the same output fails again.
+- **Avoid:** treating this as a provider/auth outage — cost was billed, login valid, breaker untouched; and never build a path that routes verbatim book text around the filter.
+- **Better:** register paraphrase + short quotes per page; the diagnosis check that settles it is `journalctl … | grep "content filtering"` next to the task output in `tasks` (read-only).
