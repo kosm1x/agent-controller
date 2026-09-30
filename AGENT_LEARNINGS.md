@@ -19,12 +19,8 @@
 - Replay the stored corpus old-vs-new through a detector or term list BEFORE writing or trusting it — unit tests cannot see corpus-level false positives (#42: 34/34 asks caught, 0/6 real questions; #50: 34 of 36 alias hits were noise).
 - Prove each new test with a mutant that goes RED: rows sharing one `datetime('now')` second kept a per-version mutant GREEN until `ran_at` was staggered (#43); mutation-check each qa fold (#50).
 - Timing tests: size each adversarial input so the slow (quadratic) code takes seconds instead of hanging CI and the pre-commit hook (vitest cannot interrupt a synchronous parse), keep the real-cap test for valid input only, and put the bound between the measured linear worst case and a mutant's time (#44: 800 ms vs ≤ 520 ms real / 984 ms mutant; #48).
+- An auditor's fix is a proposal: check every fold brief against the operator rulings AND the data model before dispatching it. 09-30 twice: "A2A `interactive:false`" contradicted ruling R6; "same task_id for the follow-up reply" would never match because the router writes the user turn before the reply exists (27/27 live tasks). Both caught by the implementer, not by me.
 - Git commands run alone: no `grep` or pipe in the same Bash call (the hook-bypass guard scans the whole string), and `cd <repo> && git push origin main` is its own call (git-auth-guard reads the SESSION cwd's remote). Logged 09-23 and 09-29.
-
-## 2026-09-23 — Jev walk-forward, open-seo, R2T2 (Jarvis side)
-- **Mistake:** `pkill -f <pattern>` inside a compound Bash command matched its own shell and killed it (exit 144) → `pgrep -f` first, then `kill <pid>` in a separate call.
-- **Mistake:** deleted a reviewed clone right after the verdict, then had to re-clone it for the findings doc → keep review clones in the scratchpad until the session ends.
-- **Better:** voice-note transcription (`src/inference/transcription.ts`) is batch and Whisper-compatible, and almost unused. Check that call site first before probing any new ASR for Jarvis. Pipesong is the only streaming consumer.
 
 ## 2026-09-24 — jarvis_dev branch base (root cause of the stale #33/#37 PRs)
 - **Mistake:** wrote git-fixture tests (tmpdir repos) whose helper inherited `process.env`; the pre-commit hook exports `GIT_DIR`/`GIT_INDEX_FILE`, so under the hook every fixture call hit the REAL repo (tests red + `user.email t@t` written to the shared `.git/config`; qa R1 caught it before commit) → any test that spawns git passes an env with every `GIT_*` key stripped; prove it by running the file with `GIT_DIR` pointed at a scratch repo.
@@ -140,11 +136,22 @@
 - **Better:** state in the description what a re-run IS (one extra run, not a re-send of an earlier result), so the model does not promise the operator yesterday's report.
 
 ## 2026-09-30 — Confirmation gate enforced on the SDK path (`2aa6ce9`)
-- **Mistake:** my fold brief passed an auditor suggestion through unchecked and told the implementer to mark A2A tasks `interactive:false` — the opposite of the operator's R6 ruling (A2A = refuse); the implementer flagged it → check every fold against the ruling list before dispatching it; an auditor's "fix" is a proposal, not a ruling.
 - **Mistake (inherited, 04-11):** the gate was tested only on the openai path while production ran claude-sdk → a safety gate is asserted at the seam every runner shares (dispatcher `runner.execute`), not inside one runner; the population table per (origin × interactive × runner) is the audit artefact that finds the gap.
 - **Avoid:** an allow-list predicate on ONE argument of a tool that assembles argv from several (`resource` split on "." carried `--flags` and a write verb past a `method` read check) → validate every argv-bearing field with a plain-identifier rule AND reject at the tool.
 - **Avoid:** letting the operator approve the model's wording — render the approval line from the STORED args after `sanitizeDeliverable`, in inline code (Telegram/WhatsApp formatters mangle `<addr>`, `__init__`, `*`), with per-tool key fields ahead of the clip and arrays as "(N total)".
 - **Better:** a tool result quoted into a user turn goes in a per-message nonce-delimited data block, cut first then neutralized; R1→R3 audits with mutation per fold (60+ RED) and one paid eval gate on the FINAL text, run in parallel with the last audit round.
 - **Mistake:** `git push` failed the git-auth-guard ("No git remote configured") right after a python heredoc had reset the session cwd to `/root/claude` → the guard reads the SESSION cwd, which a heredoc/tool call can silently reset: `cd <repo>` as its own call, then push as its own call (standing rule, third occurrence).
-- **Mistake:** two proof queries guessed column names (`tool_approvals.task_id`, `tasks.tool_calls`) → `pragma table_info(<t>)` before the first query on a table not read this session (standing rule already; the cost was two retries).
 - **Better:** live proof of a gate = the first row of the table it should write (`tool_approvals` went 0 → 1 pending → confirmed within 8 s), the trace names at each decision, and the downstream effect (schedule run 806 → `gmail_send` at background origin); read them in that order.
+
+## 2026-09-30 — JME adversarial audit (keep ruling + hardening fold)
+- **Mistake (inherited):** the 09-18 keep/cut ruling used `was_used` (text overlap) on a preference/identity bank — a reply that honors "prefers tables" never quotes it, so the bank scored 8.7 % by construction → pick the metric per bank type; for a preference bank judge token cost + ignored-preference signals, and let the consumer's verdict ("strong and acute") override the proxy.
+- **Mistake (inherited, Phase 3):** the `ts DESC, id DESC` tiebreak was added to `getTurnsForTask` but not to the consolidator's `ORDER BY ts ASC` sibling; user+jarvis turns share a millisecond, so 40 % of exchanges reached Haiku reversed → grep every `ORDER BY ts` on a table whose writer stamps `Date.now()` twice.
+- **Avoid:** a recall score floor that nothing can fall under (BM25 normalized to the best hit + vector floor ≈ 0.33 > minScore 0.25): 581/607 chat recalls returned the full k=8 and 0 returned none. Count "returned k / returned 0" per bank before trusting any utility number.
+- **Mistake:** my R2 fold brief said "on a ≥ 0.95 skip, refresh the stored wording to the incoming text" with no class guard, so an inferred or echoed fact could rewrite an operator-stated preference while keeping its 0.99 class (qa R3 C1) → any fold that makes a stored row MUTABLE carries the same class rule as the insert path (incoming class ≥ stored, else signal only); state it in the brief, not after the audit.
+- **Better:** when a cutoff is calibrated on a self-matching replay (facts as queries → avg 1.06 results), find a stored embedding of REAL inputs (`conversation_embeddings`, 150 router exchanges) before shipping the number: 0.15 left ≤ 2 facts on 31 % of turns, 0.20 on 1 %.
+- **Better:** run the code audit and the stored-data quality sample as two parallel agents (code: defects + ms per stage; data: graded 60-row sample + duplicate/PII sweep) — the PII rows (RFC, session id) only showed up in the data half.
+
+
+## 2026-09-30 — JME hardening R2 fold
+- **Mistake:** R1 test fixtures used the operator's real e-mail in a PUBLIC repo → grep new test/fixture strings for real addresses/ids before reporting; use `@example.com`.
+- **Mistake:** a "letters-only" redaction fixture (`QWxh…U2Vz…`) hid a digit, so its mutation stayed GREEN → a fixture must exercise ONLY the rule under test; the mutation run is what catches it.

@@ -1027,7 +1027,7 @@ function scheduleJmeConsolidation(): void {
         // nightly; operator-rejected preferences (confidence 0) are kept.
         const expired = pruneExpiredFacts();
         console.log(
-          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup), ${pruned} stale pruned, ${expired} expired facts pruned`,
+          `[rituals] jme-consolidate: ${result.turnsProcessed} turns → ${result.factsExtracted} facts (${result.factsInserted} ins, ${result.factsSkipped} skip, ${result.factsSuperseded} sup, ${result.factsDropped} drop), ${pruned} stale pruned, ${expired} expired facts pruned`,
         );
       } catch (err) {
         console.error("[rituals] jme-consolidate failed:", err);

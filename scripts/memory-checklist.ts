@@ -143,10 +143,12 @@ export function evaluateChecklist(i: ChecklistInputs): ChecklistRow[] {
     {
       n: 10,
       item: "Forgetting: expire / supersede / flag",
-      // Amber until runForgetting() exists — zero counters would mean "nothing
-      // to forget today", not "forgetting works" (qa R2 W-5).
-      status: "amber",
-      evidence: `jme_facts expired but never pruned: ${i.jmeFactsExpiredUnpruned} (pruneExpiredFacts has no caller); user_facts untouched > ${STALE_FACT_DAYS} d: ${i.userFactsStale90d}; supersede: JME dedup + triples valid_to; flag: none`,
+      // JME forgetting is live (TTLs + nightly pruneExpiredFacts in the
+      // jme-consolidate cron; expired-but-unpruned rows are waiting for the
+      // next 02:45 run or are operator-rejected markers), so the row is amber
+      // only for the user_facts store, which has no TTL yet.
+      status: i.userFactsStale90d > 0 ? "amber" : "green",
+      evidence: `jme_facts expired, awaiting the nightly prune: ${i.jmeFactsExpiredUnpruned}; user_facts untouched > ${STALE_FACT_DAYS} d: ${i.userFactsStale90d}; supersede: JME dedup + triples valid_to; flag: none`,
       phase: "P5 runForgetting()",
     },
   ];

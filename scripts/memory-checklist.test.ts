@@ -3,9 +3,9 @@
  *
  * Invariants:
  *   1. Always exactly 10 rows, numbered 1..10, each with evidence text.
- *   2. Rows that can only go green in a later phase (4, 9 red; 10 amber) are
- *      pinned today and name the phase — the checklist must not flatter the
- *      current state.
+ *   2. Rows that can only go green in a later phase (4, 9 red) are pinned
+ *      today and name the phase — the checklist must not flatter the current
+ *      state. Row 10 is amber only while user_facts has stale rows.
  *   3. Rollback (7) is green: `mc-ctl skills revert` exists (plan G8 correction).
  *   4. Ritual freshness (8): unreachable metrics → amber, stale → red, fresh → green.
  *   5. parseRitualAges reads prom text into seconds-since-success.
@@ -70,10 +70,15 @@ describe("evaluateChecklist", () => {
     expect(at(BASE.ritualAgeSec).status).toBe("green");
   });
 
-  it("forgetting: stays amber even with zero counters — no runForgetting() exists yet (P5)", () => {
+  it("forgetting: amber only while user_facts has stale rows; green when both counters are 0", () => {
     expect(evaluateChecklist(BASE)[9].status).toBe("amber");
+    // JME expired-unpruned alone never turns the row amber (pruned nightly)
+    expect(
+      evaluateChecklist({ ...BASE, jmeFactsExpiredUnpruned: 5, userFactsStale90d: 0 })[9].status,
+    ).toBe("green");
     const empty = evaluateChecklist({ ...BASE, jmeFactsExpiredUnpruned: 0, userFactsStale90d: 0 })[9];
-    expect(empty.status).toBe("amber");
+    expect(empty.status).toBe("green");
+    expect(empty.evidence).not.toContain("has no caller");
     expect(empty.phase).toBe("P5 runForgetting()");
   });
 });

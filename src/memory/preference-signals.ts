@@ -52,19 +52,28 @@ export const SIGNAL_SNIPPET_MAX = 200;
  * non-word characters, so a bare stem would miss "más cortos" / "resúmelos".
  * "más contexto" / "more context" were dropped — they fire when Fede GIVES
  * context — and "elaborate" is also an adjective.
+ *
+ * 2026-09-30 data review (the fixture in preference-signals.test.ts is the
+ * guard, not these regexes alone): "prefiero X" and "de ahora en adelante …"
+ * count only when they are about the REPLY ("prefiero que me…", "prefiero
+ * tablas", "de ahora en adelante dame…") — "prefiero Monterrey para la
+ * tienda" and "de ahora en adelante los reportes van a Juan" are decisions.
+ * "Haz/dame una lista DE X" and a bare "resume" followed by an object
+ * ("resume en tus palabras y haz append…") open a new task; the clitic forms
+ * (resúmelo) and a bare "Resume." still correct the last reply.
  */
 const PATTERNS: ReadonlyArray<readonly [PreferenceSignalKind, RegExp]> = [
   [
     "explicit",
-    /\b(?:prefiero|siempre (?:dame|quiero|pon|usa)|nunca (?:me des|pongas|uses)|de ahora en adelante|i prefer|always (?:give me|use)|never (?:give me|use)|from now on)\b/i,
+    /\b(?:prefiero (?:que (?:me|lo|la|los|las|le|les|sea|sean)\b|(?:las |los |una |un )?(?:tablas?|listas?|bullets|respuestas?|res[uú]menes|textos?|p[aá]rrafos?|reportes? (?:cortos?|breves?|largos?))|en (?:una )?(?:tablas?|listas?|bullets|prosa))|siempre (?:dame|quiero|pon|usa)|nunca (?:me des|pongas|uses)|de ahora en adelante,? (?:siempre |nunca )?(?:dame|dime|resp[oó]ndeme|responde|contesta|escribe|hazlo|usa|pon)|i prefer (?:that you|answers|replies|tables|bullets|lists|prose|shorter|longer)|always (?:give me|use)|never (?:give me|use))\b/i,
   ],
   [
     "length",
-    /\b(?:muy largos?|demasiado largos?|m[aá]s cortos?|m[aá]s breve|s[eé] breve|res[uú]me(?:me)?(?:l[oa]s?)?(?!\s+the\b)|en una l[ií]nea|too long|shorter|tl;?dr|too verbose)\b/i,
+    /\b(?:muy largos?|demasiado largos?|no tan largos?|muy extens[oa]s?|demasiado extens[oa]s?|menos texto|demasiado texto|al grano|(?:tanto|demasiado) detalle|resumid[oa]s?|m[aá]s cortos?|m[aá]s breve|s[eé] breve|res[uú]me(?:me)?l[oa]s?|res[uú]me(?:me)?(?=\s*(?:[.!?]|$))|en una l[ií]nea|too long|shorter|tl;?dr|too verbose)\b/i,
   ],
   [
     "format",
-    /\b(?:dame (?:la|una) (?:tabla|lista)|haz una lista|en (?:una )?tablas?|en formato tabla|sin tablas?|en bullets|sin bullets|en prosa|(?:en|como) lista|as a table|in a table|use bullets|no bullets|in prose|as a list)\b/i,
+    /\b(?:dame (?:la|una) (?:tabla|lista)(?!\s+de\b)|haz una lista(?!\s+de\b)|en (?:una )?tablas?|en formato tabla|sin tablas?|en bullets|sin bullets|en prosa|(?:en|como) lista|as a table|in a table|use bullets|no bullets|in prose|as a list)\b/i,
   ],
   [
     "depth",

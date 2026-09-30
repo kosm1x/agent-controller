@@ -1739,9 +1739,11 @@ cmd_jme_preferences() {
       [[ "$id" =~ ^[0-9]+$ ]] || die "usage: mc-ctl jme-preferences ${action} <id>"
       local n
       if [ "$action" = "--confirm" ]; then
-        n=$(sql_raw "UPDATE jme_facts SET confidence = 1.0 WHERE id = ${id} AND category = 'preference' AND (expires_at IS NULL OR expires_at > ${now_ms}); SELECT changes();")
+        # Confirmed = permanent: an inferred preference carries a 60 d TTL
+        # (factTtlMs in src/memory/jme.ts), so the confirm clears it.
+        n=$(sql_raw "UPDATE jme_facts SET confidence = 1.0, expires_at = NULL WHERE id = ${id} AND category = 'preference' AND (expires_at IS NULL OR expires_at > ${now_ms}); SELECT changes();")
         [ "$n" = "1" ] || die "no live preference fact with id ${id}"
-        echo "confirmed #${id} → confidence 1.0 (stated)"
+        echo "confirmed #${id} → confidence 1.0 (stated), permanent"
       else
         # Reject = confidence 0 + expired now. confidence=0 is the marker that
         # tells a rejected row apart from one the consolidator superseded
@@ -1783,8 +1785,18 @@ cmd_jme_preferences() {
     echo -e "  ${YELLOW}jme_signals not present yet — schema migration v5 applies on the next mission-control start (deploy pending).${NC}"
     return
   fi
+  # Possible corrections (upsertFact, JME hardening 2026-09-30): the nightly
+  # extractor produced a preference 0.85–0.95 similar to a CONFIRMED one. The
+  # confirmed row is kept; the new wording is here for the operator to judge.
+  # These rows reuse kind 'explicit' under a reserved task_id
+  # (POSSIBLE_CORRECTION_TASK_ID) and are kept out of the rate below.
+  echo -e "${BOLD}Possible corrections${NC} (re-inferred preference 0.85–0.95 similar to a confirmed #id — the confirmed wording is kept; reject it if the new wording is right):"
+  sql "SELECT id, date(ts/1000, 'unixepoch') AS day, snippet
+       FROM jme_signals WHERE task_id = 'jme-possible-correction'
+       ORDER BY ts DESC LIMIT 20;"
+  echo ""
   echo -e "${BOLD}Correction signals per 100 chat turns${NC} (weeks are %W, Monday-based, not ISO):"
-  echo -e "  Numerator = owner-Telegram turns only (the JME capture predicate); denominator = recall_audit source='jme', one row per chat turn on EVERY chat path — the rate is a LOWER BOUND, read the snippets."
+  echo -e "  Numerator = owner-Telegram turns only (the JME capture predicate); denominator = recall_audit source='jme', one row per chat turn on EVERY chat path (since 2026-09-30: trivial turns like \"Listo\" and the nightly dedup write none) — the rate is a LOWER BOUND, read the snippets."
   echo -e "  Readout (advisory, not a gate): once >= 5 inferred preferences exist, a 4-week rate >= 30% below the first 4 weeks = success."
   echo -e "  INCONCLUSIVE, not a verdict: fewer than 20 signals in a window (calibration: ~0.3–0.8% of turns ≈ <1 signal/week — expect months, not weeks)."
   sql "WITH t AS (
@@ -1795,7 +1807,7 @@ cmd_jme_preferences() {
                 COUNT(*) AS signals,
                 SUM(kind = 'length') AS len, SUM(kind = 'format') AS fmt,
                 SUM(kind = 'depth') AS dep, SUM(kind = 'explicit') AS expl
-         FROM jme_signals GROUP BY wk
+         FROM jme_signals WHERE task_id != 'jme-possible-correction' GROUP BY wk
        )
        SELECT t.wk AS week, t.chat_turns, COALESCE(s.signals, 0) AS signals,
               printf('%.1f', 100.0 * COALESCE(s.signals, 0) / t.chat_turns) AS per_100,
@@ -1805,6 +1817,13 @@ cmd_jme_preferences() {
        ORDER BY t.wk DESC LIMIT 30;"
   echo ""
   echo -e "  confirm: ${GREEN}mc-ctl jme-preferences --confirm <id>${NC}   reject: ${GREEN}mc-ctl jme-preferences --reject <id>${NC}"
+}
+
+cmd_jme_dedup() {
+  # mc-ctl jme-dedup [--apply] — expire near-identical live jme_facts
+  # (cosine ≥ 0.95 per category, newest kept; confirmed preferences never
+  # expired). Default is a read-only dry run that prints the plan.
+  ( cd "$PROJECT_DIR" && npx --no-install tsx scripts/jme-dedup-backfill.ts "$@" )
 }
 
 cmd_jme_stats() {
@@ -2046,6 +2065,7 @@ usage() {
   echo -e "  ${GREEN}memory${NC}              Memory backend status"
   echo -e "  ${GREEN}jme-stats${NC}           JME utility dashboard — facts, recall rate, verdict runway"
   echo -e "  ${GREEN}jme-preferences${NC}     Preference facts (stated/inferred) + correction-signal rate; --confirm <id> | --reject <id>"
+  echo -e "  ${GREEN}jme-dedup${NC}           Expire near-identical live JME facts (≥ 0.95, newest kept); dry run unless --apply"
   echo -e "  ${GREEN}kb-health${NC}           KB taxonomy report — near-duplicate siblings, single-file folders, size (read-only)"
   echo -e "  ${GREEN}memory-checklist${NC}    Agent-memory playbook 10-item checklist from live data; --stale lists user_facts > 90 d (read-only)"
   echo ""
@@ -3308,6 +3328,7 @@ case "$cmd" in
   stats)             cmd_stats ;;
   jme-stats)         cmd_jme_stats ;;
   jme-preferences)   cmd_jme_preferences "$@" ;;
+  jme-dedup)         cmd_jme_dedup "$@" ;;
   kb-health)         cmd_kb_health "$@" ;;
   memory-checklist)  cmd_memory_checklist "$@" ;;
 

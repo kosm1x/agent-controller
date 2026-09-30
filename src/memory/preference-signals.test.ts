@@ -45,6 +45,33 @@ describe("detectPreferenceSignal", () => {
     expect(detectPreferenceSignal(text)).toBe(kind);
   });
 
+  // 2026-09-30 data review: the operator's real corrections that the tagger
+  // missed, and the live false positives (jme_signals #1-#4, #7). This
+  // fixture is the guard — widen a regex only while both lists stay green.
+  it.each([
+    ["no tan largo", "length"],
+    ["está muy extenso", "length"],
+    ["menos texto", "length"],
+    ["demasiado texto", "length"],
+    ["resumido por favor", "length"],
+    ["ve al grano", "length"],
+    ["no me gusta tanto detalle", "length"],
+  ] as const)("data-review correction tags: %s → %s", (text, kind) => {
+    expect(detectPreferenceSignal(text)).toBe(kind);
+  });
+
+  it.each([
+    "prefiero Monterrey para la tienda",
+    "de ahora en adelante los reportes van a Juan",
+    "De ahora en adelante solo trabaja con 10 equipos",
+    "Haz una lista de las 10 mueblerías que debo visitar",
+    "dame la lista de pendientes de Pulso",
+    "resume en tus palabras y haz append a entrepreneurship101.md",
+    "Resume el aprendizaje para los dos en un párrafo",
+  ])("data-review task instruction never tags: %s", (text) => {
+    expect(detectPreferenceSignal(text)).toBeNull();
+  });
+
   it("explicit statements win over the format words they contain (pattern order)", () => {
     // Matches BOTH explicit ("prefiero") and format ("en una tabla") —
     // reversing the pattern order would return "format".

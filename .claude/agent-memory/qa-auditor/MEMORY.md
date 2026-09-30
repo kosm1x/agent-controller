@@ -99,3 +99,7 @@
 - [run-schedule-tool-r1-audit](run-schedule-tool-r1-audit.md) - run_schedule (09-29): PASS-W-WARN. CLASS: requiresConfirmation is enforced only on the openai path; claude-sdk prod never gates it.
 - [denue-guard-literal-r2-audit](denue-guard-literal-r2-audit.md) - R2 (09-29): PASS-W-WARN, 7/7 RED. CLASS: cross-module marker literal (telegram->fast-runner) unpinned by any test.
 - [sdk-confirmation-gate-r2-audit](sdk-confirmation-gate-r2-audit.md) - SDK gate R2+R3 (09-30): PASS-W-WARN. CLASS: "inline code is literal" is per-formatter - WA strips `<tag>` inside code (recipient hidden).
+- [jme-full-audit-2026-09-30](jme-full-audit-2026-09-30.md) - whole-engine audit (09-30): FAIL 3 Crit. CLASS: ORDER BY ts without id tiebreak reverses same-ms turn pairs; dedup candidate pool post-temporal-dedup hides the twin.
+- [jme-hardening-r2-audit-2026-09-30](jme-hardening-r2-audit-2026-09-30.md) - R2 (09-30): FAIL 1 Crit, 12/12 RED. CLASS: supersede inheriting the INCOMING TTL downgrades a stated permanent row to a 60 d inferred one.
+- [jme-hardening-r3-audit-2026-09-30](jme-hardening-r3-audit-2026-09-30.md) - R3 (09-30): FAIL 1 Crit. CLASS: refresh-on-skip + max(confidence) launders echo wording into a stated row; cutoff 0.15->0.20.
+- [jme-hardening-r4-audit-2026-09-30](jme-hardening-r4-audit-2026-09-30.md) - R4 (09-30): PASS-W-NOTES, 7/8 RED. CLASS: max-conf inheritance launders only where confidence is a CLASS (preference).
