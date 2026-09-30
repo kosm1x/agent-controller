@@ -98,3 +98,4 @@
 - [denue-guard-literal-r1-audit](denue-guard-literal-r1-audit.md) - literal DENUE guard + heavy failure toolCalls (09-29): PASS-W-WARN. CLASS: msg.text embeds file content; runToolContext Set is per-SESSION.
 - [run-schedule-tool-r1-audit](run-schedule-tool-r1-audit.md) - run_schedule (09-29): PASS-W-WARN. CLASS: requiresConfirmation is enforced only on the openai path; claude-sdk prod never gates it.
 - [denue-guard-literal-r2-audit](denue-guard-literal-r2-audit.md) - R2 (09-29): PASS-W-WARN, 7/7 RED. CLASS: cross-module marker literal (telegram->fast-runner) unpinned by any test.
+- [sdk-confirmation-gate-r2-audit](sdk-confirmation-gate-r2-audit.md) - SDK gate R2+R3 (09-30): PASS-W-WARN. CLASS: "inline code is literal" is per-formatter - WA strips `<tag>` inside code (recipient hidden).

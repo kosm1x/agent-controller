@@ -34,7 +34,6 @@
 ## 2026-09-24 — jarvis_dev action=pr staging paths + node_modules ignore
 - **Avoid:** parsing `git status --porcelain` through a helper that `trim()`s the whole output — the first entry's leading status space vanishes and `slice(3)` eats a path char (`src/x.ts` → `rc/x.ts`) → use raw `status --porcelain -z --untracked-files=all` and `--literal-pathspecs add -- <paths>`.
 - **Avoid:** treating both rename columns alike: an index rename (X=R) must SKIP the original path, a worktree rename (Y=R, intent-to-add) must STAGE it (it's a worktree-only deletion) — qa R2 caught my first fold, which skipped both; assert a clean tree after staging, not just the returned list.
-- **Avoid:** `name/` ignore patterns for a path that can be a symlink — a trailing slash matches directories only; the worktree's `node_modules` symlink was hidden only by `.git/info/exclude`.
 
 ## 2026-09-24 — Jarvis versioned skills (ogilvy "can't store the version")
 - **Mistake:** my first SKILL.md template used `tests_json: '[]'` and pointed the model at `skills/ogilvy-slogan/` — both fail the skill critic (≥2 tests, verb-led name) → read `src/skills/critic.ts` SKILL_CRITIC_SYSTEM_PROMPT before writing any skill template or skill file.
@@ -67,7 +66,6 @@
 - **Better:** live-verify a deployed tool fix through `/api/tasks` with `agent_type:"fast"` and `tools:[<tool>]`, then read `tasks.output` and the trace's `tool.called` rows.
 
 ## 2026-09-25 — google_news RSS failures (#48)
-- **Better:** when a third-party proxy fails, fetch the origin directly from the host before blaming the origin: Google's feed returned 200 from the VPS while rss2json failed, which settled the diagnosis in one curl.
 - **Avoid:** lazy `[\s\S]*?` regex spans in an in-process parser of untrusted input. Each unclosed opener rescans to EOF, so a 5 MB hostile feed blocked the event loop > 90 s. Use indexOf scans that stop at the first unclosed opener.
 
 ## 2026-09-26 — Jarvis conflated VLCMS with VLMP (#49)
@@ -103,14 +101,11 @@
 
 ## 2026-09-29 — "Output blocked by content filtering policy" on book-page transcription
 - **Mistake:** none in code — the 09-19 `is_error` handling surfaced it correctly (partial kept, DONE_WITH_CONCERNS). The CLASS: the Anthropic API's output-side classifier blocks long verbatim reproduction of published text (2nd hit: 08-21 Rumi poem, 09-29 book page). Retrying the same output fails again.
-- **Avoid:** treating this as a provider/auth outage — cost was billed, login valid, breaker untouched; and never build a path that routes verbatim book text around the filter.
-- **Better:** register paraphrase + short quotes per page; the diagnosis check that settles it is `journalctl … | grep "content filtering"` next to the task output in `tasks` (read-only).
 
 ## 2026-09-29 — Sonnet 5.5 fast-path benchmark (A 4.6 / B 5.5 medium / C 5.5 low)
 - **Mistake:** the first harness draft ran arms in a fixed order and inherited the launching shell's env → C always read B's warm cache and checkpoints could reach the live KB mirror/pgvector/Drive. The qa-auditor caught both before `--run`; the check is a DRY run that prints the env-guard line + a per-task rotation column.
 - **Avoid:** reading the runner's self-reported STATUS as quality — A logged 10/20 DONE_WITH_CONCERNS while inventing facts; B/C logged NEEDS_CONTEXT on turns that were correct tool requests. Grade answers, not tags.
 - **Avoid:** committing benchmark result files — this repo is public and `results/*.md` carry user chat + KB content. Only aggregates go in the plan doc; `benchmarks/` stays gitignored.
-- **Better:** a one-line "Necesito `X` para esto." is the router's scope-miss protocol, not a refusal; exclude those cells (or score them separately) when grading a replay that withholds write tools.
 - **Better:** the cache-read gate needs position-balanced arms; report per-position cache read next to the Σ ratio or the gate reads noise as a regression.
 
 ## 2026-09-29 — Sonnet 5.5 fast-path env wiring + eval gate A/C
@@ -146,3 +141,10 @@
 - **Avoid:** a tool that starts a task and is callable from that task's own kind — schedule A could run B, which runs A. Refuse on `currentRunOrigin().source === "background"` and spawn outside the caller's run context (`outsideRunToolContext`).
 - **Avoid:** Spanish verb stems without an ending list in a scope regex — `corr`/`lanz` matched `correo`, `correcciones`, `lanzamiento`; list the verb forms and replay 30 d of messages (158/158 unchanged) before the paid gate.
 - **Better:** state in the description what a re-run IS (one extra run, not a re-send of an earlier result), so the model does not promise the operator yesterday's report.
+
+## 2026-09-30 — Confirmation gate enforced on the SDK path (`2aa6ce9`)
+- **Mistake:** my fold brief passed an auditor suggestion through unchecked and told the implementer to mark A2A tasks `interactive:false` — the opposite of the operator's R6 ruling (A2A = refuse); the implementer flagged it → check every fold against the ruling list before dispatching it; an auditor's "fix" is a proposal, not a ruling.
+- **Mistake (inherited, 04-11):** the gate was tested only on the openai path while production ran claude-sdk → a safety gate is asserted at the seam every runner shares (dispatcher `runner.execute`), not inside one runner; the population table per (origin × interactive × runner) is the audit artefact that finds the gap.
+- **Avoid:** an allow-list predicate on ONE argument of a tool that assembles argv from several (`resource` split on "." carried `--flags` and a write verb past a `method` read check) → validate every argv-bearing field with a plain-identifier rule AND reject at the tool.
+- **Avoid:** letting the operator approve the model's wording — render the approval line from the STORED args after `sanitizeDeliverable`, in inline code (Telegram/WhatsApp formatters mangle `<addr>`, `__init__`, `*`), with per-tool key fields ahead of the clip and arrays as "(N total)".
+- **Better:** a tool result quoted into a user turn goes in a per-message nonce-delimited data block, cut first then neutralized; R1→R3 audits with mutation per fold (60+ RED) and one paid eval gate on the FINAL text, run in parallel with the last audit round.
