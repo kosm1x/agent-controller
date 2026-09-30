@@ -28,7 +28,6 @@
 
 ## 2026-09-24 — jarvis_dev branch base (root cause of the stale #33/#37 PRs)
 - **Mistake:** wrote git-fixture tests (tmpdir repos) whose helper inherited `process.env`; the pre-commit hook exports `GIT_DIR`/`GIT_INDEX_FILE`, so under the hook every fixture call hit the REAL repo (tests red + `user.email t@t` written to the shared `.git/config`; qa R1 caught it before commit) → any test that spawns git passes an env with every `GIT_*` key stripped; prove it by running the file with `GIT_DIR` pointed at a scratch repo.
-- **Avoid:** `try { git checkout main } catch {}` in Jarvis's linked worktree — git refuses (`main` is held by the primary), the swallow hid it, and `checkout -b` stacked every new branch on the previous one → cut branches with `fetch origin main` + `checkout --no-track -b <name> origin/main`, and return every git failure.
 - **Mistake:** rewrote two `jarvis_dev` description lines without checking length; it sat at 1497/1500 (`registry.test.ts` DESC_THRESHOLD), went to 1616 (qa R2) → before editing any tool description, measure its headroom and run `registry.test.ts` scoped; start the paid eval gate only on the FINAL text.
 
 ## 2026-09-24 — jarvis_dev action=pr staging paths + node_modules ignore
@@ -38,7 +37,6 @@
 ## 2026-09-24 — Jarvis versioned skills (ogilvy "can't store the version")
 - **Mistake:** my first SKILL.md template used `tests_json: '[]'` and pointed the model at `skills/ogilvy-slogan/` — both fail the skill critic (≥2 tests, verb-led name) → read `src/skills/critic.ts` SKILL_CRITIC_SYSTEM_PROMPT before writing any skill template or skill file.
 - **Avoid:** guarding only the model's write tools when a scheduled importer (hourly kb-reindex) turns ANY disk write (shell_exec, editor) into a registry row — close the door at the importer (`MANAGED_FILE_RE`), keep tool refusals for the error message.
-- **Better:** settle "already registered" (sha of the body) BEFORE a paid LLM gate — an identical rewrite must not cost, or be failed by, the critic.
 
 ## 2026-09-24 — skill auto-certify + monotonic versions
 - **Mistake:** ran tests inside the registration step, BEFORE the KB write; a cut-short run left DB and file disagreeing and the identical-rewrite recovery refused (qa R1 W3) → return the slow step as a continuation the caller runs after the durable write.
@@ -59,7 +57,6 @@
 ## 2026-09-24 — CI green again (#44: 4 VPS-only test files)
 - **Mistake:** dated the red CI "since #41, 5 runs" from memory; `gh run list --limit 30` showed ~30 red runs from ≤09-22 → count the streak with `gh run list` before dating it.
 - **Mistake:** the first path sweep grepped `/root/claude` and `~/claude` only; the `"$HOME"/claude` and `${HOME}/claude` spellings were missed, and PR CI caught one (vitest stops an `it` at its first failure, so the other was hidden) → sweep every spelling of a root (`/root`, `~`, `$HOME`, `${HOME}`), and reproduce CI locally: a scratch worktree at a non-VPS path plus a fake `HOME=` made main's file fail and the fix pass.
-- **Better:** env-coupled tests: derive the checkout from `import.meta.url`, give a fake PATH a node-only symlink dir (the CI toolcache dir also holds a real `npm`), and `it.skipIf` root-only and live-host checks.
 
 ## 2026-09-25 — Jarvis could not read tweets (#47)
 - **Avoid:** a tool that returns only the upstream status code. Jina's JSON body said "anonymous access to x.com blocked (someone else's abuse)"; `web_read` passed on "403 Forbidden", and the model read it as "this tweet is private" and gave up. Carry the upstream's reason and a next route in the error.
@@ -148,3 +145,6 @@
 - **Avoid:** an allow-list predicate on ONE argument of a tool that assembles argv from several (`resource` split on "." carried `--flags` and a write verb past a `method` read check) → validate every argv-bearing field with a plain-identifier rule AND reject at the tool.
 - **Avoid:** letting the operator approve the model's wording — render the approval line from the STORED args after `sanitizeDeliverable`, in inline code (Telegram/WhatsApp formatters mangle `<addr>`, `__init__`, `*`), with per-tool key fields ahead of the clip and arrays as "(N total)".
 - **Better:** a tool result quoted into a user turn goes in a per-message nonce-delimited data block, cut first then neutralized; R1→R3 audits with mutation per fold (60+ RED) and one paid eval gate on the FINAL text, run in parallel with the last audit round.
+- **Mistake:** `git push` failed the git-auth-guard ("No git remote configured") right after a python heredoc had reset the session cwd to `/root/claude` → the guard reads the SESSION cwd, which a heredoc/tool call can silently reset: `cd <repo>` as its own call, then push as its own call (standing rule, third occurrence).
+- **Mistake:** two proof queries guessed column names (`tool_approvals.task_id`, `tasks.tool_calls`) → `pragma table_info(<t>)` before the first query on a table not read this session (standing rule already; the cost was two retries).
+- **Better:** live proof of a gate = the first row of the table it should write (`tool_approvals` went 0 → 1 pending → confirmed within 8 s), the trace names at each decision, and the downstream effect (schedule run 806 → `gmail_send` at background origin); read them in that order.
