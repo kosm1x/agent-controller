@@ -51,6 +51,12 @@ import type {
 import { errMsg } from "../lib/err-msg.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
+import { currentExecutionContext } from "./execution-context.js";
+import {
+  confirmationGate,
+  NO_CONFIRM_IN_CHAT_ERROR,
+} from "../tools/task-executor.js";
+import { currentRunOrigin, currentRunTaskId } from "../tools/rule-of-two.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
 // db/config/pricing — no static cycle back into the inference layer.
 import {
@@ -170,6 +176,80 @@ function runsConcurrently(t: Tool): boolean {
   );
 }
 
+/** Tool result for a call the gate paused (model-facing, Spanish). */
+const CONFIRMATION_PENDING_MESSAGE =
+  "Acción en espera de confirmación del operador: NO se ejecutó. Detente aquí: no la reintentes, no llames más herramientas y no digas que ya se hizo. Termina tu respuesta explicando qué vas a hacer y pregunta '¿Procedo?'. Si el operador confirma, la acción se ejecutará y se retomará lo que falte.";
+
+/**
+ * The confirmation gate on the SDK path (the production path — `permissionMode:
+ * "dontAsk"` means the SDK itself never asks). Returns the tool-result text
+ * when the call must NOT execute, or null to run it. The decision itself is
+ * `confirmationGate` (task-executor.ts); this applies it to the run's
+ * execution context: the dispatcher enters one around every runner (so heavy,
+ * swarm and Prometheus runs are gated too — they cannot ask, so they refuse),
+ * and the fast runner enters its own, the only one that may ask.
+ * First pending wins: a later gated call in the same run is refused.
+ */
+function gateSdkToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  const ctx = currentExecutionContext();
+  const origin = currentRunOrigin();
+  const trace = (decision: string, taskId: string | undefined): void => {
+    if (!taskId) return;
+    emitTraceEvent({
+      taskId,
+      name: "tool.gated",
+      tool: name,
+      attrs: { decision, origin: origin.source },
+    });
+  };
+  if (!ctx) {
+    // Outside any dispatched task: no run, no one to ask — as before.
+    const taskId = currentRunTaskId();
+    if (taskId === undefined) return null;
+    // Inside a run with no execution context (a wiring gap — the dispatcher
+    // enters one around every runner): whether it is interactive is unknown,
+    // so a call that would need the operator's yes does not run.
+    const gate = confirmationGate(
+      toolRegistry,
+      {
+        interactive: true,
+        isDestructiveUnlocked: () => false,
+        canAskOperator: false,
+        chatOrigin: true,
+      },
+      name,
+      args,
+    );
+    if (gate.action === "proceed") return null;
+    trace("refused_no_context", taskId);
+    return JSON.stringify({ error: NO_CONFIRM_IN_CHAT_ERROR });
+  }
+  const gate = confirmationGate(toolRegistry, ctx, name, args);
+  if (gate.action === "proceed") return null;
+  ctx.recordGatedCall(name);
+  if (gate.action === "refuse") {
+    trace("refused_cannot_ask", ctx.taskId);
+    return JSON.stringify({ error: gate.error });
+  }
+  const pending = ctx.getPendingConfirmation();
+  if (pending) {
+    trace("refused_already_pending", ctx.taskId);
+    return JSON.stringify({
+      error: `Ya hay una confirmación pendiente en esta respuesta (${pending.toolName}). Esta acción NO se ejecutó; pídela de nuevo cuando el operador responda.`,
+    });
+  }
+  ctx.setPendingConfirmation(name, args);
+  trace("confirmation_required", ctx.taskId);
+  return JSON.stringify({
+    error: "CONFIRMATION_REQUIRED",
+    message: CONFIRMATION_PENDING_MESSAGE,
+    tool: name,
+  });
+}
+
 function wrapTool(t: Tool) {
   const params = t.definition.function.parameters as Record<string, unknown>;
   const shape = jsonSchemaToZodShape(params);
@@ -180,6 +260,10 @@ function wrapTool(t: Tool) {
     shape,
     async (args: Record<string, unknown>): Promise<CallToolResult> => {
       try {
+        const gated = gateSdkToolCall(t.name, args);
+        if (gated !== null) {
+          return { content: [{ type: "text", text: gated }] };
+        }
         const result = await toolRegistry.execute(
           t.name,
           args as Record<string, unknown>,

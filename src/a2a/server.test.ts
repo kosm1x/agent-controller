@@ -125,6 +125,28 @@ describe("A2A server", () => {
       expect(json.result.id).toBe("task-abc");
       expect(json.result.status.state).toBe("submitted");
       expect(mockSubmitTask).toHaveBeenCalledOnce();
+      // W-E / R6: explicit interactive — no chat to confirm in, so a
+      // high-risk call is refused, never run unconfirmed.
+      expect(mockSubmitTask.mock.calls[0][0].interactive).toBe(true);
+      // Round 3: the gate reads the tag to give A2A its own refusal text.
+      expect(mockSubmitTask.mock.calls[0][0].tags).toContain("a2a");
+    });
+
+    it("sendStreamingMessage submits the task interactive too (W-E / R6)", async () => {
+      mockSubmitTask.mockResolvedValueOnce({
+        taskId: "task-sse",
+        agentType: "fast",
+        classification: { score: 1, reason: "simple", explicit: false },
+      });
+      const res = await post(
+        makeJsonRpc("sendStreamingMessage", {
+          message: { role: "user", parts: [{ type: "text", text: "Hola" }] },
+        }),
+      );
+      await res.body?.cancel();
+      expect(mockSubmitTask).toHaveBeenCalledOnce();
+      expect(mockSubmitTask.mock.calls[0][0].interactive).toBe(true);
+      expect(mockSubmitTask.mock.calls[0][0].tags).toContain("a2a");
     });
 
     it("should reject missing message", async () => {

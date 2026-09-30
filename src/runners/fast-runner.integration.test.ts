@@ -175,6 +175,11 @@ import { shadowKbRows } from "../jev/shadow-kb.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
 import { getEssentialFacts } from "../memory/essentials.js";
+import {
+  TaskExecutionContext,
+  currentExecutionContext,
+  runWithExecutionContext,
+} from "../inference/execution-context.js";
 
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
@@ -1519,5 +1524,228 @@ describe("DENUE guard fires only on a DENUE mention the user wrote (2026-09-29)"
         interactive: false,
       }),
     ).toBeUndefined();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Confirmation gate on the claude-sdk path (2026-09-29). queryClaudeSdk is
+// mocked; the mock stands in for wrapTool: it gates a high-risk call through
+// the execution context fast-runner entered (the real module), exactly as
+// the MCP bridge handler does.
+// ────────────────────────────────────────────────────────────────────
+describe("confirmation gate on the claude-sdk path", () => {
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+  });
+
+  const gatingLeg =
+    (text: string, interactiveSeen: boolean[] = []) =>
+    async () => {
+      const ctx = currentExecutionContext();
+      if (!ctx)
+        throw new Error("queryClaudeSdk ran outside the execution context");
+      interactiveSeen.push(ctx.interactive);
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      ctx.recordGatedCall("wp_delete");
+      return makeSdkResult({ text, toolCalls: ["wp_list_posts", "wp_delete"] });
+    };
+
+  it("surfaces pendingConfirmation in the output and drops the gated call from toolCalls", async () => {
+    const seen: boolean[] = [];
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg("Voy a borrar el post 7 «Hola». ¿Procedo?", seen),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate",
+      runId: "run-sdk-gate",
+      title: "Borra el post 7",
+      description: "Borra el post 7",
+    });
+
+    expect(seen).toEqual([true]);
+    expect(result.success).toBe(true);
+    const output = result.output as {
+      pendingConfirmation?: { toolName: string; args: Record<string, unknown> };
+      toolCalls: string[];
+      text: string;
+    };
+    expect(output.pendingConfirmation).toEqual({
+      toolName: "wp_delete",
+      args: { id: 7 },
+    });
+    expect(result.toolCalls).toEqual(["wp_list_posts"]);
+    expect(output.toolCalls).toEqual(["wp_list_posts"]);
+    expect(output.text).toContain("¿Procedo?");
+  });
+
+  it("a short BLOCKED reply with a pending confirmation still completes (router must store it)", async () => {
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg("¿Procedo?\n\nSTATUS: BLOCKED — esperando confirmación"),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-blocked",
+      runId: "run-sdk-gate-blocked",
+      title: "Borra el post 7",
+      description: "Borra el post 7",
+    });
+    expect(result.success).toBe(true);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toBeDefined();
+  });
+
+  it("an empty reply with a pending confirmation gets the confirmation question", async () => {
+    mockQuerySdk.mockImplementationOnce(gatingLeg(""));
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-empty",
+      runId: "run-sdk-gate-empty",
+      title: "Borra el post 7",
+      description: "Borra el post 7",
+    });
+    expect((result.output as { text: string }).text).toBe(
+      "Esta acción requiere tu confirmación: wp_delete. ¿Procedo?",
+    );
+  });
+
+  it("a non-interactive run enters the context with interactive=false", async () => {
+    const seen: boolean[] = [];
+    mockQuerySdk.mockImplementationOnce(async () => {
+      seen.push(currentExecutionContext()!.interactive);
+      return makeSdkResult({ toolCalls: ["gmail_send"] });
+    });
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-bg",
+      runId: "run-sdk-gate-bg",
+      title: "[Scheduled] Reporte",
+      description: "Envía el reporte",
+      interactive: false,
+    });
+    expect(seen).toEqual([false]);
+    expect(result.toolCalls).toEqual(["gmail_send"]);
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toBeUndefined();
+  });
+
+  it("the resume leg after a cap does not list a gated call as already executed", async () => {
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg(
+        "[error_max_turns — max turns reached] parcial\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+      ),
+    );
+    mockQuerySdk.mockImplementationOnce(async () => {
+      // Same context across legs: first pending still set.
+      expect(
+        currentExecutionContext()!.getPendingConfirmation()?.toolName,
+      ).toBe("wp_delete");
+      return makeSdkResult({ text: "STATUS: DONE\n¿Procedo con el borrado?" });
+    });
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-resume",
+      runId: "run-sdk-gate-resume",
+      title: "Analiza y borra",
+      description: "Analiza los posts y borra el 7",
+    });
+    const resumePrompt = mockQuerySdk.mock.calls[1][0].prompt as string;
+    expect(resumePrompt).toContain("Herramientas YA ejecutadas");
+    expect(resumePrompt).toContain("wp_list_posts");
+    expect(resumePrompt).not.toContain("wp_delete");
+    expect(result.toolCalls).not.toContain("wp_delete");
+  });
+
+  it("W4: a confirmation gated on the RESUME leg reaches the output (the leg runs in the task's context)", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_max_turns — max turns reached] parcial\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+        toolCalls: ["wp_list_posts"],
+      }),
+    );
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg("STATUS: DONE\nVoy a borrar el post 7. ¿Procedo?"),
+    );
+    const outer = new TaskExecutionContext("sdk-gate-resume-leg", true, {
+      routerRoot: true,
+      chatOrigin: true,
+    });
+    const result = await runWithExecutionContext(outer, () =>
+      fastRunner.execute({
+        taskId: "sdk-gate-resume-leg",
+        runId: "run-sdk-gate-resume-leg",
+        title: "Analiza y borra",
+        description: "Analiza los posts y borra el 7",
+      }),
+    );
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    expect(outer.getPendingConfirmation()).toBeNull();
+    expect(result.toolCalls).not.toContain("wp_delete");
+  });
+
+  it("W4: a confirmation gated on the AUTH-retry leg reaches the output", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+      }),
+    );
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg("STATUS: DONE\nVoy a borrar el post 7. ¿Procedo?"),
+    );
+    const outer = new TaskExecutionContext("sdk-gate-auth-leg", true, {
+      routerRoot: true,
+      chatOrigin: true,
+    });
+    const result = await runWithExecutionContext(outer, () =>
+      fastRunner.execute({
+        taskId: "sdk-gate-auth-leg",
+        runId: "run-sdk-gate-auth-leg",
+        title: "Borra el post 7",
+        description: "Borra el post 7",
+      }),
+    );
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    expect(outer.getPendingConfirmation()).toBeNull();
+  });
+
+  it("W3: the runner's context can ask only inside a router-tracked root dispatch of the same task", async () => {
+    const seen: Array<boolean | undefined> = [];
+    const probe = async () => {
+      seen.push(currentExecutionContext()?.canAskOperator);
+      return makeSdkResult({ text: "STATUS: DONE\nok" });
+    };
+    const run = (taskId: string, outer?: TaskExecutionContext) => {
+      mockQuerySdk.mockImplementationOnce(probe);
+      const go = () =>
+        fastRunner.execute({
+          taskId,
+          runId: `run-${taskId}`,
+          title: "t",
+          description: "d",
+        });
+      return outer ? runWithExecutionContext(outer, go) : go();
+    };
+    await run(
+      "w3-root",
+      new TaskExecutionContext("w3-root", true, {
+        routerRoot: true,
+        chatOrigin: true,
+      }),
+    );
+    await run(
+      "w3-child",
+      new TaskExecutionContext("w3-child", true, { chatOrigin: true }),
+    );
+    await run(
+      "w3-other",
+      new TaskExecutionContext("w3-parent", true, { routerRoot: true }),
+    );
+    await run("w3-direct");
+    expect(seen).toEqual([true, false, false, false]);
   });
 });

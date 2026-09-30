@@ -73,4 +73,22 @@ describe("POST /api/tasks gates", () => {
     });
     expect(mocks.submitTask).not.toHaveBeenCalled();
   });
+
+  it("R6: forwards interactive:false only; absent or true leaves the default (interactive)", async () => {
+    const post = (extra: Record<string, unknown>) =>
+      app.request("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "t", description: "d", ...extra }),
+      });
+    expect((await post({ interactive: false })).status).toBe(201);
+    expect((await post({})).status).toBe(201);
+    expect((await post({ interactive: true })).status).toBe(201);
+    expect((await post({ interactive: "false" })).status).toBe(201);
+    const calls = mocks.submitTask.mock.calls.map((c) => c[0]);
+    expect(calls[0]).toMatchObject({ interactive: false });
+    expect(calls[1]).not.toHaveProperty("interactive");
+    expect(calls[2]).not.toHaveProperty("interactive");
+    expect(calls[3]).not.toHaveProperty("interactive");
+  });
 });

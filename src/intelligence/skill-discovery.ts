@@ -128,6 +128,7 @@ async function proposeSkill(
     const { submitTask } = await import("../dispatch/dispatcher.js");
     await submitTask({
       title: `Auto-skill: ${name}`,
+      interactive: false, // background (W-E): no operator to confirm
       description: `A recurring tool pattern was detected (${occurrences}x in 14 days).
 Tools: ${tools.join(", ")}
 Related tasks: ${titles.join(", ") || "N/A"}

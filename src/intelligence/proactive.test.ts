@@ -65,6 +65,21 @@ describe("proactive", () => {
       );
     });
 
+    it("the nudge scan submits its task non-interactive (W-E: explicit, not defaulted)", async () => {
+      vi.stubEnv("PROACTIVE_NUDGE_ENABLED", "true");
+      startProactiveScheduler(router);
+      const call = vi
+        .mocked(cron.schedule)
+        .mock.calls.find((c) => c[0] === "0 8,12,16,20 * * *");
+      (call![1] as () => void)();
+      const { submitTask } = await import("../dispatch/dispatcher.js");
+      await vi.waitFor(() => expect(submitTask).toHaveBeenCalled());
+      expect(vi.mocked(submitTask).mock.calls[0][0]).toMatchObject({
+        title: expect.stringContaining("Proactive scan"),
+        interactive: false,
+      });
+    });
+
     it("does NOT schedule the NorthStar nudge by default (operator ruling 2026-06-23)", () => {
       // Flag unset → the day-log-truth posture: no NorthStar nudge cron.
       startProactiveScheduler(router);

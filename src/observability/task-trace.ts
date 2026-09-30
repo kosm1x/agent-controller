@@ -32,6 +32,12 @@ export type TraceEventName =
   | "task.started"
   | "task.fallback"
   | "tool.called"
+  // Confirmation gate stopped a tool call on the SDK path (2026-09-29)
+  | "tool.gated"
+  // Router decision after an operator confirmation (2026-09-30)
+  | "confirmation.continuation_started"
+  | "confirmation.continuation_skipped"
+  | "confirmation.continuation_failed"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

@@ -21,8 +21,23 @@ export function formatForWhatsApp(text: string): string {
 
   let result = text;
 
+  // Code spans are literal (audit 2026-09-30 round 3): lift them out BEFORE
+  // any markdown or tag rule runs and restore them last, as formatForTelegram
+  // does — otherwise `Peter <evil@x.com>` lost the address to the tag strip
+  // and `__init__.py` became `_init_.py`. NUL placeholders (never in LLM text).
+  const spans: string[] = [];
+  const hold = (literal: string): string =>
+    `\u0000${spans.push(literal) - 1}\u0000`;
+
   // Strip code fences (```language ... ```) — WhatsApp can't render them
-  result = result.replace(/```[\w]*\n?([\s\S]*?)```/g, "$1");
+  result = result.replace(/```[\w]*\n?([\s\S]*?)```/g, (_m, body: string) =>
+    hold(body),
+  );
+
+  // Inline code: `text` → ```text``` (WhatsApp monospace)
+  result = result.replace(/`([^`]+)`/g, (_m, code: string) =>
+    hold("```" + code + "```"),
+  );
 
   // Headers: ## Header → *Header*
   result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
@@ -33,14 +48,17 @@ export function formatForWhatsApp(text: string): string {
   // Italic: __text__ → _text_ (WhatsApp italic)
   result = result.replace(/__(.+?)__/g, "_$1_");
 
-  // Inline code: `text` → ```text``` (WhatsApp monospace)
-  result = result.replace(/`([^`]+)`/g, "```$1```");
-
   // Strikethrough: ~~text~~ → ~text~ (WhatsApp strikethrough)
   result = result.replace(/~~(.+?)~~/g, "~$1~");
 
   // Strip HTML tags that may leak from mixed formatting
   result = result.replace(/<\/?[a-z][^>]*>/gi, "");
+
+  // Restore the code spans held above.
+  result = result.replace(
+    /\u0000(\d+)\u0000/g,
+    (_m, i: string) => spans[Number(i)],
+  );
 
   return result;
 }

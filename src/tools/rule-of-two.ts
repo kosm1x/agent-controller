@@ -48,6 +48,7 @@
  */
 
 import { AsyncLocalStorage } from "async_hooks";
+import { exitExecutionContext } from "../inference/execution-context.js";
 import type { Tool, ToolAnnotations } from "./types.js";
 
 export interface RuleOfTwoClass {
@@ -507,7 +508,9 @@ export function enterRunToolContext<T>(
  * finishing run's tool set as its prior, and its calls leaked back).
  */
 export function outsideRunToolContext<T>(fn: () => T): T {
-  return runToolContext.exit(fn);
+  // Exit the execution context too (audit 2026-09-30 N1): a task spawned from
+  // here must not inherit the finishing run's confirmation facts.
+  return runToolContext.exit(() => exitExecutionContext(fn));
 }
 
 /**

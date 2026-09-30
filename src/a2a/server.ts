@@ -134,8 +134,13 @@ async function handleSendMessage(
   // Convert message to submission
   const submission = a2aMessageToSubmission(params.message);
 
-  // Submit task
-  const result = await submitTask(submission);
+  // Submit task. Explicitly interactive (W-E, R6): an A2A peer has no chat
+  // where the operator could confirm, so a high-risk call is REFUSED.
+  const result = await submitTask({
+    ...submission,
+    interactive: true,
+    tags: [...(submission.tags ?? []), "a2a"], // gate: A2A refusal text
+  });
 
   // Create context mapping
   const contextId = params.contextId ?? newContextId();
@@ -264,9 +269,13 @@ async function handleStreamingMessage(
     );
   }
 
-  // Submit the task (same as sendMessage)
+  // Submit the task (same as sendMessage, interactive too — R6)
   const submission = a2aMessageToSubmission(params.message);
-  const result = await submitTask(submission);
+  const result = await submitTask({
+    ...submission,
+    interactive: true,
+    tags: [...(submission.tags ?? []), "a2a"],
+  });
 
   const contextId = params.contextId ?? newContextId();
   createContext(contextId, result.taskId);

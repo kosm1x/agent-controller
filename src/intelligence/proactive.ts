@@ -120,6 +120,7 @@ async function runProactiveScan(): Promise<void> {
   try {
     const result = await submitTask({
       title: `Proactive scan — ${today}`,
+      interactive: false, // background (W-E): no operator to confirm
       description: `Eres Jarvis. Realiza un escaneo proactivo de la situación del usuario:
 
 1. Usa jarvis_file_read para leer los archivos en NorthStar/ y ver tareas pendientes, vencidas, y próximos deadlines.

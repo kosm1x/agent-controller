@@ -48,6 +48,22 @@ describe("formatForWhatsApp", () => {
       "This is _italic_ text",
     );
   });
+
+  it("keeps inline code literal: no tag strip, no bold/italic inside (audit round 3)", () => {
+    expect(
+      formatForWhatsApp(
+        "🔐 Si confirmas: `gmail_send(to: Peter <evil@x.com>, subject: **Q3**)` ok",
+      ),
+    ).toBe(
+      "🔐 Si confirmas: ```gmail_send(to: Peter <evil@x.com>, subject: **Q3**)``` ok",
+    );
+    expect(formatForWhatsApp("borra `src/__init__.py` y **ya**")).toBe(
+      "borra ```src/__init__.py``` y *ya*",
+    );
+    expect(formatForWhatsApp("```\na&b<c>@x.mx __x__\n```")).toBe(
+      "a&b<c>@x.mx __x__\n",
+    );
+  });
 });
 
 describe("formatForTelegram", () => {

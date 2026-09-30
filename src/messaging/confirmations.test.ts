@@ -418,6 +418,23 @@ describe("tool_approvals durability", () => {
     expect(getPendingConfirmation(tk)?.approvalId).toBe(r[0].id);
   });
 
+  it("W-C: the stored summary keeps every key field (no 500-char cut of the rendered line)", () => {
+    const wide = {
+      to: "a".repeat(200),
+      cc: "c".repeat(200),
+      bcc: "b".repeat(200),
+      subject: "s".repeat(200),
+      body: "y".repeat(500),
+    };
+    const summary = renderConfirmationSummary("gmail_send", wide);
+    expect(summary.length).toBeGreaterThan(500);
+    storePendingConfirmation(tk, "gmail_send", wide, summary);
+    const row = getDatabase()
+      .prepare("SELECT summary FROM tool_approvals WHERE thread_key = ?")
+      .get(tk) as { summary: string };
+    expect(row.summary).toBe(summary);
+  });
+
   it("argsSha256 is key-order insensitive and value sensitive", () => {
     expect(argsSha256({ a: 1, b: [1, { c: 2 }] })).toBe(argsSha256({ b: [1, { c: 2 }], a: 1 }));
     expect(argsSha256({ to: "a@b.mx" })).not.toBe(argsSha256({ to: "a@b.mx " }));
@@ -511,5 +528,215 @@ describe("tool_approvals durability", () => {
     storePendingConfirmation(tk, "gmail_send", args, "s");
     clearPendingConfirmation(tk);
     expect(rows(tk)[0].decision).toBe("superseded");
+  });
+});
+
+import { renderConfirmationSummary } from "./confirmations.js";
+import { formatForTelegram } from "./formatter.js";
+
+describe("renderConfirmationSummary (audit 2026-09-30 W1)", () => {
+  it("names key fields first, then the rest as compact JSON — nested values never [object Object]", () => {
+    const line = renderConfirmationSummary("gmail_send", {
+      body: { html: "<p>hola</p>" },
+      subject: "Reporte",
+      to: "a@b.com",
+      cc: ["c@d.com"],
+      attachments: [{ name: "r.pdf" }],
+    });
+    expect(line).toBe(
+      'gmail_send(to: a@b.com, cc: ["c@d.com"], subject: Reporte, {"attachments":[{"name":"r.pdf"}],"body":{"html":"<p>hola</p>"}})',
+    );
+    expect(line).not.toContain("[object Object]");
+  });
+
+  it("delete tools show the path / id they touch", () => {
+    expect(renderConfirmationSummary("wp_delete", { id: 7 })).toBe(
+      "wp_delete(id: 7)",
+    );
+    expect(
+      renderConfirmationSummary("jarvis_file_delete", { path: "notes/a.md" }),
+    ).toBe("jarvis_file_delete(path: notes/a.md)");
+  });
+
+  it("google_workspace_cli shows the exact gws argv it will run", () => {
+    expect(
+      renderConfirmationSummary("google_workspace_cli", {
+        service: "chat",
+        resource: "spaces.messages",
+        method: "create",
+        params: { parent: "spaces/AAAA" },
+        json: { text: "hola" },
+      }),
+    ).toBe(
+      'google_workspace_cli(gws chat spaces messages create --params {"parent":"spaces/AAAA"} --json {"text":"hola"})',
+    );
+  });
+
+  it("caps each key value and the whole line", () => {
+    const line = renderConfirmationSummary("gmail_send", {
+      to: "x".repeat(500),
+      body: "y".repeat(2000),
+    });
+    expect(line).toContain(`to: ${"x".repeat(120)}…`);
+    expect(line.length).toBe(400);
+    expect(line.endsWith("…)")).toBe(true);
+  });
+
+  it("W-C: per-tool key fields come first and the line cap clips the JSON tail, never a key field", () => {
+    const text = "t".repeat(110);
+    const tweet = renderConfirmationSummary("tweet_post", {
+      media: [{ alt: "z".repeat(600) }],
+      text,
+      reply_to_id: "1790000000000000000",
+      account: "eurekamd",
+    });
+    expect(
+      tweet.startsWith(
+        `tweet_post(account: eurekamd, reply_to_id: 1790000000000000000, text: ${text}, {"media":`,
+      ),
+    ).toBe(true);
+    expect(tweet.length).toBe(400);
+    expect(tweet.endsWith("…)")).toBe(true);
+
+    // Key fields beyond the cap stay whole (each value capped at 120 only).
+    const mail = renderConfirmationSummary("gmail_send", {
+      to: "a".repeat(200),
+      cc: "c".repeat(200),
+      bcc: "b".repeat(200),
+      subject: "s".repeat(200),
+      body: "y".repeat(500),
+    });
+    expect(mail).toContain(`bcc: ${"b".repeat(120)}…`);
+    expect(mail).toContain(`subject: ${"s".repeat(120)}…`);
+    expect(mail.endsWith(", …)")).toBe(true);
+
+    expect(
+      renderConfirmationSummary("wp_raw_api", {
+        body: { status: "draft" },
+        site: "radar",
+        path: "/wp/v2/posts/9",
+        method: "DELETE",
+      }),
+    ).toBe(
+      'wp_raw_api(method: DELETE, path: /wp/v2/posts/9, site: radar, {"body":{"status":"draft"}})',
+    );
+    expect(
+      renderConfirmationSummary("run_schedule", { schedule_id: "sch-1" }),
+    ).toBe("run_schedule(schedule_id: sch-1)");
+    expect(
+      renderConfirmationSummary("delete_schedule", {
+        schedule_id: "sch-2",
+        reason: "x",
+      }),
+    ).toBe('delete_schedule(schedule_id: sch-2, {"reason":"x"})');
+  });
+
+  it("round 3 (2a): the JSON tail puts short values first, so free text is what the cap clips", () => {
+    const line = renderConfirmationSummary("crm_update", {
+      notes: "n".repeat(500),
+      deal_id: "D-42",
+    });
+    expect(line.startsWith('crm_update({"deal_id":"D-42","notes":"nnn')).toBe(
+      true,
+    );
+    expect(line.length).toBe(400);
+  });
+
+  it("round 3 (2b): per-tool key fields keep the load-bearing args ahead of free text", () => {
+    expect(
+      renderConfirmationSummary("jarvis_dev", {
+        body: "b".repeat(500),
+        action: "merge",
+      }),
+    ).toMatch(/^jarvis_dev\(action: merge, \{"body":"b+…\)$/);
+    const cal = renderConfirmationSummary("calendar_create", {
+      title: "Reunión",
+      description: "d".repeat(600),
+      start: "2026-10-01T10:00:00-06:00",
+      end: "2026-10-01T11:00:00-06:00",
+      attendees: ["externo@otra.com"],
+    });
+    expect(cal).toContain(
+      'calendar_create(start: 2026-10-01T10:00:00-06:00, end: 2026-10-01T11:00:00-06:00, attendees: ["externo@otra.com"], {"title":"Reunión","description":"ddd',
+    );
+    expect(
+      renderConfirmationSummary("gdrive_share", {
+        file_id: "f1",
+        email: "x@y.com",
+        role: "writer",
+      }),
+    ).toBe("gdrive_share(file_id: f1, email: x@y.com, role: writer)");
+    expect(
+      renderConfirmationSummary("wp_plugins", {
+        site: "radar",
+        action: "deactivate",
+        plugin: "akismet",
+      }),
+    ).toBe("wp_plugins(site: radar, action: deactivate, plugin: akismet)");
+    expect(
+      renderConfirmationSummary("wp_publish", {
+        content: "c".repeat(900),
+        site: "radar",
+        status: "publish",
+        post_id: 9,
+        slug: "w40",
+      }),
+    ).toMatch(
+      /^wp_publish\(site: radar, status: publish, post_id: 9, slug: w40, \{"content":"c+…\)$/,
+    );
+    // wp_raw_api has no `endpoint` param: it is not a key field.
+    expect(
+      renderConfirmationSummary("wp_raw_api", {
+        endpoint: "x",
+        method: "GET",
+        path: "/p",
+        site: "s",
+      }),
+    ).toBe('wp_raw_api(method: GET, path: /p, site: s, {"endpoint":"x"})');
+  });
+
+  it("round 3 (2c): a truncated array says how many items it holds", () => {
+    const paths = Array.from({ length: 30 }, (_, i) => `notes/n${i}.md`);
+    const line = renderConfirmationSummary("jarvis_files_batch_delete", {
+      paths,
+    });
+    expect(line).toMatch(
+      /^jarvis_files_batch_delete\(paths: \["notes\/n0\.md","notes\/n1\.md",.*,…\] \(30 total\)\)$/,
+    );
+    // An array that fits renders whole, without a count.
+    expect(
+      renderConfirmationSummary("jarvis_files_batch_delete", {
+        paths: ["a.md", "b.md"],
+      }),
+    ).toBe('jarvis_files_batch_delete(paths: ["a.md","b.md"])');
+  });
+
+  it("round 3 (3): a raw newline in a gws argv word is escaped, never a line break", () => {
+    const line = renderConfirmationSummary("google_workspace_cli", {
+      service: "gmail",
+      resource: "users.messages",
+      method: "send\n*x*",
+    });
+    expect(line).not.toMatch(/[\r\n`]/);
+    expect(line).toBe(
+      'google_workspace_cli(gws gmail users messages "send\\n*x*")',
+    );
+    // The router shows it as inline code: one intact <code> span on Telegram.
+    const html = formatForTelegram(`🔐 \`${line}\``).join("");
+    expect(html).toBe(
+      '🔐 <code>google_workspace_cli(gws gmail users messages "send\\n*x*")</code>',
+    );
+  });
+
+  it("W-C: the line is one line with no backtick, so it can sit in inline code", () => {
+    const line = renderConfirmationSummary("gmail_send", {
+      to: "a`b@x.mx",
+      subject: "linea1\nlinea2",
+      body: "`x`",
+    });
+    expect(line).not.toMatch(/[`\n]/);
+    expect(line).toBe(
+      'gmail_send(to: "a\\u0060b@x.mx", subject: "linea1\\nlinea2", {"body":"\\u0060x\\u0060"})',
+    );
   });
 });

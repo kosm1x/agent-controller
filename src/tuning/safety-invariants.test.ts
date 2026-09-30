@@ -24,7 +24,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, initDatabase } from "../db/index.js";
 import { RULE_OF_TWO_CLASSIFICATION } from "../tools/rule-of-two.js";
 import { sanitizeToolResult, analyzeInjection } from "../inference/guards.js";
-import { createTaskExecutor } from "../tools/task-executor.js";
+import {
+  createTaskExecutor,
+  NO_CONFIRM_CHANNEL_ERROR,
+} from "../tools/task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
@@ -94,9 +97,20 @@ describe("2. high-risk tools pause for confirmation on interactive tasks", () =>
 
   it("interactive + high → CONFIRMATION_REQUIRED and the tool does NOT run", async () => {
     const reg = registry("high");
-    const exec = createTaskExecutor(reg, new TaskExecutionContext("t1", true));
+    // The fast runner on a router-tracked operator chat root — the only
+    // context that may ask.
+    const ctx = new TaskExecutionContext("t1", true, { canAskOperator: true });
+    const exec = createTaskExecutor(reg, ctx);
     const out = JSON.parse(await exec("gmail_send", { to: "a@b.mx" }));
     expect(out.error).toBe("CONFIRMATION_REQUIRED");
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("interactive + high in a context that cannot ask (R6: API task, sub-task, retry) → refused, the tool does NOT run", async () => {
+    const reg = registry("high");
+    const exec = createTaskExecutor(reg, new TaskExecutionContext("t1b", true));
+    const out = JSON.parse(await exec("gmail_send", { to: "a@b.mx" }));
+    expect(out.error).toBe(NO_CONFIRM_CHANNEL_ERROR);
     expect(reg.execute).not.toHaveBeenCalled();
   });
 

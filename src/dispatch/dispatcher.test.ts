@@ -95,6 +95,12 @@ import {
   type RunOrigin,
 } from "../tools/rule-of-two.js";
 import type { RunnerOutput } from "../runners/types.js";
+import {
+  currentExecutionContext,
+  type TaskExecutionContext,
+} from "../inference/execution-context.js";
+import { outsideRunToolContext } from "../tools/rule-of-two.js";
+import { classify } from "./classifier.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -565,6 +571,273 @@ describe("dispatchTask V8.3 seam origin wiring (qa W2 2026-08-17)", () => {
     expect(seen[0]).toEqual({ source: "operator", threadId: "telegram:42" });
     expect(seen[1]).toBe(BACKGROUND_ORIGIN);
     expect(currentRunOrigin()).toBe(BACKGROUND_ORIGIN); // no leak out of the run
+  });
+});
+
+// Confirmation gate (audit 2026-09-30 C2/W3): the SDK gate reads the run's
+// execution context — it must exist around EVERY runner, carry the right
+// facts per population, and never let a sub-task or retry ask.
+describe("dispatchTask confirmation-gate context", () => {
+  type Facts = Pick<
+    TaskExecutionContext,
+    | "taskId"
+    | "interactive"
+    | "routerRoot"
+    | "canAskOperator"
+    | "chatOrigin"
+    | "a2aOrigin"
+  >;
+  const seen = new Map<string, Facts | undefined>();
+  const facts = (ctx: TaskExecutionContext | undefined): Facts | undefined =>
+    ctx && {
+      taskId: ctx.taskId,
+      interactive: ctx.interactive,
+      routerRoot: ctx.routerRoot,
+      canAskOperator: ctx.canAskOperator,
+      chatOrigin: ctx.chatOrigin,
+      a2aOrigin: ctx.a2aOrigin,
+    };
+  let spawn: ((title: string) => Promise<void>) | null = null;
+
+  beforeEach(() => {
+    seen.clear();
+    spawn = null;
+    mockRun.mockReturnValue({ changes: 1 });
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen.set(input.title, facts(currentExecutionContext()));
+        if (spawn) await spawn(input.title);
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+  });
+
+  async function runAll(
+    subs: Array<Parameters<typeof submitTask>[0]>,
+  ): Promise<void> {
+    for (const sub of subs) await submitTask(sub);
+    await vi.waitFor(() => {
+      if (seen.size < subs.length) throw new Error("runners not yet executed");
+    });
+  }
+
+  it("every population runs inside its own gate context with the right facts; background stays non-interactive", async () => {
+    const chat = {
+      threadId: "telegram:42",
+      replyTracked: true,
+      tags: ["messaging", "telegram"],
+    };
+    await runAll([
+      { title: "chat-root", description: "d", ...chat },
+      {
+        title: "ritual",
+        description: "d",
+        interactive: false,
+        ritualId: "morning-briefing",
+      },
+      {
+        title: "scheduled",
+        description: "d",
+        interactive: false,
+        tags: ["scheduled"],
+      },
+      { title: "cron-autonomous", description: "d", interactive: false },
+      {
+        title: "ritual-reaction-retry",
+        description: "d",
+        interactive: false,
+        ritualId: "r",
+        tags: ["ritual-retry"],
+      },
+      { title: "api", description: "d" },
+      { title: "a2a", description: "d", interactive: true, tags: ["a2a"] },
+      {
+        title: "non-owner-chat",
+        description: "d",
+        tags: ["messaging", "whatsapp"],
+        replyTracked: true,
+      },
+      // A reaction retry of a chat task: the router does not track it.
+      {
+        title: "chat-reaction-retry",
+        description: "d",
+        threadId: "telegram:42",
+        tags: ["messaging"],
+      },
+      {
+        title: "chat-required-tool-retry",
+        description: "d",
+        ...chat,
+        _isRequiredToolRetry: true,
+        retryCount: 1,
+      },
+      // Each retry marker alone also keeps the run from asking.
+      {
+        title: "chat-retry-flag-only",
+        description: "d",
+        ...chat,
+        _isRequiredToolRetry: true,
+      },
+      {
+        title: "chat-retry-count-only",
+        description: "d",
+        ...chat,
+        retryCount: 1,
+      },
+      { title: "chat-subtask", description: "d", ...chat, parentTaskId: "p-1" },
+    ]);
+    const f = (title: string) => {
+      const got = seen.get(title);
+      expect(got, title).toBeDefined();
+      expect(got!.canAskOperator, title).toBe(false); // the dispatcher's own context never asks
+      return got!;
+    };
+    expect(f("chat-root")).toMatchObject({
+      interactive: true,
+      routerRoot: true,
+      chatOrigin: true,
+    });
+    for (const bg of [
+      "ritual",
+      "scheduled",
+      "cron-autonomous",
+      "ritual-reaction-retry",
+    ]) {
+      expect(f(bg), bg).toMatchObject({
+        interactive: false,
+        routerRoot: false,
+      });
+    }
+    expect(f("api")).toMatchObject({
+      interactive: true,
+      routerRoot: false,
+      chatOrigin: false,
+      a2aOrigin: false,
+    });
+    expect(f("a2a")).toMatchObject({
+      interactive: true,
+      routerRoot: false,
+      chatOrigin: false,
+      a2aOrigin: true,
+    });
+    expect(f("non-owner-chat")).toMatchObject({
+      interactive: true,
+      routerRoot: false,
+      chatOrigin: true,
+    });
+    for (const t of [
+      "chat-reaction-retry",
+      "chat-required-tool-retry",
+      "chat-retry-flag-only",
+      "chat-retry-count-only",
+      "chat-subtask",
+    ]) {
+      expect(f(t), t).toMatchObject({
+        interactive: true,
+        routerRoot: false,
+        chatOrigin: true,
+      });
+    }
+    expect(currentExecutionContext()).toBeUndefined(); // no leak out of the run
+  });
+
+  it("W-A: the nanoclaw→fast fallback runs inside the same gate context (routerRoot + chatOrigin)", async () => {
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: "nanoclaw",
+      score: 5,
+      reason: "coding",
+      explicit: false,
+      modelTier: "standard",
+    } as unknown as ReturnType<typeof classify>);
+    const nano: Array<Facts | undefined> = [];
+    registerRunner({
+      type: "nanoclaw",
+      // A no-op sandbox failure (no error) → the in-process fast fallback.
+      execute: async () => {
+        nano.push(facts(currentExecutionContext()));
+        return { success: false } as RunnerOutput;
+      },
+    });
+    await runAll([
+      {
+        title: "misrouted-chat",
+        description: "d",
+        threadId: "telegram:42",
+        replyTracked: true,
+        tags: ["messaging", "telegram"],
+      },
+    ]);
+    expect(nano).toHaveLength(1);
+    const expected = {
+      taskId: nano[0]!.taskId,
+      interactive: true,
+      routerRoot: true,
+      chatOrigin: true,
+      canAskOperator: false,
+      a2aOrigin: false,
+    };
+    expect(nano[0]).toEqual(expected);
+    expect(seen.get("misrouted-chat")).toEqual(expected); // the fast fallback
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task.fallback" }),
+    );
+  });
+
+  it("a sub-task inherits interactive=false and chat origin from the submitting run, never routerRoot", async () => {
+    spawn = async (title) => {
+      if (title === "ritual-parent") {
+        await submitTask({ title: "ritual-child", description: "d" });
+      } else if (title === "chat-parent") {
+        await submitTask({
+          title: "chat-child",
+          description: "d",
+          parentTaskId: "p",
+        });
+      } else if (title === "ritual-parent-detached") {
+        // N1: a task spawned OUTSIDE the run context starts fresh.
+        await outsideRunToolContext(() =>
+          submitTask({ title: "detached-child", description: "d" }),
+        );
+      }
+    };
+    await runAll([
+      {
+        title: "ritual-parent",
+        description: "d",
+        interactive: false,
+        ritualId: "r",
+      },
+      {
+        title: "chat-parent",
+        description: "d",
+        threadId: "telegram:1",
+        replyTracked: true,
+        tags: ["messaging"],
+      },
+      {
+        title: "ritual-parent-detached",
+        description: "d",
+        interactive: false,
+        ritualId: "r",
+      },
+    ]);
+    await vi.waitFor(() => {
+      if (seen.size < 6) throw new Error("children not yet executed");
+    });
+    expect(seen.get("ritual-child")).toMatchObject({
+      interactive: false,
+      routerRoot: false,
+    });
+    expect(seen.get("chat-child")).toMatchObject({
+      interactive: true,
+      routerRoot: false,
+      chatOrigin: true,
+    });
+    expect(seen.get("detached-child")).toMatchObject({
+      interactive: true,
+      chatOrigin: false,
+    });
   });
 });
 

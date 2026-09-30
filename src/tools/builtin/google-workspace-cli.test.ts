@@ -346,4 +346,31 @@ describe("google_workspace_cli", () => {
 
     expect(capturedArgv).toEqual(["chat", "--help"]);
   });
+
+  it("rejects a service/resource segment that gws would parse as a flag or helper (audit C1)", async () => {
+    for (const bad of [
+      {
+        service: "chat",
+        resource: "+send.--space.spaces/AAAA.--text",
+        method: "list",
+      },
+      {
+        service: "gmail",
+        resource: "users.messages.send.--sanitize",
+        method: "list",
+      },
+      {
+        service: "tasks",
+        resource: "tasklists.delete.--params.{}.--format",
+        method: "get",
+      },
+      { service: "+gmail", resource: "", method: "list" },
+      { service: "--dry-run", resource: "tasklists", method: "list" },
+    ]) {
+      const result = JSON.parse(await googleWorkspaceCliTool.execute(bad));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/cannot start with "-" or "\+"/);
+    }
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
 });

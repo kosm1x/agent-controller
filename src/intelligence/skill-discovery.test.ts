@@ -105,6 +105,7 @@ describe("skill-discovery", () => {
         agentType: "fast",
         tools: ["skill_save", "skill_list"],
         tags: ["internal", "skill-suggestion"],
+        interactive: false, // W-E: background — explicit, not defaulted
       }),
     );
   });

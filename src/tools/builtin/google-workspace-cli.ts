@@ -31,6 +31,33 @@ const GWS_BINARY = "gws";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024; // 2 MiB subprocess stdout cap
 
+/**
+ * The gws argv a call runs: gws <service> [resource segments...] <method>
+ * [--params ...] [--json ...] [--page-all]. Resource is dot-separated for
+ * nested subcommands (spaces.messages → ["spaces", "messages"]). Exported so
+ * the confirmation line shows the operator exactly this (audit 2026-09-30 W1).
+ */
+export function buildGwsArgv(args: Record<string, unknown>): string[] {
+  const resource = typeof args.resource === "string" ? args.resource : "";
+  const argv: string[] = [String(args.service)];
+  if (resource.length > 0) {
+    for (const segment of resource.split(".")) {
+      if (segment.length > 0) argv.push(segment);
+    }
+  }
+  argv.push(String(args.method));
+  if (args.params !== undefined) {
+    argv.push("--params", JSON.stringify(args.params));
+  }
+  if (args.json !== undefined) {
+    argv.push("--json", JSON.stringify(args.json));
+  }
+  if (args.page_all) {
+    argv.push("--page-all");
+  }
+  return argv;
+}
+
 interface ExecResult {
   stdout: string;
   stderr: string;
@@ -213,8 +240,6 @@ RESPONSE SHAPE: { "ok": true, "result": <parsed JSON> } on success, or { "ok": f
     const service = args.service as string;
     const resource = args.resource as string;
     const method = args.method as string;
-    const params = args.params as Record<string, unknown> | undefined;
-    const json = args.json as Record<string, unknown> | undefined;
     const pageAll = Boolean(args.page_all ?? false);
     const timeoutMs = Math.max(
       1000,
@@ -237,6 +262,19 @@ RESPONSE SHAPE: { "ok": true, "result": <parsed JSON> } on success, or { "ok": f
       return JSON.stringify({
         ok: false,
         error: "method is required",
+      });
+    }
+    // service/resource become bare argv words: a "-"/"+" segment would be
+    // parsed as a gws flag or helper command (`+send`, `--sanitize`), turning
+    // a declared read into a write. Reject it here, independent of the
+    // confirmation gate (audit 2026-09-30 C1).
+    const badSegment = [service, ...resource.split(".")].find((seg) =>
+      /^[-+]/.test(seg),
+    );
+    if (badSegment !== undefined) {
+      return JSON.stringify({
+        ok: false,
+        error: `service/resource segments cannot start with "-" or "+" (got "${badSegment}"); pass flags via params/json`,
       });
     }
 
@@ -264,24 +302,7 @@ RESPONSE SHAPE: { "ok": true, "result": <parsed JSON> } on success, or { "ok": f
       });
     }
 
-    // Build argv: gws <service> [resource segments...] <method> [--params ...] [--json ...] [--page-all]
-    // Resource is dot-separated for nested subcommands (spaces.messages → ["spaces", "messages"]).
-    const argv: string[] = [service];
-    if (resource.length > 0) {
-      for (const segment of resource.split(".")) {
-        if (segment.length > 0) argv.push(segment);
-      }
-    }
-    argv.push(method);
-    if (params !== undefined) {
-      argv.push("--params", JSON.stringify(params));
-    }
-    if (json !== undefined) {
-      argv.push("--json", JSON.stringify(json));
-    }
-    if (pageAll) {
-      argv.push("--page-all");
-    }
+    const argv = buildGwsArgv(args);
 
     // Inject the token into the child env. Never log it. Strip unrelated
     // Jarvis env that could confuse gws behavior (none currently, but keep

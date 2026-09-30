@@ -12,7 +12,10 @@ import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import { TaskExecutionContext } from "../inference/execution-context.js";
+import {
+  runnerExecutionContext,
+  runWithExecutionContext,
+} from "../inference/execution-context.js";
 import { createTaskExecutor } from "../tools/task-executor.js";
 import {
   recordToolExecution,
@@ -1276,7 +1279,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
 
     // Per-task execution context: isolates destructive locks + memory rate limits
     // Non-interactive tasks (scheduled, rituals) bypass the confirmation gate.
-    const taskContext = new TaskExecutionContext(
+    // Takes the dispatcher's confirmation facts for this task: it may ask
+    // only on a router-tracked operator root (it surfaces the pending below).
+    const taskContext = runnerExecutionContext(
       input.taskId,
       input.interactive !== false,
     );
@@ -1431,23 +1436,27 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             (sdkImages.length > 0 ? `, images=${sdkImages.length}` : ""),
         );
 
-        let sdkResult = await queryClaudeSdk({
-          prompt: userPrompt,
-          systemPrompt,
-          toolNames: allToolNames,
-          maxTurns: maxRounds,
-          unlimited: input.unlimited,
-          abortSignal: input.signal,
-          // Metered by the dispatcher aggregate over result.tokenUsage (and
-          // by recordReflectionCost when reflection invokes this runner
-          // directly) — seam recording here would double-count. (3.3)
-          costLedger: false,
-          // Phase 6: per-turn/per-tool timeline correlated to this task.
-          // Reflection invokes execute() without a real task row — those
-          // emits still land and prune with the 30d window; harmless.
-          trace: { taskId: input.taskId, runId: input.runId },
-          ...(sdkImages.length > 0 && { images: sdkImages }),
-        });
+        // The confirmation gate on the SDK path reads this context (wrapTool →
+        // confirmationGate); entered around every queryClaudeSdk leg below.
+        let sdkResult = await runWithExecutionContext(taskContext, () =>
+          queryClaudeSdk({
+            prompt: userPrompt,
+            systemPrompt,
+            toolNames: allToolNames,
+            maxTurns: maxRounds,
+            unlimited: input.unlimited,
+            abortSignal: input.signal,
+            // Metered by the dispatcher aggregate over result.tokenUsage (and
+            // by recordReflectionCost when reflection invokes this runner
+            // directly) — seam recording here would double-count. (3.3)
+            costLedger: false,
+            // Phase 6: per-turn/per-tool timeline correlated to this task.
+            // Reflection invokes execute() without a real task row — those
+            // emits still land and prune with the 30d window; harmless.
+            trace: { taskId: input.taskId, runId: input.runId },
+            ...(sdkImages.length > 0 && { images: sdkImages }),
+          }),
+        );
 
         // ── Phase 4.3 on the PRODUCTION path (R1 audit C1: the first cut
         // lived only on the openai branch, which this box never runs). ──
@@ -1494,6 +1503,18 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           durationMs: first.durationMs + second.durationMs,
         });
 
+        // Calls the confirmation gate stopped never executed — drop them from
+        // every "already ran" record (resume prompt, run output, telemetry).
+        const withoutGated = (calls: string[]): string[] => {
+          const gated = [...taskContext.getGatedCalls()];
+          return calls.filter((name) => {
+            const i = gated.indexOf(name);
+            if (i === -1) return true;
+            gated.splice(i, 1);
+            return false;
+          });
+        };
+
         let sdkAutoResumed = false;
         // R3 audit W2: set BEFORE the await — a resume that THROWS must
         // still count as the run's one recovery leg, or a capped partial
@@ -1509,29 +1530,31 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           recoveryLegUsed = true;
           try {
             const firstLegText = sdkResult.text;
-            const resumeLeg = await queryClaudeSdk({
-              prompt:
-                `${userPrompt}\n\n[AVANCE PREVIO — la ejecución anterior alcanzó su límite de turnos/presupuesto antes de terminar]\n` +
-                `${firstLegText.slice(0, 4000)}\n\n` +
-                // R2 audit C2: the claim must carry the evidence — name the
-                // tools that ALREADY ran so mutating calls (send/write/post)
-                // are not repeated.
-                `Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ${sdkResult.toolCalls.join(", ") || "ninguna"}.\n` +
-                `CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.`,
-              systemPrompt,
-              toolNames: allToolNames,
-              // R1 audit W4: bounded — half the rounds finishes a nearly-done
-              // task; anything needing more re-caps into checkpoint + ¿Sigo?.
-              maxTurns: input.unlimited
-                ? LOOP_MAX_TURNS
-                : Math.max(4, Math.ceil(maxRounds / 2)),
-              unlimited: input.unlimited,
-              abortSignal: input.signal,
-              costLedger: false,
-              trace: { taskId: input.taskId, runId: input.runId },
-              // A capped vision task keeps its image on resume (R2 info).
-              ...(sdkImages.length > 0 && { images: sdkImages }),
-            });
+            const resumeLeg = await runWithExecutionContext(taskContext, () =>
+              queryClaudeSdk({
+                prompt:
+                  `${userPrompt}\n\n[AVANCE PREVIO — la ejecución anterior alcanzó su límite de turnos/presupuesto antes de terminar]\n` +
+                  `${firstLegText.slice(0, 4000)}\n\n` +
+                  // R2 audit C2: the claim must carry the evidence — name the
+                  // tools that ALREADY ran so mutating calls (send/write/post)
+                  // are not repeated.
+                  `Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ${withoutGated(sdkResult.toolCalls).join(", ") || "ninguna"}.\n` +
+                  `CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.`,
+                systemPrompt,
+                toolNames: allToolNames,
+                // R1 audit W4: bounded — half the rounds finishes a nearly-done
+                // task; anything needing more re-caps into checkpoint + ¿Sigo?.
+                maxTurns: input.unlimited
+                  ? LOOP_MAX_TURNS
+                  : Math.max(4, Math.ceil(maxRounds / 2)),
+                unlimited: input.unlimited,
+                abortSignal: input.signal,
+                costLedger: false,
+                trace: { taskId: input.taskId, runId: input.runId },
+                // A capped vision task keeps its image on resume (R2 info).
+                ...(sdkImages.length > 0 && { images: sdkImages }),
+              }),
+            );
             sdkResult = mergeSdkLegs(sdkResult, resumeLeg);
             // R2 audit C2: leg-1's streamed work must survive when leg-2
             // returns only a thin closer — the partial IS the deliverable.
@@ -1570,17 +1593,19 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
           );
           try {
-            const authLeg = await queryClaudeSdk({
-              prompt: userPrompt,
-              systemPrompt,
-              toolNames: allToolNames,
-              maxTurns: maxRounds,
-              unlimited: input.unlimited,
-              abortSignal: input.signal,
-              costLedger: false,
-              trace: { taskId: input.taskId, runId: input.runId },
-              ...(sdkImages.length > 0 && { images: sdkImages }),
-            });
+            const authLeg = await runWithExecutionContext(taskContext, () =>
+              queryClaudeSdk({
+                prompt: userPrompt,
+                systemPrompt,
+                toolNames: allToolNames,
+                maxTurns: maxRounds,
+                unlimited: input.unlimited,
+                abortSignal: input.signal,
+                costLedger: false,
+                trace: { taskId: input.taskId, runId: input.runId },
+                ...(sdkImages.length > 0 && { images: sdkImages }),
+              }),
+            );
             if (!sdkAuthFailed(authLeg.text)) {
               sdkResult = mergeSdkLegs(sdkResult, authLeg);
               console.log(
@@ -1599,6 +1624,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             console.warn(`[recovery] auth retry threw: ${errMsg(authErr)}`);
           }
         }
+
+        sdkResult = {
+          ...sdkResult,
+          toolCalls: withoutGated(sdkResult.toolCalls),
+        };
 
         // Map SDK result to RunnerOutput
         let parsed = parseRunnerStatus(sdkResult.text);
@@ -1651,6 +1681,32 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           };
         }
 
+        // A high-risk call is waiting for the operator (confirmation gate):
+        // the run must complete so the router stores the pending action and
+        // the reply asks for it — a short BLOCKED reply would route to
+        // handleTaskFailed, and an empty one would store nothing.
+        const pendingConfirmation = taskContext.getPendingConfirmation();
+        if (pendingConfirmation) {
+          if (
+            parsed.status === "BLOCKED" ||
+            parsed.status === "NEEDS_CONTEXT"
+          ) {
+            parsed = {
+              ...parsed,
+              status: "DONE_WITH_CONCERNS",
+              concerns: [
+                `Original status: ${parsed.status}. Awaiting operator confirmation for ${pendingConfirmation.toolName}.`,
+              ],
+            };
+          }
+          if (parsed.cleanContent.trim() === "") {
+            parsed = {
+              ...parsed,
+              cleanContent: `Esta acción requiere tu confirmación: ${pendingConfirmation.toolName}. ¿Procedo?`,
+            };
+          }
+        }
+
         // Scope telemetry — record tool execution on the SDK path. The
         // openai-path does this ~100 lines below (after inferWithTools),
         // but the SDK branch returns early so a separate record call is
@@ -1685,6 +1741,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             // V8.4: how the terminal status was obtained (explicit STATUS
             // line vs the DONE default) — measured via tasks.output.
             statusSource: parsed.statusSource,
+            // Read by the router (handleTaskCompleted) to ask the operator.
+            ...(pendingConfirmation && { pendingConfirmation }),
           },
           toolCalls: sdkResult.toolCalls,
           // qa-audit 2026-09-12 C-2: this branch returned before the field

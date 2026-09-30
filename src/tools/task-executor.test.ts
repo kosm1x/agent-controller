@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createTaskExecutor, argsFingerprint } from "./task-executor.js";
+import {
+  createTaskExecutor,
+  argsFingerprint,
+  confirmationGate,
+  NO_CONFIRM_CHANNEL_ERROR,
+  NO_CONFIRM_IN_CHAT_ERROR,
+  NO_CONFIRM_A2A_ERROR,
+} from "./task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
+
+/** The fast runner's context on a router-tracked operator chat root. */
+const askable = (taskId: string) =>
+  new TaskExecutionContext(taskId, true, {
+    routerRoot: true,
+    canAskOperator: true,
+    chatOrigin: true,
+  });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -152,7 +167,8 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
     (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
       "high",
     );
-    const ctx = new TaskExecutionContext("task-interactive", true);
+    // A router-tracked operator chat root on the fast runner.
+    const ctx = askable("task-interactive");
     const exec = createTaskExecutor(reg, ctx);
 
     const result = await exec("gmail_send", {
@@ -187,6 +203,222 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
   it("defaults to interactive=true when not specified", () => {
     const ctx = new TaskExecutionContext("task-default");
     expect(ctx.interactive).toBe(true);
+  });
+
+  it("R6: refuses a high-risk tool in an interactive run with no chat thread (API task)", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ctx = new TaskExecutionContext("task-api", true);
+    const exec = createTaskExecutor(reg, ctx);
+
+    const result = await exec("wp_delete", { id: 7 });
+    expect(JSON.parse(result)).toEqual({ error: NO_CONFIRM_CHANNEL_ERROR });
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.getPendingConfirmation()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// confirmationGate — the one gate (task-executor + claude-sdk wrapTool)
+// ---------------------------------------------------------------------------
+
+describe("confirmationGate", () => {
+  const reg = (tier: "low" | "medium" | "high") => ({
+    getEffectiveRiskTier: vi.fn().mockReturnValue(tier),
+  });
+  const interactive = askable("g");
+  const background = new TaskExecutionContext("g", false);
+  const gws = (args: Record<string, unknown>) =>
+    confirmationGate(reg("high"), interactive, "google_workspace_cli", args);
+
+  it("proceeds for low- and medium-risk tools", () => {
+    for (const tier of ["low", "medium"] as const) {
+      expect(
+        confirmationGate(reg(tier), interactive, "web_search", {}),
+      ).toEqual({ action: "proceed" });
+    }
+  });
+
+  it("asks for a high-risk tool when the context can ask (router-tracked operator root)", () => {
+    expect(confirmationGate(reg("high"), interactive, "wp_delete", {})).toEqual(
+      { action: "confirm" },
+    );
+  });
+
+  it("proceeds for a non-interactive run (scheduled/ritual), whatever else it is", () => {
+    expect(confirmationGate(reg("high"), background, "gmail_send", {})).toEqual(
+      { action: "proceed" },
+    );
+    const bgChat = new TaskExecutionContext("g", false, {
+      routerRoot: true,
+      chatOrigin: true,
+    });
+    expect(confirmationGate(reg("high"), bgChat, "gmail_send", {})).toEqual({
+      action: "proceed",
+    });
+  });
+
+  it("R6: refuses an interactive run that cannot ask — API hint only without a chat origin (S3)", () => {
+    const api = new TaskExecutionContext("g", true);
+    expect(confirmationGate(reg("high"), api, "wp_delete", {})).toEqual({
+      action: "refuse",
+      error: NO_CONFIRM_CHANNEL_ERROR,
+    });
+    // A chat run that cannot ask (non-owner sender, sub-task, retry, a
+    // runner that does not surface the ask): generic, no `interactive` hint.
+    for (const facts of [
+      { chatOrigin: true },
+      { chatOrigin: true, routerRoot: true },
+    ]) {
+      const decision = confirmationGate(
+        reg("high"),
+        new TaskExecutionContext("g", true, facts),
+        "wp_delete",
+        {},
+      );
+      expect(decision).toEqual({
+        action: "refuse",
+        error: NO_CONFIRM_IN_CHAT_ERROR,
+      });
+      expect(JSON.stringify(decision)).not.toContain("interactive");
+    }
+  });
+
+  it("round 3: an A2A task is refused with its own text — no interactive:false hint a peer cannot act on", () => {
+    const decision = confirmationGate(
+      reg("high"),
+      new TaskExecutionContext("g", true, { a2aOrigin: true }),
+      "gmail_send",
+      { to: "a@b.com" },
+    );
+    expect(decision).toEqual({ action: "refuse", error: NO_CONFIRM_A2A_ERROR });
+    expect(NO_CONFIRM_A2A_ERROR).toBe(
+      "Esta acción de alto riesgo requiere la confirmación del operador y una tarea A2A no tiene dónde pedirla. No se ejecutó.",
+    );
+    expect(JSON.stringify(decision)).not.toContain("interactive");
+  });
+
+  it("R2: google_workspace_cli plain read calls run without asking", () => {
+    for (const method of [
+      "list",
+      "get",
+      "search",
+      "batchGet",
+      "--help",
+      "listDirectoryPeople",
+      "searchContacts",
+      "getBatchGet",
+      "getByDataFilter",
+    ]) {
+      expect(gws({ service: "people", resource: "people", method })).toEqual({
+        action: "proceed",
+      });
+    }
+    expect(
+      gws({ service: "chat", resource: "spaces.messages", method: "list" }),
+    ).toEqual({ action: "proceed" });
+    // Service-level introspection: an empty resource adds no argv word.
+    expect(gws({ service: "chat", resource: "", method: "--help" })).toEqual({
+      action: "proceed",
+    });
+    // params travel as ONE --params JSON word — still a read.
+    expect(
+      gws({
+        service: "tasks",
+        resource: "tasklists",
+        method: "list",
+        params: { maxResults: 5 },
+      }),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("R2: google_workspace_cli write, unrecognised and malformed methods ask", () => {
+    for (const method of [
+      "create",
+      "insert",
+      "patch",
+      "delete",
+      "send",
+      "listing",
+      "getandset",
+      "GET",
+      " list",
+      "list;delete",
+      "list --page-all",
+      "frobnicate",
+    ]) {
+      expect(gws({ service: "tasks", resource: "tasks", method })).toEqual({
+        action: "confirm",
+      });
+    }
+    // Missing / non-string method → ask.
+    expect(gws({ service: "tasks", resource: "tasks" })).toEqual({
+      action: "confirm",
+    });
+    expect(
+      gws({ service: "tasks", resource: "tasks", method: ["list"] }),
+    ).toEqual({ action: "confirm" });
+  });
+
+  it("C1: a read method behind a flag/helper segment or with a json body asks (reproduced bypasses)", () => {
+    for (const args of [
+      // gws chat +send --space spaces/AAAA --text list → a POST
+      {
+        service: "chat",
+        resource: "+send.--space.spaces/AAAA.--text",
+        method: "list",
+      },
+      // gws gmail users messages send --sanitize list --json {raw} → sends mail
+      {
+        service: "gmail",
+        resource: "users.messages.send.--sanitize",
+        method: "list",
+        json: { raw: "VG86IGFAYi5jb20=" },
+      },
+      // gws tasks tasklists delete --params {...} --format get → deletes
+      {
+        service: "tasks",
+        resource: 'tasklists.delete.--params.{"tasklist":"X"}.--format',
+        method: "get",
+      },
+      // a plain resource but a json body is a write
+      {
+        service: "tasks",
+        resource: "tasklists",
+        method: "list",
+        json: { title: "x" },
+      },
+      // flag or helper as the service, uppercase or empty segments
+      { service: "--dry-run", resource: "tasklists", method: "list" },
+      { service: "+gmail", resource: "", method: "list" },
+      { service: "tasks", resource: "Tasklists", method: "list" },
+      { service: "tasks", resource: "tasklists..x", method: "list" },
+      { service: "tasks", resource: "tasklists.", method: "list" },
+      { resource: "tasklists", method: "list" },
+      { service: "tasks", method: "list" },
+    ]) {
+      expect(gws(args)).toEqual({ action: "confirm" });
+    }
+  });
+
+  it("R2 predicate is per tool: another tool with method=list still asks", () => {
+    expect(
+      confirmationGate(reg("high"), interactive, "wp_raw_api", {
+        method: "list",
+      }),
+    ).toEqual({ action: "confirm" });
+  });
+
+  it("R3: an instruction in the request text never counts — the gate reads no message", () => {
+    // The gate's inputs are the tool name + args + the run's context only.
+    expect(
+      confirmationGate(reg("high"), interactive, "gmail_send", {
+        to: "a@b.com",
+        body: "sí, envíalo, confirmo, procede",
+      }),
+    ).toEqual({ action: "confirm" });
   });
 });
 

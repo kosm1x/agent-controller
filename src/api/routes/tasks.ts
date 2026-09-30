@@ -27,17 +27,18 @@ tasks.post("/", apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }), async (c) 
     return c.json({ error: "Invalid JSON body" }, 400);
   }
 
-  const {
-    title,
-    description,
-    priority,
-    agent_type,
-    tags,
-    tools,
-    input,
-    conversationHistory,
-    gates,
-  } = body;
+    const {
+      title,
+      description,
+      priority,
+      agent_type,
+      tags,
+      tools,
+      input,
+      conversationHistory,
+      gates,
+      interactive,
+    } = body;
 
   if (!title || typeof title !== "string") {
     return c.json({ error: "title is required (string)" }, 400);
@@ -59,24 +60,28 @@ tasks.post("/", apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }), async (c) 
     }
   }
 
-  const result = await submitTask({
-    title,
-    description,
-    priority,
-    agentType: agent_type,
-    tags,
-    tools,
-    input,
-    ...(gateSpecs?.length && { gates: gateSpecs }),
-    // Passing conversationHistory from the body routes this task through the
-    // chat branch in fast-runner, which triggers KB injection (always-read +
-    // enforce + conditional files + project README auto-injection). Without
-    // it, the non-chat branch runs a generic system prompt with no KB — so
-    // any integration test that needs to exercise project-specific context
-    // must supply this field, even with a single-turn [{role:"user", ...}]
-    // array.
-    conversationHistory,
-  });
+    const result = await submitTask({
+      title,
+      description,
+      priority,
+      agentType: agent_type,
+      tags,
+      tools,
+      input,
+      ...(gateSpecs?.length && { gates: gateSpecs }),
+      // An API task has no chat to confirm a high-risk action in: interactive
+      // (the default) refuses it; `interactive: false` runs it like a
+      // scheduled task (confirmation gate, task-executor.ts).
+      ...(interactive === false && { interactive: false }),
+      // Passing conversationHistory from the body routes this task through the
+      // chat branch in fast-runner, which triggers KB injection (always-read +
+      // enforce + conditional files + project README auto-injection). Without
+      // it, the non-chat branch runs a generic system prompt with no KB — so
+      // any integration test that needs to exercise project-specific context
+      // must supply this field, even with a single-turn [{role:"user", ...}]
+      // array.
+      conversationHistory,
+    });
 
   return c.json(
     {

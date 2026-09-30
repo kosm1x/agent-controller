@@ -30,6 +30,11 @@ import {
   outsideRunToolContext,
   type RunOrigin,
 } from "../tools/rule-of-two.js";
+import {
+  TaskExecutionContext,
+  currentExecutionContext,
+  runWithExecutionContext,
+} from "../inference/execution-context.js";
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -94,6 +99,13 @@ export interface TaskSubmission {
   unlimited?: boolean;
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
+  /**
+   * @internal Router only: the router tracks this task's reply in
+   * `pendingReplies`, so a confirmation question the run ends with is stored
+   * and the operator's answer handled. Never persisted — a reaction retry or
+   * a required-tool retry is a new task the router does not track.
+   */
+  replyTracked?: boolean;
   /**
    * @internal Set on a retry submission so the new task's `retry_count`
    * column starts at the predecessor's value + 1. Used by both the
@@ -239,6 +251,7 @@ interface QueuedContainerTask {
   taskId: string;
   agentType: AgentType;
   submission: TaskSubmission;
+  gateContext: TaskExecutionContext;
 }
 
 const containerQueue: QueuedContainerTask[] = [];
@@ -263,12 +276,52 @@ function runOriginOf(submission: TaskSubmission): RunOrigin | undefined {
     : undefined;
 }
 
+/**
+ * Confirmation-gate facts for one run (audit 2026-09-30 C2/W3). Computed at
+ * SUBMIT time — inside the submitting run's context, before a container-queue
+ * drain drops it — and entered around every `runner.execute`, so the gate on
+ * any SDK path (heavy, swarm, Prometheus) knows them:
+ * - interactive: the submission's, else the submitting run's (a child of a
+ *   scheduled run has no one to ask either), else true.
+ * - routerRoot: the router tracks this task's reply (`replyTracked` on an
+ *   operator-thread root). Never a sub-task or a retry: an ask there would
+ *   land only in that task's run output and be dropped.
+ * - chatOrigin: the run answers a chat message (any sender).
+ * The context itself never asks (`canAskOperator` false): only a runner that
+ * surfaces the pending action (fast) enters one that may.
+ */
+export function gateContextFor(
+  taskId: string,
+  submission: TaskSubmission,
+): TaskExecutionContext {
+  const parent = currentExecutionContext();
+  return new TaskExecutionContext(
+    taskId,
+    submission.interactive ?? parent?.interactive ?? true,
+    {
+      routerRoot:
+        submission.replyTracked === true &&
+        !!submission.threadId &&
+        !submission.parentTaskId &&
+        !submission._isRequiredToolRetry &&
+        !submission.retryCount,
+      chatOrigin:
+        !!submission.threadId ||
+        !!submission.tags?.includes("messaging") ||
+        parent?.chatOrigin === true,
+      a2aOrigin:
+        !!submission.tags?.includes("a2a") || parent?.a2aOrigin === true,
+    },
+  );
+}
+
 function enqueueContainerTask(
   taskId: string,
   agentType: AgentType,
   submission: TaskSubmission,
+  gateContext: TaskExecutionContext,
 ): void {
-  containerQueue.push({ taskId, agentType, submission });
+  containerQueue.push({ taskId, agentType, submission, gateContext });
   log.info(
     { taskId, queueLength: containerQueue.length },
     "task queued for container slot",
@@ -288,7 +341,12 @@ function drainContainerQueue(): void {
     // FINISHING run's async frame — exit its run-tool context so the dequeued
     // (unrelated) task neither inherits that run's prior nor leaks into it.
     outsideRunToolContext(() =>
-      dispatchWithSlot(next.taskId, next.agentType, next.submission),
+      dispatchWithSlot(
+        next.taskId,
+        next.agentType,
+        next.submission,
+        next.gateContext,
+      ),
     ).catch((err) => {
       log.error({ err, taskId: next.taskId }, "queued task failed");
       updateTaskStatus(next.taskId, "failed", undefined, String(err));
@@ -486,7 +544,12 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   }
 
   // Dispatch asynchronously
-  dispatchTask(taskId, classification.agentType, submission).catch((err) => {
+  dispatchTask(
+    taskId,
+    classification.agentType,
+    submission,
+    gateContextFor(taskId, submission),
+  ).catch((err) => {
     log.error({ err, taskId }, "failed to dispatch task");
     updateTaskStatus(taskId, "failed", undefined, String(err));
   });
@@ -509,6 +572,7 @@ async function dispatchTask(
   taskId: string,
   agentType: AgentType,
   submission: TaskSubmission,
+  gateContext: TaskExecutionContext,
 ): Promise<void> {
   const runner = runners.get(agentType);
   if (!runner) {
@@ -585,12 +649,12 @@ async function dispatchTask(
   // Container concurrency check
   if (needsContainer(agentType)) {
     if (!acquireContainerSlot()) {
-      enqueueContainerTask(taskId, agentType, submission);
+      enqueueContainerTask(taskId, agentType, submission, gateContext);
       return;
     }
   }
 
-  await dispatchWithSlot(taskId, agentType, submission);
+  await dispatchWithSlot(taskId, agentType, submission, gateContext);
 }
 
 /**
@@ -617,6 +681,7 @@ async function dispatchWithSlot(
   taskId: string,
   agentType: AgentType,
   submission: TaskSubmission,
+  gateContext: TaskExecutionContext,
 ): Promise<void> {
   const runner = runners.get(agentType);
   if (!runner) {
@@ -727,14 +792,18 @@ async function dispatchWithSlot(
     // the run (and its nested dispatches) `operator` on its thread; anything
     // else inherits the parent's origin or defaults to background.
     const runOrigin = runOriginOf(submission);
-    let result = await enterRunToolContext(
-      taskId,
-      () =>
-        ritualId
-          ? ritualContext.run({ ritualId }, () => runner.execute(input))
-          : runner.execute(input),
-      runOrigin,
-      abortController.signal,
+    // Confirmation gate (audit 2026-09-30 C2): every runner runs inside its
+    // task's gate context, so an SDK tool call anywhere in it is gated.
+    let result = await runWithExecutionContext(gateContext, () =>
+      enterRunToolContext(
+        taskId,
+        () =>
+          ritualId
+            ? ritualContext.run({ ritualId }, () => runner.execute(input))
+            : runner.execute(input),
+        runOrigin,
+        abortController.signal,
+      ),
     );
 
     // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
@@ -804,11 +873,13 @@ async function dispatchWithSlot(
           "UPDATE tasks SET started_at = datetime('now'), updated_at = datetime('now') WHERE task_id = ? AND status = 'running'",
         ).run(taskId);
         try {
-          const fb = await enterRunToolContext(
-            taskId,
-            () => fastRunner.execute(input),
-            runOrigin,
-            abortController.signal,
+          const fb = await runWithExecutionContext(gateContext, () =>
+            enterRunToolContext(
+              taskId,
+              () => fastRunner.execute(input),
+              runOrigin,
+              abortController.signal,
+            ),
           );
           if (fb.success) {
             result = fb;

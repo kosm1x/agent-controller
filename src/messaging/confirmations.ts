@@ -24,6 +24,7 @@
 
 import { createHash } from "crypto";
 import { getDatabase } from "../db/index.js";
+import { buildGwsArgv } from "../tools/builtin/google-workspace-cli.js";
 
 /** Pending confirmation waiting for user approval. */
 export interface PendingConfirmation {
@@ -63,6 +64,100 @@ function stableStringify(value: unknown): string {
 /** Exact-action identity: sha256 over sorted-key JSON (order-insensitive, lossless). */
 export function argsSha256(args: Record<string, unknown>): string {
   return createHash("sha256").update(stableStringify(args)).digest("hex");
+}
+
+/**
+ * Fields named first in a confirmation line — who receives it, what it
+ * touches — per tool; everything else goes in the JSON tail.
+ */
+const DEFAULT_KEY_FIELDS = [
+  "to",
+  "cc",
+  "bcc",
+  "subject",
+  "path",
+  "paths",
+  "id",
+  "ids",
+];
+const SUMMARY_KEY_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  tweet_post: ["account", "reply_to_id", "text"],
+  wp_raw_api: ["method", "path", "site"],
+  run_schedule: ["schedule_id", "id"],
+  delete_schedule: ["schedule_id", "id"],
+  jarvis_dev: ["action", "type", "slug"],
+  wp_publish: ["site", "status", "post_id", "slug"],
+  wp_plugins: ["site", "action", "plugin"],
+  calendar_create: ["event_id", "start", "end", "attendees", "status"],
+  calendar_update: ["event_id", "start", "end", "attendees", "status"],
+  gdrive_share: ["file_id", "email", "role"],
+};
+const SUMMARY_VALUE_CAP = 120;
+const SUMMARY_CAP = 400;
+
+function clip(text: string, cap: number): string {
+  return text.length > cap ? `${text.slice(0, cap)}…` : text;
+}
+
+/**
+ * What a confirmation approves, rendered by the harness from the STORED args
+ * the sha binds — never the model's wording (audit 2026-09-30 W1). Shown to
+ * the operator under the reply and stored as `tool_approvals.summary`.
+ * google_workspace_cli shows the exact gws argv it will run; other tools
+ * show their key fields by name (each value capped, never dropped), then the
+ * rest as compact JSON, shortest values first — the tail is what the line
+ * cap clips, so free text goes before an identifier does (W-C, round 3). A
+ * truncated array says how many items it holds. Nested values render as
+ * JSON, never `[object Object]`. One line, no backtick, so the router can
+ * show it as inline code (no chat markdown applies inside).
+ */
+export function renderConfirmationSummary(
+  toolName: string,
+  args: Record<string, unknown>,
+): string {
+  const oneLine = (s: string): string =>
+    s.replace(/`/g, "\\u0060").replace(/[\r\n]+/g, " ");
+  // A value with a control character or backtick renders as JSON (escaped).
+  const text = (v: unknown): string =>
+    typeof v === "string" && !/[\u0000-\u001f`]/.test(v)
+      ? v
+      : (JSON.stringify(v) ?? String(v));
+  if (toolName === "google_workspace_cli") {
+    const argv = buildGwsArgv(args).map(text).join(" ");
+    return oneLine(clip(`${toolName}(gws ${argv})`, SUMMARY_CAP));
+  }
+  const keyValue = (v: unknown): string => {
+    const full = text(v);
+    if (!Array.isArray(v) || full.length <= SUMMARY_VALUE_CAP) {
+      return clip(full, SUMMARY_VALUE_CAP);
+    }
+    const items: string[] = [];
+    for (const item of v) {
+      const next = JSON.stringify(item) ?? "null";
+      if ([...items, next].join(",").length > SUMMARY_VALUE_CAP) break;
+      items.push(next);
+    }
+    const shown =
+      items.length > 0 ? items.join(",") : clip(full, SUMMARY_VALUE_CAP);
+    return `[${shown},…] (${v.length} total)`;
+  };
+  const keys = SUMMARY_KEY_FIELDS[toolName] ?? DEFAULT_KEY_FIELDS;
+  const parts = keys
+    .filter((k) => args[k] !== undefined)
+    .map((k) => `${k}: ${keyValue(args[k])}`);
+  const size = (v: unknown): number => (JSON.stringify(v) ?? "").length;
+  const rest = Object.fromEntries(
+    Object.entries(args)
+      .filter(([k]) => !keys.includes(k))
+      .sort(([, a], [, b]) => size(a) - size(b)),
+  );
+  if (Object.keys(rest).length > 0) {
+    const head = `${toolName}(${parts.join(", ")}${parts.length > 0 ? ", " : ""}`;
+    const room = SUMMARY_CAP - head.length - 2; // "…" + ")"
+    const tail = JSON.stringify(rest);
+    parts.push(room > 0 ? clip(tail, room) : "…");
+  }
+  return oneLine(`${toolName}(${parts.join(", ")})`);
 }
 
 /** Best-effort durable write; never throws (DB may be absent in tests / early boot). */
@@ -114,8 +209,13 @@ export function storePendingConfirmation(
           `INSERT INTO tool_approvals (thread_key, tool, args_sha256, args_json, summary)
            VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(threadKey, toolName, sha, JSON.stringify(args), summary.slice(0, 500))
-        .lastInsertRowid as number,
+        .run(
+          threadKey,
+          toolName,
+          sha,
+          JSON.stringify(args),
+          summary.slice(0, 2000),
+        ).lastInsertRowid as number,
   );
 
   pendingConfirmations.set(threadKey, {
