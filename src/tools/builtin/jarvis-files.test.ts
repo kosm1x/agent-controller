@@ -36,6 +36,11 @@ import {
   jarvisFileMoveTool,
 } from "./jarvis-files.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
+import {
+  TaskExecutionContext,
+  runWithExecutionContext,
+  runnerExecutionContext,
+} from "../../inference/execution-context.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -874,5 +879,154 @@ describe("jarvis_file_list limit (logic audit F25 — a bare call dumped the who
     mockAll.mockReturnValueOnce(rows);
     const five = await jarvisFileListTool.execute({ prefix: "bulk/", limit: 5 });
     expect(five.split("\n").filter((l) => l.includes("bulk/f")).length).toBe(5);
+  });
+});
+
+describe("the external tag is operator-only (qa R3 W4 — publishing a row to the CRM)", () => {
+  const TAG_ERROR = "the external tag is set only from an operator chat";
+  const background = new TaskExecutionContext("t-bg", false);
+  // Interactive chat run that is not a router root (a sub-task, a retry, a
+  // non-operator sender): no operator to have asked for the publish.
+  const chatNonRoot = new TaskExecutionContext("t-sub", true, { chatOrigin: true });
+  const operatorRoot = new TaskExecutionContext("t-op", true, {
+    routerRoot: true,
+    canAskOperator: true,
+    chatOrigin: true,
+  });
+  // A user-background agent as the dispatcher builds it (gateContextFor on the
+  // router's `spawnType: "user-background"` submission — pinned in
+  // dispatcher.test.ts), then the fast runner's own context inside it.
+  const userBackground = new TaskExecutionContext("t-bgagent", true, {
+    routerRoot: true,
+    chatOrigin: true,
+    unattended: true,
+  });
+  const inUserBackground = <T>(fn: () => T): T =>
+    runWithExecutionContext(userBackground, () =>
+      runWithExecutionContext(runnerExecutionContext("t-bgagent", true), fn),
+    );
+  const externalRun = new TaskExecutionContext(
+    "t-ext",
+    true,
+    { routerRoot: true, canAskOperator: true, chatOrigin: true },
+    ["jarvis_file_read"],
+  );
+  const row = (tags: string) => ({
+    id: "x",
+    path: "notes/share.md",
+    title: "Share",
+    content: "body",
+    tags,
+    qualifier: "reference",
+    condition: null,
+    priority: 50,
+    related_to: "[]",
+    created_at: "",
+    updated_at: "",
+    user_edit_time: null,
+  });
+  const write = (ctx: TaskExecutionContext | null, tags: string[]) => {
+    const run = () =>
+      jarvisFileWriteTool.execute({
+        path: "notes/share.md",
+        title: "Share",
+        content: "cuerpo",
+        tags,
+      });
+    return ctx ? runWithExecutionContext(ctx, run) : run();
+  };
+  const writes = () =>
+    mockDb.prepare.mock.calls.filter((c: unknown[]) =>
+      /INSERT|UPDATE/.test(String(c[0])),
+    ).length;
+
+  it("jarvis_file_write: background, non-root chat, external run and no context are refused without a write", async () => {
+    for (const ctx of [background, chatNonRoot, externalRun, null]) {
+      mockGet.mockReturnValueOnce(undefined);
+      expect(JSON.parse(await write(ctx, ["crm", "external"]))).toEqual({ error: TAG_ERROR });
+    }
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(writes()).toBe(0);
+  });
+
+  it("a user-background agent (router root, unattended) cannot add the tag: write, update, batch", async () => {
+    mockGet.mockReturnValueOnce(undefined);
+    const w = await inUserBackground(() =>
+      jarvisFileWriteTool.execute({ path: "notes/share.md", title: "S", content: "c", tags: ["external"] }),
+    );
+    expect(JSON.parse(w)).toEqual({ error: TAG_ERROR });
+    mockGet.mockReturnValueOnce(row('["crm"]'));
+    const u = await inUserBackground(() =>
+      jarvisFileUpdateTool.execute({ path: "notes/share.md", tags: ["crm", "external"] }),
+    );
+    expect(JSON.parse(u)).toEqual({ error: TAG_ERROR });
+    mockGet.mockReturnValue(undefined);
+    const b = JSON.parse(
+      await inUserBackground(() =>
+        jarvisFilesBatchWriteTool.execute({
+          files: [{ path: "a.md", title: "A", content: "alpha", tags: ["external"] }],
+        }),
+      ),
+    );
+    expect(b.results[0]).toEqual({ path: "a.md", status: "rejected", error: TAG_ERROR });
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(writes()).toBe(0);
+  });
+
+  it("jarvis_file_write: an operator root may add the tag", async () => {
+    mockGet.mockReturnValueOnce(undefined);
+    expect(JSON.parse(await write(operatorRoot, ["external"])).success).toBe(true);
+    expect(mockRun).toHaveBeenCalled();
+  });
+
+  it("jarvis_file_write: keeping a tag the row already has is not an add (background)", async () => {
+    mockGet.mockReturnValueOnce(row('["external"]'));
+    expect(JSON.parse(await write(background, ["external"])).success).toBe(true);
+  });
+
+  it("jarvis_file_write: an external run never publishes, even a row already tagged", async () => {
+    mockGet.mockReturnValueOnce(row('["external"]'));
+    expect(JSON.parse(await write(externalRun, ["external"]))).toEqual({ error: TAG_ERROR });
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_update: adding the tag from background or an external run is refused, no write", async () => {
+    for (const ctx of [background, externalRun]) {
+      mockGet.mockReturnValueOnce(row('["crm"]'));
+      const out = await runWithExecutionContext(ctx, () =>
+        jarvisFileUpdateTool.execute({ path: "notes/share.md", tags: ["crm", "external"], append: "x" }),
+      );
+      expect(JSON.parse(out)).toEqual({ error: TAG_ERROR });
+    }
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(writes()).toBe(0);
+  });
+
+  it("jarvis_file_update: an operator root proceeds", async () => {
+    mockGet.mockReturnValueOnce(row('["crm"]'));
+    mockGet.mockReturnValueOnce(row('["crm","external"]'));
+    const out = await runWithExecutionContext(operatorRoot, () =>
+      jarvisFileUpdateTool.execute({ path: "notes/share.md", tags: ["crm", "external"] }),
+    );
+    expect(JSON.parse(out).success).toBe(true);
+    expect(
+      mockDb.prepare.mock.calls.some((c: unknown[]) => String(c[0]).includes("UPDATE jarvis_files SET tags")),
+    ).toBe(true);
+  });
+
+  it("jarvis_files_batch_write: a background item adding the tag is rejected, the rest still write", async () => {
+    mockGet.mockReturnValue(undefined);
+    const out = await runWithExecutionContext(background, () =>
+      jarvisFilesBatchWriteTool.execute({
+        files: [
+          { path: "a.md", title: "A", content: "alpha", tags: ["external"] },
+          { path: "b.md", title: "B", content: "beta", tags: ["crm"] },
+        ],
+      }),
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.results[0]).toEqual({ path: "a.md", status: "rejected", error: TAG_ERROR });
+    expect(parsed.results[1].status).toBe("ok");
+    expect(mockRun).toHaveBeenCalledTimes(1);
   });
 });

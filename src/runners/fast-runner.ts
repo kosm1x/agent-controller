@@ -17,6 +17,8 @@ import {
   runWithExecutionContext,
 } from "../inference/execution-context.js";
 import { createTaskExecutor } from "../tools/task-executor.js";
+import { externalToolGuard } from "../tools/external-tool-guard.js";
+import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
 import {
   recordToolExecution,
   recordToolRepairs,
@@ -134,7 +136,8 @@ export function mentionsDenue(text: string): boolean {
 }
 
 /**
- * "none" for a non-interactive task (scheduled, ritual) without either tool:
+ * "none" for an external request (jarvis-pull), and for a non-interactive
+ * task (scheduled, ritual) without either tool:
  * the advisory promises a router re-run that only interactive chat gets, so
  * there it just turned the task into a one-line failure (Pharma schedule,
  * 2026-09-29). `interactive` undefined counts as interactive.
@@ -142,7 +145,11 @@ export function mentionsDenue(text: string): boolean {
 export function highStakesGuardVariant(
   tools: readonly string[] | undefined,
   interactive?: boolean,
+  external?: boolean,
 ): "advisory" | "full" | "none" {
+  // External caller (jarvis-pull): the advisory promises a router re-run
+  // that never happens on that path.
+  if (external) return "none";
   const hasShell = !!tools?.includes("shell_exec");
   const hasFetch = !!tools?.includes("http_fetch");
   if (hasShell || hasFetch) return "full";
@@ -870,9 +877,14 @@ export const fastRunner: Runner = {
       // research/observation — KB sections add tokens that won't be acted on.
       // Enforce files are ALWAYS included since they contain safety-critical
       // rules even for read-only operations.
+      // An external request (jarvis-pull) gets the split KB even though its
+      // toolset is all read-only (the KB is what it came for), filtered by
+      // the external KB policy below.
       const scopedTools = input.tools ?? [];
       const isReadOnlyTask =
-        scopedTools.length > 0 && scopedTools.every((t) => isReadOnlyTool(t));
+        !input.external &&
+        scopedTools.length > 0 &&
+        scopedTools.every((t) => isReadOnlyTool(t));
       const lastUserMsg = input.conversationHistory
         ?.filter((t) => t.role === "user")
         .pop()?.content;
@@ -893,6 +905,8 @@ export const fastRunner: Runner = {
       // is parallelized.
       const [essentials, kbResult, precedent] = await Promise.all([
         (async () => {
+          // Operator-private: never injected for an external caller.
+          if (input.external) return "";
           const { getEssentialFacts } = await import("../memory/essentials.js");
           return getEssentialFacts("mc-jarvis");
         })(),
@@ -918,6 +932,9 @@ export const fastRunner: Runner = {
                   scopedTools,
                   lastUserMsg,
                   "fast-runner",
+                  // External caller: only the allow-listed enforce rows and
+                  // the opt-in rows of the external KB policy.
+                  input.external ? isExternalKbInjectable : undefined,
                 ),
               },
         ),
@@ -932,7 +949,9 @@ export const fastRunner: Runner = {
 
       // Jev shadow (dormant unless armed): log-only, never awaited. Read-only
       // tasks get no conditional rows, so there is nothing to score.
-      if (!isReadOnlyTask) shadowKbRows(input.taskId, lastUserMsg, scopedTools);
+      // An external caller's query text never goes to the Jev vendor.
+      if (!isReadOnlyTask && !input.external)
+        shadowKbRows(input.taskId, lastUserMsg, scopedTools);
 
       // R-3 metric: assembly-phase wall-clock. Only emit when the parallel
       // pre-fetch ran (i.e., the chat path). Operator can `journalctl |
@@ -1024,7 +1043,8 @@ export const fastRunner: Runner = {
             : input.title.slice(0, JME_QUERY_MAX_CHARS);
         // `[Hoy: …]` header stripped; a trivial message ("Listo") gets no
         // recall at all — no embed call, no block, no recall_audit row.
-        const recallQuery = jmeRecallQuery(lastMsg);
+        // Operator-private memory never reaches an external caller.
+        const recallQuery = input.external ? null : jmeRecallQuery(lastMsg);
         // Preferences first (memory plan v2.0 Track 2): prompt primacy for
         // the how-to-answer rules. (Not a truncation defense — the budget
         // cut below cannot fire at k=8 with today's fact sizes; see
@@ -1127,7 +1147,11 @@ export const fastRunner: Runner = {
       // SQL. He spends 90s thrashing alternatives. Pick the advisory variant
       // that tells him to ask the operator to reformulate immediately.
       // Non-interactive tasks get neither ("none" — no router re-run exists).
-      const variant = highStakesGuardVariant(input.tools, input.interactive);
+      const variant = highStakesGuardVariant(
+        input.tools,
+        input.interactive,
+        !!input.external,
+      );
       if (variant === "advisory") {
         messages.push({
           role: "system",
@@ -1275,13 +1299,16 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       ].includes(t),
     );
     // `/loop` (operator-instructed): the cap is lifted for THIS task only.
+    const scopeMaxRounds = hasPlaywright
+      ? MAX_ROUNDS_BROWSER
+      : hasCodingTools
+        ? MAX_ROUNDS_CODING
+        : MAX_ROUNDS_DEFAULT;
     const maxRounds = input.unlimited
       ? LOOP_MAX_TURNS
-      : hasPlaywright
-        ? MAX_ROUNDS_BROWSER
-        : hasCodingTools
-          ? MAX_ROUNDS_CODING
-          : MAX_ROUNDS_DEFAULT;
+      : input.external
+        ? Math.min(scopeMaxRounds, input.external.maxRounds)
+        : scopeMaxRounds;
 
     // Per-task execution context: isolates destructive locks + memory rate limits
     // Non-interactive tasks (scheduled, rituals) bypass the confirmation gate.
@@ -1290,8 +1317,16 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
     const taskContext = runnerExecutionContext(
       input.taskId,
       input.interactive !== false,
+      input.external ? (input.tools ?? []) : undefined,
     );
-    const taskExecutor = createTaskExecutor(toolRegistry, taskContext);
+    // External request: the SDK path is guarded through taskContext
+    // (claude-sdk wrapTool); the OpenAI path through this executor wrapper.
+    const taskExecutor = input.external
+      ? externalToolGuard(
+          createTaskExecutor(toolRegistry, taskContext),
+          input.tools ?? [],
+        )
+      : createTaskExecutor(toolRegistry, taskContext);
 
     // Liveness heartbeat. The stuck watchdog (reactions/manager.ts) keys on
     // tasks.updated_at, which only task.progress refreshes; fast tasks emitted
@@ -1643,7 +1678,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // the ONE allowed short question, and leave a checkpoint so
         // "continúa" resumes through the existing seam. Closes the SDK
         // branch's pre-existing no-checkpoint gap for exactly this case.
-        if (sdkAutoResumed && sdkCapped(sdkResult.text)) {
+        // Never for an external caller: the operator's "continúa" must not
+        // resume a CRM request.
+        if (!input.external && sdkAutoResumed && sdkCapped(sdkResult.text)) {
           if (!parsed.cleanContent.includes("¿Sigo?")) {
             parsed = {
               ...parsed,
@@ -2459,8 +2496,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       // Task continuity: save checkpoint when hitting max_rounds or token_budget
       // so user can say "continúa" and resume where we left off.
       if (
-        result.exitReason === "max_rounds" ||
-        result.exitReason === "token_budget"
+        !input.external &&
+        (result.exitReason === "max_rounds" ||
+          result.exitReason === "token_budget")
       ) {
         // Phase 4.3: reaching here WITH autoResumed means both legs capped —
         // deliver the partial and ask ONE short question (the only case the

@@ -6,7 +6,8 @@
  * Reflection cadence therefore tracks operator activity — a busy day yields
  * more passes, an idle day yields none.
  *
- * "Foreground" = a `spawn_type='root'` task. Subtasks do NOT qualify, and
+ * "Foreground" = a `spawn_type='root'` task not tagged `jarvis-pull` (an
+ * external caller, not operator activity). Subtasks do NOT qualify, and
  * reflection's own inference runs via `fastRunner.execute` / `infer()`
  * directly (not the dispatcher), so it never emits `task.completed` and
  * cannot feed this counter recursively.
@@ -62,6 +63,8 @@ export function handleTaskCompleted(event: Event<"task.completed">): void {
     const task = getTask(event.data.task_id);
     // Foreground only — subtasks and any non-root spawn do not count.
     if (!task || task.spawn_type !== "root") return;
+    // An external caller's request (jarvis-pull) is not operator activity.
+    if (hasTag(task.metadata, "jarvis-pull")) return;
 
     foregroundCount++;
     if (foregroundCount < REFLECTION_FREQ) return;
@@ -70,6 +73,16 @@ export function handleTaskCompleted(event: Event<"task.completed">): void {
     void fireNTurnReflection();
   } catch (err) {
     log.warn({ err }, "n-turn handler error (swallowed)");
+  }
+}
+
+function hasTag(metadata: string | null | undefined, tag: string): boolean {
+  if (!metadata) return false;
+  try {
+    const tags: unknown = JSON.parse(metadata)?.tags;
+    return Array.isArray(tags) && tags.includes(tag);
+  } catch {
+    return false;
   }
 }
 

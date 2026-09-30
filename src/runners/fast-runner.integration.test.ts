@@ -181,6 +181,12 @@ import { shadowKbRows } from "../jev/shadow-kb.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
 import { getEssentialFacts } from "../memory/essentials.js";
+import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
+import { TOOL_NOT_AVAILABLE } from "../tools/external-tool-guard.js";
+import {
+  buildKnowledgeBaseSection,
+  buildKnowledgeBaseSections,
+} from "../messaging/kb-injection.js";
 import {
   TaskExecutionContext,
   currentExecutionContext,
@@ -1810,5 +1816,183 @@ describe("confirmation gate on the claude-sdk path", () => {
     );
     await run("w3-direct");
     expect(seen).toEqual([true, false, false, false]);
+  });
+});
+
+// jarvis-pull: an external agent's request runs as a chat turn with a
+// read-only research toolset. It must get the FULL split KB (not the
+// read-only enforce-only collapse), never operator-private memory (JME
+// recall, essentials), and a hard tool-round cap.
+describe("external request (jarvis-pull)", () => {
+  const fact = {
+    id: 11,
+    factText: "Fede prefers tables for competitive analysis",
+    category: "preference",
+    sourceTask: "t0",
+    score: 0.9,
+    ts: 1,
+  };
+  const turn = (external?: { maxRounds: number }) =>
+    fastRunner.execute({
+      taskId: "task-ext",
+      runId: "run-ext",
+      title: "CRM jarvis-pull: mercado",
+      description: "stable###CACHE_BREAK###variable",
+      tools: ["web_search", "file_read"],
+      conversationHistory: [
+        {
+          role: "user",
+          content: "¿Cómo va la inversión publicitaria digital en México?",
+        },
+      ],
+      ...(external && { external }),
+    });
+  const lastMessages = () =>
+    (mockInferWithTools.mock.calls.at(-1)![0] as ChatMessage[]).map((m) =>
+      String(m.content),
+    );
+
+  it("gets the policy-filtered KB (no private paths), no JME recall, essentials or Jev shadow", async () => {
+    vi.mocked(getEssentialFacts).mockReturnValue("ESSENTIALS-BLOCK" as never);
+    mockQueryMemory.mockResolvedValue([fact]);
+    // Stand-in KB honouring the path filter the runner passes (the real
+    // filtering is pinned in kb-injection.test.ts).
+    vi.mocked(buildKnowledgeBaseSections).mockImplementationOnce(
+      (_tools, _msg, _tag, allowed) => ({
+        stable: [
+          "knowledge/people/someone.md",
+          "projects/session-brief/CURRENT.md",
+          "knowledge/domain/tv-tarifas.md",
+        ]
+          .filter((p) => !allowed || allowed({ path: p, tags: "[]" }))
+          .map((p) => `### ${p}`)
+          .join("\n"),
+        variable: null,
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await turn({ maxRounds: 8 });
+    expect(buildKnowledgeBaseSections).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(buildKnowledgeBaseSections).mock.calls[0]![3]).toBe(
+      isExternalKbInjectable,
+    );
+    expect(buildKnowledgeBaseSection).not.toHaveBeenCalled();
+    expect(getEssentialFacts).not.toHaveBeenCalled();
+    expect(mockQueryMemory).not.toHaveBeenCalled();
+    expect(shadowKbRows).not.toHaveBeenCalled();
+    const prompt = lastMessages().join("\n");
+    expect(prompt).toContain("knowledge/domain/tv-tarifas.md");
+    expect(prompt).not.toContain("knowledge/people/");
+    expect(prompt).not.toContain("session-brief");
+    expect(prompt).not.toContain("ESSENTIALS-BLOCK");
+    expect(lastMessages().some((m) => m.startsWith("[JME MEMORY"))).toBe(false);
+  });
+
+  it("W3: a DENUE mention injects no high-stakes advisory for an external request", async () => {
+    const run = async (external?: { maxRounds: number }) => {
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({ content: "STATUS: DONE\nok" }),
+      );
+      await fastRunner.execute({
+        taskId: "task-ext-denue",
+        runId: "run-ext-denue",
+        title: "CRM jarvis-pull: farmacias",
+        description: "stable###CACHE_BREAK###variable",
+        tools: ["web_search"],
+        conversationHistory: [
+          { role: "user", content: "¿Cuántas farmacias hay en Puebla según el DENUE?" },
+        ],
+        ...(external && { external }),
+      });
+      return lastMessages().some((m) => m.includes("DENUE ANALYZER"));
+    };
+    expect(await run({ maxRounds: 8 })).toBe(false);
+    expect(await run()).toBe(true); // control: same turn without the flag
+  });
+
+  it("OpenAI path: the executor refuses a tool outside the run's list", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await turn({ maxRounds: 8 });
+    const executor = mockInferWithTools.mock.calls[0]![2] as (
+      n: string,
+      a: Record<string, unknown>,
+    ) => Promise<string>;
+    expect(await executor("memory_search", { query: "x" })).toBe(
+      TOOL_NOT_AVAILABLE,
+    );
+  });
+
+  it("SDK path: the query runs under a context carrying the run's tool list", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    let seen: readonly string[] | undefined;
+    mockQuerySdk.mockImplementationOnce(async () => {
+      seen = currentExecutionContext()?.externalTools;
+      return makeSdkResult();
+    });
+    await turn({ maxRounds: 8 });
+    expect(seen).toEqual(["web_search", "file_read"]);
+  });
+
+  it("OpenAI path: a double cap writes no checkpoint and asks no ¿Sigo?", async () => {
+    for (const part of ["Parte 1…", "Parte 2…"]) {
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: part,
+          exitReason: "max_rounds",
+          roundsCompleted: 8,
+        }),
+      );
+    }
+    const result = await turn({ maxRounds: 8 });
+    expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+  });
+
+  it("SDK path: a double cap writes no checkpoint and asks no ¿Sigo?", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    const capped = (part: string) =>
+      makeSdkResult({
+        text: `[error_max_turns — max turns reached] ${part}\n\nSTATUS: DONE_WITH_CONCERNS — partial.`,
+        numTurns: 8,
+      });
+    mockQuerySdk.mockResolvedValueOnce(capped("Parte 1…"));
+    mockQuerySdk.mockResolvedValueOnce(capped("Parte 2…"));
+    const result = await turn({ maxRounds: 8 });
+    expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+  });
+
+  it("control: the same read-only turn without the flag collapses the KB and injects essentials + JME", async () => {
+    vi.mocked(getEssentialFacts).mockReturnValue("ESSENTIALS-BLOCK" as never);
+    mockQueryMemory.mockResolvedValue([fact]);
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await turn();
+    expect(buildKnowledgeBaseSection).toHaveBeenCalledTimes(1);
+    expect(buildKnowledgeBaseSections).not.toHaveBeenCalled();
+    const msgs = lastMessages();
+    expect(msgs).toContain("ESSENTIALS-BLOCK");
+    expect(msgs.some((m) => m.startsWith("[JME MEMORY"))).toBe(true);
+  });
+
+  it("caps the SDK maxTurns at external.maxRounds", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await turn({ maxRounds: 8 });
+    expect(mockQuerySdk.mock.calls[0]![0].maxTurns).toBe(8);
+  });
+
+  it("never raises the cap: a larger external.maxRounds keeps the scope default", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await turn({ maxRounds: 500 });
+    const cap = mockQuerySdk.mock.calls[0]![0].maxTurns;
+    expect(cap).toBeLessThan(500);
+    expect(cap).toBeGreaterThan(8);
   });
 });

@@ -181,7 +181,9 @@ import {
   _testThreadEntries,
   holdScopeAsks,
   formatConfirmationResult,
+  buildExternalJarvisSystemPrompt,
 } from "./router.js";
+import { detectToolFlags, fileSystemSection } from "./prompt-sections.js";
 import {
   pinFromExchange,
   getPins,
@@ -4455,5 +4457,19 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     await vi.advanceTimersByTimeAsync(0);
     expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(2);
     expect(submitTask).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("buildExternalJarvisSystemPrompt — no host paths (jarvis-pull)", () => {
+  it("skips fileSystemSection for the external caller; the default path would include it", () => {
+    const tools = ["jarvis_file_read", "jarvis_file_search", "jarvis_file_list", "web_search"];
+    // Same tools set the NorthStar flag, so the default builder adds the section.
+    expect(detectToolFlags(tools).hasNorthStar).toBe(true);
+    expect(fileSystemSection()).toContain("LOCAL\" = este VPS");
+    expect(fileSystemSection()).toContain("/root/claude");
+    const { stable, variable } = buildExternalJarvisSystemPrompt(tools);
+    const prompt = `${stable}\n${variable}`;
+    expect(prompt).not.toContain("LOCAL\" = este VPS");
+    expect(prompt).not.toContain("/root/claude");
   });
 });

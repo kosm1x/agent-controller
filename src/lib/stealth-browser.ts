@@ -14,6 +14,10 @@
 
 import { applyStealthPatches } from "../tools/builtin/stealth.js";
 import { errMsg } from "./err-msg.js";
+import {
+  validateOutboundUrl,
+  validateOutboundUrlResolved,
+} from "./url-safety.js";
 
 // ---------------------------------------------------------------------------
 // Stealth launch flags (from Scrapling constants.py)
@@ -212,6 +216,32 @@ export async function solveCloudflareTurnstile(
 // ---------------------------------------------------------------------------
 
 /**
+ * Every request the stealth page makes — the navigation, each redirect hop,
+ * every subresource — must pass the outbound URL check web_read applies to
+ * its own URL (one function: validateOutboundUrl).
+ */
+export function isStealthRequestAllowed(url: string): boolean {
+  return validateOutboundUrl(url) === null;
+}
+
+/**
+ * The route guard's full check: the sync string check first (fast
+ * pre-filter), then the DNS-resolving check, so a public-looking hostname
+ * that resolves to a private/internal address is refused too. Any error or
+ * rejection refuses.
+ */
+export async function isStealthRequestAllowedResolved(
+  url: string,
+): Promise<boolean> {
+  if (!isStealthRequestAllowed(url)) return false;
+  try {
+    return (await validateOutboundUrlResolved(url)) === null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fetch a URL using a stealth-configured Playwright browser.
  * Automatically handles Cloudflare Turnstile challenges.
  *
@@ -245,7 +275,7 @@ export async function stealthFetch(
         // Fallback: plain context without fingerprinting
         context = await browser.newContext({
           ignoreHTTPSErrors: true,
-          serviceWorkers: "allow" as const,
+          serviceWorkers: "block" as const,
         });
       }
 
@@ -255,6 +285,19 @@ export async function stealthFetch(
       } catch {
         // Non-fatal — stealth patches are supplementary
       }
+
+      // SSRF guard: a redirect or subresource to a private/internal address
+      // is aborted. Not best-effort — a failure here fails the fetch.
+      await context.route("**/*", async (route) =>
+        (await isStealthRequestAllowedResolved(route.request().url()))
+          ? route.continue()
+          : route.abort(),
+      );
+      // context.route does not see WebSockets: close every one.
+      await context.routeWebSocket(
+        () => true,
+        (ws) => ws.close(),
+      );
 
       const page = await context.newPage();
 

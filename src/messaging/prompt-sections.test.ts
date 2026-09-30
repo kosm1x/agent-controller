@@ -3,6 +3,7 @@
  */
 
 import { afterEach, describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import {
   detectToolFlags,
   identitySection,
@@ -503,5 +504,67 @@ describe("identitySection — Piotr is Jarvis's OWN name (identity fix 2026-08-3
     expect(text.indexOf("Piotr eres TÚ")).toBeLessThan(
       text.indexOf(firstChannelBlock),
     );
+  });
+});
+
+describe("identitySection — external caller (jarvis-pull)", () => {
+  const prev = process.env.WHATSAPP_ENABLED;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.WHATSAPP_ENABLED;
+    else process.env.WHATSAPP_ENABLED = prev;
+  });
+
+  // Pinned when the `external` option was added (2026-09-30): the default
+  // output is byte-identical to the pre-option text. An intended edit to the
+  // identity section updates these two hashes.
+  it("default output is byte-identical (sha256 pin, WhatsApp off and on)", () => {
+    delete process.env.WHATSAPP_ENABLED;
+    expect(createHash("sha256").update(identitySection()).digest("hex")).toBe(
+      "ddfaab7214f5a33dbcbef7c73c5240491769d46071796807ac13db2674c96e92",
+    );
+    process.env.WHATSAPP_ENABLED = "true";
+    expect(createHash("sha256").update(identitySection()).digest("hex")).toBe(
+      "fcfd834cac658c3e2d899b9cc889bca115719479f302c46d7eb533c0151d25c9",
+    );
+  });
+
+  it("external differs from the default ONLY by the operator-addressing pieces and the scope-retry rule", () => {
+    delete process.env.WHATSAPP_ENABLED;
+    const d = identitySection();
+    const e = identitySection({ external: true });
+    const sentence = / Estás hablando con Fede o su equipo, igual que en [^.]*\./.exec(d)?.[0];
+    const piotr = / Fede te llama \*\*Piotr\*\*:[^\n]*?a Fede le hablas como Fede\./.exec(d)?.[0];
+    const lineWith = (needle: string) =>
+      d.split("\n").find((l) => l.includes(needle));
+    const bullet = lineWith("NO repitas la dirección del remitente");
+    const act = lineWith("Cuando Fede pida algo, HAZLO");
+    const retry = / En ese caso responde con UNA sola línea [^\n]*?reintenta tu turno solo\./.exec(d)?.[0];
+    const retryLine = / Di en UNA línea qué herramienta te falta[^\n]*?sin que el usuario haga nada\./.exec(d)?.[0];
+    const vps = / NO estás en un sandbox ni en una interfaz web de chat — [^\n]*?Supabase, Hindsight\)\./.exec(d)?.[0];
+    for (const piece of [sentence, piotr, bullet, act, retry, retryLine, vps]) expect(piece).toBeTruthy();
+    expect(identitySection({})).toBe(d);
+    expect(identitySection({ external: false })).toBe(d);
+    expect(
+      d
+        .replace(sentence!, "")
+        .replace(piotr!, "")
+        .replace(`${bullet}\n`, "")
+        .replace(`${act}\n`, "")
+        .replace(retry!, "")
+        .replace(retryLine!, "")
+        .replace(vps!, ""),
+    ).toBe(e);
+    for (const gone of [
+      "Fede o su equipo",
+      "Piotr eres TÚ",
+      "NO repitas la dirección del remitente",
+      "Cuando Fede pida algo",
+      "UNA sola línea",
+      "reintenta tu turno solo",
+      "VPS Linux",
+      "Supabase, Hindsight",
+    ]) {
+      expect(e).not.toContain(gone);
+    }
   });
 });

@@ -53,6 +53,20 @@ vi.mock("../db/reflector-gap.js", () => ({
 
 vi.mock("../dispatch/dispatcher.js", () => ({
   getTask: vi.fn((taskId: string) => {
+    if (taskId === "task-jarvis-pull") {
+      return {
+        task_id: "task-jarvis-pull",
+        spawn_type: "root",
+        title: "CRM jarvis-pull: q",
+        description: "persona",
+        priority: "medium",
+        status: "failed",
+        error: "Request timeout after 30s",
+        classification: null,
+        agent_type: "fast",
+        metadata: JSON.stringify({ tags: ["jarvis-pull", "crm"] }),
+      };
+    }
     if (taskId === "task-subtask") {
       return {
         task_id: "task-subtask",
@@ -463,6 +477,14 @@ describe("ReactionManager", () => {
     expect(mockSubmitTask).not.toHaveBeenCalled();
     const reactions = getReactionsBySourceTask(db, "task-subtask");
     expect(reactions).toHaveLength(0);
+  });
+
+  it("skips a failed jarvis-pull task: the route already answered via its fallback", async () => {
+    await triggerTaskFailed("task-jarvis-pull", "Request timeout after 30s");
+
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(mockEmitEvent).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-jarvis-pull")).toHaveLength(0);
   });
 
   it("respects cooldown (no rapid-fire reactions)", async () => {

@@ -53,6 +53,11 @@ import { emitTraceEvent } from "../observability/task-trace.js";
 import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
 import { currentExecutionContext } from "./execution-context.js";
 import {
+  externalToolArgs,
+  externalToolRefusal,
+  filterExternalToolResult,
+} from "../tools/external-tool-guard.js";
+import {
   confirmationGate,
   NO_CONFIRM_IN_CHAT_ERROR,
 } from "../tools/task-executor.js";
@@ -264,10 +269,22 @@ function wrapTool(t: Tool) {
         if (gated !== null) {
           return { content: [{ type: "text", text: gated }] };
         }
-        const result = await toolRegistry.execute(
+        // External request (jarvis-pull): tool list + KB path policy.
+        const external = currentExecutionContext()?.externalTools;
+        if (external) {
+          const refusal = externalToolRefusal(t.name, args, external);
+          if (refusal !== null) {
+            return { content: [{ type: "text", text: refusal }] };
+          }
+          args = externalToolArgs(t.name, args);
+        }
+        const raw = await toolRegistry.execute(
           t.name,
           args as Record<string, unknown>,
         );
+        const result = external
+          ? filterExternalToolResult(t.name, raw, args)
+          : raw;
         // Sec10 round-1 fix: parity with OpenAI adapter path (adapter.ts:1679).
         // SDK tool results were reaching Sonnet unsanitized — role markers
         // (`SYSTEM:`, `[INST]`, `<system>`) were not being defanged, so

@@ -82,6 +82,8 @@ export interface JarvisFileSummary {
   path: string;
   title: string;
   content: string;
+  /** JSON array string, as stored (read by the external KB policy). */
+  tags?: string;
   qualifier: string;
   condition: string | null;
   priority: number;
@@ -255,7 +257,7 @@ export function getFilesByQualifier(
   const placeholders = qualifiers.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT path, title, content, qualifier, condition, priority
+      `SELECT path, title, content, tags, qualifier, condition, priority
        FROM jarvis_files
        WHERE qualifier IN (${placeholders})
        ORDER BY priority ASC, created_at ASC`,

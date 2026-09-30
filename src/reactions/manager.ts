@@ -221,10 +221,15 @@ export class ReactionManager {
 
     // Skip messaging/chat tasks — the user already received a response (or error message)
     // and can simply re-ask. Retrying chat tasks creates confusing duplicate replies.
+    // jarvis-pull: the route already answered via its fallback; nobody consumes a retry.
     try {
       if (task.metadata) {
         const meta = JSON.parse(task.metadata);
-        if (Array.isArray(meta.tags) && meta.tags.includes("messaging")) return;
+        if (
+          Array.isArray(meta.tags) &&
+          (meta.tags.includes("messaging") || meta.tags.includes("jarvis-pull"))
+        )
+          return;
       }
     } catch {
       // Non-fatal — proceed with reaction evaluation

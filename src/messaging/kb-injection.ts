@@ -136,6 +136,15 @@ export function detectProjectInMessage(text: string): string | null {
 /** Project README for an explicitly mentioned project slug — bypasses every
  *  budget (silently dropping it leaves the runner blind to the asked-about
  *  project). */
+/** Row policy for an external caller (see buildKnowledgeBaseSections). */
+export type KbRowFilter = (row: {
+  path: string;
+  tags?: string;
+  qualifier?: string;
+}) => boolean;
+
+const ALLOW_ALL: KbRowFilter = () => true;
+
 function projectReadmeSection(
   messageText: string | undefined,
   logTag: string,
@@ -201,9 +210,10 @@ function collectVariableSections(
   scopedTools: string[],
   messageText: string | undefined,
   logTag: string,
+  rowAllowed: KbRowFilter = ALLOW_ALL,
 ): string[] {
   const packed = packConditionalRows(
-    getFilesByQualifier("conditional"),
+    getFilesByQualifier("conditional").filter((f) => rowAllowed(f)),
     scopedTools,
   );
   const variableSections = packed.inBudget.map(
@@ -227,7 +237,11 @@ function collectVariableSections(
     );
   }
 
-  const readme = projectReadmeSection(messageText, logTag);
+  // External caller (a row filter is set): no project README at all — the
+  // slug is guessed from free text ("CRM" → pulso-aura-upfront) and a README
+  // is a project's private front page (qa R3 W1).
+  const readme =
+    rowAllowed === ALLOW_ALL ? projectReadmeSection(messageText, logTag) : null;
   if (readme) variableSections.push(readme);
 
   if (messageText) {
@@ -242,7 +256,8 @@ function collectVariableSections(
       conditionMatches("coding", scopedTools)
     ) {
       try {
-        const preview = getFile(PREVIEW_DIRECTIVE_PATH);
+        const found = getFile(PREVIEW_DIRECTIVE_PATH);
+        const preview = found && rowAllowed(found) ? found : null;
         const section = preview && `### ${preview.title}\n${preview.content}`;
         if (section && !variableSections.includes(section)) {
           variableSections.push(section);
@@ -269,7 +284,7 @@ function collectVariableSections(
       for (const rumiPath of rumiPaths) {
         try {
           const rumiFile = getFile(rumiPath);
-          if (rumiFile) {
+          if (rumiFile && rowAllowed(rumiFile)) {
             const section = `### ${rumiFile.title}\n${rumiFile.content}`;
             // Bypasses budget — these are mandatory context for correctness
             variableSections.push(section);
@@ -418,16 +433,22 @@ export function capStableContent(path: string, content: string, logTag: string):
  * @param messageText  Optional user message — if it mentions a known project
  *                     slug, that project's README is appended to `variable`.
  * @param logTag       Optional log prefix (default `"runner"`).
+ * @param rowAllowed   Optional row policy (external callers): every row —
+ *                     enforce, always-read, conditional and the
+ *                     force-injected guardrail rows — is injected only when
+ *                     it passes; the project README is skipped entirely.
  */
 export function buildKnowledgeBaseSections(
   scopedTools: string[],
   messageText?: string,
   logTag = "runner",
+  rowAllowed?: KbRowFilter,
 ): { stable: string | null; variable: string | null } {
   try {
     const stableFiles = getFilesByQualifier("enforce", "always-read");
     const stableSections: string[] = [];
     for (const f of stableFiles) {
+      if (rowAllowed && !rowAllowed(f)) continue;
       const prefix = f.qualifier === "enforce" ? "MANDATORY: " : "";
       stableSections.push(
         `### ${prefix}${f.title}\n${capStableContent(f.path, f.content, logTag)}`,
@@ -438,6 +459,7 @@ export function buildKnowledgeBaseSections(
       scopedTools,
       messageText,
       logTag,
+      rowAllowed,
     );
 
     const stable =

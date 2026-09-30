@@ -80,6 +80,17 @@ describe("handleTaskCompleted — N-turn counter", () => {
     expect(getNTurnCounter()).toBe(0);
   });
 
+  it("does not count a jarvis-pull root task (external caller)", () => {
+    getDatabase()
+      .prepare(
+        `INSERT INTO tasks (task_id, spawn_type, title, description, status, metadata)
+         VALUES ('pull-1', 'root', 'T', 'D', 'completed', ?)`,
+      )
+      .run(JSON.stringify({ tags: ["jarvis-pull", "crm"] }));
+    handleTaskCompleted(completedEvent("pull-1"));
+    expect(getNTurnCounter()).toBe(0);
+  });
+
   it("ignores a completion for an unknown task id", () => {
     handleTaskCompleted(completedEvent("does-not-exist"));
     expect(getNTurnCounter()).toBe(0);

@@ -47,6 +47,12 @@ export interface RunnerInput {
   /** `/loop` (operator-instructed): no turn cap, no SDK wall-clock timeout,
    *  exempt from the stuck-task kill. Only the hard stop ends it. */
   unlimited?: boolean;
+  /**
+   * Request from an external agent (jarvis-pull). Full KB injection even with
+   * an all-read-only toolset; NO JME recall, NO operator user-facts/essentials;
+   * tool rounds capped at maxRounds.
+   */
+  external?: { maxRounds: number };
 }
 
 /**

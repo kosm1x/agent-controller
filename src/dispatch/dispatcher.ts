@@ -97,6 +97,12 @@ export interface TaskSubmission {
   /** `/loop` (operator-instructed): the runner lifts the turn cap + SDK
    *  wall-clock; the "loop" tag exempts the stuck-task kill. */
   unlimited?: boolean;
+  /**
+   * Request from an external agent (jarvis-pull). Full KB injection even with
+   * an all-read-only toolset; NO JME recall, NO operator user-facts/essentials;
+   * tool rounds capped at maxRounds.
+   */
+  external?: { maxRounds: number };
   /** @internal Set by dispatcher on auto-retry to prevent infinite retry loops. */
   _isRequiredToolRetry?: boolean;
   /**
@@ -287,6 +293,9 @@ function runOriginOf(submission: TaskSubmission): RunOrigin | undefined {
  *   operator-thread root). Never a sub-task or a retry: an ask there would
  *   land only in that task's run output and be dropped.
  * - chatOrigin: the run answers a chat message (any sender).
+ * - unattended: a background agent (spawnType `user-background` or tag
+ *   `background-agent`) or any sub-task of one — the operator is not
+ *   watching the run.
  * The context itself never asks (`canAskOperator` false): only a runner that
  * surfaces the pending action (fast) enters one that may.
  */
@@ -311,6 +320,10 @@ export function gateContextFor(
         parent?.chatOrigin === true,
       a2aOrigin:
         !!submission.tags?.includes("a2a") || parent?.a2aOrigin === true,
+      unattended:
+        submission.spawnType === "user-background" ||
+        !!submission.tags?.includes("background-agent") ||
+        parent?.unattended === true,
     },
   );
 }
@@ -745,6 +758,7 @@ async function dispatchWithSlot(
     signal: abortController.signal,
     interactive: submission.interactive,
     unlimited: submission.unlimited,
+    external: submission.external,
   };
 
   // V8.4: freeze the ledger (gates declared so far are the fixed contract for

@@ -22,7 +22,9 @@ const STATIC_CONTEXT_OPTIONS = {
   isMobile: false,
   hasTouch: false,
   ignoreHTTPSErrors: true,
-  serviceWorkers: "allow" as const,
+  // A service worker's own requests bypass context.route (the stealth SSRF
+  // guard), so none may register.
+  serviceWorkers: "block" as const,
   permissions: ["geolocation", "notifications"],
 };
 
@@ -48,7 +50,7 @@ export async function createFingerprintedContext(
       },
       newContextOptions: {
         ignoreHTTPSErrors: true,
-        serviceWorkers: "allow",
+        serviceWorkers: "block",
         permissions: ["geolocation", "notifications"],
         ...contextOptions,
       },

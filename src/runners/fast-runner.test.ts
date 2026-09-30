@@ -1381,6 +1381,13 @@ describe("highStakesGuardVariant (Fix D — DENUE no-tools advisory)", () => {
     expect(highStakesGuardVariant(undefined, false)).toBe("none");
   });
 
+  it("returns 'none' for an external request (jarvis-pull), whatever the tools", () => {
+    expect(highStakesGuardVariant(["web_search"], undefined, true)).toBe("none");
+    expect(highStakesGuardVariant(["web_search"], true, true)).toBe("none");
+    expect(highStakesGuardVariant(["shell_exec"], undefined, true)).toBe("none");
+    expect(highStakesGuardVariant(["web_search"], undefined, false)).toBe("advisory");
+  });
+
   it("returns 'advisory' for an explicitly interactive task without either tool", () => {
     expect(highStakesGuardVariant(["web_search"], true)).toBe("advisory");
   });

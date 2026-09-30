@@ -21,6 +21,8 @@ import {
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
 import { currentRunTaskId } from "../rule-of-two.js";
+import { currentExecutionContext } from "../../inference/execution-context.js";
+import { hasExternalTag } from "../../lib/external-kb-policy.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
 import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
@@ -41,6 +43,30 @@ import {
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
+
+/**
+ * The `external` tag publishes a row to the CRM (src/lib/external-kb-policy.ts),
+ * so ADDING it is allowed only on an operator chat root (router-tracked,
+ * attended). Background agents, scheduled, API, A2A and external runs are
+ * refused; an external run is refused even when the row already has the tag.
+ * Otherwise keeping a tag the row already has is not an add. Returns the
+ * refusal JSON, or null to proceed.
+ */
+function externalTagRefusal(
+  incoming: unknown,
+  existingTags: string | undefined,
+): string | null {
+  if (!hasExternalTag(incoming)) return null;
+  const ctx = currentExecutionContext();
+  const operatorRoot =
+    ctx?.routerRoot === true && !ctx.unattended && !ctx.externalTools;
+  if (ctx?.externalTools || (!operatorRoot && !hasExternalTag(existingTags))) {
+    return JSON.stringify({
+      error: "the external tag is set only from an operator chat",
+    });
+  }
+  return null;
+}
 
 export const jarvisFileReadTool: Tool = {
   name: "jarvis_file_read",
@@ -356,8 +382,12 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
       });
     }
 
+    const prior = getFile(path);
+    const tagRefused = externalTagRefusal(tags, prior?.tags);
+    if (tagRefused) return tagRefused;
+
     // Usability Phase 3.2: figures written to the KB need provenance.
-    const priorContent = getFile(path)?.content ?? null;
+    const priorContent = prior?.content ?? null;
     const provenance = checkArtifactProvenance({
       tool: "jarvis_file_write",
       artifact: `kb:${path}`,
@@ -496,6 +526,8 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
     if (!existing) {
       return JSON.stringify({ error: `File not found: ${path}` });
     }
+    const tagRefused = externalTagRefusal(tags, existing.tags);
+    if (tagRefused) return tagRefused;
 
     if (append) {
       const provenance = checkArtifactProvenance({
@@ -1020,11 +1052,22 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
           errors++;
           continue;
         }
+        const prior = getFile(path);
+        const tagRefused = externalTagRefusal(tags, prior?.tags);
+        if (tagRefused) {
+          results.push({
+            path,
+            status: "rejected",
+            error: (JSON.parse(tagRefused) as { error: string }).error,
+          });
+          errors++;
+          continue;
+        }
         const provenance = checkArtifactProvenance({
           tool: "jarvis_files_batch_write",
           artifact: `kb:${path}`,
           text: content,
-          priorContent: getFile(path)?.content ?? null,
+          priorContent: prior?.content ?? null,
         });
         if (!provenance.ok) {
           results.push({

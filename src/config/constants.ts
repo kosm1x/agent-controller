@@ -71,6 +71,15 @@ export const MAX_ROUNDS_DEFAULT = int("MAX_ROUNDS_DEFAULT", 30);
 export const MAX_ROUNDS_CODING = int("MAX_ROUNDS_CODING", 55);
 /** Max inference rounds for Playwright browser tasks (navigate+snapshot+click cycles). */
 export const MAX_ROUNDS_BROWSER = int("MAX_ROUNDS_BROWSER", 35);
+/** Wall-clock budget for a POST /api/jarvis-pull research task; past it the
+ * task is cancelled and the route answers with a single tool-less call. */
+export const JARVIS_PULL_DEADLINE_MS = int("JARVIS_PULL_DEADLINE_MS", 60_000);
+/** Whole-request budget for POST /api/jarvis-pull (task + fallback call); past
+ * it the route answers with the best text it has — never a hang. */
+export const JARVIS_PULL_BUDGET_MS = int("JARVIS_PULL_BUDGET_MS", 105_000);
+/** Research tasks POST /api/jarvis-pull runs at once; a request over the cap
+ * gets the single tool-less call. */
+export const JARVIS_PULL_MAX_INFLIGHT = int("JARVIS_PULL_MAX_INFLIGHT", 3);
 /** `/loop` (operator-instructed, 2026-08-27): no turn cap. Deliberately NOT an
  * env knob — the cap is lifted only for the task the operator prefixed with
  * `/loop`; every other task keeps the three caps above. The SDK needs a number,

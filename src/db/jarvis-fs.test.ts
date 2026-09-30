@@ -317,3 +317,14 @@ describe("searchFiles — citation (line + section) per hit (paper plan A.2, 202
     expect(hits[0]).toMatchObject({ path: "knowledge/sym.md", line: 3, section: "Ops" });
   });
 });
+
+describe("getFilesByQualifier — tags for the external KB policy", () => {
+  it("returns each row's stored tags (JSON array string)", () => {
+    upsertFile("knowledge/shared.md", "Shared", "body", ["crm", "external"], "always-read");
+    upsertFile("knowledge/private.md", "Private", "body", [], "always-read");
+    const rows = getFilesByQualifier("always-read");
+    const tagsOf = (p: string) => rows.find((r) => r.path === p)?.tags;
+    expect(JSON.parse(tagsOf("knowledge/shared.md")!)).toEqual(["crm", "external"]);
+    expect(JSON.parse(tagsOf("knowledge/private.md")!)).toEqual([]);
+  });
+});

@@ -545,6 +545,31 @@ describe("dispatchTask forwards detectionText to the runner", () => {
   });
 });
 
+// jarvis-pull: dropping this forward silently turns an external request back
+// into an operator chat turn (JME + essentials injected, no round cap).
+describe("dispatchTask forwards external to the runner", () => {
+  it("submission.external → RunnerInput.external", async () => {
+    let seen: unknown = "unset";
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen = input.external;
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({
+      title: "CRM jarvis-pull: q",
+      description: "persona",
+      agentType: "fast",
+      external: { maxRounds: 8 },
+    });
+    await vi.waitFor(() => {
+      if (seen === "unset") throw new Error("runner not yet executed");
+    });
+    expect(seen).toEqual({ maxRounds: 8 });
+  });
+});
+
 // Seam origin wiring (qa W2 2026-08-17): the store is tested in rule-of-two;
 // THIS pins the dispatcher's wiring point — delete the 3rd argument at the
 // enterRunToolContext site and the operator label silently reverts to
@@ -586,6 +611,7 @@ describe("dispatchTask confirmation-gate context", () => {
     | "canAskOperator"
     | "chatOrigin"
     | "a2aOrigin"
+    | "unattended"
   >;
   const seen = new Map<string, Facts | undefined>();
   const facts = (ctx: TaskExecutionContext | undefined): Facts | undefined =>
@@ -596,6 +622,7 @@ describe("dispatchTask confirmation-gate context", () => {
       canAskOperator: ctx.canAskOperator,
       chatOrigin: ctx.chatOrigin,
       a2aOrigin: ctx.a2aOrigin,
+      unattended: ctx.unattended,
     };
   let spawn: ((title: string) => Promise<void>) | null = null;
 
@@ -776,6 +803,7 @@ describe("dispatchTask confirmation-gate context", () => {
       chatOrigin: true,
       canAskOperator: false,
       a2aOrigin: false,
+      unattended: false,
     };
     expect(nano[0]).toEqual(expected);
     expect(seen.get("misrouted-chat")).toEqual(expected); // the fast fallback
@@ -838,6 +866,68 @@ describe("dispatchTask confirmation-gate context", () => {
       interactive: true,
       chatOrigin: false,
     });
+  });
+});
+
+describe("dispatchTask unattended fact (qa R4 W1)", () => {
+  const seen = new Map<string, TaskExecutionContext | undefined>();
+
+  beforeEach(() => {
+    seen.clear();
+    mockRun.mockReturnValue({ changes: 1 });
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen.set(input.title, currentExecutionContext());
+        if (input.title === "bg-agent") {
+          await submitTask({ title: "bg-child", description: "d", parentTaskId: "p" });
+        }
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+  });
+
+  it("a user-background agent (router shape) and its sub-task are unattended; either marker alone suffices; a chat root is attended", async () => {
+    // Same shape as the router's background-agent submission (router.ts).
+    await submitTask({
+      title: "bg-agent",
+      description: "d",
+      spawnType: "user-background",
+      tags: ["messaging", "telegram", "background-agent"],
+      threadId: "telegram:42",
+      interactive: true,
+      replyTracked: true,
+    });
+    await submitTask({
+      title: "spawntype-only",
+      description: "d",
+      spawnType: "user-background",
+      threadId: "telegram:42",
+      replyTracked: true,
+    });
+    await submitTask({
+      title: "tag-only",
+      description: "d",
+      tags: ["background-agent"],
+      threadId: "telegram:42",
+      replyTracked: true,
+    });
+    await submitTask({
+      title: "chat-root",
+      description: "d",
+      tags: ["messaging", "telegram"],
+      threadId: "telegram:42",
+      replyTracked: true,
+    });
+    await vi.waitFor(() => {
+      if (seen.size < 5) throw new Error("runners not yet executed");
+    });
+    // routerRoot alone would let the agent pass operator-only checks.
+    expect(seen.get("bg-agent")).toMatchObject({ routerRoot: true, unattended: true });
+    expect(seen.get("spawntype-only")).toMatchObject({ unattended: true });
+    expect(seen.get("tag-only")).toMatchObject({ unattended: true });
+    expect(seen.get("bg-child")).toMatchObject({ routerRoot: false, unattended: true });
+    expect(seen.get("chat-root")).toMatchObject({ routerRoot: true, unattended: false });
   });
 });
 

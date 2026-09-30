@@ -30,6 +30,7 @@ vi.mock("../observability/prometheus.js", () => ({
   recordMemoryInjection: vi.fn(),
 }));
 import { recordMemoryInjection } from "../observability/prometheus.js";
+import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
 
 describe("conditionMatches (KB injection conditional matcher)", () => {
   it("the preview directive's condition carries a group keyword — prose alone never injects (2026-09-19)", () => {
@@ -490,6 +491,109 @@ describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () 
       stable: null,
       variable: null,
     });
+  });
+
+  it("external row policy: only repo-authorization of the enforce rows, and only opt-in rows", () => {
+    const row = (
+      path: string,
+      title: string,
+      content: string,
+      qualifier: string,
+      tags = "[]",
+    ) => ({ path, title, content, qualifier, tags, condition: null, priority: 50 });
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      [
+        row("directives/repo-authorization.md", "Repo", "ENFORCE-REPO", "enforce"),
+        row("directives/exposing-services-externally.md", "Expose", "ENFORCE-EXPOSE", "enforce"),
+        row("directives/user-data-sources.md", "Data", "ENFORCE-DATA", "enforce"),
+        row("knowledge/people/someone.md", "Persona", "PRIVATE-PEOPLE", "always-read"),
+        row("knowledge/health/x.md", "Salud", "PRIVATE-HEALTH", "always-read"),
+        row("knowledge/domain/work-profile.md", "Perfil", "PRIVATE-PROFILE", "always-read"),
+        row("knowledge/preferences/x.md", "Prefs", "PRIVATE-PREFS", "conditional"),
+        row("projects/plan-2027/health/sleep-score.md", "Sueño", "PRIVATE-SLEEP", "conditional"),
+        row("knowledge/domain/tv-tarifas.md", "Tarifas", "SEED-ALWAYS", "always-read"),
+        row("knowledge/domain/media-market-plan.md", "Plan", "SEED-COND", "conditional"),
+        row("notes/shared.md", "Shared", "TAGGED-COND", "conditional", '["external"]'),
+      ].filter((f) => quals.includes(f.qualifier)),
+    );
+    const readme = (path: string, content: string) => ({
+      id: "r",
+      path,
+      title: "README",
+      content,
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      created_at: "",
+      updated_at: "",
+      user_edit_time: null,
+    });
+    vi.mocked(getFile).mockImplementation((path: string) =>
+      path === "projects/vlmp/README.md" ? readme(path, "README-PRIVATE") : undefined,
+    );
+
+    const { stable, variable } = buildKnowledgeBaseSections(
+      [],
+      "tell me about vlmp",
+      "runner",
+      isExternalKbInjectable,
+    );
+    const prompt = `${stable ?? ""}\n${variable ?? ""}`;
+    for (const shown of ["ENFORCE-REPO", "SEED-ALWAYS", "SEED-COND", "TAGGED-COND"]) {
+      expect(prompt).toContain(shown);
+    }
+    for (const hidden of [
+      "ENFORCE-EXPOSE",
+      "ENFORCE-DATA",
+      "PRIVATE-PEOPLE",
+      "PRIVATE-HEALTH",
+      "PRIVATE-PROFILE",
+      "PRIVATE-PREFS",
+      "PRIVATE-SLEEP",
+      "README-PRIVATE",
+      "knowledge/preferences",
+      "plan-2027/health",
+    ]) {
+      expect(prompt).not.toContain(hidden);
+    }
+
+    // Without the filter every row (and the README) is injected as today.
+    const all = buildKnowledgeBaseSections([], "tell me about vlmp");
+    const full = `${all.stable ?? ""}\n${all.variable ?? ""}`;
+    for (const shown of ["ENFORCE-EXPOSE", "PRIVATE-HEALTH", "PRIVATE-SLEEP", "README-PRIVATE"]) {
+      expect(full).toContain(shown);
+    }
+  });
+
+  it("external path: the project README is skipped entirely, even a row tagged external (qa R3 W1)", () => {
+    vi.mocked(getFilesByQualifier).mockReturnValue([]);
+    vi.mocked(getFile).mockImplementation((path: string) =>
+      path === "projects/pulso-aura-upfront/README.md"
+        ? {
+            id: "r",
+            path,
+            title: "Pulso README",
+            content: "README-PULSO-DEVLOG",
+            tags: '["external"]',
+            qualifier: "reference",
+            condition: null,
+            priority: 50,
+            related_to: "[]",
+            created_at: "",
+            updated_at: "",
+            user_edit_time: null,
+          }
+        : undefined,
+    );
+    const ext = buildKnowledgeBaseSections([], "status del CRM", "runner", isExternalKbInjectable);
+    expect(`${ext.stable ?? ""}\n${ext.variable ?? ""}`).not.toContain("README-PULSO-DEVLOG");
+    expect(vi.mocked(getFile)).not.toHaveBeenCalledWith("projects/pulso-aura-upfront/README.md");
+
+    // Operator path unchanged: the same message injects the README.
+    const own = buildKnowledgeBaseSections([], "status del CRM");
+    expect(own.variable ?? "").toContain("README-PULSO-DEVLOG");
   });
 });
 

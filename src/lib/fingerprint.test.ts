@@ -69,6 +69,8 @@ describe("createFingerprintedContext", () => {
     expect(options.newContextOptions.deviceScaleFactor).toBe(1);
     // Base options still present
     expect(options.newContextOptions.ignoreHTTPSErrors).toBe(true);
+    // Service workers would bypass the stealth route guard.
+    expect(options.newContextOptions.serviceWorkers).toBe("block");
   });
 
   it("falls back to static context when fingerprint-injector throws", async () => {
@@ -100,5 +102,6 @@ describe("createFingerprintedContext", () => {
     // Static defaults still present
     expect(opts.ignoreHTTPSErrors).toBe(true);
     expect(opts.colorScheme).toBe("dark");
+    expect(opts.serviceWorkers).toBe("block");
   });
 });

@@ -19,6 +19,7 @@ export interface ConfirmationFacts {
   canAskOperator?: boolean;
   chatOrigin?: boolean;
   a2aOrigin?: boolean;
+  unattended?: boolean;
 }
 
 export class TaskExecutionContext {
@@ -70,17 +71,35 @@ export class TaskExecutionContext {
   /** The run serves an A2A peer (tag `a2a`): its refusal has no API hint. */
   readonly a2aOrigin: boolean;
 
+  /**
+   * A background agent (spawnType `user-background` / tag `background-agent`)
+   * or a sub-task of one: launched from a chat, but the operator is not
+   * watching the run. Some operator-only acts refuse here even on a router
+   * root (the `external` KB tag, jarvis-files.ts).
+   */
+  readonly unattended: boolean;
+
+  /**
+   * Set only for an external request (jarvis-pull): the run's tool list. Every
+   * tool call on the SDK path goes through `external-tool-guard` against it
+   * (the OpenAI path wraps the executor with the same guard).
+   */
+  readonly externalTools?: readonly string[];
+
   constructor(
     taskId: string,
     interactive = true,
     facts: ConfirmationFacts = {},
+    externalTools?: readonly string[],
   ) {
     this.taskId = taskId;
+    this.externalTools = externalTools;
     this.interactive = interactive;
     this.routerRoot = facts.routerRoot === true;
     this.canAskOperator = facts.canAskOperator === true;
     this.chatOrigin = facts.chatOrigin === true;
     this.a2aOrigin = facts.a2aOrigin === true;
+    this.unattended = facts.unattended === true;
   }
 
   // --- Pending confirmation (pause/resume pattern) ---
@@ -196,6 +215,7 @@ export function exitExecutionContext<T>(fn: () => T): T {
 export function runnerExecutionContext(
   taskId: string,
   interactive: boolean,
+  externalTools?: readonly string[],
 ): TaskExecutionContext {
   const outer = currentExecutionContext();
   const run = outer?.taskId === taskId ? outer : undefined;
@@ -204,5 +224,6 @@ export function runnerExecutionContext(
     canAskOperator: run?.routerRoot,
     chatOrigin: run?.chatOrigin,
     a2aOrigin: run?.a2aOrigin,
-  });
+    unattended: run?.unattended,
+  }, externalTools);
 }

@@ -103,3 +103,7 @@
 - [jme-hardening-r2-audit-2026-09-30](jme-hardening-r2-audit-2026-09-30.md) - R2 (09-30): FAIL 1 Crit, 12/12 RED. CLASS: supersede inheriting the INCOMING TTL downgrades a stated permanent row to a 60 d inferred one.
 - [jme-hardening-r3-audit-2026-09-30](jme-hardening-r3-audit-2026-09-30.md) - R3 (09-30): FAIL 1 Crit. CLASS: refresh-on-skip + max(confidence) launders echo wording into a stated row; cutoff 0.15->0.20.
 - [jme-hardening-r4-audit-2026-09-30](jme-hardening-r4-audit-2026-09-30.md) - R4 (09-30): PASS-W-NOTES, 7/8 RED. CLASS: max-conf inheritance launders only where confidence is a CLASS (preference).
+- [jarvis-pull-task-seam-r1-audit](jarvis-pull-task-seam-r1-audit.md) - jarvis-pull task seam (09-30): FAIL 1 Crit. CLASS: "no private memory" skipped JME/essentials but kept always-read KB + unscoped jarvis_file_*.
+- [jarvis-pull-task-seam-r2-audit](jarvis-pull-task-seam-r2-audit.md) - R2 (09-30): FAIL 1 Crit. CLASS: allow-tree-minus-denies policy leaked divorce/health rows; guard wiring fine (17/17 RED).
+- [jarvis-pull-task-seam-r3-audit](jarvis-pull-task-seam-r3-audit.md) - R3 (09-30): FAIL 1 Crit (data). CLASS: opt-in fixed the mechanism; leak moved to a whole-tree SEED (competitor staff list to the client).
+- [jarvis-pull-task-seam-r4-audit](jarvis-pull-task-seam-r4-audit.md) - R4 (09-30): PASS-W-WARN, 8/8 RED. CLASS: routerRoot = reply route, not operator watching; user-background passes the tag guard.

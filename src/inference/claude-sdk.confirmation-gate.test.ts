@@ -337,3 +337,66 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     expect(reg.execute).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("wrapTool external guard (jarvis-pull on the claude-sdk path)", () => {
+  const external = (taskId: string) =>
+    new TaskExecutionContext(taskId, true, {}, [
+      "jarvis_file_read",
+      "jarvis_file_list",
+      "web_search",
+    ]);
+
+  it("refuses a tool outside the run's list without executing it", async () => {
+    const text = await inRun(BACKGROUND, external("t-ext1"), () =>
+      call("memory_search", { query: "x" }),
+    );
+    expect(JSON.parse(text)).toEqual({ error: "tool not available on this path" });
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed jarvis_file_read path without executing it", async () => {
+    const text = await inRun(BACKGROUND, external("t-ext2"), () =>
+      call("jarvis_file_read", { path: "projects/expansion-crm/../../INDEX.md" }),
+    );
+    expect(JSON.parse(text)).toEqual({ error: "path not available on this path" });
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses an untagged private row returned by jarvis_file_read", async () => {
+    reg.execute.mockImplementationOnce(async () =>
+      JSON.stringify({ path: "knowledge/health/x.md", content: "PRIVATE", tags: [] }),
+    );
+    const text = await inRun(BACKGROUND, external("t-ext2b"), () =>
+      call("jarvis_file_read", { path: "knowledge/health/x.md" }),
+    );
+    expect(JSON.parse(text)).toEqual({ error: "path not available on this path" });
+    expect(text).not.toContain("PRIVATE");
+  });
+
+  it("filters private paths out of a jarvis_file_list result (runs at max limit)", async () => {
+    reg.execute.mockImplementationOnce(async () =>
+      [
+        "📂 **2 files**",
+        "  knowledge/people/someone.md (1K, always-read)",
+        "  knowledge/domain/tv-tarifas.md (3K, reference)",
+      ].join("\n"),
+    );
+    const text = await inRun(BACKGROUND, external("t-ext3"), () =>
+      call("jarvis_file_list", { prefix: "knowledge/", limit: 1 }),
+    );
+    expect(reg.execute).toHaveBeenCalledWith("jarvis_file_list", {
+      prefix: "knowledge/",
+      limit: 500,
+    });
+    expect(text).toContain("knowledge/domain/tv-tarifas.md");
+    expect(text).not.toContain("knowledge/people/");
+    expect(text.split("\n")[0]).toBe("📂 **1 files**");
+  });
+
+  it("a run without externalTools is unaffected", async () => {
+    const text = await inRun(BACKGROUND, new TaskExecutionContext("t-int", true), () =>
+      call("memory_search", { query: "x" }),
+    );
+    expect(JSON.parse(text)).toEqual({ ok: true, name: "memory_search" });
+  });
+});

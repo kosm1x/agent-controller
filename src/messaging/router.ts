@@ -277,6 +277,8 @@ function buildJarvisSystemPrompt(
   // when this is true. Defaults to false so a caller that forgets to pass it
   // fails safe — no private data leaks. See `cohortSection`.
   ownerChannel = false,
+  // External caller (jarvis-pull): identity without operator addressing.
+  external = false,
 ): { stable: string; variable: string } {
   const flags = detectToolFlags(tools);
 
@@ -288,7 +290,7 @@ function buildJarvisSystemPrompt(
   const p4: string[] = []; // First to truncate
 
   // P1: Identity + safety (STABLE)
-  p1.push(identitySection());
+  p1.push(identitySection({ external }));
   // Per-channel org persona for community-manager email mailboxes. Loaded
   // once at startup from `EMAIL_<ID>_PERSONA_FILE`, so the content is byte-
   // stable across calls on the same channel and prompt-cache friendly. P1
@@ -303,7 +305,8 @@ function buildJarvisSystemPrompt(
   // Note: fileSystemSection is gated on hasNorthStar but the gate decision is
   // stable per scope-tool composition; it stays in the stable layer. Coding
   // tasks without NorthStar tools won't see this either way.
-  if (flags.hasNorthStar) p2.push(fileSystemSection());
+  // External caller (jarvis-pull): no host paths for the CRM model.
+  if (flags.hasNorthStar && !external) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
   // V8.1 Phase A — Conway Pattern 2 grounding. Surface the self-defining
   // cohort (what Fede actually has live) in the stable layer so the model
@@ -414,6 +417,17 @@ function buildJarvisSystemPrompt(
     `[prompt] System prompt: ${Math.round(combinedLength / 4)} tokens, ${p1.length + p2.length + p3.length + p4.length} sections (stable=${p1.length + p2.length}, variable=${p3.length + p4.length})`,
   );
   return { stable, variable };
+}
+
+/**
+ * Jarvis persona for an EXTERNAL caller (jarvis-pull): no user facts, no
+ * enrichment, no org persona, and never the operator-private cohort.
+ */
+export function buildExternalJarvisSystemPrompt(tools: string[]): {
+  stable: string;
+  variable: string;
+} {
+  return buildJarvisSystemPrompt(tools, "", "", null, false, true);
 }
 
 /**
