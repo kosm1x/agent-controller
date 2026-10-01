@@ -1918,14 +1918,11 @@ cmd_jme_stats() {
 
   echo ""
 
-  # ── Verdict runway ──────────────────────────────────────────────────────────
-  echo -e "${BOLD}Verdict runway:${NC}"
-  local verdict_date="2026-07-27"
-  local days_left
-  days_left=$(( ( $(date -d "$verdict_date" +%s) - $(date +%s) ) / 86400 ))
-  echo -e "  Verdict date:  ${verdict_date}"
-  echo -e "  Days remaining: ${days_left}"
-  echo -e "  Success criteria: util_pct ≥ 39% (baseline hybrid), p50 latency < 350ms"
+  # ── Standing ruling ─────────────────────────────────────────────────────────
+  echo -e "${BOLD}Standing ruling (2026-09-30):${NC}"
+  echo -e "  JME stays as standing machinery — no verdict date."
+  echo -e "  The 39% keep / 20% demote was_used lines are RETIRED for this bank (text-overlap proxy under-reads preferences)."
+  echo -e "  Judge on: per-turn token cost of the JME block + ignored stated preferences (./mc-ctl jme-preferences)."
   echo ""
 }
 
