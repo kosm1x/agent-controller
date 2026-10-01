@@ -38,6 +38,10 @@ import {
 import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
+import {
+  redactCredentialsForPersist,
+  stringifyRedacted,
+} from "../api/mcp-server/redact.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
 import {
   declareGates,
@@ -778,7 +782,7 @@ async function dispatchWithSlot(
     name: "task.started",
     attrs: {
       agent_type: agentType,
-      title: submission.title.slice(0, 120),
+      title: redactCredentialsForPersist(submission.title)!.slice(0, 120),
       ...(input.modelTier && { tier: input.modelTier }),
     },
   });
@@ -934,11 +938,17 @@ async function dispatchWithSlot(
       runId,
       status: result.success ? "completed" : "failed",
       runnerStatus: result.status ?? null,
-      output: result.output ? JSON.stringify(result.output) : null,
-      error: result.error ?? null,
+      // Credential-redacted: output, error, trace. Raw by design:
+      // output.pendingConfirmation (router executes its args on "sí"; the
+      // hash-bound copy is tool_approvals.args_json), goal_graph (resume
+      // input), token_usage (numbers).
+      output: result.output
+        ? stringifyRedacted(result.output, ["pendingConfirmation"])
+        : null,
+      error: redactCredentialsForPersist(result.error),
       tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
       goalGraph: result.goalGraph ? JSON.stringify(result.goalGraph) : null,
-      trace: result.trace ? JSON.stringify(result.trace) : null,
+      trace: result.trace ? stringifyRedacted(result.trace) : null,
       // queue #231: persist bare tool names for the swarm-retry classifier.
       // Defensive JSON-encode of an empty array if toolCalls is missing —
       // null distinguishes "no run completed" from "ran but called no tools".
@@ -969,7 +979,9 @@ async function dispatchWithSlot(
         // The runner's own stated reason (2026-09-19: a dead model login read
         // only "Required tools not called" here — the cause sat in the output).
         const why = result.concerns?.[0]
-          ? ` — runner: ${result.concerns[0].replace(/\s+/g, " ").slice(0, 200)}`
+          ? ` — runner: ${redactCredentialsForPersist(result.concerns[0])!
+              .replace(/\s+/g, " ")
+              .slice(0, 200)}`
           : "";
         if (submission._isRequiredToolRetry) {
           // Retry also failed — alert and give up
@@ -1175,7 +1187,10 @@ async function dispatchWithSlot(
           terminationFromTaskStatus(taskStatus, result.success),
         agent_type: effectiveAgentType,
         tool_calls: result.toolCalls?.length ?? 0,
-        ...(result.error && { error: result.error.slice(0, 300) }),
+        // Redact BEFORE the cut: a fixed-length key rule misses a split key.
+        ...(result.error && {
+          error: redactCredentialsForPersist(result.error)!.slice(0, 300),
+        }),
       },
     });
 
@@ -1212,7 +1227,7 @@ async function dispatchWithSlot(
       UPDATE runs SET status = 'failed', error = @error, completed_at = datetime('now')
       WHERE run_id = @runId
     `,
-    ).run({ runId, error: errorMsg });
+    ).run({ runId, error: redactCredentialsForPersist(errorMsg) });
 
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
     emitTraceEvent({
@@ -1221,7 +1236,7 @@ async function dispatchWithSlot(
       name: "task.failed",
       attrs: {
         termination_reason: "error",
-        error: errorMsg.slice(0, 300),
+        error: redactCredentialsForPersist(errorMsg)!.slice(0, 300),
         thrown: true,
       },
     });
@@ -1336,6 +1351,9 @@ export function updateTaskStatus(
 ): void {
   const db = getDatabase();
 
+  // tasks.error is credential-redacted at write; tasks.output stays raw on
+  // purpose — swarm parents deliver child tasks.output to the user verbatim.
+
   // C2 fix (queue #7 audit, 2026-05-07): once a task reaches a terminal
   // status (cancelled / completed / failed) it should NEVER be flipped to
   // a different terminal status by a runner that finishes after the user
@@ -1358,14 +1376,18 @@ export function updateTaskStatus(
   } else if (status === "needs_context" || status === "blocked") {
     db.prepare(
       `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
-    ).run(status, error ?? null, taskId);
+    ).run(status, redactCredentialsForPersist(error), taskId);
   } else if (status === "failed") {
     // Persist whatever the runner produced even on failure — post-mortems on
     // graded-down heavy tasks (e6f3dfa0, 2026-07-27) had tasks.output=null
     // and needed the conversations table to reconstruct the deliverable.
     db.prepare(
       `UPDATE tasks SET status = 'failed', error = ?, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
-    ).run(error ?? null, output ? JSON.stringify(output) : null, taskId);
+    ).run(
+      redactCredentialsForPersist(error),
+      output ? JSON.stringify(output) : null,
+      taskId,
+    );
   } else {
     // Round-2 audit W2 fix (2026-05-07): guard the generic UPDATE too so
     // any future caller passing a non-enumerated status (e.g. "claimed",

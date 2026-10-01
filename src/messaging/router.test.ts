@@ -4425,6 +4425,20 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(traced("confirmation.continuation_started")).toEqual([]);
   });
 
+  it("S1b: the continuation_failed error is redacted BEFORE its 200-char cut", async () => {
+    await gatedTurn();
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const err = "x".repeat(179) + " " + "AIza" + "b".repeat(35); // key spans 180..218
+    vi.mocked(submitTask).mockRejectedValueOnce(new Error(err));
+    await say("sí");
+    await vi.advanceTimersByTimeAsync(0);
+    const [ev] = traced("confirmation.continuation_failed") as Array<{
+      attrs: { error: string };
+    }>;
+    expect(ev!.attrs.error).toContain("[REDACTED");
+    expect(ev!.attrs.error).not.toMatch(/AIza|bbbbb/);
+  });
+
   it("W4: the resume is bound to the exact args — a superseding pending runs but continues nothing (sha mismatch)", async () => {
     await gatedTurn();
     storePendingConfirmation(tk, "wp_delete", { id: 8 }, "wp_delete(id: 8)");

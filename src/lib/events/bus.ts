@@ -33,6 +33,7 @@ import type {
   Subscription,
 } from "./types";
 import { errMsg } from "../err-msg.js";
+import { stringifyRedacted } from "../../api/mcp-server/redact.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -502,7 +503,9 @@ export class PersistentEventBus extends EventEmitter {
         category: event.category,
         timestamp: event.timestamp,
         workspace_id: event.workspace_id,
-        data: JSON.stringify(event.data),
+        // Credential-redacted persisted copy only; subscribers get event.data
+        // as is (the router delivers task results from it).
+        data: stringifyRedacted(event.data),
         correlation_id: event.correlation_id,
         causation_id: event.causation_id ?? null,
       });

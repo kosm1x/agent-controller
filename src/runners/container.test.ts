@@ -4,6 +4,23 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
+// Real spawn by default; one spec swaps in a fake docker process.
+const spawnMock = vi.hoisted(() => ({ fake: null as unknown }));
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return {
+    ...actual,
+    spawn: (...args: Parameters<typeof actual.spawn>) =>
+      spawnMock.fake ?? actual.spawn(...args),
+  };
+});
+// spawnContainer only reads heavyRunnerImage (the spec passes `image` anyway).
+vi.mock("../config.js", () => ({
+  getConfig: () => ({ heavyRunnerImage: "img:test" }),
+}));
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +39,7 @@ import {
   HOST_DIST_REQUIRED_ASSETS,
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
+  spawnContainer,
 } from "./container.js";
 
 describe("generateContainerName", () => {
@@ -401,5 +419,34 @@ describe("missingHostDistAssets — the mounted host dist/ must be a full `npm r
   // Only the host has a live dist/ to check; CI checks out elsewhere.
   it.skipIf(!existsSync(MC_ROOT))("the live host dist/ is complete right now (deploy.sh ran `npm run build`)", () => {
     expect(missingHostDistAssets()).toEqual([]);
+  });
+});
+
+describe("spawnContainer non-zero exit error", () => {
+  it("redacts stderr BEFORE the 500-char cut — a straddling key leaves no fragment", async () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const key = "AIza" + "b".repeat(35);
+    const proc = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    spawnMock.fake = proc;
+    try {
+      const h = spawnContainer({
+        image: "img:test",
+        input: { prompt: "p" },
+        timeoutMs: 5_000,
+      });
+      proc.stderr.emit("data", Buffer.from("x".repeat(479) + " " + key)); // key spans 480..518
+      proc.emit("close", 1);
+      const out = await h.result;
+      expect(out.status).toBe("error");
+      expect(out.error).toMatch(/^Container exited with code 1: x+ \[REDACTED/);
+      expect(out.error).not.toMatch(/AIza|bbbbb/);
+    } finally {
+      spawnMock.fake = null;
+    }
   });
 });

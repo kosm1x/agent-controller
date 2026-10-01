@@ -140,6 +140,44 @@ describe("maybeStrategicInjection", () => {
     expect(mocks.markJudgmentSurfaced).not.toHaveBeenCalled(); // no stamp on a dead run
   });
 
+  it("a dead strategic run (task terminal past the grace, no bus event) is reaped and stops suppressing", () => {
+    const inj = maybeStrategicInjection(makeSchedule());
+    watchScheduledTask("task-thrown", makeSchedule(), 0, inj);
+    expect(maybeStrategicInjection(makeSchedule())).toBeNull(); // live: suppressed
+    // The reap query (terminal + past the grace) now finds the task row.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.getDatabase.mockReturnValue({
+      prepare: (sql: string) => ({
+        run: vi.fn(),
+        get: vi.fn(() =>
+          sql.includes("FROM tasks") ? { status: "failed" } : { status: "running" },
+        ),
+        all: vi.fn(() => []),
+      }),
+    });
+    expect(maybeStrategicInjection(makeSchedule())).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("task task-thrown failed"),
+    );
+  });
+
+  it("a DB error inside the reap's schedule_runs write never sinks the Sync (failure-isolated)", () => {
+    const inj = maybeStrategicInjection(makeSchedule());
+    watchScheduledTask("task-busy", makeSchedule(), 0, inj);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.getDatabase.mockReturnValue({
+      prepare: (sql: string) => {
+        if (sql.includes("schedule_runs")) throw new Error("SQLITE_BUSY: database is locked");
+        return { run: vi.fn(), get: vi.fn(() => ({ status: "failed" })), all: vi.fn(() => []) };
+      },
+    });
+    let out: ReturnType<typeof maybeStrategicInjection> | undefined;
+    expect(() => {
+      out = maybeStrategicInjection(makeSchedule());
+    }).not.toThrow();
+    expect(out?.judgmentId).toBe(127); // dead entry reaped → today's reading proceeds
+  });
+
   it("skips while another strategic run of the same schedule is in flight (no double-append)", async () => {
     mocks.getRouter.mockReturnValue({
       broadcastToAll: vi.fn().mockResolvedValue({ sent: 1, failed: 0 }),

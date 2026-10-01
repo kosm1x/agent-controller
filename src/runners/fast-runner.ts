@@ -229,6 +229,33 @@ const CONFIRM_PATTERN = buildConfirmRegex("strict");
 const AUTH_ERROR_RE =
   /\b401\b|authentication_error|authentication_failed|invalid x-api-key|OAuth token.{0,40}(expired|revoked)|OAuth session expired|token (expirad|revocad)/i;
 
+/** SDK built-ins that can land in a run's toolCalls and change nothing:
+ *  `queryClaudeSdk` admits only `ToolSearch` (`tools: ["ToolSearch"]` when
+ *  armed; every other built-in is disabled). A fresh leg must re-run it to
+ *  load deferred schemas, so it never counts as already-done work. */
+const SDK_READ_ONLY_BUILTINS = new Set(["ToolSearch"]);
+
+/** Cut `text` at `i`, together with the newline run right before it. */
+function cutWithLeadingNewlines(text: string, i: number): string {
+  let k = i;
+  while (k > 0 && text[k - 1] === "\n") k--;
+  return text.slice(0, k);
+}
+
+/** ≡ `text.replace(/\n*STATUS: DONE_WITH_CONCERNS[^]*$/, "")`, linear (the
+ *  regex is quadratic on long blank-line runs). Exported for tests. */
+export function stripConcernsTrailer(text: string): string {
+  const i = text.indexOf("STATUS: DONE_WITH_CONCERNS");
+  return i < 0 ? text : cutWithLeadingNewlines(text, i);
+}
+
+/** ≡ `text.replace(/\n*STATUS:[^\n]*$/, "")` — the first `STATUS:` on the
+ *  final line and the newline run before it — linear. Exported for tests. */
+export function stripFinalStatusLine(text: string): string {
+  const i = text.indexOf("STATUS:", text.lastIndexOf("\n") + 1);
+  return i < 0 ? text : cutWithLeadingNewlines(text, i);
+}
+
 /** Maximum tokens of JME facts injected into the system prompt per turn. */
 const JME_INJECTION_BUDGET_TOKENS = 1500;
 /** Pattern in assistant messages that indicates a deletion confirmation was requested. */
@@ -1556,6 +1583,34 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           });
         };
 
+        // A recovery leg's prompt: the original request, leg 1's progress and
+        // the tools leg 1 already ran (shared by the resume and auth legs).
+        const continuationPrompt = (
+          reason: string,
+          progress: string,
+          ranNames: string[],
+        ): string =>
+          `${userPrompt}\n\n[AVANCE PREVIO — la ejecución anterior ${reason} antes de terminar]\n` +
+          `${progress.slice(0, 4000)}\n\n` +
+          // R2 audit C2: the claim must carry the evidence — name the
+          // tools that ALREADY ran so mutating calls (send/write/post)
+          // are not repeated.
+          `Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ${ranNames.join(", ") || "ninguna"}.\n` +
+          `CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.`;
+        // Leg 1's text without the SDK error marker and the partial trailer.
+        const leg1BodyOf = (text: string): string =>
+          stripConcernsTrailer(
+            text.replace(/^\[[^\]]*\]\s*(Partial response below[^\n]*)?\n*/, ""),
+          ).trim();
+        // R2 audit C2: leg-1's streamed work must survive when leg-2 returns
+        // only a thin closer — the partial IS the deliverable.
+        const keepLeg1Partial = (firstText: string, secondText: string): string | null => {
+          const leg2Body = stripFinalStatusLine(secondText).trim();
+          if (leg2Body.length >= 200) return null;
+          const leg1Body = leg1BodyOf(firstText);
+          return leg1Body.length >= 200 ? `${leg1Body}\n\n${secondText}` : null;
+        };
+
         let sdkAutoResumed = false;
         // R3 audit W2: set BEFORE the await — a resume that THROWS must
         // still count as the run's one recovery leg, or a capped partial
@@ -1573,14 +1628,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             const firstLegText = sdkResult.text;
             const resumeLeg = await runWithExecutionContext(taskContext, () =>
               queryClaudeSdk({
-                prompt:
-                  `${userPrompt}\n\n[AVANCE PREVIO — la ejecución anterior alcanzó su límite de turnos/presupuesto antes de terminar]\n` +
-                  `${firstLegText.slice(0, 4000)}\n\n` +
-                  // R2 audit C2: the claim must carry the evidence — name the
-                  // tools that ALREADY ran so mutating calls (send/write/post)
-                  // are not repeated.
-                  `Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ${withoutGated(sdkResult.toolCalls).join(", ") || "ninguna"}.\n` +
-                  `CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.`,
+                prompt: continuationPrompt(
+                  "alcanzó su límite de turnos/presupuesto",
+                  firstLegText,
+                  withoutGated(sdkResult.toolCalls),
+                ),
                 systemPrompt,
                 toolNames: allToolNames,
                 // R1 audit W4: bounded — half the rounds finishes a nearly-done
@@ -1597,23 +1649,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               }),
             );
             sdkResult = mergeSdkLegs(sdkResult, resumeLeg);
-            // R2 audit C2: leg-1's streamed work must survive when leg-2
-            // returns only a thin closer — the partial IS the deliverable.
-            const leg2Body = resumeLeg.text
-              .replace(/\n*STATUS:[^\n]*$/, "")
-              .trim();
-            if (leg2Body.length < 200) {
-              const leg1Body = firstLegText
-                .replace(/^\[[^\]]*\]\s*(Partial response below[^\n]*)?\n*/, "")
-                .replace(/\n*STATUS: DONE_WITH_CONCERNS[^]*$/, "")
-                .trim();
-              if (leg1Body.length >= 200) {
-                sdkResult = {
-                  ...sdkResult,
-                  text: `${leg1Body}\n\n${resumeLeg.text}`,
-                };
-              }
-            }
+            const kept = keepLeg1Partial(firstLegText, resumeLeg.text);
+            if (kept) sdkResult = { ...sdkResult, text: kept };
             sdkAutoResumed = true;
             console.log(
               `[recovery] auto-resume finished (task ${input.taskId})`,
@@ -1633,10 +1670,31 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           console.log(
             `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
           );
+          // Tools leg 1 already ran must not be replayed: the retry continues
+          // from them (resume-leg wording) instead of restarting the request.
+          // Leg 1's error marker is stripped so the 401 text is not echoed
+          // back and misread as a second auth failure.
+          const firstLegText = sdkResult.text;
+          // Replay guard, not provenance (EVIDENCE_TOOL_RE decides evidence):
+          // a tool declaring readOnlyHint changes nothing, so redoing it is
+          // safe — and leg 2 never saw its result. Unknown or unhinted (MCP)
+          // tools count as side-effecting.
+          const sideEffecting = withoutGated(sdkResult.toolCalls).filter(
+            (name) =>
+              !SDK_READ_ONLY_BUILTINS.has(name) &&
+              toolRegistry.get(name)?.readOnlyHint !== true,
+          );
+          const ranTools = sideEffecting.length > 0;
           try {
             const authLeg = await runWithExecutionContext(taskContext, () =>
               queryClaudeSdk({
-                prompt: userPrompt,
+                prompt: ranTools
+                  ? continuationPrompt(
+                      "falló por un error de autenticación",
+                      leg1BodyOf(firstLegText),
+                      sideEffecting,
+                    )
+                  : userPrompt,
                 systemPrompt,
                 toolNames: allToolNames,
                 maxTurns: maxRounds,
@@ -1649,6 +1707,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             );
             if (!sdkAuthFailed(authLeg.text)) {
               sdkResult = mergeSdkLegs(sdkResult, authLeg);
+              const kept = ranTools && keepLeg1Partial(firstLegText, authLeg.text);
+              if (kept) sdkResult = { ...sdkResult, text: kept };
               console.log(
                 `[recovery] auth retry succeeded (task ${input.taskId})`,
               );

@@ -18,6 +18,7 @@ import { randomUUID } from "crypto";
 import { basename, extname } from "path";
 import { extractPdfToMarkdown } from "../lib/pdf.js";
 import type { KbEntry } from "../db/pgvector.js";
+import { validatePathSafety } from "../tools/builtin/immutable-core.js";
 
 export type ChunkModality = "text" | "table";
 
@@ -62,6 +63,8 @@ export async function ingestPdf(
   pdfPath: string,
   opts: IngestOptions = {},
 ): Promise<IngestResult> {
+  const safety = validatePathSafety(pdfPath, "read");
+  if (!safety.safe) throw new Error(`path blocked: ${safety.reason}`);
   const markdown = await extractPdfToMarkdown(pdfPath, {
     maxChars: opts.pdfMaxChars ?? DEFAULT_PDF_MAX_CHARS,
   });

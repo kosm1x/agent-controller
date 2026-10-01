@@ -326,6 +326,24 @@ describe("R4 audit pins", () => {
     expect(fuenteIsCheckable("denue")).toBe(false);
   });
 
+  it("trace attrs: artifact and fuente are redacted BEFORE their 120/80-char cuts", () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const key = "AIza" + "b".repeat(35);
+    seedTask("t-cut", "x");
+    enterRunToolContext("t-cut", () =>
+      checkArtifactProvenance({
+        tool: "gsheets_write",
+        artifact: "kb:" + "x".repeat(96) + "/" + key, // key spans 100..138
+        text: "Ventas 12,500",
+        fuente: "https://example.com/" + "x".repeat(50) + "/" + key, // 71..109
+      }),
+    );
+    const [attrs] = traces("t-cut");
+    expect(String(attrs!.artifact)).toContain("[REDACTED");
+    expect(String(attrs!.fuente)).toContain("[REDACTED");
+    expect(JSON.stringify(attrs)).not.toMatch(/AIza|bbbbb/);
+  });
+
   it("W-5: the persona prompt is NOT evidence for a chat task; a scheduled task's prompt IS", () => {
     seedTask(
       "t-persona",

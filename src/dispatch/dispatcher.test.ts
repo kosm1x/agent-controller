@@ -1150,3 +1150,163 @@ describe("V8.4 ledger wiring: declare at submit → render at run → consumer a
     expect(terminal.attrs).toMatchObject({ status: "completed" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Durable-sink credential redaction (Hermes 4e740313 port, 2026-10-01)
+// ---------------------------------------------------------------------------
+
+describe("dispatchTask redacts credentials in runs.output / runs.error / tasks.error", () => {
+  // Built at runtime — no key-shaped literal in the (public) repo.
+  const SECRET = "sk-" + "a".repeat(24);
+
+  async function dispatchWith(execute: () => Promise<RunnerOutput>) {
+    registerRunner({ type: "fast", execute });
+    await submitTask({ title: "Redact me", description: "redaction spec" });
+    await vi.waitFor(() => {
+      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+      if (!names.some((n) => n === "task.completed" || n === "task.failed")) {
+        throw new Error("no terminal trace event yet");
+      }
+    });
+  }
+
+  /** The `UPDATE runs SET status = @status, …` named-parameter write. */
+  function runsUpdate(): { output: string | null; error: string | null } {
+    const call = mockRun.mock.calls.find(
+      (c) => c[0] && typeof c[0] === "object" && "runnerStatus" in c[0],
+    );
+    expect(call).toBeDefined();
+    return call![0] as { output: string | null; error: string | null };
+  }
+
+  it("failed result: runs.error and tasks.error carry the token, never the raw key", async () => {
+    await dispatchWith(
+      async () =>
+        ({ success: false, error: `provider 401 ${SECRET}` }) as RunnerOutput,
+    );
+    expect(runsUpdate().error).toBe("provider 401 [REDACTED_KEY]");
+    const flat = mockRun.mock.calls.flat();
+    expect(
+      flat.some(
+        (a) =>
+          typeof a === "string" && a.includes("provider 401 [REDACTED_KEY]"),
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(mockRun.mock.calls)).not.toContain(SECRET);
+  });
+
+  // A fixed-length key rule (AIza + 35) misses a key cut by .slice(0, 300),
+  // so the trace attrs must be redacted BEFORE the cut.
+  const AIZA = "AIza" + "b".repeat(35);
+  const straddle = "x".repeat(289) + " " + AIZA; // key spans 290..328
+
+  it("failed result: trace attrs error is redacted before the 300-char cut", async () => {
+    await dispatchWith(
+      async () => ({ success: false, error: straddle }) as RunnerOutput,
+    );
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.name).toBe("task.failed");
+    expect(terminal.attrs.error).not.toMatch(/AIza|bbbbb/);
+  });
+
+  it("runner throw: trace attrs error is redacted before the 300-char cut", async () => {
+    await dispatchWith(async () => {
+      throw new Error(straddle);
+    });
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.attrs.thrown).toBe(true);
+    expect(terminal.attrs.error).not.toMatch(/AIza|bbbbb/);
+  });
+
+  it("required-tools concern is redacted before its 200-char cut", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({
+          success: true,
+          status: "DONE_WITH_CONCERNS",
+          concerns: ["y".repeat(189) + " " + AIZA],
+          output: "x",
+          toolCalls: [],
+        }) as RunnerOutput,
+    });
+    await submitTask({
+      title: "PM daily rebalance",
+      description: "rebalance",
+      requiredTools: ["pm_paper_rebalance"],
+      _isRequiredToolRetry: true,
+    });
+    await vi.waitFor(() => {
+      if (
+        !mockRun.mock.calls.some((c) =>
+          c.some((a) => typeof a === "string" && a.includes("— runner: yyy")),
+        )
+      )
+        throw new Error("failed-status write not seen yet");
+    });
+    expect(JSON.stringify(mockRun.mock.calls)).not.toMatch(/AIza|bbbbb/);
+  });
+
+  it("task.started trace title is redacted BEFORE its 120-char cut", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, output: "ok" }) as RunnerOutput,
+    });
+    await submitTask({
+      title: "x".repeat(99) + " " + AIZA, // key spans 100..138
+      description: "title cut spec",
+    });
+    await vi.waitFor(() => {
+      if (!emitTraceMock.mock.calls.some((c) => c[0].name === "task.started"))
+        throw new Error("no task.started yet");
+    });
+    const started = emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .find((e) => e.name === "task.started")!;
+    expect(started.attrs.title).toContain("[REDACTED");
+    expect(started.attrs.title).not.toMatch(/AIza|bbbbb/);
+  });
+
+  it("runner throw: the catch-path runs.error and tasks.error are redacted", async () => {
+    await dispatchWith(async () => {
+      throw new Error(`boom ${SECRET}`);
+    });
+    expect(
+      mockRun.mock.calls.some(
+        (c) => (c[0] as { error?: string })?.error === "boom [REDACTED_KEY]",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(mockRun.mock.calls)).not.toContain(SECRET);
+  });
+
+  it("completed: runs.output redacted except pendingConfirmation; tasks.output verbatim", async () => {
+    const output = {
+      finalAnswer: `here ${SECRET}`,
+      toolCalls: ["shell_exec"],
+      pendingConfirmation: {
+        toolName: "shell_exec",
+        args: { command: `curl -H "x-api-key: ${SECRET}" https://example.com` },
+      },
+    };
+    const trace = [{ type: "phase_error", error: `Error: 401 ${SECRET}` }];
+    await dispatchWith(
+      async () => ({ success: true, output, trace }) as unknown as RunnerOutput,
+    );
+    // runs.trace (Prometheus phase_error text) is redacted like runs.error.
+    const storedTrace = (runsUpdate() as unknown as { trace: string }).trace;
+    expect(JSON.parse(storedTrace)).toEqual([
+      { type: "phase_error", error: "Error: 401 [REDACTED_KEY]" },
+    ]);
+    const stored = JSON.parse(runsUpdate().output!);
+    expect(stored.finalAnswer).toBe("here [REDACTED_KEY]");
+    expect(stored.toolCalls).toEqual(["shell_exec"]);
+    // The router executes these args on the operator's "sí" — byte-identical.
+    expect(stored.pendingConfirmation).toEqual(output.pendingConfirmation);
+    // tasks.output stays raw: swarm parents deliver child tasks.output.
+    expect(
+      mockRun.mock.calls.some(
+        (c) => typeof c[0] === "string" && c[0].includes(`here ${SECRET}`),
+      ),
+    ).toBe(true);
+  });
+});

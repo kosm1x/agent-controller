@@ -10,10 +10,27 @@ import { execFileSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 import { readDenylistReason, validatePathSafety } from "./immutable-core.js";
+import { kernelWalk } from "./write-guard.js";
 import { redactCredentials } from "../../api/mcp-server/redact.js";
 
 const MAX_RESULTS = 100;
 const MAX_OUTPUT = 15_000; // chars
+
+/**
+ * A listed name is refused on its spelling AND where the kernel lands: the
+ * listing runs from the base path the kernel walked, so `link/..` in the base
+ * (or `/proc/self/cwd/..`) lists a different tree than resolve() names
+ * (audit 2026-10-01 C1). A walk through a /proc magic link (another
+ * process's filesystem view) is refused outright (C1-R2).
+ */
+function listedBlocked(p: string): boolean {
+  const walk = kernelWalk(p);
+  return (
+    walk.procLink !== null ||
+    readDenylistReason(resolve(p)) !== null ||
+    readDenylistReason(walk.path) !== null
+  );
+}
 
 // ---------------------------------------------------------------------------
 // grep — content search
@@ -444,9 +461,7 @@ TIPS:
       }
 
       const listed = output.trim().split("\n").filter(Boolean);
-      const all = listed.filter(
-        (f) => readDenylistReason(resolve(searchPath, f)) === null,
-      );
+      const all = listed.filter((f) => !listedBlocked(`${searchPath}/${f}`));
       // The find fallback has no limit of its own — apply max_results here
       // (the handler never sliced; `truncated` claimed a cut that never happened).
       const files = all.slice(0, maxResults);
@@ -582,9 +597,9 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
         .filter(
           (e) =>
             !!e &&
-            readDenylistReason(
-              resolve(recursive ? e : resolve(dirPath, e.replace(/\/$/, ""))),
-            ) === null,
+            !listedBlocked(
+              recursive ? e : `${dirPath}/${e.replace(/\/$/, "")}`,
+            ),
         );
       return JSON.stringify({ path: dirPath, entries, total: entries.length });
     } catch (err) {

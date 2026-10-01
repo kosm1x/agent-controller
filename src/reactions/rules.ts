@@ -12,6 +12,7 @@ import type {
   ReactionContext,
   ReactionDecision,
 } from "./types.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 
 // ---------------------------------------------------------------------------
 // Patterns
@@ -54,7 +55,7 @@ export const transientRetryRule: ReactionRule = {
     if (TRANSIENT_ERROR_PATTERN.test(ctx.error)) {
       return {
         action: "retry",
-        reason: `Transient error detected: ${ctx.error.slice(0, 100)}`,
+        reason: `Transient error detected: ${redactCredentialsForPersist(ctx.error)!.slice(0, 100)}`,
       };
     }
     return null;

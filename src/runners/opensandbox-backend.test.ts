@@ -386,6 +386,39 @@ describe("spawnOpenSandbox", () => {
     ).toEqual({ status: "success", result: "plain output" });
   });
 
+  it("redacts stderr / exec error text BEFORE the 500-char cut", async () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const straddle = "x".repeat(479) + " " + "AIza" + "b".repeat(35); // key spans 480..518
+    const run = async (fake: Parameters<typeof makeFake>[0]) => {
+      makeFake(fake);
+      return spawnOpenSandbox({
+        input: { prompt: "p" },
+        command: ["x"],
+        timeoutMs: 5_000,
+      }).result;
+    };
+    const exited = await run({
+      run: async ({ stderr }) => {
+        stderr(straddle);
+        return { exitCode: 2, error: { name: "CommandExecError", value: "2" } };
+      },
+    });
+    const execErr = await run({
+      run: async () => ({ error: { name: "CommandTimeout", value: straddle } }),
+    });
+    const streamEnded = await run({
+      run: async ({ stderr }) => {
+        stderr(straddle);
+        return { exitCode: null };
+      },
+    });
+    for (const out of [exited, execErr, streamEnded]) {
+      expect(out.status).toBe("error");
+      expect(out.error).toContain("[REDACTED");
+      expect(out.error).not.toMatch(/AIza|bbbbb/);
+    }
+  });
+
   it("an execd-level error is reported as an exec error", async () => {
     makeFake({
       run: async () => ({

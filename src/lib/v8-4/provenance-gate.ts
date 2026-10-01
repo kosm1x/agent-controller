@@ -29,6 +29,7 @@
 import { getDatabase } from "../../db/index.js";
 import { emitTraceEvent } from "../../observability/task-trace.js";
 import { currentRunTaskId, priorRunTools } from "../../tools/rule-of-two.js";
+import { redactCredentialsForPersist } from "../../api/mcp-server/redact.js";
 import {
   CHECKABLE_SOURCE_RE,
   auditNumbers,
@@ -217,10 +218,12 @@ export function checkArtifactProvenance(
       name: "provenance.checked",
       tool: input.tool,
       attrs: {
-        artifact: input.artifact.slice(0, 120),
+        artifact: redactCredentialsForPersist(input.artifact)!.slice(0, 120),
         figures: audit.found.length,
         unsourced: unsourced.length,
-        fuente: fuente ? fuente.slice(0, 80) : undefined,
+        fuente: fuente
+          ? redactCredentialsForPersist(fuente)!.slice(0, 80)
+          : undefined,
         mode,
         rejected,
       },

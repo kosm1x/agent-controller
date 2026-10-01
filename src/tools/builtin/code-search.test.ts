@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { grepTool, globTool, listDirTool } from "./code-search.js";
 
 const TEST_DIR = "/tmp/mc-test-code-search";
@@ -285,6 +285,42 @@ describe("list_dir", () => {
       await listDirTool.execute({ path: `${TEST_DIR}/subdir/.env` }),
     );
     expect(String(env.error)).toMatch(/path blocked/);
+  });
+
+  // audit 2026-10-01 C1: `ls` lists the tree the kernel walked to, so the
+  // entry filter must judge that tree, not the lexical spelling.
+  it("hides entries reached through `link/..` (kernel path, not text)", async () => {
+    symlinkSync("/proc/self/fd", `${TEST_DIR}/lnk`);
+    const r = JSON.parse(
+      await listDirTool.execute({ path: `${TEST_DIR}/lnk/..` }),
+    );
+    expect(r.entries).toContain("status");
+    expect(r.entries).not.toContain("environ");
+    // C1-R2: magic links are not listed through (another process's view).
+    expect(r.entries).not.toContain("root/");
+    expect(r.entries).not.toContain("cwd/");
+    expect(r.entries).not.toContain("root");
+    expect(r.entries).not.toContain("cwd");
+  });
+
+  it("refuses listing a /proc magic link or a symlink to one (C1-R2)", async () => {
+    symlinkSync("/proc/self/root", `${TEST_DIR}/hostroot`);
+    for (const path of ["/proc/self/root", "/proc/1/root/etc", `${TEST_DIR}/hostroot/etc`]) {
+      const r = JSON.parse(await listDirTool.execute({ path }));
+      expect(String(r.error), path).toMatch(/path blocked/);
+    }
+    // A listing of a tree holding such a link does not enumerate through it.
+    const deep = JSON.parse(
+      await listDirTool.execute({ path: TEST_DIR, recursive: true }),
+    );
+    expect(deep.entries.some((e: string) => e.includes("hostroot/"))).toBe(false);
+  });
+
+  it("refuses a blocked directory itself instead of listing it empty (I1)", async () => {
+    for (const path of ["/root/.ssh", "/root/backups", "/proc/self/cwd/../../backups"]) {
+      const r = JSON.parse(await listDirTool.execute({ path }));
+      expect(String(r.error), path).toMatch(/path blocked/);
+    }
   });
 
   it("should handle non-existent directory", async () => {

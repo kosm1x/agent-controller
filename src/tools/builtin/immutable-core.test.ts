@@ -1,7 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
+import { kernelWalk, realResolve } from "./write-guard.js";
 import {
   isImmutableCorePath,
   validatePathSafety,
@@ -417,6 +425,219 @@ describe("validatePathSafety", () => {
         true,
       );
     });
+
+    it("blocks backups, key material and transcripts an upload could ship (Hermes #107609 review)", () => {
+      for (const p of [
+        "/root/backups/mc-db-pre-kbcleanup-2026-09-28.db",
+        "/root/claude-backups/crm-azteca-archived-2026-06-20.tar.gz",
+        "/root/claude/mission-control/backups/mc.db.2026-01-01", // vps_backup's copies
+        "/root/claude/mission-control/backups",
+        // Every other writer of an mc.db / .env copy (enumeration 2026-10-01)
+        "/opt/supabase/backups/mission-control-20260101.tar.gz",
+        "/opt/supabase/backups/commit_ai_20260101_040001.sql.gz",
+        "/opt/supabase/backups",
+        "/root/claude/Pulso-Aura-Upfront/data/backups/messages-20260101.db",
+        "/root/claude/Pulso-Aura-Upfront/data/backups",
+        "/root/claude/mission-control/data/sonnet-bench/bench.db", // via data/
+        "/root/claude/Pulso-Aura-Upfront/.env.bak-rotate-20260101-0000", // .env name rule
+        "/root/claude/eurekams-intelligence-ui/server/.env.longevidad.bak-fwrotate-x",
+        "/root/.hapi.yaml",
+        "/root/claude/Pulso-Aura-Upfront/store/auth/creds.json",
+        "/root/claude/Pulso-Aura-Upfront/store/messages.db",
+        "/var/lib/caddy/.local/share/caddy/certificates/acme/x.com/x.com.key",
+        "/var/lib/stalwart/data/CURRENT",
+        "/root/.kube/config",
+        "/root/.config/gcloud/credentials.db",
+        "/root/.claude/projects/-root-claude/0b1c.jsonl",
+        "/root/.claude/projects/-root-claude/0b1c/subagents/agent-1.jsonl",
+        "/root/.claude/projects/-root-claude/0b1c/tool-results/out.txt",
+        "/root/.claude/projects/-root-claude/0b1c/workflows/run-1/log.txt",
+        "/root/.claude/history.jsonl",
+        "/root/.claude/paste-cache/abc.txt",
+        "/root/.claude/file-history/abc/v1",
+        "/root/.claude/shell-snapshots/snapshot-bash.sh",
+        "/root/.claude/session-env/abc/env",
+        "/root/.claude/backups/.claude.json.backup.1",
+        // /root/.claude/ is default-deny (W1-R2): stores, keys, config
+        "/root/.claude/daemon/key",
+        "/root/.claude/sessions/abc.key",
+        "/root/.claude/jobs/j1/transcript.jsonl",
+        "/root/.claude/uploads/a.pdf",
+        "/root/.claude/debug/latest",
+        "/root/.claude/settings.json",
+        "/root/.claude/settings.local.json",
+        "/root/.claude/plugins/x/plugin.json",
+        "/root/.claude/hooks/guard.sh",
+        "/root/.claude/skills/x/SKILL.md",
+        "/root/.claude/CLAUDE.md.bak-pre-fable-split-2026-09-25",
+        "/root/.claude/history.jsonl.md",
+        "/root/.claude/some-future-store/x",
+        "/root/.claude/projects/-root-claude/memory-evil/x.md",
+        "/var/lib/docker/volumes/pg/_data/base/1/1259",
+        "/var/lib/docker",
+        // containerd snapshotter: the same container layers (audit W1)
+        "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1/fs/etc/hostname",
+        "/var/lib/containerd",
+        "/run/containerd/io.containerd.runtime.v2.task/moby/abc123/rootfs/etc/hostname",
+        "/run/containerd",
+        // A blocked DIRECTORY itself is refused, not listed empty (I1).
+        "/root/backups",
+        "/root/.ssh",
+        "/var/lib/stalwart",
+      ]) {
+        expect(validatePathSafety(p, "read").safe, p).toBe(false);
+      }
+    });
+
+    it("does not over-block neighbours of the new entries", () => {
+      for (const p of [
+        "/root/claude/mission-control/README.md",
+        "/root/claude/Pulso-Aura-Upfront/README.md",
+        "/root/claude/Pulso-Aura-Upfront/src/index.ts",
+        "/tmp/x.txt",
+        "/root/backups-notes.txt",
+        "/root/claude-backups-index.md",
+        "/root/claude/mission-control/backups-notes.md",
+        "/root/claude/mission-control/docs/backups.md",
+        "/opt/supabase/backups-notes.md",
+        "/root/claude/Pulso-Aura-Upfront/data/backups-notes.md",
+        "/root/.hapi.yaml.example",
+        // Memory files beside the transcripts are read legitimately.
+        "/root/.claude/projects/-root-claude/memory/MEMORY.md",
+        "/root/.claude/projects",
+        "/root/.claude/projects/-root-claude",
+        "/root/.claude/CLAUDE.md",
+        "/root/.claude/NOW.md",
+        "/root/.claude/rules/git.md",
+        "/root/.claude/agents/ui-agent.md",
+        "/root/.claude/global-memory/methodology.md",
+        "/root/.claude",
+        "/root/.sshd-notes.txt",
+        "/var/lib/docker-notes.txt",
+        "/var/lib/containerd-notes.txt",
+        "/run/containerd-notes.txt",
+        // /proc state that is not a magic link stays readable (as at HEAD).
+        "/proc/cpuinfo",
+        "/proc/meminfo",
+        "/proc/self/status",
+        "/proc/loadavg",
+      ]) {
+        expect(validatePathSafety(p, "read").safe, p).toBe(true);
+      }
+    });
+
+    // realpath needs an existing target: use a real entry's NAME (never its
+    // contents) where the VPS has one; CI has no /root/backups.
+    const backupEntry = existsSync("/root/backups")
+      ? readdirSync("/root/backups")[0]
+      : undefined;
+    it.skipIf(!backupEntry)(
+      "refuses a symlink into a newly blocked directory via realpath",
+      () => {
+        const dir = mkdtempSync(join(tmpdir(), "vps-bk-"));
+        try {
+          const lnk = join(dir, "notes.txt");
+          symlinkSync(join("/root/backups", backupEntry!), lnk);
+          expect(validatePathSafety(lnk, "read").safe).toBe(false);
+          // Through a symlinked directory too.
+          symlinkSync("/root/backups", join(dir, "bk"));
+          expect(
+            validatePathSafety(join(dir, "bk", backupEntry!), "read").safe,
+          ).toBe(false);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it("judges `link/..` where the kernel lands, not as text (audit 2026-10-01 C1)", () => {
+      // CI-safe: /proc/self/fd is a real directory under the symlinked
+      // /proc/self, so `fd/..` is /proc/<pid> to the kernel while resolve()
+      // and realpathSync make it `<tmp>/environ` (not blocked; ENOENT).
+      const dir = mkdtempSync(join(tmpdir(), "vps-dd-"));
+      try {
+        symlinkSync("/proc/self/fd", join(dir, "lnk"));
+        const spelled = `${dir}/lnk/../environ`;
+        expect(validatePathSafety(spelled, "read").safe).toBe(false);
+        expect(validatePathSafety(spelled, "write").safe).toBe(false);
+        // A target that does not exist yet is still walked kernel-style.
+        mkdirSync(join(dir, "real", "sub"), { recursive: true });
+        symlinkSync(join(dir, "real", "sub"), join(dir, "sib"));
+        expect(realResolve(`${dir}/sib/../new/file.txt`)).toBe(
+          join(dir, "real", "new", "file.txt"),
+        );
+        // Control: an ordinary `..` spelling stays allowed.
+        expect(validatePathSafety(`${dir}/sib/../x.txt`, "read").safe).toBe(
+          true,
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses any walk through a /proc magic link (audit 2026-10-01 C1-R2)", () => {
+      // The link opens another process's view (a container's root), so its
+      // readlink text is not a path here. CI-safe: these exist on any Linux.
+      const tid = readdirSync("/proc/self/task")[0]!;
+      for (const p of [
+        "/proc/self/root/etc/hostname",
+        "/proc/self/cwd/package.json",
+        "/proc/self/cwd/../../backups/x", // was C1's spelling
+        "/proc/1/root/etc/hostname",
+        "/proc/thread-self/root/etc/hostname",
+        `/proc/self/task/${tid}/root/etc/hostname`,
+        "/proc/self/fd/0",
+        "/proc/self/exe",
+        "/proc/self/cwd",
+      ]) {
+        for (const op of ["read", "write", "delete"] as const) {
+          const r = validatePathSafety(p, op);
+          expect(r.safe, `${op} ${p}`).toBe(false);
+          expect(r.reason, `${op} ${p}`).toMatch(/another process's filesystem view/);
+        }
+      }
+      // The walk stops on the link; what it returns stays under /proc/, so
+      // no allow-list (write-guard callers) admits it.
+      const w = kernelWalk("/proc/self/cwd/../../root/claude/x");
+      expect(w.procLink).toBe(`/proc/${process.pid}/cwd`);
+      expect(w.path).toBe(`/proc/${process.pid}/cwd/root/claude/x`);
+      expect(resolve(realResolve("/proc/1/root/../../tmp/x"))).toBe(
+        "/proc/1/root/tmp/x",
+      );
+    });
+
+    it("catches a magic link reached through ordinary symlinks (C1-R2)", () => {
+      const dir = mkdtempSync(join(tmpdir(), "vps-pl-"));
+      try {
+        symlinkSync("/proc/self/root", join(dir, "lnk"));
+        symlinkSync(join(dir, "b"), join(dir, "a"));
+        symlinkSync("/proc/self/cwd", join(dir, "b"));
+        for (const p of [`${dir}/lnk/etc/hostname`, `${dir}/a/package.json`]) {
+          expect(validatePathSafety(p, "read").safe, p).toBe(false);
+          expect(kernelWalk(p).procLink, p).not.toBeNull();
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it.skipIf(!existsSync("/root/claude/mission-control"))(
+      "refuses `<tmp>/mc/../../backups/x` with mc -> mission-control (C1)",
+      () => {
+        const dir = mkdtempSync(join(tmpdir(), "vps-mc-"));
+        try {
+          symlinkSync("/root/claude/mission-control", join(dir, "mc"));
+          for (const tail of ["../../backups/x.db", "../../.hapi.yaml", "data/mc.db"]) {
+            expect(
+              validatePathSafety(`${dir}/mc/${tail}`, "read").safe,
+              tail,
+            ).toBe(false);
+          }
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+    );
 
     it("checks the RAW spelling's symlink target, not only the trimmed one (R3)", () => {
       const dir = mkdtempSync(join(tmpdir(), "vps-raw-"));

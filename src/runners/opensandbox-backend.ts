@@ -41,6 +41,7 @@ import {
   type SpawnContainerOptions,
 } from "./container.js";
 import type { SandboxHandle } from "./sandbox-backend.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 
 // ---------------------------------------------------------------------------
 // Constants (mirror the docker path — container.ts buildDockerRunArgs)
@@ -380,13 +381,13 @@ export function spawnOpenSandbox(opts: SpawnContainerOptions): SandboxHandle {
         resolveResult({
           status: "error",
           result: null,
-          error: `Container exited with code ${exec.exitCode}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+          error: `Container exited with code ${exec.exitCode}${stderr ? `: ${redactCredentialsForPersist(stderr)!.slice(0, 500)}` : ""}`,
         });
       } else if (exec.error) {
         resolveResult({
           status: "error",
           result: null,
-          error: `Sandbox exec error: ${exec.error.name ?? "error"}${exec.error.value ? `: ${exec.error.value.slice(0, 500)}` : ""}`,
+          error: `Sandbox exec error: ${exec.error.name ?? "error"}${exec.error.value ? `: ${redactCredentialsForPersist(exec.error.value)!.slice(0, 500)}` : ""}`,
         });
       } else if (exec.exitCode == null && !exec.complete) {
         // SSE ended with neither `complete` nor `error` (server restart,
@@ -395,7 +396,7 @@ export function spawnOpenSandbox(opts: SpawnContainerOptions): SandboxHandle {
         resolveResult({
           status: "error",
           result: null,
-          error: `Sandbox stream ended without a terminal event${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+          error: `Sandbox stream ended without a terminal event${stderr ? `: ${redactCredentialsForPersist(stderr)!.slice(0, 500)}` : ""}`,
         });
       } else {
         resolveResult({ status: "success", result: stdout.trim() || null });

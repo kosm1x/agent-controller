@@ -9,6 +9,7 @@
 import { Hono } from "hono";
 import { getEventBus } from "../../lib/event-bus.js";
 import type { Event } from "../../lib/events/types.js";
+import { stringifyRedacted } from "../mcp-server/redact.js";
 
 const events = new Hono();
 
@@ -47,7 +48,9 @@ events.get("/stream", (c) => {
             if (!matches) return;
           }
 
-          const data = JSON.stringify({
+          // Live events arrive as the raw in-memory object (only the DB copy
+          // is redacted at persist), so this export sink redacts on its own.
+          const data = stringifyRedacted({
             id: event.id,
             type: event.type,
             category: event.category,

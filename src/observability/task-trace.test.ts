@@ -94,6 +94,40 @@ describe("emitTraceEvent / getTrace", () => {
     expect(JSON.parse(row.attrs!)).toHaveProperty("truncated");
   });
 
+  it("redacts credential shapes in attrs (nested) and keeps ids byte-identical", () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const secret = "sk-" + "a".repeat(24);
+    const ids = {
+      task: "3f2b8c1e-9d4a-4e6b-8f1a-2c3d4e5f6a7b",
+      sha: "cd3c8204f1e2d3c4b5a69784f1e2d3c4b5a6978a",
+    };
+    emitTraceEvent({
+      taskId: "t-red",
+      name: "task.failed",
+      attrs: { error: `401 ${secret}`, detail: { echo: [secret] }, ids },
+    });
+    const [row] = getTrace("t-red");
+    expect(row.attrs).not.toContain(secret);
+    expect(JSON.parse(row.attrs!)).toEqual({
+      error: "401 [REDACTED_KEY]",
+      detail: { echo: ["[REDACTED_KEY]"] },
+      ids,
+    });
+  });
+
+  it("redacts before the size cap: a key straddling the cut leaves no fragment", () => {
+    const key = "AIza" + "b".repeat(35);
+    emitTraceEvent({
+      taskId: "t-cut",
+      name: "task.failed",
+      // {"error":" is 10 chars → the key spans offsets 1990..2029.
+      attrs: { error: "x".repeat(1_979) + " " + key + " " + "y".repeat(500) },
+    });
+    const [row] = getTrace("t-cut");
+    expect(JSON.parse(row.attrs!)).toHaveProperty("truncated");
+    expect(row.attrs).not.toMatch(/AIza|bbbbb/);
+  });
+
   it("never throws when the insert fails (best-effort contract)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     getDatabase().exec("DROP TABLE task_trace_events");

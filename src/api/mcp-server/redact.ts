@@ -119,6 +119,78 @@ export function redactCredentials(input: string | null | undefined): string {
   return out;
 }
 
+let persistRedactWarned = false;
+
+function persistRedactFailed(err: unknown): void {
+  if (persistRedactWarned) return;
+  persistRedactWarned = true;
+  console.warn(
+    `[redact] credential redaction failed — writing raw (further failures not logged): ${err instanceof Error ? err.message : String(err)}`,
+  );
+}
+
+/**
+ * redactCredentials for a string bound for a durable column (tasks.error,
+ * runs.error). null/undefined stay null. Fail-open: a redactor bug must never
+ * lose the write it guards, so a throw returns the raw string (warned once).
+ */
+export function redactCredentialsForPersist(
+  input: string | null | undefined,
+): string | null {
+  if (input == null) return null;
+  try {
+    return redactCredentials(input);
+  } catch (err) {
+    persistRedactFailed(err);
+    return input;
+  }
+}
+
+const redactStringValue = (_key: string, v: unknown): unknown =>
+  typeof v === "string" ? redactCredentials(v) : v;
+
+/**
+ * JSON.stringify for a durable column (events.data, runs.output, runs.trace,
+ * trace attrs, SSE frames) with redactCredentials applied to every string
+ * VALUE at any depth, inside the serialization pass — never a regex over JSON
+ * text. Keys are not touched; the input is never mutated. `keepRaw` names
+ * top-level keys of a plain-object root that are serialized verbatim (by key,
+ * not by object identity, so a reference shared with another field stays
+ * redacted there). Fail-open like redactCredentialsForPersist; a genuine
+ * serialization error (cycle, BigInt) still throws as JSON.stringify would.
+ */
+export function stringifyRedacted(
+  value: unknown,
+  keepRaw: readonly string[] = [],
+): string {
+  try {
+    if (
+      keepRaw.length === 0 ||
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      typeof (value as { toJSON?: unknown }).toJSON === "function"
+    ) {
+      return JSON.stringify(value, redactStringValue);
+    }
+    // One field at a time, wrapped so toJSON(key), undefined-skipping and key
+    // order match a single JSON.stringify of the whole object.
+    const fields: string[] = [];
+    for (const key of Object.keys(value)) {
+      const one = JSON.stringify(
+        { [key]: (value as Record<string, unknown>)[key] },
+        keepRaw.includes(key) ? undefined : redactStringValue,
+      );
+      if (one !== "{}") fields.push(one.slice(1, -1));
+    }
+    return `{${fields.join(",")}}`;
+  } catch (err) {
+    const plain = JSON.stringify(value);
+    persistRedactFailed(err);
+    return plain;
+  }
+}
+
 /**
  * Deep-redact a JSON-serializable value. Strings are pattern-replaced;
  * objects/arrays are walked. Returns a new value of the same shape.

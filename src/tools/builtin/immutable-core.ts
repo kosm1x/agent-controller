@@ -9,7 +9,7 @@
 
 import { basename as baseOf, posix, relative, resolve } from "path";
 import { realpathSync } from "fs";
-import { realResolve, realResolveParent } from "./write-guard.js";
+import { kernelWalk, realResolve, realResolveParent } from "./write-guard.js";
 
 const MC_ROOT = "/root/claude/mission-control/";
 
@@ -138,7 +138,33 @@ const READ_BLOCKED_PATHS = [
   "/opt/supabase/docker/.env",
   "/opt/supabase/volumes/api/kong.yml",
   "/etc/opensandbox/",
+  // Upload-tool exfil holes (Hermes PR #107609 review, 2026-10-01)
+  "/root/backups/", // weekly full mc.db copies
+  "/root/claude-backups/", // mc.db copies + archived trees with old .env files
+  "/root/claude/mission-control/backups/", // vps_backup's mc.db copies
+  "/opt/supabase/backups/", // pg_dumps + state bundles (mc.db, .env)
+  "/root/claude/Pulso-Aura-Upfront/data/backups/", // db-snapshot.sh: crm.db + messages.db copies
+  "/root/.hapi.yaml", // Hostinger API token
+  "/root/claude/Pulso-Aura-Upfront/store/", // WhatsApp session keys + messages.db
+  "/var/lib/caddy/", // TLS private keys
+  "/var/lib/stalwart/", // mail store
+  "/root/.kube/",
+  "/root/.config/gcloud/",
+  "/var/lib/docker/", // volume data files + container filesystems
+  "/var/lib/containerd/", // containerd snapshotter: the same container layers
+  "/run/containerd/", // mounted container root filesystems
 ];
+
+/**
+ * `/root/.claude/` is DEFAULT-DENY: transcripts, saved prompts, key files and
+ * session stores live there and new ones keep appearing (audit 2026-10-01
+ * W1-R2). Readable: the documentation (CLAUDE.md, NOW.md, rules/, agents/,
+ * global-memory/), per-project memory, and the projects/<proj> directories
+ * themselves so a listing can reach memory/ (their entries are judged each).
+ */
+const CLAUDE_HOME = "/root/.claude/";
+const CLAUDE_HOME_READABLE_RE =
+  /^\/root\/\.claude\/(?:(?:CLAUDE|NOW)\.md|(?:rules|agents|global-memory)(?:\/.*)?|projects(?:\/[^/]+)?|projects\/[^/]+\/memory(?:\/.*)?)$/;
 
 /**
  * Process-state files that expose a process's secrets. The exact
@@ -286,6 +312,20 @@ export function validatePathSafety(
   // the file exists), and for write/delete we only enforce the denylist
   // on post-resolve string match since writes to a new symlink can't
   // follow one.
+  //
+  // A /proc magic link (`/proc/<pid>/root`, `cwd`, `exe`, `fd/<n>`,
+  // `map_files/…`) opens another process's view — for a container, its
+  // filesystem — which no check below can name (audit 2026-10-01 C1-R2). No
+  // file tool has a reason to go through one, for any operation.
+  for (const spelled of rawPath !== path ? [path, rawPath] : [path]) {
+    const { procLink } = kernelWalk(spelled);
+    if (procLink) {
+      return {
+        safe: false,
+        reason: `'${procLink}' is a /proc link into another process's filesystem view — blocked for file tools`,
+      };
+    }
+  }
   const candidates = [resolve(path)];
   if (operation === "read") {
     try {
@@ -304,6 +344,12 @@ export function validatePathSafety(
         // Raw spelling does not exist; the reader will fail on it too.
       }
     }
+    // The kernel applies `..` AFTER following a symlink; resolve() and
+    // realpathSync collapse it as text first, so `/proc/self/cwd/../../x`
+    // was judged as `/proc/x` while the reader opened `/root/x` (audit
+    // 2026-10-01 C1). Check the path the kernel walks to, existing or not.
+    candidates.push(realResolve(path));
+    if (rawPath !== path) candidates.push(realResolve(rawPath));
   } else {
     // Write/delete: a symlinked parent directory (or, for a write, a
     // symlinked target) lands the op where the string checks above never
@@ -354,12 +400,17 @@ export function readDenylistReason(probe: string): string | null {
   if (PROC_SECRET_RE.test(probe)) {
     return `'${probe}' is a read-blocked process-state file`;
   }
+  if (probe.startsWith(CLAUDE_HOME) && !CLAUDE_HOME_READABLE_RE.test(probe)) {
+    return `'${probe}' is read-blocked: under /root/.claude/ only the docs (CLAUDE.md, NOW.md, rules/, agents/, global-memory/) and projects/*/memory/ are readable`;
+  }
   for (const blocked of READ_BLOCKED_PATHS) {
     // Exact-file blocklist: probe === blocked OR probe starts with blocked+"/"
     // (prefix semantics only for entries ending in "/"). Avoids the
     // /root/.ssh-evil matching /root/.ssh class of bug (poka-yoke test).
     if (blocked.endsWith("/")) {
-      if (probe.startsWith(blocked)) {
+      // The bare directory too, so `list_dir /root/.ssh` is refused rather
+      // than answered with an empty (filtered) listing.
+      if (probe.startsWith(blocked) || `${probe}/` === blocked) {
         return `'${blocked}' is a read-blocked secret directory`;
       }
     } else if (probe === blocked) {

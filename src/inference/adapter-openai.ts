@@ -407,7 +407,7 @@ async function callAnthropicProvider(
       const text = await response.text().catch(() => "");
       throw new HttpError(
         response.status,
-        text.slice(0, 200),
+        redactCredentialsForPersist(text)!.slice(0, 200),
         parseRateLimitHeaders(response.headers),
       );
     }
@@ -526,7 +526,7 @@ async function callOpenAIProvider(
       const text = await response.text().catch(() => "");
       throw new HttpError(
         response.status,
-        text.slice(0, 200),
+        redactCredentialsForPersist(text)!.slice(0, 200),
         parseRateLimitHeaders(response.headers),
       );
     }
@@ -858,6 +858,7 @@ import {
   isTokenBudgetExceeded,
 } from "./guards.js";
 import { errMsg } from "../lib/err-msg.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 
 // ---------------------------------------------------------------------------
 // Critical System Reminder — re-injected every 3 rounds to prevent drift

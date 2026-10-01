@@ -30,6 +30,29 @@ const CLAUDE_HOME = "/root/claude/";
  * kernel refuses with ELOOP; the literal path is returned.
  */
 export function realResolve(p: string): string {
+  return kernelWalk(p).path;
+}
+
+/**
+ * `/proc/<pid>/{root,cwd,exe}`, `fd/<n>` and `map_files/<range>` are magic
+ * links: the kernel jumps into the target PROCESS's view (for a container,
+ * another mount namespace), so their readlink text is not a path in ours —
+ * `/proc/<pid>/root` reads `/` and the walk judged a host path while the
+ * kernel opened the container's file (audit 2026-10-01 C1-R2).
+ */
+const PROC_MAGIC_LINK_RE =
+  /^\/proc\/(?:\d+|self|thread-self)(?:\/task\/\d+)?\/(?:root|cwd|exe|(?:fd|map_files)\/[^/]+)$/;
+
+/**
+ * The walk behind realResolve. When it stands on a /proc magic link (spelled
+ * directly or reached through any symlink) it stops: `procLink` names the
+ * link, and `path` is the link plus the rest without `.`/`..`, so it stays
+ * under /proc/ and no allow-list admits it.
+ */
+export function kernelWalk(p: string): {
+  path: string;
+  procLink: string | null;
+} {
   const pending = (p.startsWith("/") ? p : `${process.cwd()}/${p}`).split("/");
   let cur = "/";
   let hops = 0;
@@ -41,6 +64,10 @@ export function realResolve(p: string): string {
       continue;
     }
     const next = join(cur, part);
+    if (PROC_MAGIC_LINK_RE.test(next)) {
+      const rest = pending.filter((s) => s !== "" && s !== "." && s !== "..");
+      return { path: [next, ...rest].join("/"), procLink: next };
+    }
     let target: string;
     try {
       if (!lstatSync(next).isSymbolicLink()) {
@@ -49,13 +76,13 @@ export function realResolve(p: string): string {
       }
       target = readlinkSync(next);
     } catch {
-      return resolve(next, ...pending);
+      return { path: resolve(next, ...pending), procLink: null };
     }
-    if (++hops > 40) return resolve(p);
+    if (++hops > 40) return { path: resolve(p), procLink: null };
     if (target.startsWith("/")) cur = "/";
     pending.unshift(...target.split("/"));
   }
-  return cur;
+  return { path: cur, procLink: null };
 }
 
 /**

@@ -65,6 +65,15 @@ describe("reaction rules", () => {
   });
 
   describe("transientRetryRule", () => {
+    it("redacts the error BEFORE the 100-char reason cut (reason reaches events.data)", () => {
+      // Built at runtime — no key-shaped literal in the (public) repo.
+      const err = "timeout " + "x".repeat(71) + " " + "AIza" + "b".repeat(35); // key spans 80..118
+      const d = transientRetryRule.evaluate(makeContext({ error: err }));
+      expect(d?.action).toBe("retry");
+      expect(d!.reason).toContain("[REDACTED");
+      expect(d!.reason).not.toMatch(/AIza|bbbbb/);
+    });
+
     const transientErrors = [
       "Request timeout after 30s",
       "ECONNRESET: connection reset",

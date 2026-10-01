@@ -4,7 +4,8 @@
  * Initializes database, event bus, MCP servers, and starts the Hono HTTP server.
  */
 
-import { createServer } from "net";
+import { createServer, type Server } from "net";
+import { acquireSingleInstance } from "./lib/single-instance.js";
 import { registerReadbackVerifiers } from "./lib/v8-4/readback-verifiers.js";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
@@ -89,11 +90,21 @@ async function checkPort(port: number): Promise<void> {
 
 const log = createLogger("mc");
 
+/** Held for the process lifetime; the socket lock dies with the process. */
+let instanceGuard: Server | null = null;
+
 async function main(): Promise<void> {
   const config = getConfig();
   // MAX_CONCURRENT_CONTAINERS was parsed but never applied — the dispatcher
   // ran on its hard-coded 5 regardless of the env (reliability audit R6).
   setMaxContainers(config.maxConcurrentContainers);
+
+  // Boot guards run BEFORE anything opens the DB or spawns: a second process
+  // would otherwise reconcile (fail) every in-flight task of the live service.
+  // Check port availability before binding
+  await checkPort(config.port);
+  // One process per DB even when MC_PORT differs (abstract-socket lock).
+  instanceGuard = await acquireSingleInstance(config.dbPath);
 
   // Initialize database
   const db = initDatabase(config.dbPath);
@@ -334,9 +345,6 @@ async function main(): Promise<void> {
   // Start reaction engine
   const reactionManager = new ReactionManager(db);
   reactionManager.start();
-
-  // Check port availability before binding
-  await checkPort(config.port);
 
   // Create and start HTTP server
   const app = createApp();

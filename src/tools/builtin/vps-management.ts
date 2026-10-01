@@ -9,6 +9,8 @@ import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
+import { execGroupKill } from "./shell.js";
+import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 
 const MC_DIR = "/root/claude/mission-control";
 const DB_PATH = join(MC_DIR, "data", "mc.db");
@@ -185,58 +187,69 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
   },
 
   async execute(): Promise<string> {
-    const lines: string[] = ["🚀 **Deploy**"];
+    const run = await withSuiteRunLock(async () => {
+      const lines: string[] = ["🚀 **Deploy**"];
 
-    // 1. Build
-    try {
-      execFileSync("npx", ["tsc"], {
-        cwd: MC_DIR,
-        timeout: 60_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      lines.push("✅ Build: PASS");
-    } catch (err) {
-      const msg =
-        (err as { stderr?: string }).stderr?.slice(0, 300) ?? "build error";
-      return `❌ Deploy aborted: build failed\n${msg}`;
-    }
+      // 1. Build
+      try {
+        // Group-kill on timeout, off the event loop (orphaned-worker incident).
+        await execGroupKill("npx tsc", {
+          cwd: MC_DIR,
+          timeout: 60_000,
+          maxBuffer: 1024 * 1024,
+          env: process.env,
+        });
+        lines.push("✅ Build: PASS");
+      } catch (err) {
+        const msg =
+          (err as { stderr?: string }).stderr?.slice(0, 300) ?? "build error";
+        return `❌ Deploy aborted: build failed\n${msg}`;
+      }
 
-    // 2. Tests
-    try {
-      const output = execFileSync("npx", ["vitest", "run", "--reporter=dot"], {
-        cwd: MC_DIR,
-        timeout: 120_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      const match = output.match(/Tests\s+(\d+)\s+passed/);
-      lines.push(`✅ Tests: ${match?.[1] ?? "?"} passed`);
-    } catch (err) {
-      const stdout =
-        (err as { stdout?: string }).stdout?.slice(-300) ?? "test error";
-      return `❌ Deploy aborted: tests failed\n${stdout}`;
-    }
+      // 2. Tests
+      try {
+        const { stdout: output } = await execGroupKill(
+          "npx vitest run --reporter=dot",
+          {
+            cwd: MC_DIR,
+            timeout: 120_000,
+            maxBuffer: 1024 * 1024,
+            env: process.env,
+          },
+        );
+        const match = output.match(/Tests\s+(\d+)\s+passed/);
+        lines.push(`✅ Tests: ${match?.[1] ?? "?"} passed`);
+      } catch (err) {
+        const stdout =
+          (err as { stdout?: string }).stdout?.slice(-300) ?? "test error";
+        return `❌ Deploy aborted: tests failed\n${stdout}`;
+      }
 
-    // 3. Restart — NOTE: this kills the current process.
-    // The response is returned BEFORE the restart takes effect via
-    // systemctl's --no-block flag. Jarvis should call vps_status after
-    // to confirm health.
-    lines.push("✅ Build + tests passed. Initiating restart...");
-    lines.push(
-      "⚠️ The service will restart momentarily. Call vps_status in ~10s to confirm health.",
-    );
+      // 3. Restart — NOTE: this kills the current process.
+      // The response is returned BEFORE the restart takes effect via
+      // systemctl's --no-block flag. Jarvis should call vps_status after
+      // to confirm health.
+      lines.push("✅ Build + tests passed. Initiating restart...");
+      lines.push(
+        "⚠️ The service will restart momentarily. Call vps_status in ~10s to confirm health.",
+      );
 
-    try {
-      execFileSync("systemctl", ["restart", "--no-block", "mission-control"], {
-        timeout: 5_000,
-        stdio: "pipe",
-      });
-    } catch {
-      lines.push("❌ systemctl restart failed");
-    }
+      try {
+        execFileSync(
+          "systemctl",
+          ["restart", "--no-block", "mission-control"],
+          {
+            timeout: 5_000,
+            stdio: "pipe",
+          },
+        );
+      } catch {
+        lines.push("❌ systemctl restart failed");
+      }
 
-    return lines.join("\n");
+      return lines.join("\n");
+    });
+    return run ?? `❌ Deploy aborted: ${SUITE_RUN_BUSY}`;
   },
 };
 

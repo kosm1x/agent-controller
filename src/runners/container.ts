@@ -12,6 +12,7 @@ import { posix } from "path";
 import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
 import { getEventBus } from "../lib/event-bus.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -559,7 +560,7 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
         resolve({
           status: "error",
           result: null,
-          error: `Container exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+          error: `Container exited with code ${code}${stderr ? `: ${redactCredentialsForPersist(stderr)!.slice(0, 500)}` : ""}`,
         });
       } else {
         // Exited cleanly but no sentinel output — return raw stdout

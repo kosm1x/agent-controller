@@ -292,7 +292,11 @@ export function maybeStrategicInjection(
   // entry here would otherwise suppress the surface invisibly (qa R2-C1 —
   // the cancelled-task path now cleans up via handleScheduledTaskFailure).
   for (const [pendingTaskId, pending] of pendingScheduled.entries()) {
-    if (pending.scheduleId === schedule.schedule_id && pending.strategic) {
+    if (
+      pending.scheduleId === schedule.schedule_id &&
+      pending.strategic &&
+      !reapIfDead(pendingTaskId, pending)
+    ) {
       console.log(
         `[schedules] strategic injection suppressed — run ${pendingTaskId} already in flight for this schedule`,
       );
@@ -803,8 +807,12 @@ export function handleScheduledTaskFailure(
   if (!meta) return;
   pendingScheduled.delete(taskId);
   updateScheduleRun(taskId, "failed", error?.slice(0, 500));
+  alertScheduleFailed(meta.name, error);
+}
 
-  const alert = `⚠️ Scheduled task "${meta.name}" FAILED: ${error}`;
+/** Operator alert for a failed scheduled run — fire-and-catch, never awaited. */
+function alertScheduleFailed(name: string, error: string): void {
+  const alert = `⚠️ Scheduled task "${name}" FAILED: ${error}`;
   console.error(`[schedules] ${alert}`);
 
   const router = getRouter();
@@ -828,7 +836,62 @@ export function isScheduledTask(taskId: string): boolean {
  */
 export function inFlightScheduleRun(scheduleId: string): string | null {
   for (const [taskId, pending] of pendingScheduled.entries()) {
-    if (pending.scheduleId === scheduleId) return taskId;
+    if (pending.scheduleId === scheduleId && !reapIfDead(taskId, pending)) {
+      return taskId;
+    }
   }
   return null;
+}
+
+/** Seconds a task may sit terminal before its pending entry counts as dead.
+ *  The dispatcher writes the terminal status + `completed_at` and emits the bus
+ *  event that clears the entry in the same synchronous stretch for scheduled
+ *  submissions (no `persistResult`, so no await in between). */
+const DEAD_RUN_GRACE_SECONDS = 120;
+
+/**
+ * Drop a pending entry whose result can never arrive: the task row is terminal
+ * and has been for longer than the grace. A runner that THROWS is marked failed
+ * by the dispatcher catch, which emits no bus event, so the router never clears
+ * the entry and the schedule would read "in flight" until restart. Marks a
+ * still-`running` schedule_runs row failed. Returns true when it reaped.
+ */
+function reapIfDead(taskId: string, pending: PendingSchedule): boolean {
+  let task: { status: string } | undefined;
+  try {
+    task = getDatabase()
+      .prepare(
+        `SELECT status FROM tasks WHERE task_id = ?
+           AND status IN ('completed','completed_with_concerns','failed','cancelled')
+           AND completed_at <= datetime('now', ?)`,
+      )
+      .get(taskId, `-${DEAD_RUN_GRACE_SECONDS} seconds`) as
+      | { status: string }
+      | undefined;
+  } catch {
+    return false; // unreadable → keep the entry (fail safe: still in flight)
+  }
+  if (!task) return false;
+  pendingScheduled.delete(taskId);
+  // Never throws: callers (run_schedule, the Morning Sync strategic dedupe)
+  // must not fail on an audit-trail write — the entry is dead either way.
+  try {
+    const run = getDatabase()
+      .prepare("SELECT status FROM schedule_runs WHERE task_id = ?")
+      .get(taskId) as { status: string } | undefined;
+    if (run?.status === "running") {
+      const reason = `lost: task ${task.status} but its result never reached the scheduler`;
+      updateScheduleRun(taskId, "failed", reason);
+      // Once per task: the entry is already gone, so no later caller re-alerts.
+      alertScheduleFailed(pending.name, reason);
+    }
+  } catch (err) {
+    console.warn(
+      `[schedules] reap: schedule_runs update/alert failed for task ${taskId}: ${errMsg(err)}`,
+    );
+  }
+  console.warn(
+    `[schedules] reaped dead in-flight run of "${pending.name}" (schedule ${pending.scheduleId}, task ${taskId} ${task.status})`,
+  );
+  return true;
 }

@@ -9,8 +9,30 @@ import { execFileSync } from "child_process";
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
+import { execGroupKill } from "./shell.js";
 
 const MC_DIR = "/root/claude/mission-control";
+
+/**
+ * One full-suite run at a time. These tools ran the suite with execFileSync,
+ * which blocked the event loop and so could never overlap; now that they are
+ * async, two concurrent tasks could each start the full suite, which OOMs
+ * this box. Returns null (fn not run) when a run is already in flight.
+ */
+let suiteRunInFlight = false;
+export const SUITE_RUN_BUSY =
+  "a test run is already in progress — retry when it finishes";
+export async function withSuiteRunLock<T>(
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  if (suiteRunInFlight) return null;
+  suiteRunInFlight = true;
+  try {
+    return await fn();
+  } finally {
+    suiteRunInFlight = false;
+  }
+}
 
 // Files Jarvis is allowed to modify (S2 scope limit)
 const ALLOWED_PATHS = [
@@ -248,56 +270,65 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const typecheckOnly = (args.typecheck_only as boolean) ?? false;
-    const branch = currentBranch();
-    const lines: string[] = [`🧪 **Test Run** (branch: ${branch})`];
+    const run = await withSuiteRunLock(async () => {
+      const typecheckOnly = (args.typecheck_only as boolean) ?? false;
+      const branch = currentBranch();
+      const lines: string[] = [`🧪 **Test Run** (branch: ${branch})`];
 
-    // Typecheck
-    try {
-      execFileSync("npx", ["tsc", "--noEmit"], {
-        cwd: MC_DIR,
-        timeout: 60_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      lines.push("✅ Typecheck: PASS");
-    } catch (err) {
-      const stderr =
-        (err as { stderr?: string }).stderr?.slice(0, 500) ?? "unknown error";
-      lines.push(`❌ Typecheck: FAIL\n${stderr}`);
-      if (typecheckOnly) return lines.join("\n");
-    }
-
-    if (typecheckOnly) return lines.join("\n");
-
-    // Test suite
-    try {
-      const output = execFileSync("npx", ["vitest", "run", "--reporter=dot"], {
-        cwd: MC_DIR,
-        timeout: 120_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      const summary = output.match(/Tests\s+(\d+)\s+passed/);
-      const files = output.match(/Test Files\s+(\d+)\s+passed/);
-      lines.push(
-        `✅ Tests: ${summary?.[1] ?? "?"} passed (${files?.[1] ?? "?"} files)`,
-      );
-    } catch (err) {
-      const stdout =
-        (err as { stdout?: string }).stdout?.slice(-500) ?? "unknown error";
-      const failMatch = stdout.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
-      if (failMatch) {
-        lines.push(`❌ Tests: ${failMatch[1]} failed, ${failMatch[2]} passed`);
-      } else {
-        lines.push(`❌ Tests: FAIL\n${stdout.slice(0, 300)}`);
+      // Typecheck
+      try {
+        // Group-kill on timeout, off the event loop (orphaned-worker incident).
+        await execGroupKill("npx tsc --noEmit", {
+          cwd: MC_DIR,
+          timeout: 60_000,
+          maxBuffer: 1024 * 1024,
+          env: process.env,
+        });
+        lines.push("✅ Typecheck: PASS");
+      } catch (err) {
+        const stderr =
+          (err as { stderr?: string }).stderr?.slice(0, 500) ?? "unknown error";
+        lines.push(`❌ Typecheck: FAIL\n${stderr}`);
+        if (typecheckOnly) return lines.join("\n");
       }
-    }
 
-    lines.push(
-      `\n**Next:** ${branch === "main" ? "Create a jarvis/* branch first with jarvis_dev." : "If tests pass, open a PR with jarvis_dev action=pr."}`,
-    );
+      if (typecheckOnly) return lines.join("\n");
 
-    return lines.join("\n");
+      // Test suite
+      try {
+        const { stdout: output } = await execGroupKill(
+          "npx vitest run --reporter=dot",
+          {
+            cwd: MC_DIR,
+            timeout: 120_000,
+            maxBuffer: 1024 * 1024,
+            env: process.env,
+          },
+        );
+        const summary = output.match(/Tests\s+(\d+)\s+passed/);
+        const files = output.match(/Test Files\s+(\d+)\s+passed/);
+        lines.push(
+          `✅ Tests: ${summary?.[1] ?? "?"} passed (${files?.[1] ?? "?"} files)`,
+        );
+      } catch (err) {
+        const stdout =
+          (err as { stdout?: string }).stdout?.slice(-500) ?? "unknown error";
+        const failMatch = stdout.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
+        if (failMatch) {
+          lines.push(
+            `❌ Tests: ${failMatch[1]} failed, ${failMatch[2]} passed`,
+          );
+        } else {
+          lines.push(`❌ Tests: FAIL\n${stdout.slice(0, 300)}`);
+        }
+      }
+
+      lines.push(
+        `\n**Next:** ${branch === "main" ? "Create a jarvis/* branch first with jarvis_dev." : "If tests pass, open a PR with jarvis_dev action=pr."}`,
+      );
+
+      return lines.join("\n");
+    });
+    return run ?? `❌ Tests: ${SUITE_RUN_BUSY}`;
   },
 };

@@ -160,6 +160,7 @@ import {
   bindTaskConfirmedFigures,
 } from "./thread-pins.js";
 import { applyRitualDeliveryPolicy } from "../rituals/delivery-policy.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 import {
   RITUALES_RE,
   handleRitualesCommand,
@@ -4021,7 +4022,7 @@ export class MessageRouter {
         );
         traceContinuation(resume, "confirmation.continuation_failed", {
           tool: approved.toolName,
-          error: errMsg(err).slice(0, 200),
+          error: redactCredentialsForPersist(errMsg(err))!.slice(0, 200),
         });
       });
   }

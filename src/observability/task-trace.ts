@@ -26,6 +26,7 @@
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/index.js";
 import { errMsg } from "../lib/err-msg.js";
+import { stringifyRedacted } from "../api/mcp-server/redact.js";
 
 /** Event names — a closed set so the viewer and queries can rely on them. */
 export type TraceEventName =
@@ -117,7 +118,8 @@ export function emitTraceEvent(ev: TraceEvent): void {
   try {
     let attrs: string | null = null;
     if (ev.attrs !== undefined) {
-      attrs = JSON.stringify(ev.attrs);
+      // Credential-redacted BEFORE the size cap, so a cut never splits a key.
+      attrs = stringifyRedacted(ev.attrs);
       if (attrs.length > ATTRS_MAX_CHARS) {
         attrs = JSON.stringify({ truncated: attrs.slice(0, ATTRS_MAX_CHARS) });
       }

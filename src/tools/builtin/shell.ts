@@ -48,13 +48,14 @@ void execAsync; // superseded by execGroupKill (group-kill on timeout); kept for
  * maxBuffer by truncation (exec would reject; truncation is kinder to the
  * agent and the incident class here is runaway output, not protocol).
  */
-function execGroupKill(
+export function execGroupKill(
   command: string,
-  opts: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv },
+  opts: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv; cwd?: string },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("/bin/sh", ["-c", command], {
       detached: true,
+      cwd: opts.cwd,
       env: opts.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -395,15 +396,38 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
  * (`echo "see /root/.ssh/config"`). `.env.example|sample|template` are
  * readable — a relaxation of the old shell rule, matching file_read.
  */
+/** Linux MAX_ARG_STRLEN (32 pages): the longest `sh -c` argument execve takes. */
+const MAX_COMMAND_BYTES = 131_072;
+
 const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/root\/\.claude\/\.credentials\.json\b/, reason: "credentials.json is off-limits to the shell" },
   { pattern: /\/root\/\.ssh(?:\/|\b)/, reason: "/root/.ssh is off-limits to the shell" },
-  { pattern: /\/root\/\.(?:gnupg|aws|docker|kube|config\/gh)\b/, reason: "secret dotfile directory is off-limits to the shell" },
+  { pattern: /\/root\/\.(?:gnupg|aws|docker|kube|config\/gh|config\/gcloud)\b/, reason: "secret dotfile directory is off-limits to the shell" },
   { pattern: /\/etc\/(?:shadow|gshadow|sudoers|ssh)\b/, reason: "system secret is off-limits to the shell" },
   { pattern: /\/proc\/(?:self|\d+)\/(?:environ|mem)\b/, reason: "/proc/<pid>/environ and mem are off-limits to the shell" },
   // Any spelling of a process env under /proc — glob (`/proc/*/environ`), thread-self, task/<tid> (audit 2026-09-22).
-  { pattern: /\/proc\/\S*environ/, reason: "/proc/<pid>/environ is off-limits to the shell" },
-  { pattern: /\/root\/(?:\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials)\b/, reason: "dotfile credential is off-limits to the shell" },
+  { pattern: /\/proc\/(?:(?!\/proc\/)\S)*environ/, reason: "/proc/<pid>/environ is off-limits to the shell" },
+  // Another process's filesystem view (a container's root) — audit 2026-10-01 C1-R2.
+  { pattern: /\/proc\/[^\s/]+\/(?:task\/[^\s/]+\/)?(?:root|cwd)\//, reason: "/proc/<pid>/root and cwd are off-limits to the shell as a path prefix" },
+  { pattern: /\/root\/(?:\.npmrc|\.netrc|\.pgpass|\.gitconfig|\.git-credentials|\.hapi\.yaml|\.claude\.json)\b/, reason: "dotfile credential is off-limits to the shell" },
+  // Key material and backup copies an upload could ship off the box (Hermes PR #107609 review, 2026-10-01).
+  { pattern: /\/root\/claude\/Pulso-Aura-Upfront\/store\/(?:auth(?![\w-])|messages\.db)/, reason: "Pulso's WhatsApp session keys and message store are off-limits to the shell" }, // auth-status.txt stays readable
+  { pattern: /\/var\/lib\/stalwart\/\S/, reason: "the mail store is off-limits to the shell" }, // the bare directory stays usable (`du -sh`)
+  { pattern: /\/var\/lib\/caddy\/(?:(?!\/var\/lib\/caddy\/)\S)*\.key\b/, reason: "Caddy TLS private keys are off-limits to the shell" },
+  // /root/.claude/ is default-deny, as in the read guard: only the docs and projects/*/memory continue (no `..`).
+  // The bare directory too — `grep -r`/`find`/`tar` on it read every store.
+  { pattern: /\/root\/\.claude(?:(?![\w.\/-])|\/(?:(?!(?:(?:CLAUDE|NOW)\.md|rules|agents|global-memory)(?![\w.-])|projects\/[^\s/]+\/memory(?![\w.-]))|(?:(?!\/root\/\.claude(?![\w.-]))\S)*\/\.\.(?![^\s/])))/, reason: "/root/.claude/ (transcripts, saved prompts, session keys) is off-limits to the shell outside its docs and memory" },
+  { pattern: /\/var\/lib\/docker\/\S/, reason: "Docker volumes and container filesystems are off-limits to the shell" }, // `du -sh /var/lib/docker` stays usable
+  { pattern: /\/var\/lib\/containerd\/\S/, reason: "containerd snapshots (container filesystems) are off-limits to the shell" }, // the bare directory stays usable (`du -sh`)
+  { pattern: /\/run\/containerd\/\S/, reason: "mounted container root filesystems are off-limits to the shell" }, // the bare directory stays usable (`ls`)
+  { pattern: /\/root\/(?:claude-)?backups\/\S/, reason: "backup copies are off-limits to the shell" }, // the bare directory stays listable (`ls`/`du`)
+  // vps_backup's `mc.db.<ts>` and backup-db.sh's `mc-<date>.db` copies; relative by those names only, like
+  // `data/mc.db` below (the shell's default cwd IS mission-control) — another repo's `backups/` stays usable.
+  { pattern: /\/root\/claude\/mission-control\/backups\/\S|(?<![\w/.-])(?:\.\/)?backups\/mc(?:\.db|-)/, reason: "backup copies are off-limits to the shell" },
+  { pattern: /\/opt\/supabase\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // pg_dumps + state bundles (mc.db, .env)
+  { pattern: /\/root\/claude\/Pulso-Aura-Upfront\/data\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // crm.db + messages.db copies
+  // benchmark-sonnet-tier.ts's full mc.db copy; relative like `data/mc.db` below.
+  { pattern: /\/root\/claude\/mission-control\/data\/sonnet-bench\/\S|(?<![\w/.])(?:\.\/)?data\/sonnet-bench\/\S/, reason: "backup copies are off-limits to the shell" },
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
   { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
   { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },
@@ -413,7 +437,7 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
  *  bare `.env` (the shell's default cwd IS mission-control). Same allow-by-
  *  membership rule as file_read (isBlockedEnvFile). A regex-escaped `\.env`
  *  is a pattern, not a path. */
-const ENV_ABS_RE = /(?<![\w.\\-])(\/[\w.\/-]*\/\.env(?:[._-][\w.-]+)?)(?!\w)/g;
+const ENV_ABS_RE = /(?<![\w.\\-])(\/(?:[\w.\/-]*\/)?\.env(?:[._-][\w.-]+)?)(?!\w)/g;
 const ENV_BARE_RE = /(?<![\w.\/\\$@-])(?:\.\/)?(\.env(?:[._-][\w.-]+)?)(?![\w\/])/g;
 
 /** Unquoted heredoc bodies as index ranges. A bare `.env` inside one is
@@ -459,7 +483,9 @@ function checkSecretPaths(sanitized: string): { allowed: boolean; reason?: strin
   const normalized = sanitized
     .replace(/(?<!\\)["']/g, "")
     .replace(/\$\{HOME\}|\$HOME/g, "/root")
-    .replace(/(?<![\w/])~(?=\/)/g, "/root");
+    .replace(/(?<![\w/])~(?=\/)/g, "/root")
+    // `//` and `/./` name the same path (`/root//.ssh`); `/../` is left alone.
+    .replace(/\/(?:\.?\/)+/g, "/");
   for (const { pattern, reason } of SECRET_PATH_PATTERNS) {
     const hit = normalized.match(pattern);
     if (hit) return { allowed: false, reason: `'${hit[0]}': ${reason}` };
@@ -1283,6 +1309,13 @@ export function validateShellCommand(command: string): {
   allowed: boolean;
   reason?: string;
 } {
+  // The command runs as ONE `sh -c` argv string, which the kernel refuses
+  // (E2BIG) at MAX_ARG_STRLEN; nothing longer could run, and refusing it here
+  // bounds the regex scans below (audit 2026-10-01 W3).
+  const bytes = Buffer.byteLength(command, "utf8");
+  if (bytes > MAX_COMMAND_BYTES) {
+    return { allowed: false, reason: `command too long (${bytes} bytes; limit ${MAX_COMMAND_BYTES})` };
+  }
   // Strip quoted-heredoc bodies — they are literal data, not shell syntax,
   // so scanning them for `>(`, backticks, etc. produces false positives.
   const sanitized = stripQuotedHeredocs(command);

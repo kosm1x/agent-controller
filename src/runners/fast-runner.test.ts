@@ -8,6 +8,8 @@ import {
   denueGuardText,
   mentionsDenue,
   splitSystemMessagesByCache,
+  stripConcernsTrailer,
+  stripFinalStatusLine,
 } from "./fast-runner.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
@@ -1507,5 +1509,54 @@ describe("splitSystemMessagesByCache (cache-aware routing helper)", () => {
     ]);
     expect(result.stable).toEqual([]);
     expect(result.variable).toEqual([]);
+  });
+});
+
+// The recovery legs' STATUS strippers replaced two regexes that are quadratic
+// on long blank-line runs; they must return exactly what the regexes did.
+describe("linear STATUS strippers ≡ the regexes they replaced", () => {
+  const concernsRe = (t: string) => t.replace(/\n*STATUS: DONE_WITH_CONCERNS[^]*$/, "");
+  const finalLineRe = (t: string) => t.replace(/\n*STATUS:[^\n]*$/, "");
+  const shapes = [
+    "",
+    "Listo.\n\nSTATUS: DONE",
+    "STATUS: DONE\nListo.",
+    "STATUS: DONE",
+    "Listo.\n\nSTATUS: DONE\n",
+    "a STATUS: DONE",
+    "a\nb STATUS: x STATUS: y",
+    "\n\n\nSTATUS:",
+    "[error_max_turns — max turns reached] Parte 1…\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+    "Doc creado.\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial.\n\nmore\nSTATUS: DONE_WITH_CONCERNS again",
+    "STATUS: DONE_WITH_CONCERNS",
+    "no status here",
+  ];
+  it.each(shapes)("table shape %j", (t) => {
+    expect(stripConcernsTrailer(t)).toBe(concernsRe(t));
+    expect(stripFinalStatusLine(t)).toBe(finalLineRe(t));
+  });
+
+  it("agrees on 20,000 seeded random strings", () => {
+    const parts = ["\n", "\n\n", " ", "x", "S", ":", "STATUS:", "STATUS: DONE", "STATUS: DONE_WITH_CONCERNS", "\r", "—"];
+    let seed = 42;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
+    for (let n = 0; n < 20_000; n++) {
+      let t = "";
+      const len = Math.floor(rnd() * 12);
+      for (let j = 0; j < len; j++) t += parts[Math.floor(rnd() * parts.length)];
+      expect(stripConcernsTrailer(t)).toBe(concernsRe(t));
+      expect(stripFinalStatusLine(t)).toBe(finalLineRe(t));
+    }
+  });
+
+  it("50,000 consecutive newlines in under 50 ms", () => {
+    const t = "Parte 1" + "\n".repeat(50_000) + "fin";
+    const start = performance.now();
+    expect(stripConcernsTrailer(t)).toBe(t);
+    expect(stripFinalStatusLine(t)).toBe(t);
+    const u = "Parte 1" + "\n".repeat(50_000) + "STATUS: DONE_WITH_CONCERNS — x";
+    expect(stripConcernsTrailer(u)).toBe("Parte 1");
+    expect(stripFinalStatusLine(u)).toBe("Parte 1");
+    expect(performance.now() - start).toBeLessThan(50);
   });
 });

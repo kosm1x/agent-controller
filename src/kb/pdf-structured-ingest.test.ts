@@ -11,6 +11,7 @@ import {
   chunkText,
   looksLikeTableStart,
   slugify,
+  ingestPdf,
 } from "./pdf-structured-ingest.js";
 
 // ---------------------------------------------------------------------------
@@ -279,5 +280,13 @@ describe("structureMarkdown", () => {
     expect(out.chunks).toHaveLength(0);
     expect(out.counts.text).toBe(0);
     expect(out.counts.table).toBe(0);
+  });
+});
+
+describe("ingestPdf — read denylist", () => {
+  it("refuses a path the read guard blocks before extracting", async () => {
+    await expect(
+      ingestPdf("/root/backups/mc-db-pre-kbcleanup-x.pdf"),
+    ).rejects.toThrow(/path blocked/);
   });
 });

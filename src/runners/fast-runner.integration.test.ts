@@ -78,6 +78,16 @@ vi.mock("../tools/registry.js", () => ({
       },
     ]),
     getDeferredCatalog: vi.fn(() => ""),
+    // Hints as declared by the real tools; any other name is unregistered.
+    get: vi.fn(
+      (name: string) =>
+        ({
+          file_read: { readOnlyHint: true },
+          web_search: { readOnlyHint: true },
+          file_write: { readOnlyHint: false },
+          shell_exec: { readOnlyHint: false },
+        })[name],
+    ),
     has: vi.fn((name: string) =>
       ["file_read", "file_write", "shell_exec", "web_search"].includes(name),
     ),
@@ -1129,6 +1139,14 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     // R2 audit C2: the resume prompt NAMES the tools that already ran.
     expect(resumeArgs.prompt).toContain("Herramientas YA ejecutadas");
     expect(resumeArgs.prompt).toContain("shell_exec");
+    // These bytes reach the model — any change needs the paid eval gate.
+    expect(resumeArgs.prompt).toBe(
+      "Task: Analiza el corpus\n\nAnaliza el corpus completo y guarda el reporte\n\n" +
+        "[AVANCE PREVIO — la ejecución anterior alcanzó su límite de turnos/presupuesto antes de terminar]\n" +
+        "[error_max_turns — max turns reached] Parte 1 del análisis…\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported error_max_turns; content above is partial and the task did not formally complete.\n\n" +
+        "Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): shell_exec.\n" +
+        "CONTINÚA AUTOMÁTICO: retoma el último paso pendiente y TERMINA la tarea. Tu respuesta final debe INCLUIR todo el contenido entregable (incorpora el avance previo) — no solo el cierre. Entrega el resultado con su STATUS.",
+    );
     // W4: the resume leg is bounded to half the rounds.
     expect(resumeArgs.maxTurns).toBeLessThan(24);
     expect(result.success).toBe(true);
@@ -1215,6 +1233,199 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(result.status).toBe("DONE_WITH_CONCERNS");
     expect(result.output?.text).toContain("rotar el token");
     expect(result.output?.text).not.toContain("authentication_error");
+  });
+
+  // Hermes #106546 class: an auth failure on turn N must not replay the
+  // writes leg 1 already made — the retry continues from them.
+  it("auth retry after leg-1 tools names them as already executed (no replay)", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_api_response — authentication_failed, status 401: OAuth token has expired] Partial response below — the turn ended on an API error.\n\nDoc creado con el resumen.\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial and the task did not formally complete.",
+        toolCalls: ["gdocs_write"],
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nListo, compartido." }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth-tools",
+      runId: "run-sdk-auth-tools",
+      title: "Tarea",
+      description: "Escribe el resumen en un Doc y compártelo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    const first = mockQuerySdk.mock.calls[0][0].prompt as string;
+    const retry = mockQuerySdk.mock.calls[1][0].prompt as string;
+    expect(retry.startsWith(first)).toBe(true);
+    expect(retry).toContain(
+      "[AVANCE PREVIO — la ejecución anterior falló por un error de autenticación antes de terminar]\nDoc creado con el resumen.\n\n",
+    );
+    expect(retry).toContain(
+      "Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): gdocs_write.\n",
+    );
+    expect(retry).toContain("CONTINÚA AUTOMÁTICO");
+    // The leg-1 error marker is not fed back (it would echo as a 2nd 401).
+    expect(retry).not.toContain("401");
+    expect(retry).not.toContain("error_api_response");
+    expect(result.success).toBe(true);
+    expect(result.toolCalls).toEqual(["gdocs_write"]);
+  });
+
+  it("auth retry after leg-1 tools keeps leg-1's partial when the retry is a thin closer", async () => {
+    const longBody = "Resumen del Doc: " + "punto clave. ".repeat(20);
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: `[error_api_response — authentication_failed, status 401: OAuth token has expired] Partial response below — the turn ended on an API error.\n\n${longBody}\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial and the task did not formally complete.`,
+        toolCalls: ["gdocs_write"],
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Listo.\n\nSTATUS: DONE" }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth-thin",
+      runId: "run-sdk-auth-thin",
+      title: "Tarea",
+      description: "Escribe el resumen en un Doc",
+    });
+    expect(result.output?.text).toContain("punto clave");
+    expect(result.output?.text).not.toContain("401");
+  });
+
+  it("plain retry (no leg-1 tools) never splices leg-1's partial into a thin leg 2", async () => {
+    const longBody = "Borrador previo: " + "frase descartada. ".repeat(20);
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: `[error_api_response — authentication_failed, status 401: OAuth token has expired] Partial response below — the turn ended on an API error.\n\n${longBody}\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial and the task did not formally complete.`,
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Listo.\n\nSTATUS: DONE" }),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-auth-plain-thin",
+      runId: "run-sdk-auth-plain-thin",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk.mock.calls[1][0].prompt).toBe(
+      mockQuerySdk.mock.calls[0][0].prompt,
+    );
+    expect(result.output?.text).toContain("Listo.");
+    expect(result.output?.text).not.toContain("frase descartada");
+  });
+
+  it("auth retry with NO leg-1 tools is the plain original prompt (regression pin)", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nListo." }),
+    );
+    await fastRunner.execute({
+      taskId: "sdk-auth-plain",
+      runId: "run-sdk-auth-plain",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockQuerySdk.mock.calls[1][0].prompt).toBe(
+      mockQuerySdk.mock.calls[0][0].prompt,
+    );
+  });
+
+  describe("auth retry lists only side-effecting tools (reads are safe to redo)", () => {
+    const AUTH_FAIL =
+      "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.";
+    const CLAUSE = "Herramientas YA ejecutadas (NO las repitas sobre el mismo objetivo): ";
+    async function prompts(leg1: Parameters<typeof mockQuerySdk.mockImplementationOnce>[0]) {
+      mockQuerySdk.mockImplementationOnce(leg1);
+      mockQuerySdk.mockResolvedValueOnce(makeSdkResult({ text: "STATUS: DONE\nListo." }));
+      await fastRunner.execute({
+        taskId: "sdk-auth-se",
+        runId: "run-sdk-auth-se",
+        title: "Tarea",
+        description: "Haz algo",
+      });
+      expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+      return [
+        mockQuerySdk.mock.calls[0][0].prompt as string,
+        mockQuerySdk.mock.calls[1][0].prompt as string,
+      ];
+    }
+
+    it("only read tools ran → plain retry with the original prompt", async () => {
+      const [first, retry] = await prompts(async () =>
+        makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_read", "web_search"] }),
+      );
+      expect(retry).toBe(first);
+    });
+
+    it("a read + a write ran → the clause names only the write", async () => {
+      const [, retry] = await prompts(async () =>
+        makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_read", "file_write"] }),
+      );
+      expect(retry).toContain(`${CLAUSE}file_write.\n`);
+    });
+
+    it("an unregistered tool (no hint) counts as side-effecting", async () => {
+      const [, retry] = await prompts(async () =>
+        makeSdkResult({ text: AUTH_FAIL, toolCalls: ["web_search", "mcp_tool_x"] }),
+      );
+      expect(retry).toContain(`${CLAUSE}mcp_tool_x.\n`);
+    });
+
+    it("ToolSearch (SDK built-in) + a read → plain retry (a fresh leg must reload schemas)", async () => {
+      const [first, retry] = await prompts(async () =>
+        makeSdkResult({ text: AUTH_FAIL, toolCalls: ["ToolSearch", "web_search"] }),
+      );
+      expect(retry).toBe(first);
+    });
+
+    it("ToolSearch + a write → the clause names only the write", async () => {
+      const [, retry] = await prompts(async () =>
+        makeSdkResult({ text: AUTH_FAIL, toolCalls: ["ToolSearch", "file_write"] }),
+      );
+      expect(retry).toContain(`${CLAUSE}file_write.\n`);
+    });
+
+    it("the only call was stopped by the confirmation gate → plain retry", async () => {
+      const [first, retry] = await prompts(async () => {
+        const ctx = currentExecutionContext()!;
+        ctx.setPendingConfirmation("file_write", { path: "x" });
+        ctx.recordGatedCall("file_write");
+        return makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_write"] });
+      });
+      expect(retry).toBe(first);
+    });
+  });
+
+  it("a resume leg that ends on an auth failure fires no third (auth) leg", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_max_turns — max turns reached] Parte 1…\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+        toolCalls: ["gdocs_write"],
+        numTurns: 24,
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+        toolCalls: ["gdrive_upload"],
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nno debería ejecutarse" }),
+    );
+    await fastRunner.execute({
+      taskId: "sdk-resume-then-auth",
+      runId: "run-sdk-resume-then-auth",
+      title: "Tarea",
+      description: "Haz algo largo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
   });
 
   // Each alternative alone: the SDK's typed class with other wording, and the
