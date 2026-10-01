@@ -592,7 +592,18 @@ From `docs/planning/hermes-upstream-review-2026-10-01.md` and `docs/planning/nan
 
 **Operator action (not a ruling):** rotate the Gemini API key held in `user_facts` (category `projects`, key `gemini_api_key`), new key into `.env` from the Panel terminal, restart, then `user_fact_delete` via Jarvis. Detail + the list of historical copies: Hermes note §"Operator action". The scrub SQL for the historical rows is an UNREPLAYED draft — replay on a scratch copy of mc.db before running anything.
 
-**Operator rulings needed** (each changes gate, tool or isolation behaviour; nothing ships without the ruling):
+**Operator rulings — ALL SIX RULED 2026-10-01 (22:1x UTC, asked one by one):**
+
+| # | Ruling | Decision |
+| --- | --- | --- |
+| 1 | Late "sí" after an approval expired | **Expiry notice**: at TTL Jarvis sends one line saying the approval lapsed and what it was for; a late "sí" still does nothing |
+| 2 | Schedules carrying a high-risk tool | **Confirm at creation**: creating or editing a schedule that includes a high-risk tool asks for "sí" once (tool + cadence named); its runs stay unattended; existing schedules keep running |
+| 3 | Credentials stored as user facts | **Mask and block**: credential-style facts appear in the prompt with the value hidden; `user_fact_set` refuses credential-shaped values and points to `.env`. Needs `npm run eval:gate -- --run` |
+| 4 | Full suite inside the service | **Changed files only**: `jarvis_test_run`, `vps_deploy` and `jarvis_dev action=pr` run typecheck + the tests related to the changed files, all under the one-at-a-time lock; the full suite stays in the pre-commit hook and CI |
+| 5 | `docker` verbs in the shell gate | **Reads plus psql**: `ps`/`logs`/`inspect`/`images`/`stats` pass, `docker exec supabase-db psql` passes (the only use in 30 d: 10 of 1,795 runs); every other `exec`, `cp`, `run`, `compose exec/run` is refused |
+| 6 | Structural closer for the read-guard class | **Shell mount namespace**: `shell_exec` and `check_cmd` children run in a private mount namespace where the secret stores do not exist; file tools keep the path guard. Spike on a scratch copy first (what breaks: git, pm-shim, docker), then build |
+
+Original statements of the six (kept for the record):
 
 1. **Late "sí" after an approval expired** — 2 of 4 `tool_approvals` rows expired unanswered. Options: an expiry notice at TTL, re-issue the card on a late "sí" (can swallow an unrelated "sí"), or a longer TTL.
 2. **`schedule_task` is not confirmation-gated**, and non-interactive runs skip the gate — a schedule can carry a gated tool (1 of 20 active schedules carries `gmail_send`).
