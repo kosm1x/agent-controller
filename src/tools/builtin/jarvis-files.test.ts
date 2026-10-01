@@ -882,6 +882,108 @@ describe("jarvis_file_list limit (logic audit F25 — a bare call dumped the who
   });
 });
 
+describe("jarvis_file_list clamp keeps the newest files (2026-10-01 Morning Sync saw no day-logs)", () => {
+  // 120 day-logs 2026-06-03..2026-09-30, each updated the day after its date;
+  // returned in listFiles order (priority ASC, path ASC = oldest first).
+  const dayLogs = Array.from({ length: 120 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 5, 3 + i));
+    const next = new Date(Date.UTC(2026, 5, 4 + i));
+    return {
+      path: `logs/day-logs/${d.toISOString().slice(0, 10)}.md`,
+      title: "Day log",
+      tags: "[]",
+      qualifier: "workspace",
+      priority: 50,
+      size: 2048,
+      updated_at: `${next.toISOString().slice(0, 10)} 04:00:00`,
+    };
+  });
+  const entries = (out: string) => out.split("\n").filter((l) => l.startsWith("  logs/"));
+
+  it("clamped: shows the most recently updated files, newest first, and says older ones are omitted", async () => {
+    mockAll.mockReturnValueOnce(dayLogs);
+    const out = await jarvisFileListTool.execute({ prefix: "logs/day-logs/" });
+    const lines = out.split("\n");
+    expect(lines[0]).toBe(
+      "📂 **120 files** — showing the 100 most recently updated, newest first",
+    );
+    expect(entries(out).length).toBe(100);
+    expect(lines[1]).toBe("  logs/day-logs/2026-09-30.md (2.0K, workspace)");
+    expect(out).toContain("logs/day-logs/2026-09-29.md");
+    expect(out).not.toContain("logs/day-logs/2026-06-03.md");
+    expect(lines.at(-1)).toBe(
+      '  … 20 more, older files not shown — narrow with prefix (e.g. "projects/") or raise limit',
+    );
+  });
+
+  it("clamped: ties on updated_at break by path ascending", async () => {
+    const rows = ["c.md", "a.md", "b.md"].map((p) => ({
+      ...dayLogs[0]!,
+      path: `logs/${p}`,
+      updated_at: "2026-09-30 04:00:00",
+    }));
+    mockAll.mockReturnValueOnce(rows);
+    const out = await jarvisFileListTool.execute({ prefix: "logs/", limit: 2 });
+    expect(entries(out).map((l) => l.trim().split(" ")[0])).toEqual([
+      "logs/a.md",
+      "logs/b.md",
+    ]);
+  });
+
+  it("clamped: a NULL updated_at does not throw and sorts last", async () => {
+    const rows = [
+      { ...dayLogs[0]!, path: "logs/a-null.md", updated_at: null },
+      ...dayLogs.slice(-3),
+    ];
+    mockAll.mockReturnValueOnce(rows);
+    const out = await jarvisFileListTool.execute({ prefix: "logs/", limit: 3 });
+    expect(out).not.toContain("logs/a-null.md");
+    // Two NULL rows, limit 4: one is shown, and it is the last entry.
+    mockAll.mockReturnValueOnce([...rows, { ...rows[0]!, path: "logs/b-null.md" }]);
+    const shown = entries(await jarvisFileListTool.execute({ prefix: "logs/", limit: 4 }));
+    expect(shown.length).toBe(4);
+    expect(shown.at(-1)).toBe("  logs/a-null.md (2.0K, workspace)");
+  });
+
+  it("explicit limit: exactly that many newest files", async () => {
+    mockAll.mockReturnValueOnce(dayLogs);
+    const out = await jarvisFileListTool.execute({ prefix: "logs/day-logs/", limit: 3 });
+    expect(out.split("\n")[0]).toBe(
+      "📂 **120 files** — showing the 3 most recently updated, newest first",
+    );
+    expect(entries(out).map((l) => l.trim().split(" ")[0])).toEqual([
+      "logs/day-logs/2026-09-30.md",
+      "logs/day-logs/2026-09-29.md",
+      "logs/day-logs/2026-09-28.md",
+    ]);
+    expect(out).toContain("… 117 more, older files not shown");
+    mockAll.mockReturnValueOnce(dayLogs);
+    const frac = await jarvisFileListTool.execute({ prefix: "logs/day-logs/", limit: 2.5 });
+    expect(frac.split("\n")[0]).toBe(
+      "📂 **120 files** — showing the 2 most recently updated, newest first",
+    );
+    expect(entries(frac).length).toBe(2);
+  });
+
+  it("unclamped: output unchanged — plain header, priority/path order, no more line", async () => {
+    const rows = [dayLogs[0]!, dayLogs[1]!, dayLogs[119]!];
+    mockAll.mockReturnValueOnce(rows);
+    const out = await jarvisFileListTool.execute({ prefix: "logs/day-logs/" });
+    expect(out).toBe(
+      [
+        "📂 **3 files**",
+        "  logs/day-logs/2026-06-03.md (2.0K, workspace)",
+        "  logs/day-logs/2026-06-04.md (2.0K, workspace)",
+        "  logs/day-logs/2026-09-30.md (2.0K, workspace)",
+      ].join("\n"),
+    );
+    mockAll.mockReturnValueOnce(rows);
+    const exact = await jarvisFileListTool.execute({ prefix: "logs/day-logs/", limit: 3 });
+    expect(exact.split("\n")[0]).toBe("📂 **3 files**");
+    expect(entries(exact)[0]).toBe("  logs/day-logs/2026-06-03.md (2.0K, workspace)");
+  });
+});
+
 describe("the external tag is operator-only (qa R3 W4 — publishing a row to the CRM)", () => {
   const TAG_ERROR = "the external tag is set only from an operator chat";
   const background = new TaskExecutionContext("t-bg", false);

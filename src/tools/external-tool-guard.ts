@@ -26,6 +26,7 @@
 
 import type { ToolExecutor } from "../inference/adapter.js";
 import {
+  EXTERNAL_KB_SEED_PREFIXES,
   isExternalKbPathShapeOk,
   isExternalKbRowAllowed,
   type ExternalKbRowRef,
@@ -62,15 +63,34 @@ export function externalToolRefusal(
 const FILE_LIST_MAX = 500;
 
 /**
+ * Deepest directory holding every seed prefix ("knowledge/domain/"). A wider
+ * list prefix is narrowed to it: the KB is over FILE_LIST_MAX rows, so a bare
+ * list is clamped to its newest rows and would push seed rows out.
+ */
+export const SEED_LIST_ROOT = (() => {
+  const [first, ...rest] = EXTERNAL_KB_SEED_PREFIXES;
+  let common: string = first;
+  for (const p of rest) while (!p.startsWith(common)) common = common.slice(0, -1);
+  return common.slice(0, common.lastIndexOf("/") + 1);
+})();
+
+/**
  * Arguments an external call actually runs with. `jarvis_file_list` always
  * runs at its max limit and its filtered output never says "… more": with a
- * caller-chosen limit, "more" after filtering would count private rows.
+ * caller-chosen limit, "more" after filtering would count private rows. A
+ * prefix that is absent or wider than SEED_LIST_ROOT is narrowed to it.
  */
 export function externalToolArgs(
   name: string,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  return name === "jarvis_file_list" ? { ...args, limit: FILE_LIST_MAX } : args;
+  if (name !== "jarvis_file_list") return args;
+  const prefix = typeof args.prefix === "string" ? args.prefix : "";
+  return {
+    ...args,
+    ...(SEED_LIST_ROOT.startsWith(prefix) ? { prefix: SEED_LIST_ROOT } : {}),
+    limit: FILE_LIST_MAX,
+  };
 }
 
 /** Seed-prefix test for an entry whose output carries no tags. */
@@ -162,13 +182,19 @@ function filterFileSearch(raw: string): string {
 }
 
 /**
- * `📂 **N files**` + `  <path> (<size>, <qualifier>)` lines + optional
- * `  … more`. The more line is dropped and an empty result is always the
- * tool's own empty text, so a private prefix reads exactly like an empty one.
+ * `📂 **N files**` (or, when clamped, `📂 **N files** — showing the L most
+ * recently updated, newest first`) + `  <path> (<size>, <qualifier>)` lines +
+ * optional `  … more`. The header suffix and the more line are dropped and an
+ * empty result is always the tool's own empty text, so a private prefix reads
+ * exactly like an empty one.
  */
 function filterFileList(raw: string): string {
   const lines = raw.split("\n");
-  if (!/^📂 \*\*\d+ files\*\*$/.test(lines[0] ?? "")) {
+  if (
+    !/^📂 \*\*\d+ files\*\*(?: — showing the \d+ most recently updated, newest first)?$/.test(
+      lines[0] ?? "",
+    )
+  ) {
     return raw === "📂 No files found." ? raw : RESULT_NOT_AVAILABLE;
   }
   const kept: string[] = [];

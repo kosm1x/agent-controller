@@ -648,9 +648,26 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
     if (results.length === 0) return "📂 No files found.";
     // Every sibling clamps its output; this one dumped the whole index
     // (~1,077 rows, ~20K tokens) on a bare call (logic audit F25).
-    const limit = Math.min(Math.max(Number(args.limit) || 100, 1), 500);
-    const shown = results.slice(0, limit);
-    const lines = [`📂 **${results.length} files**`];
+    const limit = Math.trunc(
+      Math.min(Math.max(Number(args.limit) || 100, 1), 500),
+    );
+    // Clamped: keep the newest rows. priority/path order cut a date-named
+    // folder (logs/day-logs/) to its OLDEST files and hid today's.
+    const clamped = results.length > limit;
+    const shown = clamped
+      ? [...results]
+          .sort(
+            (a, b) =>
+              (b.updated_at ?? "").localeCompare(a.updated_at ?? "") ||
+              a.path.localeCompare(b.path),
+          )
+          .slice(0, limit)
+      : results;
+    const lines = [
+      clamped
+        ? `📂 **${results.length} files** — showing the ${limit} most recently updated, newest first`
+        : `📂 **${results.length} files**`,
+    ];
     for (const f of shown) {
       const sizeStr =
         f.size > 1024 ? `${(f.size / 1024).toFixed(1)}K` : `${f.size}B`;
@@ -658,7 +675,7 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
     }
     if (results.length > shown.length) {
       lines.push(
-        `  … ${results.length - shown.length} more — narrow with prefix (e.g. "projects/") or raise limit`,
+        `  … ${results.length - shown.length} more, older files not shown — narrow with prefix (e.g. "projects/") or raise limit`,
       );
     }
     return lines.join("\n");

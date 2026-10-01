@@ -385,7 +385,7 @@ describe("wrapTool external guard (jarvis-pull on the claude-sdk path)", () => {
       call("jarvis_file_list", { prefix: "knowledge/", limit: 1 }),
     );
     expect(reg.execute).toHaveBeenCalledWith("jarvis_file_list", {
-      prefix: "knowledge/",
+      prefix: "knowledge/domain/",
       limit: 500,
     });
     expect(text).toContain("knowledge/domain/tv-tarifas.md");

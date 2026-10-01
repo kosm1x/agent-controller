@@ -5,10 +5,28 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+
+// Rows behind the real jarvis_file_list (end-to-end list test below):
+// listFiles' SQL is mocked as a prefix filter over these rows.
+const kbRows = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
+vi.mock("../db/index.js", () => ({
+  getDatabase: () => ({
+    prepare: () => ({
+      all: (...params: unknown[]) => {
+        const like = typeof params[0] === "string" ? params[0] : "%";
+        const prefix = like.slice(0, -1).replace(/\\(.)/g, "$1");
+        return kbRows.rows.filter((r) => String(r.path).startsWith(prefix));
+      },
+    }),
+  }),
+}));
+
+import { jarvisFileListTool } from "./builtin/jarvis-files.js";
 import {
   PATH_NOT_AVAILABLE,
   RESULT_NOT_AVAILABLE,
   TOOL_NOT_AVAILABLE,
+  SEED_LIST_ROOT,
   externalToolArgs,
   externalToolGuard,
   filterExternalToolResult,
@@ -202,6 +220,62 @@ describe("externalToolGuard", () => {
     expect(externalToolArgs("jarvis_file_read", args)).toBe(args);
   });
 
+  it("externalToolArgs narrows an absent or wider list prefix to the seed root", () => {
+    expect(EXTERNAL_KB_SEED_PREFIXES.every((p) => p.startsWith("knowledge/domain/"))).toBe(true);
+    for (const args of [{}, { prefix: "" }, { prefix: "know" }, { prefix: "knowledge/" }, { prefix: "knowledge/domain/" }]) {
+      expect(externalToolArgs("jarvis_file_list", { ...args, limit: 3 }), JSON.stringify(args)).toEqual({
+        prefix: "knowledge/domain/",
+        limit: 500,
+      });
+    }
+    for (const prefix of [["x"], 5, null, {}]) {
+      expect(externalToolArgs("jarvis_file_list", { prefix }), JSON.stringify(prefix)).toEqual({
+        prefix: "knowledge/domain/",
+        limit: 500,
+      });
+    }
+    for (const prefix of ["knowledge/domain/tv-", "projects/", "knowledge/people/"]) {
+      expect(externalToolArgs("jarvis_file_list", { prefix })).toEqual({ prefix, limit: 500 });
+    }
+  });
+
+  it("SEED_LIST_ROOT is the seed prefixes' common directory", () => {
+    // An empty root would let a bare external list run over the whole KB and be clamped.
+    expect(SEED_LIST_ROOT).toBe("knowledge/domain/");
+  });
+
+  it("jarvis_file_list end-to-end: a bare external list over a KB larger than 500 rows returns every seed row", async () => {
+    // 9 seed rows, all OLDER than 1,125 private rows: a bare list at limit 500
+    // would clamp to the newest 500 and push every seed row out.
+    const seedPaths = EXTERNAL_KB_SEED_PREFIXES.flatMap((p, i) =>
+      [0, 1, 2].slice(0, i === 0 ? 3 : 2).map((n) => `${p}doc-${n}.md`),
+    );
+    const row = (path: string, updated_at: string) => ({
+      path,
+      title: "t",
+      tags: "[]",
+      qualifier: "reference",
+      priority: 50,
+      size: 10,
+      updated_at,
+    });
+    kbRows.rows = [
+      ...seedPaths.map((p) => row(p, "2026-01-01 00:00:00")),
+      row("knowledge/domain/work-profile.md", "2026-09-30 00:00:00"),
+      ...Array.from({ length: 1124 }, (_, i) =>
+        row(`logs/day-logs/f${String(i).padStart(4, "0")}.md`, "2026-09-30 00:00:00"),
+      ),
+    ].sort((a, b) => a.path.localeCompare(b.path));
+    expect(seedPaths.length).toBe(9);
+    expect(kbRows.rows.length).toBe(1134);
+
+    const guarded = externalToolGuard((_n, a) => jarvisFileListTool.execute(a), TOOLS);
+    const out = await guarded("jarvis_file_list", {});
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("📂 **9 files**");
+    expect(lines.slice(1).map((l) => l.trim().split(" ")[0]).sort()).toEqual([...seedPaths].sort());
+  });
+
   it("passes a non-KB tool's output through unchanged", async () => {
     const guarded = externalToolGuard(async () => "raw web text", TOOLS);
     expect(await guarded("web_search", { query: "x" })).toBe("raw web text");
@@ -320,6 +394,25 @@ describe("filterExternalToolResult", () => {
       "  … 2 more — narrow with prefix or raise limit",
     ].join("\n");
     expect(filterExternalToolResult("jarvis_file_list", raw)).toBe("📂 No files found.");
+  });
+
+  it("jarvis_file_list: clamped (newest-first) header is accepted, its suffix and the more line dropped", () => {
+    const raw = [
+      "📂 **900 files** — showing the 500 most recently updated, newest first",
+      "  knowledge/people/someone.md (1.2K, always-read)",
+      "  knowledge/domain/tv-tarifas.md (3K, reference)",
+      '  … 400 more, older files not shown — narrow with prefix (e.g. "projects/") or raise limit',
+    ].join("\n");
+    expect(filterExternalToolResult("jarvis_file_list", raw)).toBe(
+      ["📂 **1 files**", "  knowledge/domain/tv-tarifas.md (3K, reference)"].join("\n"),
+    );
+  });
+
+  it("jarvis_file_list: any other header suffix fails closed", () => {
+    const raw = ["📂 **2 files** — anything else", "  knowledge/domain/tv-tarifas.md (3K, reference)"].join(
+      "\n",
+    );
+    expect(filterExternalToolResult("jarvis_file_list", raw)).toBe(RESULT_NOT_AVAILABLE);
   });
 
   it("jarvis_file_list: unknown format fails closed", () => {
