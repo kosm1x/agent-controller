@@ -603,6 +603,12 @@ From `docs/planning/hermes-upstream-review-2026-10-01.md` and `docs/planning/nan
 | 5 | `docker` verbs in the shell gate | **Reads plus psql**: `ps`/`logs`/`inspect`/`images`/`stats` pass, `docker exec supabase-db psql` passes (the only use in 30 d: 10 of 1,795 runs); every other `exec`, `cp`, `run`, `compose exec/run` is refused |
 | 6 | Structural closer for the read-guard class | **Shell mount namespace**: `shell_exec` and `check_cmd` children run in a private mount namespace where the secret stores do not exist; file tools keep the path guard. Spike on a scratch copy first (what breaks: git, pm-shim, docker), then build |
 
+Follow-up rulings on #3 (2026-10-01, after the first audit):
+
+- **3a — "Mask all"**: no exemptions for credentials the model itself used and that have no env-backed tool (six ESPN `s2`/`swid` cookie facts, Doctoralia/Substack/FTP passwords, the DENUE token). Those ad-hoc flows stop until a tool reads the credential harness-side; schedules and env-backed tools (X, WordPress, Alpha Vantage, Gemini) are unaffected.
+- **3b — "Same treatment now" for the `projects` store**: `project_get` hides credential-style entries of `projects.credentials`, `project_update` refuses new ones and points to `.env`, descriptions stop advertising it as a credential store. Same eval-gate run.
+- Ruling 6 defaults taken by the session after the spike (not asked; operator may redirect): capabilities dropped after setup, child stays root, systemd/D-Bus sockets hidden, `/etc` `/usr` cron `/sys` read-only and block devices unreadable where the compatibility run stays green, `python3` setup helper, no off switch, deploy/test tools NOT wrapped, docker socket stays visible (ruling 5).
+
 Original statements of the six (kept for the record):
 
 1. **Late "sí" after an approval expired** — 2 of 4 `tool_approvals` rows expired unanswered. Options: an expiry notice at TTL, re-issue the card on a late "sí" (can swallow an unrelated "sí"), or a longer TTL.
