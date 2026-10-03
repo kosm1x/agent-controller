@@ -6,7 +6,8 @@
  * has worse error handling and inconsistent output formats.
  */
 
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
+import { statSync } from "fs";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 import { readDenylistReason, validatePathSafety } from "./immutable-core.js";
@@ -24,6 +25,114 @@ const MAX_OUTPUT = 15_000; // chars
  * consumes a visible slot.
  */
 const INTERNAL_MAXCOUNT = 2000;
+
+/**
+ * Combined-audit B1 (2026-10-03): byte cap on the search's stdout. Line mode
+ * (round 8) reads every matching line, so a broad pattern ("const" over src)
+ * outgrew the old 2 MB `maxBuffer`: rg threw ENOBUFS, fell back to grep, which
+ * overflowed too and the tool returned an error. Output is now streamed and
+ * cut at this cap (at the last complete line), and the result says
+ * `truncated: true`. A cap hit is an answer, never a reason to re-run grep.
+ */
+const DEFAULT_SEARCH_BYTE_CAP = 64 * 1024 * 1024;
+let searchByteCap = DEFAULT_SEARCH_BYTE_CAP;
+/** Test hook: lower the stdout byte cap (no argument restores the default). */
+export function __setSearchByteCapForTests(bytes?: number): void {
+  searchByteCap = bytes ?? DEFAULT_SEARCH_BYTE_CAP;
+}
+
+interface CappedRun {
+  stdout: string;
+  stderr: string;
+  /** Exit code; null when killed (cap or timeout) or not started. */
+  status: number | null;
+  /** True when stdout reached the byte cap and the child was stopped. */
+  capped: boolean;
+  timedOut: boolean;
+  /** Spawn error code (e.g. ENOENT when the binary is missing). */
+  code?: string;
+}
+
+/**
+ * Run `cmd args` (no shell) and collect stdout up to `cap` bytes. On the cap
+ * the child is killed and stdout is cut after its last complete line, so no
+ * partial record reaches the parser.
+ */
+function runCapped(
+  cmd: string,
+  args: string[],
+  cap: number,
+  timeoutMs: number,
+  cwd?: string,
+): Promise<CappedRun> {
+  return new Promise((resolveRun) => {
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let outBytes = 0;
+    let errBytes = 0;
+    let capped = false;
+    let timedOut = false;
+    let settled = false;
+    const finish = (r: Omit<CappedRun, "stdout" | "stderr" | "capped" | "timedOut">) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      let buf = Buffer.concat(out);
+      if (capped) {
+        const nl = buf.lastIndexOf(0x0a);
+        buf = nl === -1 ? Buffer.alloc(0) : buf.subarray(0, nl + 1);
+      }
+      resolveRun({
+        ...r,
+        stdout: buf.toString("utf-8"),
+        stderr: Buffer.concat(err).toString("utf-8"),
+        capped,
+        timedOut,
+      });
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(cwd !== undefined && { cwd }),
+      });
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      resolveRun({ stdout: "", stderr: String(e), status: null, capped: false, timedOut: false, code });
+      return;
+    }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout!.on("data", (chunk: Buffer) => {
+      if (capped) return;
+      const room = cap - outBytes;
+      if (chunk.length >= room) {
+        out.push(chunk.subarray(0, room));
+        outBytes = cap;
+        capped = true;
+        child.kill("SIGKILL");
+        return;
+      }
+      out.push(chunk);
+      outBytes += chunk.length;
+    });
+    child.stderr!.on("data", (chunk: Buffer) => {
+      // stderr is only reported in an error; keep a small bounded head.
+      if (errBytes < 64 * 1024) {
+        err.push(chunk);
+        errBytes += chunk.length;
+      }
+    });
+    child.on("error", (e) => {
+      finish({ status: null, code: (e as { code?: string }).code });
+    });
+    child.on("close", (status) => {
+      finish({ status });
+    });
+  });
+}
 
 /**
  * A listed name is refused on its spelling AND where the kernel lands: the
@@ -56,6 +165,7 @@ function listedBlocked(p: string): boolean {
  */
 function parseLineRecords(
   output: string,
+  mapFile: (file: string) => string = (f) => f,
 ): Array<{ file: string; lineno: string; content: string }> {
   const verdicts = new Map<string, boolean>();
   const allowed = (file: string): boolean => {
@@ -75,6 +185,7 @@ function parseLineRecords(
     const chunk = chunks[i]!;
     const nl = chunk.indexOf("\n");
     const text = nl === -1 ? chunk : chunk.slice(0, nl);
+    if (file) file = mapFile(file);
     if (file && allowed(file)) {
       const m = /^(\d+):([\s\S]*)$/.exec(text);
       out.push(
@@ -245,30 +356,59 @@ TIPS:
     // filtering, so a dropped value-line never consumes a visible slot (B-2).
     flags.push("--max-count", String(INTERNAL_MAXCOUNT));
 
-    // execFileSync: args as array — no shell interpolation, immune to injection
-    const rgArgs = [...flags, "--", pattern, searchPath];
+    // A glob with a directory part ("src/**/*.ts") matches nothing on some
+    // rg versions (14.1.0) when the search path is not "." — rg matches it
+    // against the path as given ("/abs/root/src/..."), not relative to the
+    // search root. Run rg FROM the root with path "." instead, then map each
+    // "./rel" record back to the exact form rg prints for `searchPath`
+    // (Path::join: one "/" unless the root already ends with "/"), BEFORE the
+    // read-denylist check in parseLineRecords sees it.
+    let rgCwd: string | undefined;
+    let rgPath = searchPath;
+    let mapRgFile: ((f: string) => string) | undefined;
+    if (includeGlob && includeGlob.includes("/") && searchPath !== ".") {
+      let isDir = false;
+      try {
+        isDir = statSync(searchPath).isDirectory();
+      } catch {
+        // Missing / unreadable root: leave rg to report it as before.
+      }
+      if (isDir) {
+        rgCwd = resolve(searchPath);
+        rgPath = ".";
+        const base = searchPath.endsWith("/") ? searchPath : `${searchPath}/`;
+        mapRgFile = (f) => (f.startsWith("./") ? base + f.slice(2) : f);
+      }
+    }
+
+    // spawn: args as array — no shell interpolation, immune to injection
+    const rgArgs = [...flags, "--", pattern, rgPath];
 
     try {
       let output: string;
-      try {
-        output = execFileSync("rg", rgArgs, {
-          timeout: 20_000,
-          maxBuffer: 2 * 1024 * 1024,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      } catch (rgErr) {
+      let byteCapped = false;
+      let mapFile: ((f: string) => string) | undefined;
+      const rg = await runCapped("rg", rgArgs, searchByteCap, 20_000, rgCwd);
+      if (rg.capped || (rg.status === 0 && !rg.timedOut)) {
+        // A cap hit is an answer (truncated), never a fallback trigger: grep
+        // over the same tree would overflow the same way (combined-audit B1).
+        output = rg.stdout;
+        byteCapped = rg.capped;
+        mapFile = mapRgFile;
+      } else if (
+        rg.status === 1 &&
+        !rg.stderr.trim() &&
+        rg.code !== "ENOENT"
+      ) {
         // rg exit 1 = "no matches" (rg present, nothing found) — that is an
         // answer, not a failure; falling through to grep re-ran the search
         // under different glob semantics (qa R2 W2).
-        const e = rgErr as { status?: number; stderr?: string; code?: string };
-        if (e.status === 1 && !e.stderr?.trim() && e.code !== "ENOENT") {
-          return JSON.stringify({ matches: [], total: 0, message: "No matches found" });
-        }
+        return JSON.stringify({ matches: [], total: 0, message: "No matches found" });
+      } else {
         // rg not found or failed — fall back to grep
         // Bounded like the rg path: without these the default path "."
         // walks node_modules (707 MB) and dies on the 20 s timeout or
-        // maxBuffer before returning anything (logic audit F3).
+        // the output cap before returning anything (logic audit F3).
         const grepArgs = [
           "-r",
           "-H",
@@ -296,12 +436,28 @@ TIPS:
           pattern,
           grepSearchPath,
         ];
-        output = execFileSync("grep", grepArgs, {
-          timeout: 20_000,
-          maxBuffer: 2 * 1024 * 1024,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+        const gr = await runCapped("grep", grepArgs, searchByteCap, 20_000);
+        if (gr.capped) {
+          output = gr.stdout;
+          byteCapped = true;
+        } else if (gr.status === 0 && !gr.timedOut) {
+          output = gr.stdout;
+        } else if (gr.status === 1 && !gr.stderr) {
+          // grep returns exit code 1 for "no matches" — not an error
+          return JSON.stringify({
+            matches: [],
+            total: 0,
+            message: "No matches found",
+          });
+        } else {
+          return JSON.stringify({
+            error:
+              gr.stderr.trim() ||
+              (gr.timedOut
+                ? "search timed out after 20s"
+                : `grep failed (${gr.code ?? `exit ${gr.status}`})`),
+          });
+        }
       }
 
       if (!output.trim()) {
@@ -309,6 +465,7 @@ TIPS:
           matches: [],
           total: 0,
           message: "No matches found",
+          ...(byteCapped && { truncated: true }),
         });
       }
 
@@ -317,7 +474,7 @@ TIPS:
       // hit is inside a value is dropped (match / no-match / count would
       // otherwise be a per-character oracle). Files and counts are derived
       // from the kept lines, and each kept line is scrubbed before the cap.
-      const records = parseLineRecords(output);
+      const records = parseLineRecords(output, mapFile);
       // Audit round 9 (should-fix 5): a file that reached the internal
       // per-file cap was cut by the search itself — say so. (Residual: the
       // cap counts raw matching lines, including a line whose only hit is
@@ -337,7 +494,7 @@ TIPS:
           matches: [],
           total: 0,
           message: "No matches found",
-          ...(capped && { truncated: true }),
+          ...((capped || byteCapped) && { truncated: true }),
         });
       }
 
@@ -380,7 +537,7 @@ TIPS:
       return JSON.stringify({
         matches: trimmed,
         total,
-        truncated: total > maxResults || capped,
+        truncated: total > maxResults || capped || byteCapped,
       });
     } catch (err) {
       const error = err as {

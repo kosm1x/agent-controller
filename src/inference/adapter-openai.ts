@@ -36,6 +36,7 @@ import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
 import { currentExecutionContext } from "./execution-context.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { sanitizeToolResult } from "./guards.js";
 import {
   HttpError,
@@ -358,7 +359,15 @@ async function callProvider(
   // inferWithToolsViaOpenAi round, compaction summary and wrap-up, which all
   // go through infer()) reaches the wire only through here. Shared scrub in
   // adapter.ts.
-  request = { ...request, messages: scrubOutboundMessages(request.messages) };
+  try {
+    request = { ...request, messages: scrubOutboundMessages(request.messages) };
+  } catch (err) {
+    // Not sent — a decision point on the run's timeline (combined audit SF2).
+    if (err instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("openai");
+    }
+    throw err;
+  }
   // Dispatch to Anthropic path when model is claude-*
   if (isAnthropicProvider(provider)) {
     return callAnthropicProvider(

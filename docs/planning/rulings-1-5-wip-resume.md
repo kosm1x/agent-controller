@@ -1,5 +1,7 @@
 # Rulings 1–5 — work-in-progress handover (2026-10-03)
 
+`main` was merged into this branch at `be6152e` (2026-10-03).
+
 Branch `wip/rulings-1-5` carries the UNSHIPPED build of operator rulings 1–5 (ruled
 2026-10-01, see `next-sessions-queue.md` §rulings). Nothing here is deployed; `main` and
 the live service (`b402df9`) do not contain it. Delete this file when the work merges.
@@ -8,11 +10,11 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 
 | Ruling | What | State |
 | --- | --- | --- |
-| 1 | Expiry notice at the 5-minute confirmation TTL | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
-| 2 | Confirm at schedule creation when a high-risk tool is included | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
-| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub); audit round 5 = FAIL → fix round 5 done (`95f6f7e`); audit round 6 = FAIL → fix round 6 (`fc5d7a9`); audit round 7 = FAIL → fix round 7 done, NOT re-audited; eval gate pending (project_update description + new refusal strings + round 7 placeholder form tag / key refusal) |
-| 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
-| 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only; follow-ups 5a–5e (2026-10-03) | Built, fix round done after an audit FAIL; re-audit 2026-10-03: tests green, 13/13 hand mutants RED, ~190 probes, nothing blocking; follow-ups 5b/5c/5d built (`6dc2358`, `97b051c`, mutants RED), NOT re-audited; the differential vs `main` is now `scripts/validate-shell-gate-diff.ts --run` (operator, VPS, read-only) and must be run there |
+| 1 | Expiry notice at the 5-minute confirmation TTL | re-audit PASS; should-fix round + batch_decompose ruling; audit S1–S3 `395e3c3` PASSED audit; its should-fix round `7cfb892`; combined audit 2026-10-03 done (fixes below) |
+| 2 | Confirm at schedule creation when a high-risk tool is included | as ruling 1: `395e3c3` passed audit, should-fix `7cfb892`; combined audit 2026-10-03 done |
+| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible"): a `projects.credentials` entry is a secret only when `isCredentialFact` says so | Fix rounds 3–9 done (round 8 `47b0cee`, round 9 `3d1ef77`); the grep / file_edit / KB guessing-oracle residual (round 9 residuals) ACCEPTED by the operator 2026-10-03; combined audit 2026-10-03: B1 grep regression + should-fix 1–4 fixed (below); eval gate pending (see "Order to finish" 5) |
+| 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done; combined audit 2026-10-03 done; its output lines are model-visible (eval gate) |
+| 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only; follow-ups 5a–5e (2026-10-03) | SHIPS WITH RESIDUALS (operator ruling 2026-10-03, `ea8bad1`); the differential `scripts/validate-shell-gate-diff.ts --run` is still to be run by the operator on the VPS |
 | 6 | Shell mount namespace | PARKED by the operator. Not in this branch. See `postmortem-2026-10-01-host-mount-leak.md`. Do not rebuild it here. |
 
 ## Ruling 3 fix round (answers audit round 2)
@@ -292,6 +294,11 @@ exec-time docker shim in `src/tools/builtin/pm-shim/`, queued in `next-sessions-
 
 ## Order to finish
 
+0. Operator, before shipping: measure KB search cost on the live KB size. Since round 8
+   `searchFiles` fetches up to `FTS_FETCH_CAP = 5000` FTS / LIKE rows per query and scrubs
+   each value-holding row before the visible `LIMIT`; time a few typical
+   `jarvis_file_search` queries (read-only) on the VPS and lower the cap if needed.
+
 0. Before shipping, the operator runs a read-only census of key names (never values) in
    `user_facts.key` and the `projects.credentials` keys, including nested ones, to see
    which live entries change visibility under 3d / 3d-a / 3d-b.
@@ -300,7 +307,7 @@ exec-time docker shim in `src/tools/builtin/pm-shim/`, queued in `next-sessions-
 2. ~~Re-audit ruling 5 (re-run its tests and the differential against `main`).~~ DONE with residuals — operator ruling 2026-10-03, ship with residuals (see the ruling 5 section).
 3. Re-audit rulings 1–2.
 4. Combined audit of rulings 1–5.
-5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording; the audit round 4 inference-seam scrub (stored values are replaced in the system prompt — KB, user facts, history, enrichment — wherever they appeared, and in every message and tool result); the 3d-a nested-leaf visibility and the 3d-b classifier changes (more names and PEM private keys hidden; `…_enabled/_region/_host/_url/_file` names visible); rulings 1–2 should-fix round: `noConfirmApiScheduleError` (API task creating a risky schedule), `undeclaredToolError` (batch child refused), the creation-card suffix "(puede usar cualquier herramienta)" and "y N más", unregistered tool names now listed on the card, and the expiry notice now present in the thread history the model reads.
+5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, `project_update` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording and the ruling 4 output lines of `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` (changed-files-only test runs); the audit round 4 inference-seam scrub (stored values are replaced in the system prompt — KB, user facts, history, enrichment — wherever they appeared, and in every message and tool result); the 3d-a nested-leaf visibility and the 3d-b classifier changes (more names and PEM private keys hidden; `…_enabled/_region/_host/_url/_file` names visible); round 6 rendered-placeholder refusals and the `projectFieldProblem` refusal; round 7 placeholder form tag (` · forma URL|JSON|JSON2`), the key-placeholder refusal and the `jarvis_file_read` scrub `{error}`; round 8 classifier changes (`ciec`, `*_session`, `user:pass`, length meta) and the file_edit / KB scrubbed lengths; round 9 `OVERLAP_PLACEHOLDER` removed (older-wins rendering), `clave_<servicio>` inverted to a service allow-list, narrower `user:pass`, `*_session` token rule, KB ranking/size of value-holding rows, grep `truncated: true` on the per-file cap; combined audit 2026-10-03: the `http_fetch` description (by-name `{{SECRET_<NAME>}}` section; "sends no secrets" removed), the reworded rendered-placeholder refusal ("si tienes shell_exec … si tienes http_fetch o el navegador …"), grep `truncated: true` on the output byte cap, and the rendered-placeholder refusal now returned INSTEAD of a confirmation card for a high-risk call; rulings 1–2 should-fix round: `noConfirmApiScheduleError` (API task creating a risky schedule), `undeclaredToolError` (batch child refused), the creation-card suffix "(puede usar cualquier herramienta)" and "y N más", unregistered tool names now listed on the card, and the expiry notice now present in the thread history the model reads.
 6. Docs (`PROJECT-STATUS.md`, `README.md` baselines, queue), merge to `main`, operator deploy.
 
 ## Rules that apply to this work
@@ -321,6 +328,13 @@ references; a credential whose key name and value shape both escape the classifi
 password stored under a neutral key such as `ftp` or `admin`, or nested below a container
 name such as `oauth.ftp`) is shown and not scrubbed (ruling 3d; children of a
 credential-named parent such as `passwords.ftp` are hidden since fix round 4).
+
+Ruling 3d neutral-key gap, `user / pass` form (combined audit 2026-10-03): a login written
+as a neutral-key value with the user and the password side by side, e.g. a fact
+`[cuentas] netflix = demo@example.invalid / Xy7…` or `usuario pass`, is shown and not
+scrubbed — the key names no credential and the value is not a single-token secret shape
+(`looksLikeUserPass` only reads the `user:pass` form under a login-ish key). Same class as
+the neutral-key gap above.
 
 Added after audit round 3: partly percent-encoded URLs, `\uXXXX` JSON escapes,
 the Playwright fill echo and `browser_evaluate` / `run_code` transforms escape the
@@ -343,7 +357,7 @@ or the critic's `[`/`]` match markers inside a value defeat the substring scrub;
 
 ## Open notes
 
-- `http_fetch` description still says the tool sends no secrets, which no longer matches `{{SECRET_<NAME>}}` substitution (description change → eval gate).
+- ~~`http_fetch` description still says the tool sends no secrets.~~ FIXED in the combined-audit round (description change → eval gate).
 - ~~Ruling 5: start/stop-type docker commands … await operator confirmation.~~ ANSWERED 2026-10-03 (see the follow-ups section); remaining are the 5a operator step and the VPS differential run.
 - ~~Rulings 1–2: the "no confirmation channel" error suggests `interactive:false`, which is now refused for risky `schedule_task`; background `batch_decompose` declaring high-risk tools is not refused.~~ RESOLVED 2026-10-03 (should-fix round + batch_decompose ruling, above).
 
@@ -537,3 +551,47 @@ NOT re-audited.
 | SF3 | FTS `size: r.size` / LIKE `size: r.size` | jarvis-fs.test.ts | RED (1 each), restored |
 | SF3 | KB verifier raw length | readback-verifiers.test.ts | RED (1), restored |
 | SF5 | drop `|| capped` | code-search.test.ts | RED (1 + pre-existing), restored |
+
+## Combined audit fix round (2026-10-03, rulings 1–5)
+
+Typecheck 0; every fix has a test that went RED under a hand mutant (restored, `cmp`).
+
+- **B1 grep regression (ruling 3c).** `code-search.ts`: rg / grep run through `runCapped`
+  (`spawn`, stdout streamed under a fixed 64 MiB byte cap, cut after the last complete
+  line). A cap hit returns what was read with `truncated: true` and never re-runs grep;
+  rg exit 1 = no matches; other rg failures (missing binary, error) still fall back to
+  grep; a grep failure / timeout is an `{error}`. Round 8/9 span filtering unchanged.
+- **SF1** `http_fetch` description: "sends no secrets" removed; new STORED CREDENTIALS
+  section (`{{SECRET_<NAME>}}` in url / header / body, substituted at execution, never
+  shown). `DO NOT USE WHEN:` names only registered tools. Under the 1500-char cap.
+- **SF2** trace events: `tool.secret_ref_refused` `{tool, reason, stage}` (reason
+  `rendered_placeholder` / `unknown_name` / `shell_expansion`; stage `execute` at the
+  registry seam, `pre_gate` before a confirmation card) and `inference.scrub_unavailable`
+  `{where: openai | claude_sdk | claude_sdk_tool_error}` (`src/lib/secret-ref-trace.ts`,
+  keyed by the execution context's task id, else the run-tool context's; nothing outside
+  a run). `resolveSecretRefs` refusals now carry a `reason`.
+- **SF3** placeholder check before the card: `placeholderRefusalBeforeGate`
+  (`task-executor.ts`) runs `resolveRenderedPlaceholders` when the gate would ASK, in the
+  per-task executor and in `gateSdkToolCall`; the refusal is returned instead of
+  `CONFIRMATION_REQUIRED` (no pending action, no gated-call record).
+- **SF4** the rendered-placeholder refusal says "si tienes shell_exec … si tienes
+  http_fetch o el navegador …; si no tienes ninguna de ellas, el valor no se puede usar en
+  esta tarea (díselo al usuario)". The placeholder itself is unchanged.
+- CI pin (`safety-invariants.test.ts`): `wrapTool`'s catch scrub moved into
+  `scrubToolErrorText(err)`; same behaviour (outbound scrub, fallback text when the index
+  is unavailable, now also traced).
+
+Residuals:
+
+- The placeholder text still names `shell_exec` / `http_fetch`; a run without those tools
+  is told so only by the refusal (SF4).
+- The pre-gate check judges the call as non-read-only (it only runs for a call the gate
+  would ask about); gate refusals (cannot ask, undeclared tool) keep precedence over the
+  placeholder refusal.
+- grep: a run that hits the 64 MiB cap shows the first part of the tree only (rg order);
+  a timeout of rg still falls back to grep (as before).
+- `claude_sdk_tool_error` trace has no dedicated test.
+
+Mutants: B1 cap→fallback/error (RED), B1 cap back to 2 MiB (RED ×2); SF2 registry trace
+removed, openai trace removed, SDK trace removed (each RED); SF3 executor pre-check
+removed, SDK pre-check removed (each RED).

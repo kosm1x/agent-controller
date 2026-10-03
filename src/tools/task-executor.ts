@@ -14,6 +14,8 @@ import type { ToolRegistry } from "./registry.js";
 import type { ToolExecutor } from "../inference/adapter.js";
 import { createLogger } from "../lib/logger.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { resolveRenderedPlaceholders } from "../lib/secret-refs.js";
+import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
 import { classifyMutation, recordMutation } from "../db/task-mutations.js";
 
 import { existsSync } from "fs";
@@ -343,6 +345,33 @@ export function noteUndeclaredRefusal(
 }
 
 /**
+ * Combined audit 2026-10-03 (should-fix 3): the registry refuses a call whose
+ * arguments carry a rendered `[oculto · …]` placeholder it cannot resolve
+ * (`resolveRenderedPlaceholders`). When the confirmation gate would ask the
+ * operator, run that same rule FIRST: otherwise the operator sees a card,
+ * approves, and the approved call is refused anyway. Returns the registry's
+ * `{error}` text, or null to go on. Only consulted for a call the gate would
+ * confirm, so it is judged as a non-read-only call (a read-only tool is never
+ * gated). A failure to build the index here is not a refusal: the registry
+ * makes that decision again at execution.
+ */
+export function placeholderRefusalBeforeGate(
+  name: string,
+  args: Record<string, unknown>,
+  taskId?: string,
+): string | null {
+  let r: ReturnType<typeof resolveRenderedPlaceholders>;
+  try {
+    r = resolveRenderedPlaceholders(name, args, false);
+  } catch {
+    return null;
+  }
+  if (!("error" in r)) return null;
+  traceSecretRefRefused(name, "rendered_placeholder", "pre_gate", taskId);
+  return r.error;
+}
+
+/**
  * Create a per-task executor that delegates to toolRegistry but uses the
  * task's own execution context for destructive lock checks and memory
  * rate limiting.
@@ -373,6 +402,9 @@ export function createTaskExecutor(
       return JSON.stringify({ error: gate.error });
     }
     if (gate.action === "confirm") {
+      // No card for a call the registry would refuse after the approval.
+      const refused = placeholderRefusalBeforeGate(name, args, context.taskId);
+      if (refused !== null) return refused;
       // Store the pending operation so the router can execute it on confirmation
       context.setPendingConfirmation(name, args);
       log.info(

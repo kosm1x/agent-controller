@@ -4,7 +4,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from "fs";
-import { grepTool, globTool, listDirTool } from "./code-search.js";
+import {
+  grepTool,
+  globTool,
+  listDirTool,
+  __setSearchByteCapForTests,
+} from "./code-search.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import { invalidateSecretRefs } from "../../lib/secret-refs.js";
 
@@ -201,6 +206,68 @@ describe("grep", () => {
   it("content mode keeps file:line:text shape through the NUL parse", async () => {
     const r = JSON.parse(await grepTool.execute({ pattern: "bar", path: TEST_DIR, output_mode: "content" }));
     expect(r.matches).toBe(`${TEST_DIR}/a.ts:2:const bar = 2;`);
+  });
+
+  // Combined audit B1 (2026-10-03): line mode reads every matching line, so
+  // more than 2 MB of matches used to overflow rg's maxBuffer (ENOBUFS), fall
+  // back to grep, overflow again and return an error.
+  describe("large outputs (combined audit B1)", () => {
+    const BIG = `${TEST_DIR}/big`;
+    const FILES = 10;
+    const LINES = 1500; // under the 2000 per-file internal cap
+    beforeEach(() => {
+      mkdirSync(BIG, { recursive: true });
+      const line = "needle " + "x".repeat(200) + "\n";
+      for (let i = 0; i < FILES; i++) {
+        writeFileSync(`${BIG}/f${i}.txt`, line.repeat(LINES));
+      }
+      // rg skips hidden dirs, grep -r does not: a match here only shows up
+      // if the tool fell back to grep.
+      mkdirSync(`${BIG}/.hid`, { recursive: true });
+      writeFileSync(`${BIG}/.hid/h.txt`, line.repeat(10));
+    });
+    afterEach(() => __setSearchByteCapForTests());
+
+    it("files mode over > 2 MB of matching lines returns the files", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "files" }),
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.total).toBe(FILES);
+      expect(r.truncated).toBe(false);
+      for (let i = 0; i < FILES; i++) expect(r.matches).toContain(`${BIG}/f${i}.txt`);
+      expect(r.matches).not.toContain(".hid");
+    });
+
+    it("count mode over > 2 MB of matching lines returns the counts", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "count" }),
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.total).toBe(FILES);
+      for (let i = 0; i < FILES; i++) {
+        expect(r.matches).toContain(`${BIG}/f${i}.txt:${LINES}`);
+      }
+    });
+
+    it("hitting the byte cap returns truncated results, not an error or a grep re-run", async () => {
+      __setSearchByteCapForTests(64 * 1024);
+      for (const mode of ["files", "count", "content"]) {
+        const r = JSON.parse(
+          await grepTool.execute({ pattern: "needle", path: BIG, output_mode: mode, max_results: 20 }),
+        );
+        expect(r.error, mode).toBeUndefined();
+        expect(r.truncated, mode).toBe(true);
+        expect(r.total, mode).toBeGreaterThan(0);
+        expect(JSON.stringify(r), mode).not.toContain(".hid");
+        if (mode === "content") {
+          // cut on a line boundary: every returned line is whole
+          for (const l of String(r.matches).split("\n")) {
+            expect(l, mode).toMatch(/:\d+:needle x{200}$/);
+          }
+        }
+      }
+    });
   });
 
   it("redacts credential shapes in matched lines", async () => {

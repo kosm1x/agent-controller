@@ -50,7 +50,8 @@ const stopHook = vi.hoisted(() => ({ impl: null as unknown }));
 vi.mock("../lib/v8-4/stop-hook.js", () => ({
   makeGatesStopHook: () => stopHook.impl,
 }));
-vi.mock("../observability/task-trace.js", () => ({ emitTraceEvent: vi.fn() }));
+const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
+vi.mock("../observability/task-trace.js", () => traceMock);
 vi.mock("../budget/service.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../budget/service.js")>()),
   recordCost: vi.fn(),
@@ -112,6 +113,7 @@ import {
 import { describeImage } from "./vision.js";
 import { generateEmbeddings } from "./embeddings.js";
 import { askJev } from "../jev/client.js";
+import { enterRunToolContext } from "../tools/rule-of-two.js";
 
 // Synthetic values. STORED / PROJ are stored; PASTED is new this turn.
 const STORED = "pw-" + "z".repeat(14);
@@ -589,6 +591,38 @@ describe("failure policy and performance", () => {
     const statuses = Object.values(circuitRegistry.getAllStatus());
     expect(statuses.length).toBeGreaterThan(0);
     for (const st of statuses) expect(st.failures).toBe(0);
+  });
+
+  // Combined audit 2026-10-03 (should-fix 2): the not-sent decision is on
+  // the run's trace timeline, at both choke points.
+  it("a scrub failure at either choke point emits inference.scrub_unavailable on the run", async () => {
+    db.close();
+    resetSecretRefsForTest();
+    traceMock.emitTraceEvent.mockClear();
+    await expect(
+      enterRunToolContext("task-sdk", () =>
+        queryClaudeSdk({ prompt: `c ${STORED}`, systemPrompt: "s", toolNames: [] }),
+      ),
+    ).rejects.toThrow(SecretScrubUnavailableError);
+    expect(traceMock.emitTraceEvent).toHaveBeenCalledWith({
+      taskId: "task-sdk",
+      name: "inference.scrub_unavailable",
+      attrs: { where: "claude_sdk" },
+    });
+
+    cfg.inferencePrimaryProvider = "openai";
+    vi.stubGlobal("fetch", vi.fn());
+    traceMock.emitTraceEvent.mockClear();
+    await expect(
+      enterRunToolContext("task-oai", () =>
+        infer({ messages: [{ role: "user", content: `x ${STORED}` }] }),
+      ),
+    ).rejects.toBeInstanceOf(SecretScrubUnavailableError);
+    expect(traceMock.emitTraceEvent).toHaveBeenCalledWith({
+      taskId: "task-oai",
+      name: "inference.scrub_unavailable",
+      attrs: { where: "openai" },
+    });
   });
 
   it("a realistic 70 KB request with 40 secrets is scrubbed cheaply", () => {

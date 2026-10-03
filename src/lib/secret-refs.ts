@@ -866,15 +866,17 @@ function substitute(
 export function resolveSecretRefs(
   tool: string,
   args: Record<string, unknown>,
-): { args: Record<string, unknown> } | { error: string } {
+):
+  | { args: Record<string, unknown> }
+  | { error: string; reason: "shell_expansion" | "unknown_name" } {
   if (tool === "shell_exec" && typeof args.command === "string") {
     if (SHELL_EXPANSION_RE.test(args.command)) {
-      return { error: shellExpansionError() };
+      return { error: shellExpansionError(), reason: "shell_expansion" };
     }
     const { valueOf } = index();
     const unknown = shellRefNames(args.command).filter((n) => !valueOf.has(n));
     return unknown.length > 0
-      ? { error: unknownRefError(tool, unknown) }
+      ? { error: unknownRefError(tool, unknown), reason: "unknown_name" }
       : { args };
   }
   if (!TEMPLATE_TOOLS.has(tool)) return { args };
@@ -885,7 +887,7 @@ export function resolveSecretRefs(
     unknown
   >;
   return unknown.length > 0
-    ? { error: unknownRefError(tool, unknown) }
+    ? { error: unknownRefError(tool, unknown), reason: "unknown_name" }
     : { args: resolved };
 }
 
@@ -1030,7 +1032,7 @@ export function resolveRenderedPlaceholders(
     return {
       error: renderedPlaceholderError(
         tool,
-        "los argumentos contienen un dato oculto ([oculto · …]), que no es el valor real. Para usar una credencial guardada escribe su referencia: $SECRET_<NOMBRE> en shell_exec, {{SECRET_<NOMBRE>}} en http_fetch/navegador; si no necesitas el valor, quita el texto del dato oculto.",
+        "los argumentos contienen un dato oculto ([oculto · …]), que no es el valor real. Para usar una credencial guardada escribe su referencia, si tienes la herramienta: $SECRET_<NOMBRE> si tienes shell_exec, {{SECRET_<NOMBRE>}} si tienes http_fetch o el navegador; si no tienes ninguna de ellas, el valor no se puede usar en esta tarea (díselo al usuario). Si no necesitas el valor, quita el texto del dato oculto.",
       ),
     };
   }

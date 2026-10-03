@@ -190,6 +190,36 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
     expect(ctx.getPendingConfirmation()!.toolName).toBe("gmail_send");
   });
 
+  // Combined audit 2026-10-03 (should-fix 3): no card for a call the
+  // registry would refuse after the approval.
+  it("a high-risk call carrying a rendered placeholder is refused before the card", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ctx = askable("task-ph");
+    const exec = createTaskExecutor(reg, ctx);
+    const ph =
+      "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: `A complete email body with the key ${ph} inside it.`,
+    });
+    expect(JSON.parse(result).error).toMatch(
+      /^No ejecuté gmail_send: los argumentos contienen un dato oculto/,
+    );
+    expect(result).not.toContain("CONFIRMATION_REQUIRED");
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.getPendingConfirmation()).toBeNull();
+    expect(traceMock.emitTraceEvent).toHaveBeenCalledWith({
+      taskId: "task-ph",
+      name: "tool.secret_ref_refused",
+      tool: "gmail_send",
+      attrs: { tool: "gmail_send", reason: "rendered_placeholder", stage: "pre_gate" },
+    });
+  });
+
   it("allows high-risk tools in non-interactive context (scheduled tasks)", async () => {
     const reg = mockRegistry();
     (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(

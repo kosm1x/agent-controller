@@ -171,6 +171,38 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     );
   });
 
+  // Combined audit 2026-10-03 (should-fix 3): the registry refuses a call
+  // carrying a rendered placeholder; asking first showed a card the operator
+  // approved for nothing.
+  it("a high-risk call carrying a rendered placeholder is refused BEFORE any card", async () => {
+    const ctx = fastChatRoot("t-ph");
+    const ph = "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("gmail_send", { to: "a@b.com", body: `clave: ${ph}` }),
+    );
+    expect(reg.execute).not.toHaveBeenCalled();
+    const parsed = JSON.parse(text);
+    expect(parsed.error).toMatch(/^No ejecuté gmail_send: los argumentos contienen un dato oculto/);
+    expect(ctx.getPendingConfirmation()).toBeNull();
+    expect(ctx.getGatedCalls()).toEqual([]);
+    expect(emitTraceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "tool.gated" }),
+    );
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "t-ph",
+        name: "tool.secret_ref_refused",
+        tool: "gmail_send",
+        attrs: { tool: "gmail_send", reason: "rendered_placeholder", stage: "pre_gate" },
+      }),
+    );
+    // The same call without the placeholder still asks.
+    const ok = await inRun(OPERATOR, fastChatRoot("t-ph2"), () =>
+      call("gmail_send", { to: "a@b.com", body: "hola" }),
+    );
+    expect(JSON.parse(ok).error).toBe("CONFIRMATION_REQUIRED");
+  });
+
   it("first pending wins: a second gated call is refused and not executed", async () => {
     const ctx = fastChatRoot("t-two");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));

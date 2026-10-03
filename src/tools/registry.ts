@@ -27,6 +27,7 @@ import {
   scrubSecrets,
   scrubJsonText,
 } from "../lib/secret-refs.js";
+import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 import {
@@ -428,9 +429,15 @@ export class ToolRegistry {
       args,
       this.annotationsOf(name)?.readOnlyHint === true,
     );
-    if ("error" in rendered) return rendered.error;
+    if ("error" in rendered) {
+      traceSecretRefRefused(name, "rendered_placeholder", "execute");
+      return rendered.error;
+    }
     const resolved = resolveSecretRefs(name, rendered.args);
-    if ("error" in resolved) return resolved.error;
+    if ("error" in resolved) {
+      traceSecretRefRefused(name, resolved.reason, "execute");
+      return resolved.error;
+    }
     const start = Date.now();
     try {
       const result = scrubResult(await tool.execute(resolved.args));

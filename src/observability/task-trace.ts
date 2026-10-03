@@ -46,6 +46,10 @@ export type TraceEventName =
   // openai path dropped tool definitions outside the run's declared list
   // (audit S2, rulings 1–2)
   | "tools.declared_filtered"
+  // Ruling 3c (combined audit 2026-10-03): a secret reference / rendered
+  // placeholder refused, and a model request not sent (scrub unavailable)
+  | "tool.secret_ref_refused"
+  | "inference.scrub_unavailable"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

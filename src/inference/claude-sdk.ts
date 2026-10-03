@@ -51,7 +51,8 @@ import type {
 } from "./adapter.js";
 // Outbound secret scrub (ruling 3c, audit round 4). Shared helper lives in
 // adapter.ts; queryClaudeSdk is the SDK path's one choke point.
-import { scrubOutboundText } from "./adapter.js";
+import { scrubOutboundText, SecretScrubUnavailableError } from "./adapter.js";
+import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
@@ -63,6 +64,7 @@ import {
 } from "../tools/external-tool-guard.js";
 import {
   confirmationGate,
+  placeholderRefusalBeforeGate,
   NO_CONFIRM_IN_CHAT_ERROR,
   noteUndeclaredRefusal,
 } from "../tools/task-executor.js";
@@ -239,6 +241,12 @@ function gateSdkToolCall(
   }
   const gate = confirmationGate(toolRegistry, ctx, name, args);
   if (gate.action === "proceed") return null;
+  if (gate.action === "confirm") {
+    // No card for a call the registry would refuse after the approval
+    // (combined audit 2026-10-03, should-fix 3).
+    const refused = placeholderRefusalBeforeGate(name, args, ctx.taskId);
+    if (refused !== null) return refused;
+  }
   ctx.recordGatedCall(name);
   if (gate.action === "refuse") {
     if (gate.reason === "undeclared_tool") {
@@ -263,6 +271,19 @@ function gateSdkToolCall(
     message: CONFIRMATION_PENDING_MESSAGE,
     tool: name,
   });
+}
+
+/**
+ * A thrown tool error as the model will see it: outbound-scrubbed (ruling
+ * 3c); when the secret index is unavailable the detail is withheld.
+ */
+function scrubToolErrorText(err: unknown): string {
+  try {
+    return scrubOutboundText(`Error: ${errMsg(err)}`);
+  } catch {
+    traceScrubUnavailable("claude_sdk_tool_error");
+    return "Error: tool failed (detail withheld: secret index unavailable)";
+  }
 }
 
 function wrapTool(t: Tool) {
@@ -307,14 +328,8 @@ function wrapTool(t: Tool) {
           content: [{ type: "text", text: scrubOutboundText(sanitized) }],
         };
       } catch (err) {
-        let text = `Error: ${errMsg(err)}`;
-        try {
-          text = scrubOutboundText(text);
-        } catch {
-          text = "Error: tool failed (detail withheld: secret index unavailable)";
-        }
         return {
-          content: [{ type: "text", text }],
+          content: [{ type: "text", text: scrubToolErrorText(err) }],
           isError: true,
         };
       }
@@ -905,10 +920,20 @@ export async function queryClaudeSdk(opts: {
   // Throws (fail closed) only with no current index. Runs BEFORE the abort
   // listener and the 15-minute timer are armed (audit round 5), so a throw
   // leaves no timer or listener behind and nothing reaches the SDK.
-  const safePromptText = sanitizeSurrogates(scrubOutboundText(opts.prompt));
-  const safeSystemPromptText = sanitizeSurrogates(
-    scrubOutboundText(opts.systemPrompt),
-  );
+  let safePromptText: string;
+  let safeSystemPromptText: string;
+  try {
+    safePromptText = sanitizeSurrogates(scrubOutboundText(opts.prompt));
+    safeSystemPromptText = sanitizeSurrogates(
+      scrubOutboundText(opts.systemPrompt),
+    );
+  } catch (err) {
+    // Not sent — a decision point on the run's timeline (combined audit SF2).
+    if (err instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("claude_sdk");
+    }
+    throw err;
+  }
 
   const abortController = new AbortController();
   if (opts.abortSignal) {

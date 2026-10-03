@@ -17,6 +17,10 @@ vi.mock("../db/index.js", () => ({
   },
 }));
 
+// Combined audit 2026-10-03 (should-fix 2): refusals are trace events.
+const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
+vi.mock("../observability/task-trace.js", () => traceMock);
+
 const logWarn = vi.fn();
 const logInfo = vi.fn();
 vi.mock("./logger.js", () => {
@@ -62,6 +66,7 @@ import {
 } from "../db/user-facts.js";
 import { deleteProject, updateProject } from "../db/projects.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { enterRunToolContext } from "../tools/rule-of-two.js";
 import type { Tool } from "../tools/types.js";
 import { confirmationGate } from "../tools/task-executor.js";
 import { httpTool } from "../tools/builtin/http.js";
@@ -1013,6 +1018,43 @@ describe("the tool seam (ToolRegistry.executeDirect)", () => {
     const logged = JSON.stringify(logWarn.mock.calls);
     expect(logged).toContain(`{{${N.cookie}}}`);
     expect(logged).not.toContain(COOKIE);
+  });
+
+  it("combined audit SF2: each refusal at the seam is a tool.secret_ref_refused trace event keyed by the run", async () => {
+    const reg = new ToolRegistry();
+    const shell = echoTool("shell_exec", "high");
+    const http = echoTool("http_fetch", "high");
+    reg.register(shell);
+    reg.register(http);
+    traceMock.emitTraceEvent.mockClear();
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["shell_exec", { command: "echo $SECRET_NOT_STORED_X" }, "unknown_name"],
+      ["http_fetch", { url: "https://api.example.test/{{SECRET_NOT_STORED_X}}" }, "unknown_name"],
+      ["shell_exec", { command: `echo \${${N.ftp}:-d}` }, "shell_expansion"],
+      ["http_fetch", { url: "https://api.example.test/", body: secretPlaceholder(N.ftp) }, "rendered_placeholder"],
+    ];
+    for (const [tool, args, reason] of cases) {
+      traceMock.emitTraceEvent.mockClear();
+      const out = await enterRunToolContext("task-sr", () => reg.execute(tool, args));
+      expect(JSON.parse(out as string).error, reason).toMatch(/^No ejecuté/);
+      expect(traceMock.emitTraceEvent, reason).toHaveBeenCalledWith({
+        taskId: "task-sr",
+        name: "tool.secret_ref_refused",
+        tool,
+        attrs: { tool, reason, stage: "execute" },
+      });
+    }
+    expect(shell.execute).not.toHaveBeenCalled();
+    expect(http.execute).not.toHaveBeenCalled();
+    // A call that runs emits no refusal; outside a run there is no timeline.
+    traceMock.emitTraceEvent.mockClear();
+    await enterRunToolContext("task-sr", () =>
+      reg.execute("http_fetch", { url: `https://api.example.test/{{${N.tok}}}` }),
+    );
+    await reg.execute("shell_exec", { command: "echo $SECRET_NOT_STORED_X" });
+    expect(traceMock.emitTraceEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "tool.secret_ref_refused" }),
+    );
   });
 
   it("a non-allow-listed tool receives the literal reference", async () => {
