@@ -16,6 +16,13 @@ vi.mock("../../db/index.js", () => ({
   getDatabase: () => mockDb,
 }));
 
+// The stub db above is not a secret store; the read-side scrub (ruling 3c,
+// audit R7) is exercised against a real temp db in secret-refs.test.ts.
+vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/secret-refs.js")>()),
+  scrubSecrets: (text: string) => text,
+}));
+
 vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),

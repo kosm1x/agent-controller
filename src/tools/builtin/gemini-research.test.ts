@@ -26,8 +26,26 @@ vi.mock("../../db/index.js", () => ({
   }),
 }));
 
+const { mockGetUserFacts } = vi.hoisted(() => ({
+  mockGetUserFacts: vi.fn(() => [
+    { key: "gemini_api_key", value: "test-key-123" },
+  ]),
+}));
 vi.mock("../../db/user-facts.js", () => ({
-  getUserFacts: () => [{ key: "gemini_api_key", value: "test-key-123" }],
+  getUserFacts: mockGetUserFacts,
+}));
+
+// Ruling 3c (audit round 5, S1): the secret index, reduced to one stored value.
+const secrets = vi.hoisted(() => ({
+  STORED: "up-" + "s".repeat(14),
+  PH: "[oculto · úsalo por nombre: $SECRET_PROJECTS_UP_PASSWORD en shell_exec, {{SECRET_PROJECTS_UP_PASSWORD}} en http_fetch/navegador]",
+  fail: false,
+}));
+vi.mock("../../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => {
+    if (secrets.fail) throw new Error("The database connection is not open");
+    return t.replaceAll(secrets.STORED, secrets.PH);
+  },
 }));
 
 vi.mock("node:fs", async () => {
@@ -257,6 +275,83 @@ describe("gemini_upload", () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
+  describe("audit R5 S1 — a text file is scrubbed before upload", () => {
+    function mockUploadOk() {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === "x-goog-upload-url"
+              ? "https://upload.googleapis.com/session/s1"
+              : null,
+        },
+        text: async () => "",
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({ file: { name: "files/s1", uri: "u", state: "ACTIVE" } }),
+      });
+    }
+    async function uploadRealFile(name: string, content: Buffer) {
+      const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+      const os = await vi.importActual<typeof import("node:os")>("node:os");
+      const path = await vi.importActual<typeof import("node:path")>("node:path");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-s1-"));
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, content);
+      const { readFileSync } = await import("node:fs");
+      vi.mocked(readFileSync).mockImplementationOnce(
+        ((p: string) => fs.readFileSync(p)) as typeof readFileSync,
+      );
+      try {
+        return JSON.parse(await geminiUploadTool.execute({ source: file }));
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    const sentBody = () => mockFetch.mock.calls[1]![1].body as Buffer;
+    const sentLength = () =>
+      new Headers(mockFetch.mock.calls[1]![1].headers).get("content-length");
+
+    // .yaml / .ini have no MIME entry (octet-stream): judged by their bytes.
+    it.each(["notes.txt", "config.json", "deploy.yaml", "settings.ini"])(
+      "%s: the stored value is replaced by its placeholder in the bytes sent (and the declared length matches)",
+      async (name) => {
+        mockUploadOk();
+        const text = `host: ftp.example.com\npassword: ${secrets.STORED}\nñandú ✓\n`;
+        const result = await uploadRealFile(name, Buffer.from(text, "utf8"));
+        expect(result.success).toBe(true);
+        const body = sentBody().toString("utf8");
+        expect(body).not.toContain(secrets.STORED);
+        expect(body).toBe(text.replace(secrets.STORED, secrets.PH));
+        expect(sentLength()).toBe(String(sentBody().length));
+      },
+    );
+
+    it("a binary type (PDF) is sent as read (residual)", async () => {
+      mockUploadOk();
+      const bytes = Buffer.concat([
+        Buffer.from("%PDF-1.4\n"),
+        Buffer.from([0, 255, 254, 0]),
+        Buffer.from(secrets.STORED),
+      ]);
+      await uploadRealFile("doc.pdf", bytes);
+      expect(Buffer.compare(sentBody(), bytes)).toBe(0);
+    });
+
+    it("no secret index: nothing is uploaded", async () => {
+      secrets.fail = true;
+      try {
+        const result = await uploadRealFile("notes.txt", Buffer.from(`x ${secrets.STORED}`));
+        expect(result.error).toContain("secret index unavailable");
+        expect(mockFetch).not.toHaveBeenCalled();
+      } finally {
+        secrets.fail = false;
+      }
+    });
+  });
+
   it("handles URL download failure", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() });
 
@@ -457,5 +552,29 @@ describe("gemini_audio_overview", () => {
     );
     expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("upload");
+  });
+});
+
+// Ruling 3c (2026-10-01): a credential can be stored as a fact again, so the
+// missing-key error names both sources. An EXISTING fact supplies the key
+// (every test above runs on one).
+describe("missing Gemini key", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["gemini_upload", () => geminiUploadTool.execute({ source: "/tmp/x.pdf" })],
+    ["gemini_research", () => geminiResearchTool.execute({ query: "q" })],
+    ["gemini_audio_overview", () => geminiAudioOverviewTool.execute({})],
+  ])("%s points to GEMINI_API_KEY and the gemini_api_key fact", async (_name, run) => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    mockGetUserFacts.mockReturnValueOnce([]);
+    const out = await run();
+    const { error } = JSON.parse(out) as { error: string };
+    expect(error).toBe(
+      "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

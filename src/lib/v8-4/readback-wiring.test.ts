@@ -158,9 +158,140 @@ describe("write tools declare read-back gates inside a run", () => {
     expect(listGates("task-sched")[0].state).toBe("abandoned");
   });
 
+  it("ruling 2026-10-01: a schedule_task parked for confirmation writes nothing and declares no gate (never a failed read-back)", async () => {
+    const { scheduleTaskTool } = await import("../../tools/builtin/schedule.js");
+    const { ensureScheduledTasksTable, listSchedules } = await import("../../rituals/dynamic.js");
+    const { ToolRegistry } = await import("../../tools/registry.js");
+    const { createTaskExecutor } = await import("../../tools/task-executor.js");
+    const { TaskExecutionContext } = await import("../../inference/execution-context.js");
+    ensureScheduledTasksTable();
+    const registry = new ToolRegistry();
+    registry.register(scheduleTaskTool);
+    registry.register({
+      name: "gmail_send",
+      requiresConfirmation: true,
+      definition: { type: "function", function: { name: "gmail_send", description: "x", parameters: { type: "object", properties: {} } } },
+      execute: async () => "{}",
+    });
+    const chat = new TaskExecutionContext("task-park", true, { routerRoot: true, canAskOperator: true, chatOrigin: true });
+    const out = await enterRunToolContext("task-park", () =>
+      createTaskExecutor(registry, chat)("schedule_task", {
+        name: "Reporte", description: "x", cron: "0 9 * * *", tools: ["gmail_send"], delivery: "telegram",
+      }),
+    );
+    expect(JSON.parse(out).error).toBe("CONFIRMATION_REQUIRED");
+    expect(listGates("task-park")).toHaveLength(0);
+    expect(listSchedules(false)).toHaveLength(0);
+  });
+
   it("outside a run context no gate is declared (background tools, tests)", async () => {
     const { jarvisFileWriteTool } = await import("../../tools/builtin/jarvis-files.js");
     await jarvisFileWriteTool.execute({ path: "projects/demo/x.md", title: "X", content: "x" });
     expect(listGates("task-w")).toHaveLength(0);
+  });
+});
+
+// Ruling 3c, audit round 7 (B-1b): a gate payload is stored at rest and its
+// text is quoted in evidence — it holds the scrubbed text (placeholder), cut
+// AFTER the scrub, never a stored credential value or a prefix of one.
+describe("audit R7 B-1(b) — read-back payloads never hold a stored value", () => {
+  // Synthetic, runtime-assembled; stored under a credential name.
+  const PASS = "pw-" + "Q7z".repeat(6);
+  async function storeSecret() {
+    const { getDatabase } = await import("../../db/index.js");
+    const { invalidateSecretRefs } = await import("../secret-refs.js");
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)")
+      .run("projects", "acme_ftp_password", PASS);
+    invalidateSecretRefs();
+  }
+
+  it("jarvis_file_update: must_contain is scrubbed before the 160 cut, and the verifier still passes", async () => {
+    await storeSecret();
+    const { jarvisFileWriteTool, jarvisFileUpdateTool } = await import("../../tools/builtin/jarvis-files.js");
+    const { verifyKbFile } = await import("./readback-verifiers.js");
+    await enterRunToolContext("task-s0", () =>
+      jarvisFileWriteTool.execute({ path: "projects/demo/env.md", title: "Env", content: "# Env" }),
+    );
+    const append = "x".repeat(160 - 5) + PASS + " fin";
+    await enterRunToolContext("task-s", () =>
+      jarvisFileUpdateTool.execute({ path: "projects/demo/env.md", append }),
+    );
+    const rows = listGates("task-s");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].check_cmd).not.toContain(PASS.slice(0, 4));
+    const data = parseReadback(rows[0])!.data as Record<string, unknown>;
+    expect(data.must_contain as string).toBe("x".repeat(155) + "[ocul");
+    const verdict = await verifyKbFile(data);
+    expect(verdict.ok).toBe(true);
+    // A failing check quotes only the scrubbed declared text.
+    const bad = await verifyKbFile({ ...data, must_contain: PASS + " no está" });
+    expect(bad.ok).toBe(false);
+    expect(bad.evidence).not.toContain(PASS.slice(0, 4));
+  });
+
+  it("gdocs_write: snippet / written_text are scrubbed before their cuts", async () => {
+    await storeSecret();
+    google.googleFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith(":batchUpdate")) return {};
+      return { body: { content: [{ endIndex: 10 }] } };
+    });
+    const { gdocsWriteTool } = await import("../../tools/builtin/google-docs.js");
+    await enterRunToolContext("task-doc-s", () =>
+      gdocsWriteTool.execute({ document_id: "D2", text: "y".repeat(120 - 5) + PASS + " " + "z".repeat(900) }),
+    );
+    const rows = listGates("task-doc-s");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].check_cmd).not.toContain(PASS.slice(0, 4));
+  });
+
+  it("gsheets_write: each first-row cell is scrubbed before its 60-char cut", async () => {
+    await storeSecret();
+    google.googleFetch.mockImplementation(async (url: string, opts?: { method?: string }) => {
+      if (opts?.method === "PUT") return { updatedRange: "Hoja!A1:B1", updatedRows: 1, updatedCells: 2 };
+      return { values: [] };
+    });
+    const { gsheetsWriteTool } = await import("../../tools/builtin/google-docs.js");
+    await enterRunToolContext("task-sheet-s", () =>
+      gsheetsWriteTool.execute({ spreadsheet_id: "S9", range: "Hoja!A1:B1", values: [["x".repeat(55) + PASS, "y"]], append: false }),
+    );
+    const rows = listGates("task-sheet-s");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].check_cmd).not.toContain(PASS.slice(0, 4));
+    const first = parseReadback(rows[0])!.data.first_row as string[];
+    expect(first[0]).toBe("x".repeat(55) + "[ocul");
+  });
+
+  it("declareReadbackGate scrubs whole stored values in any payload field", async () => {
+    await storeSecret();
+    const { declareReadbackGate } = await import("./readback.js");
+    expect(
+      declareReadbackGate("task-any", "jarvis_file_update", "kb:any.md", "crit", {
+        path: "any.md",
+        must_contain: "hola " + PASS,
+        nested: { [PASS]: [PASS] },
+      }),
+    ).toBe(true);
+    const rows = listGates("task-any");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].check_cmd).not.toContain(PASS);
+    expect(rows[0].check_cmd).toContain("[oculto");
+  });
+
+  it("confirmed-figure evidence scrubs the read text before its 120-char line cut", async () => {
+    await storeSecret();
+    const { verifyDocWrite } = await import("./readback-verifiers.js");
+    google.googleFetch.mockResolvedValue({ title: "T", body: { content: [] } });
+    // A gate declared with raw written_text (pre-R7 row): the contradicting
+    // line is cut at 120 chars right through the stored value.
+    const line = "Margen bruto 12 MDP " + "a".repeat(95) + PASS;
+    const v = await verifyDocWrite({
+      document_id: "D3",
+      written_text: line,
+      __confirmed: [{ raw: "16 MDP", label: "Margen bruto" }],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.evidence).toContain("Contradice");
+    expect(v.evidence).not.toContain(PASS.slice(0, 4));
   });
 });

@@ -12,6 +12,7 @@ import { A2A_TERMINAL_STATES } from "../a2a/types.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 const POLL_INITIAL_MS = 1_000;
 const POLL_MAX_MS = 15_000;
@@ -53,12 +54,17 @@ export const a2aRunner: Runner = {
       const client = new A2ARpcClient(targetUrl, targetKey);
       // v8 S1: strip cache-break marker before sending to remote A2A peer.
       // Marker is an mc-internal optimization; remote agents shouldn't see it.
+      // Ruling 3c, audit round 5 (S6): the outbound text goes to a remote
+      // agent's model — stored credential values are replaced by their
+      // placeholders (a scrub failure lands in the catch: nothing is sent).
       const message = {
         role: "user" as const,
         parts: [
           {
             type: "text" as const,
-            text: `${input.title}\n\n${stripCacheMarker(input.description)}`,
+            text: scrubSecrets(
+              `${input.title}\n\n${stripCacheMarker(input.description)}`,
+            ),
           },
         ],
       };

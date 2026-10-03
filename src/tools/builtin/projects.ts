@@ -14,7 +14,83 @@ import {
   createProject,
   updateProject,
   logProjectAction,
+  projectFieldProblem,
 } from "../../db/projects.js";
+import {
+  isProjectSecret,
+  projectEntryLeaves,
+  projectSecretDisplay,
+  resolveStoredReferencesDeep,
+  visibleDestinationError,
+} from "../../lib/secret-refs.js";
+
+/**
+ * Audit round 5 (B2a): stored credentials written back BY NAME inside
+ * `credentials` / `urls` / `config` (a leaf that is exactly a placeholder,
+ * `{{SECRET_X}}` or `$SECRET_X`) are replaced by their stored value, so
+ * moving or renaming an entry keeps it; each must land on a leaf that stays
+ * hidden. A leaf carrying a placeholder inside other text, or an unknown
+ * name, refuses the whole call. Returns the args to apply (a copy when
+ * anything changed) or the `{error}` JSON.
+ */
+function resolveProjectRefs(
+  slug: string,
+  args: Record<string, unknown>,
+): { args: Record<string, unknown> } | { error: string } {
+  let out = args;
+  for (const field of ["credentials", "urls", "config"] as const) {
+    const obj = args[field];
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    const r = resolveStoredReferencesDeep(obj);
+    if ("error" in r) return { error: JSON.stringify({ error: r.error }) };
+    if (r.resolvedPaths.length === 0) continue;
+    const resolved = r.value as Record<string, unknown>;
+    for (const path of r.resolvedPaths) {
+      const top = path[0]!;
+      const leaf = projectEntryLeaves(slug, field, top, resolved[top]).find(
+        (l) => l.path.join("\0") === path.join("\0"),
+      );
+      if (!leaf?.secret) {
+        return {
+          error: JSON.stringify({
+            error: visibleDestinationError(`${field}.${path.join(".")}`),
+          }),
+        };
+      }
+    }
+    out = { ...out, [field]: resolved };
+  }
+  return { args: out };
+}
+
+/**
+ * Ruling 3c: the by-name placeholder of each credential-style entry (nested
+ * values included, keyed by their dotted path) this call stored (never the value); undefined when there is none, so the
+ * result of a call without credentials is unchanged.
+ */
+function savedSecrets(
+  slug: string,
+  args: Record<string, unknown>,
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const field of ["credentials", "urls", "config"] as const) {
+    const obj = args[field];
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    for (const [k, v] of Object.entries(obj)) {
+      // Nested values carry their own names (audit R3 S4).
+      if (v && typeof v === "object") {
+        for (const leaf of projectEntryLeaves(slug, field, k, v)) {
+          if (leaf.secret) out[`${field}.${leaf.path.join(".")}`] = leaf.display;
+        }
+        continue;
+      }
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      if (v === "" || !isProjectSecret(k, String(v))) continue;
+      out[`${field}.${k}`] = projectSecretDisplay(slug, field, k, v);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // project_list
@@ -64,7 +140,9 @@ NOTE: This returns DB project metadata (status, URLs, credentials). For project 
     lines.push("| Slug | Name | Status | URL | Credentials |");
     lines.push("| --- | --- | --- | --- | --- |");
     for (const p of projects) {
-      const url = p.urls.site ?? "—";
+      const url = p.urls.site
+        ? projectSecretDisplay(p.slug, "urls", "site", p.urls.site)
+        : "—";
       const creds =
         Object.keys(p.credentials).length > 0
           ? Object.keys(p.credentials).join(", ")
@@ -90,7 +168,7 @@ export const projectGetTool: Tool = {
     type: "function",
     function: {
       name: "project_get",
-      description: `Get full details of a project including credentials, config, and recent activity log.
+      description: `Get full details of a project including credential names (secret values hidden), config, and recent activity log.
 
 USE WHEN:
 - You need a project's credentials (WP password, API key, FTP host)
@@ -134,12 +212,20 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
       `Status: ${project.status}`,
     ];
     if (project.description) lines.push(`${project.description}`);
-    if (project.urls?.site) lines.push(`URL: ${project.urls.site}`);
-    if (project.urls?.repo) lines.push(`Repo: ${project.urls.repo}`);
+    if (project.urls?.site)
+      lines.push(
+        `URL: ${projectSecretDisplay(project.slug, "urls", "site", project.urls.site)}`,
+      );
+    if (project.urls?.repo)
+      lines.push(
+        `Repo: ${projectSecretDisplay(project.slug, "urls", "repo", project.urls.repo)}`,
+      );
     // Surface additional repos (multi-repo projects store them as repo_* keys).
     for (const [k, v] of Object.entries(project.urls ?? {})) {
       if (k === "repo" || k === "site" || !v || !/repo/i.test(k)) continue;
-      lines.push(`Repo (${k.replace(/_?repo_?/i, "") || k}): ${v}`);
+      lines.push(
+        `Repo (${k.replace(/_?repo_?/i, "") || k}): ${projectSecretDisplay(project.slug, "urls", k, v)}`,
+      );
     }
     if (project.commit_goal_id)
       lines.push(`NorthStar goal: ${project.commit_goal_id}`);
@@ -147,7 +233,16 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
     if (credKeys.length > 0) {
       lines.push(`\n**Credentials:** ${credKeys.join(", ")}`);
       for (const [k, v] of Object.entries(project.credentials)) {
-        lines.push(`  ${k}: ${String(v)}`);
+        // A nested entry shows each value under its own name (audit R3 S4).
+        if (v && typeof v === "object") {
+          for (const leaf of projectEntryLeaves(project.slug, "credentials", k, v)) {
+            lines.push(`  ${leaf.path.join(".")}: ${leaf.display}`);
+          }
+          continue;
+        }
+        lines.push(
+          `  ${k}: ${projectSecretDisplay(project.slug, "credentials", k, v)}`,
+        );
       }
     }
     if (recentLog.length > 0) {
@@ -176,7 +271,7 @@ export const projectUpdateTool: Tool = {
     type: "function",
     function: {
       name: "project_update",
-      description: `Create or update a project. Updates are merged (credentials, URLs, config are merged, not replaced).
+      description: `Create or update a project. Updates are merged (credentials, URLs, config are merged key by key, nested objects too, not replaced; a null value deletes that key).
 
 USE WHEN:
 - User provides project credentials (WP password, API key, FTP host) — store them here
@@ -240,8 +335,20 @@ CREDENTIAL STORAGE:
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
-    const slug = args.slug as string;
+  async execute(rawArgs: Record<string, unknown>): Promise<string> {
+    const slug = rawArgs.slug as string;
+    // Audit R6 should-fix 4: a non-object field, or a prototype key, is
+    // refused — never silently dropped or stored as {"0":"h",...}.
+    for (const field of ["credentials", "urls", "config"] as const) {
+      if (rawArgs[field] === undefined) continue;
+      const problem = projectFieldProblem(field, rawArgs[field]);
+      if (problem) {
+        return JSON.stringify({ error: `No guardé: ${problem}.` });
+      }
+    }
+    const refs = resolveProjectRefs(slug, rawArgs);
+    if ("error" in refs) return refs.error;
+    const args = refs.args;
     const existing = getProject(slug);
 
     if (!existing) {
@@ -263,6 +370,7 @@ CREDENTIAL STORAGE:
           status: project.status,
           credential_keys: Object.keys(project.credentials),
         },
+        saved_secrets: savedSecrets(project.slug, args),
       });
     }
 
@@ -296,6 +404,7 @@ CREDENTIAL STORAGE:
         status: updated.status,
         credential_keys: Object.keys(updated.credentials),
       },
+      saved_secrets: savedSecrets(updated.slug, args),
     });
   },
 };

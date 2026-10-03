@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath, isBlockedEnvFile } from "./immutable-core.js";
+import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
@@ -20,6 +21,7 @@ import {
   recordCall,
 } from "../flailing-guard.js";
 import { redactCredentials, redactSecrets } from "../../api/mcp-server/redact.js";
+import { scrubSecrets, secretEnvForCommand } from "../../lib/secret-refs.js";
 
 /**
  * Async command runner. Uses child_process.exec (not execSync) so it does NOT
@@ -227,10 +229,28 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
  */
 export const PM_SHIM_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), "pm-shim");
 
-/** PATH with the shim directory first (and nowhere else). */
+/**
+ * PATH with the shim directory first (and nowhere else), and `DOCKER_CONFIG` pinned (audit B3,
+ * see withDockerConfig) — so every caller (shell_exec and the task_gates check_cmd child in
+ * gate-check.ts) gets both from one place.
+ */
 export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
-  return { ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") };
+  return withDockerConfig({ ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") });
+}
+
+/**
+ * Audit B3: the docker CLI reads `$DOCKER_CONFIG`, else `$HOME/.docker` — so `HOME=/tmp/h docker ps`
+ * would load another config.json (which can set a context, hence a daemon). The child env pins
+ * `DOCKER_CONFIG` to the directory resolved ONCE at startup from mission-control's own environment,
+ * so a HOME override in the command no longer moves it (overriding or unsetting `DOCKER_CONFIG`
+ * itself is refused by the docker gate).
+ */
+export const DOCKER_CONFIG_DIR = process.env.DOCKER_CONFIG || resolvePath(process.env.HOME || homedir(), ".docker");
+
+/** The env with `DOCKER_CONFIG` pinned to DOCKER_CONFIG_DIR. */
+export function withDockerConfig(env: NodeJS.ProcessEnv, dir: string = DOCKER_CONFIG_DIR): NodeJS.ProcessEnv {
+  return { ...env, DOCKER_CONFIG: dir };
 }
 
 /** Fail closed: a dist/ built without the shim must not hand the child install authority. */
@@ -420,6 +440,8 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/var\/lib\/docker\/\S/, reason: "Docker volumes and container filesystems are off-limits to the shell" }, // `du -sh /var/lib/docker` stays usable
   { pattern: /\/var\/lib\/containerd\/\S/, reason: "containerd snapshots (container filesystems) are off-limits to the shell" }, // the bare directory stays usable (`du -sh`)
   { pattern: /\/run\/containerd\/\S/, reason: "mounted container root filesystems are off-limits to the shell" }, // the bare directory stays usable (`ls`)
+  // The Docker API socket answers every verb the docker gate refuses (`curl --unix-socket … /containers/create`) — ruling 5, 2026-10-01.
+  { pattern: /\/run\/docker\.sock\b/, reason: "the Docker API socket is off-limits to the shell (container file access and new containers are operator-only)" },
   { pattern: /\/root\/(?:claude-)?backups\/\S/, reason: "backup copies are off-limits to the shell" }, // the bare directory stays listable (`ls`/`du`)
   // vps_backup's `mc.db.<ts>` and backup-db.sh's `mc-<date>.db` copies; relative by those names only, like
   // `data/mc.db` below (the shell's default cwd IS mission-control) — another repo's `backups/` stays usable.
@@ -992,6 +1014,238 @@ function normalizeShellText(text: string): string {
 }
 
 /**
+ * Docker gate — operator ruling 5, 2026-10-01 ("reads plus psql"). `docker`
+ * reaches file content without naming a blocked path (`docker exec <c> cat
+ * /app/.env`, `docker cp`, `docker run -v /:/h …`), so no docker verb may read
+ * or write container/host files or create a container, except `docker exec
+ * supabase-db psql` (with `-e PG*` only, ruling 5b 2026-10-03). Read verbs pass;
+ * lifecycle verbs (start/stop/rm/prune/…) stay allowed (ruling 5c 2026-10-03),
+ * except `docker volume create` with a bind/device option. Checked inside the flat token
+ * walk of checkPackageManagerRaw, so it holds behind the standard wrappers,
+ * inside `bash -c`/`eval`/interpreter heredocs and in `npm run` script bodies.
+ * At command position (the first word, or behind a wrapper) an unknown verb is
+ * refused; elsewhere the word is an argument (`grep docker src`) unless a
+ * refused verb follows it — prose like `echo docker run` is refused, the same
+ * way the package-manager walk refuses `echo npm install x`.
+ */
+type DockerClass = "read" | "lifecycle" | "refuse" | "exec";
+function dockerVerbs(spec: Partial<Record<DockerClass, string>>): Map<string, DockerClass> {
+  const out = new Map<string, DockerClass>();
+  for (const [cls, words] of Object.entries(spec)) for (const w of words.split(" ")) out.set(w, cls as DockerClass);
+  return out;
+}
+const DOCKER_VERBS = dockerVerbs({
+  read: "ps logs inspect images stats version info top port events history diff search wait help",
+  lifecycle: "start stop restart kill rm rmi pause unpause pull tag rename update",
+  exec: "exec",
+  refuse: "cp run create build bake commit export save import load attach push login logout swarm service stack node secret config checkpoint trust manifest scout sbom init debug",
+});
+/** Management commands: the SUB-verb decides; an unlisted sub is unknown. */
+const DOCKER_BUILDER = dockerVerbs({
+  read: "ls du inspect version",
+  lifecycle: "prune",
+  refuse: "bake build create dap dial-stdio history imagetools policy rm stop use",
+});
+const DOCKER_SUBS: Record<string, Map<string, DockerClass>> = {
+  container: dockerVerbs({
+    read: "ls list ps inspect logs stats top port diff wait",
+    lifecycle: "start stop restart kill rm pause unpause rename prune update",
+    exec: "exec",
+    refuse: "cp run create commit export attach",
+  }),
+  image: dockerVerbs({ read: "ls list inspect history", lifecycle: "rm pull tag prune", refuse: "build save load import push" }),
+  network: dockerVerbs({ read: "ls list inspect", lifecycle: "rm prune create connect disconnect" }),
+  volume: dockerVerbs({ read: "ls list inspect", lifecycle: "rm prune create" }),
+  system: dockerVerbs({ read: "df info events", lifecycle: "prune", refuse: "dial-stdio" }),
+  context: dockerVerbs({ read: "ls list show inspect", refuse: "create export import rm update use" }),
+  plugin: dockerVerbs({ read: "ls list inspect", refuse: "create disable enable install push rm set upgrade" }),
+  builder: DOCKER_BUILDER,
+  buildx: DOCKER_BUILDER,
+  model: dockerVerbs({}),
+  compose: dockerVerbs({
+    read: "ps ls list logs top images version events port stats volumes wait",
+    lifecycle: "down stop restart start pull rm kill pause unpause",
+    // `config`/`convert` print the resolved environment.
+    refuse: "exec run up create build cp config convert attach commit export push publish watch scale bridge alpha",
+  }),
+};
+/** `docker`, and the CLI plugins run as their own binaries (`docker-compose up` = `docker compose up`). */
+const DOCKER_WORD_RE = /^docker(?:-compose|-buildx|-model)?$/;
+// pflag: in a short-flag token the first value-taking letter takes the rest of the token as its value, and the
+// next token only when it is the last character (`-lfatal ps` = log-level fatal, verb ps; `-Dl x ps` = verb ps).
+const DOCKER_VALUE_FLAG_RE = /^(?:--(?:config|context|host|log-level|tlscacert|tlscert|tlskey)|-(?:(?![cHl])[A-Za-z])*[cHl])$/;
+const COMPOSE_VALUE_FLAG_RE = /^(?:--(?:ansi|env-file|file|parallel|profile|progress|project-directory|project-name)|-(?:(?![fp])[A-Za-z])*[fp])$/;
+/** Pointing the CLI at another daemon, context or config. */
+const DOCKER_REDIRECT_FLAG_RE = /^(?:--(?:host|context|config)(?:=|$)|-[A-Za-z]*[Hc])/;
+/**
+ * Any `DOCKER_*=` assignment (ruling 5d, 2026-10-03: "any DOCKER_* prefix … Keep refused"), wherever it
+ * appears in the command — not only in front of a docker word. The CLI reads many of these (HOST, CONTEXT,
+ * CONFIG, CERT_PATH, TLS_VERIFY, API_VERSION, …) and an assignment reaches docker through indirection the
+ * walk cannot see: a script, a Makefile, `npm run`, an interpreter that assembles the word. The cost is a
+ * refusal of a non-docker command that sets a `DOCKER_` variable (`DOCKER_FOO=1 npm run x`), which no
+ * logged use needs. Case-sensitive: bash and the CLI treat `docker_host` as a different variable.
+ */
+const DOCKER_ENV_ASSIGN_RE = /(?:^|\.)DOCKER_\w*=/;
+/**
+ * Audit B2 (ruling 5d, "anywhere"): a builtin that SETS a variable from a name argument
+ * (`read DOCKER_HOST`, `printf -v DOCKER_HOST …`, `mapfile`/`readarray`, `declare`/`typeset`/
+ * `export`/`local`, `getopts`, `for`/`select` loop variables) reaches the CLI without a
+ * `DOCKER_*=` token. A segment that contains one of these words and names a `DOCKER_` variable is
+ * refused (`printf` only with `-v`). The cost: in such a segment a `DOCKER_` name is refused even as
+ * a read (`export X=$DOCKER_HOST`); no logged use needs it.
+ */
+const DOCKER_SETTER_WORDS = new Set(["read", "mapfile", "readarray", "declare", "typeset", "export", "local", "getopts", "for", "select"]);
+/** A `DOCKER_` name anywhere in a token (`-vDOCKER_HOST`, `r=DOCKER_HOST` for a nameref). */
+const DOCKER_NAME_RE = /DOCKER_\w*/;
+/**
+ * `${DOCKER_HOST:=x}` / `${DOCKER_HOST=x}`: an assign-default expansion sets the variable. Matched on the
+ * RAW command — normalizeShellText folds the expansion to its word before the walk sees it.
+ */
+const DOCKER_ASSIGN_DEFAULT_RE = /\$\{DOCKER_\w*:?=/;
+/** Other assignment spellings the `DOCKER_*=` token test misses: `+=`, `V[0]=`, arithmetic `(( V = 1 ))`. */
+const DOCKER_OTHER_ASSIGN_RE = /(?<!\w)DOCKER_\w*(?:\[[^\]]*\])?\s*\+?=/;
+/**
+ * Audit B3: shell_exec pins `DOCKER_CONFIG` (see withDockerConfig) so `HOME=/tmp/h docker ps` cannot
+ * point the CLI at another config.json/context. Removing the pin (`unset DOCKER_CONFIG`) is refused
+ * (`env -u` is already refused by checkEnvReset); unsetting any other `DOCKER_` variable stays allowed.
+ */
+const DOCKER_CONFIG_UNPIN_WORDS = new Set(["unset"]);
+function checkDockerVarSet(part: string, tokens: string[]): string | null {
+  const other = DOCKER_OTHER_ASSIGN_RE.exec(part)?.[0];
+  if (other) return dockerRefusal(other.replace(/\s+/g, ""));
+  const words = tokens.map((t) => t.replace(/^.*\//, ""));
+  const setter = words.find(
+    (w, k) => DOCKER_SETTER_WORDS.has(w) || (w === "printf" && tokens.slice(k + 1).some((a) => a.startsWith("-v"))),
+  );
+  const unpin = words.some((w) => DOCKER_CONFIG_UNPIN_WORDS.has(w));
+  for (const t of tokens) {
+    const name = DOCKER_NAME_RE.exec(t)?.[0];
+    if (!name) continue;
+    if (setter) return dockerRefusal(`${setter} ${name}`);
+    if (unpin && name === "DOCKER_CONFIG") return dockerRefusal(`unset ${name}`);
+  }
+  return null;
+}
+
+/** A here-string with its operand attached (`<<<docker`): group 1 is the operator. */
+const HERE_STRING_RE = /^(\d*<<<)(?=.)/;
+/** Flag tokens scanned before a verb; the 64th refuses the invocation, so padding buys nothing and the walk stays linear. */
+const DOCKER_SCAN_CAP = 64;
+const dockerRefusal = (what: string): string =>
+  `\`${what}\` is refused — container file access and new containers are operator-only (operator ruling 2026-10-01); \`docker exec supabase-db psql …\` and the read verbs (ps, logs, inspect, images, stats) are available`;
+
+/** Index of the first positional at or after `k` (flags and redirections skipped, collected into `flags`); -1 past the cap. */
+function dockerPositional(tokens: string[], k: number, valueFlag: RegExp | null, flags: string[]): number {
+  for (let n = 0; k < tokens.length; n++) {
+    if (n >= DOCKER_SCAN_CAP) return -1;
+    const t = tokens[k]!;
+    if (REDIRECTION_RE.test(t)) { k += redirectionSpan(tokens, k); continue; }
+    if (!t.startsWith("-") || t === "-") return k;
+    flags.push(t);
+    k += valueFlag?.test(t) ? 2 : 1;
+  }
+  return tokens.length;
+}
+
+/**
+ * Ruling 5b (2026-10-03): `-e`/`--env` on the psql form only, for libpq variables. The name must start
+ * with `PG` (`PGPASSWORD=x`, or a bare `PGUSER` passed through from the caller's env). `--env-file` stays
+ * refused; on any other exec form the container/command check refuses first.
+ */
+const DOCKER_EXEC_ENV_RE = /^PG\w*(?:=|$)/;
+/**
+ * `exec [-i|-t|--interactive|--tty|-e PG…|--env PG…] supabase-db psql …` is the one exec form; `k` is the
+ * index after `exec`. Short flags follow pflag: `i`/`t` are booleans, `e` takes the rest of its token as
+ * its value (`-ePGHOST=h`, `-ie PGUSER=u` takes the next token); any other letter is refused.
+ */
+function checkDockerExec(tokens: string[], k: number, label: string): string | null {
+  let bad: string | undefined;
+  let c = -1;
+  for (let n = 0; k < tokens.length; n++) {
+    if (n >= DOCKER_SCAN_CAP) break;
+    const t = tokens[k]!;
+    if (REDIRECTION_RE.test(t)) { k += redirectionSpan(tokens, k); continue; }
+    if (!t.startsWith("-") || t === "-") { c = k; break; }
+    k++;
+    if (t === "--interactive" || t === "--tty") continue;
+    let value: string | undefined;
+    if (t === "--env") value = tokens[k++] ?? "";
+    else if (t.startsWith("--env=")) value = t.slice("--env=".length);
+    else if (/^-[A-Za-z]/.test(t)) {
+      const letters = t.slice(1);
+      const e = letters.indexOf("e");
+      const bools = e === -1 ? letters : letters.slice(0, e);
+      if (!/^[it]*$/.test(bools)) { bad = t; break; }
+      if (e !== -1) value = letters.slice(e + 1) || (tokens[k++] ?? "");
+    } else { bad = t; break; }
+    if (value !== undefined && !DOCKER_EXEC_ENV_RE.test(value)) { bad = `${t} ${value}`.trim(); break; }
+  }
+  if (c === -1 && !bad && k >= tokens.length) c = tokens.length;
+  let cmd = c + 1;
+  while (c !== -1 && cmd < tokens.length && REDIRECTION_RE.test(tokens[cmd]!)) cmd += redirectionSpan(tokens, cmd);
+  if (bad || c === -1 || tokens[c] !== "supabase-db" || tokens[cmd] !== "psql") {
+    return dockerRefusal(`${label} ${bad ?? (c === -1 ? "…" : `${tokens[c] ?? ""} ${tokens[cmd] ?? ""}`.trim())}`);
+  }
+  return null;
+}
+
+/**
+ * Ruling 5c (2026-10-03): `docker volume create` stays a lifecycle verb, except a local-driver bind or
+ * device volume — any option that sets `type=none`, `o=…bind…` or `device=` — which mounts a host path
+ * into every container that uses the volume. The tokenizer splits on commas, so a word after an `o=`
+ * value (`o=rw,bind` → `o=rw` `bind`) is still part of it. `k` is the index after `create`.
+ */
+function checkVolumeCreate(tokens: string[], k: number): string | null {
+  let inO = false;
+  for (let n = 0; k < tokens.length; k++, n++) {
+    if (n >= DOCKER_SCAN_CAP) return dockerRefusal("docker volume create …"); // padding past the cap refuses
+    const raw = tokens[k]!;
+    if (REDIRECTION_RE.test(raw)) { k += redirectionSpan(tokens, k) - 1; inO = false; continue; }
+    // Every pflag spelling of the option: `--opt X`, `--opt=X`, `-o X`, `-oX`, `-o=X` (audit B1: `-o=type=none`).
+    const t = raw.replace(/^(?:--opt=|-o=?(?=.))/, "");
+    if (t !== raw) inO = false;
+    else if (raw.startsWith("-")) { inO = false; continue; }
+    const oValue = /^o=/i.test(t);
+    if (/^type=none$/i.test(t) || /^device=/i.test(t) || ((inO || oValue) && /\br?bind\b/i.test(t))) {
+      return dockerRefusal(`docker volume create ${t}`);
+    }
+    if (oValue) inO = true;
+  }
+  return null;
+}
+
+/** The docker word at `tokens[i]`; `strict` = command position (an unknown verb is refused there). */
+function checkDockerAt(tokens: string[], i: number, strict: boolean): string | null {
+  const bin = tokens[i]!.replace(/^.*\//, "");
+  const flags: string[] = [];
+  let k = i;
+  let verb = bin.slice("docker-".length); // a plugin binary is its own verb
+  if (bin === "docker") {
+    k = dockerPositional(tokens, i + 1, DOCKER_VALUE_FLAG_RE, flags);
+    if (k === -1) return dockerRefusal(`docker ${flags.slice(0, 3).join(" ")} …`);
+    verb = tokens[k] ?? "";
+  }
+  const redirect = flags.find((f) => DOCKER_REDIRECT_FLAG_RE.test(f));
+  if (!verb) return strict && redirect ? dockerRefusal(`docker ${redirect}`) : null; // `docker --version`, `ls /usr/bin/docker`
+  let cls = DOCKER_VERBS.get(verb);
+  let label = `docker ${verb}`;
+  const subs = DOCKER_SUBS[verb];
+  if (subs) {
+    const s = dockerPositional(tokens, k + 1, verb === "compose" ? COMPOSE_VALUE_FLAG_RE : null, []);
+    if (s === -1) return dockerRefusal(`${label} …`);
+    const sub = tokens[s] ?? "";
+    cls = sub ? subs.get(sub) : "read"; // no sub: the usage text
+    if (sub) label = `${label} ${sub}`;
+    k = s;
+  }
+  if (cls === undefined) return strict ? dockerRefusal(`${label} (unknown verb)`) : null;
+  if (redirect) return dockerRefusal(`docker ${redirect}`);
+  if (cls === "exec") return checkDockerExec(tokens, k + 1, label);
+  if (cls === "refuse") return dockerRefusal(label);
+  return verb === "volume" && tokens[k] === "create" ? checkVolumeCreate(tokens, k + 1) : null;
+}
+
+/**
  * Wrapper-proof layer of the dependency-trust gate (qa R1 C1–C4, R2 C-1..C-4).
  * The per-segment walk is defeated by anything that re-enters a shell
  * (`bash -c "…"`, `xargs`, `node -e "execSync('…')"`), by quoted-heredoc bodies
@@ -1004,8 +1258,14 @@ function normalizeShellText(text: string): string {
  * C-4 — the previous regex layer wedged the event loop for 29 s on 229 chars).
  * @internal exported for tests
  */
-export function checkPackageManagerRaw(command: string, cwd: string = process.cwd()): string | null {
+export function checkPackageManagerRaw(
+  command: string,
+  cwd: string = process.cwd(),
+  opts: { docker?: boolean } = {},
+): string | null {
   const scan = spaceRedirections(normalizeShellText(`${stripQuotedHeredocs(command)}\n${interpreterHeredocBodies(command)}`));
+  const assignDefault = opts.docker !== false ? DOCKER_ASSIGN_DEFAULT_RE.exec(command)?.[0] : undefined;
+  if (assignDefault) return dockerRefusal(assignDefault);
   // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
   // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
   // rules see the whole segment from each package-manager word onward
@@ -1032,6 +1292,42 @@ export function checkPackageManagerRaw(command: string, cwd: string = process.cw
     if (CD_WORD_RE.test(tokens[0]!.replace(/^.*\//, ""))) {
       cwd = nextCwd(tokens.join(" "), cwd);
       continue;
+    }
+    // Docker (ruling 5): command position = leading assignments/redirections, or behind a wrapper,
+    // shell keyword or shell re-entry (sticky, like checkEnvReset); after a docker word the rest is its
+    // arguments. Skipped for a `bash -c` re-validation (opts.docker false): that string arrives with its
+    // `-x` flags stripped (`docker -l debug ps` → `docker debug ps`), and this walk already saw it intact.
+    // A here-string fed to a shell is its script (`bash <<< 'docker run x'`), so after a re-entry word its
+    // operand is not skipped as a redirection target, and an attached operand (`<<<docker`) is split off.
+    const dTokens = tokens.flatMap((t) => {
+      const op = HERE_STRING_RE.exec(t)?.[1];
+      return op ? [op, t.slice(op.length)] : [t];
+    });
+    if (opts.docker !== false && !dTokens.some((t) => DOCKER_ENV_ASSIGN_RE.test(t))) {
+      const varSet = checkDockerVarSet(part, dTokens);
+      if (varSet) return varSet;
+    }
+    let lead = true;
+    let behindWrapper = false;
+    let reentry = false;
+    let inDocker = false;
+    for (let i = 0; i < dTokens.length && opts.docker !== false; i++) {
+      const t = dTokens[i]!;
+      if (DOCKER_ENV_ASSIGN_RE.test(t)) return dockerRefusal(t.replace(/=.*/, "="));
+      const word = t.replace(/^.*\//, "");
+      if (DOCKER_WORD_RE.test(word)) {
+        const verdict = checkDockerAt(dTokens, i, !inDocker && (lead || behindWrapper));
+        if (verdict) return verdict;
+        inDocker = true;
+      }
+      if (inDocker) continue;
+      if (lead && REDIRECTION_RE.test(t)) {
+        if (!(reentry && /^\d*<<<$/.test(t))) i += redirectionSpan(dTokens, i) - 1;
+        continue;
+      }
+      if (SHELL_REENTRY.has(word)) reentry = true;
+      if (isWrapper(word) || SHELL_REENTRY.has(word) || /^(?:if|while|until)$/.test(word)) behindWrapper = true;
+      else if (!/^[A-Za-z_]\w*=/.test(t)) lead = false;
     }
     for (let i = 0; i < tokens.length; i++) {
       if (!PM_WORD_RE.test(pmWord(tokens[i]!))) continue;
@@ -1075,7 +1371,7 @@ function findUp(cwd: string, rel: string): boolean {
  * `PATH=/usr/bin npm install x` reached the real npm). The lookup mirrors
  * npm's: `--prefix`/`-C`/`--cwd` move the root; a workspace flag or an
  * unknowable cwd cannot be resolved and is refused; no package.json = nothing
- * to run. Only the dependency-trust rules apply to the body (a repo's own
+ * to run. Only the dependency-trust and docker rules apply to the body (a repo's own
  * `rm -rf dist` build step is not this gate's business). Depth-bounded so
  * `a: npm run b` / `b: npm run a` terminates.
  */
@@ -1169,7 +1465,7 @@ export function checkPackageManagerMutation(
     // `bash -c "…"` / `eval …`: validate the string as its own command.
     const inner = rest.filter((t) => base === "eval" || !/^-[a-z]+$/.test(t)).join(" ");
     if (inner.trim()) {
-      const verdict = validateShellCommand(inner);
+      const verdict = validateShellCommand(inner, { reentry: true });
       if (!verdict.allowed) return `inside \`${base}\`: ${verdict.reason}`;
     }
     return null;
@@ -1305,7 +1601,7 @@ export function checkPrimaryMcGitMutation(
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
  */
-export function validateShellCommand(command: string): {
+export function validateShellCommand(command: string, opts: { reentry?: boolean } = {}): {
   allowed: boolean;
   reason?: string;
 } {
@@ -1363,7 +1659,7 @@ export function validateShellCommand(command: string): {
   let pendingPops = 0;
 
   // Dependency-trust gate, raw-string layer (wrapper/heredoc/quote-proof).
-  const pmRawViolation = checkPackageManagerRaw(command);
+  const pmRawViolation = checkPackageManagerRaw(command, undefined, { docker: !opts.reentry });
   if (pmRawViolation) {
     return { allowed: false, reason: pmRawViolation };
   }
@@ -1553,7 +1849,7 @@ RESTRICTIONS:
 - File writes restricted to project dirs (/root/claude/, /tmp/, /workspace/)
 - System directories blocked (/etc, /boot, /usr, /proc, /sys, /dev)
 - Timeout: 60s max for general commands; 5 min max for database commands
-  (psql, pg_dump/restore, mysql/mysqldump — incl. via 'docker exec'), since
+  (psql, pg_dump/restore, mysql/mysqldump; via docker only \`docker exec supabase-db psql …\`), since
   TRUNCATE/COPY/migrations on large tables run long. Max 10,000 chars output.`,
       parameters: {
         type: "object",
@@ -1564,7 +1860,7 @@ RESTRICTIONS:
           },
           timeout_ms: {
             type: "number",
-            description: `Timeout in milliseconds. General commands: default ${TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}. Database commands (psql/pg_dump/pg_restore/mysql/mysqldump, incl. via 'docker exec'): default ${DB_TIMEOUT_MS}, max ${DB_MAX_TIMEOUT_MS} — set this higher for a long TRUNCATE/COPY/migration on big tables.`,
+            description: `Timeout in milliseconds. General commands: default ${TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}. Database commands (psql/pg_dump/pg_restore/mysql/mysqldump, incl. \`docker exec supabase-db psql\`): default ${DB_TIMEOUT_MS}, max ${DB_MAX_TIMEOUT_MS} — set this higher for a long TRUNCATE/COPY/migration on big tables.`,
           },
         },
         required: ["command"],
@@ -1630,15 +1926,18 @@ RESTRICTIONS:
         // H1: hand the child a scrubbed env so `env`/`printenv`/`echo $VAR`
         // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
         // PATH starts with the package-manager shim (see PM_SHIM_DIR).
-        env: withPmShimPath(buildScrubbedEnv()),
+        // Ruling 3c: plus exactly the stored secrets this command names as $SECRET_X.
+        // Audit B3: withPmShimPath also pins DOCKER_CONFIG so a HOME override cannot move the docker config.
+        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command) },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret
       // fields) that reach stdout past the text guard above (audit 2026-09-22:
       // globs, cd-relative paths, interpreter one-liners). Encoded output
       // (base64, xxd) and unrecognised names still pass — the process-level
-      // defence is buildScrubbedEnv. Redact before the cut so a key is never split.
-      const safeOut = redactCredentials(stdout);
+      // defence is buildScrubbedEnv. Redact before the cut so a key is never split;
+      // stored secrets (ruling 3c) are scrubbed first for the same reason.
+      const safeOut = redactCredentials(scrubSecrets(stdout));
       const trimmed =
         safeOut.length > MAX_OUTPUT
           ? safeOut.slice(0, MAX_OUTPUT) +
@@ -1652,7 +1951,7 @@ RESTRICTIONS:
       };
       // Surface non-empty stderr even on success — many tools (npm, tsc, git,
       // curl -v) write progress/diagnostics there. Dropping it blinds the agent.
-      if (stderr) result.stderr = redactCredentials(stderr).slice(0, MAX_OUTPUT);
+      if (stderr) result.stderr = redactCredentials(scrubSecrets(stderr)).slice(0, MAX_OUTPUT);
       return JSON.stringify(result);
     } catch (err: unknown) {
       // promisify(exec) rejects with the exit code on `code` (number) — unlike
@@ -1689,8 +1988,8 @@ RESTRICTIONS:
       if (stderr.includes("[pm-shim] refused:")) console.error(`[pm-shim] refused (shell_exec): ${redactSecrets(command).slice(0, 300)}`);
       return JSON.stringify({
         exit_code: exitCode,
-        stdout: redactCredentials(error.stdout ?? "").slice(0, MAX_OUTPUT),
-        stderr: redactCredentials(stderr).slice(0, MAX_OUTPUT),
+        stdout: redactCredentials(scrubSecrets(error.stdout ?? "")).slice(0, MAX_OUTPUT),
+        stderr: redactCredentials(scrubSecrets(stderr)).slice(0, MAX_OUTPUT),
       });
     }
   },

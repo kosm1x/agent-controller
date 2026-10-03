@@ -118,6 +118,9 @@ export async function initMessaging(): Promise<MessageRouter | null> {
   }
 
   router.startEventListeners();
+  // One bounded pass: approvals still pending from before this boot get their
+  // expiry (and, when the chat resolves, the notice) back. Never throws.
+  router.rearmPendingApprovals();
   console.log(
     `[messaging] Router active with ${router.channelCount} channel(s)`,
   );

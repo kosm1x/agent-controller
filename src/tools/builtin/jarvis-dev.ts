@@ -11,9 +11,17 @@ import { existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
+import {
+  FULL_SUITE_CI,
+  relatedScopeSummary,
+  relatedTestArgv,
+  resolveTestScope,
+} from "./changed-tests.js";
+import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 
 // The test gate MUST run async: a synchronous exec blocks mission-control's
-// event loop for the whole suite (~2 min), /health stops answering, the
+// event loop for the whole run (the full suite took ~2 min before ruling 4
+// scoped it to related tests), /health stops answering, the
 // external watchdog's double-probe fails, and its `systemctl restart` SIGTERMs
 // the entire cgroup — vitest included. Both 2026-07-13 action=pr "timeouts"
 // (18:30, 21:30) were this exact loop: the gate froze the service, the
@@ -48,14 +56,16 @@ export function ensureJarvisWorktree(): void {
     symlinkSync(join(PRIMARY_DIR, "node_modules"), nm, "dir");
   }
 }
-// Full suite runs ~105s on an idle VPS. 120s left <15% headroom, so any
-// concurrent inference/swap pressure pushed it over and ETIMEDOUT was then
-// misparsed as "tests failed" by the catch-branch regex. 300s is 3x headroom.
+// Sized for the full suite (~105s idle) the gate ran before ruling 4; 120s
+// left <15% headroom, so any concurrent inference/swap pressure pushed it over
+// and ETIMEDOUT was then misparsed as "tests failed" by the catch-branch regex.
+// Kept at 300s for the related run, whose size is unbounded (a hub file
+// selects most of the suite).
 const TIMEOUT_MS = 300_000;
 // execFileSync's default maxBuffer is 1 MiB per stream and a breach SIGTERMs
 // the child — indistinguishable from a timeout in the catch. The full suite's
-// routine dot-reporter stdout measured 774 KB (2026-07-13), so one flaky
-// failure dump tipped it over and killed Jarvis's action=pr at ~107s while
+// (pre-ruling-4) routine dot-reporter stdout measured 774 KB (2026-07-13), so
+// one flaky failure dump tipped it over and killed Jarvis's action=pr at ~107s while
 // reporting "exceeded 300s". 32 MiB gives ~40x headroom.
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 // Git ops (status/add/commit/push) can take longer than 10s on a loaded box.
@@ -167,9 +177,10 @@ export function describeTestRunFailure(e: ExecFailure): string {
     : `FAIL: ${msg.slice(0, 500)}`;
 }
 
-// action=test caches its result so action=pr can skip re-running the full
-// suite when nothing has changed since. Tests take 136s+ and that alone can
-// exceed the caller's per-query budget.
+// action=test caches its result so action=pr can skip re-running the gate
+// when nothing has changed since. The gate's related run can still take
+// minutes (a hub file selects most of the suite), which can exceed the
+// caller's per-query budget.
 // Cache lives in the PRIMARY repo's .git (a real directory) — in a linked
 // worktree `.git` is a pointer FILE, so join(MC_DIR, ".git", ...) breaks.
 const TEST_CACHE_FILE = join(PRIMARY_DIR, ".git", "jarvis-test-cache.json");
@@ -440,6 +451,12 @@ export function actionBranch(
   });
 }
 
+/** A gate `tests` result that lets a PR through: green, or skipped by
+ * ruling 4 (no changed source files / over the cap — typecheck only). */
+function testsGreen(tests: string): boolean {
+  return tests.startsWith("PASS") || tests.startsWith("SKIPPED");
+}
+
 async function actionTest(): Promise<string> {
   const branch = currentBranch();
   if (!JARVIS_BRANCH_RE.test(branch)) {
@@ -447,7 +464,21 @@ async function actionTest(): Promise<string> {
       error: `Not on a jarvis/* branch (current: "${branch}"). Create one first with action="branch".`,
     });
   }
+  // Same one-at-a-time lock as jarvis_test_run and vps_deploy (ruling 4).
+  // actionPr reaches the gate only through here and holds no lock itself.
+  const run = await withSuiteRunLock(() => runTestGate(branch));
+  return (
+    run ??
+    JSON.stringify({
+      branch,
+      typecheck: "NOT RUN",
+      tests: `FAIL: ${SUITE_RUN_BUSY}`,
+      ready_for_pr: false,
+    })
+  );
+}
 
+async function runTestGate(branch: string): Promise<string> {
   const results: { typecheck: string; tests: string } = {
     typecheck: "pending",
     tests: "pending",
@@ -480,26 +511,34 @@ async function actionTest(): Promise<string> {
     results.typecheck = `FAIL: ${msg.slice(0, 500)}`;
   }
 
-  // Tests
-  try {
-    const { stdout } = await execFileAsync(
-      "systemd-run",
-      buildGateScopeArgs(["npx", "vitest", "run", "--reporter=dot"]),
-      {
-        cwd: MC_DIR,
-        timeout: EXEC_TIMEOUT_MS,
-        encoding: "utf-8",
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
-    const summaryMatch = stdout.match(/Tests\s+(\d+)\s+passed/);
-    results.tests = summaryMatch ? `PASS (${summaryMatch[1]} tests)` : "PASS";
-  } catch (err) {
-    // Distinguish timeout (ETIMEDOUT or signal=SIGTERM) from test-failure.
-    // A timed-out vitest has partial stdout that can match the "N failed" regex
-    // even when the ONLY failure was the kill signal — don't trust that as a
-    // real failure count.
-    results.tests = describeTestRunFailure(err as ExecFailure);
+  // Tests related to the changed files only (operator ruling 4) — the full
+  // suite runs in CI (action=pr commits with --no-verify: no pre-commit hook).
+  const scope = resolveTestScope(MC_DIR, undefined, FULL_SUITE_CI);
+  if (scope.kind === "skip") {
+    results.tests = `SKIPPED (${scope.reason})`;
+  } else if (scope.kind === "error") {
+    results.tests = `FAIL: ${scope.reason}`;
+  } else {
+    try {
+      const { stdout } = await execFileAsync(
+        "systemd-run",
+        buildGateScopeArgs(relatedTestArgv(scope.files)),
+        {
+          cwd: MC_DIR,
+          timeout: EXEC_TIMEOUT_MS,
+          encoding: "utf-8",
+          maxBuffer: EXEC_MAX_BUFFER,
+        },
+      );
+      const summaryMatch = stdout.match(/Tests\s+(\d+)\s+passed/);
+      results.tests = `PASS (${summaryMatch ? `${summaryMatch[1]} tests; ` : ""}${relatedScopeSummary(scope, stdout)})`;
+    } catch (err) {
+      // Distinguish timeout (ETIMEDOUT or signal=SIGTERM) from test-failure.
+      // A timed-out vitest has partial stdout that can match the "N failed" regex
+      // even when the ONLY failure was the kill signal — don't trust that as a
+      // real failure count.
+      results.tests = `${describeTestRunFailure(err as ExecFailure)} [${relatedScopeSummary(scope)}]`;
+    }
   }
 
   // Re-snapshot AFTER tests ran. If the working tree changed during the
@@ -507,7 +546,7 @@ async function actionTest(): Promise<string> {
   // must not cache a green result for a state that wasn't actually tested.
   const postState = computeWorkingTreeState();
   const mutatedDuringRun = detectRunMutation(preState, postState);
-  if (mutatedDuringRun && results.tests.startsWith("PASS")) {
+  if (mutatedDuringRun && testsGreen(results.tests)) {
     results.tests =
       "STALE: working tree changed during test run — tested code differs from current disk state. Re-run action=test.";
   }
@@ -515,7 +554,7 @@ async function actionTest(): Promise<string> {
   const ready_for_pr =
     !mutatedDuringRun &&
     results.typecheck === "PASS" &&
-    results.tests.startsWith("PASS");
+    testsGreen(results.tests);
 
   // Cache the result so action=pr can skip re-running the suite if nothing
   // has changed. Both pass and fail are cached; only passing entries are
@@ -589,8 +628,8 @@ async function actionPr(title: string, body: string): Promise<string> {
   }
 
   // Trust a fresh green action=test cache if branch + HEAD + working tree
-  // all match, so action=pr doesn't burn 136s of the caller's budget on a
-  // suite that was just run. Cache-miss path runs tests inline as before.
+  // all match, so action=pr doesn't re-spend the caller's budget on a gate
+  // that was just run. Cache-miss path runs tests inline as before.
   const cached = getFreshPassingCache(branch);
   const testResult: {
     typecheck: string;
@@ -667,9 +706,9 @@ async function actionPr(title: string, body: string): Promise<string> {
     );
     run(prAddArgs(changed));
     // --no-verify: the test gate for this commit already ran above (fresh
-    // actionTest or trusted cache, ~line 397) — the pre-commit hook would
-    // re-run the same full suite inside GIT_TIMEOUT_MS (60s) and ETIMEDOUT
-    // every time (task 7489/7491, 2026-07-13). CI on push/PR still gates.
+    // actionTest or trusted cache) — the pre-commit hook would run the FULL
+    // suite inside GIT_TIMEOUT_MS (60s) and ETIMEDOUT every time (task
+    // 7489/7491, 2026-07-13). CI on push/PR runs the full suite and gates.
     run(["commit", "--no-verify", "-m", title]);
     console.log(`[jarvis_dev] action=pr committed on ${branch}`);
   } catch (err) {
@@ -813,7 +852,7 @@ USE WHEN:
 WORKFLOW:
 1. jarvis_dev action="branch" type="feat" slug="oilprice-adapter" → creates jarvis/feat/oilprice-adapter
 2. Use file_edit/file_write on /root/claude/mission-control-jarvis/src/... to make changes
-3. jarvis_dev action="test" → runs typecheck + full test suite (~136s)
+3. jarvis_dev action="test" → runs typecheck + tests of changed files only
 4. jarvis_dev action="pr" title="feat: add OilPrice adapter" body="..." → commits, pushes, opens PR
 5. User reviews and merges the PR
 

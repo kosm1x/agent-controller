@@ -14,6 +14,7 @@ import { getFile } from "../../db/jarvis-fs.js";
 import { getSchedule } from "../../rituals/dynamic.js";
 import { googleFetch } from "../../google/client.js";
 import { registerReadback, sha8, type ReadbackVerdict } from "./readback.js";
+import { scrubSecrets } from "../secret-refs.js";
 import {
   confirmedMismatch,
   type ConfirmedFigure,
@@ -21,6 +22,33 @@ import {
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/**
+ * Ruling 3c, audit R7 B-1(b): declared payloads hold SCRUBBED text (a stored
+ * credential appears as its placeholder), so a read-back compares against the
+ * scrubbed artifact as well as the raw one. Evidence only ever quotes the
+ * payload's (scrubbed) text, never the artifact's raw content.
+ */
+function containsWritten(raw: string, want: string): boolean {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  const w = norm(want);
+  if (norm(raw).includes(w)) return true;
+  try {
+    return norm(scrubSecrets(raw)).includes(w);
+  } catch {
+    return false;
+  }
+}
+
+/** A quote of declared text for evidence: scrubbed again before the cut. */
+function quote(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  try {
+    return scrubSecrets(t).slice(0, max);
+  } catch {
+    return "…";
+  }
 }
 
 /** Phase 2.3: fail the read-back when the artifact CONTRADICTS a figure the
@@ -36,11 +64,21 @@ function confirmedCheck(
     ? (data.__confirmed as ConfirmedFigure[])
     : [];
   if (confirmed.length === 0) return null;
-  const hit = confirmedMismatch(readText, confirmed);
+  // Audit R7 B-1(b): the quoted line is cut to 120 chars inside
+  // confirmedMismatch — scrub the whole read text BEFORE that cut.
+  let text: string;
+  let scrubbed = true;
+  try {
+    text = scrubSecrets(readText);
+  } catch {
+    text = readText;
+    scrubbed = false;
+  }
+  const hit = confirmedMismatch(text, confirmed);
   if (!hit) return null;
   return {
     ok: false,
-    evidence: `Contradice la cifra confirmada «${hit.figure.raw}» (${hit.figure.label.slice(0, 60)}): la línea dice «${hit.line}»`,
+    evidence: `Contradice la cifra confirmada «${hit.figure.raw}» (${hit.figure.label.slice(0, 60)})${scrubbed ? `: la línea dice «${hit.line}»` : ""}`,
   };
 }
 
@@ -116,11 +154,10 @@ export async function verifyKbFile(
       evidence: `KB ${path}: contenido distinto al escrito (sha ${actual} ≠ ${expected})`,
     };
   }
-  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
-  if (mustContain && !norm(file.content).includes(norm(mustContain))) {
+  if (mustContain && !containsWritten(file.content, mustContain)) {
     return {
       ok: false,
-      evidence: `KB ${path}: el texto agregado no aparece («${norm(mustContain).slice(0, 40)}…»)`,
+      evidence: `KB ${path}: el texto agregado no aparece («${quote(mustContain, 40)}…»)`,
     };
   }
   if (declaredAt && file.updated_at < declaredAt) {
@@ -134,7 +171,9 @@ export async function verifyKbFile(
   }
   return {
     ok: true,
-    evidence: `KB ${path} (sha ${actual}, ${file.content.length} chars, ${file.updated_at})`,
+    // Ruling 3c (audit round 9, should-fix 3): the length of the SCRUBBED
+    // view — the raw length would carry a stored value's length.
+    evidence: `KB ${path} (sha ${actual}, ${scrubSecrets(file.content).length} chars, ${file.updated_at})`,
   };
 }
 
@@ -157,12 +196,16 @@ export async function verifySheetWrite(
   const gotFirst = (got[0] ?? []).map((c) => String(c ?? "").trim());
   const want = first.map((c) => String(c ?? "").trim());
   const mismatch = want.findIndex(
-    (w, i) => w !== "" && !cellEquals(gotFirst[i] ?? "", w),
+    (w, i) =>
+      w !== "" &&
+      !cellEquals(gotFirst[i] ?? "", w) &&
+      // Audit R7: the payload holds scrubbed cells.
+      !cellEquals(quote(gotFirst[i] ?? "", 100_000), w),
   );
   if (mismatch >= 0) {
     return {
       ok: false,
-      evidence: `Sheet ${range}: col ${mismatch + 1} dice «${gotFirst[mismatch] ?? ""}», escribí «${want[mismatch]}»`,
+      evidence: `Sheet ${range}: col ${mismatch + 1} dice «${quote(gotFirst[mismatch] ?? "", 200)}», escribí «${want[mismatch]}»`,
     };
   }
   // Phase 2.3: matching what was written is not enough — the write must
@@ -179,7 +222,7 @@ export async function verifySheetWrite(
   }
   return {
     ok: true,
-    evidence: `Sheet ${range} (${got.length} fila${got.length === 1 ? "" : "s"}: ${gotFirst.slice(0, 4).join(" | ").slice(0, 80)})`,
+    evidence: `Sheet ${range} (${got.length} fila${got.length === 1 ? "" : "s"}: ${quote(gotFirst.slice(0, 4).join(" | "), 80)})`,
   };
 }
 
@@ -202,10 +245,13 @@ export async function verifyDocWrite(
     .map((e) => e.textRun?.content ?? "")
     .join("");
   const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-  if (snippet && !norm(text).includes(norm(snippet))) {
+  // Ruling 3c (audit round 8, should-fix): the char count reported in evidence
+  // is of the SCRUBBED view — the raw length leaks a stored value's length.
+  const shownLen = norm(scrubSecrets(text)).length;
+  if (snippet && !containsWritten(text, snippet)) {
     return {
       ok: false,
-      evidence: `Doc «${doc.title ?? docId}»: no contiene el texto escrito (${norm(text).length} chars leídos)`,
+      evidence: `Doc «${doc.title ?? docId}»: no contiene el texto escrito (${shownLen} chars leídos)`,
     };
   }
   // Phase 2.3: the WRITE must not contradict operator-confirmed figures.
@@ -224,7 +270,7 @@ export async function verifyDocWrite(
   }
   return {
     ok: true,
-    evidence: `Doc «${doc.title ?? docId}» (${norm(text).length} chars, empieza «${norm(snippet).slice(0, 40)}»)`,
+    evidence: `Doc «${doc.title ?? docId}» (${shownLen} chars, empieza «${quote(snippet, 40)}»)`,
   };
 }
 

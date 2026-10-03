@@ -47,6 +47,7 @@ import { getDatabase } from "../../db/index.js";
 import { declareGates, type GateRow } from "./gates.js";
 import { READBACK_PREFIX, isReadbackCheck } from "./ledger-lines.js";
 import { getTaskConfirmedFigures } from "../../messaging/thread-pins.js";
+import { scrubStructured } from "../secret-refs.js";
 
 export { READBACK_PREFIX };
 const MAX_PAYLOAD = 2000; // mirrors gates.ts MAX_CHECK
@@ -145,6 +146,11 @@ export function declareReadbackGate(
 ): boolean {
   if (!taskId || !verifiers.has(tool)) return false;
   try {
+    // Ruling 3c, audit R7 B-1(b): the payload is stored at rest and quoted in
+    // evidence — never a stored credential value (callers scrub before their
+    // cuts; this catches whole values in anything else). A scrub failure
+    // throws into the catch below: no row, the write itself still stands.
+    data = scrubStructured(data) as Record<string, unknown>;
     // Identity is the ARTIFACT (e.g. `kb:<path>`), not the tool: a
     // jarvis_file_write followed by a jarvis_file_update on the same path is
     // ONE proof — the final state.

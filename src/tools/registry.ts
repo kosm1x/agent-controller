@@ -21,6 +21,13 @@ import {
   targetsRunWrite,
 } from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
+import {
+  resolveRenderedPlaceholders,
+  resolveSecretRefs,
+  scrubSecrets,
+  scrubJsonText,
+} from "../lib/secret-refs.js";
+import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 import {
@@ -117,6 +124,73 @@ function createdKeys(name: string, result: unknown): string[] {
 /** Any error-shaped result — `{"error":…}` JSON or a plain "Error:" string. */
 function isErrorResult(result: unknown): boolean {
   return typeof result !== "string" || /^\s*(\{\s*"error"|Error\b|❌)/.test(result);
+}
+
+/**
+ * Audit R7 B-4: a JSON result is scrubbed structurally (each string leaf in
+ * its DECODED form), so a value stored raw inside a field gets the raw
+ * placeholder — the substring scrub of the serialized text would see its
+ * JSON-escaped form and tag the placeholder "forma JSON", and a write-back
+ * would then JSON-escape a value that was raw. Non-JSON text: substring scrub.
+ */
+function scrubResultText(text: string): string {
+  const t = text.trimStart();
+  return t.startsWith("{") || t.startsWith("[")
+    ? scrubJsonText(text)
+    : scrubSecrets(text);
+}
+
+/**
+ * Ruling 3c (audit R3 N1): a tool result scrubbed of stored credentials. The
+ * contract is a string, but MCP bridges and a few builtins can hand back
+ * undefined, null or an object: those must not throw here. A JSON-able object
+ * is scrubbed through its JSON text (the placeholder is JSON-safe, so the
+ * shape survives); anything else passes through unchanged.
+ */
+function scrubResult(result: unknown): string {
+  if (typeof result === "string") return scrubResultText(result);
+  if (result === null || typeof result !== "object") return result as string;
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(result);
+  } catch {
+    return result as unknown as string; // circular / BigInt: not JSON-able
+  }
+  if (typeof json !== "string") return result as unknown as string;
+  // A scrub failure (no index, no last-good) propagates: fail closed.
+  const clean = scrubResultText(json);
+  if (clean === json) return result as unknown as string;
+  try {
+    return JSON.parse(clean) as string;
+  } catch {
+    // Audit round 4 S4: never fall back to the original object — the
+    // scrubbed JSON text is what the model gets.
+    return clean;
+  }
+}
+
+/**
+ * Ruling 3c: a thrown value scrubbed of stored credentials. The original is
+ * rethrown untouched when nothing matched; an Error whose message cannot be
+ * assigned (DOMException's is read-only) is replaced by a plain Error with
+ * the scrubbed message and the original name.
+ */
+function scrubThrown(err: unknown): unknown {
+  if (typeof err === "string") return scrubSecrets(err);
+  if (!(err instanceof Error)) return err;
+  const message = scrubSecrets(err.message);
+  const stack = err.stack === undefined ? undefined : scrubSecrets(err.stack);
+  if (message === err.message && stack === err.stack) return err;
+  try {
+    err.message = message;
+    if (stack !== undefined) err.stack = stack;
+    if (err.message === message) return err;
+  } catch {
+    // read-only message: fall through to a replacement
+  }
+  const replacement = new Error(message);
+  replacement.name = err.name;
+  return replacement;
 }
 
 export class ToolRegistry {
@@ -343,9 +417,30 @@ export class ToolRegistry {
         "destructive tool called",
       );
     }
+    // Ruling 3c: `{{SECRET_X}}` is filled in on a COPY handed to the tool
+    // (allow-listed tools only), after every gate and recording point above;
+    // `args` itself keeps the reference. What comes back is scrubbed of every
+    // stored credential value before anything else sees it.
+    // Audit R6 B2: a rendered placeholder (what a read shows) written back —
+    // file-content writes get the stored value again, every other write is
+    // refused (use the reference). On a copy; `args` keeps what was sent.
+    const rendered = resolveRenderedPlaceholders(
+      name,
+      args,
+      this.annotationsOf(name)?.readOnlyHint === true,
+    );
+    if ("error" in rendered) {
+      traceSecretRefRefused(name, "rendered_placeholder", "execute");
+      return rendered.error;
+    }
+    const resolved = resolveSecretRefs(name, rendered.args);
+    if ("error" in resolved) {
+      traceSecretRefRefused(name, resolved.reason, "execute");
+      return resolved.error;
+    }
     const start = Date.now();
     try {
-      const result = await tool.execute(args);
+      const result = scrubResult(await tool.execute(resolved.args));
       toolMetrics.record(name, Date.now() - start, true);
       // V8.4 numbers-provenance corpus: every tool result of the current run
       // (task id from the run-tool context; no-op outside a run). Digested +
@@ -379,7 +474,7 @@ export class ToolRegistry {
       return result;
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);
-      throw err;
+      throw scrubThrown(err);
     }
   }
 

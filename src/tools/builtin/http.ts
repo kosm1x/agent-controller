@@ -6,6 +6,7 @@
 
 import type { Tool } from "../types.js";
 import { safeFetch, validateOutboundUrlResolved } from "../../lib/url-safety.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
@@ -27,7 +28,7 @@ export const httpTool: Tool = {
 
 DO NOT USE WHEN:
 - You want the readable text of a web page → use web_read (clean Markdown, no headers noise).
-- The endpoint needs a stored credential (OAuth, API key) → use the dedicated tool (gmail_*, gdocs_*, crm_query, wp_*); this tool sends no secrets.
+- A dedicated tool covers the service (gmail_*, gdocs_*, crm_query, wp_*) → use it (it handles OAuth).
 
 WHEN TO USE:
 - Calling a JSON API without a dedicated tool (small internal service, webhook test, an ad-hoc REST endpoint)
@@ -40,6 +41,9 @@ WHEN NOT TO USE:
 - Google Workspace APIs → use the gdocs/gsheets/gdrive/gmail/gcal tools (they handle OAuth)
 - GitHub → use gh_* tools (auth + rate limits)
 - WordPress → use wp_* tools (auth, media handling)
+
+STORED CREDENTIALS:
+- Write {{SECRET_<NAME>}} in the url, a header or the body (e.g. "Authorization": "Bearer {{SECRET_<NAME>}}"); the saved value is substituted at execution and never shown to you. Never type the value or a hidden-value placeholder.
 
 BOUNDARIES:
 - Body is truncated to 20,000 chars. For larger payloads use a stream-aware tool.
@@ -122,7 +126,8 @@ BOUNDARIES:
           response.headers.has("location");
 
         if (!isRedirect) {
-          const text = await response.text();
+          // Ruling 3c: scrub stored secrets before the cut can split one.
+          const text = scrubSecrets(await response.text());
           const trimmed =
             text.length > MAX_BODY
               ? text.slice(0, MAX_BODY) +

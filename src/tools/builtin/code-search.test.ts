@@ -2,9 +2,42 @@
  * Tests for grep, glob, and list_dir tools.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, symlinkSync } from "fs";
-import { grepTool, globTool, listDirTool } from "./code-search.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { writeFileSync, mkdirSync, rmSync, rmdirSync, symlinkSync, accessSync, existsSync, constants as fsConstants } from "fs";
+import { spawnSync } from "child_process";
+
+// Every search process the tool starts, in order: the byte-cap test asserts
+// on it to prove a cap hit never triggers a second search, on either engine.
+const spawned = vi.hoisted(() => [] as string[]);
+// ...and the child objects, so a test can see how each one ended.
+const children = vi.hoisted(
+  () => [] as Array<{ signalCode: string | null; exitCode: number | null }>,
+);
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return {
+    ...actual,
+    spawn: ((cmd: string, ...rest: unknown[]) => {
+      spawned.push(cmd);
+      const child = (actual.spawn as (...a: unknown[]) => unknown)(cmd, ...rest);
+      children.push(child as (typeof children)[number]);
+      return child;
+    }) as typeof actual.spawn,
+  };
+});
+
+// CI runners (ubuntu-latest) have no rg, so the grep fallback runs there;
+// these tests must hold on both engines.
+const HAS_RG = !spawnSync("rg", ["--version"]).error;
+import {
+  grepTool,
+  globTool,
+  listDirTool,
+  rgRecordMapper,
+  __setSearchByteCapForTests,
+} from "./code-search.js";
+import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
+import { invalidateSecretRefs } from "../../lib/secret-refs.js";
 
 const TEST_DIR = "/tmp/mc-test-code-search";
 
@@ -28,6 +61,20 @@ describe("grep", () => {
     expect(result.total).toBeGreaterThanOrEqual(2);
     expect(result.matches).toContain("a.ts");
     expect(result.matches).toContain("b.ts");
+  });
+
+  it("audit R9 should-fix 5: reports truncated when a file reaches the internal per-file cap", async () => {
+    writeFileSync(`${TEST_DIR}/many.txt`, "needle\n".repeat(2100));
+    writeFileSync(`${TEST_DIR}/few.txt`, "needle\n".repeat(3));
+    const big = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: `${TEST_DIR}/many.txt` }),
+    );
+    expect(big.total).toBe(1);
+    expect(big.truncated).toBe(true);
+    const small = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: `${TEST_DIR}/few.txt` }),
+    );
+    expect(small.truncated).toBe(false);
   });
 
   it("should return content mode with line numbers", async () => {
@@ -64,10 +111,111 @@ describe("grep", () => {
     const result = JSON.parse(
       await grepTool.execute({ pattern: "needle", path: TEST_DIR, include_glob: "src/**/*.txt", output_mode: "files" }),
     );
-    // files mode returns the matched paths as a newline-joined string
-    const files = String(result.matches);
-    expect(files).toContain("src/inner/a.txt");
-    expect(files).not.toContain("other/b.txt");
+    // files mode returns the matched paths as a newline-joined string.
+    // Exact: rg runs from the root with path "." and its "./src/inner/a.txt"
+    // must be mapped back under the root (grep prints it that way itself).
+    expect(result.matches).toBe(`${TEST_DIR}/src/inner/a.txt`);
+    expect(result.total).toBe(1);
+    // A root spelled with a trailing "/" maps to exactly one separator.
+    const slash = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: `${TEST_DIR}/`, include_glob: "src/**/*.txt", output_mode: "content" }),
+    );
+    expect(slash.matches).toBe(`${TEST_DIR}/src/inner/a.txt:1:needle here`);
+  });
+
+  // Combined audit SF-A (2026-10-03): the root is searched where the kernel
+  // walks it — `lnk/..` is the symlink target's parent, not the text-collapsed
+  // TEST_DIR — with or without a dir glob, and on either engine.
+  it("a dir-glob search of `link/..` searches the tree the kernel walks to (SF-A)", async () => {
+    mkdirSync(`${TEST_DIR}/real/x`, { recursive: true });
+    mkdirSync(`${TEST_DIR}/real/src`, { recursive: true });
+    mkdirSync(`${TEST_DIR}/src`, { recursive: true });
+    writeFileSync(`${TEST_DIR}/real/src/walked.txt`, "needle walked\n");
+    writeFileSync(`${TEST_DIR}/src/lexical.txt`, "needle lexical\n");
+    symlinkSync(`${TEST_DIR}/real/x`, `${TEST_DIR}/lnk`);
+    const root = `${TEST_DIR}/lnk/..`;
+    for (const include_glob of ["src/*.txt", undefined]) {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: root, include_glob, output_mode: "content" }),
+      );
+      expect(r.error, String(include_glob)).toBeUndefined();
+      expect(r.matches, String(include_glob)).toBe(`${root}/src/walked.txt:1:needle walked`);
+    }
+  });
+
+  // Combined audit SF-B: the dir-glob run's "./rel" records are judged by the
+  // read denylist at their real location under the root. Judged unmapped,
+  // "./projects/p/x.jsonl" is a path under the process cwd and passes.
+  // Synthetic fixture under the real /root/.claude/ default-deny rule (the
+  // audit's probe: path=/root/.claude/, glob projects/**): projects/<p>/ is
+  // readable, a session store beside memory/ is not.
+  const CLAUDE_PROJECTS = "/root/.claude/projects";
+  const claudeWritable = (() => {
+    try {
+      accessSync(existsSync(CLAUDE_PROJECTS) ? CLAUDE_PROJECTS : "/root/.claude", fsConstants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  it.skipIf(!claudeWritable)("a dir-glob search does not list a denylisted session store under the root (SF-B)", async () => {
+    const hadProjects = existsSync(CLAUDE_PROJECTS);
+    const proj = `${CLAUDE_PROJECTS}/-mc-test-code-search-${process.pid}`;
+    mkdirSync(`${proj}/sess`, { recursive: true });
+    mkdirSync(`${proj}/memory`, { recursive: true });
+    try {
+      writeFileSync(`${proj}/sess/s.jsonl`, "needle session\n");
+      writeFileSync(`${proj}/memory/m.md`, "needle memory\n");
+      for (const [path, include_glob] of [
+        [proj, "**/*"],
+        [proj, "sess/*"],
+        [`${proj}/`, "**/*"],
+      ] as const) {
+        for (const mode of ["files", "content", "count"]) {
+          const r = JSON.parse(
+            await grepTool.execute({ pattern: "needle", path, include_glob, output_mode: mode }),
+          );
+          const tag = `${path} ${include_glob} ${mode}`;
+          expect(r.error, tag).toBeUndefined();
+          expect(JSON.stringify(r), tag).not.toContain("s.jsonl");
+          expect(JSON.stringify(r), tag).not.toContain("needle session");
+        }
+      }
+      // The readable memory file under the same root still comes back, mapped.
+      const ok = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: proj, include_glob: "memory/*.md", output_mode: "files" }),
+      );
+      expect(ok.matches).toBe(`${proj}/memory/m.md`);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+      if (!hadProjects) {
+        try {
+          rmdirSync(CLAUDE_PROJECTS); // only if still empty
+        } catch {
+          // something else now lives there — leave it
+        }
+      }
+    }
+  });
+
+  it("a denylisted file name under the root is refused with a dir glob too", async () => {
+    mkdirSync(`${TEST_DIR}/keys/deep`, { recursive: true });
+    writeFileSync(`${TEST_DIR}/keys/deep/id_rsa`, "needle key\n");
+    writeFileSync(`${TEST_DIR}/keys/deep/pub.txt`, "needle pub\n");
+    const r = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: TEST_DIR, include_glob: "keys/**/*", output_mode: "content" }),
+    );
+    expect(r.matches).toBe(`${TEST_DIR}/keys/deep/pub.txt:1:needle pub`);
+  });
+
+  it("rgRecordMapper maps ./rel under the root and drops any other record shape (fail closed)", () => {
+    const m = rgRecordMapper("/a/b");
+    expect(m("./c/d.txt")).toBe("/a/b/c/d.txt");
+    expect(rgRecordMapper("/a/b/")("./c")).toBe("/a/b/c");
+    expect(rgRecordMapper("lnk/..")("./c")).toBe("lnk/../c");
+    for (const odd of ["c/d.txt", "/etc/shadow", "../x", ".hid/x", ""]) {
+      expect(m(odd), odd).toBe("");
+    }
   });
 
   it("should return empty for no matches", async () => {
@@ -96,6 +244,55 @@ describe("grep", () => {
     );
     expect(result.total).toBe(1);
     expect(result.matches).toBe(`${TEST_DIR}/a.ts:1`);
+  });
+
+  // Ruling 3c (audit round 8, B-2): grep is not a per-character oracle on a
+  // stored value. A pattern that cuts into a stored-value span never matches
+  // (match / no-match / count would otherwise recover the value), while a
+  // pattern entirely outside the value still finds the line, scrubbed.
+  describe("stored-value oracle (B-2)", () => {
+    const SEC = "pw-" + "Q7z".repeat(6); // secret-shaped, > 8 chars
+    beforeEach(() => {
+      initDatabase(":memory:");
+      getDatabase()
+        .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+        .run("projects", "acme_ftp_password", SEC);
+      invalidateSecretRefs();
+      writeFileSync(`${TEST_DIR}/conf.txt`, `FTP_PASSWORD=${SEC}\n`);
+    });
+    afterEach(() => {
+      invalidateSecretRefs();
+      closeDatabase();
+    });
+
+    it("a partial-value pattern matches nothing, right guess or wrong", async () => {
+      for (const g of [SEC.slice(0, 7), "pw-Q8z", SEC.slice(0, 12)]) {
+        for (const mode of ["files", "content", "count"]) {
+          const r = JSON.parse(
+            await grepTool.execute({
+              pattern: "FTP_PASSWORD=" + g,
+              path: TEST_DIR,
+              output_mode: mode,
+            }),
+          );
+          expect(r.total, `${mode} ${g}`).toBe(0);
+        }
+      }
+    });
+
+    it("the key before the value still matches; the value is scrubbed out", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({
+          pattern: "FTP_PASSWORD=",
+          path: TEST_DIR,
+          output_mode: "content",
+        }),
+      );
+      expect(r.total).toBe(1);
+      expect(String(r.matches)).toContain("FTP_PASSWORD=");
+      expect(String(r.matches)).not.toContain(SEC);
+      expect(String(r.matches)).not.toContain(SEC.slice(0, 7));
+    });
   });
 
   // audit 2026-09-22: grep read credential files the file_read denylist blocks.
@@ -136,6 +333,82 @@ describe("grep", () => {
   it("content mode keeps file:line:text shape through the NUL parse", async () => {
     const r = JSON.parse(await grepTool.execute({ pattern: "bar", path: TEST_DIR, output_mode: "content" }));
     expect(r.matches).toBe(`${TEST_DIR}/a.ts:2:const bar = 2;`);
+  });
+
+  // Combined audit B1 (2026-10-03): line mode reads every matching line, so
+  // more than 2 MB of matches used to overflow rg's maxBuffer (ENOBUFS), fall
+  // back to grep, overflow again and return an error.
+  describe("large outputs (combined audit B1)", () => {
+    const BIG = `${TEST_DIR}/big`;
+    const FILES = 10;
+    const LINES = 1500; // under the 2000 per-file internal cap
+    const HID_LINES = 10;
+    // rg skips hidden dirs; the grep fallback skips only node_modules, .git
+    // and the credential dot-dirs, so it also finds .hid/h.txt. Under rg a
+    // .hid match therefore means the tool fell back to grep.
+    const EXPECTED_FILES = HAS_RG ? FILES : FILES + 1;
+    beforeEach(() => {
+      mkdirSync(BIG, { recursive: true });
+      const line = "needle " + "x".repeat(200) + "\n";
+      for (let i = 0; i < FILES; i++) {
+        writeFileSync(`${BIG}/f${i}.txt`, line.repeat(LINES));
+      }
+      mkdirSync(`${BIG}/.hid`, { recursive: true });
+      writeFileSync(`${BIG}/.hid/h.txt`, line.repeat(HID_LINES));
+    });
+    afterEach(() => __setSearchByteCapForTests());
+
+    it("files mode over > 2 MB of matching lines returns the files", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "files" }),
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.total).toBe(EXPECTED_FILES);
+      expect(r.truncated).toBe(false);
+      for (let i = 0; i < FILES; i++) expect(r.matches).toContain(`${BIG}/f${i}.txt`);
+      if (HAS_RG) expect(r.matches).not.toContain(".hid");
+      else expect(r.matches).toContain(`${BIG}/.hid/h.txt`);
+    });
+
+    it("count mode over > 2 MB of matching lines returns the counts", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "count" }),
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.total).toBe(EXPECTED_FILES);
+      for (let i = 0; i < FILES; i++) {
+        expect(r.matches).toContain(`${BIG}/f${i}.txt:${LINES}`);
+      }
+      if (HAS_RG) expect(r.matches).not.toContain(".hid");
+      else expect(r.matches).toContain(`${BIG}/.hid/h.txt:${HID_LINES}`);
+    });
+
+    it("hitting the byte cap returns truncated results, not an error or a grep re-run", async () => {
+      __setSearchByteCapForTests(64 * 1024);
+      for (const mode of ["files", "count", "content"]) {
+        spawned.length = 0;
+        children.length = 0;
+        const r = JSON.parse(
+          await grepTool.execute({ pattern: "needle", path: BIG, output_mode: mode, max_results: 20 }),
+        );
+        expect(r.error, mode).toBeUndefined();
+        expect(r.truncated, mode).toBe(true);
+        expect(r.total, mode).toBeGreaterThan(0);
+        // Exactly one search ran: rg alone, or (rg missing) grep once after
+        // the failed rg spawn. A capped rg re-run as grep, or a capped grep
+        // re-run, adds a process here.
+        expect(spawned, mode).toEqual(HAS_RG ? ["rg"] : ["rg", "grep"]);
+        // M2: the capped search was stopped, not left to run to the end.
+        expect(children.at(-1)?.signalCode, mode).toBe("SIGKILL");
+        if (HAS_RG) expect(JSON.stringify(r), mode).not.toContain(".hid");
+        if (mode === "content") {
+          // cut on a line boundary: every returned line is whole
+          for (const l of String(r.matches).split("\n")) {
+            expect(l, mode).toMatch(/:\d+:needle x{200}$/);
+          }
+        }
+      }
+    });
   });
 
   it("redacts credential shapes in matched lines", async () => {

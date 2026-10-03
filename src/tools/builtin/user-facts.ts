@@ -11,8 +11,14 @@ import {
   setUserFact,
   getUserFacts,
   deleteUserFact,
+  factDisplayValue,
+  isCredentialFact,
 } from "../../db/user-facts.js";
 import { toMexTime } from "../../lib/timezone.js";
+import {
+  resolveStoredReference,
+  visibleDestinationError,
+} from "../../lib/secret-refs.js";
 
 // ---------------------------------------------------------------------------
 // user_fact_set
@@ -89,11 +95,30 @@ BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, cred
   async execute(args: Record<string, unknown>): Promise<string> {
     const category = args.category as string;
     const key = args.key as string;
-    const value = args.value as string;
+    let value = args.value as string;
+
+    // Audit round 5 (B2): a stored credential written back by name — its
+    // placeholder, {{SECRET_X}} or $SECRET_X as the whole value — is saved
+    // as the stored VALUE (moving / renaming keeps it), and only under a key
+    // that keeps it hidden. A value carrying a placeholder inside other text
+    // is refused (it would store the placeholder and lose the credential).
+    if (typeof value === "string") {
+      const ref = resolveStoredReference(value);
+      if (ref.kind === "error") return JSON.stringify({ error: ref.error });
+      if (ref.kind === "resolved") {
+        if (!isCredentialFact(category, key, ref.value)) {
+          return JSON.stringify({
+            error: visibleDestinationError(`[${category}] ${key}`),
+          });
+        }
+        value = ref.value;
+      }
+    }
 
     setUserFact(category, key, value, "conversation");
 
-    return `Fact stored: [${category}] ${key} = ${value}. This will be included in all future conversations.`;
+    // Ruling 3c: a credential is confirmed by its by-name placeholder, never echoed.
+    return `Fact stored: [${category}] ${key} = ${factDisplayValue({ category, key, value })}. This will be included in all future conversations.`;
   },
 };
 
@@ -151,7 +176,7 @@ USE WHEN:
     return facts
       .map(
         (f) =>
-          `[${f.category}] ${f.key}: ${f.value} (updated: ${toMexTime(f.updated_at)})`,
+          `[${f.category}] ${f.key}: ${factDisplayValue(f)} (updated: ${toMexTime(f.updated_at)})`,
       )
       .join("\n");
   },

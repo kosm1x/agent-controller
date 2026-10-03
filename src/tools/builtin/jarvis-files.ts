@@ -24,6 +24,7 @@ import { currentRunTaskId } from "../rule-of-two.js";
 import { currentExecutionContext } from "../../inference/execution-context.js";
 import { hasExternalTag } from "../../lib/external-kb-policy.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
 import {
@@ -157,8 +158,18 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
         /* ignore */
       }
 
-      const totalChars = file.content.length;
-      const totalLines = countLines(file.content);
+      // Ruling 3c, audit R7 B-1: scrub the WHOLE content before any slice,
+      // preview or outline (scrub-before-cut); fails closed with {error}.
+      let content: string;
+      try {
+        content = scrubSecrets(file.content);
+      } catch (err) {
+        return JSON.stringify({
+          error: `No pude ocultar las credenciales guardadas del archivo: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      const totalChars = content.length;
+      const totalLines = countLines(content);
 
       // Branch A: caller asked for a specific slice → return that slice + meta
       if (linesSpec !== undefined) {
@@ -171,7 +182,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
           });
         }
         const { slice, sliceLines, clamped, lineCapped } = extractLineRanges(
-          file.content,
+          content,
           ranges,
         );
         return JSON.stringify({
@@ -196,7 +207,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
       // Branch B: large file with no slice asked → return structured envelope
       // (truncated flag at the TOP of the JSON, outline with line numbers, small preview)
       if (totalChars > LARGE_FILE_THRESHOLD) {
-        const outline = buildOutline(file.content);
+        const outline = buildOutline(content);
         return JSON.stringify({
           path: file.path,
           title: file.title,
@@ -204,7 +215,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
           total_chars: totalChars,
           total_lines: totalLines,
           outline,
-          preview: file.content.slice(0, PREVIEW_CHARS),
+          preview: content.slice(0, PREVIEW_CHARS),
           next_steps: [
             `File is ${totalChars} chars / ${totalLines} lines — full content NOT returned.`,
             `Pick a section from \`outline\` (each entry has its line number) and call again with lines='START-END' to read the slice.`,
@@ -223,7 +234,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
       return JSON.stringify({
         path: file.path,
         title: file.title,
-        content: file.content,
+        content,
         total_chars: totalChars,
         total_lines: totalLines,
         tags: JSON.parse(file.tags),
@@ -564,7 +575,19 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
       {
         path,
         ...(typeof append === "string" && append.trim()
-          ? { must_contain: append.trim().slice(0, 160) }
+          ? (() => {
+              // Audit R7 B-1(b): the gate payload is stored at rest and its
+              // text is quoted in evidence — never the resolved value. Scrub
+              // the WHOLE appended text before the cut; the verifier compares
+              // it against the scrubbed file. No scrub → no must_contain.
+              try {
+                return {
+                  must_contain: scrubSecrets(append.trim()).slice(0, 160),
+                };
+              } catch {
+                return {};
+              }
+            })()
           : {}),
         declared_at: declaredAt,
       },

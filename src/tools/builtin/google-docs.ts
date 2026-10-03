@@ -6,12 +6,22 @@ import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate } from "../../lib/v8-4/readback.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 import { checkArtifactProvenance } from "../../lib/v8-4/provenance-gate.js";
 
 /** Ledger payload hygiene: a written row may carry PII — keep only what the
  *  read-back needs to compare, bounded per cell (R1 audit W10). */
 function capCells(row: unknown[] | undefined): string[] {
-  return (row ?? []).slice(0, 12).map((c) => String(c ?? "").slice(0, 60));
+  // Ruling 3c, audit R7 B-1(b): scrub each cell BEFORE the 60-char cut (a cut
+  // stored value would survive the payload's whole-value scrub). No scrub →
+  // the cell is dropped (an empty cell is not compared).
+  return (row ?? []).slice(0, 12).map((c) => {
+    try {
+      return scrubSecrets(String(c ?? "")).slice(0, 60);
+    } catch {
+      return "";
+    }
+  });
 }
 import { validatePathSafety } from "./immutable-core.js";
 
@@ -88,7 +98,8 @@ AFTER READING: Report the spreadsheet name and range read. Only report data that
         `| --- | ${headers.map(() => "---").join(" | ")} |`,
         ...dataRows.map(
           (row, i) =>
-            `| ${startRow + 1 + i} | ${row.map((c) => (c ?? "").slice(0, 100)).join(" | ")} |`,
+            // Audit R7 B-1: scrub each cell before its 100-char cut.
+            `| ${startRow + 1 + i} | ${row.map((c) => scrubSecrets(c ?? "").slice(0, 100)).join(" | ")} |`,
         ),
       ];
       return lines.join("\n");
@@ -420,11 +431,13 @@ document as plain text with no truncation limit.`,
         )
         .join("");
 
-      const truncated = text.length > 8000;
+      // Ruling 3c, audit R7 B-1: scrub the WHOLE text before the 8000 cut.
+      const shown = scrubSecrets(text);
+      const truncated = shown.length > 8000;
       return JSON.stringify({
         document_id: docId,
         title: doc.title,
-        text: text.slice(0, 8000),
+        text: shown.slice(0, 8000),
         ...(truncated
           ? {
               warning: `Document truncated at 8,000 chars (total: ${text.length} chars). Use gdocs_read_full to read the complete document.`,
@@ -636,14 +649,25 @@ AFTER WRITING: Report the document title and what was appended.`,
         "gdocs_write",
         `doc:${docId}`,
         `Doc ${docId} contiene el texto escrito`,
-        {
-          document_id: docId,
-          snippet: text.slice(0, 120),
-          // R1 audit W1: the confirmed-figure contradiction check must run
-          // over what THIS write inserted, not the whole document — an
-          // untouched 2023 paragraph must not fail a 2026 write.
-          written_text: text.slice(0, 800),
-        },
+        (() => {
+          // Ruling 3c, audit R7 B-1(b): a content_file can hold a stored
+          // value; the payload (stored at rest, quoted in evidence) gets the
+          // scrubbed text, scrubbed BEFORE the cut. No scrub → no snippet.
+          let shown: string;
+          try {
+            shown = scrubSecrets(text);
+          } catch {
+            return { document_id: docId };
+          }
+          return {
+            document_id: docId,
+            snippet: shown.slice(0, 120),
+            // R1 audit W1: the confirmed-figure contradiction check must run
+            // over what THIS write inserted, not the whole document — an
+            // untouched 2023 paragraph must not fail a 2026 write.
+            written_text: shown.slice(0, 800),
+          };
+        })(),
       );
       return JSON.stringify({
         written: true,
@@ -916,7 +940,10 @@ Pass the presentation ID (from the URL: docs.google.com/presentation/d/{ID}/edit
         return slideText;
       });
 
-      const content = `# ${pres.title}\n\n${slideTexts.join("\n\n")}`;
+      // Ruling 3c, audit R7 B-1: scrub before the 8000 cut.
+      const content = scrubSecrets(
+        `# ${pres.title}\n\n${slideTexts.join("\n\n")}`,
+      );
       return content.length > 8000
         ? content.slice(0, 8000) + "\n...(truncated)"
         : content;

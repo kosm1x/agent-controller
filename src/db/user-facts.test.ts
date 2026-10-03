@@ -4,7 +4,23 @@ import {
   getUserFacts,
   deleteUserFact,
   formatUserFactsBlock,
+  isCredentialFact,
+  isSecretValueName,
+  CREDENTIAL_FACT_PLACEHOLDER,
 } from "./user-facts.js";
+import {
+  invalidateSecretRefs,
+  secretEnvForCommand,
+  secretPlaceholder,
+} from "../lib/secret-refs.js";
+
+// Synthetic credential shapes, assembled at runtime (never a key-shaped
+// literal in source — the repo is public and a commit hook scans for them).
+const FAKE_GOOGLE_KEY = "AIza" + "b".repeat(35);
+const FAKE_GH_TOKEN = "gh" + "p_" + "c".repeat(36);
+const SYN_EMAIL = ["demo", "example.invalid"].join("@");
+const SYN_PASS = "syn-" + "p".repeat(10);
+const SYN_WIFI = "syn-" + "w".repeat(12);
 
 // Mock getDatabase to return an in-memory SQLite instance
 const mockDb = {
@@ -38,6 +54,796 @@ describe("user-facts", () => {
         "30",
         "conversation",
       );
+    });
+  });
+
+  describe("Ruling 3c: credential facts are stored (refusal removed)", () => {
+    function dbRecording() {
+      const rows: Array<{ category: string; key: string; value: string }> =
+        [];
+      const run = vi.fn((category: string, key: string, value: string) => {
+        rows.push({ category, key, value });
+      });
+      mockDb.prepare.mockImplementation(() => ({
+        run,
+        all: () => rows,
+      }));
+      return run;
+    }
+
+    it.each([
+      ["a credential-named fact", "projects", "acme_portal_password", SYN_PASS],
+      ["a credential-shaped value under a neutral name", "projects", "gemini_setup", FAKE_GOOGLE_KEY],
+      ["a credential inside prose", "work", "notes", `el repo usa ${FAKE_GH_TOKEN} para CI`],
+    ])("writes %s like any other fact, without a warning", (_l, category, key, value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const run = dbRecording();
+      setUserFact(category, key, value);
+      expect(run).toHaveBeenCalledWith(category, key, value, "conversation");
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("once stored, it is shown by name and resolvable by that name", () => {
+      dbRecording();
+      setUserFact("projects", "gemini_setup", FAKE_GOOGLE_KEY, "auto-detected");
+      const block = formatUserFactsBlock();
+      expect(block).toContain(
+        `- **gemini_setup**: ${secretPlaceholder("SECRET_PROJECTS_GEMINI_SETUP")}`,
+      );
+      expect(block).not.toContain(FAKE_GOOGLE_KEY);
+      expect(
+        secretEnvForCommand("curl -H \"x-goog-api-key: $SECRET_PROJECTS_GEMINI_SETUP\" x"),
+      ).toEqual({ SECRET_PROJECTS_GEMINI_SETUP: FAKE_GOOGLE_KEY });
+    });
+  });
+
+  describe("isCredentialFact", () => {
+    it.each([
+      ["projects", "maps_api_key"],
+      ["projects", "quotes_api_key"],
+      ["projects", "apiKey"],
+      ["projects", "census_api_token"],
+      ["projects", "x_auth_token__acct"],
+      ["projects", "acme_auth_token"],
+      ["projects", "acme_portal_password"],
+      ["projects", "blog_wp_app_password_new"],
+      ["projects", "db_passwd"],
+      ["projects", "router_pwd"],
+      ["projects", "stripe_client_secret"],
+      ["projects", "deploy_private_key"],
+      ["projects", "session_cookie"],
+      ["projects", "github_oauth"],
+      ["projects", "bearer"],
+      ["projects", "service_api_credential"],
+      ["projects", "contraseña_wp"],
+      ["projects", "clave_api"],
+      ["projects", "credenciales_ftp"],
+      ["projects", "acme_espn_s2"],
+      ["projects", "acme_swid"],
+      ["projects", "x_ct0__acct"],
+      ["secrets", "anything"],
+      // Fold 1 (audit W2/W4)
+      ["projects", "wpPassword"],
+      ["projects", "wp_pass"],
+      ["projects", "app_pw"],
+      ["projects", "db_service_key"],
+      ["projects", "signing_key"],
+      ["projects", "master_key"],
+      ["projects", "encryption_key"],
+      ["projects", "license_key"],
+      ["projects", "admin_key"],
+      ["projects", "stripe_key"],
+      ["projects", "openai_key"],
+      ["projects", "gemini_key"],
+      ["projects", "sessionid"],
+      ["projects", "session_id"],
+      ["projects", "sid"],
+      ["projects", "connect_sid"],
+      ["projects", "phpsessid"],
+      ["projects", "li_at"],
+      ["projects", "llave_api"],
+      ["projects", "pin"],
+      ["projects", "clave"],
+      ["projects", "clave_acceso_sat"],
+      ["projects", "clave_wifi"],
+      // Ruling 3d: cookie names stored bare under a project's credentials
+      ["projects", "s2"],
+      ["projects", "session"],
+      ["projects", "pass"],
+      ["projects", "passwd"],
+      ["projects", "apikey"],
+      ["projects", "secret"],
+      ["projects", "token"],
+      ["projects", "key"],
+      ["projects", "cookie"],
+      ["projects", "auth"],
+    ])("marks %s/%s by name", (category, key) => {
+      expect(isCredentialFact(category, key, "plain value")).toBe(true);
+    });
+
+    it.each([
+      ["personal", "author"],
+      ["projects", "token_budget"],
+      ["projects", "max_tokens"],
+      ["projects", "keyboard_layout"],
+      ["projects", "monkey_name"],
+      ["projects", "palabras_clave"],
+      ["projects", "local_brain_context_budget"],
+      ["projects", "login"],
+      ["personal", "CURP"],
+      ["projects", "blog_ga4_id"],
+      ["projects", "acme_espn_league_id"],
+      ["projects", "signal_digest_2026-09-30"],
+      // Fold 1: a neutral name ending in a vocabulary word (W4)
+      ["projects", "bypass"],
+      ["projects", "compass"],
+      ["projects", "turkey"],
+      ["projects", "whiskey"],
+      // Fold 1: excluded `key` / `sid` positions (W2)
+      ["projects", "public_key"],
+      ["projects", "primary_key"],
+      ["projects", "foreign_key"],
+      ["projects", "sort_key"],
+      ["projects", "partition_key"],
+      ["projects", "cache_key"],
+      ["projects", "hot_key"],
+      ["projects", "short_key"],
+      ["projects", "key_results"],
+      ["projects", "license_key_count"],
+      ["projects", "sid_meier"],
+      ["projects", "session_notes"],
+      // Fold 1: `clave` only last or before api/acceso/secreta/privada/wifi (W3)
+      ["projects", "clave_interbancaria"],
+      ["projects", "clave_elector"],
+      ["projects", "clave_catastral"],
+      ["projects", "clave_producto"],
+      ["projects", "clave_unica"],
+      // Fold 1: last token is metadata about a credential (W3); the value
+      // must have that metadata's type since audit R5 S4 (see below)
+      ["projects", "auth_method"],
+      ["projects", "oauth_provider"],
+      ["projects", "jwt_issuer"],
+      ["projects", "credential_rotation_date"],
+      ["projects", "token_type"],
+      ["projects", "password_expiry"],
+      ["projects", "cookie_expires"],
+      // Ruling 3d: the whole-name `s2` / `session` rule stays narrow, and
+      // what a project's credentials usually hold besides secrets is visible
+      ["projects", "sessions"],
+      ["projects", "session_timeout"],
+      ["projects", "last_session"],
+      ["projects", "s2_region"],
+      ["projects", "username"],
+      ["projects", "email"],
+      ["projects", "ftp_host"],
+      ["projects", "ftp_user"],
+      ["projects", "wp_user"],
+      ["projects", "port"],
+      ["projects", "ga4_measurement_id"],
+      ["projects", "client_id"],
+      ["projects", "site_url"],
+    ])("does not mark %s/%s by name", (category, key) => {
+      expect(isCredentialFact(category, key, "plain value")).toBe(false);
+    });
+
+    // Fold 1 (audit C1): shapes redactCredentials misses, under a neutral
+    // name. Every key-shaped literal is assembled at runtime.
+    const rnd = (n: number) => "Qx7Lm2Vb9Zt4Rk8Np3Wd".repeat(10).slice(0, n);
+    it.each([
+      ["JWT", "ey" + "J" + rnd(20) + ".ey" + "J" + rnd(40) + "." + rnd(43)],
+      ["Stripe sk_live", "sk" + "_live_" + rnd(30)],
+      ["Stripe rk_test", "rk" + "_test_" + rnd(30)],
+      ["GitHub fine-grained", "github" + "_pat_" + rnd(60)],
+      ["GitHub gho", "gh" + "o_" + rnd(36)],
+      ["GitHub ghs", "gh" + "s_" + rnd(36)],
+      ["Slack xoxp", "xo" + "xp-" + rnd(40)],
+      ["AWS AKIA", "AK" + "IA" + "ABCDEFGHIJKLMNOP"],
+      ["Fireworks", "fw" + "_" + rnd(30)],
+      ["URL userinfo ftp", "ftp://demo:" + rnd(14) + "@ftp.example.com/"],
+      ["URL userinfo https", "https://user:" + rnd(14) + "@example.com"],
+      ["bare Bearer", "Bearer " + rnd(40)],
+      ["api key label", "api key: " + rnd(32)],
+      ["token label", "token: " + rnd(32)],
+      ["password label", "password: " + rnd(14)],
+      ["contraseña label", "contraseña: " + rnd(14)],
+      ["clave label", "clave: " + rnd(14)],
+      ["JSON token", JSON.stringify({ token: rnd(32) })],
+      ["JSON auth_token", JSON.stringify({ auth_token: rnd(40) })],
+      ["JSON password", JSON.stringify({ password: rnd(14) })],
+      ["inside prose", "mi config usa " + "sk" + "_live_" + rnd(30) + " ok"],
+    ])("marks a %s value under a neutral name", (_label, value) => {
+      expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+    });
+
+    it.each([
+      ["plain prose", "hola mundo, la clave del éxito es la constancia"],
+      ["URL without userinfo", "https://example.com/a:b/c"],
+      ["short label value", "token: abc"],
+      ["email", SYN_EMAIL],
+      ["bearer prose", "bearer bonds are instruments"],
+    ])("does not mark a %s value", (_label, value) => {
+      expect(isCredentialFact("projects", "site_config", value)).toBe(false);
+    });
+
+    it("a metadata-named fact is still judged by value", () => {
+      expect(
+        isCredentialFact("projects", "auth_method", "Bearer " + rnd(40)),
+      ).toBe(true);
+    });
+
+    it("marks a credential-shaped value, not a git SHA", () => {
+      expect(isCredentialFact("projects", "setup", FAKE_GOOGLE_KEY)).toBe(true);
+      expect(isCredentialFact("projects", "last_commit", "a".repeat(40))).toBe(
+        false,
+      );
+    });
+
+    // Audit round 4 (3d-b): whole-token names the classifier missed.
+    describe("audit R4 3d-b", () => {
+      it.each([
+        "api_keys", "access_keys", "apiKeys", "github_api_keys", "tokens",
+        "github_tokens", "authorization", "authorization_header", "privkey",
+        "appkey", "nip", "bank_nip", "otp", "totp", "totp_secret_code", "mfa",
+        "mfa_code", "2fa", "2fa_code", "seed", "wallet_seed", "mnemonic",
+        "recovery_codes", "backup_codes", "github_backup_code", "dsn",
+        "sentry_dsn",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "keyword", "keywords", "monkeys", "seed_url", "seeds_file",
+        "otp_enabled", "key_id", "public_key",
+        "ssh_public_key", "public_keys", "max_tokens", "input_tokens",
+        "random_seed", "turkey", "snippet", "dsnap",
+      ])("does not mark the neighbour projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+      });
+
+      it("meta-suffix convention: a credential name ending in a metadata token (enabled/region/host/url/file) is visible by name when its value has that type, still judged by value", () => {
+        for (const [k, v] of [
+          ["mfa_enabled", "true"],
+          ["token_url", "https://oauth2.example.com/token"],
+          ["password_file", "/etc/app/secret.txt"],
+          ["dsn_region", "us-east-1"],
+          ["nip_region", "mx-central-1"],
+          ["dsn_host", "db.example.com:5432"],
+          ["market_data_api_key_path", "~/.config/md/key.txt"],
+        ]) {
+          expect(isCredentialFact("projects", k!, v!), k).toBe(false);
+        }
+        expect(
+          isCredentialFact("projects", "token_url", "Bearer " + rnd(40)),
+        ).toBe(true);
+      });
+
+      const pem = (label: string) =>
+        "-----" + "BEGIN " + label + "-----\n" + rnd(64) + "\n-----" + "END " + label + "-----";
+      it.each([
+        "PRIVATE KEY",
+        "RSA PRIVATE KEY",
+        "EC PRIVATE KEY",
+        "OPENSSH PRIVATE KEY",
+        "ENCRYPTED PRIVATE KEY",
+      ])("marks a PEM %s value under a neutral name", (label) => {
+        expect(isCredentialFact("projects", "site_config", pem(label))).toBe(true);
+      });
+
+      it.each(["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"])(
+        "does not mark a PEM %s value",
+        (label) => {
+          expect(isCredentialFact("projects", "site_config", pem(label))).toBe(
+            false,
+          );
+        },
+      );
+    });
+
+    // Audit round 5: fewer false positives (the global scrub blanks a
+    // false positive's value everywhere — ruling 3d "everything accessible")
+    // and fewer false negatives.
+    describe("audit R5 S2 — position-bound words and exclusions", () => {
+      it.each([
+        "otp", "mfa", "2fa", "seed", "authorization", "bank_otp", "wallet_seed",
+        "mfa_code", "2fa_codes", "otp_secret", "seed_phrase", "mfa_backup",
+        "authorization_header", "authorization_token", "2fa_key", "seed_seed",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "design_tokens", "context_tokens", "css_tokens", "color_tokens",
+        "translation_keys", "required_keys", "shortcut_keys", "object_keys",
+        "index_keys", "mfa_device", "mfa_app", "2fa_phone", "otp_phone",
+        "authorization_status", "prior_authorization", "seed_command",
+        "seed_data", "otp_provider_name", "mfa_methods",
+      ])("does not mark projects/%s by name (false-positive replay)", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+      });
+    });
+
+    describe("audit R5 S3 — names and value shapes the classifier missed", () => {
+      it.each([
+        "accesstoken", "authtoken", "secretkey", "apitoken", "privatekey",
+        "refreshtoken", "sessiontoken", "passcode", "pincode",
+        "respuesta_secreta", "frase_semilla", "codigos_respaldo", "codigo_acceso",
+        "recovery_phrase", "cvv", "cvc", "card_cvv", "github_accesstoken",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "codigo_postal", "codigo_producto", "pregunta_frecuente", "frase_favorita",
+        "recovery_email", "passenger", "tokenizer", "keystone",
+      ])(
+        "does not mark the neighbour projects/%s by name",
+        (key) => {
+          expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+        },
+      );
+
+      const b64 = (n: number) => "Ab3dE5gH7jK9mN1pQ2sT4vW6yZ8".repeat(8).slice(0, n);
+      const hex = (n: number) => "0a1b2c3d4e5f6789".repeat(8).slice(0, n);
+      const label = (l: string) => "-----" + "BEGIN " + l + "-----";
+      it.each([
+        ["PGP private key block", label("PGP PRIVATE KEY BLOCK") + "\n" + b64(64)],
+        ["PuTTY private key", "PuTTY-User-Key-File-" + "3: ssh-ed25519\nPrivate-Lines: 1\n" + b64(40)],
+        ["Google ya29 token", "ya" + "29." + b64(60)],
+        ["Google 1// refresh token", "1/" + "/0" + b64(40)],
+        ["Hugging Face", "hf" + "_" + b64(34)],
+        ["npm", "np" + "m_" + b64(36)],
+        ["SendGrid", "S" + "G." + b64(22) + "." + b64(43)],
+        ["Shopify shpat", "shp" + "at_" + hex(32)],
+        ["Shopify shpss", "shp" + "ss_" + hex(32)],
+        ["URL userinfo with an empty user", "redis://" + ":" + b64(16) + "@cache.example.com:6379"],
+      ])("marks a %s value under a neutral name", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+      });
+
+      it.each([
+        ["PGP public key block", label("PGP PUBLIC KEY BLOCK") + "\n" + b64(64)],
+        ["prose about PuTTY", "use PuTTY to connect to the host"],
+        ["ya29 prose", "ya29 is a token prefix"],
+        ["a URL path with 1//", "https://example.com/v1//0abc"],
+        ["short hf_", "hf_model"],
+        ["npm prose", "run npm_install later"],
+        ["SG. abbreviation", "SG.com is a site; SG.x"],
+        ["shpat_ too short", "shp" + "at_" + hex(10)],
+        ["redis URL without password", "redis://cache.example.com:6379"],
+        ["a time with colons", "10:30:00@office"],
+      ])("does not mark a %s value", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(false);
+      });
+    });
+
+    describe("audit R5 S4 — a meta suffix exempts only a value of its type", () => {
+      it.each([
+        ["token_url", "https://oauth2.example.com/token"],
+        ["auth_url", "https://login.example.com/authorize?client=web"],
+        ["password_file", "/run/secrets/db_password"],
+        ["api_key_path", "C:\\keys\\maps.txt"],
+        ["db_password_host", "db.internal.example.com"],
+        ["secret_host", "127.0.0.1:8200"],
+        ["otp_secret_enabled", "false"],
+        ["mfa_code_enabled", "sí"],
+        ["api_key_region", "europe-west4"],
+        ["token_type", "Bearer"],
+        ["password_expiry", "2026-12-31"],
+      ])("%s = %s stays visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      const run = "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      it.each([
+        ["token_url", run],
+        ["token_url", "https://api.example.com/cb?token=" + run],
+        ["password_file", "hunter-" + "two-pass"],
+        ["api_key_path", "/keys/" + run + ".txt"],
+        ["db_password_host", "not a host name"],
+        ["otp_secret_enabled", run],
+        ["api_key_region", "Pa55word99"],
+        ["token_type", run],
+        ["password_expiry", run],
+      ])("%s = %s is a secret", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+
+      it("a container key (no scalar value) with a meta suffix is not an ancestor", () => {
+        expect(isCredentialFact("projects", "api_key_path", "")).toBe(false);
+      });
+    });
+
+    // Audit round 6. Ruling 3d: "Just real credentials. Everything must be
+    // accessible." A false positive blanks the value everywhere.
+    describe("audit R6 B1 — container words + identity last token, acceso/respaldo", () => {
+      const EMAIL = ["ops", "example.com"].join("@");
+      it.each([
+        ["auth_email", EMAIL],
+        ["credentials_email", EMAIL],
+        ["credentials_username", "deploy"],
+        ["db_credentials_user", "deploy"],
+        ["basic_auth_user", "deploy"],
+        ["smtp_auth_username", "mailer"],
+        ["credenciales_usuario", "deploy"],
+        ["oauth_client_id", "1234-abc.apps.example.com"],
+        ["auth_client_id", "cid-0001"],
+        ["oauth_project_id", "demo-project"],
+        ["auth_port", "21"],
+        ["auth_uri", "https://accounts.example.com/o/oauth2/auth"],
+        ["oauth_redirect_uri", "https://app.example.com/cb"],
+        ["auth_domain", "example.com"],
+        ["oauth_scope", "read write"],
+      ])("%s = %s is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      it.each([
+        "auth_token", "oauth_client_secret", "credentials_password",
+        "basic_auth_password", "oauth_refresh_token", "credenciales_contrasena",
+      ])("%s stays hidden by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it("an identity-named container key is still judged by its value's shape", () => {
+        expect(
+          isCredentialFact("projects", "oauth_client_id", "gh" + "p_" + "c".repeat(36)),
+        ).toBe(true);
+      });
+
+      it("acceso/respaldo/recuperacion/seguridad name a secret value only after codigo/clave/frase", () => {
+        expect(isSecretValueName("credenciales_de_acceso")).toBe(false);
+        expect(isSecretValueName("credenciales_respaldo")).toBe(false);
+        expect(isSecretValueName("credenciales_recuperacion")).toBe(false);
+        for (const k of [
+          "codigos_de_acceso", "codigo_acceso", "codigos_respaldo",
+          "frase_de_recuperacion", "clave_de_seguridad", "claves_de_acceso",
+        ]) {
+          expect(isSecretValueName(k), k).toBe(true);
+        }
+      });
+
+      it("uri is a url synonym: token_uri holding a URL is visible, holding a token is not", () => {
+        expect(isCredentialFact("projects", "token_uri", "https://oauth2.example.com/token")).toBe(false);
+        expect(isCredentialFact("projects", "token_uri", "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd")).toBe(true);
+      });
+    });
+
+    describe("audit R6 should-fix 1 — ordinary text no longer blanked", () => {
+      it.each([
+        ["api_key_header", "Authorization"],
+        ["auth_header", "X-Api-Key"],
+        ["cookie_consent", "accepted"],
+        ["token_name", "deploy-bot"],
+        ["token_symbol", "ETH"],
+        ["token_address", "0x" + "ab12".repeat(10)],
+        ["map_pin", "19.43, -99.13"],
+        ["pin_location", "Hall B"],
+        ["pregunta_secreta", "¿Nombre de tu primera mascota?"],
+        ["password_hint", "my first dog"],
+        ["password_policy", "min 12 chars, 1 symbol"],
+        ["password_last_changed", "2026-09-01"],
+        ["secret_name", "prod/db/password"],
+        ["secret_arn", "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf"],
+        ["api_key_name", "ci key"],
+        ["api_key_id", "key-01"],
+        ["token_id", "12345"],
+        ["private_key_id", "pk-01"],
+        ["cookie_domain", ".example.com"],
+        ["cookie_name", "sessionid"],
+        ["session_id_format", "uuid"],
+        ["pass_rate", "95%"],
+        ["boarding_pass", "AM 123 seat 4C"],
+        ["secret_santa", "Ana"],
+        ["musical_key", "C minor"],
+        ["pwd", "/var/www/site"],
+        ["llave_publica", "ssh-ed25519 AAAAC3Nz example"],
+        ["token_uri", "https://oauth2.example.com/token"],
+        ["auth_uri", "https://accounts.example.com/o/oauth2/auth"],
+      ])("%s = %s is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      const run = "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      it.each([
+        ["api_key_header", run],
+        ["auth_header", "Basic " + "dXNlcjpwYXNz"],
+        ["cookie_consent", run],
+        ["token_name", "Hunter2Pass"],
+        ["token_symbol", "Ab1Cd2"],
+        ["token_address", "0x" + "ab12".repeat(16)],
+        ["pin_location", "1234"],
+        ["pregunta_secreta", run],
+        ["password_hint", "hunter2"],
+        ["password_policy", run],
+        ["password_last_changed", run],
+        ["secret_name", run],
+        ["secret_arn", run],
+        ["api_key_id", run],
+        ["token_id", "Ab1" + "x".repeat(10)],
+        ["cookie_domain", "Pa55.Word"],
+        ["session_id_format", run],
+        ["pass_rate", "hunter2"],
+        ["pwd", "hunter2"],
+        ["pwd", "hunter2/x"],
+        ["respuesta_secreta", "Firulais"],
+        ["private_key_id", "0a1b2c3d".repeat(5)],
+      ])("%s = %s is a secret (wrong type for its meta suffix)", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+    });
+
+    describe("audit R6 should-fix 2 — false negatives", () => {
+      it.each([
+        ["Slack webhook", "https://hooks.slack.com/services/T" + "0ABC/B" + "0DEF/" + "x".repeat(24)],
+        ["Discord webhook", "https://discord.com/api/webhooks/123456/" + "y".repeat(30)],
+        ["Discord (discordapp) webhook", "https://discordapp.com/api/webhooks/987/" + "y".repeat(30)],
+        ["Teams webhook", "https://acme.webhook.office.com/webhookb2/" + "z".repeat(30)],
+      ])("marks a %s under a neutral name", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+      });
+
+      it("a secret run in a url-meta value's PATH is a secret", () => {
+        expect(
+          isCredentialFact("projects", "token_url", "https://example.com/cb/" + run6()),
+        ).toBe(true);
+        expect(
+          isCredentialFact("projects", "token_url", "https://example.com/oauth/token"),
+        ).toBe(false);
+      });
+      function run6() {
+        return "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      }
+
+      it.each(["security_answer", "respuesta_seguridad", "access_code", "codigo_acceso"])(
+        "marks projects/%s by name",
+        (key) => {
+          expect(isCredentialFact("projects", key, "Firulais")).toBe(true);
+        },
+      );
+    });
+
+    describe("audit R6 should-fix 3 — meta value types are strict", () => {
+      it.each([
+        ["dsn_host", "Tr0ub4dor.3"],
+        ["dsn_host", "Pa55.Word.com"],
+        ["dsn_host", "hunter2"],
+        ["password_file", "hunter2/x"],
+        ["password_file", "/  /"],
+        ["password_file", "config/key.txt"],
+        ["token_type", "this is a long free text value that is not an enum at all"],
+        ["token_type", "Pa55word"],
+        ["auth_method", "s3cr3t!pass"],
+      ])("%s = %j is a secret", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+
+      it.each([
+        ["dsn_host", "db.example.com"],
+        ["dsn_host", "10.0.0.5:5432"],
+        ["dsn_host", "localhost"],
+        ["password_file", "./secrets/db.txt"],
+        ["password_file", "~/keys/db.txt"],
+        ["token_type", "Bearer"],
+        ["auth_method", "basic"],
+      ])("%s = %j is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+    });
+
+    // Audit round 7 (probe table ported from the auditor's cls.ts). Each row:
+    // [category, key, value, hidden]. Values are synthetic and assembled at
+    // runtime; hosts are example.com.
+    describe("audit R7 — B-2 / B-3 / should-fix classifier table", () => {
+      const uuid = () =>
+        ["3f2a9c1e", "7b4d", "4e21", "9a0f", "1c2d3e4f5a6b"].join("-");
+      const mixRun = "Ab12Cd34Ef56Gh78Ij90";
+      const pwMix = ["Hunter", "2", "Pass", "99"].join("");
+      const pwMix2 = ["S3cret", "Passw0rd", "!"].join("");
+      const cases: Array<[string, string, string, boolean]> = [
+        // B-2(1): `id` belongs to the credential word.
+        ["projects", "session_id", uuid(), true],
+        ["projects", "acme_session_id", "1234567890123", true],
+        ["web", "sessionid", uuid(), true],
+        ["web", "session_token", uuid(), true],
+        ["web", "csrf_id", uuid(), true],
+        ["projects", "csrf_token_id", "abcdefgh12", false],
+        // B-3: adjective clave.
+        ["trabajo", "clientes_clave", "Acme, Globex y Initech", false],
+        ["trabajo", "fechas_clave", "15 de marzo y 2 de abril", false],
+        ["trabajo", "puntos_clave", "precio, entrega y soporte", false],
+        ["trabajo", "nombre_clave", "Proyecto Fenix", false],
+        ["trabajo", "metricas_clave", "MRR, churn, NPS", false],
+        ["trabajo", "ideas_clave", "precio y soporte", false],
+        ["personal", "clave", "plain value", true],
+        ["personal", "banco_clave", "plain value", true],
+        ["personal", "teams_clave", "plain value", true],
+        ["personal", "nuestras_claves", "plain value", true],
+        ["personal", "clave_wifi", "plain value", true],
+        ["personal", "clave_api", "plain value", true],
+        ["personal", "clave_acceso", "plain value", true],
+        ["personal", "palabra_clave", "girasol", false],
+        // should-fix: exclusions.
+        ["personal", "gym_pass", "Smart Fit membresia 4433", false],
+        ["personal", "receta_secreta", "mole de mi abuela", false],
+        ["infra", "pin_message", "Recordar pagar renta", false],
+        ["infra", "pin_code", "plain value", true],
+        ["infra", "stripe_publishable_key", "pk" + "_live_" + "a1".repeat(12), false],
+        ["infra", "site_config", "pk" + "_test_" + "a1".repeat(12), false],
+        ["infra", "site_config", "sk" + "_test_" + "a1".repeat(12), true],
+        // should-fix: identity last tokens with types.
+        ["infra", "credenciales_puerto", "5432", false],
+        ["infra", "credenciales_servidor", "srv.example.com", false],
+        ["infra", "credenciales_dominio", "example.com", false],
+        ["infra", "oauth_client", "mi-app-web", false],
+        ["infra", "auth_phone", "+52 55 1234 5678", false],
+        ["infra", "credenciales_cuenta", "jdoe", false],
+        ["infra", "credenciales_nombre", "Cuenta principal", false],
+        ["infra", "credenciales_puerto", pwMix, true],
+        ["infra", "auth_phone", pwMix, true],
+        ["infra", "oauth_client", mixRun + "Kl12", true],
+        // B-2(2): identity token typed.
+        ["infra", "auth_url", "https://example.com/cb?x=" + mixRun + "Kl12Mn", true],
+        ["infra", "oauth_id", mixRun + "Kl12Mn34Op56", true],
+        ["infra", "auth_user", pwMix, true],
+        ["infra", "credentials_login", pwMix2, true],
+        ["infra", "auth_email", "a@example.invalid", false],
+        ["infra", "auth_email", pwMix, true],
+        ["infra", "auth_port", "pw" + "x".repeat(10), true],
+        ["infra", "oauth_tenant", "contoso", false],
+        ["infra", "oauth_scope", "repo read:org", false],
+        ["infra", "credenciales_de_acceso_usuario", "jdoe", false],
+        ["infra", "credenciales_de_acceso_host", "db.example.com", false],
+        ["infra", "clave_de_acceso_usuario", "jdoe", false],
+        ["infra", "clave_de_acceso_usuario", pwMix, true],
+        // should-fix: location path.
+        ["infra", "access_token_location", "/etc/app/token", false],
+        ["infra", "password_location", "Tr0ub4dor&3", true],
+        // rate is a typed meta (token_rate no longer excluded by name).
+        ["infra", "token_rate", "100/min", false],
+        ["infra", "token_rate", mixRun, true],
+        // webhook names: a URL with a secret path is hidden.
+        ["infra", "webhook", "https://example.com/hooks/" + "aB3".repeat(10), true],
+        ["infra", "webhook", "https://example.com/hooks/abc", false],
+        ["infra", "webhook_url", "https://example.com/hooks/abc", false],
+        // unchanged neighbours.
+        ["infra", "api_key_header", "X-Api-Key", false],
+        ["infra", "ftp_host", "ftp.example.com", false],
+        ["infra", "ftp_password", "hunter2hunter2", true],
+        ["infra", "github_token_id", "12345678", false],
+        ["infra", "api_key_id", "key-prod-01", false],
+        ["infra", "secret_name", "prod-db-pass", false],
+        ["infra", "security_answer", "Guadalajara", true],
+        ["infra", "respuesta_secreta", "Guadalajara", true],
+        ["infra", "pregunta_secreta", "¿Ciudad natal?", false],
+        ["infra", "codigo_de_acceso", "883421", true],
+        ["personal", "clave_interbancaria", "012180001234567891", false],
+        ["personal", "house_keys", "con el vecino", true],
+        ["personal", "nip_tarjeta", "4821", true],
+        ["personal", "max_tokens", "4096", false],
+        ["personal", "secretaria", "Laura", false],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
+
+      it("container keys stay containers (no value): identity tokens and webhook", () => {
+        expect(isSecretValueName("credenciales_de_acceso")).toBe(false);
+        expect(isSecretValueName("db_credentials")).toBe(false);
+        expect(isSecretValueName("webhook")).toBe(false);
+        expect(isSecretValueName("clave_de_acceso")).toBe(true);
+        expect(isSecretValueName("passwords")).toBe(true);
+      });
+    });
+
+    describe("audit R8 — B-4 clave_<servicio> / session / user:pass / length meta", () => {
+      const pw = "Tr0ub4dor&3xyz";
+      const rndTok = "Ab12Cd34Ef56Gh78Ij90Kl12";
+      const cases: Array<[string, string, string, boolean]> = [
+        // B-4: a leading clave_<servicio> holding a password is hidden.
+        ["projects", "clave_ftp", pw, true],
+        ["projects", "clave_sat", pw, true],
+        ["projects", "clave_banco", pw, true],
+        ["projects", "clave_correo", pw, true],
+        ["projects", "clave_gmail", pw, true],
+        ["projects", "clave_ssh", pw, true],
+        ["projects", "clave_wordpress", pw, true],
+        ["projects", "clave_cpanel", pw, true],
+        ["projects", "clave_hosting", pw, true],
+        ["projects", "clave_bd", pw, true],
+        ["projects", "clave_admin", pw, true],
+        ["projects", "clave_root", pw, true],
+        ["projects", "clave_servidor", pw, true],
+        ["projects", "clave_instagram", pw, true],
+        ["projects", "clave_ciec", pw, true],
+        ["projects", "clave_fiel", pw, true],
+        ["projects", "clave_tarjeta", pw, true],
+        ["projects", "clave_del_ftp", pw, true],
+        ["personal", "ciec", "4839", true],
+        // B-4: identifier words after clave stay visible (not a secret).
+        ["work", "clave_interbancaria", "012180001234567891", false],
+        ["work", "clave_elector", "ABCD123456", false],
+        ["work", "clave_producto", "SKU-1234", false],
+        ["work", "clave_proyecto", "ACME-42", false],
+        ["work", "clave_catastral", "1234-5678-90", false],
+        ["work", "clave_unica", "CURP-ABC", false],
+        ["work", "clave_rfc", "ACM010101ABC", false],
+        // round-7 adjective behaviour unchanged (clave is the trailing word).
+        ["work", "fechas_clave", "15 de marzo", false],
+        ["work", "clientes_clave", "Acme, Globex", false],
+        ["work", "palabras_clave", "seo, ventas", false],
+        // should-fix: *_session holding a random token is a session id.
+        ["projects", "acme_session", rndTok, true],
+        ["projects", "acme_session", "activa", false],
+        ["projects", "acme_session_timeout", "30m", false],
+        // should-fix: user:pass value shape.
+        ["projects", "acme_wp_admin", "admin:" + pw, true],
+        ["projects", "acme_login", "jdoe:" + pw, true],
+        ["projects", "schedule", "10:30", false],
+        ["projects", "aspect_ratio", "16:9", false],
+        ["projects", "db_server", "db:5432", false],
+        ["projects", "note_colon", "status:ok", false],
+        // should-fix: length / size / count meta suffixes are numeric.
+        ["projects", "acme_pin_code_length", "4", false],
+        ["projects", "acme_token_len", "32", false],
+        ["projects", "acme_key_size", "2048", false],
+        ["projects", "acme_pin_code_length", pw, true],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
+    });
+
+    describe("audit R9 — B2 clave_X by service word / B3 user:pass / session", () => {
+      const cases: Array<[string, string, string, boolean]> = [
+        // B2: clave_<service> is a credential whatever the value looks like.
+        ["p", "clave_ftp", "abcdef", true],
+        ["p", "clave_banco", "4321", true],
+        ["p", "clave_correo", "gato", true],
+        ["p", "clave_gmail", "perro", true],
+        ["p", "clave_ssh", "abc", true],
+        ["p", "clave_wifi", "casa", true],
+        ["p", "clave_ciec", "xyz", true],
+        ["p", "clave_fiel", "x", true],
+        ["p", "clave_del_ftp", "x", true],
+        ["p", "clave_sat", "x", true],
+        ["p", "ciec", "x", true],
+        // B2: any other clave_X is judged by its value only.
+        ["w", "clave_materia", "Tr0ub4dor&3", true],
+        ["w", "clave_sucursal", "Xk9#pLm2qR", true],
+        ["w", "clave_sucursal", "0042", false],
+        ["w", "clave_sat_producto", "43211503", false],
+        ["w", "clave_moneda", "MXN", false],
+        ["w", "clave_escuela", "09DPR1234X", false],
+        ["w", "clave_materia", "MAT-101", false],
+        ["w", "clave_departamento", "FIN-01", false],
+        ["w", "clave_ruta", "R12", false],
+        ["w", "clave_cuenta_contable", "1105-01", false],
+        ["w", "clave_imss", "12345678901", false],
+        ["w", "clave_issste", "12345678", false],
+        ["w", "clave_ine", "ABCDEF123456", false],
+        ["w", "clave_vendedor", "V-07", false],
+        ["w", "clave_almacen", "ALM-3", false],
+        ["w", "clave_centro_costos", "CC-200", false],
+        ["w", "clave_contrato", "CT-2026-9", false],
+        ["w", "clave_evento", "EV-33", false],
+        ["w", "clave_interbancaria", "012180001234567891", false],
+        ["w", "clave_elector", "GRMZFR90051209H400", false],
+        // B3: user:pass only under a login/credential key, with a real signal.
+        ["w", "ref", "ticket:ABC-12345", false],
+        ["w", "owner", "equipo:Finanzas2026", false],
+        ["w", "contacto", "Juan:Gerente2026", false],
+        ["w", "schedule", "lunes:Oficina-Norte", false],
+        ["w", "nota", "tema:Junta#2026", false], // neutral key: not judged
+        ["p", "acme_ftp", "ftpuser:Junta#2026", true],
+        ["p", "acme_wp_admin", "admin:S3cr#t!pw", true],
+        ["p", "acme_login", "jdoe:Gerente2026", false],
+        // should-fix 1: *_session needs a secret run or a long single token.
+        ["w", "training_session", "Monday 9am", false],
+        ["p", "acme_session", "Q".repeat(8) + "w".repeat(8), true],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
     });
   });
 
@@ -140,6 +946,86 @@ describe("user-facts", () => {
       expect(block).toContain("**diet**: high protein");
     });
 
+    it("Ruling 3: non-credential block format is byte-identical (pinned)", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "personal",
+            key: "age",
+            value: "30",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "personal",
+            key: "name",
+            value: "Ana",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "health",
+            key: "diet",
+            value: "high protein",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+        ]),
+      });
+
+      expect(formatUserFactsBlock()).toBe(
+        "\n\n## Perfil del usuario (hechos confirmados)\n" +
+          "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
+          "### personal\n- **age**: 30\n- **name**: Ana\n\n" +
+          "### health\n- **diet**: high protein",
+      );
+    });
+
+    it("Ruling 3: a credential fact keeps category and key, its value is masked", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "personal",
+            key: "wifi_password",
+            value: SYN_WIFI,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "projects",
+            key: "acme_api_key",
+            value: FAKE_GOOGLE_KEY,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "projects",
+            key: "acme_notes",
+            value: `usa ${FAKE_GOOGLE_KEY}`,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+        ]),
+      });
+
+      invalidateSecretRefs(); // the reference index reads these rows
+      const block = formatUserFactsBlock("acme");
+
+      // Ruling 3c: the mask carries the reference name and how to use it.
+      expect(block).toContain(
+        `### personal\n- **wifi_password**: ${secretPlaceholder("SECRET_PERSONAL_WIFI_PASSWORD")}`,
+      );
+      expect(block).toContain(
+        `- **acme_api_key**: ${secretPlaceholder("SECRET_PROJECTS_ACME_API_KEY")}`,
+      );
+      expect(block).toContain(
+        `- **acme_notes**: ${secretPlaceholder("SECRET_PROJECTS_ACME_NOTES")}`,
+      );
+      expect(block).not.toContain(CREDENTIAL_FACT_PLACEHOLDER);
+      expect(block).not.toContain(SYN_WIFI);
+      expect(block).not.toContain(FAKE_GOOGLE_KEY);
+    });
+
     it("2026-09-06: always-inject facts do not consume the scored budget", () => {
       // Live regression: `personal` alone was 3,726 chars, so every scored
       // fact (all 197 `projects` rows) was skipped on every turn since 05-24.
@@ -167,7 +1053,11 @@ describe("user-facts", () => {
       );
 
       expect(block).toContain("**bio**:");
-      expect(block).toContain("**fantasy_espn_s2**: cookie-value");
+      // Ruling 3: the scored credential fact is injected by name, value masked.
+      expect(block).toContain(
+        `**fantasy_espn_s2**: ${CREDENTIAL_FACT_PLACEHOLDER}`,
+      );
+      expect(block).not.toContain("cookie-value");
     });
 
     it("2026-09-06 qa-audit C1: a fact with no keyword overlap is never injected on an unrelated message", () => {

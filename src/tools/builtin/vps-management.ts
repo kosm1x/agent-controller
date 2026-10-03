@@ -11,8 +11,15 @@ import { join } from "path";
 import type { Tool } from "../types.js";
 import { execGroupKill } from "./shell.js";
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
+import {
+  CHANGED_BASE_REF,
+  relatedScopeSummary,
+  relatedTestCommand,
+  resolveTestScope,
+} from "./changed-tests.js";
 
 const MC_DIR = "/root/claude/mission-control";
+const DEPLOY_SCOPE_NOTE = `Note: the running build's commit is not recorded, so "changed" here is commits ahead of ${CHANGED_BASE_REF} + uncommitted changes, NOT everything since the last deploy.`;
 const DB_PATH = join(MC_DIR, "data", "mc.db");
 const BACKUP_DIR = join(MC_DIR, "backups");
 const BACKUP_RETENTION_DAYS = 7;
@@ -168,7 +175,7 @@ export const vpsDeployTool: Tool = {
     type: "function",
     function: {
       name: "vps_deploy",
-      description: `Build and deploy mission-control. Gates on test suite — will NOT restart if tests fail.
+      description: `Build and deploy mission-control. Gates on the tests related to changed files (not the full suite) — will NOT restart if they fail.
 
 USE WHEN:
 - After merging a Jarvis PR (jarvis_dev workflow)
@@ -176,7 +183,7 @@ USE WHEN:
 
 WORKFLOW:
 1. Runs npx tsc (build)
-2. Runs npx vitest run (tests)
+2. Runs the tests related to changed .ts files (none changed → skipped)
 3. If tests pass: systemctl restart mission-control
 4. Waits 5s, checks health endpoint
 5. Reports success or rollback instructions
@@ -206,30 +213,48 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
         return `❌ Deploy aborted: build failed\n${msg}`;
       }
 
-      // 2. Tests
-      try {
-        const { stdout: output } = await execGroupKill(
-          "npx vitest run --reporter=dot",
-          {
-            cwd: MC_DIR,
-            timeout: 120_000,
-            maxBuffer: 1024 * 1024,
-            env: process.env,
-          },
-        );
-        const match = output.match(/Tests\s+(\d+)\s+passed/);
-        lines.push(`✅ Tests: ${match?.[1] ?? "?"} passed`);
-      } catch (err) {
-        const stdout =
-          (err as { stdout?: string }).stdout?.slice(-300) ?? "test error";
-        return `❌ Deploy aborted: tests failed\n${stdout}`;
+      // 2. Tests related to the changed files only (operator ruling 4). The
+      // running build's commit is recorded nowhere, so "changed" cannot mean
+      // "since the last deploy" — say so in the output.
+      const scope = resolveTestScope(MC_DIR);
+      if (scope.kind === "error") {
+        return `❌ Deploy aborted: tests NOT RUN — ${scope.reason}`;
       }
+      if (scope.kind === "skip") {
+        lines.push(`⏭️ tests: skipped (${scope.reason})`);
+      } else {
+        try {
+          const { stdout: output } = await execGroupKill(
+            relatedTestCommand(scope.files),
+            {
+              cwd: MC_DIR,
+              timeout: 120_000,
+              maxBuffer: 1024 * 1024,
+              env: process.env,
+            },
+          );
+          const match = output.match(/Tests\s+(\d+)\s+passed/);
+          lines.push(
+            `✅ Tests: ${match?.[1] ?? "?"} passed`,
+            `Scope: ${relatedScopeSummary(scope, output)}`,
+          );
+        } catch (err) {
+          const stdout =
+            (err as { stdout?: string }).stdout?.slice(-300) ?? "test error";
+          return `❌ Deploy aborted: tests failed\n${stdout}\nScope: ${relatedScopeSummary(scope)}`;
+        }
+      }
+      lines.push(DEPLOY_SCOPE_NOTE);
 
       // 3. Restart — NOTE: this kills the current process.
       // The response is returned BEFORE the restart takes effect via
       // systemctl's --no-block flag. Jarvis should call vps_status after
       // to confirm health.
-      lines.push("✅ Build + tests passed. Initiating restart...");
+      lines.push(
+        scope.kind === "related"
+          ? "✅ Build + related tests passed. Initiating restart..."
+          : "✅ Build passed (tests skipped, see above). Initiating restart...",
+      );
       lines.push(
         "⚠️ The service will restart momentarily. Call vps_status in ~10s to confirm health.",
       );

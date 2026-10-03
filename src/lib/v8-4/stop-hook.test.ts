@@ -308,3 +308,48 @@ describe("qa folds 2026-08-16", () => {
     expect(traces("x1")).toEqual(["gates.hook_released"]);
   });
 });
+
+describe("ruling 3c, audit round 5 — evidence scrubbed before the 160-char cut", () => {
+  it("a stored value straddling char 160 of the evidence never leaks as a fragment", async () => {
+    const { resetSecretRefsForTest, secretPlaceholder } = await import(
+      "../secret-refs.js"
+    );
+    const stored = "sh-" + "k".repeat(20);
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)")
+      .run("projects", "acme_ftp_password", stored);
+    resetSecretRefsForTest();
+    declareGates("t5", [{ criterion: "deploy ok", check: "cmd" }], "submission");
+    // 150 filler chars, so a plain slice(0,160) would keep "sh-kkkkkkk".
+    const evidence = "e".repeat(150) + stored + " tail";
+    const hook = makeGatesStopHook("t5", {
+      env: ARMED,
+      evaluate: async () => {
+        recordGateResult("t5", "G1", { state: "failed", evidence });
+        const rows = listGates("t5");
+        return {
+          verdict: "failed",
+          total: 1,
+          met: 0,
+          failed: 1,
+          pending: 0,
+          abandoned: 0,
+          failedRows: rows,
+          pendingRows: [],
+          abandonedRows: [],
+          ran: 1,
+          abandonedNow: 0,
+          rows,
+        };
+      },
+    })!;
+    const blocked = (await hook(stopInput("Listo."), undefined, {
+      signal: new AbortController().signal,
+    })) as { reason: string };
+    expect(blocked.reason).not.toContain("sh-kkk");
+    expect(blocked.reason).toContain(
+      secretPlaceholder("SECRET_PROJECTS_ACME_FTP_PASSWORD").slice(0, 9),
+    );
+    resetSecretRefsForTest();
+  });
+});

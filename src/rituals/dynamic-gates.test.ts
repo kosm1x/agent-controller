@@ -214,6 +214,28 @@ describe("schedule submissions carry detectionText (2026-09-29)", () => {
     });
   });
 
+  // Ruling 2026-10-01: the yes is asked when the schedule is created; an
+  // existing schedule carrying gmail_send keeps firing unattended
+  // (interactive:false → the confirmation gate proceeds).
+  it("cron tick of a schedule carrying gmail_send stays non-interactive", async () => {
+    createSchedule({
+      scheduleId: "s-dt",
+      name: "DT",
+      description: "d",
+      cronExpr: "* * * * *",
+      tools: ["web_search", "gmail_send"],
+      delivery: "email",
+      emailTo: "a@b.mx",
+    });
+    startDynamicScheduler();
+    (mocks.scheduleCron.mock.calls[0]![2] as () => void)();
+    await vi.waitFor(() => expect(mocks.submitTask).toHaveBeenCalledTimes(1));
+    expect(mocks.submitTask.mock.calls[0]![0]).toMatchObject({
+      interactive: false,
+      tools: ["web_search", "gmail_send"],
+    });
+  });
+
   it("delivery-miss retry", async () => {
     create("email");
     watchScheduledTask("t-miss", getSchedule("s-dt")!);

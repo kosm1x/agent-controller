@@ -10,6 +10,11 @@ import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
 import { execGroupKill } from "./shell.js";
+import {
+  relatedScopeSummary,
+  relatedTestCommand,
+  resolveTestScope,
+} from "./changed-tests.js";
 
 const MC_DIR = "/root/claude/mission-control";
 
@@ -18,6 +23,8 @@ const MC_DIR = "/root/claude/mission-control";
  * which blocked the event loop and so could never overlap; now that they are
  * async, two concurrent tasks could each start the full suite, which OOMs
  * this box. Returns null (fn not run) when a run is already in flight.
+ * Shared by jarvis_test_run, vps_deploy and jarvis_dev's test gate (ruling 4:
+ * related tests only now, but still one run at a time).
  */
 let suiteRunInFlight = false;
 export const SUITE_RUN_BUSY =
@@ -242,7 +249,7 @@ export const jarvisTestRunTool: Tool = {
     type: "function",
     function: {
       name: "jarvis_test_run",
-      description: `Run typecheck and test suite on mission-control. Use BEFORE opening a PR to verify your fix.
+      description: `Run typecheck and the tests related to changed files (not the full suite) on mission-control. Use BEFORE opening a PR to verify your fix.
 
 DO NOT USE WHEN:
 - The code under test is another repo → run its own test command via shell_exec.
@@ -294,32 +301,41 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
 
       if (typecheckOnly) return lines.join("\n");
 
-      // Test suite
-      try {
-        const { stdout: output } = await execGroupKill(
-          "npx vitest run --reporter=dot",
-          {
-            cwd: MC_DIR,
-            timeout: 120_000,
-            maxBuffer: 1024 * 1024,
-            env: process.env,
-          },
-        );
-        const summary = output.match(/Tests\s+(\d+)\s+passed/);
-        const files = output.match(/Test Files\s+(\d+)\s+passed/);
-        lines.push(
-          `✅ Tests: ${summary?.[1] ?? "?"} passed (${files?.[1] ?? "?"} files)`,
-        );
-      } catch (err) {
-        const stdout =
-          (err as { stdout?: string }).stdout?.slice(-500) ?? "unknown error";
-        const failMatch = stdout.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
-        if (failMatch) {
-          lines.push(
-            `❌ Tests: ${failMatch[1]} failed, ${failMatch[2]} passed`,
+      // Tests related to the changed files only (operator ruling 4).
+      const scope = resolveTestScope(MC_DIR);
+      if (scope.kind === "skip") {
+        lines.push(`⏭️ tests: skipped (${scope.reason})`);
+      } else if (scope.kind === "error") {
+        lines.push(`❌ Tests: NOT RUN — ${scope.reason}`);
+      } else {
+        try {
+          const { stdout: output } = await execGroupKill(
+            relatedTestCommand(scope.files),
+            {
+              cwd: MC_DIR,
+              timeout: 120_000,
+              maxBuffer: 1024 * 1024,
+              env: process.env,
+            },
           );
-        } else {
-          lines.push(`❌ Tests: FAIL\n${stdout.slice(0, 300)}`);
+          const summary = output.match(/Tests\s+(\d+)\s+passed/);
+          const files = output.match(/Test Files\s+(\d+)\s+passed/);
+          lines.push(
+            `✅ Tests: ${summary?.[1] ?? "?"} passed (${files?.[1] ?? "?"} files)`,
+            `Scope: ${relatedScopeSummary(scope, output)}`,
+          );
+        } catch (err) {
+          const full = (err as { stdout?: string }).stdout;
+          const stdout = full?.slice(-500) ?? "unknown error";
+          const failMatch = stdout.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
+          if (failMatch) {
+            lines.push(
+              `❌ Tests: ${failMatch[1]} failed, ${failMatch[2]} passed`,
+            );
+          } else {
+            lines.push(`❌ Tests: FAIL\n${stdout.slice(0, 300)}`);
+          }
+          lines.push(`Scope: ${relatedScopeSummary(scope, full)}`);
         }
       }
 

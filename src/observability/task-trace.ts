@@ -39,6 +39,17 @@ export type TraceEventName =
   | "confirmation.continuation_started"
   | "confirmation.continuation_skipped"
   | "confirmation.continuation_failed"
+  // An unanswered approval reached its TTL (ruling 1, 2026-10-03)
+  | "confirmation.expired"
+  // One failed attempt at the expiry notice (audit A3; bounded retries)
+  | "confirmation.expiry_notice_failed"
+  // openai path dropped tool definitions outside the run's declared list
+  // (audit S2, rulings 1–2)
+  | "tools.declared_filtered"
+  // Ruling 3c (combined audit 2026-10-03): a secret reference / rendered
+  // placeholder refused, and a model request not sent (scrub unavailable)
+  | "tool.secret_ref_refused"
+  | "inference.scrub_unavailable"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

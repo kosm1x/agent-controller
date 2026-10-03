@@ -2,7 +2,7 @@
  * Shell command validation tests.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
@@ -25,8 +25,23 @@ import {
   isSecretEnvKey,
   buildScrubbedEnv,
   execGroupKill,
+  withDockerConfig,
+  withPmShimPath,
+  DOCKER_CONFIG_DIR,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
+
+// Ruling 3c: a stored secret reaches ONLY the child whose command names it.
+// The store is replaced by one synthetic reference, SECRET_T.
+const SECRET_SYN = vi.hoisted(() => "syn-" + "s".repeat(12));
+// A second synthetic stored value, the only one the scrub knows (fold F2).
+const SCRUB_SYN = vi.hoisted(() => "cut-" + "c".repeat(20));
+vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/secret-refs.js")>()),
+  secretEnvForCommand: (c: string) =>
+    /\$\{?SECRET_T\b/.test(c) ? { SECRET_T: SECRET_SYN } : {},
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
 
 // The checkout under test: the package-manager gate resolves `npx` bins against
 // real node_modules, so the tests must not assume the VPS path (CI checks out
@@ -310,7 +325,7 @@ describe("validateShellCommand", () => {
         "! test -f /tmp/x",
         "ls /root/claude/mission-control/*.json",
         "ls /root/claude/*",
-        "docker exec -i crm-hindsight psql -U x -c 'select 1'",
+        "docker exec -i supabase-db psql -U x -c 'select 1'", // ruling 5: psql through supabase-db only (crm-hindsight is refused below)
         "find /root/claude/vlved -name '*.ts'",
       ];
       for (const cmd of allowed) {
@@ -1679,7 +1694,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
       // ordinary globs under copy words stay ordinary (no glob rule — qa R6–R8)
       "cp b* /tmp/test/", "mv u* out/", "cat y*", "head -5 n*", "tar cf backup.tar c*", "sed -n 1,5p p*",
       "mv build/{a,b}* out/", "cp *.json dist/", "rsync -a src/*/ dst/", "tar xf *.tgz", "cat logs/*.log",
-      "cp -r node_modules/@types/* x/", 'grep -n "install" b*', "docker run img tar c*", "rg --files-with-matches cat y*",
+      "cp -r node_modules/@types/* x/", 'grep -n "install" b*', "docker logs img | tar c*", "rg --files-with-matches cat y*",
       "cp np*.log /tmp/test/", "tar cf x.tar bun*",
       // qa R8 W8-2: numeric values after non-wrappers do not mint a command position
       "grep -m 5 sudo file", "head -n 5 /etc/hosts", "timeout 5 ls", "nice -n 5 ls", "seq 5 sudo", "echo 5 su",
@@ -1938,5 +1953,527 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     expect(checkPackageManagerRaw("npm run update-something")).toBeNull();
     expect(checkPackageManagerRaw("npm install-scripts ls")).toBeNull();
     expect(checkPackageManagerRaw("npx tsx x.ts")).toBeNull();
+  });
+});
+
+describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () => {
+  const refused = (cmd: string, why: RegExp = /operator ruling 2026-10-01/) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(why);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("refuses every verb that reaches container/host file content or creates a container", () => {
+    for (const cmd of [
+      "docker exec crm-hindsight cat /app/config.json",
+      "docker exec supabase-db cat /etc/hostname",
+      "docker exec -it supabase-db sh",
+      "docker exec supabase-db bash -c 'psql -c \"select 1\"'",
+      "docker exec -i crm-hindsight psql -U x -c 'select 1'", // psql only through supabase-db
+      "docker cp supabase-db:/var/lib/postgresql/data/pg_hba.conf /tmp/x",
+      "docker cp /tmp/x supabase-db:/tmp/x",
+      "docker run --rm -v /:/h alpine cat /h/etc/hostname",
+      "docker run img tar c*",
+      "docker create -v /:/h alpine",
+      "docker build -t x .",
+      "docker buildx build .",
+      "docker commit supabase-db x",
+      "docker export supabase-db",
+      "docker save postgres > /tmp/x.tar",
+      "docker load < /tmp/x.tar",
+      "docker import /tmp/x.tar",
+      "docker attach supabase-db",
+      "docker push x/y",
+      "docker login -u x",
+      "docker swarm init",
+      "docker service create alpine",
+      "docker stack deploy -c x.yml s",
+      "docker plugin install x",
+      "docker context use other",
+      "docker system dial-stdio",
+      "docker container exec supabase-db cat /etc/hostname",
+      "docker container cp a:/x /tmp/y",
+      "docker container run alpine",
+      "docker image save x",
+      "docker compose exec db sh",
+      "docker compose run --rm db sh",
+      "docker compose up -d",
+      "docker compose create",
+      "docker compose build",
+      "docker compose cp db:/x /tmp/y",
+      "docker compose config",
+      "docker compose -f /opt/supabase/docker-compose.yml --project-directory /opt/supabase exec db sh",
+      "docker-compose exec db sh",
+      "/usr/libexec/docker/cli-plugins/docker-compose up",
+      "docker frobnicate", // an unknown verb at command position (a CLI plugin, say)
+      "docker container frob",
+    ]) refused(cmd);
+  });
+
+  it("the one exec form is `docker exec [-i|-t|-it|-ti|--interactive|--tty] supabase-db psql …`", () => {
+    for (const cmd of [
+      "docker exec supabase-db psql -U postgres -d postgres -c 'select 1'",
+      "docker exec -i supabase-db psql -U postgres < /tmp/q.sql",
+      "docker exec -t supabase-db psql",
+      "docker exec -it supabase-db psql -U postgres",
+      "docker exec -ti supabase-db psql",
+      "docker exec --interactive --tty supabase-db psql",
+      "docker container exec supabase-db psql -c 'select 1'",
+      "timeout 60 docker exec supabase-db psql -c 'select 1'",
+      "docker exec supabase-db psql -c 'select 1' 2>&1 | head -20",
+    ]) allowed(cmd);
+    for (const cmd of [
+      "docker exec -u root supabase-db psql",
+      "docker exec --user root supabase-db psql",
+      "docker exec --env-file /tmp/e supabase-db psql",
+      "docker exec -w / supabase-db psql",
+      "docker exec --privileged supabase-db psql",
+      "docker exec -d supabase-db psql",
+      "docker exec -itu root supabase-db psql",
+      "docker exec supabase-db /usr/bin/psql",
+      "docker exec supabase-db -it psql", // docker runs `-it` as the command
+      "docker exec supabase-db pg_dump -U postgres postgres",
+      "docker exec supabase-db pg_restore x",
+      "docker exec supabase-db pg_isready",
+      "docker exec supabase-db",
+      "docker exec",
+      `docker exec ${"-i ".repeat(64)}supabase-db psql`, // the 64th flag token refuses (cap = 64)
+    ]) refused(cmd);
+    // The psql arguments still meet the rest of the gate.
+    refused("docker exec supabase-db psql -f /root/.ssh/id_rsa", /\.ssh/);
+  });
+
+  it("ruling 5b (2026-10-03): `-e`/`--env` only on the supabase-db psql form, only for PG* names", () => {
+    for (const cmd of [
+      "docker exec -e PGPASSWORD=x supabase-db psql",
+      "docker exec --env PGUSER=y supabase-db psql",
+      "docker exec --env=PGDATABASE=z supabase-db psql",
+      "docker exec -ePGHOST=h supabase-db psql", // pflag: an attached value
+      "docker exec -e PGPASSWORD supabase-db psql", // no assignment: passed through from the caller's env
+      "docker exec -ie PGUSER=u supabase-db psql -c 'select 1'", // `e` last in a cluster takes the next token
+      "docker exec -it -e PGPASSWORD=x -e PGUSER=y supabase-db psql -U postgres",
+      "docker exec -e PG=1 supabase-db psql",
+      "docker exec -e PGPASSWORD=$SECRET_T supabase-db psql -c 'select 1'", // ruling 3c by-name use
+      "docker container exec --env PGSSLMODE=disable supabase-db psql",
+      "timeout 60 docker exec -e PGOPTIONS=x supabase-db psql",
+    ]) allowed(cmd);
+    for (const cmd of [
+      "docker exec -e LD_PRELOAD=/tmp/x.so supabase-db psql",
+      "docker exec --env PSQLRC=/tmp/rc supabase-db psql", // read by psql, but not PG*
+      "docker exec --env=LD_LIBRARY_PATH=/tmp supabase-db psql",
+      "docker exec -eLD_PRELOAD=x supabase-db psql",
+      "docker exec -e pgpassword=x supabase-db psql", // the name is case-sensitive
+      "docker exec -e XPGUSER=x supabase-db psql",
+      "docker exec -e PGX=1 supabase-db sh", // PG* with a non-psql binary
+      "docker exec -e PGX=1 supabase-db pg_dump x",
+      "docker exec -e PGX=1 crm-hindsight psql", // before a different container
+      "docker exec -e PGX=1 crm-hindsight cat /app/config.json",
+      "docker exec --env-file /tmp/e supabase-db psql",
+      "docker exec --env-file=/tmp/e supabase-db psql",
+      "docker exec -e supabase-db psql", // `-e` takes `supabase-db` as its value; `psql` is then the container
+      "docker exec -ei supabase-db psql", // pflag: `e` takes the rest (`i`) as its value
+      "docker exec -e PGX=1 -u root supabase-db psql", // the other flags stay refused
+      "docker exec -eu root supabase-db psql",
+      "docker exec -e", // no value
+      "docker exec --env",
+      "docker exec -e PGX=1 -- supabase-db psql",
+      `docker exec ${"-e PGX=1 ".repeat(64)}supabase-db psql`, // the cap counts flags, values included
+    ]) refused(cmd);
+    refused("docker exec -e PATH=/tmp supabase-db psql", /PATH/); // the PATH-rewrite rule answers first
+  });
+
+  it("finds the docker word behind wrappers, paths, global flags, separators and shell re-entry", () => {
+    for (const cmd of [
+      "timeout 5 docker cp a:/x /tmp/y",
+      "timeout -s KILL 5 docker run alpine",
+      "nohup docker run alpine &",
+      "env FOO=1 docker run alpine",
+      "nice -n 5 docker exec x cat /y",
+      "xargs docker cp",
+      "docker ps -q | xargs -I{} docker exec {} cat /etc/hostname",
+      "watch docker frob",
+      "ls; docker run alpine",
+      "true && docker cp a:/x /y",
+      "false || docker run alpine",
+      "(docker run alpine)",
+      "{ docker run alpine; }",
+      "bash -c 'docker exec x cat /y'",
+      "sh -c \"cd /tmp && docker cp a:/x y\"",
+      "eval docker run alpine",
+      "bash <<'EOF'\ndocker cp a:/x /tmp/y\nEOF",
+      "/usr/bin/docker run alpine",
+      "\"docker\" run alpine",
+      "d\\ocker run alpine",
+      "docker --context other exec supabase-db psql",
+      "docker -l debug run alpine",
+      "docker -D run alpine",
+      "docker --log-level=debug cp a:/x /y",
+      "docker 2>/dev/null exec x cat /y",
+      "docker >/tmp/o run alpine",
+      `docker ${"-D ".repeat(70)}run alpine`,
+      `python3 -c "import subprocess; subprocess.run(['docker','cp','a:/x','/tmp/y'])"`,
+      "bash -c 'docker -l debug run alpine'",
+      "bash -c 'docker exec -u root supabase-db psql'",
+      "sh -c \"docker compose -f x.yml exec db sh\"",
+      "if docker frob; then ls; fi",
+      "while docker frob; do ls; done",
+      "echo docker builder build", // prose naming a refused sub-verb
+    ]) refused(cmd);
+  });
+
+  it("refuses pointing the CLI at another daemon, context or config, and the API socket", () => {
+    for (const cmd of [
+      "docker -H tcp://10.0.0.1:2375 ps",
+      "docker --host unix:///tmp/d.sock ps",
+      "docker --host=tcp://x ps",
+      "docker -Htcp://x ps",
+      "docker -c other ps",
+      "docker --context other ps",
+      "docker --config /tmp/cfg ps",
+      "docker -H tcp://x",
+      "DOCKER_HOST=tcp://x docker ps",
+      "export DOCKER_HOST=tcp://x; docker ps",
+      "env DOCKER_CONTEXT=other docker ps",
+      "DOCKER_CONFIG=/tmp/c docker ps",
+    ]) refused(cmd);
+    refused("curl --unix-socket /var/run/docker.sock http://d/containers/json", /Docker API socket/);
+    refused("curl --unix-socket /run/docker.sock -X POST http://d/containers/create", /Docker API socket/);
+    refused("socat - UNIX-CONNECT:/var/run/docker.sock", /Docker API socket/);
+  });
+
+  it("read verbs pass, lifecycle verbs keep their verdict, and the word as an argument is data", () => {
+    for (const cmd of [
+      // READ
+      "docker ps", "docker ps -a --format '{{.Names}}\t{{.Status}}'", "docker logs --tail 50 supabase-db 2>&1 | tail -5",
+      "docker logs -f supabase-db", "docker inspect supabase-db", "docker inspect -f '{{.State.Health.Status}}' supabase-db",
+      "docker images", "docker stats --no-stream", "docker version", "docker info", "docker top supabase-db",
+      "docker port supabase-db", "docker events --since 1h --until 0s", "docker history postgres", "docker diff supabase-db",
+      "docker search postgres", "docker wait x", "docker help", "docker --version", "docker -v", "docker",
+      "docker container ls -a", "docker container inspect supabase-db", "docker image ls", "docker network ls",
+      "docker network inspect bridge", "docker volume ls", "docker volume inspect pg", "docker system df", "docker system info",
+      "docker context ls", "docker context show", "docker plugin ls", "docker builder ls", "docker buildx du",
+      "docker compose ps", "docker compose ls", "docker compose logs --tail 20 db", "docker compose top", "docker compose images",
+      "docker compose version", "docker compose -f /opt/supabase/docker-compose.yml ps", "docker-compose ps", "docker compose",
+      "docker -l debug ps", "docker -D ps", "timeout 5 docker ps", "watch -n 5 docker stats --no-stream",
+      // `bash -c` re-validation strips `-x` flags from the string; the docker rule reads it from the outer walk intact
+      "bash -c 'docker -l debug ps'", "sh -c \"docker compose -f x.yml ps\"", "bash -c 'docker logs -f --tail 5 supabase-db'",
+      "bash -c 'docker exec -it supabase-db psql -c \"select 1\"'",
+      // LIFECYCLE (not ruled: allowed at HEAD, still allowed)
+      "docker start x", "docker stop x", "docker restart supabase-db", "docker kill x", "docker rm x", "docker rmi x",
+      "docker pause x", "docker unpause x", "docker pull postgres:16", "docker tag a b", "docker rename a b",
+      "docker update --restart unless-stopped x", "docker container prune -f", "docker image prune -af",
+      "docker system prune -f", "docker volume prune -f", "docker network prune -f", "docker builder prune -f",
+      "docker buildx prune -f", "docker compose down", "docker compose stop", "docker compose restart db",
+      "docker compose start", "docker compose pull",
+      // the word as an argument or a path is data
+      "ls docker/", "cat docker-compose.yml", "grep docker src", "grep -rn docker src | head", "git log -- docker",
+      "which docker", "ls -l /usr/bin/docker", "command -v docker", "type docker", "ls /usr/libexec/docker/cli-plugins/docker-compose",
+      "du -sh /var/lib/docker", "echo docker ps", "grep -c docker frob.txt",
+    ]) allowed(cmd);
+    // HEAD's other rules still fire on lifecycle verbs exactly as before.
+    expect(validateShellCommand("docker rm -f /x").allowed).toBe(false); // rm-with-absolute-path pattern, unchanged
+  });
+
+  it("ruling 5c (2026-10-03): `docker volume create` with a bind/device option is refused; plain create stays", () => {
+    for (const cmd of [
+      "docker volume create --driver local --opt type=none --opt device=/ --opt o=bind v",
+      "docker volume create --opt type=none v",
+      "docker volume create -o type=none v",
+      "docker volume create -otype=none v", // attached value
+      "docker volume create --opt=type=none v",
+      "docker volume create --opt TYPE=NONE v",
+      "docker volume create --opt device=/root v",
+      "docker volume create -o device=/etc v",
+      "docker volume create --opt=device=/ v",
+      "docker volume create --opt o=bind v",
+      "docker volume create -o o=rbind v",
+      "docker volume create --opt o=rw,bind v", // the tokenizer splits the comma; the word after o= is still read
+      "docker volume create --opt o=bind,ro v",
+      "docker volume create -d local -o o=bind -o device=/ v",
+      "docker volume create --driver=local --opt=o=bind v",
+      "docker volume create v --opt type=none", // options after the name
+      "docker volume create --label x=y --opt 'type=none' v", // quotes are stripped
+      "T=type=none; docker volume create --opt $T v", // a known variable is expanded
+      "timeout 5 docker volume create --opt device=/ v",
+      "bash -c 'docker volume create --opt o=bind v'",
+      `docker volume create ${"--label a=b ".repeat(40)}--opt type=none v`, // padding past the cap refuses
+    ]) refused(cmd);
+    for (const cmd of [
+      "docker volume create v",
+      "docker volume create",
+      "docker volume create --driver local v",
+      "docker volume create --opt type=tmpfs --opt o=size=100m v",
+      "docker volume create --label app=mc v",
+      "docker volume create binder", // a name merely containing `bind`
+      "docker volume ls", "docker volume inspect v", "docker volume rm v", "docker volume prune -f",
+    ]) allowed(cmd);
+  });
+
+  it("ruling 5d: daemon redirection stays refused (pinned again after the 2026-10-03 follow-ups)", () => {
+    for (const cmd of [
+      "docker --context=other ps",
+      "docker --config=/tmp/c ps",
+      "docker -H unix:///tmp/d.sock exec supabase-db psql",
+      "docker --host=tcp://x volume create v",
+      "DOCKER_HOST=tcp://x docker exec supabase-db psql",
+      "docker exec -e DOCKER_HOST=tcp://x supabase-db psql", // not PG*, and DOCKER_HOST= is refused anywhere
+    ]) refused(cmd);
+    refused("docker exec -e PGHOST=/var/run/docker.sock supabase-db psql", /Docker API socket/);
+  });
+
+  it("ruling 5d: ANY `DOCKER_*=` assignment is refused, wherever it appears; reads and lowercase are not", () => {
+    for (const cmd of [
+      "DOCKER_CERT_PATH=/tmp/certs docker ps",
+      "DOCKER_TLS_VERIFY=1 docker ps",
+      "DOCKER_API_VERSION=1.40 docker ps",
+      "export DOCKER_TLS_VERIFY=0; docker ps",
+      "env DOCKER_CERT_PATH=/tmp/c docker ps",
+      "DOCKER_BUILDKIT=1 docker ps",
+      // not only in front of a docker word: an assignment reaches docker through a script, make, npm run, …
+      "DOCKER_CERT_PATH=/tmp/c ./deploy.sh",
+      "DOCKER_TLS_VERIFY=0 make up",
+      "DOCKER_FOO=1 npm run x", // deliberate: a non-docker DOCKER_ variable is refused too (no logged use)
+      "bash -c 'DOCKER_API_VERSION=1.40 docker ps'",
+    ]) refused(cmd, /^`DOCKER_\w+=` is refused/);
+    refused("docker exec -e DOCKER_CERT_PATH=/x supabase-db psql", /docker exec -e DOCKER_CERT_PATH/); // inside -e: not PG*
+    for (const cmd of [
+      "docker_host=tcp://x docker ps", // bash treats lowercase as a different variable; the CLI does not read it
+      "MY_DOCKER_HOST=x ls", // DOCKER_ must start the name
+      "echo $DOCKER_HOST", // a read, not an assignment
+      "printenv DOCKER_CERT_PATH",
+      "unset DOCKER_HOST",
+      "grep -n DOCKER_TLS_VERIFY docs/x.md",
+    ]) allowed(cmd);
+  });
+
+  it("audit B1: every pflag spelling of `-o`/`--opt` is read, `-o=value` included", () => {
+    for (const cmd of [
+      "docker volume create -o=type=none h",
+      "docker volume create -o=o=bind h",
+      "docker volume create -o=device=/ h",
+      "docker volume create -o=type=none -o=o=bind -o=device=/ h", // the audit probe
+      "docker volume create --opt type=none h", // --opt X
+      "docker volume create --opt=type=none h", // --opt=X
+      "docker volume create -o type=none h", // -o X
+      "docker volume create -otype=none h", // -oX
+      "docker volume create -o=O=RBIND h",
+      "docker volume create -o=o=rw,bind h",
+    ]) refused(cmd);
+    for (const cmd of [
+      "docker volume create name",
+      "docker volume create --driver local name",
+      "docker volume create --driver=local -o=type=tmpfs -o=o=size=100m name",
+    ]) allowed(cmd);
+  });
+
+  it("audit B2: a builtin that sets a DOCKER_ variable by name is refused (5d: anywhere)", () => {
+    for (const cmd of [
+      "read DOCKER_HOST < /tmp/h; docker ps",
+      "read -r DOCKER_HOST",
+      "echo tcp://x | read DOCKER_HOST",
+      "printf -v DOCKER_HOST %s tcp://x; docker ps",
+      "printf -vDOCKER_HOST %s tcp://x",
+      "mapfile -t DOCKER_HOST < /tmp/h",
+      "readarray DOCKER_CONTEXT < /tmp/h",
+      "declare -x DOCKER_HOST",
+      "declare -n r=DOCKER_HOST", // nameref
+      "typeset DOCKER_HOST",
+      "export DOCKER_HOST",
+      "export -n DOCKER_CONFIG",
+      "local DOCKER_HOST",
+      "getopts h: DOCKER_HOST",
+      "for DOCKER_HOST in tcp://x; do docker ps; done",
+      "select DOCKER_HOST in tcp://x; do docker ps; done",
+      ": ${DOCKER_HOST:=tcp://x}; docker ps", // assign-default expansion
+      ": ${DOCKER_HOST=tcp://x}",
+      "DOCKER_HOST+=tcp://x docker ps", // append to an unset variable sets it
+      "DOCKER_HOST[0]=tcp://x; export DOCKER_HOST",
+      "(( DOCKER_TLS_VERIFY = 0 ))", // arithmetic assignment, spaced
+      "let DOCKER_TLS_VERIFY=0",
+      "bash -c 'read DOCKER_HOST'",
+    ]) refused(cmd);
+    refused("builtin read DOCKER_HOST", /./); // `builtin` is already refused by the env-reset rule
+    for (const cmd of [
+      "echo $DOCKER_HOST",
+      "echo ${DOCKER_HOST:-unset}", // use-default does not assign
+      "printenv DOCKER_CERT_PATH",
+      "printf '%s\\n' DOCKER_HOST", // printf without -v
+      "grep -n DOCKER_TLS_VERIFY docs/x.md",
+      "read -r line < /tmp/x",
+      "for f in a b; do grep DOCKER_HOST $f; done", // the name is in another segment than `for`
+      "unset DOCKER_HOST",
+    ]) allowed(cmd);
+  });
+
+  it("audit B3: DOCKER_CONFIG is pinned in the child env and cannot be unpinned", async () => {
+    expect(DOCKER_CONFIG_DIR).toBe(process.env.DOCKER_CONFIG || join(process.env.HOME || "/root", ".docker"));
+    expect(withDockerConfig({ HOME: "/tmp/h", PATH: "/bin" }, "/real/.docker")).toEqual({
+      HOME: "/tmp/h",
+      PATH: "/bin",
+      DOCKER_CONFIG: "/real/.docker",
+    });
+    expect(withDockerConfig({ DOCKER_CONFIG: "/tmp/other" }, "/real/.docker").DOCKER_CONFIG).toBe("/real/.docker");
+    // withPmShimPath carries the pin too, so the task_gates check_cmd child (gate-check.ts) gets it.
+    expect(withPmShimPath({ HOME: "/tmp/h", PATH: "/bin" }).DOCKER_CONFIG).toBe(DOCKER_CONFIG_DIR);
+    expect(withPmShimPath({ DOCKER_CONFIG: "/tmp/other", PATH: "/bin" }).DOCKER_CONFIG).toBe(DOCKER_CONFIG_DIR);
+    // The live child: a HOME override in the command leaves DOCKER_CONFIG on the startup dir.
+    _resetFlailingGuard();
+    const parsed = JSON.parse(await shellTool.execute({ command: "HOME=/tmp/h printenv DOCKER_CONFIG" }));
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.stdout.trim()).toBe(DOCKER_CONFIG_DIR);
+    refused("unset DOCKER_CONFIG; HOME=/tmp/h docker ps");
+    refused("unset -v DOCKER_CONFIG");
+    refused("env -u DOCKER_CONFIG HOME=/tmp/h docker ps", /./); // `env -u` is already refused by the env-reset rule
+  });
+
+  it("prose naming a refused verb is refused, as the package-manager walk refuses `echo npm install x`", () => {
+    refused("echo docker run");
+    refused("grep -rn 'docker exec' src");
+    refused("echo 'use docker cp to copy'");
+    refused("grep -rn 'docker compose up' docs"); // sub-verb tables decide prose too, not only command position
+    expect(validateShellCommand("echo npm install x").allowed).toBe(false); // the precedent
+  });
+
+  it("npm run script bodies are held to the docker rule", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "mc-docker-scripts-"));
+    try {
+      writeFileSync(
+        join(tmp, "package.json"),
+        JSON.stringify({ scripts: { "docker:logs": "docker logs --tail 20 db", "docker:sh": "docker exec -it db sh", "db:psql": "docker exec -i supabase-db psql -U postgres" } }),
+      );
+      allowed(`cd ${tmp} && npm run docker:logs`);
+      allowed(`cd ${tmp} && npm run db:psql`);
+      refused(`cd ${tmp} && npm run docker:sh`, /script `docker:sh`.*docker exec db sh/);
+      refused(`cd ${tmp} && bash -c 'npm run docker:sh'`, /script `docker:sh`/); // the body is checked inside a re-validation too
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("a here-string fed to a shell is its script (audit fold 1, C1)", () => {
+    for (const cmd of [
+      "bash <<< 'docker run x'",
+      'sh <<< "docker cp a b"',
+      "bash <<<'docker run x'", // attached operand
+      "bash 2>&1 <<< 'docker run x'",
+      "timeout 5 bash <<< 'docker exec supabase-db sh'",
+      "eval <<< 'docker run x'",
+      "bash <<< 'docker frob'", // command position: an unknown verb is refused
+      "cat <<< 'docker run x'", // as before the fold: flat prose naming a refused verb
+    ]) refused(cmd);
+    for (const cmd of [
+      "bash <<< 'docker ps'",
+      "bash <<<'docker ps'",
+      "bash <<< 'docker exec supabase-db psql -c \"select 1\"'",
+      "cat <<< 'docker frob'", // not fed to a shell: argument data
+      "cat <<< hello",
+    ]) allowed(cmd);
+  });
+
+  it("short flags follow pflag: the first value letter takes the rest of the token (audit fold 1, C2)", () => {
+    for (const cmd of [
+      "docker compose -papp up",
+      "docker compose -pmcp up",
+      "docker compose -pf up",
+      "docker -lfatal run x",
+      "docker -lfatal run ps", // the old rule swallowed `run` and read `ps` as the verb
+      "docker -Dl debug run x",
+      "docker compose -fx.yml exec a sh",
+      "docker -Htcp://x ps", // attached daemon-redirect flags
+      "docker -cfoo ps",
+    ]) refused(cmd);
+    for (const cmd of [
+      "docker -lfatal ps",
+      "docker -lfatal images img", // the old rule swallowed `images` and refused `img` as unknown
+      "docker -Dl debug ps",
+      "docker compose -f x.yml ps",
+      "docker compose -p app ps",
+      "docker compose -papp ps",
+    ]) allowed(cmd);
+  });
+
+  it("pins the surviving audit mutants MB–MG and the flag cap boundary (audit fold 1, W1)", () => {
+    for (const cmd of [
+      "docker --log-level debug ps", // MB: --log-level takes a value
+      "docker 2>/dev/null ps", // MG: a redirection before the verb is skipped
+      "docker exec 2>/dev/null supabase-db psql -c 'select 1'",
+      `docker ${"-D ".repeat(63)}ps`, // 63 flag tokens pass
+    ]) allowed(cmd);
+    for (const cmd of [
+      "docker compose scale web=3", // MC: scale is refused, not lifecycle
+      "bash -c 'docker frob'", // MD: a shell re-entry is command position
+      "docker-buildx build .", // ME: the buildx plugin binary is a docker word
+      "docker exec supabase-db psqlx", // MF: psql exactly, not a prefix
+      `docker ${"-D ".repeat(64)}ps`, // the 64th flag token refuses
+    ]) refused(cmd);
+  });
+
+  it("stays linear on 131,072-byte docker-dense input", () => {
+    for (const cmd of [
+      ("docker ".repeat(20_000)).slice(0, 131_072),
+      ("docker exec ".repeat(11_000)).slice(0, 131_072),
+      ("timeout 1 ".repeat(13_000) + "docker ps").slice(-131_072),
+      ("echo " + "docker -D ".repeat(13_000)).slice(0, 131_072),
+      ("echo " + "docker -l ".repeat(13_000)).slice(0, 131_072),
+      ("echo " + ("docker " + "-D ".repeat(60) + "ps ").repeat(700)).slice(0, 131_072),
+      ("docker compose " + "-f x ".repeat(26_000)).slice(0, 131_072),
+      ("bash <<< " + "<<<docker ".repeat(13_000)).slice(0, 131_072),
+      ("docker compose " + "-papp ".repeat(21_000)).slice(0, 131_072),
+    ]) {
+      expect(Buffer.byteLength(cmd)).toBeLessThanOrEqual(131_072);
+      const t = performance.now();
+      const r = validateShellCommand(cmd);
+      const ms = performance.now() - t;
+      expect(r.reason ?? "", `len=${cmd.length}`).not.toMatch(/command too long/);
+      // Same bound as the hostile-input pin above (linear worst case ~440 ms on the VPS).
+      expect(ms, `len=${cmd.length}`).toBeLessThan(1500);
+    }
+  });
+});
+
+describe("ruling 3c — $SECRET_X is exported only into the child that names it", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("referenced: set in the child; the command text stays literal", async () => {
+    const r = JSON.parse(
+      await shellTool.execute({ command: 'printf %s "$SECRET_T"' }),
+    );
+    expect(r.stdout).toBe(SECRET_SYN);
+  });
+
+  it("not referenced: absent from the child env", async () => {
+    const r = JSON.parse(
+      await shellTool.execute({ command: "printenv SECRET_T || echo absent" }),
+    );
+    expect(r.stdout.trim()).toBe("absent");
+  });
+
+  // Fold F2: a stored value straddling the 10,000-char cut must not leave a
+  // prefix behind — the scrub runs before the cut (success and error paths).
+  it("a stored value straddling the output cap is scrubbed before the cut (stdout)", async () => {
+    const r = JSON.parse(
+      await shellTool.execute({
+        command: `printf '%9995s' '' | tr ' ' x; printf %s ${SCRUB_SYN}`,
+      }),
+    );
+    expect(r.exit_code).toBe(0);
+    expect(r.stdout.slice(9995)).toMatch(/^\[ocul\n\.\.\. \(truncated/);
+    expect(r.stdout).not.toContain(SCRUB_SYN.slice(0, 5));
+  });
+
+  it("a stored value straddling the output cap is scrubbed before the cut (error path, stdout and stderr)", async () => {
+    const r = JSON.parse(
+      await shellTool.execute({
+        command: `printf '%9995s' '' | tr ' ' x; printf %s ${SCRUB_SYN}; printf '%9995s' '' | tr ' ' y >&2; printf %s ${SCRUB_SYN} >&2; exit 3`,
+      }),
+    );
+    expect(r.exit_code).toBe(3);
+    for (const out of [r.stdout, r.stderr]) {
+      expect(out.slice(9995)).toBe("[oculto]".slice(0, 5));
+      expect(out).not.toContain(SCRUB_SYN.slice(0, 5));
+    }
   });
 });

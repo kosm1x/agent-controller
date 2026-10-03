@@ -3,11 +3,19 @@ import {
   createTaskExecutor,
   argsFingerprint,
   confirmationGate,
+  highRiskScheduledTools,
+  noConfirmBackgroundScheduleError,
+  noConfirmApiScheduleError,
+  undeclaredToolError,
   NO_CONFIRM_CHANNEL_ERROR,
   NO_CONFIRM_IN_CHAT_ERROR,
   NO_CONFIRM_A2A_ERROR,
 } from "./task-executor.js";
 import { TaskExecutionContext } from "../inference/execution-context.js";
+
+// Ruling 2026-10-03: the undeclared-tool refusal is a trace event.
+const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
+vi.mock("../observability/task-trace.js", () => traceMock);
 
 /** The fast runner's context on a router-tracked operator chat root. */
 const askable = (taskId: string) =>
@@ -180,6 +188,36 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
     expect(reg.execute).not.toHaveBeenCalled();
     expect(ctx.getPendingConfirmation()).not.toBeNull();
     expect(ctx.getPendingConfirmation()!.toolName).toBe("gmail_send");
+  });
+
+  // Combined audit 2026-10-03 (should-fix 3): no card for a call the
+  // registry would refuse after the approval.
+  it("a high-risk call carrying a rendered placeholder is refused before the card", async () => {
+    const reg = mockRegistry();
+    (reg.getEffectiveRiskTier as ReturnType<typeof vi.fn>).mockReturnValue(
+      "high",
+    );
+    const ctx = askable("task-ph");
+    const exec = createTaskExecutor(reg, ctx);
+    const ph =
+      "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const result = await exec("gmail_send", {
+      to: "test@example.com",
+      subject: "Test",
+      body: `A complete email body with the key ${ph} inside it.`,
+    });
+    expect(JSON.parse(result).error).toMatch(
+      /^No ejecuté gmail_send: los argumentos contienen un dato oculto/,
+    );
+    expect(result).not.toContain("CONFIRMATION_REQUIRED");
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.getPendingConfirmation()).toBeNull();
+    expect(traceMock.emitTraceEvent).toHaveBeenCalledWith({
+      taskId: "task-ph",
+      name: "tool.secret_ref_refused",
+      tool: "gmail_send",
+      attrs: { tool: "gmail_send", reason: "rendered_placeholder", stage: "pre_gate" },
+    });
   });
 
   it("allows high-risk tools in non-interactive context (scheduled tasks)", async () => {
@@ -422,6 +460,220 @@ describe("confirmationGate", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Operator ruling 2026-10-01: a schedule carrying a high-risk tool asks once
+// ---------------------------------------------------------------------------
+
+describe("schedule_task escalation (ruling 2026-10-01)", () => {
+  /** Registry whose tier is per tool name: schedule_task itself stays low. */
+  const tiered = () => ({
+    getEffectiveRiskTier: vi.fn(
+      (n: string): "low" | "medium" | "high" =>
+        n === "gmail_send" || n === "tweet_post" ? "high" : "low",
+    ),
+    // Registered: everything named in these tests except the `__` names
+    // below that are not loaded (xpoz__post, notion__create_page) and a
+    // plain unknown name (unknown_tool_xyz).
+    has: vi.fn(
+      (n: string) =>
+        !["xpoz__post", "notion__create_page", "unknown_tool_xyz"].includes(n),
+    ),
+  });
+  const sched = (over: Record<string, unknown> = {}) => ({
+    name: "Reporte",
+    description: "Busca noticias",
+    cron: "0 8 * * *",
+    tools: ["web_search", "web_read"],
+    delivery: "telegram",
+    ...over,
+  });
+
+  it("a schedule whose tools are all low-risk runs without asking, as before", () => {
+    expect(
+      confirmationGate(tiered(), askable("s"), "schedule_task", sched()),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("a declared high-risk tool asks in a chat that can ask", () => {
+    for (const tools of [["web_search", "gmail_send"], ["tweet_post"]]) {
+      expect(
+        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ tools })),
+      ).toEqual({ action: "confirm" });
+    }
+  });
+
+  it("email/both delivery carries gmail_send (dynamic.ts adds it to every run) → asks; telegram does not", () => {
+    for (const delivery of ["email", "both"]) {
+      expect(
+        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ delivery, email_to: "a@b.mx" })),
+      ).toEqual({ action: "confirm" });
+    }
+    expect(
+      confirmationGate(tiered(), askable("s"), "schedule_task", sched({ delivery: "telegram" })),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("decided from the tools list only — prompt prose naming a high-risk tool does not ask", () => {
+    expect(
+      confirmationGate(tiered(), askable("s"), "schedule_task", sched({
+        description: "usa gmail_send y tweet_post para avisar",
+      })),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("fold 1 W1: a background run (scheduled, ritual, batch child, API interactive:false) cannot create a schedule carrying a risky tool", () => {
+    for (const bg of [
+      new TaskExecutionContext("s", false),
+      new TaskExecutionContext("s", false, { routerRoot: true, chatOrigin: true }),
+      new TaskExecutionContext("s", false, { a2aOrigin: true }),
+    ]) {
+      expect(
+        confirmationGate(tiered(), bg, "schedule_task", sched({ tools: ["web_search", "gmail_send", "tweet_post"] })),
+      ).toEqual({
+        action: "refuse",
+        error: noConfirmBackgroundScheduleError(["gmail_send", "tweet_post"]),
+      });
+      expect(
+        confirmationGate(tiered(), bg, "schedule_task", sched({ delivery: "email", email_to: "a@b.mx" })),
+      ).toEqual({ action: "refuse", error: noConfirmBackgroundScheduleError(["gmail_send"]) });
+      // A low-risk schedule, and every other tool, stays `proceed` in the background.
+      expect(confirmationGate(tiered(), bg, "schedule_task", sched())).toEqual({ action: "proceed" });
+      for (const name of ["gmail_send", "tweet_post", "list_schedules", "batch_decompose"]) {
+        expect(
+          confirmationGate(tiered(), bg, name, sched({ tools: ["gmail_send"] })),
+        ).toEqual({ action: "proceed" });
+      }
+    }
+    // Unlocked does not matter: nobody said "sí" for a background schedule.
+    const unlocked = new TaskExecutionContext("s", false);
+    unlocked.isDestructiveUnlocked = () => true;
+    expect(
+      confirmationGate(tiered(), unlocked, "schedule_task", sched({ tools: ["gmail_send"] })).action,
+    ).toBe("refuse");
+    expect(noConfirmBackgroundScheduleError(["gmail_send", "tweet_post"])).toBe(
+      "Un schedule que usa herramientas de alto riesgo (gmail_send, tweet_post) solo puede crearse desde la conversación del operador, donde se confirma. Esta tarea en segundo plano no puede crearlo. No se ejecutó.",
+    );
+    expect(NO_CONFIRM_CHANNEL_ERROR).not.toBe(noConfirmBackgroundScheduleError(["gmail_send"]));
+  });
+
+  it("fold 1 W2: a declared tool-set carrier (schedule_task, batch_decompose) or an unloaded MCP name is risky whatever its tier", () => {
+    for (const tools of [
+      ["web_search", "schedule_task"],
+      ["batch_decompose"],
+      ["xpoz__post"],
+    ]) {
+      expect(
+        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ tools })),
+      ).toEqual({ action: "confirm" });
+    }
+    const reg = tiered();
+    expect(
+      highRiskScheduledTools(reg, {
+        tools: ["web_search", "schedule_task", "batch_decompose", "notion__create_page", "xpoz__search", "gmail_send"],
+      }),
+    ).toEqual(["schedule_task", "batch_decompose", "notion__create_page", "gmail_send"]);
+    // The other way: a registered low MCP name and names that merely
+    // contain a carrier's name do not ask.
+    for (const tools of [
+      ["xpoz__search"],
+      ["list_schedules", "schedule_task_v2", "batch"],
+    ]) {
+      expect(highRiskScheduledTools(reg, { tools })).toEqual([]);
+      expect(
+        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ tools })),
+      ).toEqual({ action: "proceed" });
+    }
+  });
+
+  it("fold 1 chain repro: A carrying schedule_task asks at creation; A's background run cannot then create B carrying gmail_send", () => {
+    // Creating A (its runs could create schedules) asks the operator once.
+    expect(
+      confirmationGate(tiered(), askable("chain"), "schedule_task", sched({ name: "A", tools: ["web_search", "schedule_task"] })),
+    ).toEqual({ action: "confirm" });
+    // A's cron run is interactive:false: creating B with gmail_send is refused.
+    const aRun = new TaskExecutionContext("chain-run", false);
+    expect(
+      confirmationGate(tiered(), aRun, "schedule_task", sched({ name: "B", tools: ["gmail_send"] })),
+    ).toEqual({ action: "refuse", error: noConfirmBackgroundScheduleError(["gmail_send"]) });
+    // Nor can it hand B the carrier itself.
+    expect(
+      confirmationGate(tiered(), aRun, "schedule_task", sched({ name: "B", tools: ["schedule_task"] })).action,
+    ).toBe("refuse");
+  });
+
+  it("re-audit 2026-10-03: ANY unregistered name is risky at creation, not only MCP-shaped `__` names", () => {
+    const reg = tiered();
+    expect(highRiskScheduledTools(reg, { tools: ["web_search", "unknown_tool_xyz"] })).toEqual([
+      "unknown_tool_xyz",
+    ]);
+    expect(
+      confirmationGate(tiered(), askable("s"), "schedule_task", sched({ tools: ["unknown_tool_xyz"] })),
+    ).toEqual({ action: "confirm" });
+    expect(
+      confirmationGate(tiered(), new TaskExecutionContext("s", false), "schedule_task", sched({ tools: ["unknown_tool_xyz"] })),
+    ).toEqual({ action: "refuse", error: noConfirmBackgroundScheduleError(["unknown_tool_xyz"]) });
+  });
+
+  it("re-audit 2026-10-03: an API task (no chat, not A2A) creating a risky schedule is NOT told to resubmit with interactive:false", () => {
+    const args = sched({ tools: ["gmail_send"] });
+    const gate = confirmationGate(tiered(), new TaskExecutionContext("s", true), "schedule_task", args);
+    expect(gate).toEqual({ action: "refuse", error: noConfirmApiScheduleError(["gmail_send"]) });
+    const error = (gate as { error: string }).error;
+    expect(error).not.toContain("interactive: false");
+    expect(error).not.toContain("segundo plano");
+    expect(error).toBe(
+      "Un schedule que usa herramientas de alto riesgo (gmail_send) solo puede crearse desde la conversación del operador, donde se confirma. Esta tarea no tiene esa conversación, así que no puede crearlo (tampoco como tarea no interactiva). No se ejecutó.",
+    );
+    // A high-risk tool itself (no escalation) keeps the API hint: there,
+    // interactive:false is the documented way to run it.
+    expect(
+      confirmationGate(tiered(), new TaskExecutionContext("s", true), "gmail_send", { to: "a@b.mx" }),
+    ).toEqual({ action: "refuse", error: NO_CONFIRM_CHANNEL_ERROR });
+  });
+
+  it("an interactive chat / A2A run that cannot ask is refused with the existing texts", () => {
+    const args = sched({ tools: ["gmail_send"] });
+    expect(
+      confirmationGate(tiered(), new TaskExecutionContext("s", true, { chatOrigin: true }), "schedule_task", args),
+    ).toEqual({ action: "refuse", error: NO_CONFIRM_IN_CHAT_ERROR });
+    expect(
+      confirmationGate(tiered(), new TaskExecutionContext("s", true, { a2aOrigin: true }), "schedule_task", args),
+    ).toEqual({ action: "refuse", error: NO_CONFIRM_A2A_ERROR });
+  });
+
+  it("the escalation is per tool: other tools with the same args are untouched", () => {
+    const args = sched({ tools: ["gmail_send"], delivery: "email" });
+    for (const name of ["list_schedules", "web_search", "constructor", "toString"]) {
+      expect(confirmationGate(tiered(), askable("s"), name, args)).toEqual({
+        action: "proceed",
+      });
+    }
+  });
+
+  it("highRiskScheduledTools: registry tier per name, deduped, non-strings ignored", () => {
+    const reg = tiered();
+    expect(
+      highRiskScheduledTools(reg, {
+        tools: ["gmail_send", 7, null, "tweet_post", "gmail_send", "web_search"],
+        delivery: "both",
+      }),
+    ).toEqual(["gmail_send", "tweet_post"]);
+    expect(highRiskScheduledTools(reg, { tools: "gmail_send" })).toEqual([]);
+    expect(highRiskScheduledTools(reg, { delivery: "email" })).toEqual(["gmail_send"]);
+  });
+
+  it("a parked schedule_task never reaches the registry (no write, so no read-back gate to fail)", async () => {
+    const reg = { ...mockRegistry(), ...tiered() } as unknown as import("./registry.js").ToolRegistry;
+    const ctx = askable("s-park");
+    const out = JSON.parse(
+      await createTaskExecutor(reg, ctx)("schedule_task", sched({ tools: ["gmail_send"] })),
+    );
+    expect(out.error).toBe("CONFIRMATION_REQUIRED");
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.getPendingConfirmation()?.toolName).toBe("schedule_task");
+  });
+});
+
 // CCP9: argsFingerprint tests
 describe("argsFingerprint", () => {
   it("produces deterministic output for same args", () => {
@@ -446,5 +698,112 @@ describe("argsFingerprint", () => {
 
   it("handles empty args", () => {
     expect(argsFingerprint({})).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator ruling 2026-10-03 (batch_decompose): a background sub-task may not
+// reach a high-risk tool or carrier that its run did not declare.
+// ---------------------------------------------------------------------------
+
+describe("undeclared high-risk tools in background sub-tasks (ruling 2026-10-03)", () => {
+  const reg = () => ({
+    getEffectiveRiskTier: vi.fn(
+      (n: string): "low" | "medium" | "high" =>
+        ["gmail_send", "google_workspace_cli"].includes(n) ? "high" : "low",
+    ),
+    has: vi.fn((n: string) => n !== "xpoz__post"),
+  });
+  /** A batch child of a scheduled run that declared `declared`. */
+  const child = (declared: string[], interactive = false) =>
+    new TaskExecutionContext("child", interactive, {
+      inheritedDeclaredTools: declared,
+    });
+
+  it("an undeclared gmail_send is refused, naming the tool and the schedule", () => {
+    expect(confirmationGate(reg(), child(["web_search"]), "gmail_send", { to: "a@b.mx" })).toEqual({
+      action: "refuse",
+      error: undeclaredToolError("gmail_send"),
+      reason: "undeclared_tool",
+    });
+    expect(undeclaredToolError("gmail_send")).toBe(
+      "La herramienta gmail_send es de alto riesgo y el schedule de esta tarea en segundo plano no la declaró, así que esta sub-tarea no puede usarla. No se ejecutó.",
+    );
+  });
+
+  it("a declared gmail_send proceeds (the schedule is the authorization, as before)", () => {
+    expect(
+      confirmationGate(reg(), child(["web_search", "gmail_send"]), "gmail_send", { to: "a@b.mx" }),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("nested carriers (batch_decompose, schedule_task) and unregistered names are refused when undeclared", () => {
+    for (const name of ["batch_decompose", "schedule_task", "xpoz__post"]) {
+      expect(confirmationGate(reg(), child(["web_search"]), name, {})).toMatchObject({
+        action: "refuse",
+        reason: "undeclared_tool",
+        error: undeclaredToolError(name),
+      });
+    }
+    // Declared: a carrier passes this check (schedule_task keeps its own).
+    expect(
+      confirmationGate(reg(), child(["batch_decompose"]), "batch_decompose", {}),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("low-risk undeclared tools, and a read call of a mixed tool, are untouched", () => {
+    expect(confirmationGate(reg(), child(["web_search"]), "web_read", {})).toEqual({
+      action: "proceed",
+    });
+    expect(
+      confirmationGate(reg(), child(["web_search"]), "google_workspace_cli", {
+        service: "gmail",
+        resource: "users.messages",
+        method: "list",
+      }),
+    ).toEqual({ action: "proceed" });
+    expect(
+      confirmationGate(reg(), child(["web_search"]), "google_workspace_cli", {
+        service: "gmail",
+        resource: "users.messages",
+        method: "send",
+      }).action,
+    ).toBe("refuse");
+  });
+
+  it("no inherited list (root run, interactive parent) → background behavior unchanged", () => {
+    expect(
+      confirmationGate(reg(), new TaskExecutionContext("root", false), "gmail_send", {}),
+    ).toEqual({ action: "proceed" });
+  });
+
+  it("chat / interactive runs are unchanged even if a list is present", () => {
+    const chat = new TaskExecutionContext("c", true, {
+      routerRoot: true,
+      canAskOperator: true,
+      chatOrigin: true,
+      inheritedDeclaredTools: ["web_search"],
+    });
+    expect(confirmationGate(reg(), chat, "gmail_send", {})).toEqual({ action: "confirm" });
+    expect(confirmationGate(reg(), chat, "batch_decompose", {})).toEqual({ action: "proceed" });
+  });
+
+  it("the executor refuses without running the tool, records the refusal on the run, and traces it", async () => {
+    const registry = {
+      ...reg(),
+      execute: vi.fn().mockResolvedValue('{"ok": true}'),
+      isDestructiveMcp: vi.fn().mockReturnValue(false),
+    } as unknown as import("./registry.js").ToolRegistry;
+    const ctx = child(["web_search"]);
+    const out = await createTaskExecutor(registry, ctx)("gmail_send", { to: "a@b.mx" });
+    expect(JSON.parse(out)).toEqual({ error: undeclaredToolError("gmail_send") });
+    expect(registry.execute).not.toHaveBeenCalled();
+    expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);
+    expect(traceMock.emitTraceEvent).toHaveBeenCalledWith({
+      taskId: "child",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "refused_undeclared" },
+    });
   });
 });

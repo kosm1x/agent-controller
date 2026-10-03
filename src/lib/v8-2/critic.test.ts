@@ -653,6 +653,27 @@ describe("verification tools — read-only guards", () => {
     expect(out.window_days).toBe(7);
   });
 
+  it("audit R4 S2: runRecallCheck's KB snippets carry no stored value", async () => {
+    const { invalidateSecretRefs } = await import("../secret-refs.js");
+    const SEC = "pw-" + "z".repeat(14); // synthetic, runtime-assembled
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "acme_ftp_password", SEC);
+    db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    ).run("f9", "kb/ftp.md", "Ftp", `the ftp login uses ${SEC} today`);
+    invalidateSecretRefs();
+    try {
+      const hit = runRecallCheck(db, "ftp login");
+      expect(hit).toContain("kb/ftp.md");
+      expect(hit).toContain("[oculto");
+      expect(hit).not.toContain(SEC);
+    } finally {
+      invalidateSecretRefs();
+    }
+  });
+
   it("runRecallCheck does a lexical FTS lookup over jarvis_files", () => {
     const db = getDatabase();
     db.prepare(
