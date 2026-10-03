@@ -30,10 +30,12 @@ export interface UserFact {
  * cache/hot/short. `clave` counts only as the last token or before
  * api/acceso/secreta/privada/wifi, never after `palabra` (keyword) — so
  * `clave_interbancaria` / `clave_elector` do not match. ct0 / swid / espn_s2
- * / li_at are session cookies stored under their own names.
+ * / li_at are session cookies stored under their own names; `s2` and
+ * `session` count only as the WHOLE name (ruling 3d: a project credential
+ * keyed `s2` / `session` is a cookie; `session_notes` is not).
  */
 const CREDENTIAL_NAME_RE =
-  / (?:api ?key|private key|access key|ssh key|(?<!(?:public|primary|foreign|sort|partition|cache|hot|short) )key(?= $)|token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )|secrets?|passwords?|pass|pw|passwd|pwd|passphrase|cookies?|o?auth|credentials?|bearer|jwt|(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )|llaves?|contrasenas?|credencial(?:es)?|secretos?|pin|sessionid|session id|sid(?= $)|phpsessid|li at|ct0|swid|espn s2) /;
+  / (?:api ?key|private key|access key|ssh key|(?<!(?:public|primary|foreign|sort|partition|cache|hot|short) )key(?= $)|token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )|secrets?|passwords?|pass|pw|passwd|pwd|passphrase|cookies?|o?auth|credentials?|bearer|jwt|(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )|llaves?|contrasenas?|credencial(?:es)?|secretos?|pin|sessionid|session id|sid(?= $)|phpsessid|li at|ct0|swid|espn s2|(?<=^ )(?:s2|session)(?= $)) /;
 
 /**
  * A name whose LAST token is metadata ABOUT a credential (`api_key_path`,

@@ -17,10 +17,12 @@ import {
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../../db/user-facts.js";
 import {
   resolveSecretRefs,
+  scrubSecrets,
   secretEnvForCommand,
   secretPlaceholder,
 } from "../../lib/secret-refs.js";
 import { projectGetTool, projectListTool, projectUpdateTool } from "./projects.js";
+import { ToolRegistry } from "../registry.js";
 
 // Synthetic credential values, assembled at runtime (never a key-shaped
 // literal in source — the repo is public).
@@ -62,7 +64,7 @@ afterEach(() => {
 });
 
 describe("project_get — credential masking", () => {
-  it("masks every credentials entry, whatever its key, with its by-name placeholder; the URL stays verbatim (ruling 3c)", async () => {
+  it("masks only the real credentials (classifier) by name; user and host show in clear; the URL stays verbatim (rulings 3c + 3d)", async () => {
     seedLegacy();
     clearLog();
     const out = await projectGetTool.execute({ slug: "legacy" });
@@ -72,9 +74,9 @@ describe("project_get — credential masking", () => {
         "Status: active",
         "URL: https://legacy.example.com",
         "\n**Credentials:** wp_user, wp_app_password, ftp_host, acme_api_key",
-        `  wp_user: ${secretPlaceholder("SECRET_LEGACY_WP_USER")}`,
+        "  wp_user: editor",
         `  wp_app_password: ${secretPlaceholder("SECRET_LEGACY_WP_APP_PASSWORD")}`,
-        `  ftp_host: ${secretPlaceholder("SECRET_LEGACY_FTP_HOST")}`,
+        "  ftp_host: ftp.example.com",
         `  acme_api_key: ${secretPlaceholder("SECRET_LEGACY_ACME_API_KEY")}`,
       ].join("\n"),
     );
@@ -181,7 +183,6 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
         credential_keys: ["wp_user", "wp_app_password"],
       },
       saved_secrets: {
-        "credentials.wp_user": secretPlaceholder("SECRET_NUEVO_WP_USER"),
         "credentials.wp_app_password": secretPlaceholder(
           "SECRET_NUEVO_WP_APP_PASSWORD",
         ),
@@ -218,7 +219,6 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     };
     expect(parsed.action).toBe("updated");
     expect(parsed.saved_secrets).toEqual({
-      "credentials.wp_user": secretPlaceholder("SECRET_LEGACY_WP_USER"),
       "credentials.api_key": secretPlaceholder("SECRET_LEGACY_API_KEY"),
       "credentials.notes": secretPlaceholder("SECRET_LEGACY_NOTES"),
     });
@@ -280,16 +280,13 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
       },
     });
     expect(JSON.parse(out).saved_secrets).toEqual({
-      "credentials.ftp.host": secretPlaceholder("SECRET_NESTED_FTP_HOST"),
       "credentials.ftp.pass": secretPlaceholder("SECRET_NESTED_FTP_PASS"),
       "credentials.keys.0": secretPlaceholder("SECRET_NESTED_KEYS_0"),
     });
     expectNoSecret(out);
     const got = await projectGetTool.execute({ slug: "nested" });
     expect(got).toContain("\n**Credentials:** ftp, keys");
-    expect(got).toContain(
-      `  ftp.host: ${secretPlaceholder("SECRET_NESTED_FTP_HOST")}`,
-    );
+    expect(got).toContain("  ftp.host: ftp.example.test"); // ruling 3d
     expect(got).toContain(
       `  ftp.pass: ${secretPlaceholder("SECRET_NESTED_FTP_PASS")}`,
     );
@@ -369,5 +366,68 @@ describe("descriptions", () => {
     expect(credParam).toBe(
       "Project credentials. Keys: wp_user, wp_app_password, ftp_host, api_keys, etc. Merged with existing.",
     );
+  });
+});
+
+describe('ruling 3d — "Just real credentials. Everything must be accessible"', () => {
+  const HOST = ["acme-shop", "example", "test"].join(".");
+  const SITE = "https://" + HOST;
+  const LOGIN = ["admin", HOST].join("@");
+  const MEASURE = "G-" + "K".repeat(10);
+  const COMMON = [
+    "pass", "password", "pwd", "passwd", "token", "api_key", "apikey",
+    "secret", "client_secret", "private_key", "key", "cookie", "s2", "swid",
+    "session", "auth", "bearer",
+  ];
+  const val = (k: string, n: boolean) =>
+    (n ? "nv-" : "tv-") + k.replace(/_/g, "u") + "-" + "r".repeat(10);
+  const name = (k: string, n: boolean) =>
+    `SECRET_SHOP_${n ? "SVC_" : ""}${k.toUpperCase()}`;
+
+  it("ftp_host equal to the site's domain, the username e-mail and the GA4 id show in clear and survive the tool seam's scrub; every common secret key is hidden by name (top-level and nested)", async () => {
+    const out = await projectUpdateTool.execute({
+      slug: "shop",
+      name: "Shop",
+      urls: { site: SITE },
+      credentials: {
+        ftp_host: HOST,
+        ftp_user: LOGIN,
+        ga4_measurement_id: MEASURE,
+        ...Object.fromEntries(COMMON.map((k) => [k, val(k, false)])),
+        svc: {
+          host: HOST,
+          ...Object.fromEntries(COMMON.map((k) => [k, val(k, true)])),
+        },
+      },
+    });
+    const expected: Record<string, string> = {};
+    for (const k of COMMON) {
+      expected[`credentials.${k}`] = secretPlaceholder(name(k, false));
+    }
+    for (const k of COMMON) {
+      expected[`credentials.svc.${k}`] = secretPlaceholder(name(k, true));
+    }
+    expect(JSON.parse(out).saved_secrets).toEqual(expected);
+    // Through the real tool seam (resolve + scrub), as the model receives it.
+    const reg = new ToolRegistry();
+    reg.register(projectGetTool);
+    const got = await reg.execute("project_get", { slug: "shop" });
+    expect(got).toContain(`URL: ${SITE}\n`);
+    expect(got).toContain(`  ftp_host: ${HOST}\n`);
+    expect(got).toContain(`  ftp_user: ${LOGIN}\n`);
+    expect(got).toContain(`  ga4_measurement_id: ${MEASURE}\n`);
+    expect(got).toContain(`  svc.host: ${HOST}\n`);
+    for (const k of COMMON) {
+      expect(got).toContain(`  ${k}: ${secretPlaceholder(name(k, false))}`);
+      expect(got).toContain(`  svc.${k}: ${secretPlaceholder(name(k, true))}`);
+      expect(got).not.toContain(val(k, false));
+      expect(got).not.toContain(val(k, true));
+    }
+    // Neither the host nor the e-mail is a scrub target in other tool output.
+    const echoed = `fetched ${SITE}/contacto for ${LOGIN} (${MEASURE})`;
+    expect(scrubSecrets(echoed)).toBe(echoed);
+    expect(
+      secretEnvForCommand(`lftp -u "${LOGIN},$SECRET_SHOP_SVC_PASS" ${HOST}`),
+    ).toEqual({ SECRET_SHOP_SVC_PASS: val("pass", true) });
   });
 });

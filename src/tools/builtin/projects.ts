@@ -43,7 +43,7 @@ function savedSecrets(
         continue;
       }
       if (typeof v !== "string" && typeof v !== "number") continue;
-      if (v === "" || !isProjectSecret(field, k, String(v))) continue;
+      if (v === "" || !isProjectSecret(k, String(v))) continue;
       out[`${field}.${k}`] = projectSecretDisplay(slug, field, k, v);
     }
   }

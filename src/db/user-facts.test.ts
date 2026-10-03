@@ -145,6 +145,17 @@ describe("user-facts", () => {
       ["projects", "clave"],
       ["projects", "clave_acceso_sat"],
       ["projects", "clave_wifi"],
+      // Ruling 3d: cookie names stored bare under a project's credentials
+      ["projects", "s2"],
+      ["projects", "session"],
+      ["projects", "pass"],
+      ["projects", "passwd"],
+      ["projects", "apikey"],
+      ["projects", "secret"],
+      ["projects", "token"],
+      ["projects", "key"],
+      ["projects", "cookie"],
+      ["projects", "auth"],
     ])("marks %s/%s by name", (category, key) => {
       expect(isCredentialFact(category, key, "plain value")).toBe(true);
     });
@@ -195,6 +206,21 @@ describe("user-facts", () => {
       ["projects", "token_type"],
       ["projects", "password_expiry"],
       ["projects", "cookie_expires"],
+      // Ruling 3d: the whole-name `s2` / `session` rule stays narrow, and
+      // what a project's credentials usually hold besides secrets is visible
+      ["projects", "sessions"],
+      ["projects", "session_timeout"],
+      ["projects", "last_session"],
+      ["projects", "s2_region"],
+      ["projects", "username"],
+      ["projects", "email"],
+      ["projects", "ftp_host"],
+      ["projects", "ftp_user"],
+      ["projects", "wp_user"],
+      ["projects", "port"],
+      ["projects", "ga4_measurement_id"],
+      ["projects", "client_id"],
+      ["projects", "site_url"],
     ])("does not mark %s/%s by name", (category, key) => {
       expect(isCredentialFact(category, key, "plain value")).toBe(false);
     });

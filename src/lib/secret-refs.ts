@@ -100,19 +100,16 @@ export function secretPlaceholder(name: string): string {
 }
 
 /**
- * Whether a project entry is a secret: everything under `credentials` is,
- * whatever its key; `urls` / `config` entries by the shared classifier.
+ * Whether a project entry is a secret. Ruling 3d (2026-10-03, "Just real
+ * credentials. Everything must be accessible"): every field — `credentials`
+ * included — is judged by the ONE classifier on the entry's own key and
+ * value, under the neutral category "projects" (the field name
+ * "credentials" is not itself a reason). Usernames, e-mails, hosts, ports,
+ * URLs and IDs stored under `credentials` stay visible and unscrubbed; a
+ * key named like a credential or a value shaped like one is hidden.
  */
-export function isProjectSecret(
-  field: string,
-  key: string,
-  value: string,
-): boolean {
-  return isCredentialFact(
-    field === "credentials" ? "credentials" : "projects",
-    key,
-    value,
-  );
+export function isProjectSecret(key: string, value: string): boolean {
+  return isCredentialFact("projects", key, value);
 }
 
 interface Entry {
@@ -155,7 +152,7 @@ function projectEntries(
   }
   if (typeof value !== "string" && typeof value !== "number") return;
   const str = String(value);
-  if (!isProjectSecret(field, key, str)) return;
+  if (!isProjectSecret(key, str)) return;
   const prefix = field === "credentials" ? [slug] : [slug, field];
   out.push({
     identity: projectIdentity(slug, field, path),
@@ -281,7 +278,7 @@ export function projectSecretDisplay(
   const str = String(value);
   return displayFor(
     projectIdentity(slug, field, [key]),
-    isProjectSecret(field, key, str),
+    isProjectSecret(key, str),
     str,
   );
 }
@@ -313,7 +310,7 @@ export function projectEntryLeaves(
     }
     if (typeof v !== "string" && typeof v !== "number") return;
     const str = String(v);
-    const secret = isProjectSecret(field, leafKey, str);
+    const secret = isProjectSecret(leafKey, str);
     out.push({
       path,
       secret,

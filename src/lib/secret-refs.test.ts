@@ -139,11 +139,11 @@ describe("reference names", () => {
     expect(
       secretRefName(factIdentity("projects", "acme_ga4_id")),
     ).toBeUndefined();
-    // Everything under a project's `credentials` is a secret, whatever its
-    // key; `urls` / `config` entries only by the classifier.
+    // Ruling 3d: a `credentials` entry is a secret only by the classifier,
+    // like `urls` / `config` — a username/e-mail gets no name.
     expect(
       secretRefName(projectIdentity("acme-portal", "credentials", ["user"])),
-    ).toBe("SECRET_ACME_PORTAL_USER");
+    ).toBeUndefined();
     expect(
       secretRefName(projectIdentity("acme-portal", "urls", ["site"])),
     ).toBeUndefined();
@@ -222,7 +222,7 @@ describe("display", () => {
         "user",
         EMAIL,
       ),
-    ).toBe(secretPlaceholder("SECRET_ACME_PORTAL_USER"));
+    ).toBe(EMAIL);
     expect(
       projectSecretDisplay(
         "acme-portal",
@@ -241,6 +241,110 @@ describe("display", () => {
     expect(block).toContain("- **age**: 30");
     expect(block).not.toContain(COOKIE);
     expect(block).not.toContain(FTP_PASS);
+  });
+});
+
+describe('ruling 3d — "Just real credentials. Everything must be accessible"', () => {
+  // Synthetic project; every value assembled at runtime, neutral in shape so
+  // only the KEY NAME can make it a secret.
+  const SITE_HOST = ["acme-site", "example", "test"].join(".");
+  const SITE_URL = "https://" + SITE_HOST;
+  const LOGIN_EMAIL = ["webmaster", SITE_HOST].join("@");
+  const MEASUREMENT_ID = "G-" + "M".repeat(10);
+  const CLIENT_ID = "cid-" + "4".repeat(12);
+  const SECRET_KEYS = [
+    "pass", "password", "pwd", "passwd", "token", "api_key", "apikey",
+    "secret", "client_secret", "private_key", "key", "cookie", "s2", "swid",
+    "session", "auth", "bearer",
+  ];
+  const valueFor = (k: string, nested: boolean) =>
+    (nested ? "nv-" : "tv-") + k.replace(/_/g, "u") + "-" + "c".repeat(10);
+
+  function seed3d() {
+    project("acme-site", {
+      urls: { site: SITE_URL },
+      credentials: {
+        ftp_host: SITE_HOST,
+        username: LOGIN_EMAIL,
+        ga4_measurement_id: MEASUREMENT_ID,
+        client_id: CLIENT_ID,
+        port: 2121,
+        ...Object.fromEntries(SECRET_KEYS.map((k) => [k, valueFor(k, false)])),
+        svc: {
+          host: SITE_HOST,
+          user: LOGIN_EMAIL,
+          ...Object.fromEntries(SECRET_KEYS.map((k) => [k, valueFor(k, true)])),
+        },
+      },
+    });
+    invalidateSecretRefs();
+  }
+
+  it("usernames, e-mails, hosts, ports and IDs under credentials (top-level and nested) get no name, show in clear and are not scrubbed", () => {
+    seed3d();
+    const visible: Array<[string[], string]> = [
+      [["ftp_host"], SITE_HOST],
+      [["username"], LOGIN_EMAIL],
+      [["ga4_measurement_id"], MEASUREMENT_ID],
+      [["client_id"], CLIENT_ID],
+      [["svc", "host"], SITE_HOST],
+      [["svc", "user"], LOGIN_EMAIL],
+    ];
+    for (const [path, value] of visible) {
+      expect(
+        secretRefName(projectIdentity("acme-site", "credentials", path)),
+      ).toBeUndefined();
+    }
+    for (const k of ["ftp_host", "username", "ga4_measurement_id", "client_id"]) {
+      const v = visible.find(([p]) => p[0] === k)![1];
+      expect(projectSecretDisplay("acme-site", "credentials", k, v)).toBe(v);
+    }
+    expect(projectSecretDisplay("acme-site", "credentials", "port", 2121)).toBe(
+      "2121",
+    );
+    // ftp_host equals the site's domain: the site URL, the e-mail and the IDs
+    // come through tool output intact.
+    const text = `site ${SITE_URL}/blog mail ${LOGIN_EMAIL} ga ${MEASUREMENT_ID} id ${CLIENT_ID}`;
+    expect(scrubSecrets(text)).toBe(text);
+    expect(scrubSecrets(JSON.stringify({ url: SITE_URL }))).toBe(
+      JSON.stringify({ url: SITE_URL }),
+    );
+  });
+
+  it.each(SECRET_KEYS)(
+    "a %s entry, top-level and nested, is hidden, named and scrubbed",
+    (k) => {
+      seed3d();
+      const top = valueFor(k, false);
+      const nested = valueFor(k, true);
+      const topName = secretRefName(
+        projectIdentity("acme-site", "credentials", [k]),
+      );
+      const nestedName = secretRefName(
+        projectIdentity("acme-site", "credentials", ["svc", k]),
+      );
+      expect(topName).toBe(`SECRET_ACME_SITE_${k.toUpperCase()}`);
+      expect(nestedName).toBe(`SECRET_ACME_SITE_SVC_${k.toUpperCase()}`);
+      expect(projectSecretDisplay("acme-site", "credentials", k, top)).toBe(
+        secretPlaceholder(topName!),
+      );
+      expect(scrubSecrets(`a ${top} b ${nested} c`)).toBe(
+        `a ${secretPlaceholder(topName!)} b ${secretPlaceholder(nestedName!)} c`,
+      );
+      expect(secretEnvForCommand(`echo $${nestedName}`)).toEqual({
+        [nestedName!]: nested,
+      });
+    },
+  );
+
+  it("a credential-SHAPED value under a neutral key is still hidden", () => {
+    project("acme-site", {
+      credentials: { notes: "https://deploy:" + PORTAL_PASS + "@" + SITE_HOST },
+    });
+    invalidateSecretRefs();
+    expect(
+      secretRefName(projectIdentity("acme-site", "credentials", ["notes"])),
+    ).toBe("SECRET_ACME_SITE_NOTES");
   });
 });
 

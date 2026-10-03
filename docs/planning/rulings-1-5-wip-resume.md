@@ -10,7 +10,7 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 | --- | --- | --- |
 | 1 | Expiry notice at the 5-minute confirmation TTL | Built, fix round done, NOT re-audited |
 | 2 | Confirm at schedule creation when a high-risk tool is included | Built, fix round done, NOT re-audited |
-| 3 / 3a / 3b / 3c | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed | Audit round 3 = FAIL; fix round 3 done (below; one hand mutant per fix, all RED); NOT re-audited |
+| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done (below; one hand mutant per fix, all RED); 3d built with mutants RED; NOT re-audited |
 | 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
 | 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only | Built, fix round done after an audit FAIL, NOT re-audited; its test, mutant and 110,000-command differential results must be re-run (they came from a window in which the host was damaged) |
 | 6 | Shell mount namespace | PARKED by the operator. Not in this branch. See `postmortem-2026-10-01-host-mount-leak.md`. Do not rebuild it here. |
@@ -22,7 +22,7 @@ All coded with tests; typecheck 0; 13 scoped test files green (965 passed, 5 tod
 - Scrub also catches JSON-escaped forms (once and twice) of a value — `src/lib/secret-refs.ts`.
 - Scrub runs BEFORE output truncation — `src/tools/builtin/shell.ts`, `src/tools/builtin/http.ts`.
 - Error path: `scrubThrown` in `src/tools/registry.ts` (string throws; read-only `message`; untouched errors rethrown as the same object).
-- Every entry under a project's `credentials` field is a secret regardless of key name (`isProjectSecret`).
+- ~~Every entry under a project's `credentials` field is a secret regardless of key name (`isProjectSecret`).~~ Reversed by ruling 3d (2026-10-03): `isProjectSecret` judges every field's entries by `isCredentialFact("projects", key, value)`; the classifier also matches the whole names `s2` and `session`.
 - `shell_exec` with an unknown `$SECRET_<NAME>` is refused.
 - Scrub at the writers: `pushToThread` (router), both memory backends' `retain`, JME `writeEpisodic`.
 - Placeholder is JSON-safe (no quotes).
@@ -69,7 +69,7 @@ restored exactly).
 2. Re-audit ruling 5 (re-run its tests and the differential against `main`).
 3. Re-audit rulings 1–2.
 4. Combined audit of rulings 1–5.
-5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording.
+5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording.
 6. Docs (`PROJECT-STATUS.md`, `README.md` baselines, queue), merge to `main`, operator deploy.
 
 ## Rules that apply to this work
@@ -86,7 +86,9 @@ By-name use is not bound to a destination host; shell transforms of a value (bas
 cut) are not scrubbed; values under 8 characters are not scrubbed; screenshots cannot be
 scrubbed; the day-log line written when a message arrives precedes any save; cuts made
 inside external MCP servers happen before the scrub; container runners cannot use by-name
-references; project `credentials` entries are masked whole, usernames included.
+references; a credential whose key name and value shape both escape the classifier (e.g. a
+password stored under a neutral key such as `ftp` or `admin`, or under a neutral key nested
+below a credential-named parent such as `passwords.ftp`) is shown and not scrubbed (ruling 3d).
 
 Added after audit round 3: partly percent-encoded URLs, `\uXXXX` JSON escapes,
 the Playwright fill echo and `browser_evaluate` / `run_code` transforms escape the
