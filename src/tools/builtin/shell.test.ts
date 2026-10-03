@@ -26,6 +26,7 @@ import {
   buildScrubbedEnv,
   execGroupKill,
   withDockerConfig,
+  withPmShimPath,
   DOCKER_CONFIG_DIR,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
@@ -2313,6 +2314,9 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       DOCKER_CONFIG: "/real/.docker",
     });
     expect(withDockerConfig({ DOCKER_CONFIG: "/tmp/other" }, "/real/.docker").DOCKER_CONFIG).toBe("/real/.docker");
+    // withPmShimPath carries the pin too, so the task_gates check_cmd child (gate-check.ts) gets it.
+    expect(withPmShimPath({ HOME: "/tmp/h", PATH: "/bin" }).DOCKER_CONFIG).toBe(DOCKER_CONFIG_DIR);
+    expect(withPmShimPath({ DOCKER_CONFIG: "/tmp/other", PATH: "/bin" }).DOCKER_CONFIG).toBe(DOCKER_CONFIG_DIR);
     // The live child: a HOME override in the command leaves DOCKER_CONFIG on the startup dir.
     _resetFlailingGuard();
     const parsed = JSON.parse(await shellTool.execute({ command: "HOME=/tmp/h printenv DOCKER_CONFIG" }));

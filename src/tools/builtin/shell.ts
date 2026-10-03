@@ -229,10 +229,14 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
  */
 export const PM_SHIM_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), "pm-shim");
 
-/** PATH with the shim directory first (and nowhere else). */
+/**
+ * PATH with the shim directory first (and nowhere else), and `DOCKER_CONFIG` pinned (audit B3,
+ * see withDockerConfig) — so every caller (shell_exec and the task_gates check_cmd child in
+ * gate-check.ts) gets both from one place.
+ */
 export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
-  return { ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") };
+  return withDockerConfig({ ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") });
 }
 
 /**
@@ -1923,8 +1927,8 @@ RESTRICTIONS:
         // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
         // PATH starts with the package-manager shim (see PM_SHIM_DIR).
         // Ruling 3c: plus exactly the stored secrets this command names as $SECRET_X.
-        // Audit B3: DOCKER_CONFIG pinned so a HOME override cannot move the docker config.
-        env: { ...withDockerConfig(withPmShimPath(buildScrubbedEnv())), ...secretEnvForCommand(command) },
+        // Audit B3: withPmShimPath also pins DOCKER_CONFIG so a HOME override cannot move the docker config.
+        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command) },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret

@@ -273,6 +273,23 @@ Notes for ship time:
 
 Residuals (ruling 5, to state at ship time): psql escapes until the non-superuser role exists (5a); PG* vars can point libpq at container files (PGPASSFILE/PGSSLKEY/PGSERVICEFILE/PGSYSCONFDIR) and PGOPTIONS sets server options; volume options built at run time (`$(…)`, xargs from a file) and third-party volume drivers' host-path options are not seen by the string gate.
 
+Operator ruling 2026-10-03: ship with residuals. Ruling 5 ships with the residuals above plus
+these open classes, which the text gate does not close and is not expected to:
+
+- (a) Bash ANSI-C quoted strings (`$'…'`) whose escape sequences spell a docker word or a
+  `DOCKER_*` name; the text gate reads the command as written and does not decode them.
+- (b) Environment loaded from a file — `.` / `source`, `BASH_ENV`, `ENV`, `set -a` before a
+  sourced file — can set `DOCKER_*` variables that never appear in the command text.
+- (c) The docker program name assembled at run time (printf, base64, an interpreter, a shell
+  glob) is not seen by the text gate.
+- (d) A writable `~/.docker/config.json` can set a current context, hence a daemon. Path-guard
+  class; ruling 6 is parked.
+
+`DOCKER_CONFIG` is now pinned inside `withPmShimPath`, so the task_gates `check_cmd` child gets
+the same pin as `shell_exec` (it previously had none). The structural closer for (a)–(c) is an
+exec-time docker shim in `src/tools/builtin/pm-shim/`, queued in `next-sessions-queue.md`
+("Docker exec-time shim (ruling 5 structural closer)").
+
 ## Order to finish
 
 0. Before shipping, the operator runs a read-only census of key names (never values) in
@@ -280,7 +297,7 @@ Residuals (ruling 5, to state at ship time): psql escapes until the non-superuse
    which live entries change visibility under 3d / 3d-a / 3d-b.
 
 1. Ruling 3 mutants → re-audit ruling 3.
-2. Re-audit ruling 5 (re-run its tests and the differential against `main`).
+2. ~~Re-audit ruling 5 (re-run its tests and the differential against `main`).~~ DONE with residuals — operator ruling 2026-10-03, ship with residuals (see the ruling 5 section).
 3. Re-audit rulings 1–2.
 4. Combined audit of rulings 1–5.
 5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording; the audit round 4 inference-seam scrub (stored values are replaced in the system prompt — KB, user facts, history, enrichment — wherever they appeared, and in every message and tool result); the 3d-a nested-leaf visibility and the 3d-b classifier changes (more names and PEM private keys hidden; `…_enabled/_region/_host/_url/_file` names visible); rulings 1–2 should-fix round: `noConfirmApiScheduleError` (API task creating a risky schedule), `undeclaredToolError` (batch child refused), the creation-card suffix "(puede usar cualquier herramienta)" and "y N más", unregistered tool names now listed on the card, and the expiry notice now present in the thread history the model reads.

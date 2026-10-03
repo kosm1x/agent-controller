@@ -642,6 +642,21 @@ Original statements of the six (kept for the record):
 21. **Shell validator CPU at the 131,072-byte cap** (R4; all pre-existing shapes, unbounded before the cap): a whitespace run takes 24–27 s (the split regex in `validateShellCommand`), `(` × N 15.6 s (`/^\(+/` re-run in a loop condition — hoist into a const), `${` × N 8.5 s, `find ` / `git ` × N 5–6 s; nested `bash -c` 0.8 s at 800 levels and a fail-closed `RangeError` from ~1,600. One model-supplied command can block the event loop. Options: linearise the five shapes (each needs a differential fuzz), or a smaller cap (changes which commands are accepted — ruling). **Trigger:** first event-loop stall traced to `validateShellCommand`, or the next edit of the tokenizer.
 22. **Shell gate spellings left open** (R4, pre-existing): `..` through an existing sibling directory (`/root/claude/../.ssh/…`) and brace expansion under `bash -c` pass every secret pattern; the file tools resolve both. Recipe for the first: also match a copy with `path.posix.normalize` applied to each token containing `/..` (only adds refusals). Same class, also pre-existing: a `.env` named through a RELATIVE path with a directory part (`cat foo/.env`, `cat ../.env`, `cat src/../.env`) passes both env rules — the absolute rule needs a leading `/`, the bare rule excludes a preceding `/`; a basename rule (`.env` after any `/`) would close it and needs its own false-positive replay. **Trigger:** ruling 6 — do not patch alone.
 
+## Docker exec-time shim (ruling 5 structural closer) — queued 2026-10-03
+
+Context: operator ruling 2026-10-03 — ruling 5 (docker verbs in the shell gate) **ships with residuals**; the residual list is in `docs/planning/rulings-1-5-wip-resume.md` (ruling 5 section). The text gate cannot see what the shell builds at run time; this is the closer. **This work tripped a safety stop in cloud sessions — best done by the operator on the VPS.**
+
+1. **Goal — a `docker` / `docker-compose` shim in `src/tools/builtin/pm-shim/`** that at exec time:
+   - refuses when `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_TLS*` or `DOCKER_CERT_PATH` is set;
+   - refuses when `DOCKER_CONFIG` differs from a pin that `shell.ts` passes in a dedicated env var set inside `withPmShimPath` (which already pins `DOCKER_CONFIG` itself since 2026-10-03, so both callers get it);
+   - refuses global daemon flags (`-H`/`--host`, `--context`, `--config`, `--tls*`) and forces `--context default`;
+   - re-applies the gate's verb, volume-option and psql `-e` rules on the real argv;
+   - fails closed (no exec) when the real binary is not found.
+2. **Wiring facts:** `withPmShimPath` (`src/tools/builtin/shell.ts` ~233) is the single PATH seam and reaches both `shell_exec` and the task_gates `check_cmd` child (`src/lib/v8-4/gate-check.ts:143`). `npm run build` copies the directory with `cp -a` (`package.json:8`), so symlinks survive. The pm-shim dir is on the immutable-core list (`src/tools/builtin/immutable-core.ts:36`), so Jarvis cannot edit it. `pm-shim.sh` finds the real binary as the first PATH match outside the shim dir and exits 127 when there is none — the docker shim should do the same.
+3. **String-gate follow-ups (second layer):** decode bash ANSI-C quoted escapes before matching; refuse sourcing a file (`.`/`source`, `BASH_ENV`, `ENV`, `set -a`) in a command that also reaches docker; refuse an absolute docker binary path (the shim only covers PATH lookups).
+4. **False refusal:** `docker volume create` with `type=tmpfs` plus `device=tmpfs` is refused today by the `device=` rule; a tmpfs volume touches no host path and should be allowed.
+5. **`scripts/validate-shell-gate-diff.ts` redaction gaps:** env names containing `PWD`, `PW` or `KEY` are not redacted, nor `redis-cli -a <password>`, nor values inside quotes. Fix before the next differential run whose output leaves the VPS.
+
 ## Per-sub-task retry in swarm (deferred feature gap from Hermes v0.13)
 
 **Triggered by:** Hermes v0.13 May Tier-2 #5 audit (2026-05-23). The audit closed the zombie-status gap (`syncSubTaskStatuses` recognizes 3 more terminal statuses), but Hermes also ships per-sub-task retry + hallucination recovery — neither of which we have. A failed sub-task in our swarm is final; the goal-graph cascades FAILED to dependents and the parent reflector picks up the partial state.
