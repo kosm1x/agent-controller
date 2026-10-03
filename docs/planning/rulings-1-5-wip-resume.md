@@ -425,3 +425,98 @@ leaks. All eight are closed; 3c (write-back of a rendered placeholder) stays PAS
 | length meta | drop `length|len|size|count|…` from meta regex | user-facts.test.ts | RED, restored |
 | file_edit len | old/new_length back to raw `.length` | secret-refs.test.ts | RED, restored |
 | gdoc len | shownLen back to `norm(text).length` | readback-verifiers.test.ts | RED, restored |
+
+## Fix round 9 (audit round 9 — ruling 3)
+
+Round-9 audit FAILED with three blocking findings (B1 overlap rendering, B2/B3
+ruling-3d regressions) and six should-fix items. All are addressed below;
+NOT re-audited.
+
+### Blocking fixes
+
+- **B1 older-wins, un-merged spans (`src/lib/secret-refs.ts`, `scrubSpans`).** Round 8's
+  span union with `OVERLAP_PLACEHOLDER` made the rendering depend on whether a
+  later-stored value partially overlapping V occurred in the text. Now each value text has
+  a WRITE ORDER (`firstSeen`: per-database `WeakMap`, keyed by sha256 of the text, order =
+  the row's `updated_at` at first sight + a process-wide counter; facts by `id`, projects by
+  `rowid`; no schema change). Occurrences are accepted oldest first: no overlap → kept;
+  inside a kept span → dropped (nesting); fully containing every kept span it touches →
+  replaces them (cover); PARTIAL overlap with an older kept span → dropped entirely. Spans
+  never grow past their own occurrence, so context stays visible. Same-form self-overlaps
+  of one value are joined. `OVERLAP_PLACEHOLDER` is removed (any leftover marker text is
+  still refused on write-back by the generic `[oculto ·` check). `secretSpans` returns
+  the same spans, so `file_edit` (`safeMatches`) and `grep` (`safeMatchCount`) share them;
+  doc comments rewritten. A value keeps its first-seen order when re-saved by name, copied
+  to another key (original deleted), or when a sibling field of its project row changes.
+- **B2 `clave_X` inverted (`src/db/user-facts.ts`).** `CLAVE_ID_AFTER` is gone. A leading
+  `clave_X` / `clave de X` is a credential name only when X is in `CLAVE_SERVICE_AFTER`
+  (ftp, sftp, ciec, fiel, banco, correo, email, gmail, wifi, ssh, hosting, cpanel, bd/db,
+  admin, root, servidor, wordpress, instagram, facebook, tarjeta, acceso, api, secreta,
+  privada, portal, sistema, red, router, vpn, …); `sat` only as the LAST token
+  (`clave_sat` hidden, `clave_sat_producto` visible). Any other leading `clave_X` is hidden
+  only when its value is password-shaped (`LEADING_CLAVE_RE` + `looksLikePassword`:
+  one token, ≥ 6 chars, password mix, secret run, or a special char beside letters and
+  digits). `bancaria`, `cuenta`, `usuario` are NOT service words.
+- **B3 `user:pass` narrowed.** `looksLikeUserPass` runs only when the key or category has a
+  login/credential-ish token (`USERPASS_KEY_RE`: login, acceso, cuenta, account, ftp, ssh,
+  admin, root, panel, cpanel, wp, wordpress, hosting, servidor, db, vpn, correo, usuario,
+  auth, credenciales, …) and the password part carries a real signal (`hasPasswordSignal`:
+  a special char other than `-` `_` `.`, or a secret run; the length-≥10 mix clause is gone).
+
+### Should-fix
+
+1. `*_session`: `looksLikeSessionToken` = secret run, or one whitespace-free token ≥ 16 chars
+   (`training_session = Monday 9am` visible). The whole-name `session` rule (ruling 3d) is unchanged.
+2. KB ranking (`src/db/jarvis-fs.ts`): every FTS row gets a score = query-token hits in its
+   scrubbed content + title; clean rows keep bm25 order and value-holding rows (sorted by
+   score, then path) are merged in before the first clean row with a lower score.
+3. KB `size` of a value-holding row = scrubbed length (FTS and LIKE paths); `verifyKbFile`
+   evidence reports the scrubbed length (`src/lib/v8-4/readback-verifiers.ts`).
+4. KB 5000 fetch cap: documented as a residual at `FTS_FETCH_CAP`.
+5. grep: `truncated: true` when any file reaches `INTERNAL_MAXCOUNT` (also on the no-match
+   return). The description already says "count" = number of matches, which is what it
+   reports (occurrences) — no description change.
+6. Doc comments updated (scrubSecrets, scrubSpans, secretSpans, clave/user:pass/session).
+
+### Deviations from the brief
+
+- The write order is not a raw rowid/updated_at read on every build: it is fixed the first
+  time a value text is seen in the process (`firstSeen`), so a by-name re-save, a copy, or a
+  project-row bump cannot make a stored value "newer". Seeded from `updated_at`.
+- Prettier was not run on the touched files (they were already non-conforming at HEAD).
+- No `npm run eval:gate` run (classifier changes are model-visible through what is hidden; owed).
+
+### Residuals (new in round 9)
+
+- After a restart, orders are re-derived from row timestamps; project leaves share the
+  project row's `updated_at`, so a sibling-field update before a restart makes a project
+  value look as new as that update.
+- A value stored AFTER another one that it legitimately overlaps in some text loses the
+  overlap: its part outside the older span is shown there.
+- grep's per-file cap (2000 raw matching lines) counts a line whose only hit is inside a
+  value, so for a file with ~2000 matching lines the cut point / `total` can move by one.
+- bm25 corpus statistics (FTS) include value-holding rows' raw text; clean-row order can in
+  principle shift with them. KB search over > 5000 matching rows cuts in bm25 order before
+  the filter.
+- `verifyKbFile` evidence still carries `sha8` of the raw row content (unchanged).
+
+### Model-visible strings changed → eval gate owed
+
+- `OVERLAP_PLACEHOLDER` removed; classifier changes (clave_X, user:pass, session) change
+  which stored facts are shown in clear.
+
+### Mutant verification (revert → RED → restore → cmp)
+
+| Fix | Mutant | Test file | Result |
+| --- | --- | --- | --- |
+| B1 | sort newest-first (newer wins) | secret-refs.test.ts | RED (4), restored |
+| B1 | partial overlap merges into a union span | secret-refs.test.ts | RED (4 incl. the tool byte-identity test), restored |
+| B1 | no first-seen carry | secret-refs.test.ts | RED (1), restored |
+| B2 | any leading `clave_X` is a credential name | user-facts.test.ts | RED (31), restored |
+| B3 | old loose password signal | user-facts.test.ts | RED (1), restored |
+| B3 | no key gate | user-facts.test.ts | RED (1), restored |
+| SF1 | session = secret run or mix | user-facts.test.ts | RED (2), restored |
+| SF2 | append value rows after clean rows | jarvis-fs.test.ts | RED (1), restored |
+| SF3 | FTS `size: r.size` / LIKE `size: r.size` | jarvis-fs.test.ts | RED (1 each), restored |
+| SF3 | KB verifier raw length | readback-verifiers.test.ts | RED (1), restored |
+| SF5 | drop `|| capped` | code-search.test.ts | RED (1 + pre-existing), restored |

@@ -63,18 +63,20 @@ export interface UserFact {
 const CLAVE_ADJ_BEFORE =
   "(?:palabras?| (?!(?:nuestr|vuestr|est|es|tod|otr|algun|much|mism|aquell|ciert|vari|demas|las|los|unas|unos)[ao]?s )[a-z]{2,}[aeiou]s| (?:fecha|punto|idea|cliente|tema|mensaje|metrica|indicador|nombre|dato|factor|momento|objetivo|pregunta|paso|rol|actor|socio|elemento|aspecto|concepto|evento|hito|proceso|requisito|tarea)) ";
 /**
- * Ruling 3d (B-4, audit round 8): a LEADING `clave_X` / `clave de X` names a
- * stored password (`clave_ftp`, `clave_sat`, `clave_banco`, `clave_gmail`,
- * `clave_root`, `clave_cpanel`, `clave_ciec`, `clave_fiel`, `clave_tarjeta`,
- * `clave_bd`, `clave_del_ftp`) UNLESS the word after `clave` is an identifier
- * word — then it is a code/number, not a secret (`clave_interbancaria` CLABE,
- * `clave_elector` voter key, `clave_producto` SKU, `clave_catastral`,
- * `clave_unica` CURP, `clave_rfc`). The round-7 adjective behaviour
- * (`fechas_clave`, `clientes_clave` — `clave` as a trailing adjective) is
- * unchanged: this rule only fires when `clave` is the FIRST token.
+ * Ruling 3d (audit round 9, B2 — inverts round 8's B-4): a LEADING
+ * `clave_X` / `clave de X` names a stored password only when X is a service
+ * or system word (`clave_ftp`, `clave_banco`, `clave_correo`, `clave_gmail`,
+ * `clave_ssh`, `clave_wifi`, `clave_ciec`, `clave_fiel`, `clave_del_ftp`,
+ * `clave_root`, `clave_cpanel`). Any other `clave_X` is an identifier/code
+ * by default (`clave_sucursal`, `clave_moneda`, `clave_imss`,
+ * `clave_interbancaria`, `clave_elector`, `clave_cuenta_contable`) and is
+ * hidden only when its VALUE is password-shaped (`LEADING_CLAVE_RE` +
+ * `looksLikePassword` in `isCredentialFact`). `sat` counts only as the LAST
+ * token: `clave_sat` is the tax-portal password, `clave_sat_producto` /
+ * `clave_sat_unidad` are SAT catalogue codes.
  */
-const CLAVE_ID_AFTER =
-  "interbancaria|interbancario|elector|electoral|producto|productos|proyecto|proyectos|catastral|articulo|articulos|cliente|clientes|empleado|empleados|pais|paises|area|areas|lada|presupuestal|presupuestaria|unica|unico|curp|rfc|postal|unidad|registro|catalogo|catalogos";
+const CLAVE_SERVICE_AFTER =
+  "(?:ftp|sftp|ciec|fiel|efirma|banco|banca|bancomer|correo|email|mail|gmail|hotmail|outlook|yahoo|icloud|wifi|wi fi|ssh|hosting|cpanel|plesk|bd|db|mysql|postgres|admin|administrador|root|servidor|server|wordpress|wp|instagram|facebook|twitter|tiktok|linkedin|tarjeta|cajero|acceso|api|secreta|privada|portal|sistema|red|router|modem|vpn|paypal|netflix|spotify|amazon|apple|google|microsoft|computadora|laptop|windows|celular)(?= )|sat(?= $)";
 const FOLLOWER = "(?= $| (?:codes?|secrets?|phrases?|keys?|tokens?|seeds?|backup|header) )";
 const CREDENTIAL_NAME_RE = new RegExp(
   " (?:" +
@@ -116,8 +118,8 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "bearer",
       "jwt",
       `(?<!${CLAVE_ADJ_BEFORE})claves?(?= $| (?:api|acceso|secreta|privada|wifi) )`,
-      // Ruling 3d (B-4): a leading `clave_X` where X is not an identifier word.
-      `(?<=^ )claves?(?= (?!(?:${CLAVE_ID_AFTER}) )[a-z0-9])`,
+      // Ruling 3d (audit R9 B2): a leading `clave_X` where X is a service.
+      `(?<=^ )claves?(?= (?:del? |de la )?(?:${CLAVE_SERVICE_AFTER}))`,
       "claves? de (?:acceso|seguridad|respaldo|recuperacion)",
       // CIEC (SAT tax-portal credential) — a secret under its own name.
       "ciec",
@@ -212,23 +214,35 @@ function hasPasswordMix(v: string): boolean {
   return /\d/.test(v) && /[a-z]/.test(v) && /[A-Z]/.test(v);
 }
 
-/**
- * Should-fix (round 8): the shape of a generated secret VALUE — a long
- * letters+digits run, or a password mix. Used to judge a `*_session` entry
- * (a session id looks like this; a short status word does not).
- */
-function hasSecretShape(v: string): boolean {
-  return hasSecretRun(v) || hasPasswordMix(v);
-}
 /** A name whose last token is `session` (not `session_id`, handled earlier). */
 const SESSION_LAST_RE = / session $/;
 
 /**
- * Should-fix (round 8): a `user:pass` value — a username, a colon, and a
- * secret-shaped password (`admin:Tr0ub4dor&3xyz`). Not a URL (`https://…`,
- * caught by the userinfo pattern), a time (`10:30`), a ratio (`16:9`) or a
- * host:port (`db:5432`): the password part must start with a letter or carry
- * a special character / case mix, and must not be all digits or hold `:`/`/`.
+ * Should-fix (round 8, narrowed round 9): a `*_session` value is a session
+ * token only when it has a generated-secret run, or is one whitespace-free
+ * token of 16+ characters (`training_session = Monday 9am` is a schedule).
+ */
+function looksLikeSessionToken(v: string): boolean {
+  return hasSecretRun(v) || (!/\s/.test(v) && v.length >= 16);
+}
+
+/**
+ * A REAL password signal (audit round 9, B3): a special character other than
+ * `-` `_` `.` (and `:` `/` `\` / whitespace, which are rejected before), or a
+ * generated-secret run. A hyphen or a digit-suffixed word is not one
+ * (`ABC-12345`, `Finanzas2026`, `Oficina-Norte`).
+ */
+function hasPasswordSignal(v: string): boolean {
+  return /[^A-Za-z0-9\-_.]/.test(v) || hasSecretRun(v);
+}
+
+/**
+ * Should-fix (round 8, narrowed round 9 / B3): a `user:pass` value. Applied
+ * only under a credential-ish or login/account-ish key (`USERPASS_KEY_RE`), so
+ * `ref = ticket:ABC-12345` or `contacto = Juan:Gerente2026` stay visible. Not
+ * a URL, a time, a ratio, a host:port or a Windows path; the password part is
+ * 6+ characters, not all digits, with no `:` `/` `\` or whitespace, and
+ * carries a real password signal (`hasPasswordSignal`).
  */
 function looksLikeUserPass(v: string): boolean {
   if (PATH_LIKE_RE.test(v)) return false; // `C:\keys\…` is a Windows path
@@ -238,12 +252,33 @@ function looksLikeUserPass(v: string): boolean {
   if (/[:/\\\s]/.test(pass)) return false; // url / time h:m:s / path
   if (/^\d+$/.test(pass)) return false; // host:port, time
   if (pass.length < 6) return false;
+  return hasPasswordSignal(pass);
+}
+
+/**
+ * Audit round 9 (B3): key tokens under which a `user:pass` value is judged —
+ * login / account / access words and the systems a login belongs to.
+ */
+const USERPASS_KEY_RE =
+  / (?:login|logins|acceso|accesos|access|cuenta|cuentas|account|accounts|ftp|sftp|ssh|admin|administrador|root|panel|cpanel|plesk|wp|wordpress|hosting|servidor|server|db|bd|mysql|postgres|vpn|router|wifi|smtp|imap|correo|email|mail|usuario|user|auth|creds|credenciales?|credentials?|signin|portal) /;
+
+/**
+ * Audit round 9 (B2): a password-shaped value for a leading `clave_X` that is
+ * not a service name — one token of 6+ characters with a password mix, a
+ * generated-secret run, or a special character (other than - _ .) next to
+ * both a letter and a digit. Codes stay visible: `0042`, `MXN`, `09DPR1234X`,
+ * `CT-2026-9`, `012180001234567891`.
+ */
+function looksLikePassword(v: string): boolean {
+  if (/\s/.test(v) || v.length < 6) return false;
   return (
-    /[^A-Za-z0-9]/.test(pass) ||
-    hasSecretRun(pass) ||
-    (hasPasswordMix(pass) && pass.length >= 10)
+    hasPasswordMix(v) ||
+    hasSecretRun(v) ||
+    (/[^A-Za-z0-9\-_.]/.test(v) && /\d/.test(v) && /[A-Za-z]/.test(v))
   );
 }
+/** A name whose FIRST token is `clave(s)` followed by another token. */
+const LEADING_CLAVE_RE = /^ claves? [a-z0-9]/;
 
 // Audit round 6 (should-fix 3): a host is an IP, localhost, a bracketed IPv6
 // or dotted labels ending in a TLD-ish label (starts with a letter) — and not
@@ -588,9 +623,14 @@ export function isCredentialFact(
   return (
     isCredentialName(key, value) ||
     isCredentialName(category, value) ||
-    // Should-fix (round 8): `*_session` holding a session-token value.
-    (SESSION_LAST_RE.test(nameTokens(key)) && hasSecretShape(value)) ||
-    looksLikeUserPass(value) ||
+    // Should-fix (round 8/9): `*_session` holding a session-token value.
+    (SESSION_LAST_RE.test(nameTokens(key)) && looksLikeSessionToken(value)) ||
+    // Audit R9 B3: `user:pass` only under a login/credential-ish key.
+    ((USERPASS_KEY_RE.test(nameTokens(key)) ||
+      USERPASS_KEY_RE.test(nameTokens(category))) &&
+      looksLikeUserPass(value)) ||
+    // Audit R9 B2: a non-service leading `clave_X` with a password value.
+    (LEADING_CLAVE_RE.test(nameTokens(key)) && looksLikePassword(value)) ||
     redactCredentials(value) !== value ||
     CREDENTIAL_VALUE_PATTERNS.some((re) => re.test(value))
   );

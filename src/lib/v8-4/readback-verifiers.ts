@@ -171,7 +171,9 @@ export async function verifyKbFile(
   }
   return {
     ok: true,
-    evidence: `KB ${path} (sha ${actual}, ${file.content.length} chars, ${file.updated_at})`,
+    // Ruling 3c (audit round 9, should-fix 3): the length of the SCRUBBED
+    // view — the raw length would carry a stored value's length.
+    evidence: `KB ${path} (sha ${actual}, ${scrubSecrets(file.content).length} chars, ${file.updated_at})`,
   };
 }
 

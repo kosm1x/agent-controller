@@ -552,6 +552,10 @@ export function locateMatch(
  * the value-holding-row filter — far above any realistic `limit`, so the
  * visible result never depends on a dropped row, and the query stays bounded
  * without a secret-dependent SQL LIMIT.
+ * Residual (audit round 9, should-fix 4): when MORE than this many rows match,
+ * the cut is made in bm25 order before the filter, so which rows fall past it
+ * can still depend on token hits inside a stored value. Only a query matching
+ * over 5000 KB rows is affected.
  */
 const FTS_FETCH_CAP = 5000;
 
@@ -589,8 +593,8 @@ export function searchFiles(
           // into an oracle. Fetch all matches (bounded by the corpus and a
           // hard cap), filter, then slice to `limit` in JS. bm25 order is
           // kept for clean rows (relevance); value-holding kept rows are
-          // reordered by path (value-independent) below, because bm25 counts
-          // token hits INSIDE the value.
+          // placed by a score on their SCRUBBED text below (round 9), because
+          // bm25 counts token hits INSIDE the value.
           `SELECT f.path, f.title, f.content, LENGTH(f.content) AS size,
                   snippet(jarvis_files_fts, 1, '«', '»', '…', 16) AS snip
              FROM jarvis_files_fts
@@ -616,10 +620,23 @@ export function searchFiles(
     if (ftsRows) {
       // Ruling 3c (audit round 8, B-3): filter THEN slice, so a dropped
       // value-holding row never costs a visible slot. Clean rows keep their
-      // bm25 order (relevance); value-holding kept rows are ordered by path
-      // (value-independent — bm25 ranks them by token hits inside the value).
-      const clean: SearchResult[] = [];
-      const secret: SearchResult[] = [];
+      // bm25 order (relevance); value-holding kept rows are merged in by a
+      // score on their scrubbed text (round 9 — bm25 ranks them by token
+      // hits inside the value).
+      // Audit round 9 (should-fix 2): each row also gets a value-independent
+      // score — query-token hits in its SCRUBBED content + title — used to
+      // place value-holding rows among the clean ones (see the merge below).
+      const score = (text: string, title: string): number => {
+        const hay = foldDiacritics(`${text}\n${title}`.toLowerCase());
+        let n = 0;
+        for (const t of tokens) {
+          const needle = foldDiacritics(t);
+          for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) n++;
+        }
+        return n;
+      };
+      const clean: Array<SearchResult & { score: number }> = [];
+      const secret: Array<SearchResult & { score: number }> = [];
       for (const r of ftsRows) {
         const raw = asText(r.content);
         // FTS5's snippet is cut inside SQLite (it could cut a value) and its
@@ -633,6 +650,7 @@ export function searchFiles(
             snippet: r.snip || r.title,
             size: r.size,
             ...locateMatch(r.content, tokens),
+            score: score(raw, String(r.title ?? "")),
           });
           continue;
         }
@@ -657,12 +675,31 @@ export function searchFiles(
           path: r.path,
           title: r.title,
           snippet,
-          size: r.size,
+          // Audit round 9 (should-fix 3): the SCRUBBED length.
+          size: scrubbed.length,
           ...locateMatch(scrubbed, tokens),
+          score: score(scrubbed, String(r.title ?? "")),
         });
       }
-      secret.sort((a, b) => a.path.localeCompare(b.path));
-      return [...clean, ...secret].slice(0, limit);
+      // Audit round 9 (should-fix 2): clean rows keep their bm25 order; each
+      // value-holding row (sorted by scrubbed score, then path) is placed
+      // before the first clean row whose scrubbed score is lower than its own
+      // — a merge on value-independent scores, instead of appending every
+      // value-holding row after all clean ones.
+      secret.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+      const merged: SearchResult[] = [];
+      let i = 0;
+      let j = 0;
+      while (merged.length < limit && (i < clean.length || j < secret.length)) {
+        const take =
+          j < secret.length &&
+          (i >= clean.length || secret[j]!.score > clean[i]!.score)
+            ? secret[j++]!
+            : clean[i++]!;
+        const { score: _s, ...row } = take;
+        merged.push(row);
+      }
+      return merged;
     }
   }
 
@@ -727,7 +764,9 @@ export function searchFiles(
         path: r.path,
         title: r.title,
         snippet,
-        size: r.size,
+        // Audit round 9 (should-fix 3): a value-holding row reports the
+        // SCRUBBED length (the raw one carries the stored value's length).
+        size: content === asText(r.content) ? r.size : content.length,
         // Same needle the LIKE filter used, so the cited line is the LIKE hit.
         ...locateMatch(content, [query]),
       },

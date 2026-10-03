@@ -53,10 +53,13 @@ import {
   resolveRenderedPlaceholders,
   encodeSecretForm,
   secretSpans,
-  OVERLAP_PLACEHOLDER,
 } from "./secret-refs.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
-import { deleteUserFact, formatUserFactsBlock } from "../db/user-facts.js";
+import {
+  deleteUserFact,
+  formatUserFactsBlock,
+  setUserFact,
+} from "../db/user-facts.js";
 import { deleteProject, updateProject } from "../db/projects.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
@@ -64,6 +67,7 @@ import { confirmationGate } from "../tools/task-executor.js";
 import { httpTool } from "../tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
 import { fileEditTool } from "../tools/builtin/code-editing.js";
+import { grepTool } from "../tools/builtin/code-search.js";
 import { dataSummarizeTool } from "../tools/builtin/data-summarize.js";
 import { mkdtempSync, readFileSync as readFs, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -789,41 +793,58 @@ describe("scrubSecrets", () => {
     );
   });
 
-  it("audit R8 B-1: a model-stored value overlapping a known value cannot expose the rest of it", () => {
-    // Attack: the model stores a guess value (context + first char of the
-    // target) that is LONGER than the target and overlaps it. Sequential
-    // longest-first replacement would replace the guess, leaving the target's
-    // suffix in the clear; a span union replaces the whole overlapping region.
+  it("audit R9 B1: a later value partly overlapping an older one is dropped; the older keeps its own span", () => {
     const ctx = "A".repeat(30);
-    const guess = ctx + FTP_PASS.slice(0, 1); // ctx + "p"
-    fact("projects", "zz_guess_password", guess);
+    const later = ctx + FTP_PASS.slice(0, 1); // written after FTP_PASS
+    fact("projects", "zz_later_password", later);
     invalidateSecretRefs();
-    const out = scrubSecrets(ctx + FTP_PASS);
-    // No suffix of the target leaks (not even one character of it).
-    expect(out).not.toContain(FTP_PASS.slice(1));
-    expect(out).not.toContain(FTP_PASS);
-    // The overlapping region renders a single non-reversible overlap marker.
-    expect(out).toContain(OVERLAP_PLACEHOLDER);
+    const text = "x " + ctx + FTP_PASS + " y";
+    const out = scrubSecrets(text);
+    // The older value renders exactly as if the later one did not exist;
+    // the context outside its span stays visible.
+    expect(out).toBe("x " + ctx + secretPlaceholder(N.ftp) + " y");
+    const spans = secretSpans(text);
+    expect(spans).toHaveLength(1);
+    expect(text.slice(spans[0]![0], spans[0]![1])).toBe(FTP_PASS);
+    // Same on the right side.
+    fact("projects", "zz_later2_password", FTP_PASS.slice(-1) + "B".repeat(30));
+    invalidateSecretRefs();
+    const t2 = FTP_PASS + "B".repeat(30);
+    expect(scrubSecrets(t2)).toBe(secretPlaceholder(N.ftp) + "B".repeat(30));
   });
 
-  it("audit R8 B-1: two distinct adjacent values each keep their own placeholder", () => {
+  it("audit R9 B1: the older of two partly overlapping values wins whichever is longer", () => {
+    // An older long value, a later short one overlapping its tail.
+    const older = "ol-" + "k".repeat(14);
+    const newer = "k".repeat(4) + "nw-" + "m".repeat(10);
+    fact("projects", "zz_older_token", older);
+    fact("projects", "zz_newer_token", newer);
+    invalidateSecretRefs();
+    const text = older + newer.slice(4);
+    expect(scrubSecrets(text)).toBe(
+      secretPlaceholder("SECRET_PROJECTS_ZZ_OLDER_TOKEN") + newer.slice(4),
+    );
+  });
+
+  it("audit R9 B1: re-saving or copying a value does not make it newer", () => {
+    const ctx = "A".repeat(30);
+    fact("projects", "zz_later_password", ctx + FTP_PASS.slice(0, 1));
+    invalidateSecretRefs();
+    scrubSecrets("warm"); // both values seen: FTP_PASS older
+    // Copy the older value to a new key and delete the original row.
+    fact("projects", "zz_copy_password", FTP_PASS);
+    deleteUserFact("projects", "acme_ftp_password");
+    invalidateSecretRefs();
+    expect(scrubSecrets(ctx + FTP_PASS)).toBe(
+      ctx + secretPlaceholder("SECRET_PROJECTS_ZZ_COPY_PASSWORD"),
+    );
+  });
+
+  it("audit R9 B1: two distinct adjacent values each keep their own placeholder", () => {
     const out = scrubSecrets(`${BLOG_PASS}${PORTAL_PASS}`);
     expect(out).toBe(
       `${secretPlaceholder(N.sub)}${secretPlaceholder(N.doc)}`,
     );
-    expect(out).not.toContain(OVERLAP_PLACEHOLDER);
-  });
-
-  it("audit R8 B-1: secretSpans merges an overlapping guess+value into one span", () => {
-    const ctx = "A".repeat(30);
-    fact("projects", "zz_guess_password", ctx + FTP_PASS.slice(0, 1));
-    invalidateSecretRefs();
-    const text = "x " + ctx + FTP_PASS + " y";
-    const spans = secretSpans(text);
-    // One merged span covering the whole ctx+value region.
-    expect(spans).toHaveLength(1);
-    const [s, e] = spans[0]!;
-    expect(text.slice(s, e)).toBe(ctx + FTP_PASS);
   });
 
   it("deleteProject drops the project's secrets from the index at once", () => {
@@ -1632,4 +1653,66 @@ describe("audit R7 B-1 — data_summarize scrubs the whole text before splitting
     expect(out).not.toContain("h".repeat(8));
     expect(out).not.toContain("j".repeat(8));
   });
+});
+
+describe("audit R9 B1 — a later partly-overlapping value changes no tool output", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "r9-b1-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A short synthetic value and visible context on both sides.
+  const V = "q9-" + "Xy7Wv4t";
+  const L = "LEFTCTX=";
+  const R = "=RIGHTCTX";
+  const BODY = `a ${L}${V}${R} b\n`;
+
+  function reg() {
+    const r = new ToolRegistry();
+    for (const t of [fileReadTool, fileEditTool, grepTool]) r.register(t);
+    return r;
+  }
+
+  async function outputs(r: ToolRegistry, g: string): Promise<string[]> {
+    setUserFact("projects", "zz_probe_password", g);
+    const path = join(dir, "f.txt");
+    const out: string[] = [];
+    writeFileSync(path, BODY);
+    out.push(await r.execute("file_read", { path }));
+    for (const old_string of [L, R, g]) {
+      writeFileSync(path, BODY);
+      out.push(
+        await r.execute("file_edit", { path, old_string, new_string: "Z" }),
+      );
+      out.push(readFs(path, "utf8") === BODY ? "same" : "changed");
+    }
+    writeFileSync(path, BODY);
+    for (const pattern of [L, R, g])
+      for (const output_mode of ["files", "count", "content"])
+        out.push(await r.execute("grep", { pattern, path: dir, output_mode }));
+    return out;
+  }
+
+  it("file_read, file_edit and grep are byte-identical for a right vs wrong character at every position", async () => {
+    fact("projects", "acme_probe_password", V);
+    invalidateSecretRefs();
+    const r = reg();
+    const cases: Array<[string, string]> = [];
+    // Left-anchored (context + known prefix + one char) and right-anchored
+    // (one char + known suffix + context). The two cases where the guess
+    // would contain the WHOLE value are left out: they need every character.
+    for (let k = 0; k < V.length - 1; k++)
+      cases.push([L + V.slice(0, k) + V[k], L + V.slice(0, k) + "#"]);
+    for (let k = 1; k < V.length; k++)
+      cases.push([V[k] + V.slice(k + 1) + R, "#" + V.slice(k + 1) + R]);
+    for (const [right, wrong] of cases) {
+      const a = await outputs(r, right);
+      const b = await outputs(r, wrong);
+      expect(a).toEqual(b);
+    }
+    // And the value itself never appears.
+    const last = await outputs(r, cases[0]![0]);
+    expect(last.join("\n")).not.toContain(V);
+  }, 60_000);
 });

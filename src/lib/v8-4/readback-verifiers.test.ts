@@ -111,6 +111,29 @@ describe("verifyDocWrite — scrubbed length in evidence", () => {
   });
 });
 
+describe("verifyKbFile — scrubbed length in evidence (audit R9 should-fix 3)", () => {
+  const SEC = "pw-" + "Q7z".repeat(6);
+  afterEach(() => {
+    invalidateSecretRefs();
+    closeDatabase();
+  });
+  it("reports the scrubbed length, not the raw length", async () => {
+    initDatabase(":memory:");
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+      .run("projects", "acme_ftp_password", SEC);
+    invalidateSecretRefs();
+    const content = `nota ${SEC} fin`;
+    mocks.getFile.mockReturnValue({ content, updated_at: "2026-08-23 01:00:00" });
+    const shownLen = scrubSecrets(content).length;
+    expect(shownLen).not.toBe(content.length);
+    const ok = await verifyKbFile({ path: "a.md", sha8: sha8(content) });
+    expect(ok).toMatchObject({ ok: true });
+    expect(ok.evidence).toContain(`${shownLen} chars`);
+    expect(ok.evidence).not.toContain(`${content.length} chars`);
+  });
+});
+
 describe("verifySchedule", () => {
   it("requires an existing, active row with the cron we set", async () => {
     mocks.getSchedule.mockReturnValue({ name: "Química", active: 1, cron_expr: "0 13 * * *" });

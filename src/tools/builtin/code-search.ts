@@ -318,6 +318,14 @@ TIPS:
       // otherwise be a per-character oracle). Files and counts are derived
       // from the kept lines, and each kept line is scrubbed before the cap.
       const records = parseLineRecords(output);
+      // Audit round 9 (should-fix 5): a file that reached the internal
+      // per-file cap was cut by the search itself — say so. (Residual: the
+      // cap counts raw matching lines, including a line whose only hit is
+      // inside a value, so for a file with ~2000 matching lines the cut point
+      // — and `total` — can move by such a line.)
+      const perFile = new Map<string, number>();
+      for (const r of records) perFile.set(r.file, (perFile.get(r.file) ?? 0) + 1);
+      const capped = [...perFile.values()].some((n) => n >= INTERNAL_MAXCOUNT);
       const kept: Array<{ file: string; lineno: string; content: string; hits: number }> =
         [];
       for (const r of records) {
@@ -329,6 +337,7 @@ TIPS:
           matches: [],
           total: 0,
           message: "No matches found",
+          ...(capped && { truncated: true }),
         });
       }
 
@@ -371,7 +380,7 @@ TIPS:
       return JSON.stringify({
         matches: trimmed,
         total,
-        truncated: total > maxResults,
+        truncated: total > maxResults || capped,
       });
     } catch (err) {
       const error = err as {

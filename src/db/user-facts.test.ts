@@ -792,6 +792,59 @@ describe("user-facts", () => {
         expect(isCredentialFact(category, key, value)).toBe(hidden);
       });
     });
+
+    describe("audit R9 — B2 clave_X by service word / B3 user:pass / session", () => {
+      const cases: Array<[string, string, string, boolean]> = [
+        // B2: clave_<service> is a credential whatever the value looks like.
+        ["p", "clave_ftp", "abcdef", true],
+        ["p", "clave_banco", "4321", true],
+        ["p", "clave_correo", "gato", true],
+        ["p", "clave_gmail", "perro", true],
+        ["p", "clave_ssh", "abc", true],
+        ["p", "clave_wifi", "casa", true],
+        ["p", "clave_ciec", "xyz", true],
+        ["p", "clave_fiel", "x", true],
+        ["p", "clave_del_ftp", "x", true],
+        ["p", "clave_sat", "x", true],
+        ["p", "ciec", "x", true],
+        // B2: any other clave_X is judged by its value only.
+        ["w", "clave_materia", "Tr0ub4dor&3", true],
+        ["w", "clave_sucursal", "Xk9#pLm2qR", true],
+        ["w", "clave_sucursal", "0042", false],
+        ["w", "clave_sat_producto", "43211503", false],
+        ["w", "clave_moneda", "MXN", false],
+        ["w", "clave_escuela", "09DPR1234X", false],
+        ["w", "clave_materia", "MAT-101", false],
+        ["w", "clave_departamento", "FIN-01", false],
+        ["w", "clave_ruta", "R12", false],
+        ["w", "clave_cuenta_contable", "1105-01", false],
+        ["w", "clave_imss", "12345678901", false],
+        ["w", "clave_issste", "12345678", false],
+        ["w", "clave_ine", "ABCDEF123456", false],
+        ["w", "clave_vendedor", "V-07", false],
+        ["w", "clave_almacen", "ALM-3", false],
+        ["w", "clave_centro_costos", "CC-200", false],
+        ["w", "clave_contrato", "CT-2026-9", false],
+        ["w", "clave_evento", "EV-33", false],
+        ["w", "clave_interbancaria", "012180001234567891", false],
+        ["w", "clave_elector", "GRMZFR90051209H400", false],
+        // B3: user:pass only under a login/credential key, with a real signal.
+        ["w", "ref", "ticket:ABC-12345", false],
+        ["w", "owner", "equipo:Finanzas2026", false],
+        ["w", "contacto", "Juan:Gerente2026", false],
+        ["w", "schedule", "lunes:Oficina-Norte", false],
+        ["w", "nota", "tema:Junta#2026", false], // neutral key: not judged
+        ["p", "acme_ftp", "ftpuser:Junta#2026", true],
+        ["p", "acme_wp_admin", "admin:S3cr#t!pw", true],
+        ["p", "acme_login", "jdoe:Gerente2026", false],
+        // should-fix 1: *_session needs a secret run or a long single token.
+        ["w", "training_session", "Monday 9am", false],
+        ["p", "acme_session", "Q".repeat(8) + "w".repeat(8), true],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
+    });
   });
 
   describe("getUserFacts", () => {

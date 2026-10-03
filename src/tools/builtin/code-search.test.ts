@@ -32,6 +32,20 @@ describe("grep", () => {
     expect(result.matches).toContain("b.ts");
   });
 
+  it("audit R9 should-fix 5: reports truncated when a file reaches the internal per-file cap", async () => {
+    writeFileSync(`${TEST_DIR}/many.txt`, "needle\n".repeat(2100));
+    writeFileSync(`${TEST_DIR}/few.txt`, "needle\n".repeat(3));
+    const big = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: `${TEST_DIR}/many.txt` }),
+    );
+    expect(big.total).toBe(1);
+    expect(big.truncated).toBe(true);
+    const small = JSON.parse(
+      await grepTool.execute({ pattern: "needle", path: `${TEST_DIR}/few.txt` }),
+    );
+    expect(small.truncated).toBe(false);
+  });
+
   it("should return content mode with line numbers", async () => {
     const result = JSON.parse(
       await grepTool.execute({

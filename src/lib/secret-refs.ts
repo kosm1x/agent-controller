@@ -63,8 +63,13 @@ interface SecretIndex {
   /** identity ("fact\0cat\0key" | "project\0slug\0field\0path") → name */
   nameOf: Map<string, string>;
   valueOf: Map<string, string>;
-  /** [value, placeholder], longest value first; URL-encoded and JSON-escaped forms included. */
-  scrub: Array<[string, string]>;
+  /**
+   * [value, placeholder, rank], longest value first; URL-encoded and
+   * JSON-escaped forms included. `rank` is the value's WRITE ORDER (audit
+   * round 9, B1): lower = written earlier. Unique per value text (forms of one
+   * value get consecutive ranks); used only to settle a partial overlap.
+   */
+  scrub: Array<[string, string, number]>;
   /** raw scrubbed value (>= MIN_SCRUB_LENGTH) → placeholder; numeric JSON leaves are matched here. */
   exact: Map<string, string>;
 }
@@ -181,6 +186,28 @@ interface Entry {
   identity: string;
   base: string;
   value: string;
+  /** Row write time (ms) of the value's current row; 0 when unknown. */
+  t: number;
+}
+
+/**
+ * Audit round 9 (B1): the write order of every value TEXT this process has
+ * seen in a given database, keyed by a hash of the text (no raw value is
+ * kept here). A value keeps the order it was first seen with for the life of
+ * the process — re-saving it by name, copying it to another key, or touching
+ * a sibling field of its project row does not make it "newer". A value text
+ * seen for the first time takes its row's write time (`updated_at`, which is
+ * the current value's write time for a fact), ties broken by a process-wide
+ * counter in build order (facts by id, then projects by rowid). Scoped per
+ * database object so a fresh database (a test, a reopened file) starts clean.
+ */
+const firstSeen = new WeakMap<object, Map<string, { t: number; seq: number }>>();
+let seenSeq = 0;
+
+function rowTime(v: unknown): number {
+  if (typeof v !== "string" || v === "") return 0;
+  const ms = Date.parse(v.includes("T") ? v : v.replace(" ", "T") + "Z");
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 function parseObject(raw: unknown): Record<string, unknown> {
@@ -233,6 +260,7 @@ function projectEntries(
     identity: projectIdentity(slug, field, path),
     base: `SECRET_${norm([...prefix, ...path].join("_"))}`,
     value: str,
+    t: 0, // set from the project row by buildIndex
   });
 }
 
@@ -243,14 +271,23 @@ function buildIndex(): SecretIndex | null {
   } catch {
     return null; // no database open in this process: no stored secrets
   }
-  let facts: Array<{ category: string; key: string; value: string }>;
+  let facts: Array<{
+    category: string;
+    key: string;
+    value: string;
+    updated_at: unknown;
+  }>;
   let projects: Array<Record<string, unknown>>;
   try {
     facts = db
-      .prepare("SELECT category, key, value FROM user_facts")
+      .prepare(
+        "SELECT category, key, value, updated_at FROM user_facts ORDER BY id",
+      )
       .all() as typeof facts;
     projects = db
-      .prepare("SELECT slug, urls, credentials, config FROM projects")
+      .prepare(
+        "SELECT slug, urls, credentials, config, updated_at FROM projects ORDER BY rowid",
+      )
       .all() as typeof projects;
   } catch (err) {
     // A database without the two stores (a partial test schema) holds none.
@@ -265,14 +302,41 @@ function buildIndex(): SecretIndex | null {
       identity: factIdentity(f.category, f.key),
       base: `SECRET_${norm(`${f.category}_${f.key}`)}`,
       value: f.value,
+      t: rowTime(f.updated_at),
     });
   }
   for (const p of projects) {
     if (typeof p.slug !== "string") continue;
+    const from = entries.length;
     for (const field of ["credentials", "urls", "config"]) {
       projectEntries(p.slug, field, parseObject(p[field]), [], "", entries);
     }
+    const t = rowTime(p.updated_at);
+    for (let i = from; i < entries.length; i++) entries[i]!.t = t;
   }
+
+  // Audit round 9 (B1): the write order of each value text (see firstSeen).
+  let seen = firstSeen.get(db as object);
+  if (!seen) {
+    seen = new Map();
+    firstSeen.set(db as object, seen);
+  }
+  const orderOf = new Map<string, { t: number; seq: number }>();
+  for (const e of entries) {
+    if (orderOf.has(e.value)) continue;
+    const h = createHash("sha256").update(e.value).digest("hex");
+    let o = seen.get(h);
+    if (!o) {
+      o = { t: e.t, seq: ++seenSeq };
+      seen.set(h, o);
+    }
+    orderOf.set(e.value, o);
+  }
+  const ranked = [...orderOf.entries()].sort(
+    ([, a], [, b]) => a.t - b.t || a.seq - b.seq,
+  );
+  const rankOf = new Map<string, number>();
+  ranked.forEach(([v], i) => rankOf.set(v, i * 4));
 
   // Collision rule: every member of a group sharing a base name gets a
   // suffix from its own identity — deterministic, independent of row order.
@@ -280,7 +344,7 @@ function buildIndex(): SecretIndex | null {
   for (const e of entries) count.set(e.base, (count.get(e.base) ?? 0) + 1);
   const nameOf = new Map<string, string>();
   const valueOf = new Map<string, string>();
-  const scrub: Array<[string, string]> = [];
+  const scrub: Array<[string, string, number]> = [];
   const exact = new Map<string, string>();
   for (const e of entries) {
     const name =
@@ -295,13 +359,14 @@ function buildIndex(): SecretIndex | null {
     // (escaped once, and twice for JSON nested in a JSON string). Each
     // encoded form gets a placeholder tagged with its form (audit R7 B-4);
     // a form whose text equals an earlier one keeps the earlier (raw first).
-    const seen = new Set<string>();
-    for (const form of ["raw", "url", "json", "json2"] as const) {
+    const seenForm = new Set<string>();
+    const rank = rankOf.get(e.value)!;
+    (["raw", "url", "json", "json2"] as const).forEach((form, fi) => {
       const text = encodeSecretForm(e.value, form);
-      if (seen.has(text)) continue;
-      seen.add(text);
-      scrub.push([text, secretPlaceholder(name, form)]);
-    }
+      if (seenForm.has(text)) return;
+      seenForm.add(text);
+      scrub.push([text, secretPlaceholder(name, form), rank + fi]);
+    });
   }
   scrub.sort((a, b) => b[0].length - a[0].length);
   return { at: Date.now(), nameOf, valueOf, scrub, exact };
@@ -478,7 +543,9 @@ export function projectEntryLeaves(
 
 /**
  * Replace every stored credential value (and its URL-encoded and JSON-escaped
- * forms) with its placeholder. Plain substring replacement, longest value first.
+ * forms) with its placeholder, over the spans `scrubSpans` picks (a value
+ * containing a shorter stored value is replaced whole; a partial overlap is
+ * settled older-wins).
  */
 export function scrubSecrets(text: string): string {
   return scrubWith(index(), text);
@@ -544,83 +611,80 @@ export function scrubJsonText(text: string): string {
   return clean === parsed ? scrubSecrets(text) : JSON.stringify(clean);
 }
 
-/**
- * Audit round 8 (B-1): the placeholder for a span where two or more DIFFERENT
- * stored values overlap. `resolveRenderedPlaceholders` refuses to write it
- * back (it carries a marker but is not a `RENDERED_PLACEHOLDER_RE` shape), so
- * an overlapping pair cannot be round-tripped — the only safe behaviour, and
- * the attack this closes (a model-stored value that overlaps a shorter one)
- * never has a legitimate round-trip anyway.
- */
-export const OVERLAP_PLACEHOLDER =
-  "[oculto · varios datos ocultos se traslapan aquí; cópialos por separado por nombre]";
-
-interface MergedSpan {
+interface ScrubSpan {
   start: number;
   end: number;
   ph: string;
 }
 
 /**
- * Audit round 8 (B-1): the scrub spans of `text`, as a SPAN UNION over the
- * ORIGINAL text — not sequential longest-first replacement. Every occurrence
- * of every stored value (every scrubbed form) is collected, then overlapping
- * occurrences are merged into one span. A single-value span renders that
- * value's placeholder; a span where different values overlap renders
- * `OVERLAP_PLACEHOLDER`. Sequential replacement let a model-stored value that
- * overlaps a shorter one (`ctx + prefix(V)`) win the longest-first race and
- * expose the rest of V; a union replaces the whole overlapping region as one
- * unit, so no prefix of V can ever be left behind.
+ * Audit round 9 (B1): the scrub spans of `text`, computed over the ORIGINAL
+ * text, OLDER-WINS and un-merged.
+ *
+ * Every occurrence of every stored form is collected with its value's write
+ * rank, then accepted oldest first:
+ * - no overlap with an accepted span → accepted;
+ * - lies inside an accepted span (full containment) → dropped (nested);
+ * - fully contains every accepted span it touches → accepted, replacing them
+ *   (a longer value that contains a shorter stored value renders as one unit);
+ * - PARTIALLY overlaps an accepted (older) span → dropped entirely.
+ * Occurrences of one form of one value that overlap each other (a periodic
+ * value) are first joined into one span with that value's placeholder.
+ *
+ * Consequence: an accepted span never grows past the occurrence it came from,
+ * so text around a value stays as it is; and a value written AFTER another one
+ * cannot change how the older one renders, nor be kept where it partly
+ * overlaps it. Round 8 merged partial overlaps into a region with a special
+ * placeholder, so the output depended on whether the newer value occurred in
+ * the text at all. Residual: when a value written later legitimately overlaps
+ * an older one in the same text, the later value's part outside the older span
+ * is shown (the later value loses the overlap).
  */
-function scrubMergedSpans(idx: SecretIndex, text: string): MergedSpan[] {
-  type Occ = { start: number; end: number; ph: string };
-  const raw: Occ[] = [];
-  for (const [value, ph] of idx.scrub) {
+function scrubSpans(idx: SecretIndex, text: string): ScrubSpan[] {
+  type Occ = { start: number; end: number; ph: string; rank: number };
+  const occs: Occ[] = [];
+  for (const [value, ph, rank] of idx.scrub) {
     if (value.length === 0) continue;
+    let cur: Occ | undefined;
     for (
       let i = text.indexOf(value);
       i !== -1;
       i = text.indexOf(value, i + 1)
     ) {
-      raw.push({ start: i, end: i + value.length, ph });
+      if (cur && i < cur.end) {
+        cur.end = i + value.length; // same form of the same value: join
+        continue;
+      }
+      cur = { start: i, end: i + value.length, ph, rank };
+      occs.push(cur);
     }
   }
-  if (raw.length === 0) return [];
-  // Earliest start first; on a tie the longer span first (so a containing
-  // value anchors the region and shorter values nest inside it).
-  raw.sort((a, b) => a.start - b.start || b.end - a.end);
-  const regions: Array<{ start: number; end: number; occs: Occ[] }> = [];
-  for (const r of raw) {
-    const last = regions[regions.length - 1];
-    // Merge only a TRUE overlap (shares at least one character): two values
-    // that merely abut are distinct secrets and each keeps its own
-    // placeholder. The overlap attack always shares the boundary character.
-    if (last && r.start < last.end) {
-      if (r.end > last.end) last.end = r.end;
-      last.occs.push(r);
-    } else {
-      regions.push({ start: r.start, end: r.end, occs: [r] });
+  if (occs.length === 0) return [];
+  // Oldest value first; within one value, left to right, longer first.
+  occs.sort(
+    (a, b) => a.rank - b.rank || a.start - b.start || b.end - a.end,
+  );
+  let accepted: Occ[] = [];
+  for (const o of occs) {
+    const touching = accepted.filter((a) => a.start < o.end && o.start < a.end);
+    if (touching.length === 0) {
+      accepted.push(o);
+      continue;
     }
+    if (touching.some((a) => a.start <= o.start && o.end <= a.end)) continue;
+    if (touching.every((a) => o.start <= a.start && a.end <= o.end)) {
+      accepted = accepted.filter((a) => !touching.includes(a));
+      accepted.push(o);
+      continue;
+    }
+    // A partial overlap with an older accepted span: dropped entirely.
   }
-  return regions.map((m) => {
-    // One stored value whose span covers the WHOLE region → that value's
-    // placeholder (the others are nested inside it: a longer value that
-    // contains a shorter stored value, which must render as one unit, not
-    // as "overlapping"). Only a PARTIAL overlap — no single value spanning
-    // the region — renders the non-reversible overlap placeholder.
-    const cover = m.occs.find((o) => o.start === m.start && o.end === m.end);
-    if (cover) return { start: m.start, end: m.end, ph: cover.ph };
-    const phs = new Set(m.occs.map((o) => o.ph));
-    return {
-      start: m.start,
-      end: m.end,
-      ph: phs.size === 1 ? [...phs][0]! : OVERLAP_PLACEHOLDER,
-    };
-  });
+  accepted.sort((a, b) => a.start - b.start);
+  return accepted.map(({ start, end, ph }) => ({ start, end, ph }));
 }
 
 function scrubWith(idx: SecretIndex, text: string): string {
-  const spans = scrubMergedSpans(idx, text);
+  const spans = scrubSpans(idx, text);
   if (spans.length === 0) return text;
   let out = "";
   let at = 0;
@@ -633,17 +697,17 @@ function scrubWith(idx: SecretIndex, text: string): string {
 }
 
 /**
- * Audit round 7 (B-1c), round 8 (B-1): the [start, end) spans of every stored
- * value in `text`, MERGED by span union (the same spans `scrubWith` replaces).
- * A content-matching tool (file_edit, grep) uses them to ignore a match that
- * cuts INTO a value — otherwise "old_string not found" vs "found" is an oracle
- * that recovers the value one character at a time. Merged spans also close the
- * guess-value overlap oracle: a model-stored value overlapping V extends the
- * span over the whole region, so a partial match there is dropped whether or
- * not the guess was right.
+ * Audit round 7 (B-1c), round 9 (B1): the [start, end) spans of every stored
+ * value in `text` — exactly the spans `scrubWith` replaces (older-wins,
+ * un-merged; see `scrubSpans`). A content-matching tool (file_edit, grep)
+ * uses them to ignore a match that cuts INTO a value, so "found" vs "not
+ * found" cannot be read character by character. The spans depend only on the
+ * values stored before the one a later write adds where the two partly
+ * overlap: a later value that partly overlaps an older one adds no span and
+ * removes none, so its presence in the text changes nothing here.
  */
 export function secretSpans(text: string): Array<[number, number]> {
-  return scrubMergedSpans(index(), text).map((s) => [s.start, s.end]);
+  return scrubSpans(index(), text).map((s) => [s.start, s.end]);
 }
 
 // ---------------------------------------------------------------------------
