@@ -13,6 +13,7 @@ import { upsertFile } from "../db/jarvis-fs.js";
 import { safeSlice } from "../lib/unicode-safe.js";
 import { getOutcomeTag } from "./outcome-tag.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -188,7 +189,11 @@ export async function autoPersistConversation(
 ): Promise<void> {
   if (!shouldAutoPersist(input)) return;
 
-  const { userText, responseText, toolCalls, channel, taskId } = input;
+  const { toolCalls, channel, taskId } = input;
+  // Ruling 3c (audit R3 S2): stored credential values never reach the title,
+  // the topic path or the summary — scrubbed before any cut.
+  const userText = scrubSecrets(input.userText);
+  const responseText = scrubSecrets(input.responseText);
 
   // Build a compact summary (no LLM call — keep it mechanical and fast)
   const toolList = [...new Set(toolCalls)].slice(0, 10).join(", ");

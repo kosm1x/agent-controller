@@ -121,6 +121,25 @@ function isErrorResult(result: unknown): boolean {
 }
 
 /**
+ * Ruling 3c (audit R3 N1): a tool result scrubbed of stored credentials. The
+ * contract is a string, but MCP bridges and a few builtins can hand back
+ * undefined, null or an object: those must not throw here. A JSON-able object
+ * is scrubbed through its JSON text (the placeholder is JSON-safe, so the
+ * shape survives); anything else passes through unchanged.
+ */
+function scrubResult(result: unknown): string {
+  if (typeof result === "string") return scrubSecrets(result);
+  if (result === null || typeof result !== "object") return result as string;
+  try {
+    const json = JSON.stringify(result);
+    const clean = scrubSecrets(json);
+    return (clean === json ? result : JSON.parse(clean)) as string;
+  } catch {
+    return result as unknown as string; // circular / BigInt: not JSON-able
+  }
+}
+
+/**
  * Ruling 3c: a thrown value scrubbed of stored credentials. The original is
  * rethrown untouched when nothing matched; an Error whose message cannot be
  * assigned (DOMException's is read-only) is replaced by a plain Error with
@@ -376,7 +395,7 @@ export class ToolRegistry {
     if ("error" in resolved) return resolved.error;
     const start = Date.now();
     try {
-      const result = scrubSecrets(await tool.execute(resolved.args));
+      const result = scrubResult(await tool.execute(resolved.args));
       toolMetrics.record(name, Date.now() - start, true);
       // V8.4 numbers-provenance corpus: every tool result of the current run
       // (task id from the run-tool context; no-op outside a run). Digested +

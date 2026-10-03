@@ -13,7 +13,8 @@
  *   args (the caller's object — what gets recorded — keeps the reference).
  * - Every other tool: references stay literal text.
  * - An unknown `{{SECRET_X}}` in a template tool, or `$SECRET_X` in
- *   shell_exec, refuses the call (no value involved).
+ *   shell_exec, refuses the call (no value involved); so does any
+ *   `${…SECRET_…}` expansion other than the bare `${SECRET_X}`.
  *
  * Internal consumers that read the stores for their own API calls (Gemini key
  * fallback, scripts) read the raw rows directly and are unaffected.
@@ -44,6 +45,14 @@ const INDEX_TTL_MS = 60_000;
 
 const TEMPLATE_RE = /\{\{(SECRET_[A-Za-z0-9_]+)\}\}/g;
 const SHELL_REF_RE = /\$\{(SECRET_[A-Za-z0-9_]+)\}|\$(SECRET_[A-Za-z0-9_]+)/g;
+/**
+ * Any `${…SECRET_…}` form other than the bare `${SECRET_X}`: an operator
+ * (`${SECRET_X:-d}`, `${SECRET_X#p}`, `${SECRET_X:0:4}`), length
+ * (`${#SECRET_X}`), indirection (`${!SECRET_X}`), or an unclosed brace. These
+ * would hand the shell a transform of the value the scrub cannot recognise.
+ */
+const SHELL_EXPANSION_RE =
+  /\$\{[#!]SECRET_|\$\{SECRET_[A-Za-z0-9_]*(?:[^A-Za-z0-9_}]|$)/;
 
 interface SecretIndex {
   at: number;
@@ -278,6 +287,44 @@ export function projectSecretDisplay(
 }
 
 /**
+ * Every string/number leaf under one project entry (`credentials` / `urls` /
+ * `config` key `key`), with its path from that key and its display form —
+ * the same identity and name the index gives a nested value (audit R3 S4).
+ * A scalar entry yields one leaf with path `[key]`.
+ */
+export function projectEntryLeaves(
+  slug: string,
+  field: "credentials" | "urls" | "config",
+  key: string,
+  value: unknown,
+): Array<{ path: string[]; secret: boolean; display: string }> {
+  const out: Array<{ path: string[]; secret: boolean; display: string }> = [];
+  const walk = (v: unknown, path: string[], leafKey: string): void => {
+    if (v === null || v === undefined || v === "") return;
+    if (Array.isArray(v)) {
+      v.forEach((x, i) => walk(x, [...path, String(i)], leafKey));
+      return;
+    }
+    if (typeof v === "object") {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        walk(x, [...path, k], k);
+      }
+      return;
+    }
+    if (typeof v !== "string" && typeof v !== "number") return;
+    const str = String(v);
+    const secret = isProjectSecret(field, leafKey, str);
+    out.push({
+      path,
+      secret,
+      display: displayFor(projectIdentity(slug, field, path), secret, str),
+    });
+  };
+  walk(value, [key], key);
+  return out;
+}
+
+/**
  * Replace every stored credential value (and its URL-encoded and JSON-escaped
  * forms) with its placeholder. Plain substring replacement, longest value first.
  */
@@ -293,6 +340,13 @@ function unknownRefError(tool: string, names: string[]): string {
   const list = [...new Set(names)].join(", ");
   return JSON.stringify({
     error: `No ejecuté ${tool}: no hay credencial guardada con el nombre ${list}. Usa el nombre exacto que muestra el dato oculto.`,
+  });
+}
+
+function shellExpansionError(): string {
+  return JSON.stringify({
+    error:
+      "No ejecuté shell_exec: escribe la referencia tal cual, $SECRET_<NOMBRE> o ${SECRET_<NOMBRE>}, sin operadores de expansión (${SECRET_X:-…}, ${SECRET_X#…}, ${#SECRET_X}, ${!SECRET_X}).",
   });
 }
 
@@ -337,6 +391,9 @@ export function resolveSecretRefs(
   args: Record<string, unknown>,
 ): { args: Record<string, unknown> } | { error: string } {
   if (tool === "shell_exec" && typeof args.command === "string") {
+    if (SHELL_EXPANSION_RE.test(args.command)) {
+      return { error: shellExpansionError() };
+    }
     const { valueOf } = index();
     const unknown = shellRefNames(args.command).filter((n) => !valueOf.has(n));
     return unknown.length > 0

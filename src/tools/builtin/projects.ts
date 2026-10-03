@@ -17,12 +17,13 @@ import {
 } from "../../db/projects.js";
 import {
   isProjectSecret,
+  projectEntryLeaves,
   projectSecretDisplay,
 } from "../../lib/secret-refs.js";
 
 /**
- * Ruling 3c: the by-name placeholder of each credential-style top-level entry
- * this call stored (never the value); undefined when there is none, so the
+ * Ruling 3c: the by-name placeholder of each credential-style entry (nested
+ * values included, keyed by their dotted path) this call stored (never the value); undefined when there is none, so the
  * result of a call without credentials is unchanged.
  */
 function savedSecrets(
@@ -34,6 +35,13 @@ function savedSecrets(
     const obj = args[field];
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
     for (const [k, v] of Object.entries(obj)) {
+      // Nested values carry their own names (audit R3 S4).
+      if (v && typeof v === "object") {
+        for (const leaf of projectEntryLeaves(slug, field, k, v)) {
+          if (leaf.secret) out[`${field}.${leaf.path.join(".")}`] = leaf.display;
+        }
+        continue;
+      }
       if (typeof v !== "string" && typeof v !== "number") continue;
       if (v === "" || !isProjectSecret(field, k, String(v))) continue;
       out[`${field}.${k}`] = projectSecretDisplay(slug, field, k, v);
@@ -183,6 +191,13 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
     if (credKeys.length > 0) {
       lines.push(`\n**Credentials:** ${credKeys.join(", ")}`);
       for (const [k, v] of Object.entries(project.credentials)) {
+        // A nested entry shows each value under its own name (audit R3 S4).
+        if (v && typeof v === "object") {
+          for (const leaf of projectEntryLeaves(project.slug, "credentials", k, v)) {
+            lines.push(`  ${leaf.path.join(".")}: ${leaf.display}`);
+          }
+          continue;
+        }
         lines.push(
           `  ${k}: ${projectSecretDisplay(project.slug, "credentials", k, v)}`,
         );

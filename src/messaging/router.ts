@@ -1270,9 +1270,11 @@ function hydrateThreadIfNeeded(tk: string): void {
     if (rows.length > 0) {
       // Reverse to chronological order (query returns newest-first)
       // Images don't survive restarts (base64 not stored in DB) — text only
+      // Ruling 3c (audit R3 B1): rows stored before the write-side scrub
+      // (or before the value was saved) come back scrubbed.
       const thread: ThreadEntry[] = rows
         .reverse()
-        .map((r) => ({ text: r.content }));
+        .map((r) => ({ text: scrubSecrets(r.content) }));
       conversationThreads.set(tk, thread);
     } else {
       conversationThreads.set(tk, []);
@@ -1354,7 +1356,8 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
     });
 
     const path = `logs/day-logs/${date}.md`;
-    const entry = `- [${time}] **${role}**: ${safeSlice(text, 500).replace(/\n/g, " ")}\n`;
+    // Ruling 3c (audit R3 S3): stored credential values scrubbed before the cut.
+    const entry = `- [${time}] **${role}**: ${safeSlice(scrubSecrets(text), 500).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
     const existing = getFile(path);
@@ -1752,15 +1755,18 @@ export class MessageRouter {
         // others (heavy/nanoclaw/swarm) strip the marker and treat as a blob.
         // Per-call extras (time context, agent boilerplate) attach to the
         // VARIABLE half — they'd bust the cache anyway.
+        // Ruling 3c (audit R3 S3): the stored title/description (and the
+        // prompt built from them) carry no stored credential value.
         const result = await submitTask({
-          title: `🤖 Agente: ${taskText.slice(0, 50)}`,
-          description:
+          title: `🤖 Agente: ${scrubSecrets(taskText).slice(0, 50)}`,
+          description: scrubSecrets(
             stableSP +
-            CACHE_BREAK_MARKER +
-            variableSP +
-            `\n\n${timeContextLine(mxDate, mxTime)}\n` +
-            `\nTarea del agente (background):\n${taskText}\n\n` +
-            BACKGROUND_AGENT_BOILERPLATE,
+              CACHE_BREAK_MARKER +
+              variableSP +
+              `\n\n${timeContextLine(mxDate, mxTime)}\n` +
+              `\nTarea del agente (background):\n${taskText}\n\n` +
+              BACKGROUND_AGENT_BOILERPLATE,
+          ),
           // Classify on the full agent task text, not the 50-char title (see
           // classifier `detectionText` — truncation can forge a coding signal).
           detectionText: taskText,
@@ -2332,8 +2338,11 @@ export class MessageRouter {
       );
     }
 
+    // Ruling 3c (audit R3 S3): the task title and description are stored
+    // (tasks table) — stored credential values scrubbed before the cut.
+    const titleSource = scrubSecrets(msg.text);
     const titleText =
-      msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
+      titleSource.length > 60 ? titleSource.slice(0, 60) + "..." : titleSource;
 
     // Build structured conversation turns from in-memory thread buffer.
     // The current user message is appended as the final turn so the fast runner
@@ -2562,8 +2571,9 @@ export class MessageRouter {
       (pinsBlock ? "\n\n" + pinsBlock : "") +
       (patternBlock ? "\n\n" + patternBlock : "") +
       checkpointBlock;
-    const taskDescription =
-      stableSP + CACHE_BREAK_MARKER + variableSP + variableTail;
+    const taskDescription = scrubSecrets(
+      stableSP + CACHE_BREAK_MARKER + variableSP + variableTail,
+    );
 
     // Create abort controller for task cancellation (v6.2 S2)
     const taskAbort = new AbortController();
@@ -2674,7 +2684,9 @@ export class MessageRouter {
             spChannel?.personaContent ?? null,
             isOwnerChannel(msg.channel, spChannel?.mode),
           );
-          return sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail;
+          return scrubSecrets(
+            sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail,
+          );
         },
         detectionText: msg.text,
         conversationHistory,
@@ -3156,6 +3168,16 @@ export class MessageRouter {
         /* DB or JSON parse failure — proceed with empty tool list */
       }
 
+      // Safety net: auto-persist critical data the LLM may have ignored.
+      // Ruling 3c (audit R3 B1): runs BEFORE the day-log line, the thread push,
+      // the memory retain and the JME write below, so a credential it saves is
+      // already in the store when their write-side scrub runs.
+      try {
+        ensureCriticalDataPersisted(pending.originalText, taskId);
+      } catch {
+        // Non-fatal
+      }
+
       // W1 (audit 2026-09-30): the operator approves what the harness will
       // run — rendered from the STORED args the sha binds, appended after the
       // deliverable filter — never only the model's wording of it.
@@ -3343,13 +3365,6 @@ export class MessageRouter {
             result: resultText.slice(0, 500),
           }).catch(() => {});
         }
-      } catch {
-        // Non-fatal
-      }
-
-      // Safety net: auto-persist critical data the LLM may have ignored
-      try {
-        ensureCriticalDataPersisted(pending.originalText, taskId);
       } catch {
         // Non-fatal
       }

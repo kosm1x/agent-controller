@@ -132,6 +132,20 @@ describe("HindsightMemoryBackend", () => {
       });
     });
 
+    it("returns Hindsight results and the reflection with stored credential values scrubbed (ruling 3c, audit R3 B1)", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [{ id: "m1", text: `la clave es ${SCRUB_SYN}`, type: "world" }],
+      });
+      mockClient.reflect.mockResolvedValueOnce({ text: `usa ${SCRUB_SYN}` });
+      const results = await backend.recall("clave", { bank: "mc-operational" });
+      expect(results[0].content).toBe("la clave es [oculto]");
+      const reflection = await backend.reflect("clave", { bank: "mc-operational" });
+      expect(reflection).toBe("usa [oculto]");
+      expect(JSON.stringify([results, reflection, logRecallSpy.mock.calls])).not.toContain(
+        SCRUB_SYN,
+      );
+    });
+
     it("logs a recall_audit row tagged source=hindsight on success", async () => {
       logRecallSpy.mockClear();
       await backend.recall("what happened", { bank: "mc-operational" });

@@ -2296,3 +2296,45 @@ describe("JME hardening R3 folds (qa R3 2026-09-30)", () => {
     ).toEqual([{ fact_text: "Fede plans the Pulso launch", confidence: 0.7 }]);
   });
 });
+
+describe("JME — read-side scrub (ruling 3c, audit R3 B1)", () => {
+  beforeEach(() => {
+    inferMock.mockReset();
+  });
+
+  it("queryMemory returns a fact stored in clear (before deploy) with the stored value scrubbed", async () => {
+    const { queryMemory } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_facts (source_task, ts, fact_text, category) VALUES (?, ?, ?, ?)`,
+      )
+      .run("t-old", Date.now(), `Fede guardó la clave ${SCRUB_SYN} del portal`, "project");
+    const results = await queryMemory("clave portal");
+    expect(results.map((r) => r.factText)).toEqual([
+      "Fede guardó la clave [oculto] del portal",
+    ]);
+    expect(JSON.stringify(logRecallMock.mock.calls)).not.toContain(SCRUB_SYN);
+  });
+
+  it("the consolidator transcript scrubs a turn stored in clear (before deploy)", async () => {
+    const { consolidateAll } = await getJme();
+    settledTurn("t-old", "user", `revisa ${SCRUB_SYN} hoy`);
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+    await consolidateAll();
+    expect(lastTranscript()).toBe("Fede: revisa [oculto] hoy");
+  });
+
+  it("a preference-signal snippet is written from the scrubbed turn", async () => {
+    const { writeEpisodic } = await getJme();
+    mockDb
+      .prepare(
+        `INSERT INTO jme_turns (task_id, role, content, channel, ts) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("t-prev", "jarvis", "respuesta", "telegram", Date.now() - 60_000);
+    writeEpisodic({ taskId: "t-sig", role: "user", content: `Muy largo, ${SCRUB_SYN}` });
+    const rows = mockDb.prepare("SELECT snippet FROM jme_signals").all() as Array<{
+      snippet: string;
+    }>;
+    expect(rows).toEqual([{ snippet: "Muy largo, [oculto]" }]);
+  });
+});

@@ -11,6 +11,17 @@ vi.mock("../db/index.js", () => ({
   getDatabase: () => mockDb,
 }));
 
+// Ruling 3c: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn-" + "e".repeat(14));
+const laterSaved = vi.hoisted(() => new Set<string>());
+vi.mock("../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => {
+    let out = t.replaceAll(SCRUB_SYN, "[oculto]");
+    for (const v of laterSaved) out = out.replaceAll(v, "[oculto]");
+    return out;
+  },
+}));
+
 import { getEssentialFacts, clearEssentialsCache } from "./essentials.js";
 
 beforeEach(() => {
@@ -37,6 +48,35 @@ afterEach(() => {
 });
 
 describe("getEssentialFacts", () => {
+  it("scrubs a stored credential value from a row stored in clear, before the per-entry cut (ruling 3c, audit R3 B1)", () => {
+    mockDb
+      .prepare(
+        "INSERT INTO conversations (bank, content, trust_tier) VALUES (?, ?, ?)",
+      )
+      .run("mc-jarvis", "x".repeat(140) + ` ${SCRUB_SYN} fin`, 1);
+    const result = getEssentialFacts();
+    expect(result).toContain("[Essential context");
+    expect(result).not.toContain(SCRUB_SYN.slice(0, 6));
+  });
+
+  it("a value saved after the block was cached is scrubbed on the cache hit", () => {
+    const later = "lt-" + "w".repeat(14);
+    mockDb
+      .prepare(
+        "INSERT INTO conversations (bank, content, trust_tier) VALUES (?, ?, ?)",
+      )
+      .run("mc-jarvis", `la nota ${later}`, 1);
+    expect(getEssentialFacts()).toContain(later); // not a stored secret yet
+    laterSaved.add(later);
+    try {
+      const cached = getEssentialFacts();
+      expect(cached).toContain("la nota [oculto]");
+      expect(cached).not.toContain(later);
+    } finally {
+      laterSaved.clear();
+    }
+  });
+
   it("returns empty string when no memories exist", () => {
     expect(getEssentialFacts()).toBe("");
   });

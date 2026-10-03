@@ -249,6 +249,9 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
       urls: { repo: FAKE_URL_WITH_USERINFO },
     });
     expect(JSON.parse(out).saved_secrets).toEqual({
+      "config.deploy.notes": secretPlaceholder(
+        "SECRET_LEGACY_CONFIG_DEPLOY_NOTES",
+      ),
       "urls.repo": secretPlaceholder("SECRET_LEGACY_URLS_REPO"),
     });
     expectNoSecret(out);
@@ -264,6 +267,40 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     });
     expect(r).toEqual({
       args: { url: FAKE_URL_WITH_USERINFO, body: "api_key=" + FAKE_GOOGLE_KEY },
+    });
+  });
+
+  it("audit R3 S4: nested credentials show each value's own name in saved_secrets and project_get (no generic placeholder)", async () => {
+    const out = await projectUpdateTool.execute({
+      slug: "nested",
+      name: "Nested",
+      credentials: {
+        ftp: { host: "ftp.example.test", pass: FAKE_APP_PASSWORD },
+        keys: [FAKE_GOOGLE_KEY],
+      },
+    });
+    expect(JSON.parse(out).saved_secrets).toEqual({
+      "credentials.ftp.host": secretPlaceholder("SECRET_NESTED_FTP_HOST"),
+      "credentials.ftp.pass": secretPlaceholder("SECRET_NESTED_FTP_PASS"),
+      "credentials.keys.0": secretPlaceholder("SECRET_NESTED_KEYS_0"),
+    });
+    expectNoSecret(out);
+    const got = await projectGetTool.execute({ slug: "nested" });
+    expect(got).toContain("\n**Credentials:** ftp, keys");
+    expect(got).toContain(
+      `  ftp.host: ${secretPlaceholder("SECRET_NESTED_FTP_HOST")}`,
+    );
+    expect(got).toContain(
+      `  ftp.pass: ${secretPlaceholder("SECRET_NESTED_FTP_PASS")}`,
+    );
+    expect(got).toContain(
+      `  keys.0: ${secretPlaceholder("SECRET_NESTED_KEYS_0")}`,
+    );
+    expect(got).not.toContain(CREDENTIAL_FACT_PLACEHOLDER);
+    expectNoSecret(got);
+    // Each shown name resolves at the execution seam.
+    expect(secretEnvForCommand("echo $SECRET_NESTED_FTP_PASS")).toEqual({
+      SECRET_NESTED_FTP_PASS: FAKE_APP_PASSWORD,
     });
   });
 

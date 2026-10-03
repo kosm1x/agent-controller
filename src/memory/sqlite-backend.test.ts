@@ -151,3 +151,44 @@ describe("SqliteMemoryBackend — retain (ruling 3c)", () => {
     expect(embedSpy).toHaveBeenCalledWith("Usuario: la clave es [oculto]");
   });
 });
+
+describe("SqliteMemoryBackend — recall scrub (ruling 3c, audit R3 B1)", () => {
+  // A row stored before the write-side scrub (or before the value was saved)
+  // comes back from every retrieval layer; FTS hit here, embed stubbed null.
+  const row = () => ({
+    content: `Usuario: la clave es ${SCRUB_SYN}`,
+    created_at: "2026-01-01 00:00:00",
+    trust_tier: 2,
+    tags: "[]",
+    score: -1,
+  });
+  const fakeDb = () =>
+    ({
+      prepare: () => ({ all: () => [row()] }),
+    }) as unknown as ReturnType<typeof getDatabase>;
+
+  it.each([
+    ["instrument=false (the Hindsight fallback)", false],
+    ["instrument=true (primary service)", true],
+  ])("%s: recalled content carries no stored value", async (_l, instrument) => {
+    applyOutcomeBiasSpy.mockImplementation((raw: MemoryItem[]) => ({
+      kept: raw,
+      excluded: 0,
+      breakdown: { success: 0, concerns: 0, failed: 0, unknown: 0 },
+    }));
+    vi.mocked(getDatabase).mockReturnValue(fakeDb());
+    try {
+      const out = await new SqliteMemoryBackend(instrument).recall(
+        "clave acceso",
+        opts(),
+      );
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]!.content).toBe("Usuario: la clave es [oculto]");
+      expect(JSON.stringify(out)).not.toContain(SCRUB_SYN);
+    } finally {
+      vi.mocked(getDatabase).mockImplementation(() => {
+        throw new Error("no db in test");
+      });
+    }
+  });
+});

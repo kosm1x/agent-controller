@@ -275,6 +275,31 @@ describe("resolveEpisodic", () => {
     expect(briefing.episodicSamples[0].episodic.found).toBe(false);
   });
 
+  it("scrubs a stored credential value from a conversation or task row stored in clear (ruling 3c, audit R3 B1)", async () => {
+    const { invalidateSecretRefs, secretPlaceholder } = await import(
+      "../lib/secret-refs.js"
+    );
+    const value = "pw-" + "z".repeat(14);
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "demo_ftp_password", value);
+    invalidateSecretRefs();
+    db.prepare(
+      "INSERT INTO conversations (id, bank, content) VALUES (?, ?, ?)",
+    ).run(8, "mc-jarvis", `User: la clave es ${value}`);
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status) VALUES (?, ?, ?, ?)",
+    ).run("t-10", "a task", `usa ${value}`, "running");
+    const conv = resolveEpisodic("conversation", "8");
+    const task = resolveEpisodic("task", "t-10");
+    expect(JSON.stringify([conv, task])).not.toContain(value);
+    expect(task.snippet).toBe(
+      `usa ${secretPlaceholder("SECRET_PROJECTS_DEMO_FTP_PASSWORD")}`,
+    );
+    invalidateSecretRefs();
+  });
+
   it("resolves every episodic kind", () => {
     const db = getDatabase();
     db.prepare(

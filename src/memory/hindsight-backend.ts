@@ -283,7 +283,9 @@ export class HindsightMemoryBackend implements MemoryService {
       // that ordering while exposing a comparable scalar for bias arithmetic.
       const total = response.results.length;
       const raw: MemoryItem[] = response.results.map((r, idx) => ({
-        content: r.text,
+        // Ruling 3c (audit R3 B1): scrubbed on read (the SQLite fallback
+        // paths scrub inside SqliteMemoryBackend.recall).
+        content: scrubSecrets(r.text),
         tags: r.tags ?? [],
         relevance: total > 1 ? 1 - idx / (total - 1) : 1,
       }));
@@ -354,7 +356,7 @@ export class HindsightMemoryBackend implements MemoryService {
         budget: "mid",
       });
       this.recordSuccess();
-      return response.text;
+      return scrubSecrets(response.text); // synthesized from stored memories
     } catch (err) {
       this.recordFailure(err);
       return "";

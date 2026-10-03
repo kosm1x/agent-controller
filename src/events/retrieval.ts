@@ -19,6 +19,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 import {
   cosineSimilarity,
   deserializeEmbedding,
@@ -229,7 +230,9 @@ const SNIPPET_MAX = 200;
 
 function snippet(text: string | null | undefined): string | null {
   if (!text) return null;
-  const trimmed = text.trim();
+  // Ruling 3c (audit R3 B1): conversation / task rows stored in clear reach
+  // the briefing; stored credential values are scrubbed before the cut.
+  const trimmed = scrubSecrets(text).trim();
   if (!trimmed) return null;
   return trimmed.length > SNIPPET_MAX
     ? `${trimmed.slice(0, SNIPPET_MAX)}…`

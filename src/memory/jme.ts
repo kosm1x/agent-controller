@@ -184,7 +184,7 @@ export function writeEpisodic(turn: JmeTurn): void {
     writeWithRetry(() => {
       db.prepare(
         `INSERT INTO jme_signals (task_id, ts, kind, snippet) VALUES (?, ?, ?, ?)`,
-      ).run(turn.taskId, now, kind, signalSnippet(turn.content));
+      ).run(turn.taskId, now, kind, signalSnippet(content)); // scrubbed (3c)
     });
   } catch (err) {
     console.warn(`[jme] preference signal write failed: ${errMsg(err)}`);
@@ -669,7 +669,9 @@ export async function queryMemory(
 
       return {
         id: row.id,
-        factText: row.fact_text,
+        // Ruling 3c (audit R3 B1): recalled facts feed the [JME MEMORY]
+        // block; a stored credential value is scrubbed on read.
+        factText: scrubSecrets(row.fact_text),
         category: row.category as JmeFactCategory,
         sourceTask: row.source_task,
         score: fusedScore,
@@ -1137,7 +1139,9 @@ export const CONSOLIDATOR_JARVIS_TURN_MAX_CHARS = 500;
  * before the cut so a secret is never left half-visible.
  */
 function transcriptLine(role: JmeTurnRole, content: string): string {
-  let text = redactForJme(content).replace(/\r\n|\r|\n/g, " ⏎ ");
+  // Ruling 3c (audit R3 B1): a turn stored before the write-side scrub
+  // reaches Haiku with stored credential values replaced.
+  let text = redactForJme(scrubSecrets(content)).replace(/\r\n|\r|\n/g, " ⏎ ");
   if (role === "jarvis" && text.length > CONSOLIDATOR_JARVIS_TURN_MAX_CHARS) {
     text = `${text.slice(0, CONSOLIDATOR_JARVIS_TURN_MAX_CHARS)}…`;
   }

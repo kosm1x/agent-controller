@@ -37,10 +37,14 @@ vi.mock("../lib/event-bus.js", () => ({
 // getMemoryService(); other exports stay stubbed so a memory/index.ts
 // refactor can't surface as a misleading router test failure.
 const memoryRetainSpy = vi.fn().mockResolvedValue(undefined);
+// Audit R3 B1/S3: a test can steer what enrichment recalls.
+const memoryRecallSpy = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ memories: [] }),
+);
 vi.mock("../memory/index.js", () => ({
   getMemoryService: () => ({
     retain: memoryRetainSpy,
-    recall: vi.fn().mockResolvedValue({ memories: [] }),
+    recall: memoryRecallSpy,
   }),
   initMemoryService: vi.fn().mockResolvedValue(undefined),
   resetMemoryService: vi.fn(),
@@ -168,18 +172,31 @@ vi.mock("../db/user-facts.js", async (importOriginal) => {
 });
 
 // Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
+// Audit R3 B1: values a test "stores" (storedSecrets) are scrubbed from then on.
 const SCRUB_SYN = vi.hoisted(() => "syn-" + "t".repeat(14));
+const storedSecrets = vi.hoisted(() => new Set<string>());
 vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
-  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+  scrubSecrets: (t: string) => {
+    let out = t.replaceAll(SCRUB_SYN, "[oculto]");
+    for (const v of storedSecrets) out = out.replaceAll(v, "[oculto]");
+    return out;
+  },
 }));
 
+// Audit R3 B1/S3: rows a test feeds to `.all()` (hydration) and every
+// `.run()` write (day-log) are observable, keyed by the SQL text.
+const dbAll = vi.hoisted(() => vi.fn((_sql: string, ..._a: unknown[]) => [] as unknown[]));
+const dbRun = vi.hoisted(() => vi.fn((_sql: string, ..._a: unknown[]) => undefined));
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
-    prepare: () => ({
+    prepare: (sql: string) => ({
       get: dbStatusGet,
-      run: () => ({ changes: 1 }),
-      all: () => [],
+      run: (...a: unknown[]) => {
+        dbRun(sql, ...a);
+        return { changes: 1 };
+      },
+      all: (...a: unknown[]) => dbAll(sql, ...a),
     }),
     // ritual delivery-policy ledger (ensure table / insert) — no-op in tests
     exec: () => undefined,
@@ -709,6 +726,103 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("audit R3 B1b: the safety net saves BEFORE the thread push and the memory retain, so the pushed exchange is already scrubbed", async () => {
+      const PASTED = ["Wr", "5".repeat(4), "Jy".repeat(4)].join("");
+      userFactsMock.setUserFact.mockImplementation(
+        (_c: string, _k: string, value: string) => {
+          storedSecrets.add(value);
+        },
+      );
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `guarda esto: password: ${PASTED}`,
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: `Guardé ${PASTED}.`, duration_ms: 1 },
+        });
+        expect(userFactsMock.setUserFact).toHaveBeenCalled();
+        expect(memoryRetainSpy).toHaveBeenCalled();
+        const saveOrder = Math.min(...userFactsMock.setUserFact.mock.invocationCallOrder);
+        const retainOrder = Math.min(...memoryRetainSpy.mock.invocationCallOrder);
+        expect(saveOrder).toBeLessThan(retainOrder);
+        const thread = _testThreadEntries(threadKey("whatsapp", "owner@s.whatsapp.net"));
+        const pushed = thread.at(-1)!.text;
+        expect(pushed).toContain("User: guarda esto: password: [oculto]");
+        expect(JSON.stringify(thread)).not.toContain(PASTED);
+        // The JARVIS day-log line is written after the save too.
+        const jarvisLog = dbRun.mock.calls
+          .map((c) => JSON.stringify(c))
+          .filter((c) => c.includes("**JARVIS**"));
+        expect(jarvisLog.length).toBeGreaterThan(0);
+        expect(jarvisLog.join(" ")).not.toContain(PASTED);
+      } finally {
+        userFactsMock.setUserFact.mockReset();
+        storedSecrets.clear();
+      }
+    });
+
+    it("audit R3 B1a: a thread hydrated from stored conversations comes back scrubbed", () => {
+      const tk = "telegram-hydrate-r3";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [{ content: `User: la clave es ${SCRUB_SYN}\nJarvis: ok` }]
+          : [],
+      );
+      _testPushToThread(tk, "User: hola\nJarvis: hola");
+      const entries = _testThreadEntries(tk);
+      expect(entries[0]!.text).toBe("User: la clave es [oculto]\nJarvis: ok");
+      expect(JSON.stringify(entries)).not.toContain(SCRUB_SYN);
+    });
+
+    it("audit R3 S3: the day-log lines and the stored chat task title/description carry no stored value", async () => {
+      memoryRecallSpy.mockResolvedValue([
+        { content: `nota previa con ${SCRUB_SYN}`, tags: [] },
+      ]);
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `revisa el acceso ${SCRUB_SYN} por favor`,
+          timestamp: new Date(),
+        });
+        const sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+        expect(sub.title).toBe("Chat: revisa el acceso [oculto] por favor");
+        // Enrichment (recall) is part of the stored description: scrubbed.
+        expect(sub.description).toContain("nota previa con [oculto]");
+        expect(sub.description).not.toContain(SCRUB_SYN);
+        const dayLog = dbRun.mock.calls
+          .map((c) => JSON.stringify(c))
+          .filter((c) => c.includes("day-logs"));
+        expect(dayLog.join(" ")).toContain("revisa el acceso [oculto]");
+        expect(dayLog.join(" ")).not.toContain(SCRUB_SYN);
+      } finally {
+        memoryRecallSpy.mockResolvedValue({ memories: [] });
+      }
+    });
+
+    it("audit R3 S3: a background agent's stored title and description carry no stored value", async () => {
+      dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `lanza un agente e investiga el acceso ${SCRUB_SYN}`,
+          timestamp: new Date(),
+        });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+      const sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+      expect(sub.spawnType).toBe("user-background");
+      expect(sub.title).toContain("[oculto]");
+      expect(sub.description).toContain("investiga el acceso [oculto]");
+      expect(JSON.stringify([sub.title, sub.description])).not.toContain(SCRUB_SYN);
+    });
+
     it("delivers a sanitized reply when the runner output carries harness markers (usability plan Phase 0.1)", async () => {
       const msg: IncomingMessage = {
         channel: "whatsapp",
@@ -838,6 +952,49 @@ describe("MessageRouter", () => {
       expect(corpus[0]).toBe(
         "Estoy viendo 975 M de impresiones en el sheet y no 776 M",
       );
+    });
+
+    it("audit R3 S3: the scope re-run's rebuilt description is scrubbed too", async () => {
+      const mocked = vi.mocked(submitTask);
+      memoryRecallSpy.mockResolvedValue([
+        { content: `nota previa con ${SCRUB_SYN}`, tags: [] },
+      ]);
+      try {
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-123",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result:
+              '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const rerun = mocked.mock.calls.at(-1)![0];
+        expect(rerun.tags).toContain("scope-rerun");
+        expect(rerun.description).toContain("nota previa con [oculto]");
+        expect(rerun.description).not.toContain(SCRUB_SYN);
+      } finally {
+        memoryRecallSpy.mockResolvedValue({ memories: [] });
+      }
     });
 
     it("usability Phase 1.2: a scope-ask reply is NOT delivered — the turn is re-run with the widened tool list", async () => {

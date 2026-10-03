@@ -342,6 +342,28 @@ describe("secretEnvForCommand (shell_exec)", () => {
     expect((resolveSecretRefs("shell_exec", args) as { args: unknown }).args).toBe(args);
   });
 
+  it("audit R3 N2: any ${…SECRET_…} form but the bare ${SECRET_X} is refused, even for a stored name", () => {
+    for (const command of [
+      `echo \${${N.ftp}:-d}`,
+      `echo \${${N.ftp}:0:4} $${N.ftp}`,
+      `echo \${${N.ftp}#p}`,
+      `echo \${${N.ftp}%x}`,
+      `echo \${#${N.ftp}}`,
+      `echo \${!${N.ftp}}`,
+      "echo ${!SECRET_*}",
+      `echo \${${N.ftp}/a/b}`,
+      `echo \${${N.ftp}`,
+    ]) {
+      const r = resolveSecretRefs("shell_exec", { command });
+      expect("error" in r, command).toBe(true);
+      const { error } = JSON.parse((r as { error: string }).error);
+      expect(error).toContain("shell_exec");
+      expect(error).not.toContain(FTP_PASS);
+    }
+    const args = { command: `echo "\${${N.ftp}}" $${N.ftp}` };
+    expect((resolveSecretRefs("shell_exec", args) as { args: unknown }).args).toBe(args);
+  });
+
   it("a mention without $, or $SECRET_ with nothing after the underscore, still runs", () => {
     for (const command of ["grep -rn SECRET_NOPE .", "echo '$SECRET_'", "echo $SECRET_ done"]) {
       const args = { command };
@@ -534,6 +556,32 @@ describe("the tool seam (ToolRegistry.executeDirect)", () => {
     const out = await reg.execute("shell_exec", { command: `printenv ${N.ftp}` });
     expect(out).not.toContain(FTP_PASS);
     expect(out).toContain(secretPlaceholder(N.ftp));
+  });
+
+  it("audit R3 N1: a non-string result does not throw; an object's strings are scrubbed, its shape kept", async () => {
+    const reg = new ToolRegistry();
+    const results: unknown[] = [
+      undefined,
+      null,
+      42,
+      { out: `pw=${FTP_PASS}`, rows: [{ k: API_TOKEN }], n: 1 },
+    ];
+    const t: Tool = {
+      ...echoTool("mcp__demo__thing"),
+      execute: (async () => results.shift()) as unknown as Tool["execute"],
+    };
+    reg.register(t);
+    await expect(reg.execute("mcp__demo__thing", {})).resolves.toBeUndefined();
+    await expect(reg.execute("mcp__demo__thing", {})).resolves.toBeNull();
+    await expect(reg.execute("mcp__demo__thing", {})).resolves.toBe(42);
+    const obj = (await reg.execute("mcp__demo__thing", {})) as unknown;
+    expect(JSON.stringify(obj)).not.toContain(FTP_PASS);
+    expect(JSON.stringify(obj)).not.toContain(API_TOKEN);
+    expect(obj).toEqual({
+      out: `pw=${secretPlaceholder(N.ftp)}`,
+      rows: [{ k: secretPlaceholder(N.tok) }],
+      n: 1,
+    });
   });
 
   it("scrubs a thrown error's message", async () => {

@@ -172,6 +172,18 @@ function getCachedVector(id: number, blob: Buffer): Float32Array {
   return vec;
 }
 
+/**
+ * Ruling 3c (audit R3 B1): recalled rows reach the prompt (enrichment, the
+ * memory tools, the Hindsight fallback); a row stored before the write-side
+ * scrub, or before the value was saved, is scrubbed here on every read.
+ */
+function scrubRecalled(items: MemoryItem[]): MemoryItem[] {
+  return items.map((item) => {
+    const content = scrubSecrets(item.content);
+    return content === item.content ? item : { ...item, content };
+  });
+}
+
 export class SqliteMemoryBackend implements MemoryService {
   readonly backend = "sqlite" as const;
 
@@ -252,7 +264,7 @@ export class SqliteMemoryBackend implements MemoryService {
    */
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
     if (!this.instrument) {
-      return this.recallHybrid(query, options);
+      return scrubRecalled(await this.recallHybrid(query, options));
     }
 
     // Primary-service path (HINDSIGHT_ENABLED=false). Apply the recall-side
@@ -260,7 +272,7 @@ export class SqliteMemoryBackend implements MemoryService {
     // in HindsightMemoryBackend — and write the recall_audit row that the
     // V8.1 correspondence audit + `mc-ctl recall-utility` consume.
     const start = Date.now();
-    const raw = await this.recallHybrid(query, options);
+    const raw = scrubRecalled(await this.recallHybrid(query, options));
     const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
     logRecall({
       bank: options.bank,
