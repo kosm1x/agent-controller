@@ -54,7 +54,8 @@ export type ExpiryReason =
   | "already_decided"
   | "no_notifier"
   | "notify_failed"
-  | "stale_at_boot";
+  | "stale_at_boot"
+  | "notice_superseded";
 
 export type ApprovalDecision = "confirmed" | "declined" | "expired" | "superseded";
 
@@ -82,8 +83,28 @@ export const EXPIRY_NOTICE_MAX_ATTEMPTS = 3;
 export const EXPIRY_NOTICE_RETRY_MS = 30_000;
 /** Failure id `recordRitualFailure` gets when every attempt failed. */
 export const EXPIRY_NOTICE_FAILURE_ID = "confirmation-expiry-notice";
-/** Pending notice retries (unref'd; cleared by the test reset). */
-const noticeRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+/**
+ * Pending notice retries (unref'd; cleared by the test reset), with the
+ * thread and lapsed card each one belongs to: a newer card, a decision or a
+ * clear in the same chat cancels them (a stale notice never lands after it).
+ */
+const noticeRetryTimers = new Map<
+  ReturnType<typeof setTimeout>,
+  { threadKey: string; pending: PendingConfirmation; attempt: number }
+>();
+
+/**
+ * Cancel the thread's pending expiry-notice retries; each cancelled notice
+ * is traced `notice_superseded` (its last trace said `will_retry`).
+ */
+function cancelNoticeRetries(threadKey: string): void {
+  for (const [timer, entry] of noticeRetryTimers) {
+    if (entry.threadKey !== threadKey) continue;
+    clearTimeout(timer);
+    noticeRetryTimers.delete(timer);
+    traceExpiry(threadKey, entry.pending, "notice_superseded", entry.attempt);
+  }
+}
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -356,7 +377,7 @@ function deliverExpiryNotice(
         deliverExpiryNotice(threadKey, pending, notify, attempt + 1);
       }, EXPIRY_NOTICE_RETRY_MS * attempt);
       timer.unref?.();
-      noticeRetryTimers.add(timer);
+      noticeRetryTimers.set(timer, { threadKey, pending, attempt });
       return;
     }
     traceExpiry(threadKey, pending, "notify_failed", attempt);
@@ -440,6 +461,7 @@ export function storePendingConfirmation(
   const existing = expiryTimers.get(threadKey);
   if (existing) clearTimeout(existing);
   expiryNotifiers.delete(threadKey);
+  cancelNoticeRetries(threadKey);
   markThreadRows(threadKey, "superseded");
 
   const sha = argsSha256(args);
@@ -744,6 +766,7 @@ export function resolvePendingConfirmation(
 function clearInMemory(threadKey: string): void {
   pendingConfirmations.delete(threadKey);
   expiryNotifiers.delete(threadKey);
+  cancelNoticeRetries(threadKey);
   const timer = expiryTimers.get(threadKey);
   if (timer) {
     clearTimeout(timer);
@@ -767,7 +790,7 @@ export function clearPendingConfirmation(
 export function _resetPendingConfirmationsForTests(): void {
   for (const timer of expiryTimers.values()) clearTimeout(timer);
   expiryTimers.clear();
-  for (const timer of noticeRetryTimers) clearTimeout(timer);
+  for (const timer of noticeRetryTimers.keys()) clearTimeout(timer);
   noticeRetryTimers.clear();
   expiryNotifiers.clear();
   pendingConfirmations.clear();

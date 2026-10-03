@@ -88,6 +88,7 @@ import {
   isPhantomZeroCostRow,
   registerRunner,
   undeclaredRunFailure,
+  gateContextFor,
 } from "./dispatcher.js";
 import { recordRitualFailure } from "../rituals/scheduler.js";
 import { createTaskExecutor, undeclaredToolError } from "../tools/task-executor.js";
@@ -104,6 +105,7 @@ import type { RunnerOutput } from "../runners/types.js";
 import {
   currentExecutionContext,
   runnerExecutionContext,
+  runWithExecutionContext,
   type TaskExecutionContext,
 } from "../inference/execution-context.js";
 import { outsideRunToolContext } from "../tools/rule-of-two.js";
@@ -1497,6 +1499,31 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
       emitTraceMock.mock.calls.some((c) => c[0].attrs?.decision === "refused_undeclared"),
     ).toBe(false);
     expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("audit S3: background root → interactive:true child → interactive:false grandchild keeps the ROOT's list", () => {
+    const root = gateContextFor("t-root", {
+      title: "r",
+      description: "d",
+      interactive: false,
+      tools: ["web_search"],
+    });
+    const child = runWithExecutionContext(root, () =>
+      gateContextFor("t-child", { title: "c", description: "d", interactive: true, tools: ["gmail_send"] }),
+    );
+    expect(child.interactive).toBe(true);
+    expect(child.inheritedDeclaredTools).toEqual(["web_search"]);
+    const grandchild = runWithExecutionContext(child, () =>
+      gateContextFor("t-grand", { title: "g", description: "d", interactive: false, tools: ["gmail_send"] }),
+    );
+    expect(grandchild.inheritedDeclaredTools).toEqual(["web_search"]);
+    // A root (no parent) and an interactive root's child still set no limit.
+    expect(root.inheritedDeclaredTools).toBeUndefined();
+    const chatRoot = gateContextFor("t-chat", { title: "r", description: "d", interactive: true, tools: ["web_search"] });
+    expect(
+      runWithExecutionContext(chatRoot, () => gateContextFor("t-cc", { title: "c", description: "d" }))
+        .inheritedDeclaredTools,
+    ).toBeUndefined();
   });
 
   it("a nested carrier (batch_decompose) the run did not declare is refused; a grandchild keeps the ROOT's list", async () => {

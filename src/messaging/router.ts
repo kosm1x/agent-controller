@@ -4257,8 +4257,22 @@ export class MessageRouter {
     return async (notice) => {
       const sent = await this.sendLLMReplyToChannel(channel, to, notice);
       if (!sent) throw new Error(`expiry notice not delivered to ${channel}`);
-      appendDayLog("JARVIS", notice);
-      pushToThread(tk, `User: \nJarvis: ${sanitizeDeliverable(notice).text}`);
+      // Audit S1: the notice is out — bookkeeping failures (secret scrub
+      // unavailable, thread hydration) must not reject, or confirmations.ts
+      // would resend a delivered notice and record a false ritual failure.
+      try {
+        appendDayLog("JARVIS", notice);
+      } catch (err) {
+        console.warn(`[router] expiry notice day-log failed:`, err);
+      }
+      try {
+        pushToThread(
+          tk,
+          `User: \nJarvis: ${sanitizeDeliverable(notice).text}`,
+        );
+      } catch (err) {
+        console.warn(`[router] expiry notice thread push failed:`, err);
+      }
     };
   }
 

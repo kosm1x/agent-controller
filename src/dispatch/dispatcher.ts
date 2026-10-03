@@ -328,10 +328,14 @@ export function gateContextFor(
       // an EMPTY allow-list (every high-risk tool / carrier undeclared), not
       // "unrestricted". Low-risk tools are unaffected (the gate checks only
       // risky names); an interactive parent or a root run sets no limit.
+      // Audit S3: an inherited list is never dropped — a sub-task that set
+      // `interactive: true` under a background root still carries the root's
+      // list down to its own children.
       inheritedDeclaredTools:
-        parent && !parent.interactive
-          ? (parent.inheritedDeclaredTools ?? parent.declaredTools ?? [])
-          : undefined,
+        parent?.inheritedDeclaredTools ??
+        (parent && !parent.interactive
+          ? (parent.declaredTools ?? [])
+          : undefined),
       originScheduleId:
         submission.ritualId ?? scheduleTag ?? parent?.originScheduleId,
       routerRoot:

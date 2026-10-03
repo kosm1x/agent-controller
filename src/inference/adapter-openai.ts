@@ -34,6 +34,7 @@ import { compactConversation } from "../prometheus/compaction-pipeline.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
+import { currentExecutionContext } from "./execution-context.js";
 import { sanitizeToolResult } from "./guards.js";
 import {
   HttpError,
@@ -1242,6 +1243,20 @@ export function compactionGuardStep(
  * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached only
  * when INFERENCE_PRIMARY_PROVIDER != claude-sdk.
  */
+/**
+ * Audit S2 (rulings 1–2): the run's declared tool list, when it declared one
+ * — the dispatcher's gate context carries the submission's `tools` (a
+ * schedule's saved list, a chat turn's scoped set). `undefined` means no
+ * list was declared (or no dispatched run): the full registry stays
+ * reachable, as before. An explicit `[]` is an empty set — no tools. Same
+ * semantics as the claude-sdk path, whose `allowedTools` admits only the
+ * names it was given.
+ */
+export function declaredToolSetForRun(): ReadonlySet<string> | undefined {
+  const declared = currentExecutionContext()?.declaredTools;
+  return declared === undefined ? undefined : new Set(declared);
+}
+
 export async function inferWithToolsViaOpenAi(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -1324,6 +1339,18 @@ export async function inferWithToolsViaOpenAi(
   // paralysis guard can distinguish "gathering data before acting" from
   // "endlessly exploring without acting".
   const calledToolNames = new Set<string>();
+  // Audit S2: a declared list bounds what reaches the model — a schedule
+  // saved with `tools: []` gets the full registry from `getDefinitions([])`
+  // upstream; here it gets none. Copied only when something is dropped, so
+  // an undeclared run keeps today's array identity.
+  const declaredTools = declaredToolSetForRun();
+  if (declaredTools && tools.some((t) => !declaredTools.has(t.function.name))) {
+    const dropped = tools.length;
+    tools = tools.filter((t) => declaredTools.has(t.function.name));
+    console.warn(
+      `[inference] ${dropped - tools.length} tool definition(s) outside the run's declared list dropped`,
+    );
+  }
   const allowedToolNames = new Set(tools.map((t) => t.function.name));
   const availableNonReadOnly = new Set(
     tools.map((t) => t.function.name).filter((n) => !isReadOnlyTool(n)),
@@ -1720,7 +1747,15 @@ export async function inferWithToolsViaOpenAi(
             // so the LLM can retry with correct arguments on the next round.
             if (!allowedToolNames.has(toolName)) {
               const registeredTool = toolRegistry.get(toolName);
-              if (registeredTool?.deferred) {
+              // Audit S2: expansion stays inside the run's declared list —
+              // an unconfirmed high-risk deferred tool (tweet_post,
+              // gdrive_delete, vps_deploy…) is never admitted into a run
+              // that did not declare it. No list declared → any deferred
+              // tool in the registry, as before.
+              if (
+                registeredTool?.deferred &&
+                (!declaredTools || declaredTools.has(toolName))
+              ) {
                 // Deferred tool expansion — return full schema for retry.
                 // CRITICAL: add to allowedToolNames so the retry actually
                 // executes instead of looping back here, and push the full

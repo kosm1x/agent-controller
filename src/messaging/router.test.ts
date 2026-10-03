@@ -175,14 +175,23 @@ vi.mock("../db/user-facts.js", async (importOriginal) => {
 // Audit R3 B1: values a test "stores" (storedSecrets) are scrubbed from then on.
 const SCRUB_SYN = vi.hoisted(() => "syn-" + "t".repeat(14));
 const storedSecrets = vi.hoisted(() => new Set<string>());
+// Audit S1: a test can make the scrub fail (index unavailable) for matching text.
+const scrubThrowOn = vi.hoisted(() => ({ re: null as RegExp | null }));
 vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
   scrubSecrets: (t: string) => {
+    if (scrubThrowOn.re?.test(t)) throw new Error("secret index unavailable");
     let out = t.replaceAll(SCRUB_SYN, "[oculto]");
     for (const v of storedSecrets) out = out.replaceAll(v, "[oculto]");
     return out;
   },
 }));
+
+vi.mock("../rituals/scheduler.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../rituals/scheduler.js")>()),
+  recordRitualFailure: vi.fn(),
+}));
+import { recordRitualFailure } from "../rituals/scheduler.js";
 
 // Audit R3 B1/S3: rows a test feeds to `.all()` (hydration) and every
 // `.run()` write (day-log) are observable, keyed by the SQL text.
@@ -4851,6 +4860,30 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
         attrs: expect.objectContaining({ notified: true, reason: "notified", attempts: 2 }),
       }),
     ]);
+  });
+
+  it("audit S1: a delivered notice whose bookkeeping throws is not resent and not a ritual failure", async () => {
+    await gatedTurn();
+    const sentBefore = waAdapter.sentMessages.length;
+    vi.mocked(recordRitualFailure).mockClear();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    scrubThrowOn.re = /^User: \nJarvis: ⏱/; // pushToThread's scrub fails
+    try {
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000); // past every retry window
+    } finally {
+      scrubThrowOn.re = null;
+    }
+    expect(waAdapter.sentMessages).toHaveLength(sentBefore + 1);
+    expect(waAdapter.sentMessages.at(-1)!.text).toBe(NOTICE_7);
+    expect(traced("confirmation.expiry_notice_failed")).toEqual([]);
+    expect(traced("confirmation.expired")).toEqual([
+      expect.objectContaining({
+        taskId: "task-orig",
+        attrs: expect.objectContaining({ notified: true, reason: "notified" }),
+      }),
+    ]);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
   });
 
   it("item 4: boot wiring — a pending row past its TTL is lapsed at once with ONE notice to the owner chat", async () => {

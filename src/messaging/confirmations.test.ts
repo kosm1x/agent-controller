@@ -1344,4 +1344,42 @@ describe("audit A2/A3: boot notice once, never stale; notified only on a deliver
     expect(notify).toHaveBeenCalledTimes(2);
     expect(recordRitualFailure).not.toHaveBeenCalled();
   });
+
+  it("A3 follow-up: a new card in the same chat cancels the old notice's pending retry (no stale notice after it)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const oldNotify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, oldNotify, "task-old");
+    // Another chat's failing notice keeps its own retry.
+    const otherNotify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation("whatsapp", "gmail_send", args, summary, otherNotify, "task-other");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(oldNotify).toHaveBeenCalledTimes(1);
+
+    const newNotify = vi.fn();
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "wp_delete(id: 7)", newNotify, "task-new");
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 3);
+    expect(oldNotify).toHaveBeenCalledTimes(1); // the retry never fired
+    expect(otherNotify).toHaveBeenCalledTimes(3); // unaffected
+    expect(traceOf("task-old", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notice_superseded" }),
+    ]);
+    expect(getPendingConfirmation(tk)?.toolName).toBe("wp_delete");
+  });
+
+  it("A3 follow-up: clearPendingConfirmation cancels the chat's pending notice retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-clr");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    clearPendingConfirmation(tk);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 10);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(traceOf("task-clr", "confirmation.expired")).toEqual([
+      expect.objectContaining({ reason: "notice_superseded" }),
+    ]);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
 });
