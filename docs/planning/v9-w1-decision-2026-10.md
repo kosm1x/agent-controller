@@ -127,7 +127,13 @@ Before any aggregate is quoted, run `mc-ctl audit-claim`. If the FP budget is mi
 - §11: replaced by §5 above. §12: replaced by §6 above.
 - §13: Q1 answered (trace only). Q3: V8.2-internal tasks are not graded (their critic is the gate). Q4: deliver with the verdict (no replan in v1). Q6: keep `selfAssess` in the loop; the grader is the task-level gate.
 
-## Question for Fede
+## Decision (2026-10-03)
+
+**Approved by Fede at 17:39 UTC: option B, the ledger grader gate**, starting in shadow (project decision card "Approve the verify-gate design for S4?", option "Ledger gate"). The approved card described the design above (fresh-context Opus grader, no fallback, own off/shadow/enforce flag, FP ≤ 10% over ≥ 30 labelled runs). The two sub-points below therefore follow the recommended defaults: a fresh-context Opus grader is acceptable when the executor was also Opus, and v1 demotes only, with the replan left to Phase 6. Either can be reopened before S4 starts.
+
+S4 scope: Phases 0–4 of §5, shipped dormant (`TASK_GATES_GRADER=off`). Phase 5 (deploy, arm shadow, label) is Fede's.
+
+## Question for Fede (answered above)
 
 Approve **option B** as designed above, or change it. Points where your answer changes S4:
 1. **Option:** B (recommended) or A.
