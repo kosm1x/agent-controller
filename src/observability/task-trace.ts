@@ -41,6 +41,8 @@ export type TraceEventName =
   | "confirmation.continuation_failed"
   // An unanswered approval reached its TTL (ruling 1, 2026-10-03)
   | "confirmation.expired"
+  // One failed attempt at the expiry notice (audit A3; bounded retries)
+  | "confirmation.expiry_notice_failed"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

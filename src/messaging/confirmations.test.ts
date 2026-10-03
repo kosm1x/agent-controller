@@ -1199,3 +1199,149 @@ describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
     expect(expiredTrace(`approval:${rowOf(tk).id}`)).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audit A2 (stale boot notice) + A3 (notified only after the send resolves).
+// ---------------------------------------------------------------------------
+
+vi.mock("../rituals/scheduler.js", () => ({ recordRitualFailure: vi.fn() }));
+import { recordRitualFailure } from "../rituals/scheduler.js";
+import {
+  BOOT_NOTICE_GRACE_MS,
+  EXPIRY_NOTICE_MAX_ATTEMPTS,
+  EXPIRY_NOTICE_RETRY_MS,
+  EXPIRY_NOTICE_FAILURE_ID,
+} from "./confirmations.js";
+
+describe("audit A2/A3: boot notice once, never stale; notified only on a delivered send", () => {
+  const tk = "telegram";
+  const args = { to: "a@b.mx", body: "x" };
+  const TTL = 5 * 60 * 1000;
+  const summary = "gmail_send(to: a@b.mx)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+    vi.mocked(recordRitualFailure).mockClear();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const traceOf = (taskId: string, name: string) =>
+    getTrace(taskId)
+      .filter((e) => e.name === name)
+      .map((e) => JSON.parse(e.attrs ?? "{}") as Record<string, unknown>);
+  const rowOf = (threadKey: string) =>
+    getDatabase()
+      .prepare("SELECT id, decision FROM tool_approvals WHERE thread_key = ? ORDER BY id DESC")
+      .get(threadKey) as { id: number; decision: string };
+  const age = (threadKey: string, ageMs: number) =>
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?")
+      .run(new Date(Date.now() - ageMs).toISOString(), threadKey);
+
+  it("A2: a row that expired long before the restart lapses SILENTLY (stale_at_boot), no notice", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + BOOT_NOTICE_GRACE_MS + 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify).not.toHaveBeenCalled();
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(traceOf(`approval:${rowOf(tk).id}`, "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "stale_at_boot" }),
+    ]);
+  });
+
+  it("A2: expired while down within the grace window → ONE notice; a second boot never repeats it", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + BOOT_NOTICE_GRACE_MS - 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify.mock.calls).toEqual([[renderExpiryNotice(summary)]]);
+    _resetPendingConfirmationsForTests(); // another restart
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 0 });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(traceOf(`approval:${rowOf(tk).id}`, "confirmation.expired")).toHaveLength(1);
+  });
+
+  it("A3: an async notifier — `notified` is traced only after the send resolves", async () => {
+    let resolveSend!: () => void;
+    const notify = vi.fn(() => new Promise<void>((r) => (resolveSend = r)));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-async");
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(traceOf("task-async", "confirmation.expired")).toEqual([]); // not yet
+    resolveSend();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(traceOf("task-async", "confirmation.expired")).toEqual([
+      { tool: "gmail_send", notified: true, reason: "notified", approval_id: rowOf(tk).id },
+    ]);
+  });
+
+  it("A3: a failing send is retried with backoff, at most EXPIRY_NOTICE_MAX_ATTEMPTS, then notify_failed + recordRitualFailure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn(() => Promise.reject(new Error("adapter down")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-fail");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(traceOf("task-fail", "confirmation.expired")).toEqual([]);
+    expect(traceOf("task-fail", "confirmation.expiry_notice_failed")).toEqual([
+      expect.objectContaining({ attempt: 1, will_retry: true, error: "adapter down" }),
+    ]);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS - 1);
+    expect(notify).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(notify).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2 * EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(EXPIRY_NOTICE_MAX_ATTEMPTS);
+    expect(EXPIRY_NOTICE_MAX_ATTEMPTS).toBe(3);
+    await vi.advanceTimersByTimeAsync(100 * EXPIRY_NOTICE_RETRY_MS); // bounded: no more attempts
+    expect(notify).toHaveBeenCalledTimes(EXPIRY_NOTICE_MAX_ATTEMPTS);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(traceOf("task-fail", "confirmation.expiry_notice_failed").map((a) => a.will_retry)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(traceOf("task-fail", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notify_failed", attempts: 3 }),
+    ]);
+    await vi.waitFor(() => expect(recordRitualFailure).toHaveBeenCalledTimes(1));
+    expect(recordRitualFailure).toHaveBeenCalledWith(
+      EXPIRY_NOTICE_FAILURE_ID,
+      expect.stringContaining("not delivered after 3 attempts: adapter down"),
+      "execute",
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("giving up"));
+    expect(rowOf(tk).decision).toBe("expired"); // never re-opened
+  });
+
+  it("A3: a failure then a success → one `notified` trace with attempts 2, no failure recorded", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi
+      .fn<(n: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockResolvedValueOnce(undefined);
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-retry");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(traceOf("task-retry", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: true, reason: "notified", attempts: 2 }),
+    ]);
+    await vi.advanceTimersByTimeAsync(10 * EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+});

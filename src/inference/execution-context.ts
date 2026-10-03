@@ -102,7 +102,8 @@ export class TaskExecutionContext {
    * NON-interactive run — the tool list that background run declared (its
    * schedule's, or its own background ancestor's). A high-risk tool or a
    * carrier outside it is refused at this run's gate. Undefined = no limit
-   * (interactive parent, a root run, or a parent that declared no list).
+   * (interactive parent or a root run). A background parent that declared
+   * no list yields `[]` (audit A1): no high-risk tool / carrier is declared.
    */
   readonly inheritedDeclaredTools?: readonly string[];
 

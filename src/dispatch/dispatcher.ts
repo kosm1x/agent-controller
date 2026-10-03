@@ -302,7 +302,8 @@ function runOriginOf(submission: TaskSubmission): RunOrigin | undefined {
  *   watching the run.
  * - declaredTools / inheritedDeclaredTools: the run's own `tools`; on a
  *   sub-task of a NON-interactive run, that run's declared list (or its own
- *   inherited one) — the gate refuses a high-risk tool / carrier outside it.
+ *   inherited one; `[]` when it declared none) — the gate refuses a
+ *   high-risk tool / carrier outside it.
  * - originScheduleId: `ritualId`, else the `schedule:<id>` tag, else the
  *   parent's — where a refused sub-task's failure is reported.
  * The context itself never asks (`canAskOperator` false): only a runner that
@@ -323,9 +324,13 @@ export function gateContextFor(
       // Operator ruling 2026-10-03: a sub-task of a background run may not
       // reach a high-risk tool / carrier that run did not declare.
       declaredTools: submission.tools,
+      // Audit A1: a background run that declared NO list hands its children
+      // an EMPTY allow-list (every high-risk tool / carrier undeclared), not
+      // "unrestricted". Low-risk tools are unaffected (the gate checks only
+      // risky names); an interactive parent or a root run sets no limit.
       inheritedDeclaredTools:
         parent && !parent.interactive
-          ? (parent.inheritedDeclaredTools ?? parent.declaredTools)
+          ? (parent.inheritedDeclaredTools ?? parent.declaredTools ?? [])
           : undefined,
       originScheduleId:
         submission.ritualId ?? scheduleTag ?? parent?.originScheduleId,

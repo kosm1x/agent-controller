@@ -4249,9 +4249,14 @@ export class MessageRouter {
     channel: ChannelName,
     to: string,
     tk: string,
-  ): (notice: string) => void {
-    return (notice) => {
-      this.sendLLMReplyToChannel(channel, to, notice);
+  ): (notice: string) => Promise<void> {
+    // Audit A3: resolves only once the send went out (the expiry is traced
+    // `notified` then); a failed send rejects, so confirmations.ts records
+    // it and retries (bounded). Day-log and thread record only a notice
+    // that was actually delivered.
+    return async (notice) => {
+      const sent = await this.sendLLMReplyToChannel(channel, to, notice);
+      if (!sent) throw new Error(`expiry notice not delivered to ${channel}`);
       appendDayLog("JARVIS", notice);
       pushToThread(tk, `User: \nJarvis: ${sanitizeDeliverable(notice).text}`);
     };
@@ -4358,17 +4363,20 @@ export class MessageRouter {
    * critic infra error, replaces the reply with COMMUNITY_REPLY_FALLBACK.
    * For all other channels, behaves identically to sendToChannel.
    *
-   * Sync signature (callers fire-and-forget). The actual gate+send happens
-   * on the microtask queue via an IIFE tracked in `this.gateInflight` so
-   * shutdown can await pending sends.
+   * Callers may fire-and-forget: the returned promise never rejects. It
+   * resolves true once the adapter accepted the send, false when nothing
+   * went out (no adapter, filtered to empty, send failed) — the expiry
+   * notice (audit A3) waits on it. The gate+send happens on the microtask
+   * queue via an IIFE tracked in `this.gateInflight` so shutdown can await
+   * pending sends.
    */
   private sendLLMReplyToChannel(
     channel: ChannelName,
     to: string,
     rawText: string,
-  ): void {
+  ): Promise<boolean> {
     const adapter = this.channels.get(channel);
-    if (!adapter) return;
+    if (!adapter) return Promise.resolve(false);
 
     // v6.3 W1.5: log AI writing patterns on the ORIGINAL text, before any
     // gate substitution, so observability captures what the LLM produced.
@@ -4381,7 +4389,7 @@ export class MessageRouter {
     // this catches the other callers (needs_context/blocked text, heavy
     // partials, background-agent notifications) without double effects.
     const text = this.filterForDelivery(rawText, `send:${channel}`);
-    if (!text) return;
+    if (!text) return Promise.resolve(false);
 
     // Positive default-deny: any email channel that is NOT explicitly
     // owner-only gets the gate. Matches applyCommunityChannelScopeOverride's
@@ -4389,15 +4397,16 @@ export class MessageRouter {
     // is treated as community-manager. R1-W2 from the Phase 2b audit.
     const needsGate = isEmailChannel(channel) && adapter.mode !== "owner-only";
     if (!needsGate) {
-      adapter
-        .send({ channel, to, text })
-        .catch((err) =>
-          console.error(`[router] Send to ${channel} failed:`, err),
-        );
-      return;
+      return adapter.send({ channel, to, text }).then(
+        () => true,
+        (err) => {
+          console.error(`[router] Send to ${channel} failed:`, err);
+          return false;
+        },
+      );
     }
 
-    const inflight = (async () => {
+    const inflight = (async (): Promise<boolean> => {
       let outbound = text;
       let verdictBucket: "pass" | "fail" | "error" = "error";
       try {
@@ -4437,13 +4446,16 @@ export class MessageRouter {
       }
       try {
         await adapter.send({ channel, to, text: outbound });
+        return true;
       } catch (err) {
         console.error(`[router] Send to ${channel} failed:`, err);
+        return false;
       }
     })();
 
     this.gateInflight.add(inflight);
     inflight.finally(() => this.gateInflight.delete(inflight));
+    return inflight;
   }
 
   private extractResultText(result: unknown): string | null {

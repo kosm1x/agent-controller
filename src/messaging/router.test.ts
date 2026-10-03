@@ -4824,7 +4824,36 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(router.resolveApprovalRecipient("whatsapp:weird")).toBeNull();
   });
 
-  it("item 4: boot wiring — a pending row past its TTL is lapsed at once with ONE notice to the owner chat", () => {
+  it("audit A3: notified only once the send resolves — a failed send is traced, not logged as delivered, and retried (bounded)", async () => {
+    await gatedTurn();
+    const sentBefore = waAdapter.sentMessages.length;
+    const threadBefore = _testThreadEntries(tk).length;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    waAdapter.send.mockRejectedValueOnce(new Error("socket closed"));
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(waAdapter.sentMessages).toHaveLength(sentBefore);
+    expect(traced("confirmation.expired")).toEqual([]);
+    expect(traced("confirmation.expiry_notice_failed")).toEqual([
+      expect.objectContaining({
+        taskId: "task-orig",
+        attrs: expect.objectContaining({ attempt: 1, will_retry: true }),
+      }),
+    ]);
+    expect(_testThreadEntries(tk)).toHaveLength(threadBefore); // nothing recorded as said
+    await vi.advanceTimersByTimeAsync(30_000); // the one retry
+    expect(waAdapter.sentMessages).toHaveLength(sentBefore + 1);
+    expect(waAdapter.sentMessages.at(-1)!.text).toBe(NOTICE_7);
+    expect(_testThreadEntries(tk).at(-1)!.text).toBe(`User: \nJarvis: ${NOTICE_7}`);
+    expect(traced("confirmation.expired")).toEqual([
+      expect.objectContaining({
+        taskId: "task-orig",
+        attrs: expect.objectContaining({ notified: true, reason: "notified", attempts: 2 }),
+      }),
+    ]);
+  });
+
+  it("item 4: boot wiring — a pending row past its TTL is lapsed at once with ONE notice to the owner chat", async () => {
     const args = { id: 7 };
     dbAll.mockImplementation((sql: string) =>
       sql.includes("FROM tool_approvals WHERE decision = 'pending'")
@@ -4847,6 +4876,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
       router.rearmPendingApprovals();
       expect(waAdapter.sentMessages).toHaveLength(before + 1);
       expect(waAdapter.sentMessages.at(-1)).toEqual(expect.objectContaining({ to: OWNER, text: NOTICE_7 }));
+      await vi.advanceTimersByTimeAsync(0); // the send settles → traced
       expect(traced("confirmation.expired")).toEqual([
         expect.objectContaining({ taskId: "approval:41", attrs: expect.objectContaining({ reason: "notified" }) }),
       ]);

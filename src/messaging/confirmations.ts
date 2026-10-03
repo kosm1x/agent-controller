@@ -53,7 +53,8 @@ export type ExpiryReason =
   | "notified"
   | "already_decided"
   | "no_notifier"
-  | "notify_failed";
+  | "notify_failed"
+  | "stale_at_boot";
 
 export type ApprovalDecision = "confirmed" | "declined" | "expired" | "superseded";
 
@@ -65,8 +66,24 @@ const pendingConfirmations = new Map<string, PendingConfirmation>();
 /** Timers for auto-expiry. */
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Sends the one expiry line to the asked chat. May return a promise: the
+ * notice counts as delivered only when it resolves (audit A3); a sync return
+ * counts as delivered at once, a throw / rejection as a failed attempt.
+ */
+type ExpiryNotifier = (notice: string) => void | Promise<void>;
+
 /** Who to tell when the thread's pending approval lapses (the asked chat). */
-const expiryNotifiers = new Map<string, (notice: string) => void>();
+const expiryNotifiers = new Map<string, ExpiryNotifier>();
+
+/** Attempts per expiry notice (first send + bounded retries) — audit A3. */
+export const EXPIRY_NOTICE_MAX_ATTEMPTS = 3;
+/** Retry n waits n × this after the failed attempt n. */
+export const EXPIRY_NOTICE_RETRY_MS = 30_000;
+/** Failure id `recordRitualFailure` gets when every attempt failed. */
+export const EXPIRY_NOTICE_FAILURE_ID = "confirmation-expiry-notice";
+/** Pending notice retries (unref'd; cleared by the test reset). */
+const noticeRetryTimers = new Set<ReturnType<typeof setTimeout>>();
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -249,15 +266,21 @@ function markThreadRows(threadKey: string, decision: ApprovalDecision): void {
  * The TTL passed with no answer (ruling 2026-10-01). Re-reads the row at
  * fire time: the one notice goes out only when THIS approval was still
  * pending (a confirmed/declined/superseded row changes nothing), and only
- * when the router registered the chat it asked in. The notice stores
- * nothing, so a late "sí" finds no pending op and runs nothing. Every call
- * emits `confirmation.expired` with the outcome. Never throws — it runs
+ * when the router registered the chat it asked in. The pending → expired
+ * flip happens BEFORE the send and only one caller can win it, so a row is
+ * announced at most once — a later boot sweep never sees it as pending.
+ * The notice stores nothing, so a late "sí" finds no pending op and runs
+ * nothing. `staleAtBoot` (boot sweep, audit A2): the row expired so long
+ * ago that a notice now would be noise — it closes silently. Every outcome
+ * emits `confirmation.expired`; a notice's outcome is traced when its send
+ * settles (audit A3), not when it is handed off. Never throws — it runs
  * from a timer.
  */
 function lapsePendingConfirmation(
   threadKey: string,
   pending: PendingConfirmation,
-): ExpiryReason {
+  staleAtBoot = false,
+): void {
   let reason: ExpiryReason = "no_notifier";
   try {
     const notify = expiryNotifiers.get(threadKey);
@@ -278,22 +301,100 @@ function lapsePendingConfirmation(
     markThreadRows(threadKey, "expired");
     // No durable row (or the DB is down): fall back to the in-memory identity.
     const lapsed = closed ?? current === pending;
-    reason = !lapsed ? "already_decided" : notify ? "notified" : "no_notifier";
-    if (reason === "notified") {
-      try {
-        notify!(renderExpiryNotice(pending.summary));
-      } catch (err) {
-        reason = "notify_failed";
-        throw err;
-      }
+    if (!lapsed) reason = "already_decided";
+    else if (staleAtBoot) reason = "stale_at_boot";
+    else if (notify) {
+      // The trace waits for the send's outcome (deliverExpiryNotice).
+      deliverExpiryNotice(threadKey, pending, notify, 1);
+      return;
     }
   } catch (err) {
     console.warn(
-      `[confirmations] expiry notice failed: ${err instanceof Error ? err.message : String(err)}`,
+      `[confirmations] expiry failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   traceExpiry(threadKey, pending, reason);
-  return reason;
+}
+
+/**
+ * Audit A3: one attempt at the expiry notice. `notified` is traced only once
+ * the send resolved. A failed attempt is traced
+ * (`confirmation.expiry_notice_failed`) and retried after a backoff, at most
+ * `EXPIRY_NOTICE_MAX_ATTEMPTS` attempts in all (no unbounded loop); after
+ * the last one the expiry is traced `notify_failed` and the failure goes to
+ * `recordRitualFailure` (schedule.run_failed → operator alert) so it is
+ * never silent. The row is already closed, so a retry never re-opens it.
+ */
+function deliverExpiryNotice(
+  threadKey: string,
+  pending: PendingConfirmation,
+  notify: ExpiryNotifier,
+  attempt: number,
+): void {
+  const onSent = (): void => traceExpiry(threadKey, pending, "notified", attempt);
+  const onFailed = (err: unknown): void => {
+    const message = err instanceof Error ? err.message : String(err);
+    const willRetry = attempt < EXPIRY_NOTICE_MAX_ATTEMPTS;
+    console.warn(
+      `[confirmations] expiry notice failed: ${message} (attempt ${attempt}/${EXPIRY_NOTICE_MAX_ATTEMPTS}${willRetry ? ", will retry" : ", giving up"})`,
+    );
+    emitTraceEvent({
+      taskId: expiryTraceKey(threadKey, pending),
+      name: "confirmation.expiry_notice_failed",
+      tool: pending.toolName,
+      attrs: {
+        tool: pending.toolName,
+        attempt,
+        max_attempts: EXPIRY_NOTICE_MAX_ATTEMPTS,
+        will_retry: willRetry,
+        error: message.slice(0, 300),
+      },
+    });
+    if (willRetry) {
+      const timer = setTimeout(() => {
+        noticeRetryTimers.delete(timer);
+        deliverExpiryNotice(threadKey, pending, notify, attempt + 1);
+      }, EXPIRY_NOTICE_RETRY_MS * attempt);
+      timer.unref?.();
+      noticeRetryTimers.add(timer);
+      return;
+    }
+    traceExpiry(threadKey, pending, "notify_failed", attempt);
+    const failure = `expiry notice for ${pending.toolName} (${threadKey}) not delivered after ${attempt} attempts: ${message}`;
+    import("../rituals/scheduler.js")
+      .then(({ recordRitualFailure }) =>
+        recordRitualFailure(EXPIRY_NOTICE_FAILURE_ID, failure, "execute"),
+      )
+      .catch((importErr) =>
+        console.warn(
+          `[confirmations] ${failure} — and not recorded: ${importErr instanceof Error ? importErr.message : String(importErr)}`,
+        ),
+      );
+  };
+  let sent: void | Promise<void>;
+  try {
+    sent = notify(renderExpiryNotice(pending.summary));
+  } catch (err) {
+    onFailed(err);
+    return;
+  }
+  if (sent && typeof (sent as Promise<void>).then === "function") {
+    (sent as Promise<void>).then(onSent, onFailed);
+  } else {
+    onSent();
+  }
+}
+
+/** The timeline an expiry is traced on. */
+function expiryTraceKey(threadKey: string, pending: PendingConfirmation): string {
+  // A card rehydrated after a restart has no task id in memory: the
+  // approval row (or the thread) keys its timeline instead.
+  return (
+    pending.taskId ??
+    (pending.approvalId !== undefined
+      ? `approval:${pending.approvalId}`
+      : `approval:${threadKey}`)
+  );
 }
 
 /** Trace the expiry decision (dashboard timeline); best-effort like every emit. */
@@ -301,21 +402,17 @@ function traceExpiry(
   threadKey: string,
   pending: PendingConfirmation,
   reason: ExpiryReason,
+  attempts = 1,
 ): void {
   emitTraceEvent({
-    // A card rehydrated after a restart has no task id in memory: the
-    // approval row (or the thread) keys its timeline instead.
-    taskId:
-      pending.taskId ??
-      (pending.approvalId !== undefined
-        ? `approval:${pending.approvalId}`
-        : `approval:${threadKey}`),
+    taskId: expiryTraceKey(threadKey, pending),
     name: "confirmation.expired",
     tool: pending.toolName,
     attrs: {
       tool: pending.toolName,
       notified: reason === "notified",
       reason,
+      ...(attempts > 1 && { attempts }),
       ...(pending.approvalId !== undefined && {
         approval_id: pending.approvalId,
       }),
@@ -336,7 +433,7 @@ export function storePendingConfirmation(
   toolName: string,
   args: Record<string, unknown>,
   summary: string,
-  onExpire?: (notice: string) => void,
+  onExpire?: ExpiryNotifier,
   taskId?: string,
 ): void {
   // Clear existing timer if any
@@ -455,8 +552,6 @@ function rehydrateFromDb(threadKey: string): PendingConfirmation | null {
   return pending;
 }
 
-type ExpiryNotifier = (notice: string) => void;
-
 /** The router's thread-key → chat resolver, set by the boot sweep. */
 let bootNotifierResolver:
   | ((threadKey: string) => ExpiryNotifier | null)
@@ -486,6 +581,15 @@ function resolveBootNotifier(
 /** Rows one boot sweep handles at most (newest first); older ones lapse on read. */
 export const BOOT_SWEEP_MAX_ROWS = 50;
 
+/**
+ * Audit A2: how long past its TTL a row found pending at boot still gets the
+ * expiry notice. Ruling 1 promises the line AT the 5-minute TTL; a restart
+ * window (deploy, crash loop) delays it a little, but a notice about a card
+ * that lapsed long ago (the service was down for hours) only confuses the
+ * chat — that row closes silently (trace reason `stale_at_boot`).
+ */
+export const BOOT_NOTICE_GRACE_MS = 15 * 60 * 1000;
+
 interface SweepRow extends ApprovalRow {
   thread_key: string;
 }
@@ -496,6 +600,14 @@ interface SweepRow extends ApprovalRow {
  * boot (bounded by `maxRows`, newest first, one row per thread) re-arms
  * every still-pending approval: past its TTL it lapses at once, otherwise a
  * timer runs for the remainder — both through `lapsePendingConfirmation`.
+ * Audit A2 — at most one notice per approval, never a stale one:
+ * - expired while the service was down, within `BOOT_NOTICE_GRACE_MS` past
+ *   its TTL: lapses now with the ONE notice it never got;
+ * - expired longer ago than that: lapses silently (`stale_at_boot`);
+ * - already announced: its row was flipped to `expired` before that send,
+ *   so it is not pending and the sweep never sees it. (Residual: a notice
+ *   sent while the DB write failed leaves the row pending; nothing durable
+ *   records that send, so a boot inside the grace window repeats it.)
  * `resolveNotifier` maps a thread key to the chat that showed the card;
  * when it cannot (unknown key shape, channel not up), the row lapses
  * silently (trace reason `no_notifier`) — never a guessed recipient. Never
@@ -545,7 +657,11 @@ export function rearmPendingConfirmationsAtBoot(
       if (notify) expiryNotifiers.set(row.thread_key, notify);
       const remaining = CONFIRMATION_TTL_MS - (Date.now() - pending.timestamp);
       if (remaining <= 0) {
-        lapsePendingConfirmation(row.thread_key, pending);
+        lapsePendingConfirmation(
+          row.thread_key,
+          pending,
+          -remaining > BOOT_NOTICE_GRACE_MS,
+        );
         tally.lapsed++;
       } else {
         armExpiryTimer(row.thread_key, pending, remaining);
@@ -651,6 +767,8 @@ export function clearPendingConfirmation(
 export function _resetPendingConfirmationsForTests(): void {
   for (const timer of expiryTimers.values()) clearTimeout(timer);
   expiryTimers.clear();
+  for (const timer of noticeRetryTimers) clearTimeout(timer);
+  noticeRetryTimers.clear();
   expiryNotifiers.clear();
   pendingConfirmations.clear();
   bootNotifierResolver = null;

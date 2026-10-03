@@ -1460,6 +1460,45 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
     expect(recordRitualFailure).not.toHaveBeenCalled();
   });
 
+  it("audit A1: a background root that declared NO tools gives its children an EMPTY allow-list — high-risk refused, low-risk unaffected", async () => {
+    await runRoot(
+      { title: "root-nolist", description: "d", interactive: false, tags: ["scheduled", "schedule:sch-1"] },
+      ["child-of-root-nolist"],
+    );
+    expect(ctxs.get("child-of-root-nolist")!.inheritedDeclaredTools).toEqual([]);
+    expect(JSON.parse(outcome.get("child-of-root-nolist")!)).toEqual({
+      error: undeclaredToolError("gmail_send"),
+    });
+    expect(registry.execute).not.toHaveBeenCalled();
+    const names = finalOf("child-of-root-nolist").map((e) => e.name);
+    expect(names).toContain("task.failed");
+    expect(names).not.toContain("task.completed");
+    await vi.waitFor(() => expect(recordRitualFailure).toHaveBeenCalledTimes(1));
+    expect(recordRitualFailure).toHaveBeenCalledWith("sch-1", undeclaredRunFailure(["gmail_send"]), "execute");
+
+    // A low-risk tool in a child of the same kind of run still runs.
+    vi.mocked(recordRitualFailure).mockClear();
+    childCalls["child-of-root-nolist-low"] = "web_search";
+    await runRoot(
+      { title: "root-nolist-low", description: "d", interactive: false, tags: ["scheduled"] },
+      ["child-of-root-nolist-low"],
+    );
+    expect(JSON.parse(outcome.get("child-of-root-nolist-low")!)).toEqual({ ok: true });
+    expect(registry.execute).toHaveBeenCalledWith("web_search", { to: "a@b.mx" });
+    expect(finalOf("child-of-root-nolist-low").map((e) => e.name)).toContain("task.completed");
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("audit A1: an INTERACTIVE root that declared no tools leaves its children unrestricted (unchanged)", async () => {
+    await runRoot({ title: "root-api-nolist", description: "d", interactive: true }, ["child-of-root-api-nolist"]);
+    expect(ctxs.get("child-of-root-api-nolist")!.inheritedDeclaredTools).toBeUndefined();
+    expect(outcome.get("child-of-root-api-nolist")).not.toContain(undeclaredToolError("gmail_send"));
+    expect(
+      emitTraceMock.mock.calls.some((c) => c[0].attrs?.decision === "refused_undeclared"),
+    ).toBe(false);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
   it("a nested carrier (batch_decompose) the run did not declare is refused; a grandchild keeps the ROOT's list", async () => {
     childCalls["child-of-root-nested"] = "batch_decompose";
     childCalls.grandchild = "gmail_send";
