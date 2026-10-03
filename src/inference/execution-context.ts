@@ -20,6 +20,14 @@ export interface ConfirmationFacts {
   chatOrigin?: boolean;
   a2aOrigin?: boolean;
   unattended?: boolean;
+  /** This run's own declared tool list (the submission's `tools`). */
+  declaredTools?: readonly string[];
+  /** Sub-task of a background run: that run's declared tool list. */
+  inheritedDeclaredTools?: readonly string[];
+  /** Schedule/ritual id the run (or its background ancestor) serves. */
+  originScheduleId?: string;
+  /** Shared with the dispatcher's context for the same task (see field doc). */
+  undeclaredRefusalSink?: string[];
 }
 
 export class TaskExecutionContext {
@@ -86,6 +94,28 @@ export class TaskExecutionContext {
    */
   readonly externalTools?: readonly string[];
 
+  /** This run's declared tool list (the submission's `tools`), if any. */
+  readonly declaredTools?: readonly string[];
+
+  /**
+   * Operator ruling 2026-10-03 (batch_decompose): set only on a sub-task of a
+   * NON-interactive run — the tool list that background run declared (its
+   * schedule's, or its own background ancestor's). A high-risk tool or a
+   * carrier outside it is refused at this run's gate. Undefined = no limit
+   * (interactive parent, a root run, or a parent that declared no list).
+   */
+  readonly inheritedDeclaredTools?: readonly string[];
+
+  /** Schedule/ritual id this run (or its background ancestor) serves. */
+  readonly originScheduleId?: string;
+
+  /**
+   * Tools refused because the background run did not declare them. One array
+   * shared by the dispatcher's context and the runner's own context for the
+   * same task, so the dispatcher can fail the run after the runner returns.
+   */
+  readonly undeclaredRefusalSink: string[];
+
   constructor(
     taskId: string,
     interactive = true,
@@ -100,6 +130,15 @@ export class TaskExecutionContext {
     this.chatOrigin = facts.chatOrigin === true;
     this.a2aOrigin = facts.a2aOrigin === true;
     this.unattended = facts.unattended === true;
+    this.declaredTools = facts.declaredTools;
+    this.inheritedDeclaredTools = facts.inheritedDeclaredTools;
+    this.originScheduleId = facts.originScheduleId;
+    this.undeclaredRefusalSink = facts.undeclaredRefusalSink ?? [];
+  }
+
+  /** Record a tool refused for not being declared by the background run. */
+  recordUndeclaredRefusal(toolName: string): void {
+    this.undeclaredRefusalSink.push(toolName);
   }
 
   // --- Pending confirmation (pause/resume pattern) ---
@@ -225,5 +264,9 @@ export function runnerExecutionContext(
     chatOrigin: run?.chatOrigin,
     a2aOrigin: run?.a2aOrigin,
     unattended: run?.unattended,
+    declaredTools: run?.declaredTools,
+    inheritedDeclaredTools: run?.inheritedDeclaredTools,
+    originScheduleId: run?.originScheduleId,
+    undeclaredRefusalSink: run?.undeclaredRefusalSink,
   }, externalTools);
 }

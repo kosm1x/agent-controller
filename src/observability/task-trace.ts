@@ -39,6 +39,8 @@ export type TraceEventName =
   | "confirmation.continuation_started"
   | "confirmation.continuation_skipped"
   | "confirmation.continuation_failed"
+  // An unanswered approval reached its TTL (ruling 1, 2026-10-03)
+  | "confirmation.expired"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

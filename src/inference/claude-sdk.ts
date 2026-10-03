@@ -64,6 +64,7 @@ import {
 import {
   confirmationGate,
   NO_CONFIRM_IN_CHAT_ERROR,
+  noteUndeclaredRefusal,
 } from "../tools/task-executor.js";
 import { currentRunOrigin, currentRunTaskId } from "../tools/rule-of-two.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
@@ -240,7 +241,12 @@ function gateSdkToolCall(
   if (gate.action === "proceed") return null;
   ctx.recordGatedCall(name);
   if (gate.action === "refuse") {
-    trace("refused_cannot_ask", ctx.taskId);
+    if (gate.reason === "undeclared_tool") {
+      // Operator ruling 2026-10-03: recorded so the dispatcher fails the run.
+      noteUndeclaredRefusal(ctx, name, origin.source);
+    } else {
+      trace("refused_cannot_ask", ctx.taskId);
+    }
     return JSON.stringify({ error: gate.error });
   }
   const pending = ctx.getPendingConfirmation();

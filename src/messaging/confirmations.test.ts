@@ -784,6 +784,10 @@ describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () =
 
   it("names a high-risk tool even when the tools array is truncated; email delivery implies gmail_send", () => {
     const tools = [...Array.from({ length: 20 }, (_, i) => `tool_number_${i}`), "tweet_post"];
+    // Registered low-risk tools (an unregistered name is itself risky).
+    tools.slice(0, 20).forEach((t) =>
+      toolRegistry.register({ ...stubTool(t, false), readOnlyHint: true, destructiveHint: false }),
+    );
     const line = renderConfirmationSummary("schedule_task", {
       name: "R",
       cron: "*/30 * * * *",
@@ -821,7 +825,33 @@ describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () =
       delivery: "telegram",
     });
     expect(line).toMatch(
-      / · usará sin pedir confirmación: batch_decompose, schedule_task, xpoz__post \(cadencia: diario 08:00\)$/,
+      / · usará sin pedir confirmación: batch_decompose \(puede usar cualquier herramienta\), schedule_task \(puede usar cualquier herramienta\), xpoz__post \(puede usar cualquier herramienta\) \(cadencia: diario 08:00\)$/,
+    );
+  });
+
+  it("re-audit 2026-10-03: carriers and unregistered names are marked; a high-risk tool is not", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["gmail_send", "batch_decompose", "made_up_tool"],
+      delivery: "telegram",
+    });
+    expect(line).toMatch(
+      / · usará sin pedir confirmación: gmail_send, batch_decompose \(puede usar cualquier herramienta\), made_up_tool \(puede usar cualquier herramienta\) \(cadencia: diario 08:00\)$/,
+    );
+  });
+
+  it("re-audit 2026-10-03: the risky list on the card is capped at 5 names, then 'y N más'", () => {
+    const risky = Array.from({ length: 8 }, (_, i) => `unloaded_${i}`);
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["gmail_send", ...risky],
+      delivery: "telegram",
+    });
+    const suffix = line.slice(line.indexOf(" · usará"));
+    expect(suffix).toBe(
+      " · usará sin pedir confirmación: gmail_send, unloaded_0 (puede usar cualquier herramienta), unloaded_1 (puede usar cualquier herramienta), unloaded_2 (puede usar cualquier herramienta), unloaded_3 (puede usar cualquier herramienta) y 4 más (cadencia: diario 08:00)",
     );
   });
 
@@ -995,5 +1025,177 @@ describe("approval expiry notice (ruling 2026-10-01)", () => {
     expect(() => vi.advanceTimersByTime(TTL)).not.toThrow();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("expiry notice failed: adapter gone"));
     expect(decisions()).toEqual(["expired"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-audit should-fix round (2026-10-03): expiry trace + restart re-arm.
+// ---------------------------------------------------------------------------
+
+import {
+  rearmPendingConfirmationsAtBoot,
+  BOOT_SWEEP_MAX_ROWS,
+} from "./confirmations.js";
+import { getTrace } from "../observability/task-trace.js";
+
+describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
+  const tk = "telegram";
+  const args = { to: "a@b.mx", body: "x" };
+  const TTL = 5 * 60 * 1000;
+  const summary = "gmail_send(to: a@b.mx)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const expiredTrace = (taskId: string) =>
+    getTrace(taskId)
+      .filter((e) => e.name === "confirmation.expired")
+      .map((e) => ({ tool: e.tool, attrs: JSON.parse(e.attrs ?? "{}") }));
+  const rowOf = (threadKey: string) =>
+    getDatabase()
+      .prepare("SELECT id, decision FROM tool_approvals WHERE thread_key = ? ORDER BY id DESC")
+      .get(threadKey) as { id: number; decision: string };
+  /** Move a row's request time `ageMs` into the past (relative to the fake clock). */
+  const age = (threadKey: string, ageMs: number) =>
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?")
+      .run(new Date(Date.now() - ageMs).toISOString(), threadKey);
+
+  it("trace: a notified expiry is keyed by the task that showed the card", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-card");
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(expiredTrace("task-card")).toEqual([
+      {
+        tool: "gmail_send",
+        attrs: { tool: "gmail_send", notified: true, reason: "notified", approval_id: rowOf(tk).id },
+      },
+    ]);
+  });
+
+  it("trace: no notifier → reason no_notifier; already decided → reason already_decided", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary, undefined, "task-silent");
+    vi.advanceTimersByTime(TTL);
+    expect(expiredTrace("task-silent")[0].attrs).toMatchObject({ notified: false, reason: "no_notifier" });
+
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-decided");
+    getDatabase().prepare("UPDATE tool_approvals SET decision = 'confirmed' WHERE thread_key = ? AND decision = 'pending'").run(tk);
+    vi.advanceTimersByTime(TTL);
+    expect(notify).not.toHaveBeenCalled();
+    expect(expiredTrace("task-decided")[0].attrs).toMatchObject({ notified: false, reason: "already_decided" });
+  });
+
+  it("restart inside the TTL: the boot sweep re-arms the remainder and the card's chat gets the ONE notice", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 2 * 60 * 1000);
+    _resetPendingConfirmationsForTests(); // process restart: maps and timers gone
+    const notify = vi.fn();
+    const resolver = vi.fn((key: string) => (key === tk ? notify : null));
+    expect(rearmPendingConfirmationsAtBoot(resolver)).toEqual({ armed: 1, lapsed: 0 });
+    expect(resolver).toHaveBeenCalledWith(tk);
+    vi.advanceTimersByTime(3 * 60 * 1000 - 1);
+    expect(notify).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(notify.mock.calls).toEqual([[renderExpiryNotice(summary)]]);
+    vi.advanceTimersByTime(2 * TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    const { id } = rowOf(tk);
+    expect(expiredTrace(`approval:${id}`)[0].attrs).toMatchObject({ notified: true, reason: "notified" });
+  });
+
+  it("restart after the TTL: the sweep lapses and notifies at once", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("recipient not resolvable: lapses silently at the TTL (no_notifier), logged, never a guessed chat", () => {
+    const key = "email:acct:someone@x.mx";
+    storePendingConfirmation(key, "gmail_send", args, summary);
+    age(key, 0); // align SQLite's clock with the fake one
+    _resetPendingConfirmationsForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(rearmPendingConfirmationsAtBoot(() => null)).toEqual({ armed: 1, lapsed: 0 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat not resolvable after restart"));
+    vi.advanceTimersByTime(TTL);
+    expect(rowOf(key).decision).toBe("expired");
+    expect(expiredTrace(`approval:${rowOf(key).id}`)[0].attrs).toMatchObject({
+      notified: false,
+      reason: "no_notifier",
+    });
+  });
+
+  it("bounded: newest rows first, one per chat, at most `maxRows`; a resolver that throws is a silent lapse", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    for (const key of ["telegram:a", "telegram:b", "telegram:c"]) {
+      storePendingConfirmation(key, "gmail_send", args, summary);
+    }
+    _resetPendingConfirmationsForTests();
+    const resolver = vi.fn(() => {
+      throw new Error("router gone");
+    });
+    expect(rearmPendingConfirmationsAtBoot(resolver, 2)).toEqual({ armed: 2, lapsed: 0 });
+    expect(resolver.mock.calls.map((c) => c[0])).toEqual(["telegram:c", "telegram:b"]);
+    expect(vi.getTimerCount()).toBe(2);
+    expect(BOOT_SWEEP_MAX_ROWS).toBe(50);
+  });
+
+  it("every expiry timer (store, boot sweep, rehydrate) is unref'd — a pending approval never holds the process open", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 0);
+    storePendingConfirmation("telegram:b", "gmail_send", args, summary);
+    age("telegram:b", 0);
+    _resetPendingConfirmationsForTests();
+    rearmPendingConfirmationsAtBoot(() => null, 1); // re-arms telegram:b only
+    expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send"); // rehydrates tk
+    const timers = spy.mock.results.map((r) => r.value as { hasRef: () => boolean });
+    expect(timers).toHaveLength(4);
+    expect(timers.map((t) => t.hasRef())).toEqual([false, false, false, false]);
+  });
+
+  it("a tampered pending row is not re-armed (superseded)", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE thread_key = ?").run(
+      JSON.stringify({ to: "other@x.mx" }),
+      tk,
+    );
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 0 });
+    expect(rowOf(tk).decision).toBe("superseded");
+    vi.advanceTimersByTime(2 * TTL);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("a row rehydrated on read (beyond the sweep) expires through the same lapse path (traced)", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 0);
+    _resetPendingConfirmationsForTests();
+    expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send"); // rehydrates
+    vi.advanceTimersByTime(TTL);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(expiredTrace(`approval:${rowOf(tk).id}`)).toHaveLength(1);
   });
 });

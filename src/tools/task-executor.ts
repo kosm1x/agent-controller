@@ -13,6 +13,7 @@ import type { TaskExecutionContext } from "../inference/execution-context.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ToolExecutor } from "../inference/adapter.js";
 import { createLogger } from "../lib/logger.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import { classifyMutation, recordMutation } from "../db/task-mutations.js";
 
 import { existsSync } from "fs";
@@ -132,12 +133,36 @@ const TOOL_SET_CARRIERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * A tool whose runs can reach ANY tool, so its tier says nothing: a declared
+ * tool-set carrier, or a name the registry does not know (an MCP tool whose
+ * server has not loaded, a typo, a future tool — its tier is unknown).
+ */
+export function isToolSetCarrier(
+  registry: Pick<ToolRegistry, "has">,
+  name: string,
+): boolean {
+  return TOOL_SET_CARRIERS.has(name) || !registry.has(name);
+}
+
+/** High-risk by tier, or a carrier / unregistered name (see above). */
+export function isUnattendedRisky(
+  registry: Pick<ToolRegistry, "getEffectiveRiskTier" | "has">,
+  name: string,
+): boolean {
+  return (
+    registry.getEffectiveRiskTier(name) === "high" ||
+    isToolSetCarrier(registry, name)
+  );
+}
+
+/**
  * The risky tools a `schedule_task` call would hand to its unattended
  * runs: the declared `tools`, plus `gmail_send` when it delivers by email
  * (dynamic.ts adds it to every email/both run), each judged by the
  * registry's risk tier — never by the prompt text. Also risky whatever
- * their tier: a tool-set carrier, and an MCP name (`server__tool`) that is
- * not registered yet (its tier is unknown until its server loads).
+ * their tier: a tool-set carrier, and any name that is not registered
+ * (re-audit 2026-10-03: not only MCP-shaped `server__tool` names — an
+ * unknown name's tier is unknown).
  */
 export function highRiskScheduledTools(
   registry: Pick<ToolRegistry, "getEffectiveRiskTier" | "has">,
@@ -149,12 +174,7 @@ export function highRiskScheduledTools(
   if (args.delivery === "email" || args.delivery === "both") {
     declared.push("gmail_send");
   }
-  return [...new Set(declared)].filter(
-    (t) =>
-      registry.getEffectiveRiskTier(t) === "high" ||
-      TOOL_SET_CARRIERS.has(t) ||
-      (t.includes("__") && !registry.has(t)),
-  );
+  return [...new Set(declared)].filter((t) => isUnattendedRisky(registry, t));
 }
 
 /**
@@ -184,6 +204,24 @@ export function noConfirmBackgroundScheduleError(tools: string[]): string {
 }
 
 /**
+ * Re-audit should-fix (2026-10-03): an API task (interactive, no chat, not
+ * A2A) asked to create a schedule carrying a risky tool. Not "en segundo
+ * plano" (it is not a background run) and no `interactive: false` hint —
+ * resubmitting that way is refused too (`noConfirmBackgroundScheduleError`).
+ */
+export function noConfirmApiScheduleError(tools: string[]): string {
+  return `Un schedule que usa herramientas de alto riesgo (${tools.join(", ")}) solo puede crearse desde la conversación del operador, donde se confirma. Esta tarea no tiene esa conversación, así que no puede crearlo (tampoco como tarea no interactiva). No se ejecutó.`;
+}
+
+/**
+ * Operator ruling 2026-10-03 (batch_decompose): a sub-task of a background
+ * run used a high-risk tool or a carrier that run's schedule did not declare.
+ */
+export function undeclaredToolError(tool: string): string {
+  return `La herramienta ${tool} es de alto riesgo y el schedule de esta tarea en segundo plano no la declaró, así que esta sub-tarea no puede usarla. No se ejecutó.`;
+}
+
+/**
  * Operator ruling R6: an interactive task that cannot ask (API/A2A task —
  * no chat) is refused; the hint tells the API caller how to run it.
  */
@@ -207,7 +245,7 @@ export const NO_CONFIRM_A2A_ERROR =
 export type ConfirmationGateDecision =
   | { action: "proceed" }
   | { action: "confirm" }
-  | { action: "refuse"; error: string };
+  | { action: "refuse"; error: string; reason?: "undeclared_tool" };
 
 /**
  * Decide whether a tool call may run now.
@@ -231,19 +269,36 @@ export function confirmationGate(
     TaskExecutionContext,
     "interactive" | "isDestructiveUnlocked" | "canAskOperator" | "chatOrigin"
   > &
-    Partial<Pick<TaskExecutionContext, "a2aOrigin">>,
+    Partial<Pick<TaskExecutionContext, "a2aOrigin" | "inheritedDeclaredTools">>,
   name: string,
   args: Record<string, unknown>,
 ): ConfirmationGateDecision {
   if (!context.interactive) {
+    // Operator ruling 2026-10-03: a sub-task of a background run (batch
+    // child) may not reach a risky tool its run did not declare. A read
+    // call of a mixed tool (CONFIRMATION_PREDICATES) is not risky.
+    const declared = context.inheritedDeclaredTools;
+    if (
+      declared !== undefined &&
+      !declared.includes(name) &&
+      isUnattendedRisky(registry, name) &&
+      CONFIRMATION_PREDICATES[name]?.(args) !== false
+    ) {
+      return {
+        action: "refuse",
+        error: undeclaredToolError(name),
+        reason: "undeclared_tool",
+      };
+    }
     const risky = CONFIRMATION_ESCALATIONS.get(name)?.(args, registry) ?? [];
     return risky.length > 0
       ? { action: "refuse", error: noConfirmBackgroundScheduleError(risky) }
       : { action: "proceed" };
   }
+  let escalated: string[] = [];
   if (registry.getEffectiveRiskTier(name) !== "high") {
-    const escalation = CONFIRMATION_ESCALATIONS.get(name);
-    if (!escalation?.(args, registry).length) return { action: "proceed" };
+    escalated = CONFIRMATION_ESCALATIONS.get(name)?.(args, registry) ?? [];
+    if (!escalated.length) return { action: "proceed" };
   }
   const predicate = CONFIRMATION_PREDICATES[name];
   if (predicate && !predicate(args)) return { action: "proceed" };
@@ -257,10 +312,34 @@ export function confirmationGate(
         ? NO_CONFIRM_IN_CHAT_ERROR
         : context.a2aOrigin
           ? NO_CONFIRM_A2A_ERROR
-          : NO_CONFIRM_CHANNEL_ERROR,
+          : escalated.length > 0
+            ? // An escalated schedule: `interactive: false` is refused too.
+              noConfirmApiScheduleError(escalated)
+            : NO_CONFIRM_CHANNEL_ERROR,
     };
   }
   return { action: "confirm" };
+}
+
+/**
+ * Operator ruling 2026-10-03: record an undeclared-tool refusal on the run
+ * (the dispatcher fails the run from it) and put it on the trace timeline.
+ */
+export function noteUndeclaredRefusal(
+  context: Pick<TaskExecutionContext, "taskId" | "recordUndeclaredRefusal">,
+  name: string,
+  origin?: string,
+): void {
+  context.recordUndeclaredRefusal(name);
+  emitTraceEvent({
+    taskId: context.taskId,
+    name: "tool.gated",
+    tool: name,
+    attrs: {
+      decision: "refused_undeclared",
+      ...(origin !== undefined && { origin }),
+    },
+  });
 }
 
 /**
@@ -283,6 +362,9 @@ export function createTaskExecutor(
     // Bypass: non-interactive tasks (scheduled, rituals) have no user to confirm —
     // the schedule itself serves as prior authorization.
     const gate = confirmationGate(registry, context, name, args);
+    if (gate.action === "refuse" && gate.reason === "undeclared_tool") {
+      noteUndeclaredRefusal(context, name);
+    }
     if (gate.action === "refuse") {
       log.info(
         { tool: name, taskId: context.taskId },

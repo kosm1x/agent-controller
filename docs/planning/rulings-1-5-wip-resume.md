@@ -8,8 +8,8 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 
 | Ruling | What | State |
 | --- | --- | --- |
-| 1 | Expiry notice at the 5-minute confirmation TTL | Built, fix round done, NOT re-audited |
-| 2 | Confirm at schedule creation when a high-risk tool is included | Built, fix round done, NOT re-audited |
+| 1 | Expiry notice at the 5-minute confirmation TTL | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
+| 2 | Confirm at schedule creation when a high-risk tool is included | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
 | 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub), NOT re-audited |
 | 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
 | 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only | Built, fix round done after an audit FAIL, NOT re-audited; its test, mutant and 110,000-command differential results must be re-run (they came from a window in which the host was damaged) |
@@ -105,6 +105,52 @@ each restored exactly; scoped vitest 37 files / 1528 tests green).
   `seed_url`, also `token_url`, `password_file`), which are visible by name and still
   judged by value.
 
+## Rulings 1–2 should-fix round + batch_decompose ruling (2026-10-03)
+
+Answers the rulings 1–2 re-audit (PASS with should-fix items) and the operator ruling of
+2026-10-03 on `batch_decompose`. Typecheck 0; every item has a test that went RED with
+the fix reverted (23 hand mutants, each restored byte-exact).
+
+- API task creating a risky schedule: `noConfirmApiScheduleError` (no "resubmit with
+  `interactive:false`" advice — that is refused too). `src/tools/task-executor.ts`.
+- `confirmation.expired` trace event `{tool, notified, reason}` (reason `notified` /
+  `already_decided` / `no_notifier` / `notify_failed`) at the one expiry decision
+  (`lapsePendingConfirmation`), keyed by the task that showed the card.
+- The expiry notice is sent through `sendLLMReplyToChannel` (deliverable filter), logged to
+  the day-log, and pushed into the thread history as a Jarvis turn.
+- Boot sweep `rearmPendingConfirmationsAtBoot` (called once from `messaging/index.ts` via
+  `router.rearmPendingApprovals()`): one pass, newest 50 pending rows, one per chat. Past
+  the TTL → lapse and notify at once; otherwise a timer for the remainder (unref'd, through
+  `lapsePendingConfirmation`). Recipient from the thread key only (owner channel's own key,
+  or a WhatsApp group key whose sender is the owner); otherwise a logged silent lapse
+  (`no_notifier`). The rehydrate-on-read timer uses the same lapse path.
+- Any unregistered tool name is risky at schedule creation (not only `server__tool`).
+- Creation card: carriers and unregistered names marked "(puede usar cualquier
+  herramienta)"; the risky list shows at most 5 names, then "y N más".
+- Ruling 2026-10-03: a sub-task of a NON-interactive run (batch child, any depth) inherits
+  the run's declared tool list (`inheritedDeclaredTools`, from the root's `tools`; a
+  child's own `tools` does not widen it). A high-risk tool or carrier outside it is refused
+  at the child's gate with `undeclaredToolError` (trace `tool.gated` /
+  `refused_undeclared`). The dispatcher then fails the child (one status mapping, one
+  completion ledger — no second "done" decision) and calls `recordRitualFailure` for the
+  schedule/ritual the run serves (`schedule.run_failed`). Interactive/chat runs unchanged.
+
+Residuals (to state at ship time):
+
+- Unresolvable recipient after a restart (community mailbox, unknown key shape, channel not
+  up) → the approval lapses silently (`no_notifier`, logged).
+- Pending rows beyond the 50-row boot cap: re-armed only when the chat is next read (then
+  through the same lapse path, with the notice when the recipient resolves). A row first
+  read after its TTL is closed as expired silently — no notice, no trace.
+- The thread-history entry for the notice is in memory only (not in `conversations`); it is
+  lost on restart.
+- A boot-swept or rehydrated card has no task id: its trace is keyed `approval:<id>`.
+- A background run that declared no `tools` list leaves its children unrestricted.
+- Read calls of a mixed tool (`google_workspace_cli` plain read, per
+  `CONFIRMATION_PREDICATES`) are not "high-risk" and pass an undeclared check.
+- The refused child fails; the parent background run itself still reports its own outcome
+  (the schedule gets the `schedule.run_failed` alert from the child).
+
 ## Order to finish
 
 0. Before shipping, the operator runs a read-only census of key names (never values) in
@@ -115,7 +161,7 @@ each restored exactly; scoped vitest 37 files / 1528 tests green).
 2. Re-audit ruling 5 (re-run its tests and the differential against `main`).
 3. Re-audit rulings 1–2.
 4. Combined audit of rulings 1–5.
-5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording; the audit round 4 inference-seam scrub (stored values are replaced in the system prompt — KB, user facts, history, enrichment — wherever they appeared, and in every message and tool result); the 3d-a nested-leaf visibility and the 3d-b classifier changes (more names and PEM private keys hidden; `…_enabled/_region/_host/_url/_file` names visible).
+5. ONE paid `npm run eval:gate -- --run` on the final text; do not ship on FAIL. Model-visible strings changed by this work: the hidden-value placeholder, the unknown-reference refusal, the `${…SECRET_…}` expansion refusal, the nested-entry lines of `project_get` / `saved_secrets`, the ruling 3d `project_get` / `saved_secrets` change (non-secret `credentials` entries shown in clear and dropped from `saved_secrets`), `project_get` first description line, the ruling 5 shell description lines, the ruling 4 coding-section wording; the audit round 4 inference-seam scrub (stored values are replaced in the system prompt — KB, user facts, history, enrichment — wherever they appeared, and in every message and tool result); the 3d-a nested-leaf visibility and the 3d-b classifier changes (more names and PEM private keys hidden; `…_enabled/_region/_host/_url/_file` names visible); rulings 1–2 should-fix round: `noConfirmApiScheduleError` (API task creating a risky schedule), `undeclaredToolError` (batch child refused), the creation-card suffix "(puede usar cualquier herramienta)" and "y N más", unregistered tool names now listed on the card, and the expiry notice now present in the thread history the model reads.
 6. Docs (`PROJECT-STATUS.md`, `README.md` baselines, queue), merge to `main`, operator deploy.
 
 ## Rules that apply to this work
@@ -163,4 +209,4 @@ arguments outside the seam; images are pixels.
 
 - `http_fetch` description still says the tool sends no secrets, which no longer matches `{{SECRET_<NAME>}}` substitution (description change → eval gate).
 - Ruling 5: start/stop-type docker commands are unchanged from `main` (allowed); commands that redirect the daemon (`-H`, `--context`, `--config`, `DOCKER_HOST=`) are refused. Both await operator confirmation.
-- Rulings 1–2: the "no confirmation channel" error suggests `interactive:false`, which is now refused for risky `schedule_task`; background `batch_decompose` declaring high-risk tools is not refused.
+- ~~Rulings 1–2: the "no confirmation channel" error suggests `interactive:false`, which is now refused for risky `schedule_task`; background `batch_decompose` declaring high-risk tools is not refused.~~ RESOLVED 2026-10-03 (should-fix round + batch_decompose ruling, above).

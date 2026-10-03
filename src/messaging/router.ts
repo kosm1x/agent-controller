@@ -71,6 +71,7 @@ import {
   clearPendingConfirmation,
   resolvePendingConfirmation,
   storePendingConfirmation,
+  rearmPendingConfirmationsAtBoot,
   detectConfirmationResponse,
   argsSha256,
   renderConfirmationSummary,
@@ -3331,16 +3332,13 @@ export class MessageRouter {
       if (taskPendingConfirmation && pending.tk && confirmSummary) {
         // Ruling 2026-10-01: an unanswered card gets ONE expiry line, in the
         // chat that showed it and through the card's own send path.
-        const { channel: askedChannel, to: askedTo } = pending;
         storePendingConfirmation(
           pending.tk,
           taskPendingConfirmation.toolName,
           taskPendingConfirmation.args,
           confirmSummary,
-          (notice) => {
-            this.sendLLMReplyToChannel(askedChannel, askedTo, notice);
-            appendDayLog("JARVIS", notice);
-          },
+          this.expiryNotifier(pending.channel, pending.to, pending.tk),
+          taskId,
         );
         console.log(`[router] Stored pending confirmation: ${confirmSummary}`);
         if (pending.rerunSpec) {
@@ -4238,6 +4236,74 @@ export class MessageRouter {
         }
       });
     return "rerun";
+  }
+
+  /**
+   * Ruling 2026-10-01: the one expiry line for an unanswered card, sent to
+   * the chat that showed it through the LLM-reply seam (deliverable filter —
+   * the summary renders stored args), logged to the day-log, and added to
+   * the thread so the next turn's model knows the approval lapsed (an
+   * assistant-only entry: empty user side, as `getThreadTurns` parses it).
+   */
+  private expiryNotifier(
+    channel: ChannelName,
+    to: string,
+    tk: string,
+  ): (notice: string) => void {
+    return (notice) => {
+      this.sendLLMReplyToChannel(channel, to, notice);
+      appendDayLog("JARVIS", notice);
+      pushToThread(tk, `User: \nJarvis: ${sanitizeDeliverable(notice).text}`);
+    };
+  }
+
+  /**
+   * Re-audit should-fix (2026-10-03): which chat a pending approval's thread
+   * key belongs to, for the notice after a restart. Only the operator
+   * shapes a card can come from: an owner channel's own key (its owner
+   * address — Telegram/WhatsApp DMs and owner-only mailboxes accept only the
+   * owner) or a WhatsApp group key whose sender is the owner (the group).
+   * Anything else — community mailbox, unknown shape, a channel that is not
+   * up — is null: the row lapses silently, never to a guessed recipient.
+   */
+  resolveApprovalRecipient(
+    tk: string,
+  ): { channel: ChannelName; to: string } | null {
+    let channel: ChannelName | undefined;
+    for (const name of this.channels.keys()) {
+      if (
+        (tk === name || tk.startsWith(`${name}:`)) &&
+        (!channel || name.length > channel.length)
+      ) {
+        channel = name;
+      }
+    }
+    if (!channel) return null;
+    const adapter = this.channels.get(channel);
+    const owner = this.getOwnerAddress(channel);
+    if (!owner || !isOwnerChannel(channel, adapter?.mode)) return null;
+    if (tk === channel) return { channel, to: owner };
+    const rest = tk.slice(channel.length + 1).split(":");
+    if (
+      channel === "whatsapp" &&
+      rest.length === 2 &&
+      rest[0].endsWith("@g.us") &&
+      rest[1] === owner
+    ) {
+      return { channel, to: rest[0] };
+    }
+    return null;
+  }
+
+  /**
+   * Boot (once, after the channels are up): re-arm the expiry of approvals
+   * still pending in `tool_approvals` — see `rearmPendingConfirmationsAtBoot`.
+   */
+  rearmPendingApprovals(): void {
+    rearmPendingConfirmationsAtBoot((tk) => {
+      const r = this.resolveApprovalRecipient(tk);
+      return r ? this.expiryNotifier(r.channel, r.to, tk) : null;
+    });
   }
 
   /**

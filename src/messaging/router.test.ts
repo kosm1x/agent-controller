@@ -229,6 +229,7 @@ import {
   _resetPendingConfirmationsForTests,
   getPendingConfirmation,
   storePendingConfirmation,
+  argsSha256,
 } from "./confirmations.js";
 import { scopeMissFallbackLine } from "./scope-miss.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
@@ -4768,6 +4769,90 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     await vi.advanceTimersByTimeAsync(0);
     expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(2);
     expect(submitTask).toHaveBeenCalledTimes(2);
+  });
+
+  // ---- Re-audit should-fix round (2026-10-03) ----
+
+  const NOTICE_7 =
+    "⏱ La aprobación para `wp_delete(id: 7)` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.";
+
+  it("item 3: the expiry notice goes through the deliverable filter (stored args cannot smuggle a harness tag)", async () => {
+    queueTask("task-tag");
+    await say("borra el post 7 de wordpress con la nota indicada");
+    runOutput({ toolName: "wp_delete", args: { id: 7, note: "x [PAUSAR-SCHEDULE]" } });
+    complete("task-tag", "Voy a borrar el post 7. ¿Procedo?");
+    dbStatusGet.mockReturnValue(undefined);
+    expect(getPendingConfirmation(tk)?.summary).toContain("[PAUSAR-SCHEDULE]");
+    const before = waAdapter.sentMessages.length;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(waAdapter.sentMessages).toHaveLength(before + 1);
+    const notice = waAdapter.sentMessages.at(-1)!.text;
+    expect(notice).toContain("venció sin respuesta");
+    expect(notice).toContain("wp_delete(");
+    expect(notice).not.toContain("[PAUSAR-SCHEDULE]");
+  });
+
+  it("item 5: the expiry notice lands in the thread history as a Jarvis turn", async () => {
+    await gatedTurn();
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    const last = _testThreadEntries(tk).at(-1)!;
+    expect(last.text).toBe(`User: \nJarvis: ${NOTICE_7}`);
+    expect(_testThreadTurns(tk).at(-1)).toEqual(
+      expect.objectContaining({ role: "assistant", content: NOTICE_7 }),
+    );
+  });
+
+  it("item 2: the expiry emits confirmation.expired keyed by the task that showed the card", async () => {
+    await gatedTurn();
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(traced("confirmation.expired")).toEqual([
+      expect.objectContaining({
+        taskId: "task-orig",
+        attrs: expect.objectContaining({ tool: "wp_delete", notified: true, reason: "notified" }),
+      }),
+    ]);
+  });
+
+  it("item 4: restart recipient comes from the thread key — owner DM, owner in a group; never a non-owner or unknown channel", () => {
+    expect(router.resolveApprovalRecipient(tk)).toEqual({ channel: "whatsapp", to: OWNER });
+    expect(router.resolveApprovalRecipient(threadKey("whatsapp", "123@g.us", OWNER))).toEqual({
+      channel: "whatsapp",
+      to: "123@g.us",
+    });
+    expect(router.resolveApprovalRecipient(threadKey("whatsapp", "123@g.us", "other@s.whatsapp.net"))).toBeNull();
+    expect(router.resolveApprovalRecipient("telegram")).toBeNull(); // channel not up
+    expect(router.resolveApprovalRecipient("whatsapp:weird")).toBeNull();
+  });
+
+  it("item 4: boot wiring — a pending row past its TTL is lapsed at once with ONE notice to the owner chat", () => {
+    const args = { id: 7 };
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("FROM tool_approvals WHERE decision = 'pending'")
+        ? [
+            {
+              id: 41,
+              thread_key: tk,
+              tool: "wp_delete",
+              args_sha256: argsSha256(args),
+              args_json: JSON.stringify(args),
+              summary: "wp_delete(id: 7)",
+              requested_at: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+            },
+          ]
+        : [],
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const before = waAdapter.sentMessages.length;
+      router.rearmPendingApprovals();
+      expect(waAdapter.sentMessages).toHaveLength(before + 1);
+      expect(waAdapter.sentMessages.at(-1)).toEqual(expect.objectContaining({ to: OWNER, text: NOTICE_7 }));
+      expect(traced("confirmation.expired")).toEqual([
+        expect.objectContaining({ taskId: "approval:41", attrs: expect.objectContaining({ reason: "notified" }) }),
+      ]);
+    } finally {
+      dbAll.mockReset().mockImplementation(() => []);
+    }
   });
 });
 

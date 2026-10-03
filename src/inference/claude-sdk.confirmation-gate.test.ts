@@ -57,6 +57,7 @@ import {
   NO_CONFIRM_IN_CHAT_ERROR,
   NO_CONFIRM_A2A_ERROR,
   noConfirmBackgroundScheduleError,
+  undeclaredToolError,
 } from "../tools/task-executor.js";
 import type { Tool } from "../tools/types.js";
 
@@ -206,6 +207,31 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     }
     expect(reg.execute).toHaveBeenCalledTimes(6);
     expect(emitTraceMock).not.toHaveBeenCalled();
+  });
+
+  it("ruling 2026-10-03: a background batch child's undeclared gmail_send is refused on the SDK path and recorded for the dispatcher (shared sink)", async () => {
+    const ctx = dispatcherCtx("t-child", false, { inheritedDeclaredTools: ["web_search"] });
+    const text = await inRun(BACKGROUND, ctx, () =>
+      runWithExecutionContext(runnerExecutionContext("t-child", true), () =>
+        call("gmail_send", { to: "a@b.com" }),
+      ),
+    );
+    expect(JSON.parse(text)).toEqual({ error: undeclaredToolError("gmail_send") });
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);
+    expect(emitTraceMock).toHaveBeenCalledWith({
+      taskId: "t-child",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "refused_undeclared", origin: "background" },
+    });
+    // Declared: the schedule is the authorization, as before.
+    const ok = await inRun(
+      BACKGROUND,
+      dispatcherCtx("t-child-2", false, { inheritedDeclaredTools: ["gmail_send"] }),
+      () => call("gmail_send", { to: "a@b.com" }),
+    );
+    expect(JSON.parse(ok).ok).toBe(true);
   });
 
   it("R6: an interactive API task (no chat) is refused with the API hint, not executed", async () => {

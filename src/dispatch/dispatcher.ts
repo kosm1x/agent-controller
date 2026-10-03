@@ -300,6 +300,11 @@ function runOriginOf(submission: TaskSubmission): RunOrigin | undefined {
  * - unattended: a background agent (spawnType `user-background` or tag
  *   `background-agent`) or any sub-task of one — the operator is not
  *   watching the run.
+ * - declaredTools / inheritedDeclaredTools: the run's own `tools`; on a
+ *   sub-task of a NON-interactive run, that run's declared list (or its own
+ *   inherited one) — the gate refuses a high-risk tool / carrier outside it.
+ * - originScheduleId: `ritualId`, else the `schedule:<id>` tag, else the
+ *   parent's — where a refused sub-task's failure is reported.
  * The context itself never asks (`canAskOperator` false): only a runner that
  * surfaces the pending action (fast) enters one that may.
  */
@@ -308,10 +313,22 @@ export function gateContextFor(
   submission: TaskSubmission,
 ): TaskExecutionContext {
   const parent = currentExecutionContext();
+  const scheduleTag = submission.tags
+    ?.find((t) => t.startsWith("schedule:"))
+    ?.slice("schedule:".length);
   return new TaskExecutionContext(
     taskId,
     submission.interactive ?? parent?.interactive ?? true,
     {
+      // Operator ruling 2026-10-03: a sub-task of a background run may not
+      // reach a high-risk tool / carrier that run did not declare.
+      declaredTools: submission.tools,
+      inheritedDeclaredTools:
+        parent && !parent.interactive
+          ? (parent.inheritedDeclaredTools ?? parent.declaredTools)
+          : undefined,
+      originScheduleId:
+        submission.ritualId ?? scheduleTag ?? parent?.originScheduleId,
       routerRoot:
         submission.replyTracked === true &&
         !!submission.threadId &&
@@ -330,6 +347,15 @@ export function gateContextFor(
         parent?.unattended === true,
     },
   );
+}
+
+/**
+ * The failure text of a background sub-task whose gate refused tools its run
+ * did not declare (operator ruling 2026-10-03). Operator-facing (task error,
+ * schedule.run_failed alert), not model-facing.
+ */
+export function undeclaredRunFailure(tools: readonly string[]): string {
+  return `Sub-tarea en segundo plano rechazada: usó ${tools.join(", ")}, que el schedule no declaró`;
 }
 
 function enqueueContainerTask(
@@ -913,6 +939,39 @@ async function dispatchWithSlot(
         } catch (err) {
           log.error({ err, taskId }, "fast-runner fallback threw");
         }
+      }
+    }
+
+    // Operator ruling 2026-10-03 (batch_decompose): a background sub-task
+    // whose gate refused a high-risk tool / carrier its run did not declare
+    // FAILS — never a quiet success — and the schedule it serves gets the
+    // existing schedule.run_failed alert. Decided here, on the runner's
+    // result, before the one status mapping and the completion ledger.
+    const undeclared = [...new Set(gateContext.undeclaredRefusalSink)];
+    if (undeclared.length > 0) {
+      const refusal = undeclaredRunFailure(undeclared);
+      result = {
+        ...result,
+        success: false,
+        status: undefined,
+        error: result.error ? `${refusal} — ${result.error}` : refusal,
+      };
+      log.warn(
+        { taskId, tools: undeclared, schedule: gateContext.originScheduleId },
+        "background sub-task failed: undeclared high-risk tool refused",
+      );
+      const scheduleId = gateContext.originScheduleId;
+      if (scheduleId) {
+        import("../rituals/scheduler.js")
+          .then(({ recordRitualFailure }) =>
+            recordRitualFailure(scheduleId, refusal, "execute"),
+          )
+          .catch((err) =>
+            log.error(
+              { taskId, err: errMsg(err) },
+              "undeclared-tool failure not recorded as a schedule failure",
+            ),
+          );
       }
     }
 
