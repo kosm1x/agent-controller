@@ -182,6 +182,7 @@ import {
   holdScopeAsks,
   formatConfirmationResult,
   buildExternalJarvisSystemPrompt,
+  dayLogEntryText,
 } from "./router.js";
 import { detectToolFlags, fileSystemSection } from "./prompt-sections.js";
 import {
@@ -4485,5 +4486,30 @@ describe("buildExternalJarvisSystemPrompt — no host paths (jarvis-pull)", () =
     const prompt = `${stable}\n${variable}`;
     expect(prompt).not.toContain("LOCAL\" = este VPS");
     expect(prompt).not.toContain("/root/claude");
+  });
+});
+
+// 2026-10-03: a cut day-log entry carries one visible "…" so the nightly
+// close and the day narrative can tell it from a complete one.
+describe("dayLogEntryText — visible cut marker", () => {
+  it("text over 500 chars → cut at 500 plus one '…'", () => {
+    const out = dayLogEntryText("a".repeat(600));
+    expect(out).toBe("a".repeat(500) + "…");
+  });
+
+  it("text at or under 500 chars → unchanged, no marker", () => {
+    expect(dayLogEntryText("hola")).toBe("hola");
+    expect(dayLogEntryText("b".repeat(500))).toBe("b".repeat(500));
+  });
+
+  it("an entry that already ends in '…' at exactly the limit is not doubled", () => {
+    const exact = "c".repeat(499) + "…";
+    expect(dayLogEntryText(exact)).toBe(exact);
+    expect(dayLogEntryText(exact + "más texto")).toBe(exact);
+  });
+
+  it("a cut that would split a surrogate pair still gets one marker", () => {
+    const out = dayLogEntryText("d".repeat(499) + "😀" + "e".repeat(10));
+    expect(out).toBe("d".repeat(499) + "…");
   });
 });

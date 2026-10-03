@@ -353,6 +353,8 @@ describe("ReactionManager", () => {
       "memory_store",
     ]);
     expect(call.ritualId).toBe("skill-evolution");
+    // DENUE guard detects on the title, never the log-bearing description.
+    expect(call.detectionText).toBe("Skill evolution — 2026-05-24");
   });
 
   it("retry_adjusted forwards agent_type + tools + ritualId from the failed ritual task", async () => {
@@ -361,6 +363,7 @@ describe("ReactionManager", () => {
     expect(mockSubmitTask).toHaveBeenCalledTimes(1);
     const call = mockSubmitTask.mock.calls[0][0];
     expect(call.description).toContain("[Auto-retry]");
+    expect(call.detectionText).toBe("Skill evolution — 2026-05-24");
     expect(call.agentType).toBe("heavy");
     expect(call.tools).toEqual([
       "evolution_get_data",
@@ -378,6 +381,7 @@ describe("ReactionManager", () => {
     expect(call.agentType).toBe("fast");
     expect(call.tools).toBeUndefined();
     expect(call.ritualId).toBeUndefined();
+    expect(call.detectionText).toBeUndefined();
     expect(call.tags).toBeUndefined();
     expect(call.interactive).toBeUndefined();
   });

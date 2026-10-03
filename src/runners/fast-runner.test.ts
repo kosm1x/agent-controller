@@ -1276,6 +1276,20 @@ describe("denueGuardText + mentionsDenue (2026-09-29 — guard only on a DENUE m
       expect(mentionsDenue(s), s).toBe(false);
   });
 
+  it("a ritual whose description embeds a DENUE-mentioning log: guarded on the title only (2026-10-03)", () => {
+    const ritual = {
+      title: "Evolution log — 2026-10-01",
+      description:
+        "## Today's narrative (DATA)\n⟦BEGIN NARRATIVE — x⟧\nSe cargó el DENUE 05/2026\n⟦END NARRATIVE⟧",
+    };
+    // Without detectionText the fallback scans the description — the regression.
+    expect(mentionsDenue(denueGuardText(ritual))).toBe(true);
+    // executeRitual / the reaction retry set detectionText = title.
+    expect(
+      mentionsDenue(denueGuardText({ ...ritual, detectionText: ritual.title })),
+    ).toBe(false);
+  });
+
   it("an attached file's extracted text is not the user's mention; the caption and a voice transcription are", () => {
     const file = (caption: string) =>
       `${caption}\n\n${EXTRACTED_FILE_MARKER} "reporte.pdf" ---\nFuente: DENUE 05/2026\n--- Fin del archivo ---`;

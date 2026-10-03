@@ -17,12 +17,13 @@ import type { ScheduleRunFailedPayload } from "../lib/events/types.js";
 import { rituals, RITUALS_TIMEZONE, type RitualDefinition } from "./config.js";
 import { isRitualPaused } from "./ritual-controls.js";
 import { movesPromptBlock, safeTrackedMoves } from "./signal-moves.js";
-import { createMorningBriefing } from "./morning.js";
+import { createMorningBriefing, previousDateLabel } from "./morning.js";
 import { composeMorningBriefDriftSection } from "../lib/s3/delivery.js";
 import { createNightlyClose } from "./nightly.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { commitEvolutionLogIfDirty } from "./evolution-log-commit.js";
 import { createDayNarrative } from "./day-narrative.js";
+import { loadKbText } from "./verbatim-block.js";
 import { createEvolutionRitual } from "./evolution.js";
 import { createWeeklyReview } from "./weekly-review.js";
 import { createSignalIntelligence } from "./signal-intelligence.js";
@@ -216,16 +217,25 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
           errMsg(err),
         );
       }
-      return createMorningBriefing(date, alertSection);
+      return createMorningBriefing(
+        date,
+        alertSection,
+        loadKbText(`logs/day-narratives/${previousDateLabel(date)}.md`),
+      );
     }
+    // The harness loads the day's log/narrative (2026-10-03): a model-side
+    // jarvis_file_read of a file over 8,000 chars returns only an outline.
     case "nightly-close":
-      return createNightlyClose(date);
+      return createNightlyClose(date, loadKbText(`logs/day-logs/${date}.md`));
     case "skill-evolution":
       return createEvolutionRitual(date);
     case "day-narrative":
-      return createDayNarrative(date);
+      return createDayNarrative(date, loadKbText(`logs/day-logs/${date}.md`));
     case "evolution-log":
-      return createEvolutionLogEntry(date);
+      return createEvolutionLogEntry(
+        date,
+        loadKbText(`logs/day-narratives/${date}.md`),
+      );
     case "weekly-review":
       return createWeeklyReview(date);
     case "market-morning-scan":
@@ -389,6 +399,11 @@ async function executeRitual(
 
   const template = getTaskTemplate(ritual);
   template.interactive = false; // Rituals have no interactive user
+  // The fast runner's DENUE guard falls back to title+description when
+  // detectionText is unset; ritual descriptions embed the day-log/narrative
+  // (2026-10-03), so a DENUE mention in the log would inject the guard. A
+  // ritual has no user text: detect on the title only.
+  template.detectionText ??= template.title;
   // Tag the submission so dispatcher.ts wraps runner.execute() in
   // ritualContext, exempting the ritual's legitimate SELECT/curl chains from
   // the flailing-guard. See P1+P2 in feedback_evolution_log_misattribution.

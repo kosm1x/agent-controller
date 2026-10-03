@@ -318,6 +318,9 @@ export class ReactionManager {
             ritualId: meta.ritualId,
             threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
             ...(isNonInteractiveMeta(meta) && { interactive: false }),
+            // Same DENUE-guard text as executeRitual: a ritual's description
+            // embeds the day's log, not user words (2026-10-03).
+            ...(meta.ritualId && { detectionText: task.title }),
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",
@@ -353,6 +356,9 @@ export class ReactionManager {
             ritualId: meta.ritualId,
             threadId: meta.threadId, // V8.3 seam origin survives the retry (qa W4)
             ...(isNonInteractiveMeta(meta) && { interactive: false }),
+            // Same DENUE-guard text as executeRitual: a ritual's description
+            // embeds the day's log, not user words (2026-10-03).
+            ...(meta.ritualId && { detectionText: task.title }),
           });
           const reactionId = recordReaction(this.db, {
             trigger: "task_failed",

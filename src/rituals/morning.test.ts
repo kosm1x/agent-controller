@@ -15,10 +15,9 @@ describe("createMorningBriefing", () => {
 
   it("keeps the existing required tools (regression guard — submit_report intentionally NOT here, see C2 below)", () => {
     const submission = createMorningBriefing("2026-04-21");
-    expect(submission.requiredTools).toEqual([
-      "jarvis_file_read",
-      "gmail_send",
-    ]);
+    // jarvis_file_read dropped 2026-10-03: the narrative is harness-embedded,
+    // README reads are optional — requiring one would re-run (re-send) the brief.
+    expect(submission.requiredTools).toEqual(["gmail_send"]);
   });
 
   it("v7.7 Spine 1 Phase 2a: submit_report wired before gmail_send", () => {
@@ -91,11 +90,43 @@ describe("createMorningBriefing", () => {
   // Cambio 2 (2026-06-19): the brief reads the prior-day narrative so it has
   // ground truth on what happened yesterday instead of marking it "incierto".
   describe("Cambio 2 — brief reads prior-day narrative", () => {
-    it("instructs the LLM to read yesterday's day-narrative file", () => {
-      const submission = createMorningBriefing("2026-04-21");
-      expect(submission.description).toContain(
-        'jarvis_file_read on path="logs/day-narratives/2026-04-20.md"',
+    // 2026-10-03: the scheduler loads the narrative and the template embeds
+    // it — a model-side read of a narrative over 8,000 chars got an outline.
+    it("embeds yesterday's narrative verbatim, fenced as data, with no read instruction", () => {
+      const tail = "y quedó DESPLEGADO y verificado en producción";
+      const narrative = `# Bitácora narrativa — 2026-04-20\n\n| 10:00 | Deploy | ${"x".repeat(9_000)} ${tail} |\n`;
+      const submission = createMorningBriefing("2026-04-21", "", narrative);
+      const d = submission.description;
+      expect(d).toContain(tail);
+      expect(d).toContain(
+        "⟦BEGIN NARRATIVE — logs/day-narratives/2026-04-20.md — ",
       );
+      expect(d).toContain("⟦END NARRATIVE⟧");
+      expect(d).toMatch(/quoted DATA/);
+      expect(d).not.toContain('jarvis_file_read on path="logs/day-narratives/');
+    });
+
+    it("the data block is the END of the description, after the S3 section (2026-10-03)", () => {
+      const d = createMorningBriefing(
+        "2026-04-21",
+        "### Alertas S3\n- señal X",
+        "# narrativa\n| 10:00 | a | b |\n",
+      ).description;
+      expect(d.endsWith("⟦END NARRATIVE⟧")).toBe(true);
+      expect(d.indexOf("## Yesterday's narrative (DATA")).toBeGreaterThan(
+        d.indexOf("- señal X"),
+      );
+      expect(d.indexOf("## Yesterday's narrative (DATA")).toBeGreaterThan(
+        d.indexOf("## Email body format"),
+      );
+    });
+
+    it("no narrative → the harness says so and the Ayer line is omitted", () => {
+      const submission = createMorningBriefing("2026-04-21", "", null);
+      expect(submission.description).toContain(
+        "(`logs/day-narratives/2026-04-20.md`) does not exist",
+      );
+      expect(submission.description).not.toContain("⟦BEGIN NARRATIVE");
     });
 
     it("adds the '📋 Ayer' line to the brief template", () => {
