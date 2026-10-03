@@ -23,6 +23,14 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}"
 
+# Cloud clones have no pre-commit hook: point git at the versioned one
+# (typecheck + `vitest related` on staged .ts; CI stays the full gate). Only when
+# core.hooksPath is unset, so an existing setting is never overwritten. Behind
+# the env gate above, so never on the VPS.
+if ! git config --get core.hooksPath >/dev/null 2>&1; then
+  git config core.hooksPath scripts/git-hooks || true
+fi
+
 stamp="node_modules/.session-start-lock.sha256"
 want="$(sha256sum package-lock.json | cut -d' ' -f1)"
 

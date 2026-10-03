@@ -29,7 +29,7 @@ You implement one brief in the agent-controller repository (Jarvis / mission-con
 2. `npx vitest run <changed or added test files>`; all green. For a bug fix, show the new test failing on the old code first.
 3. Re-read your diff (`git diff`) adversarially: what would CI or the auditor reject?
 
-The full suite is not yours to run: on the VPS the pre-commit hook runs it, and in a cloud clone (no pre-commit hook) CI does. Do not commit unless the brief says to.
+The full suite is not yours to run: on the VPS the pre-commit hook runs it, and in a cloud clone CI does (the cloud pre-commit hook, `scripts/git-hooks/pre-commit`, runs only typecheck plus `vitest related` on the staged .ts files). Do not commit unless the brief says to.
 
 ## Report
 

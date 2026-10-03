@@ -1,0 +1,37 @@
+#!/bin/bash
+# Versioned pre-commit hook for cloud clones (2026-10-03). Enabled by
+# .claude/hooks/session-start.sh (cloud sessions only) via core.hooksPath, and
+# only when core.hooksPath was unset. The VPS keeps its own unversioned
+# .git/hooks/pre-commit; Jarvis commits there with --no-verify by design.
+#
+# - Skips at once when no .ts file is staged (added, modified, renamed or deleted).
+# - Runs `npm run typecheck`, then `vitest related` on the staged .ts files: the
+#   tests that import them, not the full suite. A single full `vitest run` OOMs
+#   small machines; CI (.github/workflows/ci.yml, sharded) is the full gate.
+# - `git commit --no-verify` skips it.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# A deleted .ts can break imports, so deletions trigger the typecheck too; only
+# files that still exist go to `vitest related`.
+mapfile -d '' -t changed < <(git diff --cached --name-only --diff-filter=ACMRD -z -- '*.ts')
+if [ "${#changed[@]}" -eq 0 ]; then
+  exit 0
+fi
+mapfile -d '' -t staged < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.ts')
+
+if [ ! -d node_modules ]; then
+  echo "pre-commit: node_modules missing; run npm ci (commit aborted, or --no-verify)." >&2
+  exit 1
+fi
+
+if ! npm run --silent typecheck; then
+  echo "pre-commit: npm run typecheck failed; commit aborted (fix the errors, or --no-verify)." >&2
+  exit 1
+fi
+
+if [ "${#staged[@]}" -gt 0 ] && ! npx vitest related --run "${staged[@]}"; then
+  echo "pre-commit: vitest related failed for the staged .ts files; commit aborted." >&2
+  exit 1
+fi
