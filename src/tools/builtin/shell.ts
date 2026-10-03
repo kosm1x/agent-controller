@@ -999,8 +999,9 @@ function normalizeShellText(text: string): string {
  * reaches file content without naming a blocked path (`docker exec <c> cat
  * /app/.env`, `docker cp`, `docker run -v /:/h …`), so no docker verb may read
  * or write container/host files or create a container, except `docker exec
- * supabase-db psql`. Read verbs pass; lifecycle verbs (start/stop/rm/prune/…)
- * are not ruled and keep their previous verdict. Checked inside the flat token
+ * supabase-db psql` (with `-e PG*` only, ruling 5b 2026-10-03). Read verbs pass;
+ * lifecycle verbs (start/stop/rm/prune/…) stay allowed (ruling 5c 2026-10-03),
+ * except `docker volume create` with a bind/device option. Checked inside the flat token
  * walk of checkPackageManagerRaw, so it holds behind the standard wrappers,
  * inside `bash -c`/`eval`/interpreter heredocs and in `npm run` script bodies.
  * At command position (the first word, or behind a wrapper) an unknown verb is
@@ -1060,7 +1061,6 @@ const DOCKER_REDIRECT_FLAG_RE = /^(?:--(?:host|context|config)(?:=|$)|-[A-Za-z]*
 const DOCKER_ENV_ASSIGN_RE = /(?:^|\.)DOCKER_(?:HOST|CONTEXT|CONFIG)=/;
 /** A here-string with its operand attached (`<<<docker`): group 1 is the operator. */
 const HERE_STRING_RE = /^(\d*<<<)(?=.)/;
-const DOCKER_EXEC_FLAGS = new Set(["-i", "-t", "-it", "-ti", "--interactive", "--tty"]);
 /** Flag tokens scanned before a verb; the 64th refuses the invocation, so padding buys nothing and the walk stays linear. */
 const DOCKER_SCAN_CAP = 64;
 const dockerRefusal = (what: string): string =>
@@ -1079,15 +1079,68 @@ function dockerPositional(tokens: string[], k: number, valueFlag: RegExp | null,
   return tokens.length;
 }
 
-/** `exec [-i|-t|-it|-ti|--interactive|--tty] supabase-db psql …` is the one exec form; `k` is the index after `exec`. */
+/**
+ * Ruling 5b (2026-10-03): `-e`/`--env` on the psql form only, for libpq variables. The name must start
+ * with `PG` (`PGPASSWORD=x`, or a bare `PGUSER` passed through from the caller's env). `--env-file` stays
+ * refused; on any other exec form the container/command check refuses first.
+ */
+const DOCKER_EXEC_ENV_RE = /^PG\w*(?:=|$)/;
+/**
+ * `exec [-i|-t|--interactive|--tty|-e PG…|--env PG…] supabase-db psql …` is the one exec form; `k` is the
+ * index after `exec`. Short flags follow pflag: `i`/`t` are booleans, `e` takes the rest of its token as
+ * its value (`-ePGHOST=h`, `-ie PGUSER=u` takes the next token); any other letter is refused.
+ */
 function checkDockerExec(tokens: string[], k: number, label: string): string | null {
-  const flags: string[] = [];
-  const c = dockerPositional(tokens, k, null, flags);
-  const bad = flags.find((f) => !DOCKER_EXEC_FLAGS.has(f));
+  let bad: string | undefined;
+  let c = -1;
+  for (let n = 0; k < tokens.length; n++) {
+    if (n >= DOCKER_SCAN_CAP) break;
+    const t = tokens[k]!;
+    if (REDIRECTION_RE.test(t)) { k += redirectionSpan(tokens, k); continue; }
+    if (!t.startsWith("-") || t === "-") { c = k; break; }
+    k++;
+    if (t === "--interactive" || t === "--tty") continue;
+    let value: string | undefined;
+    if (t === "--env") value = tokens[k++] ?? "";
+    else if (t.startsWith("--env=")) value = t.slice("--env=".length);
+    else if (/^-[A-Za-z]/.test(t)) {
+      const letters = t.slice(1);
+      const e = letters.indexOf("e");
+      const bools = e === -1 ? letters : letters.slice(0, e);
+      if (!/^[it]*$/.test(bools)) { bad = t; break; }
+      if (e !== -1) value = letters.slice(e + 1) || (tokens[k++] ?? "");
+    } else { bad = t; break; }
+    if (value !== undefined && !DOCKER_EXEC_ENV_RE.test(value)) { bad = `${t} ${value}`.trim(); break; }
+  }
+  if (c === -1 && !bad && k >= tokens.length) c = tokens.length;
   let cmd = c + 1;
   while (c !== -1 && cmd < tokens.length && REDIRECTION_RE.test(tokens[cmd]!)) cmd += redirectionSpan(tokens, cmd);
-  if (c === -1 || bad || tokens[c] !== "supabase-db" || tokens[cmd] !== "psql") {
+  if (bad || c === -1 || tokens[c] !== "supabase-db" || tokens[cmd] !== "psql") {
     return dockerRefusal(`${label} ${bad ?? (c === -1 ? "…" : `${tokens[c] ?? ""} ${tokens[cmd] ?? ""}`.trim())}`);
+  }
+  return null;
+}
+
+/**
+ * Ruling 5c (2026-10-03): `docker volume create` stays a lifecycle verb, except a local-driver bind or
+ * device volume — any option that sets `type=none`, `o=…bind…` or `device=` — which mounts a host path
+ * into every container that uses the volume. The tokenizer splits on commas, so a word after an `o=`
+ * value (`o=rw,bind` → `o=rw` `bind`) is still part of it. `k` is the index after `create`.
+ */
+function checkVolumeCreate(tokens: string[], k: number): string | null {
+  let inO = false;
+  for (let n = 0; k < tokens.length; k++, n++) {
+    if (n >= DOCKER_SCAN_CAP) return dockerRefusal("docker volume create …"); // padding past the cap refuses
+    const raw = tokens[k]!;
+    if (REDIRECTION_RE.test(raw)) { k += redirectionSpan(tokens, k) - 1; inO = false; continue; }
+    const t = raw.replace(/^(?:--opt=|-o(?=.))/, "");
+    if (t !== raw) inO = false;
+    else if (raw.startsWith("-")) { inO = false; continue; }
+    const oValue = /^o=/i.test(t);
+    if (/^type=none$/i.test(t) || /^device=/i.test(t) || ((inO || oValue) && /\br?bind\b/i.test(t))) {
+      return dockerRefusal(`docker volume create ${t}`);
+    }
+    if (oValue) inO = true;
   }
   return null;
 }
@@ -1119,7 +1172,8 @@ function checkDockerAt(tokens: string[], i: number, strict: boolean): string | n
   if (cls === undefined) return strict ? dockerRefusal(`${label} (unknown verb)`) : null;
   if (redirect) return dockerRefusal(`docker ${redirect}`);
   if (cls === "exec") return checkDockerExec(tokens, k + 1, label);
-  return cls === "refuse" ? dockerRefusal(label) : null;
+  if (cls === "refuse") return dockerRefusal(label);
+  return verb === "volume" && tokens[k] === "create" ? checkVolumeCreate(tokens, k + 1) : null;
 }
 
 /**

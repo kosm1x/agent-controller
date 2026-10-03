@@ -2023,7 +2023,6 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     for (const cmd of [
       "docker exec -u root supabase-db psql",
       "docker exec --user root supabase-db psql",
-      "docker exec -e PGPASSWORD=x supabase-db psql",
       "docker exec --env-file /tmp/e supabase-db psql",
       "docker exec -w / supabase-db psql",
       "docker exec --privileged supabase-db psql",
@@ -2040,6 +2039,45 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) refused(cmd);
     // The psql arguments still meet the rest of the gate.
     refused("docker exec supabase-db psql -f /root/.ssh/id_rsa", /\.ssh/);
+  });
+
+  it("ruling 5b (2026-10-03): `-e`/`--env` only on the supabase-db psql form, only for PG* names", () => {
+    for (const cmd of [
+      "docker exec -e PGPASSWORD=x supabase-db psql",
+      "docker exec --env PGUSER=y supabase-db psql",
+      "docker exec --env=PGDATABASE=z supabase-db psql",
+      "docker exec -ePGHOST=h supabase-db psql", // pflag: an attached value
+      "docker exec -e PGPASSWORD supabase-db psql", // no assignment: passed through from the caller's env
+      "docker exec -ie PGUSER=u supabase-db psql -c 'select 1'", // `e` last in a cluster takes the next token
+      "docker exec -it -e PGPASSWORD=x -e PGUSER=y supabase-db psql -U postgres",
+      "docker exec -e PG=1 supabase-db psql",
+      "docker exec -e PGPASSWORD=$SECRET_T supabase-db psql -c 'select 1'", // ruling 3c by-name use
+      "docker container exec --env PGSSLMODE=disable supabase-db psql",
+      "timeout 60 docker exec -e PGOPTIONS=x supabase-db psql",
+    ]) allowed(cmd);
+    for (const cmd of [
+      "docker exec -e LD_PRELOAD=/tmp/x.so supabase-db psql",
+      "docker exec --env PSQLRC=/tmp/rc supabase-db psql", // read by psql, but not PG*
+      "docker exec --env=LD_LIBRARY_PATH=/tmp supabase-db psql",
+      "docker exec -eLD_PRELOAD=x supabase-db psql",
+      "docker exec -e pgpassword=x supabase-db psql", // the name is case-sensitive
+      "docker exec -e XPGUSER=x supabase-db psql",
+      "docker exec -e PGX=1 supabase-db sh", // PG* with a non-psql binary
+      "docker exec -e PGX=1 supabase-db pg_dump x",
+      "docker exec -e PGX=1 crm-hindsight psql", // before a different container
+      "docker exec -e PGX=1 crm-hindsight cat /app/config.json",
+      "docker exec --env-file /tmp/e supabase-db psql",
+      "docker exec --env-file=/tmp/e supabase-db psql",
+      "docker exec -e supabase-db psql", // `-e` takes `supabase-db` as its value; `psql` is then the container
+      "docker exec -ei supabase-db psql", // pflag: `e` takes the rest (`i`) as its value
+      "docker exec -e PGX=1 -u root supabase-db psql", // the other flags stay refused
+      "docker exec -eu root supabase-db psql",
+      "docker exec -e", // no value
+      "docker exec --env",
+      "docker exec -e PGX=1 -- supabase-db psql",
+      `docker exec ${"-e PGX=1 ".repeat(64)}supabase-db psql`, // the cap counts flags, values included
+    ]) refused(cmd);
+    refused("docker exec -e PATH=/tmp supabase-db psql", /PATH/); // the PATH-rewrite rule answers first
   });
 
   it("finds the docker word behind wrappers, paths, global flags, separators and shell re-entry", () => {
@@ -2132,6 +2170,53 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) allowed(cmd);
     // HEAD's other rules still fire on lifecycle verbs exactly as before.
     expect(validateShellCommand("docker rm -f /x").allowed).toBe(false); // rm-with-absolute-path pattern, unchanged
+  });
+
+  it("ruling 5c (2026-10-03): `docker volume create` with a bind/device option is refused; plain create stays", () => {
+    for (const cmd of [
+      "docker volume create --driver local --opt type=none --opt device=/ --opt o=bind v",
+      "docker volume create --opt type=none v",
+      "docker volume create -o type=none v",
+      "docker volume create -otype=none v", // attached value
+      "docker volume create --opt=type=none v",
+      "docker volume create --opt TYPE=NONE v",
+      "docker volume create --opt device=/root v",
+      "docker volume create -o device=/etc v",
+      "docker volume create --opt=device=/ v",
+      "docker volume create --opt o=bind v",
+      "docker volume create -o o=rbind v",
+      "docker volume create --opt o=rw,bind v", // the tokenizer splits the comma; the word after o= is still read
+      "docker volume create --opt o=bind,ro v",
+      "docker volume create -d local -o o=bind -o device=/ v",
+      "docker volume create --driver=local --opt=o=bind v",
+      "docker volume create v --opt type=none", // options after the name
+      "docker volume create --label x=y --opt 'type=none' v", // quotes are stripped
+      "T=type=none; docker volume create --opt $T v", // a known variable is expanded
+      "timeout 5 docker volume create --opt device=/ v",
+      "bash -c 'docker volume create --opt o=bind v'",
+      `docker volume create ${"--label a=b ".repeat(40)}--opt type=none v`, // padding past the cap refuses
+    ]) refused(cmd);
+    for (const cmd of [
+      "docker volume create v",
+      "docker volume create",
+      "docker volume create --driver local v",
+      "docker volume create --opt type=tmpfs --opt o=size=100m v",
+      "docker volume create --label app=mc v",
+      "docker volume create binder", // a name merely containing `bind`
+      "docker volume ls", "docker volume inspect v", "docker volume rm v", "docker volume prune -f",
+    ]) allowed(cmd);
+  });
+
+  it("ruling 5d: daemon redirection stays refused (pinned again after the 2026-10-03 follow-ups)", () => {
+    for (const cmd of [
+      "docker --context=other ps",
+      "docker --config=/tmp/c ps",
+      "docker -H unix:///tmp/d.sock exec supabase-db psql",
+      "docker --host=tcp://x volume create v",
+      "DOCKER_HOST=tcp://x docker exec supabase-db psql",
+      "docker exec -e DOCKER_HOST=tcp://x supabase-db psql", // not PG*, and DOCKER_HOST= is refused anywhere
+    ]) refused(cmd);
+    refused("docker exec -e PGHOST=/var/run/docker.sock supabase-db psql", /Docker API socket/);
   });
 
   it("prose naming a refused verb is refused, as the package-manager walk refuses `echo npm install x`", () => {
