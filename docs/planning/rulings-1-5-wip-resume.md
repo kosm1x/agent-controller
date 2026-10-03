@@ -12,7 +12,7 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 | 2 | Confirm at schedule creation when a high-risk tool is included | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
 | 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub), NOT re-audited |
 | 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
-| 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only | Built, fix round done after an audit FAIL, NOT re-audited; its test, mutant and 110,000-command differential results must be re-run (they came from a window in which the host was damaged) |
+| 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only; follow-ups 5a–5e (2026-10-03) | Built, fix round done after an audit FAIL; re-audit 2026-10-03: tests green, 13/13 hand mutants RED, ~190 probes, nothing blocking; follow-ups 5b/5c/5d built (`6dc2358`, `97b051c`, mutants RED), NOT re-audited; the differential vs `main` is now `scripts/validate-shell-gate-diff.ts --run` (operator, VPS, read-only) and must be run there |
 | 6 | Shell mount namespace | PARKED by the operator. Not in this branch. See `postmortem-2026-10-01-host-mount-leak.md`. Do not rebuild it here. |
 
 ## Ruling 3 fix round (answers audit round 2)
@@ -151,6 +151,16 @@ Residuals (to state at ship time):
 - The refused child fails; the parent background run itself still reports its own outcome
   (the schedule gets the `schedule.run_failed` alert from the child).
 
+## Ruling 5 follow-ups (operator, 2026-10-03, asked one by one) — `6dc2358`, `97b051c`
+
+- 5a psql shell escapes (`\!`, `\o |`, `COPY … PROGRAM`, `-f`, `| sh`): no gate change. OPERATOR STEP: give Jarvis's psql a non-superuser DB role. Residual until done.
+- 5b `docker exec -e/--env` (all spellings, `-ie` clusters): only on `docker exec [opts] supabase-db psql …`, only `PG*` names (bare name = passthrough). Everything else, `--env-file`, and `-e` on any other exec form stay refused. Mutants ×3 RED.
+- 5c lifecycle verbs stay allowed; `docker volume create` with `type=none` / `o=…bind…` / `device=` refused (comma-split continuation read; cap refuses). Mutants ×3 RED.
+- 5d daemon redirection stays refused (`-H`/`--context`/`--config`, docker.sock); `DOCKER_ENV_ASSIGN_RE` widened to ANY `DOCKER_\w*=` assignment anywhere in the command (case-sensitive), not only before a docker word, because scripts/make/npm run/interpreters reach docker indirectly; a non-docker command setting a `DOCKER_` var is refused by design (`97b051c`, mutant RED).
+- 5e differential: `npx tsx scripts/validate-shell-gate-diff.ts --run [--days 30] [--ref main]` — read-only (better-sqlite3 readonly + query_only), the ref's validator via `git archive` into a temp dir, redacted by default; exit 0 / 1 unexplained / 2 no commands found / 3 error. mc.db has no tool-args table, so it walks the JSON columns of runs/tasks/prometheus_snapshots/events plus tool_approvals; exit 2 on the VPS means a logging source is needed first.
+
+Residuals (ruling 5, to state at ship time): psql escapes until the non-superuser role exists (5a); PG* vars can point libpq at container files (PGPASSFILE/PGSSLKEY/PGSERVICEFILE/PGSYSCONFDIR) and PGOPTIONS sets server options; volume options built at run time (`$(…)`, xargs from a file) and third-party volume drivers' host-path options are not seen by the string gate.
+
 ## Order to finish
 
 0. Before shipping, the operator runs a read-only census of key names (never values) in
@@ -166,7 +176,7 @@ Residuals (to state at ship time):
 
 ## Rules that apply to this work
 
-- Scoped vitest only (literal test-file paths); the pre-commit hook is the one full run.
+- Scoped vitest only (literal test-file paths); the pre-commit hook is the one full run. NOTE: the cloud clone used on 2026-10-03 has no pre-commit hook installed, so commits `bab59cf`…`2be88e1` have NOT had a full-suite run — run it once (VPS, or CI on the PR) before merge.
 - No real credential, project slug, key name or e-mail in fixtures — this repo is public.
 - Tests that need a database use a temp db with synthetic rows; the live `mc.db` is never written and no stored value is ever printed.
 - No new dependencies, no schema change without `SCHEMA_MIGRATIONS`.
@@ -208,5 +218,5 @@ arguments outside the seam; images are pixels.
 ## Open notes
 
 - `http_fetch` description still says the tool sends no secrets, which no longer matches `{{SECRET_<NAME>}}` substitution (description change → eval gate).
-- Ruling 5: start/stop-type docker commands are unchanged from `main` (allowed); commands that redirect the daemon (`-H`, `--context`, `--config`, `DOCKER_HOST=`) are refused. Both await operator confirmation.
+- ~~Ruling 5: start/stop-type docker commands … await operator confirmation.~~ ANSWERED 2026-10-03 (see the follow-ups section); remaining are the 5a operator step and the VPS differential run.
 - ~~Rulings 1–2: the "no confirmation channel" error suggests `interactive:false`, which is now refused for risky `schedule_task`; background `batch_decompose` declaring high-risk tools is not refused.~~ RESOLVED 2026-10-03 (should-fix round + batch_decompose ruling, above).
