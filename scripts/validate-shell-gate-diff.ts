@@ -42,7 +42,7 @@
  * nothing written to the repo or its `.git`; the temp dir is removed at exit.
  *
  * Output: only command text (redacted by default — see redactCommand: credential shapes via
- * `redactSecrets`, client `-p` passwords, `curl -u`, `*PASS*/*TOKEN*/*SECRET*=` values, URL userinfo,
+ * `redactSecrets`, client `-p` passwords, `curl -u`, `PASS`/`TOKEN`/`SECRET`-named assignment values, URL userinfo,
  * long mixed tokens) and verdict reasons. No
  * environment variable or stored secret is read or printed.
  */
