@@ -24,9 +24,173 @@ import { EXTRACTED_FILE_MARKER } from "../extracted-file.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
-const JINA_PREFIX = "https://r.jina.ai/";
 const MAX_FILE_CONTENT = 15_000; // chars
 const DOWNLOADS_DIR = "/tmp/jarvis-downloads"; // same root gdrive_download uses
+
+/**
+ * Remove the bot token from text that leaves this adapter (message text, log
+ * lines). Telegram file URLs embed it (`api.telegram.org/file/bot<token>/…`);
+ * until 2026-10-03 the HTML path sent that URL to Jina Reader, whose
+ * `URL Source:` echo carried the token into the message, the day-log and
+ * every store downstream. Both the URL form and any bare occurrence of the
+ * configured token are replaced.
+ */
+export function redactBotToken(
+  text: string,
+  token: string | undefined = BOT_TOKEN,
+): string {
+  const out = text.replace(
+    /(api\.telegram\.org\/(?:file\/)?bot)[^/\s"'<>]+/gi,
+    "$1[REDACTED]",
+  );
+  return token ? out.split(token).join("[REDACTED]") : out;
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/** Input cap for `htmlToText` — it runs on the event loop; 20 MB is allowed in. */
+const HTML_MAX_INPUT = 1_000_000;
+
+// Elements whose whole content is dropped.
+const DROPPED_ELEMENT_RE =
+  /^<(head|script|style|noscript|template|svg)(?![\w-])/;
+
+/** A numeric entity's character, or "" for controls, surrogates, BOM, out of range. */
+function numericEntity(code: number): string {
+  if (code === 9 || code === 10 || code === 13)
+    return String.fromCharCode(code);
+  if (
+    !(code > 0 && code <= 0x10ffff) ||
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    (code >= 0xd800 && code <= 0xdfff) ||
+    code === 0xfeff
+  )
+    return "";
+  return String.fromCodePoint(code);
+}
+
+function decodeEntities(s: string): string {
+  return s.replace(
+    /&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,32});/gi,
+    (m, e: string) => {
+      if (e[0] !== "#") return HTML_ENTITIES[e.toLowerCase()] ?? m;
+      return numericEntity(
+        e[1] === "x" || e[1] === "X"
+          ? parseInt(e.slice(2), 16)
+          : parseInt(e.slice(1), 10),
+      );
+    },
+  );
+}
+
+/**
+ * Remove comments and dropped elements with an index walk — no backtracking
+ * regex over the whole document (an unclosed `<script` or `<!--` used to make
+ * the lazy patterns quadratic). An unclosed one drops the rest.
+ */
+function stripDroppedBlocks(html: string, lower: string): string {
+  let out = "";
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, lt);
+    if (lower.startsWith("<!--", lt)) {
+      const e = lower.indexOf("-->", lt + 4);
+      i = e === -1 ? html.length : e + 3;
+      continue;
+    }
+    const m = DROPPED_ELEMENT_RE.exec(lower.slice(lt, lt + 12));
+    if (m) {
+      const close = lower.indexOf(`</${m[1]}`, lt + 1);
+      const gt = close === -1 ? -1 : lower.indexOf(">", close);
+      i = gt === -1 ? html.length : gt + 1;
+      continue;
+    }
+    out += "<";
+    i = lt + 1;
+  }
+  return out;
+}
+
+/**
+ * HTML → plain text, locally. Replaces the Jina Reader round-trip, which had
+ * to be handed the token-bearing file URL. Keeps the <title>, drops
+ * head/script/style/comments, turns block ends into line breaks. Linear: input
+ * over HTML_MAX_INPUT is cut first and the output says so.
+ */
+export function htmlToText(input: string): string {
+  const cut = input.length > HTML_MAX_INPUT;
+  const html = cut ? input.slice(0, HTML_MAX_INPUT) : input;
+  const lower = html.toLowerCase();
+  let title = "";
+  const ts = lower.indexOf("<title");
+  const tgt = ts === -1 ? -1 : lower.indexOf(">", ts);
+  const te = tgt === -1 ? -1 : lower.indexOf("</title", tgt);
+  if (te !== -1) title = decodeEntities(html.slice(tgt + 1, te)).trim();
+  const body = decodeEntities(
+    stripDroppedBlocks(html, lower)
+      .replace(
+        /<\s*(?:br|hr)(?![\w-])[^<>]*>|<\/\s*(?:p|div|tr|li|h[1-6]|section|article|table|ul|ol|blockquote|pre)\s*>/gi,
+        "\n",
+      )
+      .replace(/<[^<>]*>/g, ""),
+  )
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const note = cut
+    ? `[HTML truncado: solo se convirtieron los primeros ${HTML_MAX_INPUT.toLocaleString("en-US")} de ${input.length.toLocaleString("en-US")} caracteres]\n\n`
+    : "";
+  return `${note}${title ? `Title: ${title}\n\n` : ""}${body}`;
+}
+
+/**
+ * Decode HTML bytes by BOM first, else in the charset the page declares
+ * (`<meta charset>` or the http-equiv Content-Type) — Spanish pages in Latin-1/windows-1252 otherwise
+ * garble every accent. UTF-8 when undeclared or unknown.
+ */
+export function decodeHtmlBytes(bytes: Uint8Array): string {
+  // A byte-order mark wins over any declaration (WHATWG encoding sniffing).
+  const [b0, b1, b2] = bytes;
+  if (b0 === 0xef && b1 === 0xbb && b2 === 0xbf)
+    return new TextDecoder("utf-8").decode(bytes);
+  if (b0 === 0xff && b1 === 0xfe)
+    return new TextDecoder("utf-16le").decode(bytes);
+  if (b0 === 0xfe && b1 === 0xff)
+    return new TextDecoder("utf-16be").decode(bytes);
+  const head = new TextDecoder("latin1").decode(bytes.subarray(0, 4096));
+  const label =
+    /<meta\b[^<>]{0,512}?charset\s*=\s*["']?\s*([\w.:-]{1,40})/i.exec(
+      head,
+    )?.[1];
+  if (label) {
+    try {
+      return new TextDecoder(label).decode(bytes);
+    } catch {
+      // Unknown label → UTF-8 below.
+    }
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function clipFileContent(text: string): string {
+  return text.length > MAX_FILE_CONTENT
+    ? text.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
+    : text;
+}
 
 /** Sanitize a Telegram attachment filename for local persistence. */
 export function sanitizeAttachmentName(name: string | undefined): string {
@@ -70,7 +234,9 @@ async function saveAttachmentToDisk(
     );
     return { path, bytes };
   } catch (err) {
-    console.warn(`[telegram] Attachment save failed: ${errMsg(err)}`);
+    console.warn(
+      `[telegram] Attachment save failed: ${redactBotToken(errMsg(err))}`,
+    );
     return null;
   }
 }
@@ -78,7 +244,8 @@ async function saveAttachmentToDisk(
 /**
  * Download a file from Telegram and extract readable content.
  * PDFs: local extraction via OpenDataLoader (no external API).
- * HTML: routes through Jina Reader for Markdown conversion.
+ * HTML: downloads directly, converted locally (`htmlToText`) — the URL holds
+ * the bot token and must not reach a third-party reader.
  * Text files: downloads directly.
  */
 async function extractFileContent(
@@ -98,20 +265,7 @@ async function extractFileContent(
     }
 
     if (isHtml) {
-      // HTML still uses Jina Reader for clean Markdown conversion
-      const response = await fetch(`${JINA_PREFIX}${telegramFileUrl}`, {
-        headers: { Accept: "text/markdown" },
-        signal: AbortSignal.timeout(20_000),
-      });
-
-      if (!response.ok) {
-        return await downloadRawText(telegramFileUrl);
-      }
-
-      const content = await response.text();
-      return content.length > MAX_FILE_CONTENT
-        ? content.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
-        : content;
+      return htmlToText(await downloadRawText(telegramFileUrl));
     }
 
     // For text-based files, download directly
@@ -126,10 +280,7 @@ async function downloadRawText(url: string): Promise<string> {
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) return `[Error HTTP ${response.status}]`;
-  const text = await response.text();
-  return text.length > MAX_FILE_CONTENT
-    ? text.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
-    : text;
+  return clipFileContent(redactBotToken(await response.text()));
 }
 
 /**
@@ -201,7 +352,10 @@ async function downloadImageAsBase64(url: string): Promise<string | null> {
     const base64 = Buffer.from(buffer).toString("base64");
     return `data:${mimeType};base64,${base64}`;
   } catch (err) {
-    console.error("[telegram] Image download failed:", err);
+    console.error(
+      "[telegram] Image download failed:",
+      redactBotToken(errMsg(err)),
+    );
     return null;
   }
 }
@@ -462,15 +616,17 @@ export class TelegramAdapter implements ChannelAdapter {
               } catch (err) {
                 fileContent = `[Error al extraer contenido: ${errMsg(err)}]`;
               }
-            } else if (saved && !isHtml) {
-              // Plain text-ish files: decode the bytes we already have
-              const text = new TextDecoder().decode(saved.bytes);
-              fileContent =
-                text.length > MAX_FILE_CONTENT
-                  ? text.slice(0, MAX_FILE_CONTENT) + "\n...(truncado)"
-                  : text;
+            } else if (saved) {
+              // Text-ish and HTML files: decode the bytes we already have
+              // (HTML converted locally — never a URL-based external reader).
+              // Redact BEFORE clipping: a token cut at the clip boundary
+              // would no longer match the redactor.
+              const text = isHtml
+                ? htmlToText(decodeHtmlBytes(saved.bytes))
+                : new TextDecoder().decode(saved.bytes);
+              fileContent = clipFileContent(redactBotToken(text));
             } else {
-              // HTML (needs Jina's URL-based conversion) or save failed
+              // Save failed
               fileContent = await extractFileContent(fileUrl, doc.mime_type);
             }
           }
@@ -520,13 +676,16 @@ export class TelegramAdapter implements ChannelAdapter {
         this.messageHandler({
           channel: "telegram",
           from: chatId,
-          text,
+          text: redactBotToken(text),
           imageUrl,
           timestamp: new Date(ctx.message.date * 1000),
           replyTo: String(ctx.message.message_id),
         });
       } catch (err) {
-        console.error("[telegram] File handler error:", err);
+        console.error(
+          "[telegram] File handler error:",
+          redactBotToken(errMsg(err)),
+        );
       }
     });
 
@@ -596,7 +755,10 @@ export class TelegramAdapter implements ChannelAdapter {
           replyTo: String(ctx.message.message_id),
         });
       } catch (err) {
-        console.error("[telegram] Voice handler error:", err);
+        console.error(
+          "[telegram] Voice handler error:",
+          redactBotToken(errMsg(err)),
+        );
       }
     });
 

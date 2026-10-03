@@ -1353,6 +1353,20 @@ export function formatConfirmationResult(
   }
 }
 
+/** Per-entry cap for the day-log. */
+const DAY_LOG_ENTRY_MAX = 500;
+
+/**
+ * The day-log entry text: cut at DAY_LOG_ENTRY_MAX and, only when the text
+ * was actually cut, marked with one trailing "…" (2026-10-03) so the rituals
+ * reading the log can tell a cut entry from a complete one. Not doubled when
+ * the cut already ends in "…".
+ */
+export function dayLogEntryText(text: string): string {
+  const cut = safeSlice(text, DAY_LOG_ENTRY_MAX);
+  return cut.length < text.length && !cut.endsWith("…") ? `${cut}…` : cut;
+}
+
 function appendDayLog(role: "USER" | "JARVIS", text: string): void {
   try {
     const now = new Date();
@@ -1365,8 +1379,9 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
     });
 
     const path = `logs/day-logs/${date}.md`;
-    // Ruling 3c (audit R3 S3): stored credential values scrubbed before the cut.
-    const entry = `- [${time}] **${role}**: ${safeSlice(scrubSecrets(text), 500).replace(/\n/g, " ")}\n`;
+    // Ruling 3c (audit R3 S3): stored credential values scrubbed before the cut;
+    // dayLogEntryText then cuts and marks a truncated entry with "…".
+    const entry = `- [${time}] **${role}**: ${dayLogEntryText(scrubSecrets(text)).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
     const existing = getFile(path);

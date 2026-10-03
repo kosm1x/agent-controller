@@ -78,7 +78,13 @@ const SECRET_PATTERNS: Rule[] = [
   // prefix set above did NOT cover it.
   [/\bAIza[0-9A-Za-z_-]{35}\b/g, "[REDACTED_KEY]"],
   // Telegram bot tokens (<bot_id digits>:<35-char secret>). Same sweep.
-  [/\b\d{6,10}:[A-Za-z0-9_-]{35}\b/g, "[REDACTED_KEY]"],
+  // Also inside a Bot API URL (`…/file/bot<id>:<secret>/…`), where `\b`
+  // cannot fire between "bot" and the id, and a secret ending in `-` (no
+  // `\b` before the next `/`) — 2026-10-03 file-URL token leak.
+  [
+    /(?:(?<=bot)|\b)\d{6,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+    "[REDACTED_KEY]",
+  ],
   // Secret-named shell/env assignments: NAME=value where NAME ends in a secret
   // keyword (GEMINI_API_KEY="AIza…", BRAVE_API_KEY=…, X_AUTH_TOKEN__acct=…).
   // Catches keys with no recognizable value prefix — the common `export KEY=val`

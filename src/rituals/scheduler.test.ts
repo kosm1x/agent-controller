@@ -52,6 +52,19 @@ vi.mock("../dispatch/dispatcher.js", () => ({
   submitTask: mockSubmitTask,
 }));
 
+// The harness-loaded day-log / narrative (2026-10-03): the file layer returns
+// a synthetic body naming its own path, so a test can tell WHICH file landed
+// in the submitted description.
+const mockGetFile = vi.hoisted(() =>
+  vi.fn((path: string) => ({
+    content: `# synthetic\n- [10:00:00] **USER**: contenido de ${path} — avance del DENUE 05/2026\n`,
+  })),
+);
+vi.mock("../db/jarvis-fs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../db/jarvis-fs.js")>()),
+  getFile: mockGetFile,
+}));
+
 const mockConfig = vi.hoisted(
   () => ({ tuningEnabled: false }) as Record<string, unknown>,
 );
@@ -552,6 +565,74 @@ describe("schedule.run_failed notifier", () => {
   });
 });
 
+// 2026-10-03: the PRODUCTION path — the scheduler loads the right file and
+// the submitted description carries it (audit W1: the template tests alone
+// let "scheduler passes null" and "morning loads today" mutants survive).
+describe("scheduler embeds the harness-loaded log in the submitted task", () => {
+  async function submitted(id: string) {
+    mockGet.mockReturnValue(undefined); // alreadyRanToday = false
+    mockSubmitTask.mockClear();
+    const { rituals } = await import("./config.js");
+    const r = rituals.find((x) => x.id === id)!;
+    const wasEnabled = r.enabled;
+    r.enabled = true; // morning-briefing is retired (enabled: false)
+    try {
+      startRitualScheduler();
+      const enabled = rituals.filter((x) =>
+        x.id === "overnight-tuning" ? false : x.enabled,
+      );
+      const idx = enabled.findIndex((x) => x.id === id);
+      const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
+      await callback();
+    } finally {
+      r.enabled = wasEnabled;
+    }
+    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+    const date = new Date().toLocaleDateString("en-CA", {
+      timeZone: r.timezone ?? "America/Mexico_City",
+    });
+    return { sub: mockSubmitTask.mock.calls[0][0], date };
+  }
+
+  it.each([
+    ["nightly-close", "logs/day-logs"],
+    ["day-narrative", "logs/day-logs"],
+    ["evolution-log", "logs/day-narratives"],
+  ])("%s embeds today's %s file", async (id, dir) => {
+    const { sub, date } = await submitted(id);
+    const path = `${dir}/${date}.md`;
+    expect(mockGetFile).toHaveBeenCalledWith(path);
+    expect(sub.description).toContain(`contenido de ${path}`);
+    expect(sub.description).toContain(`⟦BEGIN `);
+  });
+
+  it("morning-briefing embeds YESTERDAY's narrative", async () => {
+    const { previousDateLabel } = await import("./morning.js");
+    const { sub, date } = await submitted("morning-briefing");
+    const path = `logs/day-narratives/${previousDateLabel(date)}.md`;
+    expect(mockGetFile).toHaveBeenCalledWith(path);
+    expect(mockGetFile).not.toHaveBeenCalledWith(
+      `logs/day-narratives/${date}.md`,
+    );
+    expect(sub.description).toContain(`contenido de ${path}`);
+  });
+
+  // Audit C1: the embedded log mentions DENUE; the fast runner's guard falls
+  // back to title+description without detectionText, and evolution-log holds
+  // shell_exec (variant "full").
+  it.each(["nightly-close", "day-narrative", "evolution-log", "morning-briefing"])(
+    "%s: a DENUE mention in the embedded log does not arm the DENUE guard",
+    async (id) => {
+      // denueGuardText prefers detectionText (fast-runner.test.ts pins that a
+      // ritual-shaped input with detectionText = title is not guarded).
+      const { sub } = await submitted(id);
+      expect(sub.description).toContain("DENUE 05/2026");
+      expect(sub.detectionText).toBe(sub.title);
+      expect(sub.title).not.toMatch(/denue/i);
+    },
+  );
+});
+
 describe("task templates", () => {
   it("morning briefing has correct structure", () => {
     const task = createMorningBriefing("2026-03-13");
@@ -563,11 +644,11 @@ describe("task templates", () => {
   });
 
   it("nightly close has correct structure", () => {
-    const task = createNightlyClose("2026-03-13");
+    const task = createNightlyClose("2026-03-13", "# Day Log: 2026-03-13\n");
     expect(task.title).toBe("Nightly close — 2026-03-13");
     expect(task.agentType).toBe("fast");
-    expect(task.tools).toContain("jarvis_file_read");
-    expect(task.tools).toContain("gmail_send");
+    // 2026-10-03: the harness embeds the day-log; no model-side read.
+    expect(task.tools).toEqual(["project_list", "gmail_send"]);
     expect(task.description).toContain("Jarvis");
     // Converted 2026-06-23: grounded in the day-log (work-truth), not NorthStar.
     expect(task.description).toContain("day-log");
@@ -604,7 +685,7 @@ describe("task templates", () => {
   });
 
   it("evolution log has correct structure", () => {
-    const task = createEvolutionLogEntry("2026-04-05");
+    const task = createEvolutionLogEntry("2026-04-05", null);
     expect(task.title).toBe("Evolution log — 2026-04-05");
     expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("jarvis_file_read");
@@ -615,12 +696,12 @@ describe("task templates", () => {
   });
 
   it("day narrative has correct structure", () => {
-    const task = createDayNarrative("2026-04-17");
+    const task = createDayNarrative("2026-04-17", "# Day Log: 2026-04-17\n");
     expect(task.title).toBe("Day log narrative — 2026-04-17");
     expect(task.agentType).toBe("fast");
-    expect(task.tools).toContain("jarvis_file_read");
-    expect(task.tools).toContain("jarvis_file_write");
-    // Source path — raw log — must be read, never modified
+    // 2026-10-03: the harness embeds the raw log; the model only writes.
+    expect(task.tools).toEqual(["jarvis_file_write"]);
+    // Source path — raw log — must be embedded, never modified
     expect(task.description).toContain("logs/day-logs/2026-04-17.md");
     // Companion path — narrative output
     expect(task.description).toContain("logs/day-narratives/2026-04-17.md");

@@ -197,7 +197,14 @@ describe("promptExtras + deferral consumption on delivery", () => {
     mocks.db = { exec: () => { throw new Error("disk I/O"); }, prepare: () => { throw new Error("disk I/O"); } };
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(promptExtras(makeSchedule()).text).toBe("");
-    expect(promptExtras(makeSchedule({ name: "Morning Sync — Piotr 8am" })).text).toBe("");
+    // Morning Sync (2026-10-03): the deferrals still degrade to nothing, but
+    // the day-log part STATES the load failure — never a silent "no day-logs".
+    const sync = promptExtras(makeSchedule({ name: "Morning Sync — Piotr 8am" }));
+    expect(sync.deferralIds).toEqual([]);
+    expect(sync.dayLogs).toBe("");
+    expect(sync.text).not.toContain("DIFERIDOS");
+    expect(sync.text.match(/NO SE PUDO CARGAR \(disk I\/O\)/g)).toHaveLength(2);
+    expect(sync.text).toContain("NO falta de registro");
     err.mockRestore();
   });
 });

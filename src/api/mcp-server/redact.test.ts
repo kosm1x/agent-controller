@@ -137,6 +137,17 @@ describe("redactSecrets", () => {
     expect(redactSecrets(`token=${TELEGRAM}`)).not.toContain(TELEGRAM);
   });
 
+  it("redacts a Telegram bot token inside a Bot API file URL (2026-10-03)", () => {
+    // Secret ending in '-' too: no `\b` between it and the next '/'.
+    const dashTail = "987654321:" + "B".repeat(34) + "-";
+    for (const tok of [TELEGRAM, dashTail]) {
+      const url = `URL Source: https://api.telegram.org/file/bot${tok}/documents/file_7.html`;
+      const out = redactCredentials(url);
+      expect(out).not.toContain(tok);
+      expect(out).toContain("/file/bot[REDACTED_KEY]/documents/file_7.html");
+    }
+  });
+
   it("passes null/undefined through as empty string", () => {
     expect(redactSecrets(null)).toBe("");
     expect(redactSecrets(undefined)).toBe("");
