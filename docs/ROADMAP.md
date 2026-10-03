@@ -1,6 +1,6 @@
 # Roadmap — one page
 
-> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S1).
+> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S2).
 
 **Destination: Beta 1.0** (`docs/V8-VISION.md` §8). Decided 2026-10-03: Beta means both (a) it works for Fede, with evidence, and (b) any other operator could adopt it. Fede is the first operator and super beta tester; his setup becomes the first operator profile, not a special case.
 
@@ -25,7 +25,11 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | --- | --- | --- | --- |
 | W1 verify gate | Build-vs-adopt decision approved by Fede | Spike: map `task_gates` onto spec `checks[]`, compare build vs extend V8.4 | S3 → S4 |
 | W3 internal eval, reshaped | Uses existing gate/outcome/eval data; gate-definition changes logged with old-definition number | Inventory real row counts, paired comparisons vs explicit-direction baseline | S5 |
-| Landscape review | Every item has a primary source and a verdict (build / adopt / borrow / ignore) | First review + `docs/LANDSCAPE.md` register | S2 |
+| Landscape review | Every item has a primary source and a verdict (build / adopt / borrow / ignore) | **Done in S2:** register `docs/LANDSCAPE.md`; inputs folded into S3, S5, W2 | S2 |
+| L1 Agent SDK 0.3.245 → 0.3.288 | `eval:gate -- --run` passes (VPS) | `verbatimPrompts`, snapshot check, telemetry caveat, MCP timeout | L1 (operator) |
+| L2 MCP result fidelity | typecheck + scoped vitest; implementer + qa-auditor | Bridge keeps `structuredContent` + resource links; SDK 1.32.0 within caret | L2 (cloud) |
+| L5 Stop-hook own deadline + trace | typecheck + scoped vitest; implementer + qa-auditor | Gates hook past 180 s stops silently, already at the current pin; not tied to L1 | L5 (cloud) |
+| L3 A2A: interop or retire | VPS data, then operator ruling | Is A2A used at all? Then shim to A2A 1.0 or retire (ties to S6) | L3 |
 | Beta scope + operator abstraction | `docs/BETA.md` merged | Hardcoded-to-Fede inventory, first transferability workstream | S6 |
 | Cloud-session support | Clean clone runs hook; agents + skills load | **Done in S1.** VPS-only: `eval:gate` (even dry), `mc-ctl`, prod data, deploy | S1 |
 | W5 loop vocabulary | Doc only | **Done in S0** (CLAUDE.md) | S0 |
@@ -40,12 +44,14 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 ## Not now
 
 - W4 self-modification (blocked on W3 + V8.3 shadow-Git + L≥3 sign-off).
-- W2 Ralph continuity (after W1). W6 crawl frontier (background only).
+- W2 Ralph continuity (after W1). W6 crawl frontier (background only). L4 trace spans (after S5).
 - Hosted Managed Agents or an external grader (option A). Budget hard-cap enforcement (closed 2026-07-13).
 
 ## Blocked on Fede
 
 - S3 outcome: approve or change the W1 option before S4 is briefed.
+- L1: run the Agent SDK bump with `npm run eval:gate -- --run` on the VPS (cloud sessions cannot).
+- L3: after the VPS A2A-usage check, rule shim-to-1.0 or retire.
 
 ## Session log
 
@@ -53,3 +59,4 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | --- | --- | --- | --- | --- |
 | 2026-10-03 | S0 compact record + roadmap | [#53](https://github.com/kosm1x/agent-controller/pull/53) | PROJECT-STATUS 1.84 MB → ~196 KB; history moved unchanged to `docs/archive/status-history-2026-0{3..9}.md`; this page; W5 in CLAUDE.md. D2 (archive move) approved and done. | S1 next |
 | 2026-10-03 | S1 cloud-session setup | [#54](https://github.com/kosm1x/agent-controller/pull/54) | Cloud-only SessionStart hook (`npm ci` when the lockfile changes, then typecheck; clean clone 27 s, rerun 10 s; never touches a node_modules it did not create); `implementer` + `qa-auditor` agents (auditor keeps `.claude/agent-memory/qa-auditor/`); skills `eval-gate`, `session-close`, `upstream-review`. | S2 next. Cloud sessions cannot run `eval:gate` or read prod data: they record it as owed. New auditor memory files are gitignored (need `git add -f`). |
+| 2026-10-03 | S2 landscape review #1 | [#PR_TBD](https://github.com/kosm1x/agent-controller/pull/PR_TBD) | 59 items across Agent SDK/platform, MCP, A2A, four frameworks and OTel each got a verdict with a primary source (`docs/planning/landscape-review-2026-10.md`); register `docs/LANDSCAPE.md`. MCP: spec 2026-07-28, our SDK 1.29.0 negotiates up to 2025-11-25 (so does 1.32.0). A2A: upstream 1.0.1, ours matches no released version. qa-auditor index trimmed (MEMORY.md 23.9 KB → 16.1 KB; verbatim pre-trim copy in `archived-index-2026-10-03.md`). | L1 SDK bump (VPS, eval:gate), L2 MCP fidelity (cloud), L5 Stop-hook deadline (cloud), L3 A2A ruling (VPS data); inputs to S3, S5, W2; L4 later |
