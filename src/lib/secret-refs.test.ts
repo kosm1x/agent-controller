@@ -52,6 +52,8 @@ import {
   PLACEHOLDER_MARKERS,
   resolveRenderedPlaceholders,
   encodeSecretForm,
+  secretSpans,
+  OVERLAP_PLACEHOLDER,
 } from "./secret-refs.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import { deleteUserFact, formatUserFactsBlock } from "../db/user-facts.js";
@@ -787,6 +789,43 @@ describe("scrubSecrets", () => {
     );
   });
 
+  it("audit R8 B-1: a model-stored value overlapping a known value cannot expose the rest of it", () => {
+    // Attack: the model stores a guess value (context + first char of the
+    // target) that is LONGER than the target and overlaps it. Sequential
+    // longest-first replacement would replace the guess, leaving the target's
+    // suffix in the clear; a span union replaces the whole overlapping region.
+    const ctx = "A".repeat(30);
+    const guess = ctx + FTP_PASS.slice(0, 1); // ctx + "p"
+    fact("projects", "zz_guess_password", guess);
+    invalidateSecretRefs();
+    const out = scrubSecrets(ctx + FTP_PASS);
+    // No suffix of the target leaks (not even one character of it).
+    expect(out).not.toContain(FTP_PASS.slice(1));
+    expect(out).not.toContain(FTP_PASS);
+    // The overlapping region renders a single non-reversible overlap marker.
+    expect(out).toContain(OVERLAP_PLACEHOLDER);
+  });
+
+  it("audit R8 B-1: two distinct adjacent values each keep their own placeholder", () => {
+    const out = scrubSecrets(`${BLOG_PASS}${PORTAL_PASS}`);
+    expect(out).toBe(
+      `${secretPlaceholder(N.sub)}${secretPlaceholder(N.doc)}`,
+    );
+    expect(out).not.toContain(OVERLAP_PLACEHOLDER);
+  });
+
+  it("audit R8 B-1: secretSpans merges an overlapping guess+value into one span", () => {
+    const ctx = "A".repeat(30);
+    fact("projects", "zz_guess_password", ctx + FTP_PASS.slice(0, 1));
+    invalidateSecretRefs();
+    const text = "x " + ctx + FTP_PASS + " y";
+    const spans = secretSpans(text);
+    // One merged span covering the whole ctx+value region.
+    expect(spans).toHaveLength(1);
+    const [s, e] = spans[0]!;
+    expect(text.slice(s, e)).toBe(ctx + FTP_PASS);
+  });
+
   it("deleteProject drops the project's secrets from the index at once", () => {
     expect(scrubSecrets(BLOG_PASS)).toBe(secretPlaceholder(N.sub)); // index built
     expect(deleteProject("demo-blog")).toBe(true);
@@ -1276,6 +1315,40 @@ describe("audit R6 B2 — a rendered placeholder written back through a tool", (
     );
     expect(out.error).toBeUndefined();
     expect(readFs(path, "utf8")).toBe(`A=9\nFTP_PASSWORD=${FTP_PASS}\nB=2\n`);
+  });
+
+  it("audit R8 should-fix: file_edit reports lengths of the scrubbed view, not the raw file", async () => {
+    const reg = seam();
+    const path = join(dir, "app.env");
+    const raw = `A=1\nFTP_PASSWORD=${FTP_PASS}\nB=2\n`;
+    writeFileSync(path, raw);
+    const scrubbedLen = scrubSecrets(raw).length;
+    expect(scrubbedLen).not.toBe(raw.length); // the value differs in length
+
+    // Successful edit: old_length / new_length are of the scrubbed view.
+    const ok = JSON.parse(
+      await reg.execute("file_edit", {
+        path,
+        old_string: "A=1",
+        new_string: "A=2",
+      }),
+    );
+    expect(ok.old_length).toBe(scrubbedLen);
+    expect(ok.old_length).not.toBe(raw.length);
+    const afterRaw = readFs(path, "utf8");
+    expect(ok.new_length).toBe(scrubSecrets(afterRaw).length);
+    expect(ok.new_length).not.toBe(afterRaw.length);
+
+    // Not-found path: file_length is of the scrubbed view too.
+    const miss = JSON.parse(
+      await reg.execute("file_edit", {
+        path,
+        old_string: "ZZZ-not-here",
+        new_string: "x",
+      }),
+    );
+    expect(miss.file_length).toBe(scrubSecrets(afterRaw).length);
+    expect(miss.file_length).not.toBe(afterRaw.length);
   });
 
   it("an unknown name, the generic placeholder, a mangled one, or one outside a content field refuses the file write", async () => {

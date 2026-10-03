@@ -329,3 +329,99 @@ or the critic's `[`/`]` match markers inside a value defeat the substring scrub;
 - `http_fetch` description still says the tool sends no secrets, which no longer matches `{{SECRET_<NAME>}}` substitution (description change → eval gate).
 - ~~Ruling 5: start/stop-type docker commands … await operator confirmation.~~ ANSWERED 2026-10-03 (see the follow-ups section); remaining are the 5a operator step and the VPS differential run.
 - ~~Rulings 1–2: the "no confirmation channel" error suggests `interactive:false`, which is now refused for risky `schedule_task`; background `batch_decompose` declaring high-risk tools is not refused.~~ RESOLVED 2026-10-03 (should-fix round + batch_decompose ruling, above).
+
+## Fix round 8 (audit round 8 — ruling 3)
+
+Round-8 re-audit FAILED with four blocking stored-value oracles and four should-fix
+leaks. All eight are closed; 3c (write-back of a rendered placeholder) stays PASS.
+
+### Blocking fixes
+
+- **B-1 overlap scrub (`src/lib/secret-refs.ts`).** The scrub now works over a span
+  UNION of every stored form's occurrences, not sequential per-value replacement. A
+  model-stored value `ctx + V[0]` that overlaps the real value `V` by one boundary
+  character used to be replaced first, leaving the rest of `V` in clear. `scrubMergedSpans`
+  gathers occurrences, merges those that truly overlap (`r.start < last.end`), and renders:
+  the cover value's placeholder when one occurrence spans the whole region (nesting —
+  a longer stored value that contains a shorter one, which must read as one unit); the
+  single shared placeholder when all occurrences carry it; otherwise the new
+  `OVERLAP_PLACEHOLDER` ("…varios datos…cópialos por separado por nombre"), which
+  `resolveRenderedPlaceholders` refuses on write-back (it carries the `[oculto ·` marker
+  but not `RENDERED_PLACEHOLDER_RE`). `secretSpans` returns these merged spans, so
+  `code-editing` / `code-search` share the same oracle-free boundary. Adjacent (touching,
+  non-overlapping) values each keep their own placeholder.
+- **B-2 grep oracle (`src/tools/builtin/code-search.ts`).** The rg/grep run is always
+  `--line-number --max-count 2000` (internal cap `INTERNAL_MAXCOUNT = 2000`); the
+  `--files-with-matches` / `--count` / `-l` / `-c` flags were removed so match/no-match/count
+  can no longer be read per character. `safeMatchCount` takes spans on the raw line and
+  drops any hit that cuts into a value span (`a < e && s < b && !(a <= s && e <= b)`); files,
+  counts and content are derived from kept hits only, then each surviving line is scrubbed
+  before the `maxResults` slice and `MAX_OUTPUT` cap.
+- **B-3 KB search limit-before-filter (`src/db/jarvis-fs.ts`).** The FTS and LIKE paths bind
+  a bounded `FTS_FETCH_CAP = 5000` instead of the visible `LIMIT`, filter out value-holding
+  rows the token filter rejects, then `.slice(0, limit)`. Clean rows keep bm25 relevance;
+  value-holding kept rows are appended, ordered by `path` (localeCompare) so row order never
+  depends on the value. The LIMIT no longer ran before the filter, so presence/absence at a
+  given `limit` is no longer an oracle.
+- **B-4 `clave_<servicio>` (`src/db/user-facts.ts`).** A leading `clave_X` is a credential
+  unless X is an identifier word: new alternative
+  `` `(?<=^ )claves?(?= (?!(?:${CLAVE_ID_AFTER}) )[a-z0-9])` `` with an identifier allow-list
+  (`interbancaria|elector|producto|catastral|rfc|curp|…`). `ciec` added as its own name;
+  `fiel` is NOT added bare (only caught in forms like `clave_fiel` via the clave rule) to
+  avoid shadowing the ordinary adjective.
+
+### Should-fix
+
+- `*_session` holding a secret-shaped value is hidden (`SESSION_LAST_RE` + `hasSecretShape`).
+- A `user:pass` value is hidden (`looksLikeUserPass`: rejects PATH_LIKE values and a backslash
+  in the password part; password ≥ 6 chars, not all digits, no `:/\s`, and needs a special
+  char / secret run / length-≥10 password mix).
+- `length|len|size|count|longitud|tamano` are numeric meta suffixes (`CREDENTIAL_META_LAST_RE`,
+  typed as `/^\d+$/` in `metaValueMatches`).
+- `file_edit` (`src/tools/builtin/code-editing.ts`) reports `file_length` / `old_length` /
+  `new_length` of the SCRUBBED view; the gdoc readback evidence
+  (`src/lib/v8-4/readback-verifiers.ts`, `verifyDocWrite`) reports `norm(scrubSecrets(text)).length`.
+
+### Deviations from the brief
+
+- B-2 uses a per-line NUL-parse (`parseLineRecords`) + JS re-count rather than rg `--json`:
+  no new dependency on rg's JSON event schema, and the fail-closed denylist check already lived
+  in the per-line path.
+- Internal max-count is 2000 and the KB fetch cap is 5000 (bounded, not unbounded).
+- FTS value-holding rows are placed AFTER clean rows and sorted by path; adjacent (touching)
+  value spans are NOT merged; a region fully covered by one occurrence renders the cover's
+  placeholder (nesting), not `OVERLAP_PLACEHOLDER`.
+- Extra identifier words were added to `CLAVE_ID_AFTER` beyond the brief's examples; `fiel`
+  is not a bare name.
+- The KB readback verifier's `file.content.length` (`readback-verifiers.ts` ~174) was left
+  unchanged — that length is of a KB row the operator owns, not a scrubbed-doc view.
+- Optional gdoc scrubbed-length regression test WAS added (the jarvis-fs mock now spreads the
+  real module so `initDatabase`'s `seedDirectives` survives while `getFile` stays mocked).
+
+### Residuals (unchanged scope)
+
+- The pre-existing `code-search` test "a glob with a directory part narrows…" still fails;
+  confirmed to fail identically on clean HEAD, not chased, not made worse.
+- All round-3 through round-7 residuals above still stand (encoded-form edge cases, MCP-internal
+  transforms, container runners, index staleness, the ruling-3d neutral-key/value-shape gap).
+
+### Model-visible strings changed → eval gate owed
+
+- New `OVERLAP_PLACEHOLDER` string surfaced to the model in scrubbed output.
+- Classifier regex changes in `user-facts.ts` (leading-clave, `ciec`, session, user:pass,
+  length meta). Per CLAUDE.md, run `npm run eval:gate -- --run` before shipping; not run here
+  (do not ship on FAIL).
+
+### Mutant verification (one per fix, revert → RED → restore → cmp)
+
+| Fix | Mutant | Test file | Result |
+| --- | --- | --- | --- |
+| B-1 | partial overlap renders first placeholder, not OVERLAP | secret-refs.test.ts | RED, restored |
+| B-2 | drop the `cuts()` guard in safeMatchCount | code-search.test.ts | RED, restored |
+| B-3 | bind `limit` instead of FTS_FETCH_CAP in FTS SQL | jarvis-fs.test.ts | RED, restored |
+| B-4 | remove the leading `clave_X` alternative | user-facts.test.ts | RED, restored |
+| session | disable the `*_session` clause | user-facts.test.ts | RED, restored |
+| user:pass | disable `looksLikeUserPass` | user-facts.test.ts | RED, restored |
+| length meta | drop `length|len|size|count|…` from meta regex | user-facts.test.ts | RED, restored |
+| file_edit len | old/new_length back to raw `.length` | secret-refs.test.ts | RED, restored |
+| gdoc len | shownLen back to `norm(text).length` | readback-verifiers.test.ts | RED, restored |

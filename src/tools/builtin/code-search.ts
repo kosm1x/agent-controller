@@ -12,9 +12,18 @@ import type { Tool } from "../types.js";
 import { readDenylistReason, validatePathSafety } from "./immutable-core.js";
 import { kernelWalk } from "./write-guard.js";
 import { redactCredentials } from "../../api/mcp-server/redact.js";
+import { scrubSecrets, secretSpans } from "../../lib/secret-refs.js";
 
 const MAX_RESULTS = 100;
 const MAX_OUTPUT = 15_000; // chars
+/**
+ * Ruling 3c (audit round 8, B-2): a fixed per-file cap on the UNDERLYING
+ * search, far above any user `max_results`, so output stays bounded without a
+ * secret-dependent limit-before-filter. The visible cap (`max_results`) is
+ * applied in JS AFTER value-span filtering, so a dropped value-line never
+ * consumes a visible slot.
+ */
+const INTERNAL_MAXCOUNT = 2000;
 
 /**
  * A listed name is refused on its spelling AND where the kernel lands: the
@@ -36,23 +45,22 @@ function listedBlocked(p: string): boolean {
 // grep — content search
 // ---------------------------------------------------------------------------
 
+
 /**
- * Parse NUL-delimited rg/grep output and drop every record whose file the
- * read denylist refuses. A directory path passes validatePathSafety, so the
- * per-file check is what keeps `grep -r /etc` or `/root/.claude` from
- * returning shadow lines or credential files (audit 2026-09-22 R2).
- *
- * Records are `name\0` (files mode, `-l --null`) or `name\0text\n`
- * (content/count). Match text never holds a newline but a file NAME can, so
- * the split is on NUL: each chunk's text runs to its first newline and the
- * remainder is the next record's name (R3).
+ * Ruling 3c (audit round 8, B-2): parse NUL-delimited line-mode output
+ * (`path\0lineno:line\n`) into per-line records, dropping every record whose
+ * file the read denylist refuses (the same fail-closed check as
+ * `dropBlockedFiles`). Always run in line mode so each line's text can be
+ * inspected for stored-value spans; files / count are derived from the kept
+ * lines, never from the raw tool's own `-l` / `-c` output.
  */
-function dropBlockedFiles(output: string, filesOnly: boolean): string[] {
+function parseLineRecords(
+  output: string,
+): Array<{ file: string; lineno: string; content: string }> {
   const verdicts = new Map<string, boolean>();
   const allowed = (file: string): boolean => {
     let ok = verdicts.get(file);
     if (ok === undefined) {
-      // Fail closed: a name holding a newline is checked whole and per line.
       ok = [file, ...file.split("\n")].every(
         (f) => !!f && validatePathSafety(f, "read").safe,
       );
@@ -60,24 +68,56 @@ function dropBlockedFiles(output: string, filesOnly: boolean): string[] {
     }
     return ok;
   };
-  const kept: string[] = [];
+  const out: Array<{ file: string; lineno: string; content: string }> = [];
   const chunks = output.split("\0");
-  if (filesOnly) {
-    for (const name of chunks) {
-      const file = name.replace(/^\n+|\n+$/g, "");
-      if (file && allowed(file)) kept.push(file);
-    }
-    return kept;
-  }
   let file = chunks[0] ?? "";
   for (let i = 1; i < chunks.length; i++) {
     const chunk = chunks[i]!;
     const nl = chunk.indexOf("\n");
     const text = nl === -1 ? chunk : chunk.slice(0, nl);
-    if (file && allowed(file)) kept.push(`${file}:${text}`);
+    if (file && allowed(file)) {
+      const m = /^(\d+):([\s\S]*)$/.exec(text);
+      out.push(
+        m
+          ? { file, lineno: m[1]!, content: m[2]! }
+          : { file, lineno: "", content: text },
+      );
+    }
     file = nl === -1 ? "" : chunk.slice(nl + 1);
   }
-  return kept;
+  return out;
+}
+
+/**
+ * Ruling 3c (audit round 8, B-2): the number of occurrences of `pattern`
+ * (literal / fixed-string) in `line` that do NOT cut into a stored-value span
+ * — the same rule `file_edit` uses (`safeMatches`). An occurrence that starts
+ * inside, ends inside, or lies inside a value span is dropped (it would turn
+ * grep's match / no-match / count into a per-character oracle on the value); an
+ * occurrence that covers a whole value, or sits entirely outside every span,
+ * is a real match. Spans are computed on the RAW line (before scrubbing), so
+ * the offsets line up with the pattern's own offsets.
+ */
+function safeMatchCount(
+  line: string,
+  pattern: string,
+  caseInsensitive: boolean,
+): number {
+  if (pattern === "") return 0;
+  const spans = secretSpans(line);
+  const hay = caseInsensitive ? line.toLowerCase() : line;
+  const needle = caseInsensitive ? pattern.toLowerCase() : pattern;
+  const cuts = (a: number, b: number): boolean =>
+    spans.some(([s, e]) => a < e && s < b && !(a <= s && e <= b));
+  let count = 0;
+  let next = 0;
+  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
+    if (i < next) continue;
+    if (cuts(i, i + needle.length)) continue;
+    count++;
+    next = i + needle.length;
+  }
+  return count;
 }
 
 export const grepTool: Tool = {
@@ -177,17 +217,11 @@ TIPS:
     ];
     if (caseInsensitive) flags.push("--ignore-case");
 
-    switch (mode) {
-      case "files":
-        flags.push("--files-with-matches");
-        break;
-      case "count":
-        flags.push("--count");
-        break;
-      case "content":
-        flags.push("--line-number");
-        break;
-    }
+    // Ruling 3c (audit round 8, B-2): ALWAYS run in line mode (never the
+    // tool's own --files-with-matches / --count), so every matching line's
+    // text is available for value-span filtering below; files and counts are
+    // derived from the kept lines.
+    flags.push("--line-number");
 
     // rg's --glob is path-aware — pass the glob verbatim. Only grep's
     // --include is basename-only; the fallback below narrows its search root
@@ -206,11 +240,10 @@ TIPS:
       }
     }
 
-    // Limit output (per file). Not in count mode: --max-count caps the per-file
-    // count itself and corrupts the tool's only output (qa W2).
-    if (mode !== "count") {
-      flags.push("--max-count", String(mode === "files" ? 1 : maxResults));
-    }
+    // Bound the underlying search per file at a fixed cap well above any
+    // user max_results — the visible cap is applied in JS after value-span
+    // filtering, so a dropped value-line never consumes a visible slot (B-2).
+    flags.push("--max-count", String(INTERNAL_MAXCOUNT));
 
     // execFileSync: args as array — no shell interpolation, immune to injection
     const rgArgs = [...flags, "--", pattern, searchPath];
@@ -253,11 +286,11 @@ TIPS:
           "--exclude=.env*",
           "--exclude=.claude.json",
           "--exclude=.git-credentials",
-          ...(mode !== "count"
-            ? ["--max-count", String(mode === "files" ? 1 : maxResults)]
-            : []),
+          "--max-count",
+          String(INTERNAL_MAXCOUNT),
           ...(caseInsensitive ? ["-i"] : []),
-          mode === "files" ? "-l" : mode === "count" ? "-c" : "-n",
+          // Always line mode (-n -Z) — files / counts derived from kept lines.
+          "-n",
           "--fixed-strings",
           "--",
           pattern,
@@ -279,19 +312,51 @@ TIPS:
         });
       }
 
-      let lines = dropBlockedFiles(output, mode === "files");
-      // grep -c (the fallback when rg is absent, as in the service) prints
-      // every searched file, zero counts included; rg --count does not.
-      if (mode === "count") lines = lines.filter((l) => !l.endsWith(":0"));
-      if (lines.length === 0) {
+      // Ruling 3c (audit round 8, B-2): keep only lines with at least one
+      // match that does NOT cut into a stored-value span; a line whose only
+      // hit is inside a value is dropped (match / no-match / count would
+      // otherwise be a per-character oracle). Files and counts are derived
+      // from the kept lines, and each kept line is scrubbed before the cap.
+      const records = parseLineRecords(output);
+      const kept: Array<{ file: string; lineno: string; content: string; hits: number }> =
+        [];
+      for (const r of records) {
+        const hits = safeMatchCount(r.content, pattern, caseInsensitive);
+        if (hits > 0) kept.push({ ...r, hits });
+      }
+      if (kept.length === 0) {
         return JSON.stringify({
           matches: [],
           total: 0,
           message: "No matches found",
         });
       }
-      const total = lines.length;
 
+      let lines: string[];
+      if (mode === "files") {
+        const seen = new Set<string>();
+        lines = [];
+        for (const r of kept) {
+          if (!seen.has(r.file)) {
+            seen.add(r.file);
+            lines.push(r.file);
+          }
+        }
+      } else if (mode === "count") {
+        const counts = new Map<string, number>();
+        const order: string[] = [];
+        for (const r of kept) {
+          if (!counts.has(r.file)) order.push(r.file);
+          counts.set(r.file, (counts.get(r.file) ?? 0) + r.hits);
+        }
+        lines = order.map((f) => `${f}:${counts.get(f)}`);
+      } else {
+        lines = kept.map(
+          (r) => `${r.file}:${r.lineno}:${scrubSecrets(r.content)}`,
+        );
+      }
+
+      const total = lines.length;
       if (lines.length > maxResults) {
         lines = lines.slice(0, maxResults);
       }

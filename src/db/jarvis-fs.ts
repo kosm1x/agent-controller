@@ -547,17 +547,27 @@ export function locateMatch(
  * empty token set or FTS5 error to preserve the previous contract for
  * single-character / punctuation-only queries.
  */
-export function searchFiles(
-  query: string,
-  limit: number = 20,
-): Array<{
+/**
+ * Ruling 3c (audit round 8, B-3): a hard upper bound on rows fetched before
+ * the value-holding-row filter — far above any realistic `limit`, so the
+ * visible result never depends on a dropped row, and the query stays bounded
+ * without a secret-dependent SQL LIMIT.
+ */
+const FTS_FETCH_CAP = 5000;
+
+type SearchResult = {
   path: string;
   title: string;
   snippet: string;
   size: number;
   line: number | null;
   section: string | null;
-}> {
+};
+
+export function searchFiles(
+  query: string,
+  limit: number = 20,
+): SearchResult[] {
   const db = getDatabase();
   const match = buildFtsMatch(query);
   const tokens = tokenizeQuery(query);
@@ -573,6 +583,14 @@ export function searchFiles(
     try {
       const rows = db
         .prepare(
+          // Ruling 3c (audit round 8, B-3): NO SQL LIMIT. The LIMIT ran
+          // before the value-holding-row filter below, so a dropped row
+          // consumed a slot and a correct guess prefix turned "fewer results"
+          // into an oracle. Fetch all matches (bounded by the corpus and a
+          // hard cap), filter, then slice to `limit` in JS. bm25 order is
+          // kept for clean rows (relevance); value-holding kept rows are
+          // reordered by path (value-independent) below, because bm25 counts
+          // token hits INSIDE the value.
           `SELECT f.path, f.title, f.content, LENGTH(f.content) AS size,
                   snippet(jarvis_files_fts, 1, '«', '»', '…', 16) AS snip
              FROM jarvis_files_fts
@@ -581,7 +599,7 @@ export function searchFiles(
             ORDER BY bm25(jarvis_files_fts), f.path ASC
             LIMIT ?`,
         )
-        .all(match, limit) as Array<{
+        .all(match, FTS_FETCH_CAP) as Array<{
         path: string;
         title: string;
         content: unknown;
@@ -596,51 +614,55 @@ export function searchFiles(
     // Post-process OUTSIDE the catch: a per-row defect must never mute the
     // whole FTS result set into the LIKE fallback (qa-audit C1).
     if (ftsRows) {
-      return ftsRows.flatMap((r) => {
+      // Ruling 3c (audit round 8, B-3): filter THEN slice, so a dropped
+      // value-holding row never costs a visible slot. Clean rows keep their
+      // bm25 order (relevance); value-holding kept rows are ordered by path
+      // (value-independent — bm25 ranks them by token hits inside the value).
+      const clean: SearchResult[] = [];
+      const secret: SearchResult[] = [];
+      for (const r of ftsRows) {
         const raw = asText(r.content);
-        // Ruling 3c, audit R7 B-1: a row holding a stored credential value.
         // FTS5's snippet is cut inside SQLite (it could cut a value) and its
         // prefix match runs over the value's tokens (row / no row would be a
         // prefix oracle) — so judge and cut on the SCRUBBED content instead.
-        const clean = scrubSecrets(raw);
-        if (clean === raw) {
-          return [
-            {
-              path: r.path,
-              title: r.title,
-              snippet: r.snip || r.title,
-              size: r.size,
-              ...locateMatch(r.content, tokens),
-            },
-          ];
+        const scrubbed = scrubSecrets(raw);
+        if (scrubbed === raw) {
+          clean.push({
+            path: r.path,
+            title: r.title,
+            snippet: r.snip || r.title,
+            size: r.size,
+            ...locateMatch(r.content, tokens),
+          });
+          continue;
         }
         const visible = foldDiacritics(
-          `${clean}\n${r.title ?? ""}\n${r.path ?? ""}`.toLowerCase(),
+          `${scrubbed}\n${r.title ?? ""}\n${r.path ?? ""}`.toLowerCase(),
         );
         if (!tokens.every((t) => visible.includes(foldDiacritics(t)))) {
-          return [];
+          continue;
         }
-        const lower = clean.toLowerCase();
-        const hits = tokens
-          .map((t) => lower.indexOf(t))
-          .filter((i) => i >= 0);
+        const lower = scrubbed.toLowerCase();
+        const hits = tokens.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
         const at = hits.length > 0 ? Math.min(...hits) : -1;
         const snippet =
           at >= 0
             ? (at > 50 ? "…" : "") +
-              clean.slice(Math.max(0, at - 50), at + 80).replace(/\n/g, " ") +
-              (at + 80 < clean.length ? "…" : "")
+              scrubbed
+                .slice(Math.max(0, at - 50), at + 80)
+                .replace(/\n/g, " ") +
+              (at + 80 < scrubbed.length ? "…" : "")
             : r.title;
-        return [
-          {
-            path: r.path,
-            title: r.title,
-            snippet,
-            size: r.size,
-            ...locateMatch(clean, tokens),
-          },
-        ];
-      });
+        secret.push({
+          path: r.path,
+          title: r.title,
+          snippet,
+          size: r.size,
+          ...locateMatch(scrubbed, tokens),
+        });
+      }
+      secret.sort((a, b) => a.path.localeCompare(b.path));
+      return [...clean, ...secret].slice(0, limit);
     }
   }
 
@@ -670,7 +692,11 @@ export function searchFiles(
       `%${escaped}%`,
       `%${escaped}%`,
       `%${escaped}%`,
-      limit,
+      // Ruling 3c (audit round 8, B-3): fetch up to the hard cap, not the
+      // visible `limit` — the LIMIT ran before the value-holding-row filter
+      // below, so a dropped row consumed a slot (prefix oracle). The LIKE
+      // ORDER BY is value-independent (path / title), so slice after filter.
+      FTS_FETCH_CAP,
     ) as Array<{ path: string; title: string; content: unknown; size: number }>;
 
   // Ruling 3c, audit R7 B-1: the snippet is cut around the hit — scrub the
@@ -706,7 +732,7 @@ export function searchFiles(
         ...locateMatch(content, [query]),
       },
     ];
-  });
+  }).slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------

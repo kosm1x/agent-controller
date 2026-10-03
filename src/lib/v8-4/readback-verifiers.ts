@@ -243,10 +243,13 @@ export async function verifyDocWrite(
     .map((e) => e.textRun?.content ?? "")
     .join("");
   const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  // Ruling 3c (audit round 8, should-fix): the char count reported in evidence
+  // is of the SCRUBBED view — the raw length leaks a stored value's length.
+  const shownLen = norm(scrubSecrets(text)).length;
   if (snippet && !containsWritten(text, snippet)) {
     return {
       ok: false,
-      evidence: `Doc «${doc.title ?? docId}»: no contiene el texto escrito (${norm(text).length} chars leídos)`,
+      evidence: `Doc «${doc.title ?? docId}»: no contiene el texto escrito (${shownLen} chars leídos)`,
     };
   }
   // Phase 2.3: the WRITE must not contradict operator-confirmed figures.
@@ -265,7 +268,7 @@ export async function verifyDocWrite(
   }
   return {
     ok: true,
-    evidence: `Doc «${doc.title ?? docId}» (${norm(text).length} chars, empieza «${quote(snippet, 40)}»)`,
+    evidence: `Doc «${doc.title ?? docId}» (${shownLen} chars, empieza «${quote(snippet, 40)}»)`,
   };
 }
 

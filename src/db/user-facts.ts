@@ -62,6 +62,19 @@ export interface UserFact {
  */
 const CLAVE_ADJ_BEFORE =
   "(?:palabras?| (?!(?:nuestr|vuestr|est|es|tod|otr|algun|much|mism|aquell|ciert|vari|demas|las|los|unas|unos)[ao]?s )[a-z]{2,}[aeiou]s| (?:fecha|punto|idea|cliente|tema|mensaje|metrica|indicador|nombre|dato|factor|momento|objetivo|pregunta|paso|rol|actor|socio|elemento|aspecto|concepto|evento|hito|proceso|requisito|tarea)) ";
+/**
+ * Ruling 3d (B-4, audit round 8): a LEADING `clave_X` / `clave de X` names a
+ * stored password (`clave_ftp`, `clave_sat`, `clave_banco`, `clave_gmail`,
+ * `clave_root`, `clave_cpanel`, `clave_ciec`, `clave_fiel`, `clave_tarjeta`,
+ * `clave_bd`, `clave_del_ftp`) UNLESS the word after `clave` is an identifier
+ * word — then it is a code/number, not a secret (`clave_interbancaria` CLABE,
+ * `clave_elector` voter key, `clave_producto` SKU, `clave_catastral`,
+ * `clave_unica` CURP, `clave_rfc`). The round-7 adjective behaviour
+ * (`fechas_clave`, `clientes_clave` — `clave` as a trailing adjective) is
+ * unchanged: this rule only fires when `clave` is the FIRST token.
+ */
+const CLAVE_ID_AFTER =
+  "interbancaria|interbancario|elector|electoral|producto|productos|proyecto|proyectos|catastral|articulo|articulos|cliente|clientes|empleado|empleados|pais|paises|area|areas|lada|presupuestal|presupuestaria|unica|unico|curp|rfc|postal|unidad|registro|catalogo|catalogos";
 const FOLLOWER = "(?= $| (?:codes?|secrets?|phrases?|keys?|tokens?|seeds?|backup|header) )";
 const CREDENTIAL_NAME_RE = new RegExp(
   " (?:" +
@@ -103,7 +116,11 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "bearer",
       "jwt",
       `(?<!${CLAVE_ADJ_BEFORE})claves?(?= $| (?:api|acceso|secreta|privada|wifi) )`,
+      // Ruling 3d (B-4): a leading `clave_X` where X is not an identifier word.
+      `(?<=^ )claves?(?= (?!(?:${CLAVE_ID_AFTER}) )[a-z0-9])`,
       "claves? de (?:acceso|seguridad|respaldo|recuperacion)",
+      // CIEC (SAT tax-portal credential) — a secret under its own name.
+      "ciec",
       "llaves?(?! publicas? )",
       "contrasenas?",
       "credencial(?:es)?",
@@ -147,7 +164,7 @@ const CREDENTIAL_NAME_RE = new RegExp(
  * `pass_rate`), each with its own value type.
  */
 const CREDENTIAL_META_LAST_RE =
-  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|uri|file|header|name|id|hint|policy|domain|scope|arn|symbol|address|format|rate|location|question|consent|last changed|user|username|usuario|login|account|cuenta|email|correo|mail|port|puerto|server|servidor|dominio|endpoint|redirect|tenant|nombre|telefono|phone|client) $/;
+  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|uri|file|header|name|id|hint|policy|domain|scope|arn|symbol|address|format|rate|location|question|consent|last changed|user|username|usuario|login|account|cuenta|email|correo|mail|port|puerto|server|servidor|dominio|endpoint|redirect|tenant|nombre|telefono|phone|client|length|len|size|count|longitud|tamano) $/;
 
 /**
  * Audit round 7 (B-2.1): `id` belongs to the credential word itself in
@@ -193,6 +210,39 @@ function hasSecretRun(value: string): boolean {
 /** Digits, lower AND upper case together: the shape of a password. */
 function hasPasswordMix(v: string): boolean {
   return /\d/.test(v) && /[a-z]/.test(v) && /[A-Z]/.test(v);
+}
+
+/**
+ * Should-fix (round 8): the shape of a generated secret VALUE — a long
+ * letters+digits run, or a password mix. Used to judge a `*_session` entry
+ * (a session id looks like this; a short status word does not).
+ */
+function hasSecretShape(v: string): boolean {
+  return hasSecretRun(v) || hasPasswordMix(v);
+}
+/** A name whose last token is `session` (not `session_id`, handled earlier). */
+const SESSION_LAST_RE = / session $/;
+
+/**
+ * Should-fix (round 8): a `user:pass` value — a username, a colon, and a
+ * secret-shaped password (`admin:Tr0ub4dor&3xyz`). Not a URL (`https://…`,
+ * caught by the userinfo pattern), a time (`10:30`), a ratio (`16:9`) or a
+ * host:port (`db:5432`): the password part must start with a letter or carry
+ * a special character / case mix, and must not be all digits or hold `:`/`/`.
+ */
+function looksLikeUserPass(v: string): boolean {
+  if (PATH_LIKE_RE.test(v)) return false; // `C:\keys\…` is a Windows path
+  const m = /^([A-Za-z][\w.-]{0,63}):(.+)$/.exec(v);
+  if (!m) return false;
+  const pass = m[2]!;
+  if (/[:/\\\s]/.test(pass)) return false; // url / time h:m:s / path
+  if (/^\d+$/.test(pass)) return false; // host:port, time
+  if (pass.length < 6) return false;
+  return (
+    /[^A-Za-z0-9]/.test(pass) ||
+    hasSecretRun(pass) ||
+    (hasPasswordMix(pass) && pass.length >= 10)
+  );
 }
 
 // Audit round 6 (should-fix 3): a host is an IP, localhost, a bracketed IPv6
@@ -317,6 +367,15 @@ function metaValueMatches(meta: string, raw: string): boolean {
       return BOOLEAN_WORD_RE.test(v);
     case "region":
       return v.length <= 30 && REGION_SLUG_RE.test(v);
+    case "length":
+    case "len":
+    case "size":
+    case "count":
+    case "longitud":
+    case "tamano":
+      // Should-fix (round 8): a meta count/length is a plain number
+      // (`pin_code_length = 4`), not the secret itself.
+      return /^\d+$/.test(v);
     case "header":
       return HEADER_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v);
     case "name":
@@ -529,6 +588,9 @@ export function isCredentialFact(
   return (
     isCredentialName(key, value) ||
     isCredentialName(category, value) ||
+    // Should-fix (round 8): `*_session` holding a session-token value.
+    (SESSION_LAST_RE.test(nameTokens(key)) && hasSecretShape(value)) ||
+    looksLikeUserPass(value) ||
     redactCredentials(value) !== value ||
     CREDENTIAL_VALUE_PATTERNS.some((re) => re.test(value))
   );

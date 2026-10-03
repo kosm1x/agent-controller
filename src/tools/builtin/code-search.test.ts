@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { grepTool, globTool, listDirTool } from "./code-search.js";
+import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
+import { invalidateSecretRefs } from "../../lib/secret-refs.js";
 
 const TEST_DIR = "/tmp/mc-test-code-search";
 
@@ -96,6 +98,55 @@ describe("grep", () => {
     );
     expect(result.total).toBe(1);
     expect(result.matches).toBe(`${TEST_DIR}/a.ts:1`);
+  });
+
+  // Ruling 3c (audit round 8, B-2): grep is not a per-character oracle on a
+  // stored value. A pattern that cuts into a stored-value span never matches
+  // (match / no-match / count would otherwise recover the value), while a
+  // pattern entirely outside the value still finds the line, scrubbed.
+  describe("stored-value oracle (B-2)", () => {
+    const SEC = "pw-" + "Q7z".repeat(6); // secret-shaped, > 8 chars
+    beforeEach(() => {
+      initDatabase(":memory:");
+      getDatabase()
+        .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+        .run("projects", "acme_ftp_password", SEC);
+      invalidateSecretRefs();
+      writeFileSync(`${TEST_DIR}/conf.txt`, `FTP_PASSWORD=${SEC}\n`);
+    });
+    afterEach(() => {
+      invalidateSecretRefs();
+      closeDatabase();
+    });
+
+    it("a partial-value pattern matches nothing, right guess or wrong", async () => {
+      for (const g of [SEC.slice(0, 7), "pw-Q8z", SEC.slice(0, 12)]) {
+        for (const mode of ["files", "content", "count"]) {
+          const r = JSON.parse(
+            await grepTool.execute({
+              pattern: "FTP_PASSWORD=" + g,
+              path: TEST_DIR,
+              output_mode: mode,
+            }),
+          );
+          expect(r.total, `${mode} ${g}`).toBe(0);
+        }
+      }
+    });
+
+    it("the key before the value still matches; the value is scrubbed out", async () => {
+      const r = JSON.parse(
+        await grepTool.execute({
+          pattern: "FTP_PASSWORD=",
+          path: TEST_DIR,
+          output_mode: "content",
+        }),
+      );
+      expect(r.total).toBe(1);
+      expect(String(r.matches)).toContain("FTP_PASSWORD=");
+      expect(String(r.matches)).not.toContain(SEC);
+      expect(String(r.matches)).not.toContain(SEC.slice(0, 7));
+    });
   });
 
   // audit 2026-09-22: grep read credential files the file_read denylist blocks.

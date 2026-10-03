@@ -5,7 +5,10 @@ const mocks = vi.hoisted(() => ({
   getSchedule: vi.fn(),
   googleFetch: vi.fn(),
 }));
-vi.mock("../../db/jarvis-fs.js", () => ({ getFile: mocks.getFile }));
+vi.mock("../../db/jarvis-fs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../db/jarvis-fs.js")>()),
+  getFile: mocks.getFile,
+}));
 vi.mock("../../rituals/dynamic.js", () => ({ getSchedule: mocks.getSchedule }));
 vi.mock("../../google/client.js", () => ({ googleFetch: mocks.googleFetch }));
 
@@ -17,6 +20,8 @@ import {
   verifySheetWrite,
 } from "./readback-verifiers.js";
 import { _resetReadbacks, hasReadback, sha8 } from "./readback.js";
+import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
+import { invalidateSecretRefs, scrubSecrets } from "../secret-refs.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -68,6 +73,41 @@ describe("verifyDocWrite", () => {
     });
     expect(await verifyDocWrite({ document_id: "d", snippet: "Resumen W34 para" })).toMatchObject({ ok: true });
     expect((await verifyDocWrite({ document_id: "d", snippet: "Texto que nunca escribí" })).evidence).toContain("no contiene");
+  });
+});
+
+// Ruling 3c (audit round 8, should-fix): the char count in gdoc evidence is of
+// the SCRUBBED view, never the raw body — a raw length leaks a stored value's
+// length to an operator who can stage the value into a doc and read the count.
+describe("verifyDocWrite — scrubbed length in evidence", () => {
+  const SEC = "pw-" + "Q7z".repeat(6);
+  afterEach(() => {
+    invalidateSecretRefs();
+    closeDatabase();
+  });
+  it("reports norm(scrubbed).length, which differs from the raw length", async () => {
+    initDatabase(":memory:");
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+      .run("projects", "acme_ftp_password", SEC);
+    invalidateSecretRefs();
+    const text = `prefijo ${SEC} sufijo`;
+    mocks.googleFetch.mockResolvedValue({
+      title: "W40",
+      body: { content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }] },
+    });
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const shownLen = norm(scrubSecrets(text)).length;
+    const rawLen = norm(text).length;
+    expect(shownLen).not.toBe(rawLen);
+    const ok = await verifyDocWrite({ document_id: "d", snippet: "prefijo" });
+    expect(ok).toMatchObject({ ok: true });
+    expect(ok.evidence).toContain(`${shownLen} chars`);
+    expect(ok.evidence).not.toContain(`${rawLen} chars`);
+    expect(ok.evidence).not.toContain(SEC);
+    const bad = await verifyDocWrite({ document_id: "d", snippet: "nunca escribí esto" });
+    expect(bad.ok).toBe(false);
+    expect(bad.evidence).toContain(`${shownLen} chars`);
   });
 });
 

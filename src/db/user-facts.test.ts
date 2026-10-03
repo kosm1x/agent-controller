@@ -734,6 +734,64 @@ describe("user-facts", () => {
         expect(isSecretValueName("passwords")).toBe(true);
       });
     });
+
+    describe("audit R8 — B-4 clave_<servicio> / session / user:pass / length meta", () => {
+      const pw = "Tr0ub4dor&3xyz";
+      const rndTok = "Ab12Cd34Ef56Gh78Ij90Kl12";
+      const cases: Array<[string, string, string, boolean]> = [
+        // B-4: a leading clave_<servicio> holding a password is hidden.
+        ["projects", "clave_ftp", pw, true],
+        ["projects", "clave_sat", pw, true],
+        ["projects", "clave_banco", pw, true],
+        ["projects", "clave_correo", pw, true],
+        ["projects", "clave_gmail", pw, true],
+        ["projects", "clave_ssh", pw, true],
+        ["projects", "clave_wordpress", pw, true],
+        ["projects", "clave_cpanel", pw, true],
+        ["projects", "clave_hosting", pw, true],
+        ["projects", "clave_bd", pw, true],
+        ["projects", "clave_admin", pw, true],
+        ["projects", "clave_root", pw, true],
+        ["projects", "clave_servidor", pw, true],
+        ["projects", "clave_instagram", pw, true],
+        ["projects", "clave_ciec", pw, true],
+        ["projects", "clave_fiel", pw, true],
+        ["projects", "clave_tarjeta", pw, true],
+        ["projects", "clave_del_ftp", pw, true],
+        ["personal", "ciec", "4839", true],
+        // B-4: identifier words after clave stay visible (not a secret).
+        ["work", "clave_interbancaria", "012180001234567891", false],
+        ["work", "clave_elector", "ABCD123456", false],
+        ["work", "clave_producto", "SKU-1234", false],
+        ["work", "clave_proyecto", "ACME-42", false],
+        ["work", "clave_catastral", "1234-5678-90", false],
+        ["work", "clave_unica", "CURP-ABC", false],
+        ["work", "clave_rfc", "ACM010101ABC", false],
+        // round-7 adjective behaviour unchanged (clave is the trailing word).
+        ["work", "fechas_clave", "15 de marzo", false],
+        ["work", "clientes_clave", "Acme, Globex", false],
+        ["work", "palabras_clave", "seo, ventas", false],
+        // should-fix: *_session holding a random token is a session id.
+        ["projects", "acme_session", rndTok, true],
+        ["projects", "acme_session", "activa", false],
+        ["projects", "acme_session_timeout", "30m", false],
+        // should-fix: user:pass value shape.
+        ["projects", "acme_wp_admin", "admin:" + pw, true],
+        ["projects", "acme_login", "jdoe:" + pw, true],
+        ["projects", "schedule", "10:30", false],
+        ["projects", "aspect_ratio", "16:9", false],
+        ["projects", "db_server", "db:5432", false],
+        ["projects", "note_colon", "status:ok", false],
+        // should-fix: length / size / count meta suffixes are numeric.
+        ["projects", "acme_pin_code_length", "4", false],
+        ["projects", "acme_token_len", "32", false],
+        ["projects", "acme_key_size", "2048", false],
+        ["projects", "acme_pin_code_length", pw, true],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
+    });
   });
 
   describe("getUserFacts", () => {

@@ -25,7 +25,7 @@ import {
 } from "./immutable-core.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve } from "./write-guard.js";
-import { secretSpans } from "../../lib/secret-refs.js";
+import { scrubSecrets, secretSpans } from "../../lib/secret-refs.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -234,7 +234,9 @@ RULES:
         return JSON.stringify({
           error:
             "old_string not found in file. Re-read the file to get the current content.",
-          file_length: content.length,
+          // Ruling 3c (audit round 8, should-fix): report the length of the
+          // SCRUBBED view — the raw length leaks a stored value's length.
+          file_length: scrubSecrets(content).length,
           hint: "Check for whitespace differences (tabs vs spaces, trailing newlines).",
         });
       }
@@ -261,8 +263,10 @@ RULES:
       return JSON.stringify({
         path,
         replacements: replaceAll ? occurrences : 1,
-        old_length: content.length,
-        new_length: newContent.length,
+        // Ruling 3c (audit round 8, should-fix): lengths of the SCRUBBED view,
+        // so a credential's length (and the edit's effect on it) is not leaked.
+        old_length: scrubSecrets(content).length,
+        new_length: scrubSecrets(newContent).length,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

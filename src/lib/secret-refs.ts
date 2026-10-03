@@ -544,28 +544,106 @@ export function scrubJsonText(text: string): string {
   return clean === parsed ? scrubSecrets(text) : JSON.stringify(clean);
 }
 
-function scrubWith(idx: SecretIndex, text: string): string {
-  let out = text;
+/**
+ * Audit round 8 (B-1): the placeholder for a span where two or more DIFFERENT
+ * stored values overlap. `resolveRenderedPlaceholders` refuses to write it
+ * back (it carries a marker but is not a `RENDERED_PLACEHOLDER_RE` shape), so
+ * an overlapping pair cannot be round-tripped — the only safe behaviour, and
+ * the attack this closes (a model-stored value that overlaps a shorter one)
+ * never has a legitimate round-trip anyway.
+ */
+export const OVERLAP_PLACEHOLDER =
+  "[oculto · varios datos ocultos se traslapan aquí; cópialos por separado por nombre]";
+
+interface MergedSpan {
+  start: number;
+  end: number;
+  ph: string;
+}
+
+/**
+ * Audit round 8 (B-1): the scrub spans of `text`, as a SPAN UNION over the
+ * ORIGINAL text — not sequential longest-first replacement. Every occurrence
+ * of every stored value (every scrubbed form) is collected, then overlapping
+ * occurrences are merged into one span. A single-value span renders that
+ * value's placeholder; a span where different values overlap renders
+ * `OVERLAP_PLACEHOLDER`. Sequential replacement let a model-stored value that
+ * overlaps a shorter one (`ctx + prefix(V)`) win the longest-first race and
+ * expose the rest of V; a union replaces the whole overlapping region as one
+ * unit, so no prefix of V can ever be left behind.
+ */
+function scrubMergedSpans(idx: SecretIndex, text: string): MergedSpan[] {
+  type Occ = { start: number; end: number; ph: string };
+  const raw: Occ[] = [];
   for (const [value, ph] of idx.scrub) {
-    if (out.includes(value)) out = out.replaceAll(value, () => ph);
+    if (value.length === 0) continue;
+    for (
+      let i = text.indexOf(value);
+      i !== -1;
+      i = text.indexOf(value, i + 1)
+    ) {
+      raw.push({ start: i, end: i + value.length, ph });
+    }
   }
+  if (raw.length === 0) return [];
+  // Earliest start first; on a tie the longer span first (so a containing
+  // value anchors the region and shorter values nest inside it).
+  raw.sort((a, b) => a.start - b.start || b.end - a.end);
+  const regions: Array<{ start: number; end: number; occs: Occ[] }> = [];
+  for (const r of raw) {
+    const last = regions[regions.length - 1];
+    // Merge only a TRUE overlap (shares at least one character): two values
+    // that merely abut are distinct secrets and each keeps its own
+    // placeholder. The overlap attack always shares the boundary character.
+    if (last && r.start < last.end) {
+      if (r.end > last.end) last.end = r.end;
+      last.occs.push(r);
+    } else {
+      regions.push({ start: r.start, end: r.end, occs: [r] });
+    }
+  }
+  return regions.map((m) => {
+    // One stored value whose span covers the WHOLE region → that value's
+    // placeholder (the others are nested inside it: a longer value that
+    // contains a shorter stored value, which must render as one unit, not
+    // as "overlapping"). Only a PARTIAL overlap — no single value spanning
+    // the region — renders the non-reversible overlap placeholder.
+    const cover = m.occs.find((o) => o.start === m.start && o.end === m.end);
+    if (cover) return { start: m.start, end: m.end, ph: cover.ph };
+    const phs = new Set(m.occs.map((o) => o.ph));
+    return {
+      start: m.start,
+      end: m.end,
+      ph: phs.size === 1 ? [...phs][0]! : OVERLAP_PLACEHOLDER,
+    };
+  });
+}
+
+function scrubWith(idx: SecretIndex, text: string): string {
+  const spans = scrubMergedSpans(idx, text);
+  if (spans.length === 0) return text;
+  let out = "";
+  let at = 0;
+  for (const s of spans) {
+    out += text.slice(at, s.start) + s.ph;
+    at = s.end;
+  }
+  out += text.slice(at);
   return out;
 }
 
 /**
- * Audit round 7 (B-1c): the [start, end) spans of every stored value (any
- * scrubbed form) in `text`. A content-matching tool (file_edit) uses them to
- * ignore a match that cuts INTO a value — otherwise "old_string not found"
- * vs "found" is an oracle that recovers the value one character at a time.
+ * Audit round 7 (B-1c), round 8 (B-1): the [start, end) spans of every stored
+ * value in `text`, MERGED by span union (the same spans `scrubWith` replaces).
+ * A content-matching tool (file_edit, grep) uses them to ignore a match that
+ * cuts INTO a value — otherwise "old_string not found" vs "found" is an oracle
+ * that recovers the value one character at a time. Merged spans also close the
+ * guess-value overlap oracle: a model-stored value overlapping V extends the
+ * span over the whole region, so a partial match there is dropped whether or
+ * not the guess was right.
  */
 export function secretSpans(text: string): Array<[number, number]> {
-  const spans: Array<[number, number]> = [];
-  for (const [value] of index().scrub) {
-    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
-      spans.push([i, i + value.length]);
-    }
-  }
-  return spans;
+  return scrubMergedSpans(index(), text).map((s) => [s.start, s.end]);
 }
 
 // ---------------------------------------------------------------------------
