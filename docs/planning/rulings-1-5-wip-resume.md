@@ -10,7 +10,7 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 | --- | --- | --- |
 | 1 | Expiry notice at the 5-minute confirmation TTL | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
 | 2 | Confirm at schedule creation when a high-risk tool is included | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
-| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub), NOT re-audited |
+| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub); audit round 5 = FAIL → fix round 5 done (`95f6f7e`), NOT re-audited; eval gate pending (project_update description + new refusal strings) |
 | 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
 | 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only; follow-ups 5a–5e (2026-10-03) | Built, fix round done after an audit FAIL; re-audit 2026-10-03: tests green, 13/13 hand mutants RED, ~190 probes, nothing blocking; follow-ups 5b/5c/5d built (`6dc2358`, `97b051c`, mutants RED), NOT re-audited; the differential vs `main` is now `scripts/validate-shell-gate-diff.ts --run` (operator, VPS, read-only) and must be run there |
 | 6 | Shell mount namespace | PARKED by the operator. Not in this branch. See `postmortem-2026-10-01-host-mount-leak.md`. Do not rebuild it here. |
@@ -104,6 +104,20 @@ each restored exactly; scoped vitest 37 files / 1528 tests green).
   `enabled`, `region`, `host`, `url`, `file` (`otp_enabled`, `nip_region`, `dsn_host`,
   `seed_url`, also `token_url`, `password_file`), which are visible by name and still
   judged by value.
+
+## Fix round 5 (rulings 3c/3d) — commit 95f6f7e, NOT re-audited
+
+- B1 secret-ancestor = last token names a secret VALUE (`isSecretValueName`, user-facts.ts); compound containers (db_credentials, basic_auth, google_oauth, smtp_auth, oauth_config, credenciales_ftp) show host/user/username/client_id/project_id/port, hide password/client_secret; `password:{…}` / `api_keys:[…]` stay hidden; index == display.
+- B2a `user_fact_set` / `project_update`: a whole value equal to a placeholder, `{{SECRET_X}}` or `$SECRET_X` resolves to the stored value, only into a key/leaf that stays hidden (else refused); unknown name or placeholder inside other text → `{error}`.
+- B2b `project_update` deep-merges nested objects; null deletes (`credentials:{ftp:{password:null}}` one key, `{ftp:null}` whole entry). Description first line changed → eval gate.
+- S1 `gemini_upload` scrubs text-MIME bytes (UTF-8, latin1 fallback for text MIME; octet-stream only if valid UTF-8 without NUL) before upload; fails closed.
+- S2/S3/S4 classifier: follower-gated otp/mfa/2fa/seed/authorization (+header), new exclusions, new names/value shapes, meta suffix exempt only when the value has the meta type.
+- S5 `dirtySinceLastGood`: a build failure after a store write fails closed; TTL-only failure still uses last good; recovery logged once.
+- S6 `spawnSandbox` scrubs `opts.input` host-side (strings + numeric leaves), envVars untouched; a2a outbound text scrubbed.
+- Notes: capStableContent and stop-hook scrub before cutting; tool-call args JSON-aware incl. numbers; `SecretScrubUnavailableError` typed, not a breaker failure / provider metric in callProvider; queryClaudeSdk scrub before timer + abort listener; vision/embeddings/jev via `scrubOutboundText`.
+- Every item has a test that went RED under a hand mutant (file restored byte-exact).
+
+Residuals added by fix round 5: binary `gemini_upload` files (PDF/images/audio/video/Office) are sent as read, and the other Gemini tools' model-authored args remain outside the seam; `gemini_upload` octet-stream is treated as text only when valid UTF-8 without NUL, and non-UTF-8 text MIME is decoded latin1 (a multi-byte-encoded secret could slip); `authorization_header` is kept as a credential name; the a2a remote agent's reply is not scrubbed (only our outbound text is).
 
 ## Rulings 1–2 should-fix round + batch_decompose ruling (2026-10-03)
 
@@ -199,8 +213,7 @@ scrub; template values are inserted raw (no URL or JSON encoding); the index can
 up to 60 s stale for out-of-process edits; a secret's name changes when a later entry
 collides with it; by-name use is not bound to the sender or the channel;
 `redactCredentials` rewrites part of the placeholder (cosmetic); persistence written
-before the deploy stays in clear at rest, but is never sent to a model in clear (every
-path to a model passes the inference seam; an operator backfill is optional); a
+before the deploy stays in clear at rest, but is never sent to a model in clear (the model paths listed in the audit round 5 coverage table pass the inference seam; an operator backfill is optional); a
 non-JSON-able object tool result (circular, BigInt) passes the tool seam unscrubbed.
 
 Added after audit round 4: Hindsight's server-side reflect runs over memories stored
@@ -211,9 +224,7 @@ not one still unsaved); a background agent cannot re-save a pasted value already
 stored under another name (it sees the placeholder); on the SDK path a value stored
 mid-turn stays in that turn's context (the next request is scrubbed); with the
 database failing, the last good index misses values stored after it; FTS snippet cuts
-or the critic's `[`/`]` match markers inside a value defeat the substring scrub; the
-Gemini tools (`gemini-research`, `gemini-image`, video/images) send model-authored
-arguments outside the seam; images are pixels.
+or the critic's `[`/`]` match markers inside a value defeat the substring scrub; Gemini: see fix round 5 (text uploads now scrubbed); images are pixels.
 
 ## Open notes
 
