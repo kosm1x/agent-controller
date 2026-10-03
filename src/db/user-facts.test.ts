@@ -277,6 +277,59 @@ describe("user-facts", () => {
         false,
       );
     });
+
+    // Audit round 4 (3d-b): whole-token names the classifier missed.
+    describe("audit R4 3d-b", () => {
+      it.each([
+        "api_keys", "access_keys", "apiKeys", "github_api_keys", "tokens",
+        "github_tokens", "authorization", "authorization_header", "privkey",
+        "appkey", "nip", "bank_nip", "otp", "totp", "totp_secret_code", "mfa",
+        "mfa_code", "2fa", "2fa_code", "seed", "wallet_seed", "mnemonic",
+        "recovery_codes", "backup_codes", "github_backup_code", "dsn",
+        "sentry_dsn",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "keyword", "keywords", "monkeys", "seed_url", "seeds_file",
+        "otp_enabled", "nip_region", "dsn_host", "key_id", "public_key",
+        "ssh_public_key", "public_keys", "max_tokens", "input_tokens",
+        "random_seed", "turkey", "snippet", "dsnap",
+      ])("does not mark the neighbour projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+      });
+
+      it("meta-suffix convention: a credential name ending in a metadata token (enabled/region/host/url/file) is visible by name, still judged by value", () => {
+        for (const k of ["mfa_enabled", "token_url", "password_file", "dsn_region"]) {
+          expect(isCredentialFact("projects", k, "plain value"), k).toBe(false);
+        }
+        expect(
+          isCredentialFact("projects", "token_url", "Bearer " + rnd(40)),
+        ).toBe(true);
+      });
+
+      const pem = (label: string) =>
+        "-----" + "BEGIN " + label + "-----\n" + rnd(64) + "\n-----" + "END " + label + "-----";
+      it.each([
+        "PRIVATE KEY",
+        "RSA PRIVATE KEY",
+        "EC PRIVATE KEY",
+        "OPENSSH PRIVATE KEY",
+        "ENCRYPTED PRIVATE KEY",
+      ])("marks a PEM %s value under a neutral name", (label) => {
+        expect(isCredentialFact("projects", "site_config", pem(label))).toBe(true);
+      });
+
+      it.each(["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"])(
+        "does not mark a PEM %s value",
+        (label) => {
+          expect(isCredentialFact("projects", "site_config", pem(label))).toBe(
+            false,
+          );
+        },
+      );
+    });
   });
 
   describe("getUserFacts", () => {

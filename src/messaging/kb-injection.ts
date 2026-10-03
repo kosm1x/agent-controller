@@ -16,6 +16,7 @@
  */
 
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 import { recordMemoryInjection } from "../observability/prometheus.js";
 import {
   CRM_TOOLS_SCOPE,
@@ -158,6 +159,8 @@ function projectReadmeSection(
     console.log(
       `[${logTag}] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
     );
+    // Ruling 3c (audit round 4 B1-b): scrubbed by the builders, which
+    // scrub the joined block this section lands in.
     return `### Project Context: ${readme.title}\n${capStableContent(readme.path, readme.content, logTag)}`;
   } catch {
     return null; // Project README not found — non-fatal
@@ -357,7 +360,12 @@ export function buildKnowledgeBaseSection(
       );
     }
 
-    const block = `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`;
+    // Ruling 3c (audit round 4 B1-b): scrubbed as one string after the join
+    // (every section, mandatory and per-turn). A scrub failure with no
+    // last-good index lands in the catch: no KB block (fail closed).
+    const block = scrubSecrets(
+      `[JARVIS KNOWLEDGE BASE]\n\n${sections.join("\n\n---\n\n")}`,
+    );
     // Memory tax is per chat TURN: the planner/executor callers (>100 calls
     // a week live) would swamp the histogram (qa R2 W-4).
     if (logTag === "fast-runner") recordMemoryInjection("kb", block.length);
@@ -464,11 +472,15 @@ export function buildKnowledgeBaseSections(
 
     const stable =
       stableSections.length > 0
-        ? `[JARVIS KNOWLEDGE BASE]\n\n${stableSections.join("\n\n---\n\n")}`
+        ? scrubSecrets(
+            `[JARVIS KNOWLEDGE BASE]\n\n${stableSections.join("\n\n---\n\n")}`,
+          )
         : null;
     const variable =
       variableSections.length > 0
-        ? `[JARVIS KNOWLEDGE BASE — task-specific]\n\n${variableSections.join("\n\n---\n\n")}`
+        ? scrubSecrets(
+            `[JARVIS KNOWLEDGE BASE — task-specific]\n\n${variableSections.join("\n\n---\n\n")}`,
+          )
         : null;
 
     // Chat turns only, like buildKnowledgeBaseSection: executor goals would

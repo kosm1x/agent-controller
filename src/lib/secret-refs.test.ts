@@ -27,12 +27,14 @@ vi.mock("./logger.js", () => {
 import {
   TEMPLATE_TOOLS,
   invalidateSecretRefs,
+  resetSecretRefsForTest,
   secretPlaceholder,
   secretRefName,
   factIdentity,
   projectIdentity,
   factSecretDisplay,
   projectSecretDisplay,
+  projectEntryLeaves,
   scrubSecrets,
   resolveSecretRefs,
   secretEnvForCommand,
@@ -348,6 +350,94 @@ describe('ruling 3d — "Just real credentials. Everything must be accessible"',
   });
 });
 
+describe("audit R4 3d-a — a leaf below a credential-named key is secret", () => {
+  const v = (tag: string) => "av-" + tag + "-" + "k".repeat(10);
+  const HOST = ["ftp", "acme-nest", "example", "test"].join(".");
+  const CID = "cid-" + "7".repeat(12);
+  function seedNested() {
+    project("acme-nest", {
+      credentials: {
+        password: { prod: v("prod"), staging: v("staging") },
+        github_token: { value: v("ghval"), scope: "repo" },
+        api_keys: [v("k0"), v("k1")],
+        svc: { tokens: [{ label: v("lbl") }] },
+        oauth: { client_id: CID, client_secret: v("cs") },
+        ftp: { host: HOST, user: "deploy" },
+      },
+    });
+    invalidateSecretRefs();
+  }
+  const hidden: Array<[string[], string]> = [
+    [["password", "prod"], v("prod")],
+    [["password", "staging"], v("staging")],
+    [["github_token", "value"], v("ghval")],
+    [["github_token", "scope"], "repo"],
+    [["api_keys", "0"], v("k0")],
+    [["api_keys", "1"], v("k1")],
+    [["svc", "tokens", "0", "label"], v("lbl")],
+    [["oauth", "client_secret"], v("cs")],
+  ];
+  const visible: Array<[string[], string]> = [
+    [["oauth", "client_id"], CID],
+    [["ftp", "host"], HOST],
+    [["ftp", "user"], "deploy"],
+  ];
+
+  it("object and array children of a secret-named parent are named in the index and scrubbed", () => {
+    seedNested();
+    for (const [path, value] of hidden) {
+      const name = secretRefName(projectIdentity("acme-nest", "credentials", path));
+      expect(name, path.join(".")).toBe(
+        "SECRET_ACME_NEST_" + path.join("_").toUpperCase(),
+      );
+      if (value.length >= 8) {
+        expect(scrubSecrets(`x ${value} y`)).toBe(
+          `x ${secretPlaceholder(name!)} y`,
+        );
+      }
+    }
+  });
+
+  it("projectEntryLeaves (project_get / saved_secrets) hides the same leaves", () => {
+    seedNested();
+    const creds: Record<string, unknown> = {
+      password: { prod: v("prod"), staging: v("staging") },
+      github_token: { value: v("ghval"), scope: "repo" },
+      api_keys: [v("k0"), v("k1")],
+      svc: { tokens: [{ label: v("lbl") }] },
+      oauth: { client_id: CID, client_secret: v("cs") },
+      ftp: { host: HOST, user: "deploy" },
+    };
+    const leaves = Object.entries(creds).flatMap(([k, val]) =>
+      projectEntryLeaves("acme-nest", "credentials", k, val),
+    );
+    const byPath = new Map(leaves.map((l) => [l.path.join("."), l]));
+    for (const [path, value] of hidden) {
+      const leaf = byPath.get(path.join("."))!;
+      expect(leaf.secret, path.join(".")).toBe(true);
+      expect(leaf.display).not.toContain(value);
+      expect(leaf.display).toBe(
+        secretPlaceholder("SECRET_ACME_NEST_" + path.join("_").toUpperCase()),
+      );
+    }
+    for (const [path, value] of visible) {
+      const leaf = byPath.get(path.join("."))!;
+      expect(leaf.secret, path.join(".")).toBe(false);
+      expect(leaf.display).toBe(value);
+    }
+  });
+
+  it("oauth.client_id, ftp.host and ftp.user stay visible: no name, not scrubbed", () => {
+    seedNested();
+    for (const [path, value] of visible) {
+      expect(
+        secretRefName(projectIdentity("acme-nest", "credentials", path)),
+      ).toBeUndefined();
+      expect(scrubSecrets(`x ${value} y`)).toBe(`x ${value} y`);
+    }
+  });
+});
+
 describe("resolveSecretRefs", () => {
   it("http_fetch: {{SECRET_X}} in nested header strings resolves on a COPY; the caller's args keep the reference", () => {
     const args = {
@@ -573,9 +663,30 @@ describe("index build (buildIndex)", () => {
     expect("error" in out && JSON.parse(out.error).error).toContain(N.cookie);
   });
 
-  it("any other database error is rethrown, so the scrub and the tool seam fail closed", async () => {
+  it("audit R4 failure policy: a build error falls back to the last-good index, warns once per episode, and recovers", () => {
+    const warned = () =>
+      logWarn.mock.calls.filter((c) =>
+        String(c[1]).includes("last good index"),
+      ).length;
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
     db.close(); // "The database connection is not open"
     invalidateSecretRefs();
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
+    expect(scrubSecrets(`y ${FTP_PASS}`)).toBe(`y ${secretPlaceholder(N.ftp)}`);
+    expect(warned()).toBe(1);
+    // Recovery: a fresh database builds again and ends the episode…
+    seed();
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
+    // …so the next failure warns again.
+    db.close();
+    invalidateSecretRefs();
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
+    expect(warned()).toBe(2);
+  });
+
+  it("any other database error with NO last-good index is rethrown, so the scrub and the tool seam fail closed", async () => {
+    db.close(); // "The database connection is not open"
+    resetSecretRefsForTest();
     expect(() => scrubSecrets(`x ${COOKIE}`)).toThrow(/not open/);
     const reg = new ToolRegistry();
     const execute = vi.fn(async () => `out ${COOKIE}`);
@@ -686,6 +797,29 @@ describe("the tool seam (ToolRegistry.executeDirect)", () => {
       rows: [{ k: secretPlaceholder(N.tok) }],
       n: 1,
     });
+  });
+
+  it("audit R4 S4: when the scrubbed JSON no longer parses, the model gets the scrubbed TEXT, never the original object", async () => {
+    // A stored value that is itself a JSON fragment: its raw form spans the
+    // serialization's punctuation, so replacing it breaks the JSON.
+    const FRAG = '1,"' + "q".repeat(8);
+    fact("projects", "acme_frag_password", FRAG);
+    invalidateSecretRefs();
+    const reg = new ToolRegistry();
+    const t: Tool = {
+      ...echoTool("mcp__demo__frag"),
+      execute: (async () => ({
+        a: 1,
+        ["q".repeat(8)]: 2,
+      })) as unknown as Tool["execute"],
+    };
+    reg.register(t);
+    const out = (await reg.execute("mcp__demo__frag", {})) as unknown;
+    expect(typeof out).toBe("string");
+    expect(out as string).not.toContain(FRAG);
+    expect(out as string).toContain(
+      secretPlaceholder("SECRET_PROJECTS_ACME_FRAG_PASSWORD"),
+    );
   });
 
   it("scrubs a thrown error's message", async () => {

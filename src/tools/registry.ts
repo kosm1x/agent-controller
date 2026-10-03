@@ -130,12 +130,22 @@ function isErrorResult(result: unknown): boolean {
 function scrubResult(result: unknown): string {
   if (typeof result === "string") return scrubSecrets(result);
   if (result === null || typeof result !== "object") return result as string;
+  let json: string | undefined;
   try {
-    const json = JSON.stringify(result);
-    const clean = scrubSecrets(json);
-    return (clean === json ? result : JSON.parse(clean)) as string;
+    json = JSON.stringify(result);
   } catch {
     return result as unknown as string; // circular / BigInt: not JSON-able
+  }
+  if (typeof json !== "string") return result as unknown as string;
+  // A scrub failure (no index, no last-good) propagates: fail closed.
+  const clean = scrubSecrets(json);
+  if (clean === json) return result as unknown as string;
+  try {
+    return JSON.parse(clean) as string;
+  } catch {
+    // Audit round 4 S4: never fall back to the original object — the
+    // scrubbed JSON text is what the model gets.
+    return clean;
   }
 }
 

@@ -26,6 +26,13 @@ vi.mock("../db/jarvis-fs.js", () => ({
 }));
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
 
+// Ruling 3c (audit round 4 B1-b): one synthetic stored value stands in for
+// the secret store.
+const KB_SYN = vi.hoisted(() => "kbs-" + "t".repeat(14));
+vi.mock("../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => t.replaceAll(KB_SYN, "[oculto]"),
+}));
+
 vi.mock("../observability/prometheus.js", () => ({
   recordMemoryInjection: vi.fn(),
 }));
@@ -946,5 +953,58 @@ describe("buildKnowledgeBaseSection — conditional rows reach heavy/swarm goals
     expect(kb).not.toContain("index.md");
     expect(kb).not.toContain("SOP-BODY");
     expect(kb).not.toContain("preview-removed");
+  });
+});
+
+describe("audit R4 B1-b: KB sections carry no stored value", () => {
+  const readme = {
+    id: "r",
+    path: "projects/vlmp/README.md",
+    title: "VLMP",
+    content: `deploy pass ${KB_SYN}`,
+    tags: "[]",
+    qualifier: "reference",
+    condition: null,
+    priority: 50,
+    related_to: "[]",
+    created_at: "",
+    updated_at: "",
+    user_edit_time: null,
+  };
+  const rows = [
+    { path: "enforce.md", title: "Enforce", content: `MUST ${KB_SYN}`, qualifier: "enforce", condition: null, priority: 100 },
+    { path: "always.md", title: "Always", content: `ALW ${KB_SYN}`, qualifier: "always-read", condition: null, priority: 50 },
+    { path: "coding-sop.md", title: "Coding SOP", content: `SOP ${KB_SYN}`, qualifier: "conditional", condition: "coding", priority: 50 },
+  ];
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      rows.filter((r) => (quals as string[]).includes(r.qualifier)) as never,
+    );
+    vi.mocked(getFile).mockReset();
+    vi.mocked(getFile).mockImplementation(((p: string) =>
+      p === readme.path ? readme : undefined) as never);
+  });
+
+  it("buildKnowledgeBaseSection: mandatory, per-turn and README sections", () => {
+    const all = buildKnowledgeBaseSection(["shell_exec"], false, "tell me about vlmp");
+    expect(all).toContain("MUST [oculto]");
+    expect(all).toContain("SOP [oculto]");
+    expect(all).not.toContain(KB_SYN);
+    const enforce = buildKnowledgeBaseSection([], true, "tell me about vlmp");
+    expect(enforce).toContain("deploy pass [oculto]");
+    expect(enforce).not.toContain(KB_SYN);
+  });
+
+  it("buildKnowledgeBaseSections: stable and variable", () => {
+    const { stable, variable } = buildKnowledgeBaseSections(
+      ["shell_exec"],
+      "tell me about vlmp",
+    );
+    expect(stable).toContain("ALW [oculto]");
+    expect(stable).not.toContain(KB_SYN);
+    expect(variable).toContain("SOP [oculto]");
+    expect(variable).toContain("deploy pass [oculto]");
+    expect(variable).not.toContain(KB_SYN);
   });
 });

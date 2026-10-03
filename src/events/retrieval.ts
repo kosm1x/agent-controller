@@ -277,7 +277,8 @@ export function resolveEpisodic(
         kind,
         ref,
         found: true,
-        title: `[${row.status}] ${row.title}`,
+        // Ruling 3c (audit round 4 S3): the title is scrubbed like the snippet.
+        title: `[${row.status}] ${scrubSecrets(row.title)}`,
         snippet: snippet(row.description),
         timestamp: row.created_at,
       };
@@ -309,7 +310,7 @@ export function resolveEpisodic(
         kind,
         ref,
         found: true,
-        title: row.title,
+        title: scrubSecrets(row.title),
         snippet: snippet(row.content),
         timestamp: row.updated_at,
       };

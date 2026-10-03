@@ -7,6 +7,7 @@
  */
 
 import { getConfig } from "../config.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 const DEFAULT_PROMPT =
   "Describe esta imagen en detalle. Incluye texto visible, objetos, personas, contexto y cualquier información relevante.";
@@ -89,7 +90,8 @@ export async function describeImage(
         {
           role: "user",
           content: [
-            { type: "text", text: prompt || DEFAULT_PROMPT },
+            // Ruling 3c (audit round 4): outbound model text is scrubbed.
+            { type: "text", text: scrubSecrets(prompt || DEFAULT_PROMPT) },
             { type: "image_url", image_url: { url: imageBase64Url } },
           ],
         },

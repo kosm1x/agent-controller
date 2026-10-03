@@ -32,6 +32,7 @@ import {
   DECOMPOSE_SYSTEM_PROMPT,
 } from "./decompose.js";
 import { strategicVoiceSystemPrompt } from "./strategic-voice.js";
+import { invalidateSecretRefs } from "../secret-refs.js";
 import type { Decomposition, DecompositionAngle } from "./types.js";
 
 vi.mock("../../inference/claude-sdk.js", async () => {
@@ -622,5 +623,41 @@ describe("saveDecomposition — append-only ADR", () => {
     }
     // the traversal target was never created
     expect(existsSync(join(baseDir, "..", "evil"))).toBe(false);
+  });
+});
+
+describe("audit R4 S2: KB and day-log excerpts carry no stored value", () => {
+  // Synthetic, assembled at runtime (public repo).
+  const SEC = "pw-" + "z".repeat(14);
+  beforeEach(() => {
+    initDatabase(":memory:");
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "acme_ftp_password", SEC);
+    const kb = db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    );
+    kb.run("k1", "projects/pipesong/README.md", "PipeSong", `pipesong ftp ${SEC} ok`);
+    kb.run("d1", "logs/day-logs/2026-05-20.md", "day", `pipesong deploy ${SEC} done`);
+    invalidateSecretRefs();
+  });
+  afterEach(() => {
+    closeDatabase();
+    invalidateSecretRefs();
+  });
+
+  it("retrieveKbForQuery excerpts", () => {
+    const refs = retrieveKbForQuery("pipesong", { db: getDatabase(), nowIso: NOW });
+    const kb = refs.find((r) => r.id === "projects/pipesong/README.md")!;
+    expect(kb.excerpt).toContain("[oculto");
+    expect(JSON.stringify(refs)).not.toContain(SEC);
+  });
+
+  it("retrieveRecentDayLogs excerpts", () => {
+    const refs = retrieveRecentDayLogs("pipesong", { db: getDatabase(), nowIso: NOW });
+    expect(refs).toHaveLength(1);
+    expect(refs[0].excerpt).toContain("[oculto");
+    expect(refs[0].excerpt).not.toContain(SEC);
   });
 });

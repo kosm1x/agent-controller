@@ -16,7 +16,15 @@ vi.mock("../db/jarvis-fs.js", () => ({
 
 vi.mock("../inference/adapter.js", () => ({ infer: vi.fn() }));
 
+// Ruling 3c (audit round 4 S1): one synthetic stored value stands in for the
+// secret store.
+const EP_SYN = vi.hoisted(() => "eps-" + "t".repeat(14));
+vi.mock("../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => t.replaceAll(EP_SYN, "[oculto]"),
+}));
+
 import { findRelevantPatterns, extractPattern } from "./execution-patterns.js";
+import { infer } from "../inference/adapter.js";
 
 describe("findRelevantPatterns", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -169,5 +177,34 @@ describe("extractPattern", () => {
     });
     expect(mocks.listFiles).not.toHaveBeenCalled();
     expect(mocks.upsertFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("audit R4 S1: extractPattern never sends or stores a stored value", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("request, result and title are scrubbed before the lesson call and the lesson file", async () => {
+    mocks.listFiles.mockReturnValue([]);
+    vi.mocked(infer).mockResolvedValue({
+      content: "coding: use the stored credential by name",
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+    await extractPattern({
+      taskId: "task-r4-s1",
+      title: `deploy with ${EP_SYN}`,
+      toolsCalled: ["shell_exec", "http_fetch"],
+      scopeGroups: ["coding"],
+      userMessage: `use the password ${EP_SYN} to log in`,
+      result: `logged in with ${EP_SYN}. ` + "x".repeat(120),
+    });
+    const sent = JSON.stringify(vi.mocked(infer).mock.calls);
+    expect(sent).toContain("[oculto]");
+    expect(sent).not.toContain(EP_SYN);
+    expect(mocks.upsertFile).toHaveBeenCalledTimes(1);
+    const stored = JSON.stringify(mocks.upsertFile.mock.calls);
+    expect(stored).toContain("deploy with [oculto]");
+    expect(stored).not.toContain(EP_SYN);
   });
 });

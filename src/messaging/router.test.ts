@@ -211,6 +211,7 @@ import {
   threadImageLive,
   _testSeedThread,
   _testPushToThread,
+  _testThreadTurns,
   _testThreadEntries,
   holdScopeAsks,
   formatConfirmationResult,
@@ -776,6 +777,24 @@ describe("MessageRouter", () => {
       const entries = _testThreadEntries(tk);
       expect(entries[0]!.text).toBe("User: la clave es [oculto]\nJarvis: ok");
       expect(JSON.stringify(entries)).not.toContain(SCRUB_SYN);
+    });
+
+    it("audit R4 B1-a: thread turns are scrubbed on read (an entry pushed before its value was stored)", () => {
+      const tk = "telegram-turns-r4";
+      const later = "lat-" + "k".repeat(14);
+      _testSeedThread(tk, [
+        { text: `User: guarda ${later}\nJarvis: guardado ${later}` },
+      ]);
+      storedSecrets.add(later); // stored after the entry was pushed
+      try {
+        const turns = _testThreadTurns(tk);
+        expect(turns).toEqual([
+          { role: "user", content: "guarda [oculto]" },
+          { role: "assistant", content: "guardado [oculto]" },
+        ]);
+      } finally {
+        storedSecrets.clear();
+      }
     });
 
     it("audit R3 S3: the day-log lines and the stored chat task title/description carry no stored value", async () => {

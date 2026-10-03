@@ -1164,6 +1164,11 @@ export function _testThreadEntries(
   return [...(conversationThreads.get(channel) ?? [])];
 }
 
+/** Test-only: the turns the runner gets for a thread (getThreadTurns). */
+export function _testThreadTurns(channel: string): ConversationTurn[] {
+  return getThreadTurns(channel);
+}
+
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
 
@@ -1192,7 +1197,10 @@ function getThreadTurns(channel: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   let poisonedCount = 0;
   for (const [i, entry] of thread.entries()) {
-    const jarvisIdx = entry.text.indexOf("\nJarvis: ");
+    // Ruling 3c (audit round 4 B1-a): scrub on read — an entry pushed
+    // before its value was stored (the turn that saved it) still holds it.
+    const text = scrubSecrets(entry.text);
+    const jarvisIdx = text.indexOf("\nJarvis: ");
     if (jarvisIdx === -1) continue;
 
     // Phase 4.2: only the last entry's image survives into this turn.
@@ -1200,8 +1208,8 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       ? entry.imageUrl
       : undefined;
 
-    const userText = entry.text.slice("User: ".length, jarvisIdx).trim();
-    const assistantText = entry.text
+    const userText = text.slice("User: ".length, jarvisIdx).trim();
+    const assistantText = text
       .slice(jarvisIdx + "\nJarvis: ".length)
       .trim();
 

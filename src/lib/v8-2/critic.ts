@@ -37,6 +37,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve, relative, isAbsolute } from "node:path";
 import { z } from "zod";
+import { scrubSecrets } from "../secret-refs.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
 import {
   queryClaudeSdk,
@@ -433,7 +434,10 @@ export function runRecallCheck(db: Database.Database, q: string): string {
     if (rows.length === 0) {
       return recallAbsenceProbe(db, q);
     }
-    return `top ${rows.length} (lexical bm25, lower=closer): ${JSON.stringify(rows)}`;
+    // Ruling 3c (audit round 4 S2): KB snippets never carry a stored value.
+    return scrubSecrets(
+      `top ${rows.length} (lexical bm25, lower=closer): ${JSON.stringify(rows)}`,
+    );
   } catch (e) {
     return `recall_check unavailable (lexical jarvis_files_fts): ${errMsg(e)}`;
   }

@@ -56,7 +56,7 @@ import {
   parseAnthropicStream,
   type AnthropicResponse,
 } from "./anthropic.js";
-import { infer } from "./adapter.js";
+import { infer, scrubOutboundMessages } from "./adapter.js";
 import type {
   ChatMessage,
   ToolDefinition,
@@ -347,6 +347,12 @@ async function callProvider(
   onTextChunk?: OnTextChunk,
   externalSignal?: AbortSignal,
 ): Promise<InferenceResponse> {
+  // Outbound secret scrub (ruling 3c, audit round 4): the ONE choke point of
+  // the OpenAI-compat path — every inferViaOpenAi attempt (and so every
+  // inferWithToolsViaOpenAi round, compaction summary and wrap-up, which all
+  // go through infer()) reaches the wire only through here. Shared scrub in
+  // adapter.ts.
+  request = { ...request, messages: scrubOutboundMessages(request.messages) };
   // Dispatch to Anthropic path when model is claude-*
   if (isAnthropicProvider(provider)) {
     return callAnthropicProvider(

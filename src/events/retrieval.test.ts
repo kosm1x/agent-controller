@@ -300,6 +300,31 @@ describe("resolveEpisodic", () => {
     invalidateSecretRefs();
   });
 
+  it("audit R4 S3: the title of a task and a memory_item row is scrubbed too", async () => {
+    const { invalidateSecretRefs, secretPlaceholder } = await import(
+      "../lib/secret-refs.js"
+    );
+    const value = "pw-" + "z".repeat(14);
+    const ph = secretPlaceholder("SECRET_PROJECTS_DEMO_FTP_PASSWORD");
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "demo_ftp_password", value);
+    invalidateSecretRefs();
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status) VALUES (?, ?, ?, ?)",
+    ).run("t-11", `login ${value}`, "d", "running");
+    db.prepare(
+      "INSERT INTO jarvis_files (id, path, title, content) VALUES (?, ?, ?, ?)",
+    ).run("m-11", "notes/ftp.md", `ftp ${value}`, "body");
+    try {
+      expect(resolveEpisodic("task", "t-11").title).toBe(`[running] login ${ph}`);
+      expect(resolveEpisodic("memory_item", "notes/ftp.md").title).toBe(`ftp ${ph}`);
+    } finally {
+      invalidateSecretRefs();
+    }
+  });
+
   it("resolves every episodic kind", () => {
     const db = getDatabase();
     db.prepare(

@@ -22,8 +22,10 @@
 
 import { createHash } from "node:crypto";
 import { getDatabase } from "../db/index.js";
+import { createLogger } from "./logger.js";
 import {
   isCredentialFact,
+  isCredentialName,
   CREDENTIAL_FACT_PLACEHOLDER,
 } from "../db/user-facts.js";
 
@@ -112,6 +114,24 @@ export function isProjectSecret(key: string, value: string): boolean {
   return isCredentialFact("projects", key, value);
 }
 
+/**
+ * A scheme/container name that names no secret by itself: its children are
+ * judged by their own keys (`oauth.client_id`, `auth.user`, a nested
+ * `credentials.user` stay visible; ruling 3d — the field name
+ * "credentials" is not itself a reason).
+ */
+const CONTAINER_NAME_RE = /^(?:o?auth|credentials?|credencial(?:es)?|creds?)$/i;
+
+/**
+ * Audit round 4 (3d-a): whether every leaf below a key with this name is a
+ * secret — the key is a credential name (`password: {prod, staging}`,
+ * `github_token: {value, scope}`, `api_keys: [v]`) and not a mere container.
+ * The meta-suffix exemption applies (`api_key_path: {…}` is not).
+ */
+export function isSecretAncestorName(key: string): boolean {
+  return !CONTAINER_NAME_RE.test(key.trim()) && isCredentialName(key);
+}
+
 interface Entry {
   identity: string;
   base: string;
@@ -136,23 +156,33 @@ function projectEntries(
   path: string[],
   key: string,
   out: Entry[],
+  underSecret = false,
 ): void {
   if (value === null || value === undefined || value === "") return;
   if (Array.isArray(value)) {
     value.forEach((v, i) =>
-      projectEntries(slug, field, v, [...path, String(i)], key, out),
+      projectEntries(slug, field, v, [...path, String(i)], key, out, underSecret),
     );
     return;
   }
   if (typeof value === "object") {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      projectEntries(slug, field, v, [...path, k], k, out);
+      projectEntries(
+        slug,
+        field,
+        v,
+        [...path, k],
+        k,
+        out,
+        underSecret || isSecretAncestorName(k),
+      );
     }
     return;
   }
   if (typeof value !== "string" && typeof value !== "number") return;
   const str = String(value);
-  if (!isProjectSecret(key, str)) return;
+  // Same rule as projectEntryLeaves (index and display stay identical).
+  if (!underSecret && !isProjectSecret(key, str)) return;
   const prefix = field === "credentials" ? [slug] : [slug, field];
   out.push({
     identity: projectIdentity(slug, field, path),
@@ -238,9 +268,53 @@ const EMPTY: SecretIndex = {
   scrub: [],
 };
 
+const log = createLogger("secret-refs");
+
+/**
+ * The last index built from the stores without an error. Survives `invalidateSecretRefs` on purpose —
+ * it is the fallback while the database errors.
+ */
+let lastGood: SecretIndex | null = null;
+/** True while builds are failing; the warn is logged once per failure episode. */
+let failing = false;
+
+/**
+ * Failure policy (audit round 4): a build error other than "no such table"
+ * falls back to the last successfully built index when one exists (logged
+ * once per failure episode; the next call retries the build). With no
+ * last-good index the error is rethrown, so every consumer — the tool seam,
+ * the inference seam, the writers — fails closed.
+ */
 function index(): SecretIndex {
-  if (!cache || Date.now() - cache.at > INDEX_TTL_MS) cache = buildIndex();
-  return cache ?? EMPTY;
+  if (cache && Date.now() - cache.at <= INDEX_TTL_MS) return cache;
+  let built: SecretIndex | null;
+  try {
+    built = buildIndex();
+  } catch (err) {
+    if (!lastGood) throw err;
+    if (!failing) {
+      failing = true;
+      log.warn(
+        { err: String(err) },
+        "secret index build failed; scrubbing with the last good index",
+      );
+    }
+    return lastGood;
+  }
+  failing = false;
+  // No database / no store tables: nothing cached (re-read next call, as
+  // before), and not a fallback either — an index that read nothing must
+  // never stand in for a database that errors.
+  cache = built;
+  if (built) lastGood = built;
+  return built ?? EMPTY;
+}
+
+/** Test-only: forget the cached AND the last-good index. */
+export function resetSecretRefsForTest(): void {
+  cache = null;
+  lastGood = null;
+  failing = false;
 }
 
 /** Reference name of a stored credential, or undefined. */
@@ -296,28 +370,38 @@ export function projectEntryLeaves(
   value: unknown,
 ): Array<{ path: string[]; secret: boolean; display: string }> {
   const out: Array<{ path: string[]; secret: boolean; display: string }> = [];
-  const walk = (v: unknown, path: string[], leafKey: string): void => {
+  // Audit round 4 (3d-a): a leaf is secret when its own key/value says so OR
+  // any ancestor key is a credential name (isSecretAncestorName) — the same
+  // rule as the index's projectEntries.
+  const walk = (
+    v: unknown,
+    path: string[],
+    leafKey: string,
+    underSecret: boolean,
+  ): void => {
     if (v === null || v === undefined || v === "") return;
     if (Array.isArray(v)) {
-      v.forEach((x, i) => walk(x, [...path, String(i)], leafKey));
+      v.forEach((x, i) => walk(x, [...path, String(i)], leafKey, underSecret));
       return;
     }
     if (typeof v === "object") {
       for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-        walk(x, [...path, k], k);
+        walk(x, [...path, k], k, underSecret || isSecretAncestorName(k));
       }
       return;
     }
     if (typeof v !== "string" && typeof v !== "number") return;
     const str = String(v);
-    const secret = isProjectSecret(leafKey, str);
+    const secret = underSecret || isProjectSecret(leafKey, str);
     out.push({
       path,
       secret,
       display: displayFor(projectIdentity(slug, field, path), secret, str),
     });
   };
-  walk(value, [key], key);
+  // The entry key itself is an ancestor of every leaf below an object/array.
+  const nested = value !== null && typeof value === "object";
+  walk(value, [key], key, nested && isSecretAncestorName(key));
   return out;
 }
 

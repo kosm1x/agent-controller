@@ -33,17 +33,26 @@ export interface UserFact {
  * / li_at are session cookies stored under their own names; `s2` and
  * `session` count only as the WHOLE name (ruling 3d: a project credential
  * keyed `s2` / `session` is a cookie; `session_notes` is not).
+ * Audit round 4 (3d-b), all whole tokens: plural `keys` / `tokens` as the
+ * last token (`api_keys`, `access_keys`, `apiKeys`, `tokens`; not after the
+ * `key` exclusions, and `tokens` not after a quantity word — `max_tokens`);
+ * `authorization`, `privkey`, `appkey`; `nip` (Spanish PIN), `otp`, `totp`,
+ * `mfa`, `2fa`; `seed` (not `random_seed`; `seeds` is another token),
+ * `mnemonic`, `recovery_codes`, `backup_codes`, `dsn`. Neighbours stay
+ * visible by token (`keyword`, `monkeys`, `seeds_file`) or by the meta
+ * suffix (`otp_enabled`, `nip_region`, `dsn_host`, `seed_url`).
  */
 const CREDENTIAL_NAME_RE =
-  / (?:api ?key|private key|access key|ssh key|(?<!(?:public|primary|foreign|sort|partition|cache|hot|short) )key(?= $)|token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )|secrets?|passwords?|pass|pw|passwd|pwd|passphrase|cookies?|o?auth|credentials?|bearer|jwt|(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )|llaves?|contrasenas?|credencial(?:es)?|secretos?|pin|sessionid|session id|sid(?= $)|phpsessid|li at|ct0|swid|espn s2|(?<=^ )(?:s2|session)(?= $)) /;
+  / (?:api ?keys?|private keys?|access keys?|ssh keys?|(?<!(?:public|primary|foreign|sort|partition|cache|hot|short) )keys?(?= $)|(?<!(?:max|min|input|output|total|prompt|completion|num|cache|cached|reasoning) )tokens(?= $)|authorization|privkey|appkey|nip|otp|totp|mfa|2fa|(?<!random )seed|mnemonic|recovery codes?|backup codes?|dsn|token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )|secrets?|passwords?|pass|pw|passwd|pwd|passphrase|cookies?|o?auth|credentials?|bearer|jwt|(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )|llaves?|contrasenas?|credencial(?:es)?|secretos?|pin|sessionid|session id|sid(?= $)|phpsessid|li at|ct0|swid|espn s2|(?<=^ )(?:s2|session)(?= $)) /;
 
 /**
  * A name whose LAST token is metadata ABOUT a credential (`api_key_path`,
- * `auth_method`, `credential_rotation_date`) is not one by name; its value is
- * still judged by the value rules.
+ * `auth_method`, `credential_rotation_date`; audit round 4 added `enabled`,
+ * `region`, `host`, `url`, `file` — `otp_enabled`, `dsn_host`, `seed_url`)
+ * is not one by name; its value is still judged by the value rules.
  */
 const CREDENTIAL_META_LAST_RE =
-  / (?:path|method|provider|date|issuer|type|expiry|expires|rotation) $/;
+  / (?:path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|file) $/;
 
 /**
  * Credential value shapes the shared redactCredentials table does not cover,
@@ -62,6 +71,9 @@ const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,
   /(?:\bapi[ _-]?key|\btoken|\bpassword|\bcontrase(?:ñ|n\u0303?)a|\bclave)\s*[:=]\s*\S{6,}/i,
   /"(?:token|auth_token|password)"\s*:\s*"[^"]+"/i,
+  // PEM private key of any type (RSA, EC, OPENSSH, ENCRYPTED, PKCS#8);
+  // `-----BEGIN PUBLIC KEY-----` does not match.
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/,
 ];
 
 function nameTokens(name: string): string {
@@ -75,7 +87,8 @@ function nameTokens(name: string): string {
   return ` ${tokens.join(" ")} `;
 }
 
-function isCredentialName(name: string): boolean {
+/** Whether a key / category name names a credential (meta suffixes exempt). */
+export function isCredentialName(name: string): boolean {
   const tokens = nameTokens(name);
   return (
     !CREDENTIAL_META_LAST_RE.test(tokens) && CREDENTIAL_NAME_RE.test(tokens)

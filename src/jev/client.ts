@@ -7,6 +7,7 @@
  * a caller can never mistake silence for a score.
  */
 
+import { scrubSecrets } from "../lib/secret-refs.js";
 import {
   sensitiveReasons,
   type JevQuestion,
@@ -50,7 +51,10 @@ export async function askJev(
       Authorization: `Bearer ${jevKey()}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ state, model: MODEL, questions }),
+    // Ruling 3c (audit round 4): stored credential values never leave —
+    // scrubbed on the JSON text (the scrub covers JSON-escaped forms and the
+    // placeholder is JSON-safe).
+    body: scrubSecrets(JSON.stringify({ state, model: MODEL, questions })),
     signal: AbortSignal.timeout(deadlineMs),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

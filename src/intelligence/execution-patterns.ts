@@ -11,6 +11,7 @@
 import { upsertFile, listFiles, getFile } from "../db/jarvis-fs.js";
 import { infer } from "../inference/adapter.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 const PATTERNS_PREFIX = "knowledge/execution-patterns/";
 const MAX_PATTERNS = 50; // cap to prevent bloat
@@ -30,6 +31,19 @@ export async function extractPattern(opts: {
   userMessage: string;
   result: string;
 }): Promise<void> {
+  // Ruling 3c (audit round 4 S1): a lesson file never stores a value — the
+  // request, result and title are scrubbed before anything is built from
+  // them. No secret index (and no last-good) → no lesson (fail closed).
+  try {
+    opts = {
+      ...opts,
+      title: scrubSecrets(opts.title),
+      userMessage: scrubSecrets(opts.userMessage),
+      result: scrubSecrets(opts.result),
+    };
+  } catch {
+    return;
+  }
   // Only extract from tasks with meaningful tool usage
   if (opts.toolsCalled.length < 2) return;
   if (opts.result.length < 100) return;

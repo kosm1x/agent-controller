@@ -16,6 +16,7 @@
  */
 
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -129,9 +130,21 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
     return texts.map(() => []);
   }
 
+  // Ruling 3c (audit round 4): the text leaves for a model API — stored
+  // credential values are replaced by their placeholders first (before the
+  // cut, so a cut cannot split a value). No index and no last-good index →
+  // nothing is sent (this function never throws).
+  let clean: string[];
+  try {
+    clean = texts.map((t) => scrubSecrets(t));
+  } catch (err) {
+    console.warn("[embeddings] secret index unavailable, not sent:", errMsg(err));
+    return texts.map(() => []);
+  }
+
   // Truncate long texts to ~8K tokens (~32K chars) to avoid API errors
   const MAX_CHARS = 32_000;
-  const truncated = texts.map((t) =>
+  const truncated = clean.map((t) =>
     t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t,
   );
 
