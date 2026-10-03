@@ -889,6 +889,27 @@ export async function queryClaudeSdk(opts: {
     ...(toolSearchEnabled() ? ["ToolSearch"] : []),
   ];
 
+  // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
+  // server rejects JSON containing unpaired surrogates with a 400 error
+  // ("no low surrogate in string"). This catches any upstream slice/substring
+  // truncation that cut a non-BMP char (emoji, etc.) mid-pair. One-pass, zero
+  // copy for clean strings — only allocates when repair is needed.
+  //
+  // Outbound secret scrub (ruling 3c, audit round 4): EVERY SDK call —
+  // queryClaudeSdkAsInfer / AsInferWithTools (infer, inferWithTools), the
+  // tiered and Opus→Sonnet fallback wrappers, and every direct caller — sends
+  // its text only through this prompt + systemPrompt pair, so stored
+  // credential values are replaced by their placeholders here. Sessions are
+  // never resumed (persistSession: false), so no history reaches the model
+  // except what passes this point; in-turn tool results pass wrapTool's scrub.
+  // Throws (fail closed) only with no current index. Runs BEFORE the abort
+  // listener and the 15-minute timer are armed (audit round 5), so a throw
+  // leaves no timer or listener behind and nothing reaches the SDK.
+  const safePromptText = sanitizeSurrogates(scrubOutboundText(opts.prompt));
+  const safeSystemPromptText = sanitizeSurrogates(
+    scrubOutboundText(opts.systemPrompt),
+  );
+
   const abortController = new AbortController();
   if (opts.abortSignal) {
     // A signal aborted BEFORE this point never fires the listener; for an
@@ -916,25 +937,6 @@ export async function queryClaudeSdk(opts: {
         timedOut = true;
         abortController.abort();
       }, SDK_TIMEOUT_MS);
-
-  // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
-  // server rejects JSON containing unpaired surrogates with a 400 error
-  // ("no low surrogate in string"). This catches any upstream slice/substring
-  // truncation that cut a non-BMP char (emoji, etc.) mid-pair. One-pass, zero
-  // copy for clean strings — only allocates when repair is needed.
-  //
-  // Outbound secret scrub (ruling 3c, audit round 4): EVERY SDK call —
-  // queryClaudeSdkAsInfer / AsInferWithTools (infer, inferWithTools), the
-  // tiered and Opus→Sonnet fallback wrappers, and every direct caller — sends
-  // its text only through this prompt + systemPrompt pair, so stored
-  // credential values are replaced by their placeholders here. Sessions are
-  // never resumed (persistSession: false), so no history reaches the model
-  // except what passes this point; in-turn tool results pass wrapTool's scrub.
-  // Throws (fail closed) only with no buildable and no last-good index.
-  const safePromptText = sanitizeSurrogates(scrubOutboundText(opts.prompt));
-  const safeSystemPromptText = sanitizeSurrogates(
-    scrubOutboundText(opts.systemPrompt),
-  );
 
   // cache_diag (2026-05-22): diagnostic for grouping consecutive query() calls
   // by scope to attribute cache misses (same/different promptHash × toolsHash —

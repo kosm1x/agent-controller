@@ -16,7 +16,6 @@ import { getConfig } from "../config.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { inferViaOpenAi, inferWithToolsViaOpenAi } from "./adapter-openai.js";
 import { errMsg } from "../lib/err-msg.js";
-import { scrubSecrets } from "../lib/secret-refs.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,57 +170,16 @@ export interface ToolExecutor {
 export type OnTextChunk = (text: string) => void;
 
 // ---------------------------------------------------------------------------
-// Outbound secret scrub (ruling 3c, audit round 4 — the structural closer)
+// Outbound secret scrub (ruling 3c) — implementation in outbound-scrub.ts
+// (a leaf module, so vision / embeddings / Jev need not load the adapter).
 // ---------------------------------------------------------------------------
 
-/**
- * Every stored credential value replaced by its by-name placeholder
- * (`scrubSecrets`). The ONE outbound scrub for model-bound text; applied at
- * the two provider choke points — `queryClaudeSdk` (claude-sdk.ts: prompt,
- * systemPrompt, tool results, Stop-hook reasons) and `callProvider`
- * (adapter-openai.ts: every message) — so no caller can bypass it.
- *
- * A value not yet stored (a credential pasted in the current turn) is not in
- * the index and passes, so the model can still save it. Throws only when the
- * index cannot be built and no last-good index exists (fail closed).
- */
-export function scrubOutboundText(text: string): string {
-  return scrubSecrets(text);
-}
-
-/**
- * `scrubOutboundText` over every text part of every message (all roles,
- * string content, `text` parts of array content, tool-call arguments).
- * Returns copies; the caller's array and messages are never mutated.
- */
-export function scrubOutboundMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((m) => {
-    let content = m.content;
-    if (typeof content === "string") {
-      content = scrubSecrets(content);
-    } else if (Array.isArray(content)) {
-      content = content.map((part) =>
-        part.type === "text" && typeof part.text === "string"
-          ? { ...part, text: scrubSecrets(part.text) }
-          : part,
-      );
-    }
-    const out: ChatMessage = { ...m, content };
-    if (m.tool_calls) {
-      out.tool_calls = m.tool_calls.map((tc) => ({
-        ...tc,
-        function: {
-          ...tc.function,
-          arguments:
-            typeof tc.function.arguments === "string"
-              ? scrubSecrets(tc.function.arguments)
-              : tc.function.arguments,
-        },
-      }));
-    }
-    return out;
-  });
-}
+export {
+  scrubOutboundText,
+  scrubOutboundMessages,
+  scrubOutboundToolArguments,
+  SecretScrubUnavailableError,
+} from "./outbound-scrub.js";
 
 // ---------------------------------------------------------------------------
 // OpenAI-compat provider machinery — moved to adapter-openai.ts (Phase 4.2).

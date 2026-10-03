@@ -301,7 +301,7 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     });
   });
 
-  it("allows blanking an existing credential entry ('' or null)", async () => {
+  it("allows blanking an existing credential entry (''), and null DELETES it (audit R5 B2b)", async () => {
     seedLegacy();
     const out = await projectUpdateTool.execute({
       slug: "legacy",
@@ -311,7 +311,8 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     expect(out).not.toContain("saved_secrets");
     const after = getProject("legacy")!;
     expect(after.credentials.wp_app_password).toBe("");
-    expect(after.credentials.acme_api_key).toBeNull();
+    expect("acme_api_key" in after.credentials).toBe(false);
+    expect(after.credentials.wp_user).toBe("editor");
   });
 
   it("a call without credentials returns the pre-ruling result (no saved_secrets)", async () => {
@@ -344,6 +345,101 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
   });
 });
 
+describe("audit R5 B2 — edits never destroy a stored credential", () => {
+  const FTP_PASS = "fp-" + "k".repeat(14);
+  function seedFtp() {
+    createProject("acme-ftp", "Acme FTP", {
+      credentials: {
+        ftp: { host: "ftp.old.example.com", user: "deploy", password: FTP_PASS },
+        wp_app_password: FAKE_APP_PASSWORD,
+      },
+      urls: { site: "https://acme.example.com", extra: { docs: "https://docs.example.com" } },
+      config: { build: { node: "20", flags: ["a"] } },
+    });
+  }
+
+  it("changing ftp.host keeps ftp.user and ftp.password (nested objects are deep-merged)", async () => {
+    seedFtp();
+    const out = await projectUpdateTool.execute({
+      slug: "acme-ftp",
+      credentials: { ftp: { host: "ftp.new.example.com" } },
+    });
+    expect(JSON.parse(out).action).toBe("updated");
+    const p = getProject("acme-ftp")!;
+    expect(p.credentials.ftp).toEqual({
+      host: "ftp.new.example.com",
+      user: "deploy",
+      password: FTP_PASS,
+    });
+    expect(p.credentials.wp_app_password).toBe(FAKE_APP_PASSWORD);
+  });
+
+  it("urls and config merge the same way; arrays replace", async () => {
+    seedFtp();
+    await projectUpdateTool.execute({
+      slug: "acme-ftp",
+      urls: { extra: { status: "https://status.example.com" } },
+      config: { build: { flags: ["b"] } },
+    });
+    const p = getProject("acme-ftp")!;
+    expect(p.urls).toEqual({
+      site: "https://acme.example.com",
+      extra: { docs: "https://docs.example.com", status: "https://status.example.com" },
+    });
+    expect(p.config).toEqual({ build: { node: "20", flags: ["b"] } });
+  });
+
+  it("null deletes a nested key (`{ftp: {password: null}}`) or a whole entry (`{ftp: null}`)", async () => {
+    seedFtp();
+    await projectUpdateTool.execute({
+      slug: "acme-ftp",
+      credentials: { ftp: { password: null } },
+    });
+    expect(getProject("acme-ftp")!.credentials.ftp).toEqual({
+      host: "ftp.old.example.com",
+      user: "deploy",
+    });
+    await projectUpdateTool.execute({ slug: "acme-ftp", credentials: { ftp: null } });
+    expect("ftp" in getProject("acme-ftp")!.credentials).toBe(false);
+  });
+
+  it("moving a credential by its placeholder (or {{X}} / $X) stores the VALUE at the new path", async () => {
+    seedFtp();
+    const ph = secretPlaceholder("SECRET_ACME_FTP_FTP_PASSWORD");
+    const out = await projectUpdateTool.execute({
+      slug: "acme-ftp",
+      credentials: {
+        sftp: { host: "sftp.example.com", password: ph },
+        backup_password: "{{SECRET_ACME_FTP_WP_APP_PASSWORD}}",
+        ftp: { password: null },
+      },
+    });
+    expect(out).not.toContain(FTP_PASS);
+    expect(JSON.parse(out).saved_secrets["credentials.sftp.password"]).toBe(
+      secretPlaceholder("SECRET_ACME_FTP_SFTP_PASSWORD"),
+    );
+    const p = getProject("acme-ftp")!;
+    expect((p.credentials.sftp as unknown as Record<string, string>).password).toBe(FTP_PASS);
+    expect(p.credentials.backup_password).toBe(FAKE_APP_PASSWORD);
+    expect(p.credentials.ftp).toEqual({ host: "ftp.old.example.com", user: "deploy" });
+  });
+
+  it("placeholder-ish garbage, an unknown name, or a move to a visible key is refused and nothing changes", async () => {
+    seedFtp();
+    const before = JSON.stringify(getProject("acme-ftp")!.credentials);
+    const ph = secretPlaceholder("SECRET_ACME_FTP_FTP_PASSWORD");
+    for (const [credentials, needle] of [
+      [{ ftp: { password: `pw: ${ph}` } }, "{{SECRET_<NOMBRE>}}"],
+      [{ ftp: { password: "{{SECRET_ACME_FTP_NOPE}}" } }, "SECRET_ACME_FTP_NOPE"],
+      [{ ftp: { notes: ph } }, "credentials.ftp.notes"],
+    ] as const) {
+      const out = await projectUpdateTool.execute({ slug: "acme-ftp", credentials });
+      expect(JSON.parse(out).error, JSON.stringify(credentials)).toContain(needle);
+    }
+    expect(JSON.stringify(getProject("acme-ftp")!.credentials)).toBe(before);
+  });
+});
+
 describe("descriptions", () => {
   it("project_update is the pre-ruling text; project_get says values are hidden", () => {
     const get = projectGetTool.definition.function.description;
@@ -355,6 +451,9 @@ describe("descriptions", () => {
     ).properties.credentials.description;
     expect(get.split("\n")[0]).toBe(
       "Get full details of a project including credential names (secret values hidden), config, and recent activity log.",
+    );
+    expect(upd.split("\n")[0]).toBe(
+      "Create or update a project. Updates are merged (credentials, URLs, config are merged key by key, nested objects too, not replaced; a null value deletes that key).",
     );
     for (const d of [get, upd, credParam]) {
       expect(d).not.toContain(".env");

@@ -23,6 +23,16 @@ vi.mock("../a2a/client.js", () => ({
   AgentCardCache: vi.fn(),
 }));
 
+// Ruling 3c (audit round 5, S6): the secret index, reduced to one stored value.
+const secrets = vi.hoisted(() => ({
+  STORED: "a2a-" + "s".repeat(14),
+  PH: "[oculto · úsalo por nombre: $SECRET_X en shell_exec, {{SECRET_X}} en http_fetch/navegador]",
+}));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(secrets.STORED, secrets.PH),
+}));
+
 import { a2aRunner } from "./a2a-runner.js";
 
 beforeEach(() => {
@@ -172,5 +182,36 @@ describe("a2aRunner", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("audit R5 S6: the outbound message text is scrubbed before it reaches the A2A client", async () => {
+    mockCardFetch.mockResolvedValueOnce({ name: "Remote", url: "http://remote:8080" });
+    mockSendMessage.mockResolvedValueOnce({ id: "rt", status: { state: "submitted" } });
+    mockGetTask.mockResolvedValueOnce({
+      id: "rt",
+      status: { state: "completed" },
+      artifacts: [],
+    });
+    vi.useFakeTimers();
+    try {
+      const run = a2aRunner.execute({
+        taskId: "t1",
+        runId: "r1",
+        title: `deploy with ${secrets.STORED}`,
+        description: `the ftp password is ${secrets.STORED}`,
+        input: { a2a_target: "http://remote:8080" },
+      });
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+    const sent = mockSendMessage.mock.calls[0]![0] as {
+      parts: Array<{ text: string }>;
+    };
+    expect(sent.parts[0]!.text).not.toContain(secrets.STORED);
+    expect(sent.parts[0]!.text).toBe(
+      `deploy with ${secrets.PH}\n\nthe ftp password is ${secrets.PH}`,
+    );
   });
 });

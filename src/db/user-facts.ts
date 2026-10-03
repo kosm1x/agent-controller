@@ -36,28 +36,149 @@ export interface UserFact {
  * Audit round 4 (3d-b), all whole tokens: plural `keys` / `tokens` as the
  * last token (`api_keys`, `access_keys`, `apiKeys`, `tokens`; not after the
  * `key` exclusions, and `tokens` not after a quantity word — `max_tokens`);
- * `authorization`, `privkey`, `appkey`; `nip` (Spanish PIN), `otp`, `totp`,
- * `mfa`, `2fa`; `seed` (not `random_seed`; `seeds` is another token),
- * `mnemonic`, `recovery_codes`, `backup_codes`, `dsn`. Neighbours stay
- * visible by token (`keyword`, `monkeys`, `seeds_file`) or by the meta
- * suffix (`otp_enabled`, `nip_region`, `dsn_host`, `seed_url`).
+ * `privkey`, `appkey`; `nip` (Spanish PIN), `totp`; `mnemonic`,
+ * `recovery_codes`, `backup_codes`, `dsn`.
+ * Audit round 5: `otp`, `mfa`, `2fa`, `seed` and `authorization` count only
+ * as the LAST token or before code/secret/phrase/key/token/seed/backup/header
+ * (`mfa_code`, `wallet_seed`; not `mfa_device`, `otp_phone`, `seed_command`,
+ * `authorization_status`, `prior_authorization`, `random_seed`). More
+ * exclusions: `design/context/css/color_tokens`, `translation/required/
+ * shortcut/object/index_keys`. New names: concatenated forms (`accesstoken`,
+ * `secretkey`, `privatekey`, `passcode`, `pincode`), `recovery_phrase`,
+ * `cvv`, `cvc`, Spanish `pregunta/respuesta_secreta`, `frase_semilla`,
+ * `codigos_respaldo`, `codigo_acceso`.
  */
-const CREDENTIAL_NAME_RE =
-  / (?:api ?keys?|private keys?|access keys?|ssh keys?|(?<!(?:public|primary|foreign|sort|partition|cache|hot|short) )keys?(?= $)|(?<!(?:max|min|input|output|total|prompt|completion|num|cache|cached|reasoning) )tokens(?= $)|authorization|privkey|appkey|nip|otp|totp|mfa|2fa|(?<!random )seed|mnemonic|recovery codes?|backup codes?|dsn|token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )|secrets?|passwords?|pass|pw|passwd|pwd|passphrase|cookies?|o?auth|credentials?|bearer|jwt|(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )|llaves?|contrasenas?|credencial(?:es)?|secretos?|pin|sessionid|session id|sid(?= $)|phpsessid|li at|ct0|swid|espn s2|(?<=^ )(?:s2|session)(?= $)) /;
+const FOLLOWER = "(?= $| (?:codes?|secrets?|phrases?|keys?|tokens?|seeds?|backup|header) )";
+const CREDENTIAL_NAME_RE = new RegExp(
+  " (?:" +
+    [
+      "api ?keys?",
+      "private ?keys?",
+      "access ?keys?",
+      "ssh keys?",
+      "(?:access|auth|api|refresh|session|id|bearer|csrf|xsrf|oauth)tokens?",
+      "(?:secret|signing|master|encryption)keys?",
+      "passcodes?",
+      "pincodes?",
+      "(?<!(?:public|primary|foreign|sort|partition|cache|hot|short|translation|required|shortcut|object|index) )keys?(?= $)",
+      "(?<!(?:max|min|input|output|total|prompt|completion|num|cache|cached|reasoning|design|context|css|color|colour) )tokens(?= $)",
+      `(?<!prior )authorization${FOLLOWER}`,
+      `(?:otp|mfa|2fa)${FOLLOWER}`,
+      `(?<!random )seed${FOLLOWER}`,
+      "privkey",
+      "appkey",
+      "nip",
+      "totp",
+      "mnemonic",
+      "recovery (?:codes?|phrases?|keys?)",
+      "backup codes?",
+      "dsn",
+      "cvv2?",
+      "cvc2?",
+      "token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )",
+      "secrets?",
+      "passwords?",
+      "pass",
+      "pw",
+      "passwd",
+      "pwd",
+      "passphrases?",
+      "cookies?",
+      "o?auth",
+      "credentials?",
+      "bearer",
+      "jwt",
+      "(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )",
+      "llaves?",
+      "contrasenas?",
+      "credencial(?:es)?",
+      "secretos?",
+      "secretas?",
+      "frases? (?:de )?(?:semillas?|recuperacion)",
+      "codigos? (?:de )?(?:respaldo|acceso|seguridad|recuperacion)",
+      "pin",
+      "sessionid",
+      "session id",
+      "sid(?= $)",
+      "phpsessid",
+      "li at",
+      "ct0",
+      "swid",
+      "espn s2",
+      "(?<=^ )(?:s2|session)(?= $)",
+    ].join("|") +
+    ") ",
+);
 
 /**
  * A name whose LAST token is metadata ABOUT a credential (`api_key_path`,
- * `auth_method`, `credential_rotation_date`; audit round 4 added `enabled`,
- * `region`, `host`, `url`, `file` — `otp_enabled`, `dsn_host`, `seed_url`)
- * is not one by name; its value is still judged by the value rules.
+ * `auth_method`, `credential_rotation_date`, `otp_enabled`, `dsn_host`,
+ * `token_url`, `password_file`) is not one by name — but only when its VALUE
+ * has that metadata's type (audit round 5, S4: `token_url` holding a bare
+ * token, or `password_file` holding the password, is a secret). Its value is
+ * still judged by the value rules.
  */
 const CREDENTIAL_META_LAST_RE =
-  / (?:path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|file) $/;
+  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|file) $/;
+
+/**
+ * A whitespace-free run of 20+ token characters mixing letters and digits —
+ * the shape of a generated secret. `/`, `.`, `:` and `@` break a run, so path
+ * segments, hostnames, dates and e-mails are judged piece by piece.
+ */
+function hasSecretRun(value: string): boolean {
+  for (const m of value.matchAll(/[A-Za-z0-9+=_~-]{20,}/g)) {
+    if (/\d/.test(m[0]) && /[A-Za-z]/.test(m[0])) return true;
+  }
+  return false;
+}
+
+const HOSTNAME_RE =
+  /^(?:\[[0-9a-f:.]+\]|localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{1,63})(?::\d{1,5})?$/i;
+const BOOLEAN_WORD_RE =
+  /^(?:true|false|yes|no|on|off|1|0|s[ií]|y|n|enabled|disabled|activo|inactivo|habilitado|deshabilitado)$/i;
+const REGION_SLUG_RE = /^[a-z]+(?:[-_][a-z]+)*(?:[-_]?\d{1,2}[a-z]?)?$/i;
+const PATH_LIKE_RE = /^(?:~|\.{1,2})?[/\\]|^[A-Za-z]:[/\\]|^[^\s/\\]+[/\\]/;
+
+/** Whether a value has the type its metadata suffix announces (S4). */
+function metaValueMatches(meta: string, raw: string): boolean {
+  const v = raw.trim();
+  if (v === "" || /[\r\n]/.test(v)) return v === "";
+  switch (meta) {
+    case "url": {
+      if (/\s/.test(v)) return false;
+      try {
+        const u = new URL(v);
+        return (
+          /^[a-z][a-z0-9+.-]*:$/i.test(u.protocol) &&
+          u.username === "" &&
+          u.password === "" &&
+          !hasSecretRun(u.search + u.hash)
+        );
+      } catch {
+        return false;
+      }
+    }
+    case "host":
+      return v.length <= 253 && HOSTNAME_RE.test(v);
+    case "file":
+    case "path":
+      return PATH_LIKE_RE.test(v) && !hasSecretRun(v);
+    case "enabled":
+      return BOOLEAN_WORD_RE.test(v);
+    case "region":
+      return v.length <= 30 && REGION_SLUG_RE.test(v);
+    default:
+      // method / provider / issuer / type / date / expiry / expires / rotation
+      return v.length <= 200 && !hasSecretRun(v);
+  }
+}
 
 /**
  * Credential value shapes the shared redactCredentials table does not cover,
  * kept local so redact.ts consumers do not change. Every pattern is linear
- * (no nested quantifiers) and has no /g flag (test() stays stateless).
+ * (no nested quantifiers), has no /g flag (test() stays stateless) and is
+ * anchored on a fixed prefix plus a minimum length/charset.
  */
 const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/, // JWT
@@ -67,32 +188,111 @@ const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/, // Slack
   /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
   /\bfw_[A-Za-z0-9]{16,}/, // Fireworks
-  /:\/\/[^\s/:@]+:[^\s/@]+@/, // URL userinfo user:pass@
+  /:\/\/[^\s/:@]*:[^\s/@]+@/, // URL userinfo user:pass@ (empty user too: redis://:pw@)
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,
-  /(?:\bapi[ _-]?key|\btoken|\bpassword|\bcontrase(?:ñ|n\u0303?)a|\bclave)\s*[:=]\s*\S{6,}/i,
+  /(?:\bapi[ _-]?key|\btoken|\bpassword|\bcontrase(?:ñ|ñ?)a|\bclave)\s*[:=]\s*\S{6,}/i,
   /"(?:token|auth_token|password)"\s*:\s*"[^"]+"/i,
   // PEM private key of any type (RSA, EC, OPENSSH, ENCRYPTED, PKCS#8);
   // `-----BEGIN PUBLIC KEY-----` does not match.
   /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/,
+  // Audit round 5 (S3):
+  /-----BEGIN PGP PRIVATE KEY BLOCK-----/,
+  /\bPuTTY-User-Key-File-\d+:\s*\S/, // PuTTY .ppk
+  /\bya29\.[A-Za-z0-9_-]{20,}/, // Google OAuth access token
+  /(?:^|[^A-Za-z0-9/:])1\/\/0[A-Za-z0-9_-]{30,}/, // Google OAuth refresh token
+  /\bhf_[A-Za-z0-9]{30,}/, // Hugging Face
+  /\bnpm_[A-Za-z0-9]{36,}/, // npm
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{30,}/, // SendGrid
+  /\bshp(?:at|ss|ca|pa)_[a-fA-F0-9]{32,}/, // Shopify
 ];
 
 function nameTokens(name: string): string {
   const tokens = name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
   return ` ${tokens.join(" ")} `;
 }
 
-/** Whether a key / category name names a credential (meta suffixes exempt). */
-export function isCredentialName(name: string): boolean {
+/**
+ * Whether a key / category name names a credential. A name ending in a
+ * metadata token is exempt when no scalar value is given (a container key)
+ * or when the value has that metadata's type (S4); otherwise it is one.
+ */
+export function isCredentialName(name: string, value?: string): boolean {
   const tokens = nameTokens(name);
-  return (
-    !CREDENTIAL_META_LAST_RE.test(tokens) && CREDENTIAL_NAME_RE.test(tokens)
-  );
+  if (!CREDENTIAL_NAME_RE.test(tokens)) return false;
+  const meta = CREDENTIAL_META_LAST_RE.exec(tokens);
+  if (!meta) return true;
+  if (value === undefined) return false;
+  return !metaValueMatches(meta[1]!, value);
+}
+
+/**
+ * Audit round 5 (B1): the LAST token names a secret VALUE (password, token,
+ * secret, key, pin, cookie, seed, codes…), so every leaf below a key with
+ * this name is a secret (`password: {prod}`, `api_keys: [v]`,
+ * `github_token: {value, scope}`). A name whose credential word is a scheme
+ * or container — auth / oauth / credential(s) / creds / credencial(es) /
+ * authorization / otp / mfa / 2fa / dsn — is NOT: `db_credentials`,
+ * `basic_auth`, `google_oauth`, `oauth_config`, `credenciales_ftp` hold
+ * usernames, hosts and ids that stay visible (each child judged by its own
+ * key and value).
+ */
+const SECRET_VALUE_LAST_RE = new RegExp(
+  " (?:" +
+    [
+      "passwords?",
+      "passwd",
+      "pwd",
+      "pass",
+      "pw",
+      "passphrases?",
+      "phrases?",
+      "tokens?",
+      "[a-z]+tokens?",
+      "secrets?",
+      "secretos?",
+      "secretas?",
+      "keys?",
+      "[a-z]+keys?",
+      "pin",
+      "nip",
+      "cookies?",
+      "bearer",
+      "jwt",
+      "claves?",
+      "llaves?",
+      "contrasenas?",
+      "totp",
+      "seeds?",
+      "semillas?",
+      "mnemonic",
+      "codes?",
+      "codigos?",
+      "respaldo",
+      "acceso",
+      "recuperacion",
+      "cvv2?",
+      "cvc2?",
+      "passcodes?",
+      "pincodes?",
+      "sid",
+      "sessionid",
+      "phpsessid",
+      "li at",
+      "ct0",
+      "swid",
+      "s2",
+    ].join("|") +
+    ") $",
+);
+
+export function isSecretValueName(name: string): boolean {
+  return isCredentialName(name) && SECRET_VALUE_LAST_RE.test(nameTokens(name));
 }
 
 /**
@@ -109,8 +309,8 @@ export function isCredentialFact(
   value: string,
 ): boolean {
   return (
-    isCredentialName(key) ||
-    isCredentialName(category) ||
+    isCredentialName(key, value) ||
+    isCredentialName(category, value) ||
     redactCredentials(value) !== value ||
     CREDENTIAL_VALUE_PATTERNS.some((re) => re.test(value))
   );

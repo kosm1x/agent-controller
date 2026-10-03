@@ -103,6 +103,83 @@ describe("user_fact_set (ruling 3c)", () => {
     );
   });
 
+  // Audit round 5 (B2): a stored credential written back BY NAME keeps its value.
+  describe("audit R5 B2 — by-name write-back", () => {
+    const OLD = "SECRET_PROJECTS_ACME_FTP_PASSWORD";
+    async function seedOld(run: ReturnType<typeof fakeStore>) {
+      await userFactSetTool.execute({
+        category: "projects",
+        key: "acme_ftp_password",
+        value: SYN("ftp"),
+      });
+      invalidateSecretRefs();
+      run.mockClear();
+    }
+
+    it.each([
+      ["its placeholder", () => secretPlaceholder(OLD)],
+      ["{{SECRET_X}}", () => `{{${OLD}}}`],
+      ["$SECRET_X", () => `$${OLD}`],
+    ])("moving a fact by %s stores the VALUE under the new key", async (_l, ref) => {
+      const run = fakeStore();
+      await seedOld(run);
+      const out = await userFactSetTool.execute({
+        category: "projects",
+        key: "acme_sftp_password",
+        value: ref(),
+      });
+      expect(run).toHaveBeenCalledWith(
+        "projects",
+        "acme_sftp_password",
+        SYN("ftp"),
+        "conversation",
+      );
+      expect(out).not.toContain(SYN("ftp"));
+      expect(out).toContain("[oculto ·");
+    });
+
+    it("an unknown name is refused; nothing is stored", async () => {
+      const run = fakeStore();
+      await seedOld(run);
+      const out = await userFactSetTool.execute({
+        category: "projects",
+        key: "acme_sftp_password",
+        value: "{{SECRET_PROJECTS_NOPE}}",
+      });
+      expect(JSON.parse(out).error).toContain("SECRET_PROJECTS_NOPE");
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("placeholder-ish garbage (a placeholder inside other text, a cut placeholder) is refused; nothing is stored", async () => {
+      const run = fakeStore();
+      await seedOld(run);
+      for (const value of [
+        `user=demo pass=${secretPlaceholder(OLD)}`,
+        secretPlaceholder(OLD).slice(0, 25),
+      ]) {
+        const out = await userFactSetTool.execute({
+          category: "projects",
+          key: "acme_sftp_password",
+          value,
+        });
+        expect(JSON.parse(out).error, value).toContain("{{SECRET_<NOMBRE>}}");
+      }
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("a move to a key that would show the value is refused (no laundering into a visible fact)", async () => {
+      const run = fakeStore();
+      await seedOld(run);
+      const out = await userFactSetTool.execute({
+        category: "projects",
+        key: "acme_notes",
+        value: `{{${OLD}}}`,
+      });
+      expect(JSON.parse(out).error).toContain("[projects] acme_notes");
+      expect(run).not.toHaveBeenCalled();
+    });
+  });
+
   it("the description again invites credentials (no refusal, no .env)", () => {
     const d = userFactSetTool.definition.function.description;
     expect(d).toContain(

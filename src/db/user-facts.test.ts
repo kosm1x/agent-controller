@@ -197,8 +197,8 @@ describe("user-facts", () => {
       ["projects", "clave_catastral"],
       ["projects", "clave_producto"],
       ["projects", "clave_unica"],
-      // Fold 1: last token is metadata about a credential (W3)
-      ["projects", "alphavantage_api_key_path"],
+      // Fold 1: last token is metadata about a credential (W3); the value
+      // must have that metadata's type since audit R5 S4 (see below)
       ["projects", "auth_method"],
       ["projects", "oauth_provider"],
       ["projects", "jwt_issuer"],
@@ -293,16 +293,24 @@ describe("user-facts", () => {
 
       it.each([
         "keyword", "keywords", "monkeys", "seed_url", "seeds_file",
-        "otp_enabled", "nip_region", "dsn_host", "key_id", "public_key",
+        "otp_enabled", "key_id", "public_key",
         "ssh_public_key", "public_keys", "max_tokens", "input_tokens",
         "random_seed", "turkey", "snippet", "dsnap",
       ])("does not mark the neighbour projects/%s by name", (key) => {
         expect(isCredentialFact("projects", key, "plain value")).toBe(false);
       });
 
-      it("meta-suffix convention: a credential name ending in a metadata token (enabled/region/host/url/file) is visible by name, still judged by value", () => {
-        for (const k of ["mfa_enabled", "token_url", "password_file", "dsn_region"]) {
-          expect(isCredentialFact("projects", k, "plain value"), k).toBe(false);
+      it("meta-suffix convention: a credential name ending in a metadata token (enabled/region/host/url/file) is visible by name when its value has that type, still judged by value", () => {
+        for (const [k, v] of [
+          ["mfa_enabled", "true"],
+          ["token_url", "https://oauth2.example.com/token"],
+          ["password_file", "/etc/app/secret.txt"],
+          ["dsn_region", "us-east-1"],
+          ["nip_region", "mx-central-1"],
+          ["dsn_host", "db.example.com:5432"],
+          ["alphavantage_api_key_path", "~/.config/av/key.txt"],
+        ]) {
+          expect(isCredentialFact("projects", k!, v!), k).toBe(false);
         }
         expect(
           isCredentialFact("projects", "token_url", "Bearer " + rnd(40)),
@@ -329,6 +337,120 @@ describe("user-facts", () => {
           );
         },
       );
+    });
+
+    // Audit round 5: fewer false positives (the global scrub blanks a
+    // false positive's value everywhere — ruling 3d "everything accessible")
+    // and fewer false negatives.
+    describe("audit R5 S2 — position-bound words and exclusions", () => {
+      it.each([
+        "otp", "mfa", "2fa", "seed", "authorization", "bank_otp", "wallet_seed",
+        "mfa_code", "2fa_codes", "otp_secret", "seed_phrase", "mfa_backup",
+        "authorization_header", "authorization_token", "2fa_key", "seed_seed",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "design_tokens", "context_tokens", "css_tokens", "color_tokens",
+        "translation_keys", "required_keys", "shortcut_keys", "object_keys",
+        "index_keys", "mfa_device", "mfa_app", "2fa_phone", "otp_phone",
+        "authorization_status", "prior_authorization", "seed_command",
+        "seed_data", "otp_provider_name", "mfa_methods",
+      ])("does not mark projects/%s by name (false-positive replay)", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+      });
+    });
+
+    describe("audit R5 S3 — names and value shapes the classifier missed", () => {
+      it.each([
+        "accesstoken", "authtoken", "secretkey", "apitoken", "privatekey",
+        "refreshtoken", "sessiontoken", "passcode", "pincode", "pregunta_secreta",
+        "respuesta_secreta", "frase_semilla", "codigos_respaldo", "codigo_acceso",
+        "recovery_phrase", "cvv", "cvc", "card_cvv", "github_accesstoken",
+      ])("marks projects/%s by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it.each([
+        "codigo_postal", "codigo_producto", "pregunta_frecuente", "frase_favorita",
+        "recovery_email", "passenger", "tokenizer", "keystone",
+      ])(
+        "does not mark the neighbour projects/%s by name",
+        (key) => {
+          expect(isCredentialFact("projects", key, "plain value")).toBe(false);
+        },
+      );
+
+      const b64 = (n: number) => "Ab3dE5gH7jK9mN1pQ2sT4vW6yZ8".repeat(8).slice(0, n);
+      const hex = (n: number) => "0a1b2c3d4e5f6789".repeat(8).slice(0, n);
+      const label = (l: string) => "-----" + "BEGIN " + l + "-----";
+      it.each([
+        ["PGP private key block", label("PGP PRIVATE KEY BLOCK") + "\n" + b64(64)],
+        ["PuTTY private key", "PuTTY-User-Key-File-" + "3: ssh-ed25519\nPrivate-Lines: 1\n" + b64(40)],
+        ["Google ya29 token", "ya" + "29." + b64(60)],
+        ["Google 1// refresh token", "1/" + "/0" + b64(40)],
+        ["Hugging Face", "hf" + "_" + b64(34)],
+        ["npm", "np" + "m_" + b64(36)],
+        ["SendGrid", "S" + "G." + b64(22) + "." + b64(43)],
+        ["Shopify shpat", "shp" + "at_" + hex(32)],
+        ["Shopify shpss", "shp" + "ss_" + hex(32)],
+        ["URL userinfo with an empty user", "redis://" + ":" + b64(16) + "@cache.example.com:6379"],
+      ])("marks a %s value under a neutral name", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+      });
+
+      it.each([
+        ["PGP public key block", label("PGP PUBLIC KEY BLOCK") + "\n" + b64(64)],
+        ["prose about PuTTY", "use PuTTY to connect to the host"],
+        ["ya29 prose", "ya29 is a token prefix"],
+        ["a URL path with 1//", "https://example.com/v1//0abc"],
+        ["short hf_", "hf_model"],
+        ["npm prose", "run npm_install later"],
+        ["SG. abbreviation", "SG.com is a site; SG.x"],
+        ["shpat_ too short", "shp" + "at_" + hex(10)],
+        ["redis URL without password", "redis://cache.example.com:6379"],
+        ["a time with colons", "10:30:00@office"],
+      ])("does not mark a %s value", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(false);
+      });
+    });
+
+    describe("audit R5 S4 — a meta suffix exempts only a value of its type", () => {
+      it.each([
+        ["token_url", "https://oauth2.example.com/token"],
+        ["auth_url", "https://login.example.com/authorize?client=web"],
+        ["password_file", "/run/secrets/db_password"],
+        ["api_key_path", "C:\\keys\\maps.txt"],
+        ["db_password_host", "db.internal.example.com"],
+        ["secret_host", "127.0.0.1:8200"],
+        ["otp_secret_enabled", "false"],
+        ["mfa_code_enabled", "sí"],
+        ["api_key_region", "europe-west4"],
+        ["token_type", "Bearer"],
+        ["password_expiry", "2026-12-31"],
+      ])("%s = %s stays visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      const run = "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      it.each([
+        ["token_url", run],
+        ["token_url", "https://api.example.com/cb?token=" + run],
+        ["password_file", "hunter-" + "two-pass"],
+        ["api_key_path", "/keys/" + run + ".txt"],
+        ["db_password_host", "not a host name"],
+        ["otp_secret_enabled", run],
+        ["api_key_region", "Pa55word99"],
+        ["token_type", run],
+        ["password_expiry", run],
+      ])("%s = %s is a secret", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+
+      it("a container key (no scalar value) with a meta suffix is not an ancestor", () => {
+        expect(isCredentialFact("projects", "api_key_path", "")).toBe(false);
+      });
     });
   });
 

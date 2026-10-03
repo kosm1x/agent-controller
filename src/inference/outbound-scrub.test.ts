@@ -88,6 +88,8 @@ import {
   infer,
   inferWithTools,
   scrubOutboundMessages,
+  providerMetrics,
+  SecretScrubUnavailableError,
   type ChatMessage,
 } from "./adapter.js";
 import {
@@ -102,6 +104,7 @@ import { toolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
 import {
+  expireSecretRefsForTest,
   invalidateSecretRefs,
   resetSecretRefsForTest,
   secretPlaceholder,
@@ -393,6 +396,48 @@ describe("OpenAI-compat path: the body handed to fetch is scrubbed", () => {
     expect(JSON.stringify(messages)).toBe(before);
   });
 
+  it("audit R5: a NUMBER in tool-call arguments equal to a stored value becomes the placeholder string, and the arguments stay valid JSON", async () => {
+    cfg.inferencePrimaryProvider = "openai";
+    const NUM = "73519046";
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "bank_nip_long", NUM);
+    invalidateSecretRefs();
+    const bodies = stubOpenAi();
+    await infer({
+      messages: [
+        { role: "user", content: "pay" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "c9",
+              type: "function",
+              function: {
+                name: "http_fetch",
+                arguments: JSON.stringify({ pin: Number(NUM), note: `p ${STORED}`, n: 7 }),
+              },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c9", content: "ok" },
+      ],
+    });
+    expect(bodies[0]).not.toContain(NUM);
+    const sent = JSON.parse(bodies[0]) as {
+      messages: Array<{ tool_calls?: Array<{ function: { arguments: string } }> }>;
+    };
+    const args = JSON.parse(
+      sent.messages.find((m) => m.tool_calls)!.tool_calls![0]!.function.arguments,
+    );
+    expect(args).toEqual({
+      pin: secretPlaceholder("SECRET_PROJECTS_BANK_NIP_LONG"),
+      note: `p ${PH}`,
+      n: 7,
+    });
+  });
+
   it("inferWithTools() (openai routing)", async () => {
     cfg.inferencePrimaryProvider = "openai";
     const bodies = stubOpenAi();
@@ -490,19 +535,60 @@ describe("other model-bound requests", () => {
 // ---------------------------------------------------------------------------
 
 describe("failure policy and performance", () => {
-  it("a DB error with a last-good index scrubs with it; with none the call fails closed (nothing sent)", async () => {
+  it("a DB error with a current last-good index scrubs with it; after a write, or with none, the call fails closed (nothing sent)", async () => {
     await queryClaudeSdk({ prompt: `a ${STORED}`, systemPrompt: "s", toolNames: [] });
     db.close();
-    invalidateSecretRefs();
+    expireSecretRefsForTest(); // TTL expired, no write since the last good build
     await queryClaudeSdk({ prompt: `b ${STORED}`, systemPrompt: "s", toolNames: [] });
     expect(String(sdk.calls.at(-1)!.prompt)).toBe(`b ${PH}`);
 
-    resetSecretRefsForTest();
     const n = sdk.calls.length;
+    invalidateSecretRefs(); // a store write: the last good index is stale (S5)
+    await expect(
+      queryClaudeSdk({ prompt: `c ${STORED}`, systemPrompt: "s", toolNames: [] }),
+    ).rejects.toThrow(SecretScrubUnavailableError);
+
+    resetSecretRefsForTest();
     await expect(
       queryClaudeSdk({ prompt: `c ${STORED}`, systemPrompt: "s", toolNames: [] }),
     ).rejects.toThrow(/not open/);
     expect(sdk.calls).toHaveLength(n);
+  });
+
+  it("audit R5: a scrub throw in queryClaudeSdk happens before the 15-minute timer and the abort listener are armed", async () => {
+    db.close();
+    resetSecretRefsForTest();
+    const ac = new AbortController();
+    const addListener = vi.spyOn(ac.signal, "addEventListener");
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    await expect(
+      queryClaudeSdk({
+        prompt: `c ${STORED}`,
+        systemPrompt: "s",
+        toolNames: [],
+        abortSignal: ac.signal,
+      }),
+    ).rejects.toThrow(SecretScrubUnavailableError);
+    expect(addListener).not.toHaveBeenCalled();
+    expect(timers.mock.calls.filter((c) => c[1] === 15 * 60_000)).toHaveLength(0);
+    expect(sdk.calls).toHaveLength(0);
+  });
+
+  it("audit R5: a scrub throw in callProvider is not a provider failure (no breaker failure, no provider metric, nothing sent)", async () => {
+    cfg.inferencePrimaryProvider = "openai";
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const record = vi.spyOn(providerMetrics, "record");
+    db.close();
+    resetSecretRefsForTest();
+    await expect(
+      infer({ messages: [{ role: "user", content: `x ${STORED}` }] }),
+    ).rejects.toBeInstanceOf(SecretScrubUnavailableError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
+    const statuses = Object.values(circuitRegistry.getAllStatus());
+    expect(statuses.length).toBeGreaterThan(0);
+    for (const st of statuses) expect(st.failures).toBe(0);
   });
 
   it("a realistic 70 KB request with 40 secrets is scrubbed cheaply", () => {

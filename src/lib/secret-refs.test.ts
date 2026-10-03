@@ -12,10 +12,11 @@ let db: Database.Database;
 vi.mock("../db/index.js", () => ({ getDatabase: () => db }));
 
 const logWarn = vi.fn();
+const logInfo = vi.fn();
 vi.mock("./logger.js", () => {
   const child = {
     warn: (...a: unknown[]) => logWarn(...a),
-    info: () => {},
+    info: (...a: unknown[]) => logInfo(...a),
     error: () => {},
     debug: () => {},
     trace: () => {},
@@ -38,7 +39,13 @@ import {
   scrubSecrets,
   resolveSecretRefs,
   secretEnvForCommand,
+  expireSecretRefsForTest,
+  scrubStructured,
+  scrubJsonText,
+  resolveStoredReference,
+  PLACEHOLDER_MARKERS,
 } from "./secret-refs.js";
+import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import { deleteUserFact, formatUserFactsBlock } from "../db/user-facts.js";
 import { deleteProject, updateProject } from "../db/projects.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -115,6 +122,7 @@ beforeEach(seed);
 afterEach(() => {
   vi.restoreAllMocks();
   logWarn.mockClear();
+  logInfo.mockClear();
 });
 
 describe("reference names", () => {
@@ -438,6 +446,153 @@ describe("audit R4 3d-a — a leaf below a credential-named key is secret", () =
   });
 });
 
+describe("audit R5 B1 — compound containers are not secret ancestors", () => {
+  const v = (tag: string) => "cv-" + tag + "-" + "m".repeat(10);
+  const CONTAINERS = [
+    "db_credentials",
+    "basic_auth",
+    "google_oauth",
+    "smtp_auth",
+    "oauth_config",
+    "credenciales_ftp",
+  ];
+  const visibleChildren = (c: string): Record<string, string> => ({
+    host: `${c.replace(/_/g, "-")}.example.test`,
+    user: "deploy",
+    username: "deploy-" + c,
+    client_id: "cid-" + c + "-0001",
+    project_id: "pid-" + c,
+    port: "5432",
+  });
+  function seedContainers() {
+    const credentials: Record<string, unknown> = {};
+    for (const c of CONTAINERS) {
+      credentials[c] = {
+        ...visibleChildren(c),
+        password: v(c + "-pw"),
+        client_secret: v(c + "-cs"),
+      };
+    }
+    credentials.password = { prod: v("prod") };
+    credentials.api_keys = [v("k0")];
+    project("acme-box", { credentials });
+    invalidateSecretRefs();
+    return credentials;
+  }
+
+  it("children host/user/username/client_id/project_id/port stay visible (index and display); password and client_secret hidden", () => {
+    const credentials = seedContainers();
+    const leaves = Object.entries(credentials).flatMap(([k, val]) =>
+      projectEntryLeaves("acme-box", "credentials", k, val),
+    );
+    const byPath = new Map(leaves.map((l) => [l.path.join("."), l]));
+    for (const c of CONTAINERS) {
+      for (const [k, value] of Object.entries(visibleChildren(c))) {
+        const leaf = byPath.get(`${c}.${k}`)!;
+        expect(leaf.secret, `${c}.${k}`).toBe(false);
+        expect(leaf.display).toBe(value);
+        expect(
+          secretRefName(projectIdentity("acme-box", "credentials", [c, k])),
+          `${c}.${k}`,
+        ).toBeUndefined();
+        if (value.length >= 8) {
+          expect(scrubSecrets(`x ${value} y`)).toBe(`x ${value} y`);
+        }
+      }
+      for (const k of ["password", "client_secret"]) {
+        const leaf = byPath.get(`${c}.${k}`)!;
+        const name = secretRefName(projectIdentity("acme-box", "credentials", [c, k]));
+        expect(leaf.secret, `${c}.${k}`).toBe(true);
+        expect(name, `${c}.${k}`).toBeDefined();
+        expect(leaf.display).toBe(secretPlaceholder(name!));
+        const value = (credentials[c] as Record<string, string>)[k]!;
+        expect(scrubSecrets(`x ${value} y`)).toBe(`x ${secretPlaceholder(name!)} y`);
+      }
+    }
+  });
+
+  it("`password: {prod}` and `api_keys: [v]` are still hidden (index and display identical)", () => {
+    const credentials = seedContainers();
+    for (const [key, path, value] of [
+      ["password", ["password", "prod"], v("prod")],
+      ["api_keys", ["api_keys", "0"], v("k0")],
+    ] as const) {
+      const leaf = projectEntryLeaves("acme-box", "credentials", key, credentials[key])
+        .find((l) => l.path.join(".") === path.join("."))!;
+      const name = secretRefName(projectIdentity("acme-box", "credentials", [...path]));
+      expect(leaf.secret).toBe(true);
+      expect(name).toBe("SECRET_ACME_BOX_" + path.join("_").toUpperCase());
+      expect(leaf.display).toBe(secretPlaceholder(name!));
+      expect(scrubSecrets(value)).toBe(secretPlaceholder(name!));
+    }
+  });
+});
+
+describe("audit R5 — structured scrub (tool-call arguments, container payloads)", () => {
+  it("string leaves are scrubbed; a NUMBER leaf equal to a stored value becomes its placeholder; keys and other numbers kept", () => {
+    const NUM = "73519046"; // 8 digits: scrubbed length
+    fact("projects", "bank_nip_long", NUM);
+    invalidateSecretRefs();
+    const ph = secretPlaceholder("SECRET_PROJECTS_BANK_NIP_LONG");
+    const args = { pin: Number(NUM), note: `ftp ${FTP_PASS}`, n: 42, list: [Number(NUM)] };
+    expect(scrubStructured(args)).toEqual({
+      pin: ph,
+      note: `ftp ${secretPlaceholder(N.ftp)}`,
+      n: 42,
+      list: [ph],
+    });
+    // The text scrub alone misses nothing here only by luck — JSON-aware:
+    const text = JSON.stringify(args);
+    const out = scrubJsonText(text);
+    expect(out).not.toContain(NUM);
+    expect(JSON.parse(out).pin).toBe(ph);
+    // Unchanged → the same text (prompt-cache prefix stays byte-identical).
+    const clean = '{ "a": 1,  "b": "x" }';
+    expect(scrubJsonText(clean)).toBe(clean);
+    // Not JSON → the text scrub.
+    expect(scrubJsonText(`{bad ${FTP_PASS}`)).toBe(`{bad ${secretPlaceholder(N.ftp)}`);
+  });
+});
+
+describe("audit R5 B2 — resolveStoredReference", () => {
+  it("both rendered displays start with a marker", () => {
+    expect(secretPlaceholder(N.ftp).startsWith(PLACEHOLDER_MARKERS[0]!)).toBe(true);
+    expect(CREDENTIAL_FACT_PLACEHOLDER.startsWith(PLACEHOLDER_MARKERS[1]!)).toBe(true);
+  });
+
+  it("placeholder, {{X}}, ${X} and $X resolve to the stored value; unknown names and embedded placeholders are refused; plain values pass", () => {
+    for (const ref of [
+      secretPlaceholder(N.ftp),
+      ` ${secretPlaceholder(N.ftp)} `,
+      `{{${N.ftp}}}`,
+      `\${${N.ftp}}`,
+      `$${N.ftp}`,
+    ]) {
+      expect(resolveStoredReference(ref), ref).toEqual({
+        kind: "resolved",
+        value: FTP_PASS,
+        name: N.ftp,
+      });
+    }
+    for (const ref of [`{{SECRET_NOPE}}`, `$SECRET_NOPE`, secretPlaceholder("SECRET_NOPE")]) {
+      const r = resolveStoredReference(ref);
+      expect(r.kind, ref).toBe("error");
+      expect((r as { error: string }).error).toContain("SECRET_NOPE");
+    }
+    for (const junk of [
+      `ftp:${secretPlaceholder(N.ftp)}`,
+      secretPlaceholder(N.ftp).slice(0, 30),
+      CREDENTIAL_FACT_PLACEHOLDER,
+    ]) {
+      const r = resolveStoredReference(junk);
+      expect(r.kind, junk).toBe("error");
+      expect((r as { error: string }).error).toContain("{{SECRET_<NOMBRE>}}");
+    }
+    expect(resolveStoredReference("hola $SECRET_X mundo")).toEqual({ kind: "plain" });
+    expect(resolveStoredReference(FTP_PASS)).toEqual({ kind: "plain" });
+  });
+});
+
 describe("resolveSecretRefs", () => {
   it("http_fetch: {{SECRET_X}} in nested header strings resolves on a COPY; the caller's args keep the reference", () => {
     const args = {
@@ -663,14 +818,14 @@ describe("index build (buildIndex)", () => {
     expect("error" in out && JSON.parse(out.error).error).toContain(N.cookie);
   });
 
-  it("audit R4 failure policy: a build error falls back to the last-good index, warns once per episode, and recovers", () => {
+  it("audit R4 failure policy: a build error after the TTL (no write since) falls back to the last-good index, warns once per episode, and recovers", () => {
     const warned = () =>
       logWarn.mock.calls.filter((c) =>
         String(c[1]).includes("last good index"),
       ).length;
     expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
     db.close(); // "The database connection is not open"
-    invalidateSecretRefs();
+    expireSecretRefsForTest();
     expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
     expect(scrubSecrets(`y ${FTP_PASS}`)).toBe(`y ${secretPlaceholder(N.ftp)}`);
     expect(warned()).toBe(1);
@@ -679,9 +834,34 @@ describe("index build (buildIndex)", () => {
     expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
     // …so the next failure warns again.
     db.close();
-    invalidateSecretRefs();
+    expireSecretRefsForTest();
     expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
     expect(warned()).toBe(2);
+  });
+
+  it("audit R5 S5: a build error after a store WRITE (dirty since the last good index) fails closed; the recovery is logged once", () => {
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
+    logInfo.mockClear(); // a previous test's episode may have just recovered
+    logWarn.mockClear();
+    db.close(); // "The database connection is not open"
+    invalidateSecretRefs(); // a writer ran: the last good index is stale
+    expect(() => scrubSecrets(`x ${COOKIE}`)).toThrow(/not open/);
+    expect(() => scrubSecrets(`x ${COOKIE}`)).toThrow(/not open/);
+    expect(
+      logWarn.mock.calls.filter((c) => String(c[1]).includes("failing closed")),
+    ).toHaveLength(1);
+    // A good build clears the flag and logs the recovery once.
+    seed();
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
+    expireSecretRefsForTest(); // a second good build must not log again
+    expect(scrubSecrets(`y ${COOKIE}`)).toBe(`y ${secretPlaceholder(N.cookie)}`);
+    expect(
+      logInfo.mock.calls.filter((c) => String(c[0]).includes("recovered")),
+    ).toHaveLength(1);
+    // After that good build, a TTL-only failure may use it again.
+    db.close();
+    expireSecretRefsForTest();
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`);
   });
 
   it("any other database error with NO last-good index is rethrown, so the scrub and the tool seam fail closed", async () => {

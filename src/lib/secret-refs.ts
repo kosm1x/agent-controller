@@ -25,7 +25,7 @@ import { getDatabase } from "../db/index.js";
 import { createLogger } from "./logger.js";
 import {
   isCredentialFact,
-  isCredentialName,
+  isSecretValueName,
   CREDENTIAL_FACT_PLACEHOLDER,
 } from "../db/user-facts.js";
 
@@ -63,13 +63,22 @@ interface SecretIndex {
   valueOf: Map<string, string>;
   /** [value, placeholder], longest value first; URL-encoded and JSON-escaped forms included. */
   scrub: Array<[string, string]>;
+  /** raw scrubbed value (>= MIN_SCRUB_LENGTH) → placeholder; numeric JSON leaves are matched here. */
+  exact: Map<string, string>;
 }
 
 let cache: SecretIndex | null = null;
+/**
+ * Audit round 5 (S5): set by every store write, cleared by the next good
+ * build. While set, the last good index is known to be stale (a value was
+ * written after it), so a failing build throws instead of falling back.
+ */
+let dirtySinceLastGood = false;
 
 /** Drop the cached index; every writer to either store calls this. */
 export function invalidateSecretRefs(): void {
   cache = null;
+  dirtySinceLastGood = true;
 }
 
 function norm(s: string): string {
@@ -115,21 +124,17 @@ export function isProjectSecret(key: string, value: string): boolean {
 }
 
 /**
- * A scheme/container name that names no secret by itself: its children are
- * judged by their own keys (`oauth.client_id`, `auth.user`, a nested
- * `credentials.user` stay visible; ruling 3d — the field name
- * "credentials" is not itself a reason).
- */
-const CONTAINER_NAME_RE = /^(?:o?auth|credentials?|credencial(?:es)?|creds?)$/i;
-
-/**
- * Audit round 4 (3d-a): whether every leaf below a key with this name is a
- * secret — the key is a credential name (`password: {prod, staging}`,
- * `github_token: {value, scope}`, `api_keys: [v]`) and not a mere container.
- * The meta-suffix exemption applies (`api_key_path: {…}` is not).
+ * Audit round 4 (3d-a), narrowed in round 5 (B1): whether every leaf below a
+ * key with this name is a secret — the name's LAST token names a secret
+ * value (`password: {prod, staging}`, `github_token: {value, scope}`,
+ * `api_keys: [v]`). A container — any name whose credential word is
+ * auth / oauth / credential(s) / creds / credencial(es) (`db_credentials`,
+ * `basic_auth`, `google_oauth`, `oauth_config`, `credenciales_ftp`) — is not:
+ * its children are judged by their own keys and values (ruling 3d). The
+ * meta-suffix exemption applies (`api_key_path: {…}` is not).
  */
 export function isSecretAncestorName(key: string): boolean {
-  return !CONTAINER_NAME_RE.test(key.trim()) && isCredentialName(key);
+  return isSecretValueName(key.trim());
 }
 
 interface Entry {
@@ -236,6 +241,7 @@ function buildIndex(): SecretIndex | null {
   const nameOf = new Map<string, string>();
   const valueOf = new Map<string, string>();
   const scrub: Array<[string, string]> = [];
+  const exact = new Map<string, string>();
   for (const e of entries) {
     const name =
       (count.get(e.base) ?? 0) > 1
@@ -245,6 +251,7 @@ function buildIndex(): SecretIndex | null {
     valueOf.set(name, e.value);
     if (e.value.length < MIN_SCRUB_LENGTH) continue;
     const ph = secretPlaceholder(name);
+    exact.set(e.value, ph);
     // The value as it appears raw, URL-encoded, and inside a JSON string
     // (escaped once, and twice for JSON nested in a JSON string).
     const escaped = JSON.stringify(e.value).slice(1, -1);
@@ -258,7 +265,7 @@ function buildIndex(): SecretIndex | null {
     }
   }
   scrub.sort((a, b) => b[0].length - a[0].length);
-  return { at: Date.now(), nameOf, valueOf, scrub };
+  return { at: Date.now(), nameOf, valueOf, scrub, exact };
 }
 
 const EMPTY: SecretIndex = {
@@ -266,6 +273,7 @@ const EMPTY: SecretIndex = {
   nameOf: new Map(),
   valueOf: new Map(),
   scrub: [],
+  exact: new Map(),
 };
 
 const log = createLogger("secret-refs");
@@ -279,11 +287,14 @@ let lastGood: SecretIndex | null = null;
 let failing = false;
 
 /**
- * Failure policy (audit round 4): a build error other than "no such table"
- * falls back to the last successfully built index when one exists (logged
- * once per failure episode; the next call retries the build). With no
- * last-good index the error is rethrown, so every consumer — the tool seam,
- * the inference seam, the writers — fails closed.
+ * Failure policy (audit round 4, tightened in round 5 / S5): a build error
+ * other than "no such table" falls back to the last successfully built index
+ * only while that index is known current — no store write since it was built
+ * (the TTL expired, nothing changed in-process). Logged once per failure
+ * episode; the next call retries the build. With no last-good index, or with
+ * a write since it (`dirtySinceLastGood`: a value stored after it would be
+ * missed), the error is rethrown, so every consumer — the tool seam, the
+ * inference seam, the writers — fails closed. The recovery is logged once.
  */
 function index(): SecretIndex {
   if (cache && Date.now() - cache.at <= INDEX_TTL_MS) return cache;
@@ -291,7 +302,16 @@ function index(): SecretIndex {
   try {
     built = buildIndex();
   } catch (err) {
-    if (!lastGood) throw err;
+    if (!lastGood || dirtySinceLastGood) {
+      if (!failing) {
+        failing = true;
+        log.warn(
+          { err: String(err), stale: dirtySinceLastGood },
+          "secret index build failed; failing closed (no current index)",
+        );
+      }
+      throw err;
+    }
     if (!failing) {
       failing = true;
       log.warn(
@@ -301,7 +321,9 @@ function index(): SecretIndex {
     }
     return lastGood;
   }
+  if (failing) log.info("secret index build recovered");
   failing = false;
+  dirtySinceLastGood = false;
   // No database / no store tables: nothing cached (re-read next call, as
   // before), and not a fallback either — an index that read nothing must
   // never stand in for a database that errors.
@@ -315,6 +337,12 @@ export function resetSecretRefsForTest(): void {
   cache = null;
   lastGood = null;
   failing = false;
+  dirtySinceLastGood = false;
+}
+
+/** Test-only: age the cached index past its TTL WITHOUT a store write. */
+export function expireSecretRefsForTest(): void {
+  if (cache) cache = { ...cache, at: 0 };
 }
 
 /** Reference name of a stored credential, or undefined. */
@@ -410,11 +438,166 @@ export function projectEntryLeaves(
  * forms) with its placeholder. Plain substring replacement, longest value first.
  */
 export function scrubSecrets(text: string): string {
+  return scrubWith(index(), text);
+}
+
+/**
+ * Audit round 5 (outbound tool-call arguments): scrub a JSON-able value
+ * structurally — every string leaf through `scrubSecrets`, and every NUMBER
+ * leaf whose decimal form equals a stored value replaced by that value's
+ * placeholder string (a numeric PIN or account secret would otherwise pass
+ * the substring scrub only by luck). Object keys are kept. Returns the same
+ * object when nothing changed.
+ */
+export function scrubStructured(value: unknown): unknown {
+  const idx = index();
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return scrubWith(idx, v);
+    if (typeof v === "number") return idx.exact.get(String(v)) ?? v;
+    if (Array.isArray(v)) {
+      const out = v.map(walk);
+      return out.some((x, i) => x !== v[i]) ? out : v;
+    }
+    if (v && typeof v === "object") {
+      let changed = false;
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        out[k] = walk(x);
+        if (out[k] !== x) changed = true;
+      }
+      return changed ? out : v;
+    }
+    return v;
+  };
+  return walk(value);
+}
+
+/**
+ * JSON-aware scrub of a JSON text (tool-call arguments): parsed, scrubbed
+ * with `scrubStructured`, re-stringified — the original text when nothing
+ * changed (prompt-cache prefix stays byte-identical). Text that does not
+ * parse falls back to the substring scrub.
+ */
+export function scrubJsonText(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return scrubSecrets(text);
+  }
+  const clean = scrubStructured(parsed);
+  return clean === parsed ? scrubSecrets(text) : JSON.stringify(clean);
+}
+
+function scrubWith(idx: SecretIndex, text: string): string {
   let out = text;
-  for (const [value, ph] of index().scrub) {
+  for (const [value, ph] of idx.scrub) {
     if (out.includes(value)) out = out.replaceAll(value, () => ph);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Audit round 5 (B2): a stored value written back BY NAME
+// ---------------------------------------------------------------------------
+
+/**
+ * The rendered prefix of every hidden-value display: `secretPlaceholder` and
+ * the generic `CREDENTIAL_FACT_PLACEHOLDER` (literals — the two modules import
+ * each other; secret-refs.test.ts pins that both displays start with these).
+ */
+export const PLACEHOLDER_MARKERS: readonly string[] = ["[oculto ·", "[valor oculto"];
+const BARE_REF_RE =
+  /^(?:\{\{(SECRET_[A-Za-z0-9_]+)\}\}|\$\{(SECRET_[A-Za-z0-9_]+)\}|\$(SECRET_[A-Za-z0-9_]+))$/;
+const PLACEHOLDER_NAME_RE = /\$(SECRET_[A-Za-z0-9_]+) /;
+
+export type StoredRefResolution =
+  | { kind: "plain" }
+  | { kind: "resolved"; value: string; name: string }
+  | { kind: "error"; error: string };
+
+/**
+ * A value a store-writing tool (`user_fact_set`, `project_update`) received:
+ * - exactly a secret placeholder (as rendered), `{{SECRET_X}}`, `${SECRET_X}`
+ *   or `$SECRET_X` → the stored value of that name (moving or renaming a
+ *   credential keeps it); an unknown name → error;
+ * - any other value containing a placeholder marker (`[oculto ·`, the
+ *   generic `[valor oculto`) → error: the model must write the reference;
+ * - anything else → plain (stored as given).
+ */
+export function resolveStoredReference(value: string): StoredRefResolution {
+  const t = value.trim();
+  let name: string | undefined;
+  const bare = BARE_REF_RE.exec(t);
+  if (bare) name = bare[1] ?? bare[2] ?? bare[3];
+  else {
+    const m = PLACEHOLDER_NAME_RE.exec(t);
+    if (m && t === secretPlaceholder(m[1]!)) name = m[1];
+  }
+  if (name) {
+    const stored = index().valueOf.get(name);
+    if (stored === undefined) {
+      return {
+        kind: "error",
+        error: `No guardé: no hay credencial guardada con el nombre ${name}. Usa el nombre exacto que muestra el dato oculto.`,
+      };
+    }
+    return { kind: "resolved", value: stored, name };
+  }
+  if (PLACEHOLDER_MARKERS.some((m) => value.includes(m))) {
+    return {
+      kind: "error",
+      error:
+        "No guardé: el valor contiene un dato oculto. Para copiar o mover una credencial guardada, escribe como valor completo solo su referencia ({{SECRET_<NOMBRE>}} o $SECRET_<NOMBRE>); para un valor nuevo, escribe el valor real.",
+    };
+  }
+  return { kind: "plain" };
+}
+
+/**
+ * `resolveStoredReference` over every string leaf of a JSON-able value.
+ * Returns a copy with references resolved plus the paths that were resolved
+ * (the caller checks each still lands on a hidden key), or the first error.
+ */
+export function resolveStoredReferencesDeep(
+  value: unknown,
+):
+  | { value: unknown; resolvedPaths: string[][] }
+  | { error: string } {
+  const resolvedPaths: string[][] = [];
+  let error: string | undefined;
+  const walk = (v: unknown, path: string[]): unknown => {
+    if (error) return v;
+    if (typeof v === "string") {
+      const r = resolveStoredReference(v);
+      if (r.kind === "error") {
+        error = r.error;
+        return v;
+      }
+      if (r.kind === "resolved") {
+        resolvedPaths.push(path);
+        return r.value;
+      }
+      return v;
+    }
+    if (Array.isArray(v)) return v.map((x, i) => walk(x, [...path, String(i)]));
+    if (v && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, x]) => [
+          k,
+          walk(x, [...path, k]),
+        ]),
+      );
+    }
+    return v;
+  };
+  const out = walk(value, []);
+  return error ? { error } : { value: out, resolvedPaths };
+}
+
+/** The refusal when a credential written by name would land on a visible key. */
+export function visibleDestinationError(where: string): string {
+  return `No guardé: ${where} no es un nombre de credencial, así que el valor quedaría visible. Usa una clave que nombre la credencial (p. ej. …_password, …_token, …_api_key).`;
 }
 
 function unknownRefError(tool: string, names: string[]): string {

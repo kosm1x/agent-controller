@@ -16,7 +16,7 @@
  */
 
 import { errMsg } from "../lib/err-msg.js";
-import { scrubSecrets } from "../lib/secret-refs.js";
+import { scrubOutboundText } from "./outbound-scrub.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -136,7 +136,7 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   // nothing is sent (this function never throws).
   let clean: string[];
   try {
-    clean = texts.map((t) => scrubSecrets(t));
+    clean = texts.map((t) => scrubOutboundText(t));
   } catch (err) {
     console.warn("[embeddings] secret index unavailable, not sent:", errMsg(err));
     return texts.map(() => []);

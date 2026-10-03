@@ -19,7 +19,48 @@ import {
   isProjectSecret,
   projectEntryLeaves,
   projectSecretDisplay,
+  resolveStoredReferencesDeep,
+  visibleDestinationError,
 } from "../../lib/secret-refs.js";
+
+/**
+ * Audit round 5 (B2a): stored credentials written back BY NAME inside
+ * `credentials` / `urls` / `config` (a leaf that is exactly a placeholder,
+ * `{{SECRET_X}}` or `$SECRET_X`) are replaced by their stored value, so
+ * moving or renaming an entry keeps it; each must land on a leaf that stays
+ * hidden. A leaf carrying a placeholder inside other text, or an unknown
+ * name, refuses the whole call. Returns the args to apply (a copy when
+ * anything changed) or the `{error}` JSON.
+ */
+function resolveProjectRefs(
+  slug: string,
+  args: Record<string, unknown>,
+): { args: Record<string, unknown> } | { error: string } {
+  let out = args;
+  for (const field of ["credentials", "urls", "config"] as const) {
+    const obj = args[field];
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    const r = resolveStoredReferencesDeep(obj);
+    if ("error" in r) return { error: JSON.stringify({ error: r.error }) };
+    if (r.resolvedPaths.length === 0) continue;
+    const resolved = r.value as Record<string, unknown>;
+    for (const path of r.resolvedPaths) {
+      const top = path[0]!;
+      const leaf = projectEntryLeaves(slug, field, top, resolved[top]).find(
+        (l) => l.path.join("\0") === path.join("\0"),
+      );
+      if (!leaf?.secret) {
+        return {
+          error: JSON.stringify({
+            error: visibleDestinationError(`${field}.${path.join(".")}`),
+          }),
+        };
+      }
+    }
+    out = { ...out, [field]: resolved };
+  }
+  return { args: out };
+}
 
 /**
  * Ruling 3c: the by-name placeholder of each credential-style entry (nested
@@ -229,7 +270,7 @@ export const projectUpdateTool: Tool = {
     type: "function",
     function: {
       name: "project_update",
-      description: `Create or update a project. Updates are merged (credentials, URLs, config are merged, not replaced).
+      description: `Create or update a project. Updates are merged (credentials, URLs, config are merged key by key, nested objects too, not replaced; a null value deletes that key).
 
 USE WHEN:
 - User provides project credentials (WP password, API key, FTP host) — store them here
@@ -293,8 +334,11 @@ CREDENTIAL STORAGE:
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
-    const slug = args.slug as string;
+  async execute(rawArgs: Record<string, unknown>): Promise<string> {
+    const slug = rawArgs.slug as string;
+    const refs = resolveProjectRefs(slug, rawArgs);
+    if ("error" in refs) return refs.error;
+    const args = refs.args;
     const existing = getProject(slug);
 
     if (!existing) {

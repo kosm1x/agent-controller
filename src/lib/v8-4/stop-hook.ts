@@ -27,6 +27,7 @@ import type {
   HookJSONOutput,
 } from "@anthropic-ai/claude-agent-sdk";
 import { emitTraceEvent } from "../../observability/task-trace.js";
+import { scrubSecrets } from "../secret-refs.js";
 import { gatesMode, hasGates, listGates } from "./gates.js";
 import {
   evaluateLedger,
@@ -159,7 +160,9 @@ export function makeGatesStopHook(
       .slice(0, 4)
       .map(
         (r) =>
-          `${r.gate_id} — ${r.criterion}${r.evidence ? ` [${r.evidence.slice(0, 160)}]` : ""}`,
+          // Ruling 3c, audit round 5: scrub before the 160-char cut (a cut
+          // value would escape the reason-level scrub in claude-sdk.ts).
+          `${r.gate_id} — ${r.criterion}${r.evidence ? ` [${scrubSecrets(r.evidence).slice(0, 160)}]` : ""}`,
       )
       .join("; ");
     emitTraceEvent({

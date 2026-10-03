@@ -405,7 +405,10 @@ function balanceTailFences(content: string, tailStart: number, tail: string): st
   return closeOpenFence(t);
 }
 
-export function capStableContent(path: string, content: string, logTag: string): string {
+export function capStableContent(path: string, rawContent: string, logTag: string): string {
+  // Ruling 3c, audit round 5: scrub BEFORE the head/tail cut, so a cut can
+  // never split a stored value into fragments the later block scrub misses.
+  const content = scrubSecrets(rawContent);
   if (content.length <= STABLE_FILE_CHAR_CAP) return content;
   const headCut = content.lastIndexOf("\n", STABLE_HEAD_CHARS);
   const head = content.slice(0, headCut > STABLE_HEAD_CHARS / 2 ? headCut : STABLE_HEAD_CHARS);

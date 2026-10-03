@@ -51,6 +51,35 @@ function parseJSON(raw: string | null | undefined): Record<string, unknown> {
   }
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Audit round 5 (B2b): the merge `project_update` applies to `credentials`,
+ * `urls` and `config`. Nested objects are merged key by key (changing
+ * `ftp.host` keeps `ftp.user` and `ftp.password`); an explicit `null`
+ * deletes that key at any depth (`{ftp: {password: null}}` removes one
+ * nested key, `{ftp: null}` the whole entry); arrays and scalars replace.
+ * Never mutates its inputs.
+ */
+export function mergeProjectEntries(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete out[k];
+    } else if (isPlainObject(v)) {
+      out[k] = mergeProjectEntries(isPlainObject(out[k]) ? out[k] : {}, v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function rowToProject(row: Record<string, unknown>): Project {
   return {
     id: row.id as string,
@@ -126,9 +155,10 @@ export function createProject(
     name,
     fields?.description ?? "",
     fields?.status ?? "active",
-    JSON.stringify(fields?.urls ?? {}),
-    JSON.stringify(fields?.credentials ?? {}),
-    JSON.stringify(fields?.config ?? {}),
+    // Same merge as updateProject (nulls dropped, nested objects kept).
+    JSON.stringify(mergeProjectEntries({}, fields?.urls ?? {})),
+    JSON.stringify(mergeProjectEntries({}, fields?.credentials ?? {})),
+    JSON.stringify(mergeProjectEntries({}, fields?.config ?? {})),
     fields?.commit_goal_id ?? null,
   );
   invalidateSecretRefs();
@@ -172,22 +202,15 @@ export function updateProject(
     fields.push("status = ?");
     values.push(updates.status);
   }
-  if (updates.urls !== undefined) {
-    // Merge with existing URLs
-    const merged = { ...project.urls, ...updates.urls };
-    fields.push("urls = ?");
-    values.push(JSON.stringify(merged));
-  }
-  if (updates.credentials !== undefined) {
-    // Merge with existing credentials
-    const merged = { ...project.credentials, ...updates.credentials };
-    fields.push("credentials = ?");
-    values.push(JSON.stringify(merged));
-  }
-  if (updates.config !== undefined) {
-    // Merge with existing config
-    const merged = { ...project.config, ...updates.config };
-    fields.push("config = ?");
+  // Deep merge with the stored value; null deletes (mergeProjectEntries).
+  for (const field of ["urls", "credentials", "config"] as const) {
+    const patch = updates[field];
+    if (patch === undefined) continue;
+    const merged = mergeProjectEntries(
+      project[field] as Record<string, unknown>,
+      isPlainObject(patch) ? patch : {},
+    );
+    fields.push(`${field} = ?`);
     values.push(JSON.stringify(merged));
   }
   if (updates.commit_goal_id !== undefined) {

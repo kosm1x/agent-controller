@@ -1008,3 +1008,17 @@ describe("audit R4 B1-b: KB sections carry no stored value", () => {
     expect(variable).not.toContain(KB_SYN);
   });
 });
+
+describe("capStableContent — ruling 3c, audit round 5: scrub before the cut", () => {
+  it("a stored value straddling the head cut is replaced whole, never left as a fragment", async () => {
+    const { capStableContent } = await import("./kb-injection.js");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // One long line (no newline to snap to): the head is cut at exactly 6000
+    // chars, so the value starting at 5990 would be split by a cut-first path.
+    const big = "a".repeat(5990) + KB_SYN + "b".repeat(30_000);
+    const capped = capStableContent("x.md", big, "t");
+    expect(capped).not.toContain("kbs-");
+    expect(capped).toContain("[oculto]");
+    warn.mockRestore();
+  });
+});

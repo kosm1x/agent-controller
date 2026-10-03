@@ -56,7 +56,11 @@ import {
   parseAnthropicStream,
   type AnthropicResponse,
 } from "./anthropic.js";
-import { infer, scrubOutboundMessages } from "./adapter.js";
+import { infer } from "./adapter.js";
+import {
+  scrubOutboundMessages,
+  SecretScrubUnavailableError,
+} from "./outbound-scrub.js";
 import type {
   ChatMessage,
   ToolDefinition,
@@ -766,6 +770,10 @@ export async function inferViaOpenAi(
         breaker.recordSuccess();
         return result;
       } catch (err) {
+        // Ruling 3c, audit round 5: the outbound scrub could not run, so
+        // nothing was sent. Not a provider failure — no breaker, no provider
+        // metrics, no retry or failover (every provider needs the same scrub).
+        if (err instanceof SecretScrubUnavailableError) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         // HttpError carries status + rate-limit headers structurally; for any
         // other error we fall back to parsing the message string the way we
