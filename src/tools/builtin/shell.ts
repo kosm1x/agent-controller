@@ -1058,7 +1058,15 @@ const DOCKER_VALUE_FLAG_RE = /^(?:--(?:config|context|host|log-level|tlscacert|t
 const COMPOSE_VALUE_FLAG_RE = /^(?:--(?:ansi|env-file|file|parallel|profile|progress|project-directory|project-name)|-(?:(?![fp])[A-Za-z])*[fp])$/;
 /** Pointing the CLI at another daemon, context or config. */
 const DOCKER_REDIRECT_FLAG_RE = /^(?:--(?:host|context|config)(?:=|$)|-[A-Za-z]*[Hc])/;
-const DOCKER_ENV_ASSIGN_RE = /(?:^|\.)DOCKER_(?:HOST|CONTEXT|CONFIG)=/;
+/**
+ * Any `DOCKER_*=` assignment (ruling 5d, 2026-10-03: "any DOCKER_* prefix … Keep refused"), wherever it
+ * appears in the command — not only in front of a docker word. The CLI reads many of these (HOST, CONTEXT,
+ * CONFIG, CERT_PATH, TLS_VERIFY, API_VERSION, …) and an assignment reaches docker through indirection the
+ * walk cannot see: a script, a Makefile, `npm run`, an interpreter that assembles the word. The cost is a
+ * refusal of a non-docker command that sets a `DOCKER_` variable (`DOCKER_FOO=1 npm run x`), which no
+ * logged use needs. Case-sensitive: bash and the CLI treat `docker_host` as a different variable.
+ */
+const DOCKER_ENV_ASSIGN_RE = /(?:^|\.)DOCKER_\w*=/;
 /** A here-string with its operand attached (`<<<docker`): group 1 is the operator. */
 const HERE_STRING_RE = /^(\d*<<<)(?=.)/;
 /** Flag tokens scanned before a verb; the 64th refuses the invocation, so padding buys nothing and the walk stays linear. */

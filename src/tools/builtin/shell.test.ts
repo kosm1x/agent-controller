@@ -2219,6 +2219,31 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     refused("docker exec -e PGHOST=/var/run/docker.sock supabase-db psql", /Docker API socket/);
   });
 
+  it("ruling 5d: ANY `DOCKER_*=` assignment is refused, wherever it appears; reads and lowercase are not", () => {
+    for (const cmd of [
+      "DOCKER_CERT_PATH=/tmp/certs docker ps",
+      "DOCKER_TLS_VERIFY=1 docker ps",
+      "DOCKER_API_VERSION=1.40 docker ps",
+      "export DOCKER_TLS_VERIFY=0; docker ps",
+      "env DOCKER_CERT_PATH=/tmp/c docker ps",
+      "DOCKER_BUILDKIT=1 docker ps",
+      // not only in front of a docker word: an assignment reaches docker through a script, make, npm run, …
+      "DOCKER_CERT_PATH=/tmp/c ./deploy.sh",
+      "DOCKER_TLS_VERIFY=0 make up",
+      "DOCKER_FOO=1 npm run x", // deliberate: a non-docker DOCKER_ variable is refused too (no logged use)
+      "bash -c 'DOCKER_API_VERSION=1.40 docker ps'",
+    ]) refused(cmd, /^`DOCKER_\w+=` is refused/);
+    refused("docker exec -e DOCKER_CERT_PATH=/x supabase-db psql", /docker exec -e DOCKER_CERT_PATH/); // inside -e: not PG*
+    for (const cmd of [
+      "docker_host=tcp://x docker ps", // bash treats lowercase as a different variable; the CLI does not read it
+      "MY_DOCKER_HOST=x ls", // DOCKER_ must start the name
+      "echo $DOCKER_HOST", // a read, not an assignment
+      "printenv DOCKER_CERT_PATH",
+      "unset DOCKER_HOST",
+      "grep -n DOCKER_TLS_VERIFY docs/x.md",
+    ]) allowed(cmd);
+  });
+
   it("prose naming a refused verb is refused, as the package-manager walk refuses `echo npm install x`", () => {
     refused("echo docker run");
     refused("grep -rn 'docker exec' src");
