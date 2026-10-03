@@ -434,6 +434,42 @@ describe("scrubSecrets", () => {
   });
 });
 
+describe("index build (buildIndex)", () => {
+  it("a database without the store tables holds no secrets: empty index, no throw", () => {
+    db = new Database(":memory:");
+    invalidateSecretRefs();
+    const text = `x ${COOKIE} y`;
+    expect(scrubSecrets(text)).toBe(text);
+    expect(secretRefName(factIdentity("projects", "acme_session_cookie"))).toBeUndefined();
+    expect(secretEnvForCommand('echo "$' + N.cookie + '"')).toEqual({});
+    // Unknown references are still refused (nothing is stored under any name).
+    const out = resolveSecretRefs("shell_exec", { command: "echo $" + N.cookie });
+    expect("error" in out && JSON.parse(out.error).error).toContain(N.cookie);
+  });
+
+  it("any other database error is rethrown, so the scrub and the tool seam fail closed", async () => {
+    db.close(); // "The database connection is not open"
+    invalidateSecretRefs();
+    expect(() => scrubSecrets(`x ${COOKIE}`)).toThrow(/not open/);
+    const reg = new ToolRegistry();
+    const execute = vi.fn(async () => `out ${COOKIE}`);
+    const tool: Tool = {
+      name: "browser__goto",
+      definition: {
+        type: "function",
+        function: {
+          name: "browser__goto",
+          description: "echo",
+          parameters: { type: "object", properties: {} },
+        },
+      },
+      execute,
+    };
+    reg.register(tool);
+    await expect(reg.execute("browser__goto", {})).rejects.toThrow(/not open/);
+  });
+});
+
 describe("the tool seam (ToolRegistry.executeDirect)", () => {
   function echoTool(name: string, riskTier?: "high"): Tool {
     return {
@@ -539,6 +575,25 @@ describe("the tool seam (ToolRegistry.executeDirect)", () => {
       },
     });
     await expect(reg.execute("browser__goto", {})).rejects.toBe(original);
+  });
+
+  it("an error with a read-only message (DOMException) carrying no secret is rethrown untouched (same object, same type)", async () => {
+    // Pins the early return: without it the read-only message assignment
+    // fails and a clean DOMException is swapped for a plain Error.
+    const reg = new ToolRegistry();
+    const original = new DOMException("selector sin datos sensibles", "SyntaxError");
+    reg.register({
+      ...echoTool("browser__goto"),
+      execute: async () => {
+        throw original;
+      },
+    });
+    const err = await reg.execute("browser__goto", {}).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBe(original);
+    expect(err).toBeInstanceOf(DOMException);
   });
 
   it("an error with a read-only message (DOMException) is replaced by a scrubbed Error keeping its name", async () => {
