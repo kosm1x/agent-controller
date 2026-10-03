@@ -1,6 +1,6 @@
 # Roadmap — one page
 
-> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S0).
+> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S1).
 
 **Destination: Beta 1.0** (`docs/V8-VISION.md` §8). Decided 2026-10-03: Beta means both (a) it works for Fede, with evidence, and (b) any other operator could adopt it. Fede is the first operator and super beta tester; his setup becomes the first operator profile, not a special case.
 
@@ -27,7 +27,7 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | W3 internal eval, reshaped | Uses existing gate/outcome/eval data; gate-definition changes logged with old-definition number | Inventory real row counts, paired comparisons vs explicit-direction baseline | S5 |
 | Landscape review | Every item has a primary source and a verdict (build / adopt / borrow / ignore) | First review + `docs/LANDSCAPE.md` register | S2 |
 | Beta scope + operator abstraction | `docs/BETA.md` merged | Hardcoded-to-Fede inventory, first transferability workstream | S6 |
-| Cloud-session support | Clean clone runs hook; agents + skills load | SessionStart hook, `.claude/agents/`, `.claude/skills/` | S1 |
+| Cloud-session support | Clean clone runs hook; agents + skills load | **Done in S1.** VPS-only: `eval:gate` (even dry), `mc-ctl`, prod data, deploy | S1 |
 | W5 loop vocabulary | Doc only | **Done in S0** (CLAUDE.md) | S0 |
 
 ## Review cadence (tiered, routines created 2026-10-03)
@@ -52,3 +52,4 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
 | 2026-10-03 | S0 compact record + roadmap | [#53](https://github.com/kosm1x/agent-controller/pull/53) | PROJECT-STATUS 1.84 MB → ~196 KB; history moved unchanged to `docs/archive/status-history-2026-0{3..9}.md`; this page; W5 in CLAUDE.md. D2 (archive move) approved and done. | S1 next |
+| 2026-10-03 | S1 cloud-session setup | PR_LINK | Cloud-only SessionStart hook (`npm ci` when the lockfile changes, then typecheck; clean clone 27 s, rerun 10 s; never touches a node_modules it did not create); `implementer` + `qa-auditor` agents (auditor keeps `.claude/agent-memory/qa-auditor/`); skills `eval-gate`, `session-close`, `upstream-review`. | S2 next. Cloud sessions cannot run `eval:gate` or read prod data: they record it as owed. New auditor memory files are gitignored (need `git add -f`). |
