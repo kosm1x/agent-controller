@@ -129,6 +129,38 @@ describe("redaction and report", () => {
     expect(r).toContain("select 1");
   });
 
+  it("audit B4: masks passwords in client flags, curl -u, sshpass and *PASS*/*TOKEN*/*SECRET* assignments", () => {
+    const cases: Array<[string, string]> = [
+      [`mysql -u root -p${pw} db`, "-p [REDACTED]"],
+      [`mysql -u root -p ${pw} db`, "-p [REDACTED]"],
+      [`mysqldump -uroot -p${pw} db > /tmp/d.sql`, "-p [REDACTED]"],
+      [`psql -h db -p ${pw} -U u`, "-p [REDACTED]"],
+      [`sshpass -p ${pw} ssh u@h`, "-p [REDACTED]"],
+      [`sshpass -p${pw} ssh u@h`, "-p [REDACTED]"],
+      [`curl -u admin:${pw} https://h/x`, "admin:[REDACTED]"],
+      [`curl --user admin:${pw} https://h/x`, "admin:[REDACTED]"],
+      [`curl --user=admin:${pw} https://h/x`, "admin:[REDACTED]"],
+      [`PGPASSWORD=${pw} psql -U u`, "PGPASSWORD=[REDACTED]"],
+      [`DB_PASS=${pw} ./run.sh`, "DB_PASS=[REDACTED]"],
+      [`GH_TOKEN=${pw} gh pr list`, "GH_TOKEN=[REDACTED]"],
+      [`export APP_SECRET='${pw}'; ./x`, "APP_SECRET=[REDACTED]"],
+      [`x --password ${pw}`, "--password [REDACTED]"],
+      [`x --password=${pw}`, "--password=[REDACTED]"],
+    ];
+    for (const [cmd, marker] of cases) {
+      const r = redactCommand(cmd);
+      expect(r, cmd).not.toContain(pw);
+      expect(r, cmd).toContain(marker);
+    }
+    // Ordinary text survives.
+    expect(redactCommand("ls -la /tmp && grep -p foo x")).toBe("ls -la /tmp && grep -p foo x");
+    expect(redactCommand("curl -s https://h/x")).toBe("curl -s https://h/x");
+    // And the report masks reasons too.
+    const diffs = [{ command: `sshpass -p ${pw} ssh h`, group: "non-docker" as const, current: { allowed: false, reason: `saw PGPASSWORD=${pw}` }, ref: { allowed: true } }];
+    const rep = formatReport({ total: 1, commands: ["a"], perSource: {} }, diffs, { days: 1, ref: "main", redact: true });
+    expect(rep).not.toContain(pw);
+  });
+
   it("prints counts and groups; --no-redact shows the text as logged", () => {
     const diffs = [{ command: `docker cp ${longTok} /y`, group: "docker-refused-per-ruling" as const, current: { allowed: false, reason: "r" }, ref: { allowed: true } }];
     const pop = { total: 3, commands: ["a", "b"], perSource: { "runs.output": 3 } };

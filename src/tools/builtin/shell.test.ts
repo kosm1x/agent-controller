@@ -25,6 +25,8 @@ import {
   isSecretEnvKey,
   buildScrubbedEnv,
   execGroupKill,
+  withDockerConfig,
+  DOCKER_CONFIG_DIR,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
 
@@ -2242,6 +2244,83 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       "unset DOCKER_HOST",
       "grep -n DOCKER_TLS_VERIFY docs/x.md",
     ]) allowed(cmd);
+  });
+
+  it("audit B1: every pflag spelling of `-o`/`--opt` is read, `-o=value` included", () => {
+    for (const cmd of [
+      "docker volume create -o=type=none h",
+      "docker volume create -o=o=bind h",
+      "docker volume create -o=device=/ h",
+      "docker volume create -o=type=none -o=o=bind -o=device=/ h", // the audit probe
+      "docker volume create --opt type=none h", // --opt X
+      "docker volume create --opt=type=none h", // --opt=X
+      "docker volume create -o type=none h", // -o X
+      "docker volume create -otype=none h", // -oX
+      "docker volume create -o=O=RBIND h",
+      "docker volume create -o=o=rw,bind h",
+    ]) refused(cmd);
+    for (const cmd of [
+      "docker volume create name",
+      "docker volume create --driver local name",
+      "docker volume create --driver=local -o=type=tmpfs -o=o=size=100m name",
+    ]) allowed(cmd);
+  });
+
+  it("audit B2: a builtin that sets a DOCKER_ variable by name is refused (5d: anywhere)", () => {
+    for (const cmd of [
+      "read DOCKER_HOST < /tmp/h; docker ps",
+      "read -r DOCKER_HOST",
+      "echo tcp://x | read DOCKER_HOST",
+      "printf -v DOCKER_HOST %s tcp://x; docker ps",
+      "printf -vDOCKER_HOST %s tcp://x",
+      "mapfile -t DOCKER_HOST < /tmp/h",
+      "readarray DOCKER_CONTEXT < /tmp/h",
+      "declare -x DOCKER_HOST",
+      "declare -n r=DOCKER_HOST", // nameref
+      "typeset DOCKER_HOST",
+      "export DOCKER_HOST",
+      "export -n DOCKER_CONFIG",
+      "local DOCKER_HOST",
+      "getopts h: DOCKER_HOST",
+      "for DOCKER_HOST in tcp://x; do docker ps; done",
+      "select DOCKER_HOST in tcp://x; do docker ps; done",
+      ": ${DOCKER_HOST:=tcp://x}; docker ps", // assign-default expansion
+      ": ${DOCKER_HOST=tcp://x}",
+      "DOCKER_HOST+=tcp://x docker ps", // append to an unset variable sets it
+      "DOCKER_HOST[0]=tcp://x; export DOCKER_HOST",
+      "(( DOCKER_TLS_VERIFY = 0 ))", // arithmetic assignment, spaced
+      "let DOCKER_TLS_VERIFY=0",
+      "bash -c 'read DOCKER_HOST'",
+    ]) refused(cmd);
+    refused("builtin read DOCKER_HOST", /./); // `builtin` is already refused by the env-reset rule
+    for (const cmd of [
+      "echo $DOCKER_HOST",
+      "echo ${DOCKER_HOST:-unset}", // use-default does not assign
+      "printenv DOCKER_CERT_PATH",
+      "printf '%s\\n' DOCKER_HOST", // printf without -v
+      "grep -n DOCKER_TLS_VERIFY docs/x.md",
+      "read -r line < /tmp/x",
+      "for f in a b; do grep DOCKER_HOST $f; done", // the name is in another segment than `for`
+      "unset DOCKER_HOST",
+    ]) allowed(cmd);
+  });
+
+  it("audit B3: DOCKER_CONFIG is pinned in the child env and cannot be unpinned", async () => {
+    expect(DOCKER_CONFIG_DIR).toBe(process.env.DOCKER_CONFIG || join(process.env.HOME || "/root", ".docker"));
+    expect(withDockerConfig({ HOME: "/tmp/h", PATH: "/bin" }, "/real/.docker")).toEqual({
+      HOME: "/tmp/h",
+      PATH: "/bin",
+      DOCKER_CONFIG: "/real/.docker",
+    });
+    expect(withDockerConfig({ DOCKER_CONFIG: "/tmp/other" }, "/real/.docker").DOCKER_CONFIG).toBe("/real/.docker");
+    // The live child: a HOME override in the command leaves DOCKER_CONFIG on the startup dir.
+    _resetFlailingGuard();
+    const parsed = JSON.parse(await shellTool.execute({ command: "HOME=/tmp/h printenv DOCKER_CONFIG" }));
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.stdout.trim()).toBe(DOCKER_CONFIG_DIR);
+    refused("unset DOCKER_CONFIG; HOME=/tmp/h docker ps");
+    refused("unset -v DOCKER_CONFIG");
+    refused("env -u DOCKER_CONFIG HOME=/tmp/h docker ps", /./); // `env -u` is already refused by the env-reset rule
   });
 
   it("prose naming a refused verb is refused, as the package-manager walk refuses `echo npm install x`", () => {

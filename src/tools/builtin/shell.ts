@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isImmutableCorePath, isBlockedEnvFile } from "./immutable-core.js";
+import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
@@ -232,6 +233,20 @@ export const PM_SHIM_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), 
 export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
   return { ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") };
+}
+
+/**
+ * Audit B3: the docker CLI reads `$DOCKER_CONFIG`, else `$HOME/.docker` — so `HOME=/tmp/h docker ps`
+ * would load another config.json (which can set a context, hence a daemon). The child env pins
+ * `DOCKER_CONFIG` to the directory resolved ONCE at startup from mission-control's own environment,
+ * so a HOME override in the command no longer moves it (overriding or unsetting `DOCKER_CONFIG`
+ * itself is refused by the docker gate).
+ */
+export const DOCKER_CONFIG_DIR = process.env.DOCKER_CONFIG || resolvePath(process.env.HOME || homedir(), ".docker");
+
+/** The env with `DOCKER_CONFIG` pinned to DOCKER_CONFIG_DIR. */
+export function withDockerConfig(env: NodeJS.ProcessEnv, dir: string = DOCKER_CONFIG_DIR): NodeJS.ProcessEnv {
+  return { ...env, DOCKER_CONFIG: dir };
 }
 
 /** Fail closed: a dist/ built without the shim must not hand the child install authority. */
@@ -1067,6 +1082,47 @@ const DOCKER_REDIRECT_FLAG_RE = /^(?:--(?:host|context|config)(?:=|$)|-[A-Za-z]*
  * logged use needs. Case-sensitive: bash and the CLI treat `docker_host` as a different variable.
  */
 const DOCKER_ENV_ASSIGN_RE = /(?:^|\.)DOCKER_\w*=/;
+/**
+ * Audit B2 (ruling 5d, "anywhere"): a builtin that SETS a variable from a name argument
+ * (`read DOCKER_HOST`, `printf -v DOCKER_HOST …`, `mapfile`/`readarray`, `declare`/`typeset`/
+ * `export`/`local`, `getopts`, `for`/`select` loop variables) reaches the CLI without a
+ * `DOCKER_*=` token. A segment that contains one of these words and names a `DOCKER_` variable is
+ * refused (`printf` only with `-v`). The cost: in such a segment a `DOCKER_` name is refused even as
+ * a read (`export X=$DOCKER_HOST`); no logged use needs it.
+ */
+const DOCKER_SETTER_WORDS = new Set(["read", "mapfile", "readarray", "declare", "typeset", "export", "local", "getopts", "for", "select"]);
+/** A `DOCKER_` name anywhere in a token (`-vDOCKER_HOST`, `r=DOCKER_HOST` for a nameref). */
+const DOCKER_NAME_RE = /DOCKER_\w*/;
+/**
+ * `${DOCKER_HOST:=x}` / `${DOCKER_HOST=x}`: an assign-default expansion sets the variable. Matched on the
+ * RAW command — normalizeShellText folds the expansion to its word before the walk sees it.
+ */
+const DOCKER_ASSIGN_DEFAULT_RE = /\$\{DOCKER_\w*:?=/;
+/** Other assignment spellings the `DOCKER_*=` token test misses: `+=`, `V[0]=`, arithmetic `(( V = 1 ))`. */
+const DOCKER_OTHER_ASSIGN_RE = /(?<!\w)DOCKER_\w*(?:\[[^\]]*\])?\s*\+?=/;
+/**
+ * Audit B3: shell_exec pins `DOCKER_CONFIG` (see withDockerConfig) so `HOME=/tmp/h docker ps` cannot
+ * point the CLI at another config.json/context. Removing the pin (`unset DOCKER_CONFIG`) is refused
+ * (`env -u` is already refused by checkEnvReset); unsetting any other `DOCKER_` variable stays allowed.
+ */
+const DOCKER_CONFIG_UNPIN_WORDS = new Set(["unset"]);
+function checkDockerVarSet(part: string, tokens: string[]): string | null {
+  const other = DOCKER_OTHER_ASSIGN_RE.exec(part)?.[0];
+  if (other) return dockerRefusal(other.replace(/\s+/g, ""));
+  const words = tokens.map((t) => t.replace(/^.*\//, ""));
+  const setter = words.find(
+    (w, k) => DOCKER_SETTER_WORDS.has(w) || (w === "printf" && tokens.slice(k + 1).some((a) => a.startsWith("-v"))),
+  );
+  const unpin = words.some((w) => DOCKER_CONFIG_UNPIN_WORDS.has(w));
+  for (const t of tokens) {
+    const name = DOCKER_NAME_RE.exec(t)?.[0];
+    if (!name) continue;
+    if (setter) return dockerRefusal(`${setter} ${name}`);
+    if (unpin && name === "DOCKER_CONFIG") return dockerRefusal(`unset ${name}`);
+  }
+  return null;
+}
+
 /** A here-string with its operand attached (`<<<docker`): group 1 is the operator. */
 const HERE_STRING_RE = /^(\d*<<<)(?=.)/;
 /** Flag tokens scanned before a verb; the 64th refuses the invocation, so padding buys nothing and the walk stays linear. */
@@ -1141,7 +1197,8 @@ function checkVolumeCreate(tokens: string[], k: number): string | null {
     if (n >= DOCKER_SCAN_CAP) return dockerRefusal("docker volume create …"); // padding past the cap refuses
     const raw = tokens[k]!;
     if (REDIRECTION_RE.test(raw)) { k += redirectionSpan(tokens, k) - 1; inO = false; continue; }
-    const t = raw.replace(/^(?:--opt=|-o(?=.))/, "");
+    // Every pflag spelling of the option: `--opt X`, `--opt=X`, `-o X`, `-oX`, `-o=X` (audit B1: `-o=type=none`).
+    const t = raw.replace(/^(?:--opt=|-o=?(?=.))/, "");
     if (t !== raw) inO = false;
     else if (raw.startsWith("-")) { inO = false; continue; }
     const oValue = /^o=/i.test(t);
@@ -1203,6 +1260,8 @@ export function checkPackageManagerRaw(
   opts: { docker?: boolean } = {},
 ): string | null {
   const scan = spaceRedirections(normalizeShellText(`${stripQuotedHeredocs(command)}\n${interpreterHeredocBodies(command)}`));
+  const assignDefault = opts.docker !== false ? DOCKER_ASSIGN_DEFAULT_RE.exec(command)?.[0] : undefined;
+  if (assignDefault) return dockerRefusal(assignDefault);
   // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
   // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
   // rules see the whole segment from each package-manager word onward
@@ -1240,6 +1299,10 @@ export function checkPackageManagerRaw(
       const op = HERE_STRING_RE.exec(t)?.[1];
       return op ? [op, t.slice(op.length)] : [t];
     });
+    if (opts.docker !== false && !dTokens.some((t) => DOCKER_ENV_ASSIGN_RE.test(t))) {
+      const varSet = checkDockerVarSet(part, dTokens);
+      if (varSet) return varSet;
+    }
     let lead = true;
     let behindWrapper = false;
     let reentry = false;
@@ -1860,7 +1923,8 @@ RESTRICTIONS:
         // can't exfiltrate mission-control's secrets (see buildScrubbedEnv).
         // PATH starts with the package-manager shim (see PM_SHIM_DIR).
         // Ruling 3c: plus exactly the stored secrets this command names as $SECRET_X.
-        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command) },
+        // Audit B3: DOCKER_CONFIG pinned so a HOME override cannot move the docker config.
+        env: { ...withDockerConfig(withPmShimPath(buildScrubbedEnv())), ...secretEnvForCommand(command) },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret

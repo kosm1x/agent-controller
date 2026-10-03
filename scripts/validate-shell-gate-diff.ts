@@ -41,8 +41,9 @@
  * imports siblings, so it cannot be loaded alone). No worktree, no checkout,
  * nothing written to the repo or its `.git`; the temp dir is removed at exit.
  *
- * Output: only command text (redacted by default: credential shapes via
- * `redactSecrets`, URL userinfo, long mixed tokens) and verdict reasons. No
+ * Output: only command text (redacted by default — see redactCommand: credential shapes via
+ * `redactSecrets`, client `-p` passwords, `curl -u`, `*PASS*/*TOKEN*/*SECRET*=` values, URL userinfo,
+ * long mixed tokens) and verdict reasons. No
  * environment variable or stored secret is read or printed.
  */
 import Database from "better-sqlite3";
@@ -52,6 +53,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { redactSecrets } from "../src/api/mcp-server/redact.js";
+import { scrubSecrets } from "../src/lib/secret-refs.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -241,10 +243,31 @@ export function exitCodeFor(pop: Pick<Population, "commands">, diffs: Difference
 
 // ------------------------------------------------------------------- output
 
-/** Masks credential shapes, URL userinfo and long mixed letter+digit tokens. Applied to commands AND reasons. */
+/** Clients whose `-p` carries a password (`mysql -pX`, `sshpass -p X`); for psql it is the port — masked anyway. */
+const PW_FLAG_CLIENT_RE =
+  /(\b(?:mysql\w*|mariadb\w*|psql|pg_\w+|sshpass|mongo\w*|redis-cli)\b[^;&|\n]*?\s)-p(?:\s+|=)?(?!\[REDACTED\])[^\s;&|]+/gi;
+
+/**
+ * Masks credentials in logged command text (audit B4). Applied to commands AND reasons:
+ * stored secret values (scrubSecrets — only effective when a database is open in-process; this script
+ * opens mc.db through its own read-only handle, so on the VPS the shape rules below are what apply),
+ * credential shapes (redactSecrets), URL userinfo, `-p<pw>`/`-p <pw>` after a mysql/psql-like client or
+ * sshpass, `curl -u user:pw`, `--password <pw>`, any `*PASS*=` / `*TOKEN*=` / `*SECRET*=` value
+ * (`PGPASSWORD=x`), and long mixed letter+digit tokens.
+ */
 export function redactCommand(text: string): string {
-  return redactSecrets(text)
+  let out = text;
+  try {
+    out = scrubSecrets(out);
+  } catch {
+    /* the shape rules below still apply */
+  }
+  return redactSecrets(out)
     .replace(/(\b[a-z][\w+.-]*:\/\/)[^/\s@]+@/gi, "$1[REDACTED]@")
+    .replace(/\b(\w*(?:PASS|TOKEN|SECRET)\w*)=(?!\[REDACTED\])("[^"]*"|'[^']*'|[^\s;&|]+)/gi, "$1=[REDACTED]")
+    .replace(/(--?\w*pass(?:word|wd)?)(\s+)(?!-|\[REDACTED\])[^\s;&|]+/gi, "$1$2[REDACTED]")
+    .replace(PW_FLAG_CLIENT_RE, "$1-p [REDACTED]")
+    .replace(/((?:^|\s)(?:-u|--user)(?:\s+|=)?)([^\s:;&|]+):(?!\[REDACTED\])[^\s;&|]+/g, "$1$2:[REDACTED]")
     .replace(/[A-Za-z0-9_+=-]{24,}/g, (tok) =>
       /[A-Za-z]/.test(tok) && /\d/.test(tok) ? `[redacted:${tok.length}]` : tok,
     );
