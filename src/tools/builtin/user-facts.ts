@@ -11,6 +11,7 @@ import {
   setUserFact,
   getUserFacts,
   deleteUserFact,
+  factDisplayValue,
 } from "../../db/user-facts.js";
 import { toMexTime } from "../../lib/timezone.js";
 
@@ -93,7 +94,8 @@ BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, cred
 
     setUserFact(category, key, value, "conversation");
 
-    return `Fact stored: [${category}] ${key} = ${value}. This will be included in all future conversations.`;
+    // Ruling 3c: a credential is confirmed by its by-name placeholder, never echoed.
+    return `Fact stored: [${category}] ${key} = ${factDisplayValue({ category, key, value })}. This will be included in all future conversations.`;
   },
 };
 
@@ -151,7 +153,7 @@ USE WHEN:
     return facts
       .map(
         (f) =>
-          `[${f.category}] ${f.key}: ${f.value} (updated: ${toMexTime(f.updated_at)})`,
+          `[${f.category}] ${f.key}: ${factDisplayValue(f)} (updated: ${toMexTime(f.updated_at)})`,
       )
       .join("\n");
   },

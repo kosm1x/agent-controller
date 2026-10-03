@@ -158,6 +158,22 @@ vi.mock("../observability/task-trace.js", async (importOriginal) => ({
   emitTraceEvent: traceMock.emitTraceEvent,
 }));
 
+const userFactsMock = vi.hoisted(() => ({
+  setUserFact: undefined as unknown as ReturnType<typeof vi.fn>,
+}));
+vi.mock("../db/user-facts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db/user-facts.js")>();
+  userFactsMock.setUserFact = vi.fn(actual.setUserFact);
+  return { ...actual, setUserFact: (...a: Parameters<typeof actual.setUserFact>) => userFactsMock.setUserFact(...a) };
+});
+
+// Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn-" + "t".repeat(14));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 vi.mock("../db/index.js", () => ({
   getDatabase: () => ({
     prepare: () => ({
@@ -197,6 +213,8 @@ import {
   storePendingConfirmation,
 } from "./confirmations.js";
 import { scopeMissFallbackLine } from "./scope-miss.js";
+import { currentExecutionContext } from "../inference/execution-context.js";
+import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { formatForTelegram } from "./formatter.js";
 import type {
   ChannelAdapter,
@@ -655,6 +673,40 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[0].text).toContain("Recibido");
       expect(waAdapter.sentMessages[1].text).toBe("Aquí están tus tareas...");
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
+    });
+
+    it("ruling 3c: the critical-data safety net stores a detected credential too, and logs names only", async () => {
+      const PASTED = ["Zq", "7".repeat(4), "Kx".repeat(4)].join("");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      userFactsMock.setUserFact.mockImplementation(() => {});
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `guarda esto: password: ${PASTED} y la propiedad G-ABCDEF1234`,
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: "Listo.", duration_ms: 1 },
+        });
+        const keys = userFactsMock.setUserFact.mock.calls.map((c) => c[1]);
+        expect(keys).toEqual(expect.arrayContaining(["password", "ga4_measurement_id"]));
+        const logged = logSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.includes("Auto-persisted critical data"));
+        expect(logged).toHaveLength(keys.length);
+        expect(logged).toContain(
+          "[router] Auto-persisted critical data: projects/password (LLM missed user_fact_set)",
+        );
+        expect(logged).toContain(
+          "[router] Auto-persisted critical data: projects/ga4_measurement_id (LLM missed user_fact_set)",
+        );
+        expect(logSpy.mock.calls.flat().join(" ")).not.toContain(PASTED);
+      } finally {
+        logSpy.mockRestore();
+        userFactsMock.setUserFact.mockReset();
+      }
     });
 
     it("delivers a sanitized reply when the runner output carries harness markers (usability plan Phase 0.1)", async () => {
@@ -3392,6 +3444,14 @@ describe("Phase 4.2 — thread image expiry", () => {
     ]);
   });
 
+  it("ruling 3c: pushToThread keeps no stored credential value in clear", () => {
+    _testSeedThread("whatsapp", []);
+    _testPushToThread("whatsapp", `User: la clave es ${SCRUB_SYN}\nJarvis: guardada`);
+    expect(_testThreadEntries("whatsapp").map((e) => e.text)).toEqual([
+      "User: la clave es [oculto]\nJarvis: guardada",
+    ]);
+  });
+
   it("threadImageLive: only the final index is live", () => {
     expect(threadImageLive(2, 3)).toBe(true);
     expect(threadImageLive(1, 3)).toBe(false);
@@ -4199,6 +4259,67 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(submitTask).toHaveBeenCalledTimes(1);
     expect(waAdapter.sentMessages.at(-1)!.text).toBe("Cancelado.");
     expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("ruling 2026-10-01: an unanswered card gets ONE expiry line in the same chat; a late 'sí' runs nothing", async () => {
+    await gatedTurn();
+    const before = waAdapter.sentMessages.length;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(waAdapter.sentMessages).toHaveLength(before + 1);
+    const notice = waAdapter.sentMessages.at(-1)!;
+    expect(notice.to).toBe(OWNER);
+    expect(notice.text).toBe(
+      "⏱ La aprobación para `wp_delete(id: 7)` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.",
+    );
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    expect(waAdapter.sentMessages).toHaveLength(before + 1);
+    expect(getPendingConfirmation(tk)).toBeNull();
+
+    queueTask("task-late");
+    await say("sí");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gatedExec.executeGatedCapability).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(submitTask)
+        .mock.calls.some((c) => c[0].tags?.includes("confirm-continuation")),
+    ).toBe(false);
+  });
+
+  it("fold 1: 'sí' on a parked schedule carrying gmail_send runs it ONCE, outside any run context (the background refusal cannot apply)", async () => {
+    const args = { name: "R", description: "d", cron: "0 8 * * *", tools: ["gmail_send"], delivery: "telegram" };
+    queueTask("task-sched");
+    await say("programa el reporte diario por correo");
+    runOutput({ toolName: "schedule_task", args });
+    complete("task-sched", "¿Creo el schedule?");
+    dbStatusGet.mockReturnValue(undefined);
+    expect(getPendingConfirmation(tk)?.toolName).toBe("schedule_task");
+
+    const seen: unknown[] = [];
+    gatedExec.executeGatedCapability.mockImplementation(async () => {
+      seen.push(currentExecutionContext(), currentRunTaskId());
+      return JSON.stringify({ success: true, message: "Schedule creado." });
+    });
+    queueTask("task-sched-cont");
+    await say("sí");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+    expect(gatedExec.executeGatedCapability).toHaveBeenCalledWith(
+      "schedule_task",
+      { ...args, confirmed: true },
+      { threadId: tk },
+    );
+    expect(seen).toEqual([undefined, undefined]);
+    expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("ruling 2026-10-01: a card answered in time never gets an expiry line", async () => {
+    await gatedTurn();
+    await say("no");
+    const after = waAdapter.sentMessages.length;
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(waAdapter.sentMessages).toHaveLength(after);
   });
 
   it("a confirmed action that fails reports the error and starts no continuation", async () => {

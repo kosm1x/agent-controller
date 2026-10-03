@@ -64,6 +64,13 @@ vi.mock("./recall-utility.js", async () => ({
   ).redactSecrets,
 }));
 
+// Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn-" + "j".repeat(14));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 // consolidateAll reports failures through a dynamic import of the scheduler.
 const recordRitualFailureMock = vi.fn();
 vi.mock("../rituals/scheduler.js", () => ({
@@ -151,6 +158,14 @@ describe("JME — episodic store", () => {
     expect(turns[0].role).toBe("user");
     expect(turns[0].content).toBe("Hola Jarvis");
     expect(turns[1].role).toBe("jarvis");
+  });
+
+  it("writeEpisodic stores no stored credential value in clear (ruling 3c)", async () => {
+    const { writeEpisodic, getTurnsForTask } = await getJme();
+    writeEpisodic({ taskId: "t9", role: "user", content: `la clave es ${SCRUB_SYN}` });
+    expect(getTurnsForTask("t9").map((t) => t.content)).toEqual([
+      "la clave es [oculto]",
+    ]);
   });
 
   it("getTurnsForTask returns only turns for the given task", async () => {

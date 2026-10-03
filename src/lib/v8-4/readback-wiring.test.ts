@@ -158,6 +158,32 @@ describe("write tools declare read-back gates inside a run", () => {
     expect(listGates("task-sched")[0].state).toBe("abandoned");
   });
 
+  it("ruling 2026-10-01: a schedule_task parked for confirmation writes nothing and declares no gate (never a failed read-back)", async () => {
+    const { scheduleTaskTool } = await import("../../tools/builtin/schedule.js");
+    const { ensureScheduledTasksTable, listSchedules } = await import("../../rituals/dynamic.js");
+    const { ToolRegistry } = await import("../../tools/registry.js");
+    const { createTaskExecutor } = await import("../../tools/task-executor.js");
+    const { TaskExecutionContext } = await import("../../inference/execution-context.js");
+    ensureScheduledTasksTable();
+    const registry = new ToolRegistry();
+    registry.register(scheduleTaskTool);
+    registry.register({
+      name: "gmail_send",
+      requiresConfirmation: true,
+      definition: { type: "function", function: { name: "gmail_send", description: "x", parameters: { type: "object", properties: {} } } },
+      execute: async () => "{}",
+    });
+    const chat = new TaskExecutionContext("task-park", true, { routerRoot: true, canAskOperator: true, chatOrigin: true });
+    const out = await enterRunToolContext("task-park", () =>
+      createTaskExecutor(registry, chat)("schedule_task", {
+        name: "Reporte", description: "x", cron: "0 9 * * *", tools: ["gmail_send"], delivery: "telegram",
+      }),
+    );
+    expect(JSON.parse(out).error).toBe("CONFIRMATION_REQUIRED");
+    expect(listGates("task-park")).toHaveLength(0);
+    expect(listSchedules(false)).toHaveLength(0);
+  });
+
   it("outside a run context no gate is declared (background tools, tests)", async () => {
     const { jarvisFileWriteTool } = await import("../../tools/builtin/jarvis-files.js");
     await jarvisFileWriteTool.execute({ path: "projects/demo/x.md", title: "X", content: "x" });

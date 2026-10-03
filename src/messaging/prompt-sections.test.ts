@@ -20,6 +20,7 @@ import {
   toolFirstSection,
   availableSkillsSection,
   cohortSection,
+  personalDataSection,
 } from "./prompt-sections.js";
 import { listFirstPartySkills, listSkillsForTools } from "../skills/catalog.js";
 import type { CohortMember } from "../cohort/self-defining.js";
@@ -238,6 +239,17 @@ describe("conditional prompt sections", () => {
     expect(s).toContain("causa raíz primero");
     expect(s).toContain("hard-cut");
     expect(s).toContain("invariante");
+  });
+
+  it("codingSection never tells the model to run the full suite (ruling 4)", () => {
+    const s = codingSection();
+    expect(s).not.toMatch(/Suite completa al final|npx vitest run\)/);
+    expect(s).toContain(
+      "Al final, solo los tests relacionados (`npx vitest related --run <archivos cambiados>`); la suite completa corre en CI",
+    );
+    expect(s).toContain(
+      "corre los tests de lo que cambiaste (`npx vitest related --run <archivos>`); la suite completa la corre CI. Si fallan",
+    );
   });
 
   it("browserSection mentions browser__click", () => {
@@ -566,5 +578,17 @@ describe("identitySection — external caller (jarvis-pull)", () => {
     ]) {
       expect(e).not.toContain(gone);
     }
+  });
+});
+
+describe("personalDataSection (Ruling 3c, 2026-10-01)", () => {
+  it("tells the model to store credentials with user_fact_set (stored hidden); no .env refusal", () => {
+    const s = personalDataSection();
+    const storeLine = s.split("\n").find((l) => l.includes("dato técnico"))!;
+    for (const cred of ["API keys", "credenciales", "tokens", "user_fact_set"]) {
+      expect(storeLine).toContain(cred);
+    }
+    expect(s).not.toContain(".env");
+    expect(s).not.toContain("rechaza");
   });
 });

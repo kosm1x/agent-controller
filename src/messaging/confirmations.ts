@@ -25,6 +25,9 @@
 import { createHash } from "crypto";
 import { getDatabase } from "../db/index.js";
 import { buildGwsArgv } from "../tools/builtin/google-workspace-cli.js";
+import { toolRegistry } from "../tools/registry.js";
+import { highRiskScheduledTools } from "../tools/task-executor.js";
+import { describeCron } from "../rituals/cron-next.js";
 
 /** Pending confirmation waiting for user approval. */
 export interface PendingConfirmation {
@@ -48,6 +51,9 @@ const pendingConfirmations = new Map<string, PendingConfirmation>();
 
 /** Timers for auto-expiry. */
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Who to tell when the thread's pending approval lapses (the asked chat). */
+const expiryNotifiers = new Map<string, (notice: string) => void>();
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -91,6 +97,7 @@ const SUMMARY_KEY_FIELDS: Readonly<Record<string, readonly string[]>> = {
   calendar_create: ["event_id", "start", "end", "attendees", "status"],
   calendar_update: ["event_id", "start", "end", "attendees", "status"],
   gdrive_share: ["file_id", "email", "role"],
+  schedule_task: ["name", "cron", "tools", "delivery", "email_to"],
 };
 const SUMMARY_VALUE_CAP = 120;
 const SUMMARY_CAP = 400;
@@ -157,7 +164,26 @@ export function renderConfirmationSummary(
     const tail = JSON.stringify(rest);
     parts.push(room > 0 ? clip(tail, room) : "…");
   }
-  return oneLine(`${toolName}(${parts.join(", ")})`);
+  const line = oneLine(`${toolName}(${parts.join(", ")})`);
+  // Ruling 2026-10-01: a schedule's yes is asked once, so the line names the
+  // high-risk tools its runs will use unattended and how often, outside the
+  // capped key values (a long tools array is truncated above).
+  if (toolName !== "schedule_task") return line;
+  const risky = highRiskScheduledTools(toolRegistry, args);
+  if (risky.length === 0) return line;
+  const cadence = typeof args.cron === "string" ? describeCron(args.cron) : "?";
+  return oneLine(
+    `${line} · usará sin pedir confirmación: ${risky.join(", ")} (cadencia: ${cadence})`,
+  );
+}
+
+/**
+ * Ruling 2026-10-01: the ONE line sent to the asked chat when an approval
+ * lapses unanswered — the same harness summary the card showed, never
+ * raw args or model text. Not a question: nothing is pending after it.
+ */
+export function renderExpiryNotice(summary: string): string {
+  return `⏱ La aprobación para \`${summary}\` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.`;
 }
 
 /** Best-effort durable write; never throws (DB may be absent in tests / early boot). */
@@ -186,19 +212,63 @@ function markThreadRows(threadKey: string, decision: ApprovalDecision): void {
 }
 
 /**
+ * The TTL passed with no answer (ruling 2026-10-01). Re-reads the row at
+ * fire time: the one notice goes out only when THIS approval was still
+ * pending (a confirmed/declined/superseded row changes nothing), and only
+ * when the router registered the chat it asked in. The notice stores
+ * nothing, so a late "sí" finds no pending op and runs nothing. Never
+ * throws — it runs from a timer.
+ */
+function lapsePendingConfirmation(
+  threadKey: string,
+  pending: PendingConfirmation,
+): void {
+  try {
+    const notify = expiryNotifiers.get(threadKey);
+    const current = pendingConfirmations.get(threadKey);
+    clearInMemory(threadKey);
+    const closed =
+      pending.approvalId === undefined
+        ? undefined
+        : dbWrite(
+            () =>
+              getDatabase()
+                .prepare(
+                  `UPDATE tool_approvals SET decision = 'expired', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                   WHERE id = ? AND decision = 'pending'`,
+                )
+                .run(pending.approvalId).changes === 1,
+          );
+    markThreadRows(threadKey, "expired");
+    // No durable row (or the DB is down): fall back to the in-memory identity.
+    const lapsed = closed ?? current === pending;
+    if (lapsed && notify) notify(renderExpiryNotice(pending.summary));
+  } catch (err) {
+    console.warn(
+      `[confirmations] expiry notice failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * Store a pending confirmation for a thread.
  * Overwrites any existing pending for the same thread (durable row → superseded).
- * Auto-expires after 5 minutes.
+ * Auto-expires after 5 minutes; `onExpire` (the router's send to the chat
+ * that showed the card) then gets the one expiry notice. The timer lives in
+ * memory only: a restart inside the 5-minute window loses the notice (the
+ * row still closes as expired on the next read) — no schema column for it.
  */
 export function storePendingConfirmation(
   threadKey: string,
   toolName: string,
   args: Record<string, unknown>,
   summary: string,
+  onExpire?: (notice: string) => void,
 ): void {
   // Clear existing timer if any
   const existing = expiryTimers.get(threadKey);
   if (existing) clearTimeout(existing);
+  expiryNotifiers.delete(threadKey);
   markThreadRows(threadKey, "superseded");
 
   const sha = argsSha256(args);
@@ -218,24 +288,24 @@ export function storePendingConfirmation(
         ).lastInsertRowid as number,
   );
 
-  pendingConfirmations.set(threadKey, {
+  const pending: PendingConfirmation = {
     toolName,
     args,
     timestamp: Date.now(),
     summary,
     argsSha256: sha,
     ...(approvalId !== undefined && { approvalId }),
-  });
+  };
+  pendingConfirmations.set(threadKey, pending);
+  if (onExpire) expiryNotifiers.set(threadKey, onExpire);
 
-  // Auto-expire
-  expiryTimers.set(
-    threadKey,
-    setTimeout(() => {
-      pendingConfirmations.delete(threadKey);
-      expiryTimers.delete(threadKey);
-      markThreadRows(threadKey, "expired");
-    }, CONFIRMATION_TTL_MS),
+  // Auto-expire (unref'd: a pending approval never holds the process open)
+  const timer = setTimeout(
+    () => lapsePendingConfirmation(threadKey, pending),
+    CONFIRMATION_TTL_MS,
   );
+  timer.unref?.();
+  expiryTimers.set(threadKey, timer);
 }
 
 interface ApprovalRow {
@@ -307,7 +377,8 @@ export function getPendingConfirmation(
   const pending = pendingConfirmations.get(threadKey) ?? rehydrateFromDb(threadKey);
   if (!pending) return null;
   if (Date.now() - pending.timestamp > CONFIRMATION_TTL_MS) {
-    clearPendingConfirmation(threadKey, "expired");
+    // Read before a late timer fired: the same one-notice expiry path.
+    lapsePendingConfirmation(threadKey, pending);
     return null;
   }
   return pending;
@@ -358,6 +429,7 @@ export function resolvePendingConfirmation(
 
 function clearInMemory(threadKey: string): void {
   pendingConfirmations.delete(threadKey);
+  expiryNotifiers.delete(threadKey);
   const timer = expiryTimers.get(threadKey);
   if (timer) {
     clearTimeout(timer);
@@ -381,6 +453,7 @@ export function clearPendingConfirmation(
 export function _resetPendingConfirmationsForTests(): void {
   for (const timer of expiryTimers.values()) clearTimeout(timer);
   expiryTimers.clear();
+  expiryNotifiers.clear();
   pendingConfirmations.clear();
 }
 

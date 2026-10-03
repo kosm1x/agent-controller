@@ -51,6 +51,7 @@ import {
 import { enrichContext } from "../intelligence/enrichment.js";
 import { extractAndPersistCorrection } from "../intelligence/correction-loop.js";
 import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 import { formatProjectsBlock } from "../db/projects.js";
 import {
   detectFeedbackSignal,
@@ -992,6 +993,8 @@ function pushToThread(
   imageUrl?: string,
 ): void {
   hydrateThreadIfNeeded(channel);
+  // Ruling 3c: a stored credential pasted in chat is not kept in clear.
+  exchange = scrubSecrets(exchange);
   // Check for poisoned responses before adding to the thread buffer.
   // Without this, poisoned entries live in-memory until the next restart
   // and teach the LLM learned helplessness for the rest of the session.
@@ -3296,11 +3299,18 @@ export class MessageRouter {
 
       // Store pending confirmation for the next user message (pause/resume pattern)
       if (taskPendingConfirmation && pending.tk && confirmSummary) {
+        // Ruling 2026-10-01: an unanswered card gets ONE expiry line, in the
+        // chat that showed it and through the card's own send path.
+        const { channel: askedChannel, to: askedTo } = pending;
         storePendingConfirmation(
           pending.tk,
           taskPendingConfirmation.toolName,
           taskPendingConfirmation.args,
           confirmSummary,
+          (notice) => {
+            this.sendLLMReplyToChannel(askedChannel, askedTo, notice);
+            appendDayLog("JARVIS", notice);
+          },
         );
         console.log(`[router] Stored pending confirmation: ${confirmSummary}`);
         if (pending.rerunSpec) {

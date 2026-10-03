@@ -26,6 +26,7 @@ import {
   deserializeEmbedding,
 } from "./embeddings.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 import { logRecall, redactSecrets } from "./recall-utility.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
@@ -151,11 +152,12 @@ export const SIGNAL_FOLLOWUP_WINDOW_MS = 30 * 60 * 1000;
 export function writeEpisodic(turn: JmeTurn): void {
   const db = getDatabase();
   const now = Date.now();
+  const content = scrubSecrets(turn.content); // ruling 3c: no stored credential in clear
   writeWithRetry(() => {
     db.prepare(
       `INSERT INTO jme_turns (task_id, ts, role, content, channel)
        VALUES (?, ?, ?, ?, ?)`,
-    ).run(turn.taskId, now, turn.role, turn.content, turn.channel ?? "unknown");
+    ).run(turn.taskId, now, turn.role, content, turn.channel ?? "unknown");
   });
 
   // Track 2 (memory plan v2.0): a USER turn that corrects a reply's length,

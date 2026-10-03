@@ -21,6 +21,7 @@ import {
   targetsRunWrite,
 } from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
+import { resolveSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 import {
@@ -117,6 +118,30 @@ function createdKeys(name: string, result: unknown): string[] {
 /** Any error-shaped result — `{"error":…}` JSON or a plain "Error:" string. */
 function isErrorResult(result: unknown): boolean {
   return typeof result !== "string" || /^\s*(\{\s*"error"|Error\b|❌)/.test(result);
+}
+
+/**
+ * Ruling 3c: a thrown value scrubbed of stored credentials. The original is
+ * rethrown untouched when nothing matched; an Error whose message cannot be
+ * assigned (DOMException's is read-only) is replaced by a plain Error with
+ * the scrubbed message and the original name.
+ */
+function scrubThrown(err: unknown): unknown {
+  if (typeof err === "string") return scrubSecrets(err);
+  if (!(err instanceof Error)) return err;
+  const message = scrubSecrets(err.message);
+  const stack = err.stack === undefined ? undefined : scrubSecrets(err.stack);
+  if (message === err.message && stack === err.stack) return err;
+  try {
+    err.message = message;
+    if (stack !== undefined) err.stack = stack;
+    if (err.message === message) return err;
+  } catch {
+    // read-only message: fall through to a replacement
+  }
+  const replacement = new Error(message);
+  replacement.name = err.name;
+  return replacement;
 }
 
 export class ToolRegistry {
@@ -343,9 +368,15 @@ export class ToolRegistry {
         "destructive tool called",
       );
     }
+    // Ruling 3c: `{{SECRET_X}}` is filled in on a COPY handed to the tool
+    // (allow-listed tools only), after every gate and recording point above;
+    // `args` itself keeps the reference. What comes back is scrubbed of every
+    // stored credential value before anything else sees it.
+    const resolved = resolveSecretRefs(name, args);
+    if ("error" in resolved) return resolved.error;
     const start = Date.now();
     try {
-      const result = await tool.execute(args);
+      const result = scrubSecrets(await tool.execute(resolved.args));
       toolMetrics.record(name, Date.now() - start, true);
       // V8.4 numbers-provenance corpus: every tool result of the current run
       // (task id from the run-tool context; no-op outside a run). Digested +
@@ -379,7 +410,7 @@ export class ToolRegistry {
       return result;
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);
-      throw err;
+      throw scrubThrown(err);
     }
   }
 

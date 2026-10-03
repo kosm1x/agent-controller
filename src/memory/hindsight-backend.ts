@@ -28,6 +28,7 @@ import type {
   ReflectOptions,
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 // applyOutcomeFilter (binary drop) replaced by applyOutcomeBias (drop +
 // score adjustment + re-sort). 2026-05-07 queue #7 part 2. See
@@ -130,7 +131,7 @@ export class HindsightMemoryBackend implements MemoryService {
     try {
       await this.ensureBank(options.bank);
       await this.client.retain(options.bank, {
-        content,
+        content: scrubSecrets(content), // ruling 3c (the fallback scrubs its own copy)
         tags: options.tags,
         async: options.async ?? true,
       });

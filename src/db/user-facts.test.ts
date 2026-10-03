@@ -4,7 +4,22 @@ import {
   getUserFacts,
   deleteUserFact,
   formatUserFactsBlock,
+  isCredentialFact,
+  CREDENTIAL_FACT_PLACEHOLDER,
 } from "./user-facts.js";
+import {
+  invalidateSecretRefs,
+  secretEnvForCommand,
+  secretPlaceholder,
+} from "../lib/secret-refs.js";
+
+// Synthetic credential shapes, assembled at runtime (never a key-shaped
+// literal in source — the repo is public and a commit hook scans for them).
+const FAKE_GOOGLE_KEY = "AIza" + "b".repeat(35);
+const FAKE_GH_TOKEN = "gh" + "p_" + "c".repeat(36);
+const SYN_EMAIL = ["demo", "example.invalid"].join("@");
+const SYN_PASS = "syn-" + "p".repeat(10);
+const SYN_WIFI = "syn-" + "w".repeat(12);
 
 // Mock getDatabase to return an in-memory SQLite instance
 const mockDb = {
@@ -37,6 +52,203 @@ describe("user-facts", () => {
         "age",
         "30",
         "conversation",
+      );
+    });
+  });
+
+  describe("Ruling 3c: credential facts are stored (refusal removed)", () => {
+    function dbRecording() {
+      const rows: Array<{ category: string; key: string; value: string }> =
+        [];
+      const run = vi.fn((category: string, key: string, value: string) => {
+        rows.push({ category, key, value });
+      });
+      mockDb.prepare.mockImplementation(() => ({
+        run,
+        all: () => rows,
+      }));
+      return run;
+    }
+
+    it.each([
+      ["a credential-named fact", "projects", "acme_portal_password", SYN_PASS],
+      ["a credential-shaped value under a neutral name", "projects", "gemini_setup", FAKE_GOOGLE_KEY],
+      ["a credential inside prose", "work", "notes", `el repo usa ${FAKE_GH_TOKEN} para CI`],
+    ])("writes %s like any other fact, without a warning", (_l, category, key, value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const run = dbRecording();
+      setUserFact(category, key, value);
+      expect(run).toHaveBeenCalledWith(category, key, value, "conversation");
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("once stored, it is shown by name and resolvable by that name", () => {
+      dbRecording();
+      setUserFact("projects", "gemini_setup", FAKE_GOOGLE_KEY, "auto-detected");
+      const block = formatUserFactsBlock();
+      expect(block).toContain(
+        `- **gemini_setup**: ${secretPlaceholder("SECRET_PROJECTS_GEMINI_SETUP")}`,
+      );
+      expect(block).not.toContain(FAKE_GOOGLE_KEY);
+      expect(
+        secretEnvForCommand("curl -H \"x-goog-api-key: $SECRET_PROJECTS_GEMINI_SETUP\" x"),
+      ).toEqual({ SECRET_PROJECTS_GEMINI_SETUP: FAKE_GOOGLE_KEY });
+    });
+  });
+
+  describe("isCredentialFact", () => {
+    it.each([
+      ["projects", "maps_api_key"],
+      ["projects", "quotes_api_key"],
+      ["projects", "apiKey"],
+      ["projects", "census_api_token"],
+      ["projects", "x_auth_token__acct"],
+      ["projects", "acme_auth_token"],
+      ["projects", "acme_portal_password"],
+      ["projects", "blog_wp_app_password_new"],
+      ["projects", "db_passwd"],
+      ["projects", "router_pwd"],
+      ["projects", "stripe_client_secret"],
+      ["projects", "deploy_private_key"],
+      ["projects", "session_cookie"],
+      ["projects", "github_oauth"],
+      ["projects", "bearer"],
+      ["projects", "service_api_credential"],
+      ["projects", "contraseña_wp"],
+      ["projects", "clave_api"],
+      ["projects", "credenciales_ftp"],
+      ["projects", "acme_espn_s2"],
+      ["projects", "acme_swid"],
+      ["projects", "x_ct0__acct"],
+      ["secrets", "anything"],
+      // Fold 1 (audit W2/W4)
+      ["projects", "wpPassword"],
+      ["projects", "wp_pass"],
+      ["projects", "app_pw"],
+      ["projects", "db_service_key"],
+      ["projects", "signing_key"],
+      ["projects", "master_key"],
+      ["projects", "encryption_key"],
+      ["projects", "license_key"],
+      ["projects", "admin_key"],
+      ["projects", "stripe_key"],
+      ["projects", "openai_key"],
+      ["projects", "gemini_key"],
+      ["projects", "sessionid"],
+      ["projects", "session_id"],
+      ["projects", "sid"],
+      ["projects", "connect_sid"],
+      ["projects", "phpsessid"],
+      ["projects", "li_at"],
+      ["projects", "llave_api"],
+      ["projects", "pin"],
+      ["projects", "clave"],
+      ["projects", "clave_acceso_sat"],
+      ["projects", "clave_wifi"],
+    ])("marks %s/%s by name", (category, key) => {
+      expect(isCredentialFact(category, key, "plain value")).toBe(true);
+    });
+
+    it.each([
+      ["personal", "author"],
+      ["projects", "token_budget"],
+      ["projects", "max_tokens"],
+      ["projects", "keyboard_layout"],
+      ["projects", "monkey_name"],
+      ["projects", "palabras_clave"],
+      ["projects", "local_brain_context_budget"],
+      ["projects", "login"],
+      ["personal", "CURP"],
+      ["projects", "blog_ga4_id"],
+      ["projects", "acme_espn_league_id"],
+      ["projects", "signal_digest_2026-09-30"],
+      // Fold 1: a neutral name ending in a vocabulary word (W4)
+      ["projects", "bypass"],
+      ["projects", "compass"],
+      ["projects", "turkey"],
+      ["projects", "whiskey"],
+      // Fold 1: excluded `key` / `sid` positions (W2)
+      ["projects", "public_key"],
+      ["projects", "primary_key"],
+      ["projects", "foreign_key"],
+      ["projects", "sort_key"],
+      ["projects", "partition_key"],
+      ["projects", "cache_key"],
+      ["projects", "hot_key"],
+      ["projects", "short_key"],
+      ["projects", "key_results"],
+      ["projects", "license_key_count"],
+      ["projects", "sid_meier"],
+      ["projects", "session_notes"],
+      // Fold 1: `clave` only last or before api/acceso/secreta/privada/wifi (W3)
+      ["projects", "clave_interbancaria"],
+      ["projects", "clave_elector"],
+      ["projects", "clave_catastral"],
+      ["projects", "clave_producto"],
+      ["projects", "clave_unica"],
+      // Fold 1: last token is metadata about a credential (W3)
+      ["projects", "alphavantage_api_key_path"],
+      ["projects", "auth_method"],
+      ["projects", "oauth_provider"],
+      ["projects", "jwt_issuer"],
+      ["projects", "credential_rotation_date"],
+      ["projects", "token_type"],
+      ["projects", "password_expiry"],
+      ["projects", "cookie_expires"],
+    ])("does not mark %s/%s by name", (category, key) => {
+      expect(isCredentialFact(category, key, "plain value")).toBe(false);
+    });
+
+    // Fold 1 (audit C1): shapes redactCredentials misses, under a neutral
+    // name. Every key-shaped literal is assembled at runtime.
+    const rnd = (n: number) => "Qx7Lm2Vb9Zt4Rk8Np3Wd".repeat(10).slice(0, n);
+    it.each([
+      ["JWT", "ey" + "J" + rnd(20) + ".ey" + "J" + rnd(40) + "." + rnd(43)],
+      ["Stripe sk_live", "sk" + "_live_" + rnd(30)],
+      ["Stripe rk_test", "rk" + "_test_" + rnd(30)],
+      ["Stripe pk_live", "pk" + "_live_" + rnd(30)],
+      ["GitHub fine-grained", "github" + "_pat_" + rnd(60)],
+      ["GitHub gho", "gh" + "o_" + rnd(36)],
+      ["GitHub ghs", "gh" + "s_" + rnd(36)],
+      ["Slack xoxp", "xo" + "xp-" + rnd(40)],
+      ["AWS AKIA", "AK" + "IA" + "ABCDEFGHIJKLMNOP"],
+      ["Fireworks", "fw" + "_" + rnd(30)],
+      ["URL userinfo ftp", "ftp://demo:" + rnd(14) + "@ftp.example.com/"],
+      ["URL userinfo https", "https://user:" + rnd(14) + "@example.com"],
+      ["bare Bearer", "Bearer " + rnd(40)],
+      ["api key label", "api key: " + rnd(32)],
+      ["token label", "token: " + rnd(32)],
+      ["password label", "password: " + rnd(14)],
+      ["contraseña label", "contraseña: " + rnd(14)],
+      ["clave label", "clave: " + rnd(14)],
+      ["JSON token", JSON.stringify({ token: rnd(32) })],
+      ["JSON auth_token", JSON.stringify({ auth_token: rnd(40) })],
+      ["JSON password", JSON.stringify({ password: rnd(14) })],
+      ["inside prose", "mi config usa " + "sk" + "_live_" + rnd(30) + " ok"],
+    ])("marks a %s value under a neutral name", (_label, value) => {
+      expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+    });
+
+    it.each([
+      ["plain prose", "hola mundo, la clave del éxito es la constancia"],
+      ["URL without userinfo", "https://example.com/a:b/c"],
+      ["short label value", "token: abc"],
+      ["email", SYN_EMAIL],
+      ["bearer prose", "bearer bonds are instruments"],
+    ])("does not mark a %s value", (_label, value) => {
+      expect(isCredentialFact("projects", "site_config", value)).toBe(false);
+    });
+
+    it("a metadata-named fact is still judged by value", () => {
+      expect(
+        isCredentialFact("projects", "auth_method", "Bearer " + rnd(40)),
+      ).toBe(true);
+    });
+
+    it("marks a credential-shaped value, not a git SHA", () => {
+      expect(isCredentialFact("projects", "setup", FAKE_GOOGLE_KEY)).toBe(true);
+      expect(isCredentialFact("projects", "last_commit", "a".repeat(40))).toBe(
+        false,
       );
     });
   });
@@ -140,6 +352,86 @@ describe("user-facts", () => {
       expect(block).toContain("**diet**: high protein");
     });
 
+    it("Ruling 3: non-credential block format is byte-identical (pinned)", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "personal",
+            key: "age",
+            value: "30",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "personal",
+            key: "name",
+            value: "Ana",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "health",
+            key: "diet",
+            value: "high protein",
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+        ]),
+      });
+
+      expect(formatUserFactsBlock()).toBe(
+        "\n\n## Perfil del usuario (hechos confirmados)\n" +
+          "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
+          "### personal\n- **age**: 30\n- **name**: Ana\n\n" +
+          "### health\n- **diet**: high protein",
+      );
+    });
+
+    it("Ruling 3: a credential fact keeps category and key, its value is masked", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          {
+            category: "personal",
+            key: "wifi_password",
+            value: SYN_WIFI,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "projects",
+            key: "acme_api_key",
+            value: FAKE_GOOGLE_KEY,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+          {
+            category: "projects",
+            key: "acme_notes",
+            value: `usa ${FAKE_GOOGLE_KEY}`,
+            source: "conversation",
+            updated_at: "2026-03-18",
+          },
+        ]),
+      });
+
+      invalidateSecretRefs(); // the reference index reads these rows
+      const block = formatUserFactsBlock("acme");
+
+      // Ruling 3c: the mask carries the reference name and how to use it.
+      expect(block).toContain(
+        `### personal\n- **wifi_password**: ${secretPlaceholder("SECRET_PERSONAL_WIFI_PASSWORD")}`,
+      );
+      expect(block).toContain(
+        `- **acme_api_key**: ${secretPlaceholder("SECRET_PROJECTS_ACME_API_KEY")}`,
+      );
+      expect(block).toContain(
+        `- **acme_notes**: ${secretPlaceholder("SECRET_PROJECTS_ACME_NOTES")}`,
+      );
+      expect(block).not.toContain(CREDENTIAL_FACT_PLACEHOLDER);
+      expect(block).not.toContain(SYN_WIFI);
+      expect(block).not.toContain(FAKE_GOOGLE_KEY);
+    });
+
     it("2026-09-06: always-inject facts do not consume the scored budget", () => {
       // Live regression: `personal` alone was 3,726 chars, so every scored
       // fact (all 197 `projects` rows) was skipped on every turn since 05-24.
@@ -167,7 +459,11 @@ describe("user-facts", () => {
       );
 
       expect(block).toContain("**bio**:");
-      expect(block).toContain("**fantasy_espn_s2**: cookie-value");
+      // Ruling 3: the scored credential fact is injected by name, value masked.
+      expect(block).toContain(
+        `**fantasy_espn_s2**: ${CREDENTIAL_FACT_PLACEHOLDER}`,
+      );
+      expect(block).not.toContain("cookie-value");
     });
 
     it("2026-09-06 qa-audit C1: a fact with no keyword overlap is never injected on an unrelated message", () => {

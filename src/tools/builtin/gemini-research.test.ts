@@ -26,8 +26,13 @@ vi.mock("../../db/index.js", () => ({
   }),
 }));
 
+const { mockGetUserFacts } = vi.hoisted(() => ({
+  mockGetUserFacts: vi.fn(() => [
+    { key: "gemini_api_key", value: "test-key-123" },
+  ]),
+}));
 vi.mock("../../db/user-facts.js", () => ({
-  getUserFacts: () => [{ key: "gemini_api_key", value: "test-key-123" }],
+  getUserFacts: mockGetUserFacts,
 }));
 
 vi.mock("node:fs", async () => {
@@ -457,5 +462,29 @@ describe("gemini_audio_overview", () => {
     );
     expect(result.success).toBeUndefined(); // failure shape is {error}, no success key
     expect(result.error).toContain("upload");
+  });
+});
+
+// Ruling 3c (2026-10-01): a credential can be stored as a fact again, so the
+// missing-key error names both sources. An EXISTING fact supplies the key
+// (every test above runs on one).
+describe("missing Gemini key", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["gemini_upload", () => geminiUploadTool.execute({ source: "/tmp/x.pdf" })],
+    ["gemini_research", () => geminiResearchTool.execute({ query: "q" })],
+    ["gemini_audio_overview", () => geminiAudioOverviewTool.execute({})],
+  ])("%s points to GEMINI_API_KEY and the gemini_api_key fact", async (_name, run) => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    mockGetUserFacts.mockReturnValueOnce([]);
+    const out = await run();
+    const { error } = JSON.parse(out) as { error: string };
+    expect(error).toBe(
+      "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

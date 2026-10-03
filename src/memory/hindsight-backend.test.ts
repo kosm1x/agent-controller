@@ -22,6 +22,13 @@ vi.mock("./hindsight-client.js", () => {
   };
 });
 
+// Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn-" + "n".repeat(14));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 // Mock recall-utility so tests don't hit the DB; assertion-friendly spy.
 const logRecallSpy = vi.fn();
 vi.mock("./recall-utility.js", () => ({
@@ -76,6 +83,15 @@ describe("HindsightMemoryBackend", () => {
         tags: ["test"],
         async: true,
       });
+    });
+
+    it("sends the content with stored credential values scrubbed (ruling 3c)", async () => {
+      await backend.retain(`la clave es ${SCRUB_SYN}`, { bank: "mc-operational" });
+      expect(mockClient.retain).toHaveBeenCalledWith(
+        "mc-operational",
+        expect.objectContaining({ content: "la clave es [oculto]" }),
+      );
+      expect(JSON.stringify(mockClient.retain.mock.calls)).not.toContain(SCRUB_SYN);
     });
 
     it("should default async to true", async () => {

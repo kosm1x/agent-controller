@@ -24,6 +24,7 @@ const reg = vi.hoisted(() => ({
 vi.mock("../tools/registry.js", () => ({
   toolRegistry: {
     get: () => undefined,
+    has: (name: string) => name in reg.tiers,
     execute: reg.execute,
     getEffectiveRiskTier: (name: string) => reg.tiers[name] ?? "low",
   },
@@ -55,6 +56,7 @@ import {
   NO_CONFIRM_CHANNEL_ERROR,
   NO_CONFIRM_IN_CHAT_ERROR,
   NO_CONFIRM_A2A_ERROR,
+  noConfirmBackgroundScheduleError,
 } from "../tools/task-executor.js";
 import type { Tool } from "../tools/types.js";
 
@@ -335,6 +337,83 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       expect(JSON.parse(text).error).toBe("CONFIRMATION_REQUIRED");
     }
     expect(reg.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("ruling 2026-10-01: schedule_task asks only when its runs would carry a high-risk tool; scheduled runs stay unattended", async () => {
+    const sched = (over: Record<string, unknown>) => ({
+      name: "R",
+      description: "d",
+      cron: "0 8 * * *",
+      tools: ["web_search"],
+      delivery: "telegram",
+      ...over,
+    });
+    // Low-risk schedule in a chat: created as before.
+    await inRun(OPERATOR, fastChatRoot("t-s1"), () =>
+      call("schedule_task", sched({})),
+    );
+    expect(reg.execute).toHaveBeenCalledTimes(1);
+
+    // gmail_send declared, or implied by email delivery: parked, not created.
+    for (const over of [
+      { tools: ["web_search", "gmail_send"] },
+      { delivery: "email", email_to: "a@b.mx" },
+    ]) {
+      const ctx = fastChatRoot("t-s2");
+      const text = await inRun(OPERATOR, ctx, () =>
+        call("schedule_task", sched(over)),
+      );
+      expect(JSON.parse(text).error).toBe("CONFIRMATION_REQUIRED");
+      expect(ctx.getPendingConfirmation()?.toolName).toBe("schedule_task");
+    }
+    expect(reg.execute).toHaveBeenCalledTimes(1);
+
+    // A heavy run in a chat cannot ask → refused with the existing text.
+    const heavy = dispatcherCtx("t-s3", true, { routerRoot: true, chatOrigin: true });
+    const refused = await inRun(OPERATOR, heavy, () =>
+      call("schedule_task", sched({ tools: ["gmail_send"] })),
+    );
+    expect(JSON.parse(refused)).toEqual({ error: NO_CONFIRM_IN_CHAT_ERROR });
+
+    // The scheduled run of a schedule carrying gmail_send (interactive:false)
+    // sends unattended exactly as before.
+    const cron = dispatcherCtx("t-cron-mail", false, {});
+    const sent = await inRun(BACKGROUND, cron, () =>
+      runWithExecutionContext(runnerExecutionContext("t-cron-mail", true), () =>
+        call("gmail_send", { to: "a@b.mx", body: "reporte diario completo" }),
+      ),
+    );
+    expect(JSON.parse(sent).ok).toBe(true);
+    expect(reg.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("fold 1 chain repro: A carrying schedule_task is parked at creation; a background run creating B with gmail_send is refused, unexecuted", async () => {
+    const sched = (name: string, tools: string[]) => ({
+      name,
+      description: "d",
+      cron: "0 8 * * *",
+      tools,
+      delivery: "telegram",
+    });
+    // A declares schedule_task (low tier, but its runs pick their own tools).
+    const ctxA = fastChatRoot("t-chain-a");
+    const parked = await inRun(OPERATOR, ctxA, () =>
+      call("schedule_task", sched("A", ["web_search", "schedule_task"])),
+    );
+    expect(JSON.parse(parked).error).toBe("CONFIRMATION_REQUIRED");
+    expect(ctxA.getPendingConfirmation()?.toolName).toBe("schedule_task");
+
+    // A's cron run (interactive:false) tries to create B with gmail_send.
+    const cron = dispatcherCtx("t-chain-cron", false, {});
+    const refused = await inRun(BACKGROUND, cron, () =>
+      runWithExecutionContext(runnerExecutionContext("t-chain-cron", true), () =>
+        call("schedule_task", sched("B", ["gmail_send"])),
+      ),
+    );
+    expect(JSON.parse(refused)).toEqual({
+      error: noConfirmBackgroundScheduleError(["gmail_send"]),
+    });
+    expect(reg.execute).not.toHaveBeenCalled();
   });
 });
 

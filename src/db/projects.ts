@@ -7,6 +7,10 @@
  */
 
 import { getDatabase } from "./index.js";
+import {
+  invalidateSecretRefs,
+  projectSecretDisplay,
+} from "../lib/secret-refs.js";
 
 export interface Project {
   id: string;
@@ -127,6 +131,7 @@ export function createProject(
     JSON.stringify(fields?.config ?? {}),
     fields?.commit_goal_id ?? null,
   );
+  invalidateSecretRefs();
 
   logProjectAction(id, "created", `Project "${name}" created`);
   return getProject(id)!;
@@ -194,6 +199,7 @@ export function updateProject(
   db.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).run(
     ...values,
   );
+  invalidateSecretRefs();
 
   const changedFields = Object.keys(updates).join(", ");
   logProjectAction(project.id, "updated", `Fields: ${changedFields}`);
@@ -208,6 +214,7 @@ export function deleteProject(slugOrId: string): boolean {
 
   const db = getDatabase();
   db.prepare("DELETE FROM projects WHERE id = ?").run(project.id);
+  invalidateSecretRefs();
   return true;
 }
 
@@ -286,7 +293,10 @@ export function formatProjectsBlock(): string {
 
   const lines = projects.map((p) => {
     const parts = [`- **${p.name}** (${p.slug}): ${p.status}`];
-    if (p.urls.site) parts.push(`  URL: ${p.urls.site}`);
+    if (p.urls.site)
+      parts.push(
+        `  URL: ${projectSecretDisplay(p.slug, "urls", "site", p.urls.site)}`,
+      );
     if (p.commit_goal_id)
       parts.push(`  Linked NorthStar goal: ${p.commit_goal_id}`);
     if (p.description) parts.push(`  ${p.description.slice(0, 100)}`);

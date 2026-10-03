@@ -121,6 +121,69 @@ const CONFIRMATION_PREDICATES: Readonly<
 };
 
 /**
+ * Declared tools that hand THEIR runs a tool set the caller picks, so a
+ * low tier says nothing about what those runs can reach: `schedule_task`
+ * (a new schedule with any tools) and `batch_decompose` (sub-tasks with
+ * any tools, inheriting the run's interactive=false).
+ */
+const TOOL_SET_CARRIERS: ReadonlySet<string> = new Set([
+  "schedule_task",
+  "batch_decompose",
+]);
+
+/**
+ * The risky tools a `schedule_task` call would hand to its unattended
+ * runs: the declared `tools`, plus `gmail_send` when it delivers by email
+ * (dynamic.ts adds it to every email/both run), each judged by the
+ * registry's risk tier — never by the prompt text. Also risky whatever
+ * their tier: a tool-set carrier, and an MCP name (`server__tool`) that is
+ * not registered yet (its tier is unknown until its server loads).
+ */
+export function highRiskScheduledTools(
+  registry: Pick<ToolRegistry, "getEffectiveRiskTier" | "has">,
+  args: Record<string, unknown>,
+): string[] {
+  const declared = Array.isArray(args.tools)
+    ? args.tools.filter((t): t is string => typeof t === "string")
+    : [];
+  if (args.delivery === "email" || args.delivery === "both") {
+    declared.push("gmail_send");
+  }
+  return [...new Set(declared)].filter(
+    (t) =>
+      registry.getEffectiveRiskTier(t) === "high" ||
+      TOOL_SET_CARRIERS.has(t) ||
+      (t.includes("__") && !registry.has(t)),
+  );
+}
+
+/**
+ * The reverse of CONFIRMATION_PREDICATES: a tool that is NOT high-risk asks
+ * for THIS call (operator ruling 2026-10-01: a schedule carrying a high-risk
+ * tool asks once, at creation; its runs stay unattended). Each entry returns
+ * the risky tools it found (empty = no escalation). A Map, so only a listed
+ * tool name can match.
+ */
+const CONFIRMATION_ESCALATIONS: ReadonlyMap<
+  string,
+  (
+    args: Record<string, unknown>,
+    registry: Pick<ToolRegistry, "getEffectiveRiskTier" | "has">,
+  ) => string[]
+> = new Map([
+  ["schedule_task", (args, registry) => highRiskScheduledTools(registry, args)],
+]);
+
+/**
+ * A background run (scheduled, ritual, batch child, API interactive:false)
+ * cannot create a schedule carrying a risky tool: nobody is there to say
+ * "sí", and the schedule would run it unattended from then on.
+ */
+export function noConfirmBackgroundScheduleError(tools: string[]): string {
+  return `Un schedule que usa herramientas de alto riesgo (${tools.join(", ")}) solo puede crearse desde la conversación del operador, donde se confirma. Esta tarea en segundo plano no puede crearlo. No se ejecutó.`;
+}
+
+/**
  * Operator ruling R6: an interactive task that cannot ask (API/A2A task —
  * no chat) is refused; the hint tells the API caller how to run it.
  */
@@ -149,9 +212,11 @@ export type ConfirmationGateDecision =
 /**
  * Decide whether a tool call may run now.
  * - non-interactive run (scheduled, ritual, reflection): proceed — the
- *   schedule itself is the prior authorization.
- * - not high-risk, a read call of a mixed tool (R2), or already unlocked:
- *   proceed.
+ *   schedule itself is the prior authorization — except a new schedule
+ *   carrying a risky tool, which nobody authorized: refuse.
+ * - not high-risk (unless CONFIRMATION_ESCALATIONS says this call is — a
+ *   schedule carrying a high-risk tool), a read call of a mixed tool (R2),
+ *   or already unlocked: proceed.
  * - the context can ask (fast runner on a router-tracked operator root):
  *   confirm (ask first).
  * - anything else cannot ask — API/A2A task, non-owner sender, sub-task,
@@ -161,7 +226,7 @@ export type ConfirmationGateDecision =
  * request is never a confirmation (R3).
  */
 export function confirmationGate(
-  registry: Pick<ToolRegistry, "getEffectiveRiskTier">,
+  registry: Pick<ToolRegistry, "getEffectiveRiskTier" | "has">,
   context: Pick<
     TaskExecutionContext,
     "interactive" | "isDestructiveUnlocked" | "canAskOperator" | "chatOrigin"
@@ -170,9 +235,15 @@ export function confirmationGate(
   name: string,
   args: Record<string, unknown>,
 ): ConfirmationGateDecision {
-  if (!context.interactive) return { action: "proceed" };
+  if (!context.interactive) {
+    const risky = CONFIRMATION_ESCALATIONS.get(name)?.(args, registry) ?? [];
+    return risky.length > 0
+      ? { action: "refuse", error: noConfirmBackgroundScheduleError(risky) }
+      : { action: "proceed" };
+  }
   if (registry.getEffectiveRiskTier(name) !== "high") {
-    return { action: "proceed" };
+    const escalation = CONFIRMATION_ESCALATIONS.get(name);
+    if (!escalation?.(args, registry).length) return { action: "proceed" };
   }
   const predicate = CONFIRMATION_PREDICATES[name];
   if (predicate && !predicate(args)) return { action: "proceed" };

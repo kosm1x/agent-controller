@@ -29,6 +29,7 @@ import type {
   ReflectOptions,
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 /** Extract meaningful keywords from a query string for SQLite LIKE matching. */
 function extractKeywords(query: string): string[] {
@@ -198,6 +199,8 @@ export class SqliteMemoryBackend implements MemoryService {
   async retain(content: string, options: RetainOptions): Promise<void> {
     try {
       const db = getDatabase();
+      // Ruling 3c: a stored credential pasted in chat is not kept in clear.
+      const clean = scrubSecrets(content);
       const tags = JSON.stringify(options.tags ?? []);
       const trustTier = options.trustTier ?? 3;
       const source = options.source ?? "agent";
@@ -206,7 +209,7 @@ export class SqliteMemoryBackend implements MemoryService {
           .prepare(
             "INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES (?, ?, ?, ?, ?)",
           )
-          .run(options.bank, tags, content, trustTier, source),
+          .run(options.bank, tags, clean, trustTier, source),
       );
       // Queue #7 part 3 (2026-05-07): bump Prom counter AFTER the INSERT so
       // failed writes (writeWithRetry exhausting SQLITE_BUSY) don't inflate
@@ -216,7 +219,7 @@ export class SqliteMemoryBackend implements MemoryService {
 
       // Async embed + store (fire-and-forget, non-blocking)
       const rowId = result.lastInsertRowid as number;
-      embed(content)
+      embed(clean)
         .then((vec) => {
           if (vec) {
             try {

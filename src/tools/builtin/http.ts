@@ -6,6 +6,7 @@
 
 import type { Tool } from "../types.js";
 import { safeFetch, validateOutboundUrlResolved } from "../../lib/url-safety.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY = 20_000; // chars
@@ -122,7 +123,8 @@ BOUNDARIES:
           response.headers.has("location");
 
         if (!isRedirect) {
-          const text = await response.text();
+          // Ruling 3c: scrub stored secrets before the cut can split one.
+          const text = scrubSecrets(await response.text());
           const trimmed =
             text.length > MAX_BODY
               ? text.slice(0, MAX_BODY) +

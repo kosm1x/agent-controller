@@ -15,6 +15,32 @@ import {
   updateProject,
   logProjectAction,
 } from "../../db/projects.js";
+import {
+  isProjectSecret,
+  projectSecretDisplay,
+} from "../../lib/secret-refs.js";
+
+/**
+ * Ruling 3c: the by-name placeholder of each credential-style top-level entry
+ * this call stored (never the value); undefined when there is none, so the
+ * result of a call without credentials is unchanged.
+ */
+function savedSecrets(
+  slug: string,
+  args: Record<string, unknown>,
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const field of ["credentials", "urls", "config"] as const) {
+    const obj = args[field];
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v !== "string" && typeof v !== "number") continue;
+      if (v === "" || !isProjectSecret(field, k, String(v))) continue;
+      out[`${field}.${k}`] = projectSecretDisplay(slug, field, k, v);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // project_list
@@ -64,7 +90,9 @@ NOTE: This returns DB project metadata (status, URLs, credentials). For project 
     lines.push("| Slug | Name | Status | URL | Credentials |");
     lines.push("| --- | --- | --- | --- | --- |");
     for (const p of projects) {
-      const url = p.urls.site ?? "—";
+      const url = p.urls.site
+        ? projectSecretDisplay(p.slug, "urls", "site", p.urls.site)
+        : "—";
       const creds =
         Object.keys(p.credentials).length > 0
           ? Object.keys(p.credentials).join(", ")
@@ -90,7 +118,7 @@ export const projectGetTool: Tool = {
     type: "function",
     function: {
       name: "project_get",
-      description: `Get full details of a project including credentials, config, and recent activity log.
+      description: `Get full details of a project including credential names (secret values hidden), config, and recent activity log.
 
 USE WHEN:
 - You need a project's credentials (WP password, API key, FTP host)
@@ -134,12 +162,20 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
       `Status: ${project.status}`,
     ];
     if (project.description) lines.push(`${project.description}`);
-    if (project.urls?.site) lines.push(`URL: ${project.urls.site}`);
-    if (project.urls?.repo) lines.push(`Repo: ${project.urls.repo}`);
+    if (project.urls?.site)
+      lines.push(
+        `URL: ${projectSecretDisplay(project.slug, "urls", "site", project.urls.site)}`,
+      );
+    if (project.urls?.repo)
+      lines.push(
+        `Repo: ${projectSecretDisplay(project.slug, "urls", "repo", project.urls.repo)}`,
+      );
     // Surface additional repos (multi-repo projects store them as repo_* keys).
     for (const [k, v] of Object.entries(project.urls ?? {})) {
       if (k === "repo" || k === "site" || !v || !/repo/i.test(k)) continue;
-      lines.push(`Repo (${k.replace(/_?repo_?/i, "") || k}): ${v}`);
+      lines.push(
+        `Repo (${k.replace(/_?repo_?/i, "") || k}): ${projectSecretDisplay(project.slug, "urls", k, v)}`,
+      );
     }
     if (project.commit_goal_id)
       lines.push(`NorthStar goal: ${project.commit_goal_id}`);
@@ -147,7 +183,9 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
     if (credKeys.length > 0) {
       lines.push(`\n**Credentials:** ${credKeys.join(", ")}`);
       for (const [k, v] of Object.entries(project.credentials)) {
-        lines.push(`  ${k}: ${String(v)}`);
+        lines.push(
+          `  ${k}: ${projectSecretDisplay(project.slug, "credentials", k, v)}`,
+        );
       }
     }
     if (recentLog.length > 0) {
@@ -263,6 +301,7 @@ CREDENTIAL STORAGE:
           status: project.status,
           credential_keys: Object.keys(project.credentials),
         },
+        saved_secrets: savedSecrets(project.slug, args),
       });
     }
 
@@ -296,6 +335,7 @@ CREDENTIAL STORAGE:
         status: updated.status,
         credential_keys: Object.keys(updated.credentials),
       },
+      saved_secrets: savedSecrets(updated.slug, args),
     });
   },
 };
