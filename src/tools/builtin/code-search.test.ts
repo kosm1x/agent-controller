@@ -2,8 +2,27 @@
  * Tests for grep, glob, and list_dir tools.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from "fs";
+import { spawnSync } from "child_process";
+
+// Every search process the tool starts, in order: the byte-cap test asserts
+// on it to prove a cap hit never triggers a second search, on either engine.
+const spawned = vi.hoisted(() => [] as string[]);
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return {
+    ...actual,
+    spawn: ((cmd: string, ...rest: unknown[]) => {
+      spawned.push(cmd);
+      return (actual.spawn as (...a: unknown[]) => unknown)(cmd, ...rest);
+    }) as typeof actual.spawn,
+  };
+});
+
+// CI runners (ubuntu-latest) have no rg, so the grep fallback runs there;
+// these tests must hold on both engines.
+const HAS_RG = !spawnSync("rg", ["--version"]).error;
 import {
   grepTool,
   globTool,
@@ -215,16 +234,19 @@ describe("grep", () => {
     const BIG = `${TEST_DIR}/big`;
     const FILES = 10;
     const LINES = 1500; // under the 2000 per-file internal cap
+    const HID_LINES = 10;
+    // rg skips hidden dirs; the grep fallback skips only node_modules, .git
+    // and the credential dot-dirs, so it also finds .hid/h.txt. Under rg a
+    // .hid match therefore means the tool fell back to grep.
+    const EXPECTED_FILES = HAS_RG ? FILES : FILES + 1;
     beforeEach(() => {
       mkdirSync(BIG, { recursive: true });
       const line = "needle " + "x".repeat(200) + "\n";
       for (let i = 0; i < FILES; i++) {
         writeFileSync(`${BIG}/f${i}.txt`, line.repeat(LINES));
       }
-      // rg skips hidden dirs, grep -r does not: a match here only shows up
-      // if the tool fell back to grep.
       mkdirSync(`${BIG}/.hid`, { recursive: true });
-      writeFileSync(`${BIG}/.hid/h.txt`, line.repeat(10));
+      writeFileSync(`${BIG}/.hid/h.txt`, line.repeat(HID_LINES));
     });
     afterEach(() => __setSearchByteCapForTests());
 
@@ -233,10 +255,11 @@ describe("grep", () => {
         await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "files" }),
       );
       expect(r.error).toBeUndefined();
-      expect(r.total).toBe(FILES);
+      expect(r.total).toBe(EXPECTED_FILES);
       expect(r.truncated).toBe(false);
       for (let i = 0; i < FILES; i++) expect(r.matches).toContain(`${BIG}/f${i}.txt`);
-      expect(r.matches).not.toContain(".hid");
+      if (HAS_RG) expect(r.matches).not.toContain(".hid");
+      else expect(r.matches).toContain(`${BIG}/.hid/h.txt`);
     });
 
     it("count mode over > 2 MB of matching lines returns the counts", async () => {
@@ -244,22 +267,29 @@ describe("grep", () => {
         await grepTool.execute({ pattern: "needle", path: BIG, output_mode: "count" }),
       );
       expect(r.error).toBeUndefined();
-      expect(r.total).toBe(FILES);
+      expect(r.total).toBe(EXPECTED_FILES);
       for (let i = 0; i < FILES; i++) {
         expect(r.matches).toContain(`${BIG}/f${i}.txt:${LINES}`);
       }
+      if (HAS_RG) expect(r.matches).not.toContain(".hid");
+      else expect(r.matches).toContain(`${BIG}/.hid/h.txt:${HID_LINES}`);
     });
 
     it("hitting the byte cap returns truncated results, not an error or a grep re-run", async () => {
       __setSearchByteCapForTests(64 * 1024);
       for (const mode of ["files", "count", "content"]) {
+        spawned.length = 0;
         const r = JSON.parse(
           await grepTool.execute({ pattern: "needle", path: BIG, output_mode: mode, max_results: 20 }),
         );
         expect(r.error, mode).toBeUndefined();
         expect(r.truncated, mode).toBe(true);
         expect(r.total, mode).toBeGreaterThan(0);
-        expect(JSON.stringify(r), mode).not.toContain(".hid");
+        // Exactly one search ran: rg alone, or (rg missing) grep once after
+        // the failed rg spawn. A capped rg re-run as grep, or a capped grep
+        // re-run, adds a process here.
+        expect(spawned, mode).toEqual(HAS_RG ? ["rg"] : ["rg", "grep"]);
+        if (HAS_RG) expect(JSON.stringify(r), mode).not.toContain(".hid");
         if (mode === "content") {
           // cut on a line boundary: every returned line is whole
           for (const l of String(r.matches).split("\n")) {
