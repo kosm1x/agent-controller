@@ -590,8 +590,42 @@ Residuals:
   placeholder refusal.
 - grep: a run that hits the 64 MiB cap shows the first part of the tree only (rg order);
   a timeout of rg still falls back to grep (as before).
-- `claude_sdk_tool_error` trace has no dedicated test.
 
 Mutants: B1 cap→fallback/error (RED), B1 cap back to 2 MiB (RED ×2); SF2 registry trace
 removed, openai trace removed, SDK trace removed (each RED); SF3 executor pre-check
 removed, SDK pre-check removed (each RED).
+
+### Grep / pre-gate audit follow-up (2026-10-03)
+
+- **SF-A** grep dir-glob run: rg's cwd is the root as SPELLED (`cwd: searchPath`), not
+  `resolve(searchPath)` — spawn's chdir walks `lnk/..` on disk, resolve() collapsed it as
+  text and searched another tree. Test: `lnk/..` (lnk → real/x) with and without a dir
+  glob returns `real/src/walked.txt` as `<root>/src/walked.txt`, never the lexical tree.
+- **SF-B** mapping pinned: the dir-glob test asserts the exact `${TEST_DIR}/src/inner/a.txt`
+  (and one separator for a root ending in "/"); a synthetic session store under the real
+  `/root/.claude/` default-deny rule (`projects/<tmp>/sess/s.jsonl`, beside a readable
+  `memory/m.md`; skipped where /root/.claude is not writable) is never listed with a dir
+  glob in any mode; a denylisted basename under a dir glob is dropped.
+- **Mapper fails closed**: `rgRecordMapper(searchPath)` (exported) maps `./rel` → root +
+  rel and turns any other record shape into "" (dropped by `parseLineRecords`); unit test.
+- grep fallback: a root ending in "/" no longer prints `root//dir/…` for a dir glob (both
+  engines now give the same path).
+- **M2** the byte-cap test asserts the capped child ended by `SIGKILL` (spawn mock keeps
+  the child objects), on rg and on the grep fallback.
+- **SF2 nit** `scrubToolErrorText` withholds the detail on any scrub failure but traces
+  `inference.scrub_unavailable {where: claude_sdk_tool_error}` only for
+  `SecretScrubUnavailableError` (parity with the openai / claude_sdk sites); two tests in
+  `claude-sdk.confirmation-gate.test.ts` (scrub overridable via a partial `./adapter.js`
+  mock). `wrapTool`'s catch unchanged (safety-invariants pin holds).
+- **SF-C** a call refused by the placeholder pre-gate in `gateSdkToolCall` now calls
+  `ctx.recordGatedCall(name)` — the same mechanism as `CONFIRMATION_REQUIRED` — so
+  fast-runner's `withoutGated` drops it from "Herramientas YA ejecutadas", the run output
+  and telemetry. (Supersedes SF3's "no gated-call record".)
+
+Mutants (each restored, `cmp`): `rgCwd = resolve(searchPath)` RED (rg); `mapRgFile = f => f`
+RED ×4 (rg); mapper fail-open (`: f`) RED (both engines); no `child.kill` on the cap RED
+(both engines); trace on any scrub error RED; trace removed RED; SF-C `recordGatedCall`
+removed RED. The rg-only mutants are unreachable without rg (the grep fallback does not use
+the cwd/mapping path); every test passes with rg and with rg hidden from PATH.
+Residual: the `/root/.claude` fixture test is skipped where that directory is not writable
+(CI runner, non-root).

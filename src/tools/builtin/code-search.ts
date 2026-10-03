@@ -154,6 +154,19 @@ function listedBlocked(p: string): boolean {
 // grep — content search
 // ---------------------------------------------------------------------------
 
+/**
+ * Map a record of an rg run made FROM `searchPath` with path "." ("./rel")
+ * back to the form rg prints for `searchPath` itself (Path::join: one "/"
+ * unless the root already ends with "/"), so the read denylist judges the
+ * real location. Any other record shape cannot be placed under the root and
+ * is dropped (""): fail closed, never judged as a path relative to the
+ * process cwd.
+ */
+export function rgRecordMapper(searchPath: string): (f: string) => string {
+  const base = searchPath.endsWith("/") ? searchPath : `${searchPath}/`;
+  return (f) => (f.startsWith("./") ? base + f.slice(2) : "");
+}
+
 
 /**
  * Ruling 3c (audit round 8, B-2): parse NUL-delimited line-mode output
@@ -347,7 +360,10 @@ TIPS:
       const dir = includeGlob.slice(0, firstSlash);
       grepNameGlob = includeGlob.slice(includeGlob.lastIndexOf("/") + 1);
       if (dir && dir !== "**" && !dir.includes("*")) {
-        grepSearchPath = searchPath === "." ? dir : `${searchPath}/${dir}`;
+        grepSearchPath =
+          searchPath === "."
+            ? dir
+            : `${searchPath.endsWith("/") ? searchPath : `${searchPath}/`}${dir}`;
       }
     }
 
@@ -374,10 +390,11 @@ TIPS:
         // Missing / unreadable root: leave rg to report it as before.
       }
       if (isDir) {
-        rgCwd = resolve(searchPath);
+        // The spelling, not resolve(): spawn's chdir walks `link/..` on disk
+        // as rg would (resolve() collapses it as text — another tree).
+        rgCwd = searchPath;
         rgPath = ".";
-        const base = searchPath.endsWith("/") ? searchPath : `${searchPath}/`;
-        mapRgFile = (f) => (f.startsWith("./") ? base + f.slice(2) : f);
+        mapRgFile = rgRecordMapper(searchPath);
       }
     }
 

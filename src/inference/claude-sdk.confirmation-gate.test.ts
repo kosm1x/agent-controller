@@ -39,7 +39,22 @@ vi.mock("../config.js", () => ({
   getConfig: () => ({ budgetEnabled: false, budgetEnforce: false }),
 }));
 
+// The outbound scrub, overridable per test (null = the real one) so a scrub
+// failure inside wrapTool's catch can be driven.
+const scrub = vi.hoisted(() => ({ throws: null as Error | null }));
+vi.mock("./adapter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./adapter.js")>();
+  return {
+    ...actual,
+    scrubOutboundText: (text: string) => {
+      if (scrub.throws) throw scrub.throws;
+      return actual.scrubOutboundText(text);
+    },
+  };
+});
+
 import { wrapToolCached } from "./claude-sdk.js";
+import { SecretScrubUnavailableError } from "./adapter.js";
 import {
   TaskExecutionContext,
   currentExecutionContext,
@@ -127,6 +142,7 @@ const dispatcherCtx = (
 ) => new TaskExecutionContext(taskId, interactive, facts);
 
 beforeEach(() => {
+  scrub.throws = null;
   reg.execute.mockClear();
   emitTraceMock.mockReset();
   reg.tiers = {
@@ -184,7 +200,10 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const parsed = JSON.parse(text);
     expect(parsed.error).toMatch(/^No ejecuté gmail_send: los argumentos contienen un dato oculto/);
     expect(ctx.getPendingConfirmation()).toBeNull();
-    expect(ctx.getGatedCalls()).toEqual([]);
+    // SF-C (2026-10-03): it never ran, so it is recorded as gated — the
+    // fast runner's withoutGated drops it from "Herramientas YA ejecutadas",
+    // the run output and telemetry.
+    expect(ctx.getGatedCalls()).toEqual(["gmail_send"]);
     expect(emitTraceMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: "tool.gated" }),
     );
@@ -472,6 +491,42 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       error: noConfirmBackgroundScheduleError(["gmail_send"]),
     });
     expect(reg.execute).not.toHaveBeenCalled();
+  });
+});
+
+// Combined audit 2026-10-03 (SF2 nit): a thrown tool error whose scrub fails
+// is withheld either way; only an unavailable secret index is traced.
+describe("wrapTool tool-error scrub failure", () => {
+  const WITHHELD = "Error: tool failed (detail withheld: secret index unavailable)";
+  const boom = () => {
+    reg.execute.mockImplementationOnce(async () => {
+      throw new Error("tool blew up with detail");
+    });
+  };
+
+  it("an unavailable secret index withholds the detail and emits inference.scrub_unavailable (claude_sdk_tool_error)", async () => {
+    boom();
+    scrub.throws = new SecretScrubUnavailableError(new Error("db gone"));
+    const ctx = fastChatRoot("t-scrub");
+    const text = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
+    expect(text).toBe(WITHHELD);
+    expect(emitTraceMock).toHaveBeenCalledWith({
+      taskId: "t-scrub",
+      name: "inference.scrub_unavailable",
+      attrs: { where: "claude_sdk_tool_error" },
+    });
+  });
+
+  it("any other scrub failure still withholds the detail but is not traced as scrub_unavailable", async () => {
+    boom();
+    scrub.throws = new TypeError("unexpected");
+    const ctx = fastChatRoot("t-scrub2");
+    const text = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
+    expect(text).toBe(WITHHELD);
+    expect(text).not.toContain("blew up");
+    expect(emitTraceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "inference.scrub_unavailable" }),
+    );
   });
 });
 

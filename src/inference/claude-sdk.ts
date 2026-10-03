@@ -245,7 +245,13 @@ function gateSdkToolCall(
     // No card for a call the registry would refuse after the approval
     // (combined audit 2026-10-03, should-fix 3).
     const refused = placeholderRefusalBeforeGate(name, args, ctx.taskId);
-    if (refused !== null) return refused;
+    if (refused !== null) {
+      // It never ran: recorded like any gated call, so the run does not
+      // list it among the tools already executed (resume prompt, output,
+      // telemetry — fast-runner `withoutGated`).
+      ctx.recordGatedCall(name);
+      return refused;
+    }
   }
   ctx.recordGatedCall(name);
   if (gate.action === "refuse") {
@@ -280,8 +286,12 @@ function gateSdkToolCall(
 function scrubToolErrorText(err: unknown): string {
   try {
     return scrubOutboundText(`Error: ${errMsg(err)}`);
-  } catch {
-    traceScrubUnavailable("claude_sdk_tool_error");
+  } catch (scrubErr) {
+    // Withheld on ANY scrub failure; traced only as what it is (parity
+    // with the openai / claude_sdk choke points).
+    if (scrubErr instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("claude_sdk_tool_error");
+    }
     return "Error: tool failed (detail withheld: secret index unavailable)";
   }
 }
