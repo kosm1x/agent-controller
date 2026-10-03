@@ -2,9 +2,15 @@
 
 Index. Full text per section: `docs/CLAUDE-REFERENCE.md`.
 
+**Start every session by reading `docs/ROADMAP.md`** (one page: Beta tests, active bets, session log) and end it by adding a Session log row there.
+
 ## Quick Context
 
 Unified AI agent orchestrator. Routes tasks by complexity to 5 runner types (fast, nanoclaw, heavy, swarm, a2a). Single TypeScript process, Hono HTTP, SQLite.
+
+## Loop vocabulary (V9 W5)
+
+**Prompt → Context → Harness → Loop.** Prompt = the instruction text; Context = what the model sees (KB, scope, memory); Harness = tools, gates, ledger, sandbox around the call; Loop = plan/execute/verify/retry across calls. Thesis: the harness and loop are the lever, not the model weights — when a result is wrong, look for the layer to fix before reaching for a model swap.
 
 ## Claude Code model roles (this CLI, not Jarvis)
 
@@ -75,20 +81,7 @@ Five Anthropic workflow patterns → §Agent Design Principles. Rules:
 
 `mc-ctl` — bash admin tool at project root. → §Admin CLI
 
-| Command | Purpose |
-| --- | --- |
-| `./mc-ctl status` | Service health, API, Hindsight, key metrics |
-| `./mc-ctl stats` | Metrics dashboard |
-| `./mc-ctl tasks --status=X` / `task <id>` | List tasks / task detail + runs + subtasks |
-| `./mc-ctl logs 50` | journalctl last N lines |
-| `./mc-ctl db "SELECT ..."` | Raw SQLite query or interactive shell |
-| `./mc-ctl briefing-gate` | V8.1 §13 + V8.2 §17 activation gates |
-| `./mc-ctl judgments [id]` | V8.2 shadow judgments |
-| `./mc-ctl audit-claim <metric> --window=24h --stratify-by=bank` | Self-audit before reporting |
-| `./mc-ctl gates <task_id> \| summary [days] \| status-sources [days] \| set-ritual <id> <file>` | V8.4 completion ledger |
-| `./mc-ctl sandboxes` | Sandbox backend/health/guard/containers |
-| `./mc-ctl usability [days]` | Usability KPIs; `--json` |
-| `./mc-ctl schedule-resume <id>` | Re-activate a task paused by `[PAUSAR-SCHEDULE]` |
+Common: `status`, `stats`, `tasks --status=X` / `task <id>`, `logs 50`, `db "SELECT ..."`, `briefing-gate`, `judgments [id]`, `audit-claim <metric> --window=24h --stratify-by=bank`, `gates <task_id>|summary|status-sources|set-ritual`, `sandboxes`, `usability [days]`, `schedule-resume <id>`. Purpose of each → §Admin CLI.
 
 Before quoting any aggregate metric (utility %, cache-hit ratio, latency, cost, success rate) run `mc-ctl audit-claim` and incorporate any warnings. Exit codes: `0` verified, `1` warnings present (do NOT report as-is), `2` insufficient n, `3` error.
 
