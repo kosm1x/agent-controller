@@ -38,10 +38,6 @@
 - **Mistake (inherited, v7.7 sweep):** the 6 h test sweep examined only `is_certified=1`, so ONE 30 s LLM timeout decertified 5 healthy skills for 3+ months → any flag a transient error can clear needs a path that re-evaluates it; query the population the gate can never reach (`is_certified=0` with no `fail` row).
 - **Better:** two runners of the same resource (kb-file certify + sweep) share ONE claim (`claimCertificationRun`) taken with no await after the last check; re-check the cap at claim time, not only at registration.
 - **Better:** when a gate must replace a long partial deliverable, cut only the offending tail (`stripScopeAskTail`, re-checked by the same detector) — replacing the whole report re-created the "7 minutes of work discarded" bug the branch exists to prevent (qa R1 W3).
-- **Better:** multi-round qa via SendMessage to the SAME auditor (R1 → R2 → R3 deltas) kept each round to one or two minutes and let it re-verify its own findings (it reproduced W1-R2 in sqlite).
-
-## 2026-09-25 — google_news RSS failures (#48)
-- **Avoid:** lazy `[\s\S]*?` regex spans in an in-process parser of untrusted input. Each unclosed opener rescans to EOF, so a 5 MB hostile feed blocked the event loop > 90 s. Use indexOf scans that stop at the first unclosed opener.
 
 ## 2026-09-26 — project slugs (#49, #50), docs refresh, codie-checklist-app (condensed 10-01)
 - **Mistake:** hardcoded project-slug lists (`kb-injection.ts`, `precedent.ts`, `entity-extractor.ts`) drift from the `projects` registry, so an unregistered project is absorbed by its nearest-named neighbour → new project = KB `projects/<slug>/README.md` + registry row with `config.aliases` + slug in `PROJECT_SLUGS`; check the more specific name before an `includes()` loop.
@@ -148,3 +144,8 @@
 - **Avoid:** rehearsing host unmount surgery under `unshare --propagation private` as evidence — it cuts the peer groups that carry the damage and passes; never rehearse with propagation unchanged (it hits the host).
 - **Avoid:** reading a permission-check stop as "don't repeat that probe"; two stops in one host-hardening workstream meant "move this off the production host".
 - **Better:** leaf-only hides (tmpfs over a directory, empty-file bind over a file) leak recoverably; recursive self-binds of shared trees do not. An interlock tests the real precondition (own private mount namespace) and exits inline, never through the shared error function.
+
+## 2026-10-03 — day close reported done items as open; bot token leaked through an external HTML reader (`0fa9c5f`)
+- **Mistake:** grepped a day-log for a URL and printed the matching line, which carried a live bot token, into the session transcript → on any stored user/agent text (day-logs, conversations, task rows) print counts, ids and booleans only; never a matching line.
+- **Avoid:** a ritual that asks the model to read its own input through a tool: `jarvis_file_read` returns a 60-char-per-entry outline above 8,000 chars, so every outcome was cut. The harness loads the text and embeds it; then set `detectionText` to the title, or description-keyed guards fire on the embedded text (the DENUE guard did). A writer that cuts text must leave a visible mark (`…`).
+- **Avoid (2nd time, was #48 RSS):** backtracking regex spans (`[\s\S]*?`, `<[^>]+>`) on untrusted input in-process — 200 KB of `<` took 38 s. Cap the input, scan with indexOf, pin with 1 MB timing tests whose inputs are SHORTER than the cap. Also: a test whose assertion cannot match what the mutant leaves (4 surviving chars vs a 12-char needle) pins nothing — run the mutant.
