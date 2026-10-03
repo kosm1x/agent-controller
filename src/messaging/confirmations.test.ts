@@ -1367,6 +1367,40 @@ describe("audit A2/A3: boot notice once, never stale; notified only on a deliver
     expect(getPendingConfirmation(tk)?.toolName).toBe("wp_delete");
   });
 
+  it("A3 follow-up: a new card while a fired retry's send is in flight → that send's failure schedules no further attempt", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectInFlight: (err: Error) => void = () => {};
+    const oldNotify = vi
+      .fn<(n: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectInFlight = reject;
+          }),
+      )
+      .mockRejectedValue(new Error("blip"));
+    storePendingConfirmation(tk, "gmail_send", args, summary, oldNotify, "task-race");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS);
+    expect(oldNotify).toHaveBeenCalledTimes(2); // attempt 2 fired, send in flight
+
+    const newNotify = vi.fn();
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "wp_delete(id: 7)", newNotify, "task-new2");
+    rejectInFlight(new Error("adapter down"));
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 5); // < TTL: the new card stays
+    expect(oldNotify).toHaveBeenCalledTimes(2); // attempt 3 never scheduled
+    expect(traceOf("task-race", "confirmation.expiry_notice_failed")).toEqual([
+      expect.objectContaining({ attempt: 1, will_retry: true }),
+      expect.objectContaining({ attempt: 2, will_retry: false, superseded: true }),
+    ]);
+    expect(traceOf("task-race", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notice_superseded", attempts: 2 }),
+    ]);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+    expect(getPendingConfirmation(tk)?.toolName).toBe("wp_delete");
+  });
+
   it("A3 follow-up: clearPendingConfirmation cancels the chat's pending notice retry", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const notify = vi.fn(() => Promise.reject(new Error("blip")));

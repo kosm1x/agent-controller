@@ -60,6 +60,12 @@ vi.mock("../tools/registry.js", () => ({
   },
 }));
 
+const emitTraceMock = vi.hoisted(() => vi.fn());
+vi.mock("../observability/task-trace.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../observability/task-trace.js")>()),
+  emitTraceEvent: emitTraceMock,
+}));
+
 const inferMock = vi.hoisted(() => vi.fn());
 vi.mock("./adapter.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./adapter.js")>()),
@@ -119,6 +125,7 @@ async function run(
 }
 
 beforeEach(() => {
+  emitTraceMock.mockReset();
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -193,6 +200,16 @@ describe("audit S2: declared tool list bounds the openai path", () => {
       undefined,
     ]);
     for (const r of toolResults) expect(String(r.error)).toContain("is not available");
+    const filtered = emitTraceMock.mock.calls
+      .map((c) => c[0] as { taskId: string; name: string; attrs?: unknown })
+      .filter((e) => e.name === "tools.declared_filtered");
+    expect(filtered).toEqual([
+      {
+        taskId: "t-s2",
+        name: "tools.declared_filtered",
+        attrs: { declared: 0, handed_in: all.length, kept: 0, dropped: all.length },
+      },
+    ]);
   });
 
   it("definitions outside a non-empty declared list are dropped before the first request", async () => {
@@ -202,5 +219,22 @@ describe("audit S2: declared tool list bounds the openai path", () => {
       [],
     );
     expect(sentTools[0]).toEqual(["file_read"]);
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "t-s2",
+        name: "tools.declared_filtered",
+        attrs: { declared: 1, handed_in: 2, kept: 1, dropped: 1 },
+      }),
+    );
+  });
+
+  it("nothing dropped (no list, or every definition declared) → no tools.declared_filtered trace", async () => {
+    await run(undefined, [def("web_search")], []);
+    await run(["web_search"], [def("web_search")], []);
+    expect(
+      emitTraceMock.mock.calls.filter(
+        (c) => (c[0] as { name: string }).name === "tools.declared_filtered",
+      ),
+    ).toEqual([]);
   });
 });

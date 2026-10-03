@@ -35,6 +35,7 @@ import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
 import { currentExecutionContext } from "./execution-context.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import { sanitizeToolResult } from "./guards.js";
 import {
   HttpError,
@@ -1238,12 +1239,6 @@ export function compactionGuardStep(
 }
 
 /**
- * OpenAI-compat branch of inferWithTools() — the multi-round tool loop with
- * doom-loop guards, graduated escalation, compaction cascade, and wrap-up.
- * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached only
- * when INFERENCE_PRIMARY_PROVIDER != claude-sdk.
- */
-/**
  * Audit S2 (rulings 1–2): the run's declared tool list, when it declared one
  * — the dispatcher's gate context carries the submission's `tools` (a
  * schedule's saved list, a chat turn's scoped set). `undefined` means no
@@ -1257,6 +1252,12 @@ export function declaredToolSetForRun(): ReadonlySet<string> | undefined {
   return declared === undefined ? undefined : new Set(declared);
 }
 
+/**
+ * OpenAI-compat branch of inferWithTools() — the multi-round tool loop with
+ * doom-loop guards, graduated escalation, compaction cascade, and wrap-up.
+ * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached only
+ * when INFERENCE_PRIMARY_PROVIDER != claude-sdk.
+ */
 export async function inferWithToolsViaOpenAi(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -1345,11 +1346,27 @@ export async function inferWithToolsViaOpenAi(
   // an undeclared run keeps today's array identity.
   const declaredTools = declaredToolSetForRun();
   if (declaredTools && tools.some((t) => !declaredTools.has(t.function.name))) {
-    const dropped = tools.length;
+    const handedIn = tools.length;
     tools = tools.filter((t) => declaredTools.has(t.function.name));
+    const droppedCount = handedIn - tools.length;
     console.warn(
-      `[inference] ${dropped - tools.length} tool definition(s) outside the run's declared list dropped`,
+      `[inference] ${droppedCount} tool definition(s) outside the run's declared list dropped`,
     );
+    // Decision point → dashboard timeline. A declared list only exists
+    // inside an execution context, so its task id keys the event.
+    const taskId = currentExecutionContext()?.taskId;
+    if (taskId) {
+      emitTraceEvent({
+        taskId,
+        name: "tools.declared_filtered",
+        attrs: {
+          declared: declaredTools.size,
+          handed_in: handedIn,
+          kept: tools.length,
+          dropped: droppedCount,
+        },
+      });
+    }
   }
   const allowedToolNames = new Set(tools.map((t) => t.function.name));
   const availableNonReadOnly = new Set(

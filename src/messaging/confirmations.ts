@@ -94,10 +94,25 @@ const noticeRetryTimers = new Map<
 >();
 
 /**
+ * Per-thread notice generation, bumped by every `cancelNoticeRetries`. Each
+ * attempt captures it before sending: a retry timer that already fired is
+ * out of `noticeRetryTimers`, so if a newer card / decision / clear lands
+ * while that attempt's send is in flight, only the changed generation tells
+ * its failure handler not to schedule another (stale) attempt.
+ */
+const noticeGenerations = new Map<string, number>();
+
+function noticeGeneration(threadKey: string): number {
+  return noticeGenerations.get(threadKey) ?? 0;
+}
+
+/**
  * Cancel the thread's pending expiry-notice retries; each cancelled notice
- * is traced `notice_superseded` (its last trace said `will_retry`).
+ * is traced `notice_superseded` (its last trace said `will_retry`). Also
+ * bumps the thread's generation so an attempt in flight never retries.
  */
 function cancelNoticeRetries(threadKey: string): void {
+  noticeGenerations.set(threadKey, noticeGeneration(threadKey) + 1);
   for (const [timer, entry] of noticeRetryTimers) {
     if (entry.threadKey !== threadKey) continue;
     clearTimeout(timer);
@@ -352,12 +367,16 @@ function deliverExpiryNotice(
   notify: ExpiryNotifier,
   attempt: number,
 ): void {
+  const generation = noticeGeneration(threadKey);
   const onSent = (): void => traceExpiry(threadKey, pending, "notified", attempt);
   const onFailed = (err: unknown): void => {
     const message = err instanceof Error ? err.message : String(err);
-    const willRetry = attempt < EXPIRY_NOTICE_MAX_ATTEMPTS;
+    // A newer card / decision / clear in this chat landed while the send was
+    // in flight: no further attempt (a stale notice never follows it).
+    const superseded = noticeGeneration(threadKey) !== generation;
+    const willRetry = !superseded && attempt < EXPIRY_NOTICE_MAX_ATTEMPTS;
     console.warn(
-      `[confirmations] expiry notice failed: ${message} (attempt ${attempt}/${EXPIRY_NOTICE_MAX_ATTEMPTS}${willRetry ? ", will retry" : ", giving up"})`,
+      `[confirmations] expiry notice failed: ${message} (attempt ${attempt}/${EXPIRY_NOTICE_MAX_ATTEMPTS}${willRetry ? ", will retry" : superseded ? ", superseded" : ", giving up"})`,
     );
     emitTraceEvent({
       taskId: expiryTraceKey(threadKey, pending),
@@ -368,9 +387,14 @@ function deliverExpiryNotice(
         attempt,
         max_attempts: EXPIRY_NOTICE_MAX_ATTEMPTS,
         will_retry: willRetry,
+        ...(superseded && { superseded: true }),
         error: message.slice(0, 300),
       },
     });
+    if (superseded) {
+      traceExpiry(threadKey, pending, "notice_superseded", attempt);
+      return;
+    }
     if (willRetry) {
       const timer = setTimeout(() => {
         noticeRetryTimers.delete(timer);
@@ -792,6 +816,7 @@ export function _resetPendingConfirmationsForTests(): void {
   expiryTimers.clear();
   for (const timer of noticeRetryTimers.keys()) clearTimeout(timer);
   noticeRetryTimers.clear();
+  noticeGenerations.clear();
   expiryNotifiers.clear();
   pendingConfirmations.clear();
   bootNotifierResolver = null;

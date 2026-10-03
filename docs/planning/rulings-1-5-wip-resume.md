@@ -233,6 +233,36 @@ Residuals (to state at ship time):
 - The refused child fails; the parent background run itself still reports its own outcome
   (the schedule gets the `schedule.run_failed` alert from the child).
 
+### Rulings 1–2 audit S1–S3 (`395e3c3`) + its should-fix round
+
+`395e3c3` (S1 router notice bookkeeping best-effort; S2 openai path bounded by the run's
+declared tool list, `[]` = no tools; S3 inherited declared list never dropped; notice
+retries cancelled by a newer card / decision / clear) passed audit. Should-fix round:
+
+- Notice retry race closed: a per-thread generation (`noticeGenerations`, bumped by
+  `cancelNoticeRetries`) is captured before each attempt; a send that fails after a newer
+  card / decision / clear landed mid-flight schedules no further attempt
+  (`expiry_notice_failed` with `superseded: true`, then `confirmation.expired` reason
+  `notice_superseded`; no `recordRitualFailure`).
+- S2 drop of definitions outside the declared list now emits trace
+  `tools.declared_filtered` `{declared, handed_in, kept, dropped}` on the run's task id
+  (the console.warn stays).
+
+Notes for ship time:
+
+- **S2 is invisible to the eval gate.** The eval runner builds definitions with
+  `toolRegistry.getDefinitions(...)` (`src/tuning/eval-runner.ts:42`) and calls outside any
+  execution context, so `declaredToolSetForRun()` is `undefined` there and nothing is
+  filtered. The cover is the unit test `src/inference/adapter-openai.declared-tools.test.ts`
+  (declared-list cases + the trace), not `eval:gate`.
+- **Residual (openai path):** a deferred tool outside the chat's scoped set no longer
+  expands in the same run. Recovery is the scope re-run, as on the SDK path (whose
+  `allowedTools` already admitted only the given names).
+- **Operator read-only check before deploy, if running `INFERENCE_PRIMARY_PROVIDER=openai`:**
+  `./mc-ctl db "SELECT schedule_id,name,delivery FROM scheduled_tasks WHERE tools='[]' AND active=1"`
+  — any such schedule now runs with NO tools (before, `getDefinitions([])` gave it the full
+  registry). Re-save it with its real list if it needs tools.
+
 ## Ruling 5 follow-ups (operator, 2026-10-03, asked one by one) — `6dc2358`, `97b051c`
 
 - 5a psql shell escapes (`\!`, `\o |`, `COPY … PROGRAM`, `-f`, `| sh`): no gate change. OPERATOR STEP: give Jarvis's psql a non-superuser DB role. Residual until done.

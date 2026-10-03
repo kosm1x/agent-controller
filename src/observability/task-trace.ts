@@ -43,6 +43,9 @@ export type TraceEventName =
   | "confirmation.expired"
   // One failed attempt at the expiry notice (audit A3; bounded retries)
   | "confirmation.expiry_notice_failed"
+  // openai path dropped tool definitions outside the run's declared list
+  // (audit S2, rulings 1–2)
+  | "tools.declared_filtered"
   | "turn.completed"
   | "task.completed"
   | "task.failed"
