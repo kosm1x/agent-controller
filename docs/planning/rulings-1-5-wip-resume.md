@@ -119,6 +119,17 @@ each restored exactly; scoped vitest 37 files / 1528 tests green).
 
 Residuals added by fix round 5: binary `gemini_upload` files (PDF/images/audio/video/Office) are sent as read, and the other Gemini tools' model-authored args remain outside the seam; `gemini_upload` octet-stream is treated as text only when valid UTF-8 without NUL, and non-UTF-8 text MIME is decoded latin1 (a multi-byte-encoded secret could slip); `authorization_header` is kept as a credential name; the a2a remote agent's reply is not scrubbed (only our outbound text is).
 
+## Fix round 6 (answers audit round 6 = FAIL) — NOT re-audited
+
+- B1 (3d false positives): `acceso/respaldo/recuperacion/seguridad` name a secret value only after `codigo(s)/clave(s)/frase(s)` (`credenciales_de_acceso.{usuario,host}` visible); a name whose only credential words are containers (auth/oauth/credential(s)/creds/credencial(es)) and whose last token is an identity token (user/username/usuario/login/email/correo/mail/id/account/host/port/domain/uri/url/scope/tenant/redirect/endpoint/server) is not a credential by name (value still judged by shape); `uri` = `url` meta.
+- B2 (3c): `resolveRenderedPlaceholders` (secret-refs.ts) at the registry seam before `resolveSecretRefs`: file_write / file_edit / jarvis_file_write / jarvis_file_update / jarvis_files_batch_write content fields get the stored value back for each rendered placeholder; unknown name / generic / mangled / outside a content field → `{error}`; any other non-read-only tool (and shell_exec + template tools always) with a placeholder → `{error}` naming `$SECRET_<NOMBRE>` / `{{SECRET_<NOMBRE>}}`. user_fact_set / project_update keep their own resolution. New model-visible refusal strings → eval gate.
+- B3: `scrubStructured` scrubs object keys.
+- S1–S3 classifier: new meta suffixes with value types; exclusions; webhook value shapes; URL path secret run; strict host/path/word types.
+- S4: `projectFieldProblem` — non-object `credentials/urls/config` and `__proto__/constructor/prototype` keys refused (`{error}` in project_update, TypeError in the db layer; the merge skips them). New refusal string → eval gate.
+- S5: a null index build (no database) no longer clears `dirtySinceLastGood`.
+
+Residuals added by fix round 6: a placeholder that replaced a URL-encoded or JSON-escaped form of a value is resolved back to the RAW value in a file write; `gdocs_write` / `gsheets_write` and other non-file writers refuse placeholders (no write-back resolution); a category made only of container words (`credentials`) still hides every fact in it; `*_id` / `*_key_id` values that are 32/40-char hex (e.g. a Google `private_key_id`) stay hidden; single-label hosts (`db`) under a credential `*_host` key are hidden.
+
 ## Rulings 1–2 should-fix round + batch_decompose ruling (2026-10-03)
 
 Answers the rulings 1–2 re-audit (PASS with should-fix items) and the operator ruling of

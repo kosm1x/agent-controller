@@ -47,6 +47,9 @@ export interface UserFact {
  * `secretkey`, `privatekey`, `passcode`, `pincode`), `recovery_phrase`,
  * `cvv`, `cvc`, Spanish `pregunta/respuesta_secreta`, `frase_semilla`,
  * `codigos_respaldo`, `codigo_acceso`.
+ * Audit round 6: exclusions `musical/music/song/piano_key`, `boarding/day/…_pass`,
+ * `secret_santa`, `llave_publica`, `map/location/drop_pin`; new names
+ * `security_answer`, `respuesta_seguridad`, `access_code`, `clave_de_acceso`.
  */
 const FOLLOWER = "(?= $| (?:codes?|secrets?|phrases?|keys?|tokens?|seeds?|backup|header) )";
 const CREDENTIAL_NAME_RE = new RegExp(
@@ -60,7 +63,7 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "(?:secret|signing|master|encryption)keys?",
       "passcodes?",
       "pincodes?",
-      "(?<!(?:public|primary|foreign|sort|partition|cache|hot|short|translation|required|shortcut|object|index) )keys?(?= $)",
+      "(?<!(?:public|primary|foreign|sort|partition|cache|hot|short|translation|required|shortcut|object|index|musical|music|song|piano) )keys?(?= $)",
       "(?<!(?:max|min|input|output|total|prompt|completion|num|cache|cached|reasoning|design|context|css|color|colour) )tokens(?= $)",
       `(?<!prior )authorization${FOLLOWER}`,
       `(?:otp|mfa|2fa)${FOLLOWER}`,
@@ -76,9 +79,9 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "cvv2?",
       "cvc2?",
       "token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )",
-      "secrets?",
+      "secrets?(?! santa )",
       "passwords?",
-      "pass",
+      "(?<!(?:boarding|bus|day|season|ski|backstage|press|guest|hall|mountain|free) )pass",
       "pw",
       "passwd",
       "pwd",
@@ -89,14 +92,18 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "bearer",
       "jwt",
       "(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )",
-      "llaves?",
+      "claves? de (?:acceso|seguridad|respaldo|recuperacion)",
+      "llaves?(?! publicas? )",
       "contrasenas?",
       "credencial(?:es)?",
       "secretos?",
       "secretas?",
       "frases? (?:de )?(?:semillas?|recuperacion)",
       "codigos? (?:de )?(?:respaldo|acceso|seguridad|recuperacion)",
-      "pin",
+      "(?<!(?:map|location|drop|gpio|lapel|bowling) )pin",
+      "security answers?",
+      "respuestas? (?:de )?seguridad",
+      "access codes?",
       "sessionid",
       "session id",
       "sid(?= $)",
@@ -117,9 +124,35 @@ const CREDENTIAL_NAME_RE = new RegExp(
  * has that metadata's type (audit round 5, S4: `token_url` holding a bare
  * token, or `password_file` holding the password, is a secret). Its value is
  * still judged by the value rules.
+ * Audit round 6 (should-fix 1): also header / name / id / hint / policy /
+ * domain / scope / uri / arn / symbol / address / format / rate / location /
+ * question / consent / last_changed (`api_key_header = Authorization`,
+ * `token_symbol`, `password_hint`, `secret_arn`, `cookie_domain`,
+ * `pass_rate`), each with its own value type.
  */
 const CREDENTIAL_META_LAST_RE =
-  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|file) $/;
+  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|uri|file|header|name|id|hint|policy|domain|scope|arn|symbol|address|format|rate|location|question|consent|last changed) $/;
+
+/**
+ * Whole names that are metadata about a credential without a meta last token:
+ * `pregunta_secreta` (the question, not the answer — `respuesta_secreta`
+ * stays hidden) and `pwd` holding a working-directory path.
+ */
+const WHOLE_NAME_META: ReadonlyArray<[RegExp, string]> = [
+  [/^ pregunta (?:de )?secretas? $/, "question"],
+  [/^ pwd $/, "path"],
+];
+
+/**
+ * Audit round 6 (B1): words that name a credential CONTAINER (a scheme or a
+ * bag of fields), not a secret value. A name whose only credential words are
+ * these and whose last token is an identity token (`auth_email`,
+ * `db_credentials_user`, `oauth_client_id`, `oauth_redirect_uri`) is not a
+ * credential by name; its value is still judged by shape.
+ */
+const CONTAINER_TOKEN_RE = / (?:o?auth|credentials?|creds|credencial(?:es)?)(?= )/g;
+const IDENTITY_LAST_RE =
+  / (?:user|username|usuario|login|email|correo|mail|id|account|host|port|domain|uri|url|scope|tenant|redirect|endpoint|server) $/;
 
 /**
  * A whitespace-free run of 20+ token characters mixing letters and digits —
@@ -133,44 +166,147 @@ function hasSecretRun(value: string): boolean {
   return false;
 }
 
+/** Digits, lower AND upper case together: the shape of a password. */
+function hasPasswordMix(v: string): boolean {
+  return /\d/.test(v) && /[a-z]/.test(v) && /[A-Z]/.test(v);
+}
+
+// Audit round 6 (should-fix 3): a host is an IP, localhost, a bracketed IPv6
+// or dotted labels ending in a TLD-ish label (starts with a letter) — and not
+// a password mix (`Tr0ub4dor.3`, `Pa55.Word`).
 const HOSTNAME_RE =
-  /^(?:\[[0-9a-f:.]+\]|localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{1,63})(?::\d{1,5})?$/i;
+  /^(?:\[[0-9a-f:.]+\]|localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::\d{1,5})?$/i;
+const DOMAIN_RE =
+  /^\.?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const BOOLEAN_WORD_RE =
   /^(?:true|false|yes|no|on|off|1|0|s[ií]|y|n|enabled|disabled|activo|inactivo|habilitado|deshabilitado)$/i;
 const REGION_SLUG_RE = /^[a-z]+(?:[-_][a-z]+)*(?:[-_]?\d{1,2}[a-z]?)?$/i;
-const PATH_LIKE_RE = /^(?:~|\.{1,2})?[/\\]|^[A-Za-z]:[/\\]|^[^\s/\\]+[/\\]/;
+/** Absolute, home-relative, ./ or ../ relative, or a drive path. */
+const PATH_LIKE_RE = /^(?:~|\.{1,2})?[/\\]|^[A-Za-z]:[/\\]/;
+const WORD_RE = /^[A-Za-z][A-Za-z0-9 _.-]{0,40}$/;
+const HEADER_RE = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
+const NAME_RE = /^[A-Za-z_$][A-Za-z0-9 _.$/:@-]{0,80}$/;
+const SYMBOL_RE = /^\$?[A-Za-z0-9.]{1,12}$/;
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,63}$/;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ARN_RE =
+  /^arn:[a-z0-9-]+:[a-z0-9-]+:[a-z0-9-]*:\d{0,12}:[A-Za-z0-9_+=,.@/:-]+$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+const COORDS_RE = /^-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?$/;
+const RATE_RE =
+  /^\d+(?:[.,]\d+)?\s*(?:%|\/\s*[A-Za-z]+|[A-Za-z]{1,10}(?:\/[A-Za-z]+)?)?$/;
+const DATE_RE = /^(?=.*\d)[\d\s:/.,TZ+-]{4,40}$/;
+const DURATION_RE = /^\d+\s*[A-Za-z]+(?:\s+[A-Za-z]+)*$/;
+
+/** An enum / word value: letters first, ≤41 chars, no password mix, no secret run. */
+function isWord(v: string): boolean {
+  return WORD_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v);
+}
+
+/**
+ * Free text (a hint, a policy, a question, a place): has a letter, no secret
+ * run; a single token must be letters only (`Fluffy`, not `hunter2`).
+ */
+function isProse(v: string): boolean {
+  if (v.length > 300 || !/\p{L}/u.test(v) || hasSecretRun(v)) return false;
+  return /\s/.test(v) || /^\p{L}[\p{L}'.-]*$/u.test(v);
+}
+
+function isUrl(v: string): boolean {
+  if (/\s/.test(v)) return false;
+  try {
+    const u = new URL(v);
+    return (
+      /^[a-z][a-z0-9+.-]*:$/i.test(u.protocol) &&
+      u.username === "" &&
+      u.password === "" &&
+      // Should-fix 2: the path too (a webhook secret lives in the path).
+      !hasSecretRun(u.pathname + " " + u.search + " " + u.hash)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isHost(v: string): boolean {
+  return v.length <= 253 && HOSTNAME_RE.test(v) && !hasPasswordMix(v);
+}
 
 /** Whether a value has the type its metadata suffix announces (S4). */
 function metaValueMatches(meta: string, raw: string): boolean {
   const v = raw.trim();
   if (v === "" || /[\r\n]/.test(v)) return v === "";
   switch (meta) {
-    case "url": {
-      if (/\s/.test(v)) return false;
-      try {
-        const u = new URL(v);
-        return (
-          /^[a-z][a-z0-9+.-]*:$/i.test(u.protocol) &&
-          u.username === "" &&
-          u.password === "" &&
-          !hasSecretRun(u.search + u.hash)
-        );
-      } catch {
-        return false;
-      }
-    }
+    case "url":
+    case "uri":
+      return isUrl(v);
     case "host":
-      return v.length <= 253 && HOSTNAME_RE.test(v);
+      return isHost(v);
+    case "domain":
+      return v.length <= 253 && DOMAIN_RE.test(v) && !hasPasswordMix(v);
     case "file":
     case "path":
-      return PATH_LIKE_RE.test(v) && !hasSecretRun(v);
+      return (
+        PATH_LIKE_RE.test(v) && /[A-Za-z0-9]/.test(v) && !hasSecretRun(v)
+      );
     case "enabled":
       return BOOLEAN_WORD_RE.test(v);
     case "region":
       return v.length <= 30 && REGION_SLUG_RE.test(v);
+    case "header":
+      return HEADER_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v);
+    case "name":
+      return NAME_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v);
+    case "symbol":
+      return SYMBOL_RE.test(v) && !hasPasswordMix(v);
+    case "id":
+      return (
+        /^\d{1,24}$/.test(v) ||
+        UUID_RE.test(v) ||
+        (ID_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v))
+      );
+    case "arn":
+      return ARN_RE.test(v);
+    case "address":
+      return (
+        EMAIL_RE.test(v) ||
+        /^0x[0-9a-fA-F]{40}$/.test(v) ||
+        /^(?:bc1|tb1)[a-z0-9]{20,80}$/.test(v) ||
+        isHost(v) ||
+        (/\s/.test(v) && isProse(v))
+      );
+    case "scope":
+      return (
+        v.length <= 500 &&
+        v
+          .split(/[\s,]+/)
+          .every((s) => isUrl(s) || (/^[A-Za-z][\w.:/-]{0,80}$/.test(s) && !hasPasswordMix(s) && !hasSecretRun(s)))
+      );
+    case "rate":
+      return RATE_RE.test(v);
+    case "location":
+      return COORDS_RE.test(v) || isProse(v);
+    case "hint":
+    case "policy":
+    case "question":
+      return isProse(v);
+    case "format":
+      return isWord(v) || isProse(v);
+    case "date":
+    case "expiry":
+    case "expires":
+    case "rotation":
+    case "last changed":
+      return (
+        DATE_RE.test(v) || isWord(v) || (v.length <= 40 && DURATION_RE.test(v))
+      );
+    case "issuer":
+    case "provider":
+      return isWord(v) || isUrl(v);
     default:
-      // method / provider / issuer / type / date / expiry / expires / rotation
-      return v.length <= 200 && !hasSecretRun(v);
+      // method / type / consent: a word / enum value only.
+      return isWord(v);
   }
 }
 
@@ -204,6 +340,11 @@ const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\bnpm_[A-Za-z0-9]{36,}/, // npm
   /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{30,}/, // SendGrid
   /\bshp(?:at|ss|ca|pa)_[a-fA-F0-9]{32,}/, // Shopify
+  // Audit round 6 (should-fix 2): incoming-webhook URLs carry their secret
+  // in the path.
+  /hooks\.slack\.com\/services\/T[A-Za-z0-9]+\/B[A-Za-z0-9]+\/[A-Za-z0-9]{8,}/, // Slack
+  /discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]{16,}/, // Discord
+  /[a-z0-9-]+\.webhook\.office\.com\/[^\s"']{16,}/i, // Teams
 ];
 
 function nameTokens(name: string): string {
@@ -225,10 +366,19 @@ function nameTokens(name: string): string {
 export function isCredentialName(name: string, value?: string): boolean {
   const tokens = nameTokens(name);
   if (!CREDENTIAL_NAME_RE.test(tokens)) return false;
-  const meta = CREDENTIAL_META_LAST_RE.exec(tokens);
+  // Audit R6 B1: container words only + an identity last token.
+  if (
+    IDENTITY_LAST_RE.test(tokens) &&
+    !CREDENTIAL_NAME_RE.test(tokens.replace(CONTAINER_TOKEN_RE, " x"))
+  ) {
+    return false;
+  }
+  const meta =
+    CREDENTIAL_META_LAST_RE.exec(tokens)?.[1] ??
+    WHOLE_NAME_META.find(([re]) => re.test(tokens))?.[1];
   if (!meta) return true;
   if (value === undefined) return false;
-  return !metaValueMatches(meta[1]!, value);
+  return !metaValueMatches(meta, value);
 }
 
 /**
@@ -273,9 +423,12 @@ const SECRET_VALUE_LAST_RE = new RegExp(
       "mnemonic",
       "codes?",
       "codigos?",
-      "respaldo",
-      "acceso",
-      "recuperacion",
+      // Audit R6 B1: acceso / respaldo / recuperacion / seguridad name a
+      // secret only after codigo(s) / clave(s) / frase(s) — `credenciales_de_acceso`
+      // is a container (its usuario / host stay visible).
+      "(?:codigos?|claves?|frases?)(?: de)? (?:acceso|respaldo|recuperacion|seguridad)",
+      "answers?",
+      "respuestas? (?:de )?seguridad",
       "cvv2?",
       "cvc2?",
       "passcodes?",

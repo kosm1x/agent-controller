@@ -14,6 +14,7 @@ import {
   createProject,
   updateProject,
   logProjectAction,
+  projectFieldProblem,
 } from "../../db/projects.js";
 import {
   isProjectSecret,
@@ -336,6 +337,15 @@ CREDENTIAL STORAGE:
 
   async execute(rawArgs: Record<string, unknown>): Promise<string> {
     const slug = rawArgs.slug as string;
+    // Audit R6 should-fix 4: a non-object field, or a prototype key, is
+    // refused — never silently dropped or stored as {"0":"h",...}.
+    for (const field of ["credentials", "urls", "config"] as const) {
+      if (rawArgs[field] === undefined) continue;
+      const problem = projectFieldProblem(field, rawArgs[field]);
+      if (problem) {
+        return JSON.stringify({ error: `No guardé: ${problem}.` });
+      }
+    }
     const refs = resolveProjectRefs(slug, rawArgs);
     if ("error" in refs) return refs.error;
     const args = refs.args;

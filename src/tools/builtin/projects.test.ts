@@ -530,3 +530,46 @@ describe('ruling 3d — "Just real credentials. Everything must be accessible"',
     ).toEqual({ SECRET_SHOP_SVC_PASS: val("pass", true) });
   });
 });
+
+describe("audit R6 should-fix 4 — non-object fields and prototype keys are refused", () => {
+  it.each([
+    ["credentials", "ftp.example.com"],
+    ["credentials", ["h", "p"]],
+    ["urls", "https://example.com"],
+    ["config", 5],
+    ["credentials", null],
+  ])("project_update %s = %j is refused with {error} (create and update), nothing stored", async (field, value) => {
+    const created = JSON.parse(
+      await projectUpdateTool.execute({ slug: "r6-new", [field]: value }),
+    );
+    expect(created.error).toMatch(/^No guardé: /);
+    expect(getProject("r6-new")).toBeNull();
+    createProject("r6-old", "Old", { credentials: { ftp_host: "ftp.example.com" } });
+    const updated = JSON.parse(
+      await projectUpdateTool.execute({ slug: "r6-old", [field]: value }),
+    );
+    expect(updated.error).toMatch(/^No guardé: /);
+    expect(getProject("r6-old")!.credentials).toEqual({ ftp_host: "ftp.example.com" });
+  });
+
+  it("the db layer refuses a non-object field instead of storing {\"0\":\"h\",…}", () => {
+    expect(() =>
+      createProject("r6-db", "X", {
+        credentials: "host" as unknown as Record<string, string>,
+      }),
+    ).toThrow(TypeError);
+    expect(getProject("r6-db")).toBeNull();
+  });
+
+  it("__proto__ / constructor / prototype keys are refused at any depth and never listed in saved_secrets", async () => {
+    for (const bad of ["__proto__", "constructor", "prototype"]) {
+      const args = JSON.parse(
+        `{"slug":"r6-proto","credentials":{"ftp":{"${bad}":{"password":"${FAKE_APP_PASSWORD}"}}}}`,
+      );
+      const out = await projectUpdateTool.execute(args);
+      expect(JSON.parse(out).error, bad).toContain(bad);
+      expect(out).not.toContain("saved_secrets");
+      expect(getProject("r6-proto")).toBeNull();
+    }
+  });
+});

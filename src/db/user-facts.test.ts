@@ -5,6 +5,7 @@ import {
   deleteUserFact,
   formatUserFactsBlock,
   isCredentialFact,
+  isSecretValueName,
   CREDENTIAL_FACT_PLACEHOLDER,
 } from "./user-facts.js";
 import {
@@ -308,7 +309,7 @@ describe("user-facts", () => {
           ["dsn_region", "us-east-1"],
           ["nip_region", "mx-central-1"],
           ["dsn_host", "db.example.com:5432"],
-          ["alphavantage_api_key_path", "~/.config/av/key.txt"],
+          ["market_data_api_key_path", "~/.config/md/key.txt"],
         ]) {
           expect(isCredentialFact("projects", k!, v!), k).toBe(false);
         }
@@ -365,7 +366,7 @@ describe("user-facts", () => {
     describe("audit R5 S3 — names and value shapes the classifier missed", () => {
       it.each([
         "accesstoken", "authtoken", "secretkey", "apitoken", "privatekey",
-        "refreshtoken", "sessiontoken", "passcode", "pincode", "pregunta_secreta",
+        "refreshtoken", "sessiontoken", "passcode", "pincode",
         "respuesta_secreta", "frase_semilla", "codigos_respaldo", "codigo_acceso",
         "recovery_phrase", "cvv", "cvc", "card_cvv", "github_accesstoken",
       ])("marks projects/%s by name", (key) => {
@@ -450,6 +451,183 @@ describe("user-facts", () => {
 
       it("a container key (no scalar value) with a meta suffix is not an ancestor", () => {
         expect(isCredentialFact("projects", "api_key_path", "")).toBe(false);
+      });
+    });
+
+    // Audit round 6. Ruling 3d: "Just real credentials. Everything must be
+    // accessible." A false positive blanks the value everywhere.
+    describe("audit R6 B1 — container words + identity last token, acceso/respaldo", () => {
+      const EMAIL = ["ops", "example.com"].join("@");
+      it.each([
+        ["auth_email", EMAIL],
+        ["credentials_email", EMAIL],
+        ["credentials_username", "deploy"],
+        ["db_credentials_user", "deploy"],
+        ["basic_auth_user", "deploy"],
+        ["smtp_auth_username", "mailer"],
+        ["credenciales_usuario", "deploy"],
+        ["oauth_client_id", "1234-abc.apps.example.com"],
+        ["auth_client_id", "cid-0001"],
+        ["oauth_project_id", "demo-project"],
+        ["auth_port", "21"],
+        ["auth_uri", "https://accounts.example.com/o/oauth2/auth"],
+        ["oauth_redirect_uri", "https://app.example.com/cb"],
+        ["auth_domain", "example.com"],
+        ["oauth_scope", "read write"],
+      ])("%s = %s is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      it.each([
+        "auth_token", "oauth_client_secret", "credentials_password",
+        "basic_auth_password", "oauth_refresh_token", "credenciales_contrasena",
+      ])("%s stays hidden by name", (key) => {
+        expect(isCredentialFact("projects", key, "plain value")).toBe(true);
+      });
+
+      it("an identity-named container key is still judged by its value's shape", () => {
+        expect(
+          isCredentialFact("projects", "oauth_client_id", "gh" + "p_" + "c".repeat(36)),
+        ).toBe(true);
+      });
+
+      it("acceso/respaldo/recuperacion/seguridad name a secret value only after codigo/clave/frase", () => {
+        expect(isSecretValueName("credenciales_de_acceso")).toBe(false);
+        expect(isSecretValueName("credenciales_respaldo")).toBe(false);
+        expect(isSecretValueName("credenciales_recuperacion")).toBe(false);
+        for (const k of [
+          "codigos_de_acceso", "codigo_acceso", "codigos_respaldo",
+          "frase_de_recuperacion", "clave_de_seguridad", "claves_de_acceso",
+        ]) {
+          expect(isSecretValueName(k), k).toBe(true);
+        }
+      });
+
+      it("uri is a url synonym: token_uri holding a URL is visible, holding a token is not", () => {
+        expect(isCredentialFact("projects", "token_uri", "https://oauth2.example.com/token")).toBe(false);
+        expect(isCredentialFact("projects", "token_uri", "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd")).toBe(true);
+      });
+    });
+
+    describe("audit R6 should-fix 1 — ordinary text no longer blanked", () => {
+      it.each([
+        ["api_key_header", "Authorization"],
+        ["auth_header", "X-Api-Key"],
+        ["cookie_consent", "accepted"],
+        ["token_name", "deploy-bot"],
+        ["token_symbol", "ETH"],
+        ["token_address", "0x" + "ab12".repeat(10)],
+        ["map_pin", "19.43, -99.13"],
+        ["pin_location", "Hall B"],
+        ["pregunta_secreta", "¿Nombre de tu primera mascota?"],
+        ["password_hint", "my first dog"],
+        ["password_policy", "min 12 chars, 1 symbol"],
+        ["password_last_changed", "2026-09-01"],
+        ["secret_name", "prod/db/password"],
+        ["secret_arn", "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf"],
+        ["api_key_name", "ci key"],
+        ["api_key_id", "key-01"],
+        ["token_id", "12345"],
+        ["private_key_id", "pk-01"],
+        ["cookie_domain", ".example.com"],
+        ["cookie_name", "sessionid"],
+        ["session_id_format", "uuid"],
+        ["pass_rate", "95%"],
+        ["boarding_pass", "AM 123 seat 4C"],
+        ["secret_santa", "Ana"],
+        ["musical_key", "C minor"],
+        ["pwd", "/var/www/site"],
+        ["llave_publica", "ssh-ed25519 AAAAC3Nz example"],
+        ["token_uri", "https://oauth2.example.com/token"],
+        ["auth_uri", "https://accounts.example.com/o/oauth2/auth"],
+      ])("%s = %s is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+
+      const run = "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      it.each([
+        ["api_key_header", run],
+        ["auth_header", "Basic " + "dXNlcjpwYXNz"],
+        ["cookie_consent", run],
+        ["token_name", "Hunter2Pass"],
+        ["token_symbol", "Ab1Cd2"],
+        ["token_address", "0x" + "ab12".repeat(16)],
+        ["pin_location", "1234"],
+        ["pregunta_secreta", run],
+        ["password_hint", "hunter2"],
+        ["password_policy", run],
+        ["password_last_changed", run],
+        ["secret_name", run],
+        ["secret_arn", run],
+        ["api_key_id", run],
+        ["token_id", "Ab1" + "x".repeat(10)],
+        ["cookie_domain", "Pa55.Word"],
+        ["session_id_format", run],
+        ["pass_rate", "hunter2"],
+        ["pwd", "hunter2"],
+        ["pwd", "hunter2/x"],
+        ["respuesta_secreta", "Firulais"],
+        ["private_key_id", "0a1b2c3d".repeat(5)],
+      ])("%s = %s is a secret (wrong type for its meta suffix)", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+    });
+
+    describe("audit R6 should-fix 2 — false negatives", () => {
+      it.each([
+        ["Slack webhook", "https://hooks.slack.com/services/T" + "0ABC/B" + "0DEF/" + "x".repeat(24)],
+        ["Discord webhook", "https://discord.com/api/webhooks/123456/" + "y".repeat(30)],
+        ["Discord (discordapp) webhook", "https://discordapp.com/api/webhooks/987/" + "y".repeat(30)],
+        ["Teams webhook", "https://acme.webhook.office.com/webhookb2/" + "z".repeat(30)],
+      ])("marks a %s under a neutral name", (_l, value) => {
+        expect(isCredentialFact("projects", "site_config", value)).toBe(true);
+      });
+
+      it("a secret run in a url-meta value's PATH is a secret", () => {
+        expect(
+          isCredentialFact("projects", "token_url", "https://example.com/cb/" + run6()),
+        ).toBe(true);
+        expect(
+          isCredentialFact("projects", "token_url", "https://example.com/oauth/token"),
+        ).toBe(false);
+      });
+      function run6() {
+        return "Zq8" + "x7Lm2Vb9Zt4Rk8Np3Wd";
+      }
+
+      it.each(["security_answer", "respuesta_seguridad", "access_code", "codigo_acceso"])(
+        "marks projects/%s by name",
+        (key) => {
+          expect(isCredentialFact("projects", key, "Firulais")).toBe(true);
+        },
+      );
+    });
+
+    describe("audit R6 should-fix 3 — meta value types are strict", () => {
+      it.each([
+        ["dsn_host", "Tr0ub4dor.3"],
+        ["dsn_host", "Pa55.Word.com"],
+        ["dsn_host", "hunter2"],
+        ["password_file", "hunter2/x"],
+        ["password_file", "/  /"],
+        ["password_file", "config/key.txt"],
+        ["token_type", "this is a long free text value that is not an enum at all"],
+        ["token_type", "Pa55word"],
+        ["auth_method", "s3cr3t!pass"],
+      ])("%s = %j is a secret", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(true);
+      });
+
+      it.each([
+        ["dsn_host", "db.example.com"],
+        ["dsn_host", "10.0.0.5:5432"],
+        ["dsn_host", "localhost"],
+        ["password_file", "./secrets/db.txt"],
+        ["password_file", "~/keys/db.txt"],
+        ["token_type", "Bearer"],
+        ["auth_method", "basic"],
+      ])("%s = %j is visible", (key, value) => {
+        expect(isCredentialFact("projects", key, value)).toBe(false);
       });
     });
   });

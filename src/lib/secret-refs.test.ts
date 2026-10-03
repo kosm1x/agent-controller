@@ -9,7 +9,13 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 let db: Database.Database;
-vi.mock("../db/index.js", () => ({ getDatabase: () => db }));
+let dbThrows = false;
+vi.mock("../db/index.js", () => ({
+  getDatabase: () => {
+    if (dbThrows) throw new Error("no database in this process");
+    return db;
+  },
+}));
 
 const logWarn = vi.fn();
 const logInfo = vi.fn();
@@ -52,6 +58,11 @@ import { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { confirmationGate } from "../tools/task-executor.js";
 import { httpTool } from "../tools/builtin/http.js";
+import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
+import { fileEditTool } from "../tools/builtin/code-editing.js";
+import { mkdtempSync, readFileSync as readFs, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 // Synthetic secrets and names. A cookie with characters URL-encoding changes.
 const COOKIE = "AE" + "Q".repeat(30) + "/+=" + "r".repeat(12);
@@ -120,6 +131,7 @@ const N = {
 
 beforeEach(seed);
 afterEach(() => {
+  dbThrows = false;
   vi.restoreAllMocks();
   logWarn.mockClear();
   logInfo.mockClear();
@@ -1121,6 +1133,197 @@ describe("the tool seam (ToolRegistry.executeDirect)", () => {
           );
         }
       }
+    }
+  });
+});
+
+describe("audit R6 B1 — credenciales_de_acceso is a container (index and display)", () => {
+  it("usuario and host stay visible and unscrubbed; contrasena is hidden", () => {
+    const EMAIL6 = ["operador", "example.com"].join("@");
+    const HOST6 = "ftp.example.com";
+    const PASS6 = "ca-" + "k".repeat(14);
+    const credentials = {
+      credenciales_de_acceso: { usuario: EMAIL6, host: HOST6, contrasena: PASS6 },
+    };
+    project("acme-acc", { credentials });
+    invalidateSecretRefs();
+    const leaves = projectEntryLeaves(
+      "acme-acc",
+      "credentials",
+      "credenciales_de_acceso",
+      credentials.credenciales_de_acceso,
+    );
+    const byPath = new Map(leaves.map((l) => [l.path.join("."), l]));
+    for (const [k, v] of [["usuario", EMAIL6], ["host", HOST6]] as const) {
+      const leaf = byPath.get(`credenciales_de_acceso.${k}`)!;
+      expect(leaf.secret, k).toBe(false);
+      expect(leaf.display).toBe(v);
+      expect(scrubSecrets(`x ${v} y`)).toBe(`x ${v} y`);
+    }
+    const pw = byPath.get("credenciales_de_acceso.contrasena")!;
+    expect(pw.secret).toBe(true);
+    expect(scrubSecrets(PASS6)).toBe(
+      secretPlaceholder("SECRET_ACME_ACC_CREDENCIALES_DE_ACCESO_CONTRASENA"),
+    );
+  });
+});
+
+describe("audit R6 B3 — scrubJsonText scrubs object KEYS", () => {
+  it('{"map":{"<S>":"v"},"note":"<S>"} → no <S> anywhere', () => {
+    const text = JSON.stringify({ map: { [FTP_PASS]: "v" }, note: FTP_PASS });
+    const out = scrubJsonText(text);
+    expect(out).not.toContain(FTP_PASS);
+    expect(JSON.parse(out)).toEqual({
+      map: { [secretPlaceholder(N.ftp)]: "v" },
+      note: secretPlaceholder(N.ftp),
+    });
+    // A secret only in a key changes the object too.
+    const onlyKey = { [API_TOKEN]: 1 };
+    const clean = scrubStructured(onlyKey) as Record<string, unknown>;
+    expect(clean).not.toBe(onlyKey);
+    expect(Object.keys(clean)).toEqual([secretPlaceholder(N.tok)]);
+  });
+});
+
+describe("audit R6 should-fix 5 — a null build keeps the dirty flag", () => {
+  it("after a store write, a build with no database does not license a later fallback to the stale last-good index", () => {
+    expect(scrubSecrets(`x ${COOKIE}`)).toBe(`x ${secretPlaceholder(N.cookie)}`); // lastGood
+    invalidateSecretRefs(); // a writer ran
+    dbThrows = true; // getDatabase throws → buildIndex returns null
+    expect(scrubSecrets("nada")).toBe("nada");
+    dbThrows = false;
+    db.close(); // the next build errors
+    expireSecretRefsForTest();
+    expect(() => scrubSecrets(`x ${COOKIE}`)).toThrow(/not open/);
+  });
+});
+
+describe("audit R6 B2 — a rendered placeholder written back through a tool", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "r6-b2-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  function seam() {
+    const reg = new ToolRegistry();
+    reg.register(fileReadTool);
+    reg.register(fileWriteTool);
+    reg.register(fileEditTool);
+    return reg;
+  }
+  function echo(name: string, readOnlyHint?: boolean): Tool {
+    return {
+      name,
+      ...(readOnlyHint !== undefined && { readOnlyHint }),
+      definition: {
+        type: "function",
+        function: {
+          name,
+          description: "echo",
+          parameters: { type: "object", properties: {} },
+        },
+      },
+      execute: vi.fn(async (a: Record<string, unknown>) => JSON.stringify({ got: a })),
+    };
+  }
+
+  it("read (scrubbed) → file_write round trip keeps the real value on disk", async () => {
+    const reg = seam();
+    const path = join(dir, "app.env");
+    const original = `HOST=ftp.example.com\nFTP_PASSWORD=${FTP_PASS}\nTOKEN=${API_TOKEN}\n`;
+    writeFileSync(path, original);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(read.content).not.toContain(FTP_PASS);
+    expect(read.content).toContain(secretPlaceholder(N.ftp));
+    // The model edits one visible line and writes the whole file back.
+    const edited = (read.content as string).replace("ftp.example.com", "ftp2.example.com");
+    const args = { path, content: edited };
+    const out = JSON.parse(await reg.execute("file_write", args));
+    expect(out.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toBe(original.replace("ftp.example.com", "ftp2.example.com"));
+    // The caller's args (what recorders hold) keep the placeholder.
+    expect(args.content).toContain(secretPlaceholder(N.ftp));
+  });
+
+  it("file_edit with old_string spanning a placeholder line matches the real file", async () => {
+    const reg = seam();
+    const path = join(dir, "app.env");
+    writeFileSync(path, `A=1\nFTP_PASSWORD=${FTP_PASS}\nB=2\n`);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    const line = (read.content as string).split("\n")[1]!;
+    expect(line).toBe(`FTP_PASSWORD=${secretPlaceholder(N.ftp)}`);
+    const out = JSON.parse(
+      await reg.execute("file_edit", {
+        path,
+        old_string: `A=1\n${line}`,
+        new_string: `A=9\n${line}`,
+      }),
+    );
+    expect(out.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toBe(`A=9\nFTP_PASSWORD=${FTP_PASS}\nB=2\n`);
+  });
+
+  it("an unknown name, the generic placeholder, a mangled one, or one outside a content field refuses the file write", async () => {
+    const reg = seam();
+    const path = join(dir, "x.txt");
+    for (const content of [
+      `k=${secretPlaceholder("SECRET_NOT_STORED")}`,
+      `k=${CREDENTIAL_FACT_PLACEHOLDER}`,
+      `k=${secretPlaceholder(N.ftp).slice(0, 30)}`,
+    ]) {
+      const out = JSON.parse(await reg.execute("file_write", { path, content }));
+      expect(out.error, content).toMatch(/^No ejecuté file_write/);
+    }
+    const tool = echo("jarvis_files_batch_write");
+    reg.register(tool);
+    const out = JSON.parse(
+      await reg.execute("jarvis_files_batch_write", {
+        files: [{ path: `notes/${secretPlaceholder(N.ftp)}.md`, content: "x" }],
+      }),
+    );
+    expect(out.error).toMatch(/^No ejecuté/);
+    expect(tool.execute).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_files_batch_write resolves files[].content", async () => {
+    const reg = new ToolRegistry();
+    const tool = echo("jarvis_files_batch_write");
+    reg.register(tool);
+    await reg.execute("jarvis_files_batch_write", {
+      files: [{ path: "notes/a.md", content: `pw: ${secretPlaceholder(N.ftp)}` }],
+    });
+    expect(vi.mocked(tool.execute).mock.calls[0]![0]).toEqual({
+      files: [{ path: "notes/a.md", content: `pw: ${FTP_PASS}` }],
+    });
+  });
+
+  it("shell_exec / http_fetch / any other write tool with a rendered placeholder is refused before running", async () => {
+    const reg = new ToolRegistry();
+    for (const [name, args] of [
+      ["shell_exec", { command: `curl -u me:${secretPlaceholder(N.ftp)} ftp://ftp.example.com` }],
+      ["http_fetch", { url: "https://api.example.com", headers: { Authorization: secretPlaceholder(N.tok) } }],
+      ["gmail_send", { body: `clave: ${CREDENTIAL_FACT_PLACEHOLDER}` }],
+    ] as const) {
+      const tool = echo(name);
+      reg.register(tool);
+      const out = JSON.parse(await reg.execute(name, { ...args }));
+      expect(out.error, name).toMatch(/^No ejecuté/);
+      expect(out.error).toContain("$SECRET_<NOMBRE>");
+      expect(out.error).toContain("{{SECRET_<NOMBRE>}}");
+      expect(tool.execute, name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a read-only tool and the store tools (own resolution) pass a placeholder through", async () => {
+    const reg = new ToolRegistry();
+    for (const [name, ro] of [["memory_search", true], ["user_fact_set", false], ["project_update", false]] as const) {
+      const tool = echo(name, ro);
+      reg.register(tool);
+      const args = { value: secretPlaceholder(N.ftp) };
+      await reg.execute(name, args);
+      expect(vi.mocked(tool.execute).mock.calls[0]![0], name).toEqual(args);
     }
   });
 });

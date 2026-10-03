@@ -63,12 +63,56 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * nested key, `{ftp: null}` the whole entry); arrays and scalars replace.
  * Never mutates its inputs.
  */
+/**
+ * Audit R6 should-fix 4: keys that would reach an object's prototype when
+ * assigned (`out["__proto__"] = …`). Never stored, never merged.
+ */
+export const FORBIDDEN_ENTRY_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * Audit R6 should-fix 4: a `credentials` / `urls` / `config` value that is
+ * not a plain object (a string, an array, a number) — the reason it cannot
+ * be stored, or undefined when it can. Also names the first forbidden key
+ * found at any depth.
+ */
+export function projectFieldProblem(
+  field: string,
+  value: unknown,
+): string | undefined {
+  if (!isPlainObject(value)) {
+    return `${field} debe ser un objeto {clave: valor}, no ${Array.isArray(value) ? "una lista" : value === null ? "null" : typeof value}`;
+  }
+  const bad = (v: unknown, path: string): string | undefined => {
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const r = bad(v[i], `${path}.${i}`);
+        if (r) return r;
+      }
+      return undefined;
+    }
+    if (!isPlainObject(v)) return undefined;
+    for (const k of Object.keys(v)) {
+      if (FORBIDDEN_ENTRY_KEYS.has(k)) return `${path}.${k}`;
+      const r = bad(v[k], `${path}.${k}`);
+      if (r) return r;
+    }
+    return undefined;
+  };
+  const where = bad(value, field);
+  return where ? `la clave ${where} no está permitida` : undefined;
+}
+
 export function mergeProjectEntries(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base };
   for (const [k, v] of Object.entries(patch)) {
+    if (FORBIDDEN_ENTRY_KEYS.has(k)) continue;
     if (v === null) {
       delete out[k];
     } else if (isPlainObject(v)) {
@@ -144,6 +188,12 @@ export function createProject(
     >
   >,
 ): Project {
+  for (const field of ["urls", "credentials", "config"] as const) {
+    const v = fields?.[field];
+    if (v === undefined) continue;
+    const problem = projectFieldProblem(field, v);
+    if (problem) throw new TypeError(`createProject: ${problem}`);
+  }
   const db = getDatabase();
   const id = generateId();
   db.prepare(
@@ -183,6 +233,12 @@ export function updateProject(
     >
   >,
 ): Project | null {
+  for (const field of ["urls", "credentials", "config"] as const) {
+    const v = updates[field];
+    if (v === undefined) continue;
+    const problem = projectFieldProblem(field, v);
+    if (problem) throw new TypeError(`updateProject: ${problem}`);
+  }
   const project = getProject(slugOrId);
   if (!project) return null;
 
@@ -208,7 +264,7 @@ export function updateProject(
     if (patch === undefined) continue;
     const merged = mergeProjectEntries(
       project[field] as Record<string, unknown>,
-      isPlainObject(patch) ? patch : {},
+      patch as Record<string, unknown>,
     );
     fields.push(`${field} = ?`);
     values.push(JSON.stringify(merged));

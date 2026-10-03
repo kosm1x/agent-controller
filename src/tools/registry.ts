@@ -21,7 +21,11 @@ import {
   targetsRunWrite,
 } from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
-import { resolveSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
+import {
+  resolveRenderedPlaceholders,
+  resolveSecretRefs,
+  scrubSecrets,
+} from "../lib/secret-refs.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 import {
@@ -401,7 +405,16 @@ export class ToolRegistry {
     // (allow-listed tools only), after every gate and recording point above;
     // `args` itself keeps the reference. What comes back is scrubbed of every
     // stored credential value before anything else sees it.
-    const resolved = resolveSecretRefs(name, args);
+    // Audit R6 B2: a rendered placeholder (what a read shows) written back —
+    // file-content writes get the stored value again, every other write is
+    // refused (use the reference). On a copy; `args` keeps what was sent.
+    const rendered = resolveRenderedPlaceholders(
+      name,
+      args,
+      this.annotationsOf(name)?.readOnlyHint === true,
+    );
+    if ("error" in rendered) return rendered.error;
+    const resolved = resolveSecretRefs(name, rendered.args);
     if ("error" in resolved) return resolved.error;
     const start = Date.now();
     try {

@@ -12,6 +12,8 @@
  *   `{{SECRET_X}}` inside any string argument → the value, on a copy of the
  *   args (the caller's object — what gets recorded — keeps the reference).
  * - Every other tool: references stay literal text.
+ * - A rendered placeholder sent back (audit R6 B2, `resolveRenderedPlaceholders`):
+ *   file-content writes get the stored value again; any other write is refused.
  * - An unknown `{{SECRET_X}}` in a template tool, or `$SECRET_X` in
  *   shell_exec, refuses the call (no value involved); so does any
  *   `${…SECRET_…}` expansion other than the bare `${SECRET_X}`.
@@ -323,7 +325,11 @@ function index(): SecretIndex {
   }
   if (failing) log.info("secret index build recovered");
   failing = false;
-  dirtySinceLastGood = false;
+  // Audit R6 should-fix 5: a null build (no database open in this process,
+  // or no store tables) read nothing, so it does not clear the dirty flag —
+  // a later failing build must not fall back to a lastGood older than the
+  // last store write.
+  if (built) dirtySinceLastGood = false;
   // No database / no store tables: nothing cached (re-read next call, as
   // before), and not a fallback either — an index that read nothing must
   // never stand in for a database that errors.
@@ -446,8 +452,10 @@ export function scrubSecrets(text: string): string {
  * structurally — every string leaf through `scrubSecrets`, and every NUMBER
  * leaf whose decimal form equals a stored value replaced by that value's
  * placeholder string (a numeric PIN or account secret would otherwise pass
- * the substring scrub only by luck). Object keys are kept. Returns the same
- * object when nothing changed.
+ * the substring scrub only by luck). Object keys are scrubbed too (audit R6
+ * B3: `scrubJsonText` re-stringifies this result, so a key left alone would
+ * put a stored value back in the text). Returns the same object when nothing
+ * changed.
  */
 export function scrubStructured(value: unknown): unknown {
   const idx = index();
@@ -462,8 +470,11 @@ export function scrubStructured(value: unknown): unknown {
       let changed = false;
       const out: Record<string, unknown> = {};
       for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-        out[k] = walk(x);
-        if (out[k] !== x) changed = true;
+        // Audit R6 B3: a key can carry a stored value too (`{"<value>": …}`).
+        const key = scrubWith(idx, k);
+        const val = walk(x);
+        if (key !== k || val !== x) changed = true;
+        out[key] = val;
       }
       return changed ? out : v;
     }
@@ -692,4 +703,169 @@ export function secretEnvForCommand(command: string): Record<string, string> {
     if (v !== undefined) env[name] = v;
   }
   return env;
+}
+
+// ---------------------------------------------------------------------------
+// Audit round 6 (B2): a rendered placeholder written back through a tool
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools that write FILE CONTENT. A read of the file shows each stored value
+ * as its rendered placeholder; a read-modify-write would otherwise put the
+ * placeholder on disk and destroy the credential (ruling 3c: no loss of
+ * functionality). In the content fields below each placeholder that names a
+ * stored secret is turned back into that secret's value (on a copy).
+ */
+export const FILE_CONTENT_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "file_write",
+  "file_edit",
+  "jarvis_file_write",
+  "jarvis_file_update",
+  "jarvis_files_batch_write",
+]);
+/** Argument keys holding file content (file_edit's camelCase aliases too). */
+const FILE_CONTENT_KEYS: ReadonlySet<string> = new Set([
+  "content",
+  "old_string",
+  "new_string",
+  "oldString",
+  "newString",
+  "append",
+]);
+/**
+ * Tools that resolve a whole-value placeholder themselves and refuse any
+ * other placeholder text (`resolveStoredReference`, audit R5 B2a).
+ */
+const STORE_REF_TOOLS: ReadonlySet<string> = new Set([
+  "user_fact_set",
+  "project_update",
+]);
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `secretPlaceholder(<name>)` as rendered, the name captured (both copies must agree). */
+const RENDERED_PLACEHOLDER_RE: RegExp = (() => {
+  const SLOT = "SECRET_\u0001";
+  const parts = secretPlaceholder(SLOT).split(SLOT);
+  if (parts.length !== 3) throw new Error("secretPlaceholder shape changed");
+  return new RegExp(
+    escapeRe(parts[0]!) +
+      "(SECRET_[A-Za-z0-9_]+)" +
+      escapeRe(parts[1]!) +
+      "\\1" +
+      escapeRe(parts[2]!),
+    "g",
+  );
+})();
+
+function hasPlaceholderMarker(s: string): boolean {
+  return PLACEHOLDER_MARKERS.some((m) => s.includes(m));
+}
+
+function renderedPlaceholderError(tool: string, why: string): string {
+  return JSON.stringify({
+    error: `No ejecuté ${tool}: ${why}`,
+  });
+}
+
+/**
+ * Resolve / refuse rendered hidden-value placeholders in one tool call's
+ * arguments, before `resolveSecretRefs` (registry seam):
+ * - file-content write tools: in content fields, each rendered placeholder
+ *   naming a stored secret becomes its value (file_edit `old_string` too, so
+ *   it still matches the file on disk). A placeholder naming no stored
+ *   secret, the generic one, a mangled one, or one outside a content field
+ *   refuses the call.
+ * - `user_fact_set` / `project_update`: untouched (their own resolution).
+ * - every other non-read-only tool: any placeholder text refuses the call —
+ *   the model must use `$SECRET_X` (shell_exec) or `{{SECRET_X}}`
+ *   (http_fetch / browser) instead.
+ * Returns the args to run with (a copy when something was resolved — the
+ * caller's object keeps the placeholder) or an `{error}` JSON string.
+ */
+export function resolveRenderedPlaceholders(
+  tool: string,
+  args: Record<string, unknown>,
+  readOnly: boolean,
+): { args: Record<string, unknown> } | { error: string } {
+  if (STORE_REF_TOOLS.has(tool)) return { args };
+  const strings: string[] = [];
+  const collect = (v: unknown): void => {
+    if (typeof v === "string") strings.push(v);
+    else if (Array.isArray(v)) v.forEach(collect);
+    else if (v && typeof v === "object") Object.values(v).forEach(collect);
+  };
+  collect(args);
+  if (!strings.some(hasPlaceholderMarker)) return { args };
+
+  if (!FILE_CONTENT_WRITE_TOOLS.has(tool)) {
+    // A read-only tool sends nothing anywhere; shell_exec and the template
+    // tools are refused whatever their annotation says.
+    if (readOnly && tool !== "shell_exec" && !TEMPLATE_TOOLS.has(tool)) {
+      return { args };
+    }
+    return {
+      error: renderedPlaceholderError(
+        tool,
+        "los argumentos contienen un dato oculto ([oculto · …]), que no es el valor real. Para usar una credencial guardada escribe su referencia: $SECRET_<NOMBRE> en shell_exec, {{SECRET_<NOMBRE>}} en http_fetch/navegador; si no necesitas el valor, quita el texto del dato oculto.",
+      ),
+    };
+  }
+
+  const { valueOf } = index();
+  let error: string | undefined;
+  const resolveText = (s: string): string => {
+    if (!hasPlaceholderMarker(s)) return s;
+    const unknown: string[] = [];
+    const out = s.replace(RENDERED_PLACEHOLDER_RE, (m, name: string) => {
+      const v = valueOf.get(name);
+      if (v === undefined) {
+        unknown.push(name);
+        return m;
+      }
+      return v;
+    });
+    if (unknown.length > 0) {
+      error = renderedPlaceholderError(
+        tool,
+        `no hay credencial guardada con el nombre ${[...new Set(unknown)].join(", ")}; no escribí el dato oculto en el archivo.`,
+      );
+      return s;
+    }
+    if (hasPlaceholderMarker(s.replace(RENDERED_PLACEHOLDER_RE, ""))) {
+      error = renderedPlaceholderError(
+        tool,
+        "el contenido tiene un dato oculto incompleto o sin nombre, y no sé qué valor guardado es; no escribí el dato oculto en el archivo. Copia el dato oculto completo tal como se mostró, o escribe el valor real.",
+      );
+      return s;
+    }
+    return out;
+  };
+  const walk = (v: unknown, inContent: boolean): unknown => {
+    if (error) return v;
+    if (typeof v === "string") {
+      if (inContent) return resolveText(v);
+      if (hasPlaceholderMarker(v)) {
+        error = renderedPlaceholderError(
+          tool,
+          "un dato oculto solo puede ir en el contenido del archivo, no en la ruta ni en otros campos.",
+        );
+      }
+      return v;
+    }
+    if (Array.isArray(v)) return v.map((x) => walk(x, inContent));
+    if (v && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, x]) => [
+          k,
+          walk(x, FILE_CONTENT_KEYS.has(k)),
+        ]),
+      );
+    }
+    return v;
+  };
+  const resolved = walk(args, false) as Record<string, unknown>;
+  return error ? { error } : { args: resolved };
 }
