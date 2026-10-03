@@ -7,6 +7,8 @@
 > **Activation**: build behind `PROMETHEUS_VERIFY_GATE_ENABLED` (default off, systemd drop-in like V8.2). Ship dormant → shadow-measure false-complete catch rate on organic traffic → activate. No bilateral-maturity gate (this hardens an existing internal loop; it surfaces nothing new to the operator until it changes a _delivered_ status).
 >
 > **Roadmap context**: `docs/V9-ROADMAP.md` §4 (W1).
+>
+> **2026-10-03 (S3):** line numbers and the completion seam have drifted since this revision. Read `docs/planning/v9-w1-decision-2026-10.md` first: it re-checks §2/§5, recommends building W1 as a grader gate inside the V8.4 ledger, and lists the amendments to §4–§13. Pending Fede's ruling.
 
 ---
 
