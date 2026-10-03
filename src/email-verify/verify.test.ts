@@ -363,12 +363,21 @@ describe("EmailVerifier — stages before SMTP", () => {
   it("provider rules: gmail skips the catch-all probe", async () => {
     const seen: boolean[] = [];
     const v = new EmailVerifier({
+      // Pinned: the default discoverFqdn() is the host's name, and a non-FQDN one
+      // (e.g. "vm") makes the verifier refuse every probe as misconfigured.
+      heloName: "test.eurekams.net",
+      fromEmail: "postmaster@eurekams.net",
       mxLookup: async () => [{ exchange: "gmail-smtp-in.l.google.com", priority: 5 }],
       probe: async (o) => {
         seen.push(o.skipCatchAll);
         return { rcpt: { code: 250, enhanced: null, text: "Ok" }, catchAll: null, envelopeFailure: null, address: "1.1.1.1" };
       },
       governance: { ...DEFAULT_GOVERNANCE, hostGapMs: 0 },
+      // Deterministic: the default resolveMxTargets does a live DNS lookup of the MX
+      // host, and a slow/failed lookup on a CI runner ends the attempt "unreachable"
+      // before the probe is ever called (seen stays []).
+      resolveTargets: async () => [{ address: "1.1.1.1", family: 4 }],
+      sleep: async () => {},
     });
     const r = await v.verify("someone@gmail.com");
     expect(seen).toEqual([true]);

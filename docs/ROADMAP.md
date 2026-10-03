@@ -1,6 +1,6 @@
 # Roadmap — one page
 
-> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S2).
+> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S2, S1b).
 
 **Destination: Beta 1.0** (`docs/V8-VISION.md` §8). Decided 2026-10-03: Beta means both (a) it works for Fede, with evidence, and (b) any other operator could adopt it. Fede is the first operator and super beta tester; his setup becomes the first operator profile, not a special case.
 
@@ -31,7 +31,7 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | L5 Stop-hook own deadline + trace | typecheck + scoped vitest; implementer + qa-auditor | Gates hook past 180 s stops silently, already at the current pin; not tied to L1 | L5 (cloud) |
 | L3 A2A: interop or retire | VPS data, then operator ruling | Is A2A used at all? Then shim to A2A 1.0 or retire (ties to S6) | L3 |
 | Beta scope + operator abstraction | `docs/BETA.md` merged | Hardcoded-to-Fede inventory, first transferability workstream | S6 |
-| Cloud-session support | Clean clone runs hook; agents + skills load | **Done in S1.** VPS-only: `eval:gate` (even dry), `mc-ctl`, prod data, deploy | S1 |
+| Cloud-session support | Clean clone runs hook; agents + skills load; guards match the VPS | **Done in S1 + S1b.** VPS-only: `eval:gate` (even dry), `mc-ctl`, prod data, deploy | S1, S1b |
 | W5 loop vocabulary | Doc only | **Done in S0** (CLAUDE.md) | S0 |
 
 ## Review cadence (tiered, routines created 2026-10-03)
@@ -61,3 +61,4 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | 2026-10-03 | S1 cloud-session setup | [#54](https://github.com/kosm1x/agent-controller/pull/54) | Cloud-only SessionStart hook (`npm ci` when the lockfile changes, then typecheck; clean clone 27 s, rerun 10 s; never touches a node_modules it did not create); `implementer` + `qa-auditor` agents (auditor keeps `.claude/agent-memory/qa-auditor/`); skills `eval-gate`, `session-close`, `upstream-review`. | S2 next. Cloud sessions cannot run `eval:gate` or read prod data: they record it as owed. New auditor memory files are gitignored (need `git add -f`). |
 | 2026-10-03 | VPS: day close + Morning Sync read the whole day-log; bot token leak | `0fa9c5f`, `4a69615` (direct to `main`) | Harness embeds the day-log for the four rituals and the Morning Sync (the read tool returned a 60-char outline); cut entries marked `…`; Telegram HTML converted locally, token redacted. DEPLOYED 07:27 UTC; token rotated, 37 stored rows redacted. Rulings 1–5 moved to `wip/rulings-1-5` (cloud). Detail: `docs/PROJECT-STATUS.md` header. | Prove the 08:00 Sync + 23:50 close of 10-03. Operator: apply mount tripwire. `wip/rulings-1-5` must merge `main` (`router.ts`). |
 | 2026-10-03 | S2 landscape review #1 | [#55](https://github.com/kosm1x/agent-controller/pull/55) | 59 items across Agent SDK/platform, MCP, A2A, four frameworks and OTel each got a verdict with a primary source (`docs/planning/landscape-review-2026-10.md`); register `docs/LANDSCAPE.md`. MCP: spec 2026-07-28, our SDK 1.29.0 negotiates up to 2025-11-25 (so does 1.32.0). A2A: upstream 1.0.1, ours matches no released version. qa-auditor index trimmed (MEMORY.md 23.9 KB → 16.1 KB; verbatim pre-trim copy in `archived-index-2026-10-03.md`). | L1 SDK bump (VPS, eval:gate), L2 MCP fidelity (cloud), L5 Stop-hook deadline (cloud), L3 A2A ruling (VPS data); inputs to S3, S5, W2; L4 later |
+| 2026-10-03 | S1b cloud guards + flaky test | [#56](https://github.com/kosm1x/agent-controller/pull/56) | Gmail provider-rule test no longer needs live DNS or a public FQDN hostname (both reproduced the CI failure by mutation); repo copy of the mc-guard PreToolUse hook (deploy, DB writes/resets, service restarts; 163 cases); cloud-only pre-commit (typecheck + vitest related); PR template; mcp-servers.json no longer gitignored (tracked on purpose). | VPS mc-guard stays canonical there; diff it against `.claude/hooks/mc-guard.sh` on the VPS. |
