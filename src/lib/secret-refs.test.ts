@@ -50,6 +50,8 @@ import {
   scrubJsonText,
   resolveStoredReference,
   PLACEHOLDER_MARKERS,
+  resolveRenderedPlaceholders,
+  encodeSecretForm,
 } from "./secret-refs.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import { deleteUserFact, formatUserFactsBlock } from "../db/user-facts.js";
@@ -60,6 +62,7 @@ import { confirmationGate } from "../tools/task-executor.js";
 import { httpTool } from "../tools/builtin/http.js";
 import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
 import { fileEditTool } from "../tools/builtin/code-editing.js";
+import { dataSummarizeTool } from "../tools/builtin/data-summarize.js";
 import { mkdtempSync, readFileSync as readFs, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -743,7 +746,9 @@ describe("scrubSecrets", () => {
     expect(out).not.toContain(SESSION_ID);
     expect(out).not.toContain(encodeURIComponent(SESSION_ID));
     expect(out).not.toContain(PORTAL_PASS);
-    expect(out.split(secretPlaceholder(N.cookie))).toHaveLength(3);
+    // Audit R7 B-4: the URL-encoded form gets the placeholder tagged with its form.
+    expect(out.split(secretPlaceholder(N.cookie))).toHaveLength(2);
+    expect(out.split(secretPlaceholder(N.cookie, "url"))).toHaveLength(2);
     expect(out).toContain(`e=${SHORT}`);
     expect(out).toContain(`f=${GA_ID}`);
   });
@@ -756,11 +761,19 @@ describe("scrubSecrets", () => {
     const once = JSON.stringify({ stdout: `a ${quoted} b` });
     const outOnce = scrubSecrets(once);
     expect(outOnce).not.toContain(JSON.stringify(quoted).slice(1, -1));
-    expect(JSON.parse(outOnce).stdout).toBe(`a ${ph} b`);
+    // Audit R7 B-4: the substring scrub tags what it matched (the
+    // JSON-escaped form of the serialized text) …
+    const name = "SECRET_PROJECTS_ACME_QUOTED_PASSWORD";
+    expect(JSON.parse(outOnce).stdout).toBe(`a ${secretPlaceholder(name, "json")} b`);
     const twice = JSON.stringify({ result: once });
     const outTwice = scrubSecrets(twice);
     expect(outTwice).not.toContain("m".repeat(10));
-    expect(JSON.parse(JSON.parse(outTwice).result).stdout).toBe(`a ${ph} b`);
+    expect(JSON.parse(JSON.parse(outTwice).result).stdout).toBe(
+      `a ${secretPlaceholder(name, "json2")} b`,
+    );
+    // … while the JSON-aware scrub (what the tool seam uses for a JSON
+    // result) sees the decoded leaf, where the value is raw.
+    expect(JSON.parse(scrubJsonText(once)).stdout).toBe(`a ${ph} b`);
   });
 
   it("replaces the longest value first: a value containing a shorter stored value is replaced whole", () => {
@@ -1325,5 +1338,225 @@ describe("audit R6 B2 — a rendered placeholder written back through a tool", (
       await reg.execute(name, args);
       expect(vi.mocked(tool.execute).mock.calls[0]![0], name).toEqual(args);
     }
+  });
+});
+
+// Audit round 7 — probes ported from the auditor's probe-r7.test.ts.
+describe("audit R7 B-1 — no value prefix through a file reader's cut; no file_edit oracle", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "r7-b1-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  function seam() {
+    const reg = new ToolRegistry();
+    reg.register(fileReadTool);
+    reg.register(fileWriteTool);
+    reg.register(fileEditTool);
+    return reg;
+  }
+  const PREFIX3 = FTP_PASS.slice(0, 4); // "pw-z"
+
+  it("P1: a placeholder written at the preview edge shows no prefix of the value in file_read's preview", async () => {
+    const reg = seam();
+    const path = join(dir, "x.md");
+    const pad = "a".repeat(1500 - (FTP_PASS.length - 1));
+    const content = pad + secretPlaceholder(N.ftp) + "\n" + "b".repeat(9000);
+    const w = JSON.parse(await reg.execute("file_write", { path, content }));
+    expect(w.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toContain(FTP_PASS); // the write-back works
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(read.truncated).toBe(true);
+    expect(read.preview).not.toContain(PREFIX3);
+    expect(JSON.stringify(read)).not.toContain(PREFIX3);
+  });
+
+  it("P3: a value at the outline snippet edge is not cut into the outline", async () => {
+    const reg = seam();
+    const path = join(dir, "z.md");
+    const line =
+      "- [12:00:00] **J**: c " + "k".repeat(60 - 2 - (FTP_PASS.length - 1)) + secretPlaceholder(N.ftp);
+    await reg.execute("file_write", { path, content: line + "\n" + "q".repeat(9000) });
+    expect(readFs(path, "utf8")).toContain(FTP_PASS);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(JSON.stringify(read.outline)).not.toContain(PREFIX3);
+  });
+
+  it("the MAX_READ cap of a lines slice does not cut a value", async () => {
+    const reg = seam();
+    const path = join(dir, "big.txt");
+    writeFileSync(path, "c".repeat(50_000 - 5) + FTP_PASS + "\n");
+    const read = JSON.parse(await reg.execute("file_read", { path, lines: "1" }));
+    expect(read.slice_capped).toBe(true);
+    expect(read.content).not.toContain(PREFIX3);
+  });
+
+  it("P2: file_edit gives the same answer for every prefix guess as for a wrong guess (no oracle)", async () => {
+    const reg = seam();
+    const path = join(dir, "y.env");
+    await reg.execute("file_write", { path, content: `FTP_PASSWORD=${secretPlaceholder(N.ftp)}\n` });
+    expect(readFs(path, "utf8")).toBe(`FTP_PASSWORD=${FTP_PASS}\n`);
+    const wrong = await reg.execute("file_edit", {
+      path,
+      old_string: "FTP_PASSWORD=#",
+      new_string: "FTP_PASSWORD=#!",
+    });
+    expect(JSON.parse(wrong).error).toMatch(/not found/);
+    for (let k = 1; k < FTP_PASS.length; k++) {
+      const out = await reg.execute("file_edit", {
+        path,
+        old_string: "FTP_PASSWORD=" + FTP_PASS.slice(0, k),
+        new_string: "X",
+      });
+      expect(out, `prefix ${k}`).toBe(wrong);
+    }
+    // A guess inside the value (no visible context) is not a match either.
+    const inner = await reg.execute("file_edit", {
+      path,
+      old_string: FTP_PASS.slice(2, 9),
+      new_string: "X",
+    });
+    expect(JSON.parse(inner).error).toMatch(/not found/);
+    expect(readFs(path, "utf8")).toBe(`FTP_PASSWORD=${FTP_PASS}\n`);
+    // The whole value (by its placeholder) still edits.
+    const ok = JSON.parse(
+      await reg.execute("file_edit", {
+        path,
+        old_string: `FTP_PASSWORD=${secretPlaceholder(N.ftp)}`,
+        new_string: `FTP_PASS=${secretPlaceholder(N.ftp)}`,
+      }),
+    );
+    expect(ok.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toBe(`FTP_PASS=${FTP_PASS}\n`);
+  });
+
+  it("file_edit replace_all skips matches that cut into a value and keeps the others", async () => {
+    const reg = seam();
+    const path = join(dir, "r.txt");
+    writeFileSync(path, `pw-z here; ${FTP_PASS}; pw-z there\n`);
+    const out = JSON.parse(
+      await reg.execute("file_edit", { path, old_string: "pw-z", new_string: "PW", replace_all: true }),
+    );
+    expect(out.replacements).toBe(2);
+    expect(readFs(path, "utf8")).toBe(`PW here; ${FTP_PASS}; PW there\n`);
+  });
+});
+
+describe("audit R7 B-4 — an encoded value round-trips in its own form", () => {
+  let dir: string;
+  const URL_PASS = "p@ss/" + "w".repeat(10);
+  const JSON_PASS = 'jv-"' + "k".repeat(10) + "\\x";
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "r7-b4-"));
+    fact("projects", "acme_db_password", URL_PASS);
+    fact("projects", "acme_json_password", JSON_PASS);
+    invalidateSecretRefs();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  function seam() {
+    const reg = new ToolRegistry();
+    reg.register(fileReadTool);
+    reg.register(fileWriteTool);
+    reg.register(fileEditTool);
+    return reg;
+  }
+  const DB = "SECRET_PROJECTS_ACME_DB_PASSWORD";
+  const JS = "SECRET_PROJECTS_ACME_JSON_PASSWORD";
+
+  it("P4: a URL-encoded value is shown with a URL-form placeholder and written back URL-encoded", async () => {
+    const reg = seam();
+    const path = join(dir, "app.conf");
+    const orig = `DATABASE_URL=postgres://app:${encodeURIComponent(URL_PASS)}@db.example.com/x\nRAW=${URL_PASS}\n`;
+    writeFileSync(path, orig);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(read.content).not.toContain(encodeURIComponent(URL_PASS));
+    expect(read.content).not.toContain(URL_PASS);
+    expect(read.content).toContain(secretPlaceholder(DB, "url"));
+    expect(read.content).toContain(`RAW=${secretPlaceholder(DB)}`);
+    const out = JSON.parse(
+      await reg.execute("file_write", { path, content: (read.content as string) + "X=1\n" }),
+    );
+    expect(out.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toBe(orig + "X=1\n");
+  });
+
+  it("a JSON-escaped value is shown with a JSON-form placeholder and written back escaped", async () => {
+    const reg = seam();
+    const path = join(dir, "app.json");
+    const orig = JSON.stringify({ password: JSON_PASS, n: 1 }, null, 2) + "\n";
+    expect(orig).toContain(encodeSecretForm(JSON_PASS, "json"));
+    writeFileSync(path, orig);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(read.content).toContain(secretPlaceholder(JS, "json"));
+    const edited = (read.content as string).replace('"n": 1', '"n": 2');
+    const out = JSON.parse(await reg.execute("file_write", { path, content: edited }));
+    expect(out.error).toBeUndefined();
+    expect(readFs(path, "utf8")).toBe(orig.replace('"n": 1', '"n": 2'));
+    expect(JSON.parse(readFs(path, "utf8")).password).toBe(JSON_PASS);
+  });
+
+  it("a raw value with a quote in a plain file is shown with the RAW placeholder (the JSON result is scrubbed structurally)", async () => {
+    const reg = seam();
+    const path = join(dir, "plain.env");
+    const orig = `PW=${JSON_PASS}\n`;
+    writeFileSync(path, orig);
+    const read = JSON.parse(await reg.execute("file_read", { path }));
+    expect(read.content).toBe(`PW=${secretPlaceholder(JS)}\n`);
+    await reg.execute("file_write", { path, content: read.content });
+    expect(readFs(path, "utf8")).toBe(orig);
+  });
+
+  it("the seam's JSON-aware scrub tags a leaf by its decoded form", () => {
+    const tool: Tool = {
+      name: "echo_raw",
+      readOnlyHint: true,
+      definition: { type: "function", function: { name: "echo_raw", description: "e", parameters: { type: "object", properties: {} } } },
+      execute: async () => JSON.stringify({ a: `x ${JSON_PASS} y` }),
+    };
+    const reg = new ToolRegistry();
+    reg.register(tool);
+    return reg.execute("echo_raw", {}).then((out) => {
+      expect(JSON.parse(out).a).toBe(`x ${secretPlaceholder(JS)} y`);
+    });
+  });
+});
+
+describe("audit R7 should-fix — placeholder in object keys; scrubStructured key collisions", () => {
+  it("a placeholder in an object KEY refuses a write tool and a file tool", () => {
+    const ph = secretPlaceholder(N.ftp);
+    const a = resolveRenderedPlaceholders("gmail_send", { [ph]: "x" }, false);
+    expect("error" in a && a.error).toMatch(/^\{"error":"No ejecuté gmail_send/);
+    const b = resolveRenderedPlaceholders("file_write", { path: "/tmp/a", content: { [ph]: "x" } }, false);
+    expect("error" in b && b.error).toMatch(/nombre de un campo/);
+    // A read-only tool still passes (it sends nothing anywhere).
+    const c = resolveRenderedPlaceholders("memory_search", { [ph]: "x" }, true);
+    expect("args" in c).toBe(true);
+  });
+
+  it("two keys that scrub to the same placeholder are both kept", () => {
+    const ph = secretPlaceholder(N.ftp);
+    const out = scrubStructured({ [ph]: 1, [FTP_PASS]: 2 }) as Record<string, unknown>;
+    expect(Object.values(out).sort()).toEqual([1, 2]);
+    expect(Object.keys(out)).toEqual([ph, `${ph} (2)`]);
+    expect(JSON.stringify(out)).not.toContain(FTP_PASS);
+  });
+});
+
+describe("audit R7 B-1 — data_summarize scrubs the whole text before splitting it", () => {
+  it("a stored value containing the delimiter is not split into visible pieces", async () => {
+    const COMMA_PASS = "cv-" + "h".repeat(8) + "," + "j".repeat(8);
+    fact("projects", "acme_csv_password", COMMA_PASS);
+    invalidateSecretRefs();
+    const reg = new ToolRegistry();
+    reg.register(dataSummarizeTool);
+    const out = await reg.execute("data_summarize", {
+      text: `name,pw,extra\nacme,${COMMA_PASS}\nbeta,x,y\n`,
+    });
+    expect(out).not.toContain("h".repeat(8));
+    expect(out).not.toContain("j".repeat(8));
   });
 });

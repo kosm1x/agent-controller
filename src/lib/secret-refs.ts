@@ -108,8 +108,46 @@ export function projectIdentity(
  * The one display form of a hidden value: its name and how to use it. No `"`
  * and no backslash, so a JSON tool result stays valid JSON after scrubbing.
  */
-export function secretPlaceholder(name: string): string {
-  return `[oculto · úsalo por nombre: $${name} en shell_exec, {{${name}}} en http_fetch/navegador]`;
+export function secretPlaceholder(
+  name: string,
+  form: PlaceholderForm = "raw",
+): string {
+  const tag = form === "raw" ? "" : `${FORM_TAG_PREFIX}${FORM_TAG[form]}`;
+  return `[oculto · úsalo por nombre: $${name} en shell_exec, {{${name}}} en http_fetch/navegador${tag}]`;
+}
+
+/**
+ * Audit round 7 (B-4): the form of the value a placeholder replaced. A file
+ * can hold a value URL-encoded (`postgres://app:p%40ss@…`) or JSON-escaped;
+ * the scrub replaces those forms too, and the placeholder says which, so a
+ * write-back (`resolveRenderedPlaceholders`) re-encodes the value into the
+ * same form instead of putting the raw value where an encoded one was.
+ */
+export type PlaceholderForm = "raw" | "url" | "json" | "json2";
+const FORM_TAG_PREFIX = " · forma ";
+const FORM_TAG: Record<Exclude<PlaceholderForm, "raw">, string> = {
+  url: "URL",
+  json: "JSON",
+  json2: "JSON2",
+};
+const TAG_FORM: Record<string, PlaceholderForm> = {
+  URL: "url",
+  JSON: "json",
+  JSON2: "json2",
+};
+
+/** The value as it appears in `form` (inverse of what the scrub matched). */
+export function encodeSecretForm(value: string, form: PlaceholderForm): string {
+  switch (form) {
+    case "raw":
+      return value;
+    case "url":
+      return encodeURIComponent(value);
+    case "json":
+      return JSON.stringify(value).slice(1, -1);
+    case "json2":
+      return JSON.stringify(JSON.stringify(value).slice(1, -1)).slice(1, -1);
+  }
 }
 
 /**
@@ -252,18 +290,17 @@ function buildIndex(): SecretIndex | null {
     nameOf.set(e.identity, name);
     valueOf.set(name, e.value);
     if (e.value.length < MIN_SCRUB_LENGTH) continue;
-    const ph = secretPlaceholder(name);
-    exact.set(e.value, ph);
+    exact.set(e.value, secretPlaceholder(name));
     // The value as it appears raw, URL-encoded, and inside a JSON string
-    // (escaped once, and twice for JSON nested in a JSON string).
-    const escaped = JSON.stringify(e.value).slice(1, -1);
-    for (const form of new Set([
-      e.value,
-      encodeURIComponent(e.value),
-      escaped,
-      JSON.stringify(escaped).slice(1, -1),
-    ])) {
-      scrub.push([form, ph]);
+    // (escaped once, and twice for JSON nested in a JSON string). Each
+    // encoded form gets a placeholder tagged with its form (audit R7 B-4);
+    // a form whose text equals an earlier one keeps the earlier (raw first).
+    const seen = new Set<string>();
+    for (const form of ["raw", "url", "json", "json2"] as const) {
+      const text = encodeSecretForm(e.value, form);
+      if (seen.has(text)) continue;
+      seen.add(text);
+      scrub.push([text, secretPlaceholder(name, form)]);
     }
   }
   scrub.sort((a, b) => b[0].length - a[0].length);
@@ -471,7 +508,14 @@ export function scrubStructured(value: unknown): unknown {
       const out: Record<string, unknown> = {};
       for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
         // Audit R6 B3: a key can carry a stored value too (`{"<value>": …}`).
-        const key = scrubWith(idx, k);
+        let key = scrubWith(idx, k);
+        // Audit R7: two keys that scrub to the same text must not overwrite
+        // each other (a value silently lost) — later ones get a suffix.
+        if (key !== k && Object.prototype.hasOwnProperty.call(out, key)) {
+          let n = 2;
+          while (Object.prototype.hasOwnProperty.call(out, `${key} (${n})`)) n++;
+          key = `${key} (${n})`;
+        }
         const val = walk(x);
         if (key !== k || val !== x) changed = true;
         out[key] = val;
@@ -506,6 +550,22 @@ function scrubWith(idx: SecretIndex, text: string): string {
     if (out.includes(value)) out = out.replaceAll(value, () => ph);
   }
   return out;
+}
+
+/**
+ * Audit round 7 (B-1c): the [start, end) spans of every stored value (any
+ * scrubbed form) in `text`. A content-matching tool (file_edit) uses them to
+ * ignore a match that cuts INTO a value — otherwise "old_string not found"
+ * vs "found" is an oracle that recovers the value one character at a time.
+ */
+export function secretSpans(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const [value] of index().scrub) {
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) {
+      spans.push([i, i + value.length]);
+    }
+  }
+  return spans;
 }
 
 // ---------------------------------------------------------------------------
@@ -750,12 +810,27 @@ const RENDERED_PLACEHOLDER_RE: RegExp = (() => {
   const SLOT = "SECRET_\u0001";
   const parts = secretPlaceholder(SLOT).split(SLOT);
   if (parts.length !== 3) throw new Error("secretPlaceholder shape changed");
+  // Audit R7 B-4: the optional form tag sits right before the closing "]".
+  const tail = parts[2]!;
+  const tagged = secretPlaceholder(SLOT, "url").split(SLOT)[2]!;
+  if (
+    !tail.endsWith("]") ||
+    tagged !== tail.slice(0, -1) + FORM_TAG_PREFIX + FORM_TAG.url + "]"
+  ) {
+    throw new Error("secretPlaceholder form tag shape changed");
+  }
+  const tags = Object.values(FORM_TAG)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRe)
+    .join("|");
   return new RegExp(
     escapeRe(parts[0]!) +
       "(SECRET_[A-Za-z0-9_]+)" +
       escapeRe(parts[1]!) +
       "\\1" +
-      escapeRe(parts[2]!),
+      escapeRe(tail.slice(0, -1)) +
+      `(?:${escapeRe(FORM_TAG_PREFIX)}(${tags}))?` +
+      "\\]",
     "g",
   );
 })();
@@ -795,7 +870,11 @@ export function resolveRenderedPlaceholders(
   const collect = (v: unknown): void => {
     if (typeof v === "string") strings.push(v);
     else if (Array.isArray(v)) v.forEach(collect);
-    else if (v && typeof v === "object") Object.values(v).forEach(collect);
+    else if (v && typeof v === "object") {
+      // Audit R7: object KEYS can carry a placeholder too.
+      strings.push(...Object.keys(v));
+      Object.values(v).forEach(collect);
+    }
   };
   collect(args);
   if (!strings.some(hasPlaceholderMarker)) return { args };
@@ -819,14 +898,18 @@ export function resolveRenderedPlaceholders(
   const resolveText = (s: string): string => {
     if (!hasPlaceholderMarker(s)) return s;
     const unknown: string[] = [];
-    const out = s.replace(RENDERED_PLACEHOLDER_RE, (m, name: string) => {
-      const v = valueOf.get(name);
-      if (v === undefined) {
-        unknown.push(name);
-        return m;
-      }
-      return v;
-    });
+    const out = s.replace(
+      RENDERED_PLACEHOLDER_RE,
+      (m, name: string, tag: string | undefined) => {
+        const v = valueOf.get(name);
+        if (v === undefined) {
+          unknown.push(name);
+          return m;
+        }
+        // Audit R7 B-4: back into the form the placeholder replaced.
+        return encodeSecretForm(v, tag ? TAG_FORM[tag]! : "raw");
+      },
+    );
     if (unknown.length > 0) {
       error = renderedPlaceholderError(
         tool,
@@ -858,10 +941,17 @@ export function resolveRenderedPlaceholders(
     if (Array.isArray(v)) return v.map((x) => walk(x, inContent));
     if (v && typeof v === "object") {
       return Object.fromEntries(
-        Object.entries(v as Record<string, unknown>).map(([k, x]) => [
-          k,
-          walk(x, FILE_CONTENT_KEYS.has(k)),
-        ]),
+        Object.entries(v as Record<string, unknown>).map(([k, x]) => {
+          // Audit R7: a key is never file content — a placeholder there is
+          // refused (it would be written as text, or name a field by it).
+          if (!error && hasPlaceholderMarker(k)) {
+            error = renderedPlaceholderError(
+              tool,
+              "un dato oculto solo puede ir en el contenido del archivo, no en el nombre de un campo.",
+            );
+          }
+          return [k, walk(x, FILE_CONTENT_KEYS.has(k))];
+        }),
       );
     }
     return v;

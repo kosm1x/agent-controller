@@ -56,3 +56,48 @@ describe("jarvis_file_read — BLOB content row (task 9493: `content.split is no
     expect(slice).not.toContain("tres");
   });
 });
+
+// Ruling 3c, audit round 7 (B-1): the KB readers scrub the WHOLE content
+// before any cut (preview, outline, LIKE snippet), and a LIKE hit that lies
+// only inside a stored value is not a hit (no substring oracle).
+describe("audit R7 B-1 — KB readers scrub before the cut", () => {
+  const PASS = "pw-" + "Q7z".repeat(6); // synthetic, runtime-assembled
+  async function storeSecret() {
+    const { invalidateSecretRefs } = await import("../../lib/secret-refs.js");
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)")
+      .run("projects", "acme_ftp_password", PASS);
+    invalidateSecretRefs();
+  }
+
+  it("jarvis_file_read: a value at the preview edge leaks no prefix (preview, outline, slice)", async () => {
+    await storeSecret();
+    const body =
+      "a".repeat(1500 - (PASS.length - 1)) + PASS + "\n" +
+      "- [12:00:00] **J**: " + "k".repeat(60 - (PASS.length - 1)) + PASS + "\n" +
+      "b".repeat(9000);
+    upsertFile("projects/x/env.md", "Env", body);
+    const read = JSON.parse((await jarvisFileReadTool.execute({ path: "projects/x/env.md" })) as string);
+    expect(read.truncated).toBe(true);
+    expect(JSON.stringify(read)).not.toContain(PASS.slice(0, 4));
+    const slice = JSON.parse(
+      (await jarvisFileReadTool.execute({ path: "projects/x/env.md", lines: "1-2" })) as string,
+    );
+    expect(slice.content).toContain("[oculto · ");
+    expect(slice.content).not.toContain(PASS.slice(0, 4));
+  });
+
+  it("jarvis_file_search (LIKE fallback): a hit only inside a stored value is not reported", async () => {
+    await storeSecret();
+    upsertFile("projects/x/creds.md", "Creds", `FTP_PASSWORD=${PASS}\n`);
+    const probe = (await jarvisFileSearchTool.execute({ query: "SSWORD=" + PASS.slice(0, 6) })) as string;
+    expect(probe).toMatch(/^No files found/);
+    // FTS5 prefix match over the value's own tokens is not a hit either.
+    const fts = (await jarvisFileSearchTool.execute({ query: PASS.slice(3, 8) })) as string;
+    expect(fts).toMatch(/^No files found/);
+    // A hit in visible text still reports, with a scrubbed snippet.
+    const ok = (await jarvisFileSearchTool.execute({ query: "FTP_PASSWORD=" })) as string;
+    expect(ok).toContain("projects/x/creds.md");
+    expect(ok).not.toContain(PASS.slice(0, 4));
+  });
+});

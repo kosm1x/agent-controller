@@ -25,6 +25,7 @@ import {
 } from "./immutable-core.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve } from "./write-guard.js";
+import { secretSpans } from "../../lib/secret-refs.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -61,6 +62,31 @@ function isPathAllowedForSelfImprovement(filePath: string): boolean {
   if (!branch.startsWith("jarvis/fix/")) return true;
   const rel = filePath.replace("/root/claude/mission-control/", "");
   return SELF_IMPROVEMENT_ALLOWED.some((p) => rel.startsWith(p));
+}
+
+/**
+ * Left-to-right non-overlapping matches of `needle` in `hay` (the same
+ * positions `split` would use), skipping any candidate that partially
+ * overlaps a span in `spans` — skipped candidates do not consume text, so a
+ * skipped match never hides a later legitimate one (no side channel).
+ */
+function safeMatches(
+  hay: string,
+  needle: string,
+  spans: Array<[number, number]>,
+): number[] {
+  const out: number[] = [];
+  if (needle === "") return out;
+  const cuts = (a: number, b: number) =>
+    spans.some(([s, e]) => a < e && s < b && !(a <= s && e <= b));
+  let next = 0;
+  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
+    if (i < next) continue;
+    if (cuts(i, i + needle.length)) continue;
+    out.push(i);
+    next = i + needle.length;
+  }
+  return out;
 }
 
 export const fileEditTool: Tool = {
@@ -194,7 +220,14 @@ RULES:
       }
 
       const content = readFileSync(path, "utf-8");
-      const occurrences = content.split(oldString).length - 1;
+      // Ruling 3c, audit R7 B-1(c): a match that cuts INTO a stored
+      // credential value (starts or ends inside it, or lies inside it) is
+      // not a match — otherwise found / not found is an oracle that recovers
+      // the value from visible context one character at a time. A match
+      // covering a whole value (old_string written with its placeholder) is
+      // fine. Throws (→ {error}) when the scrub index is unavailable.
+      const matches = safeMatches(content, oldString, secretSpans(content));
+      const occurrences = matches.length;
 
       if (occurrences === 0) {
         // Help the LLM debug: show a snippet around where it might have expected the match
@@ -213,17 +246,14 @@ RULES:
         });
       }
 
-      let newContent: string;
-      if (replaceAll) {
-        newContent = content.split(oldString).join(newString);
-      } else {
-        // Replace only the first (and only) occurrence
-        const idx = content.indexOf(oldString);
-        newContent =
-          content.slice(0, idx) +
-          newString +
-          content.slice(idx + oldString.length);
+      // Replace exactly the safe matches (all of them, or the only one).
+      let newContent = "";
+      let at = 0;
+      for (const idx of matches) {
+        newContent += content.slice(at, idx) + newString;
+        at = idx + oldString.length;
       }
+      newContent += content.slice(at);
 
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, newContent, "utf-8");

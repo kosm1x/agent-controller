@@ -10,7 +10,7 @@ the live service (`b402df9`) do not contain it. Delete this file when the work m
 | --- | --- | --- |
 | 1 | Expiry notice at the 5-minute confirmation TTL | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
 | 2 | Confirm at schedule creation when a high-risk tool is included | re-audit PASS; should-fix round done + batch_decompose ruling; NOT re-audited |
-| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub); audit round 5 = FAIL → fix round 5 done (`95f6f7e`), NOT re-audited; eval gate pending (project_update description + new refusal strings) |
+| 3 / 3a / 3b / 3c / 3d | Credential-style facts and project credentials hidden from the model, used by name (`$SECRET_<NAME>` in `shell_exec`, `{{SECRET_<NAME>}}` in `http_fetch` / browser tools); the old "refuse to store" code removed. Ruling 3d (2026-10-03, "Just real credentials. Everything must be accessible") is built: a `projects.credentials` entry is a secret only when `isCredentialFact` says so (key name or value shape), so usernames, e-mails, hosts and IDs there are shown and not scrubbed | Audit round 3 = FAIL; fix round 3 done; audit round 4 → fix round 4 done (structural inference-seam scrub); audit round 5 = FAIL → fix round 5 done (`95f6f7e`); audit round 6 = FAIL → fix round 6 (`fc5d7a9`); audit round 7 = FAIL → fix round 7 done, NOT re-audited; eval gate pending (project_update description + new refusal strings + round 7 placeholder form tag / key refusal) |
 | 4 | Changed-files-only tests in `jarvis_test_run` / `vps_deploy` / `jarvis_dev action=pr` | Built, fix round done, awaits the combined audit |
 | 5 | Docker in the shell gate: reads + `docker exec supabase-db psql` only; follow-ups 5a–5e (2026-10-03) | Built, fix round done after an audit FAIL; re-audit 2026-10-03: tests green, 13/13 hand mutants RED, ~190 probes, nothing blocking; follow-ups 5b/5c/5d built (`6dc2358`, `97b051c`, mutants RED), NOT re-audited; the differential vs `main` is now `scripts/validate-shell-gate-diff.ts --run` (operator, VPS, read-only) and must be run there |
 | 6 | Shell mount namespace | PARKED by the operator. Not in this branch. See `postmortem-2026-10-01-host-mount-leak.md`. Do not rebuild it here. |
@@ -129,6 +129,63 @@ Residuals added by fix round 5: binary `gemini_upload` files (PDF/images/audio/v
 - S5: a null index build (no database) no longer clears `dirtySinceLastGood`.
 
 Residuals added by fix round 6: a placeholder that replaced a URL-encoded or JSON-escaped form of a value is resolved back to the RAW value in a file write; `gdocs_write` / `gsheets_write` and other non-file writers refuse placeholders (no write-back resolution); a category made only of container words (`credentials`) still hides every fact in it; `*_id` / `*_key_id` values that are 32/40-char hex (e.g. a Google `private_key_id`) stay hidden; single-label hosts (`db`) under a credential `*_host` key are hidden.
+
+## Fix round 7 (answers audit round 7 = FAIL) — NOT re-audited
+
+Typecheck 0; 37 scoped test files green (1922 passed); 34 hand mutants, all RED (each restored, checked with cmp). The audit's probes (`cls.ts`, `probe-r7.test.ts`, `b3.test.ts`) are ported into `user-facts.test.ts`, `secret-refs.test.ts`, `jarvis-files-search.test.ts`, `readback-wiring.test.ts` and `google-docs.test.ts`.
+
+- **B-1(a) scrub before the cut.** These readers now scrub the WHOLE text before any slice, preview, outline or cap:
+  - `file_read` (`file.ts`)
+  - `jarvis_file_read` (`jarvis-files.ts`; a failed scrub returns `{error}`)
+  - `data_summarize`
+  - `gdocs_read` (8000), `gsheets_read` (100 per cell), the slides reader (8000)
+  - KB search (`jarvis-fs.ts searchFiles`): an FTS row that holds a stored value is kept only when every query token appears in the scrubbed content, title or path, and its snippet is cut from the scrubbed content. A LIKE row whose only hit is inside a value is dropped. This closes the row / no-row prefix and substring oracles.
+- **B-1(b) payloads and evidence.**
+  - `declareReadbackGate` runs `scrubStructured` on every payload.
+  - Callers scrub before their own cut: `jarvis_file_update` `must_contain` (160), `gdocs_write` `snippet` / `written_text`, `gsheets_write` `capCells` (60 per cell).
+  - Verifiers compare against the raw artifact and also its scrubbed form (`containsWritten`, and the sheet cell check). Evidence quotes go through `quote()` (scrub, then cut). `confirmedCheck` scrubs the read text before `confirmedMismatch` cuts the line at 120; if the scrub fails, the line is left out.
+- **B-1(c) file_edit oracle.** `safeMatches` (`code-editing.ts`) ignores any match that starts inside, ends inside or lies inside a stored-value span (`secretSpans` in `secret-refs.ts`). Ignored candidates do not consume text. A match that covers a whole value still works. The occurrence count and `replace_all` both use the safe matches.
+  - The optional guard (refuse write-back of a placeholder not seen in an earlier result) was **skipped**. `shell_exec` can already write `$SECRET_X` to any file and test its prefix, so the guard would not close the primitive. Scrub-before-cut in the readers is the fix.
+- **B-2 classifier.**
+  - (1) `session_id` / `acme_session_id` / `csrf_id` / `sid_id` are credentials (`CREDENTIAL_ID_RE`, checked before the meta step).
+  - (2) The untyped identity early return (`CONTAINER_TOKEN_RE` / `IDENTITY_LAST_RE`) is gone. Identity tokens are typed meta suffixes now, in `metaValueMatches`:
+    - user / usuario / login / account / cuenta: one token, no password mix, no secret run
+    - email / correo / mail: e-mail
+    - port / puerto: 1–5 digits
+    - server / servidor: host
+    - endpoint: host or URL
+    - dominio: domain
+    - redirect: URL
+    - tenant / client: UUID, ID or word
+    - nombre: name
+    - telefono / phone: phone
+- **B-3.** The adjective `clave` (`fechas_clave`, `clientes_clave`, `puntos_clave`, `nombre_clave`, `palabra_clave`) is not a credential when it follows a plural noun or a listed noun (`CLAVE_ADJ_BEFORE`). These stay credentials: determiners (`nuestras_claves`), `banco_clave`, `teams_clave`, `clave_wifi` / `api` / `acceso`.
+- **B-4 encoded forms.** Each scrubbed form gets its own placeholder, tagged ` · forma URL|JSON|JSON2` (raw has no tag). `resolveRenderedPlaceholders` re-encodes the value into that form (`encodeSecretForm`). The registry scrubs JSON tool results structurally (`scrubResultText` → `scrubJsonText`), so a raw value inside a JSON field gets the raw placeholder and is not JSON-escaped on write-back.
+- **Should-fix.**
+  - Identity tokens are typed (see B-2). `clave_de_acceso_usuario = jdoe` is visible.
+  - The `location` meta accepts a path.
+  - These are visible: `pin_message`, `gym_pass` (and other pass lookbehinds), `receta_secreta` (and other secreto/secreta lookbehinds), `stripe_publishable_key`, and `pk_live_` / `pk_test_` values (the Stripe value pattern is now `[sr]k_`).
+  - `resolveRenderedPlaceholders` inspects object keys. A placeholder in a key is refused: "un dato oculto solo puede ir en el contenido del archivo, no en el nombre de un campo."
+  - In `scrubStructured`, two keys that scrub to the same text no longer overwrite each other: later ones get a ` (n)` suffix.
+
+Deviations / extras beyond the brief:
+- `webhook` / `webhooks` is a credential name, with `WHOLE_NAME_META` url typing (a URL with a secret path is hidden).
+- `rate` was removed from the token-follower exclusion, so `token_rate` is judged by its `rate` value type.
+- `(csrf|xsrf) id` was added.
+- The FTS / LIKE filtering changes search results for rows that hold stored values.
+- Line numbers and sizes in `file_read` / `jarvis_file_read` now refer to the scrubbed view (a multi-line value collapses into its placeholder).
+
+Model-visible strings changed (eval gate owed, not run):
+- the placeholder form tag
+- the key-placeholder refusal
+- the `jarvis_file_read` scrub `{error}`
+- what the classifier shows and hides
+
+Residuals added by fix round 7:
+- Shell-based oracles remain (`shell_exec` with `$SECRET_X` can transform or test the value). This is the existing shell-transform residual.
+- Readers outside the patched set can still cut before the registry's whole-value scrub: wordpress, gdrive, external MCP bridges, and the code-index signature cut (MC_DIR source only).
+- The substring scrub of non-JSON text that embeds JSON tags by the serialized form (a value inside JSON quoted in prose gets a `forma JSON` placeholder).
+- FTS rows without stored values keep SQLite's snippet.
 
 ## Rulings 1–2 should-fix round + batch_decompose ruling (2026-10-03)
 

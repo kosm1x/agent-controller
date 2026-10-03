@@ -25,6 +25,7 @@ import {
   resolveRenderedPlaceholders,
   resolveSecretRefs,
   scrubSecrets,
+  scrubJsonText,
 } from "../lib/secret-refs.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
@@ -125,6 +126,20 @@ function isErrorResult(result: unknown): boolean {
 }
 
 /**
+ * Audit R7 B-4: a JSON result is scrubbed structurally (each string leaf in
+ * its DECODED form), so a value stored raw inside a field gets the raw
+ * placeholder — the substring scrub of the serialized text would see its
+ * JSON-escaped form and tag the placeholder "forma JSON", and a write-back
+ * would then JSON-escape a value that was raw. Non-JSON text: substring scrub.
+ */
+function scrubResultText(text: string): string {
+  const t = text.trimStart();
+  return t.startsWith("{") || t.startsWith("[")
+    ? scrubJsonText(text)
+    : scrubSecrets(text);
+}
+
+/**
  * Ruling 3c (audit R3 N1): a tool result scrubbed of stored credentials. The
  * contract is a string, but MCP bridges and a few builtins can hand back
  * undefined, null or an object: those must not throw here. A JSON-able object
@@ -132,7 +147,7 @@ function isErrorResult(result: unknown): boolean {
  * shape survives); anything else passes through unchanged.
  */
 function scrubResult(result: unknown): string {
-  if (typeof result === "string") return scrubSecrets(result);
+  if (typeof result === "string") return scrubResultText(result);
   if (result === null || typeof result !== "object") return result as string;
   let json: string | undefined;
   try {
@@ -142,7 +157,7 @@ function scrubResult(result: unknown): string {
   }
   if (typeof json !== "string") return result as unknown as string;
   // A scrub failure (no index, no last-good) propagates: fail closed.
-  const clean = scrubSecrets(json);
+  const clean = scrubResultText(json);
   if (clean === json) return result as unknown as string;
   try {
     return JSON.parse(clean) as string;

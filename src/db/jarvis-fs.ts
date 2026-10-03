@@ -17,6 +17,7 @@ import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 import type { DriveMetadata } from "./drive-sync.js";
 import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
@@ -595,13 +596,51 @@ export function searchFiles(
     // Post-process OUTSIDE the catch: a per-row defect must never mute the
     // whole FTS result set into the LIKE fallback (qa-audit C1).
     if (ftsRows) {
-      return ftsRows.map((r) => ({
-        path: r.path,
-        title: r.title,
-        snippet: r.snip || r.title,
-        size: r.size,
-        ...locateMatch(r.content, tokens),
-      }));
+      return ftsRows.flatMap((r) => {
+        const raw = asText(r.content);
+        // Ruling 3c, audit R7 B-1: a row holding a stored credential value.
+        // FTS5's snippet is cut inside SQLite (it could cut a value) and its
+        // prefix match runs over the value's tokens (row / no row would be a
+        // prefix oracle) — so judge and cut on the SCRUBBED content instead.
+        const clean = scrubSecrets(raw);
+        if (clean === raw) {
+          return [
+            {
+              path: r.path,
+              title: r.title,
+              snippet: r.snip || r.title,
+              size: r.size,
+              ...locateMatch(r.content, tokens),
+            },
+          ];
+        }
+        const visible = foldDiacritics(
+          `${clean}\n${r.title ?? ""}\n${r.path ?? ""}`.toLowerCase(),
+        );
+        if (!tokens.every((t) => visible.includes(foldDiacritics(t)))) {
+          return [];
+        }
+        const lower = clean.toLowerCase();
+        const hits = tokens
+          .map((t) => lower.indexOf(t))
+          .filter((i) => i >= 0);
+        const at = hits.length > 0 ? Math.min(...hits) : -1;
+        const snippet =
+          at >= 0
+            ? (at > 50 ? "…" : "") +
+              clean.slice(Math.max(0, at - 50), at + 80).replace(/\n/g, " ") +
+              (at + 80 < clean.length ? "…" : "")
+            : r.title;
+        return [
+          {
+            path: r.path,
+            title: r.title,
+            snippet,
+            size: r.size,
+            ...locateMatch(clean, tokens),
+          },
+        ];
+      });
     }
   }
 
@@ -634,9 +673,20 @@ export function searchFiles(
       limit,
     ) as Array<{ path: string; title: string; content: unknown; size: number }>;
 
-  return rows.map((r) => {
-    const content = asText(r.content);
-    const idx = content.toLowerCase().indexOf(query.toLowerCase());
+  // Ruling 3c, audit R7 B-1: the snippet is cut around the hit — scrub the
+  // WHOLE content first, and drop a row whose only hit lies inside a stored
+  // credential value (else row / no row is a substring oracle on the value).
+  const q = query.toLowerCase();
+  return rows.flatMap((r) => {
+    const content = scrubSecrets(asText(r.content));
+    const idx = content.toLowerCase().indexOf(q);
+    if (
+      idx < 0 &&
+      !String(r.title ?? "").toLowerCase().includes(q) &&
+      !String(r.path ?? "").toLowerCase().includes(q)
+    ) {
+      return [];
+    }
     const start = Math.max(0, idx - 50);
     const end = Math.min(content.length, idx + query.length + 50);
     const snippet =
@@ -646,14 +696,16 @@ export function searchFiles(
           (end < content.length ? "..." : "")
         : r.title;
 
-    return {
-      path: r.path,
-      title: r.title,
-      snippet,
-      size: r.size,
-      // Same needle the LIKE filter used, so the cited line is the LIKE hit.
-      ...locateMatch(content, [query]),
-    };
+    return [
+      {
+        path: r.path,
+        title: r.title,
+        snippet,
+        size: r.size,
+        // Same needle the LIKE filter used, so the cited line is the LIKE hit.
+        ...locateMatch(content, [query]),
+      },
+    ];
   });
 }
 

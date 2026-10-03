@@ -51,6 +51,17 @@ export interface UserFact {
  * `secret_santa`, `llave_publica`, `map/location/drop_pin`; new names
  * `security_answer`, `respuesta_seguridad`, `access_code`, `clave_de_acceso`.
  */
+/**
+ * Audit round 7 (B-3, ruling 3d): Spanish `clave` after a plural noun
+ * (`fechas_clave`, `puntos_clave`, `clientes_clave` — the previous token ends
+ * in vowel + s) or after a singular noun it qualifies (`nombre_clave`,
+ * `dato_clave`) is the adjective "key/important", not a credential.
+ * `<servicio>_clave`, `clave` alone and `clave_{api,acceso,wifi,…}` stay
+ * credentials (`teams`, `aws` end in consonant + s and still count; a
+ * determiner — `nuestras_claves`, `todas_claves` — is not a noun).
+ */
+const CLAVE_ADJ_BEFORE =
+  "(?:palabras?| (?!(?:nuestr|vuestr|est|es|tod|otr|algun|much|mism|aquell|ciert|vari|demas|las|los|unas|unos)[ao]?s )[a-z]{2,}[aeiou]s| (?:fecha|punto|idea|cliente|tema|mensaje|metrica|indicador|nombre|dato|factor|momento|objetivo|pregunta|paso|rol|actor|socio|elemento|aspecto|concepto|evento|hito|proceso|requisito|tarea)) ";
 const FOLLOWER = "(?= $| (?:codes?|secrets?|phrases?|keys?|tokens?|seeds?|backup|header) )";
 const CREDENTIAL_NAME_RE = new RegExp(
   " (?:" +
@@ -63,7 +74,7 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "(?:secret|signing|master|encryption)keys?",
       "passcodes?",
       "pincodes?",
-      "(?<!(?:public|primary|foreign|sort|partition|cache|hot|short|translation|required|shortcut|object|index|musical|music|song|piano) )keys?(?= $)",
+      "(?<!(?:public|publishable|primary|foreign|sort|partition|cache|hot|short|translation|required|shortcut|object|index|musical|music|song|piano) )keys?(?= $)",
       "(?<!(?:max|min|input|output|total|prompt|completion|num|cache|cached|reasoning|design|context|css|color|colour) )tokens(?= $)",
       `(?<!prior )authorization${FOLLOWER}`,
       `(?:otp|mfa|2fa)${FOLLOWER}`,
@@ -78,10 +89,10 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "dsn",
       "cvv2?",
       "cvc2?",
-      "token(?! (?:budget|count|limit|limits|usage|cost|price|rate|window) )",
-      "secrets?(?! santa )",
+      "token(?! (?:budget|count|limit|limits|usage|cost|price|window) )",
+      "secrets?(?! (?:santa|recipe|ingredient|sauce|menu|garden) )",
       "passwords?",
-      "(?<!(?:boarding|bus|day|season|ski|backstage|press|guest|hall|mountain|free) )pass",
+      "(?<!(?:boarding|bus|day|season|ski|backstage|press|guest|hall|mountain|free|gym|metro|museum|park|parking|event|annual|vip|transit|train|rail|weekly|monthly) )pass",
       "pw",
       "passwd",
       "pwd",
@@ -91,21 +102,22 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "credentials?",
       "bearer",
       "jwt",
-      "(?<!palabras? )claves?(?= $| (?:api|acceso|secreta|privada|wifi) )",
+      `(?<!${CLAVE_ADJ_BEFORE})claves?(?= $| (?:api|acceso|secreta|privada|wifi) )`,
       "claves? de (?:acceso|seguridad|respaldo|recuperacion)",
       "llaves?(?! publicas? )",
       "contrasenas?",
       "credencial(?:es)?",
-      "secretos?",
-      "secretas?",
+      "(?<!(?:receta|recetas|ingrediente|ingredientes|formula|formulas|amigo|amiga|santa|mision|identidad|sociedad|historia|puerta|entrada) )secretos?",
+      "(?<!(?:receta|recetas|ingrediente|ingredientes|formula|formulas|amigo|amiga|santa|mision|identidad|sociedad|historia|puerta|entrada) )secretas?",
       "frases? (?:de )?(?:semillas?|recuperacion)",
       "codigos? (?:de )?(?:respaldo|acceso|seguridad|recuperacion)",
-      "(?<!(?:map|location|drop|gpio|lapel|bowling) )pin",
+      "(?<!(?:map|location|drop|gpio|lapel|bowling) )pin(?! (?:messages?|posts?|boards?|tweets?|comments?|chats?|mensajes?|notes?) )",
       "security answers?",
       "respuestas? (?:de )?seguridad",
       "access codes?",
       "sessionid",
       "session id",
+      "(?:csrf|xsrf) id",
       "sid(?= $)",
       "phpsessid",
       "li at",
@@ -113,6 +125,10 @@ const CREDENTIAL_NAME_RE = new RegExp(
       "swid",
       "espn s2",
       "(?<=^ )(?:s2|session)(?= $)",
+      // Audit round 7: an incoming-webhook URL carries its secret in the
+      // path; judged as a URL (WHOLE_NAME_META), so `webhook =
+      // https://example.com/hooks/abc` stays visible.
+      "webhooks?(?= $)",
     ].join("|") +
     ") ",
 );
@@ -131,7 +147,14 @@ const CREDENTIAL_NAME_RE = new RegExp(
  * `pass_rate`), each with its own value type.
  */
 const CREDENTIAL_META_LAST_RE =
-  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|uri|file|header|name|id|hint|policy|domain|scope|arn|symbol|address|format|rate|location|question|consent|last changed) $/;
+  / (path|method|provider|date|issuer|type|expiry|expires|rotation|enabled|region|host|url|uri|file|header|name|id|hint|policy|domain|scope|arn|symbol|address|format|rate|location|question|consent|last changed|user|username|usuario|login|account|cuenta|email|correo|mail|port|puerto|server|servidor|dominio|endpoint|redirect|tenant|nombre|telefono|phone|client) $/;
+
+/**
+ * Audit round 7 (B-2.1): `id` belongs to the credential word itself in
+ * `session_id`, `csrf_id`, `xsrf_id`, `sid_id` — the value IS the session /
+ * CSRF credential, so the `id` meta exemption does not apply.
+ */
+const CREDENTIAL_ID_RE = / (?:session|csrf|xsrf|sid) id $/;
 
 /**
  * Whole names that are metadata about a credential without a meta last token:
@@ -141,18 +164,19 @@ const CREDENTIAL_META_LAST_RE =
 const WHOLE_NAME_META: ReadonlyArray<[RegExp, string]> = [
   [/^ pregunta (?:de )?secretas? $/, "question"],
   [/^ pwd $/, "path"],
+  [/ webhooks? $/, "url"],
 ];
 
 /**
- * Audit round 6 (B1): words that name a credential CONTAINER (a scheme or a
- * bag of fields), not a secret value. A name whose only credential words are
- * these and whose last token is an identity token (`auth_email`,
- * `db_credentials_user`, `oauth_client_id`, `oauth_redirect_uri`) is not a
- * credential by name; its value is still judged by shape.
+ * Audit round 6 (B1) made a name whose only credential words were containers
+ * (auth / oauth / credential(s) / creds / credencial(es)) and whose last token
+ * was an identity token (`auth_email`, `db_credentials_user`) visible WITHOUT
+ * looking at the value. Audit round 7 (B-2.2) folded those identity tokens
+ * into the meta-suffix list above, so they are visible only when the value
+ * has the identity token's type (`auth_user = Hunter2Pass99`, `oauth_id` = a
+ * 32-char secret and `auth_url` with a secret query stay hidden), for every
+ * credential name (`clave_de_acceso_usuario = jdoe` is visible).
  */
-const CONTAINER_TOKEN_RE = / (?:o?auth|credentials?|creds|credencial(?:es)?)(?= )/g;
-const IDENTITY_LAST_RE =
-  / (?:user|username|usuario|login|email|correo|mail|id|account|host|port|domain|uri|url|scope|tenant|redirect|endpoint|server) $/;
 
 /**
  * A whitespace-free run of 20+ token characters mixing letters and digits —
@@ -193,6 +217,7 @@ const UUID_RE =
 const ARN_RE =
   /^arn:[a-z0-9-]+:[a-z0-9-]+:[a-z0-9-]*:\d{0,12}:[A-Za-z0-9_+=,.@/:-]+$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+const PHONE_RE = /^\+?[\d\s().-]{6,24}$/;
 const COORDS_RE = /^-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?$/;
 const RATE_RE =
   /^\d+(?:[.,]\d+)?\s*(?:%|\/\s*[A-Za-z]+|[A-Za-z]{1,10}(?:\/[A-Za-z]+)?)?$/;
@@ -240,11 +265,49 @@ function metaValueMatches(meta: string, raw: string): boolean {
   switch (meta) {
     case "url":
     case "uri":
+    case "redirect":
       return isUrl(v);
     case "host":
+    case "server":
+    case "servidor":
       return isHost(v);
+    case "endpoint":
+      return isHost(v) || isUrl(v);
     case "domain":
+    case "dominio":
       return v.length <= 253 && DOMAIN_RE.test(v) && !hasPasswordMix(v);
+    case "email":
+    case "correo":
+    case "mail":
+      return EMAIL_RE.test(v);
+    case "port":
+    case "puerto":
+      return /^\d{1,5}$/.test(v);
+    case "telefono":
+    case "phone":
+      return PHONE_RE.test(v) && (v.match(/\d/g)?.length ?? 0) >= 6;
+    case "user":
+    case "username":
+    case "usuario":
+    case "login":
+    case "account":
+    case "cuenta":
+      // A login name or e-mail: one token, no password mix, no secret run.
+      return (
+        v.length <= 254 &&
+        !/\s/.test(v) &&
+        !hasPasswordMix(v) &&
+        !hasSecretRun(v)
+      );
+    case "client":
+    case "tenant":
+      return (
+        UUID_RE.test(v) ||
+        (ID_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v)) ||
+        isWord(v)
+      );
+    case "nombre":
+      return NAME_RE.test(v) && !hasPasswordMix(v) && !hasSecretRun(v);
     case "file":
     case "path":
       return (
@@ -286,7 +349,12 @@ function metaValueMatches(meta: string, raw: string): boolean {
     case "rate":
       return RATE_RE.test(v);
     case "location":
-      return COORDS_RE.test(v) || isProse(v);
+      // Should-fix (round 7): a file path is a location too.
+      return (
+        COORDS_RE.test(v) ||
+        isProse(v) ||
+        (PATH_LIKE_RE.test(v) && /[A-Za-z0-9]/.test(v) && !hasSecretRun(v))
+      );
     case "hint":
     case "policy":
     case "question":
@@ -318,7 +386,9 @@ function metaValueMatches(meta: string, raw: string): boolean {
  */
 const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/, // JWT
-  /\b[srp]k_(?:live|test)_[A-Za-z0-9]{10,}/, // Stripe
+  // Stripe secret / restricted keys; `pk_live_` / `pk_test_` are publishable
+  // (public) keys and stay visible (audit round 7).
+  /\b[sr]k_(?:live|test)_[A-Za-z0-9]{10,}/,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/, // Slack
@@ -366,13 +436,8 @@ function nameTokens(name: string): string {
 export function isCredentialName(name: string, value?: string): boolean {
   const tokens = nameTokens(name);
   if (!CREDENTIAL_NAME_RE.test(tokens)) return false;
-  // Audit R6 B1: container words only + an identity last token.
-  if (
-    IDENTITY_LAST_RE.test(tokens) &&
-    !CREDENTIAL_NAME_RE.test(tokens.replace(CONTAINER_TOKEN_RE, " x"))
-  ) {
-    return false;
-  }
+  // Audit R7 B-2.1: `session_id` is the credential, not metadata about one.
+  if (CREDENTIAL_ID_RE.test(tokens)) return true;
   const meta =
     CREDENTIAL_META_LAST_RE.exec(tokens)?.[1] ??
     WHOLE_NAME_META.find(([re]) => re.test(tokens))?.[1];

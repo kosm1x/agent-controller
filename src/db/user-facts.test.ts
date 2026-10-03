@@ -233,7 +233,6 @@ describe("user-facts", () => {
       ["JWT", "ey" + "J" + rnd(20) + ".ey" + "J" + rnd(40) + "." + rnd(43)],
       ["Stripe sk_live", "sk" + "_live_" + rnd(30)],
       ["Stripe rk_test", "rk" + "_test_" + rnd(30)],
-      ["Stripe pk_live", "pk" + "_live_" + rnd(30)],
       ["GitHub fine-grained", "github" + "_pat_" + rnd(60)],
       ["GitHub gho", "gh" + "o_" + rnd(36)],
       ["GitHub ghs", "gh" + "s_" + rnd(36)],
@@ -628,6 +627,111 @@ describe("user-facts", () => {
         ["auth_method", "basic"],
       ])("%s = %j is visible", (key, value) => {
         expect(isCredentialFact("projects", key, value)).toBe(false);
+      });
+    });
+
+    // Audit round 7 (probe table ported from the auditor's cls.ts). Each row:
+    // [category, key, value, hidden]. Values are synthetic and assembled at
+    // runtime; hosts are example.com.
+    describe("audit R7 — B-2 / B-3 / should-fix classifier table", () => {
+      const uuid = () =>
+        ["3f2a9c1e", "7b4d", "4e21", "9a0f", "1c2d3e4f5a6b"].join("-");
+      const mixRun = "Ab12Cd34Ef56Gh78Ij90";
+      const pwMix = ["Hunter", "2", "Pass", "99"].join("");
+      const pwMix2 = ["S3cret", "Passw0rd", "!"].join("");
+      const cases: Array<[string, string, string, boolean]> = [
+        // B-2(1): `id` belongs to the credential word.
+        ["projects", "session_id", uuid(), true],
+        ["projects", "acme_session_id", "1234567890123", true],
+        ["web", "sessionid", uuid(), true],
+        ["web", "session_token", uuid(), true],
+        ["web", "csrf_id", uuid(), true],
+        ["projects", "csrf_token_id", "abcdefgh12", false],
+        // B-3: adjective clave.
+        ["trabajo", "clientes_clave", "Acme, Globex y Initech", false],
+        ["trabajo", "fechas_clave", "15 de marzo y 2 de abril", false],
+        ["trabajo", "puntos_clave", "precio, entrega y soporte", false],
+        ["trabajo", "nombre_clave", "Proyecto Fenix", false],
+        ["trabajo", "metricas_clave", "MRR, churn, NPS", false],
+        ["trabajo", "ideas_clave", "precio y soporte", false],
+        ["personal", "clave", "plain value", true],
+        ["personal", "banco_clave", "plain value", true],
+        ["personal", "teams_clave", "plain value", true],
+        ["personal", "nuestras_claves", "plain value", true],
+        ["personal", "clave_wifi", "plain value", true],
+        ["personal", "clave_api", "plain value", true],
+        ["personal", "clave_acceso", "plain value", true],
+        ["personal", "palabra_clave", "girasol", false],
+        // should-fix: exclusions.
+        ["personal", "gym_pass", "Smart Fit membresia 4433", false],
+        ["personal", "receta_secreta", "mole de mi abuela", false],
+        ["infra", "pin_message", "Recordar pagar renta", false],
+        ["infra", "pin_code", "plain value", true],
+        ["infra", "stripe_publishable_key", "pk" + "_live_" + "a1".repeat(12), false],
+        ["infra", "site_config", "pk" + "_test_" + "a1".repeat(12), false],
+        ["infra", "site_config", "sk" + "_test_" + "a1".repeat(12), true],
+        // should-fix: identity last tokens with types.
+        ["infra", "credenciales_puerto", "5432", false],
+        ["infra", "credenciales_servidor", "srv.example.com", false],
+        ["infra", "credenciales_dominio", "example.com", false],
+        ["infra", "oauth_client", "mi-app-web", false],
+        ["infra", "auth_phone", "+52 55 1234 5678", false],
+        ["infra", "credenciales_cuenta", "jdoe", false],
+        ["infra", "credenciales_nombre", "Cuenta principal", false],
+        ["infra", "credenciales_puerto", pwMix, true],
+        ["infra", "auth_phone", pwMix, true],
+        ["infra", "oauth_client", mixRun + "Kl12", true],
+        // B-2(2): identity token typed.
+        ["infra", "auth_url", "https://example.com/cb?x=" + mixRun + "Kl12Mn", true],
+        ["infra", "oauth_id", mixRun + "Kl12Mn34Op56", true],
+        ["infra", "auth_user", pwMix, true],
+        ["infra", "credentials_login", pwMix2, true],
+        ["infra", "auth_email", "a@example.invalid", false],
+        ["infra", "auth_email", pwMix, true],
+        ["infra", "auth_port", "pw" + "x".repeat(10), true],
+        ["infra", "oauth_tenant", "contoso", false],
+        ["infra", "oauth_scope", "repo read:org", false],
+        ["infra", "credenciales_de_acceso_usuario", "jdoe", false],
+        ["infra", "credenciales_de_acceso_host", "db.example.com", false],
+        ["infra", "clave_de_acceso_usuario", "jdoe", false],
+        ["infra", "clave_de_acceso_usuario", pwMix, true],
+        // should-fix: location path.
+        ["infra", "access_token_location", "/etc/app/token", false],
+        ["infra", "password_location", "Tr0ub4dor&3", true],
+        // rate is a typed meta (token_rate no longer excluded by name).
+        ["infra", "token_rate", "100/min", false],
+        ["infra", "token_rate", mixRun, true],
+        // webhook names: a URL with a secret path is hidden.
+        ["infra", "webhook", "https://example.com/hooks/" + "aB3".repeat(10), true],
+        ["infra", "webhook", "https://example.com/hooks/abc", false],
+        ["infra", "webhook_url", "https://example.com/hooks/abc", false],
+        // unchanged neighbours.
+        ["infra", "api_key_header", "X-Api-Key", false],
+        ["infra", "ftp_host", "ftp.example.com", false],
+        ["infra", "ftp_password", "hunter2hunter2", true],
+        ["infra", "github_token_id", "12345678", false],
+        ["infra", "api_key_id", "key-prod-01", false],
+        ["infra", "secret_name", "prod-db-pass", false],
+        ["infra", "security_answer", "Guadalajara", true],
+        ["infra", "respuesta_secreta", "Guadalajara", true],
+        ["infra", "pregunta_secreta", "¿Ciudad natal?", false],
+        ["infra", "codigo_de_acceso", "883421", true],
+        ["personal", "clave_interbancaria", "012180001234567891", false],
+        ["personal", "house_keys", "con el vecino", true],
+        ["personal", "nip_tarjeta", "4821", true],
+        ["personal", "max_tokens", "4096", false],
+        ["personal", "secretaria", "Laura", false],
+      ];
+      it.each(cases)("%s / %s = %j → hidden %s", (category, key, value, hidden) => {
+        expect(isCredentialFact(category, key, value)).toBe(hidden);
+      });
+
+      it("container keys stay containers (no value): identity tokens and webhook", () => {
+        expect(isSecretValueName("credenciales_de_acceso")).toBe(false);
+        expect(isSecretValueName("db_credentials")).toBe(false);
+        expect(isSecretValueName("webhook")).toBe(false);
+        expect(isSecretValueName("clave_de_acceso")).toBe(true);
+        expect(isSecretValueName("passwords")).toBe(true);
       });
     });
   });

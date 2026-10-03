@@ -16,7 +16,15 @@ vi.mock("../../google/client.js", () => ({
   googleFetch: mocks.mockGoogleFetch,
 }));
 
-import { gdocsReadTool, gdocsReadFullTool } from "./google-docs.js";
+// Ruling 3c, audit R7 B-1: a stand-in scrub (one synthetic stored value) to
+// pin the ORDER — scrub the whole text, then cut.
+const STORED = "pw-" + "Q7z".repeat(6);
+vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.split(STORED).join("[oculto · X]"),
+}));
+
+import { gdocsReadTool, gdocsReadFullTool, gsheetsReadTool } from "./google-docs.js";
 
 describe("gdocs_read_full", () => {
   beforeEach(() => {
@@ -130,5 +138,32 @@ describe("gdocs_read truncation", () => {
     expect(parsed.warning).toContain("8,000 chars");
     expect(parsed.warning).toContain("12000");
     expect(parsed.warning).toContain("gdocs_read_full");
+  });
+});
+
+describe("audit R7 B-1 — Google readers scrub before their cuts", () => {
+  beforeEach(() => {
+    mocks.mockGoogleFetch.mockReset();
+  });
+
+  it("gdocs_read: a value straddling the 8000 cut leaves no prefix", async () => {
+    const text = "a".repeat(8000 - 5) + STORED + "b".repeat(100);
+    mocks.mockGoogleFetch.mockResolvedValueOnce({
+      title: "D",
+      body: { content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }] },
+    });
+    const parsed = JSON.parse(await gdocsReadTool.execute({ document_id: "abc" }));
+    expect(parsed.text).not.toContain(STORED.slice(0, 4));
+    expect(parsed.text.endsWith("[ocul")).toBe(true);
+  });
+
+  it("gsheets_read: a value straddling a cell's 100-char cut leaves no prefix", async () => {
+    mocks.mockGoogleFetch.mockResolvedValueOnce({
+      range: "Sheet1!A1:A2",
+      values: [["h"], ["c".repeat(100 - 5) + STORED]],
+    });
+    const out = await gsheetsReadTool.execute({ spreadsheet_id: "S" });
+    expect(out).not.toContain(STORED.slice(0, 4));
+    expect(out).toContain("[ocul");
   });
 });
