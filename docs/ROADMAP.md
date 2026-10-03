@@ -51,4 +51,4 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
-| 2026-10-03 | S0 compact record + roadmap | (this PR) | PROJECT-STATUS 1.84 MB → ~196 KB; history moved unchanged to `docs/archive/status-history-2026-0{3..9}.md`; this page; W5 in CLAUDE.md. D2 (archive move) approved and done. | S1 next |
+| 2026-10-03 | S0 compact record + roadmap | [#53](https://github.com/kosm1x/agent-controller/pull/53) | PROJECT-STATUS 1.84 MB → ~196 KB; history moved unchanged to `docs/archive/status-history-2026-0{3..9}.md`; this page; W5 in CLAUDE.md. D2 (archive move) approved and done. | S1 next |
