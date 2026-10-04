@@ -554,10 +554,10 @@ export interface BaselineEvidenceInput {
   baselineSv: number | null;
   /** This checkout's SCORING_VERSION. */
   codeSv: number | null;
-  /** Committer date of HEAD's last commit touching src/ (ISO + epoch s). */
+  /** Committer date of HEAD's last commit touching src/, baseline file excluded (ISO + epoch s). */
   srcCommitIso: string | null;
   srcCommitT: number | null;
-  /** `git status --porcelain -- src/` non-empty; null = unknown. */
+  /** `git status --porcelain` of src/ (baseline file excluded) non-empty; null = unknown. */
   srcDirty: boolean | null;
 }
 
@@ -570,7 +570,7 @@ export interface BaselineEvidenceInput {
 export function baselineEvidence(i: BaselineEvidenceInput): string[] {
   const out = [
     `    baseline capturedAt: ${i.capturedAt ?? "unknown"}   scoringVersion: ${i.baselineSv ?? "absent (= 1)"}   this checkout's SCORING_VERSION: ${i.codeSv ?? "unknown"}`,
-    `    last commit touching src/ (HEAD's history, committer date): ${i.srcCommitIso ?? "unknown"}`,
+    `    last commit touching src/ other than the baseline file (HEAD's history, committer date): ${i.srcCommitIso ?? "unknown"}`,
   ];
   const capT = i.capturedAt ? Date.parse(i.capturedAt) / 1000 : NaN;
   if (!Number.isFinite(capT) || i.srcCommitT === null) {
@@ -595,8 +595,19 @@ export function baselineEvidence(i: BaselineEvidenceInput): string[] {
   return out;
 }
 
-/** The I/O for {@link baselineEvidence}: baseline JSON + git (no fetch); SCORING_VERSION is this checkout's. */
-function readBaselineEvidence(repo: string): BaselineEvidenceInput {
+/**
+ * "src/" minus the baseline file itself: the baseline lives under src/, so the
+ * commit recording a capture would otherwise always be the last src/ commit
+ * and always postdate the capture (the evidence could never say AFTER).
+ */
+export const SRC_EVIDENCE_PATHSPEC = ["src/", ":(exclude)src/tuning/eval-baseline.json"];
+
+/**
+ * The I/O for {@link baselineEvidence}: baseline JSON + git (no fetch);
+ * SCORING_VERSION is this checkout's.
+ * @internal exported for tests
+ */
+export function readBaselineEvidence(repo: string): BaselineEvidenceInput {
   let capturedAt: string | null = null;
   let baselineSv: number | null = null;
   try {
@@ -613,8 +624,8 @@ function readBaselineEvidence(repo: string): BaselineEvidenceInput {
       return null;
     }
   };
-  const log = git(["log", "-1", "--format=%cI%n%ct", "HEAD", "--", "src/"])?.trim().split("\n");
-  const status = git(["status", "--porcelain", "--", "src/"]);
+  const log = git(["log", "-1", "--format=%cI%n%ct", "HEAD", "--", ...SRC_EVIDENCE_PATHSPEC])?.trim().split("\n");
+  const status = git(["status", "--porcelain", "--", ...SRC_EVIDENCE_PATHSPEC]);
   return {
     capturedAt,
     baselineSv,

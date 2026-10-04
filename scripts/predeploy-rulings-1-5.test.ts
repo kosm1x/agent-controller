@@ -7,7 +7,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +34,7 @@ import {
   openReadOnly,
   KB_TOOL_LIMIT,
   baselineEvidence,
+  readBaselineEvidence,
   type FactRow,
   type ProjectRow,
 } from "./predeploy-rulings-1-5.js";
@@ -361,7 +363,7 @@ describe("baselineEvidence (section F, informational)", () => {
     const lines = baselineEvidence(input);
     expect(lines).toEqual([
       "    baseline capturedAt: 2026-10-04T00:00:00.000Z   scoringVersion: 2   this checkout's SCORING_VERSION: 2",
-      "    last commit touching src/ (HEAD's history, committer date): 2026-10-03T06:00:00-06:00",
+      "    last commit touching src/ other than the baseline file (HEAD's history, committer date): 2026-10-03T06:00:00-06:00",
       "    → baseline captured AFTER the last src/ commit",
     ]);
   });
@@ -407,5 +409,60 @@ describe("baselineEvidence (section F, informational)", () => {
     expect(baselineEvidence({ ...input, srcCommitT: null })).toContain(
       "    → cannot compare (capturedAt or the src/ commit date unreadable)",
     );
+  });
+});
+
+describe("readBaselineEvidence: the baseline file's own commit is not a src/ commit", () => {
+  let repo: string;
+  const gitIn = (args: string[], date?: string) =>
+    execFileSync("git", ["-C", repo, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "synthetic",
+        GIT_AUTHOR_EMAIL: "synthetic@example.invalid",
+        GIT_COMMITTER_NAME: "synthetic",
+        GIT_COMMITTER_EMAIL: "synthetic@example.invalid",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        ...(date ? { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } : {}),
+      },
+    });
+  const writeBaseline = (capturedAt: string) =>
+    writeFileSync(
+      join(repo, "src/tuning/eval-baseline.json"),
+      JSON.stringify({ overall: 1, scoringVersion: 2, capturedAt }) + "\n",
+    );
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "predeploy-evidence-"));
+    gitIn(["init", "-q"]);
+    mkdirSync(join(repo, "src/tuning"), { recursive: true });
+    writeFileSync(join(repo, "src/code.ts"), "export const x = 1;\n");
+    gitIn(["add", "-A"]);
+    gitIn(["commit", "-q", "-m", "code"], "2026-10-01T00:00:00Z");
+    // capture between the code commit and the commit that records it
+    writeBaseline("2026-10-02T00:00:00Z");
+    gitIn(["add", "-A"]);
+    gitIn(["commit", "-q", "-m", "baseline"], "2026-10-03T00:00:00Z");
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("capture after the last code commit, recorded by a later baseline-only commit → AFTER, clean", () => {
+    const ev = readBaselineEvidence(repo);
+    expect(ev.srcCommitT).toBe(Date.parse("2026-10-01T00:00:00Z") / 1000);
+    expect(ev.srcDirty).toBe(false);
+    expect(ev.capturedAt).toBe("2026-10-02T00:00:00Z");
+    expect(baselineEvidence(ev)).toContain(
+      "    → baseline captured AFTER the last src/ commit",
+    );
+  });
+
+  it("an uncommitted baseline edit alone is not a dirty src/; an uncommitted code edit is", () => {
+    writeBaseline("2026-10-02T12:00:00Z");
+    expect(readBaselineEvidence(repo).srcDirty).toBe(false);
+    writeFileSync(join(repo, "src/code.ts"), "export const x = 2;\n");
+    expect(readBaselineEvidence(repo).srcDirty).toBe(true);
+    gitIn(["checkout", "-q", "--", "."]);
   });
 });
