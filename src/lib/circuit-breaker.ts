@@ -10,6 +10,7 @@ import {
   CB_FAILURE_THRESHOLD,
   CB_WINDOW_MS,
   CB_COOLDOWN_MS,
+  CB_PROBE_TIMEOUT_MS,
 } from "../config/constants.js";
 
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
@@ -26,9 +27,11 @@ export class CircuitBreaker {
   private state: CircuitState = "CLOSED";
   private failures: number[] = []; // timestamps within window
   private lastStateChange = Date.now();
+  private probe = 0; // token of the current HALF_OPEN probe; bumped per grant
   private readonly failureThreshold: number;
   private readonly windowMs: number;
   private readonly cooldownMs: number;
+  private readonly probeTimeoutMs: number;
 
   constructor(
     name: string,
@@ -36,29 +39,62 @@ export class CircuitBreaker {
       failureThreshold?: number;
       windowMs?: number;
       cooldownMs?: number;
+      probeTimeoutMs?: number;
     },
   ) {
     this.name = name;
     this.failureThreshold = options?.failureThreshold ?? CB_FAILURE_THRESHOLD;
     this.windowMs = options?.windowMs ?? CB_WINDOW_MS;
     this.cooldownMs = options?.cooldownMs ?? CB_COOLDOWN_MS;
+    this.probeTimeoutMs = options?.probeTimeoutMs ?? CB_PROBE_TIMEOUT_MS;
   }
 
   /** Check if a request should be allowed through. */
   allowRequest(): boolean {
-    if (this.state === "CLOSED") return true;
+    return this.admit() !== null;
+  }
+
+  /**
+   * allowRequest() for callers that may release a probe: null when refused,
+   * else a probe token — 0 when admitted CLOSED (holds no probe), >0 when
+   * this caller holds the HALF_OPEN probe. Pass it to releaseProbe().
+   */
+  admit(): number | null {
+    if (this.state === "CLOSED") return 0;
 
     if (this.state === "OPEN") {
       // Check if cooldown has elapsed → transition to HALF_OPEN
       if (Date.now() - this.lastStateChange >= this.cooldownMs) {
         this.transition("HALF_OPEN");
-        return true; // allow one probe
+        return ++this.probe; // allow one probe
       }
-      return false;
+      return null;
     }
 
-    // HALF_OPEN: already allowed one probe, block further until resolved
-    return false;
+    // HALF_OPEN: already allowed one probe, block further until resolved —
+    // unless that probe never reported (backstop: grant a new one).
+    if (Date.now() - this.lastStateChange >= this.probeTimeoutMs) {
+      console.log(
+        `[circuit-breaker] ${this.name}: HALF_OPEN probe expired unreported → new probe`,
+      );
+      this.lastStateChange = Date.now();
+      return ++this.probe;
+    }
+    return null;
+  }
+
+  /**
+   * Give back a HALF_OPEN probe without judging the provider (the caller
+   * aborted on its own, or failed locally before the outcome was known).
+   * Returns to OPEN with the cooldown already spent, so the next
+   * allowRequest() grants a probe at once. No-op unless `probe` is the
+   * token admit() gave the current probe holder (so never in CLOSED/OPEN).
+   */
+  releaseProbe(probe: number): void {
+    if (this.state !== "HALF_OPEN" || probe === 0 || probe !== this.probe)
+      return;
+    this.transition("OPEN", " (probe released unjudged)");
+    this.lastStateChange = Date.now() - this.cooldownMs;
   }
 
   /** Record a successful call. Resets the breaker if in HALF_OPEN. */
@@ -100,8 +136,10 @@ export class CircuitBreaker {
     };
   }
 
-  private transition(newState: CircuitState): void {
-    console.log(`[circuit-breaker] ${this.name}: ${this.state} → ${newState}`);
+  private transition(newState: CircuitState, note = ""): void {
+    console.log(
+      `[circuit-breaker] ${this.name}: ${this.state} → ${newState}${note}`,
+    );
     this.state = newState;
     this.lastStateChange = Date.now();
     if (newState === "OPEN") {

@@ -14,7 +14,11 @@ import {
 } from "../observability/prometheus.js";
 import { toolRegistry } from "../tools/registry.js";
 import { executeGatedCapability } from "../lib/v8-3/trigger.js";
-import { SYSTEM_PROMPT_TOKEN_BUDGET } from "../config/constants.js";
+import {
+  SYSTEM_PROMPT_TOKEN_BUDGET,
+  INBOUND_STAGE_DEADLINE_MS,
+} from "../config/constants.js";
+import { withTimeout } from "../lib/with-timeout.js";
 import { getDatabase } from "../db/index.js";
 import {
   findRecentCheckpoint,
@@ -125,7 +129,10 @@ import {
   CONVERSATIONAL_PATTERN,
   applyCommunityChannelScopeOverride,
 } from "./scope.js";
-import { classifyScopeGroups } from "./scope-classifier.js";
+import {
+  classifyScopeGroups,
+  SCOPE_CLASSIFIER_TIMEOUT_MS,
+} from "./scope-classifier.js";
 import { normalizeForMatching, wasNormalized } from "./normalize.js";
 import {
   gateCommunityReply,
@@ -532,6 +539,52 @@ export function decideActiveGroups(
     source: semanticEmpty ? "regex_empty" : "regex",
     base: new Set(fallback),
   };
+}
+
+// Never below the classifier's own budget: Jev's 1500 ms leg runs before Sonnet's, +2000 covers it.
+const INBOUND_STAGE_EFFECTIVE_DEADLINE_MS = Math.max(
+  INBOUND_STAGE_DEADLINE_MS,
+  SCOPE_CLASSIFIER_TIMEOUT_MS + 2_000,
+);
+
+/**
+ * Await one pre-task inbound stage under INBOUND_STAGE_EFFECTIVE_DEADLINE_MS;
+ * past it warn naming the stage and continue with `fallback`. A rejection is a
+ * bug (the stages are documented never to throw): logged loud with its stack,
+ * then the same fallback so the task is still created.
+ * 2026-10-04: an unsettled stage left a turn at "⏳" with no task and no log.
+ * withTimeout's race keeps a handler on the late promise — no unhandled
+ * rejection after the deadline wins.
+ */
+async function boundedInboundStage<T>(
+  label: string,
+  stage: Promise<T>,
+  fallback: T,
+): Promise<T> {
+  const started = Date.now();
+  let stageRejected = false;
+  try {
+    return await withTimeout(
+      stage.catch((err: unknown) => {
+        stageRejected = true;
+        throw err;
+      }),
+      INBOUND_STAGE_EFFECTIVE_DEADLINE_MS,
+      label,
+    );
+  } catch (err) {
+    if (stageRejected) {
+      console.error(
+        `[router] ${label} stage threw (documented never to throw) → continuing without it:`,
+        err,
+      );
+    } else {
+      console.warn(
+        `[router] ${label} still pending/failed after ${Date.now() - started} ms → continuing without it: ${errMsg(err)}`,
+      );
+    }
+    return fallback;
+  }
 }
 
 function scopeToolsForMessage(
@@ -1754,7 +1807,16 @@ export class MessageRouter {
         }
 
         const { tools: scopedTools } = scopeToolsForMessage(taskText, []);
-        const enrichment = await enrichContext(taskText, msg.channel);
+        const enrichment = await boundedInboundStage(
+          "enrichment",
+          enrichContext(taskText, msg.channel),
+          {
+            contextBlock: "",
+            toolHints: [],
+            matchedSkillIds: [],
+            confidence: "low",
+          },
+        );
         const mxDate = nowMexDate();
         const mxTime = nowMexTime();
         const spChannel = this.channels.get(msg.channel);
@@ -2398,12 +2460,27 @@ export class MessageRouter {
     // call) are independent — neither consumes the other's output. Awaiting
     // them sequentially added the classifier's full latency (up to its
     // timeout) on top of enrichment on EVERY non-fast-path message.
+    // Each is bounded (INBOUND_STAGE_DEADLINE_MS) so a hang cannot block task
+    // creation: null = the regex fallback, as on a classifier failure.
     const [enrichment, semanticGroups] = await Promise.all([
-      enrichContext(msg.text, msg.channel),
-      classifyScopeGroups(
-        normalizedText,
-        recentContext || undefined,
-        recentTurns.map((t) => t.content),
+      boundedInboundStage(
+        "enrichment",
+        enrichContext(msg.text, msg.channel),
+        {
+          contextBlock: "",
+          toolHints: [],
+          matchedSkillIds: [],
+          confidence: "low",
+        },
+      ),
+      boundedInboundStage(
+        "scope classifier",
+        classifyScopeGroups(
+          normalizedText,
+          recentContext || undefined,
+          recentTurns.map((t) => t.content),
+        ),
+        null,
       ),
     ]);
 

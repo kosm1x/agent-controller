@@ -11,6 +11,9 @@ const cfg = vi.hoisted(() => ({
   inferencePrimaryUrl: "http://127.0.0.1:9/v1",
   inferencePrimaryKey: "test",
   inferencePrimaryModel: "test-model",
+  inferenceFallbackUrl: "",
+  inferenceFallbackKey: "",
+  inferenceFallbackModel: "",
   inferenceTimeoutMs: 5000,
   inferenceMaxTokens: 256,
   inferenceMaxRetries: 1,
@@ -41,6 +44,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   cfg.inferencePrimaryModel = "test-model";
+  cfg.inferenceFallbackUrl = "";
+  cfg.inferenceFallbackModel = "";
 });
 
 async function failWith(status: number, body: string, headers = {}) {
@@ -90,5 +95,31 @@ describe("inferViaOpenAi — HTTP error body excerpt", () => {
     expect(lines).toContainEqual(
       expect.stringMatching(/backoff 1000ms before retry \(source=retry-after\)/),
     );
+  });
+});
+
+describe("inferViaOpenAi — circuit-breaker probe", () => {
+  it("a tool-paralysis skip after the HALF_OPEN probe was granted hands the probe back", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    cfg.inferencePrimaryModel = "kimi-test";
+    cfg.inferenceFallbackUrl = "http://127.0.0.1:9/v1";
+    cfg.inferenceFallbackModel = "test-model";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("bad", { status: 400 })),
+    );
+    const primary = circuitRegistry.get("primary", {
+      failureThreshold: 1,
+      cooldownMs: 0,
+    });
+    primary.recordFailure();
+    const tools = Array.from({ length: 16 }, (_, i) => ({
+      type: "function" as const,
+      function: { name: `t${i}`, description: "d", parameters: {} },
+    }));
+    await expect(inferViaOpenAi({ ...request, tools })).rejects.toThrow();
+    // Skipped without a call: neither success nor failure was recorded.
+    expect(primary.getStatus().state).toBe("OPEN");
+    expect(primary.allowRequest()).toBe(true);
   });
 });

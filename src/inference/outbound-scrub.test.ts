@@ -593,6 +593,36 @@ describe("failure policy and performance", () => {
     for (const st of statuses) expect(st.failures).toBe(0);
   });
 
+  // A scrub throw while holding the single HALF_OPEN probe must hand it back,
+  // or the breaker stays HALF_OPEN with no probe in flight.
+  it("a scrub throw holding the HALF_OPEN probe releases it — at both choke points", async () => {
+    const sdkBreaker = circuitRegistry.get("claude-sdk", {
+      failureThreshold: 1,
+      cooldownMs: 0,
+    });
+    sdkBreaker.recordFailure();
+    db.close();
+    resetSecretRefsForTest();
+    await expect(
+      queryClaudeSdk({ prompt: `c ${STORED}`, systemPrompt: "s", toolNames: [] }),
+    ).rejects.toThrow(SecretScrubUnavailableError);
+    expect(sdkBreaker.getStatus().state).toBe("OPEN");
+    expect(sdkBreaker.allowRequest()).toBe(true);
+
+    cfg.inferencePrimaryProvider = "openai";
+    vi.stubGlobal("fetch", vi.fn());
+    const oaiBreaker = circuitRegistry.get("primary", {
+      failureThreshold: 1,
+      cooldownMs: 0,
+    });
+    oaiBreaker.recordFailure();
+    await expect(
+      infer({ messages: [{ role: "user", content: `x ${STORED}` }] }),
+    ).rejects.toBeInstanceOf(SecretScrubUnavailableError);
+    expect(oaiBreaker.getStatus().state).toBe("OPEN");
+    expect(oaiBreaker.allowRequest()).toBe(true);
+  });
+
   // Combined audit 2026-10-03 (should-fix 2): the not-sent decision is on
   // the run's trace timeline, at both choke points.
   it("a scrub failure at either choke point emits inference.scrub_unavailable on the run", async () => {

@@ -129,6 +129,12 @@ vi.mock("./scope-classifier.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./scope-classifier.js")>();
   return { ...actual, classifyScopeGroups: vi.fn(actual.classifyScopeGroups) };
 });
+// The real enrichment, wrapped so a test can make it hang (stage deadline).
+vi.mock("../intelligence/enrichment.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../intelligence/enrichment.js")>();
+  return { ...actual, enrichContext: vi.fn(actual.enrichContext) };
+});
 
 vi.mock("../memory/jme.js", () => ({
   writeEpisodic: (...args: unknown[]) => mockWriteEpisodic(...args),
@@ -359,6 +365,167 @@ describe("MessageRouter", () => {
         `assistant: ${reply.slice(0, 150)}\nuser: ${long.slice(0, 150)}`,
       );
       expect(wholeTurns).toEqual([reply, long]);
+    });
+
+    // Incident 2026-10-04: one of the two pre-task stages never settled, the
+    // turn sat at "⏳" with no task and no log. Each stage now has its own
+    // INBOUND_STAGE_DEADLINE_MS (15 s default) backstop.
+    describe("pre-task stage deadline", () => {
+      const turn = (text: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text,
+        timestamp: new Date(),
+      });
+      const enriched = (skillId: string) => ({
+        contextBlock: "\n\n## synthetic context",
+        toolHints: [],
+        matchedSkillIds: [skillId],
+        confidence: "high" as const,
+      });
+      const stageWarns = (spy: { mock: { calls: unknown[][] } }) =>
+        spy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.startsWith("[router] ") && l.includes("pending/failed"));
+      const logLines = (spy: { mock: { calls: unknown[][] } }) =>
+        spy.mock.calls.map((c) => String(c[0]));
+      // These turns land in the "whatsapp" thread; later tests regex-scope it.
+      afterEach(() => _testSeedThread("whatsapp", []));
+
+      it("classifier never settles → task still submitted on the regex fallback; warning names the classifier", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        const { enrichContext } = await import("../intelligence/enrichment.js");
+        // Rejects long after the deadline: must not surface as unhandled.
+        vi.mocked(classifyScopeGroups).mockReturnValueOnce(
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("late")), 60_000),
+          ),
+        );
+        vi.mocked(enrichContext).mockResolvedValueOnce(enriched("sk-a"));
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const done = router.handleInbound(turn("revisa mi correo de gmail"));
+          await vi.advanceTimersByTimeAsync(14_999);
+          expect(submitTask).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          await done;
+          expect(submitTask).toHaveBeenCalledTimes(1);
+          const sub = vi.mocked(submitTask).mock.calls[0][0];
+          expect(sub.tags).toContain("skill:sk-a"); // enrichment kept
+          const warns = stageWarns(warnSpy);
+          expect(warns).toHaveLength(1);
+          expect(warns[0]).toContain("scope classifier");
+          expect(warns[0]).toContain("15000 ms");
+          const lines = logLines(logSpy);
+          expect(lines.some((l) => l.includes("Scope groups (regex fallback)"))).toBe(true);
+          expect(lines.some((l) => l.includes("Scope groups (semantic)"))).toBe(false);
+          await vi.advanceTimersByTimeAsync(60_000); // the late rejection fires
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      });
+
+      it("enrichment never settles → task still submitted with empty enrichment; warning names enrichment", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        const { enrichContext } = await import("../intelligence/enrichment.js");
+        vi.mocked(enrichContext).mockReturnValueOnce(new Promise(() => {}));
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const done = router.handleInbound(turn("revisa mi correo de gmail"));
+          await vi.advanceTimersByTimeAsync(15_000);
+          await done;
+          expect(submitTask).toHaveBeenCalledTimes(1);
+          const sub = vi.mocked(submitTask).mock.calls[0][0];
+          expect(sub.tags).toEqual(["messaging", "whatsapp"]); // no skill tags
+          const warns = stageWarns(warnSpy);
+          expect(warns).toHaveLength(1);
+          expect(warns[0]).toContain("enrichment");
+          expect(warns[0]).toContain("15000 ms");
+          expect(
+            logLines(logSpy).some((l) => l.includes("Scope groups (semantic): finance")),
+          ).toBe(true);
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      });
+
+      it("both settle normally → unchanged behaviour, no stage warning", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        const { enrichContext } = await import("../intelligence/enrichment.js");
+        vi.mocked(enrichContext).mockResolvedValueOnce(enriched("sk-b"));
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          await router.handleInbound(turn("revisa mi correo de gmail"));
+          expect(submitTask).toHaveBeenCalledTimes(1);
+          const sub = vi.mocked(submitTask).mock.calls[0][0];
+          expect(sub.tags).toContain("skill:sk-b");
+          expect(stageWarns(warnSpy)).toEqual([]);
+          expect(
+            logLines(logSpy).some((l) => l.includes("Scope groups (semantic): finance")),
+          ).toBe(true);
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      });
+
+      it("classifier rejects → logged via console.error with the error (not the timeout warn); task still submitted", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        const { enrichContext } = await import("../intelligence/enrichment.js");
+        const bug = new Error("synthetic classifier bug");
+        vi.mocked(classifyScopeGroups).mockRejectedValueOnce(bug);
+        vi.mocked(enrichContext).mockResolvedValueOnce(enriched("sk-c"));
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          await router.handleInbound(turn("revisa mi correo de gmail"));
+          expect(submitTask).toHaveBeenCalledTimes(1);
+          expect(vi.mocked(submitTask).mock.calls[0][0].tags).toContain("skill:sk-c");
+          const errs = errSpy.mock.calls.filter((c) =>
+            String(c[0]).startsWith("[router] scope classifier stage threw"),
+          );
+          expect(errs).toHaveLength(1);
+          expect(errs[0][1]).toBe(bug); // the object, so the stack is printed
+          expect(stageWarns(warnSpy)).toEqual([]);
+          expect(
+            logLines(logSpy).some((l) => l.includes("Scope groups (regex fallback)")),
+          ).toBe(true);
+        } finally {
+          warnSpy.mockRestore();
+          errSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      });
+
+      it("background-agent spawn: enrichment never settles → the agent is still submitted", async () => {
+        const { enrichContext } = await import("../intelligence/enrichment.js");
+        vi.mocked(enrichContext).mockReturnValueOnce(new Promise(() => {}));
+        dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const done = router.handleInbound(
+            turn("lanza un agente e investiga el tráfico del sitio"),
+          );
+          await vi.advanceTimersByTimeAsync(15_000);
+          await done;
+          const sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+          expect(sub.spawnType).toBe("user-background");
+          const warns = stageWarns(warnSpy);
+          expect(warns).toHaveLength(1);
+          expect(warns[0]).toContain("enrichment");
+        } finally {
+          dbStatusGet.mockReturnValue(undefined);
+          warnSpy.mockRestore();
+        }
+      });
     });
 
     it("should call submitTask with correct shape", async () => {

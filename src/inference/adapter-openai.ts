@@ -728,7 +728,8 @@ export async function inferViaOpenAi(
 
     // Circuit breaker: hard rejection when breaker is OPEN
     const breaker = circuitRegistry.get(provider.name);
-    if (!breaker.allowRequest()) {
+    const probe = breaker.admit();
+    if (probe === null) {
       console.warn(
         `[inference] Circuit breaker OPEN for ${provider.name}, skipping`,
       );
@@ -761,6 +762,7 @@ export async function inferViaOpenAi(
       console.warn(
         `[inference] Skipping ${provider.name}/${provider.model} — ${requestToolCount} tools exceeds cap (${FALLBACK_TOOL_CAP}) for paralysis-prone model`,
       );
+      breaker.releaseProbe(probe); // never called: hand back a HALF_OPEN probe
       continue;
     }
 
@@ -784,7 +786,10 @@ export async function inferViaOpenAi(
         // Ruling 3c, audit round 5: the outbound scrub could not run, so
         // nothing was sent. Not a provider failure — no breaker, no provider
         // metrics, no retry or failover (every provider needs the same scrub).
-        if (err instanceof SecretScrubUnavailableError) throw err;
+        if (err instanceof SecretScrubUnavailableError) {
+          breaker.releaseProbe(probe); // a HALF_OPEN probe goes back unjudged
+          throw err;
+        }
         lastError = err instanceof Error ? err : new Error(String(err));
         // HttpError carries status + rate-limit headers structurally; for any
         // other error we fall back to parsing the message string the way we

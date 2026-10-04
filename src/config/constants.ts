@@ -80,6 +80,10 @@ export const JARVIS_PULL_BUDGET_MS = int("JARVIS_PULL_BUDGET_MS", 105_000);
 /** Research tasks POST /api/jarvis-pull runs at once; a request over the cap
  * gets the single tool-less call. */
 export const JARVIS_PULL_MAX_INFLIGHT = int("JARVIS_PULL_MAX_INFLIGHT", 3);
+/** Backstop for each pre-task inbound stage (enrichment, scope classifier): an
+ * unsettled one blocked task creation silently on 2026-10-04.
+ * The router floors it at SCOPE_CLASSIFIER_TIMEOUT_MS + 2000 (0/tiny = harmless). */
+export const INBOUND_STAGE_DEADLINE_MS = int("INBOUND_STAGE_DEADLINE_MS", 15_000);
 /** `/loop` (operator-instructed, 2026-08-27): no turn cap. Deliberately NOT an
  * env knob — the cap is lifted only for the task the operator prefixed with
  * `/loop`; every other task keeps the three caps above. The SDK needs a number,
@@ -116,6 +120,9 @@ export const CB_FAILURE_THRESHOLD = int("CB_FAILURE_THRESHOLD", 5);
 export const CB_WINDOW_MS = int("CB_WINDOW_MS", 60_000);
 /** Cooldown before HALF_OPEN probe (ms). */
 export const CB_COOLDOWN_MS = int("CB_COOLDOWN_MS", 30_000);
+/** A HALF_OPEN probe that never reports expires after this (ms); the next
+ *  caller gets a new probe. Exceeds the 15-min claude-sdk hard timeout. */
+export const CB_PROBE_TIMEOUT_MS = int("CB_PROBE_TIMEOUT_MS", 20 * 60_000);
 
 // --- Doom-loop detection ---
 /** Repeated text chunk hashes to trigger content-chanting alarm. */

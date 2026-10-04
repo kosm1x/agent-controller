@@ -11,6 +11,8 @@ const lastQueryArgs: { value: { prompt: unknown; options: unknown } | null } = {
 // (line ~620) — natural-exit and thrown-abort are different code paths.
 // Added 2026-05-23 (qa-audit W1 fold) so #225's catch-branch coverage is real.
 const mockThrowAfterYield: { value: Error | null } = { value: null };
+// Opt-in: query() itself throws synchronously (e.g. native CLI binary missing).
+const mockQueryThrows: { value: Error | null } = { value: null };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: (
@@ -28,6 +30,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   }),
   createSdkMcpServer: (config: unknown) => ({ type: "mcp", config }),
   query: (args: { prompt: unknown; options: unknown }) => {
+    if (mockQueryThrows.value) throw mockQueryThrows.value;
     lastQueryArgs.value = args;
     const messages = mockMessages.value;
     const throwAfter = mockThrowAfterYield.value;
@@ -108,6 +111,7 @@ beforeEach(() => {
   mockMessages.value = [];
   lastQueryArgs.value = null;
   mockThrowAfterYield.value = null;
+  mockQueryThrows.value = null;
   recordCostMock.mockReset();
   emitTraceMock.mockReset();
   remainingBudgetMock.mockReset().mockReturnValue(10);
@@ -1328,6 +1332,181 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
     expect(opusBreaker.allowRequest()).toBe(true);
 
     circuitRegistry.reset();
+  });
+
+  const opusFailure = (): MockMessage[] => [
+    { type: "result", subtype: "error_during_execution", errors: ["x"] },
+  ];
+  const opusOk = (): MockMessage[] => [
+    {
+      type: "result",
+      subtype: "success",
+      result: "ok",
+      num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  ];
+
+  it("a caller abort holding the HALF_OPEN Opus probe hands it back: the next Opus call is allowed", async () => {
+    // Queue scenario: the grader's own budget abort took the single
+    // HALF_OPEN probe and recorded nothing → every Opus caller refused until
+    // restart.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    const { CB_FAILURE_THRESHOLD, CB_COOLDOWN_MS } =
+      await import("../config/constants.js");
+    circuitRegistry.reset();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+        mockMessages.value = opusFailure();
+        await queryClaudeSdk({
+          prompt: "p",
+          systemPrompt: "s",
+          toolNames: [],
+          model: OPUS_MODEL_ID,
+        });
+      }
+      const opus = circuitRegistry.get("claude-sdk-opus");
+      expect(opus.getStatus().state).toBe("OPEN");
+      vi.setSystemTime(Date.now() + CB_COOLDOWN_MS);
+
+      // The grader call takes the probe; its abort signal fires.
+      mockMessages.value = opusFailure();
+      const ac = new AbortController();
+      ac.abort();
+      await queryClaudeSdk({
+        prompt: "grade",
+        systemPrompt: "s",
+        toolNames: [],
+        model: OPUS_MODEL_ID,
+        abortSignal: ac.signal,
+        skipBreakerOnCallerAbort: true,
+      });
+
+      mockMessages.value = opusOk();
+      lastQueryArgs.value = null;
+      const next = await queryClaudeSdk({
+        prompt: "next",
+        systemPrompt: "s",
+        toolNames: [],
+        model: OPUS_MODEL_ID,
+      });
+      expect(next.text).toBe("ok");
+      expect(lastQueryArgs.value).not.toBeNull();
+      expect(opus.getStatus().state).toBe("CLOSED");
+    } finally {
+      vi.useRealTimers();
+      circuitRegistry.reset();
+    }
+  });
+
+  it("a caller abort while CLOSED adds no failure", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    mockMessages.value = opusFailure();
+    const ac = new AbortController();
+    ac.abort();
+    await queryClaudeSdk({
+      prompt: "grade",
+      systemPrompt: "s",
+      toolNames: [],
+      model: OPUS_MODEL_ID,
+      abortSignal: ac.signal,
+      skipBreakerOnCallerAbort: true,
+    });
+    const st = circuitRegistry.get("claude-sdk-opus").getStatus();
+    expect(st.state).toBe("CLOSED");
+    expect(st.failures).toBe(0);
+    circuitRegistry.reset();
+  });
+
+  // Path (b): a local throw after the probe was granted, before the outcome
+  // record, must hand the probe back (it says nothing about the provider).
+  it.each([
+    [
+      "the Stop-hook factory (DB read)",
+      () => {
+        stopHookFactory.impl = () => {
+          throw new Error("local: db busy");
+        };
+      },
+    ],
+    [
+      "query() itself",
+      () => {
+        mockQueryThrows.value = new Error("local: native binary missing");
+      },
+    ],
+  ])(
+    "a throw from %s while holding the HALF_OPEN probe releases it",
+    async (_label, arm) => {
+      const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+      circuitRegistry.reset();
+      const opus = circuitRegistry.get("claude-sdk-opus", {
+        failureThreshold: 1,
+        cooldownMs: 0,
+      });
+      opus.recordFailure();
+      expect(opus.getStatus().state).toBe("OPEN");
+      try {
+        arm();
+        await expect(
+          queryClaudeSdk({
+            prompt: "p",
+            systemPrompt: "s",
+            toolNames: [],
+            model: OPUS_MODEL_ID,
+            trace: { taskId: "task-b" },
+          }),
+        ).rejects.toThrow(/^local: /);
+        stopHookFactory.impl = () => null;
+        mockQueryThrows.value = null;
+
+        mockMessages.value = opusOk();
+        const next = await queryClaudeSdk({
+          prompt: "next",
+          systemPrompt: "s",
+          toolNames: [],
+          model: OPUS_MODEL_ID,
+        });
+        expect(next.text).toBe("ok");
+        expect(opus.getStatus().state).toBe("CLOSED");
+      } finally {
+        stopHookFactory.impl = () => null;
+        circuitRegistry.reset();
+      }
+    },
+  );
+
+  it("an inline-tool name collision (buildMcpServer throw) while holding the HALF_OPEN probe releases it", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const opus = circuitRegistry.get("claude-sdk-opus", {
+      failureThreshold: 1,
+      cooldownMs: 0,
+    });
+    opus.recordFailure();
+    const inline = {
+      name: "dup",
+      description: "d",
+      inputSchema: {},
+      handler: async () => ({ content: [] }),
+    };
+    try {
+      await expect(
+        queryClaudeSdk({
+          prompt: "p",
+          systemPrompt: "s",
+          toolNames: ["dup"],
+          extraTools: [inline as never],
+          model: OPUS_MODEL_ID,
+        }),
+      ).rejects.toThrow(/collides/);
+      expect(opus.getStatus().state).toBe("OPEN");
+      expect(opus.allowRequest()).toBe(true); // probe available again
+    } finally {
+      circuitRegistry.reset();
+    }
   });
 });
 

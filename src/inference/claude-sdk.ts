@@ -780,7 +780,8 @@ export async function queryClaudeSdk(opts: {
   /**
    * When true and the caller's `abortSignal` fired, a non-success outcome is
    * NOT recorded on the circuit breaker: the caller cut the call short on its
-   * own budget, which says nothing about provider health (V9 W1 grader).
+   * own budget, which says nothing about provider health (V9 W1 grader). A
+   * HALF_OPEN probe the call held is released unjudged (next caller probes).
    */
   skipBreakerOnCallerAbort?: boolean;
   /** Optional vision payloads. When present, the SDK receives a streaming
@@ -901,14 +902,28 @@ export async function queryClaudeSdk(opts: {
   else if (effectiveModel.startsWith("claude-opus-"))
     breakerKey = "claude-sdk-opus";
   const breaker = circuitRegistry.get(breakerKey);
-  if (!breaker.allowRequest()) {
+  const probe = breaker.admit();
+  if (probe === null) {
     throw new Error(
       `[${breakerKey}] Circuit breaker OPEN — refusing call until cooldown elapses`,
     );
   }
+  // A throw between here and the outcome record below is a local fault, not
+  // a provider failure: hand back a HALF_OPEN probe (no-op otherwise), or the
+  // breaker stays HALF_OPEN with nothing in flight and refuses every caller.
+  const releaseProbeOnThrow = <T>(fn: () => T): T => {
+    try {
+      return fn();
+    } catch (err) {
+      breaker.releaseProbe(probe);
+      throw err;
+    }
+  };
 
   const extraTools = opts.extraTools ?? [];
-  const mcpServer = buildMcpServer(opts.toolNames, extraTools);
+  const mcpServer = releaseProbeOnThrow(() =>
+    buildMcpServer(opts.toolNames, extraTools),
+  );
 
   const allowedTools = [
     ...opts.toolNames.map((n) => `mcp__jarvis__${n}`),
@@ -944,6 +959,7 @@ export async function queryClaudeSdk(opts: {
       scrubOutboundText(opts.systemPrompt),
     );
   } catch (err) {
+    breaker.releaseProbe(probe);
     // Not sent — a decision point on the run's timeline (combined audit SF2).
     if (err instanceof SecretScrubUnavailableError) {
       traceScrubUnavailable("claude_sdk");
@@ -1003,7 +1019,7 @@ export async function queryClaudeSdk(opts: {
   // (TASK_GATES_STOP_HOOK unset / mode off / task has no ledger / no task id)
   // so the options object below is byte-for-byte today's shape.
   const rawGatesStopHook = opts.trace?.taskId
-    ? makeGatesStopHook(opts.trace.taskId)
+    ? releaseProbeOnThrow(() => makeGatesStopHook(opts.trace!.taskId))
     : null;
   // The block reason quotes gate evidence (command output) back to the model.
   const gatesStopHook = rawGatesStopHook
@@ -1151,7 +1167,7 @@ export async function queryClaudeSdk(opts: {
   // no SDK-side duration; the delta between consecutive assistant messages
   // (first one: since queryStart) is the turn's observable latency.
   let lastTurnEndedAt = queryStart;
-  const q = query({ prompt: sdkPrompt, options });
+  const q = releaseProbeOnThrow(() => query({ prompt: sdkPrompt, options }));
 
   try {
     for await (const message of q) {
@@ -1511,6 +1527,8 @@ export async function queryClaudeSdk(opts: {
     breaker.recordSuccess();
   } else if (opts.skipBreakerOnCallerAbort && opts.abortSignal?.aborted) {
     // Caller's own budget abort — not a provider failure (see option doc).
+    // Still hand back a HALF_OPEN probe it held, or the breaker freezes.
+    breaker.releaseProbe(probe);
   } else {
     breaker.recordFailure();
   }
