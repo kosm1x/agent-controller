@@ -1,6 +1,6 @@
 # Roadmap — one page
 
-> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-03 (S3).
+> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines). Detail lives in the linked docs, not here. Last updated 2026-10-04 (S4).
 
 **Destination: Beta 1.0** (`docs/V8-VISION.md` §8). Decided 2026-10-03: Beta means both (a) it works for Fede, with evidence, and (b) any other operator could adopt it. Fede is the first operator and super beta tester; his setup becomes the first operator profile, not a special case.
 
@@ -17,13 +17,13 @@
 
 ## Current stage
 
-V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **No V9 workstream (W1–W6) has code yet.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
+V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **W1 has dormant code (S4, #60); W2–W6 have none.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
 
 ## Active bets
 
 | Bet | Gate | Next step | Session |
 | --- | --- | --- | --- |
-| W1 verify gate | **Approved 2026-10-03: option B**, capable-tier grader as one more V8.4 ledger gate; shadow FP ≤10% on ≥30 labelled runs | S4: build Phases 0–4 of `docs/planning/v9-w1-decision-2026-10.md` §5, dormant behind `TASK_GATES_GRADER` | S4 |
+| W1 verify gate | **Built dormant in S4 ([#60](https://github.com/kosm1x/agent-controller/pull/60))**: ledger grader gate behind `TASK_GATES_GRADER` (off); shadow FP ≤10% on ≥30 labelled runs | Fede: merge + deploy, `eval:gate -- --run`, then arm `shadow` and label via `mc-ctl gates graded` (decision note §6) | S4 → Phase 5 (operator) |
 | W3 internal eval, reshaped | Uses existing gate/outcome/eval data; gate-definition changes logged with old-definition number | Inventory real row counts, paired comparisons vs explicit-direction baseline | S5 |
 | Landscape review | Every item has a primary source and a verdict (build / adopt / borrow / ignore) | **Done in S2:** register `docs/LANDSCAPE.md`; inputs folded into S3, S5, W2 | S2 |
 | L1 Agent SDK 0.3.245 → 0.3.288 | `eval:gate -- --run` passes (VPS) | `verbatimPrompts`, snapshot check, telemetry caveat, MCP timeout | L1 (operator) |
@@ -49,6 +49,7 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 
 ## Blocked on Fede
 
+- W1: merge + deploy #60, run `eval:gate -- --run` (grader prompt), then arm `TASK_GATES_GRADER=shadow`. Also owed: weekly count of gradeable tasks.
 - L1: run the Agent SDK bump with `npm run eval:gate -- --run` on the VPS (cloud sessions cannot).
 - L3: after the VPS A2A-usage check, rule shim-to-1.0 or retire.
 
@@ -63,3 +64,4 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 | 2026-10-03 | S2 landscape review #1 | [#55](https://github.com/kosm1x/agent-controller/pull/55) | 59 items across Agent SDK/platform, MCP, A2A, four frameworks and OTel each got a verdict with a primary source (`docs/planning/landscape-review-2026-10.md`); register `docs/LANDSCAPE.md`. MCP: spec 2026-07-28, our SDK 1.29.0 negotiates up to 2025-11-25 (so does 1.32.0). A2A: upstream 1.0.1, ours matches no released version. qa-auditor index trimmed (MEMORY.md 23.9 KB → 16.1 KB; verbatim pre-trim copy in `archived-index-2026-10-03.md`). | L1 SDK bump (VPS, eval:gate), L2 MCP fidelity (cloud), L5 Stop-hook deadline (cloud), L3 A2A ruling (VPS data); inputs to S3, S5, W2; L4 later |
 | 2026-10-03 | S1b cloud guards + flaky test | [#56](https://github.com/kosm1x/agent-controller/pull/56) | Gmail provider-rule test no longer needs live DNS or a public FQDN hostname (both reproduced the CI failure by mutation); repo copy of the mc-guard PreToolUse hook (deploy, DB writes/resets, service restarts; 163 cases); cloud-only pre-commit (typecheck + vitest related); PR template; mcp-servers.json no longer gitignored (tracked on purpose). | VPS mc-guard stays canonical there; diff it against `.claude/hooks/mc-guard.sh` on the VPS. |
 | 2026-10-03 | S3 W1 build-vs-adopt | [#58](https://github.com/kosm1x/agent-controller/pull/58) | Spec re-checked against `main`: the "done" decision moved to the dispatcher's `applyCompletionLedger`, Opus silently falls back to Sonnet, no sandbox exec helper, swarm not covered. Recommends option B (grader as a ledger gate, `TASK_GATES_GRADER` off/shadow/enforce); A conflicts with "no second done decision"; C ruled out by D4. Shadow plan with FP ≤10%. | Fede approved B 17:39 UTC (defaults: same-model OK, demote-only). S4 next. Owed (VPS): weekly count of gradeable tasks. |
+| 2026-10-04 | S4 W1 grader gate (dormant) | [#60](https://github.com/kosm1x/agent-controller/pull/60) | Phases 0–4 of the W1 decision note: fresh-context Opus grader (no fallback; malformed ⇒ pending), harness-only `GR-` rows, shadow fire-and-forget (trace + cost, cap 4), enforce demotes through the existing ledger, `mc-ctl gates graded`. Flag off byte-identical. Critic SQL whitelist now resolved via EXPLAIN (quoted/commented table bypass closed). qa-auditor R1 7 warnings → R2 4 → R3 pass; scoped 997 tests, related 8004. | Operator: deploy, `eval:gate` before arming, arm shadow, label ≥30 runs. Phase 6 replan only if shadow justifies it. |
