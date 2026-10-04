@@ -2,7 +2,10 @@
  * Excelente→flywheel auto-bridge — V8.5 Phase 4.7 (extends 4.3).
  *
  * "excelente" is the operator's SINGLE eval word (contract in
- * src/intelligence/feedback.ts). When it lands inside a feedback window, the
+ * src/intelligence/feedback.ts). When it lands inside a feedback window — or,
+ * with no window open, right after the operator's chat last showed a task
+ * reply (router `lastTaskReply` marker, confirmed by the thread's latest
+ * outcome row) — the
  * praised task's scope_telemetry becomes a pinned flywheel eval case
  * automatically — the same pin `scripts/add-eval-case.ts --from-task` does by
  * hand. Negative-feedback mining already exists in the case-miner; this

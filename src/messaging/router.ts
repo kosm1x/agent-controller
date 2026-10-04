@@ -145,6 +145,7 @@ import {
   linkFeedbackToScope,
 } from "../intelligence/scope-telemetry.js";
 import { bridgePraisedTaskToEvalCase } from "../tuning/flywheel-bridge.js";
+import { findLatestOutcomeTaskForThread } from "../db/task-outcomes.js";
 import { autoPersistConversation } from "../memory/auto-persist.js";
 import { getOutcomeTag } from "../memory/outcome-tag.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -1493,6 +1494,18 @@ export class MessageRouter {
   private pendingReplies = new Map<string, PendingReply>();
   /** R1 continuation context per thread key, beside the pending confirmation. */
   private confirmationResumes = new Map<string, ConfirmationResume>();
+  /**
+   * Per recipient (channel + to): the chat task whose reply is the LAST thing
+   * the router showed there. Every other send to that recipient — and every
+   * broadcast on its channel — deletes it. An "excelente" outside the feedback
+   * window rates only this task. In memory on purpose: after a restart a
+   * pre-restart reply is not rated (honest ack) — a dropped rating can be
+   * added by hand, a wrongly pinned eval case cannot be taken back.
+   */
+  private lastTaskReply = new Map<
+    string,
+    { channel: ChannelName; taskId: string; tk: string }
+  >();
   private subscriptions: Array<{ unsubscribe: () => void }> = [];
   private ritualWatches = new Map<string, string>(); // taskId → ritualId
   private lastMessageTime = 0;
@@ -2246,46 +2259,94 @@ export class MessageRouter {
   }
 
   /**
+   * A send to one recipient: it is now the last thing shown there, so its
+   * task-reply marker goes — unless the send IS that task's reply (a late
+   * fallback resend of the same reply keeps its own marker).
+   */
+  private noteSend(channel: ChannelName, to: string, ownTaskId?: string): void {
+    const key = `${channel}\u0000${to}`;
+    if (ownTaskId && this.lastTaskReply.get(key)?.taskId === ownTaskId) return;
+    this.lastTaskReply.delete(key);
+  }
+
+  /** A broadcast addresses the owner, whose address may be spelled differently — clear the whole channel. */
+  private noteBroadcast(channel: ChannelName): void {
+    for (const [key, m] of this.lastTaskReply) {
+      if (m.channel === channel) this.lastTaskReply.delete(key);
+    }
+  }
+
+  /** Set AFTER the reply's own send (which cleared any older marker). */
+  private markTaskReply(pending: PendingReply, taskId: string): void {
+    const key = `${pending.channel}\u0000${pending.to}`;
+    this.lastTaskReply.delete(key);
+    this.lastTaskReply.set(key, {
+      channel: pending.channel,
+      taskId,
+      tk: pending.tk,
+    });
+    if (this.lastTaskReply.size > 256) {
+      const oldest = this.lastTaskReply.keys().next().value;
+      if (oldest !== undefined) this.lastTaskReply.delete(oldest);
+    }
+  }
+
+  /**
+   * Record an explicit feedback signal on a task: task_outcomes + scope
+   * telemetry, and for a positive ("excelente") the flywheel eval-case pin.
+   */
+  private applyExplicitFeedback(taskId: string, signal: string): void {
+    recordTaskFeedback(taskId, signal);
+    try {
+      linkFeedbackToScope(taskId, signal);
+    } catch {
+      /* non-fatal */
+    }
+    // V8.5 4.7: an explicit positive here is "excelente" — the operator's
+    // sole eval word — so the praised task's telemetry auto-pins as a
+    // flywheel eval case (same pin add-eval-case.ts --from-task does by
+    // hand). Best-effort: a bridge failure must never affect the reply.
+    if (signal === "positive") {
+      try {
+        const bridge = bridgePraisedTaskToEvalCase(taskId);
+        console.log(
+          bridge.created
+            ? `[router] flywheel auto-bridge: pinned ${bridge.caseId}`
+            : `[router] flywheel auto-bridge: skipped (${bridge.reason}) for task ${taskId}`,
+        );
+      } catch (err) {
+        console.error(
+          `[router] flywheel auto-bridge failed for task ${taskId}:`,
+          err,
+        );
+      }
+    }
+  }
+
+  /**
    * checkFeedbackWindow block — records explicit feedback signals. Side-effect
    * only (always falls through). Returns the destructively-consumed
-   * feedbackTaskId for submitInboundTask's implicit-feedback block.
+   * feedbackTaskId for submitInboundTask's implicit-feedback block, and
+   * `praiseAttributed` (an "excelente" was recorded on some task) for the
+   * pure-feedback ack. With no open window, an operator's "excelente" rates
+   * the task whose reply was the last thing shown in its chat (lastTaskReply)
+   * when that is also the latest outcome on its thread — that id is NOT returned
+   * as feedbackTaskId, so the implicit block can never overwrite it.
    */
   private recordFeedbackWindowSignal(
     msg: IncomingMessage,
     tk: string,
-  ): string | null {
+  ): { feedbackTaskId: string | null; praiseAttributed: boolean } {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
+    let praiseAttributed = false;
     if (feedbackTaskId) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
       // Jev shadow (dormant unless armed): log-only, never awaited.
       shadowFeedback(feedbackTaskId, msg.text, previousMessages.get(tk), signal);
       if (signal !== "neutral") {
-        recordTaskFeedback(feedbackTaskId, signal);
-        try {
-          linkFeedbackToScope(feedbackTaskId, signal);
-        } catch {
-          /* non-fatal */
-        }
-        // V8.5 4.7: an explicit positive here is "excelente" — the operator's
-        // sole eval word — so the praised task's telemetry auto-pins as a
-        // flywheel eval case (same pin add-eval-case.ts --from-task does by
-        // hand). Best-effort: a bridge failure must never affect the reply.
-        if (signal === "positive") {
-          try {
-            const bridge = bridgePraisedTaskToEvalCase(feedbackTaskId);
-            console.log(
-              bridge.created
-                ? `[router] flywheel auto-bridge: pinned ${bridge.caseId}`
-                : `[router] flywheel auto-bridge: skipped (${bridge.reason}) for task ${feedbackTaskId}`,
-            );
-          } catch (err) {
-            console.error(
-              `[router] flywheel auto-bridge failed for task ${feedbackTaskId}:`,
-              err,
-            );
-          }
-        }
+        this.applyExplicitFeedback(feedbackTaskId, signal);
+        praiseAttributed = signal === "positive";
         // v6.4 H1: When user rephrases, extract what changed and persist
         // as a correction so the enrichment pipeline recalls it on future
         // similar messages. Builds a "when Fede says X, he means Y" dictionary.
@@ -2296,12 +2357,40 @@ export class MessageRouter {
           }
         }
       }
+    } else {
+      const threadId = this.operatorThreadKey(msg, tk);
+      const marker = this.lastTaskReply.get(`${msg.channel}\u0000${msg.from}`);
+      if (
+        threadId !== undefined &&
+        marker?.tk === threadId &&
+        detectFeedbackSignal(msg.text, previousMessages.get(tk)) === "positive"
+      ) {
+        // The marker says which reply was last shown; the lookup proves its
+        // outcome row exists, succeeded and is < 12 h old. Both must agree.
+        let praisedTaskId: string | null = null;
+        try {
+          praisedTaskId = findLatestOutcomeTaskForThread(threadId);
+        } catch (err) {
+          console.error("[router] excelente thread lookup failed:", err);
+        }
+        if (praisedTaskId && praisedTaskId === marker.taskId) {
+          console.log(
+            `[router] excelente attributed via thread lookup: task ${praisedTaskId}`,
+          );
+          this.applyExplicitFeedback(praisedTaskId, "positive");
+          praiseAttributed = true;
+        }
+      }
     }
-    return feedbackTaskId;
+    return { feedbackTaskId, praiseAttributed };
   }
 
   /** Pure feedback ("excelente", "gracias", "no") — ack without spawning a task. Returns true when intercepted (stop). */
-  private interceptPureFeedback(msg: IncomingMessage, tk: string): boolean {
+  private interceptPureFeedback(
+    msg: IncomingMessage,
+    tk: string,
+    praiseAttributed: boolean,
+  ): boolean {
     // Pure feedback ("excelente", "gracias", "perfecto", "no") → ack and skip task creation.
     // Runs UNCONDITIONALLY — even without a feedback window, these messages
     // should never spawn a 21K-token task. Record the signal so Jarvis knows.
@@ -2311,7 +2400,13 @@ export class MessageRouter {
       // when feedbackTaskId is available — no duplicate recording needed here.
       // Persist positive feedback to memory so Jarvis learns what works
       if (signal === "positive") {
-        this.sendToChannel(msg.channel, msg.from, "👍");
+        this.sendToChannel(
+          msg.channel,
+          msg.from,
+          praiseAttributed || this.operatorThreadKey(msg, tk) === undefined
+            ? "👍"
+            : "👍 (no encontré una respuesta reciente a la cual asignarlo)",
+        );
         getMemoryService()
           .retain(
             `User: ${msg.text}\nJarvis: [positive feedback acknowledged]`,
@@ -2416,7 +2511,9 @@ export class MessageRouter {
         | undefined;
       const bot = telegramAdapter?.getBot?.();
       if (bot) {
-        streamController = new TelegramStreamController(bot, msg.from);
+        streamController = new TelegramStreamController(bot, msg.from, () =>
+          this.noteSend(msg.channel, msg.from),
+        );
         await streamController.sendPlaceholder("⏳").catch(() => {});
       }
     }
@@ -2882,8 +2979,9 @@ export class MessageRouter {
     if (this.interceptRituales(msg, tk)) return;
     if (await this.interceptPendingConfirmation(msg, tk)) return;
     if (await this.interceptBriefingVerdict(msg, tk)) return;
-    const feedbackTaskId = this.recordFeedbackWindowSignal(msg, tk);
-    if (this.interceptPureFeedback(msg, tk)) return;
+    const { feedbackTaskId, praiseAttributed } =
+      this.recordFeedbackWindowSignal(msg, tk);
+    if (this.interceptPureFeedback(msg, tk, praiseAttributed)) return;
     if (await this.interceptConversationalFastPath(msg, tk)) return;
     await this.submitInboundTask(msg, tk, feedbackTaskId);
   }
@@ -2961,6 +3059,7 @@ export class MessageRouter {
       if (isEmailChannel(name)) continue;
       const to = this.getOwnerAddress(name);
       if (to) {
+        this.noteBroadcast(name);
         promises.push(
           adapter
             .send({ channel: name, to, text })
@@ -3024,6 +3123,7 @@ export class MessageRouter {
       if (!isOwnerChannel(name, adapter.mode)) continue;
       const to = this.getOwnerAddress(name);
       if (!to) continue;
+      this.noteBroadcast(name);
       promises.push(
         adapter
           .send({ channel: name, to, text })
@@ -3365,7 +3465,12 @@ export class MessageRouter {
         if (pending.streamController) {
           pending.streamController.finalize(resultText).catch((err) => {
             console.error("[router] Stream finalize failed:", err);
-            this.sendLLMReplyToChannel(pending.channel, pending.to, resultText);
+            this.sendLLMReplyToChannel(
+              pending.channel,
+              pending.to,
+              resultText,
+              taskId,
+            );
           });
         } else {
           this.sendLLMReplyToChannel(pending.channel, pending.to, resultText);
@@ -3591,6 +3696,7 @@ export class MessageRouter {
 
       // Track outcome for adaptive intelligence
       trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
+      this.markTaskReply(pending, taskId);
     } else {
       // COMPLETED chat task with empty text — the model answered with a bare
       // "STATUS: DONE" and no prose (7-token reply, 2026-07-11 "sirve"
@@ -3604,7 +3710,7 @@ export class MessageRouter {
       const fallback = "✓";
       if (pending.streamController) {
         pending.streamController.finalize(fallback).catch(() => {
-          this.sendToChannel(pending.channel, pending.to, fallback);
+          this.sendToChannel(pending.channel, pending.to, fallback, taskId);
         });
       } else {
         this.sendToChannel(pending.channel, pending.to, fallback);
@@ -3615,6 +3721,7 @@ export class MessageRouter {
         pending.imageUrl,
       );
       trackTaskOutcome(taskId, data.duration_ms, true, pending.channel);
+      this.markTaskReply(pending, taskId);
     }
   }
 
@@ -4461,9 +4568,15 @@ export class MessageRouter {
    * need the community-reply write-gate. LLM-generated replies MUST flow
    * through `sendLLMReplyToChannel` instead so the Phase 2b critic gate fires.
    */
-  private sendToChannel(channel: ChannelName, to: string, text: string): void {
+  private sendToChannel(
+    channel: ChannelName,
+    to: string,
+    text: string,
+    ownTaskId?: string,
+  ): void {
     const adapter = this.channels.get(channel);
     if (!adapter) return;
+    this.noteSend(channel, to, ownTaskId);
 
     // v6.3 W1.5: log AI writing patterns before delivery (detect-only, no modification)
     import("./post-filter.js")
@@ -4503,9 +4616,11 @@ export class MessageRouter {
     channel: ChannelName,
     to: string,
     rawText: string,
+    ownTaskId?: string,
   ): Promise<boolean> {
     const adapter = this.channels.get(channel);
     if (!adapter) return Promise.resolve(false);
+    this.noteSend(channel, to, ownTaskId);
 
     // v6.3 W1.5: log AI writing patterns on the ORIGINAL text, before any
     // gate substitution, so observability captures what the LLM produced.

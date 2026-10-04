@@ -124,6 +124,22 @@ vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => ({
 }));
 // Jev shadow: log-only side channel; the wiring test pins the call site.
 vi.mock("../jev/shadow.js", () => ({ shadowFeedback: vi.fn() }));
+// "excelente" with no window: thread lookup (no outcome unless a test sets
+// one) + the eval-case bridge, both observable.
+const praiseMocks = vi.hoisted(() => ({
+  findLatestOutcomeTaskForThread: vi.fn((_t: string): string | null => null),
+  bridgePraisedTaskToEvalCase: vi.fn((_id: string) => ({
+    created: false,
+    reason: "no_telemetry" as const,
+  })),
+}));
+vi.mock("../db/task-outcomes.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../db/task-outcomes.js")>()),
+  findLatestOutcomeTaskForThread: praiseMocks.findLatestOutcomeTaskForThread,
+}));
+vi.mock("../tuning/flywheel-bridge.js", () => ({
+  bridgePraisedTaskToEvalCase: praiseMocks.bridgePraisedTaskToEvalCase,
+}));
 // The real classifier, wrapped so the router's call can be read.
 vi.mock("./scope-classifier.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./scope-classifier.js")>();
@@ -251,6 +267,7 @@ import { scopeMissFallbackLine } from "./scope-miss.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { formatForTelegram } from "./formatter.js";
+import { TelegramStreamController } from "./channels/telegram-stream.js";
 import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
 import type {
   ChannelAdapter,
@@ -346,6 +363,359 @@ describe("MessageRouter", () => {
         "dame el reporte de ventas",
         "neutral",
       );
+    });
+
+    // "excelente" outside the 2-minute window: rated only when the praised
+    // task's reply is the last thing the chat was shown (marker) AND it is the
+    // latest outcome on the thread; the ack says when nothing was rated.
+    describe("excelente attribution", () => {
+      const HONEST =
+        "👍 (no encontré una respuesta reciente a la cual asignarlo)";
+      const turn = (text: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text,
+        timestamp: new Date(),
+      });
+      const groupTurn = (text: string, senderJid: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "grp@g.us",
+        text,
+        timestamp: new Date(),
+        metadata: { isGroup: true, groupJid: "grp@g.us", senderJid },
+      });
+      const feedbackWrites = () =>
+        dbRun.mock.calls
+          .filter(([sql]) =>
+            sql.includes("UPDATE task_outcomes SET feedback_signal"),
+          )
+          .map(([, signal, taskId]) => [signal, taskId]);
+      const sent = () => waAdapter.sentMessages.map((m) => m.text);
+      /** A chat task whose reply is delivered and tracked as success. */
+      const deliverReply = async (
+        taskId: string,
+        msg: IncomingMessage = turn("dame el reporte de ventas del mes"),
+      ) => {
+        vi.mocked(submitTask).mockResolvedValueOnce({
+          taskId,
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound(msg);
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: {
+            task_id: taskId,
+            agent_id: "fast",
+            result: "Aquí está el reporte.",
+            duration_ms: 5,
+          },
+        });
+        waAdapter.sentMessages.length = 0;
+        dbRun.mockClear();
+        praiseMocks.bridgePraisedTaskToEvalCase.mockClear();
+        vi.mocked(submitTask).mockClear();
+      };
+      beforeEach(() => {
+        praiseMocks.findLatestOutcomeTaskForThread
+          .mockReset()
+          .mockReturnValue(null);
+      });
+      afterEach(() => {
+        _testSeedThread("whatsapp", []);
+        _testSeedThread("whatsapp:grp@g.us:owner@s.whatsapp.net", []);
+        _testSeedThread("whatsapp:grp@g.us:member@s.whatsapp.net", []);
+      });
+
+      it("reply last shown + same latest outcome → rated, bridged, 👍", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          await router.handleInbound(turn("Excelente"));
+          expect(
+            praiseMocks.findLatestOutcomeTaskForThread,
+          ).toHaveBeenCalledWith("whatsapp");
+          expect(feedbackWrites()).toEqual([["positive", "task-db"]]);
+          expect(praiseMocks.bridgePraisedTaskToEvalCase).toHaveBeenCalledWith(
+            "task-db",
+          );
+          expect(sent()).toEqual(["👍"]);
+          expect(submitTask).not.toHaveBeenCalled();
+          expect(
+            logSpy.mock.calls.some(
+              ([l]) =>
+                l ===
+                "[router] excelente attributed via thread lookup: task task-db",
+            ),
+          ).toBe(true);
+        } finally {
+          logSpy.mockRestore();
+        }
+      });
+
+      it("no task reply shown (e.g. after a restart) → no lookup, honest line, nothing recorded", async () => {
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.handleInbound(turn("excelente"));
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([]);
+        expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+        expect(sent()).toEqual([HONEST]);
+      });
+
+      it("marker and latest outcome disagree (or no outcome) → honest line, nothing recorded", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-other");
+        await router.handleInbound(turn("excelente"));
+        expect(praiseMocks.findLatestOutcomeTaskForThread).toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([]);
+        expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+        expect(sent()).toEqual([HONEST]);
+      });
+
+      it("lookup throws → honest line, nothing recorded", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockImplementation(() => {
+          throw new Error("database is locked");
+        });
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackWrites()).toEqual([]);
+          expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+          expect(sent()).toEqual([HONEST]);
+        } finally {
+          errSpy.mockRestore();
+        }
+      });
+
+      it("a router notice between the reply and the praise blocks attribution", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.handleInbound(turn("/rituales"));
+        expect(sent()).toHaveLength(1); // the fixed /rituales notice
+        await router.handleInbound(turn("excelente"));
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent().at(-1)).toBe(HONEST);
+      });
+
+      it("a broadcast (ritual / proactive / scheduled) after the reply blocks attribution", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.broadcastToAll("Sync matutina", undefined, { raw: true });
+        await router.handleInbound(turn("excelente"));
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent().at(-1)).toBe(HONEST);
+      });
+
+      it("an owner briefing after the reply blocks attribution", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.sendBriefingToOwner("Brief del día", { raw: true });
+        await router.handleInbound(turn("excelente"));
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent().at(-1)).toBe(HONEST);
+      });
+
+      it("negative or rephrase with a marker → no lookup, no feedback write", async () => {
+        await deliverReply("task-db");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.handleInbound(turn("no"));
+        await router.handleInbound(
+          turn("dame el reporte de ventas del mes pasado"),
+        );
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([]);
+        expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+      });
+
+      it("window path unchanged: the window task is rated, no thread lookup", async () => {
+        const { checkFeedbackWindow } =
+          await import("../intelligence/outcome-tracker.js");
+        vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-win");
+        await router.handleInbound(turn("excelente"));
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([["positive", "task-win"]]);
+        expect(praiseMocks.bridgePraisedTaskToEvalCase).toHaveBeenCalledWith(
+          "task-win",
+        );
+        expect(sent()).toEqual(["👍"]);
+      });
+
+      it("non-operator group sender → no lookup, nothing recorded, plain 👍", async () => {
+        await deliverReply(
+          "task-member",
+          groupTurn("@jarvis agenda algo", "member@s.whatsapp.net"),
+        );
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-member");
+        await router.handleInbound(
+          groupTurn("@jarvis excelente", "member@s.whatsapp.net"),
+        );
+        expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+        expect(feedbackWrites()).toEqual([]);
+        expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+        expect(sent()).toEqual(["👍"]);
+      });
+
+      it("operator in a group: own reply → rated; a member's reply after it → not rated", async () => {
+        const ownerTk = "whatsapp:grp@g.us:owner@s.whatsapp.net";
+        await deliverReply(
+          "task-owner",
+          groupTurn("@jarvis agenda algo", "owner@s.whatsapp.net"),
+        );
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-owner");
+        await router.handleInbound(
+          groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
+        );
+        expect(
+          praiseMocks.findLatestOutcomeTaskForThread,
+        ).toHaveBeenCalledWith(ownerTk);
+        expect(feedbackWrites()).toEqual([["positive", "task-owner"]]);
+
+        await deliverReply("task-owner-2", groupTurn("@jarvis resume algo", "owner@s.whatsapp.net"));
+        await deliverReply(
+          "task-member",
+          groupTurn("@jarvis agenda otra cosa", "member@s.whatsapp.net"),
+        );
+        praiseMocks.findLatestOutcomeTaskForThread.mockClear();
+        // Even a lookup naming the member's task must not rate it: the last
+        // reply in this chat belongs to another thread (marker tk ≠ praiser).
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-member");
+        await router.handleInbound(
+          groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
+        );
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent()).toEqual([HONEST]);
+      });
+
+      it("Telegram: the next task's ⏳ placeholder blocks attribution to the previous reply", async () => {
+        const fakeBot = {
+          api: {
+            sendMessage: vi.fn().mockResolvedValue({ message_id: 777 }),
+            editMessageText: vi.fn().mockResolvedValue(true),
+          },
+        };
+        const tgAdapter = Object.assign(createMockAdapter("telegram"), {
+          getBot: () => fakeBot,
+        });
+        router.registerChannel(tgAdapter as unknown as ChannelAdapter);
+        const tgTurn = (text: string): IncomingMessage => ({
+          channel: "telegram",
+          from: "12345",
+          text,
+          timestamp: new Date(),
+        });
+        await deliverReply("tg-a", tgTurn("dame el reporte de ventas del mes"));
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("tg-a");
+        // A reply finalized in the stream IS the last thing shown → rated.
+        await router.handleInbound(tgTurn("excelente"));
+        expect(feedbackWrites()).toEqual([["positive", "tg-a"]]);
+
+        await deliverReply("tg-b", tgTurn("y ahora el de compras del mes"));
+        vi.mocked(submitTask).mockResolvedValueOnce({
+          taskId: "tg-c",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound(tgTurn("revisa el inventario de la bodega"));
+        dbRun.mockClear();
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("tg-b");
+        await router.handleInbound(tgTurn("excelente"));
+        expect(feedbackWrites()).toEqual([]);
+        expect(tgAdapter.sentMessages.at(-1)?.text).toBe(HONEST);
+        _testSeedThread("telegram", []);
+      });
+
+      it("an LLM-text send for another task (needs_context) after the reply blocks attribution", async () => {
+        vi.mocked(submitTask).mockResolvedValueOnce({
+          taskId: "task-a",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound(turn("prepara el reporte de compras"));
+        await deliverReply("task-b");
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-b");
+        dbStatusGet.mockReturnValue({
+          spawn_type: "root",
+          title: "Chat: compras",
+          status: "needs_context",
+        });
+        try {
+          findHandler("task.failed")!({
+            data: {
+              task_id: "task-a",
+              agent_id: "fast",
+              error: "Unknown error",
+              recoverable: false,
+              attempts: 1,
+              result: { text: "¿De qué mes quieres el reporte?", toolCalls: [] },
+            },
+          });
+        } finally {
+          dbStatusGet.mockReturnValue(undefined);
+        }
+        expect(sent()).toEqual(["¿De qué mes quieres el reporte?"]);
+        dbRun.mockClear();
+        await router.handleInbound(turn("excelente"));
+        expect(feedbackWrites()).toEqual([]);
+        expect(sent().at(-1)).toBe(HONEST);
+      });
+
+      it("Telegram: a late fallback resend of the reply itself keeps its own marker", async () => {
+        const fakeBot = {
+          api: {
+            sendMessage: vi.fn().mockResolvedValue({ message_id: 778 }),
+            editMessageText: vi.fn().mockResolvedValue(true),
+          },
+        };
+        const tgAdapter = Object.assign(createMockAdapter("telegram"), {
+          getBot: () => fakeBot,
+        });
+        router.registerChannel(tgAdapter as unknown as ChannelAdapter);
+        const finalizeSpy = vi
+          .spyOn(TelegramStreamController.prototype, "finalize")
+          .mockRejectedValueOnce(new Error("edit failed"));
+        try {
+          await deliverReply("tg-own", {
+            channel: "telegram",
+            from: "12345",
+            text: "dame el reporte de ventas del mes",
+            timestamp: new Date(),
+          });
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(tgAdapter.sentMessages.map((m) => m.text)).toEqual([
+            "Aquí está el reporte.",
+          ]); // the fallback resend landed after the marker was set
+          praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("tg-own");
+          await router.handleInbound({
+            channel: "telegram",
+            from: "12345",
+            text: "excelente",
+            timestamp: new Date(),
+          });
+          expect(feedbackWrites()).toEqual([["positive", "tg-own"]]);
+        } finally {
+          finalizeSpy.mockRestore();
+          _testSeedThread("telegram", []);
+        }
+      });
+
+      it("excelente + instruction → positive kept, implicit block never sees the task", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        // Prior turn on one topic, praise turn on another: were the rated task
+        // handed to the implicit block, it would be re-rated implicit_positive.
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["google"]));
+        await deliverReply("task-db", turn("revisa mi correo de gmail por favor"));
+
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+        await router.handleInbound(
+          turn("excelente, ahora dame el precio del bitcoin hoy"),
+        );
+        expect(submitTask).toHaveBeenCalledTimes(1); // the instruction still runs
+        expect(feedbackWrites()).toEqual([["positive", "task-db"]]);
+      });
     });
 
     it("hands the scope classifier the context turns uncut, beside the 150-char context", async () => {

@@ -21,14 +21,18 @@ export class TelegramStreamController {
   private lastEditTime = 0;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private finalized = false;
+  /** Called synchronously whenever this controller shows the chat new text. */
+  private onShow?: () => void;
 
-  constructor(bot: Bot, chatId: string) {
+  constructor(bot: Bot, chatId: string, onShow?: () => void) {
     this.bot = bot;
     this.chatId = chatId;
+    this.onShow = onShow;
   }
 
   /** Send the initial placeholder message. Must be called before appendChunk. */
   async sendPlaceholder(text = "⏳"): Promise<void> {
+    this.onShow?.();
     try {
       const result = await this.bot.api.sendMessage(this.chatId, text);
       this.messageId = result.message_id;
@@ -53,6 +57,7 @@ export class TelegramStreamController {
     // Once only: with no placeholder a second call would send a second copy.
     if (this.finalized) return;
     this.finalized = true;
+    this.onShow?.();
     if (this.editTimer) {
       clearTimeout(this.editTimer);
       this.editTimer = null;
@@ -141,6 +146,7 @@ export class TelegramStreamController {
     // already «🛑 Detenido.». Delivered is final; the re-run path only ever
     // resets a controller that has not finalized.
     if (this.finalized) return;
+    this.onShow?.();
     if (this.editTimer) {
       clearTimeout(this.editTimer);
       this.editTimer = null;

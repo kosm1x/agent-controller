@@ -184,3 +184,24 @@ describe("TelegramStreamController.finalize()", () => {
     expect(bot.api.sendMessage.mock.calls.length).toBe(calls);
   });
 });
+
+describe("TelegramStreamController onShow", () => {
+  it("fires synchronously on placeholder, reset and the one finalize — never after finalize", () => {
+    const { bot } = fakeBot();
+    const onShow = vi.fn();
+    const ctl = new TelegramStreamController(
+      bot as unknown as ConstructorParameters<typeof TelegramStreamController>[0],
+      "12345",
+      onShow,
+    );
+    void ctl.sendPlaceholder("⏳");
+    expect(onShow).toHaveBeenCalledTimes(1);
+    ctl.reset("⏳");
+    expect(onShow).toHaveBeenCalledTimes(2);
+    void ctl.finalize("listo");
+    expect(onShow).toHaveBeenCalledTimes(3);
+    void ctl.finalize("otra vez");
+    ctl.reset("⏳");
+    expect(onShow).toHaveBeenCalledTimes(3);
+  });
+});

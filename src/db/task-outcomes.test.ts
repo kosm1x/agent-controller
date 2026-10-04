@@ -22,6 +22,7 @@ import {
   updateFeedback,
   noteConcernDetail,
   takeConcernDetail,
+  findLatestOutcomeTaskForThread,
 } from "./task-outcomes.js";
 
 describe("task-outcomes", () => {
@@ -204,6 +205,69 @@ describe("task-outcomes", () => {
         expect.stringContaining("UPDATE task_outcomes SET feedback_signal"),
       );
       expect(runFn).toHaveBeenCalledWith("positive", "task-1");
+    });
+  });
+
+  // Real SQL on a real in-memory schema: the mocked prepare delegates to it.
+  describe("findLatestOutcomeTaskForThread", () => {
+    type RealIndex = typeof import("./index.js");
+    let real: RealIndex;
+
+    beforeEach(async () => {
+      real = await vi.importActual<RealIndex>("./index.js");
+      real.initDatabase(":memory:");
+      const db = real.getDatabase();
+      mockDb.prepare.mockImplementation((sql: string) => db.prepare(sql));
+    });
+    afterEach(() => {
+      real.closeDatabase();
+    });
+
+    function seed(
+      taskId: string,
+      threadId: string | null,
+      success: 0 | 1,
+      ageHours = 0,
+    ): void {
+      const db = real.getDatabase();
+      db.prepare(
+        `INSERT INTO tasks (task_id, title, description, metadata) VALUES (?, 't', 'd', ?)`,
+      ).run(taskId, threadId ? JSON.stringify({ threadId }) : null);
+      db.prepare(
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, success, created_at)
+         VALUES (?, 'fast', 'fast', ?, datetime('now', '-' || ? || ' hours'))`,
+      ).run(taskId, success, ageHours);
+    }
+
+    it("returns the newest outcome in the thread", () => {
+      seed("t-old", "thread-a", 1, 2);
+      seed("t-new", "thread-a", 1, 2);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBe("t-new");
+    });
+
+    it("ignores outcomes of another thread", () => {
+      seed("t-a", "thread-a", 1, 1);
+      seed("t-b", "thread-b", 1, 0);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBe("t-a");
+      expect(findLatestOutcomeTaskForThread("thread-c")).toBeNull();
+    });
+
+    it("returns null when the newest outcome is older than 12 h", () => {
+      seed("t-stale", "thread-a", 1, 13);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBeNull();
+      seed("t-fresh", "thread-a", 1, 11);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBe("t-fresh");
+    });
+
+    it("returns null when the newest outcome failed (never skips back)", () => {
+      seed("t-good", "thread-a", 1, 1);
+      seed("t-failed", "thread-a", 0, 0);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBeNull();
+    });
+
+    it("returns null for tasks with no threadId", () => {
+      seed("t-none", null, 1, 0);
+      expect(findLatestOutcomeTaskForThread("thread-a")).toBeNull();
     });
   });
 });

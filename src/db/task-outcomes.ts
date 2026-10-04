@@ -301,6 +301,33 @@ export function queryOutcomesByKeywords(
     .all(days, ...params, limit) as KeywordOutcomeRow[];
 }
 
+/**
+ * The task the operator's "excelente" praises when no 2-minute feedback window
+ * is open: the NEWEST outcome row (by id) of a task on this thread within
+ * `maxAgeHours`. Latest reply only — if that newest outcome failed, null
+ * (praise never skips back over a failure to an older reply).
+ */
+export function findLatestOutcomeTaskForThread(
+  threadId: string,
+  maxAgeHours = 12,
+): string | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT o.task_id, o.success
+       FROM task_outcomes o
+       JOIN tasks t ON t.task_id = o.task_id
+       WHERE json_extract(t.metadata, '$.threadId') = ?
+         AND o.created_at >= datetime('now', '-' || ? || ' hours')
+       ORDER BY o.id DESC
+       LIMIT 1`,
+    )
+    .get(threadId, maxAgeHours) as
+    | { task_id: string; success: number }
+    | undefined;
+  return row && row.success === 1 ? row.task_id : null;
+}
+
 /** Update feedback signal for a task outcome (explicit or implicit). */
 export function updateFeedback(
   taskId: string,
