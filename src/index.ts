@@ -22,6 +22,7 @@ import {
   reconcileOrphanedTasks,
 } from "./db/index.js";
 import { regenerateIndex } from "./db/jarvis-index.js";
+import { getKbMirrorWriteDir } from "./db/jarvis-fs.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
 import { startTriggers } from "./triggers/index.js";
@@ -109,6 +110,14 @@ async function main(): Promise<void> {
   // Initialize database
   const db = initDatabase(config.dbPath);
   log.info({ path: config.dbPath }, "database initialized");
+  // Operator check after deploy: the live service must say "enabled".
+  const kbMirrorDir = getKbMirrorWriteDir();
+  log.info(
+    { dir: kbMirrorDir },
+    kbMirrorDir
+      ? "kb mirror enabled"
+      : "kb mirror DISABLED (db is not the live mc.db)",
+  );
   // INDEX.md is regenerated here, not inside initDatabase(): every script
   // that opened the live mc.db rewrote the row from its working source
   // (the eval gate did on every run — audit 2026-09-22).

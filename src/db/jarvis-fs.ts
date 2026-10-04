@@ -10,7 +10,13 @@
  */
 
 import { getDatabase } from "./index.js";
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+} from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
@@ -33,17 +39,92 @@ const DEFAULT_MIRROR_DIR = "/root/claude/jarvis-kb";
 // path, not mkdtemp: eleven test files partially mock `fs`, and a new fs call
 // at resolve time throws inside them (qa R1 C1); mirrorToDisk mkdirs anyway.
 function getMirrorDir(): string {
-  const override = process.env.JARVIS_KB_MIRROR_DIR;
+  return explicitMirrorDir(process.env) ?? DEFAULT_MIRROR_DIR;
+}
+
+/** The env-chosen mirror dir (override or vitest), else undefined. */
+function explicitMirrorDir(env: NodeJS.ProcessEnv): string | undefined {
+  const override = env.JARVIS_KB_MIRROR_DIR;
   if (override !== undefined) return override;
-  if (process.env.VITEST) {
+  if (env.VITEST) {
     // vitest.global-setup.ts provides one dir per run and removes it at
     // teardown; the per-fork path is the fallback when a runner skips it.
     return (
-      process.env.JARVIS_KB_VITEST_FALLBACK ??
+      env.JARVIS_KB_VITEST_FALLBACK ??
       join(tmpdir(), `jarvis-kb-vitest-${process.pid}`)
     );
   }
-  return DEFAULT_MIRROR_DIR;
+  return undefined;
+}
+
+// The default mirror belongs to exactly one database (2026-10-04 incident: a
+// scratch `initDatabase('<scratch>/synth.db')` seeded directives/core.md and
+// a 349-byte INDEX.md into the live KB). Mirror WRITES and DELETES resolve
+// through resolveMirrorWriteDir: with no env-chosen dir, the default is
+// returned only when the open db file is, kernel-resolved, the live mc.db;
+// any other db (scratch, snapshot, :memory:, none open) gets null = no mirror.
+const LIVE_DB_PATH = "/root/claude/mission-control/data/mc.db";
+
+export interface KbMirrorTarget {
+  defaultDir: string;
+  liveDbPath: string;
+}
+const LIVE_TARGET: KbMirrorTarget = {
+  defaultDir: DEFAULT_MIRROR_DIR,
+  liveDbPath: LIVE_DB_PATH,
+};
+
+/** True only when `dbFile` and `liveDbPath` realpath to the same file. */
+export function isLiveDatabaseFile(dbFile: string, liveDbPath: string): boolean {
+  if (!dbFile) return false; // "" = :memory: / temp db
+  try {
+    return realpathSync.native(dbFile) === realpathSync.native(liveDbPath);
+  } catch {
+    return false; // either side missing
+  }
+}
+
+/** Where mirror writes/deletes may go; null = mirroring disabled. Pure. */
+export function resolveMirrorWriteDir(
+  env: NodeJS.ProcessEnv,
+  openDbFile: () => string,
+  target: KbMirrorTarget,
+): string | null {
+  const explicit = explicitMirrorDir(env);
+  if (explicit !== undefined) return explicit;
+  return isLiveDatabaseFile(openDbFile(), target.liveDbPath)
+    ? target.defaultDir
+    : null;
+}
+
+/** Absolute file of the open main db as SQLite resolved it; "" if none. */
+function openDbFile(): string {
+  try {
+    const rows = getDatabase().pragma("database_list") as Array<{
+      name: string;
+      file: string;
+    }>;
+    return rows.find((r) => r.name === "main")?.file ?? "";
+  } catch {
+    return ""; // no db open → not the live db
+  }
+}
+
+let mirrorDisabledLogged = false;
+function mirrorWriteDir(target: KbMirrorTarget): string | null {
+  const dir = resolveMirrorWriteDir(process.env, openDbFile, target);
+  if (dir === null && !mirrorDisabledLogged) {
+    mirrorDisabledLogged = true;
+    console.warn(
+      `[jarvis-fs] KB mirror DISABLED for this process: open db "${openDbFile() || "(none/memory)"}" is not the live ${target.liveDbPath} and JARVIS_KB_MIRROR_DIR is unset — nothing will be written to or deleted from ${target.defaultDir}`,
+    );
+  }
+  return dir;
+}
+
+/** Mirror dir writes go to for the open db (null = disabled). Boot log. */
+export function getKbMirrorWriteDir(): string | null {
+  return mirrorWriteDir(LIVE_TARGET);
 }
 
 /**
@@ -107,14 +188,18 @@ export interface JarvisFileSummary {
  * Path-traversal guarded: resolved absolute path must remain under the
  * mirror root, else the operation is a silent no-op.
  */
-export function syncDeleteFromKbMirror(path: string): void {
+export function syncDeleteFromKbMirror(
+  path: string,
+  target: KbMirrorTarget = LIVE_TARGET,
+): void {
   try {
     // Reject empty / dot / absolute / parent-only paths up-front. Without
     // this, `resolve(mirrorDir, "")` and `resolve(mirrorDir, ".")` both
     // collapse to `mirrorDir` itself and `rmSync(mirrorDir)` would wipe the
     // entire KB mirror. Caught by qa-auditor C1, 2026-05-12.
     if (!path || path === "." || path === "/" || path.startsWith("/")) return;
-    const mirrorDir = getMirrorDir();
+    const mirrorDir = mirrorWriteDir(target);
+    if (mirrorDir === null) return;
     const mirrorAbs = resolve(mirrorDir);
     const fullPath = resolve(mirrorAbs, path);
     // Strict containment: fullPath must be a STRICT child of mirrorAbs.
@@ -132,9 +217,15 @@ export function syncDeleteFromKbMirror(path: string): void {
 }
 
 /** Mirror a file to the filesystem for human inspection. Non-fatal. */
-export function mirrorToDisk(path: string, content: string): void {
+export function mirrorToDisk(
+  path: string,
+  content: string,
+  target: KbMirrorTarget = LIVE_TARGET,
+): void {
   try {
-    const mirrorAbs = resolve(getMirrorDir());
+    const mirrorDir = mirrorWriteDir(target);
+    if (mirrorDir === null) return;
+    const mirrorAbs = resolve(mirrorDir);
     const fullPath = resolve(join(mirrorAbs, path));
     // Trailing slash matters: `../jarvis-kb-evil/x.md` shares the prefix but
     // is outside the mirror (audit R2-W4; mirrors syncDeleteFromKbMirror).
