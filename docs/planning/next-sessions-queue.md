@@ -1459,3 +1459,16 @@ State and root causes: `docs/PROJECT-STATUS.md` header of 2026-10-03.
 9. **Retention.** Each day-log is now stored about four times a day in `tasks.description` (close, narrative, evolution-log, Sync). Fine for now; note for a retention pass.
 10. **`wip/rulings-1-5`** (cloud session) must merge `main` before landing: both sides touch `router.ts`; `telegram.ts` / `redact.ts` overlap is low.
 11. Still queued from the 10-01 post-mortem, not started: watchdog delivery-gated cooldown · mount sentinel in Jarvis · crashed SDK turn handling.
+
+## 2026-10-04 — eval gate scoring v2 follow-ups (`e1ad4a1`)
+
+Diagnosis and method: header of `scripts/eval-gate.ts`. Baseline re-captured under scoring version 2 on 2026-10-04.
+
+1. **`scoring_version` on `tune_runs` / `tune_variants`** (schema column via `SCHEMA_MIGRATIONS`). The nightly loop scores with the new method once deployed; stored scores jump at that point with no marker, and `getValidVariants` ranks by raw composite across generations (latent: the one valid variant is legacy-blocked).
+2. **Round boundaries in `scope_telemetry.tools_called`** so the miner can record the real first round; until then the scorer ignores `first_tools` and uses any-hit over `tools`.
+3. **Cases that call nothing with every expected tool offered** (19 of 34 even with a Jarvis system prompt in the probe, experiment 2026-10-04). Unexplained; candidates: no conversation history, no KB/user facts in the probe.
+4. **Model's first step is discovery** (`jarvis_file_search`, `project_list`) where mined traces expect `jarvis_file_read`. Decide whether that is a probe artefact or a real selection difference before tightening epsilon.
+5. **Scope accuracy rests on hand-written cases only**: every mined `scope_accuracy` row is inactive. Find out why and whether to reactivate.
+6. **`shell_exec` scoped out by the regex scoping in mined cases** where production's classifier offered it: the gate's scoping is not production's.
+7. `scripts/add-eval-case.ts --from-task` can still record harness tools (`ToolSearch`, `mcp__*`) as expected.
+8. Baseline digests: a mined case id is a deterministic hash of the user message, so a digest lets someone confirm a guessed message; a salt outside the repo would close it.
