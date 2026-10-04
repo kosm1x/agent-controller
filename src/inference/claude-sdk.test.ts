@@ -1059,6 +1059,76 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
     circuitRegistry.reset();
   });
 
+  it("skipBreakerOnCallerAbort keeps a caller-aborted failure off the breaker (V9 W1 I2)", async () => {
+    // The grader aborts on its own wall-clock budget. That outcome is not a
+    // provider failure and must not trip the shared Opus breaker; without
+    // the option the same aborted failure still counts.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    const { CB_FAILURE_THRESHOLD } = await import("../config/constants.js");
+    circuitRegistry.reset();
+    const failure: MockMessage[] = [
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        errors: ["aborted"],
+      },
+    ];
+    for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+      mockMessages.value = failure;
+      const ac = new AbortController();
+      ac.abort();
+      await queryClaudeSdk({
+        prompt: "grade",
+        systemPrompt: "sys",
+        toolNames: [],
+        abortSignal: ac.signal,
+        skipBreakerOnCallerAbort: true,
+      });
+    }
+    expect(circuitRegistry.get("claude-sdk").getStatus().state).toBe("CLOSED");
+
+    // Control: the option off → the same aborted failures DO trip it.
+    for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+      mockMessages.value = failure;
+      const ac = new AbortController();
+      ac.abort();
+      await queryClaudeSdk({
+        prompt: "grade",
+        systemPrompt: "sys",
+        toolNames: [],
+        abortSignal: ac.signal,
+      });
+    }
+    expect(circuitRegistry.get("claude-sdk").getStatus().state).toBe("OPEN");
+    circuitRegistry.reset();
+  });
+
+  it("skipBreakerOnCallerAbort without an aborted signal still counts the failure (R2 audit W4)", async () => {
+    // The option only exempts the caller's own abort; a real provider
+    // failure on a grader call must still trip the shared breaker.
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    const { CB_FAILURE_THRESHOLD } = await import("../config/constants.js");
+    circuitRegistry.reset();
+    for (let i = 0; i < CB_FAILURE_THRESHOLD; i++) {
+      mockMessages.value = [
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          errors: ["provider 500"],
+        },
+      ];
+      await queryClaudeSdk({
+        prompt: "grade",
+        systemPrompt: "sys",
+        toolNames: [],
+        abortSignal: new AbortController().signal, // never aborted
+        skipBreakerOnCallerAbort: true,
+      });
+    }
+    expect(circuitRegistry.get("claude-sdk").getStatus().state).toBe("OPEN");
+    circuitRegistry.reset();
+  });
+
   it("does NOT count partial content with error subtype as a failure", async () => {
     // error_max_turns with streamed content = provider was working until
     // SDK-internal limit. Must not trip the breaker on legitimate long runs.

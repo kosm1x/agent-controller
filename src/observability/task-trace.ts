@@ -61,6 +61,10 @@ export type TraceEventName =
   | "gates.hook_allowed"
   | "gates.hook_blocked"
   | "gates.hook_released"
+  // V9 W1 grader gate (2026-10): one per grading decision, and one per
+  // spec lifecycle step (registered / withdrawn / error)
+  | "gates.graded"
+  | "gates.grade_specs"
   | "numbers.audited"
   // Usability Phase 3 (2026-08-23): artifact provenance + citation checks
   | "provenance.checked"
@@ -98,7 +102,7 @@ export interface TraceEventRow {
 }
 
 /** Cap attrs JSON so a pathological error string can't bloat the table. */
-const ATTRS_MAX_CHARS = 2000;
+export const ATTRS_MAX_CHARS = 2000;
 
 /**
  * Prepared-statement cache keyed by DB handle (audit W1/rec: this is the

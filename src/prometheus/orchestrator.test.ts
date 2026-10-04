@@ -44,7 +44,37 @@ vi.mock("../lib/v8-4/gates.js", () => ({
   abandonPlanGatesForGoals: vi.fn(() => 0),
 }));
 
+// V9 W1: the real spec lifecycle, pinned to grader=shadow so the in-memory
+// registry shows what the orchestrator registered / withdrew (no DB, no
+// grader call; trace writes fail closed inside emitTraceEvent).
+vi.mock("../lib/v8-4/grade-specs.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../lib/v8-4/grade-specs.js")
+  >("../lib/v8-4/grade-specs.js");
+  const env = { TASK_GATES_GRADER: "shadow" } as NodeJS.ProcessEnv;
+  return {
+    ...actual,
+    syncGradeSpecs: vi.fn(
+      (...a: Parameters<typeof actual.syncGradeSpecs>) =>
+        actual.syncGradeSpecs(a[0], a[1], a[2], a[3], { ...a[4], env }),
+    ),
+    withdrawGradeSpecsForGoals: vi.fn(
+      (...a: Parameters<typeof actual.withdrawGradeSpecsForGoals>) =>
+        actual.withdrawGradeSpecsForGoals(a[0], a[1], a[2], a[3], {
+          ...a[4],
+          env,
+        }),
+    ),
+  };
+});
+
 import { orchestrate } from "./orchestrator.js";
+import {
+  _peekShadowGradeSpecs,
+  _resetShadowGradeSpecs,
+  syncGradeSpecs,
+  withdrawGradeSpecsForGoals,
+} from "../lib/v8-4/grade-specs.js";
 import { plan, replan } from "./planner.js";
 import { executeGraph } from "./executor.js";
 import { reflect } from "./reflector.js";
@@ -59,9 +89,12 @@ const mockReflect = vi.mocked(reflect);
 const mockEmitEvent = vi.mocked(getEventBus().emitEvent);
 const mockFacadeEmit = vi.mocked(eventBus.emit);
 const mockAbandonPlanGates = vi.mocked(abandonPlanGatesForGoals);
+const mockSyncGradeSpecs = vi.mocked(syncGradeSpecs);
+const mockWithdrawGradeSpecs = vi.mocked(withdrawGradeSpecsForGoals);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetShadowGradeSpecs();
 });
 
 function makeGraph(): GoalGraph {
@@ -163,6 +196,113 @@ describe("orchestrate", () => {
     expect(mockReflect).toHaveBeenCalledTimes(1);
   });
 
+  it("V9 W1: registers each goal's PROSE criteria (runnable plan-gate criteria excluded) as grade specs, once, with the task text", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+      completionCriteria: ["prose a", "runnable b"],
+      metadata: { gates: [{ criterion: "runnable b", check: "npm test" }] },
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Goal 2",
+      status: GoalStatus.COMPLETED,
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+
+    await orchestrate("task-grade", "Compare the providers end to end");
+
+    expect(mockSyncGradeSpecs).toHaveBeenCalledTimes(1);
+    expect(mockSyncGradeSpecs.mock.calls[0]![0]).toBe("task-grade");
+    expect(mockSyncGradeSpecs.mock.calls[0]![3]).toBe(
+      "Compare the providers end to end",
+    );
+    expect(_peekShadowGradeSpecs("task-grade")).toEqual([
+      { id: "GR-g-1.1", criterion: "prose a", origin: "prose" },
+    ]);
+    expect(mockWithdrawGradeSpecs).not.toHaveBeenCalled();
+  });
+
+  it("V9 W1 (R1 W5): a replan withdraws the specs of removed / rewritten goals and registers new goals' criteria under fresh ids", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+      completionCriteria: ["keep me", "drop me"],
+    });
+    graph.addGoal({
+      id: "g-2",
+      description: "Analyze all 14 slides",
+      status: GoalStatus.FAILED,
+      completionCriteria: ["old goal criterion"],
+    });
+    mockPlan.mockResolvedValueOnce({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    const exec = makeExecResult();
+    exec.goalResults["g-2"] = {
+      ...exec.goalResults["g-2"]!,
+      ok: false,
+      error: "Goal g-2 timed out after 120000ms",
+    };
+    exec.summary = { ...exec.summary, completed: 1, failed: 1 };
+    mockExecuteGraph.mockResolvedValueOnce(exec);
+
+    const replanGraph = new GoalGraph();
+    replanGraph.addGoal({
+      id: "g-1",
+      description: "Goal 1",
+      status: GoalStatus.COMPLETED,
+      completionCriteria: ["keep me", "new criterion"],
+    });
+    replanGraph.addGoal({
+      id: "g-3",
+      description: "Split batch",
+      status: GoalStatus.COMPLETED,
+      completionCriteria: ["fresh goal criterion"],
+    });
+    mockReplan.mockResolvedValueOnce({
+      graph: replanGraph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+    mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+    mockReflect.mockResolvedValueOnce({
+      result: makeReflection(),
+      usage: { promptTokens: 0, completionTokens: 0 },
+    });
+
+    await orchestrate("task-grade-replan", "Analyze each slide in the deck");
+
+    expect(mockReplan).toHaveBeenCalledTimes(1);
+    expect(mockSyncGradeSpecs).toHaveBeenCalledTimes(2);
+    // Same plan state across the initial sync and the replan sync.
+    expect(mockSyncGradeSpecs.mock.calls[1]![1]).toBe(
+      mockSyncGradeSpecs.mock.calls[0]![1],
+    );
+    expect(mockSyncGradeSpecs.mock.calls[1]![4]?.reason).toMatch(
+      /removed or rewritten by replan 1/,
+    );
+    // kept: GR-g-1.1; withdrawn: GR-g-1.2 (drop me), GR-g-2.1 (goal gone);
+    // new: GR-g-1.3 (ids are never reused), GR-g-3.1.
+    expect(_peekShadowGradeSpecs("task-grade-replan")).toEqual([
+      { id: "GR-g-1.1", criterion: "keep me", origin: "prose" },
+      { id: "GR-g-1.3", criterion: "new criterion", origin: "prose" },
+      { id: "GR-g-3.1", criterion: "fresh goal criterion", origin: "prose" },
+    ]);
+  });
+
   it("flags completedWithConcerns when all goals completed but reflection graded below the gate", async () => {
     // Task e6f3dfa0 shape (2026-07-27): execution 3/3 completed, best-effort
     // discount pushed the score under 0.8 → success=false. The runner uses
@@ -200,6 +340,7 @@ describe("orchestrate", () => {
       id: "g-1",
       description: "Goal 1",
       status: GoalStatus.COMPLETED,
+      completionCriteria: ["finished prose"],
     });
     graph.addGoal({
       id: "g-2",
@@ -211,6 +352,7 @@ describe("orchestrate", () => {
       description: "Goal 3",
       status: GoalStatus.IN_PROGRESS,
       dependsOn: ["g-2"],
+      completionCriteria: ["never-run prose"],
     });
     mockPlan.mockResolvedValueOnce({
       graph,
@@ -236,7 +378,10 @@ describe("orchestrate", () => {
       usage: { promptTokens: 0, completionTokens: 0 },
     });
 
-    const result = await orchestrate("task-early-exit", "Test task");
+    const result = await orchestrate(
+      "task-early-exit",
+      "Compare the providers end to end",
+    );
 
     expect(result.success).toBe(false);
     expect(result.completedWithConcerns).toBe(true);
@@ -248,7 +393,17 @@ describe("orchestrate", () => {
       "task-early-exit",
       ["g-3"],
       expect.stringContaining("budget_exhausted"),
+    );    // V9 W1 (R1 W4): the same goal's grade specs are withdrawn with the
+    // exit reason; the finished goal's stay registered.
+    expect(mockWithdrawGradeSpecs).toHaveBeenCalledWith(
+      "task-early-exit",
+      mockSyncGradeSpecs.mock.calls[0]![1],
+      ["g-3"],
+      expect.stringContaining("goal unfinished — orchestrator budget_exhausted"),
     );
+    expect(_peekShadowGradeSpecs("task-early-exit")).toEqual([
+      { id: "GR-g-1.1", criterion: "finished prose", origin: "prose" },
+    ]);
   });
 
   it("does NOT flag completedWithConcerns on an early exit when a goal FAILED (guards the failed === 0 clause)", async () => {

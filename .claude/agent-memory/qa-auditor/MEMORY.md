@@ -6,6 +6,7 @@
 
 ## Project Knowledge
 
+- [v9-w1-grader-gate-r3-audit](v9-w1-grader-gate-r3-audit.md) - 10-04: R1 7W -> R2 4W -> R3 PASS-W-NOTES (r1-r3 files). CLASS: lexical ban atop EXPLAIN adds only false rejects.
 - [landscape-review-1-r2-audit](landscape-review-1-r2-audit.md) - 10-03: PASS-W-WARN, R1 C1+W1-W8 closed; W6 force-add at commit.
 - [landscape-review-1-r1-audit](landscape-review-1-r1-audit.md) - 10-03: FAIL 1 Crit, 8 Warn. CLASS: "now counts as no decision" is new only if the OLD path differed for us.
 - [numbers-zero-bytes-exempt-r1-audit](numbers-zero-bytes-exempt-r1-audit.md) - 09-23: PASS-W-WARN. CLASS: "unverifiable so exempt" must be checked vs EVERY consumer's pass path.

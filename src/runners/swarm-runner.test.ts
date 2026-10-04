@@ -65,6 +65,19 @@ vi.mock("../lib/v8-4/consumer.js", () => ({
   reverifyChildLedger: v84.reverify,
 }));
 
+// V9 W1: real prose-spec derivation, spied registration (no DB, no grader).
+vi.mock("../lib/v8-4/grade-specs.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../lib/v8-4/grade-specs.js")
+  >("../lib/v8-4/grade-specs.js");
+  return {
+    ...actual,
+    registerGradeSpecs: vi.fn(() => ({ mode: "off", registered: 0 })),
+  };
+});
+
+import { registerGradeSpecs } from "../lib/v8-4/grade-specs.js";
+const mockRegisterGradeSpecs = vi.mocked(registerGradeSpecs);
 import {
   buildSubTaskDescription,
   extractSharedFindings,
@@ -603,6 +616,64 @@ describe("swarm final answer — '## Shared findings' never reaches the operator
     expect(delivered).toContain("comisión 3.6% + IVA");
     expect(delivered).not.toContain("SECRET-");
     expect(delivered).not.toContain(SHARED_FINDINGS_HEADING);
+  });
+});
+
+describe("V9 W1 — swarm children get their goal's prose criteria as grade specs", () => {
+  it("registers on the CHILD task id with the child's own description; runnable criteria excluded", async () => {
+    mockRegisterGradeSpecs.mockClear();
+    const graph = new GoalGraph();
+    graph.addGoal({
+      id: "g-1",
+      description: "Research Clip fees",
+      completionCriteria: ["fee per transaction quoted", "script exits 0"],
+      metadata: { gates: [{ criterion: "script exits 0", check: "node x.js" }] },
+    });
+    graph.addGoal({ id: "g-2", description: "Research Kustodia fees" });
+    mockPlan.mockResolvedValue({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    const childByGoal = new Map<string, string>();
+    let n = 0;
+    mockSubmitTask.mockImplementation(async (sub: { description: string }) => {
+      const id = `grade-child-${++n}`;
+      childByGoal.set(sub.description, id);
+      return { taskId: id, agentType: "fast" } as never;
+    });
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({ task_id: id, status: "completed", output: JSON.stringify({ text: "ok" }) }) as never,
+    );
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+
+    await swarmRunner.execute({
+      taskId: "grade-parent",
+      runId: "run-grade",
+      title: "Compare fees",
+      description: "Compare Clip and Kustodia fees",
+    });
+
+    expect(mockRegisterGradeSpecs).toHaveBeenCalledTimes(2);
+    const g1 = mockRegisterGradeSpecs.mock.calls.find(
+      (c) => (c[1] as unknown[]).length > 0,
+    )!;
+    expect(g1[1]).toEqual([
+      {
+        id: "GR-sw.g-1.1",
+        criterion: "fee per transaction quoted",
+        origin: "prose",
+      },
+    ]);
+    // Same description the child was submitted with ⇒ same task id.
+    expect(childByGoal.get(g1[2] as string)).toBe(g1[0]);
+    expect(String(g1[2])).toContain("Research Clip fees");
+    const g2 = mockRegisterGradeSpecs.mock.calls.find((c) => c !== g1)!;
+    expect(g2[1]).toEqual([]);
+    expect(g2[0]).not.toBe("grade-parent");
   });
 });
 
