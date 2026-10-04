@@ -74,12 +74,6 @@
 - **Better:** a word rule gets a negative table from the language, not only from the corpus: the 30-day replay had 0 hits for `denuevo`, yet the regex matched it.
 - **Better:** re-audit after a fix round that touches a gate module; R2 found the unlinked marker copy and the Spanish-word matches that R1's fixes introduced.
 
-## 2026-09-29 — `run_schedule` tool (`14f57d1`) + the confirmation gate that never ran
-- **Mistake:** I wrote "asks for confirmation" into the tool description because `requiresConfirmation: true` was set; the gate lives only in `task-executor.ts` and the production claude-sdk path calls `toolRegistry.execute` directly, so it has never run there (`tool_approvals`: 0 rows ever) → before relying on a guard, find its enforcement point on the PRODUCTION path and count the rows it should have written.
-- **Avoid:** a tool that starts a task and is callable from that task's own kind — schedule A could run B, which runs A. Refuse on `currentRunOrigin().source === "background"` and spawn outside the caller's run context (`outsideRunToolContext`).
-- **Avoid:** Spanish verb stems without an ending list in a scope regex — `corr`/`lanz` matched `correo`, `correcciones`, `lanzamiento`; list the verb forms and replay 30 d of messages (158/158 unchanged) before the paid gate.
-- **Better:** state in the description what a re-run IS (one extra run, not a re-send of an earlier result), so the model does not promise the operator yesterday's report.
-
 ## 2026-09-30 — Confirmation gate enforced on the SDK path (`2aa6ce9`)
 - **Mistake (inherited, 04-11):** the gate was tested only on the openai path while production ran claude-sdk → a safety gate is asserted at the seam every runner shares (dispatcher `runner.execute`), not inside one runner; the population table per (origin × interactive × runner) is the audit artefact that finds the gap.
 - **Avoid:** an allow-list predicate on ONE argument of a tool that assembles argv from several (`resource` split on "." carried `--flags` and a write verb past a `method` read check) → validate every argv-bearing field with a plain-identifier rule AND reject at the tool.
@@ -148,3 +142,9 @@
 - **Avoid (2nd time, was #48 RSS):** backtracking regex spans (`[\s\S]*?`, `<[^>]+>`) on untrusted input in-process — 200 KB of `<` took 38 s. Cap the input, scan with indexOf, pin with 1 MB timing tests whose inputs are SHORTER than the cap. Also: a test whose assertion cannot match what the mutant leaves (4 surviving chars vs a 12-char needle) pins nothing — run the mutant.
 - **Mistake:** fixed the four rituals and left the Morning Sync, a DB schedule with the same read instruction, as an "operator decision" → after fixing a prompt-level bug, grep `scheduled_tasks.description` for the same instruction and fix the class in the harness seam (`promptExtras`) the first time.
 - **Better:** a credential that reached a third party or a transcript is closed by ROTATION; redacting stored rows is hygiene. Order: deploy the source fix → rotate (interactive hidden prompt, never after `!`) → redact → verify each by counts, log lines and file times, never by reading or using the value. A tool that returns an outline is the wrong input for any gate that judges outcomes: 3 consumers had it (close, narrative, Sync).
+
+## 2026-10-04 — eval gate scored tool selection ~35 for structural reasons (`e1ad4a1`); rulings 1–5 pre-deploy check (`f9c7e7e`)
+- **Mistake:** reported "the gate registers 151 tools" from my own analysis script, which ran without the service env; the real gate run had 163 → a number about a harness is measured through the harness's own entry point, or labelled as coming from a different process.
+- **Avoid:** reading a relative gate's PASS as "the signal is healthy". Tool selection sat at 35 for the incumbent too: expected tools never offered (not registered / scoped out), whole-task expectations scored on one first-round probe. Before trusting any subscore, dump per-case results and count offered vs called.
+- **Avoid:** a scoring change without a version in the stored baseline, a population check, and a clean-run rule for capture — the audits found a collapsed or errored run could have been written as the incumbent, and that a refusal placed after the paid run costs $5.60 to see.
+- **Better:** pulling with a dirty never-commit file that upstream also rewrote: back it up, `git stash push -- <file>`, fast-forward, leave the stash; do not pop into a conflict. `npm run eval:gate --run` without `--` is a DRY run (npm swallows the flag).

@@ -13,6 +13,7 @@ import type {
   EvalResult,
   EvalFilter,
   CaseScore,
+  ToolReachability,
 } from "./types.js";
 import { EST_COST_PER_INFERENCE_USD } from "./types.js";
 import { getActiveTestCases } from "./schema.js";
@@ -65,7 +66,11 @@ function buildSandboxDefinitions(
  * Evaluate a tool_selection case by calling the LLM.
  *
  * Makes a single inference call with the test message and available tools,
- * then checks which tools the LLM decided to call.
+ * then checks which tools the LLM decided to call. Only expected tools that
+ * were OFFERED (present in the definitions sent) are scored; a case whose
+ * expected tools were all unreachable is returned `excluded` WITHOUT a call.
+ * `details.unreachable` is split into `notRegistered` (absent from this
+ * process's registry) and `scopedOut` (registered, cut by message scoping).
  */
 async function evalToolSelection(
   tc: TestCase,
@@ -100,9 +105,39 @@ async function evalToolSelection(
     scopedToolNames,
     sandbox.toolDescriptionOverrides,
   );
+  const offeredNames = definitions.map((d) => d.function.name);
+  const offered = new Set(offeredNames);
+  const splitUnreachable = (details: Record<string, unknown>) => {
+    const unreachable = (details.unreachable as string[]) ?? [];
+    return {
+      ...details,
+      notRegistered: unreachable.filter((t) => !toolRegistry.has(t)),
+      scopedOut: unreachable.filter((t) => toolRegistry.has(t)),
+    };
+  };
+
+  // Nothing the case expects was offered: no probe can score it — exclude
+  // (counted in EvalResult.reachability), never spend a call on it.
+  const pre = scoreToolSelection(tc.expected, [], offered);
+  if (pre.excluded) {
+    return {
+      caseId: tc.case_id,
+      category: "tool_selection",
+      score: 0,
+      weight: tc.weight,
+      excluded: true,
+      details: { ...splitUnreachable(pre.details), tokensUsed: 0 },
+    };
+  }
 
   // Build messages for LLM
   const messages: ChatMessage[] = [];
+  if (sandbox.probeSystemPrompt) {
+    messages.push({
+      role: "system",
+      content: sandbox.probeSystemPrompt(offeredNames),
+    });
+  }
   if (tc.input.conversationHistory) {
     for (const turn of tc.input.conversationHistory) {
       messages.push({ role: turn.role, content: turn.content });
@@ -116,6 +151,7 @@ async function evalToolSelection(
   const { score, details } = scoreToolSelection(
     tc.expected,
     result.toolsCalled,
+    offered,
   );
 
   return {
@@ -124,9 +160,37 @@ async function evalToolSelection(
     score,
     weight: tc.weight,
     details: {
-      ...details,
+      ...splitUnreachable(details),
       tokensUsed: result.tokensUsed,
     },
+  };
+}
+
+/**
+ * Offered / unreachable expected-tool totals over the probed (`scored`) and
+ * excluded tool_selection cases. Reads the per-case `details` the evaluator
+ * wrote, so a merged result (overnight loop) can be re-summarised.
+ */
+export function summarizeReachability(
+  scored: CaseScore[],
+  excludedCases: CaseScore[],
+): ToolReachability {
+  const len = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+  let slotsOffered = 0;
+  let slotsNotRegistered = 0;
+  let slotsScopedOut = 0;
+  for (const c of [...scored, ...excludedCases]) {
+    if (c.category !== "tool_selection") continue;
+    slotsOffered += len(c.details.offered);
+    slotsNotRegistered += len(c.details.notRegistered);
+    slotsScopedOut += len(c.details.scopedOut);
+  }
+  return {
+    casesExcluded: excludedCases.length,
+    excludedCases,
+    slotsOffered,
+    slotsNotRegistered,
+    slotsScopedOut,
   };
 }
 
@@ -259,6 +323,7 @@ export async function runEvaluation(
       compositeScore: 0,
       subscores: { toolSelection: 0, scopeAccuracy: 0, classification: 0 },
       perCase: [],
+      reachability: summarizeReachability([], []),
       totalTokens: 0,
       estimatedCostUsd: 0,
       durationMs: Date.now() - startMs,
@@ -266,6 +331,7 @@ export async function runEvaluation(
   }
 
   const results: CaseScore[] = [];
+  const excluded: CaseScore[] = [];
 
   // Evaluate each case by category
   for (const tc of cases) {
@@ -290,7 +356,8 @@ export async function runEvaluation(
           continue;
       }
 
-      results.push(caseResult);
+      if (caseResult.excluded) excluded.push(caseResult);
+      else results.push(caseResult);
     } catch (err) {
       // Record error as 0 score
       results.push({
@@ -312,6 +379,7 @@ export async function runEvaluation(
     compositeScore,
     subscores,
     perCase: results,
+    reachability: summarizeReachability(results, excluded),
     totalTokens,
     estimatedCostUsd: toolSelectionCount * EST_COST_PER_INFERENCE_USD,
     durationMs: Date.now() - startMs,

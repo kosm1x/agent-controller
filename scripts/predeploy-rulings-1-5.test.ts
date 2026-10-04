@@ -32,6 +32,7 @@ import {
   toolLessSchedules,
   openReadOnly,
   KB_TOOL_LIMIT,
+  baselineEvidence,
   type FactRow,
   type ProjectRow,
 } from "./predeploy-rulings-1-5.js";
@@ -342,5 +343,69 @@ describe("toolLessSchedules / openReadOnly", () => {
       ro.close();
     }
     expect(() => openReadOnly(join(dir, "missing.db"))).toThrow();
+  });
+});
+
+describe("baselineEvidence (section F, informational)", () => {
+  const SRC_T = Date.parse("2026-10-03T12:00:00Z") / 1000;
+  const input = {
+    capturedAt: "2026-10-04T00:00:00.000Z",
+    baselineSv: 2 as number | null,
+    codeSv: 2 as number | null,
+    srcCommitIso: "2026-10-03T06:00:00-06:00",
+    srcCommitT: SRC_T as number | null,
+    srcDirty: false as boolean | null,
+  };
+
+  it("baseline captured after the last src/ commit, same scoring, clean src/", () => {
+    const lines = baselineEvidence(input);
+    expect(lines).toEqual([
+      "    baseline capturedAt: 2026-10-04T00:00:00.000Z   scoringVersion: 2   this checkout's SCORING_VERSION: 2",
+      "    last commit touching src/ (HEAD's history, committer date): 2026-10-03T06:00:00-06:00",
+      "    → baseline captured AFTER the last src/ commit",
+    ]);
+  });
+
+  it("baseline captured before the last src/ commit", () => {
+    const lines = baselineEvidence({ ...input, capturedAt: "2026-10-02T00:00:00Z" });
+    expect(lines).toContain(
+      "    → baseline captured BEFORE the last src/ commit (no capture on this src/ yet)",
+    );
+    expect(lines.some((l) => l.includes("AFTER"))).toBe(false);
+  });
+
+  it("absent scoringVersion reads as 1 and is flagged when the checkout is newer", () => {
+    const lines = baselineEvidence({ ...input, baselineSv: null });
+    expect(lines[0]).toContain("scoringVersion: absent (= 1)");
+    expect(lines.at(-1)).toBe(
+      "    → scoringVersion differs: a compare run exits 2 until the operator re-captures (--run --update-baseline)",
+    );
+    expect(
+      baselineEvidence({ ...input, baselineSv: null, codeSv: 1 }).some((l) =>
+        l.includes("scoringVersion differs"),
+      ),
+    ).toBe(false);
+  });
+
+  it("dirty src/ says the after/before line cannot be trusted; unknown status says so too", () => {
+    const dirty = baselineEvidence({ ...input, srcDirty: true });
+    expect(dirty).toContain("    → baseline captured AFTER the last src/ commit");
+    expect(dirty).toContain(
+      "    → src/ has UNCOMMITTED changes: the line above cannot be trusted (the baseline may predate code that is not in any commit)",
+    );
+    expect(
+      baselineEvidence({ ...input, srcDirty: null }).some((l) =>
+        l.includes("could not read git status"),
+      ),
+    ).toBe(true);
+  });
+
+  it("unreadable dates: cannot compare", () => {
+    expect(baselineEvidence({ ...input, capturedAt: null })).toContain(
+      "    → cannot compare (capturedAt or the src/ commit date unreadable)",
+    );
+    expect(baselineEvidence({ ...input, srcCommitT: null })).toContain(
+      "    → cannot compare (capturedAt or the src/ commit date unreadable)",
+    );
   });
 });

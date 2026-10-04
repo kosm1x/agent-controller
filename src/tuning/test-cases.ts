@@ -29,6 +29,7 @@ interface SeedCase {
 const KNOWN_EXPECTED_KEYS: ReadonlySet<keyof TestCaseExpected> = new Set([
   "tools",
   "not_tools",
+  "first_tools",
   "agent_type",
   "scope_groups",
   "not_scope_groups",

@@ -17,19 +17,57 @@ import { METRIC_WEIGHTS } from "./types.js";
 /**
  * Score a tool_selection test case.
  *
- * Scoring:
- * - +1.0 per expected tool that WAS called
- * - -1.0 per expected tool that was NOT called
- * - -2.0 per forbidden tool that WAS called
- * - Normalized to 0.0-1.0
+ * Only tools that were OFFERED to the model count (`offered` = the names in
+ * the definitions the probe sent; omitted = all offered). A case with nothing
+ * checkable — no offered expected tool and no offered forbidden tool — comes
+ * back `excluded: true` and must not be averaged; the evaluator never probes
+ * it. A case whose expected tools are all unreachable but which forbids an
+ * offered tool is scored forbidden-only.
+ *
+ * `expected.first_tools` (recorded by the miner) is NOT scored: without round
+ * boundaries it is one arbitrary tool of a possibly parallel first round.
+ *
+ * Scoring over the offered expected tools (n):
+ * - n = 1: 1.0 if called, else 0.0 (unchanged from the proportional rule)
+ * - n > 1: "any-hit" — 1.0 if at least one was called, else 0.0. One probe
+ *   shows one round; a multi-step task's later tools can't appear in it.
+ * - -2.0 per forbidden tool called, normalised over one slot (n > 1) or n
+ * - n = 0 (forbidden-only): 1.0 with no violation, else 0.0
+ * - clamped to 0.0-1.0
+ * `details.proportionalScore` keeps the old hits/n rule for comparison.
  */
 export function scoreToolSelection(
   expected: TestCaseExpected,
   actualToolsCalled: string[],
-): { score: number; details: Record<string, unknown> } {
+  offered?: ReadonlySet<string>,
+): { score: number; excluded: boolean; details: Record<string, unknown> } {
   const calledSet = new Set(actualToolsCalled);
-  const expectedTools = expected.tools ?? [];
+  const scoredTools = expected.tools ?? [];
   const forbiddenTools = expected.not_tools ?? [];
+
+  const isOffered = (t: string) => !offered || offered.has(t);
+  const expectedTools = scoredTools.filter(isOffered);
+  const unreachable = scoredTools.filter((t) => !isOffered(t));
+  const forbiddenOffered = forbiddenTools.filter(isOffered);
+
+  if (
+    scoredTools.length + forbiddenTools.length > 0 &&
+    expectedTools.length === 0 &&
+    forbiddenOffered.length === 0
+  ) {
+    return {
+      score: 0,
+      excluded: true,
+      details: {
+        expected: scoredTools,
+        forbidden: forbiddenTools,
+        called: actualToolsCalled,
+        offered: expectedTools,
+        unreachable,
+        excluded: true,
+      },
+    };
+  }
 
   let points = 0;
   let maxPoints = 0;
@@ -56,39 +94,50 @@ export function scoreToolSelection(
     }
   }
 
+  const reach = {
+    expected: scoredTools,
+    forbidden: forbiddenTools,
+    called: actualToolsCalled,
+    offered: expectedTools,
+    unreachable,
+    hits,
+    misses,
+    violations,
+  };
+
   // If no positive expectations, score based on forbidden-only:
   // No violations → 1.0, any violation → 0.0
   if (expectedTools.length === 0) {
     const score = violations.length === 0 ? 1.0 : 0.0;
     return {
       score,
+      excluded: false,
       details: {
-        expected: expectedTools,
-        forbidden: forbiddenTools,
-        called: actualToolsCalled,
-        hits,
-        misses,
-        violations,
+        ...reach,
+        scoring: "forbidden_only",
         rawPoints: points,
         maxPoints: 0,
+        proportionalScore: score,
       },
     };
   }
 
-  const raw = points / maxPoints;
-  const score = Math.max(0, Math.min(1, raw));
+  const clamp = (x: number) => Math.max(0, Math.min(1, x));
+  const proportionalScore = clamp(points / maxPoints);
+  const anyHit = expectedTools.length > 1;
+  const score = anyHit
+    ? clamp((hits.length > 0 ? 1 : 0) - 2 * violations.length)
+    : proportionalScore;
 
   return {
     score,
+    excluded: false,
     details: {
-      expected: expectedTools,
-      forbidden: forbiddenTools,
-      called: actualToolsCalled,
-      hits,
-      misses,
-      violations,
+      ...reach,
+      scoring: anyHit ? "any_hit" : "single",
       rawPoints: points,
       maxPoints,
+      proportionalScore,
     },
   };
 }

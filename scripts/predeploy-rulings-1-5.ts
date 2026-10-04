@@ -11,6 +11,8 @@
  *    HIDDEN (kept from the model, used by name `SECRET_…`) or CLEAR.
  * C. KB search cost: the `searchFiles` path (src/db/jarvis-fs.ts) per query.
  * D. Tool-less schedules: `scheduled_tasks` with `tools='[]' AND active=1`.
+ * F (evidence only): `--baseline-evidence <repo>` prints the eval-gate
+ *    baseline evidence lines (no database is opened).
  *
  * DATABASE: opened ONLY with better-sqlite3 `{ readonly: true, fileMustExist:
  * true }` + `pragma query_only = ON` (as scripts/validate-shell-gate-diff.ts
@@ -46,8 +48,10 @@
  * (bad arguments, database not openable read-only).
  */
 import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCredentialFact, isCredentialName } from "../src/db/user-facts.js";
 import {
@@ -61,6 +65,7 @@ import {
   MIN_SCRUB_LENGTH,
 } from "../src/lib/secret-refs.js";
 import { tokenizeQuery, locateMatch } from "../src/db/jarvis-fs.js";
+import { SCORING_VERSION } from "../src/tuning/gate.js";
 
 // ------------------------------------------------------------------ census
 
@@ -540,6 +545,86 @@ export function toolLessSchedules(db: Database.Database): Schedule[] {
     .all() as Schedule[];
 }
 
+// ------------------------------------------------------------ F evidence
+
+export interface BaselineEvidenceInput {
+  /** Baseline `capturedAt` (ISO), null when absent/unreadable. */
+  capturedAt: string | null;
+  /** Baseline `scoringVersion`, null when absent (= generation 1). */
+  baselineSv: number | null;
+  /** This checkout's SCORING_VERSION. */
+  codeSv: number | null;
+  /** Committer date of HEAD's last commit touching src/ (ISO + epoch s). */
+  srcCommitIso: string | null;
+  srcCommitT: number | null;
+  /** `git status --porcelain -- src/` non-empty; null = unknown. */
+  srcDirty: boolean | null;
+}
+
+/**
+ * Section F's eval-baseline evidence, informational only (the verdict input
+ * stays EVAL_GATE_VERDICT): was the committed incumbent captured after the
+ * last commit touching src/, under this checkout's scoring generation? An
+ * uncommitted src/ makes the commit-date comparison untrustworthy.
+ */
+export function baselineEvidence(i: BaselineEvidenceInput): string[] {
+  const out = [
+    `    baseline capturedAt: ${i.capturedAt ?? "unknown"}   scoringVersion: ${i.baselineSv ?? "absent (= 1)"}   this checkout's SCORING_VERSION: ${i.codeSv ?? "unknown"}`,
+    `    last commit touching src/ (HEAD's history, committer date): ${i.srcCommitIso ?? "unknown"}`,
+  ];
+  const capT = i.capturedAt ? Date.parse(i.capturedAt) / 1000 : NaN;
+  if (!Number.isFinite(capT) || i.srcCommitT === null) {
+    out.push("    → cannot compare (capturedAt or the src/ commit date unreadable)");
+  } else if (capT > i.srcCommitT) {
+    out.push("    → baseline captured AFTER the last src/ commit");
+  } else {
+    out.push("    → baseline captured BEFORE the last src/ commit (no capture on this src/ yet)");
+  }
+  if (i.srcDirty === true) {
+    out.push(
+      "    → src/ has UNCOMMITTED changes: the line above cannot be trusted (the baseline may predate code that is not in any commit)",
+    );
+  } else if (i.srcDirty === null) {
+    out.push("    → could not read git status of src/: the line above may not be trustworthy");
+  }
+  if (i.codeSv !== null && (i.baselineSv ?? 1) !== i.codeSv) {
+    out.push(
+      "    → scoringVersion differs: a compare run exits 2 until the operator re-captures (--run --update-baseline)",
+    );
+  }
+  return out;
+}
+
+/** The I/O for {@link baselineEvidence}: baseline JSON + git (no fetch); SCORING_VERSION is this checkout's. */
+function readBaselineEvidence(repo: string): BaselineEvidenceInput {
+  let capturedAt: string | null = null;
+  let baselineSv: number | null = null;
+  try {
+    const b = JSON.parse(readFileSync(join(repo, "src/tuning/eval-baseline.json"), "utf8")) as Record<string, unknown>;
+    if (typeof b.capturedAt === "string") capturedAt = b.capturedAt;
+    if (typeof b.scoringVersion === "number") baselineSv = b.scoringVersion;
+  } catch {
+    /* reported as unknown */
+  }
+  const git = (args: string[]): string | null => {
+    try {
+      return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    } catch {
+      return null;
+    }
+  };
+  const log = git(["log", "-1", "--format=%cI%n%ct", "HEAD", "--", "src/"])?.trim().split("\n");
+  const status = git(["status", "--porcelain", "--", "src/"]);
+  return {
+    capturedAt,
+    baselineSv,
+    codeSv: SCORING_VERSION,
+    srcCommitIso: log?.[0] || null,
+    srcCommitT: log?.[1] ? Number(log[1]) : null,
+    srcDirty: status === null ? null : status.trim() !== "",
+  };
+}
+
 // ------------------------------------------------------------------- CLI
 
 /** An error as printed: SQLite code + message, otherwise only its class name (a message could quote data). */
@@ -663,7 +748,12 @@ function main(): number {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let code = 2;
   try {
-    code = main();
+    if (process.argv[2] === "--baseline-evidence") {
+      const repo = process.argv[3];
+      if (!repo || process.argv.length > 4) throw new Error("usage: --baseline-evidence <repo dir>");
+      for (const line of baselineEvidence(readBaselineEvidence(resolve(repo)))) console.log(line);
+      code = 0;
+    } else code = main();
   } catch (err) {
     console.error(`error: ${errLabel(err)}`);
   }

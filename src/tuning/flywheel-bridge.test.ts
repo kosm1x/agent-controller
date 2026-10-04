@@ -68,7 +68,10 @@ describe("bridgePraisedTaskToEvalCase", () => {
     expect(JSON.parse(row!.input)).toEqual({
       message: "Busca el precio actual de NVDA por favor",
     });
-    expect(JSON.parse(row!.expected)).toEqual({ tools: ["web_search"] });
+    expect(JSON.parse(row!.expected)).toEqual({
+      tools: ["web_search"],
+      first_tools: ["web_search"],
+    });
   });
 
   it("double praise on the same task is a no-op (already_pinned)", () => {
@@ -87,6 +90,7 @@ describe("bridgePraisedTaskToEvalCase", () => {
     expect(result.created).toBe(true);
     expect(JSON.parse(getCase(result.caseId!)!.expected)).toEqual({
       tools: ["web_search", "shell_exec"],
+      first_tools: ["web_search"],
     });
   });
 
@@ -99,7 +103,26 @@ describe("bridgePraisedTaskToEvalCase", () => {
     const result = bridgePraisedTaskToEvalCase(TASK);
     expect(JSON.parse(getCase(result.caseId!)!.expected)).toEqual({
       tools: ["jarvis_read"],
+      first_tools: ["jarvis_read"],
     });
+  });
+
+  it("drops harness tools (ToolSearch, mcp__*) from the pinned expectation; harness-only = no_tools (2026-10-04)", () => {
+    seedTelemetry({
+      toolsCalled: JSON.stringify(["ToolSearch", "web_search"]),
+    });
+    const result = bridgePraisedTaskToEvalCase(TASK);
+    expect(JSON.parse(getCase(result.caseId!)!.expected)).toEqual({
+      tools: ["web_search"],
+      first_tools: ["web_search"],
+    });
+    seedTelemetry({
+      taskId: "t-harness-only",
+      toolsCalled: JSON.stringify(["mcp__playwright__browser_navigate"]),
+    });
+    expect(bridgePraisedTaskToEvalCase("t-harness-only").reason).toBe(
+      "no_tools",
+    );
   });
 
   it("skips: no telemetry / malformed tools / no tools / unfocused run / short message", () => {

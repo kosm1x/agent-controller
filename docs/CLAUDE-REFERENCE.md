@@ -24,14 +24,14 @@ npm run dev          # tsx watch (hot reload)
 npm run build        # tsc → dist/
 npm run tune:baseline:dry  # run free eval (scope + classification)
 npm run tune:run:dry       # mock overnight loop (3 experiments)
-npm run eval:gate -- --run # model-swap gate: score vs committed incumbent (~$5, ~172 LLM calls since the 4.3 corpus growth; ~13 min)
+npm run eval:gate -- --run # model-swap gate: score vs committed incumbent (~$5, one LLM call per probed tool_selection case — the run prints the count; ~13 min)
 ```
 
 Always run `typecheck` + `test` after changes before reporting completion.
 CI (`.github/workflows/ci.yml`) runs `tsc --noEmit` + sharded `vitest` on push/PR — it is the enforced gate; the local pre-commit hook is a convenience, not the only line of defense.
 Jarvis's `git_commit` and `jarvis_dev action=pr` commit with `--no-verify` on `jarvis/*` branches by design (`d9187ae`/`e1c18bd`): the hook's full suite cannot fit inside those tools' 30-60s timeouts, and `action=pr` runs its own suite gate anyway — do not "fix" this back; CI gates.
 
-**Before ANY model-id, system-prompt, or tool-description change**, run `npm run eval:gate -- --run` and do not ship on a FAIL (exit 1). This is the guard for the tool-adherence/delivery regression class that reverted the Sonnet-5 attempt — previously caught only in prod. First capture a gate-native incumbent once with `npm run eval:gate -- --run --update-baseline` (the committed `src/tuning/eval-baseline.json` is provisional). See `docs/planning/system-hardening-sweep-2026-07-05.md`.
+**Before ANY model-id, system-prompt, or tool-description change**, run `npm run eval:gate -- --run` and do not ship on a FAIL (exit 1). This is the guard for the tool-adherence/delivery regression class that reverted the Sonnet-5 attempt — previously caught only in prod. First capture a gate-native incumbent once with `npm run eval:gate -- --run --update-baseline` (the committed `src/tuning/eval-baseline.json` is provisional). Scoring (2026-10-04, `SCORING_VERSION` 2 in `src/tuning/gate.ts`): only expected tools OFFERED to the probe are scored, a case with none offered is excluded and counted, multi-tool cases score any-hit; every run prints excluded cases and unreachable slots. Exit 2 (no verdict) before any spend: an unknown or valueless flag, a missing baseline, one captured under another `scoringVersion`, or one without its population ids — re-capture with `--run --update-baseline` — or a case the baseline probed that is now excluded (free mock pass; re-checked after the run; new/removed cases are only counted); after the run: any errored tool_selection probe (no verdict, no capture), or a capture that probed fewer than half the active tool_selection cases (nothing written). `--cases-file` / `--probe-system` are experiments: exit 4, no verdict, they refuse `--update-baseline`. Scope accuracy currently rests on the hand-written cases only (mined scope cases are inactive). Nightly `tune_runs` scores are not comparable across the 2026-10-04 scoring change. See `docs/planning/system-hardening-sweep-2026-07-05.md`.
 
 ## Invariants
 

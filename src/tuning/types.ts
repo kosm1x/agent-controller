@@ -23,6 +23,13 @@ export interface TestCaseExpected {
   tools?: string[];
   /** Tools that MUST NOT be called (tool_selection). */
   not_tools?: string[];
+  /**
+   * The tool the mined run called FIRST (tool_selection). Recorded for future
+   * use only: the evaluator IGNORES it until round boundaries are recorded
+   * (without them it is one arbitrary tool of a possibly parallel first
+   * round). Written by the miner for rows mined after 2026-10-04.
+   */
+  first_tools?: string[];
   /** Expected agent type (classification). */
   agent_type?: string;
   /** Expected scope groups to be active (scope_accuracy). */
@@ -51,6 +58,32 @@ export interface CaseScore {
   score: number; // 0.0 - 1.0
   weight?: number; // from TestCase.weight (defaults to 1.0 if missing)
   details: Record<string, unknown>;
+  /**
+   * tool_selection only: the case expects tools but NONE of them was offered
+   * to the model (not registered in the eval process, or scoped out). Such a
+   * case is never probed and never scored — it lives in
+   * `EvalResult.reachability.excludedCases`, not in `perCase`.
+   */
+  excluded?: boolean;
+}
+
+/**
+ * Who could the model have picked? Expected-tool slots of every probed or
+ * excluded tool_selection case, split by whether the tool was offered.
+ * Printed by the eval gate on every run so a shrinking scored population is
+ * visible, never silent.
+ */
+export interface ToolReachability {
+  /** tool_selection cases with expected tools, none offered — not scored. */
+  casesExcluded: number;
+  /** The excluded cases themselves (score 0, `excluded: true`; never averaged). */
+  excludedCases: CaseScore[];
+  /** Expected-tool slots that were offered to the model. */
+  slotsOffered: number;
+  /** Expected-tool slots naming a tool the eval process never registered. */
+  slotsNotRegistered: number;
+  /** Expected-tool slots registered but cut by message scoping. */
+  slotsScopedOut: number;
 }
 
 export interface EvalSubscores {
@@ -63,6 +96,8 @@ export interface EvalResult {
   compositeScore: number; // 0-100
   subscores: EvalSubscores;
   perCase: CaseScore[];
+  /** Offered/unreachable expected-tool accounting (tool_selection). */
+  reachability: ToolReachability;
   totalTokens: number;
   estimatedCostUsd: number;
   durationMs: number;
@@ -82,6 +117,13 @@ export interface SandboxConfig {
   toolDescriptionOverrides?: Map<string, string>;
   /** Override scope patterns (replaces the default SCOPE_PATTERNS). */
   scopePatternOverrides?: ScopePattern[];
+  /**
+   * OPTIONAL system message for the tool_selection probe, built from the
+   * names of the tools offered to that case. Off by default: the default
+   * probe sends no system message (the claude-sdk path then substitutes its
+   * generic "You are a helpful assistant."). Experiment-only for now.
+   */
+  probeSystemPrompt?: (offeredToolNames: string[]) => string;
 }
 
 // ---------------------------------------------------------------------------

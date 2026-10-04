@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { initDatabase, getDatabase } from "../db/index.js";
-import { minePositiveSelections, mineTestCases } from "./case-miner.js";
+import {
+  isHarnessTool,
+  minePositiveSelections,
+  mineTestCases,
+  selectionExpectation,
+} from "./case-miner.js";
 
 /**
  * V8.5 Phase 4.3 — positive-selection mining + flywheel retention.
@@ -78,6 +83,7 @@ describe("minePositiveSelections", () => {
     expect(c.case_id).toMatch(/^mined-positive-/);
     expect(c.expected).toEqual({
       tools: ["jarvis_files_search", "jarvis_read"],
+      first_tools: ["jarvis_files_search"],
     });
     expect(c.weight).toBe(0.6);
     expect(c.input.message).toContain("proyecto TMN");
@@ -148,5 +154,68 @@ describe("mineTestCases — persistence + flywheel retention", () => {
     // Fresh mineable telemetry exists (the clean fixture row), but the
     // ceiling leaves no room.
     expect(minePositiveSelections(30, 120)).toHaveLength(0);
+  });
+});
+
+describe("harness tools are never expected tools (2026-10-04)", () => {
+  it("isHarnessTool: the SDK's ToolSearch and any mcp__<server>__ tool; registry names are not", () => {
+    expect(isHarnessTool("ToolSearch")).toBe(true);
+    expect(isHarnessTool("mcp__sequential-thinking__sequentialthinking")).toBe(
+      true,
+    );
+    expect(isHarnessTool("mcp__playwright__browser_navigate")).toBe(true);
+    expect(isHarnessTool("web_search")).toBe(false);
+    expect(isHarnessTool("toolsearch")).toBe(false);
+  });
+
+  it("selectionExpectation: distinct, harness dropped, call order kept, first_tools = first real call", () => {
+    expect(
+      selectionExpectation([
+        "ToolSearch",
+        "gmail_send",
+        "mcp__sequential-thinking__sequentialthinking",
+        "jarvis_file_write",
+        "gmail_send",
+      ]),
+    ).toEqual({
+      tools: ["gmail_send", "jarvis_file_write"],
+      first_tools: ["gmail_send"],
+    });
+    expect(selectionExpectation(["ToolSearch"])).toEqual({
+      tools: [],
+      first_tools: [],
+    });
+  });
+
+  it("the miner records no harness tool, and a harness-only run mines nothing", () => {
+    // The ceiling test above filled the active-positive room; free it.
+    getDatabase()
+      .prepare(
+        `DELETE FROM mined_test_cases WHERE case_id LIKE 'mined-positive-synth-%'`,
+      )
+      .run();
+    insertTelemetry({
+      message: "Envía el resumen semanal por correo al equipo de operaciones",
+      tools_called: [
+        "ToolSearch",
+        "mcp__sequential-thinking__sequentialthinking",
+        "gmail_send",
+      ],
+    });
+    insertTelemetry({
+      message: "Piensa paso a paso cómo ordenar las tareas de esta semana",
+      tools_called: ["mcp__sequential-thinking__sequentialthinking"],
+    });
+    const cases = minePositiveSelections(30, 120);
+    const all = cases.flatMap((c) => (c.expected.tools as string[]) ?? []);
+    expect(all.some(isHarnessTool)).toBe(false);
+    const mail = cases.find((c) => c.input.message.includes("correo"));
+    expect(mail?.expected).toEqual({
+      tools: ["gmail_send"],
+      first_tools: ["gmail_send"],
+    });
+    expect(cases.some((c) => c.input.message.includes("paso a paso"))).toBe(
+      false,
+    );
   });
 });

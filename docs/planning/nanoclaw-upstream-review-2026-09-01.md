@@ -216,7 +216,7 @@ mid-deploy race = queue #5 · doc #8 egress growth = queue #6; queue-only items:
 1. ~~**Claude Agent SDK 0.3.207 → 0.3.252**~~ **DONE 2026-09-01 as 0.3.245**
    (07:10 UTC, pid 1077385) — 0.3.246–0.3.252 were <7 days old and the repo's
    own `min-release-age=7` refused them (correctly; eligible 09-01…09-07 →
-   queue #19). `eval:gate --run` **PASS** (376 cases, candidate 66.05 vs
+   queue #19). `npm run eval:gate -- --run` **PASS** (376 cases, candidate 66.05 vs
    incumbent 65.75, +0.30, threshold 63.75; 1,029 s, $5.61) ·
    `validate-tool-search --run` **PASS** · both smokes PASS. Full account in
    "SDK bump" below — including the live-install incident it caused.
@@ -422,7 +422,7 @@ cleanly, not additional pre-existing finds. Rounds 3 (R1, R2, R3). Verdict
   construction (R1). The SDK ships its CLI as the optional dep
   `@anthropic-ai/claude-agent-sdk-linux-x64` — no runtime download, egress
   list untouched.
-- **Ship checks:** `tsc` clean · 248 scoped tests · `eval:gate --run` **PASS**
+- **Ship checks:** `tsc` clean · 248 scoped tests · `npm run eval:gate -- --run` **PASS**
   (376 cases / 187 tool_selection, candidate **66.05** vs incumbent 65.75,
   +0.30, threshold 63.75; 1,029 s, $5.61 — the script header's "55 cases" is
   stale) · `validate-tool-search --run` **PASS** (prompt −76 %, core 22/22,

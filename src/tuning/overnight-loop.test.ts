@@ -3,6 +3,7 @@ import {
   runOvernightTuning,
   validateMutation,
   detectPerCaseRegressions,
+  mergeResults,
 } from "./overnight-loop.js";
 import { initDatabase, closeDatabase } from "../db/index.js";
 import {
@@ -12,7 +13,12 @@ import {
   getExperimentsByRun,
   getValidVariants,
 } from "./schema.js";
-import type { TestCase, TuningSurface } from "./types.js";
+import type {
+  CaseScore,
+  EvalResult,
+  TestCase,
+  TuningSurface,
+} from "./types.js";
 import type { InferFunction } from "./eval-runner.js";
 import type { MetaInferFunction } from "./meta-agent.js";
 
@@ -348,5 +354,63 @@ describe("detectPerCaseRegressions", () => {
       { id: "case-new", score: 0.0 }, // new case, no baseline
     ]);
     expect(detectPerCaseRegressions(baseline, merged)).toHaveLength(0);
+  });
+});
+
+describe("mergeResults (excluded tool_selection cases)", () => {
+  const ts = (
+    caseId: string,
+    score: number,
+    excluded = false,
+  ): CaseScore => ({
+    caseId,
+    category: "tool_selection",
+    score,
+    weight: 1,
+    ...(excluded ? { excluded: true } : {}),
+    details: excluded
+      ? { offered: [], notRegistered: ["zz_gone"], scopedOut: [] }
+      : { offered: ["web_search"], notRegistered: [], scopedOut: [] },
+  });
+  const result = (scored: CaseScore[], excluded: CaseScore[]): EvalResult => ({
+    compositeScore: 0,
+    subscores: { toolSelection: 0, scopeAccuracy: 0, classification: 0 },
+    perCase: scored,
+    reachability: {
+      casesExcluded: excluded.length,
+      excludedCases: excluded,
+      slotsOffered: 0,
+      slotsNotRegistered: 0,
+      slotsScopedOut: 0,
+    },
+    totalTokens: 10,
+    estimatedCostUsd: 0.01,
+    durationMs: 5,
+  });
+
+  it("moves cases between scored and excluded without double counting and recomputes reachability", () => {
+    // Baseline: a scored 1.0, b scored 1.0, x excluded.
+    const baseline = result(
+      [ts("a", 1), ts("b", 1)],
+      [ts("x", 0, true)],
+    );
+    // Targeted: b now excluded (scored -> excluded), x now scored 0 (excluded -> scored).
+    const targeted = result([ts("x", 0)], [ts("b", 0, true)]);
+    const merged = mergeResults(baseline, targeted);
+
+    expect(merged.perCase.map((c) => c.caseId).sort()).toEqual(["a", "x"]);
+    expect(merged.reachability.excludedCases.map((c) => c.caseId)).toEqual([
+      "b",
+    ]);
+    // Excluded never averaged: (a 1 + x 0) / 2 = 50, not (1+1+0)/3 or (1+0+0)/3.
+    expect(merged.subscores.toolSelection).toBe(50);
+    expect(merged.reachability).toEqual({
+      casesExcluded: 1,
+      excludedCases: [expect.objectContaining({ caseId: "b", excluded: true })],
+      slotsOffered: 2,
+      slotsNotRegistered: 1,
+      slotsScopedOut: 0,
+    });
+    expect(merged.totalTokens).toBe(20);
   });
 });
