@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-10-04 (**PR #60 — V9 W1 ledger grader gate, dormant behind `TASK_GATES_GRADER=off`; critic SQL whitelist resolved via EXPLAIN. Merged 2026-10-04, not deployed. Do NOT arm `shadow`/`enforce` until the breaker half-open freeze is fixed (queue §2026-10-04 item 11).**)
+> Last updated: 2026-10-04 (**PR #60 — V9 W1 ledger grader gate, dormant behind `TASK_GATES_GRADER=off`; critic SQL whitelist resolved via EXPLAIN. Merged and DEPLOYED 2026-10-04 05:10 UTC at `e9d7efb` (PID 3212032) together with the KB mirror guard (default mirror dir written only when the open db is the live `mc.db`; startup log `kb mirror enabled`, verified). Flag unset in the live process. Do NOT arm `shadow`/`enforce` until the breaker half-open freeze is fixed (queue §2026-10-04 item 11).**)
 >
 > Last updated: 2026-10-04 (**eval gate scoring v2 (`e1ad4a1`) + rulings 1–5 pre-deploy check (`f9c7e7e`). DEPLOYED 2026-10-04 04:14 UTC at `6cbaa6c` (PID 3072724): rulings 1–5 (`83b3cf3`) are LIVE. Verified: health 200, 0 error lines at startup, 9 schedules, Telegram round trip. Not yet proven by real use: credentials by name, outbound scrub, docker reads; first nightly tuning run under scoring v2. Open: ruling 5a (non-superuser DB role); values stored before the deploy stay in clear at rest.**
 >
