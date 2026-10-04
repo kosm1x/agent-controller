@@ -21,8 +21,12 @@
  *
  * Ceiling accounting: auto-bridged cases count against POSITIVE_CASE_CEILING
  * on BOTH sides — they consume miner room in minePositiveSelections, and the
- * bridge itself refuses to insert past the ceiling (flywheel cases are
- * retention-exempt, so nothing else bounds them). The counted set is
+ * bridge never grows the counted set past the ceiling (flywheel cases are
+ * retention-exempt, so nothing else bounds them). At a full ceiling a new pin
+ * DISPLACES one active miner positive (earliest batch, then lowest id;
+ * soft-retire, active = 0) —
+ * the operator's explicit signal outranks automatic mining — and refuses
+ * only when every slot is already an excelente pin. The counted set is
  * POSITIVE_CEILING_PREDICATE in case-miner.ts, keyed on the bridge's
  * exclusive `flywheel:excelente:` mined_from marker.
  */
@@ -46,7 +50,22 @@ export interface BridgeResult {
     | "message_too_short"
     | "ceiling_reached"
     | "already_pinned";
+  /** case_id of the miner positive this pin retired to stay at the ceiling. */
+  displaced?: string;
 }
+
+/**
+ * Rows a new excelente pin may displace: ACTIVE nightly-miner positives only.
+ * `source = 'mined'` and the marker exclusion keep every operator pin
+ * (auto-bridged or manual CLI, whatever its case_id) out of reach.
+ */
+const DISPLACEABLE_PREDICATE = `case_id LIKE 'mined-positive-%'
+    AND source = 'mined'
+    AND mined_from NOT LIKE 'flywheel:excelente:%'
+    AND active = 1`;
+
+/** Thrown inside the pin transaction to roll the insert back. */
+class CeilingFullOfPins extends Error {}
 
 /**
  * Pin the praised task's latest scope_telemetry row as a flywheel eval case.
@@ -86,35 +105,59 @@ export function bridgePraisedTaskToEvalCase(taskId: string): BridgeResult {
   // first writer on a fresh DB (router hook fires on any excelente).
   ensureMinedTestCasesTable(db);
 
-  // Audit W1 (R1, 2026-07-14): flywheel cases are retention-EXEMPT, so
-  // without this check the auto-bridge grows the corpus unboundedly — it
-  // would first displace mined positives to zero, then keep adding gate cost
-  // forever. Same hard bound the miner honors; the counted set is defined by
-  // POSITIVE_CEILING_PREDICATE (miner positives + auto-bridged pins).
-  // Deliberate ordering (I-R2.1): checked BEFORE the INSERT OR IGNORE, so at
-  // a full ceiling a re-praised already-pinned task reads "ceiling_reached"
-  // instead of "already_pinned" — misleading log label, but checking after
-  // the insert would let a genuinely new case slip past the bound.
-  if (countActivePositiveCases(db) >= POSITIVE_CASE_CEILING) {
-    return { created: false, reason: "ceiling_reached" };
-  }
-
+  // Audit W1 (R1, 2026-07-14): flywheel cases are retention-EXEMPT, so the
+  // bridge must never grow the counted set (POSITIVE_CEILING_PREDICATE:
+  // miner positives + auto-bridged pins) past the ceiling, or gate cost grows
+  // forever. 2026-10-04: at a full ceiling the pin displaces one active
+  // miner positive instead of being refused — the miner had filled
+  // every slot, so every excelente was refused. One transaction: insert,
+  // then retire one miner positive if the count went over; nothing to
+  // retire (all slots are excelente pins) → roll the insert back.
+  // Ordering (I-R2.1, revised): INSERT OR IGNORE runs FIRST, so a re-praised
+  // already-pinned task reads "already_pinned" and never displaces anything.
   const caseId = `flywheel-auto-${taskId}`;
-  const result = db
-    .prepare(
-      `INSERT OR IGNORE INTO mined_test_cases
-         (case_id, category, input, expected, weight, source, mined_from)
-       VALUES (?, 'tool_selection', ?, ?, 1.0, 'flywheel', ?)`,
-    )
-    .run(
-      caseId,
-      JSON.stringify({ message }),
-      JSON.stringify(expectation),
-      `flywheel:excelente:${taskId}`,
-    );
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO mined_test_cases
+       (case_id, category, input, expected, weight, source, mined_from)
+     VALUES (?, 'tool_selection', ?, ?, 1.0, 'flywheel', ?)`,
+  );
+  // Victim order: earliest created_at, then lowest id. The miner inserts in
+  // batches that share one created_at (second resolution), so this is
+  // "earliest batch, then lowest id" — deterministic, but arbitrary within
+  // a batch; not a true per-case age.
+  const oldestDisplaceable = db.prepare(
+    `SELECT id, case_id FROM mined_test_cases
+     WHERE ${DISPLACEABLE_PREDICATE}
+     ORDER BY created_at ASC, id ASC LIMIT 1`,
+  );
+  const retire = db.prepare(
+    `UPDATE mined_test_cases SET active = 0 WHERE id = ?`,
+  );
 
-  if (result.changes === 0) {
-    return { created: false, caseId, reason: "already_pinned" };
+  try {
+    return db.transaction((): BridgeResult => {
+      const result = insert.run(
+        caseId,
+        JSON.stringify({ message }),
+        JSON.stringify(expectation),
+        `flywheel:excelente:${taskId}`,
+      );
+      if (result.changes === 0) {
+        return { created: false, caseId, reason: "already_pinned" };
+      }
+      if (countActivePositiveCases(db) <= POSITIVE_CASE_CEILING) {
+        return { created: true, caseId };
+      }
+      const victim = oldestDisplaceable.get() as
+        { id: number; case_id: string } | undefined;
+      if (!victim) throw new CeilingFullOfPins();
+      retire.run(victim.id);
+      return { created: true, caseId, displaced: victim.case_id };
+    })();
+  } catch (err) {
+    if (err instanceof CeilingFullOfPins) {
+      return { created: false, reason: "ceiling_reached" };
+    }
+    throw err;
   }
-  return { created: true, caseId };
 }

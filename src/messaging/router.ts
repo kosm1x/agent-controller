@@ -2311,7 +2311,7 @@ export class MessageRouter {
         const bridge = bridgePraisedTaskToEvalCase(taskId);
         console.log(
           bridge.created
-            ? `[router] flywheel auto-bridge: pinned ${bridge.caseId}`
+            ? `[router] flywheel auto-bridge: pinned ${bridge.caseId}${bridge.displaced ? ` (displaced ${bridge.displaced})` : ""}`
             : `[router] flywheel auto-bridge: skipped (${bridge.reason}) for task ${taskId}`,
         );
       } catch (err) {

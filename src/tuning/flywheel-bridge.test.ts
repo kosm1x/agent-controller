@@ -5,7 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import { bridgePraisedTaskToEvalCase } from "./flywheel-bridge.js";
-import { minePositiveSelections } from "./case-miner.js";
+import {
+  countActivePositiveCases,
+  ensureMinedTestCasesTable,
+  minePositiveSelections,
+  POSITIVE_CASE_CEILING,
+} from "./case-miner.js";
 
 const TASK = "11111111-2222-3333-4444-555555555555";
 
@@ -201,5 +206,241 @@ describe("bridgePraisedTaskToEvalCase", () => {
     expect(minePositiveSelections().length).toBeGreaterThan(0);
     seedTelemetry({ taskId: "t-room" });
     expect(bridgePraisedTaskToEvalCase("t-room").created).toBe(true);
+  });
+});
+
+describe("bridgePraisedTaskToEvalCase — displacement at a full ceiling (2026-10-04)", () => {
+  // Synthetic rows only: case_id, source, mined_from, active, created_at are
+  // what the ceiling and displacement predicates read.
+  function addRow(opts: {
+    caseId: string;
+    source: "mined" | "flywheel";
+    minedFrom: string;
+    createdAt: string;
+    active?: number;
+  }): void {
+    getDatabase()
+      .prepare(
+        `INSERT INTO mined_test_cases
+           (case_id, category, input, expected, weight, source, mined_from, active, created_at)
+         VALUES (?, 'tool_selection', '{}', '{}', 0.6, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.caseId,
+        opts.source,
+        opts.minedFrom,
+        opts.active ?? 1,
+        opts.createdAt,
+      );
+  }
+  const minute = (m: number) =>
+    `2026-01-01 ${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+  // n miner positives, inserted NEWEST first: the highest id is the oldest
+  // row, so ordering by id instead of created_at picks the wrong victim.
+  function addMinerPositives(n: number, firstMinute = 0): void {
+    for (let i = 0; i < n; i++)
+      addRow({
+        caseId: `mined-positive-p${i}`,
+        source: "mined",
+        minedFrom: "positive_selection:web_search",
+        createdAt: minute(firstMinute + n - i),
+      });
+  }
+  function addExcelentePins(n: number): void {
+    for (let i = 0; i < n; i++)
+      addRow({
+        caseId: `flywheel-auto-fill-${i}`,
+        source: "flywheel",
+        minedFrom: `flywheel:excelente:fill-${i}`,
+        createdAt: minute(i),
+      });
+  }
+  const retired = () =>
+    getDatabase()
+      .prepare("SELECT case_id FROM mined_test_cases WHERE active = 0")
+      .all()
+      .map((r) => (r as { case_id: string }).case_id);
+
+  beforeEach(() => {
+    ensureMinedTestCasesTable(getDatabase());
+    seedTelemetry({ taskId: "t-new" });
+  });
+
+  it("at a full ceiling of miner positives: pins, retires exactly the OLDEST one, count stays at the ceiling", () => {
+    addMinerPositives(POSITIVE_CASE_CEILING); // p139 is the oldest (minute 1)
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+
+    const result = bridgePraisedTaskToEvalCase("t-new");
+    expect(result).toEqual({
+      created: true,
+      caseId: "flywheel-auto-t-new",
+      displaced: "mined-positive-p139",
+    });
+    expect(retired()).toEqual(["mined-positive-p139"]);
+    expect(getCase("flywheel-auto-t-new")!.active).toBe(1);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+  });
+
+  it("created_at ties break on the lower id", () => {
+    addRow({
+      caseId: "mined-positive-tie-a",
+      source: "mined",
+      minedFrom: "positive_selection:web_search",
+      createdAt: minute(0),
+    });
+    addRow({
+      caseId: "mined-positive-tie-b",
+      source: "mined",
+      minedFrom: "positive_selection:web_search",
+      createdAt: minute(0),
+    });
+    addMinerPositives(POSITIVE_CASE_CEILING - 2, 10);
+
+    expect(bridgePraisedTaskToEvalCase("t-new").displaced).toBe(
+      "mined-positive-tie-a",
+    );
+    expect(retired()).toEqual(["mined-positive-tie-a"]);
+  });
+
+  it("re-praise of an already pinned task at a full ceiling: already_pinned, nothing retired", () => {
+    addMinerPositives(POSITIVE_CASE_CEILING - 1);
+    expect(bridgePraisedTaskToEvalCase("t-new")).toEqual({
+      created: true,
+      caseId: "flywheel-auto-t-new",
+    });
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+
+    expect(bridgePraisedTaskToEvalCase("t-new")).toEqual({
+      created: false,
+      caseId: "flywheel-auto-t-new",
+      reason: "already_pinned",
+    });
+    expect(retired()).toEqual([]);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+  });
+
+  it("ceiling full of excelente pins only: ceiling_reached, insert rolled back, nothing retired", () => {
+    addExcelentePins(POSITIVE_CASE_CEILING);
+    // An already-retired miner positive is not a displacement candidate.
+    addRow({
+      caseId: "mined-positive-old-off",
+      source: "mined",
+      minedFrom: "positive_selection:web_search",
+      createdAt: minute(0),
+      active: 0,
+    });
+
+    expect(bridgePraisedTaskToEvalCase("t-new")).toEqual({
+      created: false,
+      reason: "ceiling_reached",
+    });
+    expect(getCase("flywheel-auto-t-new")).toBeUndefined();
+    expect(retired()).toEqual(["mined-positive-old-off"]);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+  });
+
+  it("below the ceiling: pins without displacing anything", () => {
+    addMinerPositives(10);
+    expect(bridgePraisedTaskToEvalCase("t-new")).toEqual({
+      created: true,
+      caseId: "flywheel-auto-t-new",
+    });
+    expect(retired()).toEqual([]);
+    expect(countActivePositiveCases(getDatabase())).toBe(11);
+  });
+
+  it("never retires a pin or an inactive row, whatever its case_id: only active source='mined' miner positives", () => {
+    // Older than the one genuine candidate, each excluded by one clause.
+    addRow({
+      caseId: "mined-positive-inactive",
+      source: "mined",
+      minedFrom: "positive_selection:web_search",
+      createdAt: minute(0),
+      active: 0,
+    });
+    addRow({
+      caseId: "mined-positive-marker",
+      source: "mined",
+      minedFrom: "flywheel:excelente:squat",
+      createdAt: minute(1),
+    });
+    addRow({
+      caseId: "mined-positive-manual",
+      source: "flywheel",
+      minedFrom: "flywheel:manual",
+      createdAt: minute(2),
+    });
+    addRow({
+      caseId: "mined-positive-genuine",
+      source: "mined",
+      minedFrom: "positive_selection:web_search",
+      createdAt: minute(500),
+    });
+    addExcelentePins(POSITIVE_CASE_CEILING - 3);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+
+    expect(bridgePraisedTaskToEvalCase("t-new").displaced).toBe(
+      "mined-positive-genuine",
+    );
+    expect(retired().sort()).toEqual([
+      "mined-positive-genuine",
+      "mined-positive-inactive",
+    ]);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+  });
+
+  it("the miner adds nothing after a displacement (ceiling still full)", () => {
+    addMinerPositives(POSITIVE_CASE_CEILING);
+    bridgePraisedTaskToEvalCase("t-new");
+    // Fresh mineable telemetry: the ceiling is still full, so no room.
+    seedTelemetry({
+      taskId: "t-fresh",
+      message: "Revisa el clima de mañana en Monterrey",
+    });
+    expect(minePositiveSelections()).toEqual([]);
+  });
+
+  it("never retires an older active miner row of another kind (mined-feedback-*, mined-tier-*)", () => {
+    // Older than every miner positive, source='mined', active — excluded by
+    // the case_id prefix alone (they do not count against the ceiling).
+    for (const caseId of ["mined-feedback-x", "mined-tier-x"])
+      addRow({
+        caseId,
+        source: "mined",
+        minedFrom: "negative_feedback:t-old",
+        createdAt: minute(0),
+      });
+    addMinerPositives(POSITIVE_CASE_CEILING, 10); // p139 earliest positive
+
+    expect(bridgePraisedTaskToEvalCase("t-new").displaced).toBe(
+      "mined-positive-p139",
+    );
+    expect(retired()).toEqual(["mined-positive-p139"]);
+    expect(countActivePositiveCases(getDatabase())).toBe(POSITIVE_CASE_CEILING);
+  });
+
+  it("a non-sentinel DB error propagates (never reported as ceiling_reached) and rolls the pin back", () => {
+    addMinerPositives(POSITIVE_CASE_CEILING);
+    const db = getDatabase();
+    // Synthetic failure at the insert step.
+    db.exec(`CREATE TRIGGER fail_pin BEFORE INSERT ON mined_test_cases
+             WHEN NEW.case_id = 'flywheel-auto-t-new'
+             BEGIN SELECT RAISE(ABORT, 'synthetic insert failure'); END`);
+    expect(() => bridgePraisedTaskToEvalCase("t-new")).toThrow(
+      /synthetic insert failure/,
+    );
+    expect(getCase("flywheel-auto-t-new")).toBeUndefined();
+    expect(retired()).toEqual([]);
+
+    // Synthetic failure at the retire step: the insert must roll back too.
+    db.exec(`DROP TRIGGER fail_pin;
+             CREATE TRIGGER fail_retire BEFORE UPDATE ON mined_test_cases
+             BEGIN SELECT RAISE(ABORT, 'synthetic retire failure'); END`);
+    expect(() => bridgePraisedTaskToEvalCase("t-new")).toThrow(
+      /synthetic retire failure/,
+    );
+    expect(getCase("flywheel-auto-t-new")).toBeUndefined();
+    expect(retired()).toEqual([]);
+    expect(countActivePositiveCases(db)).toBe(POSITIVE_CASE_CEILING);
   });
 });
