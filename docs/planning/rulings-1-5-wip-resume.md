@@ -1,5 +1,7 @@
 # Rulings 1–5 — work-in-progress handover (2026-10-03)
 
+> **STATUS 2026-10-04: DEPLOYED 04:14 UTC at `6cbaa6c`.** Pre-deploy check (`scripts/predeploy-rulings-1-5.sh`) returned READY WITH NOTES; paid eval gate PASS twice under the old scoring (67.25, 67.47 vs 68.35), baseline then re-captured under scoring v2 (76.87). Still open from the checklist below: ruling 5a (non-superuser DB role); shell-gate differential compared nothing (no `shell_exec` logged in 30 days); values stored before the deploy stay in clear at rest.
+
 `main` was merged into this branch at `be6152e` (2026-10-03).
 
 Branch `wip/rulings-1-5` carries the UNSHIPPED build of operator rulings 1–5 (ruled

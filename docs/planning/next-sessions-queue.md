@@ -1462,7 +1462,7 @@ State and root causes: `docs/PROJECT-STATUS.md` header of 2026-10-03.
 
 ## 2026-10-04 — eval gate scoring v2 follow-ups (`e1ad4a1`)
 
-Diagnosis and method: header of `scripts/eval-gate.ts`. Baseline re-captured under scoring version 2 on 2026-10-04.
+Diagnosis and method: header of `scripts/eval-gate.ts`. Baseline re-captured under scoring version 2 on 2026-10-04. Rulings 1–5 + this gate DEPLOYED 2026-10-04 04:14 UTC (`6cbaa6c`).
 
 1. **`scoring_version` on `tune_runs` / `tune_variants`** (schema column via `SCHEMA_MIGRATIONS`). The nightly loop scores with the new method once deployed; stored scores jump at that point with no marker, and `getValidVariants` ranks by raw composite across generations (latent: the one valid variant is legacy-blocked).
 2. **Round boundaries in `scope_telemetry.tools_called`** so the miner can record the real first round; until then the scorer ignores `first_tools` and uses any-hit over `tools`.
@@ -1472,3 +1472,5 @@ Diagnosis and method: header of `scripts/eval-gate.ts`. Baseline re-captured und
 6. **`shell_exec` scoped out by the regex scoping in mined cases** where production's classifier offered it: the gate's scoping is not production's.
 7. `scripts/add-eval-case.ts --from-task` can still record harness tools (`ToolSearch`, `mcp__*`) as expected.
 8. Baseline digests: a mined case id is a deterministic hash of the user message, so a digest lets someone confirm a guessed message; a salt outside the repo would close it.
+9. **Prove rulings 1–5 by first real use** (deployed 10-04): a credential used by name in `shell_exec` / a template tool, an outbound scrub hit, a docker read, an expiry notice. Also check the first nightly tuning run under scoring v2.
+10. **Ruling 5a**: non-superuser DB role for Jarvis's psql (operator).
