@@ -126,11 +126,12 @@ describe("startRitualScheduler", () => {
     //   (morning-scan + eod-scan)
     //   + 1 KB backup + 1 KB reindex (2026-05-07) + 1 autonomous improvement + 1 diff digest
     //   + 1 canary + 1 memory consolidation + 1 stale-artifact-prune (v7.7.3)
-    //   + 1 PM daily rebalance (F8.1c) + 1 hindsight-cost-pull (2026-05-07, queue #4)
+    //   + 1 hindsight-cost-pull (2026-05-07, queue #4) — PM daily rebalance
+    //   (F8.1c) ARCHIVED 2026-10-04, not scheduled
     //   + 1 evolution-log-commit (weekly durability, 2026-06-17)
     //   + 1 no-verdict-reminder (V8.5 4.6, 2026-07-14)
     //   + 1 jme-consolidate (JME Phase 2 nightly batch, 2026-07-14)
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockSchedule).toHaveBeenCalledTimes(18);
     // JME nightly consolidation runs pre-dawn MX (Phase 2, audit C3).
     expect(mockSchedule.mock.calls.some((c) => c[0] === "45 2 * * *")).toBe(
       true,
@@ -159,7 +160,7 @@ describe("startRitualScheduler", () => {
     delete process.env.HINDSIGHT_ENABLED;
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(18);
+      expect(mockSchedule).toHaveBeenCalledTimes(17);
     } finally {
       if (prior !== undefined) process.env.HINDSIGHT_ENABLED = prior;
     }
@@ -173,7 +174,7 @@ describe("startRitualScheduler", () => {
     process.env.HINDSIGHT_COST_PULL_ENABLED = "true";
     try {
       startRitualScheduler();
-      expect(mockSchedule).toHaveBeenCalledTimes(19);
+      expect(mockSchedule).toHaveBeenCalledTimes(18);
     } finally {
       if (priorEnabled !== undefined)
         process.env.HINDSIGHT_ENABLED = priorEnabled;
@@ -228,7 +229,7 @@ describe("stopRitualScheduler", () => {
     startRitualScheduler();
     stopRitualScheduler();
 
-    expect(mockStop).toHaveBeenCalledTimes(19);
+    expect(mockStop).toHaveBeenCalledTimes(18);
   });
 });
 
@@ -443,7 +444,7 @@ describe("delayed same-day retry of a failed ritual", () => {
       throw new Error("SQLITE_BUSY");
     });
     startRitualScheduler();
-    expect(mockSchedule).toHaveBeenCalledTimes(19);
+    expect(mockSchedule).toHaveBeenCalledTimes(18);
     expect(mockEmitEvent).toHaveBeenCalledWith(
       "schedule.run_failed",
       expect.objectContaining({
@@ -811,17 +812,24 @@ describe("task templates", () => {
     const r = rituals.find((x) => x.id === "pm-daily-rebalance");
     expect(r).toBeDefined();
 
-    startRitualScheduler();
-    const enabled = rituals.filter((x) =>
-      x.id === "overnight-tuning" ? false : x.enabled,
-    );
-    const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
-    expect(idx).toBeGreaterThanOrEqual(0);
-    const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
-    // Drive the callback and await its async work. If getTaskTemplate's
-    // switch is missing the pm-daily-rebalance case, executeRitual throws
-    // "Unknown ritual" and submitTask is never called.
-    await callback();
+    // ARCHIVED 2026-10-04 (enabled: false); the case stays wired so that
+    // re-enabling is a flag flip — flip it for this test only.
+    r!.enabled = true;
+    try {
+      startRitualScheduler();
+      const enabled = rituals.filter((x) =>
+        x.id === "overnight-tuning" ? false : x.enabled,
+      );
+      const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
+      // Drive the callback and await its async work. If getTaskTemplate's
+      // switch is missing the pm-daily-rebalance case, executeRitual throws
+      // "Unknown ritual" and submitTask is never called.
+      await callback();
+    } finally {
+      r!.enabled = false;
+    }
     expect(mockSubmitTask).toHaveBeenCalled();
     // And confirm the submitted task title came from createPmDailyRebalance,
     // not some other ritual template — tight binding of dispatch → template.
@@ -841,13 +849,21 @@ describe("task templates", () => {
       .mockReturnValue(false);
 
     const { rituals } = await import("./config.js");
-    startRitualScheduler();
-    const enabled = rituals.filter((x) =>
-      x.id === "overnight-tuning" ? false : x.enabled,
-    );
-    const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
-    const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
-    await callback();
+    const r = rituals.find((x) => x.id === "pm-daily-rebalance");
+    // ARCHIVED 2026-10-04 (enabled: false) — flip it for this test only.
+    r!.enabled = true;
+    try {
+      startRitualScheduler();
+      const enabled = rituals.filter((x) =>
+        x.id === "overnight-tuning" ? false : x.enabled,
+      );
+      const idx = enabled.findIndex((x) => x.id === "pm-daily-rebalance");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const callback = mockSchedule.mock.calls[idx][1] as () => unknown;
+      await callback();
+    } finally {
+      r!.enabled = false;
+    }
     expect(mockSubmitTask).toHaveBeenCalled();
     spy.mockRestore();
   });

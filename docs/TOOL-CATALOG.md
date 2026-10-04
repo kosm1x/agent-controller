@@ -236,7 +236,7 @@ MCP bridges to two browser stacks.
 
 - `schedule_task` — create a one-time or cron scheduled task
 - `list_schedules` (always-on) / `delete_schedule` — manage
-- Static rituals (`src/rituals/scheduler.ts`, 2026-09-26): morning-briefing, nightly-close, evolution-log, market-morning-scan, market-eod-scan, pm-daily-rebalance, signal-intelligence, skill-evolution, weekly-review, day-narrative, overnight-tuning, autonomous-improvement, kb-backup, stale-artifact-prune, memory-consolidation, diff-digest (and others)
+- Static rituals (`src/rituals/scheduler.ts`, 2026-09-26): morning-briefing, nightly-close, evolution-log, market-morning-scan, market-eod-scan, pm-daily-rebalance (archived 2026-10-04, `enabled: false`), signal-intelligence, skill-evolution, weekly-review, day-narrative, overnight-tuning, autonomous-improvement, kb-backup, stale-artifact-prune, memory-consolidation, diff-digest (and others)
 
 ### CRM (scope group: `crm`)
 

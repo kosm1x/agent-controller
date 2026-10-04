@@ -188,6 +188,83 @@ Alertas:
   });
 });
 
+describe("pm error filter — negated mentions (2026-10-03, task fcf3d901)", () => {
+  const reasonWith = (line: string) =>
+    decideRitualDelivery("pm-daily-rebalance", `${ZERO_DAY_1}\n- ${line}`, fingerprintReport(ZERO_DAY_1)).reason;
+
+  it.each([
+    "not an error",
+    "This is not a timeout",
+    "no error",
+    "No errors",
+    "without error",
+    "without any error",
+    "0 errors",
+    "0 error",
+    "zero errors",
+    "0 aborts",
+    "no timeout",
+    "0 errores",
+    "no es un error",
+    "No fue un error de ejecución.",
+    "no hubo error",
+    "no falló",
+  ])("negated %j is not an error event", (line) => {
+    expect(reasonWith(line)).toBe("unchanged");
+  });
+
+  it.each([
+    "Error: pm_paper_rebalance abortó por posiciones stale",
+    "hubo un error al leer el libro",
+    "falló el paso 2",
+    "❌ rebalance",
+    "timeout after 30s",
+    "the run aborted",
+    "not found; error 500",
+  ])("real %j is still an error event", (line) => {
+    expect(reasonWith(line)).toBe("error");
+  });
+
+  // Audit W1: a negator ending one line never hides an error on the next.
+  // Audit W2: a `0` after a digit or dot is not a negator.
+  it.each([
+    "Órdenes: 0/0/0\nError: pm_paper_rebalance failed",
+    "Ejecutado: no\nError: disk",
+    "Not\nError",
+    "resultado: 0\nError: X",
+    "Cash: sin cambios\nError: disk full",
+    "Took 2.0\nError: y",
+    "1.0 error",
+    "v2.0 error",
+    "HTTP 500 error",
+    "exit code 10 error",
+  ])("real %j across a line break / after a number is still an error event", (line) => {
+    expect(reasonWith(line)).toBe("error");
+  });
+
+  // Ambiguous ("step 0 error" vs "0 errors at step"): pinned as suppressed.
+  it("'paso 0 error' stays suppressed (bare 0 negator, ambiguous by design)", () => {
+    expect(reasonWith("paso 0 error")).toBe("unchanged");
+  });
+
+  it("the 2026-10-03 shape — aside glued to a zero-order report — is not `error`", () => {
+    const report = `Alpha run succeeded (0 active weights), not an error. Proceeding to step 3 as specified.**PM diario — 2026-10-03**
+
+Universo: 100 mercados | Pesos: +0 largos, −0 cortos-via-NO | Rechazos: 200 tokens excluidos (178 extreme_price, 22 far_resolution)
+Equity: n/d (sin rebalanceo) | Cash: n/d | Órdenes: 0/0/0
+Top fills: ninguno
+Alertas:
+- \`pm_alpha_run\`: nActive=0, totalExposure=0.0000. Ningún token superó el umbral de edge.
+- \`pm_paper_rebalance\` (daily) devolvió: "pm_alpha run has no active weights. Nothing to trade." No fue un error de ejecución. No se hicieron órdenes ni fills, y el libro quedó sin cambios.
+- No se usó \`allow_stale\`. No se llamó a ninguna herramienta de renta variable.`;
+    expect(decideRitualDelivery("pm-daily-rebalance", report, null).reason).toBe("first");
+    expect(decideRitualDelivery("pm-daily-rebalance", report, fingerprintReport(report))).toMatchObject({
+      deliver: false,
+      reason: "unchanged",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Usability Phase 5 — the seam pipeline
 // ---------------------------------------------------------------------------

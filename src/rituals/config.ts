@@ -122,7 +122,9 @@ export const rituals: RitualDefinition[] = [
     // 2026-08-22 (usability plan Phase 0.2/0.3): 07:00 MX instead of 06:00 ET
     // (= 04:00 MX — a 4 a.m. push with 0 orders in 22 runs). Delivery is now
     // change-only (src/rituals/delivery-policy.ts); the run itself is daily.
+    // ARCHIVED 2026-10-04 (operator ruling): zero fills ever. Factory, tools
+    // and pm_* tables are kept; re-enable = flip this flag.
     cron: "0 7 * * *",
-    enabled: true,
+    enabled: false,
   },
 ];

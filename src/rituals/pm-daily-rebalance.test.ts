@@ -43,7 +43,8 @@ describe("pm-daily-rebalance ritual config", () => {
     expect(r?.cron).toBe("0 7 * * *");
     // No per-ritual override → RITUALS_TIMEZONE (America/Mexico_City).
     expect(r?.timezone).toBeUndefined();
-    expect(r?.enabled).toBe(true);
+    // ARCHIVED 2026-10-04 (operator ruling: zero fills ever) — not scheduled.
+    expect(r?.enabled).toBe(false);
   });
 
   it("cron fires daily (no weekday restriction)", () => {

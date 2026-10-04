@@ -253,6 +253,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 | Weekly review        | Sunday 8:00 PM Mexico City | Email (fede@eurekamd.net) + Telegram                                                                                                                                     |
 | Diff digest          | Sunday 8:00 PM Mexico City | Telegram (autonomous activity summary)                                                                                                                                   |
 | Evolution log commit | Sunday 3:00 AM Mexico City | Mechanical (no LLM) — pathspec `git commit` of docs/EVOLUTION-LOG.md for durability (2026-06-17)                                                                         |
+| PM daily rebalance   | ARCHIVED 2026-10-04        | Paper prediction-market rebalance (was 07:00 MX daily, change-only) — operator ruling: zero fills ever; `enabled: false` in src/rituals/config.ts, factory + pm_* kept    |
 
 ## Autonomous Improvement Safeguards
 

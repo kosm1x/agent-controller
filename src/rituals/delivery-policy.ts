@@ -172,10 +172,18 @@ export function deliveredWords(text: string): number {
  * Error EVENTS only. "stale" is deliberately absent: the PM prompt instructs
  * the model to write "Alertas: (stale markets, …)" so every normal report
  * contains the word (R1 audit W1 — 3 of 6 real reports matched it). A
- * negated mention ("Sin stale-position abort", report 8473) is not an event.
+ * negated mention ("Sin stale-position abort", report 8473) is not an event,
+ * nor is a plainly negated English/Spanish one directly before the word —
+ * "not an error", "no error", "0 aborts", "No fue un error de ejecución"
+ * (2026-10-03: the model's aside "…, not an error." pushed a zero-order
+ * report as `error`). Plurals ("errors", "errores") never match. The tail is
+ * `(?!\w)`, not `\b`: `\w` is ASCII here, so `falló\b` never matched "falló ".
+ * Guards use `[ \t]+`, never `\s+`: a negator ending one line ("Cash: sin
+ * cambios", "Órdenes: 0/0/0") must not hide an `Error:` on the next (audit
+ * W1); a bare `0` after a digit or dot ("2.0 error") is not a negator (W2).
  */
 const ERROR_RE =
-  /(?<!\b(?:sin|no hay|no hubo|ning[uú]n[ao]?)\s+(?:[\w-]+\s+){0,2})\b(?:error|abort\w*|fall[óo]|exception|no pude|timeout)\b|❌/i;
+  /(?<!\b(?:sin|no hay|no hubo|ning[uú]n[ao]?|without)[ \t]+(?:[\w-]+[ \t]+){0,2}|\b(?:not(?:[ \t]+an?)?|no(?:[ \t]+(?:es|fue|era)[ \t]+un[ao]?)?|(?<![\d.])0|zero|cero)[ \t]+)\b(?:error|abort\w*|fall[óo]|exception|no pude|timeout)(?!\w)|❌/i;
 
 /**
  * `Órdenes: 0/0/0`, `Órdenes: 0 planned / 0 filled / 0 rejected`,
