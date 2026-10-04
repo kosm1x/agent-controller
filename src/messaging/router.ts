@@ -51,6 +51,7 @@ import {
 import { enrichContext } from "../intelligence/enrichment.js";
 import { extractAndPersistCorrection } from "../intelligence/correction-loop.js";
 import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 import { formatProjectsBlock } from "../db/projects.js";
 import {
   detectFeedbackSignal,
@@ -70,6 +71,7 @@ import {
   clearPendingConfirmation,
   resolvePendingConfirmation,
   storePendingConfirmation,
+  rearmPendingConfirmationsAtBoot,
   detectConfirmationResponse,
   argsSha256,
   renderConfirmationSummary,
@@ -992,6 +994,8 @@ function pushToThread(
   imageUrl?: string,
 ): void {
   hydrateThreadIfNeeded(channel);
+  // Ruling 3c: a stored credential pasted in chat is not kept in clear.
+  exchange = scrubSecrets(exchange);
   // Check for poisoned responses before adding to the thread buffer.
   // Without this, poisoned entries live in-memory until the next restart
   // and teach the LLM learned helplessness for the rest of the session.
@@ -1161,6 +1165,11 @@ export function _testThreadEntries(
   return [...(conversationThreads.get(channel) ?? [])];
 }
 
+/** Test-only: the turns the runner gets for a thread (getThreadTurns). */
+export function _testThreadTurns(channel: string): ConversationTurn[] {
+  return getThreadTurns(channel);
+}
+
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
 
@@ -1189,7 +1198,10 @@ function getThreadTurns(channel: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   let poisonedCount = 0;
   for (const [i, entry] of thread.entries()) {
-    const jarvisIdx = entry.text.indexOf("\nJarvis: ");
+    // Ruling 3c (audit round 4 B1-a): scrub on read — an entry pushed
+    // before its value was stored (the turn that saved it) still holds it.
+    const text = scrubSecrets(entry.text);
+    const jarvisIdx = text.indexOf("\nJarvis: ");
     if (jarvisIdx === -1) continue;
 
     // Phase 4.2: only the last entry's image survives into this turn.
@@ -1197,8 +1209,8 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       ? entry.imageUrl
       : undefined;
 
-    const userText = entry.text.slice("User: ".length, jarvisIdx).trim();
-    const assistantText = entry.text
+    const userText = text.slice("User: ".length, jarvisIdx).trim();
+    const assistantText = text
       .slice(jarvisIdx + "\nJarvis: ".length)
       .trim();
 
@@ -1267,9 +1279,11 @@ function hydrateThreadIfNeeded(tk: string): void {
     if (rows.length > 0) {
       // Reverse to chronological order (query returns newest-first)
       // Images don't survive restarts (base64 not stored in DB) — text only
+      // Ruling 3c (audit R3 B1): rows stored before the write-side scrub
+      // (or before the value was saved) come back scrubbed.
       const thread: ThreadEntry[] = rows
         .reverse()
-        .map((r) => ({ text: r.content }));
+        .map((r) => ({ text: scrubSecrets(r.content) }));
       conversationThreads.set(tk, thread);
     } else {
       conversationThreads.set(tk, []);
@@ -1365,7 +1379,9 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
     });
 
     const path = `logs/day-logs/${date}.md`;
-    const entry = `- [${time}] **${role}**: ${dayLogEntryText(text).replace(/\n/g, " ")}\n`;
+    // Ruling 3c (audit R3 S3): stored credential values scrubbed before the cut;
+    // dayLogEntryText then cuts and marks a truncated entry with "…".
+    const entry = `- [${time}] **${role}**: ${dayLogEntryText(scrubSecrets(text)).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
     const existing = getFile(path);
@@ -1763,15 +1779,18 @@ export class MessageRouter {
         // others (heavy/nanoclaw/swarm) strip the marker and treat as a blob.
         // Per-call extras (time context, agent boilerplate) attach to the
         // VARIABLE half — they'd bust the cache anyway.
+        // Ruling 3c (audit R3 S3): the stored title/description (and the
+        // prompt built from them) carry no stored credential value.
         const result = await submitTask({
-          title: `🤖 Agente: ${taskText.slice(0, 50)}`,
-          description:
+          title: `🤖 Agente: ${scrubSecrets(taskText).slice(0, 50)}`,
+          description: scrubSecrets(
             stableSP +
-            CACHE_BREAK_MARKER +
-            variableSP +
-            `\n\n${timeContextLine(mxDate, mxTime)}\n` +
-            `\nTarea del agente (background):\n${taskText}\n\n` +
-            BACKGROUND_AGENT_BOILERPLATE,
+              CACHE_BREAK_MARKER +
+              variableSP +
+              `\n\n${timeContextLine(mxDate, mxTime)}\n` +
+              `\nTarea del agente (background):\n${taskText}\n\n` +
+              BACKGROUND_AGENT_BOILERPLATE,
+          ),
           // Classify on the full agent task text, not the 50-char title (see
           // classifier `detectionText` — truncation can forge a coding signal).
           detectionText: taskText,
@@ -2343,8 +2362,11 @@ export class MessageRouter {
       );
     }
 
+    // Ruling 3c (audit R3 S3): the task title and description are stored
+    // (tasks table) — stored credential values scrubbed before the cut.
+    const titleSource = scrubSecrets(msg.text);
     const titleText =
-      msg.text.length > 60 ? msg.text.slice(0, 60) + "..." : msg.text;
+      titleSource.length > 60 ? titleSource.slice(0, 60) + "..." : titleSource;
 
     // Build structured conversation turns from in-memory thread buffer.
     // The current user message is appended as the final turn so the fast runner
@@ -2573,8 +2595,9 @@ export class MessageRouter {
       (pinsBlock ? "\n\n" + pinsBlock : "") +
       (patternBlock ? "\n\n" + patternBlock : "") +
       checkpointBlock;
-    const taskDescription =
-      stableSP + CACHE_BREAK_MARKER + variableSP + variableTail;
+    const taskDescription = scrubSecrets(
+      stableSP + CACHE_BREAK_MARKER + variableSP + variableTail,
+    );
 
     // Create abort controller for task cancellation (v6.2 S2)
     const taskAbort = new AbortController();
@@ -2685,7 +2708,9 @@ export class MessageRouter {
             spChannel?.personaContent ?? null,
             isOwnerChannel(msg.channel, spChannel?.mode),
           );
-          return sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail;
+          return scrubSecrets(
+            sp.stable + CACHE_BREAK_MARKER + sp.variable + variableTail,
+          );
         },
         detectionText: msg.text,
         conversationHistory,
@@ -3167,6 +3192,16 @@ export class MessageRouter {
         /* DB or JSON parse failure — proceed with empty tool list */
       }
 
+      // Safety net: auto-persist critical data the LLM may have ignored.
+      // Ruling 3c (audit R3 B1): runs BEFORE the day-log line, the thread push,
+      // the memory retain and the JME write below, so a credential it saves is
+      // already in the store when their write-side scrub runs.
+      try {
+        ensureCriticalDataPersisted(pending.originalText, taskId);
+      } catch {
+        // Non-fatal
+      }
+
       // W1 (audit 2026-09-30): the operator approves what the harness will
       // run — rendered from the STORED args the sha binds, appended after the
       // deliverable filter — never only the model's wording of it.
@@ -3310,11 +3345,15 @@ export class MessageRouter {
 
       // Store pending confirmation for the next user message (pause/resume pattern)
       if (taskPendingConfirmation && pending.tk && confirmSummary) {
+        // Ruling 2026-10-01: an unanswered card gets ONE expiry line, in the
+        // chat that showed it and through the card's own send path.
         storePendingConfirmation(
           pending.tk,
           taskPendingConfirmation.toolName,
           taskPendingConfirmation.args,
           confirmSummary,
+          this.expiryNotifier(pending.channel, pending.to, pending.tk),
+          taskId,
         );
         console.log(`[router] Stored pending confirmation: ${confirmSummary}`);
         if (pending.rerunSpec) {
@@ -3347,13 +3386,6 @@ export class MessageRouter {
             result: resultText.slice(0, 500),
           }).catch(() => {});
         }
-      } catch {
-        // Non-fatal
-      }
-
-      // Safety net: auto-persist critical data the LLM may have ignored
-      try {
-        ensureCriticalDataPersisted(pending.originalText, taskId);
       } catch {
         // Non-fatal
       }
@@ -4222,6 +4254,93 @@ export class MessageRouter {
   }
 
   /**
+   * Ruling 2026-10-01: the one expiry line for an unanswered card, sent to
+   * the chat that showed it through the LLM-reply seam (deliverable filter —
+   * the summary renders stored args), logged to the day-log, and added to
+   * the thread so the next turn's model knows the approval lapsed (an
+   * assistant-only entry: empty user side, as `getThreadTurns` parses it).
+   */
+  private expiryNotifier(
+    channel: ChannelName,
+    to: string,
+    tk: string,
+  ): (notice: string) => Promise<void> {
+    // Audit A3: resolves only once the send went out (the expiry is traced
+    // `notified` then); a failed send rejects, so confirmations.ts records
+    // it and retries (bounded). Day-log and thread record only a notice
+    // that was actually delivered.
+    return async (notice) => {
+      const sent = await this.sendLLMReplyToChannel(channel, to, notice);
+      if (!sent) throw new Error(`expiry notice not delivered to ${channel}`);
+      // Audit S1: the notice is out — bookkeeping failures (secret scrub
+      // unavailable, thread hydration) must not reject, or confirmations.ts
+      // would resend a delivered notice and record a false ritual failure.
+      try {
+        appendDayLog("JARVIS", notice);
+      } catch (err) {
+        console.warn(`[router] expiry notice day-log failed:`, err);
+      }
+      try {
+        pushToThread(
+          tk,
+          `User: \nJarvis: ${sanitizeDeliverable(notice).text}`,
+        );
+      } catch (err) {
+        console.warn(`[router] expiry notice thread push failed:`, err);
+      }
+    };
+  }
+
+  /**
+   * Re-audit should-fix (2026-10-03): which chat a pending approval's thread
+   * key belongs to, for the notice after a restart. Only the operator
+   * shapes a card can come from: an owner channel's own key (its owner
+   * address — Telegram/WhatsApp DMs and owner-only mailboxes accept only the
+   * owner) or a WhatsApp group key whose sender is the owner (the group).
+   * Anything else — community mailbox, unknown shape, a channel that is not
+   * up — is null: the row lapses silently, never to a guessed recipient.
+   */
+  resolveApprovalRecipient(
+    tk: string,
+  ): { channel: ChannelName; to: string } | null {
+    let channel: ChannelName | undefined;
+    for (const name of this.channels.keys()) {
+      if (
+        (tk === name || tk.startsWith(`${name}:`)) &&
+        (!channel || name.length > channel.length)
+      ) {
+        channel = name;
+      }
+    }
+    if (!channel) return null;
+    const adapter = this.channels.get(channel);
+    const owner = this.getOwnerAddress(channel);
+    if (!owner || !isOwnerChannel(channel, adapter?.mode)) return null;
+    if (tk === channel) return { channel, to: owner };
+    const rest = tk.slice(channel.length + 1).split(":");
+    if (
+      channel === "whatsapp" &&
+      rest.length === 2 &&
+      rest[0].endsWith("@g.us") &&
+      rest[1] === owner
+    ) {
+      return { channel, to: rest[0] };
+    }
+    return null;
+  }
+
+  /**
+   * Boot (once, after the channels are up): re-arm the expiry of approvals
+   * still pending in `tool_approvals` — see `rearmPendingConfirmationsAtBoot`.
+   */
+  rearmPendingApprovals(): void {
+    rearmPendingConfirmationsAtBoot((tk) => {
+      const r = this.resolveApprovalRecipient(tk);
+      return r ? this.expiryNotifier(r.channel, r.to, tk) : null;
+    });
+  }
+
+  /**
    * Phase 0.1 deliverable filter with one log line per altered send. Pure
    * (src/messaging/deliverable-filter.ts); idempotent, so a text that already
    * passed on the task-completed path is unchanged here.
@@ -4273,17 +4392,20 @@ export class MessageRouter {
    * critic infra error, replaces the reply with COMMUNITY_REPLY_FALLBACK.
    * For all other channels, behaves identically to sendToChannel.
    *
-   * Sync signature (callers fire-and-forget). The actual gate+send happens
-   * on the microtask queue via an IIFE tracked in `this.gateInflight` so
-   * shutdown can await pending sends.
+   * Callers may fire-and-forget: the returned promise never rejects. It
+   * resolves true once the adapter accepted the send, false when nothing
+   * went out (no adapter, filtered to empty, send failed) — the expiry
+   * notice (audit A3) waits on it. The gate+send happens on the microtask
+   * queue via an IIFE tracked in `this.gateInflight` so shutdown can await
+   * pending sends.
    */
   private sendLLMReplyToChannel(
     channel: ChannelName,
     to: string,
     rawText: string,
-  ): void {
+  ): Promise<boolean> {
     const adapter = this.channels.get(channel);
-    if (!adapter) return;
+    if (!adapter) return Promise.resolve(false);
 
     // v6.3 W1.5: log AI writing patterns on the ORIGINAL text, before any
     // gate substitution, so observability captures what the LLM produced.
@@ -4296,7 +4418,7 @@ export class MessageRouter {
     // this catches the other callers (needs_context/blocked text, heavy
     // partials, background-agent notifications) without double effects.
     const text = this.filterForDelivery(rawText, `send:${channel}`);
-    if (!text) return;
+    if (!text) return Promise.resolve(false);
 
     // Positive default-deny: any email channel that is NOT explicitly
     // owner-only gets the gate. Matches applyCommunityChannelScopeOverride's
@@ -4304,15 +4426,16 @@ export class MessageRouter {
     // is treated as community-manager. R1-W2 from the Phase 2b audit.
     const needsGate = isEmailChannel(channel) && adapter.mode !== "owner-only";
     if (!needsGate) {
-      adapter
-        .send({ channel, to, text })
-        .catch((err) =>
-          console.error(`[router] Send to ${channel} failed:`, err),
-        );
-      return;
+      return adapter.send({ channel, to, text }).then(
+        () => true,
+        (err) => {
+          console.error(`[router] Send to ${channel} failed:`, err);
+          return false;
+        },
+      );
     }
 
-    const inflight = (async () => {
+    const inflight = (async (): Promise<boolean> => {
       let outbound = text;
       let verdictBucket: "pass" | "fail" | "error" = "error";
       try {
@@ -4352,13 +4475,16 @@ export class MessageRouter {
       }
       try {
         await adapter.send({ channel, to, text: outbound });
+        return true;
       } catch (err) {
         console.error(`[router] Send to ${channel} failed:`, err);
+        return false;
       }
     })();
 
     this.gateInflight.add(inflight);
     inflight.finally(() => this.gateInflight.delete(inflight));
+    return inflight;
   }
 
   private extractResultText(result: unknown): string | null {

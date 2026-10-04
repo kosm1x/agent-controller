@@ -9,6 +9,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -55,7 +56,7 @@ function scoreMemory(
 export function getEssentialFacts(bank = "mc-jarvis"): string {
   const now = Date.now();
   if (cachedBlock !== null && now - cacheTimestamp < CACHE_TTL_MS) {
-    return cachedBlock;
+    return scrubSecrets(cachedBlock); // a value saved since the block was built
   }
 
   try {
@@ -91,7 +92,9 @@ export function getEssentialFacts(bank = "mc-jarvis"): string {
         (now - new Date(r.created_at + "Z").getTime()) / 86_400_000,
       );
       return {
-        content: r.content,
+        // Ruling 3c (audit R3 B1): this block goes into every chat prompt; a
+        // row stored in clear is scrubbed here, before the per-entry cut.
+        content: scrubSecrets(r.content),
         score: scoreMemory(r.trust_tier, ageDays, r.has_embed),
       };
     });

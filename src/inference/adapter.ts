@@ -170,6 +170,18 @@ export interface ToolExecutor {
 export type OnTextChunk = (text: string) => void;
 
 // ---------------------------------------------------------------------------
+// Outbound secret scrub (ruling 3c) — implementation in outbound-scrub.ts
+// (a leaf module, so vision / embeddings / Jev need not load the adapter).
+// ---------------------------------------------------------------------------
+
+export {
+  scrubOutboundText,
+  scrubOutboundMessages,
+  scrubOutboundToolArguments,
+  SecretScrubUnavailableError,
+} from "./outbound-scrub.js";
+
+// ---------------------------------------------------------------------------
 // OpenAI-compat provider machinery — moved to adapter-openai.ts (Phase 4.2).
 // Re-exported for backward compatibility (health route, observability, and
 // adapter.test.ts import these from adapter.ts).

@@ -35,6 +35,7 @@ import {
   SONNET_MODEL_ID,
   type InlineSdkTool,
 } from "../../inference/claude-sdk.js";
+import { scrubSecrets } from "../secret-refs.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
 import {
   strategicVoiceSystemPrompt,
@@ -414,7 +415,10 @@ export function retrieveKbForQuery(
   return rows.map((r) => ({
     kind: "kb_entry" as const,
     id: r.path,
-    excerpt: `${r.title}${r.snippet ? ` — ${r.snippet}` : ""}`.slice(0, 200),
+    // Ruling 3c (audit round 4 S2): scrubbed before the cut.
+    excerpt: scrubSecrets(
+      `${r.title}${r.snippet ? ` — ${r.snippet}` : ""}`,
+    ).slice(0, 200),
     retrieved_at: retrievedAt,
   }));
 }
@@ -488,7 +492,11 @@ export function retrieveRecentDayLogs(
     return {
       kind: "kb_entry" as const,
       id: r.path,
-      excerpt: `day-log ${date}: …${r.snippet.trim()}…`.slice(0, 200),
+      // Ruling 3c (audit round 4 S2): scrubbed before the cut.
+      excerpt: scrubSecrets(`day-log ${date}: …${r.snippet.trim()}…`).slice(
+        0,
+        200,
+      ),
       retrieved_at: retrievedAt,
     };
   });

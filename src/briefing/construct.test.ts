@@ -18,6 +18,7 @@ vi.mock("../audit/submit-report.js", () => ({
 
 import { constructBriefing } from "./construct.js";
 import { getProposedBriefing } from "./storage.js";
+import { invalidateSecretRefs } from "../lib/secret-refs.js";
 
 /**
  * An LLM-shaped judgment object — deliberately WITHOUT `signal_id`: the model
@@ -62,6 +63,31 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDatabase();
+});
+
+describe("audit R4 S2: the judgment prompt carries no stored value", () => {
+  it("project/day-log text in the rendered prompt is scrubbed before infer()", async () => {
+    const SEC = "pw-" + "z".repeat(14); // synthetic, runtime-assembled
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)",
+    ).run("projects", "acme_ftp_password", SEC);
+    db.prepare(
+      "INSERT INTO projects (id, slug, name, description, status) VALUES (?, ?, ?, ?, ?)",
+    ).run("p-acme", "acme", "Acme", `ftp login ${SEC}`, "active");
+    invalidateSecretRefs();
+    inferReturns({ judgments: [judgment()] });
+    s2Passes("pass");
+    try {
+      await constructBriefing({ surface: "morning" });
+      expect(inferMock).toHaveBeenCalledTimes(1);
+      const sent = JSON.stringify(inferMock.mock.calls[0]);
+      expect(sent).toContain("ftp login [oculto");
+      expect(sent).not.toContain(SEC);
+    } finally {
+      invalidateSecretRefs();
+    }
+  });
 });
 
 describe("constructBriefing", () => {

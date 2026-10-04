@@ -18,6 +18,7 @@ import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
 import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { getUserFacts } from "../../db/user-facts.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 import {
   ensureGeminiFilesTable,
   upsertGeminiFile,
@@ -104,6 +105,42 @@ const MIME_MAP: Record<string, string> = {
 function detectMimeType(filePath: string): string {
   const ext = extname(filePath).toLowerCase();
   return MIME_MAP[ext] ?? "application/octet-stream";
+}
+
+/** Text-type MIME (text/*, JSON, XML, YAML, markdown, CSV, source code). */
+function isTextMime(mime: string): boolean {
+  return (
+    mime.startsWith("text/") ||
+    /^application\/(?:json|xml|x-yaml|yaml|javascript|x-sh|sql)\b/.test(mime) ||
+    /\+(?:json|xml)$/.test(mime)
+  );
+}
+
+/**
+ * Ruling 3c, audit round 5 (S1): the file leaves for a model API outside the
+ * inference seam, so a TEXT file is scrubbed here — stored credential values
+ * replaced by their by-name placeholders. Text = a text MIME by extension,
+ * or an unknown extension (octet-stream) whose bytes are valid UTF-8 with no
+ * NUL (`.env`, `.yaml`, `.ini`, `.sh`…). Binary types (PDF, images, audio,
+ * video, Office) are sent as read — a residual. Returns the buffer to send
+ * (the same one when nothing changed). Throws when the secret index cannot
+ * be built (fail closed: the caller sends nothing).
+ */
+export function scrubUploadBytes(buf: Buffer, mime: string): Buffer {
+  let text: string;
+  let encoding: "utf8" | "latin1" = "utf8";
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    if (!isTextMime(mime)) return buf; // binary
+    encoding = "latin1"; // a text file in a legacy encoding: byte-exact round trip
+    text = buf.toString("latin1");
+  }
+  if (!isTextMime(mime) && (mime !== "application/octet-stream" || text.includes("\0"))) {
+    return buf; // a known binary type that happens to decode
+  }
+  const clean = scrubSecrets(text);
+  return clean === text ? buf : Buffer.from(clean, encoding);
 }
 
 async function pollFileState(
@@ -322,6 +359,13 @@ EDGE CASES:
     }
 
     const mimeType = detectMimeType(filePath);
+    try {
+      fileBuffer = scrubUploadBytes(fileBuffer, mimeType);
+    } catch (err) {
+      return JSON.stringify({
+        error: `Upload not sent: secret index unavailable (${errMsg(err)})`,
+      });
+    }
 
     // Resumable upload protocol — required by Gemini Files API for files >2 MB.
     // Multipart fails with "Metadata part is too large" above that threshold.

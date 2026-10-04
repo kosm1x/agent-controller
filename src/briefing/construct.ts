@@ -48,6 +48,7 @@ import {
   insertProposedBriefing,
 } from "./storage.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 const MS_PER_DAY = 86_400_000;
 const SYSTEM_PROMPT =
@@ -241,7 +242,9 @@ export async function constructBriefing(
   } = inputs;
 
   // --- 3. Render + infer the judgments -------------------------------------
-  const prompt = renderJudgmentPrompt({
+  // Ruling 3c (audit round 4 S2): the day-log detection signals, events and
+  // episodic snippets are scrubbed as one rendered string.
+  const rendered = renderJudgmentPrompt({
     surface,
     activeObjectives: objectives,
     cohort,
@@ -256,6 +259,7 @@ export async function constructBriefing(
 
   let response;
   try {
+    const prompt = scrubSecrets(rendered);
     response = await infer({
       messages: [
         { role: "system", content: SYSTEM_PROMPT },

@@ -17,6 +17,7 @@ import {
   mirrorToDisk,
 } from "./jarvis-fs.js";
 import { existsSync, writeFileSync } from "node:fs";
+import { invalidateSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
 
 let testKbDir: string;
 
@@ -315,6 +316,66 @@ describe("searchFiles — citation (line + section) per hit (paper plan A.2, 202
     upsertFile("knowledge/sym.md", "Symbols", "line one\n## Ops\n a & b\n");
     const hits = searchFiles("&", 10);
     expect(hits[0]).toMatchObject({ path: "knowledge/sym.md", line: 3, section: "Ops" });
+  });
+});
+
+describe("searchFiles — stored-value limit-before-filter oracle (audit R8 B-3)", () => {
+  // A row whose only query hit is inside a stored credential value is dropped
+  // AFTER the SQL LIMIT would have been applied. Ruling 3c R8: fetch without a
+  // visible SQL LIMIT, filter, then slice — so the dropped row never consumes
+  // a visible slot (pre-fix, limit=1 returned "no files found").
+  const SEC = "swordfish Ab12Cd34Ef56Gh78"; // secret-shaped, > 8 chars
+  beforeEach(() => {
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+      .run("projects", "acme_ftp_password", SEC);
+    invalidateSecretRefs();
+    // Value-holding row sorts first by path; its only "swordfish" is in SEC.
+    upsertFile("a-secret.md", "Secret row", `cred: ${SEC}\n`);
+    upsertFile("b-note.md", "Note", "swordfish recipe for dinner\n");
+  });
+  afterEach(() => invalidateSecretRefs());
+
+  it("limit=1 still returns a real row; the dropped value row does not steal the slot", () => {
+    const hits = searchFiles("swordfish", 1);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.path).toBe("b-note.md");
+    expect(hits.some((h) => h.path === "a-secret.md")).toBe(false);
+  });
+
+  it("the value row never leaks the stored value in any field", () => {
+    const hits = searchFiles("swordfish", 10);
+    expect(hits.some((h) => h.path === "a-secret.md")).toBe(false);
+    for (const h of hits) {
+      expect(h.snippet).not.toContain("Ab12Cd34Ef56");
+    }
+  });
+});
+
+describe("searchFiles — value-holding rows (audit R9 should-fix 2/3)", () => {
+  const SEC = "Zq9-" + "Wx7".repeat(4); // synthetic, secret-shaped
+  beforeEach(() => {
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category,key,value) VALUES (?,?,?)")
+      .run("projects", "acme_ftp_password", SEC);
+    invalidateSecretRefs();
+    upsertFile("z-secret.md", "Deploy", `deploy deploy deploy\ncred: ${SEC}\n`);
+    upsertFile("a-clean.md", "Notes", "deploy notes\n");
+  });
+  afterEach(() => invalidateSecretRefs());
+
+  it("a value-holding row is ranked by its scrubbed score, not appended after clean rows", () => {
+    const hits = searchFiles("deploy", 10).map((h) => h.path);
+    expect(hits).toEqual(["z-secret.md", "a-clean.md"]);
+  });
+
+  it("a value-holding row reports its scrubbed size (FTS and LIKE paths)", () => {
+    const raw = `deploy deploy deploy\ncred: ${SEC}\n`;
+    const fts = searchFiles("deploy", 10).find((h) => h.path === "z-secret.md")!;
+    expect(fts.size).toBe(scrubSecrets(raw).length);
+    expect(fts.size).not.toBe(raw.length);
+    const like = searchFiles(":", 10).find((h) => h.path === "z-secret.md")!;
+    expect(like.size).toBe(scrubSecrets(raw).length);
   });
 });
 

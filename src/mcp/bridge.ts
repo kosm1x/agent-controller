@@ -10,6 +10,7 @@ import { MCP_NAMESPACE_SEP } from "./types.js";
 import { validateArgsUrlsResolved } from "../lib/url-safety.js";
 import { getMcpToolHints } from "./annotations.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 /** MCP tool info as returned by client.listTools(). */
 export interface McpToolInfo {
@@ -99,8 +100,9 @@ export function createMcpTool(
       // 2026-09-22: resolved — a public name pointing at loopback is refused too.
       const urlError = await validateArgsUrlsResolved(args);
       if (urlError) {
+        // Args here may carry a resolved secret (ruling 3c): scrub the log.
         console.warn(
-          `[mcp] blocked URL-bearing arg on ${namespacedName}: ${urlError}`,
+          `[mcp] blocked URL-bearing arg on ${namespacedName}: ${scrubSecrets(urlError)}`,
         );
         return JSON.stringify({
           error: `Blocked outbound URL: ${urlError}`,

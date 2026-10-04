@@ -28,6 +28,7 @@ import type {
   ReflectOptions,
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
 
 // applyOutcomeFilter (binary drop) replaced by applyOutcomeBias (drop +
 // score adjustment + re-sort). 2026-05-07 queue #7 part 2. See
@@ -130,7 +131,7 @@ export class HindsightMemoryBackend implements MemoryService {
     try {
       await this.ensureBank(options.bank);
       await this.client.retain(options.bank, {
-        content,
+        content: scrubSecrets(content), // ruling 3c (the fallback scrubs its own copy)
         tags: options.tags,
         async: options.async ?? true,
       });
@@ -282,7 +283,9 @@ export class HindsightMemoryBackend implements MemoryService {
       // that ordering while exposing a comparable scalar for bias arithmetic.
       const total = response.results.length;
       const raw: MemoryItem[] = response.results.map((r, idx) => ({
-        content: r.text,
+        // Ruling 3c (audit R3 B1): scrubbed on read (the SQLite fallback
+        // paths scrub inside SqliteMemoryBackend.recall).
+        content: scrubSecrets(r.text),
         tags: r.tags ?? [],
         relevance: total > 1 ? 1 - idx / (total - 1) : 1,
       }));
@@ -353,7 +356,7 @@ export class HindsightMemoryBackend implements MemoryService {
         budget: "mid",
       });
       this.recordSuccess();
-      return response.text;
+      return scrubSecrets(response.text); // synthesized from stored memories
     } catch (err) {
       this.recordFailure(err);
       return "";

@@ -740,3 +740,680 @@ describe("renderConfirmationSummary (audit 2026-09-30 W1)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Operator rulings 2026-10-01 — schedule card line + one expiry notice.
+// ---------------------------------------------------------------------------
+
+import { renderExpiryNotice } from "./confirmations.js";
+import { toolRegistry } from "../tools/registry.js";
+import type { Tool } from "../tools/types.js";
+
+function stubTool(name: string, requiresConfirmation: boolean): Tool {
+  return {
+    name,
+    requiresConfirmation,
+    definition: {
+      type: "function",
+      function: { name, description: name, parameters: { type: "object", properties: {} } },
+    },
+    execute: async () => "{}",
+  };
+}
+
+describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () => {
+  beforeEach(() => {
+    toolRegistry.register(stubTool("gmail_send", true));
+    toolRegistry.register(stubTool("tweet_post", true));
+    toolRegistry.register(stubTool("web_search", false));
+  });
+
+  it("names the schedule's high-risk tools and its cadence after the exact call", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      description: "Busca noticias",
+      cron: "0 8 * * *",
+      tools: ["web_search", "gmail_send"],
+      delivery: "email",
+      email_to: "ana@x.mx",
+      name: "Reporte",
+    });
+    expect(line).toBe(
+      'schedule_task(name: Reporte, cron: 0 8 * * *, tools: ["web_search","gmail_send"], delivery: email, email_to: ana@x.mx, {"description":"Busca noticias"}) · usará sin pedir confirmación: gmail_send (cadencia: diario 08:00)',
+    );
+  });
+
+  it("names a high-risk tool even when the tools array is truncated; email delivery implies gmail_send", () => {
+    const tools = [...Array.from({ length: 20 }, (_, i) => `tool_number_${i}`), "tweet_post"];
+    // Registered low-risk tools (an unregistered name is itself risky).
+    tools.slice(0, 20).forEach((t) =>
+      toolRegistry.register({ ...stubTool(t, false), readOnlyHint: true, destructiveHint: false }),
+    );
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "*/30 * * * *",
+      tools,
+      delivery: "both",
+    });
+    expect(line).toContain("(21 total)");
+    expect(line).not.toContain('"tweet_post"');
+    expect(line).toMatch(
+      / · usará sin pedir confirmación: tweet_post, gmail_send \(cadencia: \*\/30 \* \* \* \*\)$/,
+    );
+    expect(line).not.toMatch(/[`\n]/);
+  });
+
+  it("no suffix for a schedule without high-risk tools; other tools unchanged", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["web_search"],
+      delivery: "telegram",
+    });
+    expect(line).toBe(
+      'schedule_task(name: R, cron: 0 8 * * *, tools: ["web_search"], delivery: telegram)',
+    );
+    expect(renderConfirmationSummary("gmail_send", { to: "a@b.mx", tools: ["tweet_post"] })).toBe(
+      'gmail_send(to: a@b.mx, {"tools":["tweet_post"]})',
+    );
+  });
+
+  it("fold 1 W2: the suffix also names a declared tool-set carrier and an unloaded MCP name", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["web_search", "batch_decompose", "schedule_task", "xpoz__post"],
+      delivery: "telegram",
+    });
+    expect(line).toMatch(
+      / · usará sin pedir confirmación: batch_decompose \(puede usar cualquier herramienta\), schedule_task \(puede usar cualquier herramienta\), xpoz__post \(puede usar cualquier herramienta\) \(cadencia: diario 08:00\)$/,
+    );
+  });
+
+  it("re-audit 2026-10-03: carriers and unregistered names are marked; a high-risk tool is not", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["gmail_send", "batch_decompose", "made_up_tool"],
+      delivery: "telegram",
+    });
+    expect(line).toMatch(
+      / · usará sin pedir confirmación: gmail_send, batch_decompose \(puede usar cualquier herramienta\), made_up_tool \(puede usar cualquier herramienta\) \(cadencia: diario 08:00\)$/,
+    );
+  });
+
+  it("re-audit 2026-10-03: the risky list on the card is capped at 5 names, then 'y N más'", () => {
+    const risky = Array.from({ length: 8 }, (_, i) => `unloaded_${i}`);
+    const line = renderConfirmationSummary("schedule_task", {
+      name: "R",
+      cron: "0 8 * * *",
+      tools: ["gmail_send", ...risky],
+      delivery: "telegram",
+    });
+    const suffix = line.slice(line.indexOf(" · usará"));
+    expect(suffix).toBe(
+      " · usará sin pedir confirmación: gmail_send, unloaded_0 (puede usar cualquier herramienta), unloaded_1 (puede usar cualquier herramienta), unloaded_2 (puede usar cualquier herramienta), unloaded_3 (puede usar cualquier herramienta) y 4 más (cadencia: diario 08:00)",
+    );
+  });
+
+  it("a backtick or newline in the cron cannot break the inline-code line", () => {
+    const line = renderConfirmationSummary("schedule_task", {
+      cron: "0 8 * * *`\n",
+      tools: ["gmail_send"],
+    });
+    expect(line).not.toMatch(/[`\n]/);
+  });
+});
+
+describe("approval expiry notice (ruling 2026-10-01)", () => {
+  const tk = "telegram:999";
+  const args = { to: "a@b.mx", body: "hola equipo, el reporte" };
+  const TTL = 5 * 60 * 1000;
+  const summary = "gmail_send(to: a@b.mx)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const decisions = () =>
+    (getDatabase()
+      .prepare("SELECT decision FROM tool_approvals WHERE thread_key = ? ORDER BY id")
+      .all(tk) as Array<{ decision: string }>).map((r) => r.decision);
+
+  it("the exact Spanish line, reusing the card's summary", () => {
+    expect(renderExpiryNotice(summary)).toBe(
+      "⏱ La aprobación para `gmail_send(to: a@b.mx)` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.",
+    );
+  });
+
+  it("an unanswered approval gets exactly ONE notice at the TTL; the row closes as expired", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    vi.advanceTimersByTime(TTL - 1);
+    expect(notify).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(renderExpiryNotice(summary));
+    vi.advanceTimersByTime(10 * TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(decisions()).toEqual(["expired"]);
+  });
+
+  it("a late 'sí' runs nothing and the notice left nothing pending", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    vi.advanceTimersByTime(TTL);
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(resolvePendingConfirmation(tk, "confirmed", "operator")).toBeNull();
+    expect(decisions()).toEqual(["expired"]);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("no notice when confirmed, declined, cleared (unclear reply) or superseded before the TTL", () => {
+    const outcomes: Array<(n: () => void) => void> = [
+      () => resolvePendingConfirmation(tk, "confirmed", "op"),
+      () => resolvePendingConfirmation(tk, "declined", "op"),
+      () => clearPendingConfirmation(tk),
+    ];
+    for (const settle of outcomes) {
+      const notify = vi.fn();
+      storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+      vi.advanceTimersByTime(TTL / 2);
+      settle(notify);
+      vi.advanceTimersByTime(2 * TTL);
+      expect(notify).not.toHaveBeenCalled();
+    }
+    // Superseded: only the newer card can lapse, once, at ITS own TTL.
+    const first = vi.fn();
+    const second = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, "s1", first);
+    vi.advanceTimersByTime(TTL / 2);
+    storePendingConfirmation(tk, "jarvis_file_delete", { path: "x.md" }, "s2", second);
+    vi.advanceTimersByTime(TTL - 1);
+    expect(second).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledWith(renderExpiryNotice("s2"));
+  });
+
+  it("never shown to a chat (no notifier) → no notice, row still expires", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    vi.advanceTimersByTime(TTL);
+    expect(decisions()).toEqual(["expired"]);
+  });
+
+  it("re-reads the row at fire time: a row already decided elsewhere gets no notice", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET decision = 'confirmed' WHERE thread_key = ?")
+      .run(tk);
+    vi.advanceTimersByTime(TTL);
+    expect(notify).not.toHaveBeenCalled();
+    expect(decisions()).toEqual(["confirmed"]);
+  });
+
+  it("without a durable row (DB down) the in-memory identity decides — still exactly one notice", () => {
+    closeDatabase();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    vi.advanceTimersByTime(3 * TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    initDatabase(":memory:"); // afterEach closes it
+  });
+
+  it("a read after the TTL but before a late timer fires sends the same one notice", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    vi.setSystemTime(Date.now() + TTL + 1); // clock moves, timer not run
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(notify).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(decisions()).toEqual(["expired"]);
+  });
+
+  it("fold 1: a 'sí' in the same tick the timer is due is never both run and announced (the timer wins)", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify);
+    vi.advanceTimersByTime(TTL); // the timer is due and fires inside this advance
+    const resolved = resolvePendingConfirmation(tk, "confirmed", "op");
+    expect(resolved).toBeNull();
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(decisions()).toEqual(["expired"]);
+  });
+
+  it("fold 1: re-carding one chat keeps ONE live timer, and only the newest card's notice", () => {
+    const notifiers = Array.from({ length: 50 }, () => vi.fn());
+    notifiers.forEach((n, i) => storePendingConfirmation(tk, "gmail_send", { i }, `s${i}`, n));
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(TTL);
+    expect(vi.getTimerCount()).toBe(0);
+    notifiers.slice(0, -1).forEach((n) => expect(n).not.toHaveBeenCalled());
+    expect(notifiers.at(-1)).toHaveBeenCalledTimes(1);
+    expect(notifiers.at(-1)).toHaveBeenCalledWith(renderExpiryNotice("s49"));
+  });
+
+  it("fold 1: two chats each get one notice, through their own notifier", () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    storePendingConfirmation("telegram:1", "gmail_send", args, "sa", a);
+    storePendingConfirmation("whatsapp:2", "tweet_post", { text: "x" }, "sb", b);
+    expect(vi.getTimerCount()).toBe(2);
+    vi.advanceTimersByTime(TTL);
+    expect(a.mock.calls).toEqual([[renderExpiryNotice("sa")]]);
+    expect(b.mock.calls).toEqual([[renderExpiryNotice("sb")]]);
+    vi.advanceTimersByTime(TTL);
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+
+  it("a notifier that throws never escapes the timer", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, summary, () => {
+      throw new Error("adapter gone");
+    });
+    expect(() => vi.advanceTimersByTime(TTL)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("expiry notice failed: adapter gone"));
+    expect(decisions()).toEqual(["expired"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-audit should-fix round (2026-10-03): expiry trace + restart re-arm.
+// ---------------------------------------------------------------------------
+
+import {
+  rearmPendingConfirmationsAtBoot,
+  BOOT_SWEEP_MAX_ROWS,
+} from "./confirmations.js";
+import { getTrace } from "../observability/task-trace.js";
+
+describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
+  const tk = "telegram";
+  const args = { to: "a@b.mx", body: "x" };
+  const TTL = 5 * 60 * 1000;
+  const summary = "gmail_send(to: a@b.mx)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const expiredTrace = (taskId: string) =>
+    getTrace(taskId)
+      .filter((e) => e.name === "confirmation.expired")
+      .map((e) => ({ tool: e.tool, attrs: JSON.parse(e.attrs ?? "{}") }));
+  const rowOf = (threadKey: string) =>
+    getDatabase()
+      .prepare("SELECT id, decision FROM tool_approvals WHERE thread_key = ? ORDER BY id DESC")
+      .get(threadKey) as { id: number; decision: string };
+  /** Move a row's request time `ageMs` into the past (relative to the fake clock). */
+  const age = (threadKey: string, ageMs: number) =>
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?")
+      .run(new Date(Date.now() - ageMs).toISOString(), threadKey);
+
+  it("trace: a notified expiry is keyed by the task that showed the card", () => {
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-card");
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(expiredTrace("task-card")).toEqual([
+      {
+        tool: "gmail_send",
+        attrs: { tool: "gmail_send", notified: true, reason: "notified", approval_id: rowOf(tk).id },
+      },
+    ]);
+  });
+
+  it("trace: no notifier → reason no_notifier; already decided → reason already_decided", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary, undefined, "task-silent");
+    vi.advanceTimersByTime(TTL);
+    expect(expiredTrace("task-silent")[0].attrs).toMatchObject({ notified: false, reason: "no_notifier" });
+
+    const notify = vi.fn();
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-decided");
+    getDatabase().prepare("UPDATE tool_approvals SET decision = 'confirmed' WHERE thread_key = ? AND decision = 'pending'").run(tk);
+    vi.advanceTimersByTime(TTL);
+    expect(notify).not.toHaveBeenCalled();
+    expect(expiredTrace("task-decided")[0].attrs).toMatchObject({ notified: false, reason: "already_decided" });
+  });
+
+  it("restart inside the TTL: the boot sweep re-arms the remainder and the card's chat gets the ONE notice", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 2 * 60 * 1000);
+    _resetPendingConfirmationsForTests(); // process restart: maps and timers gone
+    const notify = vi.fn();
+    const resolver = vi.fn((key: string) => (key === tk ? notify : null));
+    expect(rearmPendingConfirmationsAtBoot(resolver)).toEqual({ armed: 1, lapsed: 0 });
+    expect(resolver).toHaveBeenCalledWith(tk);
+    vi.advanceTimersByTime(3 * 60 * 1000 - 1);
+    expect(notify).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(notify.mock.calls).toEqual([[renderExpiryNotice(summary)]]);
+    vi.advanceTimersByTime(2 * TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    const { id } = rowOf(tk);
+    expect(expiredTrace(`approval:${id}`)[0].attrs).toMatchObject({ notified: true, reason: "notified" });
+  });
+
+  it("restart after the TTL: the sweep lapses and notifies at once", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("recipient not resolvable: lapses silently at the TTL (no_notifier), logged, never a guessed chat", () => {
+    const key = "email:acct:someone@x.mx";
+    storePendingConfirmation(key, "gmail_send", args, summary);
+    age(key, 0); // align SQLite's clock with the fake one
+    _resetPendingConfirmationsForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(rearmPendingConfirmationsAtBoot(() => null)).toEqual({ armed: 1, lapsed: 0 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat not resolvable after restart"));
+    vi.advanceTimersByTime(TTL);
+    expect(rowOf(key).decision).toBe("expired");
+    expect(expiredTrace(`approval:${rowOf(key).id}`)[0].attrs).toMatchObject({
+      notified: false,
+      reason: "no_notifier",
+    });
+  });
+
+  it("bounded: newest rows first, one per chat, at most `maxRows`; a resolver that throws is a silent lapse", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    for (const key of ["telegram:a", "telegram:b", "telegram:c"]) {
+      storePendingConfirmation(key, "gmail_send", args, summary);
+    }
+    _resetPendingConfirmationsForTests();
+    const resolver = vi.fn(() => {
+      throw new Error("router gone");
+    });
+    expect(rearmPendingConfirmationsAtBoot(resolver, 2)).toEqual({ armed: 2, lapsed: 0 });
+    expect(resolver.mock.calls.map((c) => c[0])).toEqual(["telegram:c", "telegram:b"]);
+    expect(vi.getTimerCount()).toBe(2);
+    expect(BOOT_SWEEP_MAX_ROWS).toBe(50);
+  });
+
+  it("every expiry timer (store, boot sweep, rehydrate) is unref'd — a pending approval never holds the process open", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 0);
+    storePendingConfirmation("telegram:b", "gmail_send", args, summary);
+    age("telegram:b", 0);
+    _resetPendingConfirmationsForTests();
+    rearmPendingConfirmationsAtBoot(() => null, 1); // re-arms telegram:b only
+    expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send"); // rehydrates tk
+    const timers = spy.mock.results.map((r) => r.value as { hasRef: () => boolean });
+    expect(timers).toHaveLength(4);
+    expect(timers.map((t) => t.hasRef())).toEqual([false, false, false, false]);
+  });
+
+  it("a tampered pending row is not re-armed (superseded)", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE thread_key = ?").run(
+      JSON.stringify({ to: "other@x.mx" }),
+      tk,
+    );
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 0 });
+    expect(rowOf(tk).decision).toBe("superseded");
+    vi.advanceTimersByTime(2 * TTL);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("a row rehydrated on read (beyond the sweep) expires through the same lapse path (traced)", () => {
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, 0);
+    _resetPendingConfirmationsForTests();
+    expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send"); // rehydrates
+    vi.advanceTimersByTime(TTL);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(expiredTrace(`approval:${rowOf(tk).id}`)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit A2 (stale boot notice) + A3 (notified only after the send resolves).
+// ---------------------------------------------------------------------------
+
+vi.mock("../rituals/scheduler.js", () => ({ recordRitualFailure: vi.fn() }));
+import { recordRitualFailure } from "../rituals/scheduler.js";
+import {
+  BOOT_NOTICE_GRACE_MS,
+  EXPIRY_NOTICE_MAX_ATTEMPTS,
+  EXPIRY_NOTICE_RETRY_MS,
+  EXPIRY_NOTICE_FAILURE_ID,
+} from "./confirmations.js";
+
+describe("audit A2/A3: boot notice once, never stale; notified only on a delivered send", () => {
+  const tk = "telegram";
+  const args = { to: "a@b.mx", body: "x" };
+  const TTL = 5 * 60 * 1000;
+  const summary = "gmail_send(to: a@b.mx)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+    vi.mocked(recordRitualFailure).mockClear();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const traceOf = (taskId: string, name: string) =>
+    getTrace(taskId)
+      .filter((e) => e.name === name)
+      .map((e) => JSON.parse(e.attrs ?? "{}") as Record<string, unknown>);
+  const rowOf = (threadKey: string) =>
+    getDatabase()
+      .prepare("SELECT id, decision FROM tool_approvals WHERE thread_key = ? ORDER BY id DESC")
+      .get(threadKey) as { id: number; decision: string };
+  const age = (threadKey: string, ageMs: number) =>
+    getDatabase()
+      .prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?")
+      .run(new Date(Date.now() - ageMs).toISOString(), threadKey);
+
+  it("A2: a row that expired long before the restart lapses SILENTLY (stale_at_boot), no notice", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + BOOT_NOTICE_GRACE_MS + 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify).not.toHaveBeenCalled();
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(traceOf(`approval:${rowOf(tk).id}`, "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "stale_at_boot" }),
+    ]);
+  });
+
+  it("A2: expired while down within the grace window → ONE notice; a second boot never repeats it", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    storePendingConfirmation(tk, "gmail_send", args, summary);
+    age(tk, TTL + BOOT_NOTICE_GRACE_MS - 60_000);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 1 });
+    expect(notify.mock.calls).toEqual([[renderExpiryNotice(summary)]]);
+    _resetPendingConfirmationsForTests(); // another restart
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 0, lapsed: 0 });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(traceOf(`approval:${rowOf(tk).id}`, "confirmation.expired")).toHaveLength(1);
+  });
+
+  it("A3: an async notifier — `notified` is traced only after the send resolves", async () => {
+    let resolveSend!: () => void;
+    const notify = vi.fn(() => new Promise<void>((r) => (resolveSend = r)));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-async");
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rowOf(tk).decision).toBe("expired");
+    expect(traceOf("task-async", "confirmation.expired")).toEqual([]); // not yet
+    resolveSend();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(traceOf("task-async", "confirmation.expired")).toEqual([
+      { tool: "gmail_send", notified: true, reason: "notified", approval_id: rowOf(tk).id },
+    ]);
+  });
+
+  it("A3: a failing send is retried with backoff, at most EXPIRY_NOTICE_MAX_ATTEMPTS, then notify_failed + recordRitualFailure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn(() => Promise.reject(new Error("adapter down")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-fail");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(traceOf("task-fail", "confirmation.expired")).toEqual([]);
+    expect(traceOf("task-fail", "confirmation.expiry_notice_failed")).toEqual([
+      expect.objectContaining({ attempt: 1, will_retry: true, error: "adapter down" }),
+    ]);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS - 1);
+    expect(notify).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(notify).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2 * EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(EXPIRY_NOTICE_MAX_ATTEMPTS);
+    expect(EXPIRY_NOTICE_MAX_ATTEMPTS).toBe(3);
+    await vi.advanceTimersByTimeAsync(100 * EXPIRY_NOTICE_RETRY_MS); // bounded: no more attempts
+    expect(notify).toHaveBeenCalledTimes(EXPIRY_NOTICE_MAX_ATTEMPTS);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(traceOf("task-fail", "confirmation.expiry_notice_failed").map((a) => a.will_retry)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(traceOf("task-fail", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notify_failed", attempts: 3 }),
+    ]);
+    await vi.waitFor(() => expect(recordRitualFailure).toHaveBeenCalledTimes(1));
+    expect(recordRitualFailure).toHaveBeenCalledWith(
+      EXPIRY_NOTICE_FAILURE_ID,
+      expect.stringContaining("not delivered after 3 attempts: adapter down"),
+      "execute",
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("giving up"));
+    expect(rowOf(tk).decision).toBe("expired"); // never re-opened
+  });
+
+  it("A3: a failure then a success → one `notified` trace with attempts 2, no failure recorded", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi
+      .fn<(n: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockResolvedValueOnce(undefined);
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-retry");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(traceOf("task-retry", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: true, reason: "notified", attempts: 2 }),
+    ]);
+    await vi.advanceTimersByTimeAsync(10 * EXPIRY_NOTICE_RETRY_MS);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("A3 follow-up: a new card in the same chat cancels the old notice's pending retry (no stale notice after it)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const oldNotify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, oldNotify, "task-old");
+    // Another chat's failing notice keeps its own retry.
+    const otherNotify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation("whatsapp", "gmail_send", args, summary, otherNotify, "task-other");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(oldNotify).toHaveBeenCalledTimes(1);
+
+    const newNotify = vi.fn();
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "wp_delete(id: 7)", newNotify, "task-new");
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 3);
+    expect(oldNotify).toHaveBeenCalledTimes(1); // the retry never fired
+    expect(otherNotify).toHaveBeenCalledTimes(3); // unaffected
+    expect(traceOf("task-old", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notice_superseded" }),
+    ]);
+    expect(getPendingConfirmation(tk)?.toolName).toBe("wp_delete");
+  });
+
+  it("A3 follow-up: a new card while a fired retry's send is in flight → that send's failure schedules no further attempt", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectInFlight: (err: Error) => void = () => {};
+    const oldNotify = vi
+      .fn<(n: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectInFlight = reject;
+          }),
+      )
+      .mockRejectedValue(new Error("blip"));
+    storePendingConfirmation(tk, "gmail_send", args, summary, oldNotify, "task-race");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS);
+    expect(oldNotify).toHaveBeenCalledTimes(2); // attempt 2 fired, send in flight
+
+    const newNotify = vi.fn();
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "wp_delete(id: 7)", newNotify, "task-new2");
+    rejectInFlight(new Error("adapter down"));
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 5); // < TTL: the new card stays
+    expect(oldNotify).toHaveBeenCalledTimes(2); // attempt 3 never scheduled
+    expect(traceOf("task-race", "confirmation.expiry_notice_failed")).toEqual([
+      expect.objectContaining({ attempt: 1, will_retry: true }),
+      expect.objectContaining({ attempt: 2, will_retry: false, superseded: true }),
+    ]);
+    expect(traceOf("task-race", "confirmation.expired")).toEqual([
+      expect.objectContaining({ notified: false, reason: "notice_superseded", attempts: 2 }),
+    ]);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+    expect(getPendingConfirmation(tk)?.toolName).toBe("wp_delete");
+  });
+
+  it("A3 follow-up: clearPendingConfirmation cancels the chat's pending notice retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn(() => Promise.reject(new Error("blip")));
+    storePendingConfirmation(tk, "gmail_send", args, summary, notify, "task-clr");
+    vi.advanceTimersByTime(TTL);
+    await vi.advanceTimersByTimeAsync(0);
+    clearPendingConfirmation(tk);
+    await vi.advanceTimersByTimeAsync(EXPIRY_NOTICE_RETRY_MS * 10);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(traceOf("task-clr", "confirmation.expired")).toEqual([
+      expect.objectContaining({ reason: "notice_superseded" }),
+    ]);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+});

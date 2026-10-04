@@ -15,6 +15,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { defineTool } from "../define-tool.js";
 import { validatePathSafety } from "./immutable-core.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const MAX_GROUPS = 25;
@@ -370,6 +371,9 @@ OUTPUT: rows, columns, header, per-column non-empty/distinct counts, numeric sta
         }
         text = readFileSync(path, "utf-8");
       }
+      // Ruling 3c, audit R7 B-1: stored credential values out of the WHOLE
+      // text before samples / column cuts (scrub-before-cut; fails closed).
+      text = scrubSecrets(text);
       const summary = summarizeText(
         text,
         typeof args.format === "string" ? args.format : undefined,

@@ -69,6 +69,8 @@ vi.mock("../observability/task-trace.js", () => ({
   emitTraceEvent: emitTraceMock,
 }));
 
+vi.mock("../rituals/scheduler.js", () => ({ recordRitualFailure: vi.fn() }));
+
 vi.mock("../lib/logger.js", () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -85,7 +87,12 @@ import {
   extractPersistText,
   isPhantomZeroCostRow,
   registerRunner,
+  undeclaredRunFailure,
+  gateContextFor,
 } from "./dispatcher.js";
+import { recordRitualFailure } from "../rituals/scheduler.js";
+import { createTaskExecutor, undeclaredToolError } from "../tools/task-executor.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import {
   BACKGROUND_ORIGIN,
   currentRunOrigin,
@@ -97,6 +104,8 @@ import {
 import type { RunnerOutput } from "../runners/types.js";
 import {
   currentExecutionContext,
+  runnerExecutionContext,
+  runWithExecutionContext,
   type TaskExecutionContext,
 } from "../inference/execution-context.js";
 import { outsideRunToolContext } from "../tools/rule-of-two.js";
@@ -1308,5 +1317,227 @@ describe("dispatchTask redacts credentials in runs.output / runs.error / tasks.e
         (c) => typeof c[0] === "string" && c[0].includes(`here ${SECRET}`),
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator ruling 2026-10-03: in a NON-interactive run, a batch_decompose
+// child may not use a high-risk tool / carrier the run did not declare.
+// ---------------------------------------------------------------------------
+
+describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)", () => {
+  const registry = {
+    getEffectiveRiskTier: (n: string): "low" | "medium" | "high" =>
+      n === "gmail_send" ? "high" : "low",
+    has: () => true,
+    get: () => undefined,
+    execute: vi.fn(async () => JSON.stringify({ ok: true })),
+  } as unknown as ToolRegistry;
+  const outcome = new Map<string, string>();
+  const childIds = new Map<string, string>();
+  const ctxs = new Map<string, TaskExecutionContext | undefined>();
+  /** What each child's runner calls (title → tool). */
+  let childCalls: Record<string, string> = {};
+
+  beforeEach(() => {
+    outcome.clear();
+    childIds.clear();
+    ctxs.clear();
+    childCalls = {};
+    vi.mocked(recordRitualFailure).mockClear();
+    mockRun.mockReturnValue({ changes: 1 });
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        ctxs.set(input.title, currentExecutionContext());
+        if (input.title.startsWith("root")) {
+          // batch_decompose's submission shape (batch.ts): the child's own
+          // `tools` is model-chosen — it may name gmail_send; it is not the
+          // run's declared set.
+          const sub = await submitTask({
+            title: `child-of-${input.title}`,
+            description: "d",
+            agentType: "fast",
+            tools: ["gmail_send"],
+            tags: ["batch", "chunk:1/1"],
+          });
+          childIds.set(`child-of-${input.title}`, sub.taskId);
+          return { success: true, output: "root ok" } as RunnerOutput;
+        }
+        if (input.title.startsWith("child-of-root-nested")) {
+          const sub = await submitTask({
+            title: "grandchild",
+            description: "d",
+            agentType: "fast",
+            tools: ["gmail_send"],
+            tags: ["batch"],
+          });
+          childIds.set("grandchild", sub.taskId);
+        }
+        const tool = childCalls[input.title] ?? "gmail_send";
+        // The fast runner's own context (shares the dispatcher's sink).
+        const ctx = runnerExecutionContext(input.taskId, true);
+        outcome.set(input.title, await createTaskExecutor(registry, ctx)(tool, { to: "a@b.mx" }));
+        return { success: true, output: "child ok" } as RunnerOutput;
+      },
+    });
+  });
+
+  async function runRoot(sub: Parameters<typeof submitTask>[0], expected: string[]) {
+    await submitTask(sub);
+    await vi.waitFor(() => {
+      for (const t of expected) if (!outcome.has(t)) throw new Error(`${t} not yet run`);
+    });
+    await vi.waitFor(() => {
+      for (const t of expected) {
+        const id = childIds.get(t)!;
+        if (!emitTraceMock.mock.calls.some((c) => c[0].taskId === id && /^task\.(failed|completed)$/.test(c[0].name)))
+          throw new Error(`${t} not settled`);
+      }
+    });
+  }
+  const finalOf = (title: string) =>
+    emitTraceMock.mock.calls
+      .map((c) => c[0] as { taskId: string; name: string; attrs?: Record<string, unknown>; tool?: string })
+      .filter((e) => e.taskId === childIds.get(title));
+
+  const scheduled = (title: string, tools: string[]) => ({
+    title,
+    description: "d",
+    interactive: false,
+    tools,
+    tags: ["scheduled", "schedule:sch-1"],
+  });
+
+  it("an undeclared gmail_send is refused at the child's gate; the child FAILS and the schedule gets the failure", async () => {
+    await runRoot(scheduled("root-undeclared", ["web_search", "batch_decompose"]), ["child-of-root-undeclared"]);
+    expect(JSON.parse(outcome.get("child-of-root-undeclared")!)).toEqual({
+      error: undeclaredToolError("gmail_send"),
+    });
+    expect(registry.execute).not.toHaveBeenCalled();
+    const ctx = ctxs.get("child-of-root-undeclared")!;
+    expect(ctx.inheritedDeclaredTools).toEqual(["web_search", "batch_decompose"]);
+    expect(ctx.originScheduleId).toBe("sch-1");
+    const events = finalOf("child-of-root-undeclared");
+    expect(events).toContainEqual(
+      expect.objectContaining({ name: "tool.gated", tool: "gmail_send", attrs: { decision: "refused_undeclared" } }),
+    );
+    expect(events.map((e) => e.name)).toContain("task.failed");
+    expect(events.map((e) => e.name)).not.toContain("task.completed");
+    await vi.waitFor(() => expect(recordRitualFailure).toHaveBeenCalledTimes(1));
+    expect(recordRitualFailure).toHaveBeenCalledWith(
+      "sch-1",
+      undeclaredRunFailure(["gmail_send"]),
+      "execute",
+    );
+  });
+
+  it("a declared gmail_send is allowed and the child completes", async () => {
+    await runRoot(scheduled("root-declared", ["web_search", "gmail_send"]), ["child-of-root-declared"]);
+    expect(JSON.parse(outcome.get("child-of-root-declared")!)).toEqual({ ok: true });
+    expect(registry.execute).toHaveBeenCalledWith("gmail_send", { to: "a@b.mx" });
+    const names = finalOf("child-of-root-declared").map((e) => e.name);
+    expect(names).toContain("task.completed");
+    expect(names).not.toContain("task.failed");
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("chat is unchanged: a chat root's batch child carries no inherited limit and is never refused as undeclared", async () => {
+    await runRoot(
+      {
+        title: "root-chat",
+        description: "d",
+        threadId: "telegram:42",
+        replyTracked: true,
+        tags: ["messaging", "telegram"],
+        tools: ["web_search"],
+      },
+      ["child-of-root-chat"],
+    );
+    expect(ctxs.get("child-of-root-chat")!.inheritedDeclaredTools).toBeUndefined();
+    expect(outcome.get("child-of-root-chat")).not.toContain(undeclaredToolError("gmail_send"));
+    expect(
+      emitTraceMock.mock.calls.some((c) => c[0].attrs?.decision === "refused_undeclared"),
+    ).toBe(false);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("audit A1: a background root that declared NO tools gives its children an EMPTY allow-list — high-risk refused, low-risk unaffected", async () => {
+    await runRoot(
+      { title: "root-nolist", description: "d", interactive: false, tags: ["scheduled", "schedule:sch-1"] },
+      ["child-of-root-nolist"],
+    );
+    expect(ctxs.get("child-of-root-nolist")!.inheritedDeclaredTools).toEqual([]);
+    expect(JSON.parse(outcome.get("child-of-root-nolist")!)).toEqual({
+      error: undeclaredToolError("gmail_send"),
+    });
+    expect(registry.execute).not.toHaveBeenCalled();
+    const names = finalOf("child-of-root-nolist").map((e) => e.name);
+    expect(names).toContain("task.failed");
+    expect(names).not.toContain("task.completed");
+    await vi.waitFor(() => expect(recordRitualFailure).toHaveBeenCalledTimes(1));
+    expect(recordRitualFailure).toHaveBeenCalledWith("sch-1", undeclaredRunFailure(["gmail_send"]), "execute");
+
+    // A low-risk tool in a child of the same kind of run still runs.
+    vi.mocked(recordRitualFailure).mockClear();
+    childCalls["child-of-root-nolist-low"] = "web_search";
+    await runRoot(
+      { title: "root-nolist-low", description: "d", interactive: false, tags: ["scheduled"] },
+      ["child-of-root-nolist-low"],
+    );
+    expect(JSON.parse(outcome.get("child-of-root-nolist-low")!)).toEqual({ ok: true });
+    expect(registry.execute).toHaveBeenCalledWith("web_search", { to: "a@b.mx" });
+    expect(finalOf("child-of-root-nolist-low").map((e) => e.name)).toContain("task.completed");
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("audit A1: an INTERACTIVE root that declared no tools leaves its children unrestricted (unchanged)", async () => {
+    await runRoot({ title: "root-api-nolist", description: "d", interactive: true }, ["child-of-root-api-nolist"]);
+    expect(ctxs.get("child-of-root-api-nolist")!.inheritedDeclaredTools).toBeUndefined();
+    expect(outcome.get("child-of-root-api-nolist")).not.toContain(undeclaredToolError("gmail_send"));
+    expect(
+      emitTraceMock.mock.calls.some((c) => c[0].attrs?.decision === "refused_undeclared"),
+    ).toBe(false);
+    expect(recordRitualFailure).not.toHaveBeenCalled();
+  });
+
+  it("audit S3: background root → interactive:true child → interactive:false grandchild keeps the ROOT's list", () => {
+    const root = gateContextFor("t-root", {
+      title: "r",
+      description: "d",
+      interactive: false,
+      tools: ["web_search"],
+    });
+    const child = runWithExecutionContext(root, () =>
+      gateContextFor("t-child", { title: "c", description: "d", interactive: true, tools: ["gmail_send"] }),
+    );
+    expect(child.interactive).toBe(true);
+    expect(child.inheritedDeclaredTools).toEqual(["web_search"]);
+    const grandchild = runWithExecutionContext(child, () =>
+      gateContextFor("t-grand", { title: "g", description: "d", interactive: false, tools: ["gmail_send"] }),
+    );
+    expect(grandchild.inheritedDeclaredTools).toEqual(["web_search"]);
+    // A root (no parent) and an interactive root's child still set no limit.
+    expect(root.inheritedDeclaredTools).toBeUndefined();
+    const chatRoot = gateContextFor("t-chat", { title: "r", description: "d", interactive: true, tools: ["web_search"] });
+    expect(
+      runWithExecutionContext(chatRoot, () => gateContextFor("t-cc", { title: "c", description: "d" }))
+        .inheritedDeclaredTools,
+    ).toBeUndefined();
+  });
+
+  it("a nested carrier (batch_decompose) the run did not declare is refused; a grandchild keeps the ROOT's list", async () => {
+    childCalls["child-of-root-nested"] = "batch_decompose";
+    childCalls.grandchild = "gmail_send";
+    await runRoot(scheduled("root-nested", ["web_search"]), ["child-of-root-nested", "grandchild"]);
+    expect(JSON.parse(outcome.get("child-of-root-nested")!)).toEqual({
+      error: undeclaredToolError("batch_decompose"),
+    });
+    expect(finalOf("child-of-root-nested").map((e) => e.name)).toContain("task.failed");
+    // The grandchild's own `tools` (["gmail_send"]) does not widen the root's.
+    expect(ctxs.get("grandchild")!.inheritedDeclaredTools).toEqual(["web_search"]);
+    expect(ctxs.get("grandchild")!.originScheduleId).toBe("sch-1");
+    expect(JSON.parse(outcome.get("grandchild")!)).toEqual({ error: undeclaredToolError("gmail_send") });
+    expect(registry.execute).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,24 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { shouldAutoPersist, deriveTopicSlug } from "./auto-persist.js";
+
+// Ruling 3c (audit R3 S2): one synthetic stored value stands in for the
+// secret store; the memory service and the file store are spies.
+const SCRUB_SYN = vi.hoisted(() => "syn" + "p".repeat(14));
+vi.mock("../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+const retainSpy = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("./index.js", () => ({
+  getMemoryService: () => ({ retain: retainSpy }),
+}));
+const upsertFileSpy = vi.hoisted(() => vi.fn());
+vi.mock("../db/jarvis-fs.js", () => ({ upsertFile: upsertFileSpy }));
+vi.mock("./outcome-tag.js", () => ({ getOutcomeTag: () => "outcome:success" }));
+
+import {
+  shouldAutoPersist,
+  deriveTopicSlug,
+  autoPersistConversation,
+} from "./auto-persist.js";
 import type { AutoPersistInput } from "./auto-persist.js";
 
 afterEach(() => {
@@ -142,5 +161,28 @@ describe("deriveTopicSlug (v6.2 S4)", () => {
 
   it("lowercases output", () => {
     expect(deriveTopicSlug("ANÁLISIS del PIPELINE")).toBe("análisis-pipeline");
+  });
+});
+
+describe("autoPersistConversation — ruling 3c (audit R3 S2)", () => {
+  it("writes the title, the topic path and the summary with stored credential values scrubbed", async () => {
+    await autoPersistConversation(
+      input({
+        userText: `${SCRUB_SYN} explica por qué falla el acceso?`,
+        responseText: `Probé con ${SCRUB_SYN}. ` + "x".repeat(1200),
+      }),
+    );
+    expect(upsertFileSpy).toHaveBeenCalledTimes(1);
+    const [path, title, summary] = upsertFileSpy.mock.calls[0]!;
+    expect(title).toBe("[oculto] explica por qué falla el acceso?");
+    expect(summary).toContain("User: [oculto] explica");
+    expect(summary).toContain("Response: Probé con [oculto].");
+    for (const written of [
+      JSON.stringify(upsertFileSpy.mock.calls),
+      JSON.stringify(retainSpy.mock.calls),
+    ]) {
+      expect(written).not.toContain(SCRUB_SYN);
+    }
+    expect(String(path)).not.toContain(SCRUB_SYN.slice(0, 10));
   });
 });

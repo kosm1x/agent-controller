@@ -20,6 +20,12 @@ vi.mock("node:dns/promises", () => ({
   ),
 }));
 
+// Ruling 3c: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn" + "h".repeat(12));
+vi.mock("../lib/secret-refs.js", () => ({
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 describe("extractText", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -354,6 +360,20 @@ describe("createMcpTool", () => {
       await tool.execute({ url: "https://example.com" });
 
       expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    // Ruling 3c: args here may carry a resolved secret; the audit line is scrubbed.
+    it("scrubs a stored secret out of the blocked-URL audit warn", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const tool = createMcpTool("browser", { name: "goto" }, vi.fn());
+
+      await tool.execute({ url: `http://${SCRUB_SYN}.internal.test/` });
+
+      const logged = warnSpy.mock.calls.flat().join(" ");
+      expect(logged).toContain("[mcp] blocked URL-bearing arg on browser__goto");
+      expect(logged).toContain("[oculto]");
+      expect(logged).not.toContain(SCRUB_SYN);
       warnSpy.mockRestore();
     });
 

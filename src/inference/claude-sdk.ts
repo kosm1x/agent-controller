@@ -25,6 +25,7 @@ import { circuitRegistry } from "../lib/circuit-breaker.js";
 // so no static cycle; the singleton is used only at call time regardless.
 import { providerMetrics } from "./adapter-openai.js";
 import type {
+  HookCallback,
   Options as SdkOptions,
   SDKResultSuccess,
   SDKResultError,
@@ -48,6 +49,10 @@ import type {
   OnTextChunk,
   CostLedgerAttribution,
 } from "./adapter.js";
+// Outbound secret scrub (ruling 3c, audit round 4). Shared helper lives in
+// adapter.ts; queryClaudeSdk is the SDK path's one choke point.
+import { scrubOutboundText, SecretScrubUnavailableError } from "./adapter.js";
+import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
@@ -59,7 +64,9 @@ import {
 } from "../tools/external-tool-guard.js";
 import {
   confirmationGate,
+  placeholderRefusalBeforeGate,
   NO_CONFIRM_IN_CHAT_ERROR,
+  noteUndeclaredRefusal,
 } from "../tools/task-executor.js";
 import { currentRunOrigin, currentRunTaskId } from "../tools/rule-of-two.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
@@ -234,9 +241,26 @@ function gateSdkToolCall(
   }
   const gate = confirmationGate(toolRegistry, ctx, name, args);
   if (gate.action === "proceed") return null;
+  if (gate.action === "confirm") {
+    // No card for a call the registry would refuse after the approval
+    // (combined audit 2026-10-03, should-fix 3).
+    const refused = placeholderRefusalBeforeGate(name, args, ctx.taskId);
+    if (refused !== null) {
+      // It never ran: recorded like any gated call, so the run does not
+      // list it among the tools already executed (resume prompt, output,
+      // telemetry — fast-runner `withoutGated`).
+      ctx.recordGatedCall(name);
+      return refused;
+    }
+  }
   ctx.recordGatedCall(name);
   if (gate.action === "refuse") {
-    trace("refused_cannot_ask", ctx.taskId);
+    if (gate.reason === "undeclared_tool") {
+      // Operator ruling 2026-10-03: recorded so the dispatcher fails the run.
+      noteUndeclaredRefusal(ctx, name, origin.source);
+    } else {
+      trace("refused_cannot_ask", ctx.taskId);
+    }
     return JSON.stringify({ error: gate.error });
   }
   const pending = ctx.getPendingConfirmation();
@@ -253,6 +277,23 @@ function gateSdkToolCall(
     message: CONFIRMATION_PENDING_MESSAGE,
     tool: name,
   });
+}
+
+/**
+ * A thrown tool error as the model will see it: outbound-scrubbed (ruling
+ * 3c); when the secret index is unavailable the detail is withheld.
+ */
+function scrubToolErrorText(err: unknown): string {
+  try {
+    return scrubOutboundText(`Error: ${errMsg(err)}`);
+  } catch (scrubErr) {
+    // Withheld on ANY scrub failure; traced only as what it is (parity
+    // with the openai / claude_sdk choke points).
+    if (scrubErr instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("claude_sdk_tool_error");
+    }
+    return "Error: tool failed (detail withheld: secret index unavailable)";
+  }
 }
 
 function wrapTool(t: Tool) {
@@ -291,15 +332,14 @@ function wrapTool(t: Tool) {
         // prompt-injection via tool output bypassed guards on claude-sdk path.
         // See docs/audit/2026-04-22-security.md C-INJ-1.
         const sanitized = sanitizeToolResult(t.name, result);
-        return { content: [{ type: "text", text: sanitized }] };
+        // The registry already scrubbed `raw`; this outbound pass also covers
+        // the external-request filter's rewrite (ruling 3c, audit round 4).
+        return {
+          content: [{ type: "text", text: scrubOutboundText(sanitized) }],
+        };
       } catch (err) {
         return {
-          content: [
-            {
-              type: "text",
-              text: `Error: ${errMsg(err)}`,
-            },
-          ],
+          content: [{ type: "text", text: scrubToolErrorText(err) }],
           isError: true,
         };
       }
@@ -367,6 +407,19 @@ function buildProbeTools(defs: ToolDefinition[]): InlineSdkTool[] {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type InlineSdkTool = SdkMcpToolDefinition<any>;
 
+/** Text parts of an MCP tool result, scrubbed of stored credential values. */
+export function scrubCallToolResult(r: CallToolResult): CallToolResult {
+  if (!r || !Array.isArray(r.content)) return r;
+  return {
+    ...r,
+    content: r.content.map((c) =>
+      c.type === "text" && typeof c.text === "string"
+        ? { ...c, text: scrubOutboundText(c.text) }
+        : c,
+    ),
+  };
+}
+
 export function buildMcpServer(
   toolNames: string[],
   extraTools: InlineSdkTool[] = [],
@@ -400,8 +453,14 @@ export function buildMcpServer(
   // silently break the eval gate's tool_selection signal — the eval-silence
   // class. `_meta['anthropic/alwaysLoad']` is the SDK's documented per-tool
   // carrier (what `tool({ alwaysLoad })` sets); pinned by spec in tests.
+  //
+  // Inline tools bypass the registry, so its scrub too: their results (the
+  // critics' recall_check / KB searches read jarvis_files) are scrubbed here
+  // before the model sees them (ruling 3c, audit round 4).
   const inlineTools = extraTools.map((t) => ({
     ...t,
+    handler: async (args: Parameters<InlineSdkTool["handler"]>[0], extra: unknown) =>
+      scrubCallToolResult(await t.handler(args, extra)),
     _meta: { ...t._meta, "anthropic/alwaysLoad": true },
   }));
 
@@ -675,6 +734,23 @@ async function* buildVisionPromptStream(
   };
 }
 
+/**
+ * Wrap a hook so the text it hands the model (`reason`, `systemMessage`) is
+ * scrubbed of stored credential values (ruling 3c, audit round 4).
+ */
+export function scrubHookOutput(hook: HookCallback): HookCallback {
+  return async (...args) => {
+    const out = await hook(...args);
+    if (!out || typeof out !== "object") return out;
+    const o = out as Record<string, unknown>;
+    const copy: Record<string, unknown> = { ...o };
+    for (const k of ["reason", "systemMessage", "stopReason"]) {
+      if (typeof o[k] === "string") copy[k] = scrubOutboundText(o[k] as string);
+    }
+    return copy as typeof out;
+  };
+}
+
 export async function queryClaudeSdk(opts: {
   prompt: string;
   systemPrompt: string;
@@ -838,6 +914,37 @@ export async function queryClaudeSdk(opts: {
     ...(toolSearchEnabled() ? ["ToolSearch"] : []),
   ];
 
+  // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
+  // server rejects JSON containing unpaired surrogates with a 400 error
+  // ("no low surrogate in string"). This catches any upstream slice/substring
+  // truncation that cut a non-BMP char (emoji, etc.) mid-pair. One-pass, zero
+  // copy for clean strings — only allocates when repair is needed.
+  //
+  // Outbound secret scrub (ruling 3c, audit round 4): EVERY SDK call —
+  // queryClaudeSdkAsInfer / AsInferWithTools (infer, inferWithTools), the
+  // tiered and Opus→Sonnet fallback wrappers, and every direct caller — sends
+  // its text only through this prompt + systemPrompt pair, so stored
+  // credential values are replaced by their placeholders here. Sessions are
+  // never resumed (persistSession: false), so no history reaches the model
+  // except what passes this point; in-turn tool results pass wrapTool's scrub.
+  // Throws (fail closed) only with no current index. Runs BEFORE the abort
+  // listener and the 15-minute timer are armed (audit round 5), so a throw
+  // leaves no timer or listener behind and nothing reaches the SDK.
+  let safePromptText: string;
+  let safeSystemPromptText: string;
+  try {
+    safePromptText = sanitizeSurrogates(scrubOutboundText(opts.prompt));
+    safeSystemPromptText = sanitizeSurrogates(
+      scrubOutboundText(opts.systemPrompt),
+    );
+  } catch (err) {
+    // Not sent — a decision point on the run's timeline (combined audit SF2).
+    if (err instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("claude_sdk");
+    }
+    throw err;
+  }
+
   const abortController = new AbortController();
   if (opts.abortSignal) {
     // A signal aborted BEFORE this point never fires the listener; for an
@@ -866,14 +973,6 @@ export async function queryClaudeSdk(opts: {
         abortController.abort();
       }, SDK_TIMEOUT_MS);
 
-  // Sanitize lone UTF-16 surrogates before sending to the API. The Claude
-  // server rejects JSON containing unpaired surrogates with a 400 error
-  // ("no low surrogate in string"). This catches any upstream slice/substring
-  // truncation that cut a non-BMP char (emoji, etc.) mid-pair. One-pass, zero
-  // copy for clean strings — only allocates when repair is needed.
-  const safePromptText = sanitizeSurrogates(opts.prompt);
-  const safeSystemPromptText = sanitizeSurrogates(opts.systemPrompt);
-
   // cache_diag (2026-05-22): diagnostic for grouping consecutive query() calls
   // by scope to attribute cache misses (same/different promptHash × toolsHash —
   // see git history for the decision table). The investigation concluded with
@@ -897,8 +996,12 @@ export async function queryClaudeSdk(opts: {
   // while a runnable acceptance gate is FAILED. Null when dormant
   // (TASK_GATES_STOP_HOOK unset / mode off / task has no ledger / no task id)
   // so the options object below is byte-for-byte today's shape.
-  const gatesStopHook = opts.trace?.taskId
+  const rawGatesStopHook = opts.trace?.taskId
     ? makeGatesStopHook(opts.trace.taskId)
+    : null;
+  // The block reason quotes gate evidence (command output) back to the model.
+  const gatesStopHook = rawGatesStopHook
+    ? scrubHookOutput(rawGatesStopHook)
     : null;
 
   const options: SdkOptions = {

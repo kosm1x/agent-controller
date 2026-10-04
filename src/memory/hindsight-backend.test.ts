@@ -22,6 +22,13 @@ vi.mock("./hindsight-client.js", () => {
   };
 });
 
+// Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
+const SCRUB_SYN = vi.hoisted(() => "syn-" + "n".repeat(14));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 // Mock recall-utility so tests don't hit the DB; assertion-friendly spy.
 const logRecallSpy = vi.fn();
 vi.mock("./recall-utility.js", () => ({
@@ -78,6 +85,15 @@ describe("HindsightMemoryBackend", () => {
       });
     });
 
+    it("sends the content with stored credential values scrubbed (ruling 3c)", async () => {
+      await backend.retain(`la clave es ${SCRUB_SYN}`, { bank: "mc-operational" });
+      expect(mockClient.retain).toHaveBeenCalledWith(
+        "mc-operational",
+        expect.objectContaining({ content: "la clave es [oculto]" }),
+      );
+      expect(JSON.stringify(mockClient.retain.mock.calls)).not.toContain(SCRUB_SYN);
+    });
+
     it("should default async to true", async () => {
       await backend.retain("test", { bank: "mc-operational" });
 
@@ -114,6 +130,20 @@ describe("HindsightMemoryBackend", () => {
         budget: "low",
         tags: undefined,
       });
+    });
+
+    it("returns Hindsight results and the reflection with stored credential values scrubbed (ruling 3c, audit R3 B1)", async () => {
+      mockClient.recall.mockResolvedValueOnce({
+        results: [{ id: "m1", text: `la clave es ${SCRUB_SYN}`, type: "world" }],
+      });
+      mockClient.reflect.mockResolvedValueOnce({ text: `usa ${SCRUB_SYN}` });
+      const results = await backend.recall("clave", { bank: "mc-operational" });
+      expect(results[0].content).toBe("la clave es [oculto]");
+      const reflection = await backend.reflect("clave", { bank: "mc-operational" });
+      expect(reflection).toBe("usa [oculto]");
+      expect(JSON.stringify([results, reflection, logRecallSpy.mock.calls])).not.toContain(
+        SCRUB_SYN,
+      );
     });
 
     it("logs a recall_audit row tagged source=hindsight on success", async () => {

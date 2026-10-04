@@ -67,7 +67,7 @@ Para nueva tool en Jarvis:
 4. Si read-only → agregar a `READ_ONLY_TOOLS` en `src/inference/guards.ts`
 5. Test file con mocks
 6. `npx tsc --noEmit` → zero errores
-7. `npm test` → todos los tests pasan (verificar que fallas son pre-existentes, no mías)
+7. `npx vitest related --run <archivos cambiados>` → pasan los tests relacionados (la suite completa corre en pre-commit/CI) (verificar que fallas son pre-existentes, no mías)
 
 Para MCP server externo:
 

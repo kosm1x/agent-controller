@@ -34,6 +34,9 @@ import { compactConversation } from "../prometheus/compaction-pipeline.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { CONTEXT_PRESSURE_ADVISORY } from "../config/constants.js";
 import { repairSession } from "./session-repair.js";
+import { currentExecutionContext } from "./execution-context.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
+import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { sanitizeToolResult } from "./guards.js";
 import {
   HttpError,
@@ -57,6 +60,10 @@ import {
   type AnthropicResponse,
 } from "./anthropic.js";
 import { infer } from "./adapter.js";
+import {
+  scrubOutboundMessages,
+  SecretScrubUnavailableError,
+} from "./outbound-scrub.js";
 import type {
   ChatMessage,
   ToolDefinition,
@@ -347,6 +354,20 @@ async function callProvider(
   onTextChunk?: OnTextChunk,
   externalSignal?: AbortSignal,
 ): Promise<InferenceResponse> {
+  // Outbound secret scrub (ruling 3c, audit round 4): the ONE choke point of
+  // the OpenAI-compat path — every inferViaOpenAi attempt (and so every
+  // inferWithToolsViaOpenAi round, compaction summary and wrap-up, which all
+  // go through infer()) reaches the wire only through here. Shared scrub in
+  // adapter.ts.
+  try {
+    request = { ...request, messages: scrubOutboundMessages(request.messages) };
+  } catch (err) {
+    // Not sent — a decision point on the run's timeline (combined audit SF2).
+    if (err instanceof SecretScrubUnavailableError) {
+      traceScrubUnavailable("openai");
+    }
+    throw err;
+  }
   // Dispatch to Anthropic path when model is claude-*
   if (isAnthropicProvider(provider)) {
     return callAnthropicProvider(
@@ -760,6 +781,10 @@ export async function inferViaOpenAi(
         breaker.recordSuccess();
         return result;
       } catch (err) {
+        // Ruling 3c, audit round 5: the outbound scrub could not run, so
+        // nothing was sent. Not a provider failure — no breaker, no provider
+        // metrics, no retry or failover (every provider needs the same scrub).
+        if (err instanceof SecretScrubUnavailableError) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         // HttpError carries status + rate-limit headers structurally; for any
         // other error we fall back to parsing the message string the way we
@@ -1223,6 +1248,20 @@ export function compactionGuardStep(
 }
 
 /**
+ * Audit S2 (rulings 1–2): the run's declared tool list, when it declared one
+ * — the dispatcher's gate context carries the submission's `tools` (a
+ * schedule's saved list, a chat turn's scoped set). `undefined` means no
+ * list was declared (or no dispatched run): the full registry stays
+ * reachable, as before. An explicit `[]` is an empty set — no tools. Same
+ * semantics as the claude-sdk path, whose `allowedTools` admits only the
+ * names it was given.
+ */
+export function declaredToolSetForRun(): ReadonlySet<string> | undefined {
+  const declared = currentExecutionContext()?.declaredTools;
+  return declared === undefined ? undefined : new Set(declared);
+}
+
+/**
  * OpenAI-compat branch of inferWithTools() — the multi-round tool loop with
  * doom-loop guards, graduated escalation, compaction cascade, and wrap-up.
  * Moved verbatim from adapter.ts inferWithTools() (Phase 4.2); reached only
@@ -1310,6 +1349,34 @@ export async function inferWithToolsViaOpenAi(
   // paralysis guard can distinguish "gathering data before acting" from
   // "endlessly exploring without acting".
   const calledToolNames = new Set<string>();
+  // Audit S2: a declared list bounds what reaches the model — a schedule
+  // saved with `tools: []` gets the full registry from `getDefinitions([])`
+  // upstream; here it gets none. Copied only when something is dropped, so
+  // an undeclared run keeps today's array identity.
+  const declaredTools = declaredToolSetForRun();
+  if (declaredTools && tools.some((t) => !declaredTools.has(t.function.name))) {
+    const handedIn = tools.length;
+    tools = tools.filter((t) => declaredTools.has(t.function.name));
+    const droppedCount = handedIn - tools.length;
+    console.warn(
+      `[inference] ${droppedCount} tool definition(s) outside the run's declared list dropped`,
+    );
+    // Decision point → dashboard timeline. A declared list only exists
+    // inside an execution context, so its task id keys the event.
+    const taskId = currentExecutionContext()?.taskId;
+    if (taskId) {
+      emitTraceEvent({
+        taskId,
+        name: "tools.declared_filtered",
+        attrs: {
+          declared: declaredTools.size,
+          handed_in: handedIn,
+          kept: tools.length,
+          dropped: droppedCount,
+        },
+      });
+    }
+  }
   const allowedToolNames = new Set(tools.map((t) => t.function.name));
   const availableNonReadOnly = new Set(
     tools.map((t) => t.function.name).filter((n) => !isReadOnlyTool(n)),
@@ -1706,7 +1773,15 @@ export async function inferWithToolsViaOpenAi(
             // so the LLM can retry with correct arguments on the next round.
             if (!allowedToolNames.has(toolName)) {
               const registeredTool = toolRegistry.get(toolName);
-              if (registeredTool?.deferred) {
+              // Audit S2: expansion stays inside the run's declared list —
+              // an unconfirmed high-risk deferred tool (tweet_post,
+              // gdrive_delete, vps_deploy…) is never admitted into a run
+              // that did not declare it. No list declared → any deferred
+              // tool in the registry, as before.
+              if (
+                registeredTool?.deferred &&
+                (!declaredTools || declaredTools.has(toolName))
+              ) {
                 // Deferred tool expansion — return full schema for retry.
                 // CRITICAL: add to allowedToolNames so the retry actually
                 // executes instead of looping back here, and push the full

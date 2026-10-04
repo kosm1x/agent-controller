@@ -24,6 +24,7 @@ const reg = vi.hoisted(() => ({
 vi.mock("../tools/registry.js", () => ({
   toolRegistry: {
     get: () => undefined,
+    has: (name: string) => name in reg.tiers,
     execute: reg.execute,
     getEffectiveRiskTier: (name: string) => reg.tiers[name] ?? "low",
   },
@@ -38,7 +39,22 @@ vi.mock("../config.js", () => ({
   getConfig: () => ({ budgetEnabled: false, budgetEnforce: false }),
 }));
 
+// The outbound scrub, overridable per test (null = the real one) so a scrub
+// failure inside wrapTool's catch can be driven.
+const scrub = vi.hoisted(() => ({ throws: null as Error | null }));
+vi.mock("./adapter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./adapter.js")>();
+  return {
+    ...actual,
+    scrubOutboundText: (text: string) => {
+      if (scrub.throws) throw scrub.throws;
+      return actual.scrubOutboundText(text);
+    },
+  };
+});
+
 import { wrapToolCached } from "./claude-sdk.js";
+import { SecretScrubUnavailableError } from "./adapter.js";
 import {
   TaskExecutionContext,
   currentExecutionContext,
@@ -55,6 +71,8 @@ import {
   NO_CONFIRM_CHANNEL_ERROR,
   NO_CONFIRM_IN_CHAT_ERROR,
   NO_CONFIRM_A2A_ERROR,
+  noConfirmBackgroundScheduleError,
+  undeclaredToolError,
 } from "../tools/task-executor.js";
 import type { Tool } from "../tools/types.js";
 
@@ -124,6 +142,7 @@ const dispatcherCtx = (
 ) => new TaskExecutionContext(taskId, interactive, facts);
 
 beforeEach(() => {
+  scrub.throws = null;
   reg.execute.mockClear();
   emitTraceMock.mockReset();
   reg.tiers = {
@@ -168,6 +187,41 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     );
   });
 
+  // Combined audit 2026-10-03 (should-fix 3): the registry refuses a call
+  // carrying a rendered placeholder; asking first showed a card the operator
+  // approved for nothing.
+  it("a high-risk call carrying a rendered placeholder is refused BEFORE any card", async () => {
+    const ctx = fastChatRoot("t-ph");
+    const ph = "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("gmail_send", { to: "a@b.com", body: `clave: ${ph}` }),
+    );
+    expect(reg.execute).not.toHaveBeenCalled();
+    const parsed = JSON.parse(text);
+    expect(parsed.error).toMatch(/^No ejecuté gmail_send: los argumentos contienen un dato oculto/);
+    expect(ctx.getPendingConfirmation()).toBeNull();
+    // SF-C (2026-10-03): it never ran, so it is recorded as gated — the
+    // fast runner's withoutGated drops it from "Herramientas YA ejecutadas",
+    // the run output and telemetry.
+    expect(ctx.getGatedCalls()).toEqual(["gmail_send"]);
+    expect(emitTraceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "tool.gated" }),
+    );
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "t-ph",
+        name: "tool.secret_ref_refused",
+        tool: "gmail_send",
+        attrs: { tool: "gmail_send", reason: "rendered_placeholder", stage: "pre_gate" },
+      }),
+    );
+    // The same call without the placeholder still asks.
+    const ok = await inRun(OPERATOR, fastChatRoot("t-ph2"), () =>
+      call("gmail_send", { to: "a@b.com", body: "hola" }),
+    );
+    expect(JSON.parse(ok).error).toBe("CONFIRMATION_REQUIRED");
+  });
+
   it("first pending wins: a second gated call is refused and not executed", async () => {
     const ctx = fastChatRoot("t-two");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
@@ -204,6 +258,31 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     }
     expect(reg.execute).toHaveBeenCalledTimes(6);
     expect(emitTraceMock).not.toHaveBeenCalled();
+  });
+
+  it("ruling 2026-10-03: a background batch child's undeclared gmail_send is refused on the SDK path and recorded for the dispatcher (shared sink)", async () => {
+    const ctx = dispatcherCtx("t-child", false, { inheritedDeclaredTools: ["web_search"] });
+    const text = await inRun(BACKGROUND, ctx, () =>
+      runWithExecutionContext(runnerExecutionContext("t-child", true), () =>
+        call("gmail_send", { to: "a@b.com" }),
+      ),
+    );
+    expect(JSON.parse(text)).toEqual({ error: undeclaredToolError("gmail_send") });
+    expect(reg.execute).not.toHaveBeenCalled();
+    expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);
+    expect(emitTraceMock).toHaveBeenCalledWith({
+      taskId: "t-child",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "refused_undeclared", origin: "background" },
+    });
+    // Declared: the schedule is the authorization, as before.
+    const ok = await inRun(
+      BACKGROUND,
+      dispatcherCtx("t-child-2", false, { inheritedDeclaredTools: ["gmail_send"] }),
+      () => call("gmail_send", { to: "a@b.com" }),
+    );
+    expect(JSON.parse(ok).ok).toBe(true);
   });
 
   it("R6: an interactive API task (no chat) is refused with the API hint, not executed", async () => {
@@ -335,6 +414,119 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       expect(JSON.parse(text).error).toBe("CONFIRMATION_REQUIRED");
     }
     expect(reg.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("ruling 2026-10-01: schedule_task asks only when its runs would carry a high-risk tool; scheduled runs stay unattended", async () => {
+    const sched = (over: Record<string, unknown>) => ({
+      name: "R",
+      description: "d",
+      cron: "0 8 * * *",
+      tools: ["web_search"],
+      delivery: "telegram",
+      ...over,
+    });
+    // Low-risk schedule in a chat: created as before.
+    await inRun(OPERATOR, fastChatRoot("t-s1"), () =>
+      call("schedule_task", sched({})),
+    );
+    expect(reg.execute).toHaveBeenCalledTimes(1);
+
+    // gmail_send declared, or implied by email delivery: parked, not created.
+    for (const over of [
+      { tools: ["web_search", "gmail_send"] },
+      { delivery: "email", email_to: "a@b.mx" },
+    ]) {
+      const ctx = fastChatRoot("t-s2");
+      const text = await inRun(OPERATOR, ctx, () =>
+        call("schedule_task", sched(over)),
+      );
+      expect(JSON.parse(text).error).toBe("CONFIRMATION_REQUIRED");
+      expect(ctx.getPendingConfirmation()?.toolName).toBe("schedule_task");
+    }
+    expect(reg.execute).toHaveBeenCalledTimes(1);
+
+    // A heavy run in a chat cannot ask → refused with the existing text.
+    const heavy = dispatcherCtx("t-s3", true, { routerRoot: true, chatOrigin: true });
+    const refused = await inRun(OPERATOR, heavy, () =>
+      call("schedule_task", sched({ tools: ["gmail_send"] })),
+    );
+    expect(JSON.parse(refused)).toEqual({ error: NO_CONFIRM_IN_CHAT_ERROR });
+
+    // The scheduled run of a schedule carrying gmail_send (interactive:false)
+    // sends unattended exactly as before.
+    const cron = dispatcherCtx("t-cron-mail", false, {});
+    const sent = await inRun(BACKGROUND, cron, () =>
+      runWithExecutionContext(runnerExecutionContext("t-cron-mail", true), () =>
+        call("gmail_send", { to: "a@b.mx", body: "reporte diario completo" }),
+      ),
+    );
+    expect(JSON.parse(sent).ok).toBe(true);
+    expect(reg.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("fold 1 chain repro: A carrying schedule_task is parked at creation; a background run creating B with gmail_send is refused, unexecuted", async () => {
+    const sched = (name: string, tools: string[]) => ({
+      name,
+      description: "d",
+      cron: "0 8 * * *",
+      tools,
+      delivery: "telegram",
+    });
+    // A declares schedule_task (low tier, but its runs pick their own tools).
+    const ctxA = fastChatRoot("t-chain-a");
+    const parked = await inRun(OPERATOR, ctxA, () =>
+      call("schedule_task", sched("A", ["web_search", "schedule_task"])),
+    );
+    expect(JSON.parse(parked).error).toBe("CONFIRMATION_REQUIRED");
+    expect(ctxA.getPendingConfirmation()?.toolName).toBe("schedule_task");
+
+    // A's cron run (interactive:false) tries to create B with gmail_send.
+    const cron = dispatcherCtx("t-chain-cron", false, {});
+    const refused = await inRun(BACKGROUND, cron, () =>
+      runWithExecutionContext(runnerExecutionContext("t-chain-cron", true), () =>
+        call("schedule_task", sched("B", ["gmail_send"])),
+      ),
+    );
+    expect(JSON.parse(refused)).toEqual({
+      error: noConfirmBackgroundScheduleError(["gmail_send"]),
+    });
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+});
+
+// Combined audit 2026-10-03 (SF2 nit): a thrown tool error whose scrub fails
+// is withheld either way; only an unavailable secret index is traced.
+describe("wrapTool tool-error scrub failure", () => {
+  const WITHHELD = "Error: tool failed (detail withheld: secret index unavailable)";
+  const boom = () => {
+    reg.execute.mockImplementationOnce(async () => {
+      throw new Error("tool blew up with detail");
+    });
+  };
+
+  it("an unavailable secret index withholds the detail and emits inference.scrub_unavailable (claude_sdk_tool_error)", async () => {
+    boom();
+    scrub.throws = new SecretScrubUnavailableError(new Error("db gone"));
+    const ctx = fastChatRoot("t-scrub");
+    const text = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
+    expect(text).toBe(WITHHELD);
+    expect(emitTraceMock).toHaveBeenCalledWith({
+      taskId: "t-scrub",
+      name: "inference.scrub_unavailable",
+      attrs: { where: "claude_sdk_tool_error" },
+    });
+  });
+
+  it("any other scrub failure still withholds the detail but is not traced as scrub_unavailable", async () => {
+    boom();
+    scrub.throws = new TypeError("unexpected");
+    const ctx = fastChatRoot("t-scrub2");
+    const text = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
+    expect(text).toBe(WITHHELD);
+    expect(text).not.toContain("blew up");
+    expect(emitTraceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "inference.scrub_unavailable" }),
+    );
   });
 });
 

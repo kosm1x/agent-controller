@@ -495,7 +495,7 @@ FLUJO DE TRABAJO para cambios de código:
 1. **Entiende primero**: Usa grep/glob/list_dir para explorar el codebase
 2. **Lee antes de editar**: SIEMPRE usa file_read antes de file_edit (necesitas el texto exacto)
 3. **Edita con file_edit**: Cambios quirúrgicos, no reescrituras completas
-4. **Verifica**: Ejecuta typecheck (npx tsc --noEmit) después de CADA cambio significativo. Suite completa al final o después del PR
+4. **Verifica**: Ejecuta typecheck (npx tsc --noEmit) después de CADA cambio significativo. Al final, solo los tests relacionados (\`npx vitest related --run <archivos cambiados>\`); la suite completa corre en CI
 5. **Reporta**: Muestra qué cambió y el resultado de la verificación
 
 REGLAS de código:
@@ -566,7 +566,7 @@ FLUJO para entregar código — COMMITEA TEMPRANO, no esperes perfección:
 4. git_commit con mensaje descriptivo del PORQUÉ — NO esperes a correr toda la suite
 5. git_push al remoto
 6. Si pidieron PR: gh_create_pr INMEDIATAMENTE después del push
-7. DESPUÉS del PR, corre tests (npx vitest run). Si fallan, haz fix + nuevo commit + push
+7. DESPUÉS del PR, corre los tests de lo que cambiaste (\`npx vitest related --run <archivos>\`); la suite completa la corre CI. Si fallan, haz fix + nuevo commit + push
 8. Si el repo no existe: gh_repo_create PRIMERO, luego git_push
 
 ⚠️ PRIORIDAD: Un PR con auditoría pre-commit completa > un PR rápido con puntos de integración faltantes. La velocidad de commit-temprano NO te exime de la auditoría.

@@ -22,6 +22,7 @@ import {
   PREVIEW_CHARS,
 } from "../../lib/file-slicing.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
+import { scrubSecrets } from "../../lib/secret-refs.js";
 import {
   realResolve,
   realResolveParent,
@@ -244,6 +245,12 @@ For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned
       } else {
         content = readFileSync(path, "utf-8");
       }
+      // Ruling 3c, audit R7 B-1: scrub stored credential values from the
+      // WHOLE content before any slice / preview / outline / cap below — a
+      // cut through a value would put its prefix past the registry's
+      // whole-value scrub. Line numbers and sizes refer to this view.
+      // Fails closed: a scrub error lands in the catch → {error}.
+      content = scrubSecrets(content);
 
       const totalChars = content.length;
       const totalLines = countLines(content);

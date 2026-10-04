@@ -3033,7 +3033,7 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
   });
 
   it("armed: the ledger hook is attached under hooks.Stop with a timeout", async () => {
-    const hook = async () => ({});
+    const hook = vi.fn(async () => ({ decision: "block", reason: "r" }));
     stopHookFactory.impl = () => hook;
     okResult();
     await queryClaudeSdk({
@@ -3046,7 +3046,17 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
       hooks?: { Stop?: Array<{ hooks: unknown[]; timeout?: number }> };
     };
     expect(opts.hooks?.Stop).toHaveLength(1);
-    expect(opts.hooks?.Stop?.[0]?.hooks).toEqual([hook]);
+    // The attached hook is the ledger hook behind the outbound scrub wrapper
+    // (ruling 3c, audit round 4): it delegates and returns its decision.
+    const attached = opts.hooks?.Stop?.[0]?.hooks ?? [];
+    expect(attached).toHaveLength(1);
+    const out = await (attached[0] as (...a: unknown[]) => Promise<unknown>)(
+      {},
+      undefined,
+      {},
+    );
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({ decision: "block", reason: "r" });
     expect(opts.hooks?.Stop?.[0]?.timeout).toBe(180);
   });
 });

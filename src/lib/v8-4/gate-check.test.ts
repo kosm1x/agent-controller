@@ -561,6 +561,30 @@ describe("guard parity (qa C1)", () => {
     expect(spawned).toBe(1);
   });
 
+  it("the docker rule (ruling 5) applies to checks: data-reaching verbs never spawn, the psql form runs", async () => {
+    let spawned = 0;
+    const exec: CheckExecutor = async () => {
+      spawned++;
+      return { output: "1", exitCode: 0, timedOut: false };
+    };
+    for (const cmd of [
+      "docker cp supabase-db:/var/lib/postgresql/data/pg_hba.conf /tmp/x",
+      "docker run --rm -v /:/h alpine ls /h/root",
+      "docker exec supabase-db cat /etc/hostname",
+    ]) {
+      const r = await runCheck({ check_cmd: cmd, expect: null }, { timeoutMs: 1000, exec });
+      expect(r.notRunnable, cmd).toBe(true);
+      expect(r.evidence, cmd).toMatch(/^check rejected by shell guard: .*operator ruling 2026-10-01/);
+    }
+    expect(spawned).toBe(0);
+    const ok = await runCheck(
+      { check_cmd: "docker exec supabase-db psql -U postgres -tAc 'select 1'", expect: "1" },
+      { timeoutMs: 1000, exec },
+    );
+    expect(spawned).toBe(1);
+    expect(ok.ok).toBe(true);
+  });
+
   it("evidence is secret-redacted before it is recorded", async () => {
     const exec = fakeExec({
       leak: {

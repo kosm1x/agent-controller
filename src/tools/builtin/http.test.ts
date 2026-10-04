@@ -12,6 +12,13 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { httpTool } from "./http.js";
 
+// Ruling 3c fold F2: one synthetic stored value stands in for the store.
+const SCRUB_SYN = vi.hoisted(() => "cut-" + "h".repeat(20));
+vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/secret-refs.js")>()),
+  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+}));
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -101,5 +108,21 @@ describe("http_fetch — redirect SSRF guard", () => {
     expect(parsed.error).toBeTruthy();
     // Blocked before any network call.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("http_fetch — stored secrets (ruling 3c)", () => {
+  it("a stored value straddling the 20,000-char body cap is scrubbed before the cut", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("x".repeat(19_995) + SCRUB_SYN, { status: 200 }),
+      ),
+    );
+    const out = await httpTool.execute({ url: "http://93.184.216.34/" });
+    const { body } = JSON.parse(out) as { body: string };
+    expect(body.slice(19_995)).toMatch(/^\[ocul\n\.\.\. \(truncated/);
+    expect(body).not.toContain(SCRUB_SYN.slice(0, 5));
   });
 });
