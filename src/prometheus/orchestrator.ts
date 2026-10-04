@@ -29,6 +29,11 @@ import {
   declareGates,
   gateSpecsFromGoal,
 } from "../lib/v8-4/gates.js";
+import {
+  newGradeSpecPlan,
+  syncGradeSpecs,
+  withdrawGradeSpecsForGoals,
+} from "../lib/v8-4/grade-specs.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -219,6 +224,26 @@ export async function orchestrate(
       };
     }
 
+    // V9 W1: the prose criteria (no runnable check) become grade specs for
+    // the completion grader — registry (shadow) or GR-* rows (enforce);
+    // TASK_GATES_GRADER=off (default) ⇒ no-op. Never blocks planning. Runs
+    // for a resumed plan too (the shadow registry does not survive a
+    // restart); a replan re-syncs and the early exit withdraws (below).
+    const gradePlan = newGradeSpecPlan();
+    {
+      const r = syncGradeSpecs(
+        taskId,
+        gradePlan,
+        graph.getAll(),
+        taskDescription,
+      );
+      if (r.registered > 0) {
+        console.log(
+          `[orchestrator] Task ${taskId}: ${r.registered} grade spec(s) registered`,
+        );
+      }
+    }
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
       emitProgress(taskId, Phase.EXECUTE, 30, "Executing goals");
@@ -387,6 +412,21 @@ export async function orchestrate(
             useOpus,
           );
           graph = rg;
+          // V9 W1: removed / rewritten goals' grade specs are withdrawn,
+          // new goals' criteria registered under fresh ids (never graded
+          // against a goal the plan no longer has).
+          const gs = syncGradeSpecs(
+            taskId,
+            gradePlan,
+            graph.getAll(),
+            taskDescription,
+            { reason: `goal removed or rewritten by replan ${replanCount}` },
+          );
+          if (gs.registered > 0 || gs.withdrawn > 0) {
+            console.log(
+              `[orchestrator] Task ${taskId}: replan ${replanCount} grade specs +${gs.registered} / -${gs.withdrawn}`,
+            );
+          }
           totalPromptTokens += replanUsage.promptTokens;
           totalCompletionTokens += replanUsage.completionTokens;
           totalCacheReadTokens += replanUsage.cacheReadTokens ?? 0;
@@ -445,6 +485,19 @@ export async function orchestrate(
       } catch (err) {
         console.warn(
           `[orchestrator] Task ${taskId}: plan gates of unfinished goals not abandoned: ${errMsg(err)}`,
+        );
+      }
+      // V9 W1: the same goals' grade specs are withdrawn, not graded `failed`
+      // for work that never ran. Never throws.
+      const gw = withdrawGradeSpecsForGoals(
+        taskId,
+        gradePlan,
+        unfinishedGoals,
+        `goal unfinished — orchestrator ${exitReason}`,
+      );
+      if (gw > 0) {
+        console.log(
+          `[orchestrator] Task ${taskId}: withdrew ${gw} grade spec(s) of unfinished goals (${exitReason})`,
         );
       }
       try {

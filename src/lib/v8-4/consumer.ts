@@ -17,6 +17,14 @@
  * nanoclaw work-landing gate (declared here at completion, verified on the
  * host) and the numbers-provenance audit (always computed when a deliverable
  * exists; footer only when `TASK_GATES_NUMBERS_ANNOTATE=true`).
+ *
+ * V9 W1 grader gate (`TASK_GATES_GRADER`, grade-specs.ts / grader.ts) rides
+ * the same seam: `shadow` grades in the background AFTER the ledger work
+ * (fire-and-forget, never awaited, trace-only: `gates.graded`) without
+ * touching status, text or output, whatever TASK_GATES_MODE says; `enforce`
+ * (awaited) writes the verdicts onto the ledger rows
+ * BEFORE `evaluateLedger`, so a failed grade demotes through the existing
+ * enforce rule below — no second "done" decision.
  */
 import type { AgentType, RunnerOutput } from "../../runners/types.js";
 import { getConfig } from "../../config.js";
@@ -34,6 +42,8 @@ import {
   formatLedgerBlock,
   gatesMode,
   hasGates,
+  isGradeRow,
+  listGates,
   ledgerSummaryJson,
   ledgerVerdict,
   type GateSpec,
@@ -41,6 +51,21 @@ import {
 } from "./gates.js";
 import { checkCitations, citationMode } from "./citations.js";
 import { evaluateLedger, type EvaluateResult } from "./gate-check.js";
+import { redactSecrets } from "../../api/mcp-server/redact.js";
+import { isSimpleTask } from "../../prometheus/model-tier.js";
+import {
+  abandonPendingGradeRows,
+  buildGradedAttrs,
+  collectGradeSpecs,
+  effectiveGraderMode,
+  recordGradeVerdict,
+  type GradeSpec,
+  type GradeVerdict,
+  type GraderMode,
+  type GraderReason,
+  type GraderUsage,
+} from "./grade-specs.js";
+import { runGrader } from "./grader.js";
 import {
   annotateUnverified,
   auditNumbers,
@@ -154,6 +179,212 @@ function appendToDeliverable(
   // (R1 audit W14 — it vanished exactly when the run produced nothing).
   next.text = suffix;
   return next;
+}
+
+/** Statuses the grader judges; anything else is an interrupted run (outcomes `interrupted`). */
+const GRADEABLE_STATUSES = new Set(["completed", "completed_with_concerns"]);
+
+interface GradeDecision {
+  verdicts: GradeVerdict[];
+  model: string | null;
+  reason?: GraderReason;
+}
+
+/**
+ * One grading decision for `specs` — the grader call, or the named reason it
+ * was not made — always traced as `gates.graded`. Never touches status,
+ * output or rows (callers decide by mode). Throws only on a bug; callers wrap.
+ */
+async function gradeDecision(
+  mode: Exclude<GraderMode, "off">,
+  args: CompletionLedgerArgs,
+  specs: readonly GradeSpec[],
+  deliverable: string,
+  evidence: readonly string[],
+  overConcurrencyCap = false,
+): Promise<GradeDecision> {
+  const { taskId, runId, taskStatus } = args;
+  let decision: GradeDecision;
+  let latencyMs = 0;
+  let usage: GraderUsage | null = null;
+  let costUsd: number | undefined;
+  if (!GRADEABLE_STATUSES.has(taskStatus)) {
+    // Not reached because the run ended early: no call; enforce surrenders
+    // the GR rows with this reason (never `failed` for work never finished).
+    const why = args.result.error
+      ? `: ${redactSecrets(args.result.error).replace(/\s+/g, " ").slice(0, 120)}`
+      : "";
+    const reason: GraderReason = `interrupted — ${taskStatus}${why}`;
+    decision = {
+      verdicts: specs.map((s) => ({
+        id: s.id,
+        verdict: "pending",
+        evidence: `not graded — ${reason}`,
+      })),
+      model: null,
+      reason,
+    };
+  } else if (isSimpleTask(args.taskDescription)) {
+    decision = {
+      verdicts: specs.map((s) => ({
+        id: s.id,
+        verdict: "pending",
+        evidence: "not graded — simple-class task",
+      })),
+      model: null,
+      reason: "skipped_simple",
+    };
+  } else if (overConcurrencyCap) {
+    // Shadow only: too many background gradings already in flight — a
+    // measurement gap (traced), never a queue that grows without bound.
+    decision = {
+      verdicts: specs.map((s) => ({
+        id: s.id,
+        verdict: "pending",
+        evidence: "not graded — shadow concurrency cap reached",
+      })),
+      model: null,
+      reason: "skipped_concurrency",
+    };
+  } else {
+    const res = await runGrader({
+      taskId,
+      taskDescription: args.taskDescription,
+      deliverable,
+      specs,
+      evidence,
+    });
+    decision = { verdicts: res.verdicts, model: res.model, reason: res.reason };
+    latencyMs = res.latencyMs;
+    usage = res.usage;
+    costUsd = res.costUsd;
+  }
+  emitTraceEvent({
+    taskId,
+    runId,
+    name: "gates.graded",
+    latencyMs,
+    ...(costUsd !== undefined && { costUsd }),
+    attrs: {
+      ...buildGradedAttrs({
+        mode,
+        verdicts: decision.verdicts,
+        statusBefore: taskStatus,
+        model: decision.model,
+        latencyMs,
+        usage,
+        costUsd,
+        reason: decision.reason,
+      }),
+    },
+  });
+  return decision;
+}
+
+/** In-flight background shadow gradings (test seam: `_drainShadowGradesForTests`). */
+const inFlightShadowGrades = new Set<Promise<void>>();
+/** Background shadow grader calls allowed at once (R2 audit Info 3). */
+export const MAX_CONCURRENT_SHADOW_GRADES = 4;
+
+function traceShadowError(args: CompletionLedgerArgs, err: unknown): void {
+  emitTraceEvent({
+    taskId: args.taskId,
+    runId: args.runId,
+    name: "gates.graded",
+    attrs: {
+      mode: "shadow",
+      error: err instanceof Error ? err.message : String(err),
+    },
+  });
+}
+
+/**
+ * Shadow (R1 audit W6): launched AFTER the ledger work and never awaited —
+ * delivery must not wait on a measurement. Specs are collected now (the
+ * ledger has settled: a manual row the report ABANDONed is no longer
+ * pending); the grading call runs in the background and lands only in the
+ * `gates.graded` trace (cost + latency included). Status, output and rows
+ * are never touched. Never throws, synchronously or later.
+ */
+function launchShadowGrade(
+  args: CompletionLedgerArgs,
+  deliverable: string,
+  evidence: readonly string[],
+): void {
+  try {
+    const specs = collectGradeSpecs(
+      args.taskId,
+      listGates(args.taskId),
+      deliverable,
+      "shadow",
+    );
+    if (specs.length === 0) return;
+    // Over the cap the decision is a traced `skipped_concurrency` (no call),
+    // and it does not occupy a slot.
+    const overCap = inFlightShadowGrades.size >= MAX_CONCURRENT_SHADOW_GRADES;
+    const p: Promise<void> = gradeDecision(
+      "shadow",
+      args,
+      specs,
+      deliverable,
+      evidence,
+      overCap,
+    )
+      .then(() => undefined)
+      .catch((err: unknown) => traceShadowError(args, err))
+      .finally(() => {
+        inFlightShadowGrades.delete(p);
+      });
+    if (!overCap) inFlightShadowGrades.add(p);
+  } catch (err) {
+    traceShadowError(args, err);
+  }
+}
+
+/**
+ * @internal Test seam only (the repo's `_…ForTests` convention) — no
+ * production caller: awaits every background shadow grading in flight.
+ */
+export async function _drainShadowGradesForTests(): Promise<void> {
+  await Promise.all([...inFlightShadowGrades]);
+}
+
+/**
+ * Enforce: write the grade onto the ledger rows (harness setter: pending
+ * manual rows only; met needs evidence) BEFORE `evaluateLedger`, so the
+ * verdict and the `Gates:` block include them. Interrupted run ⇒ pending
+ * GR rows ABANDONED with the reason. Never throws.
+ */
+async function enforceGrade(
+  args: CompletionLedgerArgs,
+  deliverable: string,
+  evidence: readonly string[],
+): Promise<void> {
+  try {
+    const specs = collectGradeSpecs(
+      args.taskId,
+      listGates(args.taskId),
+      deliverable,
+      "enforce",
+    );
+    if (specs.length === 0) return;
+    const d = await gradeDecision("enforce", args, specs, deliverable, evidence);
+    if (d.reason?.startsWith("interrupted")) {
+      abandonPendingGradeRows(args.taskId, d.reason);
+      return;
+    }
+    for (const v of d.verdicts) recordGradeVerdict(args.taskId, v);
+  } catch (err) {
+    emitTraceEvent({
+      taskId: args.taskId,
+      runId: args.runId,
+      name: "gates.graded",
+      attrs: {
+        mode: "enforce",
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
 }
 
 /**
@@ -275,6 +506,39 @@ export async function applyCompletionLedger(
   }
 
   // ── completion ledger ────────────────────────────────────────────────────
+  const grader = effectiveGraderMode();
+  const outcome = await completionLedgerStage(args, {
+    taskStatus,
+    output,
+    numbers,
+    deliverable,
+    evidence,
+    grader,
+  });
+
+  // ── V9 W1 grader (shadow) ────────────────────────────────────────────────
+  // After the ledger, on every path (mode off, no rows, rows): shadow
+  // measures every task with a gradeable criterion, whatever TASK_GATES_MODE
+  // is. Background, never awaited. Off ⇒ this block does nothing at all.
+  if (grader === "shadow") launchShadowGrade(args, deliverable, evidence);
+  return outcome;
+}
+
+/** The ledger half of `applyCompletionLedger`. Never throws (traced). */
+async function completionLedgerStage(
+  args: CompletionLedgerArgs,
+  state: {
+    taskStatus: CompletionLedgerOutcome["taskStatus"];
+    output: RunnerOutput["output"];
+    numbers: NumbersAudit | null;
+    deliverable: string;
+    evidence: readonly string[];
+    grader: GraderMode;
+  },
+): Promise<CompletionLedgerOutcome> {
+  const { taskId, runId, result } = args;
+  const { numbers, deliverable, evidence, grader } = state;
+  let { taskStatus, output } = state;
   const mode = gatesMode();
   if (mode === "off") return { taskStatus, output, gates: null, numbers };
 
@@ -284,6 +548,10 @@ export async function applyCompletionLedger(
       declareGates(taskId, [LANDING_GATE_SPEC], "harness");
     }
     if (!hasGates(taskId)) return { taskStatus, output, gates: null, numbers };
+
+    // V9 W1 enforce: grade first, so evaluateLedger's verdict and the
+    // rendered block below carry the GR rows.
+    if (grader === "enforce") await enforceGrade(args, deliverable, evidence);
 
     gates = await evaluateLedger({
       taskId,
@@ -395,10 +663,13 @@ export async function reverifyChildLedger(
   // Read-backs were adjudicated and rendered at the child's completion; the
   // parent's pass/fail decision is over the child's OTHER gates, so a failed
   // write proof demotes (as on a direct task) rather than hard-failing the
-  // goal (R3 audit W3).
+  // goal (R3 audit W3). V9 W1 grade gates likewise: v1 demotes only, so a
+  // failed grade already demoted the child and must not fail the goal here.
   const verdict: typeof evaluated = {
     ...evaluated,
-    ...ledgerVerdict(evaluated.rows.filter((r) => !isReadbackRow(r))),
+    ...ledgerVerdict(
+      evaluated.rows.filter((r) => !isReadbackRow(r) && !isGradeRow(r)),
+    ),
   };
   emitTraceEvent({
     taskId: parentTaskId,

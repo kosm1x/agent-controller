@@ -31,6 +31,10 @@ import {
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { gateSpecsFromGoal, gatesMode } from "../lib/v8-4/gates.js";
+import {
+  proseGradeSpecsFromGoal,
+  registerGradeSpecs,
+} from "../lib/v8-4/grade-specs.js";
 import { reverifyChildLedger } from "../lib/v8-4/consumer.js";
 import { renderConversationContext } from "./conversation-context.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
@@ -890,9 +894,14 @@ export const swarmRunner: Runner = {
           // the CHILD's ledger (source "plan"); the parent re-verifies it
           // before reflecting (verification hierarchy, layer 2).
           const childGates = gateSpecsFromGoal(goal.id, goal.metadata);
+          const childDescription = buildSubTaskDescription(
+            goal,
+            graph,
+            trackers,
+          );
           const result = await submitTask({
             title: `[Swarm] ${goal.description.slice(0, 100)}`,
-            description: buildSubTaskDescription(goal, graph, trackers),
+            description: childDescription,
             parentTaskId: input.taskId,
             spawnType: "subtask",
             tools: input.tools,
@@ -902,6 +911,23 @@ export const swarmRunner: Runner = {
             }),
             // agentType NOT set — classifier auto-routes
           });
+
+          // V9 W1: the goal's prose criteria are graded on the CHILD (it did
+          // the work). Registered right after submit — the child's ledger is
+          // read only at its completion. Off (default) ⇒ no-op; never throws.
+          // Swarm namespace (GR-sw.*): a child routed to heavy registers its
+          // own planner's GR-<goal>.<n> specs on the same task, and the
+          // planner numbers every plan from g-1 — ids must not collide.
+          registerGradeSpecs(
+            result.taskId,
+            proseGradeSpecsFromGoal(
+              goal.id,
+              goal.completionCriteria,
+              goal.metadata,
+              "swarm",
+            ),
+            childDescription,
+          );
 
           goalTaskMap.set(goal.id, result.taskId);
           trackers.set(goal.id, {

@@ -227,6 +227,50 @@ function referencedTables(sql: string): string[] {
   return out;
 }
 
+/**
+ * Root-level check: the tables the compiled statement actually OPENS, read
+ * from its EXPLAIN program (`OpenRead` root pages mapped through
+ * sqlite_master; an index maps to its table). Catches every spelling the
+ * regex cannot see: `FROM(t)`, subqueries, quoted / bracketed / backticked
+ * names, comments between FROM and the name (V9 W1 R1 audit W1 — the grader
+ * feeds this guard text derived from an untrusted deliverable). Quoted
+ * identifiers stay legal: the live V8.2 critic's own prompt writes them
+ * (R2 audit W1), and EXPLAIN resolves them like any other name. Virtual
+ * tables (`VOpen`, incl. pragma_* table-valued functions) and non-main
+ * databases are refused outright. Returns the offending names, or null.
+ */
+function tablesOutsideWhitelist(
+  db: Database.Database,
+  sql: string,
+): string[] | null {
+  const program = db.prepare(`EXPLAIN ${sql}`).all() as Array<{
+    opcode: string;
+    p2: number;
+    p3: number;
+  }>;
+  const roots = new Map<number, string>();
+  for (const r of db
+    .prepare(
+      `SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage IS NOT NULL AND rootpage > 0`,
+    )
+    .all() as Array<{ tbl_name: string; rootpage: number }>) {
+    roots.set(r.rootpage, r.tbl_name.toLowerCase());
+  }
+  roots.set(1, "sqlite_master");
+  const bad = new Set<string>();
+  for (const op of program) {
+    if (op.opcode === "VOpen") bad.add("(virtual table)");
+    if (op.opcode !== "OpenRead" && op.opcode !== "ReopenIdx") continue;
+    if (op.p3 !== 0) {
+      bad.add("(non-main database)");
+      continue;
+    }
+    const name = roots.get(op.p2) ?? `(rootpage ${op.p2})`;
+    if (!SQL_CHECK_TABLES.has(name)) bad.add(name);
+  }
+  return bad.size > 0 ? [...bad] : null;
+}
+
 /** Run a single read-only SELECT with layered guards. Returns a text summary or
  *  a rejection/error string (never throws — the model reads the message). */
 export function runReadOnlySelect(db: Database.Database, sql: string): string {
@@ -240,6 +284,11 @@ export function runReadOnlySelect(db: Database.Database, sql: string): string {
     return `sql_check rejected: table(s) outside the ground-truth whitelist: ${bad.join(", ")}. Allowed: ${[...SQL_CHECK_TABLES].join(", ")}.`;
   }
   try {
+    const opened = tablesOutsideWhitelist(db, trimmed);
+    if (opened) {
+      return `sql_check rejected: table(s) outside the ground-truth whitelist: ${opened.join(", ")}. Allowed: ${[...SQL_CHECK_TABLES].join(", ")}.`;
+    }
+
     // better-sqlite3 .prepare() throws on multiple statements; a readonly
     // connection throws on any write. Both are backstops to the regex guard.
     // qa-W3: .iterate() with an early break bounds memory to the cap — a

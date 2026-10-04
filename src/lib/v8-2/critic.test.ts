@@ -610,6 +610,77 @@ describe("verification tools — read-only guards", () => {
       expect(out).toMatch(/conversations/);
     });
 
+    // V9 W1 R1 audit W1: the regex guard missed quoted / commented names.
+    // Each spelling below read a non-whitelisted table before the fix; the
+    // regex still cannot see any of them — only the EXPLAIN layer refuses.
+    it.each([
+      ['double-quoted', 'SELECT * FROM "conversations"'],
+      ["bracketed", "SELECT * FROM [conversations]"],
+      ["backticked", "SELECT * FROM `conversations`"],
+      ["block comment", "SELECT * FROM/**/conversations"],
+      ["line comment", "SELECT * FROM --x\nconversations"],
+      ["comma-join quoted", 'SELECT * FROM tasks, "conversations"'],
+    ])("rejects a %s table name (EXPLAIN-resolved)", (_label, sql) => {
+      expect(runReadOnlySelect(getDatabase(), sql)).toMatch(
+        /outside the ground-truth whitelist: conversations/,
+      );
+    });
+
+    it("allows legitimate quoted identifiers on whitelisted tables (the V8.2 critic prompt writes them; R2 audit W1)", () => {
+      const out = runReadOnlySelect(
+        getDatabase(),
+        'SELECT "task_id", "status" FROM "tasks"',
+      );
+      expect(out).toMatch(/^\d+ row\(s\)/);
+      expect(
+        runReadOnlySelect(getDatabase(), "SELECT COUNT(*) AS n FROM [tasks] /* c */"),
+      ).toMatch(/^1 row\(s\):/);
+    });
+
+    it("refuses a virtual table the whitelist names cannot cover — FTS join, quoted pragma TVF (VOpen; R2 audit W2)", () => {
+      // Quoted so the regex layer cannot see the name: the VOpen refusal is
+      // the only thing standing between these and a read.
+      for (const sql of [
+        'SELECT f.* FROM tasks t, "conversations_fts" f',
+        'SELECT * FROM tasks WHERE task_id IN (SELECT name FROM "pragma_table_info"(\'tasks\'))',
+      ]) {
+        expect(runReadOnlySelect(getDatabase(), sql)).toMatch(
+          /outside the ground-truth whitelist: \(virtual table\)/,
+        );
+      }
+    });
+
+    it("rejects a non-whitelisted table the regex cannot see — FROM(t), subquery, schema, pragma TVF (EXPLAIN-resolved)", () => {
+      const out = runReadOnlySelect(
+        getDatabase(),
+        "SELECT COUNT(*) AS n FROM(conversations)",
+      );
+      expect(out).toMatch(/outside the ground-truth whitelist: conversations/);
+      expect(
+        runReadOnlySelect(
+          getDatabase(),
+          "SELECT * FROM tasks WHERE task_id IN (SELECT task_id FROM(jme_facts))",
+        ),
+      ).toMatch(/sql_check rejected/);
+      expect(
+        runReadOnlySelect(getDatabase(), "SELECT * FROM sqlite_master"),
+      ).toMatch(/sql_check rejected/);
+      expect(
+        runReadOnlySelect(
+          getDatabase(),
+          "SELECT * FROM tasks WHERE task_id IN (SELECT name FROM pragma_table_info('tasks'))",
+        ),
+      ).toMatch(/sql_check rejected/);
+    });
+
+    it("still allows quotes and comment markers INSIDE a single-quoted literal", () => {
+      const out = runReadOnlySelect(
+        getDatabase(),
+        "SELECT COUNT(*) AS n FROM tasks WHERE title = 'say \"hi\" -- [x] /* y */ it''s'",
+      );
+      expect(out).toMatch(/^1 row\(s\):/);
+    });
+
     it("runs a whitelisted SELECT and reports the row count", () => {
       const out = runReadOnlySelect(
         getDatabase(),

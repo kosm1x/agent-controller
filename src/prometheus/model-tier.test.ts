@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { assessTaskComplexity, resolveUseOpus } from "./model-tier.js";
+import {
+  assessTaskComplexity,
+  isSimpleTask,
+  resolveUseOpus,
+} from "./model-tier.js";
 import {
   queryClaudeSdkTiered,
   SONNET_MODEL_ID,
@@ -141,5 +145,27 @@ describe("queryClaudeSdkTiered (model-selection contract)", () => {
       return "ok";
     });
     expect(models[0]).toBe(OPUS_MODEL_ID);
+  });
+});
+
+describe("isSimpleTask (V9 W1 grader skip)", () => {
+  const saved = process.env.PROMETHEUS_ECONOMY_MODEL;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.PROMETHEUS_ECONOMY_MODEL;
+    else process.env.PROMETHEUS_ECONOMY_MODEL = saved;
+  });
+
+  it("true only for a confident simple signal; complex wins ties; no signal is not simple", () => {
+    expect(isSimpleTask("fix the typo in the README")).toBe(true);
+    expect(isSimpleTask("clamp a percentage" + ENV_NOTE)).toBe(true);
+    expect(isSimpleTask("fix the typo across all services")).toBe(false);
+    expect(isSimpleTask("Compare the payment providers")).toBe(false);
+    expect(isSimpleTask("")).toBe(false);
+  });
+
+  it("ignores the economy kill switch (it governs the model, not grading)", () => {
+    process.env.PROMETHEUS_ECONOMY_MODEL = "false";
+    expect(resolveUseOpus("fix the typo in the README")).toBe(true);
+    expect(isSimpleTask("fix the typo in the README")).toBe(true);
   });
 });

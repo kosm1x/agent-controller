@@ -106,3 +106,13 @@ export function resolveUseOpus(taskDescription: string): boolean {
   if (process.env.PROMETHEUS_ECONOMY_MODEL === "false") return true;
   return assessTaskComplexity(taskDescription) === "complex";
 }
+
+/**
+ * V9 W1: tasks in the confidently-simple class (a simple signal, no complex
+ * one) skip the completion grader (spec §4 item 5) — same verdict the tiering
+ * uses, so "simple" means one thing across Prometheus. Pure; ignores the
+ * economy kill switch (that governs model choice, not grading).
+ */
+export function isSimpleTask(taskDescription: string): boolean {
+  return assessTaskComplexity(taskDescription) === "simple";
+}

@@ -20,7 +20,7 @@
  * off; the factory returns null otherwise so the SDK options object is
  * byte-for-byte today's when dormant.
  */
-import { isReadbackCheck } from "./ledger-lines.js";
+import { isGradeCheck, isReadbackCheck } from "./ledger-lines.js";
 import type {
   HookCallback,
   HookInput,
@@ -127,8 +127,13 @@ export function makeGatesStopHook(
     // Read-back rows are completion-time proofs rendered as Spanish lines;
     // they never wall the model (it cannot "fix" a harness re-read mid-run
     // except by redoing the write, which the deliverable line already asks).
+    // V9 W1 grade gates (GR-*) are manual rows: never evaluated here, so a
+    // Stop never pays for a grader call; a stale graded row (resumed task)
+    // does not wall either.
     const blocking = res.failedRows.filter(
-      (r) => !isReadbackCheck(r.check_kind, r.check_cmd),
+      (r) =>
+        !isReadbackCheck(r.check_kind, r.check_cmd) &&
+        !isGradeCheck(r.check_kind, r.check_cmd),
     );
     if (blocking.length === 0) return allowed(res);
     const failedIds = blocking.map((r) => r.gate_id).sort();

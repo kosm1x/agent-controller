@@ -27,6 +27,7 @@ import {
   MAX_EVIDENCE,
   freezeGates,
   gatesMode,
+  isGradeRow,
   ledgerVerdict,
   listGates,
   parseAbandonLines,
@@ -349,9 +350,12 @@ export async function evaluateLedger(
   if (opts.outputText) {
     // Read-back gates are harness proofs: a model-authored ABANDON line can
     // never surrender one (R1 audit C2 — "Surrender is visible" must not
-    // become "a proof can be voided by one line").
+    // become "a proof can be voided by one line"). V9 W1 grade gates (GR-*)
+    // are the same: the grader's verdict is not the model's to void.
     const known = new Set(
-      rows.filter((r) => !isReadbackRow(r)).map((r) => r.gate_id),
+      rows
+        .filter((r) => !isReadbackRow(r) && !isGradeRow(r))
+        .map((r) => r.gate_id),
     );
     for (const a of parseAbandonLines(opts.outputText)) {
       if (!known.has(a.gateId)) continue;
@@ -374,7 +378,9 @@ export async function evaluateLedger(
   for (const row of rows) {
     if (row.state === "abandoned") continue;
     if (row.state === "met" && !opts.rerun) continue;
-    if (row.check_kind === "manual" && !isReadbackRow(row)) continue; // never flipped by the harness
+    // Manual rows are never flipped HERE — incl. V9 W1 grade gates (GR-*),
+    // which the consumer grades once before this runs (grade-specs.ts).
+    if (row.check_kind === "manual" && !isReadbackRow(row)) continue;
     if (Date.now() - startedAt > budgetMs) {
       budgetExhausted++;
       continue;

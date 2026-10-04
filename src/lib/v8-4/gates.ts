@@ -28,7 +28,13 @@ import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
 import { isUnsettleableExpect } from "./expect.js";
 import { countGateRefusal } from "./gate-metrics.js";
-import { isReadbackCheck } from "./ledger-lines.js";
+import { redactSecrets } from "../../api/mcp-server/redact.js";
+import {
+  GRADE_ID_PREFIX,
+  GRADE_PREFIX,
+  isGradeCheck,
+  isReadbackCheck,
+} from "./ledger-lines.js";
 
 export type GateSource = "submission" | "ritual" | "plan" | "harness";
 export type GateState = "pending" | "met" | "failed" | "abandoned";
@@ -349,6 +355,11 @@ export function declareGates(
       if (gateId.startsWith("RB-") && source !== "harness") {
         throw new Error(`gate id ${JSON.stringify(gateId)} is reserved for harness read-backs`);
       }
+      // `GR-…` ids are the V9 W1 grader's namespace (grade-specs.ts), same
+      // reason: a submission must not pre-empt or impersonate a grade gate.
+      if (gateId.startsWith(GRADE_ID_PREFIX) && source !== "harness") {
+        throw new Error(`gate id ${JSON.stringify(gateId)} is reserved for harness grade gates`);
+      }
       const kind = resolveKind(spec);
       // Structural floor: whatever producer reaches this door, a shell gate
       // whose expect can never fail lands ABANDONED, never pending → MET.
@@ -366,13 +377,15 @@ export function declareGates(
         criterion: spec.criterion.slice(0, MAX_CRITERION),
         kind,
         // A `manual` row may carry a `readback:` payload (src/lib/v8-4/readback.ts)
-        // — the harness runs its verifier at completion; any other manual
-        // check text is dropped (no runnable proof).
+        // — the harness runs its verifier at completion — or a `grade:` marker
+        // (V9 W1 grader, grade-specs.ts); both only from the harness. Any
+        // other manual check text is dropped (no runnable proof).
         check:
           kind === "shell" ||
           (kind === "manual" &&
             source === "harness" &&
-            spec.check?.startsWith("readback:"))
+            (spec.check?.startsWith("readback:") ||
+              spec.check?.startsWith(GRADE_PREFIX)))
             ? (spec.check ?? null)
             : null,
         expect: kind === "shell" ? (spec.expect ?? null) : null,
@@ -542,20 +555,48 @@ export function renderGatesBlock(rows: readonly GateRow[]): string {
         ? ` [CHECK: ${r.check_cmd}${r.expect ? ` → EXPECT: ${r.expect}` : ""}]`
         : r.check_kind === "landing"
           ? " [harness verifies the branch/PR/commit you report exists on origin]"
-          : " [manual — state the evidence in your report]";
+          : isGradeRow(r)
+            ? " [graded after you finish by an independent reviewer — state the evidence in your report]"
+            : " [manual — state the evidence in your report]";
     return `- ${r.gate_id}: ${r.criterion}${proof}`;
   });
+  // A grade gate cannot be surrendered (gate-check ignores the line), so the
+  // ABANDON invitation names only the gates it can act on (R1 audit I3).
+  const abandonable = rows.some((r) => !isGradeRow(r));
+  const graded = rows.some((r) => isGradeRow(r));
   return (
     `\n\n## Acceptance gates (harness ledger)\n` +
     `The harness will check these after you finish; you cannot mark them yourself.\n` +
     lines.join("\n") +
-    `\nIf a gate is genuinely impossible, write a line \`ABANDON: <gate id> <reason>\` in your final report instead of silently narrowing the scope.`
+    (abandonable
+      ? `\nIf a gate is genuinely impossible, write a line \`ABANDON: <gate id> <reason>\` in your final report instead of silently narrowing the scope.${graded ? ` (${GRADE_ID_PREFIX}* gates cannot be abandoned.)` : ""}`
+      : "")
   );
 }
 
 /** Compact JSON summary stored on `tasks.output.gates`. */
 const isReadbackRowLike = (r: Pick<GateRow, "check_kind" | "check_cmd">) =>
   isReadbackCheck(r.check_kind, r.check_cmd);
+
+/**
+ * One line, credentials redacted, capped — the shape `evidenceTail` gives
+ * shell evidence. Grader evidence and plan prose land in the `Gates:` line,
+ * which must stay a single ledger line (`isLedgerLine`; R1 audit W3).
+ */
+export function singleLineRedacted(text: string, max: number): string {
+  return redactSecrets(text.replace(/\s+/g, " ").trim()).slice(0, max);
+}
+
+/**
+ * V9 W1 grader gate (`GR-*`, harness `manual` row with a `grade:` check):
+ * graded once at completion by the grader (grade-specs.ts / grader.ts),
+ * never run as a command, never surrendered by a model ABANDON line.
+ */
+export function isGradeRow(
+  r: Pick<GateRow, "check_kind" | "check_cmd">,
+): boolean {
+  return isGradeCheck(r.check_kind, r.check_cmd);
+}
 
 export function ledgerSummaryJson(
   rows: readonly GateRow[],
@@ -608,8 +649,15 @@ export function formatLedgerBlock(rows: readonly GateRow[]): string {
   if (v.total === 0) return "";
   const parts = [`Gates: ${v.met}/${v.total} met`];
   if (v.failedRows.length) {
+    // A grade gate's criterion is prose the report never showed (it lived in
+    // the plan) — name it, or "FAILED: GR-g-1.1" says nothing to the reader.
     parts.push(
-      `FAILED: ${v.failedRows.map((r) => `${r.gate_id} (${r.evidence ?? "no evidence"})`).join("; ")}`,
+      `FAILED: ${v.failedRows
+        .map(
+          (r) =>
+            `${r.gate_id}${isGradeRow(r) ? ` "${singleLineRedacted(r.criterion, 120)}"` : ""} (${isGradeRow(r) && r.evidence ? singleLineRedacted(r.evidence, MAX_EVIDENCE) : (r.evidence ?? "no evidence")})`,
+        )
+        .join("; ")}`,
     );
   }
   if (v.pendingRows.length) {

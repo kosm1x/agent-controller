@@ -10,6 +10,10 @@
  */
 
 export const READBACK_PREFIX = "readback:";
+/** V9 W1: a harness `manual` row whose check is `grade:…` is a grader gate (GR-*). */
+export const GRADE_PREFIX = "grade:";
+/** V9 W1: gate-id namespace of grader gates, reserved for source=harness. */
+export const GRADE_ID_PREFIX = "GR-";
 
 /** Prefixes of every line the completion ledger can append to a deliverable. */
 export const LEDGER_LINE_PREFIXES: readonly string[] = [
@@ -33,4 +37,12 @@ export function isReadbackCheck(
   check_cmd: string | null | undefined,
 ): boolean {
   return check_kind === "manual" && !!check_cmd?.startsWith(READBACK_PREFIX);
+}
+
+/** V9 W1 grader gate (src/lib/v8-4/grade-specs.ts): graded at completion, never by a command. */
+export function isGradeCheck(
+  check_kind: string,
+  check_cmd: string | null | undefined,
+): boolean {
+  return check_kind === "manual" && !!check_cmd?.startsWith(GRADE_PREFIX);
 }

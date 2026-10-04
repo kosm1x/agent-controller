@@ -777,6 +777,12 @@ export async function queryClaudeSdk(opts: {
    */
   taskBudgetTokens?: number;
   abortSignal?: AbortSignal;
+  /**
+   * When true and the caller's `abortSignal` fired, a non-success outcome is
+   * NOT recorded on the circuit breaker: the caller cut the call short on its
+   * own budget, which says nothing about provider health (V9 W1 grader).
+   */
+  skipBreakerOnCallerAbort?: boolean;
   /** Optional vision payloads. When present, the SDK receives a streaming
    *  user message whose content is [text, image, image, ...] so the model
    *  actually sees the pixels. Without this, callers that stuff images into
@@ -1503,6 +1509,8 @@ export async function queryClaudeSdk(opts: {
   // success — everything else conservatively trips the failure counter.
   if (providerOutcome === "success") {
     breaker.recordSuccess();
+  } else if (opts.skipBreakerOnCallerAbort && opts.abortSignal?.aborted) {
+    // Caller's own budget abort — not a provider failure (see option doc).
   } else {
     breaker.recordFailure();
   }
