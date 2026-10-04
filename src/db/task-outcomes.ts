@@ -7,6 +7,7 @@
  */
 
 import { getDatabase, writeWithRetry } from "./index.js";
+import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
 
 export interface TaskOutcome {
   task_id: string;
@@ -19,6 +20,11 @@ export interface TaskOutcome {
   model_tier?: string;
   /** Phase 0: why a task landed with concerns (max_turns, tool_scope_block, …). */
   concern_reason?: string | null;
+  /**
+   * First runner concern of a successful run: the model's STATUS explanation
+   * or a runner-generated note (promotion, container note). Storage only.
+   */
+  concern_detail?: string | null;
 }
 
 export interface OutcomeFilter {
@@ -41,6 +47,7 @@ export interface OutcomeRow {
   tags: string;
   model_tier: string | null;
   concern_reason: string | null;
+  concern_detail: string | null;
   created_at: string;
 }
 
@@ -50,8 +57,8 @@ export function recordOutcome(outcome: TaskOutcome): void {
   writeWithRetry(() =>
     db
       .prepare(
-        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, model_tier, concern_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, model_tier, concern_reason, concern_detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         outcome.task_id,
@@ -63,8 +70,51 @@ export function recordOutcome(outcome: TaskOutcome): void {
         JSON.stringify(outcome.tags),
         outcome.model_tier ?? null,
         outcome.concern_reason ?? null,
+        outcome.concern_detail ?? null,
       ),
   );
+}
+
+const CONCERN_DETAIL_MAX_CHARS = 500;
+const MAX_PENDING_CONCERN_DETAILS = 256;
+
+/**
+ * First runner concern of a successful run — the model's STATUS explanation
+ * or a runner-generated note (promotion, container note) — waiting for its
+ * outcome row (taskId → detail). The
+ * dispatcher notes it at completion; trackTaskOutcome takes it into
+ * task_outcomes.concern_detail. Held in memory on purpose — the text is
+ * storage only: the task.completed payload is persisted to `events` (returned
+ * by the jarvis_recent_events MCP tool and the /api/events stream) and the
+ * run row is served by getTaskWithRuns (API + A2A). Bounded, because tasks
+ * the tracker never records (non-messaging) are never taken.
+ */
+const pendingConcernDetail = new Map<string, string>();
+
+/**
+ * Note the runner's concern for a task: credential-redacted, trimmed, capped
+ * at 500 chars. A null/blank/non-string detail clears any earlier note.
+ */
+export function noteConcernDetail(taskId: string, detail: unknown): void {
+  pendingConcernDetail.delete(taskId);
+  if (typeof detail !== "string") return;
+  // Redact BEFORE the cut: a fixed-length key rule misses a split key.
+  const clean = redactCredentialsForPersist(detail)
+    ?.trim()
+    .slice(0, CONCERN_DETAIL_MAX_CHARS);
+  if (!clean) return;
+  pendingConcernDetail.set(taskId, clean);
+  if (pendingConcernDetail.size > MAX_PENDING_CONCERN_DETAILS) {
+    const oldest = pendingConcernDetail.keys().next().value;
+    if (oldest !== undefined) pendingConcernDetail.delete(oldest);
+  }
+}
+
+/** Returns the noted concern detail for the task (or null) and forgets it. */
+export function takeConcernDetail(taskId: string): string | null {
+  const detail = pendingConcernDetail.get(taskId) ?? null;
+  pendingConcernDetail.delete(taskId);
+  return detail;
 }
 
 /** Query recent outcomes with optional filters. */

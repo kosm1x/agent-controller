@@ -26,9 +26,11 @@ vi.mock("../db/index.js", () => ({
   }),
 }));
 
+// Shared so a test can observe the task.completed emit.
+const emitEventMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/event-bus.js", () => ({
   getEventBus: () => ({
-    emitEvent: vi.fn(),
+    emitEvent: emitEventMock,
   }),
 }));
 
@@ -110,6 +112,7 @@ import {
 } from "../inference/execution-context.js";
 import { outsideRunToolContext } from "../tools/rule-of-two.js";
 import { classify } from "./classifier.js";
+import { takeConcernDetail } from "../db/task-outcomes.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -487,6 +490,90 @@ describe("dispatchTask required-tools failure names the runner's reason", () => 
       if (!mockRun.mock.calls.some((c) => c.includes(expected)))
         throw new Error("failed-status write not seen yet");
     });
+  });
+});
+
+// 2026-10-04: DONE_WITH_CONCERNS went 9% → 42% of fast tasks and the model's
+// explanation was dropped. The dispatcher notes it for task_outcomes.
+describe("dispatchTask notes the runner's concern for task_outcomes.concern_detail", () => {
+  async function dispatchWith(result: RunnerOutput): Promise<string> {
+    registerRunner({ type: "fast", execute: async () => result });
+    const { taskId } = await submitTask({
+      title: "Concern detail",
+      description: "concern detail spec",
+    });
+    await vi.waitFor(() => {
+      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+      if (!names.some((n) => n === "task.completed" || n === "task.failed")) {
+        throw new Error("no terminal trace event yet");
+      }
+    });
+    return taskId;
+  }
+
+  it("DONE_WITH_CONCERNS: the first concern is noted, redacted and capped", async () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const key = "AIza" + "b".repeat(35);
+    const taskId = await dispatchWith({
+      success: true,
+      status: "DONE_WITH_CONCERNS",
+      concerns: [` no pude confirmar con ${key} ${"z".repeat(600)}`, "second"],
+      output: "x",
+    });
+    const detail = takeConcernDetail(taskId)!;
+    expect(detail.startsWith("no pude confirmar con [REDACTED")).toBe(true);
+    expect(detail).not.toMatch(/AIza|bbbbb/);
+    expect(detail.length).toBe(500);
+  });
+
+  it("clean DONE: nothing is noted", async () => {
+    const taskId = await dispatchWith({
+      success: true,
+      status: "DONE",
+      output: "x",
+    });
+    expect(takeConcernDetail(taskId)).toBeNull();
+  });
+
+  // The tracker runs inside the task.completed handler, so the note must
+  // already be there when the event fires (audit W1).
+  it("the detail is noted BEFORE task.completed is emitted", async () => {
+    let seenInEmit: string | null | "unset" = "unset";
+    emitEventMock.mockImplementation(
+      (name: string, data: { task_id: string }) => {
+        if (name === "task.completed") seenInEmit = takeConcernDetail(data.task_id);
+      },
+    );
+    try {
+      await dispatchWith({
+        success: true,
+        status: "DONE_WITH_CONCERNS",
+        concerns: ["sin datos del día"],
+        output: "x",
+      });
+    } finally {
+      emitEventMock.mockReset();
+    }
+    expect(seenInEmit).toBe("sin datos del día");
+  });
+
+  // Storage only: a malformed concern never changes the outcome (audit W3).
+  it("a non-string first concern still completes the task, with no detail", async () => {
+    const taskId = await dispatchWith({
+      success: true,
+      status: "DONE_WITH_CONCERNS",
+      concerns: [{ not: "a string" } as unknown as string],
+      output: "x",
+    });
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.name).toBe("task.completed");
+    expect(terminal.attrs).toMatchObject({ status: "completed_with_concerns" });
+    expect(
+      emitEventMock.mock.calls.some(
+        (c) => c[0] === "task.completed" && c[1].task_id === taskId,
+      ),
+    ).toBe(true);
+    expect(takeConcernDetail(taskId)).toBeNull();
   });
 });
 

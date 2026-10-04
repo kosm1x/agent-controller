@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("../db/task-outcomes.js", () => ({
   recordOutcome: vi.fn(),
   updateFeedback: vi.fn(),
+  takeConcernDetail: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock("../dispatch/dispatcher.js", () => ({
@@ -31,7 +32,11 @@ vi.mock("../memory/index.js", () => ({
   }),
 }));
 
-import { recordOutcome, updateFeedback } from "../db/task-outcomes.js";
+import {
+  recordOutcome,
+  takeConcernDetail,
+  updateFeedback,
+} from "../db/task-outcomes.js";
 import {
   trackTaskOutcome,
   checkFeedbackWindow,
@@ -63,6 +68,28 @@ describe("outcome-tracker", () => {
           duration_ms: 2500,
           success: true,
         }),
+      );
+    });
+
+    it("writes the dispatcher-noted concern text as concern_detail", () => {
+      vi.mocked(takeConcernDetail).mockReturnValueOnce(
+        "no encontré el archivo de hoy",
+      );
+      trackTaskOutcome("task-1", 2500, true, "telegram");
+
+      expect(takeConcernDetail).toHaveBeenCalledWith("task-1");
+      expect(recordOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({
+          concern_detail: "no encontré el archivo de hoy",
+        }),
+      );
+    });
+
+    it("concern_detail is null when nothing was noted", () => {
+      trackTaskOutcome("task-1", 2500, true, "telegram");
+
+      expect(recordOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({ concern_detail: null }),
       );
     });
 

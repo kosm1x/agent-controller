@@ -9,7 +9,11 @@
  * or incorrect.
  */
 
-import { recordOutcome, updateFeedback } from "../db/task-outcomes.js";
+import {
+  recordOutcome,
+  takeConcernDetail,
+  updateFeedback,
+} from "../db/task-outcomes.js";
 import { incrementSkillUsage } from "../db/skills.js";
 import { getTask } from "../dispatch/dispatcher.js";
 import { getMemoryService } from "../memory/index.js";
@@ -76,6 +80,8 @@ export function trackTaskOutcome(
       tags,
       model_tier: classification?.modelTier ?? null,
       concern_reason: concernReason,
+      // The runner's own concern text, noted by the dispatcher. Storage only.
+      concern_detail: takeConcernDetail(taskId),
     });
 
     // Write semantic summary to Hindsight

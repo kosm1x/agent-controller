@@ -1313,6 +1313,23 @@ export function initDatabase(dbPath: string): Database.Database {
           CREATE INDEX IF NOT EXISTS idx_jev_shadow_consumer ON jev_shadow(consumer, created_at DESC);
         `),
     },
+    {
+      version: 7,
+      description:
+        "task_outcomes.concern_detail — the first runner concern of a successful run (model STATUS explanation or runner-generated note; redacted, ≤500 chars), next to concern_reason; storage only",
+      up: (db) => {
+        // Probe first: a DB pinned back below v7 (tests, a rollback) still
+        // carries the column, and a duplicate ADD COLUMN would abort boot.
+        const cols = db
+          .prepare("PRAGMA table_info(task_outcomes)")
+          .all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "concern_detail")) {
+          db.exec(
+            "ALTER TABLE task_outcomes ADD COLUMN concern_detail TEXT DEFAULT NULL",
+          );
+        }
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

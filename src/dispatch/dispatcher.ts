@@ -53,6 +53,7 @@ import {
 } from "../lib/v8-4/gates.js";
 import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
+import { noteConcernDetail } from "../db/task-outcomes.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -1261,6 +1262,18 @@ async function dispatchWithSlot(
         }),
       },
     });
+
+    // The first runner concern for task_outcomes.concern_detail — storage
+    // only; trackTaskOutcome takes it (see noteConcernDetail). Noted BEFORE
+    // the emit: the tracker runs inside the task.completed handler.
+    try {
+      noteConcernDetail(
+        taskId,
+        result.success ? (result.concerns?.[0] ?? null) : null,
+      );
+    } catch {
+      // Storage only — must never change the task's outcome
+    }
 
     // Emit completion event
     try {

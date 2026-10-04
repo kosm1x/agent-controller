@@ -10,8 +10,9 @@
  *
  * Each run prints a JSON signature {mode, userVersion, tables:{name:[cols]}, indexes:[...]}.
  * Compare: fresh ⊆ migrated on tables+columns (legacy DBs may carry retired
- * extra tables); baseline_history absent in BOTH; userVersion === 2 everywhere;
- * reboot signature must equal migrated signature.
+ * extra tables); baseline_history absent in BOTH; userVersion equal in all
+ * three modes and equal to the last SCHEMA_MIGRATIONS version in
+ * src/db/index.ts; reboot signature must equal migrated signature.
  */
 
 import { initDatabase } from "../src/db/index.js";
