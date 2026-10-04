@@ -143,6 +143,43 @@ describe("document handler writes EXTRACTED_FILE_MARKER before the file text (th
   });
 });
 
+describe("text handler: `/loop` reaches the router, other slash text is dropped", () => {
+  it("passes `/loop …` through; `/other`, `/loops` stay dropped; plain text passes", () => {
+    const handlers = new Map<string, (ctx: unknown) => void>();
+    const commands: string[] = [];
+    const adapter = new TelegramAdapter();
+    (adapter as unknown as { bot: unknown }).bot = {
+      command: vi.fn((name: string) => commands.push(name)),
+      catch: vi.fn(),
+      on: vi.fn((ev: string | string[], fn: (ctx: unknown) => void) => {
+        for (const e of [ev].flat()) handlers.set(e, fn);
+      }),
+    };
+    (adapter as unknown as { setupHandlers(): void }).setupHandlers();
+    const received: string[] = [];
+    adapter.onMessage((m) => received.push(m.text));
+    for (const text of [
+      "/loop Ordena la carpeta de pruebas",
+      "/LOOP Ordena la carpeta",
+      "/other algo",
+      "/loops algo",
+      "hola",
+    ]) {
+      handlers.get("message:text")!({
+        chat: { id: OWNER },
+        message: { text, date: 0, message_id: 1 },
+      });
+    }
+    expect(received).toEqual([
+      "/loop Ordena la carpeta de pruebas",
+      "/LOOP Ordena la carpeta",
+      "hola",
+    ]);
+    // The registered commands are untouched (and `loop` is not one of them).
+    expect(commands).toEqual(["ping", "chatid"]);
+  });
+});
+
 // 2026-10-03: an .html attachment's file URL (which embeds the bot token) went
 // to Jina Reader, whose `URL Source:` echo put the token into the message.
 

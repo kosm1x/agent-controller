@@ -251,6 +251,7 @@ import { scopeMissFallbackLine } from "./scope-miss.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { formatForTelegram } from "./formatter.js";
+import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -4257,7 +4258,7 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
     delete process.env.TELEGRAM_OWNER_CHAT_ID;
   });
 
-  it("Telegram, slash-less `loop <tarea>` (the adapter drops `/`-messages) → unlimited task", async () => {
+  it("Telegram, slash-less `loop <tarea>` (the anchored form, slash optional) → unlimited task", async () => {
     await router.handleInbound({
       channel: "telegram",
       from: "12345",
@@ -4305,6 +4306,188 @@ describe("/loop — surfaces, gating and the abort registry (qa-audit R1 folds)"
         senderJid: "member@s.whatsapp.net",
       },
     });
+    for (const call of vi.mocked(submitTask).mock.calls) {
+      expect(call[0].unlimited).not.toBe(true);
+      expect(call[0].tags ?? []).not.toContain("loop");
+    }
+  });
+
+  it("Telegram, literal `/loop <tarea>` (now let through by the adapter) → unlimited task, prefix stripped", async () => {
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: "/loop Ordena la carpeta de pruebas",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.title).toBe("Chat: Ordena la carpeta de pruebas");
+    // The anchored form keeps its old behaviour: no inline notice.
+    expect(
+      tgAdapter.sentMessages.some((m) => m.text.startsWith("Modo /loop")),
+    ).toBe(false);
+  });
+
+  it("inline `/loop` mid-sentence from the operator → unlimited task, text UNCHANGED", async () => {
+    const text = "Ordena la carpeta. Usa un /loop hasta que termines";
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text,
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.agentType).toBe("fast");
+    expect(sub.tags).toContain("loop");
+    expect(sub.title).toBe(`Chat: ${text}`);
+    const last = sub.conversationHistory?.at(-1);
+    expect(last?.content).toContain(text);
+    expect(last?.content).toContain("[MODO /loop");
+    // W2: an immediate visible notice for the inline form.
+    expect(tgAdapter.sentMessages.map((m) => m.text)).toContain(
+      "Modo /loop activado — sin límite de turnos ni de tiempo. «Para» lo detiene.",
+    );
+  });
+
+  it("inline `/loop` behind a WhatsApp `[Grupo:]` header from the owner → unlimited, text unchanged", async () => {
+    const text =
+      "[Grupo: group@g.us, De: owner]\nOrdena la carpeta, usa un /loop por favor";
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "group@g.us",
+      text,
+      timestamp: new Date(),
+      metadata: {
+        isGroup: true,
+        groupJid: "group@g.us",
+        senderJid: "owner@s.whatsapp.net",
+      },
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.detectionText).toBe(text);
+  });
+
+  it("a bare word `loop` mid-sentence (no slash) never triggers", async () => {
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: "Revisa por qué el loop de reintentos no termina",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(false);
+    expect(sub.tags).not.toContain("loop");
+    expect(
+      tgAdapter.sentMessages.some((m) => m.text.startsWith("Modo /loop")),
+    ).toBe(false);
+  });
+
+  it("`/loop` inside a URL or a path (no whitespace before the slash) never triggers", async () => {
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: "Revisa https://example.com/loop y src/a/loop.ts",
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(false);
+    expect(sub.tags).not.toContain("loop");
+  });
+
+  // Adapter-shaped document text: caption, then EXTRACTED_FILE_MARKER block
+  // (telegram.ts document handler). Only the caption is operator-typed.
+  const docText = (caption: string) =>
+    `${caption}\n\n${EXTRACTED_FILE_MARKER} "notas.txt" ---\nPaso 1 /loop paso 2\n--- Fin del archivo ---`;
+
+  it("a document whose EXTRACTED content says ` /loop` but whose caption does not → not unlimited", async () => {
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: docText("Resume este archivo"),
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(submitTask).mock.calls[0][0].unlimited).toBe(false);
+  });
+
+  it("a document whose CAPTION carries `/loop` → unlimited, text unchanged", async () => {
+    const text = docText("Resume este archivo, usa un /loop");
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text,
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(1);
+    const sub = vi.mocked(submitTask).mock.calls[0][0];
+    expect(sub.unlimited).toBe(true);
+    expect(sub.detectionText).toBe(text);
+  });
+
+  it("a voice note whose TRANSCRIPT says ` /loop` never triggers (Telegram and WhatsApp shapes)", async () => {
+    const transcript =
+      "[Audio: 4s, 12KB, confianza 90%]\n\nTranscripción:\nhaz esto con /loop";
+    await router.handleInbound({
+      channel: "telegram",
+      from: "12345",
+      text: `Escucha esto\n\n${transcript}`,
+      timestamp: new Date(),
+    });
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: transcript,
+      timestamp: new Date(),
+    });
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    for (const call of vi.mocked(submitTask).mock.calls) {
+      expect(call[0].unlimited).toBe(false);
+    }
+  });
+
+  it("inline `/loop` from a group MEMBER never becomes an unlimited task", async () => {
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "group@g.us",
+      text: "[Grupo: group@g.us, De: member]\nOrdena la carpeta, usa un /loop",
+      timestamp: new Date(),
+      metadata: {
+        isGroup: true,
+        groupJid: "group@g.us",
+        senderJid: "member@s.whatsapp.net",
+      },
+    });
+    for (const call of vi.mocked(submitTask).mock.calls) {
+      expect(call[0].unlimited).not.toBe(true);
+      expect(call[0].tags ?? []).not.toContain("loop");
+    }
+  });
+
+  it("email never gets /loop — anchored or inline — even from an owner-only mailbox", async () => {
+    const emailAdapter = {
+      ...createMockAdapter("telegram"),
+      name: "email",
+      mode: "owner-only",
+    } as unknown as ChannelAdapter;
+    router.registerChannel(emailAdapter);
+    for (const text of [
+      "/loop Ordena la carpeta de pruebas",
+      "Ordena la carpeta de pruebas. Usa un /loop hasta que termines",
+    ]) {
+      await router.handleInbound({
+        channel: "email" as IncomingMessage["channel"],
+        from: "owner@example.com",
+        text,
+        timestamp: new Date(),
+      });
+    }
     for (const call of vi.mocked(submitTask).mock.calls) {
       expect(call[0].unlimited).not.toBe(true);
       expect(call[0].tags ?? []).not.toContain("loop");

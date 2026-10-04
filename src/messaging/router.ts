@@ -153,6 +153,7 @@ import {
   hasDeliverableField,
 } from "../lib/deliverable.js";
 import { sanitizeDeliverable } from "./deliverable-filter.js";
+import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
 import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
@@ -1468,17 +1469,24 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
 
 /** `/loop <tarea>` — operator-instructed unlimited task (2026-08-27): no turn
  * cap, no SDK wall-clock, exempt from the stuck-task kill. Only the hard stop
- * ("Para") ends it. Operator-only; the prefix is stripped before anything
- * else sees the text. */
-// Slash OPTIONAL, like RITUALES_RE: the Telegram adapter drops every message
-// that starts with "/" before the router sees it (telegram.ts `message:text`),
-// so the phone form is `loop <tarea>` (qa-audit C1).
+ * ("Para") ends it. Operator-only. Two forms: a leading `loop`/`/loop` prefix
+ * (stripped before anything else sees the text), or an inline `/loop` token
+ * anywhere in the sentence (slash required; text left unchanged). */
+// Leading slash OPTIONAL, like RITUALES_RE (qa-audit C1); the Telegram adapter
+// lets `/loop…` through (telegram.ts `message:text`) and drops other `/`-text.
 const LOOP_RE = /^\/?loop\b[\s:—-]*/i;
+const LOOP_INLINE_RE = /(?:^|\s)\/loop\b/i;
+// The inline test sees only operator-typed text: the adapters append a voice
+// transcript under an `[Audio…]` header line (telegram.ts + whatsapp.ts voice
+// handlers) and file text under EXTRACTED_FILE_MARKER — cut at either.
+const LOOP_AUDIO_HEADER_RE = /^\[Audio\b/m;
 const LOOP_GROUP_HEADER_RE = /^\[Grupo:.*\]\s*\n?/i;
 const LOOP_TURN_LINE =
   "\n[MODO /loop — sin límite de turnos ni de tiempo: continúa hasta TERMINAR la tarea completa; el operador puede detenerte con «Para».]";
 const LOOP_USAGE =
   "Uso: /loop <tarea> — corre sin límite de turnos ni de tiempo; «Para» la detiene.";
+const LOOP_INLINE_NOTICE =
+  "Modo /loop activado — sin límite de turnos ni de tiempo. «Para» lo detiene.";
 
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
@@ -2829,7 +2837,8 @@ export class MessageRouter {
     // `/loop <tarea>` (operator only, Telegram/WhatsApp — never email): strip
     // the prefix and flag the message; submitInboundTask lifts every cap for
     // this one task. A WhatsApp group message carries a `[Grupo: …]` header —
-    // match past it and keep it (the model reads the sender from it).
+    // match past it and keep it (the model reads the sender from it). An
+    // inline `/loop` mid-sentence flags the message without touching the text.
     if (msg.channel === "telegram" || msg.channel === "whatsapp") {
       const grupo = msg.text.match(LOOP_GROUP_HEADER_RE)?.[0] ?? "";
       const body = msg.text.slice(grupo.length);
@@ -2844,6 +2853,20 @@ export class MessageRouter {
         console.log(
           `[loop] channel=${msg.channel} unlimited task: "${rest.slice(0, 60)}"`,
         );
+      } else {
+        const typed = body
+          .split(EXTRACTED_FILE_MARKER)[0]
+          .split(LOOP_AUDIO_HEADER_RE)[0];
+        if (
+          LOOP_INLINE_RE.test(typed) &&
+          this.operatorThreadKey(msg, tk) !== undefined
+        ) {
+          msg.loop = true;
+          this.sendToChannel(msg.channel, msg.from, LOOP_INLINE_NOTICE);
+          console.log(
+            `[loop] channel=${msg.channel} unlimited task (inline): "${typed.trim().slice(0, 60)}"`,
+          );
+        }
       }
     }
 

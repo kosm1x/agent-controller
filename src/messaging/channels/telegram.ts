@@ -550,7 +550,13 @@ export class TelegramAdapter implements ChannelAdapter {
 
     this.bot.on("message:text", (ctx) => {
       if (!this.messageHandler) return;
-      if (ctx.message.text.startsWith("/")) return;
+      // Slash commands stay dropped, except `/loop` (the router's unlimited-
+      // task prefix — an unregistered command, so it falls through to here).
+      if (
+        ctx.message.text.startsWith("/") &&
+        !/^\/loop\b/i.test(ctx.message.text)
+      )
+        return;
 
       const chatId = String(ctx.chat.id);
       if (chatId !== OWNER_CHAT_ID) return;
