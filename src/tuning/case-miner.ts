@@ -276,6 +276,34 @@ export function countActivePositiveCases(db: Database.Database): number {
   }
 }
 
+/**
+ * Harness-level tool names: the Claude Agent SDK's own `ToolSearch` and tools
+ * of other MCP servers (`mcp__<server>__<tool>`; Jarvis's own `mcp__jarvis__`
+ * prefix is already stripped by the SDK adapter). The eval gate's registry
+ * never holds them, so as expected tools they can only be unreachable —
+ * never record them as a selection (2026-10-04).
+ */
+export function isHarnessTool(name: string): boolean {
+  return name === "ToolSearch" || name.startsWith("mcp__");
+}
+
+/**
+ * Expected tools for a selection case from a run's ordered `tools_called`:
+ * distinct, harness tools dropped, in call order. `first_tools` holds the
+ * first one — `tools_called` is in call order but carries no round
+ * boundaries, so the first call is the only one provably in round one. The
+ * evaluator IGNORES `first_tools` until round boundaries are recorded (one
+ * arbitrary tool of a possibly parallel first round would turn a correct
+ * probe into a 0); recording them needs a `SCHEMA_MIGRATIONS` column on
+ * scope_telemetry — follow-up.
+ */
+export function selectionExpectation(
+  toolsCalled: string[],
+): { tools: string[]; first_tools: string[] } {
+  const tools = [...new Set(toolsCalled)].filter((t) => !isHarnessTool(t));
+  return { tools, first_tools: tools.slice(0, 1) };
+}
+
 /** @internal exported for tests */
 export function minePositiveSelections(
   days: number = 30,
@@ -309,12 +337,15 @@ export function minePositiveSelections(
   for (const row of rows) {
     if (cases.length >= room) break;
 
-    let tools: string[];
+    let expectation: { tools: string[]; first_tools: string[] };
     try {
-      tools = [...new Set(JSON.parse(row.tools_called) as string[])];
+      expectation = selectionExpectation(
+        JSON.parse(row.tools_called) as string[],
+      );
     } catch {
       continue;
     }
+    const { tools } = expectation;
     if (tools.length < 1 || tools.length > 3) continue;
 
     const msg = row.message.trim();
@@ -328,7 +359,7 @@ export function minePositiveSelections(
       case_id: `mined-positive-${h}`,
       category: "tool_selection",
       input: { message: msg },
-      expected: { tools },
+      expected: expectation,
       mined_from: `positive_selection:${tools.join(",")}`,
       weight: 0.6,
     });

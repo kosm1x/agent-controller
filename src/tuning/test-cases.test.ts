@@ -14,6 +14,7 @@ describe("assertKnownExpectedKeys (2026-09-18)", () => {
         not_scope_groups: ["social"],
         tools: ["web_search"],
         not_tools: [],
+        first_tools: ["web_search"],
         agent_type: "fast",
       }),
     ).not.toThrow();

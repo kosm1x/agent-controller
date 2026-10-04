@@ -21,7 +21,11 @@ import {
   getExperimentsByRun,
   getRecentExperiments,
 } from "./schema.js";
-import { runEvaluation, type InferFunction } from "./eval-runner.js";
+import {
+  runEvaluation,
+  summarizeReachability,
+  type InferFunction,
+} from "./eval-runner.js";
 import {
   proposeMutation,
   type MetaInferFunction,
@@ -179,19 +183,30 @@ function identifyAffectedCases(
 
 /**
  * Recompute composite score by merging new targeted results into cached baseline.
+ * @internal exported for tests
  */
-function mergeResults(baseline: EvalResult, targeted: EvalResult): EvalResult {
+export function mergeResults(baseline: EvalResult, targeted: EvalResult): EvalResult {
   // Build map of baseline per-case scores
+  // Excluded (unreachable) tool_selection cases ride along: a scope mutation
+  // can move a case in or out of the scored population.
   const caseMap = new Map<string, CaseScore>();
-  for (const c of baseline.perCase) {
+  for (const c of [
+    ...baseline.perCase,
+    ...baseline.reachability.excludedCases,
+  ]) {
     caseMap.set(c.caseId, c);
   }
   // Override with targeted results
-  for (const c of targeted.perCase) {
+  for (const c of [
+    ...targeted.perCase,
+    ...targeted.reachability.excludedCases,
+  ]) {
     caseMap.set(c.caseId, c);
   }
 
-  const mergedCases = [...caseMap.values()];
+  const all = [...caseMap.values()];
+  const mergedCases = all.filter((c) => !c.excluded);
+  const mergedExcluded = all.filter((c) => c.excluded);
 
   const { compositeScore, subscores } = computeCompositeScore(mergedCases);
 
@@ -199,6 +214,7 @@ function mergeResults(baseline: EvalResult, targeted: EvalResult): EvalResult {
     compositeScore,
     subscores,
     perCase: mergedCases,
+    reachability: summarizeReachability(mergedCases, mergedExcluded),
     totalTokens: baseline.totalTokens + targeted.totalTokens,
     estimatedCostUsd: baseline.estimatedCostUsd + targeted.estimatedCostUsd,
     durationMs: baseline.durationMs + targeted.durationMs,

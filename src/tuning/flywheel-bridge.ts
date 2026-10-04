@@ -29,6 +29,7 @@ import {
   countActivePositiveCases,
   ensureMinedTestCasesTable,
   POSITIVE_CASE_CEILING,
+  selectionExpectation,
 } from "./case-miner.js";
 
 export interface BridgeResult {
@@ -61,12 +62,15 @@ export function bridgePraisedTaskToEvalCase(taskId: string): BridgeResult {
     .get(taskId) as { message: string; tools_called: string } | undefined;
   if (!row) return { created: false, reason: "no_telemetry" };
 
-  let tools: string[];
+  let expectation: { tools: string[]; first_tools: string[] };
   try {
-    tools = [...new Set(JSON.parse(row.tools_called) as string[])];
+    expectation = selectionExpectation(
+      JSON.parse(row.tools_called) as string[],
+    );
   } catch {
     return { created: false, reason: "malformed_tools" };
   }
+  const { tools } = expectation;
   if (tools.length === 0) return { created: false, reason: "no_tools" };
   if (tools.length > 3) return { created: false, reason: "unfocused_run" };
 
@@ -102,7 +106,7 @@ export function bridgePraisedTaskToEvalCase(taskId: string): BridgeResult {
     .run(
       caseId,
       JSON.stringify({ message }),
-      JSON.stringify({ tools }),
+      JSON.stringify(expectation),
       `flywheel:excelente:${taskId}`,
     );
 

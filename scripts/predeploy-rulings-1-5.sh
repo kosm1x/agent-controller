@@ -38,7 +38,12 @@
 #      shell commands (its redaction has known gaps), so it goes to a root-only
 #      file (mode 600) under data/predeploy/ (dir 700, gitignored); only its
 #      exit code, the per-group counts and the file path are printed.
-#   F. Owed items this script cannot check (checklist).
+#   F. Owed items this script cannot check (checklist), with evidence for the
+#      paid eval gate: the committed baseline's capturedAt + scoringVersion vs
+#      this checkout's SCORING_VERSION and the committer date of HEAD's last
+#      commit touching src/ (git log, no fetch), flagged untrustworthy when
+#      src/ has uncommitted changes — informational only (helper
+#      --baseline-evidence).
 #   G. Verdict.
 #
 # B–D run scripts/predeploy-rulings-1-5.ts (node_modules/.bin/tsx — nothing is
@@ -219,9 +224,17 @@ echo
 
 # ---------------------------------------------------------------- F
 echo "F. Owed items this script cannot check"
-baseline="$MC_DIR/src/tuning/eval-baseline.json"
-captured=$(sed -n 's/.*"capturedAt": *"\([^"]*\)".*/\1/p' "$baseline" 2>/dev/null)
 head_date=$(git -C "$MC_DIR" log -1 --format=%cI HEAD 2>/dev/null)
+# Evidence only (the verdict still comes from EVAL_GATE_VERDICT): was the
+# committed incumbent captured after the last commit that touched src/ (and
+# is src/ clean, so that comparison means something), under the scorer
+# generation this checkout runs? A compare run records nothing, so only an
+# --update-baseline capture leaves a trace here. Logic: baselineEvidence()
+# in the helper (tested in scripts/predeploy-rulings-1-5.test.ts).
+echo "  Eval baseline evidence (informational; EVAL_GATE_VERDICT is the verdict input):"
+if ! (cd "$MC_DIR" && "$TSX" "$HELPER" --baseline-evidence "$MC_DIR" 2>&1); then
+  echo "    → evidence helper failed (see the line above); nothing compared"
+fi
 case "$EVAL_GATE_VERDICT" in
   PASS)
     echo "  [x] Paid eval gate: PASS — stated by operator (EVAL_GATE_VERDICT), not verified by this script."
@@ -232,9 +245,9 @@ case "$EVAL_GATE_VERDICT" in
     ;;
   *)
     echo "  [ ] Paid eval gate (npm run eval:gate -- --run) on the final text; do not ship on FAIL."
-    echo "      A compare run records nothing; the committed incumbent (src/tuning/eval-baseline.json) was"
-    echo "      captured ${captured:-unknown}, HEAD committed ${head_date:-unknown} → cannot tell whether it ran —"
-    echo "      owed per docs/planning/rulings-1-5-wip-resume.md (\"Order to finish\" 5). Set EVAL_GATE_VERDICT to state it."
+    echo "      A compare run records nothing (see the evidence above; HEAD committed ${head_date:-unknown}) → this"
+    echo "      script cannot tell whether it ran — owed per docs/planning/rulings-1-5-wip-resume.md"
+    echo "      (\"Order to finish\" 5). Set EVAL_GATE_VERDICT to state it."
     NOTES+=("paid eval gate owed (EVAL_GATE_VERDICT not set)")
     ;;
 esac

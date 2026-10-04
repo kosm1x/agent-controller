@@ -23,12 +23,117 @@ describe("scoreToolSelection", () => {
     expect(result.score).toBe(0.0);
   });
 
-  it("scores 0.5 when half the expected tools are called", () => {
+  it("multi-tool case is any-hit: half the expected tools called scores 1.0, proportional 0.5 kept in details (2026-10-04)", () => {
     const result = scoreToolSelection(
       { tools: ["web_search", "user_fact_set"] },
       ["web_search"],
     );
-    expect(result.score).toBe(0.5);
+    expect(result.score).toBe(1.0);
+    expect(result.excluded).toBe(false);
+    expect(result.details.scoring).toBe("any_hit");
+    expect(result.details.proportionalScore).toBe(0.5);
+  });
+
+  it("multi-tool case with no expected tool called scores 0 (any-hit and proportional)", () => {
+    const result = scoreToolSelection(
+      { tools: ["web_search", "user_fact_set"] },
+      ["gmail_send"],
+    );
+    expect(result.score).toBe(0);
+    expect(result.details.proportionalScore).toBe(0);
+  });
+
+  it("single-tool case is unchanged: 1/0, scoring 'single', proportional equals score", () => {
+    const hit = scoreToolSelection({ tools: ["web_search"] }, ["web_search"]);
+    const miss = scoreToolSelection({ tools: ["web_search"] }, []);
+    expect([hit.score, miss.score]).toEqual([1, 0]);
+    expect(hit.details.scoring).toBe("single");
+    expect(hit.details.proportionalScore).toBe(1);
+    expect(miss.details.proportionalScore).toBe(0);
+  });
+
+  it("any-hit keeps the forbidden-tool penalty: a hit plus a violation scores 0", () => {
+    const result = scoreToolSelection(
+      { tools: ["web_search", "user_fact_set"], not_tools: ["memory_store"] },
+      ["web_search", "memory_store"],
+    );
+    expect(result.score).toBe(0);
+    expect(result.details.violations).toEqual(["memory_store"]);
+    // proportional: (1 hit - 2) / 2 → clamped 0
+    expect(result.details.proportionalScore).toBe(0);
+    expect(result.details.rawPoints).toBe(-1);
+  });
+
+  it("scores only OFFERED expected tools: the unreachable one leaves the denominator", () => {
+    const result = scoreToolSelection(
+      { tools: ["web_search", "gmail_send"] },
+      ["web_search"],
+      new Set(["web_search", "file_read"]),
+    );
+    // gmail_send was never offered → single offered tool, hit → 1.0
+    expect(result.score).toBe(1);
+    expect(result.excluded).toBe(false);
+    expect(result.details.offered).toEqual(["web_search"]);
+    expect(result.details.unreachable).toEqual(["gmail_send"]);
+    expect(result.details.maxPoints).toBe(1);
+    expect(result.details.scoring).toBe("single");
+    expect(result.details.expected).toEqual(["web_search", "gmail_send"]);
+  });
+
+  it("a case with expected tools but NONE offered is excluded (score not meaningful)", () => {
+    const result = scoreToolSelection(
+      { tools: ["gmail_send"], not_tools: ["shell_exec"] },
+      [],
+      new Set(["web_search"]),
+    );
+    expect(result.excluded).toBe(true);
+    expect(result.details.excluded).toBe(true);
+    expect(result.details.offered).toEqual([]);
+    expect(result.details.unreachable).toEqual(["gmail_send"]);
+  });
+
+  it("expected tools all unreachable but an OFFERED forbidden tool: scored forbidden-only, not excluded", () => {
+    const offered = new Set(["web_search", "shell_exec"]);
+    const expected = { tools: ["gmail_send"], not_tools: ["shell_exec"] };
+    const clean = scoreToolSelection(expected, ["web_search"], offered);
+    expect(clean.excluded).toBe(false);
+    expect(clean.score).toBe(1);
+    expect(clean.details.scoring).toBe("forbidden_only");
+    expect(clean.details.offered).toEqual([]);
+    expect(clean.details.unreachable).toEqual(["gmail_send"]);
+    const violated = scoreToolSelection(expected, ["shell_exec"], offered);
+    expect(violated.excluded).toBe(false);
+    expect(violated.score).toBe(0);
+    expect(violated.details.violations).toEqual(["shell_exec"]);
+  });
+
+  it("a forbidden-only case is excluded only when its forbidden tools were not offered either", () => {
+    const scored = scoreToolSelection(
+      { not_tools: ["shell_exec"] },
+      [],
+      new Set(["shell_exec"]),
+    );
+    expect(scored.excluded).toBe(false);
+    expect(scored.score).toBe(1);
+    expect(scored.details.scoring).toBe("forbidden_only");
+    const nothingCheckable = scoreToolSelection(
+      { not_tools: ["shell_exec"] },
+      [],
+      new Set(["web_search"]),
+    );
+    expect(nothingCheckable.excluded).toBe(true);
+  });
+
+  it("ignores first_tools: scored against tools (no round boundaries recorded)", () => {
+    const result = scoreToolSelection(
+      { tools: ["web_search", "file_write"], first_tools: ["web_search"] },
+      ["file_write"],
+    );
+    // any-hit over `tools`: file_write is an expected tool → 1.0
+    expect(result.score).toBe(1);
+    expect(result.details.expected).toEqual(["web_search", "file_write"]);
+    expect(result.details.scoring).toBe("any_hit");
+    expect(result.details).not.toHaveProperty("expectedSource");
   });
 
   it("penalizes forbidden tools that are called", () => {
