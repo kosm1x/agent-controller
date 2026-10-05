@@ -28,6 +28,7 @@ import {
   gatherEvidence,
   saveDecomposition,
   MAX_ANGLE_LIMIT,
+  MAX_KB_LIMIT,
   DEFAULT_ANGLE_LIMIT,
   DECOMPOSE_SYSTEM_PROMPT,
 } from "./decompose.js";
@@ -577,6 +578,207 @@ describe("retrieveRecentDayLogs + gatherEvidence day-log pass (staleness gap)", 
     expect(
       retrieveRecentDayLogs("salon-voice-outreach", { db: getDatabase() }),
     ).toEqual([]);
+  });
+});
+
+describe("retrieveRecentDayLogs — subject resolved to project slug/name, folded matching", () => {
+  // Synthetic names only (public repo).
+  const DL = "logs/day-logs/";
+  const SNIP_CONTENT =
+    "Cafe\u0301 ".repeat(20) +
+    "Ánimo. Notes before it: TORRE ÑANDÚ milestone reached, " +
+    "x".repeat(200);
+  beforeEach(() => {
+    initDatabase(":memory:");
+    const db = getDatabase();
+    const p = db.prepare(
+      `INSERT INTO projects (id, slug, name) VALUES (?,?,?)`,
+    );
+    p.run("p1", "zorblat", "Zorblat - Synthetic Voice Layer");
+    p.run("p2", "krellwick", "Krellwick - Tidal Archive Engine");
+    p.run("p3", "circulo-ambar", "Impulsar Círculo Ámbar");
+    p.run("p4", "tn-tower", "Torre Ñandú");
+    p.run("p5", "quillfeather", "Quillfeather Ledger");
+    const kb = db.prepare(
+      `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+    );
+    const day = (date: string, content: string) =>
+      kb.run(`d-${date}`, `${DL}${date}.md`, `day ${date}`, content);
+    day(
+      "2026-07-01",
+      "Kickoff for Zorblat - Synthetic Voice Layer with the team.",
+    );
+    day(
+      "2026-07-02",
+      "Reviewed the Synthetic Voice Layer docs; impulsar the ambar palette later.",
+    );
+    day("2026-07-03", "circulo ambar review done.");
+    day("2026-07-04", "CÍRCULO ÁMBAR launch prep.");
+    day("2026-07-05", "Pushed zorblat fixes.");
+    day("2026-07-06", "quillfeather sync only.");
+    day("2026-07-07", "krellwick bump.");
+    day("2026-07-08", "zorblat follow-up.");
+    day("2026-07-09", "boveda gris backup check.");
+    day("2026-07-10", SNIP_CONTENT);
+    kb.run("dl-notes", `${DL}zorblat-notes.md`, "notes", "zorblat notes");
+  });
+  afterEach(() => {
+    closeDatabase();
+  });
+  const ids = (subject: string, limit?: number) =>
+    retrieveRecentDayLogs(subject, {
+      db: getDatabase(),
+      nowIso: NOW,
+      limit,
+    }).map((r) => r.id);
+
+  it("display-name subject finds the newer slug-only logs, newest first", () => {
+    expect(ids("Zorblat - Synthetic Voice Layer")).toEqual([
+      `${DL}2026-07-08.md`, // slug only
+      `${DL}2026-07-05.md`, // slug only
+      `${DL}2026-07-01.md`, // full name
+    ]);
+  });
+
+  it("display name absent verbatim from every log still matches via the slug", () => {
+    expect(ids("Krellwick - Tidal Archive Engine")).toEqual([
+      `${DL}2026-07-07.md`,
+    ]);
+  });
+
+  it("matches across case and accents on both sides", () => {
+    const r = ids("Impulsar Círculo Ámbar");
+    expect(r).toContain(`${DL}2026-07-04.md`); // "CÍRCULO ÁMBAR"
+    expect(r).toContain(`${DL}2026-07-03.md`); // "circulo ambar"
+    expect(ids("Torre Ñandú")).toEqual([`${DL}2026-07-10.md`]); // "TORRE ÑANDÚ"
+  });
+
+  it("matches the spaced-slug form", () => {
+    expect(ids("Impulsar Círculo Ámbar")).toEqual([
+      `${DL}2026-07-04.md`,
+      `${DL}2026-07-03.md`,
+    ]);
+  });
+
+  it("a slug subject resolves the project and matches full-name-only logs", () => {
+    expect(ids("tn-tower")).toEqual([`${DL}2026-07-10.md`]);
+    expect(ids("  TN-Tower ")).toEqual([`${DL}2026-07-10.md`]);
+  });
+
+  it("no project row → raw subject, folded; other projects' slugs not pulled in", () => {
+    expect(ids("Bóveda Gris")).toEqual([`${DL}2026-07-09.md`]);
+    expect(ids("BOVEDA GRIS")).toEqual([`${DL}2026-07-09.md`]);
+    expect(ids("Bóveda Gris")).not.toContain(`${DL}2026-07-06.md`);
+  });
+
+  it("does not match single words of a multi-word name", () => {
+    expect(ids("Zorblat - Synthetic Voice Layer")).not.toContain(
+      `${DL}2026-07-02.md`,
+    );
+    expect(ids("Impulsar Círculo Ámbar")).not.toContain(`${DL}2026-07-02.md`);
+  });
+
+  it("snippet is cut from the original text, not shifted by folding", () => {
+    const [ref] = retrieveRecentDayLogs("Torre Ñandú", {
+      db: getDatabase(),
+      nowIso: NOW,
+    });
+    const at = SNIP_CONTENT.indexOf("TORRE ÑANDÚ");
+    const snippet = SNIP_CONTENT.slice(at - 30, at - 30 + 160);
+    expect(snippet.startsWith("Cafe\u0301 Ánimo.")).toBe(true); // sanity
+    expect(ref.excerpt).toBe(`day-log 2026-07-10: …${snippet.trim()}…`);
+  });
+
+  it("works on the raw subject without a projects table; [] without jarvis_files", () => {
+    getDatabase().exec("DROP TABLE projects");
+    expect(ids("Bóveda Gris")).toEqual([`${DL}2026-07-09.md`]);
+    expect(ids("Zorblat - Synthetic Voice Layer")).toEqual([
+      `${DL}2026-07-01.md`,
+    ]);
+    getDatabase().exec("DROP TABLE jarvis_files_fts; DROP TABLE jarvis_files;");
+    expect(ids("Bóveda Gris")).toEqual([]);
+  });
+
+  it("honors the limit newest-first and excludes non-date day-log paths", () => {
+    expect(ids("zorblat", 2)).toEqual([
+      `${DL}2026-07-08.md`,
+      `${DL}2026-07-05.md`,
+    ]);
+    expect(ids("zorblat")).not.toContain(`${DL}zorblat-notes.md`);
+  });
+
+  const addDay = (date: string, content: unknown) =>
+    getDatabase()
+      .prepare(
+        `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+      )
+      .run(`x-${date}`, `${DL}${date}.md`, `day ${date}`, content);
+  const addProject = (id: string, slug: string, name: string) =>
+    getDatabase()
+      .prepare(`INSERT INTO projects (id, slug, name) VALUES (?,?,?)`)
+      .run(id, slug, name);
+
+  it("matches terms only on word boundaries, never inside a longer word", () => {
+    addProject("p6", "vex", "Vex - Signal Router");
+    addDay("2026-08-01", "stopped the convex loops early, vexing.");
+    addDay("2026-08-02", "vex shipped.");
+    addDay("2026-08-03", "deploy notes (vex), done");
+    addDay("2026-08-04", "rolled back vex");
+    expect(ids("vex", 8)).toEqual([
+      `${DL}2026-08-04.md`, // at text end
+      `${DL}2026-08-03.md`, // followed by punctuation
+      `${DL}2026-08-02.md`, // at text start
+    ]);
+  });
+
+  it("a hyphen is a boundary: slug followed by -suffix still matches (accepted)", () => {
+    addProject("p6", "vex", "Vex - Signal Router");
+    addDay("2026-08-05", "merged the vex-suffix branch");
+    expect(ids("vex")).toEqual([`${DL}2026-08-05.md`]);
+  });
+
+  it("skips a non-string (BLOB) content row without dropping the pass", () => {
+    addDay("2026-08-06", Buffer.from("zorblat binary"));
+    expect(ids("zorblat", 2)).toEqual([
+      `${DL}2026-07-08.md`,
+      `${DL}2026-07-05.md`,
+    ]);
+  });
+
+  it("resolution prefers a slug match over a name match", () => {
+    addProject("pb", "ndb", "Nova-Desk"); // inserted first: its NAME equals the subject
+    addProject("pa", "nova-desk", "Nova Desk Alpha");
+    addDay("2026-08-07", "Nova Desk Alpha status review.");
+    addDay("2026-08-08", "ndb fixed.");
+    expect(ids("nova-desk")).toEqual([`${DL}2026-08-07.md`]);
+  });
+
+  it("snippet anchors on the EARLIEST match across terms", () => {
+    const content = `TORRE ÑANDÚ intro. ${"y".repeat(250)} then tn-tower deploy.`;
+    addDay("2026-08-09", content);
+    const [ref] = retrieveRecentDayLogs("tn-tower", { db: getDatabase() });
+    expect(ref.excerpt).toBe(`day-log 2026-08-09: …${content.slice(0, 160)}…`);
+  });
+
+  it("caps an over-large limit at MAX_KB_LIMIT", () => {
+    for (let d = 10; d < 20; d++) addDay(`2026-08-${d}`, `zorblat day ${d}`);
+    expect(ids("zorblat", 50)).toHaveLength(MAX_KB_LIMIT);
+  });
+
+  it("matches a term containing regex metacharacters literally", () => {
+    addProject("p7", "cpp-legacy", "C++ (Legacy) v2.0");
+    addDay("2026-08-20", "migrated c++ (legacy) v2.0 today");
+    addDay("2026-08-21", "migrated cxx (legacy) v2x0 today");
+    expect(() => ids("C++ (Legacy) v2.0")).not.toThrow();
+    expect(ids("C++ (Legacy) v2.0")).toEqual([`${DL}2026-08-20.md`]);
+  });
+
+  it("a non-ASCII letter glued to a term is not a word boundary", () => {
+    // ø / ß survive folding (no NFD decomposition); ñ would fold to ASCII n.
+    addDay("2026-08-22", "notes on øzorblat only");
+    addDay("2026-08-23", "notes on zorblatß only");
+    expect(ids("zorblat", 8)).not.toContain(`${DL}2026-08-22.md`);
+    expect(ids("zorblat", 8)).not.toContain(`${DL}2026-08-23.md`);
   });
 });
 

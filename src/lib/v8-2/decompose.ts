@@ -423,7 +423,14 @@ export function retrieveKbForQuery(
   }));
 }
 
-type DayLogEvidenceRow = { path: string; snippet: string };
+type DayLogEvidenceRow = { path: string; content: unknown };
+
+/** Case- and diacritic-insensitive form used by the day-log match. */
+const foldText = (s: string): string =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 
 /**
  * Recent day-log entries (`jarvis_files` under `logs/day-logs/`) that MENTION the
@@ -435,19 +442,24 @@ type DayLogEvidenceRow = { path: string; snippet: string };
  * contradiction class the critic disproves against these SAME logs (judgment #46:
  * prose said "no execution since 2026-06-17" while day-logs 06-27/06-28 existed).
  *
- * Deterministic base-table scan with `instr` (literal substring, case-folded)
- * rather than `jarvis_files_fts`, for two reasons: (1) recency is the point here,
- * and we order by filename date DESC — FTS gives bm25 RELEVANCE, which buries the
- * newest log under the README; (2) the KB pass sanitizes the subject to a noisy
- * token-OR (`salon OR voice OR outreach`), whereas an exact-phrase `instr` match
- * keeps precision. `instr` also sidesteps LIKE-wildcard escaping. The path GLOB is
- * anchored to the `YYYY-MM-DD.md` date shape so `ORDER BY path DESC` is a true
- * recency sort — a stray `README.md`/nested dir in the namespace (kb-reindex
- * auto-ingests any FS `.md`) would otherwise sort ABOVE all dates and displace the
- * newest logs. Never throws: a missing table degrades to empty. Caveat: matches
- * the raw subject, so a display-name subject ("PipeSong - Voice AI Infrastructure")
- * matches fewer/staler logs than its slug ("pipesong") would — threading the
- * project slug is the follow-up.
+ * Deterministic base-table scan matched in JS rather than `jarvis_files_fts`, for
+ * two reasons: (1) recency is the point here, and we order by filename date DESC —
+ * FTS gives bm25 RELEVANCE, which buries the newest log under the README; (2) the
+ * KB pass sanitizes the subject to a noisy token-OR (`salon OR voice OR outreach`),
+ * whereas whole-phrase matching keeps precision. The subject is resolved against
+ * `projects` (folded; a slug match wins over a name match): a hit matches on the
+ * slug, the spaced slug and the full name — a display-name subject rarely appears
+ * verbatim in chat logs while its slug does; no hit (or no table) keeps the raw
+ * subject. Whole-identity terms only — single tokens would pull unrelated logs
+ * into the ledger. Matching folds case AND diacritics on both sides (SQLite
+ * `lower()` leaves "Á" as is) and needs a word boundary (no letter/digit) on both
+ * ends, so a short slug never matches inside a longer word; a hyphen counts as a
+ * boundary. Non-string content rows are skipped. Rows stream newest-first and
+ * stop at `limit`. The path GLOB is anchored to the
+ * `YYYY-MM-DD.md` date shape so `ORDER BY path DESC` is a true recency sort — a
+ * stray `README.md`/nested dir in the namespace (kb-reindex auto-ingests any FS
+ * `.md`) would otherwise sort ABOVE all dates and displace the newest logs. Never
+ * throws: a missing table degrades to empty.
  */
 export function retrieveRecentDayLogs(
   subject: string,
@@ -459,18 +471,60 @@ export function retrieveRecentDayLogs(
   const retrievedAt = options.nowIso ?? new Date().toISOString();
   const limit = Math.min(options.limit ?? DEFAULT_DAYLOG_LIMIT, MAX_KB_LIMIT);
 
-  let rows: DayLogEvidenceRow[];
+  const folded = foldText(needle).trim();
+  let identity = [needle];
   try {
-    rows = db
+    const projects = db.prepare(`SELECT slug, name FROM projects`).all() as {
+      slug: string;
+      name: string;
+    }[];
+    const p =
+      projects.find((r) => foldText(r.slug).trim() === folded) ??
+      projects.find((r) => foldText(r.name).trim() === folded);
+    if (p) identity = [p.slug, p.slug.replace(/[-_]/g, " "), p.name];
+  } catch {
+    // projects absent (bare in-memory db) → raw subject only.
+  }
+  const terms = [
+    ...new Set(identity.map((t) => foldText(t).trim()).filter(Boolean)),
+  ].map((t) => {
+    // Escaped literal, bounded by a non-letter/digit (or text edge) on both ends.
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, "u");
+  });
+
+  const matches: { path: string; snippet: string }[] = [];
+  try {
+    const rows = db
       .prepare(
-        `SELECT path,
-                substr(content, MAX(1, instr(lower(content), lower(?)) - 30), 160) AS snippet
-           FROM jarvis_files
+        `SELECT path, content FROM jarvis_files
           WHERE path GLOB 'logs/day-logs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md'
-            AND instr(lower(content), lower(?)) > 0
-          ORDER BY path DESC LIMIT ?`,
+          ORDER BY path DESC`,
       )
-      .all(needle, needle, limit) as DayLogEvidenceRow[];
+      .iterate() as IterableIterator<DayLogEvidenceRow>;
+    for (const r of rows) {
+      if (typeof r.content !== "string") continue;
+      const original = r.content;
+      const content = foldText(original);
+      const hits = terms.map((t) => content.search(t)).filter((i) => i >= 0);
+      if (hits.length === 0) continue;
+      // Map the folded offset back onto the original text (folding can shorten
+      // it, e.g. a decomposed "e\u0301"), so the snippet is not shifted.
+      const target = Math.min(...hits);
+      let at = 0;
+      let seen = 0;
+      for (const ch of original) {
+        if (seen >= target) break;
+        seen += foldText(ch).length;
+        at += ch.length;
+      }
+      const start = Math.max(0, at - 30);
+      matches.push({
+        path: r.path,
+        snippet: original.slice(start, start + 160),
+      });
+      if (matches.length === limit) break;
+    }
   } catch (e) {
     // jarvis_files absent (bare in-memory db) → skip, never throw.
     log.debug(
@@ -480,14 +534,14 @@ export function retrieveRecentDayLogs(
     return [];
   }
 
-  if (rows.length === limit) {
+  if (matches.length === limit) {
     log.debug(
       { limit, subject: needle },
       "decompose: day-log retrieval hit the row limit — older mentions unseen",
     );
   }
 
-  return rows.map((r) => {
+  return matches.map((r) => {
     const date = r.path.slice("logs/day-logs/".length).replace(/\.md$/, "");
     return {
       kind: "kb_entry" as const,
@@ -513,7 +567,7 @@ export function retrieveRecentDayLogs(
  * for identity/grounding files (`projects/<subject>/` README/snapshot); (2) a
  * recent-day-log pass for live activity. Note this only NARROWS the asymmetry —
  * the critic still runs up to 5 arbitrary recall queries + SQL over 6 tables, so
- * a residual gap remains (see `retrieveRecentDayLogs` caveat + critic.ts).
+ * a residual gap remains (see critic.ts).
  */
 export function gatherEvidence(
   decomposition: Decomposition,
