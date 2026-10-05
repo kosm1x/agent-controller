@@ -426,11 +426,13 @@ EDGE CASES:
         });
       }
 
-      // Phase 2: upload bytes + finalize in one POST
+      // Phase 2: upload bytes + finalize in one POST. No explicit
+      // Content-Length: safeFetch's npm-undici Agent dispatcher rejects one
+      // (UND_ERR_INVALID_ARG) for every file and sets it from the Buffer
+      // itself, so a safeFetch call with a body must not set the header.
       const resp = await safeFetch(uploadUrl, {
         method: "POST",
         headers: {
-          "Content-Length": String(fileBuffer.length),
           "X-Goog-Upload-Offset": "0",
           "X-Goog-Upload-Command": "upload, finalize",
         },
@@ -505,10 +507,20 @@ EDGE CASES:
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Surface only the cause's code: its message can carry the upload URL,
+      // and the phase-1 URL carries the API key.
+      const cause = err instanceof Error ? err.cause : undefined;
+      const code =
+        cause !== null &&
+        typeof cause === "object" &&
+        "code" in cause &&
+        typeof cause.code === "string"
+          ? ` (${cause.code})`
+          : "";
       return JSON.stringify({
         error: msg.includes("aborted")
           ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
-          : `Upload failed: ${msg}`,
+          : `Upload failed: ${msg}${code}`,
       });
     } finally {
       // Clear the abort timer on every exit path — was previously scattered

@@ -313,10 +313,16 @@ describe("gemini_upload", () => {
     const sentBody = () => mockFetch.mock.calls[1]![1].body as Buffer;
     const sentLength = () =>
       new Headers(mockFetch.mock.calls[1]![1].headers).get("content-length");
+    const declaredLength = () =>
+      new Headers(mockFetch.mock.calls[0]![1].headers).get(
+        "x-goog-upload-header-content-length",
+      );
 
     // .yaml / .ini have no MIME entry (octet-stream): judged by their bytes.
+    // Phase 2 sends no explicit Content-Length: undici derives it from the
+    // Buffer, and an explicit one made Node 22 throw UND_ERR_INVALID_ARG.
     it.each(["notes.txt", "config.json", "deploy.yaml", "settings.ini"])(
-      "%s: the stored value is replaced by its placeholder in the bytes sent (and the declared length matches)",
+      "%s: the stored value is replaced by its placeholder in the bytes sent (and the declared upload length matches)",
       async (name) => {
         mockUploadOk();
         const text = `host: ftp.example.com\npassword: ${secrets.STORED}\nñandú ✓\n`;
@@ -325,7 +331,8 @@ describe("gemini_upload", () => {
         const body = sentBody().toString("utf8");
         expect(body).not.toContain(secrets.STORED);
         expect(body).toBe(text.replace(secrets.STORED, secrets.PH));
-        expect(sentLength()).toBe(String(sentBody().length));
+        expect(sentLength()).toBeNull();
+        expect(declaredLength()).toBe(String(sentBody().length));
       },
     );
 
@@ -350,6 +357,59 @@ describe("gemini_upload", () => {
         secrets.fail = false;
       }
     });
+  });
+
+  it("surfaces a fetch rejection's cause.code, never the cause message or URL", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.googleapis.com/session/c?key=test-key-123"
+            : null,
+      },
+      text: async () => "",
+    });
+    mockFetch.mockRejectedValueOnce(
+      new TypeError("fetch failed", {
+        cause: Object.assign(
+          new Error(
+            "invalid content-length header at https://upload.googleapis.com/session/c?key=test-key-123",
+          ),
+          { code: "UND_ERR_INVALID_ARG" },
+        ),
+      }),
+    );
+
+    const raw = await geminiUploadTool.execute({ source: "/tmp/test.pdf" });
+    const result = JSON.parse(raw);
+    expect(result.error).toBe(
+      "Upload failed: fetch failed (UND_ERR_INVALID_ARG)",
+    );
+    expect(raw).not.toContain("invalid content-length");
+    expect(raw).not.toContain("test-key-123");
+    expect(raw).not.toContain("googleapis.com");
+  });
+
+  it("ignores a non-string cause.code", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === "x-goog-upload-url"
+            ? "https://upload.googleapis.com/session/n"
+            : null,
+      },
+      text: async () => "",
+    });
+    mockFetch.mockRejectedValueOnce(
+      new TypeError("fetch failed", { cause: { code: 42 } }),
+    );
+
+    const result = JSON.parse(
+      await geminiUploadTool.execute({ source: "/tmp/test.pdf" }),
+    );
+    expect(result.error).toBe("Upload failed: fetch failed");
   });
 
   it("handles URL download failure", async () => {

@@ -29,15 +29,17 @@ export async function extractPdfToMarkdown(
   pdfPath: string,
   opts?: PdfExtractOptions,
 ): Promise<string> {
-  const outDir = await mkdtemp(join(tmpdir(), "odl-pdf-"));
-
-  try {
+  const outDirs: string[] = [];
+  const runPass = async (contentSafetyOff?: string): Promise<string> => {
+    const outDir = await mkdtemp(join(tmpdir(), "odl-pdf-"));
+    outDirs.push(outDir);
     await convert([pdfPath], {
       outputDir: outDir,
       format: "markdown",
       imageOutput: "off",
       quiet: true,
       ...(opts?.pages && { pages: opts.pages }),
+      ...(contentSafetyOff && { contentSafetyOff }),
     });
 
     // Find the generated .md file
@@ -46,8 +48,18 @@ export async function extractPdfToMarkdown(
     if (!mdFile) {
       throw new Error("PDF extraction produced no Markdown output");
     }
+    return readFile(join(outDir, mdFile), "utf-8");
+  };
 
-    let content = await readFile(join(outDir, mdFile), "utf-8");
+  try {
+    let content = await runPass();
+    // Text drawn with Type 3 fonts on a large canvas (e.g. slide decks) is
+    // discarded wholesale by the "tiny" text filter, so the default pass can
+    // return nothing. Retry with only that filter off; the hidden-text and
+    // off-page filters stay on as a prompt-injection defence. A failed retry
+    // keeps the empty result, which callers report as an image-only PDF.
+    if (!content.trim()) content = await runPass("tiny").catch(() => content);
+
     const max = opts?.maxChars ?? DEFAULT_MAX_CHARS;
     if (content.length > max) {
       content =
@@ -57,7 +69,9 @@ export async function extractPdfToMarkdown(
 
     return content;
   } finally {
-    await rm(outDir, { recursive: true, force: true });
+    for (const dir of outDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 }
 

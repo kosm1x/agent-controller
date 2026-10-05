@@ -90,6 +90,107 @@ describe("extractPdfToMarkdown", () => {
 
     await expect(extractPdfToMarkdown("/tmp/test.pdf")).rejects.toThrow("java");
   });
+
+  describe("tiny-text fallback (Type 3 fonts)", () => {
+    // Writes the first pass's output, then the second pass's (if any).
+    function convertWrites(...outputs: string[]) {
+      for (const text of outputs) {
+        mockConvert.mockImplementationOnce(
+          async (_paths: string[], opts: { outputDir: string }) => {
+            const { writeFile } = await import("fs/promises");
+            const { join } = await import("path");
+            await writeFile(join(opts.outputDir, "doc.md"), text);
+          },
+        );
+      }
+    }
+
+    it("empty first pass → retries with contentSafetyOff 'tiny' and returns that text", async () => {
+      convertWrites("  \n\n ", "# Slide 1\n\nRecovered text.");
+
+      const result = await extractPdfToMarkdown("/tmp/deck.pdf");
+
+      expect(mockConvert).toHaveBeenCalledTimes(2);
+      expect(mockConvert.mock.calls[0][1].contentSafetyOff).toBeUndefined();
+      const second = mockConvert.mock.calls[1][1];
+      expect(second.contentSafetyOff).toBe("tiny");
+      expect(second.format).toBe("markdown");
+      expect(second.imageOutput).toBe("off");
+      expect(second.quiet).toBe(true);
+      expect(mockConvert.mock.calls[1][0]).toEqual(["/tmp/deck.pdf"]);
+      expect(result).toBe("# Slide 1\n\nRecovered text.");
+    });
+
+    it("non-empty first pass → exactly one call, no contentSafetyOff", async () => {
+      convertWrites("Real text", "should not be used");
+
+      const result = await extractPdfToMarkdown("/tmp/text.pdf");
+
+      expect(mockConvert).toHaveBeenCalledOnce();
+      expect(mockConvert.mock.calls[0][1].contentSafetyOff).toBeUndefined();
+      expect(result).toBe("Real text");
+    });
+
+    it("both passes empty → returns empty string, two calls, temp dirs removed", async () => {
+      convertWrites("", "  ");
+
+      const result = await extractPdfToMarkdown("/tmp/scan.pdf");
+
+      expect(result.trim()).toBe("");
+      expect(mockConvert).toHaveBeenCalledTimes(2);
+      const { existsSync } = await import("fs");
+      for (const call of mockConvert.mock.calls) {
+        expect(existsSync(call[1].outputDir)).toBe(false);
+      }
+    });
+
+    it("pass 2 throws → keeps pass 1's empty result, both dirs removed", async () => {
+      convertWrites("");
+      mockConvert.mockRejectedValueOnce(new Error("java crashed"));
+
+      const result = await extractPdfToMarkdown("/tmp/deck.pdf");
+
+      expect(result).toBe("");
+      expect(mockConvert).toHaveBeenCalledTimes(2);
+      const { existsSync } = await import("fs");
+      for (const call of mockConvert.mock.calls) {
+        expect(existsSync(call[1].outputDir)).toBe(false);
+      }
+    });
+
+    it("pass 1 throws → rejects, its dir removed, no second pass", async () => {
+      mockConvert.mockRejectedValueOnce(new Error("java crashed"));
+
+      await expect(extractPdfToMarkdown("/tmp/deck.pdf")).rejects.toThrow(
+        "java crashed",
+      );
+
+      expect(mockConvert).toHaveBeenCalledOnce();
+      const { existsSync } = await import("fs");
+      expect(existsSync(mockConvert.mock.calls[0][1].outputDir)).toBe(false);
+    });
+
+    it("forwards the pages option to both passes", async () => {
+      convertWrites("", "Page 2 text");
+
+      await extractPdfToMarkdown("/tmp/deck.pdf", { pages: "2-4" });
+
+      expect(mockConvert.mock.calls[0][1].pages).toBe("2-4");
+      expect(mockConvert.mock.calls[1][1].pages).toBe("2-4");
+    });
+
+    it("applies maxChars truncation to the fallback result", async () => {
+      convertWrites("", "y".repeat(500));
+
+      const result = await extractPdfToMarkdown("/tmp/deck.pdf", {
+        maxChars: 50,
+      });
+
+      expect(result).toBe(
+        "y".repeat(50) + "\n\n...(truncated, 500 total chars)",
+      );
+    });
+  });
 });
 
 describe("extractPdfFromUrl", () => {
