@@ -69,6 +69,13 @@ fi
 echo "[deploy] Building..."
 npm run build
 
+# Build provenance (2026-10-05, queue 9+15): record the commit dist/ was built
+# from in dist/build-info.json (tsc does not wipe dist/, so the file survives
+# until the next build). Warns loudly, without blocking, when tracked code paths
+# carry uncommitted changes.
+bash scripts/build-info.sh
+BUILD_REF=$(node -e 'const b = JSON.parse(require("fs").readFileSync("dist/build-info.json", "utf8")); console.log(b.commitShort + (b.dirty ? "+dirty" : ""))')
+
 # Sandbox image lockfile gate (2026-09-01, nanoclaw upstream review). The
 # sandbox executes the HOST dist/ (read-only mount) on top of the IMAGE's
 # node_modules, so the image must have been built from the same
@@ -159,7 +166,7 @@ fi
 
 if systemctl is-active --quiet "$SERVICE"; then
   TOOLS=$(journalctl -u "$SERVICE" --since '60 sec ago' --no-pager 2>/dev/null | grep -o 'totalTools":[0-9]*' | head -1)
-  echo "[deploy] OK — newPid=$NEW_PID (was $OLD_PID), oldPid dead, transition took ${ELAPSED}s. ${TOOLS}"
+  echo "[deploy] OK — newPid=$NEW_PID (was $OLD_PID), oldPid dead, transition took ${ELAPSED}s. build=${BUILD_REF} ${TOOLS}"
 
   # Post-deploy degradation watch (2026-07-05 sweep): a deploy that boots but
   # immediately errors passes every check above (pid flip + is-active + tool
