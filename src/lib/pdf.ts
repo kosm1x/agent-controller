@@ -4,15 +4,46 @@
  * Converts PDF files to Markdown using a local Java-based parser.
  * No external API calls, no rate limits, no truncation (unless maxChars set).
  * Requires Java 17+ on PATH.
+ * Optional: `pdftotext` (poppler-utils) is the fallback for PDFs the filtered
+ * pass reads as empty; without it the slower ODL tiny-filter pass is used.
  */
 
 import { convert } from "@opendataloader/pdf";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { promisify } from "node:util";
 import { safeFetch } from "./url-safety.js";
 
 const DEFAULT_MAX_CHARS = 50_000;
+const execFileAsync = promisify(execFile);
+
+/**
+ * Plain text via poppler's pdftotext (no shell, argv array). One call per
+ * comma-separated range of `pages`; a range that is not `N` or `N-M`, or more
+ * than 20 ranges, skips pdftotext and returns "".
+ */
+async function pdftotext(pdfPath: string, pages?: string): Promise<string> {
+  const parts = pages ? pages.split(",") : [];
+  if (parts.length > 20) return "";
+  const ranges: string[][] = [];
+  for (const part of parts) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(part.trim());
+    if (!m) return "";
+    ranges.push(["-f", m[1], "-l", m[2] ?? m[1]]);
+  }
+  let text = "";
+  for (const range of ranges.length ? ranges : [[]]) {
+    const { stdout } = await execFileAsync(
+      "pdftotext",
+      ["-q", "-enc", "UTF-8", ...range, "--", pdfPath, "-"],
+      { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 },
+    );
+    text += stdout;
+  }
+  return text;
+}
 
 export interface PdfExtractOptions {
   /** Page range, e.g. "1,3,5-7". Default: all pages. */
@@ -54,11 +85,17 @@ export async function extractPdfToMarkdown(
   try {
     let content = await runPass();
     // Text drawn with Type 3 fonts on a large canvas (e.g. slide decks) is
-    // discarded wholesale by the "tiny" text filter, so the default pass can
-    // return nothing. Retry with only that filter off; the hidden-text and
-    // off-page filters stay on as a prompt-injection defence. A failed retry
-    // keeps the empty result, which callers report as an image-only PDF.
-    if (!content.trim()) content = await runPass("tiny").catch(() => content);
+    // discarded wholesale by ODL's "tiny" text filter, so the default pass can
+    // return nothing; with that filter off ODL returns the text out of order,
+    // while pdftotext reads it correctly. pdftotext applies no hidden-text
+    // filter, so it runs only when the fully filtered pass found nothing.
+    // If it is missing, fails or is empty, retry ODL with only the tiny filter
+    // off (hidden-text and off-page stay on as a prompt-injection defence). A
+    // failed retry keeps the empty result: callers report an image-only PDF.
+    if (!content.trim()) {
+      const text = await pdftotext(pdfPath, opts?.pages).catch(() => "");
+      content = text.trim() ? text : await runPass("tiny").catch(() => content);
+    }
 
     const max = opts?.maxChars ?? DEFAULT_MAX_CHARS;
     if (content.length > max) {
