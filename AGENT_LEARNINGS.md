@@ -53,18 +53,6 @@
 - **Avoid:** a "2 alphabetic segments = slug" exemption — random base64url keys hit it 3–16 % of the time; a slug is 3+ segments that are each all-letters, all-digits or ≤ 4 chars (0.6 % miss at 32, 0 at 64+).
 - **Better:** `jev_shadow` withheld share per day is the live symptom (45 % → 90 % on 09-26); `scripts/validate-jev-withheld.ts --days 7` names the rule; the fix is judged on that table with every OTHER rule's counts unchanged.
 
-## 2026-09-29 — Scheduled tasks failed under the Sonnet 5.5 canary (`7d3faa6`)
-- **Mistake:** I first blamed `SONNET_EFFORT=low` and offered "raise effort" as a fix; the failed tasks ran at `medium` (tier `standard` sets effort explicitly, the env knob reaches tier-less callers only) → read `tasks.classification` and the run's reply text BEFORE naming a cause.
-- **Avoid:** treating an instruction the incumbent model ignores as harmless — a model swap executes it. Before a model canary, replay 30 d of stored tasks through every conditional system message and list which populations receive it (114 scheduled/ritual tasks got a chat-only advisory).
-- **Avoid:** restoring a flag on a retry without listing every consumer of that flag — `interactive:false` also lifts the confirm gate, so the retry could resend an email; the audit's per-consumer table caught it.
-- **Better:** canary health = split by task KIND (chat vs scheduled/ritual) and compare each schedule with its own prior days; the aggregate cost/cache table looked fine while 5 of 10 scheduled tasks were not clean.
-
-## 2026-09-29 — DENUE guard on a literal mention + heavy tool record (`6a660e1`)
-- **Avoid:** evaluating a trigger on a composed prompt (title + description) — injected context and appended file text are not the user's words; read the author's text (`detectionText`) and cut producer-appended blocks at a constant the producer imports.
-- **Avoid:** adding a per-task view by reusing a session-shared Set — `toolsSoFar` is shared across a swarm, so a failed child listed a sibling's send; list every reader of a safety module's state before extending it.
-- **Better:** a word rule gets a negative table from the language, not only from the corpus: the 30-day replay had 0 hits for `denuevo`, yet the regex matched it.
-- **Better:** re-audit after a fix round that touches a gate module; R2 found the unlinked marker copy and the Spanish-word matches that R1's fixes introduced.
-
 ## 2026-09-30 — Confirmation gate enforced on the SDK path (`2aa6ce9`)
 - **Mistake (inherited, 04-11):** the gate was tested only on the openai path while production ran claude-sdk → a safety gate is asserted at the seam every runner shares (dispatcher `runner.execute`), not inside one runner; the population table per (origin × interactive × runner) is the audit artefact that finds the gap.
 - **Avoid:** an allow-list predicate on ONE argument of a tool that assembles argv from several (`resource` split on "." carried `--flags` and a write verb past a `method` read check) → validate every argv-bearing field with a plain-identifier rule AND reject at the tool.
@@ -148,3 +136,11 @@
 - **Better:** a pre-merge audit by reading found the breaker HALF_OPEN freeze three cloud audit rounds missed; execution checks afterwards (critic guard on a CLI-built db, 11 allowed / 18 refused) found the reserved-gate-id validation gap. Do both: read for unreachable-when-off, execute for the one path that is live.
 - **Mistake (step-1 check, same day):** told the operator to watch "tonight's first tuning run" without checking `TUNING_ENABLED` (off; last run 09-18) → before naming a run to watch, confirm its switch in the live process env (name + boolean only). Same class, /diagnose 10-04: reported "Jarvis idle, nothing arrived since 05:55" from the absence of a router line; a message had arrived and stalled before its first log → "no log line" is not "no message": check the side-effect tables (`recall_audit`, telemetry) for the minute, and ask for the user's screen before saying nothing arrived.
 - **Mistake:** used `INDEX.md` as the "live KB untouched" tripwire in a brief; the live service rewrites it on every KB write, so the agent raised a false incident → tripwire only files the service does not write (`directives/core.md`), and settle an alarm by comparing the file's mtime with the db row's `updated_at`.
+
+## 2026-10-05 — V8.2 critic-unfixable causes (`45dcb0a`, `a370983`); PDF read failure (`113a1d8`, `6567f58`)
+- **Mistake:** verified a text-extraction fix by character count (6,134 chars) and shipped scrambled text → compare the output with an independent extractor (hash or token overlap) before calling it fixed; a second tool (`pdftotext`) was on the host and correct in 0.4 s.
+- **Mistake:** told the operator "the critic was right in all 10" from the critique text alone; the trace showed the critic's own search missed newer logs in two → a verdict about a judge needs the ground truth it judged, not its own summary.
+- **Avoid:** adding a rollback to a compare-and-set write — it removed a ref a concurrent run already indexed and could throw out of the loop; an append-only extension left uncited is harmless, so keep memory equal to storage and never undo.
+- **Avoid:** an explicit `Content-Length` on a `safeFetch` call with a body — the npm-undici dispatcher rejects it (`UND_ERR_INVALID_ARG`) and the tool reported only "fetch failed" for weeks; surface `cause.code` in tool errors.
+- **Better:** `deploy.sh` builds the WORKING TREE: an uncommitted change under audit goes live with it. Say so before handing the deploy line, or wait for the commit.
+- **Better:** matching free text against a project = slug + spaced slug + full name, folded in JS with Unicode word boundaries; SQLite `lower()`/`instr` is ASCII-only and the display name rarely appears in chat logs.
