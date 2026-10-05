@@ -432,6 +432,52 @@ const foldText = (s: string): string =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 
+/** Folded, word-bounded match patterns for a (trimmed, non-empty) subject — see
+ *  `retrieveRecentDayLogs` for the slug-first project resolution behind them. */
+function subjectTerms(db: Database.Database, needle: string): RegExp[] {
+  const folded = foldText(needle).trim();
+  let identity = [needle];
+  try {
+    const projects = db.prepare(`SELECT slug, name FROM projects`).all() as {
+      slug: string;
+      name: string;
+    }[];
+    const p =
+      projects.find((r) => foldText(r.slug).trim() === folded) ??
+      projects.find((r) => foldText(r.name).trim() === folded);
+    if (p) identity = [p.slug, p.slug.replace(/[-_]/g, " "), p.name];
+  } catch {
+    // projects absent (bare in-memory db) → raw subject only.
+  }
+  return [
+    ...new Set(identity.map((t) => foldText(t).trim()).filter(Boolean)),
+  ].map((t) => {
+    // Escaped literal, bounded by a non-letter/digit (or text edge) on both ends.
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, "u");
+  });
+}
+
+/** The 160-char window (from 30 before) of `original` around the earliest term
+ *  match, or null when no term matches. */
+function snippetAround(original: string, terms: RegExp[]): string | null {
+  const content = foldText(original);
+  const hits = terms.map((t) => content.search(t)).filter((i) => i >= 0);
+  if (hits.length === 0) return null;
+  // Map the folded offset back onto the original text (folding can shorten
+  // it, e.g. a decomposed "e\u0301"), so the snippet is not shifted.
+  const target = Math.min(...hits);
+  let at = 0;
+  let seen = 0;
+  for (const ch of original) {
+    if (seen >= target) break;
+    seen += foldText(ch).length;
+    at += ch.length;
+  }
+  const start = Math.max(0, at - 30);
+  return original.slice(start, start + 160);
+}
+
 /**
  * Recent day-log entries (`jarvis_files` under `logs/day-logs/`) that MENTION the
  * subject, newest-first → evidence refs (`kind='kb_entry'`, id=path, same shape as
@@ -471,27 +517,7 @@ export function retrieveRecentDayLogs(
   const retrievedAt = options.nowIso ?? new Date().toISOString();
   const limit = Math.min(options.limit ?? DEFAULT_DAYLOG_LIMIT, MAX_KB_LIMIT);
 
-  const folded = foldText(needle).trim();
-  let identity = [needle];
-  try {
-    const projects = db.prepare(`SELECT slug, name FROM projects`).all() as {
-      slug: string;
-      name: string;
-    }[];
-    const p =
-      projects.find((r) => foldText(r.slug).trim() === folded) ??
-      projects.find((r) => foldText(r.name).trim() === folded);
-    if (p) identity = [p.slug, p.slug.replace(/[-_]/g, " "), p.name];
-  } catch {
-    // projects absent (bare in-memory db) → raw subject only.
-  }
-  const terms = [
-    ...new Set(identity.map((t) => foldText(t).trim()).filter(Boolean)),
-  ].map((t) => {
-    // Escaped literal, bounded by a non-letter/digit (or text edge) on both ends.
-    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, "u");
-  });
+  const terms = subjectTerms(db, needle);
 
   const matches: { path: string; snippet: string }[] = [];
   try {
@@ -504,25 +530,9 @@ export function retrieveRecentDayLogs(
       .iterate() as IterableIterator<DayLogEvidenceRow>;
     for (const r of rows) {
       if (typeof r.content !== "string") continue;
-      const original = r.content;
-      const content = foldText(original);
-      const hits = terms.map((t) => content.search(t)).filter((i) => i >= 0);
-      if (hits.length === 0) continue;
-      // Map the folded offset back onto the original text (folding can shorten
-      // it, e.g. a decomposed "e\u0301"), so the snippet is not shifted.
-      const target = Math.min(...hits);
-      let at = 0;
-      let seen = 0;
-      for (const ch of original) {
-        if (seen >= target) break;
-        seen += foldText(ch).length;
-        at += ch.length;
-      }
-      const start = Math.max(0, at - 30);
-      matches.push({
-        path: r.path,
-        snippet: original.slice(start, start + 160),
-      });
+      const snippet = snippetAround(r.content, terms);
+      if (snippet === null) continue;
+      matches.push({ path: r.path, snippet });
       if (matches.length === limit) break;
     }
   } catch (e) {
@@ -554,6 +564,80 @@ export function retrieveRecentDayLogs(
       retrieved_at: retrievedAt,
     };
   });
+}
+
+/** Most KB refs one critique can pull into the re-author ledger. */
+export const MAX_CRITIQUE_KB_PATHS = 5;
+/** Most distinct path tokens looked up per critique (bounds the queries). */
+export const MAX_CRITIQUE_KB_LOOKUPS = 20;
+
+type KbFileRow = { path: string; title: unknown; content: unknown };
+
+/**
+ * KB files a critic critique names BY PATH (`logs/day-logs/2026-09-03.md`,
+ * `projects/<slug>/README.md`, …) → evidence refs, same shape as the KB/day-log
+ * passes. The critic verifies against a wider surface than the gathered ledger,
+ * so a `needs_revision` often demands a citation the author has no `[K]` entry
+ * for; the re-author appends these so the named source becomes citable. Tokens
+ * ending in `.md` are taken in first-seen order and deduped (the critique is split
+ * on non-path characters, so a comma- or paren-joined list still yields each path;
+ * path-character runs over 300 chars are skipped, which keeps the match linear); the first
+ * `MAX_CRITIQUE_KB_LOOKUPS` are looked up by EXACT `path = ?` and at most
+ * `MAX_CRITIQUE_KB_PATHS` found refs are kept — model text is never a SQL
+ * fragment or a LIKE/GLOB/FTS pattern, so an unknown or
+ * metacharacter token simply finds nothing. Excerpt: title + the snippet around
+ * the subject (same terms as the day-log pass) or the head of the content.
+ * Non-string rows are skipped. Never throws: a missing table degrades to empty.
+ */
+export function retrieveKbPathsFromCritique(
+  critique: string,
+  options: RetrievalOptions = {},
+): EvidenceRef[] {
+  const paths = [
+    ...new Set(
+      critique
+        .split(/[^\p{L}\p{N}_./-]+/u)
+        .filter((t) => t.length <= 300)
+        .flatMap(
+          (t) => t.match(/[\p{L}\p{N}_./-]*\.md(?![\p{L}\p{N}_/-])/gu) ?? [],
+        ),
+    ),
+  ].slice(0, MAX_CRITIQUE_KB_LOOKUPS);
+  if (paths.length === 0) return [];
+  const db = options.db ?? getDatabase();
+  const retrievedAt = options.nowIso ?? new Date().toISOString();
+  const needle = options.subject?.trim();
+
+  try {
+    const terms = needle ? subjectTerms(db, needle) : [];
+    const stmt = db.prepare(
+      `SELECT path, title, content FROM jarvis_files WHERE path = ?`,
+    );
+    const refs: EvidenceRef[] = [];
+    for (const path of paths) {
+      const r = stmt.get(path) as KbFileRow | undefined;
+      if (!r || typeof r.title !== "string" || typeof r.content !== "string")
+        continue;
+      const snippet =
+        snippetAround(r.content, terms) ?? r.content.slice(0, 160);
+      refs.push({
+        kind: "kb_entry" as const,
+        id: r.path,
+        // Ruling 3c (audit round 4 S2): scrubbed before the cut.
+        excerpt: scrubSecrets(`${r.title} — …${snippet.trim()}…`).slice(0, 200),
+        retrieved_at: retrievedAt,
+      });
+      if (refs.length === MAX_CRITIQUE_KB_PATHS) break;
+    }
+    return refs;
+  } catch (e) {
+    // jarvis_files absent (bare in-memory db) → skip, never throw.
+    log.debug(
+      { err: errMsg(e) },
+      "decompose: critique KB-path retrieval unavailable (jarvis_files) — skipped",
+    );
+    return [];
+  }
 }
 
 /**

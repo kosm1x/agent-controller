@@ -19,7 +19,8 @@
  * from `gatherEvidence` is rendered to the author, passed to `resolveCitations`,
  * to `runCriticLoop`, and to `computeConfidence`. Any reorder makes every `[K]`
  * resolve to the wrong evidence with no error — so the array is threaded
- * unchanged through one judgment's whole pipeline.
+ * unchanged through one judgment's whole pipeline, except that a critic-loop
+ * re-author may APPEND refs (never reorder; see `runCriticAndFinalize`).
  */
 
 import type Database from "better-sqlite3";
@@ -29,6 +30,7 @@ import { createLogger } from "../logger.js";
 import {
   decomposeQuestion,
   gatherEvidence,
+  retrieveKbPathsFromCritique,
   DecompositionError,
 } from "./decompose.js";
 import { shouldRunMultiOption } from "./should-multi-option.js";
@@ -51,6 +53,7 @@ import {
 import {
   insertJudgment,
   updateJudgmentProse,
+  updateJudgmentEvidenceRefs,
   updateJudgmentVerdict,
   normalizePosture,
   type JudgmentRow,
@@ -202,8 +205,12 @@ interface ReauthorContext {
  * (`reRunJudgment`). Assumes the judgment row + its initial attributed_claims are
  * already persisted. The reAuthor closure persists each revision so the row +
  * claims stay consistent and the FINAL `runCritic` marks contradictions on the
- * FINAL claim set — which `computeConfidence` then reads. Returns the final prose
- * (the loop may have re-authored it) + the floor-adjusted color.
+ * FINAL claim set — which `computeConfidence` then reads. The re-author also
+ * APPENDS the KB files the critique names by path (not already in the ledger), so
+ * a demanded citation becomes citable; existing indexes never move, and the
+ * extended ledger is persisted (compare-and-set) before the prose that may cite
+ * it. Returns the final prose (the loop may have re-authored it) + the
+ * floor-adjusted color.
  */
 async function runCriticAndFinalize(
   judgmentId: number,
@@ -218,14 +225,46 @@ async function runCriticAndFinalize(
 ): Promise<{ prose: string; color: ConfidenceColor }> {
   const { db, signal, nowIso } = opts;
   let finalProse = initial.prose;
+  let finalLedger = ledger;
 
   const reAuthor: ReAuthorFn = async (input, critique) => {
+    const have = new Set(input.ledger.map((r) => `${r.kind}:${r.id}`));
+    const added = retrieveKbPathsFromCritique(critique, {
+      db,
+      nowIso,
+      subject: ctx.subject,
+    }).filter((r) => !have.has(`${r.kind}:${r.id}`));
+    let used = input.ledger;
     try {
+      if (added.length > 0) {
+        // Stored refs first (compare-and-set against the ledger this run started
+        // from, so a concurrent §13 append is never clobbered): an append-only
+        // extension is harmless to any prose, whereas prose citing a ref the
+        // stored array lacks would not resolve.
+        const extended = [...input.ledger, ...added];
+        if (
+          updateJudgmentEvidenceRefs(judgmentId, input.ledger, extended, db)
+        ) {
+          // Stored now, so it is the ledger on EVERY path from here (success or
+          // failure): later passes and any later compare-and-set must match it.
+          used = extended;
+          finalLedger = used;
+          log.info(
+            { judgmentId, count: added.length, paths: added.map((a) => a.id) },
+            "re-author: appended critique-named KB refs to the ledger",
+          );
+        } else {
+          log.warn(
+            { judgmentId },
+            "re-author: stored evidence refs changed concurrently — ledger not extended",
+          );
+        }
+      }
       const re = await authorJudgment(
         {
           question: ctx.question,
           contextSummary: ctx.contextDigest,
-          ledger: input.ledger,
+          ledger: used,
           options: ctx.options,
           subject: ctx.subject,
           posture: ctx.posture,
@@ -233,19 +272,22 @@ async function runCriticAndFinalize(
         },
         { signal },
       );
-      const r = resolveCitations(re.prose, input.ledger, { startClaimId: 0 });
-      finalProse = re.prose;
+      const r = resolveCitations(re.prose, used, { startClaimId: 0 });
       updateJudgmentProse(judgmentId, re.prose, db);
+      // Finalize judges the prose that is actually stored.
+      finalProse = re.prose;
       replaceAttributedClaims(judgmentId, r.resolved, db);
       return {
         prose: re.prose,
         claims: r.resolved,
         unresolved: r.unresolved,
-        ledger: input.ledger,
+        ledger: used,
       };
     } catch (err) {
       // A failed re-author degrades to the prior draft (no fabricated revision);
-      // the loop runs its 2nd critic on the same prose, then escalates.
+      // the loop runs its 2nd critic on the same prose, then escalates. A stored
+      // extension stays (append-only, so no prior index moves and an uncited
+      // kb_entry never counts toward confidence) and is returned as the ledger.
       log.warn(
         { judgmentId, err: errMsg(err) },
         "re-author failed — keeping prior draft",
@@ -254,7 +296,7 @@ async function runCriticAndFinalize(
         prose: input.prose,
         claims: input.claims,
         unresolved: input.unresolved,
-        ledger: input.ledger,
+        ledger: used,
       };
     }
   };
@@ -278,12 +320,13 @@ async function runCriticAndFinalize(
   // UNCITED kb_entry must NOT inflate distinct_sources (green needs ≥3). Count a
   // kb_entry only when the final prose actually cites it; task refs keep their
   // prior ledger-wide treatment (unchanged). resolveCitations is deterministic.
+  // `finalLedger`: a revision may have appended refs its prose cites.
   const citedKeys = new Set(
-    resolveCitations(finalProse, ledger, { startClaimId: 0 })
+    resolveCitations(finalProse, finalLedger, { startClaimId: 0 })
       .resolved.flatMap((c) => c.evidence_refs)
       .map((r) => `${r.kind}:${r.id}`),
   );
-  const confidenceRefs = ledger.filter(
+  const confidenceRefs = finalLedger.filter(
     (r) => r.kind !== "kb_entry" || citedKeys.has(`${r.kind}:${r.id}`),
   );
   const conf = computeConfidence(

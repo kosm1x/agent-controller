@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock the LLM-calling leaves; keep cite/confidence/judgments-store REAL against
 // an in-memory DB so the orchestration (selection, ledger threading, FK-ordered
 // persistence, posture normalization, §10 floor, reAuthor revision) is exercised.
-vi.mock("./decompose.js", () => ({
+vi.mock("./decompose.js", async () => ({
   decomposeQuestion: vi.fn(),
   gatherEvidence: vi.fn(),
   DecompositionError: class DecompositionError extends Error {},
+  // REAL: the re-author's critique-named KB lookup runs on the in-memory DB.
+  retrieveKbPathsFromCritique: (
+    await vi.importActual<typeof import("./decompose.js")>("./decompose.js")
+  ).retrieveKbPathsFromCritique,
 }));
 vi.mock("./multi-option.js", () => ({ runMultiOption: vi.fn() }));
 vi.mock("./author.js", () => ({ authorJudgment: vi.fn() }));
@@ -26,11 +30,13 @@ import {
 } from "./decompose.js";
 import { runMultiOption } from "./multi-option.js";
 import { authorJudgment } from "./author.js";
-import { runCriticLoop } from "./critic.js";
+import { runCriticLoop, type ReAuthorResult } from "./critic.js";
 import {
+  appendEvidenceRef,
   getJudgmentById,
   getJudgmentsForBriefing,
   insertJudgment,
+  updateJudgmentEvidenceRefs,
 } from "./judgments-store.js";
 import type { Briefing, Judgment } from "../../briefing/schema.js";
 import type { EvidenceRef } from "./types.js";
@@ -495,5 +501,289 @@ describe("reRunJudgment (§13 concession)", () => {
     const after = getJudgmentById(id)!;
     expect(after.prose).toBe(result.prose);
     expect(after.confidence).toBe(result.confidence);
+  });
+});
+
+describe("critic-named KB paths extend the re-author ledger (append-only)", () => {
+  // Synthetic names only (public repo).
+  const BID = "11111111-1111-1111-1111-111111111111";
+  const KB_PATH = "projects/quell-harbor/research/plan-2026-06-24.md";
+  const CRITIQUE = `The next-step claim is unsupported; cite \`${KB_PATH}\`.`;
+  const REVISED =
+    "The task is blocked [1]. The plan names the gate review [4].";
+  let reAuthored: ReAuthorResult | undefined;
+
+  beforeEach(() => {
+    reAuthored = undefined;
+    seedBriefingRow(BID);
+    getDatabase()
+      .prepare(
+        `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+      )
+      .run("kb-plan", KB_PATH, "Quell plan", "Next step: the gate review.");
+  });
+  const critiqueSays = (critique: string) =>
+    vi.mocked(runCriticLoop).mockImplementation(async (input, deps) => {
+      reAuthored = await deps.reAuthor(input, critique);
+      return { ...approvedVerdict, iterations: 2 };
+    });
+  const run = async () => {
+    await runJudgmentAssembly(briefing([judgment()]), {
+      nowIso: NOW,
+      db: getDatabase(),
+    });
+    return getJudgmentsForBriefing(BID)[0];
+  };
+  const reAuthorLedger = () =>
+    vi.mocked(authorJudgment).mock.calls[1][0].ledger;
+  const stored = (json: string | null) => JSON.parse(json ?? "[]");
+
+  it("re-author sees the named file appended LAST, earlier entries unmoved", async () => {
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    await run();
+    const seen = reAuthorLedger();
+    expect(seen).toHaveLength(4);
+    expect(seen.slice(0, 3)).toEqual(LEDGER);
+    expect(seen[3]).toMatchObject({
+      kind: "kb_entry",
+      id: KB_PATH,
+      retrieved_at: NOW,
+    });
+  });
+
+  it("the revised [K] on the appended ref resolves and the loop gets that ledger", async () => {
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    expect(reAuthored?.unresolved).toEqual([]);
+    expect(reAuthored?.ledger).toEqual(reAuthorLedger());
+    expect(
+      reAuthored?.claims.some((c) =>
+        c.evidence_refs.some((r) => r.id === KB_PATH),
+      ),
+    ).toBe(true);
+    expect(JSON.parse(row.criticTrailJson ?? "{}").verdict).toBe("approved");
+  });
+
+  it("stored evidence_refs_json carries the appended ref at the cited index", async () => {
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    const refs = stored(row.evidenceRefsJson);
+    expect(refs).toEqual(reAuthorLedger());
+    expect(refs[4 - 1].id).toBe(KB_PATH); // prose cites [4]
+  });
+
+  it("a named path already in the ledger appends nothing", async () => {
+    const withKb = [
+      ...LEDGER,
+      {
+        kind: "kb_entry" as const,
+        id: KB_PATH,
+        excerpt: "plan",
+        retrieved_at: NOW,
+      },
+    ];
+    vi.mocked(gatherEvidence).mockReturnValue(withKb);
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    expect(reAuthorLedger()).toEqual(withKb);
+    expect(stored(row.evidenceRefsJson)).toEqual(withKb);
+  });
+
+  it.each([
+    ["no path", "tighten the citations"],
+    ["an unknown path", "cite `projects/ghost/none.md` instead"],
+  ])(
+    "a critique naming %s leaves ledger and stored JSON untouched",
+    async (_l, critique) => {
+      critiqueSays(critique);
+      vi.mocked(authorJudgment)
+        .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+        .mockResolvedValueOnce({ prose: DIRECT_PROSE });
+      const row = await run();
+      expect(reAuthorLedger()).toEqual(LEDGER);
+      expect(reAuthored?.ledger).toEqual(LEDGER);
+      expect(stored(row.evidenceRefsJson)).toEqual(LEDGER);
+    },
+  );
+
+  it("post-loop confidence counts a CITED appended kb_entry", async () => {
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    const basis = JSON.parse(row.confidenceBasisJson ?? "{}");
+    expect(basis.distinct_sources).toBe(4); // 3 non-KB + the cited appended KB
+  });
+
+  it("a failed re-author keeps the prior draft; the stored extension stays and is returned", async () => {
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockRejectedValueOnce(new Error("boom"));
+    const row = await run();
+    expect(row.prose).toBe(DIRECT_PROSE);
+    expect(reAuthored?.prose).toBe(DIRECT_PROSE);
+    expect(reAuthored?.ledger).toEqual(reAuthorLedger());
+    expect(reAuthored?.ledger).toHaveLength(4);
+    expect(stored(row.evidenceRefsJson)).toEqual(reAuthored?.ledger);
+    // The prior draft cites only [1]-[3]; the uncited kb_entry never counts.
+    expect(JSON.parse(row.confidenceBasisJson ?? "{}").distinct_sources).toBe(
+      3,
+    );
+  });
+
+  it("a concurrent stored-refs change blocks the extension (compare-and-set)", async () => {
+    const op: EvidenceRef = {
+      kind: "operator_message",
+      id: "op-2",
+      excerpt: "A second pushback landed meanwhile",
+      retrieved_at: NOW,
+    };
+    vi.mocked(runCriticLoop).mockImplementation(async (input, deps) => {
+      appendEvidenceRef(input.judgmentId, op); // another run's append, mid-loop
+      reAuthored = await deps.reAuthor(input, CRITIQUE);
+      return { ...approvedVerdict, iterations: 2 };
+    });
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE });
+    const row = await run();
+    expect(stored(row.evidenceRefsJson)).toEqual([...LEDGER, op]);
+    expect(reAuthorLedger()).toEqual(LEDGER);
+    expect(reAuthored?.ledger).toEqual(LEDGER);
+  });
+
+  it("a revision that fails to persist keeps the prior prose; the extension stays, uncited", async () => {
+    getDatabase().exec(
+      `CREATE TRIGGER fail_prose BEFORE UPDATE OF prose ON judgments
+       BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;`,
+    );
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    expect(row.prose).toBe(DIRECT_PROSE);
+    expect(reAuthored?.prose).toBe(DIRECT_PROSE);
+    expect(reAuthored?.ledger).toEqual(reAuthorLedger());
+    expect(reAuthored?.ledger).toHaveLength(4);
+    expect(stored(row.evidenceRefsJson)).toEqual(reAuthored?.ledger);
+    expect(JSON.parse(row.confidenceBasisJson ?? "{}").distinct_sources).toBe(
+      3,
+    );
+  });
+
+  it("keeps the extension once the revised prose is stored (claims write failed)", async () => {
+    vi.mocked(runCriticLoop).mockImplementation(async (input, deps) => {
+      // Armed after the initial claims insert, so only the re-author's write fails.
+      getDatabase().exec(
+        `CREATE TRIGGER fail_claims BEFORE INSERT ON attributed_claims
+         BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;`,
+      );
+      reAuthored = await deps.reAuthor(input, CRITIQUE);
+      return { ...approvedVerdict, iterations: 2 };
+    });
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: REVISED });
+    const row = await run();
+    expect(reAuthored?.prose).toBe(DIRECT_PROSE);
+    expect(reAuthored?.ledger).toEqual(reAuthorLedger());
+    // The stored prose cites [4], so the stored refs must still carry it...
+    expect(row.prose).toBe(REVISED);
+    expect(stored(row.evidenceRefsJson)[3].id).toBe(KB_PATH);
+    // ...and finalize judged that stored prose: 3 non-KB + the cited KB ref.
+    expect(JSON.parse(row.confidenceBasisJson ?? "{}").distinct_sources).toBe(
+      4,
+    );
+  });
+
+  it("the concession re-run gets the same append-only extension", async () => {
+    const id = insertJudgment({
+      briefingId: BID,
+      subject: "task-42",
+      posture: "at_risk",
+      prose: "Original prose [1].",
+      createdAt: NOW,
+      evidenceRefsJson: JSON.stringify(LEDGER),
+    });
+    const snapshot = getJudgmentById(id)!; // pre-append, as handlePushback passes it
+    const operatorEvidence: EvidenceRef = {
+      kind: "operator_message",
+      id: "op-1",
+      excerpt: "The gate review moved to next week",
+      retrieved_at: NOW,
+    };
+    appendEvidenceRef(id, operatorEvidence); // handlePushback's DB append
+    critiqueSays(CRITIQUE);
+    vi.mocked(authorJudgment)
+      .mockResolvedValueOnce({ prose: DIRECT_PROSE })
+      .mockResolvedValueOnce({ prose: "Blocked [1]; plan says review [5]." });
+    await reRunJudgment(snapshot, operatorEvidence);
+    const seen = reAuthorLedger();
+    expect(seen.slice(0, 4)).toEqual([...LEDGER, operatorEvidence]);
+    expect(seen[4].id).toBe(KB_PATH);
+    expect(stored(getJudgmentById(id)!.evidenceRefsJson)).toEqual(seen);
+    expect(reAuthored?.unresolved).toEqual([]);
+  });
+});
+
+describe("updateJudgmentEvidenceRefs (compare-and-set)", () => {
+  const BID = "11111111-1111-1111-1111-111111111111";
+  const KB: EvidenceRef = {
+    kind: "kb_entry",
+    id: "projects/quell-harbor/notes.md",
+    excerpt: "Quell notes",
+    retrieved_at: NOW,
+  };
+  let id: number;
+  beforeEach(() => {
+    seedBriefingRow(BID);
+    id = insertJudgment({
+      briefingId: BID,
+      subject: "task-42",
+      posture: "at_risk",
+      prose: "Original prose [1].",
+      createdAt: NOW,
+      evidenceRefsJson: JSON.stringify(LEDGER),
+    });
+  });
+  const storedRefs = () =>
+    JSON.parse(getJudgmentById(id)!.evidenceRefsJson ?? "[]");
+
+  it("writes the new ledger when the stored refs equal the expected ones", () => {
+    expect(updateJudgmentEvidenceRefs(id, LEDGER, [...LEDGER, KB])).toBe(true);
+    expect(storedRefs()).toEqual([...LEDGER, KB]);
+  });
+
+  it.each([
+    ["a changed excerpt", { excerpt: "Task one unblocked" }],
+    ["a changed retrieved_at", { retrieved_at: "2026-06-18T12:00:00.000Z" }],
+  ])("same count but %s → false and nothing written", (_l, change) => {
+    const expected = [{ ...LEDGER[0], ...change }, ...LEDGER.slice(1)];
+    expect(updateJudgmentEvidenceRefs(id, expected, [...expected, KB])).toBe(
+      false,
+    );
+    expect(storedRefs()).toEqual(LEDGER);
+  });
+
+  it("an unknown judgment id → false", () => {
+    expect(updateJudgmentEvidenceRefs(id + 999, LEDGER, [...LEDGER, KB])).toBe(
+      false,
+    );
+    expect(storedRefs()).toEqual(LEDGER);
   });
 });

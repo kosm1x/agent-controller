@@ -316,6 +316,43 @@ export function updateJudgmentProse(
   });
 }
 
+/** Order-independent identity of a ref array (stored key order may differ). */
+const refsKey = (refs: EvidenceRef[]): string =>
+  JSON.stringify(refs.map((r) => [r.kind, r.id, r.excerpt, r.retrieved_at]));
+
+/** Compare-and-set a judgment's `evidence_refs_json` to the full `ledger` (the
+ *  critic-loop re-author's append-only extension, or its rollback). Writes only
+ *  if the stored refs still equal `expected` — the ledger this run started from —
+ *  in one transaction, so a concurrent `appendEvidenceRef` (a second §13
+ *  pushback) is never clobbered; returns whether it wrote. Writes the whole
+ *  array so the stored order is exactly the in-memory order every `[K]` resolves
+ *  against — unlike `appendEvidenceRef`, whose (kind, excerpt) dedup could drop
+ *  a new path whose excerpt equals an existing one and shift every later index. */
+export function updateJudgmentEvidenceRefs(
+  id: number,
+  expected: EvidenceRef[],
+  ledger: EvidenceRef[],
+  db: Database.Database = getDatabase(),
+): boolean {
+  return writeWithRetry(() =>
+    db.transaction(() => {
+      const row = db
+        .prepare(`SELECT evidence_refs_json FROM judgments WHERE id = ?`)
+        .get(id) as { evidence_refs_json: string | null } | undefined;
+      if (
+        !row ||
+        refsKey(parseEvidenceRefs(row.evidence_refs_json)) !== refsKey(expected)
+      ) {
+        return false;
+      }
+      db.prepare(
+        `UPDATE judgments SET evidence_refs_json = ? WHERE id = ?`,
+      ).run(JSON.stringify(ledger), id);
+      return true;
+    })(),
+  );
+}
+
 /** Post-critic finalize: write the computed `confidence`, its basis, and the
  *  critic trail onto the judgment row. Null args leave that column unchanged is
  *  NOT the semantics — they SET the column (the producer always has all three

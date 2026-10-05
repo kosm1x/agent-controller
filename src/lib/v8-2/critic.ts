@@ -793,7 +793,8 @@ function finalize(
 export interface ReAuthorResult {
   prose: string;
   claims: ResolvedClaim[];
-  /** New ledger if re-retrieval changed it; falls back to the prior ledger. */
+  /** New ledger if re-retrieval changed it (append-only: existing `[K]` indexes
+   *  never move); falls back to the prior ledger. */
   ledger?: EvidenceRef[];
   unresolved?: UnresolvedClaim[];
 }
@@ -833,8 +834,9 @@ export interface CriticLoopResult extends CriticResult {
  * judgment is substantively sound, so `approved` beats mislabeling it "contradicted
  * by ground truth" (which also structurally caps the §17 unfixable rate). The
  * residual critique is preserved in the critic trail — visible in the AUDIT trail
- * (`mc-ctl judgments <id>`), NOT rendered in the operator's brief. Phase 2 widens
- * the gather ledger so these citations become fixable at the source.
+ * (`mc-ctl judgments <id>`), NOT rendered in the operator's brief. The re-author
+ * appends the KB files a critique names by path (`retrieveKbPathsFromCritique`),
+ * so a demanded file citation is fixable; a source not named by path stays out.
  */
 export function escalationDisposition(
   last: CriticResult,

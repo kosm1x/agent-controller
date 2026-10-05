@@ -25,6 +25,9 @@ import {
   retrieveTasksForBoundaries,
   retrieveKbForQuery,
   retrieveRecentDayLogs,
+  retrieveKbPathsFromCritique,
+  MAX_CRITIQUE_KB_PATHS,
+  MAX_CRITIQUE_KB_LOOKUPS,
   gatherEvidence,
   saveDecomposition,
   MAX_ANGLE_LIMIT,
@@ -861,5 +864,179 @@ describe("audit R4 S2: KB and day-log excerpts carry no stored value", () => {
     expect(refs).toHaveLength(1);
     expect(refs[0].excerpt).toContain("[oculto");
     expect(refs[0].excerpt).not.toContain(SEC);
+  });
+});
+
+describe("retrieveKbPathsFromCritique — KB files the critique names by path", () => {
+  // Synthetic names only (public repo).
+  const README = "projects/zeta-forge/README.md";
+  const DAY = "logs/day-logs/2026-09-03.md";
+  const NOTE = "projects/zeta-forge/research/notes-2026-06-24.md";
+  const LONG = `${"a".repeat(300)} then zeta-forge shipped the anvil. ${"b".repeat(200)}`;
+  const addFile = (path: string, title: unknown, content: unknown) =>
+    getDatabase()
+      .prepare(
+        `INSERT INTO jarvis_files (id, path, title, content) VALUES (?,?,?,?)`,
+      )
+      .run(`f-${path}`, path, title, content);
+  const refs = (critique: string, subject?: string) =>
+    retrieveKbPathsFromCritique(critique, {
+      db: getDatabase(),
+      nowIso: NOW,
+      subject,
+    });
+  beforeEach(() => {
+    initDatabase(":memory:");
+    getDatabase()
+      .prepare(`INSERT INTO projects (id, slug, name) VALUES (?,?,?)`)
+      .run("pz", "zeta-forge", "Zeta Forge - Synthetic Anvil");
+    addFile(README, "Zeta Forge", "Zeta Forge readme: the anvil project.");
+    addFile(DAY, "day 09-03", LONG);
+    addFile(NOTE, "Notes", "Research notes on the anvil.");
+    invalidateSecretRefs();
+  });
+  afterEach(() => {
+    closeDatabase();
+    invalidateSecretRefs();
+  });
+
+  it("extracts paths from backticks, quotes, parentheses and trailing punctuation", () => {
+    const critique =
+      `Cite \`${README}\`. The log "${DAY}", and (${NOTE}): ` +
+      `see '${README}', also ${NOTE}.`;
+    const out = refs(critique);
+    expect(out.map((r) => r.id)).toEqual([README, DAY, NOTE]); // deduped, first-seen
+    expect(out.every((r) => r.kind === "kb_entry")).toBe(true);
+    expect(out[0].retrieved_at).toBe(NOW);
+  });
+
+  it("considers at most MAX_CRITIQUE_KB_PATHS (5) distinct paths, keeping the first", () => {
+    const paths = [1, 2, 3, 4, 5, 6].map((n) => `projects/cap/p${n}.md`);
+    for (const p of paths) addFile(p, "cap", `cap file ${p}`);
+    expect(MAX_CRITIQUE_KB_PATHS).toBe(5);
+    expect(refs(paths.join(" and ")).map((r) => r.id)).toEqual(
+      paths.slice(0, 5),
+    );
+  });
+
+  it("caps FOUND refs, so unknown tokens do not crowd out a real path", () => {
+    const ghosts = [1, 2, 3, 4, 5].map((n) => `projects/ghost/g${n}.md`);
+    expect(refs(`${ghosts.join(" ")} then ${README}`).map((r) => r.id)).toEqual(
+      [README],
+    );
+  });
+
+  it("bounds lookups at MAX_CRITIQUE_KB_LOOKUPS (20) distinct tokens", () => {
+    expect(MAX_CRITIQUE_KB_LOOKUPS).toBe(20);
+    const ghosts = Array.from(
+      { length: 20 },
+      (_, n) => `projects/ghost/g${n}.md`,
+    );
+    expect(refs(`${ghosts.join(" ")} then ${README}`)).toEqual([]);
+    expect(refs(`${ghosts.slice(1).join(" ")} then ${README}`)).toHaveLength(1);
+  });
+
+  it("a 50k-char whitespace-free token completes fast and yields nothing", () => {
+    const t0 = performance.now();
+    expect(refs(`see ${"a".repeat(50_000)} now`)).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+
+  it("a comma-joined list with no spaces (> 300 chars) still yields the stored paths", () => {
+    const ghosts = Array.from(
+      { length: 10 },
+      (_, n) => `projects/ghost-archive/unknown-file-${n}.md`,
+    );
+    const list = [...ghosts.slice(0, 5), README, ...ghosts.slice(5), NOTE];
+    const critique = `cite:${list.join(",")}.`;
+    expect(list).toHaveLength(12);
+    expect(critique.length).toBeGreaterThan(300);
+    expect(refs(critique).map((r) => r.id)).toEqual([README, NOTE]);
+  });
+
+  it("does not extract .mdx / .md5 tokens as .md paths", () => {
+    addFile("projects/zeta-forge/x.md", "x", "x file");
+    addFile("projects/zeta-forge/y.md", "y", "y file");
+    expect(
+      refs("see projects/zeta-forge/x.mdx and projects/zeta-forge/y.md5"),
+    ).toEqual([]);
+  });
+
+  it("skips a path that is not stored", () => {
+    expect(
+      refs(`cite projects/ghost/README.md and ${README}`).map((r) => r.id),
+    ).toEqual([README]);
+  });
+
+  it("SQL/glob metacharacters in a path-like token are inert", () => {
+    const critique =
+      "see `projects/%.md`, `*.md`, `projects/zeta-forge/*.md`, " +
+      "`projects/zeta_forge/README.md` and `x';DROP TABLE jarvis_files;--.md`";
+    const count = () =>
+      (
+        getDatabase()
+          .prepare(`SELECT COUNT(*) AS n FROM jarvis_files`)
+          .get() as {
+          n: number;
+        }
+      ).n;
+    const before = count();
+    expect(refs(critique)).toEqual([]);
+    expect(count()).toBe(before);
+  });
+
+  it("'..' and absolute-looking tokens match only an identical stored path", () => {
+    expect(
+      refs("see ../zeta-forge/README.md and /projects/zeta-forge/README.md"),
+    ).toEqual([]);
+    addFile("/abs/kept.md", "abs", "absolute-looking stored path");
+    expect(refs("see `/abs/kept.md`").map((r) => r.id)).toEqual([
+      "/abs/kept.md",
+    ]);
+  });
+
+  it("anchors the snippet on the subject; falls back to the head of the content", () => {
+    const at = LONG.indexOf("zeta-forge");
+    const [anchored] = refs(`cite ${DAY}`, "Zeta Forge - Synthetic Anvil");
+    expect(anchored.excerpt).toBe(
+      `day 09-03 — …${LONG.slice(at - 30, at + 130).trim()}…`,
+    );
+    const [head] = refs(`cite ${DAY}`);
+    expect(head.excerpt).toBe(`day 09-03 — …${LONG.slice(0, 160)}…`);
+    const [noHit] = refs(`cite ${DAY}`, "Unrelated Subject");
+    expect(noHit.excerpt).toBe(head.excerpt);
+  });
+
+  it("scrubs a stored value BEFORE the 200-char cut", () => {
+    const SEC = "pw-" + "z".repeat(14);
+    getDatabase()
+      .prepare("INSERT INTO user_facts (category, key, value) VALUES (?, ?, ?)")
+      .run("projects", "acme_ftp_password", SEC);
+    invalidateSecretRefs();
+    // title 180 + " — …" puts the value across char 200: a cut-first excerpt
+    // would keep a partial value the scrub no longer recognises.
+    addFile(
+      "projects/zeta-forge/creds.md",
+      "T".repeat(180),
+      `x x x x x ${SEC} tail`,
+    );
+    const [ref] = refs("cite projects/zeta-forge/creds.md");
+    expect(ref.excerpt.length).toBeLessThanOrEqual(200);
+    expect(ref.excerpt).not.toContain("pw-z");
+  });
+
+  it("skips rows whose content or title is not a string", () => {
+    addFile("projects/zeta-forge/blob.md", "blob", Buffer.from("binary"));
+    addFile("projects/zeta-forge/blob-title.md", Buffer.from("t"), "text");
+    expect(
+      refs(
+        `cite projects/zeta-forge/blob.md, projects/zeta-forge/blob-title.md, ${README}`,
+      ).map((r) => r.id),
+    ).toEqual([README]);
+  });
+
+  it("degrades to [] (never throws) when jarvis_files is absent", () => {
+    getDatabase().exec("DROP TABLE jarvis_files_fts; DROP TABLE jarvis_files;");
+    expect(refs(`cite ${README}`)).toEqual([]);
   });
 });
