@@ -144,3 +144,4 @@
 - **Avoid:** an explicit `Content-Length` on a `safeFetch` call with a body — the npm-undici dispatcher rejects it (`UND_ERR_INVALID_ARG`) and the tool reported only "fetch failed" for weeks; surface `cause.code` in tool errors.
 - **Better:** `deploy.sh` builds the WORKING TREE: an uncommitted change under audit goes live with it. Say so before handing the deploy line, or wait for the commit.
 - **Better:** matching free text against a project = slug + spaced slug + full name, folded in JS with Unicode word boundaries; SQLite `lower()`/`instr` is ASCII-only and the display name rarely appears in chat logs.
+- **Avoid:** two implementers in one checkout and `git stash` / `prettier --write` — one agent's stash briefly hid the other's edits, and `--write` reformatted lines outside the change → baseline via `git show HEAD:<file> | prettier --stdin-filepath`, `--check` only; say so in every brief that shares a tree.

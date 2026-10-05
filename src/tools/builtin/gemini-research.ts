@@ -15,7 +15,11 @@ import { join, basename, extname } from "node:path";
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { fetchJson, HttpStatusError } from "../../lib/fetch-json.js";
-import { safeFetch, validateOutboundUrl } from "../../lib/url-safety.js";
+import {
+  fetchCauseCode,
+  safeFetch,
+  validateOutboundUrl,
+} from "../../lib/url-safety.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { getUserFacts } from "../../db/user-facts.js";
 import { scrubSecrets } from "../../lib/secret-refs.js";
@@ -331,7 +335,7 @@ EDGE CASES:
         return JSON.stringify({
           error: msg.includes("aborted")
             ? `Download timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
-            : `Download failed: ${msg}`,
+            : `Download failed: ${msg}${fetchCauseCode(err)}`,
         });
       }
     } else {
@@ -509,18 +513,10 @@ EDGE CASES:
       const msg = err instanceof Error ? err.message : String(err);
       // Surface only the cause's code: its message can carry the upload URL,
       // and the phase-1 URL carries the API key.
-      const cause = err instanceof Error ? err.cause : undefined;
-      const code =
-        cause !== null &&
-        typeof cause === "object" &&
-        "code" in cause &&
-        typeof cause.code === "string"
-          ? ` (${cause.code})`
-          : "";
       return JSON.stringify({
         error: msg.includes("aborted")
           ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`
-          : `Upload failed: ${msg}${code}`,
+          : `Upload failed: ${msg}${fetchCauseCode(err)}`,
       });
     } finally {
       // Clear the abort timer on every exit path — was previously scattered
@@ -710,7 +706,7 @@ EDGE CASES:
       return JSON.stringify({
         error: msg.includes("aborted")
           ? `Timed out after ${GENERATE_TIMEOUT_MS / 1000}s. Try a shorter query or use gemini-2.5-flash.`
-          : `Research failed: ${msg}`,
+          : `Research failed: ${msg}${fetchCauseCode(err)}`,
       });
     }
   },
@@ -931,7 +927,7 @@ EDGE CASES:
       return JSON.stringify({
         error: msg.includes("aborted")
           ? `Script generation timed out after ${GENERATE_TIMEOUT_MS / 1000}s`
-          : `Script generation failed: ${msg}`,
+          : `Script generation failed: ${msg}${fetchCauseCode(err)}`,
       });
     }
 
@@ -1050,7 +1046,7 @@ EDGE CASES:
         files_used: files.map((f) => f.display_name),
         error: msg.includes("aborted")
           ? `TTS timed out after ${TTS_TIMEOUT_MS / 1000}s`
-          : `TTS failed: ${msg}`,
+          : `TTS failed: ${msg}${fetchCauseCode(err)}`,
         note: "Script generated but TTS failed. Transcript available above.",
       });
     }

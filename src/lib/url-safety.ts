@@ -688,3 +688,21 @@ export async function safeFetch(
     cause: new Error(`too many redirects (>${MAX_SAFE_REDIRECTS}) from ${current}`),
   });
 }
+
+/**
+ * `" (CODE)"` from a fetch rejection's `cause.code` (`UND_ERR_*`, `ECONNRESET`,
+ * `ERR_SSRF_BLOCKED`), else `""`. A bare "fetch failed" says nothing; append
+ * this to the model-visible error. Only the code is surfaced: the cause's
+ * message can carry the request URL, and some URLs carry an API key.
+ * A code that is not an upper-case constant (≤ 64 chars) is dropped too.
+ */
+export function fetchCauseCode(err: unknown): string {
+  const cause = err instanceof Error ? err.cause : undefined;
+  return cause !== null &&
+    typeof cause === "object" &&
+    "code" in cause &&
+    typeof cause.code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,63}$/.test(cause.code)
+    ? ` (${cause.code})`
+    : "";
+}

@@ -4,6 +4,7 @@ import {
   geminiResearchTool,
   geminiAudioOverviewTool,
 } from "./gemini-research.js";
+import { fetchCauseCode } from "../../lib/url-safety.js";
 
 // ---------------------------------------------------------------------------
 // Global mocks
@@ -636,5 +637,105 @@ describe("missing Gemini key", () => {
       "No Gemini API key. Set GEMINI_API_KEY env var or store via user_fact_set (category: projects, key: gemini_api_key).",
     );
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+// Queue §2026-10-05 item 8: every generic fetch-failure path names the
+// cause's code, never its message (which can carry the keyed URL).
+describe("fetch failure cause code", () => {
+  const rejection = () =>
+    new TypeError("fetch failed", {
+      cause: Object.assign(
+        new Error(
+          "connect ECONNRESET https://generativelanguage.googleapis.com/v1beta/x?key=test-key-123",
+        ),
+        { code: "UND_ERR_X" },
+      ),
+    });
+
+  function expectNoLeak(raw: string) {
+    expect(raw).not.toContain("ECONNRESET");
+    expect(raw).not.toContain("test-key-123");
+    expect(raw).not.toMatch(/https?:\/\//);
+  }
+
+  it("fetchCauseCode: absent cause, non-string code, string code", () => {
+    expect(fetchCauseCode(new Error("x"))).toBe("");
+    expect(fetchCauseCode("fetch failed")).toBe("");
+    expect(
+      fetchCauseCode(new TypeError("fetch failed", { cause: { code: 42 } })),
+    ).toBe("");
+    expect(fetchCauseCode(rejection())).toBe(" (UND_ERR_X)");
+  });
+
+  it("fetchCauseCode: only a constant-shaped code passes", () => {
+    const withCode = (code: string) =>
+      new TypeError("fetch failed", { cause: { code } });
+    expect(fetchCauseCode(withCode("https://h/?key=x"))).toBe("");
+    expect(fetchCauseCode(withCode("A".repeat(10_240)))).toBe("");
+    // Intended: real producers emit upper-case constants; anything else is dropped.
+    expect(fetchCauseCode(withCode("econnrefused"))).toBe("");
+    expect(fetchCauseCode(withCode("ERR_SSRF_BLOCKED"))).toBe(
+      " (ERR_SSRF_BLOCKED)",
+    );
+  });
+
+  it("gemini_upload download", async () => {
+    mockFetch.mockRejectedValueOnce(rejection());
+    const raw = await geminiUploadTool.execute({
+      source: "https://example.com/doc.pdf",
+    });
+    expect(JSON.parse(raw).error).toBe(
+      "Download failed: fetch failed (UND_ERR_X)",
+    );
+    expectNoLeak(raw);
+  });
+
+  it("gemini_research", async () => {
+    mockActiveFiles();
+    mockFetch.mockRejectedValueOnce(rejection());
+    const raw = await geminiResearchTool.execute({ query: "q" });
+    expect(JSON.parse(raw).error).toBe(
+      "Research failed: fetch failed (UND_ERR_X)",
+    );
+    expectNoLeak(raw);
+  });
+
+  it("gemini_audio_overview script generation", async () => {
+    mockActiveFiles();
+    mockFetch.mockRejectedValueOnce(rejection());
+    const raw = await geminiAudioOverviewTool.execute({ length: "brief" });
+    expect(JSON.parse(raw).error).toBe(
+      "Script generation failed: fetch failed (UND_ERR_X)",
+    );
+    expectNoLeak(raw);
+  });
+
+  it("gemini_audio_overview TTS", async () => {
+    mockActiveFiles();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    turns: [{ speaker: "A", text: "Hello." }],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    mockFetch.mockRejectedValueOnce(rejection());
+    const raw = await geminiAudioOverviewTool.execute({ length: "brief" });
+    const result = JSON.parse(raw);
+    expect(result.error).toBe("TTS failed: fetch failed (UND_ERR_X)");
+    expect(result.transcript).toContain("Hello");
+    expectNoLeak(raw);
   });
 });
