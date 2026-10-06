@@ -17,13 +17,13 @@
 
 ## Current stage
 
-V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **W1 is deployed dormant (#60, live `e9d7efb` since 2026-10-04, flag off); W2–W6 have no code.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
+V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **W1 is live in shadow (#60 + pre-arm fixes `d0d95a8`; `TASK_GATES_GRADER=shadow` armed 2026-10-06 03:35 UTC, first trace pending); W2–W6 have no code.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
 
 ## Active bets
 
 | Bet | Gate | Next step | Session |
 | --- | --- | --- | --- |
-| W1 verify gate | **Deployed dormant 2026-10-04 ([#60](https://github.com/kosm1x/agent-controller/pull/60), `e9d7efb`)**: ledger grader gate behind `TASK_GATES_GRADER` (off); shadow FP ≤10% on ≥30 labelled runs | In order: breaker fix (live) → item 11 (b)–(e) (`d0d95a8` live 10-06) → `eval:gate -- --run` → Fede arms `shadow` and labels via `mc-ctl gates graded` (decision note §6) | S4 done → Phase 5 (operator) |
+| W1 verify gate | **Shadow armed 2026-10-06** ([#60](https://github.com/kosm1x/agent-controller/pull/60) `e9d7efb` 10-04 + `d0d95a8` 10-06; `TASK_GATES_GRADER=shadow`): shadow FP ≤10% on ≥30 labelled runs | In order: breaker fix (live) → item 11 (b)–(e) (`d0d95a8` live 10-06) → `eval:gate -- --run` → Fede arms `shadow` and labels via `mc-ctl gates graded` (decision note §6) | S4 done → Phase 5 (operator) |
 | W1 pre-arm fixes | typecheck + scoped vitest; implementer + qa-auditor | **Done 2026-10-06** (breaker fix `21e2386` live 10-04; item 11 (b)–(e) `d0d95a8`, R1+R2 audits, deployed 10-06 03:1x UTC). Left before arming: enforce-mode cap (queue §2026-10-06 item 1) only matters for `enforce` | Operator: eval gate → arm `shadow` |
 | Rulings 1–5 in production | Each ruling seen working on a real task (credential by name, outbound scrub, docker read, expiry notice); critic SQL guard on a real critic run | Deployed 2026-10-04, unproven by real use; first nightly tuning run under scoring v2; queue §2026-10-04 items 1–10, 12–15 | VPS |
 | W3 internal eval, reshaped | Uses existing gate/outcome/eval data; gate-definition changes logged with old-definition number | Inventory real row counts, paired comparisons vs explicit-direction baseline | S5 |
@@ -51,7 +51,7 @@ V8.1 active (08:00 Morning Sync is the surface); V8.2 judgments in shadow; V8.3 
 
 ## Blocked on Fede
 
-- W1: pre-arm fixes live (`d0d95a8`) and `eval:gate -- --run` PASSED 2026-10-06 03:3x UTC (composite 75.70 vs incumbent 76.87, delta −1.18 within ε 2; 239 cases, 0 errored probes, $4.92). `TASK_GATES_GRADER=shadow` ARMED 03:35 UTC (drop-in `v9-grader.conf`, PID 3625470). Next = first `gates.graded` trace, then label ≥30 runs via `mc-ctl gates graded`. Also owed: weekly count of gradeable tasks.
+- W1: pre-arm fixes live (`d0d95a8`) and `eval:gate -- --run` PASSED 2026-10-06 03:3x UTC (composite 75.70 vs incumbent 76.87, delta −1.18 within ε 2; 239 cases, 0 errored probes, $4.92). `TASK_GATES_GRADER=shadow` ARMED 03:35 UTC (drop-in `v9-grader.conf`, PID 3625470). Next = first `gates.graded` trace, then label ≥30 runs in `docs/planning/v9-w1-labels.md` ("excelente" = really done, explicit negative = not done, rest by hand from `mc-ctl gates graded`). Also owed: weekly count of gradeable tasks.
 - Eval gate: the committed baseline (`src/tuning/eval-baseline.json`, 2026-10-04 04:04 UTC, 76.87) predates #60's `src/` changes; the 10-06 run passed against it. A re-capture (`npm run eval:gate -- --run --update-baseline`, ~$5) is still owed BEFORE the next Jarvis system-prompt / tool-description change, so that change is measured against today's code, not 10-04's.
 - Ruling 5a: the read-only DB role (operator-run DDL).
 - L1: run the Agent SDK bump with `npm run eval:gate -- --run` on the VPS (cloud sessions cannot).

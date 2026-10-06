@@ -103,7 +103,7 @@ Every phase: implementer subagent → `npm run typecheck` + scoped vitest → se
 
 **Recorded per task.** Grader verdict per criterion, evidence, model used, latency, tokens and cost; next to the existing signals: ledger verdict, `selfAssess` `criteriaMet`, `reflection.success`, final status.
 
-**Labels.** Fede labels each graded task "really done" or "not done" from the `mc-ctl gates graded` disagreement list: every task the grader flagged `failed`, plus a random fifth of the rest (so misses the grader passed are also seen).
+**Labels.** Ledger: `v9-w1-labels.md` (2026-10-06: "excelente" on the task auto-labels really done, an explicit negative not done; the rest by hand). Fede labels each graded task "really done" or "not done" from the `mc-ctl gates graded` disagreement list: every task the grader flagged `failed`, plus a random fifth of the rest (so misses the grader passed are also seen).
 
 **Definitions.**
 - *False positive*: a task Fede labels really done that the grader flagged `failed`. **FP rate = false positives ÷ tasks labelled really done.** Budget: **≤ 10%** (spec §12).
