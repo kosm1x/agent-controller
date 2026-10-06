@@ -1518,3 +1518,27 @@ Shipped: `./mc-ctl briefing-gate` §13 now scores the 08:00 Morning Sync on five
 5. **Lost ratings by design on the broadcast path:** "excelente, gracias", "@bot excelente", "excelente ❤️", "no estuvo excelente" rate nothing. **Trigger:** operator asks for a form to be added (a ruling: the list is closed).
 6. **`proposed_briefings` still generates morning briefs** (7 in the 7 days to 10-06) although the surface was retired 2026-08-03 and nobody rules on them. **Trigger:** operator ruling (stop the producer or keep it).
 7. **Small ones:** the runner-throw catch path emits `task.failed` without `concern_reason` (the gate scores it by `tasks.status`); `delivery_error` is in `GATE_MS_HARD_DEFECT_REASONS` but the classifier never emits it ("reserved"); the SQL prefilter `spawned_at >= date(?, '-1 day')` is correct but unpinned (only matters east of UTC); a `delivery_miss` run (email schedules only) counts as a run with no delivered day; `checkFeedbackWindow(channel)` is per channel with no group guard (pre-existing, cannot reach a scheduled task); the `numbers.audited` error branch writes `err.message` into trace attrs (`src/lib/v8-4/consumer.ts` ~470, pre-existing free text in a trace); the 10-01 schedule switchover left one MX day with two runs. **Trigger:** next edit to each file; `RITUALS_TIMEZONE` change for the prefilter.
+
+## 2026-10-06 — COMMIT sync retirement follow-ups (`4b29b6a`, NOT deployed)
+
+Shipped: the `northstar_sync` tool is deleted (it was never removed when the COMMIT app was retired; the model called it on 10-06 15:18 UTC and the confirmation gate held it). Every scope, prompt, seed and list entry naming it is gone; a regression lock in `src/tools/registry.test.ts` fails if it comes back. The Supabase/pgvector host (`db.mycommit.net`, `COMMIT_DB_KEY`) is infrastructure and stays.
+
+**Operator steps, in order (nothing is live until step 3):**
+
+1. `cd /root/claude/mission-control && ./mc-ctl db "UPDATE tune_test_cases SET active=0 WHERE case_id IN ('sc-northstar-sync','ts-northstar-sync-01');"` — both cases expect the retired tool; left active, the gate exits 2 (population drift) before any spend.
+2. `cd /root/claude/mission-control && npm run eval:gate -- --run` (0 PASS, 1 FAIL = do not deploy, 2 no verdict). On PASS: `npm run eval:gate -- --run --update-baseline` and commit `src/tuning/eval-baseline.json` (this also settles the re-capture owed since 10-04).
+3. `cd /root/claude/mission-control && ./scripts/deploy.sh`
+4. `env -u MC_DB_PATH -u JARVIS_KB_MIRROR_DIR node /root/claude/mission-control/scripts/kb-retire-commit-directives-2026-10-06.mjs --dry-run`, then the same line without `--dry-run`. Expect `db: /root/claude/mission-control/data/mc.db`, `mirror write dir: /root/claude/jarvis-kb`, three `[verify]` lines all true, `DONE`. Until it runs, core directive rule 13 names a tool that no longer exists (cost: one clean "Unknown tool" refusal per NorthStar question).
+
+**Prove by use:** after step 3, a NorthStar question in chat answers from the files with no sync offer; `SELECT COUNT(*) FROM task_trace_events WHERE tool='northstar_sync' AND ts > '<deploy time>'` stays 0.
+
+Deferred, each with its trigger:
+
+1. **`NorthStar/INDEX.md` has no regenerator** (only the deleted tool rebuilt it). Accurate on 10-06; it goes stale with the next NorthStar edit, and `jarvis_file_list prefix="NorthStar/"` still surfaces it. **Trigger:** operator ruling — delete the row, or mark it frozen.
+2. **Seed removal never deactivates the live row** (`seedTestCases` is INSERT OR REPLACE; `src/tuning/test-cases.ts`), which is why step 1 is manual. Fix = deactivate `source='seed'` rows missing from the JSON at seed time. **Trigger:** the next seed-case removal.
+3. **Leftovers, all inert:** one `capability_autonomy` row for the retired capability (L1; refused by `promotion.ts`, ignored by the activation gate); the `v83-canary.conf` drop-in still lists it in `V83_GATED_CAPABILITIES`; `dist/tools/builtin/northstar-sync.*` and `northstar-index.*` survive the build (`tsc` does not wipe `dist/`); `northstar_sync_state` and the nine `commit_*` tables stay in the schema. **Trigger:** operator asks for the cleanup (table drops need a `SCHEMA_MIGRATIONS` entry and an explicit ruling).
+4. **Other KB rows still mention COMMIT or the sync** (5 on-demand reference rows outside `directives/`, plus Jarvis's own superseded "prohibit" proposal under `knowledge/proposals/`, now unnecessary). Not always-loaded. **Trigger:** one of them is quoted back in a reply.
+5. **pgvector and Drive copies of the three directives** keep the old text after step 4 (those pushes are skipped from an operator shell) until each file's next write. **Trigger:** a semantic recall returns the old rule 13.
+6. **Regression-lock limits:** MCP-sourced tools and runner prompt sections are not scanned; the KB-injection probe covers today's keywords only. **Trigger:** a new tool source or prompt surface is added.
+7. **The deleted `scripts/seed-northstar.ts` carried an email address in its header**; deletion removes it from the tree, not from the public history. **Trigger:** operator ruling on a history rewrite (not recommended for an address already public).
+
