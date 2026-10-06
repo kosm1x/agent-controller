@@ -58,6 +58,8 @@ import { skillLoadTool } from "./builtin/skill-load.js";
 import { skillRunTool } from "./builtin/skill-run.js";
 // Chat scope universe — for the deferred-tool reachability invariant.
 import { getAllAvailableTools } from "../messaging/scope.js";
+import { CLASSIFIER_SYSTEM_PROMPT } from "../messaging/scope-classifier.js";
+import { conditionMatches } from "../messaging/kb-injection.js";
 
 function makeTool(name: string, opts?: { deferred?: boolean }): Tool {
   return {
@@ -234,53 +236,53 @@ describe("deferred tool expansion", () => {
 // definition, not our codebase.
 // ---------------------------------------------------------------------------
 
-describe("MCP annotation coverage (v7.6 Spine 4)", () => {
-  // Every tool a real production deployment could register, across all
-  // ToolSources we own. (MCP source registers upstream-defined schemas at
-  // runtime — out of scope.)
-  const ALL_TOOLS: Tool[] = [
-    // BuiltinToolSource family
-    ...BUILTIN_TOOLS,
-    ...CRM_TOOLS,
-    ...GWS_TOOLS,
-    ...WP_TOOLS,
-    // GoogleToolSource — gated on GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN
-    gmailSendTool,
-    gmailSearchTool,
-    gmailReadTool,
-    gdriveListTool,
-    gdriveCreateTool,
-    gdriveShareTool,
-    gdriveDeleteTool,
-    gdriveMoveTool,
-    gdriveUploadTool,
-    gdriveDownloadTool,
-    calendarListTool,
-    calendarCreateTool,
-    calendarUpdateTool,
-    gsheetsReadTool,
-    gsheetsWriteTool,
-    gdocsReadTool,
-    gdocsReadFullTool,
-    gdocsWriteTool,
-    gdocsReplaceTool,
-    gslidesReadTool,
-    gslidesCreateTool,
-    gtasksCreateTool,
-    // MemoryToolSource — gated on Hindsight availability
-    memorySearchTool,
-    memoryStoreTool,
-    memoryReflectTool,
-    memoryKgQueryTool,
-    // SkillsToolSource — always available
-    skillSaveTool,
-    skillListTool,
-    // v7.7 Spine 3 Phase 4 B2: dispatch surface (L1/L2/execute trio)
-    skillDescribeTool,
-    skillLoadTool,
-    skillRunTool,
-  ];
+// Every tool a real production deployment could register, across all
+// ToolSources we own. (MCP source registers upstream-defined schemas at
+// runtime — out of scope.)
+const ALL_TOOLS: Tool[] = [
+  // BuiltinToolSource family
+  ...BUILTIN_TOOLS,
+  ...CRM_TOOLS,
+  ...GWS_TOOLS,
+  ...WP_TOOLS,
+  // GoogleToolSource — gated on GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN
+  gmailSendTool,
+  gmailSearchTool,
+  gmailReadTool,
+  gdriveListTool,
+  gdriveCreateTool,
+  gdriveShareTool,
+  gdriveDeleteTool,
+  gdriveMoveTool,
+  gdriveUploadTool,
+  gdriveDownloadTool,
+  calendarListTool,
+  calendarCreateTool,
+  calendarUpdateTool,
+  gsheetsReadTool,
+  gsheetsWriteTool,
+  gdocsReadTool,
+  gdocsReadFullTool,
+  gdocsWriteTool,
+  gdocsReplaceTool,
+  gslidesReadTool,
+  gslidesCreateTool,
+  gtasksCreateTool,
+  // MemoryToolSource — gated on Hindsight availability
+  memorySearchTool,
+  memoryStoreTool,
+  memoryReflectTool,
+  memoryKgQueryTool,
+  // SkillsToolSource — always available
+  skillSaveTool,
+  skillListTool,
+  // v7.7 Spine 3 Phase 4 B2: dispatch surface (L1/L2/execute trio)
+  skillDescribeTool,
+  skillLoadTool,
+  skillRunTool,
+];
 
+describe("MCP annotation coverage (v7.6 Spine 4)", () => {
   it("every production tool has all 4 MCP hints explicitly set (no defaults)", () => {
     const missing: string[] = [];
     for (const tool of ALL_TOOLS) {
@@ -385,7 +387,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-08-23: 191 → 192 (usability Phase 3.1 — data_summarize core tool).
     // 2026-09-11: 192 → 193 (email_verify — TS closed-box SMTP mailbox verifier).
     // 2026-09-29: 193 → 194 (run_schedule — run an existing schedule now).
-    expect(ALL_TOOLS.length).toBe(194);
+    // 2026-10-06: 194 → 193 (northstar_sync retired with the COMMIT app).
+    expect(ALL_TOOLS.length).toBe(193);
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -431,12 +434,6 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     video_html_compose: {
       maxLen: 5328,
       reason: "HTML/CSS composition rules + render policy",
-    },
-    northstar_sync: {
-      // 2026-09-12: +166 for the DO NOT USE WHEN block (agents-best-practices gap 8), +50 slack.
-      maxLen: 3194,
-      reason:
-        "4-phase sync architecture + LWW + safety abort (2026-05-12 incident)",
     },
     infographic_generate: {
       maxLen: 2601,
@@ -766,5 +763,69 @@ describe("writeTargetKeys — every row pinned (R4 audit W4-1)", () => {
       await reg.execute("grep", { pattern: "unidades", path: "/var/log" }); // explicit unrelated path: evidence
     });
     expect(takeToolEvidence("t-grep")).toHaveLength(2);
+  });
+});
+
+describe("retired COMMIT sync stays retired (2026-10-06 regression lock)", () => {
+  // Matched case-insensitively. `mycommit` stays banned although
+  // db.mycommit.net is still the live Supabase/pgvector host used by
+  // non-model-visible code: a tool that must name the host narrows this entry.
+  const RETIRED = ["northstar_sync", "mycommit", "COMMIT_ID"];
+  const REGISTERED = ALL_TOOLS;
+
+  it("no registered tool is named northstar_sync, nor in the scope universe", () => {
+    expect(REGISTERED.map((t) => t.name)).not.toContain("northstar_sync");
+    for (const hasGoogle of [true, false])
+      expect(
+        getAllAvailableTools({
+          hasGoogle,
+          hasWordpress: true,
+          hasMemory: true,
+          hasCrm: true,
+        }).has("northstar_sync"),
+      ).toBe(false);
+  });
+
+  it("no tool name, description, parameter or trigger phrase mentions the retired sync", () => {
+    const hits: string[] = [];
+    for (const t of REGISTERED) {
+      const text = [
+        t.name,
+        t.definition.function.description ?? "",
+        JSON.stringify(t.definition.function.parameters ?? {}),
+        ...(t.triggerPhrases ?? []),
+      ]
+        .join("\n")
+        .toLowerCase();
+      for (const word of RETIRED)
+        if (text.includes(word.toLowerCase())) hits.push(`${t.name}: ${word}`);
+    }
+    expect(hits).toEqual([]);
+  });
+
+  it("a stray call to the retired name is a clean refusal, never a fuzzy repair", async () => {
+    const reg = new ToolRegistry();
+    for (const t of REGISTERED) reg.register(t);
+    expect(reg.findClosest("northstar_sync")).toBeNull();
+    const out = await reg.execute("northstar_sync", {});
+    expect(JSON.parse(out)).toEqual({ error: "Unknown tool: northstar_sync" });
+  });
+
+  it("the scope classifier system prompt does not mention the retired sync", () => {
+    const prompt = CLASSIFIER_SYSTEM_PROMPT.toLowerCase();
+    for (const word of RETIRED)
+      expect(prompt).not.toContain(word.toLowerCase());
+  });
+
+  it("no KB-injection condition group lists a retired name", () => {
+    // CONDITION_TOOL_GROUPS is module-private; probe it through conditionMatches
+    // with a condition naming every current keyword plus the one the retired
+    // entry used (`northstar`).
+    const everyKeyword =
+      "crm google wordpress coding browser schedule reporting research teaching social northstar commit";
+    expect(conditionMatches(everyKeyword, ["web_search"])).toBe(true); // probe reaches the groups
+    const retiredNames = RETIRED.flatMap((w) => [w, w.toLowerCase()]);
+    for (const name of retiredNames)
+      expect(conditionMatches(everyKeyword, [name])).toBe(false);
   });
 });

@@ -63,7 +63,7 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
   });
 
   it("does NOT match coding without any CODING_TOOLS in scope", () => {
-    expect(conditionMatches("coding", ["gmail_send", "northstar_sync"])).toBe(
+    expect(conditionMatches("coding", ["gmail_send", "web_search"])).toBe(
       false,
     );
   });
@@ -132,7 +132,6 @@ describe("conditionMatches (KB injection conditional matcher)", () => {
     ["browser", BROWSER_TOOLS],
     ["schedule", SCHEDULE_TOOLS],
     ["research", RESEARCH_TOOLS],
-    ["northstar", ["northstar_sync"] as const],
     ["reporting", ["web_search", "exa_search", "gmail_send"] as const],
     ["social", SOCIAL_TOOLS],
   ] as const)(

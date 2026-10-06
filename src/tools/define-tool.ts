@@ -3,7 +3,7 @@
  *
  * The `Tool` interface carries the tool name twice: `tool.name` (registry
  * key) and `definition.function.name` (what the LLM sees). Hand-writing both
- * across ~194 tools is a sync hazard pinned only by the registry
+ * across ~193 tools is a sync hazard pinned only by the registry
  * name-equality invariant test. This factory derives the OpenAI
  * function-calling definition from a single `name` declaration so the two
  * can never diverge.

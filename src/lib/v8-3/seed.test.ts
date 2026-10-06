@@ -1,7 +1,7 @@
 /**
  * V8.3 capability seed (Phase 0 + Phase 1).
  *
- * Asserts: the 6 capabilities seed at L1; tool-backed keys resolve against the
+ * Asserts: the 5 capabilities seed at L1; tool-backed keys resolve against the
  * registry (fail loud into `errors`, never crash); a readOnly backing tool is
  * rejected (gated writes must mutate); `reversible_default` derives from the named
  * reversal strategy; `blast_radius`/`gate_config` persist per the §6 table; the
@@ -23,7 +23,6 @@ import {
 
 const TOOL_KEYS = [
   "gmail_send",
-  "northstar_sync",
   "jarvis_file_delete",
   "skill_run",
   "schedule_task",
@@ -74,18 +73,17 @@ afterEach(() => {
 });
 
 describe("seedV83Capabilities — happy path", () => {
-  it("seeds all 6 capabilities at L1 with no errors", () => {
+  it("seeds all 5 capabilities at L1 with no errors", () => {
     const result = seedV83Capabilities(getDatabase(), fakeRegistry());
     expect(result.errors).toEqual([]);
-    expect(result.seeded).toBe(6);
+    expect(result.seeded).toBe(5);
     const r = rows();
-    expect(r).toHaveLength(6);
+    expect(r).toHaveLength(5);
     expect(r.every((x) => x.level === 1)).toBe(true);
     expect(r.map((x) => x.capability).sort()).toEqual(
       [
         "gmail_send",
         "jarvis_file_delete",
-        "northstar_sync",
         "schedule_task",
         "skill_run",
         "task_edit",
@@ -93,12 +91,12 @@ describe("seedV83Capabilities — happy path", () => {
     );
   });
 
-  it("is idempotent — a second seed inserts nothing and keeps 6 rows", () => {
+  it("is idempotent — a second seed inserts nothing and keeps 5 rows", () => {
     seedV83Capabilities(getDatabase(), fakeRegistry());
     const second = seedV83Capabilities(getDatabase(), fakeRegistry());
     expect(second.seeded).toBe(0);
     expect(second.errors).toEqual([]);
-    expect(rows()).toHaveLength(6);
+    expect(rows()).toHaveLength(5);
   });
 
   it("derives reversible_default from the named reversal strategy", () => {
@@ -112,7 +110,6 @@ describe("seedV83Capabilities — happy path", () => {
     expect(byCap.get("jarvis_file_delete")).toBe(1);
     // compensating / none ⇒ NOT auto-reversible (0)
     expect(byCap.get("gmail_send")).toBe(0);
-    expect(byCap.get("northstar_sync")).toBe(0);
     expect(byCap.get("skill_run")).toBe(0);
   });
 
@@ -120,7 +117,6 @@ describe("seedV83Capabilities — happy path", () => {
     seedV83Capabilities(getDatabase(), fakeRegistry());
     const byCap = new Map(rows().map((r) => [r.capability, r.blast_radius]));
     expect(byCap.get("gmail_send")).toBe("persistent");
-    expect(byCap.get("northstar_sync")).toBe("persistent");
     expect(byCap.get("task_edit")).toBe("persistent");
     expect(byCap.get("jarvis_file_delete")).toBe("persistent");
     expect(byCap.get("skill_run")).toBe("session");
@@ -132,7 +128,6 @@ describe("seedV83Capabilities — happy path", () => {
     const cap = (c: string): GateConfig =>
       JSON.parse(rows().find((r) => r.capability === c)!.gate_config_json);
     expect(cap("gmail_send").max_level).toBe(2);
-    expect(cap("northstar_sync").max_level).toBe(2);
     expect(cap("skill_run").max_level).toBe(1); // Rule-of-Two trifecta (2026-08-15)
     expect(cap("jarvis_file_delete").max_level).toBe(2); // file-mutating
     expect(cap("task_edit").max_level).toBe(5);
@@ -157,7 +152,7 @@ describe("seedV83Capabilities — fail-loud resolution", () => {
     );
     expect(result.errors.some((e) => e.includes("gmail_send"))).toBe(true);
     expect(result.skipped).toBe(1);
-    expect(result.seeded).toBe(5);
+    expect(result.seeded).toBe(4);
     expect(rows().some((r) => r.capability === "gmail_send")).toBe(false);
   });
 
@@ -242,7 +237,7 @@ describe("CAPABILITY_SEEDS — Rule of Two structural cap (V8.5 Phase 5.2)", () 
   });
 
   it("non-trifecta and non-tool capabilities carry no structural cap", () => {
-    for (const c of ["gmail_send", "northstar_sync", "jarvis_file_delete", "schedule_task", "task_edit"])
+    for (const c of ["gmail_send", "jarvis_file_delete", "schedule_task", "task_edit"])
       expect(structuralMaxLevelForCapability(c), c).toBeNull();
     expect(structuralMaxLevelForCapability("unseeded")).toBeNull();
   });

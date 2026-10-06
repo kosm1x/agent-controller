@@ -285,7 +285,7 @@ USE WHEN:
 
 PATHS — follow the hierarchy:
 - "directives/*.md" — standing orders. REFUSED by this tool (STANDING_ORDERS_PROTECTED): create, modify or remove them ONLY via jarvis_propose_directive → operator approval.
-- "NorthStar/**/*.md" — visions, goals, objectives, tasks. Leave \`COMMIT_ID:\` empty for new items; the next northstar_sync run POSTs them to COMMIT and fills in the generated UUID. For goals/objectives/tasks, include a parent reference line (\`Vision: <title|uuid>\`, \`Goal: <title|uuid>\`, \`Objective: <title|uuid>\`) — sync resolves the parent before POSTing. COMMIT and NorthStar are peers; local writes stay local until the user invokes northstar_sync — do NOT call it automatically after every write.
+- "NorthStar/**/*.md" — visions, goals, objectives, tasks.
 - "projects/{slug}/*.md" — project-specific files. README.md in each project.
 - "knowledge/people/*.md" — contacts, relationships
 - "knowledge/procedures/*.md" — SOPs, protocols
@@ -303,6 +303,8 @@ QUALIFIERS:
 - "workspace" — Scratch space for ongoing work
 
 PROVENANCE: figures (amounts, %, counts, M/B) must come from a tool result of this run or the user's message, or their paragraph/table must carry "fuente: <url|archivo|herramienta>", "calc: <expresión>" or "supuesto: <por qué>". Unsourced figures are REJECTED (the error lists them); a figure from memory stays in chat as "~X (sin verificar)".
+
+DO NOT USE WHEN: the path is under directives/ — use jarvis_propose_directive instead.
 
 AFTER WRITING: Report what you did — path, title, qualifier. If updating an existing file, mention what changed.`,
       parameters: {

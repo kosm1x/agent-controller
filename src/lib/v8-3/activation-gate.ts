@@ -19,6 +19,7 @@
 
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
+import { CAPABILITY_SEEDS } from "./seed.js";
 
 /** Minimum decision records over the 7-day shadow window before the gate can
  *  render a verdict (below this → insufficient_data). Spec §14: `>= 7`. */
@@ -37,7 +38,7 @@ const V83_SCHEMA_OBJECTS = [
 const V82_DEP_TABLES = ["judgments", "reflection_followups"] as const;
 
 /** Expected seeded capability count (§6). */
-const EXPECTED_CAPABILITY_COUNT = 6;
+const EXPECTED_CAPABILITY_COUNT = 5;
 
 export interface V83GateCheck {
   pass: boolean;
@@ -118,9 +119,11 @@ export function evaluateV83Gate(
 
   // 3. default capabilities seeded.
   const seededCount = (
-    db.prepare(`SELECT COUNT(*) AS n FROM capability_autonomy`).get() as {
-      n: number;
-    }
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM capability_autonomy WHERE capability IN (${CAPABILITY_SEEDS.map(() => "?").join(",")})`,
+      )
+      .get(...CAPABILITY_SEEDS.map((s) => s.capability)) as { n: number }
   ).n;
   const seededPass = seededCount === EXPECTED_CAPABILITY_COUNT;
 

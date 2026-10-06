@@ -1149,20 +1149,6 @@
     "source": "regression"
   },
   {
-    "case_id": "sc-northstar-sync",
-    "category": "scope_accuracy",
-    "input": {
-      "message": "sync con db.mycommit"
-    },
-    "expected": {
-      "scope_groups": [
-        "northstar_read"
-      ]
-    },
-    "weight": 1.5,
-    "source": "regression"
-  },
-  {
     "case_id": "sc-northstar-marca",
     "category": "scope_accuracy",
     "input": {
@@ -1311,20 +1297,6 @@
     "expected": {
       "tools": [
         "vps_status"
-      ]
-    },
-    "weight": 1.0,
-    "source": "production"
-  },
-  {
-    "case_id": "ts-northstar-sync-01",
-    "category": "tool_selection",
-    "input": {
-      "message": "Sincroniza NorthStar con la app"
-    },
-    "expected": {
-      "tools": [
-        "northstar_sync"
       ]
     },
     "weight": 1.0,

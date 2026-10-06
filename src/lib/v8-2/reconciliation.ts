@@ -9,9 +9,10 @@
  *    `general_event` / `recurring_blocker` / `cohort_member` (the three live
  *    detection tables) alongside the base kinds. (§6)
  *  - `TOOL_GUIDANCE` — R1's enum (`tasks_query` / `northstar_read` / …) was
- *    entirely fictional. These six are grep-verified against the live registry
+ *    entirely fictional. These five are grep-verified against the live registry
  *    on 2026-05-31 (`crm_query`, `intel_query`, `memory_search`,
- *    `memory_kg_query`, `jarvis_file_search`, `northstar_sync`). (§7)
+ *    `memory_kg_query`, `jarvis_file_search`; `northstar_sync` retired
+ *    2026-10-06). (§7)
  *  - `POSTURES` — the canonical V8.2 posture vocabulary. NOTE the divergence
  *    from V8.1 `JudgmentSchema.posture` ('has_momentum'): the V8.2 value is
  *    'momentum'. The Phase 2 judgment pass that maps a V8.1 signal into a
@@ -60,7 +61,6 @@ export const TOOL_GUIDANCE = [
   "memory_search",
   "memory_kg_query",
   "jarvis_file_search",
-  "northstar_sync",
 ] as const;
 export type ToolGuidance = (typeof TOOL_GUIDANCE)[number];
 export const ToolGuidanceSchema = z.enum(TOOL_GUIDANCE);

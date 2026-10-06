@@ -21,10 +21,10 @@ import { upsertFile, getJarvisKbRoot } from "./jarvis-fs.js";
  * Path prefixes (relative to kbRoot) whose authority lies elsewhere and must
  * NOT be auto-restored by the hourly kb-reindex walk.
  *
- * `NorthStar/` — synced from db.mycommit.net via `northstar_sync`. Any FS file
- * under here that is not on COMMIT is, by definition, a stale orphan. Letting
- * kb-reindex resurrect them creates the 2026-05-12 loop where wipes are undone
- * within the hour.
+ * `NorthStar/` — authority is the `jarvis_files` registry (written through the
+ * file tools). It was once synced from the COMMIT app (retired 2026-10-06); a
+ * disk-only file here is a stale orphan. Letting kb-reindex resurrect them
+ * creates the 2026-05-12 loop where wipes are undone within the hour.
  *
  * `directives/` — standing orders. Authority is the proposal flow
  * (`jarvis_propose_directive` → `jarvis_apply_proposal`) or an operator-side

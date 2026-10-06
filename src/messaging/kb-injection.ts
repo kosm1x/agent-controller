@@ -43,7 +43,6 @@ const CONDITION_TOOL_GROUPS: ReadonlyArray<{
   tools: readonly string[];
 }> = [
   { keyword: "crm", tools: CRM_TOOLS_SCOPE },
-  { keyword: "northstar", tools: ["northstar_sync"] },
   { keyword: "google", tools: GOOGLE_TOOLS },
   { keyword: "wordpress", tools: WORDPRESS_TOOLS },
   { keyword: "coding", tools: CODING_TOOLS },

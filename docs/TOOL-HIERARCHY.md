@@ -61,7 +61,6 @@ A message with no topic signal sees the 31 always-on tools: 29 static (20 full s
 | `project_get` / `project_update` | Read / update a project             | Moved to MISC 2026-05-15   |
 | `video_status`                   | Check video job status              | Always-on for follow-ups   |
 | `vps_status`                     | Server health check                 | Always-on                  |
-| `northstar_sync`                 | Sync with COMMIT db                 | Always-on                  |
 | `browser__goto`                  | Lightpanda navigation               | Fast, no JS rendering      |
 | `browser__markdown`              | Lightpanda content extraction       |                            |
 
@@ -106,8 +105,8 @@ A message with no topic signal sees the 31 always-on tools: 29 static (20 full s
 | `schedule`                     | programa, reportes, cron, cada hora                                         | Schedule task, delete schedule                                                                                                                                 | 2     |
 | `utility`                      | clima, weather, moneda, currency, tipo de cambio, geocode                   | weather_forecast, currency_convert, geocode_address, email_verify, file_convert                                                                                | 5     |
 | `crm`                          | CRM, Azteca (explicit only)                                                 | crm_query                                                                                                                                                      | 1     |
-| `northstar_read`               | metas, visión, objetivo, north star                                         | northstar_sync (already in MISC); KB reads via jarvis_file_read (CORE)                                                                                         | 1     |
-| `northstar_write`              | actualiza visión, nueva meta                                                | northstar_sync (already in MISC); writes via jarvis_file_write (MISC)                                                                                          | 1     |
+| `northstar_read`               | metas, visión, objetivo, north star                                         | KB reads via jarvis_file_read (CORE)                                                                                                                           | 1     |
+| `northstar_write`              | actualiza visión, nueva meta                                                | writes via jarvis_file_write (MISC)                                                                                                                            | 1     |
 | `projects`                     | proyecto                                                                    | _(none since 2026-05-15 — project_get/update moved to MISC)_                                                                                                   | 0     |
 | `destructive`                  | elimina, borra, delete                                                      | _(intent-only — destructive tools live in domain groups)_                                                                                                      | 0     |
 | `northstar_journal`            | escribe diario, journal entry                                               | _(intent-only — jarvis_file_write in MISC handles writes)_                                                                                                     | 0     |

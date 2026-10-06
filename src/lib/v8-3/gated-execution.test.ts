@@ -226,11 +226,11 @@ describe("ToolRegistry.execute — V8.3 background seam", () => {
 
   it("pipeline failure (armed but UNSEEDED capability) degrades to a single direct execute", async () => {
     process.env.V83_ENABLED = "true";
-    process.env.V83_GATED_CAPABILITIES = "northstar_sync"; // not seeded here
-    registry.register(fakeTool("northstar_sync", () => "synced", calls));
-    const out = await registry.execute("northstar_sync", { do: "x" });
+    process.env.V83_GATED_CAPABILITIES = "skill_run"; // not seeded here
+    registry.register(fakeTool("skill_run", () => "synced", calls));
+    const out = await registry.execute("skill_run", { do: "x" });
     expect(out).toBe("synced"); // never blocks
-    expect(calls).toEqual(["northstar_sync"]); // at-most-once across the degrade
+    expect(calls).toEqual(["skill_run"]); // at-most-once across the degrade
     expect(decisionRows()).toEqual([]);
   });
 });

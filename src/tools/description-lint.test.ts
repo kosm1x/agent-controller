@@ -139,7 +139,7 @@ describe("tool descriptions — not-for section ratchet", () => {
    * qa-audit C R-2 / C-1 / C-2: a sibling named in a not-for block must be a
    * registered tool. Two backfilled lines pointed at names that do not exist;
    * one of them (`northstar_index`) was within the fuzzy-repair distance of
-   * the destructive `northstar_sync`. Wildcards (`gmail_*`) resolve by prefix;
+   * the destructive NorthStar sync tool (retired 2026-10-06). Wildcards (`gmail_*`) resolve by prefix;
    * a tool's own parameter names are not siblings.
    */
   it("every snake_case sibling named in a DO NOT USE block is a registered tool", () => {

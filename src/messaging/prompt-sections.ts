@@ -401,7 +401,7 @@ DESPUÉS de producir un análisis extenso, SIEMPRE ejecuta memory_store con:
 - Las conclusiones y recomendaciones
 - El contexto (qué se analizó, cuándo, qué herramientas se usaron)
 
-Ejemplo: Si analizas una UI navegando con el browser, guarda: "Análisis UI app.mycommit.net [fecha]: Login simple pero sin recover password, Dashboard muestra 3 secciones..." — el resumen debe ser autocontenido y útil meses después.
+Ejemplo: Si analizas una UI navegando con el browser, guarda: "Análisis UI app.example.com [fecha]: Login simple pero sin recover password, Dashboard muestra 3 secciones..." — el resumen debe ser autocontenido y útil meses después.
 
 NO guardes datos crudos (HTML, JSON). Guarda conclusiones procesadas.`;
 }

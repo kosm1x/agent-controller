@@ -140,7 +140,7 @@ Each tool has `deferred: true|false` controlling whether it loads at prompt-cons
 - `jarvis_file_read` / `jarvis_file_list` — read / list the Jarvis knowledge base
 - `jarvis_file_search` / `jarvis_file_write` / `jarvis_file_update` / `jarvis_file_delete` / `jarvis_file_move` / `jarvis_files_batch_write` / `jarvis_files_batch_delete` — KB CRUD (always-on since 2026-05-07)
 - Exposing a KB row to the CRM (jarvis-pull): add the `external` tag with `jarvis_file_update` (`tags` replaces the list — keep the existing tags); remove the tag to hide it again. The `external` tag is added only on an operator chat root: `jarvis_file_write`, `jarvis_file_update` and `jarvis_files_batch_write` refuse it from background agents, scheduled, API, A2A and external runs (`{error: "the external tag is set only from an operator chat"}`). Rows under the 4 TV / media-market seed prefixes in `src/lib/external-kb-policy.ts` are visible without the tag.
-- `list_schedules`, `project_list` / `project_get` / `project_update`, `video_status`, `vps_status`, `northstar_sync`, `browser__goto` / `browser__markdown` — the rest of `MISC_TOOLS`
+- `list_schedules`, `project_list` / `project_get` / `project_update`, `video_status`, `vps_status`, `browser__goto` / `browser__markdown` — the rest of `MISC_TOOLS`
 - `shell_exec` / `file_write` / `file_edit` / `git_status` / `git_diff` / `git_commit` / `git_push` — coding core, not deferred since 2026-09-01 (under `TOOL_SEARCH_ENABLED` a deferred tool is visible only after a `ToolSearch` hit; tasks 8958/8961–8963 searched once, missed, went BLOCKED). Still scope-gated to `coding`; pinned by `core-coding-always-loaded.test.ts`.
 
 ### Google Workspace (scope group: `google`)
@@ -172,7 +172,6 @@ Registered only when `WP_SITES` is set.
 
 The `commit__*` MCP tools are gone (no `commit` server in `mcp-servers.json`; no reference in `src/`). NorthStar content lives in the Jarvis KB and is read/written with the always-on `jarvis_file_*` tools.
 
-- `northstar_sync` — bidirectional LWW sync with db.mycommit (self-heal); always-on via `MISC_TOOLS`
 - `northstar_journal` and `destructive` are intent-only groups (they add no tools of their own)
 
 ### Intel Depot (scope group: `intel`)

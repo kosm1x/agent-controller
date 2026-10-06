@@ -152,7 +152,6 @@ export const MISC_TOOLS = [
   "project_update",
   "video_status", // Always available — follow-ups about video status don't re-trigger video scope
   "vps_status", // Always available — "how's the server?" doesn't need coding scope
-  "northstar_sync", // Always available — "sync con db.mycommit" shouldn't need NorthStar keywords
   // Lightpanda browser — only goto + markdown (the 90% use case)
   "browser__goto",
   "browser__markdown",
@@ -614,7 +613,7 @@ const EMAIL_SEND_RE =
 export const DEFAULT_SCOPE_PATTERNS: ScopePattern[] = [
   {
     pattern:
-      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|northstar|north\s*star|sync\w*\s+(?:\S+\s+)*(?:commit|mycommit|db\.mycommit)|db\.mycommit|sincroniza(?:r|ci[oó]n)?(?:\s+\S+){0,3}\s+(?:commit|northstar|mycommit))/i,
+      /\b(tareas?|tasks?|metas?|goals?|objetivos?|objectives?|visi[oó]n|pendientes?|productiv|priorid|sprint|diario|journal|briefing|resumen del d[ií]a|northstar|north\s*star)/i,
     group: "northstar_read",
   },
   // Projects scope — entities distinct from NorthStar goals. Lifecycle ops
@@ -1457,12 +1456,6 @@ export function scopeToolsForMessage(
     activeGroups.add("projects");
   }
 
-  if (
-    activeGroups.has("northstar_read") ||
-    activeGroups.has("northstar_write")
-  ) {
-    tools.push("northstar_sync");
-  }
   // JARVIS_WRITE_TOOLS — 2026-05-07 promoted to MISC_TOOLS (always-on) per
   // operator directive. Gating block removed; the `jarvis_write` regex group
   // still fires for telemetry/inheritance purposes but no longer changes
@@ -1606,7 +1599,7 @@ export function scopeToolsForMessage(
  * Invariant pinned by tests: scopeToolsForMessage(any-input).length must
  * always be ≤ getAllAvailableTools(options).size for the same options.
  *
- * Upper-bound looseness: a few tools (`northstar_sync`, `humanize_text`) are
+ * Upper-bound looseness: a few tools (e.g. `humanize_text`) are
  * unconditional in the universe but conditional in the producer. This keeps
  * the envelope strictly ≥ producer (correct for the `fullCount` use case),
  * but means a future regression that drops one of those tools from the
@@ -1627,7 +1620,6 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
   const all = new Set<string>([
     ...CORE_TOOLS,
     ...MISC_TOOLS,
-    "northstar_sync",
     ...SPECIALTY_TOOLS,
     "humanize_text",
     "dashboard_generate",

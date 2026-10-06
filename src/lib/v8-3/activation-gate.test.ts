@@ -2,16 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { evaluateV83Gate } from "./activation-gate.js";
 
-const SIX = [
+const FIVE = [
   "gmail_send",
-  "northstar_sync",
   "task_edit",
   "jarvis_file_delete",
   "skill_run",
   "schedule_task",
 ];
 
-function seedCapabilities(names: string[] = SIX): void {
+function seedCapabilities(names: string[] = FIVE): void {
   const db = getDatabase();
   const insert = db.prepare(
     `INSERT INTO capability_autonomy
@@ -191,12 +190,22 @@ describe("evaluateV83Gate — §14 v1 activation gate", () => {
     );
   });
 
-  it("missing a capability (5 seeded) → fail (misconfiguration, not insufficient_data)", () => {
-    seedCapabilities(SIX.slice(0, 5));
+  it("missing a capability (4 seeded) → fail (misconfiguration, not insufficient_data)", () => {
+    seedCapabilities(FIVE.slice(0, 4));
     insertN(3);
     const g = evaluateV83Gate();
     expect(g.checks.seeded.pass).toBe(false);
     expect(g.verdict).toBe("fail");
+  });
+
+  it("a leftover row for a retired capability does not break the seeded check", () => {
+    // `northstar_sync` was retired 2026-10-06; INSERT OR IGNORE never deletes
+    // its live row, so the check counts only capabilities still in the seeds.
+    seedCapabilities([...FIVE, "northstar_sync"]);
+    insertN(7);
+    const g = evaluateV83Gate();
+    expect(g.checks.seeded.pass).toBe(true);
+    expect(g.checks.seeded.detail).toBe("5/5 capabilities seeded");
   });
 
   it("an L≥3 decision with judgment_id NULL → FAIL regardless of volume (§12 breach)", () => {

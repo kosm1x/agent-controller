@@ -216,13 +216,13 @@ describe("runDecisionPipeline", () => {
 
   it("seam (a): a trigger whose declared strategy ≠ the capability's canonical strategy is refused (a compensating-only cap cannot build a local sql_inverse)", async () => {
     seedCapability({
-      capability: "northstar_sync", // canonically compensating (see CAPABILITY_SEEDS)
+      capability: "gmail_send", // canonically compensating (see CAPABILITY_SEEDS)
       level: 4,
       odd: ALWAYS_IN,
       gate: OPEN_GATE,
     });
     const badTrigger: DecisionTrigger = {
-      ...trigger("northstar_sync"),
+      ...trigger("gmail_send"),
       sqlMutation: {
         targets: [{ table: "tasks", pk: { task_id: "x" } }],
         strategy: "sql_inverse",

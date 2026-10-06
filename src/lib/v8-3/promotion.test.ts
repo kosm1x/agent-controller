@@ -6,9 +6,8 @@ import {
   type PromotionDone,
 } from "./promotion.js";
 
-const SIX = [
+const FIVE = [
   "gmail_send",
-  "northstar_sync",
   "task_edit",
   "jarvis_file_delete",
   "skill_run",
@@ -16,7 +15,7 @@ const SIX = [
 ];
 
 function seedCapabilities(
-  names: string[] = SIX,
+  names: string[] = FIVE,
   gateConfig = '{"reversible_required":true,"max_level":2}',
 ): void {
   const db = getDatabase();
@@ -68,8 +67,21 @@ describe("promoteCapabilityL1toL2 — guards", () => {
     expect(r.reason).toContain("already promoted");
   });
 
+  it("refuses a leftover row for a retired capability (not in CAPABILITY_SEEDS)", () => {
+    seedCapabilities([...FIVE, "northstar_sync"]);
+    makeGatePass();
+    const r = promoteCapabilityL1toL2("northstar_sync", { confirm: true });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.refusedBy).toBe("unseeded");
+    expect(r.reason).toContain("not a seeded capability");
+    const seededList = r.reason.split("Seeded: ")[1] ?? "";
+    expect(seededList).toContain("task_edit");
+    expect(seededList).not.toContain("northstar_sync");
+  });
+
   it("refuses when gate_config caps the capability below L2", () => {
-    seedCapabilities(SIX, '{"reversible_required":true,"max_level":1}');
+    seedCapabilities(FIVE, '{"reversible_required":true,"max_level":1}');
     makeGatePass();
     const r = promoteCapabilityL1toL2("task_edit", { confirm: true });
     expect(r.ok).toBe(false);
@@ -78,7 +90,7 @@ describe("promoteCapabilityL1toL2 — guards", () => {
   });
 
   it("refuses on unparseable gate_config (never assumes permissive)", () => {
-    seedCapabilities(SIX, "not json");
+    seedCapabilities(FIVE, "not json");
     makeGatePass();
     const r = promoteCapabilityL1toL2("task_edit", { confirm: true });
     expect(r.ok).toBe(false);
@@ -174,7 +186,7 @@ describe("promoteCapabilityL1toL2 — dry run and execution", () => {
     const others = getDatabase()
       .prepare(`SELECT COUNT(*) AS n FROM capability_autonomy WHERE level = 1`)
       .get() as { n: number };
-    expect(others.n).toBe(SIX.length - 1);
+    expect(others.n).toBe(FIVE.length - 1);
   });
 });
 

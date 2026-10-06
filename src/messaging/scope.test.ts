@@ -2764,9 +2764,9 @@ describe("scope pattern regression suite (v6.4 OH2)", () => {
     expect(groups.has("northstar_read")).toBe(true);
   });
 
-  it("'sync con db.mycommit' should trigger northstar_read", () => {
+  it("'sync con db.mycommit' no longer routes to northstar_read (COMMIT retired 2026-10-06)", () => {
     const groups = detect("sync con db.mycommit");
-    expect(groups.has("northstar_read")).toBe(true);
+    expect(groups.has("northstar_read")).toBe(false);
   });
 
   it("'sincroniza con NorthStar' should trigger northstar_read", () => {

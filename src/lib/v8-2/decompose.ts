@@ -79,7 +79,7 @@ export const DECOMPOSE_SYSTEM_PROMPT = `You break ONE strategic question into at
 
 Each angle has:
 - objective: a single specific sub-question, ≤120 characters. Not a topic — a question with a concrete answer in the data.
-- tool_guidance: zero or more of the allowed retrieval tools. Pick the tool(s) whose data would answer THIS angle. Leave empty to let retrieval choose. Prefer task/general-event evidence. Avoid northstar_sync unless the angle is explicitly about NorthStar direction (it is a moving target).
+- tool_guidance: zero or more of the allowed retrieval tools. Pick the tool(s) whose data would answer THIS angle. Leave empty to let retrieval choose. Prefer task/general-event evidence.
 - boundaries: STRUCTURED filters that scope the retrieval — date_from/date_to (ISO dates), status_in (e.g. ["open","blocked"]), exclude_completed (true to drop finished work), limit (max rows). Only include the fields that actually scope this angle.
 
 Rules:

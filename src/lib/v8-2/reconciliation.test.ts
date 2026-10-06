@@ -65,9 +65,9 @@ describe("tool_guidance reconciliation (§7)", () => {
   });
 
   it("reports names that do not resolve (validator logic)", () => {
-    const result = validateToolGuidance(new Set(["crm_query"])); // 5 missing
+    const result = validateToolGuidance(new Set(["crm_query"])); // 4 missing
     expect(result.ok).toBe(false);
-    expect(result.missing).toContain("northstar_sync");
+    expect(result.missing).toContain("jarvis_file_search");
     expect(result.missing).not.toContain("crm_query");
   });
 
@@ -78,7 +78,6 @@ describe("tool_guidance reconciliation (§7)", () => {
       "memory_search",
       "memory_kg_query",
       "jarvis_file_search",
-      "northstar_sync",
     ];
     expect(validateToolGuidance(arr).ok).toBe(true);
   });

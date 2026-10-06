@@ -32,7 +32,7 @@ import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
 import { evaluateV83Gate, type V83GateResult } from "./activation-gate.js";
 import { getCapabilityRow } from "./decisions-store.js";
-import { structuralMaxLevelForCapability } from "./seed.js";
+import { CAPABILITY_SEEDS, structuralMaxLevelForCapability } from "./seed.js";
 import type { CapabilityAutonomyRow } from "./types.js";
 
 export interface PromotionRefusal {
@@ -71,12 +71,15 @@ export interface PromotionDone extends PromotionOutcomeBase {
 export type PromotionOutcome = PromotionDryRun | PromotionDone;
 export type PromotionResult = PromotionRefusal | PromotionOutcome;
 
+/** Ledger rows for capabilities still in CAPABILITY_SEEDS (retired leftovers excluded). */
 function listSeeded(db: Database.Database): string[] {
   return (
     db
       .prepare(`SELECT capability FROM capability_autonomy ORDER BY capability`)
       .all() as Array<{ capability: string }>
-  ).map((r) => r.capability);
+  )
+    .map((r) => r.capability)
+    .filter((c) => CAPABILITY_SEEDS.some((s) => s.capability === c));
 }
 
 function maxLevelOf(row: CapabilityAutonomyRow): number {
@@ -93,12 +96,16 @@ export function promoteCapabilityL1toL2(
   opts: { confirm: boolean },
   db: Database.Database = getDatabase(),
 ): PromotionResult {
-  const row = getCapabilityRow(capability, db);
+  // A row left in the ledger by a retired capability (no longer in
+  // CAPABILITY_SEEDS, e.g. `northstar_sync` 2026-10-06) is never promotable.
+  const row = CAPABILITY_SEEDS.some((s) => s.capability === capability)
+    ? getCapabilityRow(capability, db)
+    : undefined;
   if (!row) {
     return {
       ok: false,
       refusedBy: "unseeded",
-      reason: `capability "${capability}" is not in the ledger. Seeded: ${listSeeded(db).join(", ") || "(none)"}`,
+      reason: `capability "${capability}" is not a seeded capability (retired or unknown). Seeded: ${listSeeded(db).join(", ") || "(none)"}`,
     };
   }
 

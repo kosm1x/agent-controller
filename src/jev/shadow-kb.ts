@@ -54,7 +54,7 @@ export const KB_SHADOW_ROWS: Readonly<Record<string, KbShadowRow>> = {
   "directives/northstar_recurring_tasks.md": {
     describes:
       "The difference between recurring tasks in the user's goal tracker and the system's scheduled jobs, and which one a request about recurring work means.",
-    evidence: ["northstar_sync", "schedule_task", "list_schedules"],
+    evidence: ["schedule_task", "list_schedules"],
   },
   "knowledge/domain/intelligence-depot-live-sources.md": {
     describes:

@@ -151,10 +151,10 @@ describe("reindexJarvisKb", () => {
     expect(r.errored).toBeGreaterThanOrEqual(0);
   });
 
-  it("skips managed namespaces (NorthStar/) — authority lies in northstar_sync", () => {
+  it("skips managed namespaces (NorthStar/) — authority lies in the registry", () => {
     // The 2026-05-12 orphan-resurrection incident: a NorthStar/ FS mirror with
     // 226 stale .md files was being upserted hourly into jarvis_files, undoing
-    // every operator-triggered northstar_sync wipe within the hour. kb-reindex
+    // every operator-triggered wipe within the hour (sync since retired). kb-reindex
     // must treat NorthStar/ as opaque.
     expect(MANAGED_NAMESPACES).toContain("NorthStar/");
     writeFs("NorthStar/tasks/orphan.md", "# Orphan\n\nshould not be upserted");

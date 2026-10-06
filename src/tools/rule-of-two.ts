@@ -220,7 +220,6 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   dashboard_list: B,
   evolution_get_data: B,
   evolution_deactivate_skill: B,
-  northstar_sync: B,
   schedule_task: B,
   list_schedules: B,
   // run_schedule: returns the operator's own schedule row (no third-party

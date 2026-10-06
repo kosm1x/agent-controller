@@ -213,18 +213,18 @@ describe("executeGatedCapability — wrapped (armed canary)", () => {
   });
 
   it("degrades to a single direct execute when the pipeline throws (unseeded active capability, qa-W1)", async () => {
-    // northstar_sync is mapped + made active but is NOT seeded in this DB →
+    // skill_run is mapped + made active but is NOT seeded in this DB →
     // runDecisionPipeline throws "unknown capability" BEFORE execute runs →
     // outer catch → output undefined → one fallback direct execute, no re-throw.
-    process.env.V83_GATED_CAPABILITIES = "northstar_sync";
+    process.env.V83_GATED_CAPABILITIES = "skill_run";
     const out = await executeGatedCapability(
-      "northstar_sync",
+      "skill_run",
       { do: "x" },
       { threadId: "t1" },
     );
     expect(out).toBe(OK); // fallback returned the tool output
     expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
-      "northstar_sync",
+      "skill_run",
       { do: "x" },
       { v83: "skip" },
     ); // AT MOST ONCE across the throw path; skip flag on the degrade path too

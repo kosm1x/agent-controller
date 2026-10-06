@@ -51,11 +51,11 @@ describe("buildPrecedentBlock", () => {
     const block = buildPrecedentBlock([
       {
         role: "assistant",
-        content: "Llamé gmail_send y northstar_sync con éxito",
+        content: "Llamé gmail_send y vps_status con éxito",
       },
     ]);
     expect(block).toContain("gmail_send");
-    expect(block).toContain("northstar_sync");
+    expect(block).toContain("vps_status");
     expect(block).toContain("Tools used:");
   });
 

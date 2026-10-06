@@ -60,7 +60,7 @@ export function buildPrecedentBlock(
 
     // Tool names (snake_case patterns that look like tools)
     const toolMatches = text.match(
-      /\b(?:gmail_send|web_search|jarvis_file_\w+|northstar_sync|vps_status|git_\w+|schedule_task|batch_decompose|dashboard_\w+|screenshot_\w+|wp_\w+|gsheets_\w+)\b/g,
+      /\b(?:gmail_send|web_search|jarvis_file_\w+|vps_status|git_\w+|schedule_task|batch_decompose|dashboard_\w+|screenshot_\w+|wp_\w+|gsheets_\w+)\b/g,
     );
     if (toolMatches) ctx.tools.push(...toolMatches);
 

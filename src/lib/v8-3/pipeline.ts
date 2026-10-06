@@ -302,7 +302,7 @@ export async function runDecisionPipeline(
     // Seam (a): the capability's CANONICAL reversal strategy is authoritative — a
     // caller/trigger can NEVER override it. Bind the builder to the immutable seed,
     // not `trigger.sqlMutation.strategy`; else a compensating-only capability
-    // (`northstar_sync`) could request `sql_inverse` and a local inverse would be
+    // (`gmail_send`) could request `sql_inverse` and a local inverse would be
     // built + stored = the 2026-05-12 resurrection risk. A trigger that declares a
     // different strategy is a wiring bug — fail loud rather than build the wrong op.
     const capabilityStrategy = reversalStrategyForCapability(cap.capability);

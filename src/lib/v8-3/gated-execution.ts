@@ -58,7 +58,6 @@ export const CAPABILITY_BY_TOOL: Record<string, string> = {
   jarvis_file_delete: "jarvis_file_delete",
   jarvis_files_batch_delete: "jarvis_file_delete",
   gmail_send: "gmail_send",
-  northstar_sync: "northstar_sync",
   skill_run: "skill_run",
   schedule_task: "schedule_task",
   delete_schedule: "schedule_task",

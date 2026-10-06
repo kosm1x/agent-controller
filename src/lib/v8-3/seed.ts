@@ -1,7 +1,7 @@
 /**
  * V8.3 — Autonomous Execution Gates: capability seed (Phase 0 + Phase 1).
  *
- * Seeds the 6 capabilities of `capability_autonomy`, all at L1 (the conservative
+ * Seeds the 5 capabilities of `capability_autonomy`, all at L1 (the conservative
  * default — L1's gate IS the existing router confirm flow; operators promote
  * individually over weeks via §10). Called from `src/index.ts` AFTER the tool
  * registry is populated (`initAll`), because tool-backed capabilities are
@@ -32,7 +32,7 @@ import type { CapabilitySeed, ReversalStrategy } from "./types.js";
 import { deriveReversibleDefault } from "./types.js";
 
 /**
- * The 6 capabilities (§6). Keys are real registered tool names or a named
+ * The 5 capabilities (§6). Keys are real registered tool names or a named
  * internal mutation (`task_edit` has no LLM tool — it's a `tasks` row UPDATE).
  */
 export const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
@@ -48,21 +48,6 @@ export const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
     file_mutating: false,
     description:
       "Owner-facing email send (destructive; compensating-only reversal).",
-  },
-  {
-    capability: "northstar_sync",
-    backing: { kind: "tool", tool_name: "northstar_sync" },
-    level: 1,
-    blast_radius: "persistent",
-    // Remote LWW store + kb-reindex resurrection (2026-05-12 incident) — local
-    // SQL-inverse DML is UNSAFE here, so reversal is compensating-only (§6/§7).
-    reversal_strategy: "compensating",
-    gate_config: { reversible_required: true, max_level: 2 },
-    odd_predicate: { op: "eq", field: "autonomy_eligible", value: true },
-    ux_confirm_flag: false,
-    file_mutating: false,
-    description:
-      "NorthStar remote LWW sync (operator-life-strategic; excluded from SQL-inverse).",
   },
   {
     capability: "task_edit",
@@ -151,7 +136,7 @@ export const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
  * compile-time property of a capability (a sent email is compensating-only,
  * forever), so persisting it as runtime state would only invite drift. The
  * pipeline reads this — never the caller's trigger — so a caller can never coax
- * a compensating-only capability (e.g. `northstar_sync`) into building a local
+ * a compensating-only capability (e.g. `gmail_send`) into building a local
  * `sql_inverse` (the 2026-05-12 resurrection risk).
  */
 const REVERSAL_STRATEGY_BY_CAPABILITY: ReadonlyMap<string, ReversalStrategy> =

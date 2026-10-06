@@ -106,7 +106,7 @@ Tool definitions are prompts — they deserve more engineering than the handler 
 
 Agent progress must be validated through concrete tool results, not LLM self-assessment. The Prometheus reflector scores based on goal outcomes, not the model's opinion of itself. When adding new agent loops, always feed real environment state (DB results, file contents, API responses) back into the next step.
 
-**The day-log is the only record of work done (operator ruling 2026-06-23).** Signals, detectors, and rituals must judge advancement/stalledness from the **Telegram day-log** (`jarvis_files` path `logs/day-logs/%` + the day-narrative) and the **active-`projects`** list — NEVER from `NorthStar/` (a stale compass of visions/goals) or the `tasks` table (no `due_date` column exists; deriving "overdue" from it fabricates data). `runDetection()` runs only `detectStalledProjects` (day-log-grounded); the legacy NorthStar/task-table detectors are retired. The proactive nudge + weekly-review (NorthStar-based) are off. Do NOT re-wire NorthStar/tasks as a work-source. NorthStar sync (`northstar_sync`, `kb-reindex` skip) stays — it's compass data, not work-truth. **Silence ≠ stall (operator correction 2026-06-24):** day-log absence is ambiguous — a quiet project may be finished, parked, or deliberately deprioritized, not drifting (absence records what did NOT happen, not why). So `detectStalledProjects` skips active projects whose `projects.config` has `stall_exempt: true` (operator override for done/launch-pending work, e.g. VLMP), and the judgment prompt warns the author not to read silence as drift. Absent/malformed config = NOT exempt (fail toward flagging). See `feedback_daylog_is_work_truth.md`.
+**The day-log is the only record of work done (operator ruling 2026-06-23).** Signals, detectors, and rituals must judge advancement/stalledness from the **Telegram day-log** (`jarvis_files` path `logs/day-logs/%` + the day-narrative) and the **active-`projects`** list — NEVER from `NorthStar/` (a stale compass of visions/goals) or the `tasks` table (no `due_date` column exists; deriving "overdue" from it fabricates data). `runDetection()` runs only `detectStalledProjects` (day-log-grounded); the legacy NorthStar/task-table detectors are retired. The proactive nudge + weekly-review (NorthStar-based) are off. Do NOT re-wire NorthStar/tasks as a work-source. The COMMIT app sync (`northstar_sync`) was retired 2026-10-06; `NorthStar/` stays a `kb-reindex` skip — it's compass data, not work-truth. **Silence ≠ stall (operator correction 2026-06-24):** day-log absence is ambiguous — a quiet project may be finished, parked, or deliberately deprioritized, not drifting (absence records what did NOT happen, not why). So `detectStalledProjects` skips active projects whose `projects.config` has `stall_exempt: true` (operator override for done/launch-pending work, e.g. VLMP), and the judgment prompt warns the author not to read silence as drift. Absent/malformed config = NOT exempt (fail toward flagging). See `feedback_daylog_is_work_truth.md`.
 
 ### Honest done — the completion ledger (V8.4, 2026-08-16)
 
@@ -228,9 +228,9 @@ The KB mirror at `/root/claude/jarvis-kb/` is walked hourly by `kb-reindex` and 
 
 `MANAGED_NAMESPACES` in `src/db/jarvis-reindex.ts` lists prefixes that kb-reindex MUST skip. Their authority lies elsewhere:
 
-| Prefix       | Authority         | Sync tool        |
-| ------------ | ----------------- | ---------------- |
-| `NorthStar/` | `db.mycommit.net` | `northstar_sync` |
+| Prefix       | Authority                                                                       | Sync tool |
+| ------------ | ------------------------------------------------------------------------------- | --------- |
+| `NorthStar/` | `jarvis_files` registry via the file tools (COMMIT app sync retired 2026-10-06) | none      |
 
 When adding a new tool whose authority is non-FS, add the prefix here so its wipes can't be undone by the hourly walk. The 2026-05-12 incident — 247 NorthStar records mass-deleted by `northstar_sync` and resurrected by `kb-reindex` within the hour — is the motivating case.
 
