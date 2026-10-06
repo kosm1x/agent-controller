@@ -188,6 +188,8 @@ interface GradeDecision {
   verdicts: GradeVerdict[];
   model: string | null;
   reason?: GraderReason;
+  /** The grader's orphaned SDK call, when the budget returned before it settled. */
+  settled?: Promise<void>;
 }
 
 /**
@@ -254,7 +256,12 @@ async function gradeDecision(
       specs,
       evidence,
     });
-    decision = { verdicts: res.verdicts, model: res.model, reason: res.reason };
+    decision = {
+      verdicts: res.verdicts,
+      model: res.model,
+      reason: res.reason,
+      settled: res.settled,
+    };
     latencyMs = res.latencyMs;
     usage = res.usage;
     costUsd = res.costUsd;
@@ -320,7 +327,8 @@ function launchShadowGrade(
     );
     if (specs.length === 0) return;
     // Over the cap the decision is a traced `skipped_concurrency` (no call),
-    // and it does not occupy a slot.
+    // and it does not occupy a slot. A slot is held until the SDK call
+    // itself settles — not just until the budget returned the decision.
     const overCap = inFlightShadowGrades.size >= MAX_CONCURRENT_SHADOW_GRADES;
     const p: Promise<void> = gradeDecision(
       "shadow",
@@ -330,7 +338,7 @@ function launchShadowGrade(
       evidence,
       overCap,
     )
-      .then(() => undefined)
+      .then((d) => d.settled)
       .catch((err: unknown) => traceShadowError(args, err))
       .finally(() => {
         inFlightShadowGrades.delete(p);

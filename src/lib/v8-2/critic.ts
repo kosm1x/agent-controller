@@ -112,19 +112,26 @@ const FILE_SHA_MAX_BYTES = 16 * 1024 * 1024;
 
 /** Ground-truth tables `sql_check` may read. `kb_entries` (pgvector/semantic)
  *  maps to the local `jarvis_files` KB; `recall_check` covers its FTS. */
-const SQL_CHECK_TABLES = new Set([
+export const SQL_CHECK_TABLES: ReadonlySet<string> = new Set([
   "tasks",
   "jarvis_files",
   "general_events",
   "recurring_blockers",
-  "northstar",
   "cost_ledger",
+]);
+
+/** Table-valued JSON functions `sql_check` may call over whitelisted columns
+ *  (e.g. `tasks.metadata`). Function sources, not tables: they read only the
+ *  JSON text they are handed. Every OTHER virtual table stays refused. */
+const SQL_CHECK_JSON_TVFS: ReadonlySet<string> = new Set([
+  "json_each",
+  "json_tree",
 ]);
 
 export const CRITIC_SYSTEM_PROMPT_V1 = `You are the CRITIC — a skeptical verification gate for a strategic judgment produced by another agent. You do NOT rewrite the judgment and you do NOT defer to its confident tone. Your only job is to check whether its FACTUAL claims hold against ground truth, then return a verdict.
 
 You have read-only verification tools (use up to ${CRITIC_TOOL_BUDGET} calls total — spend them on the load-bearing claims, not trivia):
-- sql_check(query): run ONE read-only SELECT against ground-truth tables (tasks, jarvis_files, general_events, recurring_blockers, northstar, cost_ledger).
+- sql_check(query): run ONE read-only SELECT against ground-truth tables (${[...SQL_CHECK_TABLES].join(", ")}).
 - cost_check(window_days, model?, agent_type?): aggregate cost_ledger to check a spend/token claim.
 - recall_check(query): lexical top-5 over the local knowledge base (jarvis_files) — does stored knowledge support the claim?
 - file_sha(path): SHA-256 of a repo file, to check an "I verified file X" claim.
@@ -227,6 +234,36 @@ function referencedTables(sql: string): string[] {
   return out;
 }
 
+/** Per-connection `sqlite3_vtab*` pointers of the json_each / json_tree
+ *  eponymous virtual tables. Within ONE connection every cursor over an
+ *  eponymous table shares the module's vtab, which EXPLAIN prints in
+ *  `VOpen.p4` as `vtab:<hex>`; pragma_*, dbstat and FTS print different ones.
+ *  Learned by probing THIS connection; a probe that throws leaves the set
+ *  empty, so every VOpen stays refused (fail closed). */
+const jsonVtabPointers = new WeakMap<Database.Database, Set<string>>();
+
+function allowedJsonVtabs(db: Database.Database): Set<string> {
+  const cached = jsonVtabPointers.get(db);
+  if (cached) return cached;
+  let ptrs = new Set<string>();
+  try {
+    for (const fn of SQL_CHECK_JSON_TVFS) {
+      const ops = db
+        .prepare(`EXPLAIN SELECT 1 FROM ${fn}('[]')`)
+        .all() as Array<{ opcode: string; p4: unknown }>;
+      for (const op of ops) {
+        if (op.opcode === "VOpen" && typeof op.p4 === "string" && op.p4) {
+          ptrs.add(op.p4);
+        }
+      }
+    }
+  } catch {
+    ptrs = new Set();
+  }
+  jsonVtabPointers.set(db, ptrs);
+  return ptrs;
+}
+
 /**
  * Root-level check: the tables the compiled statement actually OPENS, read
  * from its EXPLAIN program (`OpenRead` root pages mapped through
@@ -237,7 +274,10 @@ function referencedTables(sql: string): string[] {
  * identifiers stay legal: the live V8.2 critic's own prompt writes them
  * (R2 audit W1), and EXPLAIN resolves them like any other name. Virtual
  * tables (`VOpen`, incl. pragma_* table-valued functions) and non-main
- * databases are refused outright. Returns the offending names, or null.
+ * databases are refused outright, except a `VOpen` on this connection's
+ * json_each / json_tree vtab (matched by its `p4` pointer, never by name),
+ * so those two may read JSON from whitelisted columns. Returns the offending
+ * names, or null.
  */
 function tablesOutsideWhitelist(
   db: Database.Database,
@@ -247,6 +287,7 @@ function tablesOutsideWhitelist(
     opcode: string;
     p2: number;
     p3: number;
+    p4: unknown;
   }>;
   const roots = new Map<number, string>();
   for (const r of db
@@ -259,7 +300,10 @@ function tablesOutsideWhitelist(
   roots.set(1, "sqlite_master");
   const bad = new Set<string>();
   for (const op of program) {
-    if (op.opcode === "VOpen") bad.add("(virtual table)");
+    if (op.opcode === "VOpen") {
+      const p4 = typeof op.p4 === "string" ? op.p4 : "";
+      if (!allowedJsonVtabs(db).has(p4)) bad.add("(virtual table)");
+    }
     if (op.opcode !== "OpenRead" && op.opcode !== "ReopenIdx") continue;
     if (op.p3 !== 0) {
       bad.add("(non-main database)");
@@ -279,7 +323,9 @@ export function runReadOnlySelect(db: Database.Database, sql: string): string {
   if (!/^select\b/i.test(trimmed)) {
     return "sql_check rejected: only a single read-only SELECT is allowed (no WITH / INSERT / UPDATE / DELETE / PRAGMA / ATTACH).";
   }
-  const bad = referencedTables(trimmed).filter((t) => !SQL_CHECK_TABLES.has(t));
+  const bad = referencedTables(trimmed).filter(
+    (t) => !SQL_CHECK_TABLES.has(t) && !SQL_CHECK_JSON_TVFS.has(t),
+  );
   if (bad.length > 0) {
     return `sql_check rejected: table(s) outside the ground-truth whitelist: ${bad.join(", ")}. Allowed: ${[...SQL_CHECK_TABLES].join(", ")}.`;
   }
@@ -320,7 +366,7 @@ export function runReadOnlySelect(db: Database.Database, sql: string): string {
  *  tool descriptions are prompts). The SCHEMA NOTE closes the judgment-32 trap:
  *  the LLM defaults to `WHERE id = '<uuid>'`, but `tasks.id` is an integer rowid,
  *  so a UUID filter on it silently returns 0 rows (false "task missing"). */
-export const SQL_CHECK_TOOL_DESCRIPTION = `Run ONE read-only SELECT against ground-truth tables (${[...SQL_CHECK_TABLES].join(", ")}) and return up to ${SQL_CHECK_ROW_CAP} rows as JSON. Read-only: writes/DDL/PRAGMA/ATTACH and non-whitelisted tables are rejected. Use it to verify a factual claim against live data. SCHEMA NOTE — an evidence ref keys on its table's BUSINESS key, not the row's \`id\`: a \`task <uuid>\` ref keys on \`tasks.task_id\` (a TEXT UUID) — filter \`WHERE task_id = '<uuid>'\`, NOT \`WHERE id = '<uuid>'\` (\`tasks.id\` is an unrelated INTEGER rowid, so an id=uuid filter silently returns 0 rows and would look like the task is missing when it is not); a \`kb_entry <path>\` ref keys on \`jarvis_files.path\` — filter \`WHERE path = '<path>'\` (or just use recall_check for KB).`;
+export const SQL_CHECK_TOOL_DESCRIPTION = `Run ONE read-only SELECT against ground-truth tables (${[...SQL_CHECK_TABLES].join(", ")}) and return up to ${SQL_CHECK_ROW_CAP} rows as JSON. Read-only: writes/DDL/PRAGMA/ATTACH and non-whitelisted tables are rejected. JSON columns: \`json_each(<col>)\` / \`json_tree(<col>)\` over a whitelisted table are allowed (e.g. \`SELECT j.value FROM tasks, json_each(tasks.metadata) AS j WHERE task_id = '<uuid>'\`); every other virtual table (pragma_*, FTS, dbstat) is rejected. Use it to verify a factual claim against live data. SCHEMA NOTE — an evidence ref keys on its table's BUSINESS key, not the row's \`id\`: a \`task <uuid>\` ref keys on \`tasks.task_id\` (a TEXT UUID) — filter \`WHERE task_id = '<uuid>'\`, NOT \`WHERE id = '<uuid>'\` (\`tasks.id\` is an unrelated INTEGER rowid, so an id=uuid filter silently returns 0 rows and would look like the task is missing when it is not); a \`kb_entry <path>\` ref keys on \`jarvis_files.path\` — filter \`WHERE path = '<path>'\` (or just use recall_check for KB).`;
 
 function buildSqlCheckTool(db: Database.Database): InlineSdkTool {
   return sdkTool(

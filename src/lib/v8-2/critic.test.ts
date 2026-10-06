@@ -28,6 +28,7 @@ import {
   CRITIC_MAX_LOOP,
   CRITIC_SYSTEM_PROMPT_V1,
   SQL_CHECK_TOOL_DESCRIPTION,
+  SQL_CHECK_TABLES,
   type CriticInput,
   type CriticVerdict,
 } from "./critic.js";
@@ -114,6 +115,22 @@ describe("sql_check tool — schema guidance (ACI)", () => {
     expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("WHERE task_id = '<uuid>'");
     // Phase-2 kb_entry refs (id=path) carry the same key-column trap live now (I2).
     expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("jarvis_files.path");
+  });
+
+  it("the system prompt's sql_check line names exactly the whitelist (no drift; item 11e)", () => {
+    // `northstar` sat in both lists without being a table in mc.db. The
+    // prompt hard-codes the list, so pin it to the set it must mirror.
+    const line = CRITIC_SYSTEM_PROMPT_V1.split("\n").find((l) =>
+      l.startsWith("- sql_check(query):"),
+    );
+    const listed = /\(([^()]*)\)\.$/.exec(line ?? "")?.[1].split(", ") ?? [];
+    expect(listed.sort()).toEqual([...SQL_CHECK_TABLES].sort());
+    expect(SQL_CHECK_TABLES.has("northstar")).toBe(false);
+  });
+
+  it("tells the critic json_each / json_tree over whitelisted columns are allowed", () => {
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("json_each(<col>)");
+    expect(SQL_CHECK_TOOL_DESCRIPTION).toContain("json_tree(<col>)");
   });
 });
 
@@ -648,6 +665,174 @@ describe("verification tools — read-only guards", () => {
           /outside the ground-truth whitelist: \(virtual table\)/,
         );
       }
+    });
+
+    // Item 11(d): json_each / json_tree read JSON out of whitelisted columns
+    // (tasks.metadata). They are allowed by their per-connection vtab
+    // pointer (EXPLAIN VOpen.p4), never by name; every other VOpen stays out.
+    describe("json_each / json_tree (VOpen allowed by vtab pointer)", () => {
+      const vopens = (db: Database.Database, sql: string): string[] =>
+        (
+          db.prepare(`EXPLAIN ${sql}`).all() as Array<{
+            opcode: string;
+            p4: unknown;
+          }>
+        )
+          .filter((r) => r.opcode === "VOpen")
+          .map((r) => String(r.p4));
+
+      beforeEach(() => {
+        getDatabase()
+          .prepare(
+            "INSERT INTO tasks (task_id, title, description, metadata) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            "t-json-1",
+            "synthetic",
+            "synthetic",
+            JSON.stringify({ tags: ["alpha", "beta"], nested: { k: 1 } }),
+          );
+      });
+
+      it("the vtab pointer is stable across statements on one connection and differs per module", () => {
+        const db = getDatabase();
+        const each1 = vopens(db, "SELECT 1 FROM json_each('[]')");
+        const each2 = vopens(
+          db,
+          "SELECT j.value FROM tasks, json_each(tasks.metadata) AS j",
+        );
+        const tree = vopens(db, "SELECT 1 FROM json_tree('[]')");
+        const pti = vopens(db, "SELECT * FROM pragma_table_info('tasks')");
+        expect(each1).toHaveLength(1);
+        expect(each1[0]).toMatch(/^vtab:/);
+        expect(each2).toEqual(each1);
+        expect(tree).toHaveLength(1);
+        expect(tree[0]).not.toBe(each1[0]);
+        expect(pti).toHaveLength(1);
+        expect(pti[0]).not.toBe(each1[0]);
+        expect(pti[0]).not.toBe(tree[0]);
+      });
+
+      it.each([
+        [
+          "comma-join",
+          "SELECT value FROM tasks, json_each(tasks.metadata) WHERE task_id = 't-json-1'",
+          /^2 row\(s\)/,
+        ],
+        [
+          "aliased",
+          "SELECT j.key, j.value FROM tasks, json_each(tasks.metadata) AS j WHERE task_id = 't-json-1'",
+          /^2 row\(s\)/,
+        ],
+        [
+          "two json_each cursors",
+          "SELECT t.value FROM tasks, json_each(tasks.metadata) AS j, json_each(j.value) AS t WHERE task_id = 't-json-1' AND j.key = 'tags'",
+          /^2 row\(s\)/,
+        ],
+        [
+          "json_tree via JOIN",
+          "SELECT jt.fullkey FROM tasks JOIN json_tree(tasks.metadata) AS jt WHERE task_id = 't-json-1' AND jt.type = 'integer'",
+          /^1 row\(s\)/,
+        ],
+      ])("allows %s over a whitelisted JSON column", (_label, sql, rows) => {
+        expect(runReadOnlySelect(getDatabase(), sql)).toMatch(rows);
+      });
+
+      it.each([
+        ["plain pragma TVF", "SELECT * FROM pragma_table_info('tasks')"],
+        [
+          "quoted pragma TVF",
+          "SELECT * FROM tasks WHERE task_id IN (SELECT name FROM \"pragma_table_info\"('tasks'))",
+        ],
+        [
+          "json_each combined with a pragma TVF",
+          "SELECT j.value FROM tasks, json_each(tasks.metadata) AS j, \"pragma_table_info\"('tasks') p",
+        ],
+      ])("still refuses a %s", (_label, sql) => {
+        expect(runReadOnlySelect(getDatabase(), sql)).toMatch(
+          /sql_check rejected: .*outside the ground-truth whitelist/,
+        );
+      });
+
+      it("still refuses dbstat (reads page content of any table)", () => {
+        const db = getDatabase();
+        let hasDbstat = true;
+        try {
+          db.prepare("EXPLAIN SELECT 1 FROM dbstat").all();
+        } catch {
+          hasDbstat = false; // module compiled out of this build: nothing to refuse
+        }
+        if (!hasDbstat) return;
+        expect(
+          runReadOnlySelect(db, 'SELECT * FROM tasks, "dbstat" d'),
+        ).toMatch(/outside the ground-truth whitelist: \(virtual table\)/);
+        expect(
+          runReadOnlySelect(
+            db,
+            'SELECT j.value FROM tasks, json_each(tasks.metadata) AS j, "dbstat" d',
+          ),
+        ).toMatch(/outside the ground-truth whitelist: \(virtual table\)/);
+      });
+
+      it("fails CLOSED when the pointer probe throws — json_each refused", () => {
+        // A fresh connection (the pointer cache is per connection) whose
+        // prepare throws for the probe statements only.
+        const db = new Database(":memory:");
+        try {
+          db.exec("CREATE TABLE tasks (task_id TEXT, metadata TEXT)");
+          db.prepare("INSERT INTO tasks VALUES (?, ?)").run("t-x", "[1,2]");
+          const orig = db.prepare.bind(db);
+          vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+            if (
+              /^EXPLAIN SELECT 1 FROM json_(each|tree)\('\[\]'\)$/.test(sql)
+            ) {
+              throw new Error("probe unavailable");
+            }
+            return orig(sql);
+          }) as typeof db.prepare);
+          expect(
+            runReadOnlySelect(
+              db,
+              "SELECT value FROM tasks, json_each(tasks.metadata)",
+            ),
+          ).toMatch(/outside the ground-truth whitelist: \(virtual table\)/);
+        } finally {
+          db.close();
+        }
+      });
+
+      it("a PARTIAL probe failure fails closed too — only json_tree throws, json_each is refused as well (empty set, never partial)", () => {
+        const db = new Database(":memory:");
+        try {
+          db.exec("CREATE TABLE tasks (task_id TEXT, metadata TEXT)");
+          db.prepare("INSERT INTO tasks VALUES (?, ?)").run("t-x", "[1,2]");
+          const orig = db.prepare.bind(db);
+          const probes: string[] = [];
+          vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+            if (sql.startsWith("EXPLAIN SELECT 1 FROM json_")) probes.push(sql);
+            if (sql === "EXPLAIN SELECT 1 FROM json_tree('[]')") {
+              throw new Error("probe unavailable");
+            }
+            return orig(sql);
+          }) as typeof db.prepare);
+          for (const sql of [
+            "SELECT value FROM tasks, json_each(tasks.metadata)",
+            "SELECT fullkey FROM tasks, json_tree(tasks.metadata)",
+          ]) {
+            expect(runReadOnlySelect(db, sql)).toMatch(
+              /outside the ground-truth whitelist: \(virtual table\)/,
+            );
+          }
+          // json_each WAS probed successfully first: the refusal comes from
+          // discarding its pointer, not from never probing it.
+          expect(probes).toEqual([
+            "EXPLAIN SELECT 1 FROM json_each('[]')",
+            "EXPLAIN SELECT 1 FROM json_tree('[]')",
+          ]);
+        } finally {
+          db.close();
+        }
+      });
     });
 
     it("rejects a non-whitelisted table the regex cannot see — FROM(t), subquery, schema, pragma TVF (EXPLAIN-resolved)", () => {

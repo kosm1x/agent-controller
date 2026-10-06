@@ -709,6 +709,108 @@ describe("applyCompletionLedger — V9 W1 grader shadow (background, trace-only)
     expect(JSON.parse(gradedTraces("t-cap-after")[0]!.attrs).reason).toBeUndefined();
   });
 
+  // 11(b): the REAL runGrader on a stubbed SDK call that ignores the abort —
+  // the budget returns, the call keeps running, the slot stays held.
+  async function realGraderOnHungCalls(orphanMaxHoldMs?: number) {
+    const actual =
+      await vi.importActual<typeof import("./grader.js")>("./grader.js");
+    const calls: Array<{ resolve: () => void; reject: (e: Error) => void }> =
+      [];
+    const query = (() =>
+      new Promise((resolve, reject) => {
+        calls.push({
+          resolve: () =>
+            resolve({ text: "", toolCalls: [], model: "claude-opus-4-8" }),
+          reject,
+        });
+      })) as unknown as NonNullable<Parameters<typeof runGrader>[1]>["query"];
+    mockRunGrader.mockImplementation((input) =>
+      actual.runGrader(input, {
+        query,
+        budgetMs: 10,
+        provenance: [],
+        orphanMaxHoldMs,
+      }),
+    );
+    return calls;
+  }
+  async function launchShadow(id: string) {
+    registerGradeSpecs(id, PROSE, "do the thing");
+    await applyCompletionLedger(base({ taskId: id }));
+  }
+  async function waitForTraces(ids: string[]) {
+    for (let i = 0; i < 100; i++) {
+      if (ids.every((id) => gradedTraces(id).length > 0)) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error("graded traces never landed");
+  }
+
+  it("an orphaned call (budget returned, SDK still running) keeps its slot until the call settles (11b)", async () => {
+    process.env.TASK_GATES_GRADER = "shadow";
+    const calls = await realGraderOnHungCalls();
+    const ids = ["t-orph-0", "t-orph-1", "t-orph-2", "t-orph-3"];
+    for (const id of ids) await launchShadow(id);
+    await waitForTraces(ids); // every runGrader already returned on budget
+    for (const id of ids) {
+      expect(JSON.parse(gradedTraces(id)[0]!.attrs).reason).toBe(
+        "budget_exhausted",
+      );
+    }
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES);
+
+    await launchShadow("t-orph-over");
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES); // no new call
+    expect(JSON.parse(gradedTraces("t-orph-over")[0]!.attrs)).toMatchObject({
+      mode: "shadow",
+      model: null,
+      reason: "skipped_concurrency",
+    });
+
+    for (const c of calls) c.resolve();
+    await _drainShadowGradesForTests();
+    await launchShadow("t-orph-after");
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES + 1); // a real call
+    calls.at(-1)!.resolve();
+    await _drainShadowGradesForTests();
+  });
+
+  it("an orphaned call that REJECTS also releases its slot (11b)", async () => {
+    process.env.TASK_GATES_GRADER = "shadow";
+    const calls = await realGraderOnHungCalls();
+    const ids = ["t-rej-0", "t-rej-1", "t-rej-2", "t-rej-3"];
+    for (const id of ids) await launchShadow(id);
+    await waitForTraces(ids);
+    await launchShadow("t-rej-over");
+    expect(JSON.parse(gradedTraces("t-rej-over")[0]!.attrs).reason).toBe(
+      "skipped_concurrency",
+    );
+    for (const c of calls) c.reject(new Error("late provider error"));
+    await _drainShadowGradesForTests();
+    await launchShadow("t-rej-after");
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES + 1);
+    calls.at(-1)!.resolve();
+    await _drainShadowGradesForTests();
+    expect(gradedTraces("t-rej-after")).toHaveLength(1);
+  });
+
+  it("orphans that NEVER settle release their slots at the hold deadline (R1 W2)", async () => {
+    process.env.TASK_GATES_GRADER = "shadow";
+    const calls = await realGraderOnHungCalls(20);
+    const ids = ["t-hold-0", "t-hold-1", "t-hold-2", "t-hold-3"];
+    for (const id of ids) await launchShadow(id);
+    await waitForTraces(ids);
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES);
+    await new Promise((r) => setTimeout(r, 100)); // past the 20 ms hold
+    await launchShadow("t-hold-after"); // none of the 4 calls ever settled
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES + 1); // a real call
+    await waitForTraces(["t-hold-after"]);
+    expect(JSON.parse(gradedTraces("t-hold-after")[0]!.attrs).reason).toBe(
+      "budget_exhausted",
+    );
+    await _drainShadowGradesForTests(); // its own hold lets it go too
+  });
+
   it("under TASK_GATES_MODE=enforce a failed shadow grade never demotes and never reaches the Gates line; manual rows are read, not written", async () => {
     process.env.TASK_GATES_GRADER = "shadow";
     process.env.TASK_GATES_MODE = "enforce";
