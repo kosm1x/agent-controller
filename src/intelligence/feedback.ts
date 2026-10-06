@@ -20,7 +20,7 @@
  * (intercept-and-swallow lesson, feedback_never_silent_reply_floor #4).
  */
 
-const POSITIVE_PATTERNS = /\bexcelente\b/i;
+export const POSITIVE_PATTERNS = /\bexcelente\b/i;
 
 const NEGATIVE_PATTERNS =
   /^(no[, ]|no$|incorrecto|mal\b|error\b|otra vez|no es\b|equivocado|eso no|tampoco|nope)/i;

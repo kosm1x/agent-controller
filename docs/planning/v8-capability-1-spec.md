@@ -722,6 +722,28 @@ GROUP BY surface;
 -- Target morning surface: promote_rate >= 60% (operator finds value most days)
 ```
 
+### §13 v2 — ruled 2026-10-06 (supersedes the cache-read gate above)
+
+Operator ruling: the gate must be useful and measurable. The cache-read ratio is neither: `cost_ledger` holds one row per run summed over its turns, so the ratio follows run length (1–2-turn runs ≈ 41 %, 9+-turn runs ≈ 87 %, 7 d to 2026-10-06), not cache health. The promote-rate line was retired 2026-08-03 with the brief surface. V8.1's surface is the 08:00 Morning Sync schedule, so the gate scores that.
+
+Population: every run of a schedule named `Morning Sync%`, plus the retired predecessor id while it is inside a window. A run is a distinct task id found in `schedule_runs` (written for every spawn, including failures) or in `ritual_deliveries` (`ritual_id = 'schedule:<id>'`, written only when the result is delivered). Days are days in `RITUALS_TIMEZONE`, the same value that writes `ritual_deliveries.day`. A run still `running` today is in flight and not counted yet; an operator-cancelled run is reported as a count and is neither measured nor a defect (its missing day still counts against delivery). Grounding and costPerRun score completed runs only (`completed` or `completed_with_concerns`); a failed, cancelled or lost run is excluded from both and shown as a count, so one failure is one hard defect, not three failed checks, and a partial run's cost cannot pull the median down. A completed run with no `numbers.audited` event, or whose audit event records an error, counts as not grounded (fail closed).
+
+| Check | Pass when | Window | Source | Unmeasurable when |
+| --- | --- | --- | --- | --- |
+| delivery | delivered on ≥ 13 days | 14 d ending today once today's run is delivered, else ending yesterday (the verdict must not depend on the hour of the readout) | `ritual_deliveries` | no such schedule ⇒ FAIL |
+| cleanCompletion | 0 hard defects (task `failed`, or concern reason `max_turns` / `tool_scope_block` / `delivery_error`) | 14 d | `tasks.status`; `task.completed` trace attr `concern_reason` | < 7 runs are measured (a failed run is measured; a completed run is measured once it carries the attr) |
+| grounding | ≤ 1 completed run with unverified numbers or no evidence chunk | 14 d | `numbers.audited` trace | < 7 completed runs |
+| operatorVerdict | positive ÷ rated ≥ 60 % (the old promote-rate bar; "excelente" = positive, explicit negative = negative, silence = unrated) | 30 d | `feedback.explicit` trace | < 5 rated runs |
+| costPerRun | median ≤ $0.25 over completed runs | 14 d | `cost_ledger` | < 7 completed runs with a ledger row |
+
+Verdict: FAIL if any check fails; else INSUFFICIENT DATA if any is unmeasurable; else PASS. Thresholds are fixed constants in `src/briefing/activation-gate.ts`; changing one is a new ruling, logged here with the old number.
+
+Reported, never scored: the legacy 24 h cache-read ratio ("tracks run length"); first-turn cache-read share of Morning Sync runs from per-turn trace fields (threshold to be ruled after 7 days of data); soft concern reasons (`partial`) by count.
+
+How a run gets rated (operatorVerdict). The last schedule or ritual result broadcast on a channel stays ratable for 12 hours, or until the next message the router sends on that channel, whichever comes first (the acknowledgement of a rating does not end it, so the operator can rate again; the gate reads the latest rating per run); a broadcast whose send failed is not ratable. Only the operator's direct chat rates it, never a group message, and only when the whole message matches one of two fixed shapes (a closed allow-list in `src/messaging/router.ts`; extending it is a new ruling). Positive: the eval word alone, with one optional leading `¡` and a tail of `. , ! …`, whitespace and the emoji 👍 👏 🙌 🔥 💯 ✅ 🎉 (each with an optional skin-tone modifier). Negative: "no" + optionally one of fue / está / esta / quedó / quedo / es + the eval word, separated by plain spaces, with a tail of `. !` and whitespace. Any other message rates nothing on the broadcast and behaves as it did before: a bare "no", a question, "no, excelente", "nada excelente", "excelente, gracias", "excelente, envíalo", any other emoji, an instruction that merely contains the word. A lost rating is acceptable; a flipped one is not, because the trace stores the signal and never the text, so a flipped rating cannot be rescored. The rating wins over an open chat feedback window. It is trace-only (`feedback.explicit {signal, source:"broadcast"}`): no `task_outcomes` write, no scope link, no eval-case pin, so a schedule's prompt never enters the eval set. Last broadcast wins; attribution by Telegram reply-to is queued.
+
+What a PASS changes: V8.1 moves from ACTIVE to "gate met" in `docs/PROJECT-STATUS.md`. What a FAIL changes: each failing line names its own next action (delivery ⇒ schedule/runner, cleanCompletion ⇒ the named reason, grounding ⇒ evidence gather, operatorVerdict ⇒ the reading itself, costPerRun ⇒ prompt/tool-set size).
+
 ### Operational metrics (post-V8.1 launch)
 
 - **Promote rate ≥60%** on morning surface within 30 days

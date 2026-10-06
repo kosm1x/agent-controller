@@ -1,8 +1,13 @@
 /**
  * §13 activation gate — V8.1 Phase 9.
  *
- * Evaluates whether V8.1's Proactive Context Engine is ready to be declared
- * active, per spec §13:
+ * §13 v2 (operator ruling 2026-10-06): the verdict is scored on FIVE checks
+ * about the 08:00 Morning Sync — delivery, cleanCompletion, grounding,
+ * operatorVerdict, costPerRun (see `evaluateMorningSync`). The lines below
+ * describe the LEGACY §13 terms, still computed and rendered as unscored
+ * information (`legacy`, `legacyVerdict`): the cache ratio tracks run length.
+ *
+ * Legacy spec §13:
  *   - cache-read ratio ≥ 80% over a rolling 24h window of CACHEABLE inference
  *     (everything except `reflection:%` and `heavy` — see the two notes below);
  *   - ≥ 20 cacheable runs in that window — enough signal to trust the ratio;
@@ -45,6 +50,7 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
 /** spec §13 thresholds. */
 export const GATE_CACHE_READ_PCT = 80;
@@ -147,6 +153,59 @@ export interface ActivationGateCheck {
   detail: string;
 }
 
+/** A scored §13 v2 check: three-state, `pass` mirrors `status === "pass"`. */
+export interface ScoredGateCheck extends ActivationGateCheck {
+  status: "pass" | "fail" | "insufficient_data";
+}
+
+// ── §13 v2 (operator ruling 2026-10-06): score the Morning Sync itself ──────
+//
+// The legacy 24h cache-read ratio tracks run length (one ledger row per run
+// summing its turns: 1–2-turn runs read ~41 %, 9+-turn runs ~87 %), and the
+// promote-rate line retired 2026-08-03 when the 08:00 Morning Sync became
+// V8.1's surface. Both stay visible as UNSCORED information (`legacy`); the
+// verdict rides on the five checks below.
+
+/** Predecessor Morning Sync schedule ids, deleted from `scheduled_tasks` but
+ *  still inside the window. Their deliveries count as Morning Sync runs. */
+export const RETIRED_MORNING_SYNC_SCHEDULE_IDS = [
+  "6c312196-87e9-4741-987e-0a1bfec089eb",
+] as const;
+export const MORNING_SYNC_NAME_PATTERN = "Morning Sync%";
+/** Calendar days (MX) in the delivery / completion / grounding / cost window. */
+export const GATE_MS_WINDOW_DAYS = 14;
+/** Calendar days (MX) in the operator-verdict window. */
+export const GATE_MS_VERDICT_WINDOW_DAYS = 30;
+/** Check 1: distinct delivered days needed out of GATE_MS_WINDOW_DAYS. */
+export const GATE_MS_MIN_DELIVERED_DAYS = 13;
+/** Check 2: hard defects allowed. */
+export const GATE_MS_MAX_HARD_DEFECTS = 0;
+export const GATE_MS_HARD_DEFECT_REASONS = [
+  "max_turns",
+  "tool_scope_block",
+  "delivery_error",
+] as const;
+/** Checks 2, 3, 5: runs needed before the check is measurable. */
+export const GATE_MS_MIN_RUNS = 7;
+/** Check 3: ungrounded runs allowed in the window. */
+export const GATE_MS_MAX_UNGROUNDED = 1;
+/** Check 4: rated runs needed, and the positive share needed. */
+export const GATE_MS_MIN_RATED = 5;
+export const GATE_MS_MIN_POSITIVE_SHARE = 0.6;
+/** Check 5: median USD per run. */
+export const GATE_MS_MAX_MEDIAN_COST_USD = 0.25;
+
+export interface MorningSyncInfo {
+  /** Morning Sync runs (distinct task ids) in the 14-day window. */
+  runs: number;
+  /** First-turn cache-read share, unscored. `null` = attrs not recorded yet. */
+  firstTurn: {
+    runsWithAttrs: number;
+    cacheReadPct: number | null;
+    cacheCreationTokens: number;
+  };
+}
+
 export interface ActivationGateResult {
   /** Cache-read ratio (%) over cacheable inference, last 24h. null = no rows. */
   cacheReadPct: number | null;
@@ -171,14 +230,29 @@ export interface ActivationGateResult {
     costUsd: number;
   };
   briefingHealth: BriefingSurfaceHealth[];
+  /** The five scored §13 v2 checks — the ONLY inputs to `verdict`. */
   checks: {
+    delivery: ScoredGateCheck;
+    cleanCompletion: ScoredGateCheck;
+    grounding: ScoredGateCheck;
+    operatorVerdict: ScoredGateCheck;
+    costPerRun: ScoredGateCheck;
+  };
+  /** Unscored Morning Sync information. */
+  morningSync: MorningSyncInfo;
+  /**
+   * Legacy §13 lines — information only since 2026-10-06 (the cache ratio
+   * tracks run length; not scored). Computed exactly as before.
+   */
+  legacy: {
     cacheRead: ActivationGateCheck;
     promoteRate: ActivationGateCheck;
   };
+  /** What the legacy two-line gate WOULD say. Never feeds `verdict`. */
+  legacyVerdict: "pass" | "fail" | "insufficient_data";
   /**
-   * `pass` — both §13 checks green; `fail` — measurable but below a threshold;
-   * `insufficient_data` — not enough cacheable runs / resolved briefings to
-   * judge yet (the expected verdict during the early shadow run).
+   * `fail` if any scored check fails; else `insufficient_data` if any is not
+   * measurable; else `pass`. An unmeasurable term never reads as PASS or FAIL.
    */
   verdict: "pass" | "fail" | "insufficient_data";
 }
@@ -226,6 +300,8 @@ export const BRIEF_SURFACE_RETIRED = true;
  */
 export function evaluateActivationGate(opts?: {
   briefSurfaceRetired?: boolean;
+  /** Clock override for tests; defaults to now. */
+  now?: Date;
 }): ActivationGateResult {
   const db = getDatabase();
 
@@ -372,14 +448,23 @@ export function evaluateActivationGate(opts?: {
           `(need ≥${GATE_MIN_RULED_BRIEFS}; ${morning.expired} expired unanswered, ${morning.pending} pending)`
         : `morning promote-rate ${morning.promoteRatePct}% over ${morningRuled} ruled brief(s) (need ≥${GATE_MORNING_PROMOTE_PCT}%)`;
 
-  let verdict: ActivationGateResult["verdict"];
+  // Legacy two-line verdict — kept as information, never feeds `verdict`.
+  let legacyVerdict: ActivationGateResult["legacyVerdict"];
   if (!cacheReadMeasurable || !promoteMeasurable) {
-    verdict = "insufficient_data";
+    legacyVerdict = "insufficient_data";
   } else if (cacheReadPass && promoteRatePass) {
-    verdict = "pass";
+    legacyVerdict = "pass";
   } else {
-    verdict = "fail";
+    legacyVerdict = "fail";
   }
+
+  const { checks, morningSync } = evaluateMorningSync(opts?.now ?? new Date());
+  const states = Object.values(checks).map((c) => c.status);
+  const verdict: ActivationGateResult["verdict"] = states.includes("fail")
+    ? "fail"
+    : states.includes("insufficient_data")
+      ? "insufficient_data"
+      : "pass";
 
   return {
     cacheReadPct,
@@ -394,10 +479,323 @@ export function evaluateActivationGate(opts?: {
       costUsd: Math.round(excluded.cost * 10000) / 10000,
     },
     briefingHealth,
-    checks: {
+    checks,
+    morningSync,
+    legacy: {
       cacheRead: { pass: cacheReadPass, detail: cacheDetail },
       promoteRate: { pass: promoteRatePass, detail: promoteDetail },
     },
+    legacyVerdict,
     verdict,
+  };
+}
+
+/**
+ * The rituals-timezone (MX by default) calendar day (`YYYY-MM-DD`)
+ * `offsetDays` before `now`. `ritual_deliveries.day` is written in
+ * `RITUALS_TIMEZONE` (delivery-policy.ts), so the window bound uses that same
+ * value — explicitly via Intl, never the process TZ (`mc-ctl briefing-gate`
+ * runs from a bare shell, the service runs TZ=America/Mexico_City; both must
+ * agree).
+ */
+export function morningSyncDay(now: Date, offsetDays = 0): string {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: RITUALS_TIMEZONE,
+  }).format(now);
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function scored(
+  status: ScoredGateCheck["status"],
+  detail: string,
+): ScoredGateCheck {
+  return { status, pass: status === "pass", detail };
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/** Score the five §13 v2 checks over Morning Sync runs. Pure read. */
+function evaluateMorningSync(now: Date): {
+  checks: ActivationGateResult["checks"];
+  morningSync: MorningSyncInfo;
+} {
+  const db = getDatabase();
+  const retiredJson = JSON.stringify(RETIRED_MORNING_SYNC_SCHEDULE_IDS);
+  const namedSchedules = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM scheduled_tasks WHERE name LIKE ?`)
+      .get(MORNING_SYNC_NAME_PATTERN) as { n: number }
+  ).n;
+  // A Morning Sync run = a delivery or a `schedule_runs` row of a
+  // `Morning Sync%` schedule (live) or a retired predecessor id.
+  const msScheduleIds = `SELECT schedule_id FROM scheduled_tasks WHERE name LIKE ?
+      UNION SELECT value FROM json_each(?)`;
+  const msRitual = `ritual_id IN (SELECT 'schedule:' || schedule_id FROM (${msScheduleIds}))`;
+  const today = morningSyncDay(now);
+  // Window = `days` MX calendar days ending today, inclusive (exactly `days`).
+  // Population = deliveries UNION schedule_runs, de-duplicated by task id:
+  // `ritual_deliveries` is written only on the success broadcast path, so a
+  // failed or cancelled run exists ONLY in `schedule_runs` (audit R1-W3).
+  // `spawned_at` is UTC `datetime('now')` text, bucketed into its MX day in JS
+  // (the SQL bound is a loose prefilter one day early). A run still `running`
+  // on today's MX day is in flight and skipped; an older `running` row is a
+  // lost run and counts.
+  const runIds = (days: number): string[] => {
+    const from = morningSyncDay(now, days - 1);
+    const ids = new Set(
+      (
+        db
+          .prepare(
+            `SELECT DISTINCT task_id FROM ritual_deliveries
+              WHERE ${msRitual} AND task_id IS NOT NULL AND day BETWEEN ? AND ?`,
+          )
+          .all(MORNING_SYNC_NAME_PATTERN, retiredJson, from, today) as {
+          task_id: string;
+        }[]
+      ).map((r) => r.task_id),
+    );
+    const scheduleRuns = db
+      .prepare(
+        `SELECT task_id, spawned_at, status FROM schedule_runs
+          WHERE schedule_id IN (${msScheduleIds})
+            AND spawned_at >= date(?, '-1 day')`,
+      )
+      .all(MORNING_SYNC_NAME_PATTERN, retiredJson, from) as {
+      task_id: string;
+      spawned_at: string;
+      status: string;
+    }[];
+    for (const r of scheduleRuns) {
+      const day = morningSyncDay(
+        new Date(`${r.spawned_at.replace(" ", "T")}Z`),
+      );
+      if (day < from || day > today) continue;
+      if (r.status === "running" && day === today) continue;
+      ids.add(r.task_id);
+    }
+    return [...ids];
+  };
+  const runs = runIds(GATE_MS_WINDOW_DAYS);
+  const runsJson = JSON.stringify(runs);
+
+  // 1. delivery — distinct delivered MX days in a 14-day window. The schedule
+  // fires at 08:00 MX, so until today's run is delivered the window ends
+  // YESTERDAY; otherwise a pre-08:00 read could reach at most 13/14 and one
+  // earlier miss would flip the verdict by time of day (audit R1-W4).
+  const deliveredDaysIn = (from: string, to: string): number =>
+    (
+      db
+        .prepare(
+          `SELECT COUNT(DISTINCT day) AS n FROM ritual_deliveries
+            WHERE ${msRitual} AND delivered = 1 AND day BETWEEN ? AND ?`,
+        )
+        .get(MORNING_SYNC_NAME_PATTERN, retiredJson, from, to) as {
+        n: number;
+      }
+    ).n;
+  const deliveryEnd = deliveredDaysIn(today, today) > 0 ? 0 : 1;
+  const deliveredDays = deliveredDaysIn(
+    morningSyncDay(now, GATE_MS_WINDOW_DAYS - 1 + deliveryEnd),
+    morningSyncDay(now, deliveryEnd),
+  );
+  const delivery =
+    namedSchedules === 0
+      ? scored(
+          "fail",
+          `no schedule named \`${MORNING_SYNC_NAME_PATTERN}\` exists in scheduled_tasks`,
+        )
+      : scored(
+          deliveredDays >= GATE_MS_MIN_DELIVERED_DAYS ? "pass" : "fail",
+          `delivered on ${deliveredDays}/${GATE_MS_WINDOW_DAYS} MX days ending ` +
+            `${deliveryEnd === 0 ? "today" : "yesterday"} (${morningSyncDay(now, deliveryEnd)}) ` +
+            `(need ≥${GATE_MS_MIN_DELIVERED_DAYS})`,
+        );
+
+  // 2. cleanCompletion — measured = the latest `task.completed` carries a
+  // `concern_reason` key (json_type sees a present JSON null too), or the task
+  // failed (a failed task emits `task.failed`, never `task.completed`, so it
+  // would otherwise be unmeasurable by construction; it reaches the population
+  // through `schedule_runs` only). A `cancelled` task is an operator cancel:
+  // neither measured nor a defect, only counted below (its missing delivery is
+  // scored by check 1).
+  const outcomes = db
+    .prepare(
+      `SELECT r.value AS task_id, t.status AS status,
+              (SELECT json_type(e.attrs,'$.concern_reason') FROM task_trace_events e
+                WHERE e.task_id = r.value AND e.name = 'task.completed'
+                ORDER BY e.id DESC LIMIT 1) AS cr_type,
+              (SELECT json_extract(e.attrs,'$.concern_reason') FROM task_trace_events e
+                WHERE e.task_id = r.value AND e.name = 'task.completed'
+                ORDER BY e.id DESC LIMIT 1) AS cr
+         FROM json_each(?) r LEFT JOIN tasks t ON t.task_id = r.value`,
+    )
+    .all(runsJson) as {
+    task_id: string;
+    status: string | null;
+    cr_type: string | null;
+    cr: string | null;
+  }[];
+  const measured = outcomes.filter(
+    (o) => o.cr_type !== null || o.status === "failed",
+  );
+  const hardReasons: readonly string[] = GATE_MS_HARD_DEFECT_REASONS;
+  const hardDefects = measured.filter(
+    (o) =>
+      o.status === "failed" || (o.cr !== null && hardReasons.includes(o.cr)),
+  ).length;
+  const withConcerns = outcomes.filter(
+    (o) => o.status === "completed_with_concerns",
+  ).length;
+  const cancelled = outcomes.filter((o) => o.status === "cancelled").length;
+  const perReason = new Map<string, number>();
+  for (const o of measured)
+    if (o.cr !== null) perReason.set(o.cr, (perReason.get(o.cr) ?? 0) + 1);
+  const reasonText =
+    perReason.size === 0
+      ? "none"
+      : [...perReason].map(([k, v]) => `${k}=${v}`).join(", ");
+  const cleanCompletion = scored(
+    measured.length < GATE_MS_MIN_RUNS
+      ? "insufficient_data"
+      : hardDefects <= GATE_MS_MAX_HARD_DEFECTS
+        ? "pass"
+        : "fail",
+    `${hardDefects} hard defect(s) over ${measured.length}/${runs.length} measured run(s) ` +
+      `(need ≥${GATE_MS_MIN_RUNS} measured, ≤${GATE_MS_MAX_HARD_DEFECTS} defects); ` +
+      `unscored: ${withConcerns} completed_with_concerns, ${cancelled} cancelled, reasons: ${reasonText}`,
+  );
+
+  // Checks 3 and 5 score only runs that COMPLETED. A failed, cancelled or lost
+  // run (or one with no task row) has no audit event and a partial ledger: it
+  // is excluded and counted, never scored as ungrounded or cheap (audit R2-WA).
+  const completedRuns = outcomes
+    .filter(
+      (o) => o.status === "completed" || o.status === "completed_with_concerns",
+    )
+    .map((o) => o.task_id);
+  const completedJson = JSON.stringify(completedRuns);
+  const notCompleted = runs.length - completedRuns.length;
+
+  // 3. grounding — the latest `numbers.audited` has unverified = 0 AND
+  // evidence_chunks ≥ 1. No event ⇒ not grounded.
+  const groundedRuns = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM json_each(?) r
+          WHERE (SELECT json_extract(e.attrs,'$.unverified') = 0
+                    AND json_extract(e.attrs,'$.evidence_chunks') >= 1
+                   FROM task_trace_events e
+                  WHERE e.task_id = r.value AND e.name = 'numbers.audited'
+                  ORDER BY e.id DESC LIMIT 1) = 1`,
+      )
+      .get(completedJson) as { n: number }
+  ).n;
+  const ungrounded = completedRuns.length - groundedRuns;
+  const grounding = scored(
+    completedRuns.length < GATE_MS_MIN_RUNS
+      ? "insufficient_data"
+      : ungrounded <= GATE_MS_MAX_UNGROUNDED
+        ? "pass"
+        : "fail",
+    `${ungrounded} of ${completedRuns.length} completed run(s) not grounded, ` +
+      `${notCompleted} not completed, excluded ` +
+      `(need ≥${GATE_MS_MIN_RUNS} completed runs, ≤${GATE_MS_MAX_UNGROUNDED} ungrounded)`,
+  );
+
+  // 4. operatorVerdict — latest `feedback.explicit` per run, 30-day window.
+  const verdictRuns = runIds(GATE_MS_VERDICT_WINDOW_DAYS);
+  const signals = db
+    .prepare(
+      `SELECT (SELECT json_extract(e.attrs,'$.signal') FROM task_trace_events e
+                WHERE e.task_id = r.value AND e.name = 'feedback.explicit'
+                ORDER BY e.id DESC LIMIT 1) AS signal
+         FROM json_each(?) r`,
+    )
+    .all(JSON.stringify(verdictRuns)) as { signal: string | null }[];
+  const positive = signals.filter((s) => s.signal === "positive").length;
+  const negative = signals.filter((s) => s.signal === "negative").length;
+  const rated = positive + negative;
+  const operatorVerdict = scored(
+    rated < GATE_MS_MIN_RATED
+      ? "insufficient_data"
+      : positive / rated >= GATE_MS_MIN_POSITIVE_SHARE
+        ? "pass"
+        : "fail",
+    `${positive} positive, ${negative} negative, ${rated} rated, ` +
+      `${verdictRuns.length - rated} unrated run(s) in ${GATE_MS_VERDICT_WINDOW_DAYS}d ` +
+      `(need ≥${GATE_MS_MIN_RATED} rated, ≥${GATE_MS_MIN_POSITIVE_SHARE * 100}% positive)`,
+  );
+
+  // 5. costPerRun — median of per-run SUM(cost_ledger.cost_usd), completed
+  // runs only.
+  const costs = (
+    db
+      .prepare(
+        `SELECT SUM(c.cost_usd) AS usd FROM cost_ledger c
+          WHERE c.task_id IN (SELECT value FROM json_each(?))
+          GROUP BY c.task_id`,
+      )
+      .all(completedJson) as { usd: number }[]
+  ).map((r) => r.usd);
+  const med = costs.length > 0 ? median(costs) : null;
+  const costPerRun = scored(
+    costs.length < GATE_MS_MIN_RUNS || med === null
+      ? "insufficient_data"
+      : med <= GATE_MS_MAX_MEDIAN_COST_USD
+        ? "pass"
+        : "fail",
+    `median $${med === null ? "n/a" : med.toFixed(4)} over ${costs.length} completed run(s) with ledger rows, ` +
+      `${notCompleted} not completed, excluded ` +
+      `(need ≥${GATE_MS_MIN_RUNS}, ≤$${GATE_MS_MAX_MEDIAN_COST_USD})`,
+  );
+
+  // Unscored — first-turn cache-read share. `round` starts at 1 in live rows;
+  // the first turn is the lowest round. Share = cache_read / tokens_in, the
+  // same convention as the legacy ratio (cache_read / prompt_tokens).
+  const first = db
+    .prepare(
+      `SELECT COUNT(*) AS n,
+              SUM(json_extract(f.attrs,'$.cache_read_tokens')) AS cr,
+              SUM(json_extract(f.attrs,'$.cache_creation_tokens')) AS cc,
+              SUM(f.tokens_in) AS tin
+         FROM json_each(?) r
+         JOIN task_trace_events f ON f.id = (
+              SELECT e.id FROM task_trace_events e
+               WHERE e.task_id = r.value AND e.name = 'turn.completed'
+               ORDER BY e.round ASC, e.id ASC LIMIT 1)
+        WHERE json_type(f.attrs,'$.cache_read_tokens') IS NOT NULL`,
+    )
+    .get(runsJson) as {
+    n: number;
+    cr: number | null;
+    cc: number | null;
+    tin: number | null;
+  };
+
+  return {
+    checks: {
+      delivery,
+      cleanCompletion,
+      grounding,
+      operatorVerdict,
+      costPerRun,
+    },
+    morningSync: {
+      runs: runs.length,
+      firstTurn: {
+        runsWithAttrs: first.n,
+        cacheReadPct:
+          first.n > 0 && first.tin
+            ? round1((100 * (first.cr ?? 0)) / first.tin)
+            : null,
+        cacheCreationTokens: first.cc ?? 0,
+      },
+    },
   };
 }

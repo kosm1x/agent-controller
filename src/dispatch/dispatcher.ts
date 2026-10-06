@@ -54,6 +54,7 @@ import {
 import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
+import { classifyConcernReason } from "../intelligence/concern-reason.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -1256,6 +1257,18 @@ async function dispatchWithSlot(
           terminationFromTaskStatus(taskStatus, result.success),
         agent_type: effectiveAgentType,
         tool_calls: result.toolCalls?.length ?? 0,
+        // V8.1 gate (ruling 2026-10-06): the reason CODE only, from the same
+        // classifier trackTaskOutcome uses — scheduled tasks get no outcome
+        // row, so this is their only persisted reason. Never free text.
+        concern_reason: classifyConcernReason(
+          taskStatus,
+          result.output == null
+            ? null
+            : typeof result.output === "string"
+              ? result.output
+              : JSON.stringify(result.output),
+          result.error ?? null,
+        ),
         // Redact BEFORE the cut: a fixed-length key rule misses a split key.
         ...(result.error && {
           error: redactCredentialsForPersist(result.error)!.slice(0, 300),

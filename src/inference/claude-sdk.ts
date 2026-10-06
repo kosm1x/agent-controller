@@ -1274,6 +1274,25 @@ export async function queryClaudeSdk(opts: {
               : undefined,
             tokensOut: turnUsage?.output_tokens,
             latencyMs: turnLatencyMs,
+            // V8.1 gate (ruling 2026-10-06): per-turn cache split, from the
+            // same usage object. A field the SDK did not report is omitted,
+            // never written as 0 (0 would read as a measured cache miss).
+            ...(typeof turnUsage?.cache_read_input_tokens === "number" ||
+            typeof turnUsage?.cache_creation_input_tokens === "number"
+              ? {
+                  attrs: {
+                    ...(typeof turnUsage?.cache_read_input_tokens ===
+                      "number" && {
+                      cache_read_tokens: turnUsage.cache_read_input_tokens,
+                    }),
+                    ...(typeof turnUsage?.cache_creation_input_tokens ===
+                      "number" && {
+                      cache_creation_tokens:
+                        turnUsage.cache_creation_input_tokens,
+                    }),
+                  },
+                }
+              : {}),
           });
         }
         lastTurnEndedAt = Date.now();

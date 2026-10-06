@@ -54,6 +54,9 @@ export type TraceEventName =
   | "task.completed"
   | "task.failed"
   | "task.watchdog_failed"
+  // V8.1 gate (ruling 2026-10-06): explicit operator feedback on a task,
+  // emitted whether or not the task has a task_outcomes row
+  | "feedback.explicit"
   // V8.4 completion ledger (2026-08-16)
   | "gates.evaluated"
   | "gates.readback"

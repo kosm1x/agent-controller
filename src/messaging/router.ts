@@ -61,6 +61,7 @@ import {
   detectFeedbackSignal,
   detectImplicitFeedback,
   isFeedbackMessage,
+  POSITIVE_PATTERNS,
 } from "../intelligence/feedback.js";
 import { shadowFeedback } from "../jev/shadow.js";
 import { isConversationalFastPath, fastPathRespond } from "./fast-path.js";
@@ -182,6 +183,33 @@ const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warni
 const TASK_TIMEOUT_ABANDON_MS = 660_000; // 11 min → abandon ONLY if the task is no longer running (armPendingTimers)
 const TASK_TIMEOUT_ABANDON_CODING_MS = 1_200_000; // 20 min → coding tasks need more runway
 const LOOP_NUDGE_MS = 600_000; // /loop: no abandon — a "sigo" line every 10 min instead
+const BROADCAST_RATING_TTL_MS = 12 * 60 * 60 * 1000; // a schedule/ritual broadcast stays rateable 12 h
+
+// Eval word, from the same source the chat path uses (`\bexcelente\b`).
+const BROADCAST_EVAL_WORD = `(?:${POSITIVE_PATTERNS.source})`;
+// Whitespace minus U+FEFF (JS `\s` includes that format character).
+const BROADCAST_WS = String.raw`[^\S\uFEFF]`;
+const BROADCAST_POSITIVE_RE = new RegExp(
+  String.raw`^¡?${BROADCAST_EVAL_WORD}(?:${BROADCAST_WS}|[.,!…]|[👍👏🙌🔥💯✅🎉][\u{1F3FB}-\u{1F3FF}]?)*$`,
+  "iu",
+);
+const BROADCAST_NEGATIVE_RE = new RegExp(
+  String.raw`^no +(?:(?:fue|está|esta|quedó|quedo|es) +)?${BROADCAST_EVAL_WORD}(?:${BROADCAST_WS}|[.!])*$`,
+  "iu",
+);
+
+/**
+ * Broadcast rating rule: a closed allow-list of two anchored shapes; a lost
+ * rating is acceptable, a flipped one is not. Do not extend without an operator ruling.
+ */
+function isUnambiguousBroadcastRating(
+  text: string,
+): "positive" | "negative" | null {
+  const t = text.normalize("NFC").trim();
+  if (BROADCAST_POSITIVE_RE.test(t)) return "positive";
+  if (BROADCAST_NEGATIVE_RE.test(t)) return "negative";
+  return null;
+}
 
 // Intent regexes for handleInbound. Module-level (they close over nothing) so
 // they compile once, not on every inbound message.
@@ -1506,6 +1534,19 @@ export class MessageRouter {
     string,
     { channel: ChannelName; taskId: string; tk: string }
   >();
+  /**
+   * Per channel: the scheduled/ritual task whose broadcast is the LAST thing
+   * the router showed there. A newer broadcast replaces it (or clears it when
+   * it carries no task), any other send on the channel clears it, and it
+   * expires after BROADCAST_RATING_TTL_MS. An operator "excelente" (or its
+   * negated form) rates that task — trace only. In memory on purpose.
+   */
+  private lastBroadcast = new Map<
+    ChannelName,
+    { taskId: string; at: number }
+  >();
+  /** Set only for the synchronous span that broadcasts a scheduled/ritual result. */
+  private broadcastingTaskId: string | null = null;
   private subscriptions: Array<{ unsubscribe: () => void }> = [];
   private ritualWatches = new Map<string, string>(); // taskId → ritualId
   private lastMessageTime = 0;
@@ -2264,16 +2305,69 @@ export class MessageRouter {
    * fallback resend of the same reply keeps its own marker).
    */
   private noteSend(channel: ChannelName, to: string, ownTaskId?: string): void {
+    // Any non-broadcast send on the channel ends the broadcast's "last shown"
+    // status — except the ack of a rating on that same broadcast task.
+    if (!ownTaskId || this.lastBroadcast.get(channel)?.taskId !== ownTaskId) {
+      this.lastBroadcast.delete(channel);
+    }
     const key = `${channel}\u0000${to}`;
     if (ownTaskId && this.lastTaskReply.get(key)?.taskId === ownTaskId) return;
     this.lastTaskReply.delete(key);
   }
 
-  /** A broadcast addresses the owner, whose address may be spelled differently — clear the whole channel. */
-  private noteBroadcast(channel: ChannelName): void {
+  /**
+   * A broadcast addresses the owner, whose address may be spelled differently — clear the whole channel.
+   * `taskId` = the scheduled/ritual task whose result this is (null for a notice: clears the marker).
+   * Returns the marker it set, so a failed send can withdraw exactly that one.
+   */
+  private noteBroadcast(
+    channel: ChannelName,
+    taskId: string | null,
+  ): { taskId: string; at: number } | null {
     for (const [key, m] of this.lastTaskReply) {
       if (m.channel === channel) this.lastTaskReply.delete(key);
     }
+    if (!taskId) {
+      this.lastBroadcast.delete(channel);
+      return null;
+    }
+    const marker = { taskId, at: Date.now() };
+    this.lastBroadcast.set(channel, marker);
+    return marker;
+  }
+
+  /** Run `fn` with `taskId` as the task whose result any broadcast inside it carries. */
+  private withBroadcastTask<T>(taskId: string, fn: () => T): T {
+    this.broadcastingTaskId = taskId;
+    try {
+      return fn();
+    } finally {
+      this.broadcastingTaskId = null;
+    }
+  }
+
+  /**
+   * The scheduled/ritual task an operator rating should go to, or null:
+   * the operator's DIRECT chat (a broadcast goes to the owner address, never
+   * a group), live (< 12 h) broadcast marker, pure feedback (the same test
+   * the pure-feedback intercept uses), and either "excelente" or its negated
+   * form (a negative that carries the eval word).
+   */
+  private broadcastRatingTarget(
+    msg: IncomingMessage,
+    tk: string,
+    signal: string,
+  ): string | null {
+    if (msg.metadata?.isGroup) return null;
+    if (this.operatorThreadKey(msg, tk) === undefined) return null;
+    if (!isFeedbackMessage(msg.text)) return null;
+    const marker = this.lastBroadcast.get(msg.channel);
+    if (!marker || Date.now() - marker.at >= BROADCAST_RATING_TTL_MS) {
+      return null;
+    }
+    // The shape is the gate; equality keeps the ack consistent with the record.
+    const shape = isUnambiguousBroadcastRating(msg.text);
+    return shape !== null && shape === signal ? marker.taskId : null;
   }
 
   /** Set AFTER the reply's own send (which cleared any older marker). */
@@ -2296,6 +2390,10 @@ export class MessageRouter {
    * telemetry, and for a positive ("excelente") the flywheel eval-case pin.
    */
   private applyExplicitFeedback(taskId: string, signal: string): void {
+    // V8.1 gate (ruling 2026-10-06): recordTaskFeedback is an UPDATE that
+    // matches 0 rows when the task has no outcome row (scheduled tasks), so
+    // the trace is the record that always lands. Signal code only, no text.
+    emitTraceEvent({ taskId, name: "feedback.explicit", attrs: { signal } });
     recordTaskFeedback(taskId, signal);
     try {
       linkFeedbackToScope(taskId, signal);
@@ -2336,7 +2434,30 @@ export class MessageRouter {
   private recordFeedbackWindowSignal(
     msg: IncomingMessage,
     tk: string,
-  ): { feedbackTaskId: string | null; praiseAttributed: boolean } {
+  ): {
+    feedbackTaskId: string | null;
+    praiseAttributed: boolean;
+    broadcastTaskId: string | null;
+  } {
+    // V8.1 gate: a schedule/ritual broadcast shown last wins over an open chat
+    // window for "excelente" / its negated form. The window is NOT consumed.
+    const broadcastSignal = detectFeedbackSignal(
+      msg.text,
+      previousMessages.get(tk),
+    );
+    const broadcastTaskId = this.broadcastRatingTarget(
+      msg,
+      tk,
+      broadcastSignal,
+    );
+    if (broadcastTaskId) {
+      this.applyBroadcastFeedback(broadcastTaskId, broadcastSignal);
+      return {
+        feedbackTaskId: null,
+        praiseAttributed: broadcastSignal === "positive",
+        broadcastTaskId,
+      };
+    }
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     let praiseAttributed = false;
@@ -2382,7 +2503,21 @@ export class MessageRouter {
         }
       }
     }
-    return { feedbackTaskId, praiseAttributed };
+    return { feedbackTaskId, praiseAttributed, broadcastTaskId: null };
+  }
+
+  /**
+   * A rating on a scheduled/ritual broadcast: TRACE ONLY. No outcome update
+   * (scheduled tasks have no outcome row), no scope link, and never the
+   * flywheel pin — a schedule's prompt must not enter the eval case set.
+   */
+  private applyBroadcastFeedback(taskId: string, signal: string): void {
+    emitTraceEvent({
+      taskId,
+      name: "feedback.explicit",
+      attrs: { signal, source: "broadcast" },
+    });
+    console.log(`[router] ${signal} attributed to broadcast task ${taskId}`);
   }
 
   /** Pure feedback ("excelente", "gracias", "no") — ack without spawning a task. Returns true when intercepted (stop). */
@@ -2390,7 +2525,10 @@ export class MessageRouter {
     msg: IncomingMessage,
     tk: string,
     praiseAttributed: boolean,
+    broadcastTaskId: string | null = null,
   ): boolean {
+    // The ack of a broadcast rating keeps that broadcast the rateable one.
+    const ackOwnTaskId = broadcastTaskId ?? undefined;
     // Pure feedback ("excelente", "gracias", "perfecto", "no") → ack and skip task creation.
     // Runs UNCONDITIONALLY — even without a feedback window, these messages
     // should never spawn a 21K-token task. Record the signal so Jarvis knows.
@@ -2406,6 +2544,7 @@ export class MessageRouter {
           praiseAttributed || this.operatorThreadKey(msg, tk) === undefined
             ? "👍"
             : "👍 (no encontré una respuesta reciente a la cual asignarlo)",
+          ackOwnTaskId,
         );
         getMemoryService()
           .retain(
@@ -2424,6 +2563,7 @@ export class MessageRouter {
           msg.channel,
           msg.from,
           "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?",
+          ackOwnTaskId,
         );
       }
       console.log(
@@ -2979,9 +3119,10 @@ export class MessageRouter {
     if (this.interceptRituales(msg, tk)) return;
     if (await this.interceptPendingConfirmation(msg, tk)) return;
     if (await this.interceptBriefingVerdict(msg, tk)) return;
-    const { feedbackTaskId, praiseAttributed } =
+    const { feedbackTaskId, praiseAttributed, broadcastTaskId } =
       this.recordFeedbackWindowSignal(msg, tk);
-    if (this.interceptPureFeedback(msg, tk, praiseAttributed)) return;
+    if (this.interceptPureFeedback(msg, tk, praiseAttributed, broadcastTaskId))
+      return;
     if (await this.interceptConversationalFastPath(msg, tk)) return;
     await this.submitInboundTask(msg, tk, feedbackTaskId);
   }
@@ -3051,6 +3192,8 @@ export class MessageRouter {
       ? rawText
       : this.filterForDelivery(rawText, "broadcast");
     if (!text) return { sent: 0, failed: 0 };
+    // Raw = a router-authored notice, never a task result: it clears the marker.
+    const resultTaskId = opts.raw ? null : this.broadcastingTaskId;
 
     for (const [name, adapter] of this.channels) {
       // Email channels are request/response, not push surfaces — a ritual or
@@ -3059,7 +3202,7 @@ export class MessageRouter {
       if (isEmailChannel(name)) continue;
       const to = this.getOwnerAddress(name);
       if (to) {
-        this.noteBroadcast(name);
+        const marker = this.noteBroadcast(name, resultTaskId);
         promises.push(
           adapter
             .send({ channel: name, to, text })
@@ -3068,6 +3211,10 @@ export class MessageRouter {
             })
             .catch((err) => {
               failed++;
+              // Never shown ⇒ not rateable; a newer marker is left alone.
+              if (marker && this.lastBroadcast.get(name) === marker) {
+                this.lastBroadcast.delete(name);
+              }
               console.error(`[router] Broadcast to ${name} failed:`, err);
               if (onChannelFailure) {
                 try {
@@ -3123,7 +3270,7 @@ export class MessageRouter {
       if (!isOwnerChannel(name, adapter.mode)) continue;
       const to = this.getOwnerAddress(name);
       if (!to) continue;
-      this.noteBroadcast(name);
+      this.noteBroadcast(name, null);
       promises.push(
         adapter
           .send({ channel: name, to, text })
@@ -3242,7 +3389,9 @@ export class MessageRouter {
           );
         } else {
           // Phase 5: the seam may have filtered / capped / lead-lined the text.
-          this.broadcastToAll(decision.text).catch((err) => {
+          this.withBroadcastTask(taskId, () =>
+            this.broadcastToAll(decision.text),
+          ).catch((err) => {
             console.error(`[router] Ritual broadcast failed:`, err);
           });
         }
@@ -3295,11 +3444,14 @@ export class MessageRouter {
           /* ignore */
         }
       }
-      handleScheduledTaskResult(
-        taskId,
-        resultText ?? "",
-        task?.status,
-        toolCalls,
+      // Its result broadcast (synchronous inside) carries this task id.
+      this.withBroadcastTask(taskId, () =>
+        handleScheduledTaskResult(
+          taskId,
+          resultText ?? "",
+          task?.status,
+          toolCalls,
+        ),
       );
       return;
     }

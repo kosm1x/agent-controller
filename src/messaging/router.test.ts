@@ -12,6 +12,10 @@ const subscribers: Array<{
 }> = [];
 
 // Mock dependencies before importing router
+// Scheduled-task results reach the router through getRouter() (rituals/dynamic.ts);
+// a test points it at its own router. Null (no router) unless a test sets it.
+const messagingIndex = vi.hoisted(() => ({ router: null as unknown }));
+vi.mock("./index.js", () => ({ getRouter: () => messagingIndex.router }));
 vi.mock("../dispatch/dispatcher.js", () => ({
   submitTask: vi.fn().mockResolvedValue({
     taskId: "test-task-123",
@@ -269,6 +273,7 @@ import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { formatForTelegram } from "./formatter.js";
 import { TelegramStreamController } from "./channels/telegram-stream.js";
 import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
+import { detectFeedbackSignal } from "../intelligence/feedback.js";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -540,6 +545,592 @@ describe("MessageRouter", () => {
           "task-win",
         );
         expect(sent()).toEqual(["👍"]);
+      });
+
+      // V8.1 gate instrumentation (ruling 2026-10-06): every explicit signal
+      // leaves a feedback.explicit trace, outcome row or not.
+      const feedbackTraces = () =>
+        traceMock.emitTraceEvent.mock.calls
+          .map(([ev]) => ev)
+          .filter((ev) => ev.name === "feedback.explicit");
+
+      it("feedback.explicit: window 'excelente' emits signal=positive on that task", async () => {
+        const { checkFeedbackWindow } =
+          await import("../intelligence/outcome-tracker.js");
+        vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-win");
+        await router.handleInbound(turn("excelente"));
+        expect(feedbackTraces()).toEqual([
+          {
+            taskId: "task-win",
+            name: "feedback.explicit",
+            attrs: { signal: "positive" },
+          },
+        ]);
+      });
+
+      it("feedback.explicit: thread-lookup 'excelente' emits on the praised task", async () => {
+        await deliverReply("task-db");
+        traceMock.emitTraceEvent.mockClear();
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          await router.handleInbound(turn("excelente"));
+        } finally {
+          logSpy.mockRestore();
+        }
+        expect(feedbackTraces()).toEqual([
+          {
+            taskId: "task-db",
+            name: "feedback.explicit",
+            attrs: { signal: "positive" },
+          },
+        ]);
+      });
+
+      it("feedback.explicit: emitted even when the task has NO outcome row (UPDATE matches 0 rows)", async () => {
+        const { checkFeedbackWindow } =
+          await import("../intelligence/outcome-tracker.js");
+        // The feedback UPDATE finds no task_outcomes row.
+        dbRun.mockImplementation((sql: string) =>
+          sql.includes("UPDATE task_outcomes SET feedback_signal")
+            ? ({ changes: 0 } as never)
+            : undefined,
+        );
+        try {
+          vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-sched");
+          await router.handleInbound(turn("no, eso no era"));
+          expect(feedbackTraces()).toEqual([
+            {
+              taskId: "task-sched",
+              name: "feedback.explicit",
+              attrs: { signal: "negative" },
+            },
+          ]);
+        } finally {
+          dbRun.mockImplementation(() => undefined);
+        }
+      });
+
+      it("feedback.explicit attrs carry the signal code only, never the message text", async () => {
+        const { checkFeedbackWindow } =
+          await import("../intelligence/outcome-tracker.js");
+        vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-win");
+        await router.handleInbound(turn("excelente SYNTHETIC-USER-TEXT"));
+        const events = feedbackTraces();
+        expect(events.length).toBeGreaterThan(0);
+        for (const ev of events) {
+          expect(Object.keys(ev.attrs)).toEqual(["signal"]);
+          expect(JSON.stringify(ev)).not.toContain("SYNTHETIC-USER-TEXT");
+        }
+      });
+
+      // V8.1 gate (Brief C): an "excelente" after a schedule/ritual broadcast
+      // rates that broadcast's task — trace only, source "broadcast".
+      describe("broadcast attribution", () => {
+        const H = 60 * 60 * 1000;
+        const ACK_NEG =
+          "Entendido, lo tendré en cuenta. ¿Puedes darme más detalle?";
+        const scopeOrOutcomeWrites = () =>
+          dbRun.mock.calls.filter(
+            ([sql]) =>
+              sql.includes("UPDATE task_outcomes SET feedback_signal") ||
+              sql.includes("UPDATE scope_telemetry SET feedback_signal"),
+          );
+        const broadcastTrace = (taskId: string, signal: string) => ({
+          taskId,
+          name: "feedback.explicit",
+          attrs: { signal, source: "broadcast" },
+        });
+        /** A ritual task completes and its result is broadcast (the marker's producer). */
+        const ritualBroadcast = (taskId: string) => {
+          router.watchRitualTask(taskId, "morning-briefing");
+          router.startEventListeners();
+          findHandler("task.completed")!({
+            data: {
+              task_id: taskId,
+              agent_id: "heavy",
+              result: "Buenos días (sintético)",
+              duration_ms: 5,
+            },
+          });
+          expect(sent()).toContain("Buenos días (sintético)");
+          waAdapter.sentMessages.length = 0;
+          traceMock.emitTraceEvent.mockClear();
+          dbRun.mockClear();
+          praiseMocks.bridgePraisedTaskToEvalCase.mockClear();
+          vi.mocked(submitTask).mockClear();
+        };
+        let logSpy: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => {
+          logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        });
+        afterEach(() => {
+          logSpy.mockRestore();
+        });
+
+        it("positive after a broadcast → one trace on the broadcast task, nothing else, attributed ack", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "positive"),
+          ]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+          expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+          expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
+          expect(sent()).toEqual(["👍"]);
+        });
+
+        it("an OPEN chat window loses to the broadcast: window not consumed, chat task gets nothing", async () => {
+          const { checkFeedbackWindow } =
+            await import("../intelligence/outcome-tracker.js");
+          const { shadowFeedback } = await import("../jev/shadow.js");
+          ritualBroadcast("task-bc");
+          vi.mocked(checkFeedbackWindow).mockImplementation(() => "task-win");
+          try {
+            await router.handleInbound(turn("excelente"));
+          } finally {
+            vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+          }
+          expect(checkFeedbackWindow).not.toHaveBeenCalled();
+          expect(shadowFeedback).not.toHaveBeenCalled();
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "positive"),
+          ]);
+          expect(feedbackWrites()).toEqual([]);
+          expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
+          expect(sent()).toEqual(["👍"]);
+        });
+
+        it("a chat reply after the broadcast clears it → today's thread-lookup rating", async () => {
+          ritualBroadcast("task-bc");
+          await deliverReply("task-db");
+          traceMock.emitTraceEvent.mockClear();
+          praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackWrites()).toEqual([["positive", "task-db"]]);
+          expect(praiseMocks.bridgePraisedTaskToEvalCase).toHaveBeenCalledWith(
+            "task-db",
+          );
+          expect(feedbackTraces()).toEqual([
+            {
+              taskId: "task-db",
+              name: "feedback.explicit",
+              attrs: { signal: "positive" },
+            },
+          ]);
+          expect(sent()).toEqual(["👍"]);
+        });
+
+        it("a chat reply after the broadcast with no chat marker → today's honest ack, nothing recorded", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn("/rituales"));
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent().at(-1)).toBe(HONEST);
+        });
+
+        it("a newer broadcast replaces the older one", async () => {
+          ritualBroadcast("task-bc-old");
+          ritualBroadcast("task-bc-new");
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc-new", "positive"),
+          ]);
+        });
+
+        it("a broadcast with no task id (raw notice / owner briefing) clears the marker", async () => {
+          ritualBroadcast("task-bc");
+          await router.broadcastToAll("Aviso sintético", undefined, {
+            raw: true,
+          });
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent().at(-1)).toBe(HONEST);
+
+          ritualBroadcast("task-bc2");
+          await router.sendBriefingToOwner("Brief sintético", { raw: true });
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent().at(-1)).toBe(HONEST);
+        });
+
+        it("12 h expiry: 11 h 59 m attributed, 12 h 01 m not", async () => {
+          ritualBroadcast("task-bc");
+          vi.setSystemTime(Date.now() + 11 * H + 59 * 60_000);
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "positive"),
+          ]);
+
+          ritualBroadcast("task-bc2");
+          traceMock.emitTraceEvent.mockClear();
+          vi.setSystemTime(Date.now() + 12 * H + 60_000);
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent().at(-1)).toBe(HONEST);
+        });
+
+        it("a second 'excelente' on the same broadcast emits again (the ack consumes nothing)", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn("excelente"));
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "positive"),
+            broadcastTrace("task-bc", "positive"),
+          ]);
+        });
+
+        // Audit R1 W2: only PURE feedback rates a broadcast; an embedded form
+        // falls through to today's behaviour (no rating here) and still runs.
+        it("embedded 'excelente. Ahora …' does NOT rate the broadcast and still runs the instruction", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(
+            turn("excelente. Ahora dame el reporte de ventas del mes"),
+          );
+          expect(feedbackTraces()).toEqual([]);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        it("an instruction that merely contains the word does NOT rate the broadcast", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(
+            turn("haz un resumen excelente de las ventas sintéticas"),
+          );
+          expect(feedbackTraces()).toEqual([]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        it("embedded 'excelente, ahora …' 11 h after the broadcast does NOT rate it", async () => {
+          ritualBroadcast("task-bc");
+          vi.setSystemTime(Date.now() + 11 * H);
+          await router.handleInbound(
+            turn("excelente, ahora busca otra cosa sintética"),
+          );
+          expect(feedbackTraces()).toEqual([]);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        it("embedded form with an OPEN chat window → today's window rating, broadcast untouched", async () => {
+          const { checkFeedbackWindow } =
+            await import("../intelligence/outcome-tracker.js");
+          ritualBroadcast("task-bc");
+          vi.mocked(checkFeedbackWindow).mockImplementation(() => "task-win");
+          try {
+            await router.handleInbound(
+              turn("excelente. Ahora dame el reporte de ventas del mes"),
+            );
+          } finally {
+            vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+          }
+          expect(feedbackTraces()).toEqual([
+            {
+              taskId: "task-win",
+              name: "feedback.explicit",
+              attrs: { signal: "positive" },
+            },
+          ]);
+          expect(feedbackWrites()).toEqual([["positive", "task-win"]]);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        // Audit R1 W1: a broadcast goes to the owner's DIRECT chat; the owner
+        // speaking inside a group never rates it.
+        it("owner in a GROUP after a broadcast → no broadcast rating, today's group behaviour; direct chat still rates", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(
+            groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
+          );
+          expect(feedbackTraces()).toEqual([]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+          expect(sent()).toEqual([HONEST]);
+
+          ritualBroadcast("task-bc2");
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc2", "positive"),
+          ]);
+        });
+
+        // Audit R1 W5: a broadcast whose send failed was never shown.
+        it("failed broadcast send → not rateable, honest ack", async () => {
+          const errSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+          vi.mocked(waAdapter.send).mockRejectedValueOnce(
+            new Error("synthetic send failure"),
+          );
+          router.watchRitualTask("task-bc-fail", "morning-briefing");
+          router.startEventListeners();
+          findHandler("task.completed")!({
+            data: {
+              task_id: "task-bc-fail",
+              agent_id: "heavy",
+              result: "Buenos días (sintético)",
+              duration_ms: 5,
+            },
+          });
+          await vi.advanceTimersByTimeAsync(0);
+          errSpy.mockRestore();
+          expect(sent()).toEqual([]);
+          traceMock.emitTraceEvent.mockClear();
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent()).toEqual([HONEST]);
+        });
+
+        it("failed send settling AFTER a newer broadcast leaves the newer one rateable", async () => {
+          const errSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+          let rejectSend!: (err: Error) => void;
+          vi.mocked(waAdapter.send).mockImplementationOnce(
+            () =>
+              new Promise<string>((_resolve, reject) => {
+                rejectSend = reject;
+              }),
+          );
+          router.watchRitualTask("task-bc-fail", "morning-briefing");
+          router.startEventListeners();
+          findHandler("task.completed")!({
+            data: {
+              task_id: "task-bc-fail",
+              agent_id: "heavy",
+              result: "Aviso previo (sintético)",
+              duration_ms: 5,
+            },
+          });
+          ritualBroadcast("task-bc-new");
+          rejectSend(new Error("synthetic send failure"));
+          await vi.advanceTimersByTimeAsync(0);
+          errSpy.mockRestore();
+          traceMock.emitTraceEvent.mockClear();
+          await router.handleInbound(turn("excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc-new", "positive"),
+          ]);
+        });
+
+        // Audit R1 W6: the scheduled-task (Morning Sync) path, through the
+        // real rituals/dynamic.ts handler, carries its task id to the marker.
+        it("scheduled task result broadcast → direct-chat 'excelente' rates that task (source:broadcast)", async () => {
+          const { watchScheduledTask } = await import("../rituals/dynamic.js");
+          messagingIndex.router = router;
+          try {
+            watchScheduledTask("task-ms", {
+              name: "Morning Sync (sintético)",
+              delivery: "telegram",
+              email_to: null,
+              schedule_id: "sched-syn",
+            } as unknown as Parameters<typeof watchScheduledTask>[1]);
+            router.startEventListeners();
+            findHandler("task.completed")!({
+              data: {
+                task_id: "task-ms",
+                agent_id: "heavy",
+                result: "Buenos días programado (sintético)",
+                duration_ms: 5,
+              },
+            });
+            expect(sent()).toContain("Buenos días programado (sintético)");
+            traceMock.emitTraceEvent.mockClear();
+            waAdapter.sentMessages.length = 0;
+            await router.handleInbound(turn("excelente"));
+          } finally {
+            messagingIndex.router = null;
+          }
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-ms", "positive"),
+          ]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+          expect(sent()).toEqual(["👍"]);
+        });
+
+        it("negated praise → negative on the broadcast task; bare 'no' → today's behaviour", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn("no quedó excelente"));
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "negative"),
+          ]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+
+          traceMock.emitTraceEvent.mockClear();
+          waAdapter.sentMessages.length = 0;
+          ritualBroadcast("task-bc2");
+          await router.handleInbound(turn("no"));
+          expect(feedbackTraces()).toEqual([]);
+          expect(scopeOrOutcomeWrites()).toEqual([]);
+          expect(sent()).toEqual([ACK_NEG]);
+        });
+
+        it("bare 'no' with an open window still rates the window task (unchanged)", async () => {
+          const { checkFeedbackWindow } =
+            await import("../intelligence/outcome-tracker.js");
+          ritualBroadcast("task-bc");
+          // Not a once-value: a RED here must not leak it into the next test.
+          vi.mocked(checkFeedbackWindow).mockImplementation(() => "task-win");
+          try {
+            await router.handleInbound(turn("no"));
+          } finally {
+            vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+          }
+          expect(feedbackTraces()).toEqual([
+            {
+              taskId: "task-win",
+              name: "feedback.explicit",
+              attrs: { signal: "negative" },
+            },
+          ]);
+          expect(feedbackWrites()).toEqual([["negative", "task-win"]]);
+        });
+
+        it("non-operator sender after a broadcast → nothing on the broadcast task", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(
+            groupTurn("@jarvis excelente", "member@s.whatsapp.net"),
+          );
+          expect(feedbackTraces()).toEqual([]);
+          expect(sent()).toEqual(["👍"]);
+        });
+
+        it("broadcast trace attrs carry signal + source only, never the message text", async () => {
+          ritualBroadcast("task-bc");
+          // Only the bare word rates a broadcast (audit R2 W-B), so the
+          // leak check uses that form's own text.
+          const text = "¡Excelente!";
+          await router.handleInbound(turn(text));
+          const events = feedbackTraces();
+          expect(events.length).toBe(1);
+          expect(Object.keys(events[0].attrs)).toEqual(["signal", "source"]);
+          expect(JSON.stringify(events[0])).not.toContain(text);
+          expect(JSON.stringify(events[0]).toLowerCase()).not.toContain(
+            "excelente",
+          );
+        });
+
+        // Audit R3 (fold 3): a closed allow-list of two anchored shapes; a lost
+        // rating is acceptable, a flipped one is not.
+        const RATES_POSITIVE = [
+          "excelente",
+          "Excelente",
+          "EXCELENTE",
+          "Excelente!",
+          "¡excelente!",
+          "excelente.",
+          "excelente 👍",
+          "excelente 👍🏽",
+          "excelente 🎉🎉",
+          "  excelente  ",
+          "excelente…",
+        ];
+        const RATES_NEGATIVE = [
+          "no excelente",
+          "No excelente.",
+          "no fue excelente",
+          "no quedó excelente",
+          "no quedo excelente",
+          "no está excelente",
+          "no esta excelente",
+          "no es excelente",
+        ];
+
+        it.each(RATES_POSITIVE)(
+          "rates the broadcast POSITIVE: %j",
+          async (text) => {
+            ritualBroadcast("task-bc");
+            await router.handleInbound(turn(text));
+            expect(feedbackTraces()).toEqual([
+              broadcastTrace("task-bc", "positive"),
+            ]);
+          },
+        );
+
+        it.each(RATES_NEGATIVE)(
+          "rates the broadcast NEGATIVE: %j",
+          async (text) => {
+            ritualBroadcast("task-bc");
+            await router.handleInbound(turn(text));
+            expect(feedbackTraces()).toEqual([
+              broadcastTrace("task-bc", "negative"),
+            ]);
+          },
+        );
+
+        it("every RATES string: the chat signal equals the shape's signal (equality never drops them)", () => {
+          for (const text of RATES_POSITIVE) {
+            expect([text, detectFeedbackSignal(text)]).toEqual([
+              text,
+              "positive",
+            ]);
+          }
+          for (const text of RATES_NEGATIVE) {
+            expect([text, detectFeedbackSignal(text)]).toEqual([
+              text,
+              "negative",
+            ]);
+          }
+        });
+
+        it.each([
+          // Audit R2 W-B
+          "nada excelente",
+          "nunca excelente",
+          "ni excelente",
+          "poco excelente",
+          "menos excelente",
+          "nada de excelente",
+          "excelente, no",
+          "excelente no",
+          "excelente, envíalo",
+          "excelente borra",
+          "¿excelente?",
+          "excelente?",
+          "no, excelente",
+          "no. excelente",
+          "@bot excelente",
+          "excelente excelente",
+          // Audit R3 W1/W2
+          "No tengo quejas, excelente",
+          "No hay nada que corregir, excelente",
+          "No cambies nada, excelente",
+          "No le muevas nada: excelente",
+          "Mal no estuvo, excelente",
+          "Error ninguno, excelente",
+          "No es broma, excelente",
+          "tampoco, excelente",
+          "Nope, excelente",
+          "nope excelente",
+          "no — excelente",
+          "no - excelente",
+          "no 👍 excelente",
+          "no excelente, envíalo",
+          "👎 excelente",
+          "excelente 👎",
+          "❌ excelente",
+          "🚫 excelente",
+          "🆖 excelente",
+          "excelente 🙄",
+          "🇳🇴 excelente",
+          "excelente, gracias",
+          "excelente ❤️",
+          "muy excelente",
+          "no estuvo excelente",
+          "no es nada excelente",
+          "1️⃣ excelente",
+          "excelente​no",
+          "no\n\nexcelente",
+          "no\texcelente",
+          // U+FEFF is a format character, not whitespace, for this rule.
+          "excelente﻿!",
+          // Pins the negative shape's start anchor (chat signal is negative).
+          "Mal, no excelente",
+        ])("rates NOTHING on the broadcast: %j", async (text) => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn(text));
+          expect(
+            feedbackTraces().filter((ev) => ev.attrs?.source === "broadcast"),
+          ).toEqual([]);
+        });
       });
 
       it("non-operator group sender → no lookup, nothing recorded, plain 👍", async () => {

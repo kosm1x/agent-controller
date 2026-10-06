@@ -1100,6 +1100,56 @@ describe("dispatchTask trace emits", () => {
     const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
     expect(terminal.attrs).toMatchObject({ status: "failed", error: "no scope" });
   });
+
+  // V8.1 gate instrumentation (ruling 2026-10-06): the reason CODE from
+  // classifyConcernReason rides the terminal trace event.
+  const terminalEvent = () => {
+    const events = emitTraceMock.mock.calls.map((c) => c[0]);
+    return events.filter((e) => e.name === "task.completed" || e.name === "task.failed").at(-1)!;
+  };
+
+  it("task.completed carries concern_reason for a DONE_WITH_CONCERNS run", async () => {
+    stubRunner({
+      success: true,
+      status: "DONE_WITH_CONCERNS",
+      output: "partial synthetic report; stopped at error_max_turns",
+    });
+    await traceNamesAfterDispatch();
+    const terminal = terminalEvent();
+    expect(terminal.name).toBe("task.completed");
+    expect(terminal.attrs).toMatchObject({
+      status: "completed_with_concerns",
+      concern_reason: "max_turns",
+    });
+  });
+
+  it("concern-flagged run with no defect marker classifies as partial", async () => {
+    stubRunner({ success: true, status: "DONE_WITH_CONCERNS", output: "synthetic caveat" });
+    await traceNamesAfterDispatch();
+    expect(terminalEvent().attrs.concern_reason).toBe("partial");
+  });
+
+  it("clean run carries concern_reason \"none\"", async () => {
+    stubRunner({ success: true, output: "done" });
+    await traceNamesAfterDispatch();
+    const terminal = terminalEvent();
+    expect(terminal.attrs).toMatchObject({ status: "completed", concern_reason: "none" });
+  });
+
+  it("concern_reason is the code only: no output / concern text reaches attrs", async () => {
+    stubRunner({
+      success: true,
+      status: "DONE_WITH_CONCERNS",
+      output: "SYNTHETIC-OUTPUT-TEXT",
+      concerns: ["SYNTHETIC-CONCERN-TEXT"],
+    });
+    await traceNamesAfterDispatch();
+    const attrs = terminalEvent().attrs;
+    expect(attrs.concern_reason).toBe("partial");
+    const serialized = JSON.stringify(attrs);
+    expect(serialized).not.toContain("SYNTHETIC-OUTPUT-TEXT");
+    expect(serialized).not.toContain("SYNTHETIC-CONCERN-TEXT");
+  });
 });
 
 // ---------------------------------------------------------------------------

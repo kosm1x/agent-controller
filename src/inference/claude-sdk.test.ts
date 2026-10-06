@@ -3238,6 +3238,120 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
     });
     expect(emitTraceMock).not.toHaveBeenCalled();
   });
+
+  // V8.1 gate instrumentation (ruling 2026-10-06): per-turn cache split.
+  const turnEvents = () =>
+    emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "turn.completed");
+
+  it("turn.completed carries cache_read_tokens / cache_creation_tokens from that turn's usage", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 700,
+            cache_creation_input_tokens: 40,
+          },
+          content: [{ type: "text", text: "a" }],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 3,
+            output_tokens: 2,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 12,
+          },
+          content: [{ type: "text", text: "b" }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "ab",
+        num_turns: 2,
+        usage: { input_tokens: 13, output_tokens: 7 },
+      },
+    ];
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-c1" },
+    });
+    const turns = turnEvents();
+    expect(turns).toHaveLength(2);
+    // Per-turn, not cumulative; a reported 0 stays a measured 0.
+    expect(turns[0].attrs).toEqual({
+      cache_read_tokens: 700,
+      cache_creation_tokens: 40,
+    });
+    expect(turns[1].attrs).toEqual({
+      cache_read_tokens: 0,
+      cache_creation_tokens: 12,
+    });
+  });
+
+  it("omits the cache attrs when the usage object has no cache fields (never 0 for unknown)", async () => {
+    mockMessages.value = twoTurnFixture();
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-c2" },
+    });
+    const turns = turnEvents();
+    // Turn 1 usage has neither field → no attrs at all.
+    expect(turns[0].attrs).toBeUndefined();
+    // Turn 2 reports only cache_read → only that key, no creation key.
+    expect(turns[1].attrs).toEqual({ cache_read_tokens: 900 });
+    expect(turns[1].attrs).not.toHaveProperty("cache_creation_tokens");
+  });
+
+  it("turn.completed attrs hold only the two integer cache keys (no text)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_read_input_tokens: 5,
+            cache_creation_input_tokens: 6,
+          },
+          content: [{ type: "text", text: "SYNTHETIC-SECRET-TEXT" }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "SYNTHETIC-SECRET-TEXT",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-c3" },
+    });
+    const [turn] = turnEvents();
+    expect(Object.keys(turn.attrs).sort()).toEqual([
+      "cache_creation_tokens",
+      "cache_read_tokens",
+    ]);
+    for (const v of Object.values(turn.attrs)) {
+      expect(Number.isInteger(v)).toBe(true);
+    }
+    expect(JSON.stringify(turn)).not.toContain("SYNTHETIC-SECRET-TEXT");
+  });
 });
 
 describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {

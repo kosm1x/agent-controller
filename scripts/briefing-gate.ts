@@ -2,8 +2,8 @@
  * mc-ctl briefing-gate — V8.1 §13 + V8.2 §17 activation-gate report.
  *
  * Invoked by `mc-ctl briefing-gate`. Evaluates BOTH activation gates — the V8.1
- * §13 gate (cache-read ratio over cacheable inference + morning-brief
- * promote-rate) and the V8.2 §17 gate (shadow volume, citation resolver,
+ * §13 gate (five Morning Sync checks since 2026-10-06; the cache-read ratio and
+ * morning-brief promote-rate print as unscored information) and the V8.2 §17 gate (shadow volume, citation resolver,
  * critic-unfixable, sycophancy) — and prints one operator-readable
  * report. Read-only — no writes. Both the printed Combined verdict and the exit
  * code are TRUE worst-of-two: exit 0 means BOTH layers are activatable. (This
@@ -17,6 +17,7 @@ import { initDatabase } from "../src/db/index.js";
 import {
   evaluateActivationGate,
   GATE_COLD_START_AGENT_TYPES,
+  GATE_MS_WINDOW_DAYS,
 } from "../src/briefing/activation-gate.js";
 import {
   evaluateV82Gate,
@@ -43,12 +44,10 @@ const VERDICT_LABEL = {
   pass: "✅ PASS — V8.1 §13 activation gate met",
   fail: "❌ FAIL — below a §13 threshold",
   // NOT "shadow run still accumulating" — §13 has been ACTIVE since V8.1. And
-  // NOT a named cause: §13 has TWO insufficient terms (cache-read sample and
-  // ruled-brief sample, `activation-gate.ts:325`), so naming one gets it wrong
-  // half the time. The per-check `✗` lines below say which; the headline
-  // shouldn't guess.
+  // NOT a named cause: §13 v2 has several terms that can be unmeasurable, so
+  // naming one would guess. The per-check `…` lines below say which.
   insufficient_data:
-    "⏳ INSUFFICIENT DATA — a §13 term is not measurable (see ✗ below)",
+    "⏳ INSUFFICIENT DATA — a §13 term is not measurable (see … below)",
 } as const;
 
 function main(): number {
@@ -59,10 +58,28 @@ function main(): number {
   console.log(VERDICT_LABEL[g.verdict]);
   console.log("");
 
-  console.log("Cache-read ratio (cacheable inference, last 24h):");
+  // Scored terms (§13 v2, operator ruling 2026-10-06): the Morning Sync itself.
+  const mark = (status: string): string =>
+    status === "pass" ? "✓" : status === "fail" ? "✗" : "…";
   console.log(
-    `  ${g.checks.cacheRead.pass ? "✓" : "✗"} ${g.checks.cacheRead.detail}`,
+    `Morning Sync (scored; ${g.morningSync.runs} run(s) in the last ${GATE_MS_WINDOW_DAYS} MX days):`,
   );
+  for (const [label, chk] of Object.entries(g.checks)) {
+    console.log(`  ${mark(chk.status)} ${label}: ${chk.detail}`);
+  }
+  const ft = g.morningSync.firstTurn;
+  console.log(
+    ft.cacheReadPct === null
+      ? "  ℹ first-turn cache-read share: not recorded yet — not scored"
+      : `  ℹ first-turn cache-read share: ${ft.cacheReadPct}% over ${ft.runsWithAttrs} run(s), ` +
+          `cache_creation ${ft.cacheCreationTokens} tokens — not scored (threshold after 7 days of data)`,
+  );
+  console.log("");
+
+  console.log(
+    "Cache-read ratio (cacheable inference, last 24h) — information: tracks run length; not scored (ruled 2026-10-06):",
+  );
+  console.log(`  ℹ ${g.legacy.cacheRead.detail}`);
   console.log(
     `  cacheable runs: ${g.cacheableRuns}   cacheable cost: $${g.cacheableCostUsd}`,
   );
@@ -78,7 +95,7 @@ function main(): number {
 
   console.log("Morning briefing promote-rate (last 7d):");
   console.log(
-    `  ${g.checks.promoteRate.pass ? "✓" : "✗"} ${g.checks.promoteRate.detail}`,
+    `  ${g.legacy.promoteRate.pass ? "✓" : "✗"} ${g.legacy.promoteRate.detail}`,
   );
   console.log("");
 
@@ -116,7 +133,7 @@ function main(): number {
 
   // Combined verdict (worst-of-two) so one invocation reflects both layers.
   // 0 = both gates met; 1 = a threshold failed in either; 2 = a gate is not
-  // measurable (too few ruled briefs for §13, or a thin §17 window).
+  // measurable (a thin §13 Morning Sync sample, or a thin §17 window).
   //
   // PRINTED, not just returned (audit R2 C1): a per-gate render alone ends the
   // terminal on §17's line, so a §13 `insufficient_data` under a passing §17
