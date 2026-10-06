@@ -1534,7 +1534,7 @@ Shipped: the `northstar_sync` tool is deleted (it was never removed when the COM
 
 Deferred, each with its trigger:
 
-1. **`NorthStar/INDEX.md` has no regenerator** (only the deleted tool rebuilt it). Accurate on 10-06; it goes stale with the next NorthStar edit, and `jarvis_file_list prefix="NorthStar/"` still surfaces it. **Trigger:** operator ruling — delete the row, or mark it frozen.
+1. ~~`NorthStar/INDEX.md` has no regenerator~~ **DONE 2026-10-06 18:00 UTC**: operator ruled delete; removed through Jarvis's own delete tool (registry row, mirror file and the root index entry all gone; 27 NorthStar files untouched).
 2. **Seed removal never deactivates the live row** (`seedTestCases` is INSERT OR REPLACE; `src/tuning/test-cases.ts`), which is why step 1 is manual. Fix = deactivate `source='seed'` rows missing from the JSON at seed time. **Trigger:** the next seed-case removal.
 3. **Leftovers, all inert:** one `capability_autonomy` row for the retired capability (L1; refused by `promotion.ts`, ignored by the activation gate); the `v83-canary.conf` drop-in still lists it in `V83_GATED_CAPABILITIES`; `dist/tools/builtin/northstar-sync.*` and `northstar-index.*` survive the build (`tsc` does not wipe `dist/`); `northstar_sync_state` and the nine `commit_*` tables stay in the schema. **Trigger:** operator asks for the cleanup (table drops need a `SCHEMA_MIGRATIONS` entry and an explicit ruling).
 4. **Other KB rows still mention COMMIT or the sync** (5 on-demand reference rows outside `directives/`, plus Jarvis's own superseded "prohibit" proposal under `knowledge/proposals/`, now unnecessary). Not always-loaded. **Trigger:** one of them is quoted back in a reply.
