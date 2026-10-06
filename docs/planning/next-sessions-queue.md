@@ -1519,11 +1519,11 @@ Shipped: `./mc-ctl briefing-gate` §13 now scores the 08:00 Morning Sync on five
 6. **`proposed_briefings` still generates morning briefs** (7 in the 7 days to 10-06) although the surface was retired 2026-08-03 and nobody rules on them. **Trigger:** operator ruling (stop the producer or keep it).
 7. **Small ones:** the runner-throw catch path emits `task.failed` without `concern_reason` (the gate scores it by `tasks.status`); `delivery_error` is in `GATE_MS_HARD_DEFECT_REASONS` but the classifier never emits it ("reserved"); the SQL prefilter `spawned_at >= date(?, '-1 day')` is correct but unpinned (only matters east of UTC); a `delivery_miss` run (email schedules only) counts as a run with no delivered day; `checkFeedbackWindow(channel)` is per channel with no group guard (pre-existing, cannot reach a scheduled task); the `numbers.audited` error branch writes `err.message` into trace attrs (`src/lib/v8-4/consumer.ts` ~470, pre-existing free text in a trace); the 10-01 schedule switchover left one MX day with two runs. **Trigger:** next edit to each file; `RITUALS_TIMEZONE` change for the prefilter.
 
-## 2026-10-06 — COMMIT sync retirement follow-ups (`4b29b6a`, NOT deployed)
+## 2026-10-06 — COMMIT sync retirement follow-ups (`4b29b6a`, DEPLOYED 17:53 UTC as build `1b96787`)
 
 Shipped: the `northstar_sync` tool is deleted (it was never removed when the COMMIT app was retired; the model called it on 10-06 15:18 UTC and the confirmation gate held it). Every scope, prompt, seed and list entry naming it is gone; a regression lock in `src/tools/registry.test.ts` fails if it comes back. The Supabase/pgvector host (`db.mycommit.net`, `COMMIT_DB_KEY`) is infrastructure and stays.
 
-**Operator steps, in order (nothing is live until step 3):**
+**All four operator steps DONE 2026-10-06** (cases deactivated; eval gate PASS 76.17 vs 76.87; deployed 17:53 UTC, registry 234 tools; directive script applied, the three directives name neither the tool nor COMMIT in registry and mirror). Still unproven by use: no NorthStar question has run on the new build. Steps as run:
 
 1. `cd /root/claude/mission-control && ./mc-ctl db "UPDATE tune_test_cases SET active=0 WHERE case_id IN ('sc-northstar-sync','ts-northstar-sync-01');"` — both cases expect the retired tool; left active, the gate exits 2 (population drift) before any spend.
 2. `cd /root/claude/mission-control && npm run eval:gate -- --run` (0 PASS, 1 FAIL = do not deploy, 2 no verdict). On PASS: `npm run eval:gate -- --run --update-baseline` and commit `src/tuning/eval-baseline.json` (this also settles the re-capture owed since 10-04).
