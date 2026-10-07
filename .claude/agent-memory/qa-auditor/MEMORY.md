@@ -6,6 +6,7 @@
 
 ## Project Knowledge
 
+- [six-item-queue-2026-10-07-r1-audit](six-item-queue-2026-10-07-r1-audit.md) - 10-07: FAIL 1 Crit. CLASS: schema-head bump pinned in a SIBLING test + deploy.sh gate; eval probe blind to STATUS_SUFFIX.
 - [grader-item11-be-r2-audit](grader-item11-be-r2-audit.md) - 10-06: R1 + R2 both PASS-W-WARN, 0 Crit. CLASS: a "never rejects" promise needs a timer callback that cannot throw before resolve().
 - [grader-item11-be-r1-audit](grader-item11-be-r1-audit.md) - 10-06: PASS-W-WARN. CLASS: a nonce fence covers only the sections it wraps (provenance unfenced).
 - [flywheel-pin-displacement-r1-audit](flywheel-pin-displacement-r1-audit.md) - 10-04: PASS-W-WARN, 5/7 RED. CLASS: oldest-first over a batch insert is id order in disguise; miner DISARMED.

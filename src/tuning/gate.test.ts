@@ -134,7 +134,7 @@ describe("scoringVersionMismatch (2026-10-04)", () => {
     expect(SCORING_VERSION).toBe(3);
   });
 
-  it("the committed v2 baseline is refused before any spend (pre-spend check)", () => {
+  it("the committed baseline is the v3 capture and passes the pre-spend check", () => {
     const committed = readBaseline(() =>
       readFileSync(new URL("./eval-baseline.json", import.meta.url), "utf8"),
     );
@@ -147,7 +147,7 @@ describe("scoringVersionMismatch (2026-10-04)", () => {
         baseline: committed,
         baselinePath: "/repo/src/tuning/eval-baseline.json",
       }),
-    ).toMatch(/older scoring \(scoringVersion 2, current 3\)/);
+    ).toBeNull();
   });
 
   it("a baseline with no scoringVersion is generation 1 → older-scoring refusal naming the re-capture", () => {
