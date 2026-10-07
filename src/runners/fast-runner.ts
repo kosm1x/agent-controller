@@ -156,7 +156,13 @@ export function highStakesGuardVariant(
   return interactive === false ? "none" : "advisory";
 }
 
-const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
+/** When DONE_WITH_CONCERNS applies. Sonnet 5.5 read the bare
+ *  "[what concerns you]" as "any caveat" and flagged 44 % of fast tasks
+ *  (Sonnet 4.6: ~20 %), mostly reply caveats that never reached the user
+ *  because the STATUS line is stripped (queue §2026-10-07 item 2). */
+const CONCERNS_RULE = `Use DONE when what was asked is done, even if your reply carries caveats (an assumption, secondary sources, a file you did not re-read, a step that awaits the user's approval). Write those caveats in the reply itself: the status line is stripped and the user never sees it. Use DONE_WITH_CONCERNS only when part of what was asked was NOT done, or something you delivered may be wrong (a step that failed, figures you could not ground, a contradiction you found).`;
+
+export const GENERIC_SYSTEM_PROMPT = `You are a task execution agent. You have access to tools to accomplish the user's task.
 
 Instructions:
 - Use the available tools to complete the task.
@@ -168,7 +174,8 @@ When you finish, end your response with exactly one of these status lines:
 STATUS: DONE
 STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
-STATUS: BLOCKED — [what is preventing completion]`;
+STATUS: BLOCKED — [what is preventing completion]
+${CONCERNS_RULE}`;
 
 /**
  * Verification nudge appended to multi-step task results (≥3 tool calls with
@@ -188,13 +195,14 @@ const VERIFICATION_NUDGE = `
 - Autoevalúa 4 ejes antes de decir "listo" — cada uno necesita evidencia de tools, no tu opinión: instrucción seguida, datos correctos, todo cubierto, formato apropiado.`;
 
 /** Status suffix appended to chat system prompts. */
-const STATUS_SUFFIX = `
+export const STATUS_SUFFIX = `
 
 REQUIRED: End EVERY response with exactly one status line. Omitting it marks your task as incomplete.
 STATUS: DONE
 STATUS: DONE_WITH_CONCERNS — [brief explanation of what concerns you]
 STATUS: NEEDS_CONTEXT — [what information is missing]
-STATUS: BLOCKED — [what is preventing completion]`;
+STATUS: BLOCKED — [what is preventing completion]
+${CONCERNS_RULE}`;
 
 import {
   MAX_ROUNDS_DEFAULT,

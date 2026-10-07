@@ -10,6 +10,8 @@ import {
   splitSystemMessagesByCache,
   stripConcernsTrailer,
   stripFinalStatusLine,
+  GENERIC_SYSTEM_PROMPT,
+  STATUS_SUFFIX,
 } from "./fast-runner.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
@@ -1573,4 +1575,33 @@ describe("linear STATUS strippers ≡ the regexes they replaced", () => {
     expect(stripFinalStatusLine(u)).toBe("Parte 1");
     expect(performance.now() - start).toBeLessThan(50);
   });
+});
+
+// Queue §2026-10-07 item 2: with only "[what concerns you]" to go on, Sonnet
+// 5.5 flagged 44 % of fast tasks DONE_WITH_CONCERNS for reply caveats ("no
+// releí el archivo", "supuesto mío") that the user never sees — the STATUS
+// line is stripped. Both status contracts must carry the criterion.
+describe("status contract — when DONE_WITH_CONCERNS applies", () => {
+  for (const [name, prompt] of [
+    ["chat STATUS_SUFFIX", STATUS_SUFFIX],
+    ["non-chat GENERIC_SYSTEM_PROMPT", GENERIC_SYSTEM_PROMPT],
+  ] as const) {
+    it(`${name}: caveats stay DONE and go in the reply`, () => {
+      expect(prompt).toMatch(
+        /Use DONE when what was asked is done, even if your reply carries caveats/,
+      );
+      expect(prompt).toContain("a file you did not re-read");
+      expect(prompt).toContain("Write those caveats in the reply itself");
+    });
+
+    it(`${name}: DONE_WITH_CONCERNS only for undone or possibly wrong work`, () => {
+      expect(prompt).toMatch(
+        /Use DONE_WITH_CONCERNS only when part of what was asked was NOT done, or something you delivered may be wrong/,
+      );
+      // The rule follows the status list it qualifies.
+      expect(prompt.indexOf("Use DONE when")).toBeGreaterThan(
+        prompt.indexOf("STATUS: BLOCKED"),
+      );
+    });
+  }
 });
