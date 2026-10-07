@@ -439,6 +439,8 @@ describe("validatePathSafety", () => {
         "/root/claude/Pulso-Aura-Upfront/data/backups/messages-20260101.db",
         "/root/claude/Pulso-Aura-Upfront/data/backups",
         "/root/claude/mission-control/data/sonnet-bench/bench.db", // via data/
+        "/root/claude/mission-control/data/opus-bench/bench.db", // benchmark-opus-tier.ts copy, via data/
+        "/root/claude/mission-control/data/grade-bench/bench.db", // grade-benchmark.ts copy, via data/
         "/root/claude/Pulso-Aura-Upfront/.env.bak-rotate-20260101-0000", // .env name rule
         "/root/claude/eurekams-intelligence-ui/server/.env.longevidad.bak-fwrotate-x",
         "/root/.hapi.yaml",

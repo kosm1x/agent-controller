@@ -192,6 +192,39 @@ describe("plan", () => {
     expect(replanSys!.content).toMatch(/owned by g-N/);
   });
 
+  it("a swarm child ([Swarm] title, as heavy-runner joins it) is planned as ONE goal; other tasks get no such line (2026-10-07)", async () => {
+    // Orchestrator benchmark 2026-10-07: Opus 5.5 split single-goal swarm
+    // children into 3-4 goals (stored plans: 1). Rule rides the user message
+    // only, so PLAN_SYSTEM (cached prefix) stays byte-identical.
+    const oneGoal = () =>
+      mockInfer.mockResolvedValueOnce({
+        content: JSON.stringify({
+          goals: [{ id: "g-1", description: "Goal", completion_criteria: [], parent_id: null, depends_on: [] }],
+        }),
+        tool_calls: undefined,
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        provider: "test",
+        latency_ms: 10,
+      });
+    const msgs = (i: number) => mockInfer.mock.calls[i][0].messages as Array<{ role: string; content: string }>;
+
+    oneGoal();
+    await plan("[Swarm] Make the nav logo larger in index.html\n\nMake the nav logo larger in index.html\n## Completion Criteria\n- logo is 2x");
+    const user = msgs(0).find((m) => m.role === "user")!.content;
+    expect(user).toMatch(/## Swarm child/);
+    expect(user).toMatch(/exactly ONE goal/);
+    expect(user).toMatch(/do not split it/);
+    expect(msgs(0).find((m) => m.role === "system")!.content).not.toMatch(/Swarm child/);
+
+    // Ordinary heavy task, and "[Swarm]" anywhere but the title prefix: no line.
+    for (const [i, task] of ["Analyze each slide of the deck", "Explain what a [Swarm] task is"].entries()) {
+      oneGoal();
+      await plan(task);
+      const all = msgs(i + 1).map((m) => m.content).join("\n");
+      expect(all, task).not.toMatch(/Swarm child|parent swarm plan|do not split it/);
+    }
+  });
+
   // V8.4 (2026-08-16): object-form criteria carry a runnable proof; the prose
   // contract (`completionCriteria: string[]`) is unchanged and the specs land on
   // `metadata.gates` for the ledger. Malformed shapes are dropped, never thrown.

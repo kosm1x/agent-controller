@@ -14,6 +14,7 @@ import {
   buildGraderPrompt,
   estimateGradeCost,
   gradeKey,
+  gradeWithinBudget,
   parseGrades,
   parseResultFile,
   preSpendStop,
@@ -73,6 +74,29 @@ describe("pre-spend cap", () => {
     expect(preSpendStop(9.99, 0.02, 10)).toMatch(/spent \$9\.99 \+ next call est \$0\.02 would exceed --max-usd 10/);
     expect(preSpendStop(0, 0.5, 0.4)).toMatch(/would exceed/); // even the first call
     expect(preSpendStop(9.5, 0.5, 10)).toBeNull(); // landing exactly on the cap is allowed
+  });
+  it("skips a task whose estimate would cross --max-usd and still grades a later cheaper one (each skip logged with its estimate)", async () => {
+    const todo = [
+      { task: "t1", est: 1 },
+      { task: "t2", est: 5 }, // 1 + 5 > 3: skipped
+      { task: "t3", est: 1.5 }, // 1 + 1.5 fits
+      { task: "t4", est: 1 }, // 2.5 + 1 > 3: skipped
+    ];
+    const graded: string[] = [];
+    const log: string[] = [];
+    const r = await gradeWithinBudget(todo, (j) => j.est, 3, async (j) => (graded.push(j.task), j.est), (l) => log.push(l));
+    expect(graded).toEqual(["t1", "t3"]);
+    expect(r).toEqual({ spent: 2.5, graded: 2, skipped: ["t2", "t4"] });
+    expect(log).toEqual([
+      "[grade] t2: spent $1.00 + next call est $5.00 would exceed --max-usd 3; skipped (re-run resumes)",
+      "[grade] t4: spent $2.50 + next call est $1.00 would exceed --max-usd 3; skipped (re-run resumes)",
+    ]);
+    // The check runs per call on ACTUAL spend: a cheap estimate that costs more blocks the next job.
+    const r2 = await gradeWithinBudget([{ task: "a", est: 1 }, { task: "b", est: 1 }], (j) => j.est, 2, async () => 1.5, () => {});
+    expect(r2).toEqual({ spent: 1.5, graded: 1, skipped: ["b"] });
+    // Nothing fits: no call made, everything skipped (main() exits 2 on graded 0).
+    const r3 = await gradeWithinBudget([{ task: "x", est: 9 }], (j) => j.est, 1, async () => { throw new Error("no call"); }, () => {});
+    expect(r3).toEqual({ spent: 0, graded: 0, skipped: ["x"] });
   });
 });
 

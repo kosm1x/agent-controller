@@ -72,6 +72,15 @@ Rules:
 
 Emit ONLY valid JSON. No markdown, no commentary.`;
 
+/**
+ * A swarm child arrives as `[Swarm] <goal>\n\n<goal + criteria>` (title from
+ * swarm-runner.ts, joined by heavy-runner.ts): one sub-goal the parent plan
+ * already sized. Opus 5.5 split these into 3-4 goals on the 2026-10-07
+ * orchestrator benchmark (stored plans: 1).
+ */
+export const SWARM_CHILD_PLAN_RULE =
+  "\n\n## Swarm child\nThis task is ONE goal delegated by a parent swarm plan, which already decomposed and sized the work. Plan it as exactly ONE goal carrying its completion criteria — do not split it.";
+
 const REPLAN_SYSTEM = `You are the replanning module of an autonomous agent. A previous plan partially executed but needs revision.
 
 You receive: the original task, the current goal graph with statuses, and the reason for replanning.
@@ -224,7 +233,7 @@ export async function plan(
     { role: "system", content: systemPrompt },
     {
       role: "user",
-      content: `## Task\n${taskDescription}${mapBlock}${learningsBlock}\n\nDecompose this task into a goal graph. Respond with JSON only.`,
+      content: `## Task\n${taskDescription}${mapBlock}${learningsBlock}${/^\[Swarm\] /.test(taskDescription) ? SWARM_CHILD_PLAN_RULE : ""}\n\nDecompose this task into a goal graph. Respond with JSON only.`,
     },
   ];
 

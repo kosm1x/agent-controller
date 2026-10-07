@@ -124,6 +124,32 @@ describe("benchmark-opus-tier --summarize", () => {
     // Opus 5.5: 1M in × $4 + 100k out × $20/M = $6.00; SDK said $7 → 1.17
     expect(md).toMatch(/\| claude-opus-5-5 B \| plan \| 1 \| 7\.000 \| 6\.000 \| 1\.17 \|/);
   });
+
+  it("gate 1 reads parse success: a `parsed (ok)` column next to `bare JSON` (fenced JSON parses; reflect n/a)", () => {
+    const base = { task: "t1", family: "ops", model: "claude-opus-5-5", config: "A", durationMs: 1000, numTurns: 1, promptTokens: 100, completionTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0.01, textChars: 10, thinkingLeak: false, toolCallInText: false };
+    const rows = [
+      { ...base, phase: "plan", ok: true, bareJson: true, fencedJson: false },
+      { ...base, task: "t2", phase: "plan", ok: true, bareJson: false, fencedJson: true },
+      { ...base, task: "t3", phase: "plan", ok: false, bareJson: false, fencedJson: false, error: "unparseable" },
+      { ...base, phase: "reflect", ok: true, bareJson: false, fencedJson: true },
+    ];
+    writeFileSync(join(dir, "results.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const r = spawnSync(TSX, [resolve(HERE, "benchmark-opus-tier.ts"), "--summarize", `--out=${dir}`], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const md = readFileSync(join(dir, "summary.md"), "utf8");
+    expect(md).toMatch(/\| arm \| n \| ok \| bare JSON \| parsed \(ok\) \| think-leak \|/);
+    // plan: 2 of 3 parsed (bare + fenced); bare JSON is 1 of the 2 OK rows
+    expect(md).toMatch(/\| claude-opus-5-5 A \| 3 \| 67% \| 50% \| 67% \| 0 \|/);
+    expect(md).toMatch(/\| claude-opus-5-5 A \| 1 \| 100% \| 0% \| n\/a \| 0 \|/);
+    expect(md).toMatch(/Gate 1 \(contract\) reads `parsed \(ok\)`/);
+  });
+
+  it("--summarize on a missing dir exits 2 with one line naming it", () => {
+    const missing = join(dir, "nope");
+    const r = spawnSync(TSX, [resolve(HERE, "benchmark-opus-tier.ts"), "--summarize", `--out=${missing}`], { encoding: "utf8" });
+    expect(r.status).toBe(2);
+    expect(r.stderr.trim()).toBe(`[bench] --summarize: results dir ${missing} does not exist`);
+  });
 });
 
 describe("benchmark-sonnet-tier pool window (--before / --after, DRY on a fixture DB)", () => {

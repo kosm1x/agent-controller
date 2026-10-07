@@ -35,7 +35,9 @@
  * --arms=… is strict: a task missing any requested arm is skipped (logged), so
  * every arm's mean is over the same tasks.
  * --max-usd is checked BEFORE each call against spent + that call's rough
- * estimate; the run stops (exit 2, resumable) when the next call would cross it.
+ * estimate; a task whose call would cross it is skipped (logged with its
+ * estimate) and the next, cheaper task still runs. Exit 2 only when no task
+ * fit; skipped tasks are graded by a re-run (resume).
  * The cap is per invocation: a resumed run starts a fresh --max-usd budget
  * (spend from earlier invocations is not counted).
  * The isolated mc.db copy (it includes projects.credentials) is removed when
@@ -47,7 +49,7 @@
  *   npx tsx scripts/grade-benchmark.ts benchmarks/sonnet-tier-<stamp> --summarize
  * Flags: --grader-model=claude-opus-5-5 --max-usd=10 --arms=A,C,D,E --tasks=<8-char prefixes>
  *        --seed=grade-v1 --timeout-s=300 --force-mixed
- * Exit: 0 done, 2 usage/error/--max-usd stop, 3 dry.
+ * Exit: 0 done, 2 usage/error/no task fit --max-usd, 3 dry.
  */
 import {
   appendFileSync,
@@ -191,6 +193,34 @@ export function preSpendStop(spent: number, estimate: number, maxUsd: number): s
   return spent + estimate > maxUsd
     ? `spent $${spent.toFixed(2)} + next call est $${estimate.toFixed(2)} would exceed --max-usd ${maxUsd}`
     : null;
+}
+
+/**
+ * Grade each job whose estimate fits what is left of --max-usd, checked before
+ * every call (`spent` grows with each graded job's actual cost). A job that
+ * would cross the cap is skipped and logged; a later cheaper job still runs.
+ */
+export async function gradeWithinBudget<J extends { task: string }>(
+  todo: readonly J[],
+  estOf: (j: J) => number,
+  maxUsd: number,
+  grade: (j: J) => Promise<number>,
+  log: (line: string) => void,
+): Promise<{ spent: number; graded: number; skipped: string[] }> {
+  let spent = 0;
+  let graded = 0;
+  const skipped: string[] = [];
+  for (const j of todo) {
+    const stop = preSpendStop(spent, estOf(j), maxUsd);
+    if (stop) {
+      log(`[grade] ${j.task}: ${stop}; skipped (re-run resumes)`);
+      skipped.push(j.task);
+      continue;
+    }
+    spent += await grade(j);
+    graded++;
+  }
+  return { spent, graded, skipped };
 }
 
 /** Resume key: grader model, seed and the sorted arm set (the task is the map key). */
@@ -522,14 +552,7 @@ async function main(): Promise<number> {
     mkdirSync(OUT, { recursive: true, mode: 0o700 });
     chmodSync(OUT, 0o700);
     const ERROR_RE = /\[error_api_response|error_max_turns|\[error_max_budget_usd|\[refusal\]|\[timeout/;
-    let spent = 0;
-    for (const j of todo) {
-      const stop = preSpendStop(spent, estOf(j), MAX_USD);
-      if (stop) {
-        console.error(`[grade] ${j.task}: ${stop}; stopping before the call (re-run resumes).`);
-        finish();
-        return 2;
-      }
+    const { spent, graded, skipped } = await gradeWithinBudget(todo, estOf, MAX_USD, async (j) => {
       const mapping = blindMapping(j.arms.map((a) => a.arm), `${SEED}:${j.task}`);
       const labels = Object.keys(mapping);
       const cands = labels.map((label) => {
@@ -575,7 +598,6 @@ async function main(): Promise<number> {
         (s, t) => s + calculateCost(t.model || GRADER_MODEL, t.usage.promptTokens, t.usage.completionTokens, t.usage.cacheReadTokens, t.usage.cacheCreationTokens),
         0,
       );
-      spent += cost;
       const row: GradeRow = {
         task: j.task,
         grader_model: GRADER_MODEL,
@@ -597,10 +619,11 @@ async function main(): Promise<number> {
         `  ${j.task} ${row.effective_model} $${cost.toFixed(4)} (pricing.ts $${priced.toFixed(4)}) ${(row.duration_ms / 1000).toFixed(0)}s ` +
           (error ? `ERR ${error.slice(0, 120)}` : Object.entries(scores).sort().map(([a, s]) => `${a}=${s.fit}/${s.grounding}/${s.quality}`).join(" ")),
       );
-    }
+      return cost;
+    }, (line) => console.error(line));
     finish();
-    console.log(`[grade] spent $${spent.toFixed(2)}`);
-    return 0;
+    console.log(`[grade] spent $${spent.toFixed(2)} · graded ${graded} · skipped over --max-usd ${skipped.length}${skipped.length ? ` (${skipped.join(", ")})` : ""}`);
+    return graded === 0 && skipped.length > 0 ? 2 : 0;
   } finally {
     removeCopy();
   }

@@ -54,6 +54,12 @@
  *   npx tsx scripts/benchmark-opus-tier.ts --summarize --out=<dir>   # re-render summary.md
  * Flags: --models=a,b  --configs=A,B  --tasks=<8-char prefixes>  --out=<dir>
  *        --max-usd=N (stage 1 default 20, stage 2 default 40)  --effort-b=medium
+ *        --plan-only (stage 1: plan() only, no reflect/selfAssess — planner-prompt experiments)
+ * Task text: plan()/reflect() get `<title>\n\n<description>`, the string heavy-runner
+ * hands orchestrate() (so a swarm child's `[Swarm]` title prefix reaches the
+ * planner); rows before 2026-10-07 were planned on the description alone.
+ * Gate 1 (contract) reads `parsed (ok)`: the parsers accept fenced JSON, so
+ * `bare JSON` is formatting only.
  * Exit: 0 done, 2 usage/error, 3 dry.
  */
 import {
@@ -79,6 +85,7 @@ const flag = (name: string): string | undefined => {
   return hit?.slice(name.length + 3);
 };
 const RUN = argv.includes("--run");
+const PLAN_ONLY = argv.includes("--plan-only");
 const SUMMARIZE_ONLY = argv.includes("--summarize");
 const STAGE = Number(flag("stage") ?? "1");
 if (STAGE !== 1 && STAGE !== 2) {
@@ -101,6 +108,10 @@ if (SUMMARIZE_ONLY && !flag("out")) {
 }
 const OUT = flag("out") ?? join(SCRATCH, `stage${STAGE}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`);
 const RESULTS = join(OUT, "results.jsonl");
+if (SUMMARIZE_ONLY && !existsSync(OUT)) {
+  console.error(`[bench] --summarize: results dir ${OUT} does not exist`);
+  process.exit(2);
+}
 
 // Default replay set: 3 use-case families, all Opus-run heavy tasks (30d).
 // Single-goal rows double as selfAssess inputs (stored finalAnswer == goal output).
@@ -194,10 +205,10 @@ function renderSummary(rows: CallRow[]): string {
     lines.push(`## ${phase}`);
     lines.push("");
     lines.push(
-      "| arm | n | ok | bare JSON | think-leak | tool-in-text | prompt tok | cache-read | compl tok | $/call | s/call | turns | " +
+      "| arm | n | ok | bare JSON | parsed (ok) | think-leak | tool-in-text | prompt tok | cache-read | compl tok | $/call | s/call | turns | " +
         (phase === "plan" ? "goals (stored) | criteria | gates |" : phase === "execute" ? "tool calls (stored) | goals done | score |" : phase === "reflect" ? "score (stored) | success agree |" : "met (stored run completed every one) |"),
     );
-    lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|" + (phase === "plan" ? "---|---|---|" : phase === "execute" ? "---|---|---|" : phase === "reflect" ? "---|---|" : "---|"));
+    lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|" + (phase === "plan" ? "---|---|---|" : phase === "execute" ? "---|---|---|" : phase === "reflect" ? "---|---|" : "---|"));
     for (const arm of arms) {
       const [model, config] = arm.split("|");
       const a = ph.filter((r) => r.model === model && r.config === config);
@@ -211,6 +222,9 @@ function renderSummary(rows: CallRow[]): string {
       const isExec = phase === "execute"; // per-call text/turn stats are not defined for a whole graph run
       const base =
         `| ${model} ${config} | ${a.length} | ${pct(okRows.length, a.length)} | ${isExec ? "n/a" : pct(okRows.filter((r) => r.bareJson).length, okRows.length)} | ` +
+        // plan throws on unparseable JSON and assess is ok only with a parsed
+        // assessment; reflect swallows a parse failure into its heuristic.
+        `${phase === "plan" || phase === "assess" ? pct(okRows.length, a.length) : "n/a"} | ` +
         `${a.filter((r) => r.thinkingLeak).length} | ${a.filter((r) => r.toolCallInText).length} | ${prompt.toFixed(0)} | ` +
         `${pct(cacheRead, promptSum)} | ${mean(okRows.map((r) => r.completionTokens)).toFixed(0)} | ` +
         `${mean(okRows.map((r) => r.costUsd)).toFixed(3)} | ${(mean(okRows.map((r) => r.durationMs)) / 1000).toFixed(1)} | ${isExec ? "n/a" : mean(okRows.map((r) => r.numTurns ?? 0)).toFixed(1)} |`;
@@ -257,6 +271,8 @@ function renderSummary(rows: CallRow[]): string {
     for (const e of errs) lines.push(`- ${e.task} ${e.phase} ${e.model}/${e.config}: ${e.error}`);
     lines.push("");
   }
+  lines.push("Gate 1 (contract) reads `parsed (ok)` — the reply parsed into the phase's JSON (fenced JSON included; plan and assess only, since reflect falls back to a heuristic on a parse failure); `bare JSON` is formatting only.");
+  lines.push("");
   lines.push("Agreement columns compare against the STORED 4.8 production run (a proxy, not ground truth): reflect = success threshold 0.8 on both; assess = met on a goal the stored run completed. Spend cap is checked after each recorded call/graph run, not mid-run.");
   return lines.join("\n");
 }
@@ -347,6 +363,7 @@ interface StoredTask {
   taskId: string;
   title: string;
   description: string;
+  prompt: string;
   family: string;
   graph: { goals: Record<string, import("../src/prometheus/types.js").Goal> };
   finalAnswer: string;
@@ -382,6 +399,8 @@ for (const prefix of TASKS) {
     taskId: row.task_id,
     title: row.title,
     description: row.description || row.title,
+    // heavy-runner.ts hands orchestrate() `${title}\n\n${description}`.
+    prompt: `${row.title}\n\n${row.description}`,
     family: familyOf(row.title),
     graph: JSON.parse(row.goal_graph),
     finalAnswer: out.finalAnswer ?? "",
@@ -426,7 +445,7 @@ interface Arm {
 }
 const ARMS: Arm[] = MODELS.flatMap((model) => CONFIGS.map((config) => ({ model, config })));
 
-console.log(`[bench] stage ${STAGE} · ${stored.length} task(s) · arms: ${ARMS.map((a) => `${a.model}/${a.config}`).join(", ")} · max $${MAX_USD} · out ${OUT}`);
+console.log(`[bench] stage ${STAGE}${PLAN_ONLY ? " (plan only)" : ""} · ${stored.length} task(s) · arms: ${ARMS.map((a) => `${a.model}/${a.config}`).join(", ")} · max $${MAX_USD} · out ${OUT}`);
 for (const t of stored) {
   const goals = Object.keys(t.graph.goals).length;
   console.log(`  ${t.task} [${t.family}] goals=${goals} storedScore=${t.storedScore} tools=${t.storedToolCalls.length} desc=${t.description.length}ch — ${t.title.slice(0, 70)}`);
@@ -555,16 +574,17 @@ for (const t of stored) {
     if (STAGE === 1) {
       // plan
       try {
-        const { graph } = await plan(t.description, true);
+        const { graph } = await plan(t.prompt, true);
         const goals = graph.getAll();
         const gates = goals.reduce((n, g) => n + (((g.metadata as { gates?: unknown[] })?.gates?.length) ?? 0), 0);
         record({ ...base, phase: "plan", ok: true, goals: goals.length, criteria: goals.reduce((n, g) => n + g.completionCriteria.length, 0), gates });
       } catch (err) {
         record({ ...base, phase: "plan", ok: false, error: String((err as Error)?.message ?? err) });
       }
+      if (PLAN_ONLY) continue;
       // reflect (stored execution result → same input for every arm)
       try {
-        const { result } = await reflect(t.description, GoalGraph.fromJSON(t.graph), storedExecutionResult(t), undefined, true);
+        const { result } = await reflect(t.prompt, GoalGraph.fromJSON(t.graph), storedExecutionResult(t), undefined, true);
         record({ ...base, phase: "reflect", ok: true, score: result.score, storedScore: t.storedScore });
       } catch (err) {
         record({ ...base, phase: "reflect", ok: false, error: String((err as Error)?.message ?? err), storedScore: t.storedScore });
@@ -592,7 +612,7 @@ for (const t of stored) {
         let reflectScore: number | undefined;
         let reflectErr: string | undefined;
         try {
-          const { result } = await reflect(t.description, graph, exec, undefined, true);
+          const { result } = await reflect(t.prompt, graph, exec, undefined, true);
           reflectScore = result.score;
         } catch (e) {
           reflectErr = String((e as Error)?.message ?? e);
