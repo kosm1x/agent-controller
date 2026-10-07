@@ -19,6 +19,35 @@ describe("pricing", () => {
     });
   });
 
+  describe("claude 5.x exact entries (model-tier re-run 2026-10-06)", () => {
+    // Per-MTok list rates: in / out / cache read / cache write.
+    const cases: Array<[string, number, number, number, number]> = [
+      ["claude-opus-5-5", 4, 20, 0.2, 5],
+      ["claude-opus-5", 5, 25, 0.5, 6.25],
+      ["claude-sonnet-5-5", 2, 10, 0.2, 2.5],
+    ];
+    for (const [model, inp, out, read, write] of cases) {
+      it(`${model} prices input, output, cache read and cache write at list`, () => {
+        const M = 1_000_000;
+        expect(calculateCost(model, M, 0)).toBeCloseTo(inp, 9);
+        expect(calculateCost(model, 0, M)).toBeCloseTo(out, 9);
+        expect(calculateCost(model, M, 0, M, 0)).toBeCloseTo(read, 9);
+        expect(calculateCost(model, M, 0, 0, M)).toBeCloseTo(write, 9);
+      });
+    }
+    it("a claude-opus-5 prefix never prices claude-opus-5-5 (longest prefix wins)", () => {
+      expect(getPricing("claude-opus-5-5").promptCostPer1k).toBe(0.004);
+      expect(getPricing("claude-opus-5-5-20261001").promptCostPer1k).toBe(0.004);
+      expect(getPricing("claude-opus-5-5[1m]").completionCostPer1k).toBe(0.02);
+      expect(getPricing("claude-opus-5-20260601").promptCostPer1k).toBe(0.005);
+    });
+    it("a mixed Opus 5.5 call sums uncached, read, write and output", () => {
+      // 100k prompt = 80k read + 10k write + 10k uncached; 2k output
+      const usd = calculateCost("claude-opus-5-5", 100_000, 2_000, 80_000, 10_000);
+      expect(usd).toBeCloseTo(10_000 * 4e-6 + 80_000 * 0.2e-6 + 10_000 * 5e-6 + 2_000 * 20e-6, 9);
+    });
+  });
+
   describe("getPricing", () => {
     it("should return exact match for known model", () => {
       const p = getPricing("qwen3.5-plus");

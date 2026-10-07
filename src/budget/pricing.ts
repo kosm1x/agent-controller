@@ -10,6 +10,10 @@ export interface ModelPricing {
   promptCostPer1k: number;
   /** USD per 1,000 completion tokens. */
   completionCostPer1k: number;
+  /** USD per 1,000 cache-read tokens. Unset = 0.1x the prompt rate. */
+  cacheReadCostPer1k?: number;
+  /** USD per 1,000 cache-creation tokens. Unset = 1.25x the prompt rate. */
+  cacheWriteCostPer1k?: number;
 }
 
 /**
@@ -61,6 +65,19 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // audit:critic, some fast rows) booked 14.1 M tokens at $0.00 next to them,
   // under-reporting every budget window. Same list rates here, so the ledger
   // is one currency; genuine $0 SDK reports still win via costUsdOverride.
+  // 2026-10-06: exact 5.x ids for the model-tier re-run (the benchmark
+  // harnesses recompute cost from usage to check the SDK's own figure).
+  // Opus 5.5 cache reads are 0.05x its prompt rate, not the 0.1x default,
+  // so its cache rates are explicit. Lookup is exact first, then the LONGEST
+  // matching prefix, so "claude-opus-5" never prices a "claude-opus-5-5*" id.
+  "claude-opus-5-5": {
+    promptCostPer1k: 0.004,
+    completionCostPer1k: 0.02,
+    cacheReadCostPer1k: 0.0002,
+    cacheWriteCostPer1k: 0.005,
+  },
+  "claude-opus-5": { promptCostPer1k: 0.005, completionCostPer1k: 0.025 },
+  "claude-sonnet-5-5": { promptCostPer1k: 0.002, completionCostPer1k: 0.01 },
   "claude-sonnet-5": { promptCostPer1k: 0.002, completionCostPer1k: 0.01 },
   "claude-sonnet-4-6": { promptCostPer1k: 0.003, completionCostPer1k: 0.015 },
   "claude-sonnet-4-5": { promptCostPer1k: 0.003, completionCostPer1k: 0.015 },
@@ -105,12 +122,16 @@ export function getPricing(model: string): ModelPricing {
   // either form via BUDGET_PRICING_JSON.
   if (_pricingOverride?.[model]) return _pricingOverride[model];
   if (_pricingOverride?.[normalized]) return _pricingOverride[normalized];
-  // Check default map (try exact match, then prefix match)
+  // Check default map (try exact match, then the LONGEST matching prefix —
+  // first-match would let "claude-opus-5" price a dated "claude-opus-5-5-…")
   if (DEFAULT_PRICING[normalized]) return DEFAULT_PRICING[normalized];
-  for (const [key, pricing] of Object.entries(DEFAULT_PRICING)) {
-    if (normalized.startsWith(key)) return pricing;
+  let best: string | undefined;
+  for (const key of Object.keys(DEFAULT_PRICING)) {
+    if (normalized.startsWith(key) && (!best || key.length > best.length)) {
+      best = key;
+    }
   }
-  return FALLBACK_PRICING;
+  return best ? DEFAULT_PRICING[best] : FALLBACK_PRICING;
 }
 
 /** Calculate cost in USD for a given model and token counts. */
@@ -125,15 +146,19 @@ export function calculateCost(
   // `prompt_tokens` is INCLUSIVE of cache reads/creation (the SDK's own
   // total_cost_usd discounts them: a live row priced 2.06 M prompt tokens with
   // 1.92 M cache reads at $1.63, not $6.17). List convention: cache read
-  // 0.1x, cache creation 1.25x, the uncached remainder 1x (qa C2).
+  // 0.1x, cache creation 1.25x, the uncached remainder 1x (qa C2) — unless
+  // the entry carries explicit cache rates.
   const uncached = Math.max(
     0,
     promptTokens - cacheReadTokens - cacheCreationTokens,
   );
+  const readPer1k = pricing.cacheReadCostPer1k ?? pricing.promptCostPer1k * 0.1;
+  const writePer1k =
+    pricing.cacheWriteCostPer1k ?? pricing.promptCostPer1k * 1.25;
   return (
     (uncached / 1000) * pricing.promptCostPer1k +
-    (cacheReadTokens / 1000) * pricing.promptCostPer1k * 0.1 +
-    (cacheCreationTokens / 1000) * pricing.promptCostPer1k * 1.25 +
+    (cacheReadTokens / 1000) * readPer1k +
+    (cacheCreationTokens / 1000) * writePer1k +
     (completionTokens / 1000) * pricing.completionCostPer1k
   );
 }

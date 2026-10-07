@@ -162,3 +162,10 @@
 - **Better:** an operator script that edits live KB rows plans every target before writing, refuses on a mixed env or a registry/mirror mismatch, matches private text by fragment (public repo), and is validated on a scratch db including the refusal cases; the first draft had an untested success path and a partial-write hole.
 - **Mistake:** one brief carried the code removal AND the operator script; the implementer ran out of budget before its done-checks → one brief per deliverable, with the done-check sized to fit.
 
+
+## 2026-10-06 — Opus 5.5 model-tier re-run (harness build + canary readout)
+- **Mistake (class):** a replay benchmark's reference answers come from whatever production ran at the time; after a canary flips production, the "newest N tasks" pool is the candidate's own output, so gate 3 (tool overlap) and the grader's grounding axis silently favour the candidate → pin the pool window (`--before=<cutover>`) and print the reference model(s) in the dry run and summary; a replay harness must name its reference.
+- **Mistake:** relayed a readout claim ("`SONNET_EFFORT=low` reached only tier-less callers") that came from memory, not code; the implementer's code trace refuted it (every live fast-runner SDK leg passes no effort) → an effort/model-routing claim is verified by tracing the live provider branch, never by a memory note.
+- **Avoid:** re-running a model benchmark on a tree where the live canary leaks `SONNET_MODEL_ID`/`SONNET_EFFORT` into the copied `/proc` env — arm A gets relabelled silently; neutralise after the copy with launcher-wins.
+- **Avoid:** pricing a new model id through a prefix table without longest-prefix matching (`claude-opus-5` would have priced `claude-opus-5-5`); add exact entries + a longest-prefix test when a model family gains a point release.
+- **Better:** canary readout + harness inventory as two parallel read-only Opus agents, then one implementer brief, qa-auditor R1 → fix pass → R2 before any commit; the paid runs stay operator-side (classifier denies `/proc/<pid>/environ` reads), so the deliverable is a runbook with exact commands, not a result.

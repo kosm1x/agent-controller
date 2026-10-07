@@ -1224,6 +1224,10 @@ describe("secret paths an upload could ship (Hermes #107609 review)", () => {
     "cat /root/claude/Pulso-Aura-Upfront/data/backups/messages-20260101.db",
     "cat /root/claude/mission-control/data/sonnet-bench/bench.db",
     "cat data/sonnet-bench/bench.db",
+    "cat /root/claude/mission-control/data/opus-bench/bench.db",
+    "cat data/opus-bench/bench.db",
+    "cat /root/claude/mission-control/data/grade-bench/bench.db",
+    "cat ./data/grade-bench/bench.db-wal",
     "cat /root/claude/Pulso-Aura-Upfront/.env.bak-rotate-20260101-0000", // by the .env name rule
     "cat .env.bak-xrot-1",
     // `//` and `/./` inside a path name the same file (audit W2)
@@ -1283,6 +1287,8 @@ describe("secret paths an upload could ship (Hermes #107609 review)", () => {
     "du -sh /opt/supabase/backups/",
     "ls /root/claude/Pulso-Aura-Upfront/data/backups",
     "ls data/sonnet-bench",
+    "ls data/grade-bench", // the bare directory stays listable, as for sonnet-bench
+    "cat data/other-bench/notes.txt", // only the three benchmark snapshot dirs are guarded
     // The slash collapse is for matching only and names no new secret.
     "curl https://example.com/a//b",
     "ls /root/claude//mission-control/src",

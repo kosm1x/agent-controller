@@ -38,21 +38,41 @@
  *
  * Arms (interleaved per task, order ROTATED per task — ABC, BCA, CAB … — so
  * time-of-day drift is shared and no arm always runs first on a cold prompt
- * cache; `position` 0/1/2 is recorded per row):
- *   A = production shape: model/thinking/effort untouched (Sonnet 4.6,
- *       thinking disabled, effort unset → SDK default). Only a `tap` is set.
- *   B = defaultModel claude-sonnet-5-5, adaptive thinking, effort medium.
+ * cache; `position` 0-based is recorded per row):
+ *   A = incumbent (Sonnet 4.6, effort unset), PINNED to --model-a (default
+ *       claude-sonnet-4-6; must match /^claude-sonnet-\d/, the claude-sdk.ts
+ *       SONNET_MODEL_ID rule) via the seam's defaultModel; thinking per model (disabled on 4.x,
+ *       adaptive on 5.x), effort unset → SDK default. Arm A does NOT follow
+ *       the live SONNET_MODEL_ID: after the /proc env copy the harness sets
+ *       SONNET_MODEL_ID=--model-a and deletes SONNET_EFFORT (the live Sonnet
+ *       5.5 canary carries claude-sonnet-5-5 + low), UNLESS the launching
+ *       shell set either key itself (launcher wins, as for every key).
+ *   B = defaultModel --model-b (claude-sonnet-5-5), adaptive thinking, effort medium.
  *   C = same, effort low.
- * (Sonnet 5.5 rejects `thinking: {type:"disabled"}` with a 400, so B/C must
- * carry a thinking config.)
+ *   D = defaultModel --model-d (claude-opus-5-5), adaptive thinking, effort low.
+ *   E = same, effort medium.
+ * Default --configs is A,B,C; D/E run only when requested.
+ * (5.x Sonnet/Opus reject `thinking: {type:"disabled"}` with a 400, so B-E
+ * must carry a thinking config.)
  *
  * Usage (repo root):
  *   npx tsx scripts/benchmark-sonnet-tier.ts                 # DRY: task set, arms, tools, out dir (exit 3)
  *   npx tsx scripts/benchmark-sonnet-tier.ts --run           # 20 tasks × 3 arms
  *   npx tsx scripts/benchmark-sonnet-tier.ts --run --tasks=d11c156e,fa72616c --configs=A,C
+ *   npx tsx scripts/benchmark-sonnet-tier.ts --run --configs=A,C,D,E   # + Opus 5.5 arms
  *   npx tsx scripts/benchmark-sonnet-tier.ts --summarize --out=<dir>
- * Flags: --n=20 --tasks=<8-char prefixes> --configs=A,B,C --model-b=claude-sonnet-5-5
+ *   npx tsx scripts/grade-benchmark.ts <dir> [--run]                # blind LLM grading
+ * Flags: --n=20 --tasks=<8-char prefixes> --configs=<subset of A,B,C,D,E> (default A,B,C)
+ *        --model-a=claude-sonnet-4-6 --model-b=claude-sonnet-5-5 --model-d=claude-opus-5-5
  *        --max-usd=45 --timeout-s=300 --out=<dir> (default benchmarks/sonnet-tier-<date>/)
+ *        --before=<ISO> pool only tasks created before this instant (default: now)
+ *        --after=<ISO>  pool only tasks created at/after it (default: --before − 21 days)
+ * Pool + reference: the stored production answer (`orig`) is BOTH the
+ * tool_jaccard reference (gate 3) and the grader's REFERENCE, so the pool's
+ * production model decides what "like production" means. Production fast has
+ * run Sonnet 5.5-low since 2026-09-29 05:09 UTC (= arm C's shape); use
+ * --before=2026-09-29T05:09:00Z for a Sonnet-4.6 reference. The dry run and
+ * summary.md print the pool's date range and reference model(s).
  * Exit: 0 done, 2 usage/error/--max-usd stop, 3 dry.
  */
 import {
@@ -66,6 +86,8 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+// No imports and no env reads at module load — safe ahead of the env guards.
+import { calculateCost } from "../src/budget/pricing.js";
 
 // ---------------------------------------------------------------------------
 // Args
@@ -77,13 +99,27 @@ const flag = (name: string): string | undefined => {
 };
 const RUN = argv.includes("--run");
 const SUMMARIZE_ONLY = argv.includes("--summarize");
-type ArmId = "A" | "B" | "C";
+// MC_BENCH_SRC_DB (fixture source DB, see the snapshot step) is for dry-run tests only.
+if (process.env.MC_BENCH_SRC_DB !== undefined && RUN) {
+  console.error("[bench] MC_BENCH_SRC_DB is for fixture dry runs only; refusing --run.");
+  process.exit(2);
+}
+type ArmId = "A" | "B" | "C" | "D" | "E";
+const ALL_ARMS: ArmId[] = ["A", "B", "C", "D", "E"];
 const CONFIGS = (flag("configs") ?? "A,B,C").split(",").filter(Boolean) as ArmId[];
-if (CONFIGS.length === 0 || CONFIGS.some((c) => !["A", "B", "C"].includes(c))) {
-  console.error("[bench] --configs must be a subset of A,B,C");
+if (CONFIGS.length === 0 || CONFIGS.some((c) => !ALL_ARMS.includes(c)) || new Set(CONFIGS).size !== CONFIGS.length) {
+  console.error("[bench] --configs must be a subset of A,B,C,D,E (no repeats)");
+  process.exit(2);
+}
+const MODEL_A = flag("model-a") ?? "claude-sonnet-4-6";
+// Same rule as claude-sdk.ts SONNET_MODEL_ID: anything else would be ignored
+// there, so arm A's SONNET_EFFORT neutralisation would not line up.
+if (!/^claude-sonnet-\d/.test(MODEL_A)) {
+  console.error(`[bench] --model-a must match /^claude-sonnet-\\d/ (got ${MODEL_A})`);
   process.exit(2);
 }
 const MODEL_B = flag("model-b") ?? "claude-sonnet-5-5";
+const MODEL_D = flag("model-d") ?? "claude-opus-5-5";
 const MAX_USD = Number(flag("max-usd") ?? "45");
 const TIMEOUT_S = Number(flag("timeout-s") ?? "300");
 const N = Number(flag("n") ?? "20");
@@ -94,6 +130,31 @@ for (const [k, v] of [["max-usd", MAX_USD], ["timeout-s", TIMEOUT_S], ["n", N]] 
   }
 }
 const WINDOW_DAYS = 21;
+/** ISO flag → SQLite UTC text ("YYYY-MM-DD HH:MM:SS"), the tasks.created_at format. */
+function sqliteUtcFlag(name: string): string | undefined {
+  const v = flag(name);
+  if (v === undefined) return undefined;
+  const d = new Date(v);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(v) || Number.isNaN(d.getTime())) {
+    console.error(`[bench] --${name} must be an ISO timestamp, e.g. 2026-09-29T05:09:00Z (got ${v})`);
+    process.exit(2);
+  }
+  // A bare value parses in the process TZ, and the service shell runs
+  // TZ=America/Mexico_City: the window would silently shift by 6 h.
+  if (!/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(v)) {
+    console.error(
+      `[bench] --${name} needs an explicit Z or ±HH:MM offset, e.g. 2026-09-29T05:09:00Z (got ${v}); a bare time parses in the local TZ (the service shell runs TZ=America/Mexico_City)`,
+    );
+    process.exit(2);
+  }
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+const BEFORE = sqliteUtcFlag("before");
+const AFTER = sqliteUtcFlag("after");
+if (BEFORE && AFTER && AFTER >= BEFORE) {
+  console.error(`[bench] --after (${AFTER}) must be earlier than --before (${BEFORE})`);
+  process.exit(2);
+}
 const REPO = "/root/claude/mission-control";
 // data/ is gitignored; the snapshot lives there (a session scratchpad or /tmp
 // can be cleaned mid-run).
@@ -156,6 +217,8 @@ interface CallRow {
   orig_cost_usd: number;
   orig_turns: number | null;
   orig_tools: string[];
+  orig_models?: string[]; // cost_ledger.model of the stored run (absent on runs before 2026-10-06)
+  orig_created_at?: string; // tasks.created_at (SQLite UTC)
 }
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -169,6 +232,20 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 const DONE_CLASS = new Set(["DONE", "DONE_WITH_CONCERNS"]);
+/** Usage × pricing.ts list rates: the check on the SDK's total_cost_usd for a
+ *  new model (an SDK that does not know a model's price shows up here). */
+function pricingCost(r: CallRow): number {
+  const m = r.effective_model && r.effective_model !== "none" && !r.effective_model.includes("+") ? r.effective_model : r.model;
+  return calculateCost(m, r.prompt_tokens, r.completion_tokens, r.cache_read_tokens, r.cache_creation_tokens);
+}
+/** Request shape per arm (the model comes from the rows, so --summarize labels a past run correctly). */
+const ARM_SHAPE: Record<ArmId, string> = {
+  A: `incumbent (${MODEL_A}, effort unset): thinking per model (disabled on 4.x, adaptive on 5.x)`,
+  B: "adaptive thinking, effort medium",
+  C: "adaptive thinking, effort low",
+  D: "adaptive thinking, effort low",
+  E: "adaptive thinking, effort medium",
+};
 
 interface ArmAgg {
   arm: ArmId;
@@ -187,12 +264,14 @@ interface ArmAgg {
   mean_jaccard: number;
   mismatches: number;
   estimated: number; // rows whose cost was (partly) estimated from usage
+  pricing_cost: number; // Σ usage × src/budget/pricing.ts list rates
+  model: string; // requested model(s) of the arm's rows
   completed: number;
   cost_per_completed: number | null;
 }
 
 function aggregate(rows: CallRow[]): { paired: string[]; arms: ArmAgg[] } {
-  const arms = (["A", "B", "C"] as ArmId[]).filter((a) => rows.some((r) => r.arm === a));
+  const arms = ALL_ARMS.filter((a) => rows.some((r) => r.arm === a));
   // Paired set: tasks that have a row for EVERY arm present — a --max-usd stop
   // or crash mid-task must not skew one arm's denominator.
   const byTask = new Map<string, Set<ArmId>>();
@@ -225,6 +304,8 @@ function aggregate(rows: CallRow[]): { paired: string[]; arms: ArmAgg[] } {
         mean_jaccard: mean(a.map((r) => r.tool_jaccard)),
         mismatches: a.filter((r) => r.model_mismatch).length,
         estimated: a.filter((r) => r.cost_estimated).length,
+        pricing_cost: a.reduce((s, r) => s + pricingCost(r), 0),
+        model: [...new Set(a.map((r) => r.model))].join("+"),
         completed,
         cost_per_completed: completed ? total / completed : null,
       };
@@ -232,18 +313,44 @@ function aggregate(rows: CallRow[]): { paired: string[]; arms: ArmAgg[] } {
   };
 }
 
+/** Pool date range + reference model(s) of the stored production answers the
+ *  rows were compared with (one entry per task). */
+function referenceInfo(rows: CallRow[]): { from: string | null; to: string | null; models: Record<string, number>; unknown: number } {
+  const byTask = new Map<string, CallRow>();
+  for (const r of rows) if (!byTask.has(r.task)) byTask.set(r.task, r);
+  const dates = [...byTask.values()].map((r) => r.orig_created_at).filter((d): d is string => !!d).sort();
+  const models: Record<string, number> = {};
+  let unknown = 0;
+  for (const r of byTask.values()) {
+    if (!r.orig_models) { unknown++; continue; }
+    const k = r.orig_models.length ? r.orig_models.join("+") : "none";
+    models[k] = (models[k] ?? 0) + 1;
+  }
+  return { from: dates[0] ?? null, to: dates.at(-1) ?? null, models, unknown };
+}
+function referenceLine(ref: ReturnType<typeof referenceInfo>): string {
+  const models = Object.entries(ref.models).map(([m, n]) => `${m} ×${n}`).join(", ");
+  return (
+    `Pool created ${ref.from ?? "n/a"} → ${ref.to ?? "n/a"} UTC · reference (stored production answer) model(s): ${models || "n/a"}` +
+    (ref.unknown ? ` · ${ref.unknown} task(s) without a recorded reference model (run predates 2026-10-06)` : "")
+  );
+}
+
 function renderSummary(rows: CallRow[]): { md: string; json: unknown } {
   const { paired, arms } = aggregate(rows);
   const A = arms.find((x) => x.arm === "A");
+  const ref = referenceInfo(rows);
   const ratio = (x: number, y: number | undefined) => (y ? (x / y).toFixed(2) : "n/a");
   const L: string[] = [];
   L.push(`# Sonnet-tier (fast path) benchmark — ${OUT.split("/").pop()}`);
   L.push("");
   L.push(`Generated ${new Date().toISOString()} · rows ${rows.length} · paired tasks ${paired.length} · spend $${rows.reduce((s, r) => s + r.cost_usd, 0).toFixed(2)}`);
   L.push("");
-  L.push("Arms: A = claude-sonnet-4-6, thinking disabled, effort unset (production) · B = candidate, adaptive thinking, effort medium · C = candidate, adaptive, effort low.");
+  L.push(`Arms: ${arms.map((a) => `${a.arm} = ${a.model}, ${ARM_SHAPE[a.arm]}`).join(" · ")}.`);
   L.push("");
-  L.push("Arm order was ROTATED per task (ABC, BCA, CAB, …) so no arm always runs first on a cold prompt cache; each row's `position` (0/1/2) is in calls.jsonl.");
+  L.push(`${referenceLine(ref)}. tool_jaccard (gate 3) and the grader's REFERENCE are relative to this model: an arm that shares the reference's shape is favoured.`);
+  L.push("");
+  L.push("Arm order was ROTATED per task (ABC, BCA, CAB, …) so no arm always runs first on a cold prompt cache; each row's 0-based `position` is in calls.jsonl.");
   L.push("");
   L.push("## Per arm (paired tasks only)");
   L.push("");
@@ -257,6 +364,16 @@ function renderSummary(rows: CallRow[]): { md: string; json: unknown } {
     );
   }
   L.push("");
+  L.push("## Cost two ways (paired tasks)");
+  L.push("");
+  L.push("| arm | model | SDK total_cost_usd Σ | usage × pricing.ts Σ | SDK / pricing.ts | est. cost rows |");
+  L.push("|---|---|---|---|---|---|");
+  for (const a of arms) {
+    L.push(`| ${a.arm} | ${a.model} | ${a.total_cost.toFixed(3)} | ${a.pricing_cost.toFixed(3)} | ${ratio(a.total_cost, a.pricing_cost)} | ${a.estimated} |`);
+  }
+  L.push("");
+  L.push("A ratio far from 1.00 on one arm means the SDK and src/budget/pricing.ts disagree on that model's price (the SDK column already uses pricing.ts for est. cost rows).");
+  L.push("");
   const gates: Record<string, Record<string, boolean | null>> = {};
   if (A) {
     L.push("## Ratios vs A");
@@ -267,7 +384,7 @@ function renderSummary(rows: CallRow[]): { md: string; json: unknown } {
       L.push(`| ${a.arm}/A | ${ratio(a.total_cost, A.total_cost)} | ${ratio(a.mean_s, A.mean_s)} | ${ratio(a.cache_read_ratio, A.cache_read_ratio)} |`);
     }
     L.push("");
-    L.push("## Decision gates (adopt B or C only if ALL four pass — see plan doc)");
+    L.push("## Decision gates (adopt a candidate arm only if ALL four pass vs A — see plan doc)");
     L.push("");
     L.push("| arm | 1 $/completed ≤ A | 2 empty ≤ A and errors ≤ A | 3 tool_jaccard within 0.1 of A | 4 cache-read ≥ A − 10 pts | verdict |");
     L.push("|---|---|---|---|---|---|");
@@ -318,7 +435,7 @@ function renderSummary(rows: CallRow[]): { md: string; json: unknown } {
       "(6) the Claude subscription rate limit is shared with the live service — a 429 shows in the error column, not as a model failure. " +
       "Rows with msg_truncated=true replayed the 500-char scope_telemetry cut of the user message (no jme_turns row).",
   );
-  return { md: L.join("\n"), json: { out: OUT, generated: new Date().toISOString(), paired, arms, gates } };
+  return { md: L.join("\n"), json: { out: OUT, generated: new Date().toISOString(), paired, reference: ref, arms, gates } };
 }
 
 function readRows(): CallRow[] {
@@ -346,6 +463,8 @@ if (SUMMARIZE_ONLY) {
 // service's. Strip them first; the service's own values come back via /proc.
 const strippedClaudeKeys = Object.keys(process.env).filter((k) => /^CLAUDE/.test(k));
 for (const k of strippedClaudeKeys) delete process.env[k];
+// Arm A neutralisation keys the launching shell set itself (those win).
+const launcherSonnet = new Set(["SONNET_MODEL_ID", "SONNET_EFFORT"].filter((k) => k in process.env));
 if (RUN) {
   let pid = process.env.MC_PID ?? "";
   if (!pid) {
@@ -364,6 +483,16 @@ if (RUN) {
     if (i > 0 && !(kv.slice(0, i) in process.env)) process.env[kv.slice(0, i)] = kv.slice(i + 1);
   }
 }
+// Arm A must run --model-a at the SDK default effort, not the live canary
+// (SONNET_MODEL_ID=claude-sonnet-5-5 + SONNET_EFFORT=low): claude-sdk.ts reads
+// SONNET_MODEL_ID once at import (below) and SONNET_EFFORT per call, applying
+// the effort to any call whose effective model equals SONNET_MODEL_ID.
+if (!launcherSonnet.has("SONNET_MODEL_ID")) process.env.SONNET_MODEL_ID = MODEL_A;
+if (!launcherSonnet.has("SONNET_EFFORT")) delete process.env.SONNET_EFFORT;
+console.log(
+  `[bench] arm-A env: SONNET_MODEL_ID=${process.env.SONNET_MODEL_ID ?? "(unset)"} (${launcherSonnet.has("SONNET_MODEL_ID") ? "launching shell" : "pinned to --model-a"}) · ` +
+    `SONNET_EFFORT=${process.env.SONNET_EFFORT ?? "(unset)"} (${launcherSonnet.has("SONNET_EFFORT") ? "launching shell" : "cleared"})`,
+);
 // Side-effect guards — BEFORE any src import (drive-sync reads
 // DRIVE_KB_FOLDER_ID at module load). A KB write from the runner (double-cap
 // checkpoint → upsertFile) then mirrors into scratch (getMirrorDir() reads
@@ -386,7 +515,8 @@ process.env.JEV_SHADOW_CONSUMERS = "";
 // ---------------------------------------------------------------------------
 // 2) Isolated DB copy (always — the dry run lists the task set from it).
 // ---------------------------------------------------------------------------
-const SRC_DB = join(REPO, "data/mc.db");
+// MC_BENCH_SRC_DB: fixture DB for scripts/benchmark-tier-summary.test.ts (refused with --run above).
+const SRC_DB = process.env.MC_BENCH_SRC_DB ?? join(REPO, "data/mc.db");
 const DST_DB = join(SCRATCH, "bench.db");
 mkdirSync(SCRATCH, { recursive: true, mode: 0o700 });
 copyFileSync(SRC_DB, DST_DB);
@@ -424,6 +554,8 @@ interface Candidate {
   origCost: number;
   origTurns: number | null;
   origText: string;
+  origModels: string[];
+  createdAt: string;
 }
 
 const EXCLUDE_TITLE = ["schedule", "recordatorio", "envía", "send"];
@@ -481,10 +613,11 @@ const rows = db
        FROM tasks
       WHERE agent_type = 'fast' AND status IN ('completed','completed_with_concerns')
         AND spawn_type = 'root' AND output IS NOT NULL
-        AND created_at >= datetime('now', ?)
+        AND created_at >= COALESCE(?, datetime(COALESCE(?, 'now'), ?))
+        AND (? IS NULL OR created_at < ?)
       ORDER BY created_at DESC, task_id ASC`,
   )
-  .all(`-${WINDOW_DAYS} days`) as Array<{
+  .all(AFTER ?? null, BEFORE ?? null, `-${WINDOW_DAYS} days`, BEFORE ?? null, BEFORE ?? null) as Array<{
   task_id: string;
   title: string;
   description: string;
@@ -546,6 +679,7 @@ for (const r of rows) {
     /* none */
   }
   const origCost = (db.prepare("SELECT COALESCE(SUM(cost_usd),0) AS c FROM cost_ledger WHERE task_id = ? AND agent_type = 'fast'").get(r.task_id) as { c: number }).c;
+  const origModels = (db.prepare("SELECT DISTINCT model FROM cost_ledger WHERE task_id = ? AND agent_type = 'fast' ORDER BY model").all(r.task_id) as { model: string }[]).map((x) => x.model);
   const turnRow = db.prepare("SELECT COUNT(*) AS n FROM task_trace_events WHERE task_id = ? AND name = 'turn.completed'").get(r.task_id) as { n: number };
   pool.push({
     task: r.task_id.slice(0, 8),
@@ -562,9 +696,12 @@ for (const r of rows) {
     origCost,
     origTurns: turnRow.n > 0 ? turnRow.n : null,
     origText: out.text ?? "",
+    origModels,
+    createdAt: r.created_at,
   });
 }
 
+const WINDOW_LABEL = `created ${AFTER ?? `${BEFORE ?? "now"} − ${WINDOW_DAYS}d`} → ${BEFORE ?? "now"} UTC`;
 const wanted = flag("tasks")?.split(",").filter(Boolean);
 let selected: Candidate[];
 if (wanted) {
@@ -572,7 +709,7 @@ if (wanted) {
   for (const p of wanted) {
     const hit = pool.find((c) => c.taskId.startsWith(p));
     if (hit) selected.push(hit);
-    else console.error(`[bench] task ${p}: not in the eligible pool (window ${WINDOW_DAYS}d + filters) — skipped`);
+    else console.error(`[bench] task ${p}: not in the eligible pool (${WINDOW_LABEL} + filters) — skipped`);
   }
 } else {
   selected = pool.slice(0, N);
@@ -602,14 +739,20 @@ if (missing.length > 0) {
 // ---------------------------------------------------------------------------
 // 5) Arms + DRY listing
 // ---------------------------------------------------------------------------
-const ARM_MODEL: Record<ArmId, string> = { A: "claude-sonnet-4-6", B: MODEL_B, C: MODEL_B };
+const ARM_MODEL: Record<ArmId, string> = { A: MODEL_A, B: MODEL_B, C: MODEL_B, D: MODEL_D, E: MODEL_D };
+const ARM_EFFORT: Record<Exclude<ArmId, "A">, "low" | "medium"> = { B: "medium", C: "low", D: "low", E: "medium" };
 const ARM_DESC: Record<ArmId, string> = {
-  A: "claude-sonnet-4-6 · thinking disabled · effort unset (production shape)",
+  A: `${MODEL_A} · thinking per model · effort ${process.env.SONNET_EFFORT && MODEL_A === process.env.SONNET_MODEL_ID ? `${process.env.SONNET_EFFORT} (launching shell SONNET_EFFORT)` : "unset"} (incumbent, pinned)`,
   B: `${MODEL_B} · thinking adaptive · effort medium`,
   C: `${MODEL_B} · thinking adaptive · effort low`,
+  D: `${MODEL_D} · thinking adaptive · effort low`,
+  E: `${MODEL_D} · thinking adaptive · effort medium`,
 };
 
-console.log(`[bench] ${selected.length} task(s) of ${pool.length} eligible (${rows.length} fast root completed in ${WINDOW_DAYS}d; skipped ${Object.entries(skipped).map(([k, v]) => `${k}=${v}`).join(" ")})`);
+console.log(`[bench] ${selected.length} task(s) of ${pool.length} eligible (${rows.length} fast root completed, ${WINDOW_LABEL}; skipped ${Object.entries(skipped).map(([k, v]) => `${k}=${v}`).join(" ")})`);
+console.log(
+  `[bench] ${referenceLine(referenceInfo(selected.map((c) => ({ task: c.task, orig_created_at: c.createdAt, orig_models: c.origModels }) as CallRow)))}`,
+);
 for (const c of selected) {
   console.log(
     `  ${c.task} tier=${c.modelTier ?? "-"} orig$=${c.origCost.toFixed(3)} origTurns=${c.origTurns ?? "n/a"} origTools=[${c.origTools.join(",") || "none"}] ` +
@@ -641,7 +784,6 @@ const { setOpusTierBenchmarkOverride } = await import("../src/inference/claude-s
 const { fastRunner } = await import("../src/runners/fast-runner.js");
 const { parseRunnerStatus } = await import("../src/runners/status.js");
 const { generateEmbedding } = await import("../src/inference/embeddings.js");
-const { calculateCost } = await import("../src/budget/pricing.js");
 type SdkResult = import("../src/inference/claude-sdk.js").ClaudeSdkResult;
 type RunnerInput = import("../src/runners/types.js").RunnerInput;
 
@@ -652,8 +794,27 @@ const ERROR_RE = /\[error_api_response|error_max_turns|\[error_max_budget_usd|\[
 let taps: SdkResult[] = [];
 const tap = (r: SdkResult) => taps.push(r);
 function armOverride(arm: ArmId) {
-  if (arm === "A") return { tap };
-  return { defaultModel: MODEL_B, thinking: { type: "adaptive" as const }, effort: arm === "B" ? ("medium" as const) : ("low" as const), tap };
+  // A: model pinned, thinking/effort left to the production defaults.
+  if (arm === "A") return { defaultModel: MODEL_A, tap };
+  return { defaultModel: ARM_MODEL[arm], thinking: { type: "adaptive" as const }, effort: ARM_EFFORT[arm], tap };
+}
+/** What the replay asked (read by scripts/grade-benchmark.ts): the last prior
+ *  turns for context, then the replayed user message — or, for a non-chat
+ *  task, its description (the task prompt). Capped; private (0600). */
+function requestFile(c: Candidate): string {
+  const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)} …[cut ${s.length - n} chars]` : s);
+  const L = [`# ${c.task} — replayed request`, "", c.title, ""];
+  if (c.history) {
+    const prior = c.history.slice(0, -1).slice(-4);
+    if (prior.length) {
+      L.push(`## Prior turns (last ${prior.length} of ${c.priorTurns})`, "");
+      for (const t of prior) L.push(`**${t.role}:** ${cap(t.content, 1500)}`, "");
+    }
+    L.push(`## Request${c.msgTruncated ? " (cut at 500 chars in telemetry)" : ""}`, "", cap(c.history.at(-1)!.content, 8000), "");
+  } else {
+    L.push("## Request (task description)", "", cap(c.description, 8000), "");
+  }
+  return L.join("\n");
 }
 function jaccard(a: string[], b: string[]): number {
   const x = new Set(a.filter((n) => !NEUTRAL_TOOLS.has(n)));
@@ -667,6 +828,7 @@ let spent = 0;
 for (const [i, c] of selected.entries()) {
   console.log(`\n[bench] ${c.task} — ${oneLine(c.title).slice(0, 80)}`);
   writeFileSync(join(RESULTS_DIR, `${c.task}-orig.md`), `# ${c.task} — stored production answer\n\n${c.title}\n\n---\n\n${c.origText}\n`, { mode: 0o600 });
+  writeFileSync(join(RESULTS_DIR, `${c.task}-request.md`), requestFile(c), { mode: 0o600 });
   const order = CONFIGS.map((_, j) => CONFIGS[(i + j) % CONFIGS.length]);
   for (const [position, arm] of order.entries()) {
     // JME recall embeds the last user turn (≤2,000 chars) under a 1.5 s
@@ -764,6 +926,8 @@ for (const [i, c] of selected.entries()) {
       orig_cost_usd: c.origCost,
       orig_turns: c.origTurns,
       orig_tools: c.origTools,
+      orig_models: c.origModels,
+      orig_created_at: c.createdAt,
     };
     spent += row.cost_usd;
     appendFileSync(CALLS, JSON.stringify(row) + "\n", { mode: 0o600 });

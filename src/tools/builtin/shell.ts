@@ -448,8 +448,8 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/root\/claude\/mission-control\/backups\/\S|(?<![\w/.-])(?:\.\/)?backups\/mc(?:\.db|-)/, reason: "backup copies are off-limits to the shell" },
   { pattern: /\/opt\/supabase\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // pg_dumps + state bundles (mc.db, .env)
   { pattern: /\/root\/claude\/Pulso-Aura-Upfront\/data\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // crm.db + messages.db copies
-  // benchmark-sonnet-tier.ts's full mc.db copy; relative like `data/mc.db` below.
-  { pattern: /\/root\/claude\/mission-control\/data\/sonnet-bench\/\S|(?<![\w/.])(?:\.\/)?data\/sonnet-bench\/\S/, reason: "backup copies are off-limits to the shell" },
+  // benchmark-{sonnet,opus}-tier.ts and grade-benchmark.ts full mc.db copies; relative like `data/mc.db` below.
+  { pattern: /\/root\/claude\/mission-control\/data\/(?:sonnet|opus|grade)-bench\/\S|(?<![\w/.])(?:\.\/)?data\/(?:sonnet|opus|grade)-bench\/\S/, reason: "benchmark mc.db snapshots are off-limits to the shell" },
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
   { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
   { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },

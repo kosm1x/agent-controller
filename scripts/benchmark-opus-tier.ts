@@ -16,7 +16,18 @@
  *     allow-list (file/grep/glob/list/code_search/pdf/project reads; no
  *     shell_exec, nothing that leaves the box);
  *   - planner/reflect/selfAssess pass costLedger:false; the executor's seam
- *     metering writes go to the snapshot, not the live ledger.
+ *     metering writes go to the snapshot, not the live ledger;
+ *   - CLAUDE* keys of the launching shell are stripped before the live env is
+ *     inherited (the service's values win), and before any src import the
+ *     harness points JARVIS_KB_MIRROR_DIR at <scratch>/kb-mirror and deletes
+ *     COMMIT_DB_KEY + DRIVE_KB_FOLDER_ID, so a KB write from a stage-2 tool
+ *     loop mirrors to scratch only, skips pgvector and skips Drive (same
+ *     guards as scripts/benchmark-sonnet-tier.ts). Stage 1 makes no tool calls;
+ *   - after the /proc copy the harness pins SONNET_MODEL_ID=claude-sonnet-4-6
+ *     and deletes SONNET_EFFORT (the live canary carries claude-sonnet-5-5 +
+ *     low), unless the launching shell set either key (launcher wins), so
+ *     stage-2 executor legs routed to Sonnet match the 09-16 baseline shape.
+ *     The values in force print as `[bench] sonnet-leg env: …`.
  *
  * Arms (interleaved per task so time-of-day drift is shared):
  *   A = production shape: thinking disabled, effort unset (SDK default "high")
@@ -24,6 +35,10 @@
  *       two thinking-disabled failure modes: tool call written into visible
  *       text, `<thinking>` tag leakage)
  *   × models 4-8 / 5  → 4 arms.
+ * Config A on a 5.x model is NOT "thinking disabled": 5.x rejects it, so
+ * defaultThinkingFor gives adaptive thinking at the MODEL'S default effort.
+ * For claude-opus-5-5 (default effort medium) `--effort-b=medium` makes B a
+ * duplicate of A — use `--effort-b=high` (or `low`) instead.
  *
  * Stages:
  *   1 (default) plan() on every task, reflect() on every task (goal results
@@ -52,6 +67,8 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+// No imports and no env reads at module load — safe ahead of the env guards.
+import { calculateCost } from "../src/budget/pricing.js";
 
 // ---------------------------------------------------------------------------
 // Args
@@ -118,7 +135,8 @@ const READ_ONLY_ALLOW = [
   "project_list", "user_fact_list",
 ];
 
-if (!existsSync(OUT)) mkdirSync(OUT, { recursive: true });
+// Only a spending run writes results; a dry run must not leave an empty stage dir.
+if (RUN && !existsSync(OUT)) mkdirSync(OUT, { recursive: true });
 
 // ---------------------------------------------------------------------------
 // Summary renderer (works on partial results — safe to call mid-run)
@@ -213,6 +231,25 @@ function renderSummary(rows: CallRow[]): string {
     }
     lines.push("");
   }
+  // SDK-reported total_cost_usd vs usage × pricing.ts: a new model the SDK
+  // mis-prices shows as a ratio far from 1.00 (OK rows only, like the tables).
+  lines.push("## Cost two ways (OK rows)");
+  lines.push("");
+  lines.push("| arm | phase | n | SDK total_cost_usd Σ | usage × pricing.ts Σ | SDK / pricing.ts |");
+  lines.push("|---|---|---|---|---|---|");
+  for (const arm of arms) {
+    const [model, config] = arm.split("|");
+    for (const phase of ["plan", "reflect", "assess", "execute"] as const) {
+      const a = rows.filter((r) => r.ok && r.phase === phase && r.model === model && r.config === config);
+      if (a.length === 0) continue;
+      const sdk = a.reduce((s, r) => s + r.costUsd, 0);
+      const priced = a.reduce((s, r) => s + calculateCost(r.reportedModel || r.model, r.promptTokens, r.completionTokens, r.cacheReadTokens, r.cacheCreationTokens), 0);
+      lines.push(`| ${model} ${config} | ${phase} | ${a.length} | ${sdk.toFixed(3)} | ${priced.toFixed(3)} | ${priced ? (sdk / priced).toFixed(2) : "n/a"} |`);
+    }
+  }
+  lines.push("");
+  lines.push("execute rows price the whole graph run's summed usage at the arm's model (Sonnet-routed legs, if any, are priced as that model).");
+  lines.push("");
   const errs = rows.filter((r) => !r.ok);
   if (errs.length) {
     lines.push("## Errors");
@@ -237,6 +274,12 @@ if (SUMMARIZE_ONLY) {
 // ---------------------------------------------------------------------------
 // 1) Live env (only with --run) — inherited via /proc, never printed.
 // ---------------------------------------------------------------------------
+// The inherit loop never overwrites a key already set, so a CLAUDE* key from
+// the launching shell (e.g. a Claude Code session) would shadow the service's.
+const strippedClaudeKeys = Object.keys(process.env).filter((k) => /^CLAUDE/.test(k));
+for (const k of strippedClaudeKeys) delete process.env[k];
+// Sonnet-leg neutralisation keys the launching shell set itself (those win).
+const launcherSonnet = new Set(["SONNET_MODEL_ID", "SONNET_EFFORT"].filter((k) => k in process.env));
 if (RUN) {
   let pid = process.env.MC_PID ?? "";
   if (!pid) {
@@ -255,6 +298,29 @@ if (RUN) {
     if (i > 0 && !(kv.slice(0, i) in process.env)) process.env[kv.slice(0, i)] = kv.slice(i + 1);
   }
 }
+// Stage-2 executor legs routed to Sonnet must match the 09-16 baseline shape
+// (claude-sonnet-4-6, SDK default effort), not the live Sonnet 5.5-low canary
+// (SONNET_MODEL_ID=claude-sonnet-5-5 + SONNET_EFFORT=low): claude-sdk.ts reads
+// SONNET_MODEL_ID once at import and SONNET_EFFORT per call. Launcher wins.
+if (!launcherSonnet.has("SONNET_MODEL_ID")) process.env.SONNET_MODEL_ID = "claude-sonnet-4-6";
+if (!launcherSonnet.has("SONNET_EFFORT")) delete process.env.SONNET_EFFORT;
+console.log(
+  `[bench] sonnet-leg env: SONNET_MODEL_ID=${process.env.SONNET_MODEL_ID ?? "(unset)"} (${launcherSonnet.has("SONNET_MODEL_ID") ? "launching shell" : "pinned"}) · ` +
+    `SONNET_EFFORT=${process.env.SONNET_EFFORT ?? "(unset)"} (${launcherSonnet.has("SONNET_EFFORT") ? "launching shell" : "cleared"})`,
+);
+// Side-effect guards — BEFORE any src import (drive-sync reads
+// DRIVE_KB_FOLDER_ID at module load). A KB write from a stage-2 tool loop
+// (upsertFile) then mirrors into scratch (getMirrorDir() reads the var per
+// call), skips pgvector (isPgvectorEnabled = !!COMMIT_DB_KEY) and skips Drive
+// (syncToDrive returns when the folder id is empty).
+const KB_MIRROR = join(SCRATCH, "kb-mirror");
+mkdirSync(KB_MIRROR, { recursive: true, mode: 0o700 });
+process.env.JARVIS_KB_MIRROR_DIR = KB_MIRROR;
+delete process.env.COMMIT_DB_KEY;
+delete process.env.DRIVE_KB_FOLDER_ID;
+console.log(
+  `[bench] env guards: KB mirror -> ${KB_MIRROR} · pgvector off · Drive off · ${strippedClaudeKeys.length} launching-shell CLAUDE* key(s) stripped`,
+);
 process.env.BUDGET_ENABLED = "false";
 process.env.BUDGET_ENFORCE = "false";
 
@@ -366,6 +432,9 @@ for (const t of stored) {
   console.log(`  ${t.task} [${t.family}] goals=${goals} storedScore=${t.storedScore} tools=${t.storedToolCalls.length} desc=${t.description.length}ch — ${t.title.slice(0, 70)}`);
 }
 console.log(`[bench] stage-2 read-only tool allow-list (${readOnlyTools.length}): ${readOnlyTools.join(", ")}`);
+if (CONFIGS.includes("A") && CONFIGS.includes("B") && EFFORT_B === "medium" && MODELS.some((m) => m.startsWith("claude-opus-5-5"))) {
+  console.log("[bench] WARNING: claude-opus-5-5 defaults to effort medium, so config B (--effort-b=medium) duplicates config A for it — use --effort-b=high or low.");
+}
 if (!RUN) {
   console.log("[bench] DRY — pass --run to fire real SDK calls (see plan doc for the per-stage estimate).");
   process.exit(3);
