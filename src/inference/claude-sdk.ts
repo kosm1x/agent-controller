@@ -1179,6 +1179,11 @@ export async function queryClaudeSdk(opts: {
   let costAuthoritative = false;
   let durationMs = 0;
   let actualModel: string = effectiveModel;
+  // The dominant model's ModelUsage from the terminal result (SDK ≥0.3.285
+  // carries costBasis/thinkingTokens there). Surfaced on the Completed log
+  // line + cost_ledger.cost_basis only when the SDK reported them — never
+  // defaulted (absent ≠ "unknown").
+  let dominantUsage: ModelUsage | undefined;
 
   // When images are present, switch to streaming-input mode so the user
   // message can carry Anthropic-format image blocks alongside the text.
@@ -1397,6 +1402,7 @@ export async function queryClaudeSdk(opts: {
           const dominant = dominantModel(success.modelUsage ?? {});
           if (dominant) {
             actualModel = dominant;
+            dominantUsage = success.modelUsage[dominant];
           }
           // `subtype: "success"` + `is_error: true` is the SDK's shape for a
           // turn that ENDED on an API error (dead login, 401/403, overload
@@ -1485,6 +1491,7 @@ export async function queryClaudeSdk(opts: {
           const errDominant = dominantModel(error.modelUsage ?? {});
           if (errDominant) {
             actualModel = errDominant;
+            dominantUsage = error.modelUsage[errDominant];
           }
           if (
             streamingText ||
@@ -1630,6 +1637,10 @@ export async function queryClaudeSdk(opts: {
       `$${costUsd.toFixed(4)}, ${durationMs}ms, ` +
       `tokens=${usage.promptTokens + usage.completionTokens} ` +
       `(cache ${(cacheHitRatio * 100).toFixed(0)}%: ${usage.cacheReadTokens} read, ${usage.cacheCreationTokens} created)` +
+      (dominantUsage?.costBasis ? ` basis=${dominantUsage.costBasis}` : "") +
+      (typeof dominantUsage?.thinkingTokens === "number"
+        ? ` thinking=${dominantUsage.thinkingTokens}`
+        : "") +
       (timedOut ? " [TIMED OUT]" : ""),
   );
 
@@ -1665,6 +1676,9 @@ export async function queryClaudeSdk(opts: {
           ...(costAuthoritative && { costUsdOverride: costUsd }),
           cacheReadTokens: usage.cacheReadTokens,
           cacheCreationTokens: usage.cacheCreationTokens,
+          ...(dominantUsage?.costBasis && {
+            costBasis: dominantUsage.costBasis,
+          }),
         });
       } catch (err) {
         warnSeamRecordFailureOnce(err);

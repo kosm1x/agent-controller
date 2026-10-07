@@ -52,10 +52,10 @@ function outcomeCols(db: Database.Database): string[] {
 }
 
 describe("migration v7 — task_outcomes.concern_detail", () => {
-  it("fresh DB: head is v7 and the column sits next to concern_reason", () => {
+  it("fresh DB: head is v8 (v7 included) and the column sits next to concern_reason", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
     const cols = outcomeCols(db);
     expect(cols).toContain("concern_reason");
     expect(cols).toContain("concern_detail");
@@ -82,7 +82,7 @@ describe("migration v7 — task_outcomes.concern_detail", () => {
 
     initDatabase(tmpDbPath);
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
     expect(outcomeCols(db)).toContain("concern_detail");
     const row = db
       .prepare(`SELECT concern_detail FROM task_outcomes WHERE task_id = 'old'`)
@@ -102,7 +102,7 @@ describe("migration v7 — task_outcomes.concern_detail", () => {
     raw.close();
 
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
-    expect(getDatabase().pragma("user_version", { simple: true })).toBe(7);
+    expect(getDatabase().pragma("user_version", { simple: true })).toBe(8);
   });
 });
 

@@ -3108,6 +3108,86 @@ describe("cost-ledger seam metering (V8.5 Phase 3.3)", () => {
   });
 });
 
+describe("SDK cost basis surfacing (queue 2026-10-07 item 5)", () => {
+  const mu = (costUSD: number, extra: Record<string, unknown> = {}) => ({
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    webSearchRequests: 0,
+    costUSD,
+    contextWindow: 200000,
+    maxOutputTokens: 8192,
+    ...extra,
+  });
+  const completedLine = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.startsWith("[claude-sdk] Completed:"));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("success: dominant model's costBasis + thinkingTokens reach the log line and the ledger row", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockMessages.value = [
+      {
+        ...SEAM_SUCCESS_RESULT,
+        // Aux model listed first with a different basis: the dominant
+        // (higher-cost) entry's basis is the one surfaced.
+        modelUsage: {
+          [HAIKU_MODEL_ID]: mu(0.0001, { costBasis: "unknown" }),
+          [SONNET_MODEL_ID]: mu(0.004, {
+            costBasis: "list",
+            thinkingTokens: 12,
+          }),
+        },
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+
+    const line = completedLine(logSpy);
+    expect(line).toContain(" basis=list thinking=12");
+    expect(recordCostMock).toHaveBeenCalledTimes(1);
+    expect(recordCostMock.mock.calls[0][0].costBasis).toBe("list");
+  });
+
+  it("error subtype: costBasis is read from the error result's modelUsage too", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        errors: ["Reached maximum number of turns (2)"],
+        num_turns: 2,
+        usage: { input_tokens: 100, output_tokens: 20 },
+        modelUsage: { [OPUS_MODEL_ID]: mu(0.02, { costBasis: "managed" }) },
+        total_cost_usd: 0.02,
+        duration_ms: 900,
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+
+    expect(completedLine(logSpy)).toContain(" basis=managed");
+    expect(recordCostMock.mock.calls[0][0].costBasis).toBe("managed");
+  });
+
+  it("absent field: no basis=/thinking= text and no costBasis key — never a fabricated 'unknown'", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockMessages.value = [
+      { ...SEAM_SUCCESS_RESULT, modelUsage: { [SONNET_MODEL_ID]: mu(0.004) } },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+
+    const line = completedLine(logSpy);
+    expect(line).toBeDefined();
+    expect(line).not.toContain("basis=");
+    expect(line).not.toContain("thinking=");
+    expect("costBasis" in recordCostMock.mock.calls[0][0]).toBe(false);
+  });
+});
+
 describe("budget enforcement gate (V8.5 Phase 3.3)", () => {
   it("is dormant by default — no headroom read, no maxBudgetUsd", async () => {
     mockMessages.value = [SEAM_SUCCESS_RESULT];

@@ -44,6 +44,12 @@ export interface CostRecord {
    * a churning prefix (cache structure problem, not a hit-rate problem).
    */
   cacheCreationTokens?: number;
+  /**
+   * Which price table the SDK priced `costUsdOverride` at
+   * (`ModelUsage.costBasis`: 'list' | 'managed' | 'unknown', SDK ≥0.3.285).
+   * NULL in the ledger when the caller did not report one — never defaulted.
+   */
+  costBasis?: string;
 }
 
 export interface BudgetStatus {
@@ -81,8 +87,8 @@ export function recordCost(record: CostRecord): void {
 
   db.prepare(
     `INSERT INTO cost_ledger
-       (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, task_id, agent_type, model, prompt_tokens, completion_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, cost_basis)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     record.runId,
     record.taskId,
@@ -93,6 +99,7 @@ export function recordCost(record: CostRecord): void {
     costUsd,
     record.cacheReadTokens ?? 0,
     record.cacheCreationTokens ?? 0,
+    record.costBasis ?? null,
   );
 }
 

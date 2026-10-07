@@ -89,7 +89,7 @@ afterEach(() => {
 describe("migration v6 — jev_shadow", () => {
   it("exists at the schema head and refuses an unknown consumer", () => {
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
     expect(() =>
       db
         .prepare("INSERT INTO jev_shadow (consumer, item) VALUES ('x', 'y')")

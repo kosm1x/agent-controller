@@ -79,6 +79,7 @@ describe("budget service", () => {
         expect.closeTo(0.012, 6),
         0,
         0,
+        null,
       );
     });
 
@@ -107,6 +108,7 @@ describe("budget service", () => {
         0,
         0,
         0,
+        null,
       );
     });
 
@@ -131,6 +133,7 @@ describe("budget service", () => {
         0.087,
         0,
         0,
+        null,
       );
     });
 
@@ -165,6 +168,36 @@ describe("budget service", () => {
         0,
         41_500,
         2_400,
+        null,
+      );
+    });
+
+    it("persists the SDK cost basis when provided (queue 2026-10-07 item 5)", () => {
+      recordCost({
+        runId: "run-6",
+        taskId: "task-6",
+        agentType: "fast",
+        model: "claude-sonnet-5-5",
+        promptTokens: 1_000,
+        completionTokens: 100,
+        costUsdOverride: 0.01,
+        costBasis: "managed",
+      });
+
+      expect(mockDb.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("cost_basis"),
+      );
+      expect(mockRun).toHaveBeenCalledWith(
+        "run-6",
+        "task-6",
+        "fast",
+        "claude-sonnet-5-5",
+        1_000,
+        100,
+        0.01,
+        0,
+        0,
+        "managed",
       );
     });
 
@@ -193,6 +226,7 @@ describe("budget service", () => {
         0,
         8_000,
         0,
+        null,
       );
     });
   });

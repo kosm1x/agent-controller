@@ -1330,6 +1330,23 @@ export function initDatabase(dbPath: string): Database.Database {
         }
       },
     },
+    {
+      version: 8,
+      description:
+        "cost_ledger.cost_basis — the SDK's ModelUsage.costBasis ('list'|'managed'|'unknown') for the price table cost_usd was computed at; NULL when not reported (queue §2026-10-07 item 5)",
+      up: (db) => {
+        // Probe first (same reason as v7): a DB pinned back below v8 still
+        // carries the column.
+        const cols = db
+          .prepare("PRAGMA table_info(cost_ledger)")
+          .all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "cost_basis")) {
+          db.exec(
+            "ALTER TABLE cost_ledger ADD COLUMN cost_basis TEXT DEFAULT NULL",
+          );
+        }
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {
