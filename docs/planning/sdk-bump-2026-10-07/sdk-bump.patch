@@ -1,0 +1,51 @@
+diff -ruN pa/src/inference/claude-sdk.test.ts pb/src/inference/claude-sdk.test.ts
+--- a/src/inference/claude-sdk.test.ts	2026-10-07 03:16:49.430080809 +0000
++++ b/src/inference/claude-sdk.test.ts	2026-10-07 03:16:49.434080855 +0000
+@@ -2745,6 +2745,29 @@
+     expect(opts.strictMcpConfig).toBe(true);
+   });
+ 
++  it("pins the claude.ai skill/plugin sync opt-out — Jarvis must never load operator-synced skills or plugins (CLI 2.1.275+)", async () => {
++    mockMessages.value = [
++      {
++        type: "result",
++        subtype: "success",
++        result: "ok",
++        num_turns: 1,
++        usage: { input_tokens: 1, output_tokens: 1 },
++      },
++    ];
++    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
++    const opts = lastQueryArgs.value?.options as {
++      settings?: {
++        syncClaudeAiSkills?: boolean;
++        syncClaudeAiPlugins?: boolean;
++      };
++    };
++    expect(opts.settings).toEqual({
++      syncClaudeAiSkills: false,
++      syncClaudeAiPlugins: false,
++    });
++  });
++
+   it("pins alwaysLoad: true on the jarvis MCP server (0.3.x defers tools behind tool search)", async () => {
+     mockMessages.value = [
+       {
+diff -ruN pa/src/inference/claude-sdk.ts pb/src/inference/claude-sdk.ts
+--- a/src/inference/claude-sdk.ts	2026-10-07 03:16:49.430080809 +0000
++++ b/src/inference/claude-sdk.ts	2026-10-07 03:16:49.433080844 +0000
+@@ -1077,6 +1077,14 @@
+     // Only the jarvis server passed above may exist. Pinned by spec in
+     // claude-sdk.test.ts.
+     strictMcpConfig: true,
++    // EXPLICIT claude.ai sync opt-out (2026-10-07, SDK 0.3.285 / CLI
++    // 2.1.285). The CLI syncs the skills and (since 2.1.275) the plugins the
++    // operator enabled on claude.ai into every session signed in with that
++    // account — Jarvis's OAuth login included — and re-syncs plugins at each
++    // launch. settingSources: [] does not gate it (the opt-out is read from
++    // user settings or --settings only), so pass it in the flag-settings
++    // layer. Only `false` is honored. Pinned by spec in claude-sdk.test.ts.
++    settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
+     maxTurns: opts.maxTurns ?? 20,
+     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
+     // cached prompt prefix. Omitted when unset so the SDK default ("high")
