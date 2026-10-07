@@ -2639,6 +2639,29 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(opts.strictMcpConfig).toBe(true);
   });
 
+  it("pins the claude.ai skill/plugin sync opt-out — Jarvis must never load operator-synced skills or plugins (CLI 2.1.275+)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    const opts = lastQueryArgs.value?.options as {
+      settings?: {
+        syncClaudeAiSkills?: boolean;
+        syncClaudeAiPlugins?: boolean;
+      };
+    };
+    expect(opts.settings).toEqual({
+      syncClaudeAiSkills: false,
+      syncClaudeAiPlugins: false,
+    });
+  });
+
   it("pins alwaysLoad: true on the jarvis MCP server (0.3.x defers tools behind tool search)", async () => {
     mockMessages.value = [
       {

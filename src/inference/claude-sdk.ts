@@ -1060,6 +1060,14 @@ export async function queryClaudeSdk(opts: {
     // Only the jarvis server passed above may exist. Pinned by spec in
     // claude-sdk.test.ts.
     strictMcpConfig: true,
+    // EXPLICIT claude.ai sync opt-out (2026-10-07, SDK 0.3.285 / CLI
+    // 2.1.285). The CLI syncs the skills and (since 2.1.275) the plugins the
+    // operator enabled on claude.ai into every session signed in with that
+    // account — Jarvis's OAuth login included — and re-syncs plugins at each
+    // launch. settingSources: [] does not gate it (the opt-out is read from
+    // user settings or --settings only), so pass it in the flag-settings
+    // layer. Only `false` is honored. Pinned by spec in claude-sdk.test.ts.
+    settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
     maxTurns: opts.maxTurns ?? 20,
     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
     // cached prompt prefix. Omitted when unset so the SDK default ("high")
