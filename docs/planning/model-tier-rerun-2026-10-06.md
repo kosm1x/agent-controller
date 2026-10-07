@@ -276,3 +276,20 @@ in the per-task table before trusting a mean.
 - Fixing the `SONNET_EFFORT` / `tierToEffort` reach (§5.3), the eval scoring
   v3 WIP, and any production model change. This doc only makes the two
   benchmarks re-runnable with Opus 5.5 and adds the blind grader.
+
+## 7. Results — orchestrator tier, stage 1 (2026-10-07 03:44–04:17 UTC, $9.72, 124 rows, 0 failed calls)
+
+Run on SDK 0.3.285 (`de1f882`), 13 stored heavy tasks × {Opus 4.8, Opus 5.5} × {A default, B high}. Dir `data/opus-bench/stage1-2026-10-07-03-44/` (gitignored).
+
+| gate | 4.8/A (reference) | 5.5/A | 5.5/B high | verdict |
+|---|---|---|---|---|
+| 1 contract: bare JSON · leaks | 100 % · 0 | 85 % · 0 | 31 % · 0 | FAIL strictly; every non-bare reply is **fenced** JSON and all 52 parsed (`ok` 100 %) — formatting, not contract |
+| 2 tokens: prompt/call · cache-read | 10 232 · 49 % | 10 233 · 54 % | 10 233 · 53 % | PASS |
+| 3 quality: goals/plan (+0.5 max) | 2.5 | **3.4 (+0.9)** | **3.5 (+1.0)** | **FAIL** — same class as Opus 5 on 09-16 (3.7 vs 2.3), milder |
+| 3 quality: reflect agreement ≥ 85 % · assess met | 92 % · 80 % | 85 % · 100 % | 85 % · 100 % | PASS (agreement at the threshold) |
+| 4 cost: plan $/call, pricing.ts column | 0.0573 | 0.0565 | 0.0725 | A PASS by 1.4 %; B FAIL |
+| latency plan s/call | 11.1 | 14.9 | 23.1 | — |
+
+Where the inflation sits: the five single-goal `[swarm-child]` tasks got 3–4 goals from 5.5/A (4.8/A: 1–4, one outlier) and the deep-research chat task went 1 → 3 (B: 5). On the four multi-goal ritual/ops tasks 5.5 reproduced the stored goal count exactly (4, 4, 3, 4) where 4.8/B under-split. Mean |goals − stored|: 4.8/A 1.23 · 4.8/B 1.08 · 5.5/A 1.46 · 5.5/B 1.54. Completion tokens 1.8× (A) / 2.7× (B) of 4.8/A; the lower list price absorbs it on A only. SDK/pricing.ts ratio 1.26–1.45 on all arms (4.8 included), so the gap is not model-specific.
+
+**Ruling: Opus 4.8 stays the orchestrator.** Stage 2 does not run (gate 3 failed on both configs). Opus 5.5 is re-tested only after a planner-prompt change aimed at swarm-child decomposition (one child = one goal) — a prompt experiment (queue §2026-10-07), not a model verdict; the fenced-JSON rate is a cosmetic column until the parser stops accepting fences.
