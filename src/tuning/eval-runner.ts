@@ -145,14 +145,33 @@ async function evalToolSelection(
   }
   messages.push({ role: "user", content: message });
 
-  // Call inference — we only care about which tools are called, not execution
-  const result = await inferFn(messages, definitions);
+  // Call inference — we only care about which tools are called, not execution.
+  // Multi-round: calls of every round arrive in call order, so the any-round
+  // hit / any-round violation rule falls out of the unchanged scorer.
+  // Default 1 on purpose: the overnight tuning loop (overnight-loop.ts) and
+  // baseline.ts never set probeRounds, so nightly scoring is unchanged; only
+  // scripts/eval-gate.ts opts in (3).
+  const rounds = sandbox.probeRounds ?? 1;
+  const result = await inferFn(messages, definitions, { probeRounds: rounds });
 
   const { score, details } = scoreToolSelection(
     tc.expected,
     result.toolsCalled,
     offered,
   );
+
+  // Round of each call; an inferFn without rounds (mocks, non-SDK) = round 1.
+  const callRounds =
+    result.callRounds?.length === result.toolsCalled.length
+      ? result.callRounds
+      : result.toolsCalled.map(() => 1);
+  const calledByRound: string[][] = Array.from({ length: rounds }, () => []);
+  result.toolsCalled.forEach((t, i) => {
+    const r = Math.min(Math.max(callRounds[i], 1), rounds);
+    calledByRound[r - 1].push(t);
+  });
+  const hitTools = new Set((details.hits as string[] | undefined) ?? []);
+  const hitIdx = result.toolsCalled.findIndex((t) => hitTools.has(t));
 
   return {
     caseId: tc.case_id,
@@ -162,6 +181,13 @@ async function evalToolSelection(
     details: {
       ...splitUnreachable(details),
       tokensUsed: result.tokensUsed,
+      rounds,
+      hitRound:
+        hitIdx === -1
+          ? null
+          : Math.min(Math.max(callRounds[hitIdx], 1), rounds),
+      calledByRound,
+      sourceGroup: tc.sourceGroup ?? "seed",
     },
   };
 }
@@ -254,6 +280,8 @@ function evalClassification(tc: TestCase): CaseScore {
 export interface InferResult {
   toolsCalled: string[];
   tokensUsed: number;
+  /** 1-based model round of each `toolsCalled` entry (absent = all round 1). */
+  callRounds?: number[];
 }
 
 /**
@@ -263,6 +291,7 @@ export interface InferResult {
 export type InferFunction = (
   messages: ChatMessage[],
   tools: ToolDefinition[],
+  opts?: { probeRounds?: number },
 ) => Promise<InferResult>;
 
 /**
@@ -272,6 +301,7 @@ export type InferFunction = (
 export async function defaultInferFunction(
   messages: ChatMessage[],
   tools: ToolDefinition[],
+  opts?: { probeRounds?: number },
 ): Promise<InferResult> {
   // Dynamic import to avoid circular deps at module load time
   const { infer } = await import("../inference/adapter.js");
@@ -279,6 +309,7 @@ export async function defaultInferFunction(
   const result = await infer({
     messages,
     tools,
+    probeRounds: opts?.probeRounds,
     costLedger: { agentType: "tuning:eval-probe" },
   });
 
@@ -286,6 +317,7 @@ export async function defaultInferFunction(
 
   return {
     toolsCalled,
+    ...(result.probe_call_rounds && { callRounds: result.probe_call_rounds }),
     tokensUsed:
       (result.usage?.prompt_tokens ?? 0) +
       (result.usage?.completion_tokens ?? 0),
@@ -365,7 +397,7 @@ export async function runEvaluation(
         category: tc.category,
         score: 0,
         weight: tc.weight,
-        details: { error: String(err) },
+        details: { error: String(err), sourceGroup: tc.sourceGroup ?? "seed" },
       });
     }
   }
@@ -381,6 +413,7 @@ export async function runEvaluation(
     perCase: results,
     reachability: summarizeReachability(results, excluded),
     totalTokens,
+    // Per-probe estimate, calibrated on single-round probes (ignores probeRounds).
     estimatedCostUsd: toolSelectionCount * EST_COST_PER_INFERENCE_USD,
     durationMs: Date.now() - startMs,
   };

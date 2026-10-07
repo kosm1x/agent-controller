@@ -93,6 +93,9 @@ vi.mock("../config.js", () => ({
 import {
   queryClaudeSdk,
   queryClaudeSdkAsInfer,
+  buildProbeTools,
+  PROBE_STUB_TEXT,
+  PROBE_SIMULATED_TEXT,
   buildMcpServer,
   wrapToolCached,
   toolSearchEnabled,
@@ -682,6 +685,99 @@ describe("queryClaudeSdkAsInfer selection probe (2026-07-10 eval fix)", () => {
   });
 });
 
+describe("queryClaudeSdkAsInfer multi-round selection probe (eval scoring v3)", () => {
+  const def = (name: string): ToolDefinition => ({
+    type: "function",
+    function: {
+      name,
+      description: `synthetic ${name}`,
+      parameters: { type: "object", properties: {} },
+    },
+  });
+  const toolUse = (id: string, name: string) => ({
+    type: "assistant",
+    message: {
+      id,
+      content: [{ type: "tool_use", name: `mcp__jarvis__${name}`, input: {} }],
+    },
+  });
+  type ProbeOpts = {
+    maxTurns: number;
+    mcpServers: {
+      jarvis: {
+        config: {
+          tools: Array<{ name: string; handler: () => Promise<unknown> }>;
+        };
+      };
+    };
+  };
+
+  it("returns calls of all rounds in order with their rounds; maxTurns = probeRounds", async () => {
+    const [a, b, c] = ["tool_a", "tool_b", "tool_c"];
+    mockMessages.value = [
+      toolUse("m1", a),
+      // Same message id split across two events = still round 1.
+      toolUse("m1", b),
+      toolUse("m2", c),
+      { type: "result", subtype: "error_max_turns", errors: ["turn limit"] },
+    ];
+    const response = await queryClaudeSdkAsInfer(
+      [{ role: "user", content: "synthetic request" }],
+      { tools: [def(a), def(b), def(c)], probeRounds: 3 },
+    );
+    expect(response.tool_calls?.map((t) => t.function.name)).toEqual([a, b, c]);
+    expect(response.probe_call_rounds).toEqual([1, 1, 2]);
+    const opts = lastQueryArgs.value?.options as ProbeOpts;
+    expect(opts.maxTurns).toBe(3);
+  });
+
+  it("stub handler text per mode; nothing from the registry is registered", async () => {
+    const { toolRegistry } = await import("../tools/registry.js");
+    const texts: Record<number, string> = {};
+    const getSpy = vi.spyOn(toolRegistry, "get");
+    for (const rounds of [1, 3]) {
+      getSpy.mockClear();
+      mockMessages.value = [
+        { type: "result", subtype: "success", result: "", num_turns: 1 },
+      ];
+      await queryClaudeSdkAsInfer([{ role: "user", content: "x" }], {
+        tools: [def("tool_a")],
+        probeRounds: rounds,
+      });
+      const opts = lastQueryArgs.value?.options as ProbeOpts;
+      const tools = opts.mcpServers.jarvis.config.tools;
+      expect(tools.map((t) => t.name)).toEqual(["tool_a"]);
+      expect(getSpy).not.toHaveBeenCalled();
+      const out = (await tools[0].handler()) as {
+        content: Array<{ text: string }>;
+      };
+      texts[rounds] = out.content[0].text;
+    }
+    getSpy.mockRestore();
+    expect(texts[1]).toBe(PROBE_STUB_TEXT);
+    expect(texts[3]).toBe(PROBE_SIMULATED_TEXT);
+    expect(PROBE_SIMULATED_TEXT).toBe(
+      "Simulated result (evaluation run): the call succeeded. Assume it returned what you needed and continue with the next step of the user's request.",
+    );
+  });
+
+  it("rejects probeRounds outside 1-5", async () => {
+    await expect(
+      queryClaudeSdkAsInfer([{ role: "user", content: "x" }], {
+        tools: [def("tool_a")],
+        probeRounds: 6,
+      }),
+    ).rejects.toThrow(/probeRounds/);
+  });
+
+  it("buildProbeTools defaults to the single-round stub", () => {
+    const [t] = buildProbeTools([def("tool_a")]) as unknown as Array<{
+      handler: () => Promise<{ content: Array<{ text: string }> }>;
+    }>;
+    return t.handler().then((r) => expect(r.content[0].text).toBe(PROBE_STUB_TEXT));
+  });
+});
+
 describe("queryClaudeSdkAsInferWithTools (openai-path compatibility)", () => {
   const fakeTool: ToolDefinition = {
     type: "function",
@@ -1166,8 +1262,15 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
     circuitRegistry.reset();
   });
 
-  it("does NOT count tool_use-only turns with error_max_turns as failures (probe pattern, 2026-07-10)", async () => {
-    // A selection probe (maxTurns=1) whose model goes STRAIGHT to a tool
+  it.each([
+    { maxTurns: 1, selectionProbe: true },
+    { maxTurns: 3, selectionProbe: true },
+    { maxTurns: 1, selectionProbe: undefined },
+  ])(
+    "does NOT count tool_use-only turns with error_max_turns as failures (maxTurns=$maxTurns, selectionProbe=$selectionProbe)",
+    async ({ maxTurns, selectionProbe }) => {
+    // A selection probe (any round count) — or, as before multi-round probes,
+    // any single-turn run (sycophancy check) — whose model goes STRAIGHT to a tool
     // call — the correct behavior — ends in error_max_turns with zero
     // streamed prose. That is a healthy provider, not an outage. Before the
     // fix, 51 consecutive eval probes tripped the claude-sdk breaker open
@@ -1195,24 +1298,27 @@ describe("queryClaudeSdk circuit breaker (Dim-4 R2 fix)", () => {
           errors: ["turn limit"],
         },
       ];
-      await queryClaudeSdk({
+      const result = await queryClaudeSdk({
         prompt: "probe",
         systemPrompt: "sys",
         toolNames: [],
-        maxTurns: 1,
+        maxTurns,
+        selectionProbe,
       });
+      expect(result.text).toContain("DONE_WITH_CONCERNS");
     }
 
     const breaker = circuitRegistry.get("claude-sdk");
     expect(breaker.getStatus().state).toBe("CLOSED");
 
     circuitRegistry.reset();
-  });
+    },
+  );
 
-  it("MULTI-turn zero-prose tool loops hitting max_turns still count as failures (qa-audit W1)", async () => {
+  it("MULTI-turn NON-probe zero-prose tool loops hitting max_turns still count as failures (qa-audit W1)", async () => {
     // A 20-turn run that looped tool calls to the ceiling without emitting
-    // any prose is a wedge, not a healthy provider. The probe exemption
-    // above is scoped to maxTurns===1 — this pins that a doom-looping
+    // any prose is a wedge, not a healthy provider. The exemption above is
+    // scoped to selection probes and maxTurns===1 — this pins that a doom-looping
     // fast-runner task keeps its BLOCKED/breaker-failure classification
     // instead of reporting soft-success.
     const { circuitRegistry } = await import("../lib/circuit-breaker.js");

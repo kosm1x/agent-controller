@@ -370,18 +370,27 @@ function wrapTool(t: Tool) {
  * name/description/schema, but the handler never executes anything. Used by
  * `queryClaudeSdkAsInfer` when a caller passes `tools` — the eval runner's
  * tool_selection cases need "which tool WOULD you call", never the side
- * effects. Callers pair this with `maxTurns: 1`, so in practice the query
- * ends at the model's first tool_use turn and the stub handler is dead code —
- * it exists so a handler is present if the SDK ever executes within the turn.
+ * effects. With `rounds` 1 the query ends at the model's first tool_use turn
+ * and the stub handler is dead code (present in case the SDK ever executes
+ * within the turn). With `rounds` > 1 (multi-round probe, eval scoring v3)
+ * every call gets a generic SIMULATED success so the model continues to its
+ * next step — still nothing executes.
  */
-function buildProbeTools(defs: ToolDefinition[]): InlineSdkTool[] {
+export const PROBE_STUB_TEXT = "PROBE — tool not executed";
+export const PROBE_SIMULATED_TEXT =
+  "Simulated result (evaluation run): the call succeeded. Assume it returned what you needed and continue with the next step of the user's request.";
+export function buildProbeTools(
+  defs: ToolDefinition[],
+  rounds = 1,
+): InlineSdkTool[] {
+  const text = rounds > 1 ? PROBE_SIMULATED_TEXT : PROBE_STUB_TEXT;
   return defs.map((d) =>
     sdkTool(
       d.function.name,
       d.function.description,
       jsonSchemaToZodShape(d.function.parameters as Record<string, unknown>),
       async (): Promise<CallToolResult> => ({
-        content: [{ type: "text", text: "PROBE — tool not executed" }],
+        content: [{ type: "text", text }],
       }),
     ),
   );
@@ -661,6 +670,8 @@ export interface ClaudeSdkResult {
    * arguments (e.g. "memory_store called with bank='operational'"); previously
    * the synthesized assistant turn shipped `arguments: "{}"` for every call. */
   toolCallsWithArgs?: Array<{ name: string; input: unknown }>;
+  /** Selection probe only: 1-based model round of each `toolCalls` entry. */
+  toolCallRounds?: number[];
   numTurns: number;
   /**
    * Token usage from the SDK's terminal `result` message.
@@ -798,6 +809,12 @@ export async function queryClaudeSdk(opts: {
    * critic (2026-05-27 `fail_returned_anyway` fix).
    */
   extraTools?: InlineSdkTool[];
+  /**
+   * Selection probe (eval tool_selection, set only by
+   * `queryClaudeSdkAsInfer`): `extraTools` are no-op stubs, so a run that
+   * exhausts `maxTurns` with tool calls is the probe completing, not a wedge.
+   */
+  selectionProbe?: boolean;
   /**
    * Cost-ledger seam metering (V8.5 Phase 3.3). Every call records its own
    * cost_ledger row just before returning UNLESS this is `false` (the
@@ -1133,6 +1150,12 @@ export async function queryClaudeSdk(opts: {
   // Populated alongside the name push so indices line up. Surfaced via
   // `toolCallsWithArgs` for downstream consumers (Prometheus selfAssess).
   const toolCallsWithArgs: Array<{ name: string; input: unknown }> = [];
+  // Selection probe only: 1-based model round of each toolCallNames entry.
+  // A round is one API message (the SDK may split one message's blocks
+  // across several `assistant` events sharing a message id).
+  const toolCallRounds: number[] = [];
+  let probeRound = 0;
+  let probeMsgId: string | undefined;
   let numTurns = 0;
   let assistantTurns = 0;
   /** Structural refusal signal (assistant stop_reason — see comment below). */
@@ -1231,6 +1254,11 @@ export async function queryClaudeSdk(opts: {
         // with the `mcp__jarvis__` prefix — strip so downstream code sees
         // bare names that match the registry.
         const toolCountBeforeTurn = toolCallNames.length;
+        if (opts.selectionProbe) {
+          const id = (message.message as { id?: string } | undefined)?.id;
+          if (!id || id !== probeMsgId) probeRound++;
+          probeMsgId = id;
+        }
         if (message.message?.content) {
           for (const block of message.message.content) {
             if (typeof block !== "object" || !("type" in block)) continue;
@@ -1252,6 +1280,7 @@ export async function queryClaudeSdk(opts: {
               // referencing call args, not just call names.
               const input = "input" in block ? block.input : undefined;
               toolCallsWithArgs.push({ name: bareName, input });
+              if (opts.selectionProbe) toolCallRounds.push(probeRound);
             }
           }
         }
@@ -1459,21 +1488,24 @@ export async function queryClaudeSdk(opts: {
           }
           if (
             streamingText ||
-            (opts.maxTurns === 1 && toolCallNames.length > 0)
+            ((opts.selectionProbe || opts.maxTurns === 1) &&
+              toolCallNames.length > 0)
           ) {
             // Partial content counts as a working provider — the turn/budget
             // limit is an SDK-internal guard, not a provider outage. Avoids
             // tripping the breaker on legitimate long-running queries that
             // ran out of maxTurns while the model was still responsive.
-            // Single-turn tool_use counts the same as text (2026-07-10): a
-            // selection probe (maxTurns=1, see queryClaudeSdkAsInfer) whose
-            // model went STRAIGHT to a tool call — the correct behavior —
-            // ends here with zero prose; without this clause every good
-            // probe recorded a breaker failure and the eval run tripped the
-            // claude-sdk breaker open mid-flight. Deliberately scoped to
-            // maxTurns===1 (qa-audit W1): a MULTI-turn run that looped tool
-            // calls to the ceiling with zero prose is a wedge and must keep
-            // its BLOCKED text + breaker-failure classification.
+            // Probe tool_use counts the same as text (2026-07-10): a
+            // selection probe (see queryClaudeSdkAsInfer) whose model went
+            // STRAIGHT to tool calls — the correct behavior — ends here with
+            // zero prose once its rounds run out; without this clause every
+            // good probe recorded a breaker failure and the eval run tripped
+            // the claude-sdk breaker open mid-flight. Applies to an explicit
+            // `selectionProbe` (any round count, multi-round probes) and, as
+            // before, to any single-turn run (maxTurns===1): a NON-probe
+            // multi-turn run that looped tool calls to the ceiling with zero
+            // prose is a wedge and must keep its BLOCKED text +
+            // breaker-failure classification (qa-audit W1).
             providerOutcome = "success";
             resultText =
               `${marker} Partial response below — turn/budget limit hit before completion.\n\n${streamingText}\n\n` +
@@ -1644,6 +1676,7 @@ export async function queryClaudeSdk(opts: {
     text: resultText,
     toolCalls: toolCallNames,
     toolCallsWithArgs,
+    ...(opts.selectionProbe && { toolCallRounds }),
     numTurns: numTurns || assistantTurns,
     usage,
     model: actualModel,
@@ -1894,6 +1927,11 @@ export function flattenMessagesForSdk(messages: ChatMessage[]): {
  * dropped `request.tools` on this path — §13-adjacent postmortem in
  * docs/PROJECT-STATUS.md). A caller that wants tools EXECUTED belongs on
  * `queryClaudeSdkAsInferWithTools`, not here.
+ *
+ * MULTI-ROUND PROBE (eval scoring v3): `probeRounds` (1-5, default 1) sets
+ * `maxTurns`; each stub call gets a simulated success so the model continues,
+ * and the calls of ALL rounds come back in call order, with the 1-based round
+ * of each in `probe_call_rounds`.
  */
 export async function queryClaudeSdkAsInfer(
   messages: ChatMessage[],
@@ -1902,6 +1940,8 @@ export async function queryClaudeSdkAsInfer(
     maxTurns?: number;
     model?: string;
     tools?: ToolDefinition[];
+    /** Selection-probe rounds, integer 1-5 (default 1); ignored without `tools`. */
+    probeRounds?: number;
     effort?: "low" | "medium" | "high" | "max";
     costLedger?: CostLedgerAttribution | false;
   },
@@ -1909,12 +1949,17 @@ export async function queryClaudeSdkAsInfer(
   const { systemPrompt, userPrompt } = flattenMessagesForSdk(messages);
   const start = Date.now();
   const probing = (options?.tools?.length ?? 0) > 0;
+  const rounds = options?.probeRounds ?? 1;
+  if (probing && !(Number.isInteger(rounds) && rounds >= 1 && rounds <= 5)) {
+    throw new Error(`probeRounds must be an integer 1-5 (got ${rounds})`);
+  }
   const result = await queryClaudeSdk({
     prompt: userPrompt,
     systemPrompt,
     toolNames: [],
-    extraTools: probing ? buildProbeTools(options!.tools!) : undefined,
-    maxTurns: probing ? 1 : (options?.maxTurns ?? 3),
+    extraTools: probing ? buildProbeTools(options!.tools!, rounds) : undefined,
+    ...(probing && { selectionProbe: true }),
+    maxTurns: probing ? rounds : (options?.maxTurns ?? 3),
     model: options?.model,
     effort: options?.effort,
     abortSignal: options?.signal,
@@ -1938,6 +1983,11 @@ export async function queryClaudeSdkAsInfer(
   return {
     content: result.text,
     ...(probeCalls && probeCalls.length > 0 && { tool_calls: probeCalls }),
+    ...(probeCalls &&
+      probeCalls.length > 0 &&
+      result.toolCallRounds?.length === probeCalls.length && {
+        probe_call_rounds: result.toolCallRounds,
+      }),
     usage: {
       prompt_tokens: result.usage.promptTokens,
       completion_tokens: result.usage.completionTokens,

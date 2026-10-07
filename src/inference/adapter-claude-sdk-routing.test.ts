@@ -286,12 +286,15 @@ describe("infer() with request.model override (queue #228)", () => {
     await infer({
       messages: [{ role: "user", content: "clima cdmx" }],
       tools: probeTools,
+      probeRounds: 3,
     });
 
     const sdkMock = await import("./claude-sdk.js");
     const calls = (
       sdkMock.queryClaudeSdkAsInfer as unknown as {
-        mock: { calls: Array<[unknown, { tools?: unknown }]> };
+        mock: {
+          calls: Array<[unknown, { tools?: unknown; probeRounds?: number }]>;
+        };
       }
     ).mock.calls;
     // Mock call history accumulates across specs in this file — assert on
@@ -303,6 +306,9 @@ describe("infer() with request.model override (queue #228)", () => {
     const lastTwo = calls.slice(-2);
     expect(lastTwo[0][1].tools).toBe(probeTools);
     expect(lastTwo[1][1].tools).toBe(probeTools);
+    // Multi-round probe setting rides both legs too (eval scoring v3).
+    expect(lastTwo[0][1].probeRounds).toBe(3);
+    expect(lastTwo[1][1].probeRounds).toBe(3);
   });
 
   it("undefined request.model preserves the prior Sonnet default (back-compat)", async () => {

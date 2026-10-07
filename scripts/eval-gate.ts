@@ -21,8 +21,18 @@
  *
  * HONEST SCOPE / LIMITATIONS (read before trusting a PASS)
  * -------------------------------------------------------
- *  - One probe per case: each `tool_selection` case is ONE inference call that
- *    sees only the first round (no tool executes). So:
+ *  - Multi-round probe (scoring version 3): each `tool_selection` case is
+ *    ONE probe of up to `--probe-rounds` model rounds (default 3). No tool
+ *    ever executes: every call gets the same generic SIMULATED success
+ *    ("the call succeeded, continue") and the model takes its next step. A
+ *    case hits when an expected tool is called in ANY round; a forbidden
+ *    tool called in any round is a violation. Limitation: the simulated
+ *    result is generic, so a model whose next step depends on real data
+ *    (an id, a file's contents, a status) may diverge from what it would do
+ *    live, and a task needing more steps than the cap is still cut. Before
+ *    v3 the probe saw only the first round, so a sensible first step
+ *    (status/list/read) scored as a miss for the tool that finishes the
+ *    job. So:
  *      * only expected tools that were OFFERED (in the definitions sent) are
  *        scored; an expected tool this process never registered, or that the
  *        message's regex scoping cut, is "unreachable" and not scored;
@@ -31,10 +41,14 @@
  *        nor 1) — and counted; one whose only offered tool is a forbidden
  *        one is scored forbidden-only (1 unless it is called);
  *      * a case with several offered expected tools scores 1 if the model
- *        called at least one of them ("any-hit"; a multi-step task's later
- *        tools cannot appear in one probe), a single-tool case 1/0; each
+ *        called at least one of them ("any-hit"; a task's tools past the
+ *        round cap cannot appear), a single-tool case 1/0; each
  *        forbidden tool called costs 2 (clamped at 0). The miner's
- *        `first_tools` is recorded but NOT scored (no round boundaries yet).
+ *        `first_tools` is recorded but NOT scored. Every run PRINTS a
+ *        counts-only breakdown: source group (seed / mined / flywheel) x
+ *        outcome (hit round 1, hit round 2+, forbidden-only pass, violation,
+ *        called other, called nothing, errored — a partition of the probed
+ *        cases) plus each group's weighted subscore.
  *    Every run PRINTS the case counts, the excluded cases and the unreachable
  *    slots (not registered / scoped out), so a shrinking scored population is
  *    visible, never silent. `--percase-out` keeps the per-case detail
@@ -77,7 +91,9 @@
  *
  * USAGE
  *   npm run eval:gate                        # DRY: free evals only, no spend, exit 3
- *   npm run eval:gate -- --run               # REAL: one LLM call per PROBED tool-selection case (~$5.60 / ~15 min at 263 cases, measured 2026-09-19), PASS/FAIL
+ *   npm run eval:gate -- --run               # REAL: up to probeRounds model turns per PROBED tool-selection case (default 3), PASS/FAIL.
+ *       # ~$5.60 / ~15 min was measured with ONE round at 263 cases (2026-09-19);
+ *       # the multi-round cost is not yet measured (expect more).
  *   npm run eval:gate -- --run --update-baseline   # set the incumbent to the current score
  *   npm run eval:gate -- --run --epsilon=1.0       # override tolerance for this run
  *   npm run eval:gate -- --run --percase-out=data/predeploy/eval-percase.json
@@ -88,6 +104,8 @@
  *   (`--probe-system jarvis`) exits 2 before anything is spent.
  *   EXPERIMENT (exit 4, no verdict; refuses --update-baseline):
  *   npm run eval:gate -- --run --cases-file=<json array of case ids>
+ *   npm run eval:gate -- --run --probe-rounds=<1-5>   # rounds per probe other
+ *       # than the default 3 (1 = the pre-v3 first-round-only probe)
  *   npm run eval:gate -- --run --probe-system=jarvis   # probe gets the external
  *       # Jarvis system prompt (router.ts buildExternalJarvisSystemPrompt);
  *       # off by default — the default probe sends no system message
@@ -101,7 +119,8 @@
  *       errored (compare: no verdict; --update-baseline: nothing written);
  *       --update-baseline probed 0 or < 50 % of active tool_selection cases
  *       (nothing written); the drift re-check; no cases; thrown.
- *   3 = DRY (no --run)  |  4 = EXPERIMENT run scored (--cases-file / --probe-system), no verdict
+ *   3 = DRY (no --run)  |  4 = EXPERIMENT run scored (--cases-file / --probe-system /
+ *       non-default --probe-rounds), no verdict
  */
 
 import {
@@ -127,6 +146,7 @@ import { fileURLToPath } from "node:url";
 // 0) Arguments first: a malformed flag exits 2 before anything is read or spent.
 const {
   parseEvalGateArgs,
+  parseProbeRounds,
   percaseOutRefusal,
   preSpendRefusal,
   readBaseline,
@@ -143,7 +163,14 @@ const {
   percaseOut,
   casesFile,
   probeSystem,
+  probeRounds: probeRoundsArg,
 } = parsedArgs.args;
+const parsedRounds = parseProbeRounds(probeRoundsArg);
+if (!parsedRounds.ok) {
+  console.error(`[eval-gate] ${parsedRounds.error}`);
+  process.exit(2);
+}
+const probeRounds = parsedRounds.rounds;
 
 // 1) Inherit the live service's env (INFERENCE_*, keys, TZ) via /proc — never printed.
 //    Mirrors scripts/validate-swarm.ts so the gate hits the REAL inference backend.
@@ -176,7 +203,10 @@ const livePid = loadLiveEnv();
 const flagEpsilon = epsilonArg !== undefined ? Number(epsilonArg) : undefined;
 // An experiment run scores a subset or a non-default probe: never a verdict
 // against (or a write of) the incumbent, which was captured on neither.
-const experiment = casesFile !== undefined || probeSystem !== undefined;
+const experiment =
+  casesFile !== undefined ||
+  probeSystem !== undefined ||
+  parsedRounds.experiment;
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BASELINE_PATH = fileURLToPath(
@@ -193,7 +223,7 @@ if (probeSystem !== undefined && probeSystem !== "jarvis") {
 }
 if (experiment && doUpdate) {
   badFlag(
-    "--update-baseline refuses --cases-file / --probe-system: the incumbent is the full default-probe run.",
+    "--update-baseline refuses --cases-file / --probe-system / a non-default --probe-rounds: the incumbent is the full default-probe run.",
   );
 }
 let caseIds: string[] | undefined;
@@ -296,10 +326,27 @@ const {
   priorBaseline,
   percaseOutputRows,
   DEFAULT_EPSILON,
+  DEFAULT_PROBE_ROUNDS,
   SCORING_VERSION,
+  toolSelectionBreakdown,
 } = await import("../src/tuning/gate.js");
 import type { EvalResult, SandboxConfig } from "../src/tuning/types.js";
 import type { EvalBaseline } from "../src/tuning/gate.js";
+
+/** Source group x probe outcome, counts only — printed on EVERY run. */
+function printBreakdown(r: EvalResult): void {
+  console.log(
+    `  tool_selection by source (probe rounds ${probeRounds}): group  cases  hit-r1  hit-r2+  forbidden-only-pass  violation  called-other  called-nothing  errored  subscore`,
+  );
+  const rows = toolSelectionBreakdown(r.perCase);
+  if (rows.length === 0) console.log("    (no probed tool_selection case)");
+  for (const b of rows) {
+    const o = b.outcomes;
+    console.log(
+      `    ${b.group.padEnd(8)} ${b.cases}  ${o.hitRound1}  ${o.hitRound2Plus}  ${o.forbiddenOnlyPass}  ${o.violation}  ${o.calledOther}  ${o.calledNothing}  ${o.errored}  ${b.subscore.toFixed(2)}`,
+    );
+  }
+}
 
 /** Who could be scored — printed on EVERY run (no silent shrink). */
 function printReachability(r: EvalResult): void {
@@ -328,6 +375,7 @@ function printReachability(r: EvalResult): void {
       `  their unreachable tools: ${[...tally].map(([k, n]) => `${k} x${n}`).join(", ")}`,
     );
   }
+  printBreakdown(r);
 }
 
 function printAggregate(r: EvalResult): void {
@@ -390,7 +438,14 @@ async function main(): Promise<void> {
     `[eval-gate] registered ${toolRegistry.list().length} tools (builtin + Google + skills + memory; no MCP servers)`,
   );
 
-  const sandbox: SandboxConfig = {};
+  // Gate-only opt-in to multi-round probes; runEvaluation's default (1) keeps
+  // the overnight tuning loop unchanged.
+  const sandbox: SandboxConfig = { probeRounds };
+  if (probeRounds !== DEFAULT_PROBE_ROUNDS) {
+    console.log(
+      `[eval-gate] EXPERIMENT: --probe-rounds=${probeRounds} (default ${DEFAULT_PROBE_ROUNDS})`,
+    );
+  }
   if (probeSystem === "jarvis") {
     const { buildExternalJarvisSystemPrompt } =
       await import("../src/messaging/router.js");
@@ -419,7 +474,7 @@ async function main(): Promise<void> {
     );
     printReachability(res);
     console.log(
-      "\n[eval-gate] Harness wired OK. Pass --run for the real gate (~$5.60, ~15 min — measured 2026-09-19 at 263 cases). exit 3.",
+      `\n[eval-gate] Harness wired OK. Pass --run for the real gate (up to ${probeRounds} model turns per probed case; ~$5.60 / ~15 min was measured with ONE round at 263 cases on 2026-09-19 — multi-round cost not yet measured, expect more). exit 3.`,
     );
     process.exit(3);
   }
@@ -492,7 +547,7 @@ async function main(): Promise<void> {
 
   if (experiment) {
     console.log(
-      "\n[eval-gate] EXPERIMENT run (--cases-file / --probe-system): scored, no verdict, baseline untouched. exit 4.",
+      "\n[eval-gate] EXPERIMENT run (--cases-file / --probe-system / --probe-rounds): scored, no verdict, baseline untouched. exit 4.",
     );
     process.exit(4);
   }

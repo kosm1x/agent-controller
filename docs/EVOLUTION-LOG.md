@@ -2730,3 +2730,55 @@ Fede iterates through successive rounds of correction and refinement, and he wan
 
 ### Research notes
 This is a high-intensity, single-channel (Telegram) day of co-development, with Jarvis acting as a thinking partner and KB scribe on one dominant project. It is consistent with a maturing phase in which the user delegates both analysis and documentation. Memory tools were not called in this run, so these notes rest on the day narrative and project_list only. PE27 is the active project (the Barrio Fuerte and Barter Agency subprojects).
+
+## 2026-10-04
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | n/a (no snapshot provided) |
+| Total tasks | n/a (no snapshot provided) |
+| Conversations today | 34 (telegram: 34) |
+| Streak days | n/a (no snapshot provided) |
+
+### Interactions summary
+Fede covered several threads: a DENUE query on veterinary and pet businesses, pets per inhabitant (ENBIARE sources), and Transport Fever 3 with a daily watch schedule. He also had Jarvis clean up TMN KB links and duplicates, and update the agent-controller KB twice. The dominant thread was Barter Agency / PE27 modeling: assumption corrections, v3, v4 and a Google Doc for review. The tools used most were KB file reads and writes, DENUE queries, and schedule creation and deletion.
+
+### What Jarvis learned
+Fede wants the metric he asked for, or an explicit warning when it changes. He expects claims about available tools (such as /loop) to be verified before Jarvis says they don't exist. He also expects files to be listed or re-read before Jarvis reports status. He iterates by correction and approves with short replies ("Excelente"). Erroneous lessons were deleted from knowledge/execution-patterns/.
+
+### Friction points
+- Jarvis returned pet businesses per 10,000 inhabitants instead of pets per inhabitant, without saying so.
+- Jarvis repeatedly said it had no /loop. The runner's /loop mode does exist, which led to two wrong lessons being written and then deleted.
+- Jarvis said the Barter iterations were not done without listing the folder, then corrected itself.
+- The Transport Fever schedule delivered "SILENCIO", and there is no suppression mechanism. It was recreated, and Fede will handle the rest in the terminal.
+- Several writes were made without re-reading the file, and one TMN index file was left pending.
+
+### Research notes
+This is a high-intensity, single-channel day in which Jarvis acts as analyst and KB scribe. The main co-evolution signal is the user correcting Jarvis's confident but unverified claims about its own capabilities and state. Memory_search and memory_reflect were not available in this run's tool scope, so these notes rest on the day narrative and project_list. PE27 and Barter Agency are the active threads, alongside agent-controller, TMN and data-intelligence.
+
+## 2026-10-05
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | n/a (no snapshot provided) |
+| Total tasks | n/a (no snapshot provided) |
+| Conversations today | 44 (telegram: 44) |
+| Streak days | n/a (no snapshot provided) |
+
+### Interactions summary
+The day centered on PE 2027 (TVA). Fede had Jarvis build the Barter Agency deck, which was later approved with a $40 MDP 2027 target. He also had it merge Barrio Fuerte and Tienditas Telcel, and open a new "Travesías" project of themed FAST channels with YouTubers, modeled in Google Sheets (70% Azteca split, 30% platform, 8% commission). He also had it analyze the Buscafy deck and sync the agent-controller KB three times. The tools used most were KB file reads and writes, Google Sheets/Docs creation, and web benchmark searches.
+
+### What Jarvis learned
+Fede keeps asking for the PE 2027 project list again after edits, and he expects it to match the day's changes. He also expects Jarvis to re-read files and formulas after writing them. He approves with short replies ("Excelente") and corrects by clarifying assumptions. Jarvis's own "contradiction" flag in the sheet was wrong: the error was in the KB, not the sheet.
+
+### Friction points
+- The Buscafy PDF was scanned. pdf_read returned 0 characters and the Gemini upload failed twice. The first reading from messy extracted text had to be corrected later.
+- Jarvis flagged a 70/30 split contradiction in the sheet. Fede clarified that 70% goes to Azteca. The sheet was already right and the KB was fixed.
+- Fede asked for Ronda 1 to be opened twice, and for the PE 2027 list four times. The counts differed (10 vs 11 subprojects) because of stale reads.
+- The deletion of the old barrio-fuerte file contradicted the original instruction to leave it in /archivo, and needed confirmation.
+- Some YouTube answers on revenue and rights were given from memory, without verification.
+
+### Research notes
+This is a high-intensity, single-channel day in which Jarvis acts as analyst, modeler and KB scribe. Fede is still correcting unverified or stale claims by Jarvis. The Barter Agency approval is a concrete business milestone. memory_search and memory_reflect were not in this run's tool scope, so these notes rest on the day narrative and project_list.

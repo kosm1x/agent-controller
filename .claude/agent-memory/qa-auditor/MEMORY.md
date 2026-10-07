@@ -6,6 +6,17 @@
 
 ## Project Knowledge
 
+- [grader-item11-be-r2-audit](grader-item11-be-r2-audit.md) - 10-06: R1 + R2 both PASS-W-WARN, 0 Crit. CLASS: a "never rejects" promise needs a timer callback that cannot throw before resolve().
+- [grader-item11-be-r1-audit](grader-item11-be-r1-audit.md) - 10-06: PASS-W-WARN. CLASS: a nonce fence covers only the sections it wraps (provenance unfenced).
+- [flywheel-pin-displacement-r1-audit](flywheel-pin-displacement-r1-audit.md) - 10-04: PASS-W-WARN, 5/7 RED. CLASS: oldest-first over a batch insert is id order in disguise; miner DISARMED.
+- [cb-probe-token-inbound-deadline-r2-audit](cb-probe-token-inbound-deadline-r2-audit.md) - 10-04: PASS-W-WARN, 6/6 RED. CLASS: outer deadline over a stage with its own env budget couples the knobs.
+- [cb-probe-release-r1-audit](cb-probe-release-r1-audit.md) - 10-04: PASS-W-WARN, 7/7 RED. CLASS: an unjudged probe release has no OWNER; a non-holder can release another's probe.
+
+- [pm-archive-error-re-r1-audit](pm-archive-error-re-r1-audit.md) - 10-04: PASS-W-WARN. CLASS: a negation lookbehind with `\s+` crosses NEWLINES ("0/0/0\nError:" suppressed).
+
+- [concern-detail-v7-r1-audit](concern-detail-v7-r1-audit.md) - 10-04: PASS-W-WARN, 3/4 RED. CLASS: a note→take map before a SYNC emit; note-after-emit mutant survived.
+- [kb-mirror-live-db-gate-r1-audit](kb-mirror-live-db-gate-r1-audit.md) - 10-04: PASS-W-WARN. CLASS: a default-dir write must be keyed to the LIVE db identity (realpath), uncached.
+
 - [v9-w1-grader-gate-r3-audit](v9-w1-grader-gate-r3-audit.md) - 10-04: R1 7W -> R2 4W -> R3 PASS-W-NOTES (r1-r3 files). CLASS: lexical ban atop EXPLAIN adds only false rejects.
 - [landscape-review-1-r2-audit](landscape-review-1-r2-audit.md) - 10-03: PASS-W-WARN, R1 C1+W1-W8 closed; W6 force-add at commit.
 - [landscape-review-1-r1-audit](landscape-review-1-r1-audit.md) - 10-03: FAIL 1 Crit, 8 Warn. CLASS: "now counts as no decision" is new only if the OLD path differed for us.

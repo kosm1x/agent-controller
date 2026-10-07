@@ -10,12 +10,21 @@ import {
 import {
   runEvaluation,
   summarizeReachability,
+  defaultInferFunction,
   type InferFunction,
 } from "./eval-runner.js";
 import { initDatabase, closeDatabase } from "../db/index.js";
 import { ensureTuningTables, insertTestCase } from "./schema.js";
 import { toolRegistry } from "../tools/registry.js";
 import type { TestCase, CaseScore } from "./types.js";
+
+// Only `infer` is replaced (defaultInferFunction's link to the adapter);
+// every other adapter export stays real.
+const { adapterInfer } = vi.hoisted(() => ({ adapterInfer: vi.fn() }));
+vi.mock("../inference/adapter.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inference/adapter.js")>()),
+  infer: adapterInfer,
+}));
 
 // Synthetic stand-ins for registered tools. web_search + user_fact_set are
 // core-scope (always offered); wp_publish is registered but scoped out of a
@@ -431,3 +440,169 @@ describe("summarizeReachability", () => {
   });
 });
 
+
+describe("multi-round probe (scoring v3)", () => {
+  const [A, B] = ["web_search", "user_fact_set"];
+
+  it("an expected tool called in round 2 scores 1 with hitRound 2", async () => {
+    insertTestCase(makeToolSelectionCase({ expected: { tools: [B] } }));
+    const seenRounds: Array<number | undefined> = [];
+    const mockInfer: InferFunction = async (_m, _t, opts) => {
+      seenRounds.push(opts?.probeRounds);
+      return { toolsCalled: [A, B], callRounds: [1, 2], tokensUsed: 1 };
+    };
+    const result = await runEvaluation(
+      { probeRounds: 3 },
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    const d = result.perCase[0].details;
+    expect(seenRounds).toEqual([3]);
+    expect(result.perCase[0].score).toBe(1);
+    expect(d.rounds).toBe(3);
+    expect(d.hitRound).toBe(2);
+    expect(d.calledByRound).toEqual([[A], [B], []]);
+    expect(d.sourceGroup).toBe("seed");
+  });
+
+  it("a forbidden tool called in round 2 is a violation", async () => {
+    insertTestCase(
+      makeToolSelectionCase({ expected: { tools: [A], not_tools: [B] } }),
+    );
+    const mockInfer: InferFunction = async () => ({
+      toolsCalled: [A, B],
+      callRounds: [1, 2],
+      tokensUsed: 1,
+    });
+    const result = await runEvaluation(
+      { probeRounds: 3 },
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    expect(result.perCase[0].details.violations).toEqual([B]);
+    expect(result.perCase[0].score).toBe(0);
+    expect(result.perCase[0].details.hitRound).toBe(1);
+  });
+
+  it("probeRounds absent = 1 round: same score as the single-round probe", async () => {
+    insertTestCase(makeToolSelectionCase());
+    const seenRounds: Array<number | undefined> = [];
+    const mockInfer: InferFunction = async (_m, _t, opts) => {
+      seenRounds.push(opts?.probeRounds);
+      return { toolsCalled: [A], tokensUsed: 1 };
+    };
+    const result = await runEvaluation(
+      {},
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    const d = result.perCase[0].details;
+    expect(seenRounds).toEqual([1]);
+    expect(result.perCase[0].score).toBe(1);
+    expect(d.rounds).toBe(1);
+    expect(d.hitRound).toBe(1);
+    expect(d.calledByRound).toEqual([[A]]);
+  });
+
+  it("hitRound is clamped to the configured rounds like calledByRound", async () => {
+    insertTestCase(makeToolSelectionCase());
+    const mockInfer: InferFunction = async () => ({
+      toolsCalled: [A],
+      callRounds: [5],
+      tokensUsed: 1,
+    });
+    const result = await runEvaluation(
+      { probeRounds: 3 },
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    const d = result.perCase[0].details;
+    expect(d.hitRound).toBe(3);
+    expect(d.calledByRound).toEqual([[], [], [A]]);
+  });
+
+  it("a miss records hitRound null", async () => {
+    insertTestCase(makeToolSelectionCase({ expected: { tools: [B] } }));
+    const mockInfer: InferFunction = async () => ({
+      toolsCalled: [A],
+      callRounds: [1],
+      tokensUsed: 1,
+    });
+    const result = await runEvaluation(
+      { probeRounds: 3 },
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    expect(result.perCase[0].score).toBe(0);
+    expect(result.perCase[0].details.hitRound).toBeNull();
+  });
+
+  it("tags each case with its source group (seed / mined / flywheel)", async () => {
+    const { getDatabase } = await import("../db/index.js");
+    insertTestCase(makeToolSelectionCase({ case_id: "ts-seed-01" }));
+    const ins = getDatabase().prepare(
+      "INSERT INTO mined_test_cases (case_id, category, input, expected, weight, source, active) VALUES (?, 'tool_selection', ?, ?, 1.0, ?, 1)",
+    );
+    const input = JSON.stringify({ message: "Busca cuánto cuesta un vuelo" });
+    const expected = JSON.stringify({ tools: [A] });
+    ins.run("ts-mined-01", input, expected, "mined");
+    ins.run("ts-fly-01", input, expected, "flywheel");
+    const mockInfer: InferFunction = async () => ({
+      toolsCalled: [A],
+      tokensUsed: 1,
+    });
+    const result = await runEvaluation(
+      {},
+      { category: "tool_selection" },
+      mockInfer,
+    );
+    const byId = Object.fromEntries(
+      result.perCase.map((c) => [c.caseId, c.details.sourceGroup]),
+    );
+    expect(byId).toEqual({
+      "ts-seed-01": "seed",
+      "ts-mined-01": "mined",
+      "ts-fly-01": "flywheel",
+    });
+  });
+});
+
+describe("defaultInferFunction (gate -> infer link)", () => {
+  const messages = [{ role: "user" as const, content: "synthetic request" }];
+  beforeEach(() => adapterInfer.mockReset());
+
+  it("forwards probeRounds to infer and maps probe_call_rounds into callRounds", async () => {
+    adapterInfer.mockResolvedValueOnce({
+      content: "",
+      tool_calls: [
+        { id: "1", type: "function", function: { name: "tool_a", arguments: "{}" } },
+        { id: "2", type: "function", function: { name: "tool_b", arguments: "{}" } },
+      ],
+      probe_call_rounds: [1, 2],
+      usage: { prompt_tokens: 3, completion_tokens: 4 },
+    });
+    const out = await defaultInferFunction(messages, [], { probeRounds: 3 });
+    expect(adapterInfer).toHaveBeenCalledTimes(1);
+    expect(adapterInfer.mock.calls[0][0].probeRounds).toBe(3);
+    expect(out).toEqual({
+      toolsCalled: ["tool_a", "tool_b"],
+      callRounds: [1, 2],
+      tokensUsed: 7,
+    });
+  });
+
+  it("omitting the option forwards undefined and yields no callRounds (single round)", async () => {
+    adapterInfer.mockResolvedValueOnce({
+      content: "",
+      tool_calls: [
+        { id: "1", type: "function", function: { name: "tool_a", arguments: "{}" } },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const out = await defaultInferFunction(messages, []);
+    expect(adapterInfer).toHaveBeenCalledTimes(1);
+    expect(adapterInfer.mock.calls[0][0].probeRounds).toBeUndefined();
+    expect(out.callRounds).toBeUndefined();
+    expect(out.toolsCalled).toEqual(["tool_a"]);
+  });
+});

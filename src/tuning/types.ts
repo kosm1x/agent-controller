@@ -46,7 +46,15 @@ export interface TestCase {
   weight: number;
   source: "manual" | "mined" | "generated";
   active: boolean;
+  /**
+   * Which population the case came from (eval-gate breakdown): `seed` =
+   * tune_test_cases rows, `mined` / `flywheel` = mined_test_cases rows by
+   * source. Set by getActiveTestCases; absent = seed.
+   */
+  sourceGroup?: CaseSourceGroup;
 }
+
+export type CaseSourceGroup = "seed" | "mined" | "flywheel";
 
 // ---------------------------------------------------------------------------
 // Scoring
@@ -124,6 +132,13 @@ export interface SandboxConfig {
    * generic "You are a helpful assistant."). Experiment-only for now.
    */
   probeSystemPrompt?: (offeredToolNames: string[]) => string;
+  /**
+   * Model rounds per tool_selection probe (integer 1-5; absent = 1). Tools
+   * never execute: rounds after the first see a simulated success. A case
+   * hits when an expected tool is called in ANY round. The eval gate uses 3;
+   * the overnight tuning loop stays on 1.
+   */
+  probeRounds?: number;
 }
 
 // ---------------------------------------------------------------------------

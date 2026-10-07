@@ -110,6 +110,12 @@ export interface InferenceRequest {
   /** Anthropic effort parameter — "low" for synthesis/wrap-up, "high" default. */
   effort?: "low" | "medium" | "high" | "max";
   /**
+   * Selection-probe rounds (1-5) for `tools` callers (the tuning eval
+   * runner). Honored on the claude-sdk path only; the openai path ignores it
+   * and makes its single call as before.
+   */
+  probeRounds?: number;
+  /**
    * Model override for SDK-routed inference. When set, takes precedence over
    * the hardcoded `SONNET_MODEL_ID` default in `inferViaClaudeSdk` /
    * `inferWithToolsViaClaudeSdk`. Used by aux callers
@@ -130,6 +136,11 @@ export interface InferenceRequest {
 export interface InferenceResponse {
   content: string | null;
   tool_calls?: ToolCall[];
+  /**
+   * Selection probe on the claude-sdk path only: 1-based model round of each
+   * `tool_calls` entry (parallel array). Absent elsewhere.
+   */
+  probe_call_rounds?: number[];
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -267,6 +278,7 @@ async function inferViaClaudeSdk(
       // tools and a response with no tool_calls. The SDK shim registers
       // these as no-op stubs and returns first-turn tool_use as tool_calls.
       tools: request.tools,
+      probeRounds: request.probeRounds,
       // Effort passthrough (V8.5 Phase 2.3): request.effort was honored only
       // on the openai path since 05-10 — the SDK path dropped it.
       effort: request.effort,
@@ -290,6 +302,7 @@ async function inferViaClaudeSdk(
       // retrying it (provider-level transient).
       model: HAIKU_MODEL_ID,
       tools: request.tools,
+      probeRounds: request.probeRounds,
       // effort deliberately NOT forwarded: Haiku 4.5 has no effort support;
       // the last-line fallback carries the minimal request.
       costLedger: request.costLedger,

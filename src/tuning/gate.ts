@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { CaseScore, EvalResult } from "./types.js";
+import type { CaseScore, CaseSourceGroup, EvalResult } from "./types.js";
 import {
   dirname as dirnamePath,
   isAbsolute as isAbsolutePath,
@@ -59,8 +59,10 @@ export interface EvalBaseline {
  *      any-hit for multi-tool cases (`first_tools` ignored),
  *      Google/WP/CRM/skills/memory tools registered in the gate regardless
  *      of env.
+ *  3 — 2026-10-06: multi-round probe (`probeRounds`), an expected tool hit in
+ *      any round counts.
  */
-export const SCORING_VERSION = 2;
+export const SCORING_VERSION = 3;
 
 /**
  * Null when the baseline was captured under the current scoring, else the
@@ -83,6 +85,7 @@ export interface EvalGateArgs {
   percaseOut?: string;
   casesFile?: string;
   probeSystem?: string;
+  probeRounds?: string;
 }
 
 const GATE_BOOL_FLAGS = { "--run": "run", "--update-baseline": "updateBaseline" } as const;
@@ -91,7 +94,110 @@ const GATE_VALUE_FLAGS = {
   "--percase-out": "percaseOut",
   "--cases-file": "casesFile",
   "--probe-system": "probeSystem",
+  "--probe-rounds": "probeRounds",
 } as const;
+
+/** Model rounds per tool_selection probe in a gate run (scoring version 3). */
+export const DEFAULT_PROBE_ROUNDS = 3;
+
+/**
+ * `--probe-rounds=<1-5>`: absent = {@link DEFAULT_PROBE_ROUNDS}; any other
+ * value makes the run an EXPERIMENT (the incumbent was captured at the
+ * default). A non-integer or out-of-range value is an error (exit 2).
+ */
+export function parseProbeRounds(
+  value: string | undefined,
+):
+  | { ok: true; rounds: number; experiment: boolean }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, rounds: DEFAULT_PROBE_ROUNDS, experiment: false };
+  }
+  if (!/^[1-5]$/.test(value)) {
+    return { ok: false, error: `--probe-rounds takes an integer 1-5 (got "${value}")` };
+  }
+  const rounds = Number(value);
+  return { ok: true, rounds, experiment: rounds !== DEFAULT_PROBE_ROUNDS };
+}
+
+// --------------------------------------------- tool_selection breakdown
+
+export type ProbeOutcome =
+  | "hitRound1"
+  | "hitRound2Plus"
+  | "forbiddenOnlyPass"
+  | "violation"
+  | "calledOther"
+  | "calledNothing"
+  | "errored";
+
+export interface SourceGroupBreakdown {
+  group: CaseSourceGroup;
+  cases: number;
+  outcomes: Record<ProbeOutcome, number>;
+  /** Weighted tool_selection subscore of this group, 0-100. */
+  subscore: number;
+}
+
+/**
+ * Counts-only breakdown of the probed tool_selection cases by source group x
+ * outcome, from the `details` the eval runner wrote (`sourceGroup`,
+ * `hitRound`, `calledByRound`, `violations`, `scoring`, `error`). The outcomes
+ * partition the probed cases, first match wins: errored (the probe threw) ·
+ * violation (a forbidden tool was called, whatever else happened — scores 0) ·
+ * forbiddenOnlyPass (no expected tool offered, score 1) · hitRound1 /
+ * hitRound2Plus (score > 0 with an expected-tool hit) · calledOther ·
+ * calledNothing. Groups with no probed case are omitted.
+ */
+export function toolSelectionBreakdown(
+  perCase: CaseScore[],
+): SourceGroupBreakdown[] {
+  const groups: CaseSourceGroup[] = ["seed", "mined", "flywheel"];
+  return groups.flatMap((group) => {
+    const rows = perCase.filter(
+      (c) =>
+        c.category === "tool_selection" &&
+        ((c.details.sourceGroup as CaseSourceGroup | undefined) ?? "seed") === group,
+    );
+    if (rows.length === 0) return [];
+    const outcomes: Record<ProbeOutcome, number> = {
+      hitRound1: 0,
+      hitRound2Plus: 0,
+      forbiddenOnlyPass: 0,
+      violation: 0,
+      calledOther: 0,
+      calledNothing: 0,
+      errored: 0,
+    };
+    let wSum = 0;
+    let wScore = 0;
+    for (const c of rows) {
+      const hitRound = c.details.hitRound as number | null | undefined;
+      const called = ((c.details.calledByRound as string[][] | undefined) ?? []).flat();
+      const violations = (c.details.violations as string[] | undefined) ?? [];
+      if (c.details.error !== undefined) outcomes.errored++;
+      else if (violations.length > 0) outcomes.violation++;
+      else if (c.details.scoring === "forbidden_only" && c.score === 1)
+        outcomes.forbiddenOnlyPass++;
+      else if (c.score > 0 && hitRound === 1) outcomes.hitRound1++;
+      else if (c.score > 0 && typeof hitRound === "number")
+        outcomes.hitRound2Plus++;
+      else if (called.length > 0) outcomes.calledOther++;
+      else outcomes.calledNothing++;
+      const w = c.weight ?? 1.0;
+      wSum += w;
+      wScore += c.score * w;
+    }
+    return [
+      {
+        group,
+        cases: rows.length,
+        outcomes,
+        subscore: wSum > 0 ? (wScore / wSum) * 100 : 0,
+      },
+    ];
+  });
+}
 
 /**
  * Parse `scripts/eval-gate.ts` arguments. Value flags take `--flag=value`

@@ -12,6 +12,7 @@ import {
   rmSync,
   symlinkSync,
   lstatSync,
+  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,9 @@ import {
   countErroredProbes,
   erroredProbeRefusal,
   readBaseline,
+  parseProbeRounds,
+  DEFAULT_PROBE_ROUNDS,
+  toolSelectionBreakdown,
   priorBaseline,
   populationIds,
   preSpendPopulationRefusal,
@@ -126,15 +130,31 @@ describe("resolveEpsilon", () => {
 });
 
 describe("scoringVersionMismatch (2026-10-04)", () => {
-  it("the current scoring generation is 2", () => {
-    expect(SCORING_VERSION).toBe(2);
+  it("the current scoring generation is 3 (multi-round probe)", () => {
+    expect(SCORING_VERSION).toBe(3);
+  });
+
+  it("the committed v2 baseline is refused before any spend (pre-spend check)", () => {
+    const committed = readBaseline(() =>
+      readFileSync(new URL("./eval-baseline.json", import.meta.url), "utf8"),
+    );
+    expect(committed).not.toBeInstanceOf(Error);
+    expect(
+      preSpendRefusal({
+        run: true,
+        updateBaseline: false,
+        experiment: false,
+        baseline: committed,
+        baselinePath: "/repo/src/tuning/eval-baseline.json",
+      }),
+    ).toMatch(/older scoring \(scoringVersion 2, current 3\)/);
   });
 
   it("a baseline with no scoringVersion is generation 1 → older-scoring refusal naming the re-capture", () => {
     const msg = scoringVersionMismatch({ overall: 36.7 });
     expect(msg).toMatch(/older scoring/);
     expect(msg).toMatch(/re-capture with --run --update-baseline/);
-    expect(msg).toMatch(/scoringVersion 1, current 2/);
+    expect(msg).toMatch(/scoringVersion 1, current 3/);
   });
 
   it("an explicitly older version is refused the same way", () => {
@@ -527,5 +547,118 @@ describe("pre-spend population check (R2-N1)", () => {
     expect(
       await preSpendPopulationRefusal(baseline, free(["s-1", "s-9"], ["s-3"])),
     ).toBeNull();
+  });
+});
+
+describe("--probe-rounds (scoring v3)", () => {
+  it("parses as a value flag; a valueless spelling is refused", () => {
+    const ok = parseEvalGateArgs(["--run", "--probe-rounds=2"]);
+    expect(ok.ok && ok.args.probeRounds).toBe("2");
+    expect(parseEvalGateArgs(["--probe-rounds"])).toEqual({
+      ok: false,
+      error: "--probe-rounds needs a value: --probe-rounds=<value>",
+    });
+  });
+
+  it("absent = default 3, not an experiment; other 1-5 = experiment; else refused", () => {
+    expect(DEFAULT_PROBE_ROUNDS).toBe(3);
+    expect(parseProbeRounds(undefined)).toEqual({ ok: true, rounds: 3, experiment: false });
+    expect(parseProbeRounds("3")).toEqual({ ok: true, rounds: 3, experiment: false });
+    expect(parseProbeRounds("1")).toEqual({ ok: true, rounds: 1, experiment: true });
+    expect(parseProbeRounds("5")).toEqual({ ok: true, rounds: 5, experiment: true });
+    for (const bad of ["0", "6", "2.5", "x", "03", "-1"]) {
+      expect(parseProbeRounds(bad).ok).toBe(false);
+    }
+  });
+
+  it("an experiment needs no baseline (no compare), so preSpendRefusal passes it", () => {
+    expect(
+      preSpendRefusal({
+        run: true,
+        updateBaseline: false,
+        experiment: true,
+        baseline: null,
+        baselinePath: "/x",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("toolSelectionBreakdown (counts only)", () => {
+  const row = (
+    group: string | undefined,
+    score: number,
+    hitRound: number | null,
+    calledByRound: string[][],
+    weight = 1,
+    extra: Record<string, unknown> = {},
+  ): CaseScore => ({
+    caseId: `c-${Math.random()}`,
+    category: "tool_selection",
+    score,
+    weight,
+    details: { ...(group && { sourceGroup: group }), hitRound, calledByRound, ...extra },
+  });
+  const none = {
+    hitRound1: 0,
+    hitRound2Plus: 0,
+    forbiddenOnlyPass: 0,
+    violation: 0,
+    calledOther: 0,
+    calledNothing: 0,
+    errored: 0,
+  };
+
+  it("groups by source x outcome with a weighted subscore per group", () => {
+    const rows: CaseScore[] = [
+      row("seed", 1, 1, [["t_a"], [], []]),
+      row("seed", 1, 2, [["t_b"], ["t_a"], []]),
+      row(undefined, 0, null, [["t_b"], [], []]),
+      row("seed", 0, null, [[], [], []], 2),
+      row("mined", 1, 3, [["t_b"], ["t_c"], ["t_a"]]),
+      row("flywheel", 0, null, [], 1),
+      // An expected tool hit in round 1 plus a forbidden call: violation, not a hit.
+      row("flywheel", 0, 1, [["t_a", "t_x"]], 1, { violations: ["t_x"] }),
+      row("flywheel", 1, null, [[]], 1, { scoring: "forbidden_only", violations: [] }),
+      {
+        caseId: "err",
+        category: "tool_selection",
+        score: 0,
+        weight: 1,
+        details: { error: "Error: synthetic outage", sourceGroup: "flywheel" },
+      },
+      { caseId: "scope", category: "scope_accuracy", score: 1, weight: 1, details: {} },
+    ];
+    const out = toolSelectionBreakdown(rows);
+    expect(out.map((b) => b.group)).toEqual(["seed", "mined", "flywheel"]);
+    expect(out[0]).toEqual({
+      group: "seed",
+      cases: 4,
+      outcomes: { ...none, hitRound1: 1, hitRound2Plus: 1, calledOther: 1, calledNothing: 1 },
+      subscore: (2 / 5) * 100,
+    });
+    expect(out[1].outcomes).toEqual({ ...none, hitRound2Plus: 1 });
+    expect(out[1].subscore).toBe(100);
+    expect(out[2].outcomes).toEqual({
+      ...none,
+      violation: 1,
+      forbiddenOnlyPass: 1,
+      calledNothing: 1,
+      errored: 1,
+    });
+    expect(out[2].subscore).toBe(25);
+    // Buckets partition the probed cases and agree with the score.
+    for (const b of out) {
+      const o = b.outcomes;
+      expect(Object.values(o).reduce((x, y) => x + y, 0)).toBe(b.cases);
+    }
+    const o = out[2].outcomes;
+    expect(((o.hitRound1 + o.hitRound2Plus + o.forbiddenOnlyPass) / out[2].cases) * 100).toBe(
+      out[2].subscore,
+    );
+  });
+
+  it("omits empty groups", () => {
+    expect(toolSelectionBreakdown([])).toEqual([]);
   });
 });

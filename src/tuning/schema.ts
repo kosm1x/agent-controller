@@ -219,7 +219,17 @@ export function getActiveTestCases(category?: TestCaseCategory): TestCase[] {
     // Table may not exist yet
   }
 
-  return [...manualRows, ...minedRows].map(parseTestCaseRow);
+  return [
+    ...manualRows.map((r) => ({
+      ...parseTestCaseRow(r),
+      sourceGroup: "seed" as const,
+    })),
+    ...minedRows.map((r) => ({
+      ...parseTestCaseRow(r),
+      sourceGroup:
+        r.source === "flywheel" ? ("flywheel" as const) : ("mined" as const),
+    })),
+  ];
 }
 
 export function countTestCases(): number {
