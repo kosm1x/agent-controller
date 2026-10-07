@@ -275,12 +275,26 @@ export function filterSentBefore(
 
 const BLOCK_MAX_LINES = 40;
 
-/** Prompt block listing recently-sent heads, or "" when nothing was sent. */
+/**
+ * Prompt block listing recently-sent heads, or "" when nothing was sent.
+ * `template` is the schedule's own prompt: a sent item that repeats one of its
+ * lines is the fixed message, not a finding, and is left off the list
+ * (2026-09-29/10-06: Waiver Wire's "entrégalo tal cual" reminder listed its
+ * own three points as YA ENVIADO; Sonnet 5.5 sent "no hay nada nuevo").
+ */
 export function sentBeforeBlock(
   ritualId: string,
   days = SENT_BEFORE_DAYS,
+  template = "",
 ): string {
-  const recent = recentSentItems(ritualId, days);
+  const own: RecentItem[] = extractItems(template).map((i) => ({
+    key: i.key,
+    head: i.head,
+    tokens: i.tokens.split(" ").filter(Boolean),
+  }));
+  const recent = recentSentItems(ritualId, days).filter(
+    (r) => !isRepeat({ line: r.head, key: r.key, droppable: true, tokens: r.tokens.join(" "), head: r.head }, own),
+  );
   if (recent.length === 0) return "";
   const heads = recent.slice(0, BLOCK_MAX_LINES).map((r) => r.head);
   return (

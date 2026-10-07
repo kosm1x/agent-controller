@@ -194,4 +194,29 @@ describe("filterSentBefore (ledger)", () => {
     expect(block).toContain("Solo si tras esa búsqueda no queda nada nuevo");
     expect(block.indexOf("Primero reúne")).toBeLessThan(block.indexOf("compáralos"));
   });
+
+  it("sentBeforeBlock leaves the schedule's own template lines off the list (fixed-message schedules)", () => {
+    // 2026-09-29 / 10-06: Waiver Wire's prompt IS the message ("entrégalo tal
+    // cual"); its three points were listed as YA ENVIADO and Sonnet 5.5 sent
+    // "no hay nada nuevo" instead of the reminder.
+    const template =
+      "Entrega este mensaje:\n\n1. TE (hueco #1): Fannin Jr. (CLE) es rookie y volátil, y NO hay TE de respaldo en bench.\n" +
+      "2. RB depth: detrás de Taylor + Williams solo está Dobbins/Jones. Vigila handcuffs y RBs con volumen emergente.\n\n" +
+      "El mensaje anterior ES el deliverable — entrégalo tal cual.";
+    // Delivered reworded (10-06): same points, slightly different wording.
+    recordSentItems(
+      "schedule:ww",
+      "t1",
+      "1. TE (hueco #1): Fannin Jr. (CLE) es rookie y volátil, y no hay TE de respaldo en bench.\n" +
+        "2. RB depth: detrás de Taylor + Williams solo están Dobbins y Jones. Vigila handcuffs y RBs con volumen emergente.",
+    );
+    expect(sentBeforeBlock("schedule:ww")).toContain("Fannin");
+    expect(sentBeforeBlock("schedule:ww", 14, template)).toBe("");
+    // A real finding next to the template lines stays listed.
+    recordSentItems("schedule:ww", "t2", "- Tudriqev recibe aprobación FDA — https://fda.example/t");
+    const block = sentBeforeBlock("schedule:ww", 14, template);
+    expect(block).toContain("Tudriqev");
+    expect(block).not.toContain("Fannin");
+    expect(block).not.toContain("RB depth");
+  });
 });

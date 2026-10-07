@@ -29,6 +29,7 @@ import {
 import {
   ensureSentItemsTable,
   recordSentItems,
+  SENT_BEFORE_DAYS,
   sentBeforeBlock,
 } from "./sent-before.js";
 import { getSyncSurfaceScheduleId } from "../lib/v8-2/flags.js";
@@ -402,7 +403,11 @@ export function promptExtras(
       return { text: `${logs.note}${d.block}`, deferralIds: d.ids, dayLogs: logs.blocks };
     }
     ensureSentItemsTable();
-    return { text: sentBeforeBlock(`schedule:${schedule.schedule_id}`), deferralIds: [], dayLogs: "" };
+    return {
+      text: sentBeforeBlock(`schedule:${schedule.schedule_id}`, SENT_BEFORE_DAYS, schedule.description),
+      deferralIds: [],
+      dayLogs: "",
+    };
   } catch (err) {
     console.error(`[schedules] prompt extras failed for "${schedule.name}":`, errMsg(err));
     return { text: "", deferralIds: [], dayLogs: "" };

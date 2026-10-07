@@ -170,6 +170,14 @@ describe("promptExtras + deferral consumption on delivery", () => {
     expect(promptExtras(makeSchedule({ schedule_id: "nuevo", name: "Nuevo" })).text).toBe("");
   });
 
+  it("a schedule's sent-before list omits lines of its own prompt (fixed message, not findings)", () => {
+    ensureSentItemsTable();
+    const line = "1. TE (hueco #1): Fannin Jr. (CLE) es rookie y volátil, y NO hay TE de respaldo en bench.";
+    recordSentItems("schedule:ww", "t1", line);
+    const ww = makeSchedule({ schedule_id: "ww", name: "Waiver Wire", description: `Entrega:\n\n${line}\n\nentrégalo tal cual.` });
+    expect(promptExtras(ww).text).toBe("");
+  });
+
   it("deferrals are consumed only when the DELIVERED sync echoes their handle — not at build, not on a 0-send, not when the model drops the fold (R2 W5 / R3 W2)", async () => {
     const id = enqueueDeferral("market-eod-scan", "t1", "Market EOD scan", "SPY −1.2%", "budget");
     const id2 = enqueueDeferral("schedule:tw", "t2", "Tweet", "Tweet publicado", "budget");
