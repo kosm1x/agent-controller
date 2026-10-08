@@ -684,6 +684,53 @@ export function isFanOutTask(text: string): boolean {
   return FANOUT_PRODUCE_VERB.test(t) && FANOUT_QUANTIFIER.test(t);
 }
 
+// Explicit swarm request (2026-10-08). A chat that literally ASKS for a swarm
+// ("Lanza un Swarm profundo y complementa lo que nos falta", "Analiza ... en un
+// swarm", "Haz un deep search con un swarm", "run a swarm") must reach `swarm`;
+// the word "swarm" was never a signal, so such chats only got there by an
+// accidental fan-out match. 60-day history: 15 chats contained "swarm" — 10 went
+// to fast (which then replied it has no swarm tool), 1 to heavy, only 4 to swarm.
+//
+// Matches a LAUNCH form only, so a reference/question about a past swarm stays put:
+//   - launch verb + optional article + optional one word + "swarm" ("lanza un
+//     Swarm", "run a swarm", "spin up another deep swarm", "ejecuta el swarm");
+//   - preposition + INDEFINITE article (+ optional word) + "swarm" ("en un
+//     swarm", "con un swarm", "in a swarm", "with another swarm"). A definite
+//     article after a bare preposition ("¿qué pasó con el swarm de ayer?") is a
+//     reference, not a request, and never matches;
+//   - "El Swarm y los riesgos ya los lanzaste" (past-tense verb after the noun)
+//     stays out;
+//   - a negation in the last 3 words of the same clause before the launch phrase
+//     ("No lo hagas en un swarm", "Don't use a swarm") rejects that match. No
+//     question guard: "¿Puedes lanzar un swarm?" is a request.
+// Runs on the full inbound message (`detectionText`), which can include
+// pasted/attached text. Bilingual EN/ES.
+const SWARM_LAUNCH_VERB =
+  /\b(?:lanza|lanzar|lancemos|corre|correr|ejecuta|ejecutar|dispara|arranca|usa|usar|activa|launch|run|start|spin\s+up|use|kick\s+off|fire)\s+(?:(?:un|una|el|los|a|the|another|otro)\s+)?(?:[^\s.,;:!?¿¡]+\s+)?swarms?\b/i;
+const SWARM_VIA_PREPOSITION =
+  /\b(?:en|con|in|with|via|mediante)\s+(?:un|una|a|another|otro)\s+(?:[^\s.,;:!?¿¡]+\s+)?swarms?\b/i;
+
+const SWARM_NEGATION = /\b(?:no|nunca|sin|not|never|don['’]t|do\s+not)\b/i;
+
+/** True when `re` matches and the clause words just before it are not a negation. */
+function matchesUnnegated(re: RegExp, t: string): boolean {
+  const m = re.exec(t);
+  if (!m) return false;
+  const before = t.slice(0, m.index);
+  const clause = before.split(/[.,;:!?¿¡]/).pop() ?? "";
+  const lead = clause.trim().split(/\s+/).slice(-3).join(" ");
+  return !SWARM_NEGATION.test(lead);
+}
+
+/** True when the text explicitly asks to launch / run the task as a swarm. */
+export function isExplicitSwarmRequest(text: string): boolean {
+  const t = text.replace(/^Chat:\s*/, "");
+  return (
+    matchesUnnegated(SWARM_LAUNCH_VERB, t) ||
+    matchesUnnegated(SWARM_VIA_PREPOSITION, t)
+  );
+}
+
 export function classify(input: ClassificationInput): ClassificationResult {
   // Explicit override always wins
   if (input.agentType && input.agentType !== "auto") {
@@ -762,11 +809,14 @@ export function classify(input: ClassificationInput): ClassificationResult {
     // 2026-06-20). Killable independently via MESSAGING_SWARM_ESCALATION=false —
     // then a fan-out still escalates to heavy below (better than fast for N items).
     const swarmEnabled = process.env.MESSAGING_SWARM_ESCALATION !== "false";
-    if (advancedRouting && isFanOut && swarmEnabled) {
+    const asksSwarm = isExplicitSwarmRequest(messagingText);
+    if (advancedRouting && (isFanOut || asksSwarm) && swarmEnabled) {
       return {
         agentType: "swarm",
         score: 9,
-        reason: "messaging fan-out → swarm (parallel per-item)",
+        reason: isFanOut
+          ? "messaging fan-out → swarm (parallel per-item)"
+          : "messaging: explicit swarm request",
         explicit: false,
         modelTier: "capable",
       };
@@ -774,13 +824,16 @@ export function classify(input: ClassificationInput): ClassificationResult {
     // Non-coding chat: a genuinely challenging request — or a fan-out when swarm is
     // disabled — gets heavy's PER loop; everything else stays on fast (MCP tools,
     // no container).
-    if (advancedRouting && (needsHeavyReasoning(messagingText) || isFanOut)) {
+    const heavyReasoning = needsHeavyReasoning(messagingText);
+    if (advancedRouting && (heavyReasoning || isFanOut || asksSwarm)) {
       return {
         agentType: "heavy",
         score: 6,
         reason: isFanOut
           ? "messaging fan-out → heavy (swarm disabled)"
-          : "messaging task: challenging reasoning → heavy",
+          : asksSwarm && !heavyReasoning
+            ? "messaging: explicit swarm request → heavy (swarm disabled)"
+            : "messaging task: challenging reasoning → heavy",
         explicit: false,
         modelTier: "capable",
       };

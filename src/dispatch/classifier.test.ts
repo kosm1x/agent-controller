@@ -15,6 +15,7 @@ import {
   referencesForeignProject,
   referencesJarvisSelfDev,
   isFanOutTask,
+  isExplicitSwarmRequest,
 } from "./classifier.js";
 import type {
   RunnerStats,
@@ -1330,6 +1331,157 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
       tags: ["messaging"],
     });
     expect(result.agentType).toBe("fast");
+  });
+
+  // ----- Explicit swarm request → swarm (2026-10-08; 10/15 "swarm" chats went to fast) -----
+  it("isExplicitSwarmRequest: launch verb / indefinite preposition form → true; reference → false", () => {
+    expect(
+      isExplicitSwarmRequest(
+        "Chat: Lanza un Swarm profundo y complementa lo que nos falta",
+      ),
+    ).toBe(true);
+    expect(isExplicitSwarmRequest("Run a swarm over the competitor list")).toBe(
+      true,
+    );
+    expect(
+      isExplicitSwarmRequest(
+        "Haz un deep search con un swarm y verifica hasta donde sea posible",
+      ),
+    ).toBe(true);
+    expect(isExplicitSwarmRequest("spin up another swarm for this")).toBe(true);
+    // definite article after a bare preposition = a reference, not a request
+    expect(isExplicitSwarmRequest("¿Qué pasó con el swarm de ayer?")).toBe(
+      false,
+    );
+    // real past message: past-tense verb after the noun
+    expect(
+      isExplicitSwarmRequest(
+        "El Swarm y los riesgos ya los lanzaste y actualizaste el HTML",
+      ),
+    ).toBe(false);
+    expect(isExplicitSwarmRequest("Lanza la campaña")).toBe(false);
+  });
+
+  it("routes 'Lanza un Swarm profundo…' to swarm (explicit swarm request, score 9)", () => {
+    const result = classify({
+      title: "Chat: Lanza un Swarm profundo y complementa lo que nos falta",
+      description: "You are Jarvis, a strategic AI assistant...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+    expect(result.reason).toBe("messaging: explicit swarm request");
+    expect(result.score).toBe(9);
+    expect(result.modelTier).toBe("capable");
+  });
+
+  it("routes 'Analiza … en un swarm y elabora un plan' to swarm", () => {
+    const result = classify({
+      title:
+        "Chat: Analiza el flujo operativo de Bariátrico en un swarm y elabora un plan",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+    expect(result.reason).toBe("messaging: explicit swarm request");
+  });
+
+  it("routes 'Haz un deep search con un swarm…' to swarm", () => {
+    const result = classify({
+      title:
+        "Chat: Haz un deep search con un swarm y verifica hasta donde sea posible",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+  });
+
+  it("routes 'Run a swarm over the competitor list' to swarm", () => {
+    const result = classify({
+      title: "Chat: Run a swarm over the competitor list",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+  });
+
+  it("a fan-out chat that also asks for a swarm keeps the fan-out reason", () => {
+    const result = classify({
+      title: "Chat: Lanza un swarm y crea un reporte por cada cadena de retail",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("swarm");
+    expect(result.reason).toBe("messaging fan-out → swarm (parallel per-item)");
+  });
+
+  it("a swarm reference / question / plain launch stays on fast", () => {
+    for (const title of [
+      "Chat: ¿Qué pasó con el swarm de ayer?",
+      "Chat: El Swarm y los riesgos ya los lanzaste y actualizaste el HTML",
+      "Chat: Lanza la campaña",
+    ]) {
+      const result = classify({
+        title,
+        description: "...",
+        tags: ["messaging"],
+      });
+      expect(result.agentType, title).toBe("fast");
+    }
+  });
+
+  it("MESSAGING_SWARM_ESCALATION=false → explicit swarm request falls back to heavy", () => {
+    process.env.MESSAGING_SWARM_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: Lanza un Swarm profundo y complementa lo que nos falta",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("heavy");
+    expect(result.reason).toBe(
+      "messaging: explicit swarm request → heavy (swarm disabled)",
+    );
+  });
+
+  it("a negated swarm launch stays on fast; a polite question still routes to swarm", () => {
+    for (const title of [
+      "Chat: No lo hagas en un swarm",
+      "Chat: Don't use a swarm for this",
+    ]) {
+      const result = classify({
+        title,
+        description: "...",
+        tags: ["messaging"],
+      });
+      expect(result.agentType, title).toBe("fast");
+    }
+    const asked = classify({
+      title: "Chat: ¿Puedes lanzar un swarm con esto?",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(asked.agentType).toBe("swarm");
+    expect(asked.reason).toBe("messaging: explicit swarm request");
+  });
+
+  it("MESSAGING_HEAVY_ESCALATION=false keeps an explicit swarm request on fast", () => {
+    process.env.MESSAGING_HEAVY_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: Lanza un Swarm profundo y complementa lo que nos falta",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("fast");
+  });
+
+  it("swarm disabled + explicit swarm request + heavy-reasoning cue → heavy with the reasoning reason", () => {
+    process.env.MESSAGING_SWARM_ESCALATION = "false";
+    const result = classify({
+      title: "Chat: Analiza a fondo el mercado en un swarm y recomienda",
+      description: "...",
+      tags: ["messaging"],
+    });
+    expect(result.agentType).toBe("heavy");
+    expect(result.reason).toBe("messaging task: challenging reasoning → heavy");
   });
 });
 
