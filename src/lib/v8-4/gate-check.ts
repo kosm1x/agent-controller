@@ -19,8 +19,11 @@
  * so a pathological pattern cannot wedge the event loop (qa C2).
  */
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { pmShimMissing, validateShellCommand, withPmShimPath } from "../../tools/builtin/shell.js";
 import { redactSecrets } from "../../api/mcp-server/redact.js";
 import {
@@ -284,6 +287,78 @@ export async function runCheck(
   };
 }
 
+/**
+ * Where a shell check runs when the caller gave no cwd. 2026-10-08 (swarm
+ * task 19b7d51a): no caller passes `cwd`, so every check ran in the service's
+ * WorkingDirectory (the mission-control checkout). Three heavy swarm children
+ * declared checks on KB-relative paths (`grep -c 'Índice propuesto'
+ * projects/bet-book/README.md`, `wc -c < projects/bet-book/marco-legal-…md`);
+ * all nine FAILED on "No such file or directory" while the read-back gates on
+ * the same files were MET, parent re-verify demoted 3 of 5 goals and the swarm
+ * reported `failed`. Replayed from the KB root, all nine pass. A relative path
+ * that is missing from the checkout but present under the KB root names a KB
+ * file — the deliverable the child wrote — so the check runs there. A path
+ * missing in BOTH places still runs in the default cwd and still FAILS: a
+ * deliverable that was never written is the right verdict. An explicit cwd
+ * always wins. Never moved (qa W1/W3): a write-shaped command — the shell
+ * guard's `directives/` deny and write indicators match absolute paths only,
+ * so `: > directives/core.md` would truncate the live KB file once moved;
+ * checks are observations — and a mixed command that also names a
+ * checkout-only path (ambiguous; the old cwd is kept).
+ */
+const CHECK_WRITE_WORDS = new Set([
+  "tee", "cp", "mv", "touch", "mkdir", "rm", "truncate", "dd", "install", "ln",
+]);
+const SAFE_REDIRECT_TARGET_RE = /^(?:\/dev\/(?:null|stdout|stderr)|&\d*-?)$/;
+
+/** True when the command could write a file: a redirect to a real target, or a write verb. */
+export function isWriteShapedCheck(command: string): boolean {
+  // Quoted strings are arguments (grep patterns), never redirects or verbs.
+  const bare = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "Q");
+  for (const m of bare.matchAll(/(>\||>>|>)\s*([^\s;|<>()]*)/g)) {
+    if (!SAFE_REDIRECT_TARGET_RE.test(m[2]!)) return true;
+  }
+  for (const segment of bare.split(/[|;&()`\n]+/)) {
+    const words = segment.trim().split(/\s+/).map((w) => w.replace(/^.*\//, ""));
+    if (words.some((w) => CHECK_WRITE_WORDS.has(w))) return true;
+    if (
+      words.some((w) => w === "sed" || w === "perl") &&
+      words.some((w) => /^-[A-Za-z]*i/.test(w) || w.startsWith("--in-place"))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function resolveCheckCwd(
+  checkCmd: string,
+  deps: {
+    cwd?: string;
+    kbRoot?: string;
+    processCwd?: string;
+    exists?: (p: string) => boolean;
+  } = {},
+): string | undefined {
+  if (deps.cwd !== undefined) return deps.cwd;
+  if (isWriteShapedCheck(checkCmd)) return undefined;
+  const exists = deps.exists ?? existsSync;
+  const processCwd = deps.processCwd ?? process.cwd();
+  let kbRoot: string | undefined;
+  let kbOnly = false;
+  for (const raw of checkCmd.split(/[\s|;&<>()]+/)) {
+    const token = raw.replace(/^['"]+|['"]+$/g, "");
+    if (!token.includes("/") || token.includes("://")) continue;
+    if (/^(?:\/|\.\.?\/|~|\$|-)/.test(token)) continue;
+    kbRoot ??= deps.kbRoot ?? getJarvisKbRoot();
+    const inCheckout = exists(resolvePath(processCwd, token));
+    const inKb = exists(resolvePath(kbRoot, token));
+    if (inCheckout && !inKb) return undefined; // mixed command: keep the old cwd
+    if (inKb && !inCheckout) kbOnly = true;
+  }
+  return kbOnly ? kbRoot : undefined;
+}
+
 export interface EvaluateOptions {
   taskId: string;
   /** The model's final report — ABANDON lines are honored from here; landing claims are read from here. */
@@ -406,8 +481,10 @@ export async function evaluateLedger(
         shellSkipped++;
         continue;
       }
+      const cwd = resolveCheckCwd(row.check_cmd ?? "", { cwd: opts.cwd });
+      const ranInKb = opts.cwd === undefined && cwd !== undefined;
       const outcome = await runCheck(row, {
-        cwd: opts.cwd,
+        cwd,
         timeoutMs: Math.min(
           timeoutMs,
           Math.max(1, budgetMs - (Date.now() - startedAt)),
@@ -416,6 +493,11 @@ export async function evaluateLedger(
         taskId: opts.taskId,
       });
       ran++;
+      // The ledger row says where the check ran when it was redirected; an
+      // abandoned row (nothing ran) keeps its plain reason.
+      if (ranInKb && !outcome.notRunnable) {
+        outcome.evidence = `[cwd=kb] ${outcome.evidence}`.slice(0, MAX_EVIDENCE);
+      }
       if (outcome.notRunnable) abandonedNow++;
       recordGateResult(
         opts.taskId,

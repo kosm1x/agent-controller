@@ -18,6 +18,7 @@ import {
   evidenceTail,
   expectMatches,
   hasRunnableGates,
+  resolveCheckCwd,
   runCheck,
   runShellCheck,
   type CheckExecutor,
@@ -711,5 +712,191 @@ describe("container shell-skip (qa W1) + ledger budget (qa W5) + env guards", ()
       taskId: "e1",
     });
     expect(real.output).toContain("task=e1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 swarm 19b7d51a: KB-relative check paths run from the KB root
+// ---------------------------------------------------------------------------
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+describe("resolveCheckCwd — KB-relative paths run from the KB root (swarm 19b7d51a, 2026-10-08)", () => {
+  let kbRoot: string;
+  let procCwd: string;
+  beforeEach(() => {
+    kbRoot = mkdtempSync(join(tmpdir(), "gate-cwd-kb-"));
+    procCwd = mkdtempSync(join(tmpdir(), "gate-cwd-proc-"));
+    mkdirSync(join(kbRoot, "projects/bet-book"), { recursive: true });
+    writeFileSync(join(kbRoot, "projects/bet-book/README.md"), "Índice propuesto\n");
+    mkdirSync(join(procCwd, "src"), { recursive: true });
+    writeFileSync(join(procCwd, "src/index.ts"), "x\n");
+  });
+  afterEach(() => {
+    rmSync(kbRoot, { recursive: true, force: true });
+    rmSync(procCwd, { recursive: true, force: true });
+  });
+
+  it("an explicit cwd always wins", () => {
+    expect(
+      resolveCheckCwd("grep -c x projects/bet-book/README.md", { cwd: "/explicit", kbRoot, processCwd: procCwd }),
+    ).toBe("/explicit");
+  });
+
+  it("a path that exists only under the KB root resolves to the KB root (the live grep and wc shapes)", () => {
+    const deps = { kbRoot, processCwd: procCwd };
+    expect(resolveCheckCwd("grep -c 'Índice propuesto' projects/bet-book/README.md", deps)).toBe(kbRoot);
+    expect(resolveCheckCwd("wc -c < projects/bet-book/README.md", deps)).toBe(kbRoot);
+    writeFileSync(join(kbRoot, "projects/bet-book/marco-legal-2026-10-07.md"), "x".repeat(10));
+    expect(resolveCheckCwd("wc -c <projects/bet-book/marco-legal-2026-10-07.md", deps)).toBe(kbRoot);
+  });
+
+  it("a path that exists under BOTH the checkout and the KB root keeps the default cwd (qa W2)", () => {
+    mkdirSync(join(procCwd, "projects/bet-book"), { recursive: true });
+    writeFileSync(join(procCwd, "projects/bet-book/README.md"), "x\n");
+    expect(resolveCheckCwd("grep -c x projects/bet-book/README.md", { kbRoot, processCwd: procCwd })).toBeUndefined();
+  });
+
+  it("a mixed command naming a checkout-only path and a KB-only path keeps the default cwd (qa W3)", () => {
+    writeFileSync(join(procCwd, "src/x.ts"), "x\n");
+    writeFileSync(join(kbRoot, "projects/y.md"), "y\n");
+    const deps = { kbRoot, processCwd: procCwd };
+    expect(resolveCheckCwd("diff src/x.ts projects/y.md", deps)).toBeUndefined();
+    expect(resolveCheckCwd("diff projects/y.md src/x.ts", deps)).toBeUndefined();
+  });
+
+  it("a write-shaped command is never moved, even when its path exists only under the KB root (qa W1)", () => {
+    mkdirSync(join(kbRoot, "directives"), { recursive: true });
+    writeFileSync(join(kbRoot, "directives/core.md"), "live\n");
+    writeFileSync(join(kbRoot, "projects/a.md"), "x\n");
+    const deps = { kbRoot, processCwd: procCwd };
+    for (const cmd of [
+      ": > directives/core.md",
+      "echo x >> projects/a.md",
+      "echo x >| projects/a.md",
+      'echo x > "projects/a.md"',
+      "sed -i s/a/b/ projects/a.md",
+      "perl -pi -e s/a/b/ projects/a.md",
+      "tee projects/a.md",
+      "cat projects/a.md | tee projects/a.md",
+      "cp projects/a.md projects/b.md",
+      "mv projects/a.md projects/b.md",
+      "rm projects/a.md",
+      "/bin/rm projects/a.md",
+      "touch projects/a.md",
+      "truncate -s 0 projects/a.md",
+      "dd if=/dev/zero of=projects/a.md",
+      "ln -sf x projects/a.md",
+      "mkdir projects/a.md/sub",
+      "install -m 644 x projects/a.md",
+    ]) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBeUndefined();
+    }
+    // Harmless redirects and quoted '>' still move.
+    for (const cmd of [
+      "grep -c x projects/a.md 2>/dev/null",
+      "grep -c x projects/a.md 2>&1 | tail -1",
+      "grep -c x projects/a.md >/dev/stderr",
+      "grep -c '>' projects/a.md",
+      "sed -n 1p projects/a.md",
+    ]) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBe(kbRoot);
+    }
+  });
+
+  it("a path that exists under the process cwd keeps the default cwd", () => {
+    expect(resolveCheckCwd("grep -c x src/index.ts", { kbRoot, processCwd: procCwd })).toBeUndefined();
+  });
+
+  it("a path missing in both places keeps the default cwd (the check still fails)", () => {
+    expect(resolveCheckCwd("grep -c x projects/bet-book/missing.md", { kbRoot, processCwd: procCwd })).toBeUndefined();
+  });
+
+  it("absolute, ./, ../, ~, $ and flag tokens are never redirected", () => {
+    const deps = { kbRoot, processCwd: procCwd, exists: (p: string) => p.startsWith(kbRoot) };
+    for (const cmd of [
+      `grep -c x ${join(kbRoot, "projects/bet-book/README.md")}`,
+      "grep -c x ./projects/bet-book/README.md",
+      "grep -c x ../projects/bet-book/README.md",
+      "grep -c x ~/projects/bet-book/README.md",
+      "grep -c x $HOME/projects/bet-book/README.md",
+      "grep --file=projects/bet-book/README.md x",
+    ]) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBeUndefined();
+    }
+  });
+
+  it("a URL inside the command is not treated as a path", () => {
+    const seen: string[] = [];
+    const exists = (p: string): boolean => {
+      seen.push(p);
+      return p.startsWith(kbRoot);
+    };
+    expect(
+      resolveCheckCwd("curl -s https://example.com/projects/bet-book/README.md", { kbRoot, processCwd: procCwd, exists }),
+    ).toBeUndefined();
+    expect(seen).toEqual([]);
+  });
+
+  it("single- and double-quoted path tokens resolve", () => {
+    const deps = { kbRoot, processCwd: procCwd };
+    expect(resolveCheckCwd("grep -c x 'projects/bet-book/README.md'", deps)).toBe(kbRoot);
+    expect(resolveCheckCwd('wc -c < "projects/bet-book/README.md"', deps)).toBe(kbRoot);
+  });
+});
+
+describe("evaluateLedger — shell gates on KB-relative paths run from the KB root (swarm 19b7d51a)", () => {
+  let kbRoot: string;
+  let savedKb: string | undefined;
+  beforeEach(() => {
+    kbRoot = mkdtempSync(join(tmpdir(), "gate-cwd-eval-kb-"));
+    mkdirSync(join(kbRoot, "projects/zz-gate-cwd-test"), { recursive: true });
+    writeFileSync(join(kbRoot, "projects/zz-gate-cwd-test/README.md"), "Índice propuesto\n");
+    savedKb = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbRoot;
+  });
+  afterEach(() => {
+    if (savedKb === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = savedKb;
+    rmSync(kbRoot, { recursive: true, force: true });
+  });
+
+  it("a KB-relative check runs with cwd = KB root and its evidence says [cwd=kb]; an absolute-path check runs with no cwd and plain evidence", async () => {
+    const kbCmd = "grep -c 'Índice propuesto' projects/zz-gate-cwd-test/README.md";
+    const absCmd = `grep -c 'Índice propuesto' ${join(kbRoot, "projects/zz-gate-cwd-test/README.md")}`;
+    declareGates(
+      "t-kbcwd",
+      [
+        { criterion: "README has the index", check: kbCmd, expect: "gte 1" },
+        { criterion: "same file by absolute path", check: absCmd, expect: "gte 1" },
+      ],
+      "plan",
+    );
+    const seenCwd: Record<string, string | undefined> = {};
+    const exec: CheckExecutor = async (cmd, opts) => {
+      seenCwd[cmd] = opts.cwd;
+      return { output: "1\n", exitCode: 0, timedOut: false };
+    };
+    const v = await evaluateLedger({ taskId: "t-kbcwd", exec, timeoutMs: 1000 });
+    expect(v.verdict).toBe("met");
+    expect(seenCwd[kbCmd]).toBe(kbRoot);
+    expect(Object.prototype.hasOwnProperty.call(seenCwd, absCmd)).toBe(true);
+    expect(seenCwd[absCmd]).toBeUndefined();
+    const rows = Object.fromEntries(listGates("t-kbcwd").map((r) => [r.gate_id, r]));
+    expect(rows["G1"]).toMatchObject({ state: "met", evidence: "[cwd=kb] 1" });
+    expect(rows["G2"]).toMatchObject({ state: "met", evidence: "1" });
+  });
+
+  it("an abandoned check (nothing ran) keeps its plain reason, without the [cwd=kb] prefix (qa R2)", async () => {
+    const cmd = 'grep -c "$NOPE_GATE_CWD_VAR" projects/zz-gate-cwd-test/README.md';
+    declareGates("t-kbcwd-ab", [{ criterion: "var", check: cmd, expect: "gte 1" }], "plan");
+    const exec: CheckExecutor = async () => {
+      throw new Error("must not spawn");
+    };
+    await evaluateLedger({ taskId: "t-kbcwd-ab", exec, timeoutMs: 1000 });
+    const row = listGates("t-kbcwd-ab")[0]!;
+    expect(row.state).toBe("abandoned");
+    expect(row.abandon_reason).toMatch(/^check references undefined variable/);
   });
 });
