@@ -73,7 +73,10 @@ import {
   numbersAnnotateEnabled,
   stripForwardedSiblingFindings,
   takeToolEvidence,
+  takeWriteOutcome,
+  writeFailureMode,
   type NumbersAudit,
+  type WriteOutcome,
 } from "./numbers.js";
 
 export const LANDING_GATE_ID = "G-landing";
@@ -447,6 +450,16 @@ export async function applyCompletionLedger(
   // price quoted with 0 tools) — and the unverified figures are annotated
   // inline `(sin verificar)` unless TASK_GATES_NUMBERS_ANNOTATE=false.
   let numbers: NumbersAudit | null = null;
+  // Item 10 input, taken in EVERY mode (frees it) and BEFORE
+  // takeToolEvidence, which frees it too.
+  const wmode = writeFailureMode();
+  let lastWrite: WriteOutcome | undefined;
+  let lastWriteErr: unknown;
+  try {
+    lastWrite = takeWriteOutcome(taskId);
+  } catch (err) {
+    lastWriteErr = err ?? new Error("takeWriteOutcome failed");
+  }
   const evidence = takeToolEvidence(taskId);
   try {
     if (deliverable) {
@@ -503,6 +516,59 @@ export async function applyCompletionLedger(
       runId,
       name: "numbers.audited",
       attrs: { error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+
+  // ── done-claim after a failed write (queue 2026-10-08 late item 10) ──────
+  // The run's LAST write-class call failed (no write succeeded after it) yet
+  // the runner claims `completed`. shadow (default) = trace only; enforce =
+  // demote + one «No quedó» line + `output.write_failure`. Incoming status
+  // only: an already demoted or failed task is not this class.
+  try {
+    if (lastWriteErr !== undefined) throw lastWriteErr;
+    if (
+      wmode !== "off" &&
+      lastWrite &&
+      !lastWrite.ok &&
+      args.taskStatus === "completed"
+    ) {
+      const demoted = wmode === "enforce";
+      emitTraceEvent({
+        taskId,
+        runId,
+        name: "write.failure_claim",
+        attrs: {
+          mode: wmode,
+          agent_type: args.agentType,
+          tool: lastWrite.tool,
+          error: lastWrite.error,
+          demoted,
+        },
+      });
+      if (demoted) {
+        const why = (lastWrite.error ?? "").replace(/\s+/g, " ").trim();
+        taskStatus = "completed_with_concerns";
+        output = appendToDeliverable(
+          output,
+          `⚠️ No quedó: la última escritura (${lastWrite.tool}) falló${why ? ` — ${why}` : ""}`,
+        );
+        if (output && typeof output === "object") {
+          output = {
+            ...output,
+            write_failure: { tool: lastWrite.tool, error: lastWrite.error },
+          };
+        }
+      }
+    }
+  } catch (err) {
+    emitTraceEvent({
+      taskId,
+      runId,
+      name: "write.failure_claim",
+      attrs: {
+        mode: wmode,
+        error: err instanceof Error ? err.message : String(err),
+      },
     });
   }
 

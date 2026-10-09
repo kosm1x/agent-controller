@@ -16,7 +16,10 @@ import {
   numbersAnnotateEnabled,
   peekToolEvidence,
   recordToolEvidence,
+  recordWriteOutcome,
   takeToolEvidence,
+  takeWriteOutcome,
+  writeFailureMode,
 } from "./numbers.js";
 
 afterEach(() => _resetToolEvidence());
@@ -361,5 +364,37 @@ describe("footer + flag", () => {
     expect(
       numbersAnnotateEnabled({ TASK_GATES_NUMBERS_ANNOTATE: "false" }),
     ).toBe(false);
+  });
+});
+
+describe("write-outcome collector (queue 2026-10-08 late item 10)", () => {
+  it("keeps only the LATEST write per task, caps the error at 300 chars, frees on take", () => {
+    recordWriteOutcome("w1", "file_edit", false, "e".repeat(500));
+    expect(takeWriteOutcome("w1")).toEqual({ tool: "file_edit", ok: false, error: "e".repeat(300) });
+    expect(takeWriteOutcome("w1")).toBeUndefined();
+    recordWriteOutcome("w2", "file_edit", false, "boom");
+    recordWriteOutcome("w2", "file_write", true);
+    expect(takeWriteOutcome("w2")).toEqual({ tool: "file_write", ok: true });
+    recordWriteOutcome("w3", "file_write", true);
+    recordWriteOutcome("w3", "file_edit", false);
+    expect(takeWriteOutcome("w3")).toEqual({ tool: "file_edit", ok: false, error: "" });
+    recordWriteOutcome("", "file_edit", false, "x");
+    expect(takeWriteOutcome("")).toBeUndefined();
+  });
+
+  it("takeToolEvidence frees it too (dispatcher finally path); the reset hook clears it", () => {
+    recordWriteOutcome("w4", "file_edit", false, "x");
+    takeToolEvidence("w4");
+    expect(takeWriteOutcome("w4")).toBeUndefined();
+    recordWriteOutcome("w5", "file_edit", false, "x");
+    _resetToolEvidence();
+    expect(takeWriteOutcome("w5")).toBeUndefined();
+  });
+
+  it("TASK_GATES_WRITE_FAILURE defaults to shadow; off / enforce honoured (trimmed, any case); junk ⇒ shadow", () => {
+    expect(writeFailureMode({})).toBe("shadow");
+    expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: " OFF " })).toBe("off");
+    expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: "Enforce" })).toBe("enforce");
+    expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: "yes" })).toBe("shadow");
   });
 });

@@ -71,7 +71,9 @@ export type TraceEventName =
   | "numbers.audited"
   // Usability Phase 3 (2026-08-23): artifact provenance + citation checks
   | "provenance.checked"
-  | "citations.checked";
+  | "citations.checked"
+  // Queue 2026-10-08 (late) item 10: done-claim after a failed write
+  | "write.failure_claim";
 
 export interface TraceEvent {
   taskId: string;

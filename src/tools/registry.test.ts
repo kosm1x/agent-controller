@@ -2,8 +2,9 @@
  * Tool registry tests — findClosest() for tool call repair.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ToolRegistry } from "./registry.js";
+import { resolveSecretRefs } from "../lib/secret-refs.js";
 import { getToolAnnotations } from "./types.js";
 import type { Tool } from "./types.js";
 import {
@@ -56,6 +57,12 @@ import { skillSaveTool, skillListTool } from "./builtin/skills.js";
 import { skillDescribeTool } from "./builtin/skill-describe.js";
 import { skillLoadTool } from "./builtin/skill-load.js";
 import { skillRunTool } from "./builtin/skill-run.js";
+// Item 10 (W1): pass-through spy, so a test can force the secret-ref refusal
+// on a write-class tool (no write-class tool reaches it today).
+vi.mock("../lib/secret-refs.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/secret-refs.js")>();
+  return { ...actual, resolveSecretRefs: vi.fn(actual.resolveSecretRefs) };
+});
 // Chat scope universe — for the deferred-tool reachability invariant.
 import { getAllAvailableTools } from "../messaging/scope.js";
 import { CLASSIFIER_SYSTEM_PROMPT } from "../messaging/scope-classifier.js";
@@ -827,5 +834,138 @@ describe("retired COMMIT sync stays retired (2026-10-06 regression lock)", () =>
     const retiredNames = RETIRED.flatMap((w) => [w, w.toLowerCase()]);
     for (const name of retiredNames)
       expect(conditionMatches(everyKeyword, [name])).toBe(false);
+  });
+});
+
+describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
+  async function setup() {
+    const { enterRunToolContext } = await import("./rule-of-two.js");
+    const { _resetToolEvidence, takeWriteOutcome } = await import(
+      "../lib/v8-4/numbers.js"
+    );
+    _resetToolEvidence();
+    const reg = new ToolRegistry();
+    const add = (name: string, exec: (a: Record<string, unknown>) => string) => {
+      const t = makeTool(name);
+      t.execute = async (a) => exec(a);
+      reg.register(t);
+    };
+    return { reg, add, enterRunToolContext, takeWriteOutcome };
+  }
+
+  it("isWriteClassTool = every writeTargetKeys name + every CREATE name; shell_exec and reads are not write-class", async () => {
+    const { isWriteClassTool, writeTargetKeys } = await import("./registry.js");
+    const writes = [
+      "jarvis_file_write", "jarvis_file_update", "file_write", "file_edit",
+      "jarvis_file_move", "jarvis_files_batch_write", "kb_batch_insert",
+      "kb_ingest_pdf_structured", "gdocs_write", "gdocs_replace",
+      "gsheets_write", "gdrive_upload", "file_convert",
+    ];
+    const creates = [
+      "gslides_create", "gdrive_create", "gtasks_create", "wp_publish",
+      "wp_create_page", "memory_store",
+    ];
+    for (const n of [...writes, ...creates]) expect(isWriteClassTool(n), n).toBe(true);
+    // One source: every write name resolves keys through the same table.
+    for (const n of writes)
+      expect(writeTargetKeys(n, { path: "p/a.md", old_path: "p/a.md", files: [{ path: "p/a.md" }], entries: [{ path: "p/a.md" }], namespace: "plan-2027", document_id: "DOC12345678", spreadsheet_id: "SHEET1234567", file_id: "FILE12345678", output_path: "/tmp/o.pdf" }).length, n).toBeGreaterThan(0);
+    for (const n of ["shell_exec", "web_read", "jarvis_file_read", "file_read", "gslides_read", "constructor", "toString"])
+      expect(isWriteClassTool(n), n).toBe(false);
+  });
+
+  it("records ok on a successful write; ok:false + a 300-char error digest on an {error} result and on an Error: string", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("file_write", () => '{"success":true}');
+    add("file_edit", () => JSON.stringify({ error: `old_string not found ${"x".repeat(400)}` }));
+    add("gdocs_write", () => "Error: document not found");
+    await enterRunToolContext("t-w1", () => reg.execute("file_write", { path: "/tmp/a.md" }));
+    expect(takeWriteOutcome("t-w1")).toEqual({ tool: "file_write", ok: true });
+    await enterRunToolContext("t-w2", () => reg.execute("file_edit", { path: "/tmp/a.md" }));
+    const w2 = takeWriteOutcome("t-w2");
+    expect(w2).toMatchObject({ tool: "file_edit", ok: false });
+    expect(w2!.error!.startsWith("old_string not found x")).toBe(true); // W2: the field, not the braces
+    expect(w2!.error!).toHaveLength(300);
+    await enterRunToolContext("t-w3", () => reg.execute("gdocs_write", { document_id: "DOC12345678" }));
+    expect(takeWriteOutcome("t-w3")).toEqual({ tool: "gdocs_write", ok: false, error: "Error: document not found" });
+  });
+
+  it("a THROWN write is recorded ok:false with its message and still rethrows", async () => {
+    const { reg, enterRunToolContext, takeWriteOutcome } = await setup();
+    const t = makeTool("file_edit");
+    t.execute = async () => {
+      throw new Error("EACCES: permission denied");
+    };
+    reg.register(t);
+    await expect(
+      enterRunToolContext("t-w4", () => reg.execute("file_edit", { path: "/tmp/a.md" })),
+    ).rejects.toThrow("EACCES");
+    expect(takeWriteOutcome("t-w4")).toEqual({ tool: "file_edit", ok: false, error: "EACCES: permission denied" });
+  });
+
+  it("last wins (failed then ok = ok; ok then failed = failed); reads never overwrite it; nothing is recorded outside a run", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    add("file_edit", (a) => (a.path === "/tmp/bad.md" ? '{"error":"nope"}' : '{"success":true}'));
+    add("web_read", () => '{"error":"timeout"}');
+    await enterRunToolContext("t-w5", async () => {
+      await reg.execute("file_edit", { path: "/tmp/bad.md" });
+      await reg.execute("file_edit", { path: "/tmp/ok.md" });
+      await reg.execute("web_read", { url: "https://x" });
+    });
+    expect(takeWriteOutcome("t-w5")).toEqual({ tool: "file_edit", ok: true });
+    await enterRunToolContext("t-w6", async () => {
+      await reg.execute("file_edit", { path: "/tmp/ok.md" });
+      await reg.execute("file_edit", { path: "/tmp/bad.md" });
+    });
+    expect(takeWriteOutcome("t-w6")).toEqual({ tool: "file_edit", ok: false, error: "nope" });
+    await reg.execute("file_edit", { path: "/tmp/bad.md" }); // no run context
+    const { currentRunTaskId } = await import("./rule-of-two.js");
+    expect(currentRunTaskId()).toBeUndefined();
+    for (const id of ["t-w5", "t-w6", "", "undefined"]) expect(takeWriteOutcome(id)).toBeUndefined();
+  });
+
+  it("W1: an Unknown-tool refusal records ok:false for a write-class name, nothing for a read", async () => {
+    const { reg, enterRunToolContext, takeWriteOutcome } = await setup();
+    await enterRunToolContext("t-r1", async () => {
+      await reg.execute("file_edit", { path: "/tmp/a.md" });
+    });
+    expect(takeWriteOutcome("t-r1")).toEqual({ tool: "file_edit", ok: false, error: "Unknown tool: file_edit" });
+    await enterRunToolContext("t-r2", () => reg.execute("web_read", { url: "https://x" }));
+    expect(takeWriteOutcome("t-r2")).toBeUndefined();
+  });
+
+  it("W1: a rendered-placeholder refusal records ok:false for a write-class name, nothing for a non-write", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    let ran = 0;
+    add("gdocs_write", () => (ran++, '{"success":true}'));
+    add("shell_exec", () => (ran++, "ok"));
+    const out = await enterRunToolContext("t-r3", () =>
+      reg.execute("gdocs_write", { document_id: "DOC12345678", content: "key [oculto · x]" }),
+    );
+    expect(out).toContain('"error"');
+    const w = takeWriteOutcome("t-r3");
+    expect(w).toMatchObject({ tool: "gdocs_write", ok: false });
+    expect(w!.error!.startsWith("No ejecuté gdocs_write")).toBe(true);
+    await enterRunToolContext("t-r4", () => reg.execute("shell_exec", { command: "echo [oculto · x]" }));
+    expect(takeWriteOutcome("t-r4")).toBeUndefined();
+    expect(ran).toBe(0);
+  });
+
+  it("W1: a secret-ref refusal records ok:false for a write-class name (forced), nothing for http_fetch (real path)", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    let ran = 0;
+    add("file_edit", () => (ran++, '{"success":true}'));
+    add("http_fetch", () => (ran++, "ok"));
+    vi.mocked(resolveSecretRefs).mockReturnValueOnce({
+      error: JSON.stringify({ error: "no stored secret SECRET_NOPE" }),
+      reason: "unknown_name",
+    });
+    await enterRunToolContext("t-r5", () => reg.execute("file_edit", { path: "/tmp/a.md" }));
+    expect(takeWriteOutcome("t-r5")).toEqual({ tool: "file_edit", ok: false, error: "no stored secret SECRET_NOPE" });
+    const out = await enterRunToolContext("t-r6", () =>
+      reg.execute("http_fetch", { url: "https://x/{{SECRET_NOPE_ITEM10}}" }),
+    );
+    expect(out).toContain('"error"');
+    expect(takeWriteOutcome("t-r6")).toBeUndefined();
+    expect(ran).toBe(0);
   });
 });

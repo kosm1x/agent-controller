@@ -18,6 +18,7 @@ import {
   isEvidenceTool,
   recordRunWrite,
   recordToolEvidence,
+  recordWriteOutcome,
   targetsRunWrite,
 } from "../lib/v8-4/numbers.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
@@ -56,57 +57,74 @@ function levenshtein(a: string, b: string): number {
   return dp[n];
 }
 
+// Path-like keys (any length ≥ 3) or opaque ids (≥ 8 chars) — a short
+// plain word like "data" would poison unrelated reads (R3 audit W-4).
+const str = (v: unknown): string[] =>
+  typeof v === "string" && (v.length >= 8 || (v.length >= 3 && /[/.]/.test(v)))
+    ? [v]
+    : [];
+
+/**
+ * WRITE tools → the artifact key(s) a call targets (paths / doc / sheet ids),
+ * from its args. With CREATE_TOOL_RE this is the ONE list of write-class
+ * tool names: `writeTargetKeys`, `createdKeys` and `isWriteClassTool` all
+ * read it — never a second hand-maintained list.
+ */
+const WRITE_TARGET_KEYS = new Map<
+  string,
+  (args: Record<string, unknown>) => string[]
+>([
+  ["jarvis_file_write", (a) => str(a.path)],
+  ["jarvis_file_update", (a) => str(a.path)],
+  ["file_write", (a) => str(a.path)],
+  ["file_edit", (a) => str(a.path)],
+  ["jarvis_file_move", (a) => [...str(a.old_path), ...str(a.new_path)]],
+  [
+    "jarvis_files_batch_write",
+    (a) =>
+      Array.isArray(a.files)
+        ? (a.files as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
+        : [],
+  ],
+  [
+    "kb_batch_insert",
+    (a) =>
+      Array.isArray(a.entries)
+        ? (a.entries as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
+        : [],
+  ],
+  ["kb_ingest_pdf_structured", (a) => [...str(a.namespace), ...str(a.pdf_path)]],
+  ["gdocs_write", (a) => str(a.document_id)],
+  ["gdocs_replace", (a) => str(a.document_id)],
+  ["gsheets_write", (a) => str(a.spreadsheet_id)],
+  ["gdrive_upload", (a) => str(a.file_id)],
+  ["file_convert", (a) => str(a.output_path)],
+]);
+
+/** CREATE tools: they report the new artifact's id in their RESULT (createdKeys). */
+const CREATE_TOOL_RE =
+  /^(gslides_create|gdrive_create|gtasks_create|wp_publish|wp_create\w*|memory_store|gdrive_upload|file_convert)$/;
+
 /** Artifact keys a WRITE tool call targets (paths / doc / sheet ids), from its args. */
 export function writeTargetKeys(
   name: string,
   args: Record<string, unknown>,
 ): string[] {
-  // Path-like keys (any length ≥ 3) or opaque ids (≥ 8 chars) — a short
-  // plain word like "data" would poison unrelated reads (R3 audit W-4).
-  const str = (v: unknown): string[] =>
-    typeof v === "string" &&
-    (v.length >= 8 || (v.length >= 3 && /[/.]/.test(v)))
-      ? [v]
-      : [];
-  switch (name) {
-    case "jarvis_file_write":
-    case "jarvis_file_update":
-    case "file_write":
-    case "file_edit":
-      return str(args.path);
-    case "jarvis_file_move":
-      return [...str(args.old_path), ...str(args.new_path)];
-    case "jarvis_files_batch_write":
-      return Array.isArray(args.files)
-        ? (args.files as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
-        : [];
-    case "kb_batch_insert":
-      return Array.isArray(args.entries)
-        ? (args.entries as Array<{ path?: unknown }>).flatMap((f) => str(f?.path))
-        : [];
-    case "kb_ingest_pdf_structured":
-      return [...str(args.namespace), ...str(args.pdf_path)];
-    case "gdocs_write":
-    case "gdocs_replace":
-      return str(args.document_id);
-    case "gsheets_write":
-      return str(args.spreadsheet_id);
-    case "gdrive_upload":
-      return str(args.file_id);
-    case "file_convert":
-      return str(args.output_path);
-    default:
-      return [];
-  }
+  return WRITE_TARGET_KEYS.get(name)?.(args) ?? [];
+}
+
+/**
+ * Queue 2026-10-08 (late) item 10: is this a WRITE-class tool (write or
+ * create), by name? `shell_exec` is deliberately NOT write-class: it is an
+ * evidence (read) tool here and most of its calls observe, not write.
+ */
+export function isWriteClassTool(name: string): boolean {
+  return WRITE_TARGET_KEYS.has(name) || CREATE_TOOL_RE.test(name);
 }
 
 /** Ids a CREATE tool reports in its result (gslides_create, gdrive_create, gtasks_create, wp_publish…). */
 function createdKeys(name: string, result: unknown): string[] {
-  if (
-    !/^(gslides_create|gdrive_create|gtasks_create|wp_publish|wp_create\w*|memory_store|gdrive_upload|file_convert)$/.test(name) ||
-    typeof result !== "string"
-  )
-    return [];
+  if (!CREATE_TOOL_RE.test(name) || typeof result !== "string") return [];
   try {
     const parsed = JSON.parse(result) as Record<string, unknown>;
     const out: string[] = [];
@@ -119,6 +137,29 @@ function createdKeys(name: string, result: unknown): string[] {
   } catch {
     return [];
   }
+}
+
+/** Item 10 (W2): the readable error — `{"error":"…"}` gives its field; anything else its raw text. */
+function writeErrorText(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { error?: unknown }).error === "string"
+    )
+      return (parsed as { error: string }).error;
+  } catch {
+    // not JSON: the raw text
+  }
+  return text;
+}
+
+/** Item 10: a failed write-class call of the current run (no-op outside a run). */
+function recordFailedWrite(name: string, text: string): void {
+  const runTaskId = currentRunTaskId();
+  if (runTaskId && isWriteClassTool(name))
+    recordWriteOutcome(runTaskId, name, false, writeErrorText(text));
 }
 
 /** Any error-shaped result — `{"error":…}` JSON or a plain "Error:" string. */
@@ -405,7 +446,9 @@ export class ToolRegistry {
   ): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+      const error = JSON.stringify({ error: `Unknown tool: ${name}` });
+      recordFailedWrite(name, error);
+      return error;
     }
 
     // CCP5: Audit trail for risk-tiered tools. Blocking is handled by
@@ -431,11 +474,13 @@ export class ToolRegistry {
     );
     if ("error" in rendered) {
       traceSecretRefRefused(name, "rendered_placeholder", "execute");
+      recordFailedWrite(name, rendered.error);
       return rendered.error;
     }
     const resolved = resolveSecretRefs(name, rendered.args);
     if ("error" in resolved) {
       traceSecretRefRefused(name, resolved.reason, "execute");
+      recordFailedWrite(name, resolved.error);
       return resolved.error;
     }
     const start = Date.now();
@@ -453,6 +498,16 @@ export class ToolRegistry {
       const runTaskId = currentRunTaskId();
       if (runTaskId) {
         const isError = isErrorResult(result);
+        // Item 10: the run's LAST write-class outcome (a done-claim after a
+        // failed write is checked at completion — consumer.ts).
+        if (isWriteClassTool(name)) {
+          recordWriteOutcome(
+            runTaskId,
+            name,
+            !isError,
+            isError ? writeErrorText(String(result)) : undefined,
+          );
+        }
         const written = isError
           ? []
           : [...writeTargetKeys(name, args), ...createdKeys(name, result)];
@@ -474,7 +529,13 @@ export class ToolRegistry {
       return result;
     } catch (err) {
       toolMetrics.record(name, Date.now() - start, false);
-      throw scrubThrown(err);
+      const scrubbed = scrubThrown(err);
+      // Item 10: a THROWN write is a failed write too (recorded scrubbed).
+      recordFailedWrite(
+        name,
+        scrubbed instanceof Error ? scrubbed.message : String(scrubbed),
+      );
+      throw scrubbed;
     }
   }
 

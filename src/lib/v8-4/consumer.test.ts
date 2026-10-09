@@ -17,7 +17,14 @@ import {
   stripForwardedSiblingFindings,
 } from "./consumer.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
-import { _resetToolEvidence, recordToolEvidence } from "./numbers.js";
+import {
+  _resetToolEvidence,
+  recordToolEvidence,
+  recordWriteOutcome,
+  takeWriteOutcome,
+} from "./numbers.js";
+import { emitTraceEvent } from "../../observability/task-trace.js";
+import { isLedgerLine } from "./ledger-lines.js";
 import { _resetCitationCache } from "./citations.js";
 import { _setLandingExecForTests } from "./landing.js";
 import { runGrader, type GraderResult } from "./grader.js";
@@ -31,6 +38,18 @@ import {
 // V9 W1: the grader call is the one LLM seam here — never a real call.
 vi.mock("./grader.js", () => ({ runGrader: vi.fn() }));
 const mockRunGrader = vi.mocked(runGrader);
+// Item 10: pass-through spies, so a test can make the take / the emit fail.
+vi.mock("./numbers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./numbers.js")>();
+  return { ...actual, takeWriteOutcome: vi.fn(actual.takeWriteOutcome) };
+});
+vi.mock("../../observability/task-trace.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../observability/task-trace.js")>();
+  return { ...actual, emitTraceEvent: vi.fn(actual.emitTraceEvent) };
+});
+const mockTakeWrite = vi.mocked(takeWriteOutcome);
+const mockEmit = vi.mocked(emitTraceEvent);
 
 const ENV_KEYS = [
   "TASK_GATES_MODE",
@@ -38,6 +57,7 @@ const ENV_KEYS = [
   "CITATION_CHECK",
   "TASK_GATES_GRADER",
   "TASK_GATES_GRADER_BUDGET_MS",
+  "TASK_GATES_WRITE_FAILURE",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 
@@ -1194,5 +1214,140 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
       .run();
     const v = await reverifyChildLedger("parent", "child", { text: "done" });
     expect(v?.verdict).toBe("met");
+  });
+});
+
+describe("applyCompletionLedger — done-claim after a failed write (queue 2026-10-08 late item 10)", () => {
+  const ERR = "Edit blocked: old_string not found in\nfile"; // as the registry records it (W2)
+  const failedWrite = () => recordWriteOutcome("t1", "file_edit", false, ERR);
+  const claims = () =>
+    traceNames("t1").filter((t) => t.name === "write.failure_claim");
+
+  it("off: nothing (no trace, status and text untouched) and the buffer is still taken + freed", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "off";
+    failedWrite();
+    mockTakeWrite.mockClear();
+    const out = await applyCompletionLedger(base());
+    expect(out.taskStatus).toBe("completed");
+    expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+    expect(out.output).not.toHaveProperty("write_failure");
+    expect(claims()).toEqual([]);
+    expect(mockTakeWrite).toHaveBeenCalledWith("t1");
+    expect(takeWriteOutcome("t1")).toBeUndefined();
+  });
+
+  it("shadow is the DEFAULT (env unset): trace with demoted:false; status, text and output untouched", async () => {
+    failedWrite();
+    const out = await applyCompletionLedger(base({ agentType: "heavy" }));
+    expect(out.taskStatus).toBe("completed");
+    expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+    expect(out.output).not.toHaveProperty("write_failure");
+    expect(claims()).toEqual([
+      {
+        name: "write.failure_claim",
+        attrs: { mode: "shadow", agent_type: "heavy", tool: "file_edit", error: ERR, demoted: false },
+      },
+    ]);
+    expect(takeWriteOutcome("t1")).toBeUndefined();
+  });
+
+  it("enforce: demotes to completed_with_concerns, appends ONE «No quedó» ledger line, sets output.write_failure, trace demoted:true", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    failedWrite();
+    const out = await applyCompletionLedger(base());
+    expect(out.taskStatus).toBe("completed_with_concerns");
+    const output = out.output as Record<string, unknown>;
+    const added = String(output.text).split("\n\n").slice(1);
+    expect(added).toEqual([
+      "⚠️ No quedó: la última escritura (file_edit) falló — Edit blocked: old_string not found in file",
+    ]);
+    expect(isLedgerLine(added[0]!)).toBe(true);
+    expect(output.write_failure).toEqual({ tool: "file_edit", error: ERR });
+    expect(claims()[0]!.attrs).toMatchObject({ mode: "enforce", demoted: true, tool: "file_edit" });
+  });
+
+  it("an incoming completed_with_concerns or failed task is not this class: untouched, no trace", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    for (const taskStatus of ["completed_with_concerns", "failed"]) {
+      failedWrite();
+      const out = await applyCompletionLedger(base({ taskStatus }));
+      expect(out.taskStatus).toBe(taskStatus);
+      expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+      expect(out.output).not.toHaveProperty("write_failure");
+    }
+    expect(claims()).toEqual([]);
+  });
+
+  it("a failed write followed by a successful write (last wins) or a lone ok write: untouched, no trace", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    failedWrite();
+    recordWriteOutcome("t1", "file_write", true);
+    expect((await applyCompletionLedger(base())).taskStatus).toBe("completed");
+    recordWriteOutcome("t1", "file_edit", true);
+    expect((await applyCompletionLedger(base())).taskStatus).toBe("completed");
+    expect(claims()).toEqual([]);
+  });
+
+  it("a failing takeWriteOutcome: original status/output pass through, the failure is traced, the buffer is freed anyway", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    failedWrite();
+    mockTakeWrite.mockImplementationOnce(() => {
+      throw new Error("take boom");
+    });
+    const out = await applyCompletionLedger(base());
+    expect(out.taskStatus).toBe("completed");
+    expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+    expect(out.output).not.toHaveProperty("write_failure");
+    expect(claims()).toEqual([
+      { name: "write.failure_claim", attrs: { mode: "enforce", error: "take boom" } },
+    ]);
+    expect(takeWriteOutcome("t1")).toBeUndefined();
+  });
+
+  it("a failing emit: original status/output pass through (enforce)", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    failedWrite();
+    const real = mockEmit.getMockImplementation()!;
+    mockEmit.mockImplementation((ev) => {
+      if (ev.name === "write.failure_claim" && ev.attrs && "tool" in ev.attrs)
+        throw new Error("emit boom");
+      return real(ev);
+    });
+    try {
+      const out = await applyCompletionLedger(base());
+      expect(out.taskStatus).toBe("completed");
+      expect((out.output as Record<string, unknown>).text).toBe("Listo. Hice todo.");
+      expect(out.output).not.toHaveProperty("write_failure");
+      expect(claims()).toEqual([
+        { name: "write.failure_claim", attrs: { mode: "enforce", error: "emit boom" } },
+      ]);
+    } finally {
+      mockEmit.mockImplementation(real);
+    }
+  });
+
+  it("W2: through the real registry, an {error} write result reaches the line, the trace and output.write_failure as clean text (no braces)", async () => {
+    process.env.TASK_GATES_WRITE_FAILURE = "enforce";
+    const { ToolRegistry } = await import("../../tools/registry.js");
+    const { enterRunToolContext } = await import("../../tools/rule-of-two.js");
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "file_edit",
+      definition: {
+        type: "function",
+        function: { name: "file_edit", description: "t", parameters: { type: "object", properties: {} } },
+      },
+      execute: async () => JSON.stringify({ error: "Edit blocked: path outside the allow-list" }),
+    });
+    await enterRunToolContext("t1", () => reg.execute("file_edit", { path: "/tmp/a.md" }));
+    const out = await applyCompletionLedger(base());
+    expect(out.taskStatus).toBe("completed_with_concerns");
+    const output = out.output as Record<string, unknown>;
+    expect(String(output.text).split("\n\n").pop()).toBe(
+      "⚠️ No quedó: la última escritura (file_edit) falló — Edit blocked: path outside the allow-list",
+    );
+    expect(String(output.text)).not.toContain("{");
+    expect(output.write_failure).toEqual({ tool: "file_edit", error: "Edit blocked: path outside the allow-list" });
+    expect(claims()[0]!.attrs.error).toBe("Edit blocked: path outside the allow-list");
   });
 });

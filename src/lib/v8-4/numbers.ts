@@ -63,6 +63,7 @@ export function takeToolEvidence(taskId: string): string[] {
   const entry = evidenceByTask.get(taskId);
   evidenceByTask.delete(taskId);
   writtenByTask.delete(taskId);
+  lastWriteByTask.delete(taskId);
   return entry ? entry.chunks : [];
 }
 
@@ -102,6 +103,54 @@ export const EVIDENCE_TOOL_RE =
 
 /** Reads whose TARGET can be defaulted away (grep with no `path` = cwd): with a write on record they are not evidence (R4 W4-2). */
 export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
+
+/**
+ * Queue 2026-10-08 (late) item 10: the run's LATEST write-class call only
+ * (last wins: a failed write followed by a successful one is not a failed
+ * run). `error` = first 300 chars of the (already secret-scrubbed) error
+ * result or thrown message. Freed by `takeWriteOutcome` / `takeToolEvidence`.
+ */
+export interface WriteOutcome {
+  tool: string;
+  ok: boolean;
+  error?: string;
+}
+
+const lastWriteByTask = new Map<string, WriteOutcome>();
+
+export function recordWriteOutcome(
+  taskId: string,
+  tool: string,
+  ok: boolean,
+  error?: string,
+): void {
+  if (!taskId || !tool) return;
+  lastWriteByTask.set(
+    taskId,
+    ok ? { tool, ok } : { tool, ok, error: (error ?? "").slice(0, 300) },
+  );
+}
+
+/** Returns the task's last write-class outcome and forgets it. */
+export function takeWriteOutcome(taskId: string): WriteOutcome | undefined {
+  const last = lastWriteByTask.get(taskId);
+  lastWriteByTask.delete(taskId);
+  return last;
+}
+
+export type WriteFailureMode = "off" | "shadow" | "enforce";
+
+/**
+ * `TASK_GATES_WRITE_FAILURE`: off | shadow (DEFAULT — trace
+ * `write.failure_claim` only) | enforce (demote + «No quedó» line). Junk ⇒
+ * shadow, so the deploy alone starts the measurement.
+ */
+export function writeFailureMode(
+  env: NodeJS.ProcessEnv = process.env,
+): WriteFailureMode {
+  const raw = (env.TASK_GATES_WRITE_FAILURE ?? "shadow").trim().toLowerCase();
+  return raw === "off" || raw === "enforce" ? raw : "shadow";
+}
 
 export function hasRunWrites(taskId: string): boolean {
   return (writtenByTask.get(taskId)?.size ?? 0) > 0;
@@ -144,6 +193,7 @@ export function targetsRunWrite(taskId: string, argText: string): boolean {
 export function _resetToolEvidence(): void {
   evidenceByTask.clear();
   writtenByTask.clear();
+  lastWriteByTask.clear();
 }
 
 // ── number grammar ─────────────────────────────────────────────────────────
