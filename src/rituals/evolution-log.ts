@@ -3,6 +3,8 @@
  *
  * Runs at 11:59 PM Mexico City time. Collects system metrics, mental model
  * content, and interaction patterns, then appends an entry to EVOLUTION-LOG.md.
+ * The System state metrics are computed by the harness from the DB; the COMMIT
+ * snapshot tool the template once relied on is gone since 2026-04-03.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -32,6 +34,7 @@ function countTodayConversations(): {
     .prepare(
       `SELECT tags FROM conversations
        WHERE bank = 'mc-jarvis'
+       AND json_valid(tags)
        AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = 'conversation')
        AND created_at >= ?`,
     )
@@ -51,6 +54,56 @@ function countTodayConversations(): {
 }
 
 /**
+ * Task + streak metrics, mechanically from the DB, on the same Mexico City
+ * day boundary as countTodayConversations().
+ */
+function computeMetrics(): {
+  completedToday: number;
+  totalTasks: number;
+  streakDays: number;
+} {
+  const db = getDatabase();
+  const mxDate = new Date().toLocaleDateString("en-CA", {
+    timeZone: RITUALS_TIMEZONE,
+  });
+  const utcStart = `${mxDate} 06:00:00`;
+
+  const tasks = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+         COALESCE(SUM(status IN ('completed','completed_with_concerns')
+           AND COALESCE(completed_at, updated_at) >= ?), 0) AS completed
+       FROM tasks`,
+    )
+    .get(utcStart) as { total: number; completed: number } | undefined;
+
+  // Streak = consecutive MX days with >= 1 conversation, ending today;
+  // 0 if today has none. MX is fixed UTC-6, so the MX day is created_at - 6h.
+  const days = db
+    .prepare(
+      `SELECT DISTINCT date(created_at, '-6 hours') AS d FROM conversations
+       WHERE bank = 'mc-jarvis'
+       AND json_valid(tags)
+       AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = 'conversation')
+       AND created_at >= datetime('now', '-400 days')`,
+    )
+    .all() as Array<{ d: string }>;
+  const active = new Set(days.map((r) => r.d));
+  let streakDays = 0;
+  let t = Date.parse(`${mxDate}T00:00:00Z`);
+  while (active.has(new Date(t).toISOString().slice(0, 10))) {
+    streakDays++;
+    t -= 86_400_000;
+  }
+
+  return {
+    completedToday: tasks?.completed ?? 0,
+    totalTasks: tasks?.total ?? 0,
+    streakDays,
+  };
+}
+
+/**
  * `narrative`: today's `logs/day-narratives/<date>.md`, loaded by the
  * scheduler and embedded verbatim (2026-10-03) — a model-side
  * `jarvis_file_read` of a narrative over 8,000 chars returned only an outline.
@@ -61,6 +114,7 @@ export function createEvolutionLogEntry(
   narrative: string | null,
 ): TaskSubmission {
   const { count, channels } = countTodayConversations();
+  const { completedToday, totalTasks, streakDays } = computeMetrics();
   const channelSummary =
     Object.entries(channels)
       .map(([ch, n]) => `${ch}: ${n}`)
@@ -88,6 +142,9 @@ ${renderVerbatimBlock("NARRATIVE", narrativePath, narrative)}`
 ## Pre-computed metrics (mechanical — do NOT override)
 - Conversations today: ${count}
 - By channel: ${channelSummary}
+- Tasks processed today: ${completedToday}
+- Total tasks: ${totalTasks}
+- Streak days: ${streakDays}
 
 ## Instructions
 
@@ -119,10 +176,10 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 ### System state
 | Metric | Value |
 |--------|-------|
-| Tasks processed today | [from snapshot: completed_today] |
-| Total tasks | [from snapshot: pending_tasks + completed] |
+| Tasks processed today | ${completedToday} |
+| Total tasks | ${totalTasks} |
 | Conversations today | ${count} (${channelSummary}) |
-| Streak days | [from snapshot] |
+| Streak days | ${streakDays} |
 
 ### Interactions summary
 [2-3 sentences: what topics came up, what Fede asked about, what tools were used most]

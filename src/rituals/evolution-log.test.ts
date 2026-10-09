@@ -1,14 +1,22 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import Database from "better-sqlite3";
 
-// createEvolutionLogEntry() calls countTodayConversations() → getDatabase().
-// Stub the DB so the ritual builder runs without a real SQLite handle.
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => ({
-    prepare: () => ({ all: () => [] }),
-  }),
-}));
+// createEvolutionLogEntry() reads conversations + tasks via getDatabase().
+// Back it with a synthetic in-memory SQLite (never the live mc.db).
+const h = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock("../db/index.js", () => ({ getDatabase: () => h.db }));
 
 import { createEvolutionLogEntry } from "./evolution-log.js";
+import { RITUALS_TIMEZONE } from "./config.js";
+
+function freshDb(): Database.Database {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE conversations (bank TEXT, tags TEXT, created_at TEXT);
+           CREATE TABLE tasks (status TEXT, completed_at TEXT, updated_at TEXT);`);
+  h.db = db;
+  return db;
+}
+freshDb();
 
 describe("createEvolutionLogEntry — append-only / no-overwrite invariants (2026-06-17 fix)", () => {
   const sub = createEvolutionLogEntry("2026-06-17", null);
@@ -80,5 +88,106 @@ describe("createEvolutionLogEntry — harness-embedded narrative (2026-10-03)", 
     const d = createEvolutionLogEntry("2026-10-01", null).description;
     expect(d).toContain("(`logs/day-narratives/2026-10-01.md`) does not exist");
     expect(d).not.toContain("⟦BEGIN NARRATIVE");
+  });
+});
+
+describe("createEvolutionLogEntry — harness-computed metrics (2026-10-09)", () => {
+  // Mexico City day `n` days before today, as YYYY-MM-DD.
+  const mxDay = (n: number): string => {
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: RITUALS_TIMEZONE,
+    });
+    const t = Date.parse(`${today}T00:00:00Z`) - n * 86_400_000;
+    return new Date(t).toISOString().slice(0, 10);
+  };
+  // 06:00:01 UTC on MX day d = just after MX midnight (always <= now for today).
+  const at = (d: string): string => `${d} 06:00:01`;
+
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  const addConv = (createdAt: string, bank = "mc-jarvis") =>
+    db
+      .prepare("INSERT INTO conversations VALUES (?, ?, ?)")
+      .run(bank, '["conversation","telegram"]', createdAt);
+  const addTask = (
+    status: string,
+    completedAt: string | null,
+    updatedAt: string,
+  ) =>
+    db
+      .prepare("INSERT INTO tasks VALUES (?, ?, ?)")
+      .run(status, completedAt, updatedAt);
+
+  it("leaves no snapshot placeholder in the prompt", () => {
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).not.toContain("from snapshot");
+  });
+
+  it("fills Tasks processed today / Total tasks from the tasks table", () => {
+    addTask("completed", at(mxDay(0)), at(mxDay(0)));
+    // NULL completed_at falls back to updated_at.
+    addTask("completed_with_concerns", null, at(mxDay(0)));
+    addTask("completed", `${mxDay(1)} 12:00:00`, `${mxDay(1)} 12:00:00`);
+    addTask("pending", null, at(mxDay(0)));
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("| Tasks processed today | 2 |");
+    expect(d).toContain("| Total tasks | 4 |");
+    expect(d).toContain("- Tasks processed today: 2");
+    expect(d).toContain("- Total tasks: 4");
+  });
+
+  it("tasks: the MX day starts at 06:00 UTC and completed_at wins over updated_at", () => {
+    // 05:59:59 UTC on MX day 0 = MX yesterday 23:59:59 — not today.
+    addTask("completed", `${mxDay(0)} 05:59:59`, `${mxDay(0)} 05:59:59`);
+    // Completed yesterday, touched today — completed_at decides, not updated_at.
+    addTask("completed", `${mxDay(1)} 12:00:00`, at(mxDay(0)));
+    addTask("completed", at(mxDay(0)), at(mxDay(0)));
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("| Tasks processed today | 1 |");
+    expect(d).toContain("| Total tasks | 3 |");
+  });
+
+  it("streak counts consecutive MX days with a conversation, ending today", () => {
+    addConv(at(mxDay(0)));
+    addConv(at(mxDay(1)));
+    addConv(`${mxDay(2)} 23:00:00`);
+    addConv(at(mxDay(4)));
+    // Other banks never count.
+    addConv(at(mxDay(3)), "jarvis");
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("| Streak days | 3 |");
+    expect(d).toContain("- Streak days: 3");
+  });
+
+  it("streak: 00:00-05:59 UTC belongs to the previous MX day", () => {
+    addConv(at(mxDay(0)));
+    // 03:00 UTC on calendar day mxDay(1) = 21:00 MX on mxDay(2); MX day 1 is empty.
+    addConv(`${mxDay(1)} 03:00:00`);
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("| Streak days | 1 |");
+  });
+
+  it("a malformed tags value does not abort the build and never counts", () => {
+    db.prepare("INSERT INTO conversations VALUES (?, ?, ?)").run(
+      "mc-jarvis",
+      "not json",
+      at(mxDay(0)),
+    );
+    addConv(at(mxDay(1)));
+    let d = "";
+    expect(() => {
+      d = createEvolutionLogEntry("2026-10-09", null).description;
+    }).not.toThrow();
+    expect(d).toContain("| Streak days | 0 |");
+  });
+
+  it("streak is 0 when today has no conversation", () => {
+    addConv(at(mxDay(1)));
+    addConv(at(mxDay(2)));
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("| Streak days | 0 |");
   });
 });
