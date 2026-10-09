@@ -28,10 +28,10 @@ V8.1 active (08:00 Morning Sync is the surface; §13 gate v2 scores it since 202
 | Rulings 1–5 in production | Each ruling seen working on a real task (credential by name, outbound scrub, docker read, expiry notice); critic SQL guard on a real critic run | Deployed 2026-10-04, unproven by real use; first nightly tuning run under scoring v2; queue §2026-10-04 items 1–10, 12–15 | VPS |
 | W3 internal eval, reshaped | Uses existing gate/outcome/eval data; gate-definition changes logged with old-definition number | Inventory real row counts, paired comparisons vs explicit-direction baseline | S5 |
 | Landscape review | Every item has a primary source and a verdict (build / adopt / borrow / ignore) | **Done in S2:** register `docs/LANDSCAPE.md`; inputs folded into S3, S5, W2 | S2 |
-| L1 Agent SDK 0.3.245 → 0.3.288 | `eval:gate -- --run` passes (VPS) | `verbatimPrompts`, snapshot check, telemetry caveat, MCP timeout | L1 (operator) |
+| L1 Agent SDK 0.3.245 → 0.3.285 | `eval:gate -- --run` passes (VPS) | **0.3.285 DEPLOYED 2026-10-07** (`de1f882`, clean rebuild `dcac186`; 133 scoped tests + full pre-commit suite + smokes; queue §2026-10-07 item 4). The paid `eval:gate` run against 0.3.285 is still owed, folded into the baseline re-capture below. 0.3.288 was the target when this row was written; re-evaluate at the next upstream review (11-01) | L1 (operator) |
 | L2 MCP result fidelity | typecheck + scoped vitest; implementer + qa-auditor | Bridge keeps `structuredContent` + resource links; SDK 1.32.0 within caret | L2 (cloud) |
 | L5 Stop-hook own deadline + trace | typecheck + scoped vitest; implementer + qa-auditor | Gates hook past 180 s stops silently, already at the current pin; not tied to L1 | L5 (cloud) |
-| L3 A2A: interop or retire | VPS data, then operator ruling | Is A2A used at all? Then shim to A2A 1.0 or retire (ties to S6) | L3 |
+| L3 A2A: keep, shim to 1.0 when scheduled | **RULED 2026-10-09: A2A STAYS** (operator: "we will use it soon enough"); retiring is off the table and must not be proposed again. Usage readout done (0 A2A tasks in 30 d, 0 ledger rows in 90 d) and is a cost figure, not an input to this bet | Shim to A2A 1.0 when the first consumer is scheduled (operator names the date); ties to S6 | L3 |
 | Beta scope + operator abstraction | `docs/BETA.md` merged | Hardcoded-to-Fede inventory, first transferability workstream | S6 |
 | Cloud-session support | Clean clone runs hook; agents + skills load; guards match the VPS | **Done in S1 + S1b.** VPS-only: `eval:gate` (even dry), `mc-ctl`, prod data, deploy | S1, S1b |
 | W5 loop vocabulary | Doc only | **Done in S0** (CLAUDE.md) | S0 |
@@ -54,8 +54,8 @@ V8.1 active (08:00 Morning Sync is the surface; §13 gate v2 scores it since 202
 - W1: pre-arm fixes live (`d0d95a8`) and `eval:gate -- --run` PASSED 2026-10-06 03:3x UTC (composite 75.70 vs incumbent 76.87, delta −1.18 within ε 2; 239 cases, 0 errored probes, $4.92). `TASK_GATES_GRADER=shadow` ARMED 03:35 UTC (drop-in `v9-grader.conf`, PID 3625470). First `gates.graded` trace 10-06 (15 by 10-09: 4 heavy roots, 11 swarm children, grader `failed` on 2). Next = label ≥30 runs in `docs/planning/v9-w1-labels.md` (0 so far; the "excelente" auto-label cannot fire for 14 of 15 because scheduled roots and swarm children write no `task_outcomes` row — ruling queued §2026-10-08 item 10) ("excelente" = really done, explicit negative = not done, rest by hand from `mc-ctl gates graded`). Also owed: weekly count of gradeable tasks.
 - Eval gate: the committed baseline (`src/tuning/eval-baseline.json`, 2026-10-04 04:04 UTC, 76.87) predates #60's `src/` changes; the 10-06 run passed against it. A re-capture (`npm run eval:gate -- --run --update-baseline`, ~$5) is still owed BEFORE the next Jarvis system-prompt / tool-description change, so that change is measured against today's code, not 10-04's.
 - Ruling 5a: the read-only DB role (operator-run DDL).
-- L1: run the Agent SDK bump with `npm run eval:gate -- --run` on the VPS (cloud sessions cannot).
-- L3: after the VPS A2A-usage check, rule shim-to-1.0 or retire.
+- L1: 0.3.285 is live since 10-07 without a paid `eval:gate` run; the baseline re-capture above covers it (one ~$5 run, VPS only).
+- L3: RULED 2026-10-09 — A2A stays (usage check done: 0 tasks/30 d, 0 ledger rows/90 d; not a retirement input). Open: when to schedule the A2A 1.0 shim.
 
 ## Session log
 
