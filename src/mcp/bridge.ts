@@ -29,6 +29,7 @@ export interface McpContentItem {
 /** MCP callTool result shape. */
 export interface McpCallResult {
   content: McpContentItem[];
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -44,6 +45,89 @@ export function extractText(content: McpContentItem[]): string {
     .filter((item) => item.type === "text" && typeof item.text === "string")
     .map((item) => item.text as string);
   return texts.length > 0 ? texts.join("\n") : "[No text content returned]";
+}
+
+/** One labelled line for a non-text content item (payloads never inlined). */
+function renderItem(item: McpContentItem): string {
+  const s = (v: unknown): string => (typeof v === "string" ? v : "");
+  switch (item.type) {
+    case "resource_link":
+      return `[resource_link] ${s(item.name)} ${s(item.uri)} ${s(item.mimeType)} ${s(item.description)}`
+        .replace(/\s+/g, " ")
+        .trim();
+    case "resource": {
+      const r = (item.resource ?? {}) as Record<string, unknown>;
+      const len = typeof r.text === "string" ? r.text.length : s(r.blob).length;
+      return `[resource] ${s(r.uri)} ${s(r.mimeType)} (${len} chars)`.replace(
+        /\s+/g,
+        " ",
+      );
+    }
+    case "image":
+    case "audio":
+      return `[${item.type}] ${s(item.mimeType) || "unknown"} ${s(item.data).length} bytes base64 (not forwarded on this path)`;
+    default:
+      return `[${item.type ?? "unknown"}]`;
+  }
+}
+
+/** Key-order-insensitive JSON equality (text item vs structuredContent). */
+const sortKeys = (_k: string, v: unknown): unknown =>
+  v && typeof v === "object" && !Array.isArray(v)
+    ? Object.fromEntries(
+        Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+      )
+    : v;
+function sameJson(text: string, value: unknown): boolean {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return JSON.stringify(parsed, sortKeys) === JSON.stringify(value, sortKeys);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * L2 (2026-10-09) — the whole MCP result on the string tool-result contract:
+ * text items first (joined as extractText does), then `structuredContent` as a
+ * JSON block always labelled `[structured]` (so a result never starts with
+ * `{"error"` unless the server wrote that text) and omitted when a text item
+ * already carries the same JSON (the spec's SHOULD), then one labelled line
+ * per non-text item.
+ * Images/audio are not forwarded on this path (vision input exists only for
+ * user images: inference/claude-sdk.ts buildVisionPromptStream). No cap here:
+ * the existing caps own size (adapter-openai.ts MAX_TOOL_RESULT_CHARS
+ * eviction; the SDK path passes the string through sanitizeToolResult +
+ * scrub). No configured server emits `structuredContent` yet: that half is
+ * forward-compatible (the SDK already validates it against an outputSchema).
+ */
+export function renderResult(result: McpCallResult): string {
+  const content = result.content ?? [];
+  const parts: string[] = [];
+  const texts = content
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text as string);
+  const structured = result.structuredContent;
+  const joined = texts.join("\n");
+  if (
+    texts.length > 0 &&
+    (structured === undefined || texts.some((t) => t !== ""))
+  ) {
+    parts.push(joined);
+  }
+  if (structured !== undefined) {
+    // Plain stringify first: a circular value throws here (execute's catch).
+    const json = JSON.stringify(structured);
+    if (!texts.some((t) => sameJson(t, structured))) {
+      parts.push(`${parts.length > 0 ? "\n" : ""}[structured]\n${json}`);
+    }
+  }
+  const items = content
+    .filter((item) => item.type !== "text")
+    .map(renderItem)
+    .join("\n");
+  if (items) parts.push(items);
+  return parts.length > 0 ? parts.join("\n") : "[No text content returned]";
 }
 
 /**
@@ -111,7 +195,7 @@ export function createMcpTool(
 
       try {
         const result = await callFn(mcpTool.name, args);
-        const text = extractText(result.content);
+        const text = renderResult(result);
         if (result.isError) {
           return JSON.stringify({ error: text });
         }

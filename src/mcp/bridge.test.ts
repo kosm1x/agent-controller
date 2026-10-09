@@ -6,6 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   createMcpTool,
   extractText,
+  renderResult,
   type McpCallFn,
   type McpContentItem,
 } from "./bridge.js";
@@ -53,6 +54,156 @@ describe("extractText", () => {
 
   it("should return fallback for empty content", () => {
     expect(extractText([])).toBe("[No text content returned]");
+  });
+});
+
+describe("renderResult", () => {
+  it("text only is identical to extractText (live regression pin)", () => {
+    const content: McpContentItem[] = [
+      { type: "text", text: "Hello" },
+      { type: "text", text: "World" },
+    ];
+    expect(renderResult({ content })).toBe(extractText(content));
+  });
+
+  it("text + structuredContent appends a labelled JSON block", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: "summary" }],
+        structuredContent: { temp: 72, unit: "F" },
+      }),
+    ).toBe('summary\n\n[structured]\n{"temp":72,"unit":"F"}');
+  });
+
+  it("structuredContent only returns the labelled JSON, no fallback literal", () => {
+    const out = renderResult({ content: [], structuredContent: { a: 1 } });
+    expect(out).toBe('[structured]\n{"a":1}');
+    expect(out).not.toContain("[No text content returned]");
+  });
+
+  it("structured-only success never reads as an error result", () => {
+    const out = renderResult({
+      content: [],
+      structuredContent: { error: null, rows: 3 },
+    });
+    expect(out).not.toMatch(/^\s*\{\s*"error"/);
+    expect(out).toBe('[structured]\n{"error":null,"rows":3}');
+  });
+
+  it("omits the structured block when a text item carries the same JSON", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: '{"a":1}' }],
+        structuredContent: { a: 1 },
+      }),
+    ).toBe('{"a":1}');
+  });
+
+  it("same-JSON check ignores key order, including nested objects", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: '{"b":{"y":1,"x":2},"a":1}' }],
+        structuredContent: { a: 1, b: { x: 2, y: 1 } },
+      }),
+    ).toBe('{"b":{"y":1,"x":2},"a":1}');
+  });
+
+  it("same-JSON check respects array order", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: '{"a":[2,1]}' }],
+        structuredContent: { a: [1, 2] },
+      }),
+    ).toBe('{"a":[2,1]}\n\n[structured]\n{"a":[1,2]}');
+  });
+
+  it("keeps the structured block when the text JSON differs", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: '{"a":2}' }],
+        structuredContent: { a: 1 },
+      }),
+    ).toBe('{"a":2}\n\n[structured]\n{"a":1}');
+  });
+
+  it("an empty text item before structured content adds no blank lines", () => {
+    expect(
+      renderResult({
+        content: [{ type: "text", text: "" }],
+        structuredContent: { a: 1 },
+      }),
+    ).toBe('[structured]\n{"a":1}');
+  });
+
+  it("several empty text items before structured content add no blank lines", () => {
+    expect(
+      renderResult({
+        content: [
+          { type: "text", text: "" },
+          { type: "text", text: "" },
+        ],
+        structuredContent: { a: 1 },
+      }),
+    ).toBe('[structured]\n{"a":1}');
+  });
+
+  it("resource_link renders one labelled line with the uri", () => {
+    const out = renderResult({
+      content: [
+        {
+          type: "resource_link",
+          name: "report",
+          uri: "file:///syn/report.csv",
+          mimeType: "text/csv",
+        },
+      ],
+    });
+    expect(out).toBe("[resource_link] report file:///syn/report.csv text/csv");
+    expect(out).not.toContain("[No text content returned]");
+  });
+
+  it("embedded resource shows uri + char count, never the text", () => {
+    const body = "synthetic-embedded-body-" + "x".repeat(40);
+    const out = renderResult({
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "mem://syn/doc",
+            mimeType: "text/plain",
+            text: body,
+          },
+        },
+      ],
+    });
+    expect(out).toBe(
+      `[resource] mem://syn/doc text/plain (${body.length} chars)`,
+    );
+    expect(out).not.toContain(body);
+  });
+
+  it("image renders mimeType + base64 length, never the payload", () => {
+    const data = "iVBORw0KGgoSYNTHETICPAYLOAD" + "A".repeat(64);
+    const out = renderResult({
+      content: [
+        { type: "text", text: "Took a screenshot" },
+        { type: "image", data, mimeType: "image/png" },
+      ],
+    });
+    expect(out).toBe(
+      `Took a screenshot\n[image] image/png ${data.length} bytes base64 (not forwarded on this path)`,
+    );
+    expect(out).not.toContain(data);
+  });
+
+  it("unknown item type renders its label", () => {
+    expect(renderResult({ content: [{ type: "widget" }] })).toBe("[widget]");
+    const untyped = { text: "x" } as unknown as McpContentItem;
+    expect(renderResult({ content: [untyped] })).toBe("[unknown]");
+  });
+
+  it("empty content and no structured keeps the fallback literal", () => {
+    expect(renderResult({ content: [] })).toBe("[No text content returned]");
   });
 });
 
@@ -131,6 +282,57 @@ describe("createMcpTool", () => {
 
     const result = await tool.execute({});
     expect(JSON.parse(result)).toEqual({ error: "Server not found" });
+  });
+
+  it("isError with structured-only content carries the structured keys", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: { code: "E_SYN", detail: "bad input" },
+      isError: true,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    const result = await tool.execute({});
+    const parsed = JSON.parse(result) as { error: string };
+    expect(parsed.error).toBe(
+      '[structured]\n{"code":"E_SYN","detail":"bad input"}',
+    );
+  });
+
+  it("execute returns structuredContent when no text item came back", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: { rows: [1, 2], total: 2 },
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(await tool.execute({})).toBe(
+      '[structured]\n{"rows":[1,2],"total":2}',
+    );
+  });
+
+  it("execute returns an error JSON for unserializable structuredContent", async () => {
+    const circular: Record<string, unknown> = { a: 1 };
+    circular.self = circular;
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: circular,
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    const parsed = JSON.parse(await tool.execute({})) as { error: string };
+    expect(parsed.error).toMatch(/circular/i);
+  });
+
+  it("execute keeps a non-text item as a labelled line", async () => {
+    const callFn: McpCallFn = vi.fn().mockResolvedValue({
+      content: [{ type: "image", data: "QUJD", mimeType: "image/jpeg" }],
+    });
+    const tool = createMcpTool("w", { name: "t" }, callFn);
+
+    expect(await tool.execute({})).toBe(
+      "[image] image/jpeg 4 bytes base64 (not forwarded on this path)",
+    );
   });
 
   it("should catch thrown errors from callFn", async () => {

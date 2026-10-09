@@ -43,9 +43,9 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | Programmatic tool calling, context editing, memory tool, hosted Skills [a11, a13–a15] | ignore | none | none | 2026-10-03 |
 | Server compaction [a12] | ignore (CLI owns it) | context overflows (VPS data) | weekly scan | 2026-10-03 |
 | Hosted Managed Agents [a24] | ignore (option A) | none | operator (standing) | 2026-10-03 |
-| MCP bridge keeps `structuredContent` + resource links [b1] | build | already reachable | L2 | 2026-10-03 |
-| `@modelcontextprotocol/sdk` 1.32.0 [b2] | adopt (within caret) | with L2 | L2 | 2026-10-03 |
-| MCP validation errors as tool errors [b3] | borrow | `-32602` on a bad `/mcp` argument | L2 | 2026-10-03 |
+| MCP bridge keeps `structuredContent` + resource links [b1] | build | **built 2026-10-09** (`renderResult`: structured JSON block + one line per non-text item) | L2 | 2026-10-09 |
+| `@modelcontextprotocol/sdk` 1.32.0 [b2] | adopt (within caret) | operator-run: `npm install @modelcontextprotocol/sdk@1.32.0` under a STOPPED service; 1.32.1 (2026-10-05) is inside the 7-day `min-release-age` until 2026-10-12 | L2 | 2026-10-09 |
+| MCP validation errors as tool errors [b3] | borrow | verified 2026-10-09: 1.29.0 and 1.32.0 both throw -32602 on bad arguments; borrow needs a bypass of `registerTool` validation → parked | L2 | 2026-10-09 |
 | Deterministic `tools/list` order [b4] | borrow | cache-hit drop (`audit-claim`) | S5 | 2026-10-03 |
 | MCP 2026-07-28 stateless protocol, v2 SDK [b5] | ignore now | an SDK sets `LATEST_PROTOCOL_VERSION = 2026-07-28` | operator ruling | 2026-10-03 |
 | Drop deprecated `logging` capability on `/mcp` [b6] | adopt at the next touch of `/mcp` | MCP v2 migration | operator ruling | 2026-10-03 |
