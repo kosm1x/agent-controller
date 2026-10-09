@@ -5,6 +5,7 @@ import {
   writeFileSync,
   mkdirSync,
   chmodSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,9 @@ import {
   reindexJarvisKb,
   walkKbDir,
   MANAGED_NAMESPACES,
+  kbRegistryPath,
+  upsertFromDiskWrite,
+  registryNewerThanDisk,
 } from "./jarvis-reindex.js";
 import { upsertFile, getFile } from "./jarvis-fs.js";
 
@@ -205,6 +209,156 @@ describe("reindexJarvisKb", () => {
     } finally {
       rmSync(altDir, { recursive: true, force: true });
     }
+  });
+});
+
+// Queue §2026-10-08 item 11: a disk write that never reached the registry
+// (file_edit / shell) left a stale row the grader judged (W1 false positive).
+describe("reindexJarvisKb — refresh of stale rows (item 11)", () => {
+  const PAST = "2026-01-01 00:00:00";
+  const setTimes = (path: string, updatedAt: string, userEdit: string | null) =>
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET updated_at = ?, user_edit_time = ? WHERE path = ?")
+      .run(updatedAt, userEdit, path);
+  const times = (path: string) =>
+    getDatabase()
+      .prepare("SELECT updated_at, user_edit_time FROM jarvis_files WHERE path = ?")
+      .get(path) as { updated_at: string; user_edit_time: string | null };
+  const seedRow = (path: string, content: string) =>
+    upsertFile(path, "Kept Title", content, ["t1"], "always-read", 70, "cond", ["r.md"]);
+
+  it("refreshes a row whose disk copy is newer and different, keeping its metadata", () => {
+    seedRow("knowledge/a.md", "# A\nold");
+    setTimes("knowledge/a.md", PAST, PAST);
+    writeFs("knowledge/a.md", "# A\nnew from disk");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.refreshed).toBe(1);
+    expect(r.drift).toBe(0);
+    const row = getFile("knowledge/a.md")!;
+    expect(row.content).toBe("# A\nnew from disk");
+    expect(row.title).toBe("Kept Title");
+    expect(JSON.parse(row.tags)).toEqual(["t1"]);
+    expect(row.qualifier).toBe("always-read");
+    expect(row.priority).toBe(70);
+    expect(row.condition).toBe("cond");
+    expect(JSON.parse(row.related_to)).toEqual(["r.md"]);
+    expect(row.user_edit_time).toBe(PAST);
+    expect(row.updated_at).not.toBe(PAST);
+  });
+
+  it("does not refresh when the newer disk copy has identical bytes", () => {
+    seedRow("knowledge/same.md", "# Same\nbody");
+    setTimes("knowledge/same.md", PAST, PAST);
+    writeFs("knowledge/same.md", "# Same\nbody");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.refreshed).toBe(0);
+    expect(times("knowledge/same.md").updated_at).toBe(PAST);
+  });
+
+  it("never touches a registry-newer row (disk copy older)", () => {
+    seedRow("knowledge/reg.md", "# Reg\nregistry truth");
+    writeFs("knowledge/reg.md", "# Reg\nolder disk copy");
+    const old = new Date(Date.now() - 3600_000);
+    utimesSync(join(testKbDir, "knowledge/reg.md"), old, old);
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.refreshed).toBe(0);
+    expect(getFile("knowledge/reg.md")!.content).toBe("# Reg\nregistry truth");
+  });
+
+  it("never refreshes a day-log from disk, while a missing day-log still imports", () => {
+    seedRow("logs/day-logs/2026-09-01.md", "# Day\nfull verbatim log");
+    setTimes("logs/day-logs/2026-09-01.md", PAST, PAST);
+    writeFs("logs/day-logs/2026-09-01.md", "stub");
+    writeFs("logs/day-logs/2026-09-02.md", "# Day 2\nonly on disk");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.refreshed).toBe(0);
+    expect(r.upserted).toBe(1);
+    expect(getFile("logs/day-logs/2026-09-01.md")!.content).toBe("# Day\nfull verbatim log");
+    expect(getFile("logs/day-logs/2026-09-02.md")?.content).toBe("# Day 2\nonly on disk");
+  });
+
+  it("never refreshes managed namespaces (NorthStar/, directives/)", () => {
+    seedRow("NorthStar/goals/g.md", "# G\nregistry");
+    setTimes("NorthStar/goals/g.md", PAST, PAST);
+    writeFs("NorthStar/goals/g.md", "# G\ndisk edit");
+    const directive = getDatabase()
+      .prepare("SELECT path, content FROM jarvis_files WHERE path LIKE 'directives/%' LIMIT 1")
+      .get() as { path: string; content: string };
+    setTimes(directive.path, PAST, PAST);
+    writeFs(directive.path, "# rogue disk edit");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.refreshed).toBe(0);
+    expect(getFile("NorthStar/goals/g.md")!.content).toBe("# G\nregistry");
+    expect(getFile(directive.path)!.content).toBe(directive.content);
+  });
+
+  it("counts a row with a NULL updated_at as errored, without throwing or refreshing", () => {
+    seedRow("knowledge/n.md", "# N\nregistry");
+    getDatabase().prepare("UPDATE jarvis_files SET updated_at = NULL WHERE path = ?").run("knowledge/n.md");
+    writeFs("knowledge/n.md", "# N\ndisk");
+    const r = reindexJarvisKb({ kbRoot: testKbDir });
+    expect(r.errored).toBe(1);
+    expect(r.refreshed).toBe(0);
+    expect(getFile("knowledge/n.md")!.content).toBe("# N\nregistry");
+  });
+});
+
+describe("registryNewerThanDisk (fold F1)", () => {
+  const hourAgo = () => Date.now() - 3600_000;
+  it("is true only when the row is newer beyond 2 s AND differs", () => {
+    upsertFile("knowledge/r.md", "R", "# R\nregistry");
+    expect(registryNewerThanDisk("knowledge/r.md", "# R\nstale disk", hourAgo())).toBe(true);
+    expect(registryNewerThanDisk("knowledge/r.md", "# R\nregistry", hourAgo())).toBe(false);
+    expect(registryNewerThanDisk("knowledge/r.md", "# R\nstale disk", Date.now())).toBe(false);
+    expect(registryNewerThanDisk("knowledge/r.md", "# R\nstale disk", Date.now() + 3600_000)).toBe(false);
+    expect(registryNewerThanDisk("knowledge/none.md", "x", hourAgo())).toBe(false);
+  });
+});
+
+describe("kbRegistryPath (item 11)", () => {
+  it("maps an .md under the KB root to its registry path", () => {
+    expect(kbRegistryPath(join(testKbDir, "knowledge/x.md"))).toBe("knowledge/x.md");
+    expect(kbRegistryPath(join(testKbDir, "Notes.MD"))).toBe("Notes.MD");
+  });
+
+  it("returns null for non-.md files, paths outside the root and prefix siblings", () => {
+    expect(kbRegistryPath(join(testKbDir, "knowledge/x.txt"))).toBeNull();
+    expect(kbRegistryPath("/tmp/elsewhere/x.md")).toBeNull();
+    expect(kbRegistryPath(`${testKbDir}-evil/x.md`)).toBeNull();
+  });
+
+  it("tolerates a trailing slash on the KB root override", () => {
+    process.env.JARVIS_KB_MIRROR_DIR = testKbDir + "/";
+    expect(kbRegistryPath(join(testKbDir, "knowledge/x.md"))).toBe("knowledge/x.md");
+    expect(kbRegistryPath(`${testKbDir}-evil/x.md`)).toBeNull();
+  });
+});
+
+describe("upsertFromDiskWrite (item 11)", () => {
+  it("keeps an existing row's metadata and bumps user_edit_time", () => {
+    upsertFile("knowledge/m.md", "Kept Title", "# M\nold", ["t1"], "always-read", 70, "cond", ["r.md"], {
+      skipUserEdit: true,
+    });
+    expect(getFile("knowledge/m.md")!.user_edit_time).toBeNull();
+    upsertFromDiskWrite("knowledge/m.md", "# Other heading\nnew");
+    const row = getFile("knowledge/m.md")!;
+    expect(row.content).toBe("# Other heading\nnew");
+    expect(row.title).toBe("Kept Title");
+    expect(JSON.parse(row.tags)).toEqual(["t1"]);
+    expect(row.qualifier).toBe("always-read");
+    expect(row.priority).toBe(70);
+    expect(row.condition).toBe("cond");
+    expect(JSON.parse(row.related_to)).toEqual(["r.md"]);
+    expect(row.user_edit_time).not.toBeNull();
+  });
+
+  it("derives title and qualifier for a new path", () => {
+    upsertFromDiskWrite("workspace/new.md", "# Fresh Title\nbody");
+    const row = getFile("workspace/new.md")!;
+    expect(row.title).toBe("Fresh Title");
+    expect(row.qualifier).toBe("workspace");
+    expect(row.priority).toBe(50);
+    expect(JSON.parse(row.tags)).toEqual([]);
   });
 });
 

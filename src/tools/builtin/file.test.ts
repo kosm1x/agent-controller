@@ -12,11 +12,14 @@ const mocks = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockExecFileSync: vi.fn(() => "main"),
   mockStatSync: vi.fn(),
+  mockWriteFileSync: vi.fn(),
+  upsertFromDiskWrite: vi.fn(),
+  declareReadbackGate: vi.fn(),
 }));
 
 vi.mock("fs", () => ({
   readFileSync: mocks.mockReadFileSync,
-  writeFileSync: vi.fn(),
+  writeFileSync: mocks.mockWriteFileSync,
   mkdirSync: vi.fn(),
   rmSync: vi.fn(),
   statSync: mocks.mockStatSync,
@@ -24,6 +27,16 @@ vi.mock("fs", () => ({
 
 vi.mock("child_process", () => ({
   execFileSync: mocks.mockExecFileSync,
+}));
+
+vi.mock("../../db/jarvis-reindex.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../db/jarvis-reindex.js")>()),
+  upsertFromDiskWrite: mocks.upsertFromDiskWrite,
+}));
+
+vi.mock("../../lib/v8-4/readback.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/v8-4/readback.js")>()),
+  declareReadbackGate: mocks.declareReadbackGate,
 }));
 
 import { fileReadTool } from "./file.js";
@@ -243,5 +256,82 @@ describe("file_write content_file — read denylist", () => {
       expect(String(r.error), src).toMatch(/content_file blocked/);
       expect(mocks.mockReadFileSync, src).not.toHaveBeenCalledWith(src, "utf-8");
     }
+  });
+});
+
+// Queue §2026-10-08 item 11: a write under the KB root reaches the registry.
+describe("file_write — KB registry parity (item 11)", () => {
+  beforeEach(() => {
+    mocks.mockWriteFileSync.mockReset();
+    mocks.upsertFromDiskWrite.mockReset();
+    mocks.declareReadbackGate.mockReset();
+  });
+
+  it("upserts the registry row with the rel path and the content", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/knowledge/w.md",
+        content: "# W\nbody",
+      }),
+    );
+    expect(r.bytes_written).toBe(8);
+    expect(r.registry_error).toBeUndefined();
+    expect(mocks.upsertFromDiskWrite).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertFromDiskWrite).toHaveBeenCalledWith("knowledge/w.md", "# W\nbody");
+    const { sha8 } = await import("../../lib/v8-4/readback.js");
+    expect(mocks.declareReadbackGate).toHaveBeenCalledTimes(1);
+    expect(mocks.declareReadbackGate).toHaveBeenCalledWith(
+      undefined,
+      "file_write",
+      "kb:knowledge/w.md",
+      "KB knowledge/w.md escrito y legible",
+      { path: "knowledge/w.md", sha8: sha8("# W\nbody") },
+    );
+  });
+
+  it("does not touch the registry for a write outside the KB root", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({ path: "/tmp/mc-file-test-out/w.md", content: "x" }),
+    );
+    expect(r.bytes_written).toBe(1);
+    expect(mocks.upsertFromDiskWrite).not.toHaveBeenCalled();
+    expect(mocks.declareReadbackGate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a day-log path before writing", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/logs/day-logs/2026-09-01.md",
+        content: "stub",
+      }),
+    );
+    expect(String(r.error)).toMatch(/^Write blocked: logs\/day-logs\/ is mechanically managed/);
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mocks.upsertFromDiskWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports a registry failure on the success JSON", async () => {
+    mocks.upsertFromDiskWrite.mockImplementation(() => {
+      throw new Error("db closed");
+    });
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/knowledge/f.md",
+        content: "abc",
+      }),
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.bytes_written).toBe(3);
+    expect(r.registry_error).toBe("db closed");
+    expect(mocks.mockWriteFileSync).toHaveBeenCalledTimes(1);
+    // The gate is declared anyway, so the stale row fails the read-back.
+    expect(mocks.declareReadbackGate).toHaveBeenCalledTimes(1);
   });
 });

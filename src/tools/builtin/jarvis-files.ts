@@ -20,6 +20,7 @@ import {
   getJarvisKbRoot,
 } from "../../db/jarvis-fs.js";
 import type { JarvisFile } from "../../db/jarvis-fs.js";
+import { DAY_LOG_MANAGED } from "../../db/jarvis-reindex.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { currentExecutionContext } from "../../inference/execution-context.js";
 import { hasExternalTag } from "../../lib/external-kb-policy.js";
@@ -389,10 +390,7 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     // in router.ts is the sole writer for `logs/day-logs/`. Curated
     // narratives belong under `logs/day-narratives/`.
     if (path.startsWith("logs/day-logs/")) {
-      return JSON.stringify({
-        error:
-          "logs/day-logs/ is mechanically managed (verbatim interaction log). Write the narrative companion to logs/day-narratives/ instead.",
-      });
+      return JSON.stringify({ error: DAY_LOG_MANAGED });
     }
 
     const prior = getFile(path);

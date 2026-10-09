@@ -301,6 +301,9 @@ export function registerReadbackVerifiers(): void {
   registerReadback("jarvis_file_write", verifyKbFile);
   registerReadback("jarvis_file_update", verifyKbFile);
   registerReadback("jarvis_files_batch_write", verifyKbFile);
+  // Item 11: these disk tools now write registry rows too (under the KB root).
+  registerReadback("file_edit", verifyKbFile);
+  registerReadback("file_write", verifyKbFile);
   registerReadback("gsheets_write", verifySheetWrite);
   registerReadback("gdocs_write", verifyDocWrite);
   registerReadback("schedule_task", verifySchedule);

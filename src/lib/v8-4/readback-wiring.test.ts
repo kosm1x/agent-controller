@@ -5,6 +5,9 @@
  * `declareReadbackGate` call turns this RED.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { closeDatabase, initDatabase } from "../../db/index.js";
 import { enterRunToolContext } from "../../tools/rule-of-two.js";
 import { listGates } from "./gates.js";
@@ -182,6 +185,70 @@ describe("write tools declare read-back gates inside a run", () => {
     expect(JSON.parse(out).error).toBe("CONFIRMATION_REQUIRED");
     expect(listGates("task-park")).toHaveLength(0);
     expect(listSchedules(false)).toHaveLength(0);
+  });
+
+  describe("disk tools under the KB root (item 11)", () => {
+    let kb = "";
+    let prevMirror: string | undefined;
+    beforeEach(() => {
+      prevMirror = process.env.JARVIS_KB_MIRROR_DIR;
+      kb = mkdtempSync(join(tmpdir(), "mc-rb-wiring-kb-"));
+      process.env.JARVIS_KB_MIRROR_DIR = kb;
+      mkdirSync(join(kb, "projects/demo"), { recursive: true });
+    });
+    afterEach(() => {
+      if (prevMirror === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+      else process.env.JARVIS_KB_MIRROR_DIR = prevMirror;
+      rmSync(kb, { recursive: true, force: true });
+    });
+
+    it("file_edit → kb: gate with the edited content's hash, and it verifies", async () => {
+      const { fileEditTool } = await import("../../tools/builtin/code-editing.js");
+      const { verifyKbFile } = await import("./readback-verifiers.js");
+      writeFileSync(join(kb, "projects/demo/e.md"), "# E\nantes\n");
+      await enterRunToolContext("task-fe", () =>
+        fileEditTool.execute({ path: join(kb, "projects/demo/e.md"), old_string: "antes", new_string: "después" }),
+      );
+      const rows = listGates("task-fe");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].gate_id).toBe(readbackGateId("kb:projects/demo/e.md"));
+      expect(parseReadback(rows[0])).toEqual({
+        tool: "file_edit",
+        data: { path: "projects/demo/e.md", sha8: sha8("# E\ndespués\n") },
+      });
+      expect((await verifyKbFile(parseReadback(rows[0])!.data)).ok).toBe(true);
+    });
+
+    it("file_write → kb: gate with the written content's hash, and it verifies", async () => {
+      const { fileWriteTool } = await import("../../tools/builtin/file.js");
+      const { verifyKbFile } = await import("./readback-verifiers.js");
+      await enterRunToolContext("task-fw", () =>
+        fileWriteTool.execute({ path: join(kb, "projects/demo/w.md"), content: "# W\ncuerpo" }),
+      );
+      const rows = listGates("task-fw");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].gate_id).toBe(readbackGateId("kb:projects/demo/w.md"));
+      expect(parseReadback(rows[0])).toEqual({
+        tool: "file_write",
+        data: { path: "projects/demo/w.md", sha8: sha8("# W\ncuerpo") },
+      });
+      expect((await verifyKbFile(parseReadback(rows[0])!.data)).ok).toBe(true);
+    });
+
+    it("jarvis_file_write then file_edit on the SAME path → ONE gate holding the later hash (supersede by artifact)", async () => {
+      const { jarvisFileWriteTool } = await import("../../tools/builtin/jarvis-files.js");
+      const { fileEditTool } = await import("../../tools/builtin/code-editing.js");
+      await enterRunToolContext("task-sup", async () => {
+        await jarvisFileWriteTool.execute({ path: "projects/demo/x.md", title: "X", content: "# X\nprimera" });
+        await fileEditTool.execute({ path: join(kb, "projects/demo/x.md"), old_string: "primera", new_string: "segunda" });
+      });
+      const rows = listGates("task-sup");
+      expect(rows).toHaveLength(1);
+      expect(parseReadback(rows[0])).toEqual({
+        tool: "file_edit",
+        data: { path: "projects/demo/x.md", sha8: sha8("# X\nsegunda") },
+      });
+    });
   });
 
   it("outside a run context no gate is declared (background tools, tests)", async () => {

@@ -5,7 +5,8 @@
  * a mirror. External writers (shell_exec, manual edits, batch migrations)
  * sometimes drop files into the FS that bypass `upsertFile()` and become
  * invisible to Jarvis's tools. This module walks the FS, finds files
- * missing from the DB, and upserts them so the DB regains parity.
+ * missing from the DB, and upserts them so the DB regains parity. Rows whose
+ * disk copy is newer AND different get their content refreshed (item 11).
  *
  * Used by:
  *  - `scripts/reindex-jarvis-kb.ts` (manual / one-off)
@@ -15,7 +16,8 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { getDatabase } from "./index.js";
-import { upsertFile, getJarvisKbRoot } from "./jarvis-fs.js";
+import { upsertFile, getFile, getJarvisKbRoot } from "./jarvis-fs.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /**
  * Path prefixes (relative to kbRoot) whose authority lies elsewhere and must
@@ -44,6 +46,17 @@ export const MANAGED_NAMESPACES = ["NorthStar/", "directives/"];
  */
 export const MANAGED_FILE_RE = /^skills\/[^/]+\/SKILL\.md$/i;
 
+/**
+ * Prefixes the walk never REFRESHES from disk (a missing file still imports).
+ * `logs/day-logs/` — append authority is the registry via the messaging
+ * router; the 4 disk stubs of 2026-09 were `shell_exec` leftovers.
+ */
+export const REFRESH_EXEMPT = ["logs/day-logs/"];
+
+/** The refusal sentence for a model write under `logs/day-logs/` (all writers share it). */
+export const DAY_LOG_MANAGED =
+  "logs/day-logs/ is mechanically managed (verbatim interaction log). Write the narrative companion to logs/day-narratives/ instead.";
+
 export interface ReindexResult {
   /** Files on disk under the mirror root. */
   fsCount: number;
@@ -53,6 +66,8 @@ export interface ReindexResult {
   drift: number;
   /** Files actually upserted (drift minus errors). */
   upserted: number;
+  /** Registry rows whose content was refreshed from a newer, different disk copy. */
+  refreshed: number;
   /** Errored files (read failure, upsert exception). */
   errored: number;
   /** Total wall time. */
@@ -100,6 +115,58 @@ function deriveQualifier(path: string): string {
   return "reference";
 }
 
+/** Item 11 (W1 false positive): the registry path of an absolute disk path, or null. */
+export function kbRegistryPath(resolvedAbs: string): string | null {
+  const root = getJarvisKbRoot().replace(/\/+$/, "") + "/";
+  if (!resolvedAbs.startsWith(root) || !/\.md$/i.test(resolvedAbs)) return null;
+  return resolvedAbs.slice(root.length);
+}
+
+/**
+ * Which copy is newer beyond the 2 s tolerance: `updated_at` has 1 s
+ * resolution and the mirror write follows the DB write within ms, so a
+ * normal write reads "same". Throws on a NULL `updated_at`.
+ */
+function newerCopy(updatedAt: string, mtimeMs: number): "disk" | "registry" | "same" {
+  const updatedMs = Date.parse(updatedAt.replace(" ", "T") + "Z");
+  if (mtimeMs > updatedMs + 2000) return "disk";
+  if (updatedMs > mtimeMs + 2000) return "registry";
+  return "same";
+}
+
+/**
+ * Item 11: the registry row for `rel` is newer than its disk copy AND differs
+ * from it — a disk write would push a stale copy over it (file_edit refuses;
+ * the walk never refreshes that direction).
+ */
+export function registryNewerThanDisk(
+  rel: string,
+  diskContent: string,
+  mtimeMs: number,
+): boolean {
+  const row = getFile(rel);
+  return (
+    !!row &&
+    newerCopy(row.updated_at, mtimeMs) === "registry" &&
+    row.content !== diskContent
+  );
+}
+
+/** Item 11: a tool's disk write under the KB root reaches the registry too. */
+export function upsertFromDiskWrite(rel: string, content: string): void {
+  const prior = getFile(rel);
+  upsertFile(
+    rel,
+    prior?.title ?? deriveTitle(content, rel),
+    content,
+    prior ? (JSON.parse(prior.tags) as string[]) : [],
+    prior?.qualifier ?? deriveQualifier(rel),
+    prior?.priority ?? 50,
+    prior?.condition ?? null,
+    prior ? (JSON.parse(prior.related_to) as string[]) : [],
+  );
+}
+
 /**
  * Walk the mirror dir and upsert any FS-only .md files into jarvis_files.
  * Idempotent: if every FS file is already in the DB, returns drift=0 and
@@ -120,13 +187,15 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
   );
 
   const db = getDatabase();
-  const dbPaths = new Set(
+  const dbUpdatedAt = new Map(
     (
-      db.prepare("SELECT path FROM jarvis_files").all() as Array<{
+      db.prepare("SELECT path, updated_at FROM jarvis_files").all() as Array<{
         path: string;
+        updated_at: string;
       }>
-    ).map((r) => r.path),
+    ).map((r) => [r.path, r.updated_at]),
   );
+  const dbPaths = new Set(dbUpdatedAt.keys());
 
   const fsOnly = [...fsRel].filter((p) => !dbPaths.has(p));
   let upserted = 0;
@@ -146,11 +215,44 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
     }
   }
 
+  // Disk-newer rows: content moves, the row's metadata stays. Registry-newer
+  // rows are never touched (that direction is a per-file operator ruling).
+  let refreshed = 0;
+  for (const rel of fsRel) {
+    const updatedAt = dbUpdatedAt.get(rel);
+    if (updatedAt === undefined) continue;
+    if (REFRESH_EXEMPT.some((p) => rel.startsWith(p))) continue;
+    try {
+      const full = join(kbRoot, rel);
+      // mtime is only a pre-filter; content equality is the real test.
+      if (newerCopy(updatedAt, statSync(full).mtimeMs) !== "disk") continue;
+      const diskContent = readFileSync(full, "utf-8");
+      const row = getFile(rel);
+      if (!row || row.content === diskContent) continue;
+      upsertFile(
+        rel,
+        row.title,
+        diskContent,
+        JSON.parse(row.tags) as string[],
+        row.qualifier,
+        row.priority,
+        row.condition,
+        JSON.parse(row.related_to) as string[],
+        { skipUserEdit: true },
+      );
+      refreshed++;
+    } catch (err) {
+      console.warn(`[kb-reindex] refresh failed for ${rel}: ${errMsg(err)}`);
+      errored++;
+    }
+  }
+
   return {
     fsCount: fsRel.size,
     dbCount: dbPaths.size,
     drift: fsOnly.length,
     upserted,
+    refreshed,
     errored,
     durationMs: Date.now() - start,
   };

@@ -24,6 +24,14 @@ import {
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { scrubSecrets } from "../../lib/secret-refs.js";
 import {
+  DAY_LOG_MANAGED,
+  kbRegistryPath,
+  upsertFromDiskWrite,
+} from "../../db/jarvis-reindex.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { currentRunTaskId } from "../rule-of-two.js";
+import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
+import {
   realResolve,
   realResolveParent,
   isOperatorConfigPath,
@@ -404,13 +412,40 @@ AFTER WRITING: Report the file path written.`,
     if (!writeCheck.allowed) {
       return JSON.stringify({ error: writeCheck.reason });
     }
+    const kbRel = kbRegistryPath(realResolve(path));
+    if (kbRel?.startsWith("logs/day-logs/")) {
+      return JSON.stringify({ error: `Write blocked: ${DAY_LOG_MANAGED}` });
+    }
 
     try {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content, "utf-8");
+      // The disk write already happened: a registry failure rides on the
+      // success JSON rather than an {error} that invites a blind retry.
+      let registryError: string | undefined;
+      if (kbRel) {
+        try {
+          upsertFromDiskWrite(kbRel, content);
+        } catch (err) {
+          registryError = errMsg(err);
+          console.warn(
+            `[file_write] KB registry upsert failed for ${kbRel}: ${registryError}`,
+          );
+        }
+        // Declared even when the upsert threw: the stale row then FAILS the
+        // read-back, so the completion ledger sees a registry_error.
+        declareReadbackGate(
+          currentRunTaskId(),
+          "file_write",
+          `kb:${kbRel}`,
+          `KB ${kbRel} escrito y legible`,
+          { path: kbRel, sha8: sha8(content) },
+        );
+      }
       return JSON.stringify({
         path,
         bytes_written: Buffer.byteLength(content, "utf-8"),
+        ...(registryError ? { registry_error: registryError } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

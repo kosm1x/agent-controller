@@ -13,7 +13,13 @@
  *   - Makes mistakes obvious (non-unique matches → error)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+} from "fs";
 import { execFileSync } from "child_process";
 import { dirname } from "path";
 import type { Tool } from "../types.js";
@@ -26,6 +32,15 @@ import {
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve } from "./write-guard.js";
 import { scrubSecrets, secretSpans } from "../../lib/secret-refs.js";
+import {
+  DAY_LOG_MANAGED,
+  kbRegistryPath,
+  registryNewerThanDisk,
+  upsertFromDiskWrite,
+} from "../../db/jarvis-reindex.js";
+import { errMsg } from "../../lib/err-msg.js";
+import { currentRunTaskId } from "../rule-of-two.js";
+import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
 
 // Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
 const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
@@ -187,6 +202,10 @@ RULES:
         error: `Edit blocked: ${resolved} is a skill definition — write skills/<name>/SKILL.md with jarvis_file_write, which runs the skill critic and registers the version`,
       });
     }
+    const kbRel = kbRegistryPath(resolved);
+    if (kbRel?.startsWith("logs/day-logs/")) {
+      return JSON.stringify({ error: `Edit blocked: ${DAY_LOG_MANAGED}` });
+    }
     const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));
     if (
       denied &&
@@ -220,6 +239,12 @@ RULES:
       }
 
       const content = readFileSync(path, "utf-8");
+      // Item 11: never push a stale disk copy over a NEWER registry row.
+      if (kbRel && registryNewerThanDisk(kbRel, content, statSync(path).mtimeMs)) {
+        return JSON.stringify({
+          error: `Edit blocked: the KB registry copy of ${kbRel} is newer than the disk file — read it with jarvis_file_read and write it with jarvis_file_write`,
+        });
+      }
       // Ruling 3c, audit R7 B-1(c): a match that cuts INTO a stored
       // credential value (starts or ends inside it, or lies inside it) is
       // not a match — otherwise found / not found is an oracle that recovers
@@ -260,6 +285,30 @@ RULES:
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, newContent, "utf-8");
 
+      // The disk write already happened: report a registry failure on the
+      // success JSON, since an {error} would make the model retry an edit
+      // whose old_string is gone.
+      let registryError: string | undefined;
+      if (kbRel) {
+        try {
+          upsertFromDiskWrite(kbRel, newContent);
+        } catch (err) {
+          registryError = errMsg(err);
+          console.warn(
+            `[file_edit] KB registry upsert failed for ${kbRel}: ${registryError}`,
+          );
+        }
+        // Declared even when the upsert threw: the stale row then FAILS the
+        // read-back, so the completion ledger sees a registry_error.
+        declareReadbackGate(
+          currentRunTaskId(),
+          "file_edit",
+          `kb:${kbRel}`,
+          `KB ${kbRel} escrito y legible`,
+          { path: kbRel, sha8: sha8(newContent) },
+        );
+      }
+
       return JSON.stringify({
         path,
         replacements: replaceAll ? occurrences : 1,
@@ -267,6 +316,7 @@ RULES:
         // so a credential's length (and the edit's effect on it) is not leaked.
         old_length: scrubSecrets(content).length,
         new_length: scrubSecrets(newContent).length,
+        ...(registryError ? { registry_error: registryError } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

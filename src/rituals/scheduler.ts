@@ -711,9 +711,9 @@ function scheduleKbReindex(): void {
       try {
         const { reindexJarvisKb } = await import("../db/jarvis-reindex.js");
         const result = reindexJarvisKb();
-        if (result.drift > 0) {
+        if (result.drift > 0 || result.refreshed > 0) {
           console.log(
-            `[rituals] kb-reindex: drift=${result.drift} upserted=${result.upserted} errored=${result.errored} (${result.durationMs}ms)`,
+            `[rituals] kb-reindex: drift=${result.drift} upserted=${result.upserted} refreshed=${result.refreshed} errored=${result.errored} (${result.durationMs}ms)`,
           );
         }
         // Queue #12 (2026-05-07): emit drift + counts to Prometheus so the
