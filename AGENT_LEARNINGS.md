@@ -122,3 +122,10 @@
 - **Better (facts before the brief):** the 4 day-log stubs were traced to `shell_exec` runs by `runs.tool_calls` names + mtimes alone (no content); that fact made the walk's day-log exemption a design input, not an audit finding.
 - **Avoid:** telling an implementer to re-run "the audit's mutant MN" without its definition — it guessed two variants; paste the mutant text into the fold brief.
 
+
+## 2026-10-09 — done-claim after a failed write (`9aeb71f`; ruling explained → measure → brief → impl → qa R1 → fold W1/W2 → qa R2 → ship)
+- **Mistake:** the brief named the seam as "after `scrubResult(...)` inside `execute`" and missed the three `{error}` returns BEFORE the try (Unknown tool, placeholder, secret-ref) → audit W1. Check: before briefing a recording seam, list EVERY return path of the function (`grep -n "return" <fn>`), not just the success/throw pair.
+- **Mistake:** the stored measurement was assumed possible ("count 30-d completed tasks whose final write errored") → `scope_telemetry.tools_failed` empty on all 1,944 rows, trace rows carry no result. Check: `COUNT(*)` + a `typeof/length` histogram on the column BEFORE promising a number; when stored data cannot answer, shadow mode IS the measurement and the brief says so.
+- **Avoid:** asking a subagent to touch `.env.example` — the classifier denies it to agents (same as `.env`); hand the exact line to the operator instead of pursuing another route.
+- **Better:** a ruling the operator cannot parse gets the cause-and-effect walk (what happened → why the harness believed it → what changes if yes / if no → why it is theirs to decide), not a 5-point option list; the operator ruled in one word after it.
+- **Better:** audit asked for the reader-facing line's exact rendering (W2: raw `{"error":…}` JSON in a Spanish line) — pin the rendered string in a test through the REAL registry, not a fixture.
