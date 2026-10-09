@@ -153,3 +153,10 @@
 - **Better:** two `/diagnose` → one-Opus-implementer → qa-auditor → fold → commit cycles shipped two fixes in one session with zero rework; each brief named the files, the invariants (scoped vitest, no mc.db writes, scratch `JARVIS_KB_MIRROR_DIR`) and a RED-mutant done-check, and the auditor replayed the live corpus (2,692 titles / 132 gate rows) instead of trusting unit tests.
 - **Avoid:** fixing an ignored prompt line with more prompt text — planner line 54 already said "KB deliverables use the plain-string form" and Opus 4.8 children ignored it; the executor now makes the wrong form harmless (structural beats instructional, third instance after Posthumanismo and Waiver Wire).
 - **Avoid:** folding the narration-as-result defect (`claude-sdk` prefers concatenated per-turn text over the final turn) into the gate fix — it changes every runner's `text`; it got its own queue item with a design and a 30-d replay requirement.
+
+## 2026-10-09 — GDELT collector (/diagnose → /ship-it, 1 Opus implementer + qa-auditor + 1 fold)
+- **Mistake (my first read):** I queued it as "rate-limited and retrying into it". The collector polls once per 15 min; the 429 is the server's, reproduced from an outside vantage point. → Before blaming client pacing, probe the endpoint from a second IP and time the TLS handshake (`curl -w time_appconnect`).
+- **Avoid:** trusting `fetch failed` as a network error — undici hides `cause.code` (`UND_ERR_CONNECT_TIMEOUT`, its 10 s default covers the TLS handshake). Log the cause; a log line that cannot distinguish timeout from reset cannot be diagnosed later.
+- **Better:** a value pin (`expect(CONST).toBe(30_000)`) catches a changed constant but not the option dropped at the call site; name that survivor in the commit rather than mocking the library to kill it.
+- **Observed, not fixed:** `conflict_articles` delta threshold equals `maxrecords`, so the ratio caps at 1.0 and never alerts (queued, ruling).
+
