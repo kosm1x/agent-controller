@@ -61,29 +61,30 @@ below: `./mc-ctl audit-claim`.
 
 | task_id | graded (UTC) | grader | final status | signal | label | catch | note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `9a7f547e-9fa1-4436-a8a8-a29fec733699` | 2026-10-06 05:03 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
-| `19d27d55-ddfd-42ed-99de-7afa230a6d78` | 2026-10-06 14:18 | met | completed | - |  |  | swarm child |
-| `108642de-d0dc-4eac-8d69-1645fc203e3a` | 2026-10-07 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
-| `1769b7c0-3d18-4179-8265-f052ba855cd7` | 2026-10-08 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
+| `9a7f547e-9fa1-4436-a8a8-a29fec733699` | 2026-10-06 05:03 | met | completed | - | really done | no | scheduled heavy root (05:0x UTC ritual) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `19d27d55-ddfd-42ed-99de-7afa230a6d78` | 2026-10-06 14:18 | met | completed | - | really done | no | swarm child Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `108642de-d0dc-4eac-8d69-1645fc203e3a` | 2026-10-07 05:02 | met | completed | - | really done | no | scheduled heavy root (05:0x UTC ritual) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `1769b7c0-3d18-4179-8265-f052ba855cd7` | 2026-10-08 05:02 | met | completed | - | really done | no | scheduled heavy root (05:0x UTC ritual) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
 | `ca333512-e8be-45b3-aee2-218fb041e0d3` | 2026-10-08 13:40 | failed | completed | - | not done | **yes** | swarm child (parent 19b7d51a); operator read 10-09. Claimed a new section + verified URL written to a bet-book source file; the section exists in no file on disk, in no `jarvis_files` row, and the URL nowhere (checked 10-09). Run called `file_edit` (code-editing tool, self-improvement scope, no read-back gate) twice instead of `jarvis_file_write`; both returned `{error}`; the child still reported the goal complete. Grader: 3/3 criteria failed, correctly. First confirmed catch. Class queued §2026-10-08 (late) item 10. |
-| `292ea4dc-c9d0-4bd3-909f-5e690b322e35` | 2026-10-08 13:41 | met | completed | - |  |  | swarm child |
+| `292ea4dc-c9d0-4bd3-909f-5e690b322e35` | 2026-10-08 13:41 | met | completed | - | really done | no | swarm child Operator label 10-09 ("gave me what I needed"); grader met = correct. |
 | `5fd673a8-b999-4558-b4d2-dc4134193bc8` | 2026-10-08 13:41 | failed | completed_with_concerns | - | really done | no | **FALSE POSITIVE, cause = stale ground truth.** Operator read 10-09: the bet-book legal file on disk is 12,719 bytes, mtime 13:40 UTC inside the run, with the three country sections, the MP 1.394 note and 18 official URLs (all four plan criteria hold on disk). The run wrote it with `file_edit` (FS only); `jarvis_files` still holds the 5,4xx-byte pre-run copy, and the grader's `sql_check` reads that table, so both grader criteria failed against a copy the task never touched. The shell gates failed for the already-fixed cwd reason (`c583ed8`). Class queued §2026-10-08 (late) item 11 (KB registry/disk parity: 40/1,260 rows diverge). |
 | `df61c55d-d281-44cd-b66d-5a6abf16d536` | 2026-10-08 13:43 | met | completed_with_concerns | - | really done | no | Operator read 10-09. Wrote the combat/LatAm section via `jarvis_file_update` (read-back met, registry current); section present on disk at L70 with 50 URL lines, checked 10-09. Grader met on both criteria, correctly. The 2 failed shell gates are the pre-fix cwd class (`c583ed8`), which is what demoted it to concerns. Grader right, gates wrong. |
 | `443b5f42-99d2-4a78-99f5-cc8ec8be733d` | 2026-10-08 13:47 | met | completed_with_concerns | - | really done | no | Operator read 10-09. Wrote the 10-chapter index + source-status table into the bet-book README via `jarvis_file_update` (read-back met, 9,609 chars); grader met 3/3 on that content. The README was later restructured by chat tasks (17,564 → 2,689 chars at 03:46 UTC 10-09; index + table now live in the decisions-history file, 13 chapter lines), so the artifact is no longer in the README: judged at completion. 3 failed shell gates = cwd class. Its narration claimed the Shin section existed in fuente-6 (it does not, see `ca333512`): a false statement about a sibling's work, not about its own deliverable. |
-| `dd9d01e4-a1f9-45fd-9c23-421c47035fe2` | 2026-10-08 15:21 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
-| `a58fc029-6d8f-42b1-b3d2-6dc4b80808d4` | 2026-10-08 15:21 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
-| `17b23349-8f61-456b-9a1a-eb651f4bbecb` | 2026-10-08 15:22 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
-| `b0ea0fe5-0588-4615-ab0c-3c8962887d62` | 2026-10-08 15:22 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
-| `6293dff3-2f13-46f3-baf7-e0f6ce970ef7` | 2026-10-08 15:24 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
-| `084d4c84-f825-49cc-a09f-46f40e9b01ac` | 2026-10-09 03:20 | met | completed | none |  |  | heavy root; only row with a task_outcomes row (signal none) |
-| `341a6c51-bffb-4bb9-81d7-37943abc986f` | 2026-10-09 04:50 | met | completed | - |  |  | ritual root (04:50 UTC), 1 gate met |
-| `be4e0d40-fc28-471f-ba16-bc1a9193f144` | 2026-10-09 04:58 | met | completed | - |  |  | ritual root (04:58 UTC), 0 gates |
-| `371ccb8c-407a-41a3-baf3-847844e03bc5` | 2026-10-09 05:02 | met | completed | - |  |  | ritual root (05:02 UTC), 9 criteria, 0 gates |
+| `dd9d01e4-a1f9-45fd-9c23-421c47035fe2` | 2026-10-08 15:21 | met | completed | - | really done | no | swarm child (10-08 15:2x batch) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `a58fc029-6d8f-42b1-b3d2-6dc4b80808d4` | 2026-10-08 15:21 | met | completed | - | really done | no | swarm child (10-08 15:2x batch) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `17b23349-8f61-456b-9a1a-eb651f4bbecb` | 2026-10-08 15:22 | met | completed | - | really done | no | swarm child (10-08 15:2x batch) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `b0ea0fe5-0588-4615-ab0c-3c8962887d62` | 2026-10-08 15:22 | met | completed | - | really done | no | swarm child (10-08 15:2x batch) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `6293dff3-2f13-46f3-baf7-e0f6ce970ef7` | 2026-10-08 15:24 | met | completed | - | really done | no | swarm child (10-08 15:2x batch) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `084d4c84-f825-49cc-a09f-46f40e9b01ac` | 2026-10-09 03:20 | met | completed | none | really done | no | heavy root; only row with a task_outcomes row (signal none) Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `341a6c51-bffb-4bb9-81d7-37943abc986f` | 2026-10-09 04:50 | met | completed | - | really done | no | ritual root (04:50 UTC), 1 gate met Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `be4e0d40-fc28-471f-ba16-bc1a9193f144` | 2026-10-09 04:58 | met | completed | - | really done | no | ritual root (04:58 UTC), 0 gates Operator label 10-09 ("gave me what I needed"); grader met = correct. |
+| `371ccb8c-407a-41a3-baf3-847844e03bc5` | 2026-10-09 05:02 | met | completed | - | really done | no | ritual root (05:02 UTC), 9 criteria, 0 gates Operator label 10-09 ("gave me what I needed"); grader met = correct. |
 
 ## Tally (recompute from the rows, newest run first)
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-09 07:0x | 18 | 17 | 1 | 5.9 % (n=17; the FP's cause = stale ground truth, item 11) | 1 | 1 | 0 |
 | 2026-10-09 06:4x | 18 | 3 | 1 | 33 % (n=3; the FP's cause = stale ground truth, item 11) | 1 | 1 | 14 |
 | 2026-10-09 06:2x | 18 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 16 |
 | 2026-10-09 06:0x | 15 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 13 |
@@ -97,7 +98,7 @@ Grader population proxy = heavy tasks completed per ISO week (roots + swarm chil
 
 ## Activation checklist (all three, §6)
 
-- [ ] ≥ 30 rows labelled `really done` with ≤ 2 false positives (0/30 is the only count that bounds the true rate at 10 %).
+- [ ] ≥ 30 rows labelled `really done` with ≤ 2 false positives (0/30 is the only count that bounds the true rate at 10 %). **17/30 as of 2026-10-09, 1 FP (stale-registry cause, item 11). Operator rule for labelling, ruled 10-09: a task is `really done` when the operator got what they needed from it when it arrived; no re-read required.**
 - [x] ≥ 1 confirmed catch — `ca333512` (2026-10-09, operator read): completed-claim with no artifact, grader failed 3/3 criteria.
 - [ ] Median added latency and cost per graded task reported (`./mc-ctl gates graded 30`, `cost_ledger` agent_type `v9:grader`) and accepted by the operator. **Reported 2026-10-09 (n=15, 10-06 → 10-09, read-only SQL over `gates.graded` + `cost_ledger`; `mc-ctl audit-claim` has no grader metric, operator re-reads with `./mc-ctl gates graded 30`):** latency median 20.4 s (min 9.2 s, max 30.5 s; shadow runs in the background so no task waited; under enforce this is added wall-clock per graded task) · cost median $0.20 per task, total $3.11, 15 ledger rows under `v9:grader` match the 15 traces · 64 criteria graded (4.3 per task). Acceptance = operator.
 - [x] Before enforce: queue §2026-10-06 item 1 (enforce-mode concurrency cap) shipped — `e7629fa` 2026-10-09 (one 4-slot pool across modes; over the cap the grade rows are ABANDONED `skipped_concurrency`, never demoted; 3 tests, 8 mutants caught, audit R1 folded). DEPLOYED 2026-10-09 05:12 UTC as build `a87ddb8` (PID 2596714, health 200, 0 startup errors).
