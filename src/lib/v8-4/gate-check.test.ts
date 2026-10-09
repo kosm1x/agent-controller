@@ -14,10 +14,12 @@ vi.mock("../../tools/builtin/shell.js", async (importOriginal) => {
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
+  DEFAULT_LEDGER_BUDGET_MS,
   evaluateLedger,
   evidenceTail,
   expectMatches,
   hasRunnableGates,
+  ledgerBudgetMs,
   resolveCheckCwd,
   runCheck,
   runShellCheck,
@@ -898,5 +900,20 @@ describe("evaluateLedger — shell gates on KB-relative paths run from the KB ro
     const row = listGates("t-kbcwd-ab")[0]!;
     expect(row.state).toBe("abandoned");
     expect(row.abandon_reason).toMatch(/^check references undefined variable/);
+  });
+});
+
+describe("ledgerBudgetMs", () => {
+  it("default, env override, and junk values fall back to the default", () => {
+    expect(ledgerBudgetMs({})).toBe(DEFAULT_LEDGER_BUDGET_MS);
+    expect(DEFAULT_LEDGER_BUDGET_MS).toBe(120_000);
+    expect(ledgerBudgetMs({ TASK_GATES_LEDGER_BUDGET_MS: "30000" })).toBe(
+      30_000,
+    );
+    for (const junk of ["-5", "0", "NaN", "abc", ""]) {
+      expect(ledgerBudgetMs({ TASK_GATES_LEDGER_BUDGET_MS: junk })).toBe(
+        DEFAULT_LEDGER_BUDGET_MS,
+      );
+    }
   });
 });

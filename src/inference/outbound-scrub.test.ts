@@ -47,7 +47,8 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 const stopHook = vi.hoisted(() => ({ impl: null as unknown }));
-vi.mock("../lib/v8-4/stop-hook.js", () => ({
+vi.mock("../lib/v8-4/stop-hook.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/v8-4/stop-hook.js")>()),
   makeGatesStopHook: () => stopHook.impl,
 }));
 const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));

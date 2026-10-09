@@ -34,7 +34,10 @@ const emitTraceMock = vi.hoisted(() => vi.fn());
 vi.mock("../observability/task-trace.js", () => ({
   emitTraceEvent: emitTraceMock,
 }));
-vi.mock("../lib/v8-4/stop-hook.js", () => ({ makeGatesStopHook: () => null }));
+vi.mock("../lib/v8-4/stop-hook.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/v8-4/stop-hook.js")>()),
+  makeGatesStopHook: () => null,
+}));
 vi.mock("../config.js", () => ({
   getConfig: () => ({ budgetEnabled: false, budgetEnforce: false }),
 }));

@@ -22,7 +22,7 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | Item | Verdict | Trigger | Owner | Last reviewed |
 | --- | --- | --- | --- | --- |
 | Agent SDK 0.3.245 → 0.3.288 bump (umbrella for the L1 rows below) | adopt | operator VPS session with `eval:gate` | L1 | 2026-10-03 |
-| Stop hook own deadline + trace (gap exists at the current pin) [a16] | build | none needed | L5 | 2026-10-03 |
+| Stop hook own deadline + trace (gap exists at the current pin) [a16] | build | **built 2026-10-09** (`STOP_HOOK_DEADLINE_MS` 150 s < SDK 180 s; deadline/abort ⇒ `gates.hook_released reason=deadline\|aborted`; all hook traces carry `elapsed_ms`) | L5 | 2026-10-09 |
 | `verbatimPrompts` [a17] | adopt | pin bump | L1 | 2026-10-03 |
 | `systemPrompt` snapshot default (0.3.267) [a18] | adopt (check cache_diag) | pin bump | L1 | 2026-10-03 |
 | Telemetry discontinuity at the bump (0.3.246, 0.3.257) [a19] | adopt (caveat in `audit-claim`) | pin bump | L1 | 2026-10-03 |

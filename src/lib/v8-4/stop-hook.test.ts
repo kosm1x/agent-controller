@@ -3,16 +3,23 @@
  * only on FAILED runnable gates; honors ABANDON; releases after
  * MAX_HOOK_BLOCKS blocked stops without progress and RECORDS the release.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StopHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
   MAX_HOOK_BLOCKS,
+  STOP_HOOK_DEADLINE_MS,
+  STOP_HOOK_SDK_TIMEOUT_S,
   _resetStopHookState,
   makeGatesStopHook,
   stopHookEnabled,
 } from "./stop-hook.js";
+import {
+  ledgerBudgetMs,
+  type EvaluateOptions,
+  type EvaluateResult,
+} from "./gate-check.js";
 
 const ARMED = { TASK_GATES_STOP_HOOK: "true", TASK_GATES_MODE: "shadow" };
 
@@ -351,5 +358,322 @@ describe("ruling 3c, audit round 5 — evidence scrubbed before the 160-char cut
       secretPlaceholder("SECRET_PROJECTS_ACME_FTP_PASSWORD").slice(0, 9),
     );
     resetSecretRefsForTest();
+  });
+});
+
+describe("own deadline + trace (landscape [a16])", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function traceRows(
+    taskId: string,
+  ): Array<{ name: string; attrs: Record<string, unknown> }> {
+    return (
+      getDatabase()
+        .prepare(
+          `SELECT name, attrs FROM task_trace_events WHERE task_id = ? ORDER BY id`,
+        )
+        .all(taskId) as Array<{ name: string; attrs: string | null }>
+    ).map((r) => ({ name: r.name, attrs: JSON.parse(r.attrs ?? "{}") }));
+  }
+
+  /** A FAILED G1 result, recorded in the ledger like the real evaluate would. */
+  function failedResult(taskId: string): EvaluateResult {
+    recordGateResult(taskId, "G1", { state: "failed", evidence: "1 failed" });
+    const rows = listGates(taskId);
+    return {
+      verdict: "failed",
+      total: 1,
+      met: 0,
+      failed: 1,
+      pending: 0,
+      abandoned: 0,
+      failedRows: rows,
+      pendingRows: [],
+      abandonedRows: [],
+      ran: 1,
+      abandonedNow: 0,
+      shellSkipped: 0,
+      budgetExhausted: 0,
+      rows,
+    };
+  }
+
+  const never = (): Promise<EvaluateResult> => new Promise(() => {});
+
+  it("invariant: the SDK matcher timeout stays 180 s and above the hook's own deadline", () => {
+    expect(STOP_HOOK_SDK_TIMEOUT_S).toBe(180);
+    expect(STOP_HOOK_SDK_TIMEOUT_S * 1000).toBeGreaterThan(
+      STOP_HOOK_DEADLINE_MS,
+    );
+  });
+
+  it("deadline: an evaluation that never ends allows the stop and records hook_released reason=deadline; no timer left", async () => {
+    vi.useFakeTimers();
+    declareGates("d1", [{ criterion: "a", check: "x" }], "submission");
+    const hook = makeGatesStopHook("d1", {
+      env: ARMED,
+      deadlineMs: 50,
+      evaluate: never,
+    })!;
+    const p = hook(stopInput("done"), undefined, {
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await p).toEqual({});
+    const rows = traceRows("d1");
+    expect(rows.map((r) => r.name)).toEqual(["gates.hook_released"]);
+    expect(rows[0].attrs.reason).toBe("deadline");
+    expect(rows[0].attrs.deadline_ms).toBe(50);
+    expect(rows[0].attrs.elapsed_ms).toBeTypeOf("number");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("deadline clears the block counter: the next failing stop starts at block 1", async () => {
+    vi.useFakeTimers();
+    declareGates("d2", [{ criterion: "a", check: "x" }], "submission");
+    let hang = false;
+    const hook = makeGatesStopHook("d2", {
+      env: ARMED,
+      deadlineMs: 50,
+      evaluate: async () => (hang ? never() : failedResult("d2")),
+    })!;
+    const sig = { signal: new AbortController().signal };
+    const first = await hook(stopInput("x"), undefined, sig);
+    expect((first as { reason: string }).reason).toContain(
+      `(block 1/${MAX_HOOK_BLOCKS})`,
+    );
+    hang = true;
+    const p = hook(stopInput("x"), undefined, sig);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await p).toEqual({});
+    hang = false;
+    const third = await hook(stopInput("x"), undefined, sig);
+    expect((third as { reason: string }).reason).toContain(
+      `(block 1/${MAX_HOOK_BLOCKS})`,
+    );
+    expect(traceRows("d2").map((r) => r.name)).toEqual([
+      "gates.hook_blocked",
+      "gates.hook_released",
+      "gates.hook_blocked",
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a FAILED result that lands after the deadline is ignored — one trace, no hook_blocked, no state write", async () => {
+    vi.useFakeTimers();
+    declareGates("d3", [{ criterion: "a", check: "x" }], "submission");
+    let late = true;
+    const hook = makeGatesStopHook("d3", {
+      env: ARMED,
+      deadlineMs: 50,
+      evaluate: () =>
+        late
+          ? new Promise((resolve) =>
+              setTimeout(() => resolve(failedResult("d3")), 60),
+            )
+          : Promise.resolve(failedResult("d3")),
+    })!;
+    const sig = { signal: new AbortController().signal };
+    const p = hook(stopInput("done"), undefined, sig);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await p).toEqual({});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(traceRows("d3").map((r) => r.name)).toEqual(["gates.hook_released"]);
+    expect(vi.getTimerCount()).toBe(0);
+    // The late result wrote no block state: the next failing stop is block 1.
+    late = false;
+    const next = await hook(stopInput("x"), undefined, sig);
+    expect((next as { reason: string }).reason).toContain(
+      `(block 1/${MAX_HOOK_BLOCKS})`,
+    );
+  });
+
+  it("abort: the SDK's signal firing mid-evaluate allows the stop with reason=aborted", async () => {
+    vi.useFakeTimers();
+    declareGates("d4", [{ criterion: "a", check: "x" }], "submission");
+    const hook = makeGatesStopHook("d4", { env: ARMED, evaluate: never })!;
+    const ac = new AbortController();
+    const p = hook(stopInput("done"), undefined, { signal: ac.signal });
+    await vi.advanceTimersByTimeAsync(5);
+    ac.abort();
+    expect(await p).toEqual({});
+    const rows = traceRows("d4");
+    expect(rows.map((r) => r.name)).toEqual(["gates.hook_released"]);
+    expect(rows[0].attrs).toMatchObject({
+      reason: "aborted",
+      deadline_ms: STOP_HOOK_DEADLINE_MS,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fast path: allowed/blocked traces carry elapsed_ms; a hook called without options still works", async () => {
+    declareGates("d5", [{ criterion: "a", check: "x" }], "submission");
+    let pass = false;
+    const hook = makeGatesStopHook("d5", {
+      env: ARMED,
+      evaluate: async () => {
+        if (!pass) return failedResult("d5");
+        recordGateResult("d5", "G1", { state: "met", evidence: "ok" });
+        return { ...failedResult("d5"), failed: 0, met: 1, failedRows: [] };
+      },
+    })!;
+    expect(await hook(stopInput("x"), undefined, {} as never)).toMatchObject({
+      decision: "block",
+    });
+    pass = true;
+    expect(
+      await (hook as (i: StopHookInput) => Promise<unknown>)(stopInput("x")),
+    ).toEqual({});
+    const rows = traceRows("d5");
+    expect(rows.map((r) => r.name)).toEqual([
+      "gates.hook_blocked",
+      "gates.hook_allowed",
+    ]);
+    for (const r of rows) {
+      expect(r.attrs.elapsed_ms).toBeTypeOf("number");
+      expect(r.attrs.elapsed_ms as number).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("budget cap: evaluate gets min(ledger budget, deadline − 10 s)", async () => {
+    declareGates("d6", [{ criterion: "a", check: "x" }], "submission");
+    const seen: Array<number | undefined> = [];
+    const spy = async (opts: EvaluateOptions): Promise<EvaluateResult> => {
+      seen.push(opts.budgetMs);
+      return { ...failedResult("d6"), failed: 0, met: 1, failedRows: [] };
+    };
+    const sig = { signal: new AbortController().signal };
+    const call = async (deps: {
+      env: NodeJS.ProcessEnv;
+      deadlineMs?: number;
+    }): Promise<void> => {
+      await makeGatesStopHook("d6", { ...deps, evaluate: spy })!(
+        stopInput("x"),
+        undefined,
+        sig,
+      );
+    };
+    // Defaults: 120 s ledger budget < 150 s − 10 s.
+    await call({ env: ARMED });
+    // Operator env past the deadline: the cap wins.
+    const big = { ...ARMED, TASK_GATES_LEDGER_BUDGET_MS: "600000" };
+    await call({ env: big });
+    // A large deadline: the env / default wins.
+    await call({ env: big, deadlineMs: 10_000_000 });
+    await call({ env: ARMED, deadlineMs: 10_000_000 });
+    // A deadline under the margin never yields a non-positive budget.
+    await call({ env: ARMED, deadlineMs: 50 });
+    expect(seen).toEqual([
+      Math.min(ledgerBudgetMs(ARMED), STOP_HOOK_DEADLINE_MS - 10_000),
+      STOP_HOOK_DEADLINE_MS - 10_000,
+      600_000,
+      ledgerBudgetMs(ARMED),
+      1_000,
+    ]);
+    expect(seen[0]).toBe(120_000);
+    expect(seen[1]).toBe(140_000);
+  });
+});
+
+describe("audit folds 2026-10-09 (L5)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function traceRows(
+    taskId: string,
+  ): Array<{ name: string; attrs: Record<string, unknown> }> {
+    return (
+      getDatabase()
+        .prepare(
+          `SELECT name, attrs FROM task_trace_events WHERE task_id = ? ORDER BY id`,
+        )
+        .all(taskId) as Array<{ name: string; attrs: string | null }>
+    ).map((r) => ({ name: r.name, attrs: JSON.parse(r.attrs ?? "{}") }));
+  }
+
+  it("W1: a signal aborted BEFORE the call never starts an evaluation", async () => {
+    vi.useFakeTimers();
+    declareGates("f1", [{ criterion: "a", check: "x" }], "submission");
+    let calls = 0;
+    const hook = makeGatesStopHook("f1", {
+      env: ARMED,
+      evaluate: async () => {
+        calls++;
+        return new Promise(() => {});
+      },
+    })!;
+    const ac = new AbortController();
+    ac.abort();
+    expect(
+      await hook(stopInput("done"), undefined, { signal: ac.signal }),
+    ).toEqual({});
+    expect(calls).toBe(0);
+    const rows = traceRows("f1");
+    expect(rows.map((r) => r.name)).toEqual(["gates.hook_released"]);
+    expect(rows[0].attrs.reason).toBe("aborted");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("W2: an evaluate that REJECTS after the deadline records nothing more — no {error} trace", async () => {
+    vi.useFakeTimers();
+    declareGates("f2", [{ criterion: "a", check: "x" }], "submission");
+    const hook = makeGatesStopHook("f2", {
+      env: ARMED,
+      deadlineMs: 50,
+      evaluate: () =>
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new Error("SQLITE_BUSY")), 60),
+        ),
+    })!;
+    const p = hook(stopInput("done"), undefined, {
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await p).toEqual({});
+    await vi.advanceTimersByTimeAsync(10);
+    const rows = traceRows("f2");
+    expect(rows.map((r) => r.name)).toEqual(["gates.hook_released"]);
+    expect(rows[0].attrs.reason).toBe("deadline");
+    expect(rows[0].attrs).not.toHaveProperty("error");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("R1: the abort listener is removed once the fast path commits", async () => {
+    declareGates("f3", [{ criterion: "a", check: "x" }], "submission");
+    const hook = makeGatesStopHook("f3", {
+      env: ARMED,
+      evaluate: async () => {
+        const rows = listGates("f3");
+        return {
+          verdict: "met",
+          total: 1,
+          met: 1,
+          failed: 0,
+          pending: 0,
+          abandoned: 0,
+          failedRows: [],
+          pendingRows: [],
+          abandonedRows: [],
+          ran: 1,
+          abandonedNow: 0,
+          shellSkipped: 0,
+          budgetExhausted: 0,
+          rows,
+        };
+      },
+    })!;
+    const ac = new AbortController();
+    const added = vi.spyOn(ac.signal, "addEventListener");
+    const removed = vi.spyOn(ac.signal, "removeEventListener");
+    expect(
+      await hook(stopInput("done"), undefined, { signal: ac.signal }),
+    ).toEqual({});
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledTimes(1);
+    expect(removed.mock.calls[0][0]).toBe("abort");
+    expect(removed.mock.calls[0][1]).toBe(added.mock.calls[0][1]);
+    ac.abort();
+    expect(traceRows("f3").map((r) => r.name)).toEqual(["gates.hook_allowed"]);
+    removed.mockRestore();
+    added.mockRestore();
   });
 });

@@ -393,11 +393,24 @@ export interface EvaluateResult extends LedgerVerdict {
   rows: GateRow[];
 }
 
-function envPositiveInt(name: string, fallback: number): number {
-  const raw = process.env[name];
+function envPositiveInt(
+  name: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** The ledger's wall-clock budget: `TASK_GATES_LEDGER_BUDGET_MS`, else the default. */
+export function ledgerBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
+  return envPositiveInt(
+    "TASK_GATES_LEDGER_BUDGET_MS",
+    DEFAULT_LEDGER_BUDGET_MS,
+    env,
+  );
 }
 
 /**
@@ -413,9 +426,7 @@ export async function evaluateLedger(
   const timeoutMs =
     opts.timeoutMs ??
     envPositiveInt("TASK_GATES_CHECK_TIMEOUT_MS", DEFAULT_CHECK_TIMEOUT_MS);
-  const budgetMs =
-    opts.budgetMs ??
-    envPositiveInt("TASK_GATES_LEDGER_BUDGET_MS", DEFAULT_LEDGER_BUDGET_MS);
+  const budgetMs = opts.budgetMs ?? ledgerBudgetMs();
   const shellGatesRunnable = opts.shellGatesRunnable ?? true;
   const startedAt = Date.now();
   const exec = opts.exec ?? runShellCheck;

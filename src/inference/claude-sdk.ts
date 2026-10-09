@@ -55,7 +55,10 @@ import { scrubOutboundText, SecretScrubUnavailableError } from "./adapter.js";
 import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
-import { makeGatesStopHook } from "../lib/v8-4/stop-hook.js";
+import {
+  makeGatesStopHook,
+  STOP_HOOK_SDK_TIMEOUT_S,
+} from "../lib/v8-4/stop-hook.js";
 import { currentExecutionContext } from "./execution-context.js";
 import {
   externalToolArgs,
@@ -1123,7 +1126,9 @@ export async function queryClaudeSdk(opts: {
     ...(maxBudgetUsd !== undefined && { maxBudgetUsd }),
     abortController,
     ...(gatesStopHook && {
-      hooks: { Stop: [{ hooks: [gatesStopHook], timeout: 180 }] },
+      hooks: {
+        Stop: [{ hooks: [gatesStopHook], timeout: STOP_HOOK_SDK_TIMEOUT_S }],
+      },
     }),
     persistSession: false, // Ephemeral — Jarvis manages its own sessions
     cwd: process.cwd(),

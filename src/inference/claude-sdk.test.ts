@@ -62,7 +62,10 @@ const stopHookFactory = vi.hoisted(() => ({
   impl: (_taskId: string): unknown => null,
   calls: [] as string[],
 }));
-vi.mock("../lib/v8-4/stop-hook.js", () => ({
+vi.mock("../lib/v8-4/stop-hook.js", async (importOriginal) => ({
+  STOP_HOOK_SDK_TIMEOUT_S: (
+    await importOriginal<typeof import("../lib/v8-4/stop-hook.js")>()
+  ).STOP_HOOK_SDK_TIMEOUT_S,
   makeGatesStopHook: (taskId: string) => {
     stopHookFactory.calls.push(taskId);
     return stopHookFactory.impl(taskId);
@@ -106,6 +109,7 @@ import {
   OPUS_MODEL_ID,
   SONNET_MODEL_ID,
 } from "./claude-sdk.js";
+import { STOP_HOOK_SDK_TIMEOUT_S } from "../lib/v8-4/stop-hook.js";
 import type { ChatMessage, ToolDefinition } from "./adapter.js";
 import { providerMetrics } from "./adapter-openai.js";
 import { BudgetExhaustedError } from "../budget/service.js";
@@ -4021,6 +4025,6 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
     );
     expect(hook).toHaveBeenCalledTimes(1);
     expect(out).toEqual({ decision: "block", reason: "r" });
-    expect(opts.hooks?.Stop?.[0]?.timeout).toBe(180);
+    expect(opts.hooks?.Stop?.[0]?.timeout).toBe(STOP_HOOK_SDK_TIMEOUT_S);
   });
 });

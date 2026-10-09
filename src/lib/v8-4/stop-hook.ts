@@ -16,6 +16,15 @@
  *     ⇒ release (recorded as `gates.hook_released`, never silent). An
  *     `ABANDON: <id> <reason>` line in the last message is honored first.
  *
+ * Own deadline (landscape [a16]): the SDK matcher timeout
+ * (`STOP_HOOK_SDK_TIMEOUT_S`) > the hook's own deadline
+ * (`STOP_HOOK_DEADLINE_MS`) > the ledger budget it passes to `evaluate`
+ * (capped `DEADLINE_MARGIN_MS` below the deadline). When the SDK ceiling fired
+ * first it discarded the result and let the stop through with no trace; now
+ * the hook's own deadline (or the SDK's abort signal) allows the stop and
+ * records `gates.hook_released` with `reason`, so a timeout is never silent.
+ * A late `evaluate` result is ignored. Every hook trace carries `elapsed_ms`.
+ *
  * Armed only when BOTH `TASK_GATES_STOP_HOOK=true` and the ledger mode is not
  * off; the factory returns null otherwise so the SDK options object is
  * byte-for-byte today's when dormant.
@@ -32,6 +41,7 @@ import { gatesMode, hasGates, listGates } from "./gates.js";
 import {
   evaluateLedger,
   hasRunnableGates,
+  ledgerBudgetMs,
   type EvaluateOptions,
   type EvaluateResult,
 } from "./gate-check.js";
@@ -39,6 +49,13 @@ import {
 export const MAX_HOOK_BLOCKS = 3;
 /** Absolute ceiling regardless of "progress" — an oscillating failing set (qa W2) still ends. */
 export const MAX_HOOK_BLOCKS_TOTAL = MAX_HOOK_BLOCKS * 2;
+/** The hook's own ceiling: past it the stop is allowed and the release recorded. */
+export const STOP_HOOK_DEADLINE_MS = 150_000;
+/** The SDK matcher timeout (seconds) — always above the hook's own deadline. */
+export const STOP_HOOK_SDK_TIMEOUT_S =
+  Math.ceil(STOP_HOOK_DEADLINE_MS / 1000) + 30;
+/** The ledger budget ends this far before the deadline (freeze/read-back/DB overhead). */
+const DEADLINE_MARGIN_MS = 10_000;
 
 export function stopHookEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.TASK_GATES_STOP_HOOK === "true" && gatesMode(env) !== "off";
@@ -59,6 +76,14 @@ export function _resetStopHookState(): void {
 export interface StopHookDeps {
   evaluate?: (opts: EvaluateOptions) => Promise<EvaluateResult>;
   env?: NodeJS.ProcessEnv;
+  /** Override of `STOP_HOOK_DEADLINE_MS` (tests). */
+  deadlineMs?: number;
+}
+
+/** One hook invocation: whichever of decide / deadline / abort settles first wins. */
+interface HookCall {
+  enteredAt: number;
+  state: "running" | "committed" | "cut";
 }
 
 /**
@@ -74,21 +99,73 @@ export function makeGatesStopHook(
   if (!stopHookEnabled(env)) return null;
   if (!hasGates(taskId)) return null;
   const evaluate = deps.evaluate ?? evaluateLedger;
+  const deadlineMs = deps.deadlineMs ?? STOP_HOOK_DEADLINE_MS;
 
-  return async (input: HookInput): Promise<HookJSONOutput> => {
+  return async (
+    input: HookInput,
+    _toolUseID?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<HookJSONOutput> => {
     if (input.hook_event_name !== "Stop") return {};
+    const call: HookCall = { enteredAt: Date.now(), state: "running" };
+    const signal = options?.signal;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    // Deadline or SDK abort ⇒ allow the stop and RECORD it; never block on a
+    // timeout (the consumer re-evaluates at completion).
+    const cutoff = new Promise<HookJSONOutput>((resolve) => {
+      const cut = (reason: "deadline" | "aborted"): void => {
+        if (call.state !== "running") return;
+        call.state = "cut";
+        stateByTask.delete(taskId);
+        emitTraceEvent({
+          taskId,
+          name: "gates.hook_released",
+          attrs: {
+            reason,
+            deadline_ms: deadlineMs,
+            elapsed_ms: Date.now() - call.enteredAt,
+          },
+        });
+        resolve({});
+      };
+      timer = setTimeout(() => cut("deadline"), deadlineMs);
+      if (signal?.aborted) cut("aborted");
+      else if (signal) {
+        onAbort = () => cut("aborted");
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+    // An already-aborted signal never starts an evaluation.
+    if (call.state === "cut") {
+      clearTimeout(timer);
+      return cutoff;
+    }
     // Never let the wall become a new way to lose the run: any internal error
     // (DB busy, spawn EAGAIN) allows the stop and is recorded (qa W3).
+    const run = (async (): Promise<HookJSONOutput> => {
+      try {
+        return await decide(input, call);
+      } catch (err) {
+        if (call.state === "cut") return {};
+        call.state = "committed";
+        stateByTask.delete(taskId);
+        emitTraceEvent({
+          taskId,
+          name: "gates.hook_released",
+          attrs: {
+            error: err instanceof Error ? err.message : String(err),
+            elapsed_ms: Date.now() - call.enteredAt,
+          },
+        });
+        return {};
+      }
+    })();
     try {
-      return await decide(input);
-    } catch (err) {
-      stateByTask.delete(taskId);
-      emitTraceEvent({
-        taskId,
-        name: "gates.hook_released",
-        attrs: { error: err instanceof Error ? err.message : String(err) },
-      });
-      return {};
+      return await Promise.race([run, cutoff]);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
     }
   };
 
@@ -96,7 +173,7 @@ export function makeGatesStopHook(
   // indistinguishable from an unwired one until a gate FAILED (2026-09-18).
   // Still silent by design when no runnable gate exists (nothing evaluated) —
   // e.g. a recovery leg whose only rows are mid-run RB-* read-backs.
-  function allowed(res: EvaluateResult): HookJSONOutput {
+  function allowed(res: EvaluateResult, call: HookCall): HookJSONOutput {
     stateByTask.delete(taskId);
     emitTraceEvent({
       taskId,
@@ -106,12 +183,16 @@ export function makeGatesStopHook(
         met: res.met,
         failed: res.failed,
         abandoned: res.abandoned,
+        elapsed_ms: Date.now() - call.enteredAt,
       },
     });
     return {};
   }
 
-  async function decide(input: HookInput): Promise<HookJSONOutput> {
+  async function decide(
+    input: HookInput,
+    call: HookCall,
+  ): Promise<HookJSONOutput> {
     const rows = listGates(taskId);
     if (!hasRunnableGates(rows)) return {};
 
@@ -122,8 +203,17 @@ export function makeGatesStopHook(
         typeof input.last_assistant_message === "string"
           ? input.last_assistant_message
           : "",
+      // The evaluation bounds itself below the hook's own deadline.
+      budgetMs: Math.min(
+        ledgerBudgetMs(env),
+        Math.max(1_000, deadlineMs - DEADLINE_MARGIN_MS),
+      ),
     });
-    if (res.failed === 0) return allowed(res);
+    // A result that lands after the deadline/abort is ignored: the release
+    // is already recorded — no second trace, no state write.
+    if (call.state === "cut") return {};
+    call.state = "committed";
+    if (res.failed === 0) return allowed(res, call);
     // Read-back rows are completion-time proofs rendered as Spanish lines;
     // they never wall the model (it cannot "fix" a harness re-read mid-run
     // except by redoing the write, which the deliverable line already asks).
@@ -135,7 +225,7 @@ export function makeGatesStopHook(
         !isReadbackCheck(r.check_kind, r.check_cmd) &&
         !isGradeCheck(r.check_kind, r.check_cmd),
     );
-    if (blocking.length === 0) return allowed(res);
+    if (blocking.length === 0) return allowed(res, call);
     const failedIds = blocking.map((r) => r.gate_id).sort();
     const hash = failedIds.join(",");
     const prev = stateByTask.get(taskId);
@@ -154,6 +244,7 @@ export function makeGatesStopHook(
           blocks: state.blocks - 1,
           total: state.total - 1,
           failed: failedIds,
+          elapsed_ms: Date.now() - call.enteredAt,
         },
       });
       return {
@@ -173,7 +264,12 @@ export function makeGatesStopHook(
     emitTraceEvent({
       taskId,
       name: "gates.hook_blocked",
-      attrs: { block: state.blocks, total: state.total, failed: failedIds },
+      attrs: {
+        block: state.blocks,
+        total: state.total,
+        failed: failedIds,
+        elapsed_ms: Date.now() - call.enteredAt,
+      },
     });
     return {
       decision: "block",
