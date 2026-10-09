@@ -135,3 +135,8 @@
 - **Mistake:** the pre-commit output was cut to `tail -3`, losing the failing test name; a second `vitest related --run <sources>` run was needed to find it. Check: filter the hook output with `grep -E "×|FAIL|Tests "` instead of `tail`.
 - **Better:** the implementer disclosed an accidental `prettier --write` and reverted it by hand; the auditor verified the diff contained only additions. Keep "diff hygiene" as audit dimension 1 whenever a formatter could have run.
 - **Better:** the auditor's unpinned-mutant list (M7/M8/M9 survived) was the fold brief verbatim; pasting mutant definitions into the fold brief avoided the item-11 "guessed mutant" problem.
+
+## 2026-10-09 — W3 step 1 inventory (read-only, `e2d86c7`)
+- **Mistake:** three of my own messages today repeated "eval baseline re-capture (~$5) owed" from memory/ROADMAP; the inventory agent found it was captured 10-07 (85.01 v3). Check: before repeating an "owed" operator action, `python3 -c` the artifact's own summary (`capturedAt`, score) — the file beats the index.
+- **Avoid:** a column named like an enum (`reflection_baselines.task_type`) that holds request text; the agent's enum query returned prefixes. Brief rule now: `typeof`/`length` histogram before any `GROUP BY` on a text column of unknown provenance.
+- **Better:** "COUNT + MIN/MAX first, 0 rows = no population" in the brief produced honest "no population" verdicts for Q1/Q3 and policy violations instead of a designed-around metric.
