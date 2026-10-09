@@ -1158,7 +1158,12 @@ describe("swarm chain demotion (task 7466)", () => {
   it("delegates a chain plan to ONE heavy sub-task and mirrors its output", async () => {
     mockPlan.mockResolvedValue({
       graph: chainGraph(),
-      usage: { promptTokens: 0, completionTokens: 0 },
+      usage: {
+        promptTokens: 700,
+        completionTokens: 70,
+        actualModel: "m-plan",
+        actualCostUsd: 0.07,
+      },
     } as never);
     mockSubmitTask.mockResolvedValue({
       taskId: "demoted-1",
@@ -1188,12 +1193,19 @@ describe("swarm chain demotion (task 7466)", () => {
     const out = result.output as { content?: string; finalAnswer?: string };
     expect(out.content).toBe("the real answer");
     expect(out.finalAnswer).toBe("the real answer");
+    // The parent books its planner spend even when it demotes.
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 700,
+      completionTokens: 70,
+      actualModel: "m-plan",
+      actualCostUsd: 0.07,
+    });
   });
 
   it("reports the demoted child's failure honestly (task id + status)", async () => {
     mockPlan.mockResolvedValue({
       graph: chainGraph(),
-      usage: { promptTokens: 0, completionTokens: 0 },
+      usage: { promptTokens: 800, completionTokens: 80, actualCostUsd: 0.08 },
     } as never);
     mockSubmitTask.mockResolvedValue({
       taskId: "demoted-2",
@@ -1216,6 +1228,11 @@ describe("swarm chain demotion (task 7466)", () => {
     expect(result.error).toContain("demoted-2");
     expect(result.error).toContain("failed");
     expect(result.error).toContain("child exploded");
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 800,
+      completionTokens: 80,
+      actualCostUsd: 0.08,
+    });
   });
 
   it("treats completed_with_concerns as a demoted-child success (audit W1)", async () => {
@@ -1249,7 +1266,7 @@ describe("swarm chain demotion (task 7466)", () => {
   it("a completed demoted child with NO output is an honest failure, not an empty deliverable (audit W3)", async () => {
     mockPlan.mockResolvedValue({
       graph: chainGraph(),
-      usage: { promptTokens: 0, completionTokens: 0 },
+      usage: { promptTokens: 900, completionTokens: 90, actualCostUsd: 0.09 },
     } as never);
     mockSubmitTask.mockResolvedValue({
       taskId: "demoted-4",
@@ -1271,6 +1288,11 @@ describe("swarm chain demotion (task 7466)", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("demoted-4");
     expect(result.error).toContain("no output");
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 900,
+      completionTokens: 90,
+      actualCostUsd: 0.09,
+    });
   });
 
   it("does NOT demote a parallel plan — fan-out proceeds", async () => {
@@ -1435,4 +1457,126 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
     expect(goals["p-1"]!.status).toBe("completed");
     expect(goals["p-2"]!.status).toBe("completed");
   }, 30_000);
+});
+
+describe("swarm parent books its planner + reflector spend (cost_ledger)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function parallelGraph(): GoalGraph {
+    const g = new GoalGraph();
+    g.addGoal({ id: "c-1", description: "item A" });
+    g.addGoal({ id: "c-2", description: "item B" });
+    return g;
+  }
+
+  async function runFanOut() {
+    // Submissions fail fast so the poll loop ends at once (as in the
+    // "does NOT demote a parallel plan" test above).
+    mockSubmitTask.mockRejectedValue(new Error("no capacity"));
+    return swarmRunner.execute({
+      taskId: "cost-parent",
+      runId: "run-cost",
+      title: "fan-out",
+      description: "process items A and B independently",
+    });
+  }
+
+  it("sums planner + reflector usage into result.tokenUsage", async () => {
+    mockPlan.mockResolvedValue({
+      graph: parallelGraph(),
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 200,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 20,
+        actualModel: "m-plan",
+        actualCostUsd: 0.1,
+      },
+    } as never);
+    mockReflect.mockResolvedValue({
+      result: { success: false, score: 0, learnings: [], summary: "x" },
+      usage: {
+        promptTokens: 500,
+        completionTokens: 100,
+        cacheReadTokens: 100,
+        cacheCreationTokens: 50,
+        actualModel: "m-reflect",
+        actualCostUsd: 0.05,
+      },
+    } as never);
+
+    const result = await runFanOut();
+    const { actualCostUsd, ...rest } = result.tokenUsage!;
+    expect(rest).toEqual({
+      promptTokens: 1500,
+      completionTokens: 300,
+      cacheReadTokens: 400,
+      cacheCreationTokens: 70,
+      actualModel: "m-reflect",
+    });
+    expect(actualCostUsd).toBeCloseTo(0.15, 10);
+  }, 15_000);
+
+  it("reflection throws → the heuristic return still carries the planner usage alone", async () => {
+    mockPlan.mockResolvedValue({
+      graph: parallelGraph(),
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 200,
+        cacheReadTokens: 300,
+        actualModel: "m-plan",
+        actualCostUsd: 0.1,
+      },
+    } as never);
+    mockReflect.mockRejectedValue(new Error("reflector down"));
+
+    const result = await runFanOut();
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 200,
+      cacheReadTokens: 300,
+      actualModel: "m-plan",
+      actualCostUsd: 0.1,
+    });
+  }, 15_000);
+
+  it("no side defines actualCostUsd → it stays undefined, never 0", async () => {
+    mockPlan.mockResolvedValue({
+      graph: parallelGraph(),
+      usage: { promptTokens: 10, completionTokens: 2 },
+    } as never);
+    mockReflect.mockResolvedValue({
+      result: { success: false, score: 0, learnings: [], summary: "x" },
+      usage: { promptTokens: 5, completionTokens: 1 },
+    } as never);
+
+    const result = await runFanOut();
+    expect(result.tokenUsage).toBeDefined();
+    expect(result.tokenUsage!.promptTokens).toBe(15);
+    expect(result.tokenUsage!.completionTokens).toBe(3);
+    expect(result.tokenUsage!.actualCostUsd).toBeUndefined();
+  }, 15_000);
+
+  it("empty plan → the 'no goals' return still carries the planner usage", async () => {
+    mockPlan.mockResolvedValue({
+      graph: new GoalGraph(),
+      usage: { promptTokens: 40, completionTokens: 4, actualCostUsd: 0.004 },
+    } as never);
+
+    const result = await swarmRunner.execute({
+      taskId: "cost-empty",
+      runId: "run-empty",
+      title: "trivial",
+      description: "nothing to split",
+    });
+    expect(result.success).toBe(true);
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 40,
+      completionTokens: 4,
+      actualCostUsd: 0.004,
+    });
+  });
 });

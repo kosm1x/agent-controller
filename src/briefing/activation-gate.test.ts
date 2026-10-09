@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import {
   evaluateActivationGate,
+  GATE_CACHEABLE_AGENT_TYPES,
+  GATE_COLD_START_AGENT_TYPES,
   morningSyncDay,
   RETIRED_MORNING_SYNC_SCHEDULE_IDS,
 } from "./activation-gate.js";
@@ -255,6 +257,24 @@ describe("evaluateActivationGate", () => {
 
     // Excluded, never hidden: it still surfaces in the auditable mirror, so a
     // real nanoclaw cache regression stays visible while non-gating.
+    expect(r.excludedColdStart.runs).toBe(1);
+    expect(r.excludedColdStart.cacheReadPct).toBe(0);
+  });
+
+  it("EXCLUDES `swarm` — planner + reflector rows are structurally cold", () => {
+    // Since 2026-10-09 the swarm parent books its planner + reflector rows
+    // (one Opus call each, ~4 swarms/month) — far rarer than the 5-min cache
+    // TTL, so cold by the CRITERION in activation-gate.ts.
+    expect(GATE_COLD_START_AGENT_TYPES).toContain("swarm");
+    expect(GATE_CACHEABLE_AGENT_TYPES).not.toContain("swarm");
+
+    insertCacheableRuns(20, 1000, 900); // fast: 90%
+    insertCacheableCost(5_000, 0, "swarm"); // one cold planner call, 0%
+    for (let i = 0; i < 5; i++) insertBriefing("morning", "promoted");
+
+    const r = evaluateActivationGate(SCORING);
+    expect(r.cacheableRuns).toBe(20); // swarm row not counted
+    expect(r.cacheReadPct).toBe(90); // ratio undragged by the 0% swarm row
     expect(r.excludedColdStart.runs).toBe(1);
     expect(r.excludedColdStart.cacheReadPct).toBe(0);
   });

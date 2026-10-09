@@ -254,6 +254,8 @@ export async function plan(
       ...(response.usage.cache_creation_tokens !== undefined && {
         cacheCreationTokens: response.usage.cache_creation_tokens,
       }),
+      // Surface the SDK-reported model so the parent's ledger row names the model that ran.
+      ...(response.model !== undefined && { actualModel: response.model }),
       ...(response.usage.cost_usd !== undefined && {
         actualCostUsd: response.usage.cost_usd,
       }),
@@ -302,6 +304,8 @@ export async function replan(
       ...(response.usage.cache_creation_tokens !== undefined && {
         cacheCreationTokens: response.usage.cache_creation_tokens,
       }),
+      // Surface the SDK-reported model so the parent's ledger row names the model that ran.
+      ...(response.model !== undefined && { actualModel: response.model }),
       ...(response.usage.cost_usd !== undefined && {
         actualCostUsd: response.usage.cost_usd,
       }),

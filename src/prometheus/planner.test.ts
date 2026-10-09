@@ -719,3 +719,54 @@ describe("planner KB injection (regression — half-fix trap)", () => {
     expect(system?.content).not.toContain("CONDITIONAL_BLOCK_MARKER");
   });
 });
+
+describe("plan/replan usage.actualModel (swarm parent ledger row names the model that ran)", () => {
+  function oneGoal(model?: string) {
+    return {
+      content: JSON.stringify({
+        goals: [
+          {
+            id: "g-1",
+            description: "Goal",
+            completion_criteria: [],
+            parent_id: null,
+            depends_on: [],
+          },
+        ],
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      provider: "test",
+      latency_ms: 10,
+      ...(model !== undefined && { model }),
+    };
+  }
+
+  it("plan: actualModel equals the response's model", async () => {
+    mockInfer.mockResolvedValueOnce(oneGoal("claude-opus-test"));
+    const { usage } = await plan("Task");
+    expect(usage.actualModel).toBe("claude-opus-test");
+  });
+
+  it("plan: actualModel is absent when the response carries no model", async () => {
+    mockInfer.mockResolvedValueOnce(oneGoal());
+    const { usage } = await plan("Task");
+    expect("actualModel" in usage).toBe(false);
+  });
+
+  it("replan: actualModel equals the response's model", async () => {
+    mockInfer.mockResolvedValueOnce(oneGoal());
+    const { graph } = await plan("Task");
+    mockInfer.mockResolvedValueOnce(oneGoal("claude-sonnet-test"));
+    const { usage } = await replan("Task", graph, "Goal blocked");
+    expect(usage.actualModel).toBe("claude-sonnet-test");
+  });
+
+  it("replan: actualModel is absent when the response carries no model", async () => {
+    mockInfer.mockResolvedValueOnce(oneGoal("claude-opus-test"));
+    const { graph } = await plan("Task");
+    mockInfer.mockResolvedValueOnce(oneGoal());
+    const { usage } = await replan("Task", graph, "Goal blocked");
+    expect("actualModel" in usage).toBe(false);
+  });
+});

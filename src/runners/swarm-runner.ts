@@ -20,7 +20,12 @@ import { reflect } from "../prometheus/reflector.js";
 import { resolveUseOpus } from "../prometheus/model-tier.js";
 import { GoalGraph } from "../prometheus/goal-graph.js";
 import { GoalStatus } from "../prometheus/types.js";
-import type { Goal, ExecutionResult, GoalResult } from "../prometheus/types.js";
+import type {
+  Goal,
+  ExecutionResult,
+  GoalResult,
+  TokenUsage,
+} from "../prometheus/types.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import {
@@ -632,6 +637,23 @@ export function maxParallelWidth(
 // Runner
 // ---------------------------------------------------------------------------
 
+/** Sum two TokenUsage records; cost stays undefined unless a side reports it. */
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cost =
+    a.actualCostUsd === undefined && b.actualCostUsd === undefined
+      ? undefined
+      : (a.actualCostUsd ?? 0) + (b.actualCostUsd ?? 0);
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    cacheReadTokens: (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0),
+    cacheCreationTokens:
+      (a.cacheCreationTokens ?? 0) + (b.cacheCreationTokens ?? 0),
+    actualModel: b.actualModel || a.actualModel,
+    actualCostUsd: cost,
+  };
+}
+
 export const swarmRunner: Runner = {
   type: "swarm",
 
@@ -670,9 +692,13 @@ export const swarmRunner: Runner = {
 
     // --- PHASE 1: PLAN ---
     let graph: GoalGraph;
+    let parentUsage: TokenUsage;
     try {
       const planResult = await plan(taskDescription, useOpus);
       graph = planResult.graph;
+      // plan()/reflect() opt out of the SDK ledger seam (costLedger: false);
+      // the runner books their spend via tokenUsage, like heavy does.
+      parentUsage = planResult.usage;
     } catch (err) {
       return {
         success: false,
@@ -690,6 +716,7 @@ export const swarmRunner: Runner = {
         },
         durationMs: Date.now() - start,
         goalGraph: graph.toJSON(),
+        tokenUsage: parentUsage,
       };
     }
 
@@ -770,6 +797,7 @@ export const swarmRunner: Runner = {
               error: `Demoted heavy sub-task ${demoted.taskId} completed but recorded no output — check that task row`,
               durationMs: Date.now() - start,
               goalGraph: graph.toJSON(),
+              tokenUsage: parentUsage,
               trace: [
                 {
                   type: "demoted-chain",
@@ -785,6 +813,7 @@ export const swarmRunner: Runner = {
             output: mirrored as RunnerOutput["output"],
             durationMs: Date.now() - start,
             goalGraph: graph.toJSON(),
+            tokenUsage: parentUsage,
             trace: [
               {
                 type: "demoted-chain",
@@ -802,6 +831,7 @@ export const swarmRunner: Runner = {
             : `Demoted heavy sub-task ${demoted.taskId} ended ${childStatus}: ${child?.error ?? "no error recorded"}`,
           durationMs: Date.now() - start,
           goalGraph: graph.toJSON(),
+          tokenUsage: parentUsage,
           trace: [
             {
               type: "demoted-chain",
@@ -1024,7 +1054,7 @@ export const swarmRunner: Runner = {
 
     let reflectionResult;
     try {
-      const { result } = await reflect(
+      const { result, usage } = await reflect(
         taskDescription,
         graph,
         executionResults,
@@ -1032,6 +1062,7 @@ export const swarmRunner: Runner = {
         useOpus,
       );
       reflectionResult = result;
+      parentUsage = addUsage(parentUsage, usage);
     } catch (err) {
       console.warn(
         `[swarm] Task ${input.taskId}: reflection failed: ${errMsg(err)}`,
@@ -1081,6 +1112,7 @@ export const swarmRunner: Runner = {
       },
       durationMs: Date.now() - start,
       goalGraph: graph.toJSON(),
+      tokenUsage: parentUsage,
       trace: Array.from(trackers.entries()).map(([goalId, t]) => ({
         type: "subtask",
         goalId,

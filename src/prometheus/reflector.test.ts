@@ -683,3 +683,35 @@ describe("lowestDimension — replan target picker", () => {
     expect(min?.evidence).toBe("first");
   });
 });
+
+describe("reflect usage.actualModel (swarm parent ledger row names the model that ran)", () => {
+  function reflection(model?: string) {
+    return {
+      content: JSON.stringify({
+        success: true,
+        score: 0.9,
+        learnings: [],
+        summary: "ok",
+      }),
+      tool_calls: undefined,
+      usage: { prompt_tokens: 200, completion_tokens: 100, total_tokens: 300 },
+      provider: "test",
+      latency_ms: 100,
+      ...(model !== undefined && { model }),
+    };
+  }
+
+  it("actualModel equals the response's model", async () => {
+    mockInfer.mockResolvedValueOnce(reflection("claude-opus-test"));
+    const graph = makeGraph(9, 1);
+    const { usage } = await reflect("t", graph, makeExecResult(graph));
+    expect(usage.actualModel).toBe("claude-opus-test");
+  });
+
+  it("actualModel is absent when the response carries no model", async () => {
+    mockInfer.mockResolvedValueOnce(reflection());
+    const graph = makeGraph(9, 1);
+    const { usage } = await reflect("t", graph, makeExecResult(graph));
+    expect("actualModel" in usage).toBe(false);
+  });
+});

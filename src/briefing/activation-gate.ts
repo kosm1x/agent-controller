@@ -106,7 +106,14 @@ export const GATE_MIN_RULED_BRIEFS = 3;
  * cost-relevant question the gate exists to ask, and blunting it would mask a
  * genuine hot-path cache regression.
  */
-export const GATE_COLD_START_AGENT_TYPES = ["heavy", "nanoclaw"] as const;
+export const GATE_COLD_START_AGENT_TYPES = [
+  "heavy",
+  "nanoclaw",
+  // `swarm` was in GATE_CACHEABLE_AGENT_TYPES until 2026-10-09: the parent now
+  // books planner + reflector rows (one Opus call each, ~4 swarms/month ≪ 5-min
+  // TTL ⇒ cold per the CRITERION); 0 ledger rows in prior 30d ⇒ never measured.
+  "swarm",
+] as const;
 
 /**
  * ALLOW-LIST of agent_type values the §13 cache-read ratio measures — the
@@ -125,7 +132,6 @@ export const GATE_COLD_START_AGENT_TYPES = ["heavy", "nanoclaw"] as const;
  */
 export const GATE_CACHEABLE_AGENT_TYPES = [
   "fast",
-  "swarm",
   // `nanoclaw` was here until 2026-08-02 — moved to GATE_COLD_START_AGENT_TYPES
   // (containerized, fresh clone per run ⇒ structurally cold). See that const.
   "a2a",
