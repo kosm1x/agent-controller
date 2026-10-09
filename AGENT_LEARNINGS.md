@@ -114,3 +114,11 @@
 - **Mistake (labelling cost):** handed the operator 16 per-task read commands; the ledger rule is "did you get what you needed when it arrived", one word per batch → when a label is the operator's judgment, ask for the judgment, not for a re-read.
 - **Better (verdict audit):** a grader "failed" on a KB artifact is checked on DISK before it counts: the registry copy both the grader (`sql_check` over `jarvis_files`) and `jarvis_file_read` serve is stale for every `file_edit` write (40/1,260 rows diverge) → one catch and one FP in the same hour had the same symptom and opposite truth.
 - **Better (catch forensics):** `runs.tool_calls` stores names only; `tool_calls` + the gate rows + the file on disk were enough to show the done-claim after two `{error}` returns, without reading task text; the operator's own `mc-ctl task` paste is what unlocked the deliverable read.
+
+## 2026-10-09 — KB registry/disk parity (`5a8583e`; measure → brief → implementer → qa R1 → fold F1–F4 → qa R2 → ship)
+- **Mistake (brief scope):** I excluded the read-back gate from the parity brief as "a separate item"; qa R1 showed the change itself broke an existing gate (a later `file_edit` now moves the registry row an earlier `jarvis_file_write` gate hashes) → when a change adds a side effect on a seam another verifier READS, enumerate every verifier of that seam before scoping it out.
+- **Mistake (fix as proposed):** the auditor's W1 fix ("refuse `file_edit` whenever registry ≠ disk") would have blocked edits for up to an hour after any shell write; the fold used the walk's own rule (registry newer by > 2 s AND differs) → check a proposed guard against the normal write sequences with timestamps before folding it.
+- **Better (disconnect recovery):** an agent cut off mid-build keeps its transcript: `git diff --stat` + tripwires first, then resume it by message with "do not redo finished edits" — it finished in 2.5 min instead of a restart.
+- **Better (facts before the brief):** the 4 day-log stubs were traced to `shell_exec` runs by `runs.tool_calls` names + mtimes alone (no content); that fact made the walk's day-log exemption a design input, not an audit finding.
+- **Avoid:** telling an implementer to re-run "the audit's mutant MN" without its definition — it guessed two variants; paste the mutant text into the fold brief.
+
