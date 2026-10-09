@@ -61,12 +61,32 @@ below: `./mc-ctl audit-claim`.
 
 | task_id | graded (UTC) | grader | final status | signal | label | catch | note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `9a7f547e-9fa1-4436-a8a8-a29fec733699` | 2026-10-06 05:03 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
+| `19d27d55-ddfd-42ed-99de-7afa230a6d78` | 2026-10-06 14:18 | met | completed | - |  |  | swarm child |
+| `108642de-d0dc-4eac-8d69-1645fc203e3a` | 2026-10-07 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
+| `1769b7c0-3d18-4179-8265-f052ba855cd7` | 2026-10-08 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
+| `ca333512-e8be-45b3-aee2-218fb041e0d3` | 2026-10-08 13:40 | failed | completed | - |  |  | swarm child (parent 19b7d51a, 10-08 13:38); grader failed — READ FIRST (candidate catch) |
+| `292ea4dc-c9d0-4bd3-909f-5e690b322e35` | 2026-10-08 13:41 | met | completed | - |  |  | swarm child |
+| `5fd673a8-b999-4558-b4d2-dc4134193bc8` | 2026-10-08 13:41 | failed | completed_with_concerns | - |  |  | swarm child (parent 19b7d51a); grader failed — READ FIRST (candidate catch) |
+| `df61c55d-d281-44cd-b66d-5a6abf16d536` | 2026-10-08 13:43 | met | completed_with_concerns | - |  |  | swarm child |
+| `443b5f42-99d2-4a78-99f5-cc8ec8be733d` | 2026-10-08 13:47 | met | completed_with_concerns | - |  |  | swarm child |
+| `dd9d01e4-a1f9-45fd-9c23-421c47035fe2` | 2026-10-08 15:21 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
+| `a58fc029-6d8f-42b1-b3d2-6dc4b80808d4` | 2026-10-08 15:21 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
+| `17b23349-8f61-456b-9a1a-eb651f4bbecb` | 2026-10-08 15:22 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
+| `b0ea0fe5-0588-4615-ab0c-3c8962887d62` | 2026-10-08 15:22 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
+| `6293dff3-2f13-46f3-baf7-e0f6ce970ef7` | 2026-10-08 15:24 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
+| `084d4c84-f825-49cc-a09f-46f40e9b01ac` | 2026-10-09 03:20 | met | completed | none |  |  | heavy root; only row with a task_outcomes row (signal none) |
 
 ## Tally (recompute from the rows, newest run first)
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-09 04:3x | 15 | 0 | 0 | – | 0 | 0 | 15 |
 | 2026-10-06 03:50 | 0 | 0 | 0 | – | 0 | 0 | 0 |
+
+## Population (owed weekly count, first reading 2026-10-09)
+
+Grader population proxy = heavy tasks completed per ISO week (roots + swarm children; every grade so far was a heavy task): W35 37 · W36 13 · W37 18 · W38 11 · W39 12 · W40 16 (to 10-09). 15 grades in the first 3 days of shadow (10-06 → 10-09) came with one 5-child swarm plus a 5-child batch; the steady rate is ~12–16 per week, so 30 `really done` labels is 2–3 weeks of traffic, not days. 14 of the 15 rows have no `task_outcomes` row (scheduled roots and swarm children never get a chat rating), so the auto-label cannot fire for this population: labels are manual reads until queue §2026-10-08 item 10 is ruled, and even then only chat-rated tasks auto-label.
 
 ## Activation checklist (all three, §6)
 
