@@ -140,3 +140,9 @@
 - **Mistake:** three of my own messages today repeated "eval baseline re-capture (~$5) owed" from memory/ROADMAP; the inventory agent found it was captured 10-07 (85.01 v3). Check: before repeating an "owed" operator action, `python3 -c` the artifact's own summary (`capturedAt`, score) — the file beats the index.
 - **Avoid:** a column named like an enum (`reflection_baselines.task_type`) that holds request text; the agent's enum query returned prefixes. Brief rule now: `typeof`/`length` histogram before any `GROUP BY` on a text column of unknown provenance.
 - **Better:** "COUNT + MIN/MAX first, 0 rows = no population" in the brief produced honest "no population" verdicts for Q1/Q3 and policy violations instead of a designed-around metric.
+
+## 2026-10-09 — S6 step 1 inventory (read-only; 2 qa rounds)
+- **Mistake:** my starting count for the brief (86 lines / 27 files) included 3 "FEDERAL" finance-code lines; the implementer caught it (83 / 25). Check: a name grep needs `-w` or a trailing non-letter class before it becomes a headline number.
+- **Avoid:** counts produced inside the agent shell: its `grep` is a wrapper that adds `-I` and silently skips two sources with binary-looking bytes (`kb-backup.ts`, `channels/email.ts`); R1 said 103 files, R2 proved 105 under `/usr/bin/grep`. Rule: fenced counts in a public doc name the binary (`/usr/bin/grep`) or carry `-a`.
+- **Better:** "every count carries the grep that reproduces it" turned the audit into 36 mechanical re-runs with 9 mismatches found in R1; identity literals pulled from code at run time (`V D G O GO N H1 H2`) kept every literal out of the public document across both rounds.
+- **Better:** listing DB `scheduled_tasks` NAMES with identity tokens masked by class let the unsurveyed gap be narrowed without reading prompt text.
