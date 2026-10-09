@@ -237,13 +237,14 @@ async function gradeDecision(
       reason: "skipped_simple",
     };
   } else if (overConcurrencyCap) {
-    // Shadow only: too many background gradings already in flight — a
-    // measurement gap (traced), never a queue that grows without bound.
+    // Both modes share one pool: too many gradings already in flight — the
+    // decision is traced (no call), never a queue that grows without bound;
+    // under enforce the caller then ABANDONs the task's grade rows.
     decision = {
       verdicts: specs.map((s) => ({
         id: s.id,
         verdict: "pending",
-        evidence: "not graded — shadow concurrency cap reached",
+        evidence: "not graded — grader concurrency cap reached",
       })),
       model: null,
       reason: "skipped_concurrency",
@@ -361,7 +362,9 @@ export async function _drainShadowGradesForTests(): Promise<void> {
  * Enforce: write the grade onto the ledger rows (harness setter: pending
  * manual rows only; met needs evidence) BEFORE `evaluateLedger`, so the
  * verdict and the `Gates:` block include them. Interrupted run ⇒ pending
- * GR rows ABANDONED with the reason. Never throws.
+ * GR rows ABANDONED with the reason. Capped by the same pool as shadow;
+ * over the cap the GR rows are ABANDONED with `skipped_concurrency`. Never
+ * throws.
  */
 async function enforceGrade(
   args: CompletionLedgerArgs,
@@ -376,7 +379,35 @@ async function enforceGrade(
       "enforce",
     );
     if (specs.length === 0) return;
-    const d = await gradeDecision("enforce", args, specs, deliverable, evidence);
+    // One pool for both modes: they are mutually exclusive at runtime
+    // (`effectiveGraderMode()` is one value), so one set bounds the one resource.
+    // Over the cap the decision is a traced `skipped_concurrency` (no call),
+    // and it does not occupy a slot. A slot is held until the SDK call
+    // itself settles — not just until the budget returned the decision.
+    const overCap = inFlightShadowGrades.size >= MAX_CONCURRENT_SHADOW_GRADES;
+    const decision = gradeDecision(
+      "enforce",
+      args,
+      specs,
+      deliverable,
+      evidence,
+      overCap,
+    );
+    const p: Promise<void> = decision
+      .then((d) => d.settled)
+      .catch(() => undefined) // a rejection is traced by the await below
+      .finally(() => {
+        inFlightShadowGrades.delete(p);
+      });
+    if (!overCap) inFlightShadowGrades.add(p);
+    const d = await decision;
+    if (d.reason === "skipped_concurrency") {
+      abandonPendingGradeRows(
+        args.taskId,
+        "skipped_concurrency: grader pool full",
+      );
+      return;
+    }
     if (d.reason?.startsWith("interrupted")) {
       abandonPendingGradeRows(args.taskId, d.reason);
       return;

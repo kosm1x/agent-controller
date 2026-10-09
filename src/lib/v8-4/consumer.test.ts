@@ -544,6 +544,31 @@ function gradedTraces(taskId: string) {
   }>;
 }
 
+// 11(b): the REAL runGrader on a stubbed SDK call that ignores the abort —
+// the budget returns, the call keeps running, the slot stays held.
+async function realGraderOnHungCalls(orphanMaxHoldMs?: number) {
+  const actual =
+    await vi.importActual<typeof import("./grader.js")>("./grader.js");
+  const calls: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  const query = (() =>
+    new Promise((resolve, reject) => {
+      calls.push({
+        resolve: () =>
+          resolve({ text: "", toolCalls: [], model: "claude-opus-4-8" }),
+        reject,
+      });
+    })) as unknown as NonNullable<Parameters<typeof runGrader>[1]>["query"];
+  mockRunGrader.mockImplementation((input) =>
+    actual.runGrader(input, {
+      query,
+      budgetMs: 10,
+      provenance: [],
+      orphanMaxHoldMs,
+    }),
+  );
+  return calls;
+}
+
 describe("applyCompletionLedger — V9 W1 grader off (default)", () => {
   it("unset / unknown / enforce-without-ledger: byte-identical outcome, no grader call, no gates.graded trace, rows untouched", async () => {
     const run = async (taskId: string, env: Record<string, string>) => {
@@ -709,31 +734,6 @@ describe("applyCompletionLedger — V9 W1 grader shadow (background, trace-only)
     expect(JSON.parse(gradedTraces("t-cap-after")[0]!.attrs).reason).toBeUndefined();
   });
 
-  // 11(b): the REAL runGrader on a stubbed SDK call that ignores the abort —
-  // the budget returns, the call keeps running, the slot stays held.
-  async function realGraderOnHungCalls(orphanMaxHoldMs?: number) {
-    const actual =
-      await vi.importActual<typeof import("./grader.js")>("./grader.js");
-    const calls: Array<{ resolve: () => void; reject: (e: Error) => void }> =
-      [];
-    const query = (() =>
-      new Promise((resolve, reject) => {
-        calls.push({
-          resolve: () =>
-            resolve({ text: "", toolCalls: [], model: "claude-opus-4-8" }),
-          reject,
-        });
-      })) as unknown as NonNullable<Parameters<typeof runGrader>[1]>["query"];
-    mockRunGrader.mockImplementation((input) =>
-      actual.runGrader(input, {
-        query,
-        budgetMs: 10,
-        provenance: [],
-        orphanMaxHoldMs,
-      }),
-    );
-    return calls;
-  }
   async function launchShadow(id: string) {
     registerGradeSpecs(id, PROSE, "do the thing");
     await applyCompletionLedger(base({ taskId: id }));
@@ -1012,6 +1012,178 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
     expect(out.taskStatus).toBe("completed");
     expect(listGates("t1")[0]!.state).toBe("pending");
     expect(JSON.parse(gradedTraces("t1")[0]!.attrs)).toEqual({ mode: "enforce", error: "kaboom" });
+  });
+
+  it("shares the shadow pool's cap: over it the task is skipped (no call), its GR rows ABANDONED, never demoted; a freed slot grades again", async () => {
+    const releases: Array<(r: GraderResult) => void> = [];
+    mockRunGrader.mockImplementation(
+      () =>
+        new Promise<GraderResult>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const met = (): GraderResult => ({
+      verdicts: [{ id: "GR-g-1.1", verdict: "met", evidence: "listed" }],
+      model: "claude-opus-4-8",
+      latencyMs: 1,
+      usage: USAGE,
+    });
+    const inFlight = Array.from(
+      { length: MAX_CONCURRENT_SHADOW_GRADES },
+      (_, i) => `t-ecap-${i}`,
+    ).map((id) => {
+      registerGradeSpecs(id, PROSE, "do the thing");
+      return applyCompletionLedger(base({ taskId: id }));
+    });
+    await vi.waitFor(() =>
+      expect(mockRunGrader).toHaveBeenCalledTimes(MAX_CONCURRENT_SHADOW_GRADES),
+    );
+
+    registerGradeSpecs("t-ecap-over", PROSE, "do the thing");
+    let overDone = false;
+    const overP = applyCompletionLedger(base({ taskId: "t-ecap-over" })).then(
+      (o) => {
+        overDone = true;
+        return o;
+      },
+    );
+    await vi.waitFor(() => expect(overDone).toBe(true));
+    expect(mockRunGrader).toHaveBeenCalledTimes(MAX_CONCURRENT_SHADOW_GRADES);
+    const over = await overP;
+    expect(over.taskStatus).toBe("completed"); // a skipped grade never demotes
+    expect(over.gates?.verdict).not.toBe("failed");
+    expect(listGates("t-ecap-over")[0]).toMatchObject({
+      gate_id: "GR-g-1.1",
+      state: "abandoned",
+    });
+    expect(listGates("t-ecap-over")[0]!.abandon_reason).toMatch(
+      /^skipped_concurrency/,
+    );
+    expect((over.output as { text: string }).text).toMatch(
+      /ABANDONED: GR-g-1\.1.*skipped_concurrency/,
+    );
+    const tr = gradedTraces("t-ecap-over");
+    expect(tr).toHaveLength(1); // the decision's own trace, no second one
+    expect(JSON.parse(tr[0]!.attrs)).toMatchObject({
+      mode: "enforce",
+      model: null,
+      reason: "skipped_concurrency",
+    });
+
+    // The in-flight calls settle → their slots free → the next task is graded.
+    for (const r of releases) r(met());
+    for (const o of await Promise.all(inFlight)) {
+      expect(o.taskStatus).toBe("completed");
+    }
+    await _drainShadowGradesForTests();
+    registerGradeSpecs("t-ecap-after", PROSE, "do the thing");
+    const afterP = applyCompletionLedger(base({ taskId: "t-ecap-after" }));
+    await vi.waitFor(() =>
+      expect(mockRunGrader).toHaveBeenCalledTimes(
+        MAX_CONCURRENT_SHADOW_GRADES + 1,
+      ),
+    );
+    releases.at(-1)!(met());
+    const after = await afterP;
+    expect(after.taskStatus).toBe("completed");
+    expect(listGates("t-ecap-after")[0]).toMatchObject({ state: "met" });
+    expect(
+      JSON.parse(gradedTraces("t-ecap-after")[0]!.attrs).reason,
+    ).toBeUndefined();
+  });
+
+  it("an orphaned enforce call (budget returned, SDK still running) keeps its slot until the call settles", async () => {
+    const calls = await realGraderOnHungCalls();
+    const run = async (id: string) => {
+      registerGradeSpecs(id, PROSE, "do the thing");
+      return applyCompletionLedger(base({ taskId: id }));
+    };
+    for (let i = 0; i < MAX_CONCURRENT_SHADOW_GRADES; i++) {
+      const o = await run(`t-eorph-${i}`); // returns on the 10 ms budget
+      expect(o.taskStatus).toBe("completed");
+      expect(JSON.parse(gradedTraces(`t-eorph-${i}`)[0]!.attrs).reason).toBe(
+        "budget_exhausted",
+      );
+    }
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES);
+
+    await run("t-eorph-over");
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES); // no new call
+    expect(listGates("t-eorph-over")[0]).toMatchObject({ state: "abandoned" });
+    expect(JSON.parse(gradedTraces("t-eorph-over")[0]!.attrs)).toMatchObject({
+      mode: "enforce",
+      reason: "skipped_concurrency",
+    });
+
+    for (const c of calls) c.resolve();
+    await _drainShadowGradesForTests();
+    await run("t-eorph-after");
+    expect(calls).toHaveLength(MAX_CONCURRENT_SHADOW_GRADES + 1); // a real call
+    expect(listGates("t-eorph-after")[0]!.state).toBe("pending"); // budget, not abandoned
+    calls.at(-1)!.resolve();
+    await _drainShadowGradesForTests();
+  });
+
+  it("one pool across modes: shadow gradings in flight fill the cap an enforce task then hits (skipped, rows ABANDONED, never demoted)", async () => {
+    const releases: Array<(r: GraderResult) => void> = [];
+    mockRunGrader.mockImplementation(
+      () =>
+        new Promise<GraderResult>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    process.env.TASK_GATES_GRADER = "shadow";
+    for (let i = 0; i < MAX_CONCURRENT_SHADOW_GRADES; i++) {
+      registerGradeSpecs(`t-pool-${i}`, PROSE, "do the thing");
+      await applyCompletionLedger(base({ taskId: `t-pool-${i}` }));
+    }
+    await vi.waitFor(() =>
+      expect(mockRunGrader).toHaveBeenCalledTimes(MAX_CONCURRENT_SHADOW_GRADES),
+    );
+
+    process.env.TASK_GATES_GRADER = "enforce";
+    registerGradeSpecs("t-pool-enf", PROSE, "do the thing");
+    let done = false;
+    const enfP = applyCompletionLedger(base({ taskId: "t-pool-enf" })).then(
+      (o) => {
+        done = true;
+        return o;
+      },
+    );
+    // Settles on skip; a grader call (separate pool) would leave it pending.
+    await vi.waitFor(() =>
+      expect(
+        done || mockRunGrader.mock.calls.length > MAX_CONCURRENT_SHADOW_GRADES,
+      ).toBe(true),
+    );
+    expect(mockRunGrader, "enforce was not skipped").toHaveBeenCalledTimes(
+      MAX_CONCURRENT_SHADOW_GRADES,
+    );
+    const out = await enfP;
+    expect(out.taskStatus).toBe("completed");
+    expect(listGates("t-pool-enf")[0]).toMatchObject({
+      gate_id: "GR-g-1.1",
+      state: "abandoned",
+    });
+    expect(listGates("t-pool-enf")[0]!.abandon_reason).toMatch(
+      /^skipped_concurrency/,
+    );
+    const tr = gradedTraces("t-pool-enf");
+    expect(tr).toHaveLength(1);
+    expect(JSON.parse(tr[0]!.attrs)).toMatchObject({
+      mode: "enforce",
+      reason: "skipped_concurrency",
+    });
+
+    for (const r of releases) {
+      r({
+        verdicts: [{ id: "GR-g-1.1", verdict: "met", evidence: "listed" }],
+        model: "claude-opus-4-8",
+        latencyMs: 1,
+        usage: USAGE,
+      });
+    }
+    await _drainShadowGradesForTests();
   });
 
   it("reverifyChildLedger ignores a child's failed GR row (v1 demotes only, never fails the goal)", async () => {
