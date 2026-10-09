@@ -65,7 +65,7 @@ below: `./mc-ctl audit-claim`.
 | `19d27d55-ddfd-42ed-99de-7afa230a6d78` | 2026-10-06 14:18 | met | completed | - |  |  | swarm child |
 | `108642de-d0dc-4eac-8d69-1645fc203e3a` | 2026-10-07 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
 | `1769b7c0-3d18-4179-8265-f052ba855cd7` | 2026-10-08 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
-| `ca333512-e8be-45b3-aee2-218fb041e0d3` | 2026-10-08 13:40 | failed | completed | - |  |  | swarm child (parent 19b7d51a, 10-08 13:38); grader failed — READ FIRST (candidate catch) |
+| `ca333512-e8be-45b3-aee2-218fb041e0d3` | 2026-10-08 13:40 | failed | completed | - | not done | **yes** | swarm child (parent 19b7d51a); operator read 10-09. Claimed a new section + verified URL written to a bet-book source file; the section exists in no file on disk, in no `jarvis_files` row, and the URL nowhere (checked 10-09). Run called `file_edit` (code-editing tool, self-improvement scope, no read-back gate) twice instead of `jarvis_file_write`; both returned `{error}`; the child still reported the goal complete. Grader: 3/3 criteria failed, correctly. First confirmed catch. Class queued §2026-10-08 (late) item 10. |
 | `292ea4dc-c9d0-4bd3-909f-5e690b322e35` | 2026-10-08 13:41 | met | completed | - |  |  | swarm child |
 | `5fd673a8-b999-4558-b4d2-dc4134193bc8` | 2026-10-08 13:41 | failed | completed_with_concerns | - |  |  | swarm child (parent 19b7d51a); grader failed — READ FIRST (candidate catch) |
 | `df61c55d-d281-44cd-b66d-5a6abf16d536` | 2026-10-08 13:43 | met | completed_with_concerns | - |  |  | swarm child |
@@ -81,6 +81,7 @@ below: `./mc-ctl audit-claim`.
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-09 05:4x | 15 | 0 | 0 | – | 1 | 1 | 14 |
 | 2026-10-09 04:3x | 15 | 0 | 0 | – | 0 | 0 | 15 |
 | 2026-10-06 03:50 | 0 | 0 | 0 | – | 0 | 0 | 0 |
 
@@ -91,7 +92,7 @@ Grader population proxy = heavy tasks completed per ISO week (roots + swarm chil
 ## Activation checklist (all three, §6)
 
 - [ ] ≥ 30 rows labelled `really done` with ≤ 2 false positives (0/30 is the only count that bounds the true rate at 10 %).
-- [ ] ≥ 1 confirmed catch.
+- [x] ≥ 1 confirmed catch — `ca333512` (2026-10-09, operator read): completed-claim with no artifact, grader failed 3/3 criteria.
 - [ ] Median added latency and cost per graded task reported (`./mc-ctl gates graded 30`, `cost_ledger` agent_type `v9:grader`) and accepted by the operator. **Reported 2026-10-09 (n=15, 10-06 → 10-09, read-only SQL over `gates.graded` + `cost_ledger`; `mc-ctl audit-claim` has no grader metric, operator re-reads with `./mc-ctl gates graded 30`):** latency median 20.4 s (min 9.2 s, max 30.5 s; shadow runs in the background so no task waited; under enforce this is added wall-clock per graded task) · cost median $0.20 per task, total $3.11, 15 ledger rows under `v9:grader` match the 15 traces · 64 criteria graded (4.3 per task). Acceptance = operator.
 - [x] Before enforce: queue §2026-10-06 item 1 (enforce-mode concurrency cap) shipped — `e7629fa` 2026-10-09 (one 4-slot pool across modes; over the cap the grade rows are ABANDONED `skipped_concurrency`, never demoted; 3 tests, 8 mutants caught, audit R1 folded). DEPLOYED 2026-10-09 05:12 UTC as build `a87ddb8` (PID 2596714, health 200, 0 startup errors).
 
