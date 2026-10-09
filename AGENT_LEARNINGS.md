@@ -160,3 +160,8 @@
 - **Avoid:** selecting between two candidate texts by length — "longer wins" is "narration wins" the moment one candidate is an accumulator. Select by substance (body length after trailers) and keep the short-candidate fallback explicit.
 - **Better:** when a cross-module helper would create an import cycle, inline the 4 lines and name the source in the comment; the auditor's 500k random fuzz against the original is the equivalence proof.
 - **Observed, not fixed:** stored outputs hold only the chosen text, so the queue's "replay 30 d" was impossible; the seam count by agent_type is the before/after metric (query in queue §2026-10-08 item 8).
+
+## 2026-10-09 — session wrap (three /diagnose → /ship-it cycles, all deployed)
+- **Mistake:** the first commit heredoc omitted the attribution trailer; the amend cost a second 131 s full-suite gate because `--no-verify` is hook-blocked → put the trailer in the commit template before writing the body; `git log -1 --format=%B | tail -2` before the push.
+- **Mistake:** a `signals.collected_at >= '2026-10-09T00:26'` filter returned 0 rows (the column stores a space, not a `T`) and I nearly reported "no GDELT rows since deploy" → `SELECT MAX(col)` to read the stored format before any range predicate (the impossible-population class).
+- **Better:** the chain brief → implementer → qa-auditor → fold → re-audit converged in two rounds each time; the R1 FAIL on the narration fix came from the brief (threshold copied without its consumer's cuts), not the implementer — review every borrowed constant's neighbours before writing a brief.
