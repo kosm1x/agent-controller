@@ -17,7 +17,7 @@
 
 ## Current stage
 
-V8.1 active (08:00 Morning Sync is the surface; §13 gate v2 scores it since 2026-10-06, first verdict needs ~7 post-deploy runs + 5 ratings); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **W1 is live in shadow (#60 + pre-arm fixes `d0d95a8`; `TASK_GATES_GRADER=shadow` armed 2026-10-06 03:35 UTC, first trace pending); W2–W6 have no code.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
+V8.1 active (08:00 Morning Sync is the surface; §13 gate v2 scores it since 2026-10-06, first verdict needs ~7 post-deploy runs + 5 ratings); V8.2 judgments in shadow; V8.3 Phases 0–7 done, first L1→L2 promotion 2026-09-18; V8.4 Honest Done ENFORCE armed. **W1 is live in shadow (#60 + pre-arm fixes `d0d95a8`; `TASK_GATES_GRADER=shadow` armed 2026-10-06 03:35 UTC; 15 `gates.graded` traces by 10-09, 0 labels — the auto-label needs a `task_outcomes` row and 14 of the 15 graded tasks have none, queue §2026-10-08 item 10); W2–W6 have no code.** Source: `docs/PROJECT-STATUS.md` header, `docs/V9-ROADMAP.md` §3.
 
 ## Active bets
 
@@ -51,7 +51,7 @@ V8.1 active (08:00 Morning Sync is the surface; §13 gate v2 scores it since 202
 
 ## Blocked on Fede
 
-- W1: pre-arm fixes live (`d0d95a8`) and `eval:gate -- --run` PASSED 2026-10-06 03:3x UTC (composite 75.70 vs incumbent 76.87, delta −1.18 within ε 2; 239 cases, 0 errored probes, $4.92). `TASK_GATES_GRADER=shadow` ARMED 03:35 UTC (drop-in `v9-grader.conf`, PID 3625470). Next = first `gates.graded` trace, then label ≥30 runs in `docs/planning/v9-w1-labels.md` ("excelente" = really done, explicit negative = not done, rest by hand from `mc-ctl gates graded`). Also owed: weekly count of gradeable tasks.
+- W1: pre-arm fixes live (`d0d95a8`) and `eval:gate -- --run` PASSED 2026-10-06 03:3x UTC (composite 75.70 vs incumbent 76.87, delta −1.18 within ε 2; 239 cases, 0 errored probes, $4.92). `TASK_GATES_GRADER=shadow` ARMED 03:35 UTC (drop-in `v9-grader.conf`, PID 3625470). First `gates.graded` trace 10-06 (15 by 10-09: 4 heavy roots, 11 swarm children, grader `failed` on 2). Next = label ≥30 runs in `docs/planning/v9-w1-labels.md` (0 so far; the "excelente" auto-label cannot fire for 14 of 15 because scheduled roots and swarm children write no `task_outcomes` row — ruling queued §2026-10-08 item 10) ("excelente" = really done, explicit negative = not done, rest by hand from `mc-ctl gates graded`). Also owed: weekly count of gradeable tasks.
 - Eval gate: the committed baseline (`src/tuning/eval-baseline.json`, 2026-10-04 04:04 UTC, 76.87) predates #60's `src/` changes; the 10-06 run passed against it. A re-capture (`npm run eval:gate -- --run --update-baseline`, ~$5) is still owed BEFORE the next Jarvis system-prompt / tool-description change, so that change is measured against today's code, not 10-04's.
 - Ruling 5a: the read-only DB role (operator-run DDL).
 - L1: run the Agent SDK bump with `npm run eval:gate -- --run` on the VPS (cloud sessions cannot).
