@@ -76,11 +76,15 @@ below: `./mc-ctl audit-claim`.
 | `b0ea0fe5-0588-4615-ab0c-3c8962887d62` | 2026-10-08 15:22 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
 | `6293dff3-2f13-46f3-baf7-e0f6ce970ef7` | 2026-10-08 15:24 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
 | `084d4c84-f825-49cc-a09f-46f40e9b01ac` | 2026-10-09 03:20 | met | completed | none |  |  | heavy root; only row with a task_outcomes row (signal none) |
+| `341a6c51-bffb-4bb9-81d7-37943abc986f` | 2026-10-09 04:50 | met | completed | - |  |  | ritual root (04:50 UTC), 1 gate met |
+| `be4e0d40-fc28-471f-ba16-bc1a9193f144` | 2026-10-09 04:58 | met | completed | - |  |  | ritual root (04:58 UTC), 0 gates |
+| `371ccb8c-407a-41a3-baf3-847844e03bc5` | 2026-10-09 05:02 | met | completed | - |  |  | ritual root (05:02 UTC), 9 criteria, 0 gates |
 
 ## Tally (recompute from the rows, newest run first)
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-09 06:2x | 18 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 16 |
 | 2026-10-09 06:0x | 15 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 13 |
 | 2026-10-09 05:4x | 15 | 0 | 0 | – | 1 | 1 | 14 |
 | 2026-10-09 04:3x | 15 | 0 | 0 | – | 0 | 0 | 15 |
