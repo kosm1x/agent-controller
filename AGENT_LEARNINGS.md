@@ -129,3 +129,9 @@
 - **Avoid:** asking a subagent to touch `.env.example` — the classifier denies it to agents (same as `.env`); hand the exact line to the operator instead of pursuing another route.
 - **Better:** a ruling the operator cannot parse gets the cause-and-effect walk (what happened → why the harness believed it → what changes if yes / if no → why it is theirs to decide), not a 5-point option list; the operator ruled in one word after it.
 - **Better:** audit asked for the reader-facing line's exact rendering (W2: raw `{"error":…}` JSON in a Spanish line) — pin the rendered string in a test through the REAL registry, not a fixture.
+
+## 2026-10-09 — L5 Stop-hook own deadline (`36c15a7`; recon → brief → impl → qa R1 → 4 folds → qa R2 → pre-commit FAIL → mock sweep → ship)
+- **Mistake:** the brief listed the SDK-side test to update but not the OTHER test files that mock `stop-hook.js` by hand; the pre-commit full suite failed on `outbound-scrub.test.ts` (new export missing from the mock). Check: a new export from a module ⇒ `grep -rn 'vi.mock(".*<module>' src` BEFORE the commit and fold every hand-built mock to `importOriginal` spread.
+- **Mistake:** the pre-commit output was cut to `tail -3`, losing the failing test name; a second `vitest related --run <sources>` run was needed to find it. Check: filter the hook output with `grep -E "×|FAIL|Tests "` instead of `tail`.
+- **Better:** the implementer disclosed an accidental `prettier --write` and reverted it by hand; the auditor verified the diff contained only additions. Keep "diff hygiene" as audit dimension 1 whenever a formatter could have run.
+- **Better:** the auditor's unpinned-mutant list (M7/M8/M9 survived) was the fold brief verbatim; pasting mutant definitions into the fold brief avoided the item-11 "guessed mutant" problem.
