@@ -169,6 +169,45 @@ describe("intel scheduler", () => {
     expect(getCollectorHealth()[0].lastSuccess).toBeTruthy();
   });
 
+  it("appends the error cause code to the failure warn line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockCollect.mockRejectedValue(
+      new Error("fetch failed", {
+        cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+      }),
+    );
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(warn).toHaveBeenCalledWith(
+      "[intel] test_source failed (1x): fetch failed (UND_ERR_CONNECT_TIMEOUT)",
+    );
+  });
+
+  it("falls back to the cause message when the cause has no code", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockCollect.mockRejectedValue(
+      new Error("fetch failed", { cause: { message: "x" } }),
+    );
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(warn).toHaveBeenCalledWith(
+      "[intel] test_source failed (1x): fetch failed (x)",
+    );
+  });
+
+  it("logs the bare error message when there is no cause", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockCollect.mockRejectedValue(new Error("fetch failed"));
+    startIntelCollectors();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(warn).toHaveBeenCalledWith(
+      "[intel] test_source failed (1x): fetch failed",
+    );
+  });
+
   it("does not duplicate collectors on double start", () => {
     startIntelCollectors();
     startIntelCollectors();

@@ -6,7 +6,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { usgsAdapter } from "./usgs.js";
 import { nwsAdapter } from "./nws.js";
-import { gdeltAdapter } from "./gdelt.js";
+import {
+  gdeltAdapter,
+  GDELT_CONNECT_TIMEOUT_MS,
+  GDELT_TIMEOUT_MS,
+} from "./gdelt.js";
 import { frankfurterAdapter } from "./frankfurter.js";
 import { cisaKevAdapter } from "./cisa-kev.js";
 import { coingeckoAdapter } from "./coingecko.js";
@@ -283,6 +287,18 @@ describe("gdelt adapter", () => {
     await gdeltAdapter.collect();
     const url = decodeURIComponent(String(mockFetch.mock.calls[0][0]));
     expect(url).toContain("query=(conflict OR crisis OR sanctions)&");
+    // Without these GDELT searches 3 months by relevance; stale hits dedup away.
+    expect(url).toContain("timespan=1h");
+    expect(url).toContain("sort=DateDesc");
+    // Custom dispatcher carries the raised connect timeout (TLS takes 10-13 s).
+    expect(mockFetch.mock.calls[0][1]?.dispatcher).toBeDefined();
+  });
+
+  it("pins the connect and overall timeouts", () => {
+    // TLS handshake to GDELT takes 10-13 s (observed 2026-10-08); undici's 10 s default failed it.
+    expect(GDELT_CONNECT_TIMEOUT_MS).toBe(30_000);
+    // Successful responses take 13-20 s (observed 2026-10-08), plus the slow handshake.
+    expect(GDELT_TIMEOUT_MS).toBe(45_000);
   });
 });
 

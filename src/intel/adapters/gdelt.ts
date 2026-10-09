@@ -1,15 +1,21 @@
 /**
  * GDELT adapter — fetches recent conflict/crisis articles from GDELT API v2.
- * No auth required. Polling: 15 minutes.
+ * No auth required. Polling: 15 minutes, last hour newest-first.
+ * Timeouts are generous because since 2026-09-23 GDELT's TLS handshake alone
+ * takes 10-13 s from this VPS (undici's default 10 s connect timeout failed it)
+ * and successful responses take 13-20 s.
  */
 
+import { Agent } from "undici";
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
 import { httpError } from "./http-error.js";
 
 const API_URL =
-  "https://api.gdeltproject.org/api/v2/doc/doc?query=(conflict%20OR%20crisis%20OR%20sanctions)&mode=ArtList&format=json&maxrecords=50";
-const TIMEOUT_MS = 15_000;
+  "https://api.gdeltproject.org/api/v2/doc/doc?query=(conflict%20OR%20crisis%20OR%20sanctions)&mode=ArtList&format=json&maxrecords=50&timespan=1h&sort=DateDesc";
+export const GDELT_TIMEOUT_MS = 45_000;
+export const GDELT_CONNECT_TIMEOUT_MS = 30_000;
+const dispatcher = new Agent({ connectTimeout: GDELT_CONNECT_TIMEOUT_MS });
 
 interface GDELTArticle {
   url: string;
@@ -32,13 +38,16 @@ export const gdeltAdapter: CollectorAdapter = {
 
   async collect(): Promise<Signal[]> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), GDELT_TIMEOUT_MS);
 
     try {
       const res = await fetch(API_URL, {
         signal: controller.signal,
         headers: { Accept: "application/json" },
-      });
+        dispatcher,
+        // undici 7's Agent type != Node's bundled undici-types Dispatcher;
+        // runtime contract is identical (same pattern as lib/url-safety.ts).
+      } as unknown as RequestInit);
       if (!res.ok) throw await httpError(res);
 
       const data = (await res.json()) as GDELTResponse;

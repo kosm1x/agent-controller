@@ -84,7 +84,18 @@ async function runCollector(adapter: CollectorAdapter): Promise<void> {
     }
   } catch (err) {
     h.consecutiveFailures++;
-    const msg = errMsg(err);
+    // undici hides the reason ("fetch failed") behind `cause`; surface it.
+    const cause =
+      err instanceof Error
+        ? (err.cause as { code?: unknown; message?: unknown } | undefined)
+        : undefined;
+    const detail =
+      typeof cause?.code === "string"
+        ? cause.code
+        : typeof cause?.message === "string"
+          ? cause.message
+          : undefined;
+    const msg = detail ? `${errMsg(err)} (${detail})` : errMsg(err);
     console.warn(
       `[intel] ${adapter.source} failed (${h.consecutiveFailures}x): ${msg}`,
     );
