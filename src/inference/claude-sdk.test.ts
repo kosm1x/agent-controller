@@ -459,6 +459,398 @@ describe("queryClaudeSdk error_max_turns handling", () => {
     expect(result.numTurns).toBe(5);
     expect(result.costUsd).toBe(0.01);
   });
+
+  it("returns the final answer, not the glued narration, on a multi-turn run", async () => {
+    // success.result is the FINAL turn's text. When it is a full answer
+    // (>= 200 chars), earlier-turn narration must not be prepended to it.
+    const narration1 =
+      "Voy a investigar las fuentes disponibles antes de responder la pregunta.";
+    const narration2 = "Ahora leo el archivo que encontré para confirmar.";
+    const finalAnswer =
+      "## Resumen\n\n" + "Respuesta final detallada. ".repeat(18);
+    expect(finalAnswer.length).toBeGreaterThanOrEqual(480);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: narration1 },
+            { type: "tool_use", name: "mcp__jarvis__web_search" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: narration2 },
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: finalAnswer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: finalAnswer,
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "investiga",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe(finalAnswer);
+  });
+
+  it("keeps earlier body text before a thin closer, separated by a blank line", async () => {
+    const body = "x".repeat(848);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: body }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Listo." }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "Listo.",
+        num_turns: 4,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "escribe",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain(body);
+    expect(result.text.endsWith("\n\nListo.")).toBe(true);
+  });
+
+  it("separates text blocks from different turns with a blank line", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "A" }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "B" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "B",
+        num_turns: 2,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "hola",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe("A\n\nB");
+  });
+
+  it("does not add a separator after a block that already ends with a newline", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "A\n" }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "B" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "B",
+        num_turns: 2,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "hola",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe("A\nB");
+  });
+
+  it("excludes the final STATUS line from the thin-closer count", async () => {
+    // "Guardado.\n\nSTATUS: DONE_WITH_CONCERNS — <long concern>" is a thin
+    // closer: the fast runner strips the STATUS line, leaving "Guardado.".
+    const body = "x".repeat(848);
+    const closer =
+      "Guardado.\n\nSTATUS: DONE_WITH_CONCERNS — " + "c".repeat(200);
+    expect(closer.trim().length).toBeGreaterThanOrEqual(200);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: body }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: closer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: closer,
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "escribe",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain(body);
+    expect(result.text.endsWith(closer)).toBe(true);
+  });
+
+  it("excludes a DONE_WITH_CONCERNS trailer that wraps onto a second line", async () => {
+    // The concern runs past its first line, so the final line has no
+    // `STATUS:`; the fast runner's stripConcernsTrailer still cuts from the
+    // first `STATUS: DONE_WITH_CONCERNS`, leaving "Guardado.".
+    const body = "x".repeat(848);
+    const closer =
+      "Guardado.\n\nSTATUS: DONE_WITH_CONCERNS — " +
+      "c".repeat(100) +
+      "\n" +
+      "d".repeat(150);
+    expect(closer.length).toBe(291);
+    expect(closer.slice(closer.lastIndexOf("\n") + 1)).not.toContain("STATUS:");
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: body }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: closer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: closer,
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "escribe",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain(body);
+    expect(result.text.endsWith(closer)).toBe(true);
+  });
+
+  it("excludes a long non-concerns STATUS on the final line", async () => {
+    // Not DONE_WITH_CONCERNS, so only the final-line cut applies.
+    const body = "x".repeat(848);
+    const closer = "Guardado.\n\nSTATUS: BLOCKED — " + "c".repeat(200);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: body }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: closer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: closer,
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "escribe",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain(body);
+    expect(result.text.endsWith(closer)).toBe(true);
+  });
+
+  it("does not cut at a mid-body STATUS: that is not on the final line", async () => {
+    const narration = "n".repeat(900);
+    const finalAnswer = "Servidor STATUS: ok.\n" + "a".repeat(300);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: narration },
+            { type: "tool_use", name: "mcp__jarvis__web_search" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: finalAnswer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: finalAnswer,
+        num_turns: 2,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "investiga",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe(finalAnswer);
+  });
+
+  it("measures the thin closer after trimming whitespace padding", async () => {
+    const body = "x".repeat(848);
+    const closer = "Hecho." + "\n \n".repeat(83) + " ";
+    expect(closer.length).toBeGreaterThanOrEqual(250);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: body }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__jarvis__jarvis_file_update" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: closer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: closer,
+        num_turns: 3,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "escribe",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toContain(body);
+  });
+
+  it("treats a final answer of exactly 200 chars as substantive", async () => {
+    const narration = "n".repeat(500);
+    const finalAnswer = "a".repeat(200);
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: narration },
+            { type: "tool_use", name: "mcp__jarvis__web_search" },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: finalAnswer }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: finalAnswer,
+        num_turns: 2,
+        usage: { input_tokens: 800, output_tokens: 400 },
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "investiga",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+
+    expect(result.text).toBe(finalAnswer);
+  });
 });
 
 // ---------------------------------------------------------------------------

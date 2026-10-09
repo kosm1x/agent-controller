@@ -174,6 +174,23 @@ export function wrapToolCached(t: Tool): ReturnType<typeof wrapTool> {
  *  tells the model to pdf_read next. */
 const SERIAL_READ_TOOLS = new Set(["gdrive_download"]);
 
+/** A final turn shorter than this is a "thin closer"; same threshold as the
+ *  fast runner's leg stitching. STATUS trailers are excluded from the count
+ *  (see `finalTurnBodyLength`). */
+const THIN_CLOSER_CHARS = 200;
+
+/** Trimmed length of `text` cut at the earlier of (a) the first `STATUS:` on
+ *  its final line and (b) the first `STATUS: DONE_WITH_CONCERNS` anywhere —
+ *  the cuts fast-runner's `stripFinalStatusLine` and `stripConcernsTrailer`
+ *  make (inlined: the fast runner imports this module). (b) covers a concern
+ *  that wraps onto a second line, leaving no `STATUS:` on the final line. */
+function finalTurnBodyLength(text: string): number {
+  const a = text.indexOf("STATUS:", text.lastIndexOf("\n") + 1);
+  const b = text.indexOf("STATUS: DONE_WITH_CONCERNS");
+  const end = Math.min(a < 0 ? text.length : a, b < 0 ? text.length : b);
+  return text.slice(0, end).trim().length;
+}
+
 /**
  * Concurrency is decided here, not by editing readOnlyHint (which feeds the
  * Rule-of-Two resolver). MCP-bridged tools stay serial: the browser server
@@ -1272,6 +1289,9 @@ export async function queryClaudeSdk(opts: {
               "text" in block &&
               typeof block.text === "string"
             ) {
+              if (streamingText && !streamingText.endsWith("\n")) {
+                streamingText += "\n\n";
+              }
               streamingText += block.text;
             } else if (
               block.type === "tool_use" &&
@@ -1361,18 +1381,19 @@ export async function queryClaudeSdk(opts: {
           const success = message as SDKResultSuccess;
           warnIfDeferredToolUnresolved(success);
           // success.result captures only the FINAL assistant turn's text.
-          // When the final turn is tool-use-heavy (or a minimal closer), any
-          // body text produced in earlier turns lives only in streamingText.
-          // Prefer the longer of the two so multi-turn poems/answers are not
-          // silently dropped when the model ends on a tool call.
+          // A substantive final turn is the answer: earlier-turn narration
+          // must not be glued onto it. Only a thin closer (d80e29c: poem in
+          // turn 1, tool-only turns, "STATUS: DONE") falls back to the
+          // accumulated streamingText so earlier body text is not dropped.
           // v7.7.2 audit nit: coerce `success.result ?? ""` so `resultText`
           // never transiently holds `undefined` (the declared type is
-          // `string`). Both sides of the ternary are now guaranteed strings.
+          // `string`).
           const resolvedResult = success.result ?? "";
           resultText =
-            streamingText.length > resolvedResult.length
-              ? streamingText
-              : resolvedResult;
+            finalTurnBodyLength(resolvedResult) >= THIN_CLOSER_CHARS ||
+            resolvedResult.length >= streamingText.length
+              ? resolvedResult
+              : streamingText;
           numTurns = success.num_turns;
           // Anthropic Messages API: "Total input tokens in a request is the
           // summation of `input_tokens`, `cache_creation_input_tokens`, and
