@@ -159,4 +159,6 @@
 - **Avoid:** trusting `fetch failed` as a network error — undici hides `cause.code` (`UND_ERR_CONNECT_TIMEOUT`, its 10 s default covers the TLS handshake). Log the cause; a log line that cannot distinguish timeout from reset cannot be diagnosed later.
 - **Better:** a value pin (`expect(CONST).toBe(30_000)`) catches a changed constant but not the option dropped at the call site; name that survivor in the commit rather than mocking the library to kill it.
 - **Observed, not fixed:** `conflict_articles` delta threshold equals `maxrecords`, so the ratio caps at 1.0 and never alerts (queued, ruling).
+- **Mistake (queue, 10-07):** item 10 called the evolution-log "n/a (no snapshot)" rows a one-off that "recurred". `awk` over the log showed the rows had been empty since April: the snapshot was a COMMIT tool deleted on 04-03 and the template placeholders outlived it. → When a ritual output says "not provided", read the template for the word and `git log -S` it; a placeholder with no producer is a six-month bug, not a flaky run.
+- **Better:** a template row that names a source ("from snapshot", "from NorthStar") must have a harness-computed value behind it or be deleted; the model filling it in is the defect, not the fix.
 
