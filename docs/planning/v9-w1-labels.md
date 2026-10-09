@@ -67,7 +67,7 @@ below: `./mc-ctl audit-claim`.
 | `1769b7c0-3d18-4179-8265-f052ba855cd7` | 2026-10-08 05:02 | met | completed | - |  |  | scheduled heavy root (05:0x UTC ritual) |
 | `ca333512-e8be-45b3-aee2-218fb041e0d3` | 2026-10-08 13:40 | failed | completed | - | not done | **yes** | swarm child (parent 19b7d51a); operator read 10-09. Claimed a new section + verified URL written to a bet-book source file; the section exists in no file on disk, in no `jarvis_files` row, and the URL nowhere (checked 10-09). Run called `file_edit` (code-editing tool, self-improvement scope, no read-back gate) twice instead of `jarvis_file_write`; both returned `{error}`; the child still reported the goal complete. Grader: 3/3 criteria failed, correctly. First confirmed catch. Class queued §2026-10-08 (late) item 10. |
 | `292ea4dc-c9d0-4bd3-909f-5e690b322e35` | 2026-10-08 13:41 | met | completed | - |  |  | swarm child |
-| `5fd673a8-b999-4558-b4d2-dc4134193bc8` | 2026-10-08 13:41 | failed | completed_with_concerns | - |  |  | swarm child (parent 19b7d51a); grader failed — READ FIRST (candidate catch) |
+| `5fd673a8-b999-4558-b4d2-dc4134193bc8` | 2026-10-08 13:41 | failed | completed_with_concerns | - | really done | no | **FALSE POSITIVE, cause = stale ground truth.** Operator read 10-09: the bet-book legal file on disk is 12,719 bytes, mtime 13:40 UTC inside the run, with the three country sections, the MP 1.394 note and 18 official URLs (all four plan criteria hold on disk). The run wrote it with `file_edit` (FS only); `jarvis_files` still holds the 5,4xx-byte pre-run copy, and the grader's `sql_check` reads that table, so both grader criteria failed against a copy the task never touched. The shell gates failed for the already-fixed cwd reason (`c583ed8`). Class queued §2026-10-08 (late) item 11 (KB registry/disk parity: 40/1,260 rows diverge). |
 | `df61c55d-d281-44cd-b66d-5a6abf16d536` | 2026-10-08 13:43 | met | completed_with_concerns | - |  |  | swarm child |
 | `443b5f42-99d2-4a78-99f5-cc8ec8be733d` | 2026-10-08 13:47 | met | completed_with_concerns | - |  |  | swarm child |
 | `dd9d01e4-a1f9-45fd-9c23-421c47035fe2` | 2026-10-08 15:21 | met | completed | - |  |  | swarm child (10-08 15:2x batch) |
@@ -81,6 +81,7 @@ below: `./mc-ctl audit-claim`.
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-09 06:0x | 15 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 13 |
 | 2026-10-09 05:4x | 15 | 0 | 0 | – | 1 | 1 | 14 |
 | 2026-10-09 04:3x | 15 | 0 | 0 | – | 0 | 0 | 15 |
 | 2026-10-06 03:50 | 0 | 0 | 0 | – | 0 | 0 | 0 |
