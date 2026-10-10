@@ -12,7 +12,7 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | Anthropic SDK (TS) | 0.111.0 exact (peer only) | https://raw.githubusercontent.com/anthropics/anthropic-sdk-typescript/main/CHANGELOG.md |
 | Claude platform docs (Managed Agents, tool use) | n/a | https://platform.claude.com/llms.txt |
 | MCP specification | 2025-11-25 via SDK | https://modelcontextprotocol.io/specification/latest |
-| `@modelcontextprotocol/sdk` | `^1.29.0`, installed 1.29.0 | https://registry.npmjs.org/@modelcontextprotocol/sdk |
+| `@modelcontextprotocol/sdk` | `^1.32.0`, installed 1.32.0 (2026-10-10) | https://registry.npmjs.org/@modelcontextprotocol/sdk |
 | A2A protocol | bespoke, pre-0.3 dialect | https://raw.githubusercontent.com/a2aproject/A2A/main/CHANGELOG.md |
 | OTel GenAI semantic conventions | none | https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/main/CHANGELOG.md |
 | LangGraph, OpenAI Agents SDK, Google ADK, Microsoft Agent Framework | none (ideas only) | registry JSON on npm / PyPI; docs pages listed in the review note |
@@ -44,7 +44,7 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | Server compaction [a12] | ignore (CLI owns it) | context overflows (VPS data) | weekly scan | 2026-10-03 |
 | Hosted Managed Agents [a24] | ignore (option A) | none | operator (standing) | 2026-10-03 |
 | MCP bridge keeps `structuredContent` + resource links [b1] | build | **built 2026-10-09** (`renderResult`: structured JSON block + one line per non-text item) | L2 | 2026-10-09 |
-| `@modelcontextprotocol/sdk` 1.32.0 [b2] | adopt (within caret) | operator-run: `npm install @modelcontextprotocol/sdk@1.32.0` under a STOPPED service; 1.32.1 (2026-10-05) is inside the 7-day `min-release-age` until 2026-10-12 | L2 | 2026-10-09 |
+| `@modelcontextprotocol/sdk` 1.32.0 [b2] | adopt (within caret) | **adopted 2026-10-10** (operator-run under a stopped service; `npx npm@10 ci` scratch check clean; MCP test files 175/175; sandbox image rebuilt). 1.32.1 (2026-10-05) stays inside `min-release-age` until 2026-10-12 | L2 | 2026-10-10 |
 | MCP validation errors as tool errors [b3] | borrow | verified 2026-10-09: 1.29.0 and 1.32.0 both throw -32602 on bad arguments; borrow needs a bypass of `registerTool` validation → parked | L2 | 2026-10-09 |
 | Deterministic `tools/list` order [b4] | borrow | cache-hit drop (`audit-claim`) | S5 | 2026-10-03 |
 | MCP 2026-07-28 stateless protocol, v2 SDK [b5] | ignore now | an SDK sets `LATEST_PROTOCOL_VERSION = 2026-07-28` | operator ruling | 2026-10-03 |
