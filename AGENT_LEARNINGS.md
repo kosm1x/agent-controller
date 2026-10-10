@@ -32,34 +32,10 @@
 - 10-04 eval gate + #60: a number about a harness is measured through the harness; a verifier's `initDatabase()` on a scratch path overwrote live KB files twice → name the barrier (`JARVIS_KB_MIRROR_DIR`), tripwire only files the service never rewrites; confirm a switch is ON before naming a run to watch.
 - 10-05 critic/PDF: verify extraction by content overlap, not char count; a verdict about a judge needs the judge's inputs; `deploy.sh` builds the WORKING TREE; no `git stash`/`prettier --write` with two implementers in one checkout.
 
-## 2026-10-06 — W1 grader pre-arm fixes (queue item 11 b–e)
-- **Better:** an orphaned call (budget race lost) keeps whatever it holds — count the slot and the connection until the CALL settles or a hold deadline fires, not until the wrapper returns; `unref()` the timer and make the close idempotent.
-- **Better:** fence every untrusted section of an LLM prompt with one per-call random token and say so in the prompt; a fixed `<<<`/`>>>` is content the deliverable can forge. The audit found the fifth unfenced section (criteria) only after the fourth was fixed — fence by enumeration, not by example.
-- **Better:** to exempt one virtual table from an `EXPLAIN`-level refusal, match the `VOpen` `p4` vtab pointer learned by probing that function on the same connection; a name match can be paid for with a `WHERE 0` subquery, a pointer cannot. Any probe failure ⇒ empty allow-set.
-- **Avoid:** two hard-coded copies of a whitelist (set + prompt text + tool description) — interpolate the one exported set and pin the prompt line to it in a test.
-- **Better:** `eval:gate -- --run` only COMPARES against the committed baseline; `--update-baseline` is the capture. A PASS against a stale baseline clears an arm step but leaves the re-capture owed before the next prompt change — say both.
+## 2026-10-06 — W1 pre-arm · §13 gate v2 · COMMIT retirement (condensed 10-10; full entries: memory `feedback_session_2026_10_06_*`, `retired-in-practice-is-not-retired-in-code`)
 - **Mistake:** a `cd <repo> && … && git push` compound was blocked whole ("No git remote configured") because the push guard evaluates in the shell's cwd (`/root/claude`, not a repo) → move the shell into the repo with its own command first, then commit, then push.
-- **Better:** prove an armed env flag in `/proc/<pid>/environ` of the new PID (drop-in listed ≠ loaded); an armed shadow feature is UNPROVEN until its first trace row, and the readout line + revert line go in the same message. Re-prove it after every later deploy (10-06 V8.1: still armed in the new pid).
-
-## 2026-10-06 — V8.1 §13 gate v2 (ruling "useful or measurable"; 4 audit rounds, 0 Critical)
 - **Mistake:** told the operator a readout "ran read-only"; `scripts/briefing-gate.ts` opens the live db through `initDatabase` (WAL pragma, schema exec, migrations) → before an agent runs any repo script on live data, grep how it opens the db; "it only SELECTs" is not read-only. Say so in the brief.
 - **Mistake:** three rounds patching "which messages count as a rating" by subtracting bad cases from a tolerant chat helper; each round found new flips (praise scored negative, a thumbs-down scored positive) → input that feeds a scored term and is stored without its text starts as a closed, anchored allow-list whose accepted set can be enumerated.
-- **Avoid:** widening a shared population for one check without re-deriving every check that reads the same list — adding failed runs for one term made cancelled runs fail grounding and let partial runs lower the cost median.
-- **Avoid:** "N of the last 14 days including today" for a job that runs at 08:00 — the verdict flips with the hour of the readout; end the window at the last day the job could have run.
-- **Better:** a term scored from a success-path-only table cannot see failures: take the population from the spawn log (written on every path) and the outcome from the task row; fixtures must have the shape the production writers produce. Same family: per-channel state read by a per-chat rule cross-attributes (a group message rated the direct-chat broadcast) — key the state by what the rule decides on, or refuse the other chat types.
-- **Mistake:** told the operator to expect `build=<sha>+dirty` from the two never-committed files; `scripts/build-info.sh` counts only CODE paths as dirty, and the stamp printed clean → read the writer before predicting an output the operator will compare against; a wrong prediction reads as a failed deploy.
-
-## 2026-10-06 — COMMIT sync retirement (`4b29b6a`; `/diagnose` after the model called a retired service's tool)
-- **Mistake (class):** "retired" was true of the service, never of the code: the tool stayed registered, in scope every turn, named by 6 prompt surfaces and an always-loaded directive, and memory said Jarvis no longer touched it → verify a retirement in the tool registry and the trace table, not in docs or memory; retiring an integration = delete the tool + a registry lock test.
-- **Avoid:** deleting a seeded item without checking what counts the live rows — seeding is insert-only, so the leftover ledger row would have failed a count-based gate and blocked every promotion, and the removed eval cases stayed active in the live table (manual operator deactivation before the paid gate).
-- **Better:** an operator script that edits live KB rows plans every target before writing, refuses on a mixed env or a registry/mirror mismatch, matches private text by fragment (public repo), and is validated on a scratch db including the refusal cases; the first draft had an untested success path and a partial-write hole.
-- **Mistake:** one brief carried the code removal AND the operator script; the implementer ran out of budget before its done-checks → one brief per deliverable, with the done-check sized to fit.
-
-
-## 2026-10-06 — Opus 5.5 model-tier re-run (harness build + canary readout; pool-window + env-leak lessons promoted above)
-- **Mistake:** relayed a readout claim ("`SONNET_EFFORT=low` reached only tier-less callers") that came from memory, not code; the implementer's code trace refuted it (every live fast-runner SDK leg passes no effort) → an effort/model-routing claim is verified by tracing the live provider branch, never by a memory note.
-- **Avoid:** pricing a new model id through a prefix table without longest-prefix matching (`claude-opus-5` would have priced `claude-opus-5-5`); add exact entries + a longest-prefix test when a model family gains a point release.
-- **Better:** canary readout + harness inventory as two parallel read-only Opus agents, then one implementer brief, qa-auditor R1 → fix pass → R2 before any commit; paid runs stay operator-side (classifier denies `/proc/<pid>/environ` reads), so the deliverable is a runbook with exact commands.
 
 ## 2026-10-07 — fast-tier ruling applied (Sonnet 5.5 low) · SDK 0.3.285 bump · orchestrator stage 1 (Opus 4.8 stays) · dirty deploy
 - **Mistake:** handed the operator a paste that chained `setsid nohup … &` and `tail -f <log>` in one block through the session's `!` shell: the shell backgrounded after 120 s and `tail` raced the log → launch and follow are separate lines, and the paste names where the log lands and how to tell "finished" from "running".
@@ -146,3 +122,9 @@
 - **Avoid:** counts produced inside the agent shell: its `grep` is a wrapper that adds `-I` and silently skips two sources with binary-looking bytes (`kb-backup.ts`, `channels/email.ts`); R1 said 103 files, R2 proved 105 under `/usr/bin/grep`. Rule: fenced counts in a public doc name the binary (`/usr/bin/grep`) or carry `-a`.
 - **Better:** "every count carries the grep that reproduces it" turned the audit into 36 mechanical re-runs with 9 mismatches found in R1; identity literals pulled from code at run time (`V D G O GO N H1 H2`) kept every literal out of the public document across both rounds.
 - **Better:** listing DB `scheduled_tasks` NAMES with identity tokens masked by class let the unsurveyed gap be narrowed without reading prompt text.
+
+## 2026-10-09 — L2 MCP result fidelity (`717e5f6`; recon → brief → impl → qa R1 → 5 folds → qa R2 → 2 pins → ship)
+- **Mistake:** my brief told the auditor the LANDSCAPE rows have 7 pipes; the table has 5 columns (6 pipes). Check: count the pipes on an existing row before writing a rendering check into a brief.
+- **Avoid:** measuring tool usage from `task_trace_events.attrs` — `tool.called` rows carry NULL attrs; the tool name is the `tool` COLUMN. `.schema` before any attrs query.
+- **Better:** reading both SDK tarballs (installed 1.29.0 + `npm pack` 1.32.0 into scratch) resolved [b3] as "parked" and [b2] as "same dep set" without a build; two landscape rows closed by evidence, not by code.
+- **Better:** the auditor's "removing the replacer leaves 52 green" is the [[multi-round-audit-until-pass]] rule working: an unpinned behaviour is not shipped until a test makes its mutant RED (N1, 2 tests).
