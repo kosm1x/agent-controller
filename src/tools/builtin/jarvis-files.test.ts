@@ -1139,3 +1139,122 @@ describe("the external tag is operator-only (qa R3 W4 — publishing a row to th
     expect(mockRun).toHaveBeenCalledTimes(1);
   });
 });
+
+// S6 WS1 — the project record (projects/<slug>/project.md) is refused by every
+// KB file tool that writes, updates, deletes or moves; project_update is the
+// model's path. Reads stay allowed. Every refusal runs no statement.
+describe("project record (projects/<slug>/project.md) — refused by the KB file tools", () => {
+  const refused = (raw: string) => {
+    const r = JSON.parse(raw);
+    expect(r.error).toBe("PROJECT_RECORD_PROTECTED");
+    expect(r.message).toMatch(/project_update/);
+    return r as { paths: string[] };
+  };
+  const REC = "projects/acme-radar/project.md";
+
+  it("jarvis_file_write refuses the record and runs no statement", async () => {
+    const r = refused(await jarvisFileWriteTool.execute({ path: REC, title: "x", content: "x" }));
+    expect(r.paths).toEqual([REC]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["./projects/acme-radar/project.md"],
+    ["/projects/acme-radar/project.md"],
+    ["Projects/Acme-Radar/PROJECT.md"],
+    ["knowledge/../projects/acme-radar/project.md"],
+    ["projects\\acme-radar\\project.md"],
+    ["  projects/acme-radar/project.md "],
+  ])("jarvis_file_write refuses the spelling %s", async (path) => {
+    refused(await jarvisFileWriteTool.execute({ path, title: "x", content: "x" }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_update refuses before reading the row", async () => {
+    refused(await jarvisFileUpdateTool.execute({ path: REC, append: "\n- x" }));
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_delete refuses the record (confirmed:true) and the record folder", async () => {
+    refused(await jarvisFileDeleteTool.execute({ path: REC, confirmed: true }));
+    refused(await jarvisFileDeleteTool.execute({ path: "projects/acme-radar", confirmed: true }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_move refuses moving the record out, a file in, and moving the folder", async () => {
+    expect(
+      refused(await jarvisFileMoveTool.execute({ old_path: REC, new_path: "workspace/parked.md" })).paths,
+    ).toEqual([REC]);
+    expect(
+      refused(await jarvisFileMoveTool.execute({ old_path: "workspace/draft.md", new_path: REC })).paths,
+    ).toEqual([REC]);
+    refused(await jarvisFileMoveTool.execute({ old_path: "projects/acme-radar", new_path: "workspace/x" }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_files_batch_write refuses the WHOLE batch when one path is a record", async () => {
+    const r = refused(
+      await jarvisFilesBatchWriteTool.execute({
+        files: [
+          { path: "knowledge/ok.md", title: "ok", content: "fine" },
+          { path: REC, title: "r", content: "x" },
+        ],
+      }),
+    );
+    expect(r.paths).toEqual([REC]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_files_batch_delete refuses the whole batch even with confirmed:true", async () => {
+    const r = refused(
+      await jarvisFilesBatchDeleteTool.execute({ paths: ["knowledge/old.md", REC], confirmed: true }),
+    );
+    expect(r.paths).toEqual([REC]);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("other files under projects/ stay writable (README, notes)", async () => {
+    const r = JSON.parse(
+      await jarvisFileWriteTool.execute({ path: "projects/acme-radar/README.md", title: "R", content: "notes" }),
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.success).toBe(true);
+  });
+
+  it("jarvis_file_read of the record is allowed", async () => {
+    mockGet.mockReturnValueOnce({
+      id: "rec",
+      path: REC,
+      title: "Acme record",
+      content: "```json\n{}\n```",
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      updated_at: "2026-10-11",
+    });
+    const parsed = JSON.parse(await jarvisFileReadTool.execute({ path: REC }));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.title).toBe("Acme record");
+  });
+
+  it("projectRecordGuard ignores neighbours and non-string entries", async () => {
+    const { projectRecordGuard } = await import("./immutable-core.js");
+    expect(
+      projectRecordGuard(
+        [
+          "projects/acme-radar/README.md",
+          "projects/acme-radar/project.md.bak",
+          "knowledge/projects/acme/project.md",
+          "project-notes/x/project.md",
+          42,
+          undefined,
+        ],
+        "/srv/kb",
+      ),
+    ).toBeNull();
+    expect(projectRecordGuard([REC, 7], "/srv/kb")?.paths).toEqual([REC]);
+  });
+});

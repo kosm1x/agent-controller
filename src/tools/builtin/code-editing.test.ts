@@ -184,6 +184,25 @@ describe("file_edit — standing orders on disk refused", () => {
   });
 });
 
+// S6 WS1: call-site pin for the disk-side project-record guard in file_edit.
+describe("file_edit — project record on disk refused", () => {
+  it("refuses an edit to jarvis-kb/projects/<slug>/project.md in any spelling", async () => {
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const root = getJarvisKbRoot();
+    for (const p of [
+      root + "/projects/acme-radar/project.md",
+      root + "/PROJECTS/acme-radar/project.MD",
+      root + "/knowledge/../projects/acme-radar/project.md",
+    ]) {
+      const r = JSON.parse(
+        await fileEditTool.execute({ path: p, old_string: "a", new_string: "b" }),
+      );
+      expect(String(r.error), p).toMatch(/PROJECT_RECORD_PROTECTED/);
+    }
+    expect(reindexMocks.upsertFromDiskWrite).not.toHaveBeenCalled();
+  });
+});
+
 // A SKILL.md registers only through jarvis_file_write (critic-gated).
 describe("file_edit — skill definitions on disk refused", () => {
   it("refuses an edit to jarvis-kb/skills/<name>/SKILL.md", async () => {

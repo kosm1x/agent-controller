@@ -179,6 +179,10 @@ describe("validateShellCommand", () => {
       "echo hello > /tmp/test.txt",
       "cp /root/claude/projects/a.txt /root/claude/projects/b.txt",
       "tee /workspace/output.log",
+      // S6 WS1 R1-C1: only the record and the folder/dir forms are denied
+      "echo x > /root/claude/jarvis-kb/projects/acme-radar/README.md",
+      "cp /tmp/x /root/claude/jarvis-kb/projects/acme-radar/notes/project.md",
+      "cp /tmp/x /root/claude/jarvis-kb/projects-archive/acme/project.md",
     ];
 
     for (const cmd of allowed) {
@@ -216,6 +220,30 @@ describe("validateShellCommand", () => {
       ["mount /dev/sda1 /mnt", "command 'mount' is blocked"],
       ["crontab -e", "command 'crontab' is blocked"],
     ];
+
+    // S6 WS1 R1-C1 (2026-10-11): the project record is a contract the hourly
+    // walk projects onto the row — denied on disk like directives/.
+    const RECORD_REASON =
+      "jarvis-kb/projects/<slug>/project.md is the project's record — change a project with project_update";
+    for (const cmd of [
+      "echo x > /root/claude/jarvis-kb/projects/acme-radar/project.md",
+      "echo x >> /root/claude/jarvis-kb/projects/acme-radar/project.md",
+      "tee /root/claude/jarvis-kb/projects/acme-radar/project.md < /tmp/x",
+      "cp /tmp/x /root/claude/jarvis-kb/projects/acme-radar/project.md",
+      "mv /tmp/x /root/claude/jarvis-kb/projects/acme-radar/project.md",
+      "cp /tmp/project.md /root/claude/jarvis-kb/projects/acme-radar/",
+      "cp /tmp/project.md /root/claude/jarvis-kb/projects/acme-radar",
+      "mv /tmp/dir /root/claude/jarvis-kb/projects",
+      "cp /tmp/x /root/claude/jarvis-kb/projects/",
+      "echo x > /root/claude/jarvis-kb/Projects/Acme-Radar/PROJECT.md",
+      "echo x > /root/claude/jarvis-kb/knowledge/../projects/acme-radar/project.md",
+      // R2 W1: a redirection glued to the target is still a write to the record
+      "cp /tmp/x /root/claude/jarvis-kb/projects/acme-radar/project.md>/dev/null",
+      "tee /root/claude/jarvis-kb/projects/acme-radar/project.md</tmp/x",
+      "echo x >/root/claude/jarvis-kb/projects/acme-radar/project.md>&2",
+    ]) {
+      blocked.push([cmd, RECORD_REASON]);
+    }
 
     for (const [cmd, reason] of blocked) {
       it(`should block: ${cmd}`, () => {

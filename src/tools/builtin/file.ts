@@ -8,6 +8,7 @@ import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isProjectRecordDiskPath,
   isSkillFileDiskPath,
   isStandingOrdersDiskPath,
   validatePathSafety,
@@ -126,6 +127,13 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
     return {
       allowed: false,
       reason: `Write blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+    };
+  }
+  // S6 WS1: a project record is changed only through project_update.
+  if (isProjectRecordDiskPath(resolved, getJarvisKbRoot())) {
+    return {
+      allowed: false,
+      reason: `Write blocked: ${resolved} is a project record (jarvis-kb/projects/<slug>/project.md) — PROJECT_RECORD_PROTECTED: change the project with project_update`,
     };
   }
   if (isSkillFileDiskPath(resolved, getJarvisKbRoot())) {
@@ -510,6 +518,12 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
     if (isStandingOrdersDiskPath(realResolve(rawPath), getJarvisKbRoot())) {
       return JSON.stringify({
         error: `Deletion blocked: ${resolve(rawPath)} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+      });
+    }
+    // S6 WS1: the record, its folder or projects/ itself (rmSync is recursive).
+    if (isProjectRecordDiskPath(realResolve(rawPath), getJarvisKbRoot())) {
+      return JSON.stringify({
+        error: `Deletion blocked: ${resolve(rawPath)} is a project record or its folder (jarvis-kb/projects/) — PROJECT_RECORD_PROTECTED: change the project with project_update`,
       });
     }
 

@@ -142,6 +142,7 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl sandboxes           # Sandbox runtime: live backend flag, OpenSandbox server health, DOCKER-USER guard, live sandbox-*/mc-* containers
 ./mc-ctl gates summary 7     # …now also prints read-back gates (RB-*) as their own population
 ./mc-ctl usability [days]    # Usability KPIs vs the 2026-08-22 critic review (friction, scope-asks, harness strings delivered, pushes/day, provenance: writes rejected / figures marked / citations dropped); --json
+./mc-ctl project <slug> [--days N]  # S6 WS1: one project's record (projects/<slug>/project.md → row) — schedule runs, tasks + gates by schedule attribution, cost (unaudited), last day-log mention, stall state; read-only
 ./mc-ctl schedule-resume <id> # Re-activate a scheduled task that paused itself via the [PAUSAR-SCHEDULE] sentinel
 ./mc-ctl memory-checklist [--stale] [--json]   # Agent-memory playbook 10-item checklist from live mc.db + /metrics (read-only); --stale lists user_facts untouched > 90 d
 ```

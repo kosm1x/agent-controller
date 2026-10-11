@@ -585,6 +585,69 @@ export function standingOrdersGuard(
   };
 }
 
+// S6 WS1 (spec docs/planning/s6-project-contract-spec-2026-10-11.md §2): a
+// project enters Jarvis only through its record, `projects/<slug>/project.md`,
+// and the record decides what code runs at boot (MCP commands, repo write
+// access). The model-facing file tools therefore refuse it the way they refuse
+// `directives/`; `project_update` is the model's way to change a project (it
+// rewrites the record's JSON block through the registry path). Matched: the
+// record file in any spelling, the `projects/<slug>` folder itself and the
+// `projects` directory (a move or a recursive delete of either takes records).
+const PROJECT_RECORD_REL_RE = /^projects\/[^/]+\/project\.md$/;
+const PROJECT_RECORD_DIR_RE = /^projects(\/[a-z0-9][a-z0-9-]*)?$/;
+
+/** True when a canonical (`canonicalKbPath`) KB path is a record or its folder. */
+export function isProjectRecordRel(canonicalRel: string): boolean {
+  return (
+    PROJECT_RECORD_REL_RE.test(canonicalRel) ||
+    PROJECT_RECORD_DIR_RE.test(canonicalRel)
+  );
+}
+
+export interface ProjectRecordRefusal {
+  error: "PROJECT_RECORD_PROTECTED";
+  message: string;
+  paths: string[];
+}
+
+/**
+ * Refusal when any path targets a project record (`projects/*\/project.md`)
+ * or a record folder, in any spelling (`canonicalKbPath`), else null.
+ * Non-string entries are ignored, as in `standingOrdersGuard`.
+ */
+export function projectRecordGuard(
+  paths: ReadonlyArray<unknown>,
+  kbRoot: string,
+): ProjectRecordRefusal | null {
+  const hits = paths.filter(
+    (p): p is string =>
+      typeof p === "string" && isProjectRecordRel(canonicalKbPath(p, kbRoot)),
+  );
+  if (hits.length === 0) return null;
+  return {
+    error: "PROJECT_RECORD_PROTECTED",
+    message:
+      "projects/<slug>/project.md is the project's record (its contract). Change a " +
+      "project ONLY with project_update (name, description, status, urls, config, " +
+      "credentials) — it rewrites the record and the projects row together. Direct " +
+      "write/update/delete/move of the record or its folder is refused here; reading it is fine.",
+    paths: hits,
+  };
+}
+
+/**
+ * Disk-side twin of `projectRecordGuard` for the absolute-path tools
+ * (`file_write`, `file_delete`, `file_edit`): the hourly kb-reindex refreshes
+ * a record from disk, so an editor write there is another door into it.
+ */
+export function isProjectRecordDiskPath(
+  absolutePath: string,
+  kbRoot: string,
+): boolean {
+  const rel = relative(resolve(kbRoot), resolve(absolutePath)).toLowerCase();
+  return isProjectRecordRel(rel);
+}
+
 /**
  * Disk-side twin of `standingOrdersGuard` for the absolute-path tools
  * (`file_write`, `file_delete`, `code_edit`). The KB mirror's `directives/` is

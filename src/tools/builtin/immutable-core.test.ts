@@ -848,3 +848,65 @@ describe("isStandingOrdersDiskPath", () => {
     expect(isStandingOrdersDiskPath("/srv/kb/directives/x.md", "/srv/other/../kb")).toBe(true);
   });
 });
+
+// S6 WS1: the project-record guard and its disk twin.
+describe("projectRecordGuard / isProjectRecordDiskPath", () => {
+  const root = "/srv/kb";
+
+  it("projectRecordGuard refuses the record, the record folder and projects/ in any spelling", async () => {
+    const { projectRecordGuard } = await import("./immutable-core.js");
+    for (const p of [
+      "projects/acme-radar/project.md",
+      "./projects/acme-radar/project.md",
+      "/projects/acme-radar/project.md",
+      "Projects/acme-radar/Project.md",
+      "knowledge/../projects/acme-radar/project.md",
+      "../kb/projects/acme-radar/project.md",
+      "projects\\acme-radar\\project.md",
+      "projects/acme-radar",
+      "projects/acme-radar/",
+      "projects",
+    ]) {
+      const r = projectRecordGuard([p], root);
+      expect(r?.error, p).toBe("PROJECT_RECORD_PROTECTED");
+      expect(r?.message).toMatch(/project_update/);
+    }
+  });
+
+  it("projectRecordGuard lets every other path through", async () => {
+    const { projectRecordGuard } = await import("./immutable-core.js");
+    for (const p of [
+      "projects/acme-radar/README.md",
+      "projects/acme-radar/notes/project.md",
+      "projects-archive/acme/project.md",
+      "knowledge/projects/acme/project.md",
+      "../projects/acme/project.md",
+      "workspace/project.md",
+    ]) {
+      expect(projectRecordGuard([p], root), p).toBeNull();
+    }
+  });
+
+  it("isProjectRecordDiskPath: record, folder and projects/ dir under the KB root only", async () => {
+    const { isProjectRecordDiskPath } = await import("./immutable-core.js");
+    for (const p of [
+      "/srv/kb/projects/acme-radar/project.md",
+      "/srv/kb/knowledge/../projects/acme-radar/project.md",
+      "/srv/kb//projects/./acme-radar/project.md",
+      "/srv/kb/Projects/acme-radar/PROJECT.md",
+      "/srv/kb/projects/acme-radar",
+      "/srv/kb/projects",
+    ]) {
+      expect(isProjectRecordDiskPath(p, root), p).toBe(true);
+    }
+    for (const p of [
+      "/srv/kb/projects/acme-radar/README.md",
+      "/srv/kb-other/projects/acme-radar/project.md",
+      "/tmp/projects/acme-radar/project.md",
+      "/srv/kb/knowledge/projects/acme/project.md",
+    ]) {
+      expect(isProjectRecordDiskPath(p, root), p).toBe(false);
+    }
+    expect(isProjectRecordDiskPath("/srv/kb/projects/a1/project.md", "/srv/kb/")).toBe(true);
+  });
+});

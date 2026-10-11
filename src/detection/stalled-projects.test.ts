@@ -10,7 +10,12 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
-import { detectStalledProjects } from "./stalled-projects.js";
+import {
+  detectStalledProjects,
+  lastDayLogMention,
+  loadDatedDayLogs,
+  matchTermsFor,
+} from "./stalled-projects.js";
 
 beforeEach(() => initDatabase(":memory:"));
 afterEach(() => closeDatabase());
@@ -147,5 +152,47 @@ describe("detectStalledProjects", () => {
     addProject("vlmp", "VLMP", "active", "{}");
     addDayLog("2026-06-23", "otra cosa");
     expect(detectStalledProjects()).toHaveLength(1);
+  });
+});
+
+// S6 WS1: `mc-ctl project` reads record aliases through matchTermsFor's
+// opt-in; the detector itself does NOT (its output is unchanged until WS2).
+describe("aliases (S6 WS1) — opt-in for the report, off for the detector", () => {
+  const row = {
+    slug: "quill-forge",
+    name: "Quill Forge",
+    config: JSON.stringify({ aliases: ["Inkwell", "  ", 7, "ik", "Ikw"] }),
+  };
+
+  it("matchTermsFor ignores aliases by default and includes them (lower-cased, valid strings only) with {aliases:true}", () => {
+    expect(matchTermsFor(row)).not.toContain("inkwell");
+    const terms = matchTermsFor(row, { aliases: true });
+    expect(terms).toContain("inkwell");
+    expect(terms).toContain("quill-forge");
+    expect(terms).not.toContain("");
+    expect(terms).not.toContain("ik"); // a 2-char alias is below MIN_ALIAS_LEN (R1 ruling)
+    expect(terms).toContain("ikw"); // a 3-char alias is kept
+    expect(matchTermsFor({ ...row, config: "not json" }, { aliases: true })).not.toContain("inkwell");
+  });
+
+  it("detectStalledProjects still flags a project mentioned only by alias", () => {
+    addProject("quill-forge", "Quill Forge", "active", row.config);
+    addDayLog("2026-06-23", "hoy avancé en inkwell");
+    const signals = detectStalledProjects();
+    expect(signals.map((s) => s.slug)).toEqual(["quill-forge"]);
+  });
+
+  it("lastDayLogMention with alias terms finds the alias mention, aged from the newest day-log", () => {
+    addProject("quill-forge", "Quill Forge", "active", row.config);
+    addDayLog("2026-06-23", "nada relevante");
+    addDayLog("2026-06-20", "hoy avancé en inkwell");
+    const dated = loadDatedDayLogs(getDatabase());
+    expect(dated.map((d) => d.date)).toEqual(["2026-06-23", "2026-06-20"]);
+    expect(lastDayLogMention(matchTermsFor(row, { aliases: true }), dated)).toEqual({
+      date: "2026-06-20",
+      daysSinceMention: 3,
+    });
+    expect(lastDayLogMention(matchTermsFor(row), dated)).toBeNull();
+    expect(lastDayLogMention(["x"], [])).toBeNull();
   });
 });

@@ -373,9 +373,11 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     const relatedTo = (args.related_to as string[]) ?? [];
 
     // Standing orders are never written here — see immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
 
     // Prevent LLM from self-promoting files to enforce — reserved for user
     if (qualifier === "enforce") {
@@ -514,9 +516,11 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
     const priority = args.priority as number | undefined;
 
     // Standing orders are never updated here — see immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
     const skillRefused = skillFileGuard([path], getJarvisKbRoot());
     if (skillRefused) return JSON.stringify(skillRefused);
 
@@ -749,9 +753,11 @@ After user confirms, call again with confirmed:true to proceed.`,
     const confirmed = args.confirmed === true;
 
     // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
     const skillRefused = skillFileGuard([path], getJarvisKbRoot());
     if (skillRefused) return JSON.stringify(skillRefused);
 
@@ -821,9 +827,11 @@ For batch moves, call this tool multiple times (one per file).`,
       return JSON.stringify({ error: "old_path and new_path are required" });
 
     // Standing orders are never moved in or out — see immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard([oldPath, newPath], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard([oldPath, newPath], getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
     const skillRefused = skillFileGuard([oldPath, newPath], getJarvisKbRoot());
     if (skillRefused) return JSON.stringify(skillRefused);
 
@@ -1030,9 +1038,11 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
 
     // Standing orders are never written here — the whole batch is refused
     // before any write so a mixed batch cannot half-apply. See immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard(files.map((f) => f.path), getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard(files.map((f) => f.path), getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
     const skillRefused = skillFileGuard(files.map((f) => f.path), getJarvisKbRoot());
     if (skillRefused) return JSON.stringify(skillRefused);
 
@@ -1240,9 +1250,11 @@ RESPONSE SHAPE: {success, total, ok, not_found, errors, results: [{path, status,
     }
 
     // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
-    const { standingOrdersGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
     const soRefused = standingOrdersGuard(paths, getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
+    const recordRefused = projectRecordGuard(paths, getJarvisKbRoot());
+    if (recordRefused) return JSON.stringify(recordRefused);
     const skillRefused = skillFileGuard(paths, getJarvisKbRoot());
     if (skillRefused) return JSON.stringify(skillRefused);
 

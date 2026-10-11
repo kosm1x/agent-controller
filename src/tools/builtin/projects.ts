@@ -15,8 +15,25 @@ import {
   updateProject,
   logProjectAction,
   projectFieldProblem,
+  mergeProjectEntries,
 } from "../../db/projects.js";
+import { getFile } from "../../db/jarvis-fs.js";
+import { upsertFromDiskWrite } from "../../db/jarvis-reindex.js";
 import {
+  PROJECT_SLUG_RE,
+  ProjectRecordError,
+  foldDescription,
+  parseProjectRecord,
+  projectRecordRelPath,
+  replaceRecordDescription,
+  replaceRecordJson,
+} from "../../projects/record.js";
+import {
+  PROJECTOR_CONFIG_KEYS,
+  applyProjectRecord,
+} from "../../projects/projector.js";
+import {
+  isProjectProseSecret,
   isProjectSecret,
   projectEntryLeaves,
   projectSecretDisplay,
@@ -90,6 +107,185 @@ function savedSecrets(
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// S6 WS1 — project_update routes to the project record
+// ---------------------------------------------------------------------------
+
+/**
+ * `config` keys that decide what code runs or what it may reach (spec §2,
+ * "Write paths"): changed only through an operator upsert of the record,
+ * never through project_update. No row uses one today (spec, verified).
+ */
+export const OPERATOR_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "mcp",
+  "trusted",
+  "egress",
+  "deny_paths",
+]);
+
+const OWNED_CONFIG_KEYS: ReadonlySet<string> = new Set(PROJECTOR_CONFIG_KEYS);
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Record present: name / description / status / urls.site and the config
+ * keys the record owns are written into `projects/<slug>/project.md` through
+ * the registry upsert path (which re-projects the row); credentials,
+ * commit_goal_id and every key the record does not own go straight to the
+ * row, as before. The new record is validated BEFORE anything is written.
+ */
+function updateThroughRecord(
+  slug: string,
+  args: Record<string, unknown>,
+  recordContent: string,
+): string {
+  const rel = projectRecordRelPath(slug);
+  let parsed;
+  try {
+    parsed = parseProjectRecord(recordContent, { folderSlug: slug });
+  } catch (err) {
+    const reason = err instanceof ProjectRecordError ? err.reason : "error";
+    return JSON.stringify({
+      error: `No guardé: el registro ${rel} no es válido (${reason}); el operador debe corregirlo antes de cambiar el proyecto.`,
+    });
+  }
+
+  // Credentials never enter the KB (R1 W2): name and description are free
+  // text, judged by token shape only (R2 W3); urls.site and the owned config
+  // keys below get the full check.
+  for (const field of ["name", "description"] as const) {
+    const v = args[field];
+    if (typeof v === "string" && v !== "" && isProjectProseSecret(field, v)) {
+      return JSON.stringify({
+        error: `No guardé: ${field} parece contener una credencial; las credenciales no entran al registro del proyecto — guárdala en credentials.`,
+      });
+    }
+  }
+
+  const json: Record<string, unknown> = { ...parsed.json };
+  const rowUrls: Record<string, unknown> = {};
+  const rowConfig: Record<string, unknown> = {};
+
+  if (args.name !== undefined) json.name = args.name;
+  if (args.status !== undefined) json.status = args.status;
+  if (isPlainObject(args.urls)) {
+    for (const [k, v] of Object.entries(args.urls)) {
+      if (k !== "site") {
+        rowUrls[k] = v;
+        continue;
+      }
+      if (projectEntryLeaves(slug, "urls", k, v).some((l) => l.secret)) {
+        return JSON.stringify({
+          error:
+            "No guardé: urls.site parece una credencial; las credenciales no entran al registro del proyecto — guárdala en credentials.",
+        });
+      }
+      const links = isPlainObject(json.links) ? { ...json.links } : {};
+      if (v === null) delete links.site;
+      else links.site = v;
+      if (Object.keys(links).length > 0) json.links = links;
+      else delete json.links;
+    }
+  }
+  if (isPlainObject(args.config)) {
+    for (const [k, v] of Object.entries(args.config)) {
+      if (!OWNED_CONFIG_KEYS.has(k)) {
+        rowConfig[k] = v;
+        continue;
+      }
+      if (projectEntryLeaves(slug, "config", k, v).some((l) => l.secret)) {
+        return JSON.stringify({
+          error: `No guardé: config.${k} parece una credencial; las credenciales no entran al registro del proyecto — guárdala en credentials.`,
+        });
+      }
+      if (v === null) delete json[k];
+      else if (isPlainObject(v) && isPlainObject(json[k]))
+        json[k] = mergeProjectEntries(json[k] as Record<string, unknown>, v);
+      else json[k] = v;
+    }
+  }
+
+  let next = replaceRecordJson(recordContent, json);
+  const wanted =
+    args.description !== undefined ? foldDescription(String(args.description ?? "")) : undefined;
+  // R2b W2: a fence line in the description reads back today but cuts it
+  // short once the notes gain a fence of their own — refused before the write.
+  if (wanted !== undefined && /^[^\S\r\n]{0,3}(?:```|~~~)/m.test(wanted)) {
+    return JSON.stringify({
+      error:
+        "No guardé: la descripción tiene una línea que abre un bloque (``` o ~~~); escríbela como un solo párrafo de texto, sin bloques.",
+    });
+  }
+  if (wanted !== undefined) next = replaceRecordDescription(next, wanted);
+  try {
+    const reparsed = parseProjectRecord(next, { folderSlug: slug });
+    // R2 W2: the record must read back the description it was given — a
+    // line starting with `#`, a `## ` heading or a fence would cut it short
+    // or plant a section in the record.
+    if (wanted === "" && reparsed.description !== "") {
+      // R2b W3: removing the first paragraph promotes the next one.
+      return JSON.stringify({
+        error:
+          "No guardé: al borrar la descripción, el siguiente párrafo del registro pasaría a ser la descripción; el operador debe editar el registro.",
+      });
+    }
+    if (wanted !== undefined && reparsed.description !== wanted) {
+      return JSON.stringify({
+        error:
+          "No guardé: la descripción no se puede guardar tal cual en el registro (una línea que empieza con '#', un encabezado '## ' o un bloque ``` la cortan); escríbela como un solo párrafo de texto.",
+      });
+    }
+  } catch (err) {
+    const where =
+      err instanceof ProjectRecordError && err.issues.length > 0
+        ? err.issues.map((i) => i.path.join(".") || "(raíz)").join(", ")
+        : err instanceof ProjectRecordError
+          ? err.reason
+          : "error";
+    return JSON.stringify({
+      error: `No guardé: el cambio deja el registro ${rel} inválido (${where}).`,
+    });
+  }
+
+  // A changed record goes through the registry upsert path (which projects
+  // it); an unchanged one is projected only when its row is missing.
+  const projected =
+    next !== recordContent
+      ? upsertFromDiskWrite(rel, next)
+      : getProject(slug)
+        ? undefined
+        : applyProjectRecord(rel, next);
+  if (projected?.error) {
+    return JSON.stringify({
+      error: `El registro ${rel} no se pudo proyectar a la fila (${projected.error.reason}).`,
+    });
+  }
+
+  const direct: Record<string, unknown> = {};
+  if (Object.keys(rowUrls).length > 0) direct.urls = rowUrls;
+  if (Object.keys(rowConfig).length > 0) direct.config = rowConfig;
+  if (args.credentials !== undefined) direct.credentials = args.credentials;
+  if (args.commit_goal_id !== undefined) direct.commit_goal_id = args.commit_goal_id;
+  if (Object.keys(direct).length > 0) updateProject(slug, direct);
+
+  const updated = getProject(slug);
+  if (!updated) {
+    return JSON.stringify({ error: "Update failed" });
+  }
+  return JSON.stringify({
+    action: projected?.action === "created" ? "created" : "updated",
+    project: {
+      slug: updated.slug,
+      name: updated.name,
+      status: updated.status,
+      credential_keys: Object.keys(updated.credentials),
+    },
+    record: rel,
+    saved_secrets: savedSecrets(updated.slug, args),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -346,9 +542,30 @@ CREDENTIAL STORAGE:
         return JSON.stringify({ error: `No guardé: ${problem}.` });
       }
     }
+    if (isPlainObject(rawArgs.config)) {
+      const refused = Object.keys(rawArgs.config).filter((k) =>
+        OPERATOR_ONLY_CONFIG_KEYS.has(k),
+      );
+      if (refused.length > 0) {
+        return JSON.stringify({
+          error: `No guardé: config.${refused.join(", config.")} solo lo cambia el operador en el registro del proyecto (projects/<slug>/project.md), no project_update.`,
+        });
+      }
+    }
     const refs = resolveProjectRefs(slug, rawArgs);
     if ("error" in refs) return refs.error;
     const args = refs.args;
+
+    // S6 WS1: a project with a record changes through its record. The row
+    // may be named by its id (getProject accepts both), so the record is
+    // looked up by the row's slug (R1 W3).
+    const recordSlug =
+      typeof slug === "string" ? (getProject(slug)?.slug ?? slug) : undefined;
+    if (recordSlug !== undefined && PROJECT_SLUG_RE.test(recordSlug)) {
+      const record = getFile(projectRecordRelPath(recordSlug));
+      if (record) return updateThroughRecord(recordSlug, args, String(record.content));
+    }
+
     const existing = getProject(slug);
 
     if (!existing) {

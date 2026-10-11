@@ -25,6 +25,7 @@ import { dirname } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isProjectRecordDiskPath,
   isSkillFileDiskPath,
   isStandingOrdersDiskPath,
   validatePathSafety,
@@ -195,6 +196,11 @@ RULES:
     if (isStandingOrdersDiskPath(realResolve(path), getJarvisKbRoot())) {
       return JSON.stringify({
         error: `Edit blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
+      });
+    }
+    if (isProjectRecordDiskPath(realResolve(path), getJarvisKbRoot())) {
+      return JSON.stringify({
+        error: `Edit blocked: ${resolved} is a project record (jarvis-kb/projects/<slug>/project.md) — PROJECT_RECORD_PROTECTED: change the project with project_update`,
       });
     }
     if (isSkillFileDiskPath(realResolve(path), getJarvisKbRoot())) {

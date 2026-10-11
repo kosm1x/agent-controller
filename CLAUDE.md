@@ -81,7 +81,7 @@ Five Anthropic workflow patterns → §Agent Design Principles. Rules:
 
 `mc-ctl` — bash admin tool at project root. → §Admin CLI
 
-Common: `status`, `stats`, `tasks --status=X` / `task <id>`, `logs 50`, `db "SELECT ..."`, `briefing-gate`, `judgments [id]`, `audit-claim <metric> --window=24h --stratify-by=bank`, `gates <task_id>|summary|status-sources|set-ritual`, `sandboxes`, `usability [days]`, `schedule-resume <id>`. Purpose of each → §Admin CLI.
+Common: `status`, `stats`, `tasks --status=X` / `task <id>`, `logs 50`, `db "SELECT ..."`, `briefing-gate`, `judgments [id]`, `audit-claim <metric> --window=24h --stratify-by=bank`, `gates <task_id>|summary|status-sources|set-ritual`, `sandboxes`, `usability [days]`, `schedule-resume <id>`, `project <slug>`. Purpose of each → §Admin CLI.
 
 Before quoting any aggregate metric (utility %, cache-hit ratio, latency, cost, success rate) run `mc-ctl audit-claim` and incorporate any warnings. Exit codes: `0` verified, `1` warnings present (do NOT report as-is), `2` insufficient n, `3` error.
 

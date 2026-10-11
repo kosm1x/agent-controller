@@ -169,6 +169,21 @@ export function isProjectSecret(key: string, value: string): boolean {
 }
 
 /**
+ * S6 WS1 R2 W3: a project's free-text `name` / `description` holds a
+ * credential only by token SHAPE (JWT, `sk-`, `ghp_`, PEM, URL userinfo,
+ * Bearer, …). The keyword rule (`clave: …`, `token: …`, `Contraseña: …`)
+ * fires on ordinary prose, so a `keyword:` followed by a multi-word value is
+ * neutralised before the same classifier runs. An assignment (`keyword=…`)
+ * or a single-token value (`token: abcd1234…`) is never prose and keeps the
+ * full rule (R2b W1); config and urls keep the full check (isProjectSecret).
+ */
+const PROSE_KEYWORD_RE =
+  /(\b(?:api[ _-]?key|token|password|contrase\S{0,2}a|clave))\s*:(?=\s+\S+\s+\S)/gi;
+export function isProjectProseSecret(field: "name" | "description", value: string): boolean {
+  return isCredentialFact("projects", field, value.replace(PROSE_KEYWORD_RE, "$1 "));
+}
+
+/**
  * Audit round 4 (3d-a), narrowed in round 5 (B1): whether every leaf below a
  * key with this name is a secret — the name's LAST token names a secret
  * value (`password: {prod, staging}`, `github_token: {value, scope}`,

@@ -223,6 +223,72 @@ describe("standing orders on disk (jarvis-kb/directives/) — file_write / file_
   });
 });
 
+// S6 WS1: the disk twin of projectRecordGuard, pinned at its CALL SITES —
+// the hourly kb-reindex refreshes a record from disk, so file_write and
+// file_delete are doors into it. file_read stays allowed.
+describe("project record on disk (jarvis-kb/projects/<slug>/project.md) — file_write / file_delete refuse", () => {
+  it("file_write refuses the record in any spelling", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const root = getJarvisKbRoot();
+    for (const p of [
+      root + "/projects/acme-radar/project.md",
+      root + "/Projects/Acme-Radar/Project.md",
+      root + "/knowledge/../projects/acme-radar/project.md",
+    ]) {
+      const r = JSON.parse(await fileWriteTool.execute({ path: p, content: "x" }));
+      expect(String(r.error), p).toMatch(/PROJECT_RECORD_PROTECTED/);
+    }
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("file_write lets other files under projects/ through this guard", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileWriteTool.execute({
+        path: getJarvisKbRoot() + "/projects/acme-radar/README.md",
+        content: "notes",
+      }),
+    );
+    expect(String(r.error ?? "")).not.toMatch(/PROJECT_RECORD_PROTECTED/);
+  });
+
+  it("file_delete refuses the record, its folder and projects/ itself", async () => {
+    const { fileDeleteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const root = getJarvisKbRoot();
+    for (const p of [
+      root + "/projects",
+      root + "/projects/acme-radar",
+      root + "/projects/acme-radar/project.md",
+      root + "/knowledge/../projects/acme-radar/project.md",
+    ]) {
+      const r = JSON.parse(await fileDeleteTool.execute({ path: p }));
+      expect(String(r.error), p).toMatch(/PROJECT_RECORD_PROTECTED/);
+    }
+  });
+
+  it("file_delete leaves a README under projects/ to the other guards", async () => {
+    const { fileDeleteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    const r = JSON.parse(
+      await fileDeleteTool.execute({ path: getJarvisKbRoot() + "/projects/acme-radar/README.md" }),
+    );
+    expect(String(r.error ?? "")).not.toMatch(/PROJECT_RECORD_PROTECTED/);
+  });
+
+  it("file_read of the record is allowed", async () => {
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    mocks.mockReadFileSync.mockReturnValueOnce("```json\n{}\n```\n");
+    const r = JSON.parse(
+      await fileReadTool.execute({ path: getJarvisKbRoot() + "/projects/acme-radar/project.md" }),
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.content).toBe("```json\n{}\n```\n");
+  });
+});
+
 // A SKILL.md registers only through jarvis_file_write (critic-gated).
 describe("skill definitions on disk (jarvis-kb/skills/*/SKILL.md) — file_write refuses", () => {
   it("file_write refuses a SKILL.md and lets other skill files through the guard", async () => {

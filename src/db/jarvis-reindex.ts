@@ -18,6 +18,11 @@ import { join, relative } from "node:path";
 import { getDatabase } from "./index.js";
 import { upsertFile, getFile, getJarvisKbRoot } from "./jarvis-fs.js";
 import { errMsg } from "../lib/err-msg.js";
+import { isProjectRecordPath } from "../projects/record.js";
+import {
+  applyProjectRecord,
+  type ProjectApplyResult,
+} from "../projects/projector.js";
 
 /**
  * Path prefixes (relative to kbRoot) whose authority lies elsewhere and must
@@ -152,8 +157,15 @@ export function registryNewerThanDisk(
   );
 }
 
-/** Item 11: a tool's disk write under the KB root reaches the registry too. */
-export function upsertFromDiskWrite(rel: string, content: string): void {
+/**
+ * Item 11: a tool's disk write under the KB root reaches the registry too.
+ * S6 WS1: a project record written here is projected onto its `projects`
+ * row from the same content (the result is returned; undefined otherwise).
+ */
+export function upsertFromDiskWrite(
+  rel: string,
+  content: string,
+): ProjectApplyResult | undefined {
   const prior = getFile(rel);
   upsertFile(
     rel,
@@ -165,6 +177,7 @@ export function upsertFromDiskWrite(rel: string, content: string): void {
     prior?.condition ?? null,
     prior ? (JSON.parse(prior.related_to) as string[]) : [],
   );
+  return isProjectRecordPath(rel) ? applyProjectRecord(rel, content) : undefined;
 }
 
 /**
@@ -210,6 +223,8 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
         skipUserEdit: true,
       });
       upserted++;
+      // S6 WS1: a record imported from disk is projected from that content.
+      if (isProjectRecordPath(rel)) applyProjectRecord(rel, content);
     } catch {
       errored++;
     }
@@ -241,6 +256,9 @@ export function reindexJarvisKb(opts?: { kbRoot?: string }): ReindexResult {
         { skipUserEdit: true },
       );
       refreshed++;
+      // S6 WS1: `projects/` is NOT a managed namespace — a hand-edited record
+      // on disk is how an operator changes a project; project the new content.
+      if (isProjectRecordPath(rel)) applyProjectRecord(rel, diskContent);
     } catch (err) {
       console.warn(`[kb-reindex] refresh failed for ${rel}: ${errMsg(err)}`);
       errored++;

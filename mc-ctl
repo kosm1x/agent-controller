@@ -2085,6 +2085,7 @@ usage() {
   echo -e "  ${GREEN}sandboxes${NC}            Sandbox runtime: active backend, OpenSandbox server health, live sandbox-* containers, DOCKER-USER guard"
   echo -e "  ${GREEN}schedule-resume${NC} <id>  Re-activate a scheduled task paused by the [PAUSAR-SCHEDULE] sentinel"
   echo -e "  ${GREEN}usability${NC} [days]      Usability KPIs vs the 2026-08-22 critic review (friction, scope-asks, harness strings, pushes/day); --json"
+  echo -e "  ${GREEN}project${NC} <slug> [--days N]  One project's record: schedule runs, tasks, gates, cost (unaudited), last day-log mention, stall state (read-only)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
   echo -e "  ${BOLD}Intelligence Depot${NC}"
@@ -3249,6 +3250,15 @@ cmd_usability() {
       npx --no-install tsx scripts/usability-metrics.ts "$@" )
 }
 
+cmd_project() {
+  # mc-ctl project <slug> [--days N] — S6 WS1: one project's record from its
+  # record-declared schedules (runs, tasks, gates, cost, day-log, stall state).
+  # Read-only (readonly better-sqlite3, never initDatabase); numbers only.
+  [ -n "${1:-}" ] || die "Usage: mc-ctl project <slug> [--days N]"
+  ( cd "$PROJECT_DIR" && MC_DB_PATH="${DB_PATH}" \
+      npx --no-install tsx scripts/project-report.ts "$@" )
+}
+
 cmd_sandboxes() {
   # mc-ctl sandboxes — sandbox runtime at a glance (docs/planning/opensandbox-adoption.md).
   # Backend flag is read from the LIVE service environment by name only (never values).
@@ -3360,6 +3370,7 @@ case "$cmd" in
   gates)             cmd_gates "$@" ;;
   sandboxes)         cmd_sandboxes ;;
   usability)         cmd_usability "$@" ;;
+  project)           cmd_project "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

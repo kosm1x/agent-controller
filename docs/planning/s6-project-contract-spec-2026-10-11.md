@@ -55,7 +55,7 @@ comm -12 <(sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT slu
 | `egress` | host[] | O | NEW: the sandboxed MCP transport (WS7) |
 | `parent` | slug | O | report rollup (from `config.parent_project` ×4, `parent` ×1) |
 | `kb_folder` | KB path, default `projects/<slug>/` | O | `kb-injection.ts:153` (README injection), `rituals/morning.ts:103`, `jarvis-files.ts:282,290` |
-| `repos` | `[{path, role: primary·other}]`; `realpath` must sit under `profile.workspaceRoot` | O | the 6 write allow-list sites (`git.ts:33`, `shell.ts:549`, `file.ts:52`, `file.ts:561`, `runners/container.ts:49`, `write-guard.ts:16`), `git.ts:15` `DEFAULT_CWD`, `tools/builtin/projects.ts:219` |
+| `repos` | `[{path, role: primary·other}]`; `realpath` must sit under `profile.workspaceRoot`; model-writable through `project_update` and the schema accepts `..` segments: realpath ⊂ workspaceRoot, never trusted as written (R1 W4) | O | the 6 write allow-list sites (`git.ts:33`, `shell.ts:549`, `file.ts:52`, `file.ts:561`, `runners/container.ts:49`, `write-guard.ts:16`), `git.ts:15` `DEFAULT_CWD`, `tools/builtin/projects.ts:219` |
 | `deny_paths` | path[], narrow only | O | `shell.ts:434,450`, `immutable-core.ts:146,148` |
 | `secrets` | `SECRET_*` names that point into the row's `credentials` | O | `lib/secret-refs.ts:104` (`projectIdentity`); NEW: MCP env (§3) |
 | `capabilities.mcp[]` | §3 | O | `mcp/config.ts:15`, `mcp/manager.ts:107,178`, `rule-of-two.ts:296,312`, `mcp/annotations.ts`, `scope.ts`, `scope-classifier.ts:35,115` |
@@ -274,10 +274,10 @@ Project tools in the window: `project_list` 62, `project_update` 14, `project_ge
 
 | # | Workstream (depends on) | Size | Gate |
 | --- | --- | --- | --- |
-| WS1 | Record parser (JSON + zod), projector (KB→row), guard on `projects/*/project.md`, Entry radar record, `mc-ctl project` from record-declared schedule ids. **The first slice; one real project end-to-end** | M | scoped vitest + qa-auditor; no schema, no prompt text |
+| WS1 | Record parser (JSON + zod), projector (KB→row), guard on `projects/*/project.md`, Entry radar record, `mc-ctl project` from record-declared schedule ids. **The first slice; one real project end-to-end** — BUILT <sha>. Deviation (R1 W5, orchestrator ruling): `project_update` refuses the 4 operator-only keys (`mcp`, `trusted`, `egress`, `deny_paths`) even when the project has no record (0 live rows use them) | M | scoped vitest + qa-auditor; no schema, no prompt text |
 | WS2 | Attribution columns (`tasks`, `scheduled_tasks`), set at `src/dispatch/dispatcher.ts:529` from schedule, parent, ritual, inbound, chat; stall detector reads aliases (WS1) | M | `SCHEMA_MIGRATIONS` + the `user_version` pins (`deploy.sh:40,55,57`, `cost-ledger-basis-schema.test.ts:54,86,106`) moved together; operator deploy |
 | WS3 | MCP from records: `cwd`, env names only, the merging loader, derived scope / Rule-of-Two / hints; xpoz migrated byte-identical (WS1) | M | **paid eval gate** (classifier group text moves) |
-| WS4 | Write allow-list fed by `profile.workspaceRoot` and record `repos` (6 sites, one commit, qa R1+R2) (WS1, S6 profile workstream) | M | security invariant |
+| WS4 | Write allow-list fed by `profile.workspaceRoot` and record `repos` (6 sites, one commit, qa R1+R2); each `repos[].path`: realpath ⊂ workspaceRoot, never trusted as written (R1 W4) (WS1, S6 profile workstream) | M | security invariant |
 | WS5 | Remaining families: DENUE server (work in the DENUE repo), CRM capability, `DEFAULT_CWD`, slug lists → records (WS3, WS4) | L | **paid eval gate** (DENUE guard, tool descriptions, prompt examples) |
 | WS6 | Replicability suite (§6); first pass after WS3, final pass after WS5 | M | scoped vitest |
 | WS7 | Sandboxed MCP transport and `egress` field: needed before any `trusted: false` server loads (WS3) | L | qa R1–R3 (`multi-round-audit`) |

@@ -131,3 +131,9 @@
 - **Avoid:** `sleep N; tail` to wait for a background job — blocked; the task notification arrives on its own.
 - **Better:** read-only inventories (W3, S6) with "COUNT+MIN/MAX first, 0 rows = no population" and "every count carries its grep" produced honest verdicts and a mechanical audit (36 re-runs); reuse the brief shape for the next survey.
 - **Better:** two landscape rows ([b2] [b3]) closed by `npm pack` into scratch + reading both SDK versions, no build; the dependency bump validated with `npx npm@10 ci` on a scratch copy BEFORE pushing the lockfile.
+
+## 2026-10-11 — S6 WS1 project record (first operator-abstraction build)
+- **Mistake:** the brief said "wire the new guard at every site `standingOrdersGuard` is wired" → the implementer grepped the FUNCTION name and missed `shell.ts` `DENY_WRITE_PATTERNS`, which protects the same folder by PATH REGEX. A guard sweep greps the protected PATH (`jarvis-kb/directives`) across `src`, not the guard's symbol; every hit is a site to wire or justify.
+- **Mistake:** a round-trip test written as `inverse(parsed)` by hand over 0–45-char fixtures passed while the real projector truncated the live row's 391-char description → round-trip tests go through the PRODUCTION functions (`project(parse(export(row)))`) and the fixture exceeds every cap in the path (`grep -n "slice(0, " <module>` first).
+- **Avoid:** `String.prototype.replace(current, modelText)` — `$'`, `$$`, `$1` in model text are replacement patterns, and it hits the first occurrence; splice by index with `() => text`.
+- **Better:** a tripwire count that grows daily (day-log files) is stated as "N on <date>, +1 per MX day with a date-named newest file"; a frozen N stops the first agent of the next day for nothing.

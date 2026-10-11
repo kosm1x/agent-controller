@@ -40,14 +40,16 @@ import type Database from "better-sqlite3";
 import type { StalledProjectSignal } from "./signals.js";
 
 /** A project unmentioned in the day-log longer than this is "stalled". */
-const STALE_DAYS = 7;
+export const STALE_DAYS = 7;
 /** How many days of day-logs to load when computing days-since-mention. */
-const SCAN_WINDOW_DAYS = 30;
+export const SCAN_WINDOW_DAYS = 30;
 const MS_PER_DAY = 86_400_000;
 /** Tokens shorter than this collide across projects ("data","plan","salon",
  *  "voice","local","brain") and coincidentally match unrelated day-log text,
  *  suppressing real stalls — so only longer, distinctive tokens count. */
 const MIN_TOKEN_LEN = 6;
+/** Aliases are operator-written on purpose: only 1–2 char ones are dropped (they match everywhere). */
+const MIN_ALIAS_LEN = 3;
 /** Generic ≥6-char words shared across many projects — excluded so they can't
  *  mask a stall by coincidental match. */
 const COMMON_TOKENS = new Set([
@@ -64,7 +66,7 @@ const COMMON_TOKENS = new Set([
   "analysis",
 ]);
 
-interface ProjectRow {
+export interface ProjectRow {
   slug: string;
   name: string;
   /** Free-form JSON; `stall_exempt: true` marks intentional day-log silence. */
@@ -80,8 +82,16 @@ const DATE_IN_PATH = /logs\/day-logs\/(\d{4}-\d{2}-\d{2})\.md$/;
 
 /** Match terms for a project: slug, full name, and significant name tokens, all
  *  lower-cased. The slug ("salones-wa") and a tokenized name ("salones") give
- *  two independent shots at a free-text mention. */
-function matchTermsFor(p: ProjectRow): string[] {
+ *  two independent shots at a free-text mention.
+ *
+ *  S6 WS1: `{ aliases: true }` also adds each `config.aliases` entry (the
+ *  record's `aliases`, spec §2) as a whole term — `mc-ctl project` uses it.
+ *  `detectStalledProjects` does NOT pass it: its output for existing callers
+ *  stays as it was until WS2 moves the detector onto the record. */
+export function matchTermsFor(
+  p: ProjectRow,
+  opts: { aliases?: boolean } = {},
+): string[] {
   const terms = new Set<string>();
   const slug = p.slug.toLowerCase().trim();
   const name = p.name.toLowerCase().trim();
@@ -97,7 +107,26 @@ function matchTermsFor(p: ProjectRow): string[] {
     const t = tok.toLowerCase();
     if (t.length >= MIN_TOKEN_LEN && !COMMON_TOKENS.has(t)) terms.add(t);
   }
+  if (opts.aliases) {
+    for (const a of configAliases(p.config)) if (a.length >= MIN_ALIAS_LEN) terms.add(a);
+  }
   return [...terms];
+}
+
+/** `config.aliases` as lower-cased non-empty strings; malformed → none. */
+function configAliases(config: string | null): string[] {
+  if (!config) return [];
+  try {
+    const parsed: unknown = JSON.parse(config);
+    const aliases = (parsed as { aliases?: unknown } | null)?.aliases;
+    if (!Array.isArray(aliases)) return [];
+    return aliases
+      .filter((a): a is string => typeof a === "string")
+      .map((a) => a.toLowerCase().trim())
+      .filter((a) => a.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 /** A project whose day-log silence is INTENTIONAL, not a stall — the operator
@@ -105,7 +134,7 @@ function matchTermsFor(p: ProjectRow): string[] {
  *  parked on a deliberate deprioritization). Such a project must not be flagged
  *  as drifting; doing so seeds a false-premise judgment. Malformed or absent
  *  config → NOT exempt (fail toward flagging, the safe direction). */
-function isStallExempt(config: string | null): boolean {
+export function isStallExempt(config: string | null): boolean {
   if (!config) return false;
   try {
     const parsed: unknown = JSON.parse(config);
@@ -125,6 +154,43 @@ function daysBetween(aIso: string, bIso: string): number {
   return Math.round((a - b) / MS_PER_DAY);
 }
 
+export interface DatedDayLog {
+  date: string;
+  /** Lower-cased content. */
+  content: string;
+}
+
+/** The day-log scan: the newest SCAN_WINDOW_DAYS day-logs, dated, newest first. */
+export function loadDatedDayLogs(db: Database.Database): DatedDayLog[] {
+  const logs = db
+    .prepare(
+      `SELECT path, content FROM jarvis_files
+        WHERE path LIKE 'logs/day-logs/%'
+        ORDER BY path DESC
+        LIMIT ?`,
+    )
+    .all(SCAN_WINDOW_DAYS) as DayLogRow[];
+  return logs
+    .map((l) => ({
+      date: DATE_IN_PATH.exec(l.path)?.[1] ?? null,
+      content: l.content.toLowerCase(),
+    }))
+    .filter((l): l is DatedDayLog => l.date !== null)
+    .sort((a, b) => (a.date < b.date ? 1 : -1)); // newest first
+}
+
+/** Newest day-log mentioning any term; days counted from the newest day-log present. */
+export function lastDayLogMention(
+  terms: readonly string[],
+  dated: readonly DatedDayLog[],
+): { date: string; daysSinceMention: number } | null {
+  if (dated.length === 0) return null;
+  const hit = dated.find((d) => terms.some((t) => d.content.includes(t)));
+  return hit
+    ? { date: hit.date, daysSinceMention: daysBetween(dated[0].date, hit.date) }
+    : null;
+}
+
 /**
  * Detect active projects that have gone quiet in the day-log.
  *
@@ -140,34 +206,18 @@ export function detectStalledProjects(
     .all() as ProjectRow[];
   if (projects.length === 0) return [];
 
-  const logs = db
-    .prepare(
-      `SELECT path, content FROM jarvis_files
-        WHERE path LIKE 'logs/day-logs/%'
-        ORDER BY path DESC
-        LIMIT ?`,
-    )
-    .all(SCAN_WINDOW_DAYS) as DayLogRow[];
-  if (logs.length === 0) return []; // no day-log to judge against — say nothing
-
-  // Reference "today" = the newest day-log present (sidesteps wall-clock tz).
-  const dated = logs
-    .map((l) => ({
-      date: DATE_IN_PATH.exec(l.path)?.[1] ?? null,
-      content: l.content.toLowerCase(),
-    }))
-    .filter((l): l is { date: string; content: string } => l.date !== null)
-    .sort((a, b) => (a.date < b.date ? 1 : -1)); // newest first
+  // No day-log to judge against — say nothing. Reference "today" = the
+  // newest day-log present (sidesteps wall-clock tz).
+  const dated = loadDatedDayLogs(db);
   if (dated.length === 0) return [];
-  const latestDate = dated[0].date;
 
   const signals: StalledProjectSignal[] = [];
   for (const p of projects) {
     if (isStallExempt(p.config)) continue; // intentional silence, not a stall
     const terms = matchTermsFor(p);
     // newest day-log (already sorted desc) that mentions any term
-    const hit = dated.find((d) => terms.some((t) => d.content.includes(t)));
-    const daysSinceMention = hit ? daysBetween(latestDate, hit.date) : null;
+    const daysSinceMention =
+      lastDayLogMention(terms, dated)?.daysSinceMention ?? null;
     if (daysSinceMention !== null && daysSinceMention <= staleDays) continue;
 
     signals.push({

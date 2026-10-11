@@ -22,7 +22,7 @@ import {
   reconcileOrphanedTasks,
 } from "./db/index.js";
 import { regenerateIndex } from "./db/jarvis-index.js";
-import { getKbMirrorWriteDir } from "./db/jarvis-fs.js";
+import { getJarvisKbRoot, getKbMirrorWriteDir } from "./db/jarvis-fs.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
 import { startTriggers } from "./triggers/index.js";
@@ -273,6 +273,18 @@ async function main(): Promise<void> {
     migrateUserFactsToProjects();
   } catch {
     // Non-fatal — migration is best-effort
+  }
+
+  // S6 WS1: project every registered record (`projects/<slug>/project.md`)
+  // onto its `projects` row. No KB reindex runs at boot (it is the hourly
+  // `kb-reindex` cron, which projects what it imports/refreshes), so this
+  // reads the registry — the records' authority — not the disk.
+  try {
+    const { projectAllRecords } = await import("./projects/projector.js");
+    const r = projectAllRecords(getJarvisKbRoot());
+    log.info(r, "project records projected");
+  } catch (err) {
+    log.warn({ err }, "project record projection failed (non-fatal)");
   }
 
   // Initialize memory service (Hindsight if configured, else SQLite)

@@ -593,6 +593,21 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
       "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive",
   },
   {
+    // S6 WS1 (R1-C1): a project record (`projects/<slug>/project.md`) is the
+    // project's contract and the hourly kb-reindex projects it onto the row,
+    // so a shell write there is a door around project_update and its refusals.
+    // Denied: the record itself, the `projects/<slug>` folder and the
+    // `projects` dir (a cp/mv INTO either lands a record). Same basename-bound
+    // residuals as directives/ above (relative writes after a `cd`). The
+    // tail is a negative path-char class (R2 W1), so a glued redirection
+    // (`project.md>/dev/null`, `project.md</tmp/x`) is still denied. The
+    // `<slug>` segment also matches a FILE directly under `projects/`
+    // (`projects/notes.md`), so writes there are denied too (none exist today).
+    pattern: /\/jarvis-kb\/projects(?:\/[^/\s]+(?:\/project\.md)?)?\/?(?![\w./-])/i,
+    reason:
+      "jarvis-kb/projects/<slug>/project.md is the project's record — change a project with project_update",
+  },
+  {
     pattern: /\/root\/claude\/mission-control\//,
     reason: "Jarvis cannot modify its own source code via shell_exec",
     // Dynamic override: allowed on jarvis/* branches (checked at runtime)
