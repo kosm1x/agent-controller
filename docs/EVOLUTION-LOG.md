@@ -2826,3 +2826,79 @@ Jarvis treated the noon meeting notice as an assignment and mistook the preparat
 
 ### Research notes
 Still a high-volume delegation phase, with the operator now treating the agent as a research analyst across several ventures. Milestone: a new project (Bet Book) was created and scoped in a single session. No new patterns surfaced via memory_reflect today because memory_search and memory_reflect were not in this run's toolset; this entry rests on the narrative and project_list (active: TMN, Trustr, Plan 2027, Agent-Controller, Bet Book).
+
+## 2026-10-08
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 128 |
+| Total tasks | 4016 |
+| Conversations today | 103 (telegram: 103) |
+| Streak days | 63 |
+
+### Interactions summary
+The day was dominated by the Bet Book project: ingesting sources 2-8 (EPUB, PDF, audio transcript), LatAm legal research, boxing/MLB/NBA/NFL coverage, approving index v2 (pseudonym JR García, Spanish, ePub and PDF), a 6-layer human-writing method, a voice/tone template, and a first Introduction draft. Other threads were TMN (P&L correction, Soriana CMO questions, meeting minutes), the daily MexicoNecesario tweet, a 2019 Equinox oil question, local STT debugging with faster-whisper on Windows, and two agent-controller KB updates. Most-used work was KB file reads/writes and Google Doc creation.
+
+### What Jarvis learned
+Fede set a rule that everything written for the Bet Book gets a Google Doc copy, and an editorial criterion that only history useful to the average bettor is included. He also expects closed decisions (TMN P&L at 40% gross, the Bet Book index decisions) to stay closed and not be reopened. No Swarm tool exists, so deep-research requests are handled as sequential rounds.
+
+### Friction points
+- Jarvis reopened the already-closed TMN P&L, and miscounted the CMO questions (10 red instead of 15 red and 18 yellow).
+- Wrong first answers: 5W-30 oil for the Equinox (corrected to 0W-20 dexos1), an unconfirmed "4090 Ti" GPU, and a wrong PyAV diagnosis; Fede's "success" report on 21:11 was still the CUDA error.
+- Swarm was requested twice with no tool available.
+- Several uploads arrived without attachments.
+- One template edit (voice source 4) was not saved and had to be redone, and a file was overwritten by jarvis_file_update. Closed decisions still showed as pending in the index and README until 23:20.
+
+### Research notes
+Still a high-intensity, long-session collaboration phase: Fede is delegating multi-hour document-building and expects verification on factual answers ("Confirma y verifica"). Active projects moved today: bet-book (main), azteca-tvpromo-compete (TMN), agent-controller, mexico-necesario-ac. memory_search and memory_reflect were not available in this run's tool set, so no recall-derived patterns were added. This entry is based on the day narrative and project_list.
+
+## 2026-10-09
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 35 |
+| Total tasks | 3981 |
+| Conversations today | 25 (telegram: 25) |
+| Streak days | 64 |
+
+### Interactions summary
+Two blocks: the morning went to the Bet Book (tone-and-voice template usage analysis, Intro draft 3 and final version, a style guide, chapter 1 drafts 1 and 2). From 13:24 Fede paused the book for an Azteca emergency: preparing Monday's Izzi meeting on pay-TV Addressable TV (market recon, decision memo, 10-slide Google Slides deck). Mostly KB writes, Google Docs/Slides and Drive operations, plus a final agent-controller KB README update.
+
+### What Jarvis learned
+Fede scopes tightly: he removed the CTV offer from the deck and rejected an unrequested Sky addition, so Jarvis should not widen deal scope on its own. Destructive actions (deleting the old deck) went through an explicit confirm ("Procede"), which worked well. Memory tools (memory_search / memory_reflect) were not available in this run's scope, so no recall-based patterns were gathered; this entry rests on the day narrative and project_list only.
+
+### Friction points
+- Jarvis added Sky to the deal scope unprompted; Fede corrected it twice (16:58, 16:59).
+- Accidental "eswd" input: Jarvis replied three times to one message, and the deletion request could not be honored because the day-log is immutable.
+- First agent-controller KB update failed (exit code 143) and had to be repeated.
+- Open: scenario figures in the new deck were computed without a tool and are unverified.
+
+### Research notes
+Strong context-switch day: a long-running creative project (Bet Book) was paused mid-stream for a high-stakes business task, with Jarvis moving from drafting to decision support. Active projects touched: bet-book, proyectos-extraordinarios-27-tva, agent-controller (plan-2027 mentioned). Ongoing trust-calibration signal: scope discipline and verification of unchecked figures.
+
+## 2026-10-10
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 32 |
+| Total tasks | 3963 |
+| Conversations today | 26 (telegram: 26) |
+| Streak days | 65 |
+
+### Interactions summary
+Two blocks: the Williams Radar Journal W41 (publication, summary, a question about the "Ticker of the Week" that turned out to be the Deep Dive cluster) and a long afternoon/evening session on Totalplay's addressable business (project proyectos-extraordinarios-27-tva). That session covered the 2T26 report, advertising revenue, LFTR art. 237 ad-minute limits, a 2/4 minute-split assumption, CPM benchmarks, a verified pay-TV competition report, and a 14-slide Google Doc. Mostly web search plus KB file writes/appends (recon file grew to ~15 KB; a competition report was added).
+
+### What Jarvis learned
+Fede wants claims verified against the web before they are written to the KB, and wants working assumptions (e.g. 2/4 minute split, ~40% addressable share) labelled as assumptions rather than data. Jarvis should search before saying a datum does not exist (advertising revenue was initially denied, then found). Memory tools (memory_search / memory_reflect) were not available in this run's scope, so no recall-based patterns were collected; the above comes from the day narrative.
+
+### Friction points
+- 16:48: "Agrega esto al file" was ambiguous; nothing was written.
+- 18:16–18:17: Jarvis wrongly said there was no ad revenue in the reports; Fede asked for a wider search and Jarvis corrected itself.
+- 09:31: W41 summary came out truncated at the end.
+- Several written files were not re-read after writing.
+
+### Research notes
+Still a co-evolution phase of heavy operator-directed research, with the operator steering via corrections, and a 65-day streak. The correction-then-verify loop (ad revenue, Televisa percentage error) is a useful example of user-driven calibration.
