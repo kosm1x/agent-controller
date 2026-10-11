@@ -14,7 +14,7 @@ Sources: source code at the working tree on 2026-10-11; `mcp-servers.json` (key 
 2. Every task carries the slug it was attributed to, so `mc-ctl project <slug>` shows the project's record.
 3. **What the first operator's 7 code-wired families need it to express:**
 4. (a) aliases with precedence (vlcms is not vlmp; a bare "williams" means the Entry radar); (b) repo paths incl. a default repo (`git.ts:15`);
-5. (c) a per-project MCP server (xpoz today; DENUE and CRM are candidates); (d) secret NAMES, and deny-paths that only narrow (Pulso WhatsApp store);
+5. (c) a per-project MCP server (none today — xpoz is a SERVICE, not a project, RULED 2026-10-11; DENUE and CRM are candidates); (d) secret NAMES, and deny-paths that only narrow (Pulso WhatsApp store);
 6. (e) a capability brief shown when the project is in context (DENUE guard, 12 prompt lines); (f) schedules (Entry radar, X accounts);
 7. (g) an inbound caller identity (Pulso calls `/api/jarvis-pull`).
 8. **Smallest end-to-end build (WS1, M):** the Entry radar's record (`williams-entry-radar`; its chat README stays where it is via `kb_readme`) is the first `project.md`.
@@ -97,25 +97,25 @@ sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT COUNT(*) FROM 
 - `graphify-code`: no `env`
 - `xpoz`: `env: {}`, with a sibling-repo path in its `args`
 
-Tools are named `<serverId>__<tool>` (`MCP_NAMESPACE_SEP`). xpoz is already a project bringing its own server; wiring it took about 10 hand edits in 5 files: `scope.ts:439-444,1092,1564,1650`, `scope-classifier.ts:57,141`, `rule-of-two.ts:302,303,318`, `annotations.ts:115,164`, `mcp-servers.json`.
+Tools are named `<serverId>__<tool>` (`MCP_NAMESPACE_SEP`). xpoz is an operator-wide SERVICE server (RULED 2026-10-11: not a project; it stays in `mcp-servers.json` with browser/playwright/graphify); wiring it took about 10 hand edits in 5 files — the count a record-driven loader removes for a PROJECT server: `scope.ts:439-444,1092,1564,1650`, `scope-classifier.ts:57,141`, `rule-of-two.ts:302,303,318`, `annotations.ts:115,164`, `mcp-servers.json`.
 
 MCP traffic in the trace window: `browser__*` 100, `playwright__*` 37, one `mcp__jarvis__browser__markdown`; `graphify-code__*` and `xpoz__*` 0.
 
 **Declaring a server in the record:**
 
 ```json
-"capabilities": { "mcp": [ { "id": "xpoz", "command": "node", "args": ["dist/mcp.js"], "repo": "primary", "cwd": ".",
-  "env": ["XPOZ_API_TOKEN"], "trust": "AB", "tools": { "xpoz_trigger_run": { "trust": "B", "destructive": true } },
+"capabilities": { "mcp": [ { "id": "acme-radar", "command": "node", "args": ["dist/mcp.js"], "repo": "primary", "cwd": ".",
+  "env": ["ACME_API_TOKEN"], "trust": "AB", "tools": { "acme_trigger_run": { "trust": "B", "destructive": true } },
   "deferred": [], "lazy": false } ] }
 ```
 
 Field rules:
-- `id` defaults to the slug. xpoz keeps `id: "xpoz"`, so every tool name, trace and test stays byte-identical. Ids must be unique across records and `mcp-servers.json`; a duplicate is refused at boot with an alert.
+- `id` defaults to the slug; every tool name, trace and Rule-of-Two row derives from it. Ids must be unique across records and `mcp-servers.json`; a duplicate is refused at boot with an alert.
 - `cwd` resolves inside the named repo, and its `realpath` must start with that repo's path.
-- `env` lists NAMES only. Each value is resolved from the project's `secrets` (the row's `credentials`, through `secret-refs.ts`), or else from the service environment by that name. The xpoz server reads `XPOZ_API_TOKEN` (name checked in its repo, `src/mcp/server.ts:14`).
-- Operator-wide servers (browser, playwright, graphify) stay in `mcp-servers.json`.
+- `env` lists NAMES only. Each value is resolved from the project's `secrets` (the row's `credentials`, through `secret-refs.ts`), or else from the service environment by that name. Service servers in `mcp-servers.json` get the same names-only rule under the service-hardening item (ruling 3).
+- Operator-wide SERVICE servers (browser, playwright, graphify, xpoz) stay in `mcp-servers.json`; they are not project records.
 
-**Loading.** `loadMcpConfig()` (`mcp/config.ts:15`) merges `mcp-servers.json` with the `mcp[]` entries of records whose `status` is `active`. Each spawn gets the SDK's default safe environment plus the declared names. It never gets `{...process.env, ...config.env}`, which `manager.ts:178-180` passes today whenever an `env` key exists. That means the `xpoz` child currently inherits every secret in the service env.
+**Loading.** `loadMcpConfig()` (`mcp/config.ts:15`) merges `mcp-servers.json` with the `mcp[]` entries of records whose `status` is `active`. Each spawn gets the SDK's default safe environment plus the declared names. It never gets `{...process.env, ...config.env}`, which `manager.ts:178-180` passes today whenever an `env` key exists. That means the `xpoz` child currently inherits every secret in the service env — a service-hardening fix at the manager, queued, independent of the contract.
 
 **Scope, Rule-of-Two and hints, with no hand edits:**
 - **Scope.** One scope group per project that declares `mcp[]` or `routing.summary` (not one per active row: 43 active rows would mean up to 43 new groups), named after its slug. It is added to `VALID_GROUPS` (`scope-classifier.ts:35`) at boot.
@@ -221,7 +221,7 @@ R="Pulso|agentic-crm|CRM_API|crm-azteca|crm\.db|denue|trustr|vlmp|cuatro-flor|wi
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DENUE + uncharted, 66 (20/46) | prompt 12, routing 4, path guard 4 | **Recommended: a NEW record for the DENUE analyzer** (no row, no folder today; repo, `secrets`, aliases, `capabilities.brief`), with `uncharted-lite` (active row, own folder, own repo) as its child. Reason: the guard's data, `.env` and SQL live in the analyzer repo (`fast-runner.ts:1212`), while `uncharted-lite` is a separate repo whose config already declares `parent_project`/`parent_repo` (values not read; the operator confirms the parent) | the API path (`fast-runner.ts:1208-1212`) → `denue__*` | `psql` through shell in its repo | guard `fast-runner.ts:1178-1311`; `scope-classifier.ts:155,162`; `dispatch/classifier.ts:32`; `jarvis-pull.ts:145` | the `.env` read exception (`shell.ts:521,534`, `immutable-core.ts:190,425`) until its server holds the key | `http_fetch` 35, `shell_exec` 1,012 (DENUE share not separable); `scope.ts:1298` cue |
 | Pulso / CRM + vlcrm, 31 (17/14) | tool code 8, path guard 4, prompt 3, routing 2 | the Pulso row and folder; `inbound`, `secrets`, `deny_paths` — today: `crm_query` is a CORE tool (`crm-query.ts`), an exception to 3b (ruling 5) | — (`crm_query` stays core, ruling 5) | `hasCrm` ×5 → "has capability" | `signal-intelligence.ts:60`, `jarvis-self-repair.ts:83` | the inbound route `api/routes/jarvis-pull.ts` (the call runs in reverse) and the WhatsApp-store deny paths (`shell.ts:434,450`, `immutable-core.ts:146,148`): security, record may only add | `crm_query` 0; the jarvis-pull route; the `kb-injection.ts:126` cue |
-| xpoz, 29 (18/11) | routing 13, tool code 5 | NEW record (no row, no folder); `mcp[{id:"xpoz"}]` | already one (`mcp-servers.json` `xpoz`) | — | `scope-classifier.ts:57,141` | none | `xpoz__*` 0 calls; registry names, scope list and R2 classes byte-identical (tests) |
+| xpoz, 29 (18/11) | routing 13, tool code 5 | **SERVICE, not a project (RULED 2026-10-11)**: no record, stays in `mcp-servers.json` | n/a (service server) | — | `scope-classifier.ts:57,141` stay as service wiring | all 29 lines (service wiring is not project coupling) | `xpoz__*` 0 calls; nothing moves |
 | Entry radar, 13 (3/10) | routing 3 | row `williams-entry-radar` (21 config keys) and folder `williams-entry-radar` (7 files) match; `williams-radar-journal` matches the archived row. But chat injection reads a SECOND, row-less folder: `kb-injection.ts:107` lists `williams-radar` (2 files) and `:132` sends a bare "williams" there, so the project has two live READMEs. The record sets `kb_readme: projects/williams-radar/README.md` to stay zero-loss until ruling 4 picks the canonical one (a default `kb_folder` would silently switch chat injection; `kb_folder=williams-radar` would orphan the row's own folder); aliases; 1 schedule | — | git and shell in its repos | `kb-injection.ts:107,132` → aliases + `kb_readme` | none | 5 schedule runs; the alias guard `src/dispatch/dispatcher.ts:458-470`; README injected on "williams" unchanged |
 | cuatro-flor, 11 (9/2) | default path 5, path guard 1, prompt 1, routing 1, tool code 1 | row and folder; `repos` (primary) | — | `git.ts:15` `DEFAULT_CWD` → the primary repo of the project in context | `git.ts:180,232,297,386`, `prompt-sections.ts:213`, `file.ts:344`, `jarvis-files.ts:117` | none | `git_commit` 35, `git_push` 25, `git_status` 4, `git_diff` 1 |
 | salones / gilda, 10 (3/7) | the 3 "routing" hits are example comments on generic code (`stalled-projects.ts:90-93`) | row and folder; 3 schedules | — | — | — | none | 0 runs (0 active) |
@@ -276,14 +276,14 @@ Project tools in the window: `project_list` 62, `project_update` 14, `project_ge
 | --- | --- | --- | --- |
 | WS1 | Record parser (JSON + zod), projector (KB→row), guard on `projects/*/project.md`, Entry radar record, `mc-ctl project` from record-declared schedule ids. **The first slice; one real project end-to-end** — BUILT `f4f6c73` 2026-10-11 (R1 FAIL → R2/R2b/R2c PASS; 26 mutants red); DEPLOYED `d96f72c` + Entry radar record EXPORTED 2026-10-11 (report attributes 5 runs / 5 tasks over 30 d via the schedule id); forward proof = the 2026-10-16 run. Deviation (R1 W5, orchestrator ruling): `project_update` refuses the 4 operator-only keys (`mcp`, `trusted`, `egress`, `deny_paths`) even when the project has no record (0 live rows use them) | M | scoped vitest + qa-auditor; no schema, no prompt text |
 | WS2 | Attribution columns (`tasks`, `scheduled_tasks`), set at `src/dispatch/dispatcher.ts:529` from schedule, parent, ritual, inbound, chat; stall detector reads aliases (WS1) — BUILT `2a59503` 2026-10-11 (R1 FAIL → R2 PASS WITH WARNINGS → re-check PASS; 23 mutants red); DEPLOYED `b7dc7d9` 2026-10-11 (v9 applied at boot, Entry radar schedule claimed); proof = first `attribution.resolved` trace with a non-null slug. Residual: the chat detector (`kb-injection.ts` `detectProjectInMessage`) maps any word `CRM` to `pulso-aura-upfront`; attribution reads only the operator's typed text (attached-file text after `EXTRACTED_FILE_MARKER` is cut) and validates every slug against `projects` (a slug named in words — chat, thread, inbound — binds only to an active/paused row; a whole-phrase alias outranks a single hyphen-word alias). Mentions of `cmll-gira-estrellas` resolve to null until the operator adds an alias to the `alianza-cmll` record (ruling). Retries (`src/reactions/manager.ts:311`) do not pass `projectSlug`, so a retried chat turn becomes `thread` (from its own original row, inside 24 h) or null | M | `SCHEMA_MIGRATIONS` + the `user_version` pins (`deploy.sh:40,55,57`, `cost-ledger-basis-schema.test.ts:54,86,106`) moved together; operator deploy |
-| WS3 | MCP from records: `cwd`, env names only, the merging loader, derived scope / Rule-of-Two / hints; xpoz migrated byte-identical (WS1) | M | **paid eval gate** (classifier group text moves) |
+| WS3 | MCP from records: `cwd`, env names only, the merging loader, derived scope / Rule-of-Two / hints; first record-declared server = DENUE's (ruling 5) or the synthetic operator's (WS6); xpoz stays a service server and does not migrate | M | **paid eval gate** (classifier group text moves) |
 | WS4 | Write allow-list fed by `profile.workspaceRoot` and record `repos` (6 sites, one commit, qa R1+R2); each `repos[].path`: realpath ⊂ workspaceRoot, never trusted as written (R1 W4) (WS1, S6 profile workstream) | M | security invariant |
 | WS5 | Remaining families: DENUE server (work in the DENUE repo), CRM capability, `DEFAULT_CWD`, slug lists → records (WS3, WS4) | L | **paid eval gate** (DENUE guard, tool descriptions, prompt examples) |
 | WS6 | Replicability suite (§6); first pass after WS3, final pass after WS5 | M | scoped vitest |
 | WS7 | Sandboxed MCP transport and `egress` field: needed before any `trusted: false` server loads (WS3) | L | qa R1–R3 (`multi-round-audit`) |
 
 Eval-gate-sensitive moves (`npm run eval:gate -- --run`):
-- WS3: the xpoz group line `scope-classifier.ts:141` (`:57` is the `VALID_GROUPS` code entry, not prompt text).
+- WS3: no existing group line moves (xpoz stays a service); the gate applies when the first record-declared server adds a classifier group line.
 - WS5: the coding/DENUE classifier lines `scope-classifier.ts:125,155,162`; `fast-runner.ts:1193-1311`; tool descriptions `git.ts:180,232,297,386`, `x-post.ts:222`, `jarvis-files.ts:117`, `file.ts:344`, `jarvis-self-repair.ts:83`; prompt text `prompt-sections.ts:213`, `v8-2/critic.ts:142`, `day-narrative.ts:96`, `signal-intelligence.ts:60`, `jarvis-pull.ts:139,145`.
 
 WS1, WS2, WS4 and WS6 change no model-facing text.
@@ -291,8 +291,8 @@ WS1, WS2, WS4 and WS6 change no model-facing text.
 **Rulings needed from the operator:**
 1. **3c as proposed?** The attribution order in §4 (schedule → parent → ritual → inbound → chat → classifier → day-log at report time), stored as nullable columns on `tasks` and `scheduled_tasks` rather than a link table.
 2. **3d as proposed?** The synthetic-operator vitest suite with the pass criteria in §6 (1–5 after WS3 with `acme` trusted; 6 after WS7), as the replicability evidence for the Beta test.
-3. **MCP trust.** Capability fields operator-only. Env limited to declared names, applied to xpoz now (it inherits the full service env today). No server from a non-first-operator record loads before WS7.
-4. **First slice and the Entry radar's canonical README.** The Entry radar (record → row → schedule → report, no MCP, proof within a week), or xpoz (proves the MCP path first, but has 0 calls in the window, so tests are its only proof). If the Entry radar: which README is canonical, `projects/williams-entry-radar/` (the row's folder) or `projects/williams-radar/` (what chat injects today)? Until ruled, `kb_readme` keeps today's behaviour.
+3. **MCP trust.** Capability fields operator-only. Env limited to declared names for record servers. xpoz: RULED 2026-10-11 a service, outside the contract — its full-env inheritance (`manager.ts:178-180`) is a service-hardening item in the queue, not a contract ruling. No server from a non-first-operator record loads before WS7.
+4. **First slice and the Entry radar's canonical README.** The Entry radar (record → row → schedule → report, no MCP, proof within a week). RULED Entry radar 2026-10-11 (xpoz is a service, not a candidate). Still open: which README is canonical, `projects/williams-entry-radar/` (the row's folder) or `projects/williams-radar/` (what chat injects today)? Until ruled, `kb_readme` keeps today's behaviour.
 5. **3b exceptions and DENUE.** `crm_query` and `tweet_post`/`tweet_probe` stay core tools (listed residuals) or move into their projects' MCP servers; and confirm DENUE as a new record with `uncharted-lite` as its child.
 
 **Tripwires at end:** `stat -c '%Y %s' /root/claude/jarvis-kb/directives/core.md` = `1791309381 3739`; `ls /root/claude/jarvis-kb/logs/day-logs | wc -l` = `191`.
