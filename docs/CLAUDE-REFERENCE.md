@@ -143,6 +143,7 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 ./mc-ctl gates summary 7     # …now also prints read-back gates (RB-*) as their own population
 ./mc-ctl usability [days]    # Usability KPIs vs the 2026-08-22 critic review (friction, scope-asks, harness strings delivered, pushes/day, provenance: writes rejected / figures marked / citations dropped); --json
 ./mc-ctl project <slug> [--days N]  # S6 WS1/WS2: one project's record (projects/<slug>/project.md → row) — schedule runs, tasks + gates by tasks.project_slug UNION schedule tag (pre-v9 rows), tasks by source (schedule/parent/ritual/inbound/chat/thread/classifier/tag-only, 7 d · N d), cost (unaudited), last day-log mention, stall state; read-only
+./mc-ctl project-create <slug> --name <text> --repo <abs-path>[:primary|other] [--alias <a>] [--parent <slug>] [--dry-run]  # S6 ruling 5a: record for a project with NO row (refuses an existing record or row); writes projects/<slug>/project.md through the registry path, the projector creates the row; counts only; dry-run first. Operator login shell only (cgroup session scope + TTY); refused from tasks, cron, `nohup`, pipes, and from inside a Claude Code session including `!` commands
 ./mc-ctl schedule-resume <id> # Re-activate a scheduled task that paused itself via the [PAUSAR-SCHEDULE] sentinel
 ./mc-ctl memory-checklist [--stale] [--json]   # Agent-memory playbook 10-item checklist from live mc.db + /metrics (read-only); --stale lists user_facts untouched > 90 d
 ```

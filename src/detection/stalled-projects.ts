@@ -49,7 +49,7 @@ const MS_PER_DAY = 86_400_000;
  *  suppressing real stalls — so only longer, distinctive tokens count. */
 const MIN_TOKEN_LEN = 6;
 /** Aliases are operator-written on purpose: only 1–2 char ones are dropped (they match everywhere). */
-const MIN_ALIAS_LEN = 3;
+export const MIN_ALIAS_LEN = 3;
 /** Generic ≥6-char words shared across many projects — excluded so they can't
  *  mask a stall by coincidental match. */
 const COMMON_TOKENS = new Set([

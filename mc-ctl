@@ -3259,6 +3259,15 @@ cmd_project() {
       npx --no-install tsx scripts/project-report.ts "$@" )
 }
 
+cmd_project_create() {
+  # mc-ctl project-create <slug> --name <text> --repo <abs-path>[:<role>] … —
+  # S6 ruling 5a: a record for a project with NO row; the row is created from
+  # the record. Writes the KB through the registry path; --dry-run first.
+  [ -n "${1:-}" ] || die "Usage: mc-ctl project-create <slug> --name <text> --repo <abs-path>[:primary|other] [--repo …] [--alias <a>] [--parent <slug>] [--status active|paused] [--description <text>] [--kb-readme <kb-rel>] [--dry-run] — operator login shell only (cgroup session scope + TTY); refused from tasks, cron, nohup, pipes, and from inside a Claude Code session including ! commands"
+  ( cd "$PROJECT_DIR" && MC_DB_PATH="${DB_PATH}" \
+      npx --no-install tsx scripts/project-record-create.ts "$@" )
+}
+
 cmd_sandboxes() {
   # mc-ctl sandboxes — sandbox runtime at a glance (docs/planning/opensandbox-adoption.md).
   # Backend flag is read from the LIVE service environment by name only (never values).
@@ -3371,6 +3380,7 @@ case "$cmd" in
   sandboxes)         cmd_sandboxes ;;
   usability)         cmd_usability "$@" ;;
   project)           cmd_project "$@" ;;
+  project-create)    cmd_project_create "$@" ;;
   judgments)         cmd_judgments "$@" ;;
 
   close-phase)       cmd_close_phase "${1:-}" ;;

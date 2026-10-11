@@ -89,7 +89,10 @@ export const projectContractSchema = z
     repos: z
       .array(
         z.strictObject({
-          path: z.string().startsWith("/"),
+          path: z
+            .string()
+            .startsWith("/")
+            .refine((p) => !p.split("/").includes(".."), { message: "repo path must not contain a .. segment" }),
           role: z.enum(["primary", "other"]),
         }),
       )
@@ -291,6 +294,32 @@ export function isProjectRecordPath(rel: string, kbRoot?: string): boolean {
 /** The folder slug of a canonical record path, or null. */
 export function recordSlugFromPath(rel: string): string | null {
   return RECORD_PATH_RE.exec(rel)?.[1] ?? null;
+}
+
+/** One key order for a written contract block, whichever source set a field. */
+const RECORD_KEY_ORDER = ["slug", "name", "status", "aliases", "match_priority", "stall_exempt", "parent", "kb_folder", "kb_readme", "schedules", "repos", "success", "links"];
+
+/**
+ * The contract block as the operator scripts write it (exporter and create):
+ * a value equal to its contract default stays implicit, keys in one order,
+ * values as the schema normalises them (trimmed name/aliases/links.site), so
+ * a re-export of the projected row reproduces the record (audit R1 W1).
+ * Throws ProjectRecordError when the contract would not parse.
+ */
+export function normaliseRecordJson(json: Record<string, unknown>): Record<string, unknown> {
+  const slug = String(json.slug);
+  const folder = typeof json.kb_folder === "string" ? json.kb_folder : `projects/${slug}/`;
+  const implicit = (k: string, v: unknown) =>
+    (k === "match_priority" && v === 0) ||
+    (k === "kb_folder" && v === `projects/${slug}/`) ||
+    (k === "kb_readme" && v === `${folder.replace(/\/+$/, "")}/README.md`);
+  const raw = Object.fromEntries(
+    Object.entries(json)
+      .filter(([k, v]) => !implicit(k, v))
+      .sort(([a], [b]) => RECORD_KEY_ORDER.indexOf(a) - RECORD_KEY_ORDER.indexOf(b)),
+  );
+  const { contract } = parseProjectRecord(renderProjectRecord(raw, ""), { folderSlug: slug }); // throws if invalid
+  return Object.fromEntries(Object.keys(raw).map((k) => [k, contract[k as keyof typeof contract]]));
 }
 
 /** A new record: the contract block first, then the notes. */

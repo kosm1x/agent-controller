@@ -172,6 +172,32 @@ describe("applyProjectRecord — create / update / skip / error", () => {
   });
 });
 
+describe("S6 ruling 5a — a dangling parent warns, never blocks", () => {
+  const kid = { slug: "kid-lite", name: "Kid Lite", status: "active", parent: "big-parent" };
+  const rel = projectRecordRelPath("kid-lite");
+
+  it("a parent with no row: the record is applied (row created, parent projected) and warned ONCE with ids only", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = applyProjectRecord(rel, record(kid));
+    expect(r.error).toBeUndefined();
+    expect(r.action).toBe("created");
+    expect(getProject("kid-lite")!.config.parent).toBe("big-parent");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toBe("[projector] kid-lite: parent big-parent has no projects row (applied anyway)");
+    // every apply warns once (an unchanged record is skipped, still warned)
+    expect(applyProjectRecord(rel, record(kid)).action).toBe("skipped");
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("a parent whose row exists: no warning; no parent: no warning", () => {
+    createProject("big-parent", "Big Parent");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(applyProjectRecord(rel, record(kid)).action).toBe("created");
+    expect(applyProjectRecord(projectRecordRelPath("acme-radar"), record(BASE)).action).toBe("created");
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe("S6 WS2 — scheduled_tasks.project_slug follows the record's schedules", () => {
   const rel = projectRecordRelPath("acme-radar");
   const relB = projectRecordRelPath("beta-two");

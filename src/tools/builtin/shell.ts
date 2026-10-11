@@ -350,6 +350,12 @@ export function effectiveBaseCommand(segment: string): string {
 }
 
 /** Patterns checked against the full command string. */
+/** `word` with quotes/backslashes allowed between its letters (`pro''ject`). */
+const quotedWord = (w: string): string => w.split("").join(`[\\\\'"]*`);
+/** As quotedWord, and each letter may be a glob (`*`, `?`, `[…]`): `c*eate`, `rec?rd`. */
+const globbedWord = (w: string): string =>
+  w.split("").map((c) => `(?:${c}|[*?]|\\[[^\\]]*\\])`).join(`[\\\\'"]*`);
+
 const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /rm\s+(-[a-zA-Z]*\s+)*\//,
@@ -387,6 +393,24 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\bfind\b[^|;&]*\s-(?:delete|exec(?:dir)?\s+(?:rm|shred|unlink|truncate)\b)/,
     reason: "find -delete / -exec rm is blocked",
+  },
+  // S6 ruling 5a audit R1 C1: creating a project or re-pointing a live record
+  // (aliases = routing cues, kb_readme = injected text) is operator-only.
+  {
+    // Tolerant of trivial obfuscation (`\-`, `''`, one glob char per letter);
+    // a cheap layer only — the structural gate is the scripts' operator-session
+    // check (src/lib/operator-gate.ts).
+    pattern: new RegExp(
+      `${quotedWord("project")}[^a-z]*${globbedWord("record")}|mc-ctl\\W+${quotedWord("project")}[^a-z]*${globbedWord("create")}`,
+    ),
+    reason:
+      "project record create/export is operator-only (mc-ctl project-create / scripts/project-record-*.ts run from the operator terminal)",
+  },
+  // S6 ruling 5a audit R3: a task typing into the operator's terminal
+  // multiplexer would pass the operator-session gate.
+  {
+    pattern: /\btmux\b.*\b(?:send-keys|paste-buffer|load-buffer|run-shell)\b|\bscreen\b.*\s-X\b/,
+    reason: "multiplexer keystroke injection blocked — it types into another session's terminal",
   },
 ];
 

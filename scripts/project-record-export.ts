@@ -4,16 +4,20 @@
  *
  * Usage (operator, ONCE per project):
  *   npx tsx scripts/project-record-export.ts <slug> [--kb-readme <kb-rel-path>]
- *       [--schedule <schedule_id>]… [--dry-run] [--force]
+ *       [--schedule <schedule_id>]… [--parent <slug>] [--dry-run] [--force]
  *
  * Writes through the registry upsert path (`upsertFromDiskWrite`: registry
  * row + KB mirror + projection onto the row), never a bare fs write into the
- * KB. Refuses to overwrite an existing record without --force. Prints the KB
- * path and field COUNTS only — never a config value.
+ * KB. Refuses to overwrite an existing record without --force, and a parent
+ * that is the project itself or closes a cycle. Prints the KB path and field
+ * COUNTS only — never a config value. Operator terminal only (audit R1 C1 /
+ * R2): the CLI entry exits 2 outside an operator login session with a TTY
+ * (`src/lib/operator-gate.ts`).
  *
  * Mapping (spec §2 class table): `aliases`→aliases, `stall_exempt`,
  * `parent`|`parent_project`→parent, `schedule_id` (+ --schedule)→schedules[],
- * `kb_path`→kb_folder, repo-class keys holding an absolute local path→repos[]
+ * `kb_path`→kb_folder, `--parent` beats both parent spellings (a differing
+ * `parent_project` stays in the notes and is reported; S6 ruling 5a), repo-class keys holding an absolute local path→repos[]
  * (role primary for the first of local/local_path/path, else other),
  * `urls.site`→links.site. A projector-owned key (PROJECTOR_CONFIG_KEYS, written
  * by a previous apply) is the record's value and wins: it is the contract
@@ -28,6 +32,7 @@
  * `commit_goal_id` are never read into the record.
  */
 
+import { requireOperatorTerminal } from "../src/lib/operator-gate.js";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,10 +42,11 @@ import { getDatabase } from "../src/db/index.js";
 import { getFile } from "../src/db/jarvis-fs.js";
 import { upsertFromDiskWrite } from "../src/db/jarvis-reindex.js";
 import { isProjectProseSecret, projectEntryLeaves } from "../src/lib/secret-refs.js";
-import { PROJECTOR_CONFIG_KEYS } from "../src/projects/projector.js";
+import { PROJECTOR_CONFIG_KEYS, parentChainError } from "../src/projects/projector.js";
 import {
   KB_README_RE,
   PROJECT_SLUG_RE,
+  normaliseRecordJson,
   parseProjectRecord,
   projectContractSchema,
   projectRecordRelPath,
@@ -67,6 +73,8 @@ const REPO_KEYS = new Set([
 export interface ExportOptions {
   kbReadme?: string;
   schedules?: string[];
+  /** Overrides the legacy `parent_project`/`parent` mapping (S6 ruling 5a). */
+  parent?: string;
 }
 
 export interface ExportCounts {
@@ -143,7 +151,21 @@ export function buildRecordFromRow(
     json.stall_exempt = config.stall_exempt;
     delete config.stall_exempt;
   }
-  for (const k of ["parent", "parent_project"]) {
+  if (opts.parent !== undefined) {
+    // The flag is the record's parent. An equal spelling is consumed; the
+    // owned `parent` is replaced by the apply; a differing `parent_project`
+    // is never dropped silently: it stays in the notes (on every re-export).
+    json.parent = opts.parent;
+    if (config.parent_project === opts.parent) delete config.parent_project;
+    else if (config.parent_project !== undefined) differs.push("parent: overridden (legacy value kept in notes)");
+    if (typeof config.parent === "string" && PROJECT_SLUG_RE.test(config.parent)) {
+      if (config.parent !== opts.parent) {
+        differs.push(`parent: overridden (the row's previous parent ${config.parent} is replaced by ${opts.parent} on apply)`);
+      }
+      delete config.parent;
+    }
+  }
+  for (const k of opts.parent !== undefined ? [] : ["parent", "parent_project"]) {
     const v = config[k];
     if (
       (json.parent === undefined || json.parent === v) &&
@@ -294,26 +316,7 @@ export function buildRecordFromRow(
     );
   }
 
-  // One key order whichever source set a field (legacy, flag or owned key).
-  const ORDER = ["slug", "name", "status", "aliases", "match_priority", "stall_exempt", "parent", "kb_folder", "kb_readme", "schedules", "repos", "success", "links"];
-  // A value equal to the contract default stays implicit, whatever its source.
-  const folder = typeof json.kb_folder === "string" ? json.kb_folder : `projects/${row.slug}/`;
-  const implicit = (k: string, v: unknown) =>
-    (k === "match_priority" && v === 0) ||
-    (k === "kb_folder" && v === `projects/${row.slug}/`) ||
-    (k === "kb_readme" && v === `${folder.replace(/\/+$/, "")}/README.md`);
-  const raw = Object.fromEntries(
-    Object.entries(json)
-      .filter(([k, v]) => !implicit(k, v))
-      .sort(([a], [b]) => ORDER.indexOf(a) - ORDER.indexOf(b)),
-  );
-  // Written as the schema normalises it (trimmed name/aliases/links.site), so
-  // a re-export of the projected row reproduces the record (audit R1 W1).
-  const { contract } = parseProjectRecord(renderProjectRecord(raw, ""), { folderSlug: row.slug }); // throws if invalid
-  const ordered = Object.fromEntries(
-    Object.keys(raw).map((k) => [k, contract[k as keyof typeof contract]]),
-  );
-  const markdown = renderProjectRecord(ordered, notes.join("\n\n"));
+  const markdown = renderProjectRecord(normaliseRecordJson(json), notes.join("\n\n"));
   return {
     markdown,
     differs,
@@ -365,6 +368,9 @@ export function exportProjectRecord(
   if (opts.kbReadme !== undefined && !(isKbRel(opts.kbReadme) && KB_README_RE.test(opts.kbReadme))) {
     return { ok: false, error: "--kb-readme must be projects/<folder>/<file>.md" };
   }
+  if (opts.parent !== undefined && !PROJECT_SLUG_RE.test(opts.parent)) {
+    return { ok: false, error: "--parent must be a project slug" };
+  }
   const row = getProject(slug);
   if (!row || row.slug !== slug) return { ok: false, error: `no projects row for "${slug}"` };
   const rel = projectRecordRelPath(slug);
@@ -383,6 +389,10 @@ export function exportProjectRecord(
         : (err as Error).message,
     };
   }
+  // Audit R1 W3: the record's parent (flag or legacy) is not itself and closes no cycle.
+  const parent = parseProjectRecord(built.markdown, { folderSlug: slug }).contract.parent;
+  const why = parent === undefined ? null : parentChainError(slug, parent);
+  if (why) return { ok: false, error: `parent refused: ${why}` };
   const warnings = [
     ...unknownSchedules(opts.schedules ?? []).map(
       (id) => `--schedule ${id} is not in scheduled_tasks (check ./mc-ctl schedules)`,
@@ -402,23 +412,24 @@ export function exportProjectRecord(
 }
 
 export function parseArgs(argv: string[]):
-  | { slug: string; kbReadme?: string; schedules: string[]; dryRun: boolean; force: boolean }
+  | { slug: string; kbReadme?: string; parent?: string; schedules: string[]; dryRun: boolean; force: boolean }
   | { error: string } {
-  const out = { slug: "", kbReadme: undefined as string | undefined, schedules: [] as string[], dryRun: false, force: false };
+  const out = { slug: "", kbReadme: undefined as string | undefined, parent: undefined as string | undefined, schedules: [] as string[], dryRun: false, force: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--dry-run") out.dryRun = true;
     else if (a === "--force") out.force = true;
-    else if (a === "--kb-readme" || a === "--schedule") {
+    else if (a === "--kb-readme" || a === "--schedule" || a === "--parent") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) return { error: `${a} needs a value` };
       if (a === "--kb-readme") out.kbReadme = v;
+      else if (a === "--parent") out.parent = v;
       else out.schedules.push(v);
     } else if (a.startsWith("--")) return { error: `unknown flag ${a}` };
     else if (!out.slug) out.slug = a;
     else return { error: `unexpected argument ${a}` };
   }
-  if (!out.slug) return { error: "usage: project-record-export.ts <slug> [--kb-readme <kb-rel-path>] [--schedule <id>]… [--dry-run] [--force]" };
+  if (!out.slug) return { error: "usage: project-record-export.ts <slug> [--kb-readme <kb-rel-path>] [--schedule <id>]… [--parent <slug>] [--dry-run] [--force]" };
   return out;
 }
 
@@ -460,5 +471,7 @@ const real = (p: string): string => {
   }
 };
 if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+  // Audit R1 C1 / R2: an operator login session with a terminal, no override.
+  requireOperatorTerminal("project-record-export");
   main().then((code) => process.exit(code));
 }

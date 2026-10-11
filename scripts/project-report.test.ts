@@ -253,6 +253,40 @@ describe("project-report", () => {
     );
   });
 
+  it("S6 ruling 5a: parent line (row yes / no) and children line from config.parent, slugs sorted, any status; no roll-up", () => {
+    // before any relation: children 0, no parent line, no roll-up note
+    const plain = run(["acme-radar"]).out;
+    expect(plain).toContain("  children: 0");
+    expect(plain.some((l) => l.startsWith("  parent:"))).toBe(false);
+    expect(plain.join("\n")).not.toContain("not rolled up");
+
+    initDatabase(dbPath);
+    try {
+      const db = getDatabase();
+      const ins = (id: string, slug: string, status: string, config: string) =>
+        db.prepare(`INSERT INTO projects (id, slug, name, status, config) VALUES (?,?,?,?,?)`).run(id, slug, SECRETISH, status, config);
+      ins("c1", "zz-kid", "paused", JSON.stringify({ parent: "acme-radar" }));
+      ins("c2", "aa-kid", "active", JSON.stringify({ parent: "acme-radar", aliases: ["x"] }));
+      ins("c3", "not-kid", "active", JSON.stringify({ parent: "quiet-one" }));
+      ins("c4", "legacy-kid", "active", JSON.stringify({ parent_project: "acme-radar" }));
+      ins("c5", "bad-json", "active", "not json");
+      ins("c6", "orphan", "active", JSON.stringify({ parent: "no-such-parent" }));
+    } finally {
+      closeDatabase();
+    }
+    const parentOut = run(["acme-radar"]).out;
+    expect(parentOut).toContain("  children: 2 [aa-kid, zz-kid]");
+    expect(parentOut[1]).toMatch(/Windows: 7 d \/ 30 d\. children's tasks are not rolled up\.$/);
+    expect(parentOut.some((l) => l.startsWith("  parent:"))).toBe(false);
+
+    const kid = run(["zz-kid"]).out;
+    expect(kid).toContain("  parent: acme-radar (row: yes)");
+    expect(kid).toContain("  children: 0");
+    expect(kid.join("\n")).not.toContain(SECRETISH);
+    expect(run(["orphan"]).out).toContain("  parent: no-such-parent (row: no)");
+    expect(run(["quiet-one"]).out).toContain("  children: 1 [not-kid]");
+  });
+
   it("--days narrows the window", () => {
     const { out } = run(["acme-radar", "--days", "7"]);
     expect(out).toContain("  total: 3 · 3");

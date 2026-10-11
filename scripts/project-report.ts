@@ -84,10 +84,20 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
         .get() as { t: string | null }).t
     : null;
 
+  // S6 ruling 5a: the parent relation, ids only (no roll-up in this slice).
+  const parent = typeof config.parent === "string" ? config.parent : null;
+  const children = (
+    db
+      .prepare(
+        "SELECT slug FROM projects WHERE json_valid(config) AND json_extract(config, '$.parent') = ? ORDER BY slug",
+      )
+      .all(slug) as Array<{ slug: string }>
+  ).map((r) => r.slug);
+
   const out: string[] = [];
   out.push(`=== Project ${slug} (read-only) ===`);
   out.push(
-    `Attribution: tasks.project_slug UNION tag schedule:<id> (+ sub-tasks), deduped by task_id. Attribution columns: ${hasColumns ? `present, first attributed task ${since ?? "none yet"}` : "absent (schema < v9)"}; older rows are schedule-tag only. Windows: 7 d / ${days} d.`,
+    `Attribution: tasks.project_slug UNION tag schedule:<id> (+ sub-tasks), deduped by task_id. Attribution columns: ${hasColumns ? `present, first attributed task ${since ?? "none yet"}` : "absent (schema < v9)"}; older rows are schedule-tag only. Windows: 7 d / ${days} d.${children.length > 0 ? " children's tasks are not rolled up." : ""}`,
   );
   out.push("");
   out.push("Record");
@@ -97,6 +107,11 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
   out.push(`  schedules: ${schedules.length === 0 ? "none" : schedules.join(", ")}`);
   out.push(`  kb_folder: ${typeof config.kb_folder === "string" ? config.kb_folder : "(unset)"}`);
   out.push(`  kb_readme: ${typeof config.kb_readme === "string" ? config.kb_readme : "(unset)"}`);
+  if (parent !== null) {
+    const hasRow = !!db.prepare("SELECT 1 FROM projects WHERE slug = ?").get(parent);
+    out.push(`  parent: ${parent} (row: ${hasRow ? "yes" : "no"})`);
+  }
+  out.push(`  children: ${children.length}${children.length > 0 ? ` [${children.join(", ")}]` : ""}`);
 
   out.push("");
   out.push(`Schedule runs (${days} d)`);

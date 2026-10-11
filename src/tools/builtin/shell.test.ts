@@ -864,6 +864,43 @@ B`;
         expect(validateShellCommand(cmd).allowed).toBe(false);
       }
     });
+
+    it("S6 ruling 5a R3: multiplexer keystroke injection is denied; other tmux use is not", () => {
+      for (const cmd of ["tmux send-keys -t 0 'echo hi' Enter", "screen -S x -X stuff 'echo hi'"]) {
+        const r = validateShellCommand(cmd);
+        expect(r.allowed, cmd).toBe(false);
+        expect(r.reason, cmd).toMatch(/types into another session's terminal/);
+      }
+      for (const cmd of ["tmux ls", "tmux new-session -d 'npm test'"]) {
+        expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+      }
+    });
+
+    it("S6 ruling 5a R1 C1: project record create/export is operator-only; the read-only report stays allowed", () => {
+      for (const cmd of [
+        "npx tsx scripts/project-record-create.ts acme-lab --name Acme --repo /srv/acme",
+        "node --import tsx scripts/project-record-create.ts acme-lab --name Acme --repo /srv/acme",
+        "./mc-ctl project-create acme-lab --name Acme --repo /srv/acme",
+        "npx tsx scripts/project-record-export.ts acme-lab --force --parent other-lab --kb-readme projects/x/README.md",
+        // audit R2: trivial obfuscations
+        "./mc-ctl project\\-create acme-lab --name Acme --repo /srv/acme",
+        "./mc-ctl project''-create acme-lab --name Acme --repo /srv/acme",
+        "./mc-ctl project-c*eate acme-lab --name Acme --repo /srv/acme",
+        "npx tsx scripts/project\\-record-create.ts acme-lab --name Acme --repo /srv/acme",
+        "npx tsx scripts/project''-record-export.ts acme-lab --force",
+        "npx tsx scripts/project-rec*rd-create.ts acme-lab --name Acme --repo /srv/acme",
+      ]) {
+        const r = validateShellCommand(cmd);
+        expect(r.allowed, cmd).toBe(false);
+        expect(r.reason, cmd).toMatch(/operator-only.*mc-ctl project-create/);
+      }
+      expect(validateShellCommand("./mc-ctl project acme-lab")).toEqual({ allowed: true });
+      expect(validateShellCommand("./mc-ctl project acme")).toEqual({ allowed: true });
+      // the cgroup escapes the operator-session gate relies on stay denied (pinned, existing rule)
+      for (const cmd of ["systemd-run --scope bash -c 'echo hi'", "nsenter -t 1 -m echo hi", "unshare -C echo hi"]) {
+        expect(validateShellCommand(cmd).allowed, cmd).toBe(false);
+      }
+    });
   });
 });
 

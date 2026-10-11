@@ -4,9 +4,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { closeDatabase, getDatabase, initDatabase } from "../src/db/index.js";
 import { ensureScheduledTasksTable } from "../src/rituals/dynamic.js";
 import { applyProjectRecord, contractToRowPatch } from "../src/projects/projector.js";
@@ -442,6 +444,125 @@ describe("exportProjectRecord — write path", () => {
   });
 });
 
+describe("S6 ruling 5a — shared renderer extraction", () => {
+  // Rendered by the exporter at HEAD 98968f8, BEFORE normaliseRecordJson moved
+  // into record.ts; the extraction must not change one byte.
+  const HEAD_98968F8 = "```json\n{\n  \"slug\": \"zeta-desk\",\n  \"name\": \"Zeta Desk\",\n  \"status\": \"active\",\n  \"aliases\": [\n    \"zeta\",\n    \"zed\"\n  ],\n  \"match_priority\": 2,\n  \"stall_exempt\": true,\n  \"parent\": \"zeta-group\",\n  \"kb_folder\": \"projects/zeta-docs/\",\n  \"kb_readme\": \"projects/zeta-docs/OVERVIEW.md\",\n  \"schedules\": [\n    \"sched-z1\",\n    \"sched-z2\"\n  ],\n  \"repos\": [\n    {\n      \"path\": \"/srv/work/zeta\",\n      \"role\": \"primary\"\n    },\n    {\n      \"path\": \"/srv/work/zeta-two\",\n      \"role\": \"other\"\n    }\n  ],\n  \"links\": {\n    \"site\": \"https://zeta.example.test\"\n  }\n}\n```\n\nSynthetic desk for an invented team.\nSecond line.\n\n## Legacy config\n\nCopied from `projects.config` by the exporter; not part of the contract.\n\n```json\n{\n  \"tickers\": [\n    \"ZZ\"\n  ],\n  \"nested\": {\n    \"a\": 1\n  },\n  \"api_key\": \"[withheld: credential-style value — stays in the projects row]\"\n}\n```\n\n## Legacy urls\n\nCopied from `projects.urls` by the exporter; not part of the contract.\n\n```json\n{\n  \"repo\": \"https://git.example.test/zeta\"\n}\n```\n";
+
+  it("the exporter output is byte-identical to its pre-extraction rendering", () => {
+    createProject("zeta-desk", "Zeta Desk", {
+      description: "Synthetic desk for an invented team.\n\n\nSecond line.",
+      status: "active",
+      urls: { site: "https://zeta.example.test", local: "/srv/work/zeta", repo: "https://git.example.test/zeta" },
+      config: {
+        aliases: ["zeta", " zed "], parent_project: "zeta-group", kb_path: "projects/zeta-docs/",
+        local_path: "/srv/work/zeta-two", schedule_id: "sched-z1", stall_exempt: true, match_priority: 2,
+        tickers: ["ZZ"], nested: { a: 1 }, api_key: "sk-" + "b".repeat(40),
+      },
+    });
+    const md = buildRecordFromRow(getProject("zeta-desk")!, {
+      kbReadme: "projects/zeta-docs/OVERVIEW.md",
+      schedules: ["sched-z2"],
+    }).markdown;
+    expect(md).toBe(HEAD_98968F8);
+  });
+});
+
+describe("S6 ruling 5a — --parent override", () => {
+  /** The live shape: parent_project names an umbrella folder, not a project; parent_repo is a URL. */
+  const CHILD = {
+    slug: "kid-lite",
+    name: "Kid Lite",
+    description: "Synthetic child project.",
+    status: "active",
+    config: { parent_project: "umbrella-folder", parent_repo: "https://git.example.test/umbrella" },
+  };
+  const reexport = (slug: string, md: string, opts = {}) => {
+    expect(applyProjectRecord(projectRecordRelPath(slug), md).error).toBeUndefined();
+    return buildRecordFromRow(getProject(slug)!, opts);
+  };
+
+  it("the flag wins over parent_project; the legacy value stays in Legacy config and is reported", () => {
+    seed(CHILD as (typeof ROWS)[number]);
+    const without = buildRecordFromRow(getProject("kid-lite")!);
+    expect(parseProjectRecord(without.markdown, { folderSlug: "kid-lite" }).contract.parent).toBe("umbrella-folder");
+    const built = buildRecordFromRow(getProject("kid-lite")!, { parent: "real-parent" });
+    expect(parseProjectRecord(built.markdown, { folderSlug: "kid-lite" }).contract.parent).toBe("real-parent");
+    expect(legacyBlocks(built.markdown)["Legacy config"]).toEqual(CHILD.config);
+    expect(built.differs).toEqual(["parent: overridden (legacy value kept in notes)"]);
+    expect(built.counts.parent).toBe(true);
+    const r = exportProjectRecord("kid-lite", { parent: "real-parent", dryRun: true });
+    expect(r.ok && r.warnings).toContain("parent: overridden (legacy value kept in notes)");
+  });
+
+  it("idempotent: a second --force run WITHOUT --parent keeps the record's parent and the legacy notes byte for byte", () => {
+    seed(CHILD as (typeof ROWS)[number]);
+    const first = exportProjectRecord("kid-lite", { parent: "real-parent" });
+    expect(first).toMatchObject({ ok: true, written: true });
+    const md1 = String(getFile(projectRecordRelPath("kid-lite"))!.content);
+    expect(getProject("kid-lite")!.config.parent).toBe("real-parent");
+    const second = exportProjectRecord("kid-lite", { force: true });
+    expect(second.ok).toBe(true);
+    const md2 = String(getFile(projectRecordRelPath("kid-lite"))!.content);
+    expect(md2).toBe(md1);
+    expect(parseProjectRecord(md2, { folderSlug: "kid-lite" }).contract.parent).toBe("real-parent");
+    expect(legacyBlocks(md2)["Legacy config"]).toEqual(CHILD.config);
+    expect(reexport("kid-lite", md2).markdown).toBe(md1);
+  });
+
+  it("an equal legacy spelling is consumed silently; the row's previous parent is replaced and reported; a non-slug flag is refused", () => {
+    createProject("kid-eq", "Kid", { config: { parent_project: "real-parent" } });
+    const eq = buildRecordFromRow(getProject("kid-eq")!, { parent: "real-parent" });
+    expect(eq.differs).toEqual([]);
+    expect(legacyBlocks(eq.markdown)["Legacy config"]).toBeUndefined();
+    createProject("kid-old", "Kid", { config: { parent: "old-parent" } });
+    const old = buildRecordFromRow(getProject("kid-old")!, { parent: "real-parent" });
+    expect(old.differs).toEqual(["parent: overridden (the row's previous parent old-parent is replaced by real-parent on apply)"]);
+    expect(parseProjectRecord(old.markdown, { folderSlug: "kid-old" }).contract.parent).toBe("real-parent");
+    expect(exportProjectRecord("kid-eq", { parent: "Bad Slug", dryRun: true })).toEqual({
+      ok: false,
+      error: "--parent must be a project slug",
+    });
+  });
+});
+
+describe("S6 ruling 5a audit R1 W3 — parent chain", () => {
+  it("refuses a parent equal to the slug (flag or legacy) and a parent that closes a cycle; writes nothing", () => {
+    createProject("kid-a", "A", { config: { parent_project: "kid-a" } });
+    expect(exportProjectRecord("kid-a")).toEqual({ ok: false, error: "parent refused: parent must not be the project itself" });
+    expect(exportProjectRecord("kid-a", { parent: "kid-a" })).toEqual({ ok: false, error: "parent refused: parent must not be the project itself" });
+    createProject("kid-b", "B", { config: { parent: "kid-a" } });
+    expect(exportProjectRecord("kid-a", { parent: "kid-b", dryRun: true })).toEqual({
+      ok: false,
+      error: "parent refused: parent kid-b makes a cycle back to kid-a",
+    });
+    expect(getFile(projectRecordRelPath("kid-a"))).toBeNull();
+    expect(exportProjectRecord("kid-a", { parent: "elsewhere", dryRun: true }).ok).toBe(true);
+  });
+});
+
+describe("CLI entry — operator terminal only (audit R1 C1)", () => {
+  it("refuses with exit 2 under </dev/null (no TTY) before opening any db", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const db = join(kbDir, "never-created.db");
+    const r = spawnSync(
+      process.execPath,
+      ["--import", "tsx", join(here, "project-record-export.ts"), "acme-radar", "--force", "--parent", "other-lab"],
+      {
+        cwd: join(here, ".."),
+        stdio: ["ignore", "pipe", "pipe"], // stdin </dev/null
+        encoding: "utf-8",
+        env: { ...process.env, MC_DB_PATH: db, JARVIS_KB_MIRROR_DIR: kbDir },
+        timeout: 60_000,
+      },
+    );
+    expect(r.status).toBe(2);
+    // from a login shell the TTY check refuses; from a service/CI cgroup the session check does
+    expect(r.stderr).toMatch(/(not an operator login session|operator terminal required); this script is not callable from a task/);
+    expect(existsSync(db)).toBe(false);
+  });
+});
+
 describe("parseArgs", () => {
   it("parses slug and flags; rejects unknowns", () => {
     expect(parseArgs(["acme-radar", "--kb-readme", "projects/x/README.md", "--schedule", "s1", "--schedule", "s2", "--dry-run"])).toEqual({
@@ -455,5 +576,7 @@ describe("parseArgs", () => {
     expect(parseArgs(["a1", "--bogus"])).toHaveProperty("error");
     expect(parseArgs(["a1", "--schedule"])).toHaveProperty("error");
     expect(parseArgs(["a1", "b2"])).toHaveProperty("error");
+    expect(parseArgs(["a1", "--parent", "p1"])).toMatchObject({ slug: "a1", parent: "p1" });
+    expect(parseArgs(["a1", "--parent"])).toHaveProperty("error");
   });
 });

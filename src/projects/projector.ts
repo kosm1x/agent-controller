@@ -71,6 +71,26 @@ export function contractToRowPatch(
   return patch;
 }
 
+/** Longest parent chain the scripts walk before refusing (S6 ruling 5a W3). */
+const MAX_PARENT_HOPS = 16;
+
+/**
+ * S6 ruling 5a: why `parent` cannot be `slug`'s parent — itself, a cycle
+ * back to `slug` through the rows' `config.parent`, or a chain longer than
+ * MAX_PARENT_HOPS — or null. Slugs only in the message.
+ */
+export function parentChainError(slug: string, parent: string): string | null {
+  if (parent === slug) return "parent must not be the project itself";
+  let p: unknown = parent;
+  for (let hop = 0; hop < MAX_PARENT_HOPS && typeof p === "string"; hop++) {
+    if (p === slug) return `parent ${parent} makes a cycle back to ${slug}`;
+    const row = getProject(p);
+    if (!row || row.slug !== p) return null;
+    p = row.config.parent;
+  }
+  return typeof p === "string" ? `parent ${parent}: chain longer than ${MAX_PARENT_HOPS} hops` : null;
+}
+
 export interface ProjectApplyResult {
   slug: string;
   action: "created" | "updated" | "skipped";
@@ -164,6 +184,12 @@ export function applyProjectRecord(rel: string, content: string): ProjectApplyRe
     const patch = contractToRowPatch(record.contract, record.description);
     const found = getProject(slug);
     const existing = found && found.slug === slug ? found : null;
+    // S6 ruling 5a: a dangling parent warns, never blocks — the boot walk is
+    // alphabetical and a record must not wait on its parent's write order.
+    const parent = record.contract.parent;
+    if (parent !== undefined && getProject(parent)?.slug !== parent) {
+      console.warn(`[projector] ${slug}: parent ${parent} has no projects row (applied anyway)`);
+    }
     if (!existing) {
       createProject(slug, patch.name, {
         description: patch.description,
