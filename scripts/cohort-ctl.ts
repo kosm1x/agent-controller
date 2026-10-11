@@ -14,6 +14,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCohortRollup } from "../src/cohort/rollup-cron.js";
 import { initDatabase } from "../src/db/index.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("cohort-ctl", { tty: false });
 
 // Resolve the DB path relative to THIS script, not the process cwd.
 const DB_PATH = join(

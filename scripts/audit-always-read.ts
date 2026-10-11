@@ -52,6 +52,7 @@ import { createHash } from "node:crypto";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 
 import { dirname, resolve } from "node:path";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT_DEFAULT = resolve(SCRIPT_DIR, "..");
@@ -406,4 +407,8 @@ const isMain =
   process.argv[1] !== undefined &&
   resolveRealPathSafe(fileURLToPath(import.meta.url)) ===
     resolveRealPathSafe(process.argv[1]);
-if (isMain) main();
+if (isMain) {
+  // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+  requireOperatorContext("audit-always-read", { tty: false });
+  main();
+}

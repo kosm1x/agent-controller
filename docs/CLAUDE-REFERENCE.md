@@ -128,6 +128,8 @@ Planning steps must be explicit and observable. The planner's goal graph, execut
 
 `mc-ctl` — bash admin tool at project root. No npm deps, direct SQLite + systemctl + curl + docker.
 
+RW subcommands (`GATED_SUBCOMMANDS` in `scripts/lib/operator-gate.sh`) and `scripts/deploy.sh` exit 2 outside an operator context (login session or an operator unit: kb-janitor, v81-gate-check, v82-shadow-verdict); `mc-ctl db "<sql>"` opens read-only (`-readonly -safe`) there and accepts only a statement starting with SELECT, WITH or EXPLAIN; its interactive shell is operator-only.
+
 ```bash
 ./mc-ctl status             # Service health, API, Hindsight, key metrics
 ./mc-ctl stats              # Full metrics dashboard (tasks, outcomes, events, reactions, schedules, skills)

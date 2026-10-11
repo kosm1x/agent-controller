@@ -15,8 +15,12 @@ import { initDatabase } from "../src/db/index.js";
 import { initEventBus } from "../src/lib/event-bus.js";
 import { submitTask } from "../src/dispatch/dispatcher.js";
 import { getConfig } from "../src/config.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import "../src/runners/heavy-runner.js"; // self-registers the heavy runner
 import "../src/runners/nanoclaw-runner.js"; // self-registers the nanoclaw runner
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("smoke-containerized-heavy", { tty: false });
 
 // Which containerized runner to probe: `heavy` (needs HEAVY_RUNNER_CONTAINERIZED=
 // true) or `nanoclaw` (always containerized). Default heavy.

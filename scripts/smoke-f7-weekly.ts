@@ -5,6 +5,10 @@
 
 import { initDatabase } from "../src/db/index.js";
 import { alphaRunTool } from "../src/tools/builtin/alpha.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("smoke-f7-weekly", { tty: false });
 
 async function main() {
   initDatabase("./data/mc.db");

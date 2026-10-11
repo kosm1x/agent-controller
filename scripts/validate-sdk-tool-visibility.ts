@@ -25,6 +25,10 @@ import { toolRegistry } from "../src/tools/registry.js";
 import { ToolSourceManager } from "../src/tools/source.js";
 import { BuiltinToolSource } from "../src/tools/sources/builtin.js";
 import { queryClaudeSdk } from "../src/inference/claude-sdk.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("validate-sdk-tool-visibility", { tty: false });
 
 const N_TOOLS = 30;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

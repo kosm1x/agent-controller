@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # mc-ctl — Mission Control admin CLI
+# S6 item 3c: executed only — a sourced copy would hand its functions (and the
+# RW sql helpers) to the caller past the router's operator gate.
+if (return 0 2>/dev/null); then echo "mc-ctl must be executed, not sourced" >&2; return 2; fi
 set -euo pipefail
 
 PROJECT_DIR="/root/claude/mission-control"
 SERVICE_NAME="mission-control"
 DB_PATH="${PROJECT_DIR}/data/mc.db"
+# S6 item 3c: sql/sql_raw open the db read-only unless the router cleared this
+# after the operator gate passed for a GATED_SUBCOMMANDS entry.
+SQLITE_RO=(-readonly)
 API_URL="${API_URL:-http://localhost:8080}"
 HINDSIGHT_URL="http://localhost:8888"
 HINDSIGHT_CONTAINER="crm-hindsight"
@@ -30,11 +36,11 @@ need_db() {
 }
 
 sql() {
-  sqlite3 -header -column "$DB_PATH" "$1"
+  sqlite3 "${SQLITE_RO[@]}" -header -column "$DB_PATH" "$1"
 }
 
 sql_raw() {
-  sqlite3 "$DB_PATH" "$1"
+  sqlite3 "${SQLITE_RO[@]}" "$DB_PATH" "$1"
 }
 
 api_key() {
@@ -1076,7 +1082,7 @@ cmd_skill_health() {
   # Joined query: per-skill aggregate of skill_test_runs in the window.
   # COALESCE handles skills with zero test runs (never certified).
   # `-column -header` formats with auto-width; widths capped via substr.
-  sqlite3 -column -header "$DB_PATH" <<SQL
+  sqlite3 -readonly -column -header "$DB_PATH" <<SQL
 SELECT
   substr(s.name, 1, 32) AS name,
   s.version AS version,
@@ -1105,7 +1111,7 @@ SQL
 
   # Override (operator-bypassed) summary
   local overrides
-  overrides=$(sqlite3 "$DB_PATH" <<SQL
+  overrides=$(sqlite3 -readonly "$DB_PATH" <<SQL
 SELECT COUNT(*) FROM skill_versions
 WHERE critic_verdict = 'fail_returned_anyway'
   AND created_at >= datetime('now', '$sqlite_window');
@@ -1113,7 +1119,7 @@ SQL
 )
   if [ "${overrides:-0}" -gt 0 ]; then
     echo -e "${YELLOW}⚠ ${overrides} operator override(s) within ${window}:${NC}"
-    sqlite3 "$DB_PATH" <<SQL
+    sqlite3 -readonly "$DB_PATH" <<SQL
 SELECT
   '  - ' || s.name || ' v' || v.version ||
   ' (' || substr(v.critic_critique, 1, 80) || ')' AS line
@@ -1133,7 +1139,7 @@ SQL
   # that also have at least one passing test run in the last 7 days — if
   # sweep is paused or fails, stale certifications stop counting.
   local certified_count
-  certified_count=$(sqlite3 "$DB_PATH" \
+  certified_count=$(sqlite3 -readonly "$DB_PATH" \
     "SELECT COUNT(*) FROM skills s
      WHERE s.is_certified = 1 AND s.active = 1
        AND EXISTS (
@@ -1563,7 +1569,7 @@ cmd_budget() {
 
   # Check if cost_ledger table exists
   local has_ledger
-  has_ledger=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cost_ledger';" 2>/dev/null)
+  has_ledger=$(sqlite3 -readonly "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cost_ledger';" 2>/dev/null)
   if [[ "$has_ledger" != "1" ]]; then
     echo -e "${YELLOW}cost_ledger table not found — budget tracking not yet initialized.${NC}"
     return
@@ -1605,11 +1611,18 @@ cmd_budget() {
 cmd_db() {
   need_db
   if [ $# -eq 0 ]; then
+    require_operator_context # S6 item 3c: the interactive shell is operator-only
     echo -e "${CYAN}Opening interactive SQLite shell...${NC}"
     echo -e "${DIM}DB: ${DB_PATH}${NC}"
     sqlite3 -header -column "$DB_PATH"
+  elif [ -z "$(_operator_context_reason "$(cat /proc/self/cgroup 2>/dev/null || true)" 0 0)" ]; then
+    sqlite3 -header -column "$DB_PATH" "$*"
   else
-    sql "$*"
+    # S6 item 3c: outside an operator context (a task, a V8.4 gate check such
+    # as the daily tweet ritual's SELECT) the db opens read-only, for a
+    # SELECT/WITH/EXPLAIN statement only (no dot-command, PRAGMA or VACUUM).
+    _db_readonly_sql_ok "$*" || { echo "db: read-only context accepts SELECT/WITH/EXPLAIN only" >&2; exit 2; }
+    sqlite3 -readonly -safe -header -column "$DB_PATH" "$*"
   fi
 }
 
@@ -2184,7 +2197,7 @@ cmd_tuning() {
     status)
       echo -e "\n${BOLD}TUNING STATUS${NC}\n"
       local row
-      row=$(sqlite3 -separator '|' "$DB_PATH" \
+      row=$(sqlite3 -readonly -separator '|' "$DB_PATH" \
         "SELECT run_id, status, baseline_score, best_score, experiments_run, experiments_won, total_cost_usd, started_at, completed_at FROM tune_runs ORDER BY started_at DESC LIMIT 1" 2>/dev/null || echo "")
       if [ -z "$row" ]; then
         echo "No tuning runs found."
@@ -2203,7 +2216,7 @@ cmd_tuning() {
 
       # Show recent experiments
       echo -e "${BOLD}Recent experiments:${NC}"
-      sqlite3 -column -header "$DB_PATH" \
+      sqlite3 -readonly -column -header "$DB_PATH" \
         "SELECT experiment_id, surface, target, status,
                 ROUND(baseline_score, 1) as baseline,
                 ROUND(mutated_score, 1) as mutated,
@@ -2223,7 +2236,7 @@ cmd_tuning() {
         query="SELECT report FROM tune_runs ORDER BY started_at DESC LIMIT 1"
       fi
       local report
-      report=$(sqlite3 "$DB_PATH" "$query" 2>/dev/null || echo "")
+      report=$(sqlite3 -readonly "$DB_PATH" "$query" 2>/dev/null || echo "")
       if [ -z "$report" ]; then
         echo "No report found."
       else
@@ -2253,7 +2266,7 @@ cmd_tuning() {
         echo -e "${GREEN}+++ Mutation:${NC}"
         echo "$mut_val" | head -20
         echo ""
-      done < <(sqlite3 -separator '|' "$DB_PATH" "$query" 2>/dev/null)
+      done < <(sqlite3 -readonly -separator '|' "$DB_PATH" "$query" 2>/dev/null)
 
       if [ "$found" -eq 0 ]; then
         echo "No winning mutations to promote."
@@ -3328,6 +3341,12 @@ cmd_judgments() {
 
 cmd="${1:-help}"
 shift 2>/dev/null || true
+
+# S6 item 3c: RW subcommands (GATED_SUBCOMMANDS) refuse outside an operator
+# context — a login session or an operator unit; never a task.
+# shellcheck source=scripts/lib/operator-gate.sh
+source "${PROJECT_DIR}/scripts/lib/operator-gate.sh"
+if _mc_ctl_gated "$cmd" "${1:-}"; then require_operator_context; SQLITE_RO=(); fi
 
 case "$cmd" in
   status)            cmd_status ;;

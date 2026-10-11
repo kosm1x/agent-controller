@@ -142,6 +142,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("eval-gate", { tty: false });
 
 // 0) Arguments first: a malformed flag exits 2 before anything is read or spent.
 const {

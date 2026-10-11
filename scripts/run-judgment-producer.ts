@@ -43,6 +43,10 @@ import {
   deriveStrategicQuestion,
 } from "../src/lib/v8-2/produce.js";
 import { getJudgmentById } from "../src/lib/v8-2/judgments-store.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("run-judgment-producer", { tty: false });
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = process.env.MC_DB_PATH ?? resolve(REPO_ROOT, "data/mc.db");

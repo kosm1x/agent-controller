@@ -29,6 +29,10 @@ import {
   SYCOPHANCY_THRESHOLD,
   SYCOPHANCY_WINDOW_DAYS,
 } from "../src/lib/v8-2/sycophancy.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("run-sycophancy-probe", { tty: false });
 
 const REPO_ROOT_DEFAULT = resolve(
   dirname(fileURLToPath(import.meta.url)),

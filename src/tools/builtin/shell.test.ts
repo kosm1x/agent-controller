@@ -14,9 +14,12 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENV_READ_ALLOWLIST } from "./immutable-core.js";
 import {
   shellTool,
   validateShellCommand,
+  DENY_COMMANDS,
+  ENV_RESET_WORDS,
   checkUnscopedTestRun,
   checkPackageManagerMutation,
   checkPackageManagerRaw,
@@ -874,6 +877,163 @@ B`;
       for (const cmd of ["tmux ls", "tmux new-session -d 'npm test'"]) {
         expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
       }
+    });
+
+    it("S6 item 3c: mc-ctl RW subcommands and mission-control's deploy.sh are operator-only; RO subcommands stay open", () => {
+      for (const cmd of [
+        "./mc-ctl restart",
+        "/usr/local/bin/mc-ctl smoke",
+        "mc-ctl skills certify my-skill",
+        "cd /root/claude/mission-control && ./mc-ctl gates set-ritual abc /tmp/g.json",
+        "./mc-ctl jme-preferences --confirm 12",
+        "bash mc-ctl monitoring down",
+        // trivial obfuscations
+        "./mc-ctl 'restart'",
+        "./mc-ctl re\\start",
+        "./mc-ctl rest*rt",
+        "./m''c-ctl v83-promote x",
+        "./mc-ctl skills  \"cert?fy\" x",
+        // deploy.sh in command position, naming mission-control
+        "/root/claude/mission-control/scripts/deploy.sh",
+        "cd /root/claude/mission-control && ./scripts/deploy.sh --force",
+        "bash /root/claude/mission-control/scripts/deploy.sh",
+        "cd /root/claude/mission-control; MC_DEPLOY_TIMEOUT_SECS=9 nohup ./scripts/dep*oy.sh",
+        "bash -c 'cd /root/claude/mission-control && ./scripts/deploy.sh'",
+        // audit R1 W2: one glob per letter of mc-ctl, xargs-fed subcommands, deploy.sh by path tail
+        "./mc-ct? restart",
+        "./mc-c*l restart",
+        "./mc[-]ctl briefing-gate",
+        "echo restart | xargs ./mc-ctl",
+        "printf briefing-gate | xargs -n1 /usr/local/bin/mc-ctl",
+        "scripts/deploy.sh",
+        "./scripts/deploy.sh",
+        "scripts/./deploy.sh",
+        "bash scripts//deploy.sh",
+        "sh scripts/deploy.sh --drain 5",
+        "cd scripts && ./deploy.sh",
+        "x=1\nscripts/deploy.sh",
+        "cd /root/claude/projects/xpoz-pipeline && ./scripts/deploy.sh", // any checkout: the tail is the match
+        // audit R2 W3/W4: an interpreter after `cd scripts`, `env VAR=…`, pushd, a multi-letter glob or a variable subcommand
+        "cd scripts; bash deploy.sh",
+        "cd scripts && sh -x deploy.sh",
+        "pushd scripts && ./deploy.sh",
+        "env X=1 scripts/deploy.sh",
+        "env X=1 Y=2 ./scripts/deploy.sh",
+        "./mc-ctl re*rt",
+        "./mc-ctl *start",
+        "./mc-ctl skills c*",
+        "C=restart; ./mc-ctl $C",
+        "./mc-ctl ${C:-restart}",
+        "./mc-ctl $'\\x72estart'",
+        "{./mc-ctl,restart}",
+      ]) {
+        const r = validateShellCommand(cmd);
+        expect(r.allowed, cmd).toBe(false);
+        expect(r.reason, cmd).toMatch(/operator-only: mc-ctl RW subcommands/);
+      }
+      for (const cmd of [
+        "./mc-ctl status",
+        "./mc-ctl stats",
+        "./mc-ctl tasks",
+        "./mc-ctl task abc123",
+        "./mc-ctl skills list",
+        "./mc-ctl skills show x",
+        "./mc-ctl gates summary",
+        "./mc-ctl events list",
+        "./mc-ctl recall-utility 24h",
+        "./mc-ctl monitoring status",
+        "./mc-ctl project williams-entry-radar",
+        './mc-ctl db "SELECT COUNT(*) FROM tasks"', // V8.4 gate checks; cmd_db opens read-only for tasks
+        "./mc-ctl validation check", // RO helpers; its one write is data/v7-validation.log (audit R1 C1)
+        "./mc-ctl validation log",
+        "cat /root/claude/mission-control/scripts/deploy.sh",
+        "less scripts/deploy.sh",
+        "grep -n require_operator_context /root/claude/mission-control/scripts/deploy.sh",
+        "grep -rn deploy.sh /root/claude/other-repo/scripts",
+        "grep -n restart mc-ctl",
+        "git diff mc-ctl",
+        "cd /root/claude/vlmp && ./deploy.sh", // ./deploy.sh counts only after a cd into a scripts dir
+        // R2 decline: a syntax check parses, never runs
+        "bash -n scripts/deploy.sh",
+        "sh -n scripts/deploy.sh",
+        "bash -n /root/claude/mission-control/scripts/deploy.sh",
+        "cd scripts && bash -n deploy.sh",
+        "shellcheck scripts/deploy.sh",
+        "./mc-ctl status-restart",
+        "./mc-ctl skills list",
+      ]) {
+        expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+      }
+    });
+
+    it("audit R1 C1b: every DENY_COMMANDS / ENV_RESET_WORDS verb stays denied as bash reads the word", () => {
+      const esc = (w: string, f: (c: number) => string) => `$'${[...w].map((c) => f(c.charCodeAt(0))).join("")}'`;
+      const forms = (w: string) => [
+        w, `${w[0]}''${w.slice(1)}`, `\\${w}`, `$'${w}'`, `"${w}"`, `busybox ${w}`, `toybox ${w}`, `sudo -n ${w}`, `do ${w}`, `do ${w[0]}''${w.slice(1)}`, `busybox \\${w}`, `nohup "${w}"`,
+        // audit R2 W1: `$'…'` escapes decoded, brace alternatives expanded
+        esc(w, (c) => `\\x${c.toString(16)}`), esc(w, (c) => `\\${c.toString(8)}`), esc(w, (c) => `\\u${c.toString(16).padStart(4, "0")}`),
+        `{${w},x}`, `{x,${w}}`, `${w[0]}{${w.slice(1)},q}`,
+      ];
+      const words = [...DENY_COMMANDS, ...ENV_RESET_WORDS];
+      expect(words.length).toBeGreaterThan(40);
+      const allowed = words.flatMap((w) => forms(w).map((f) => `${f} x`)).filter((c) => validateShellCommand(c).allowed);
+      expect(allowed).toEqual([]);
+      for (const c of ["(c''rontab -l; echo '* * * * * /tmp/x') | c''rontab -", "s''ystemctl restart mission-control", "\\sqlite3 dat''a/mc.db 'select 1'"]) {
+        expect(validateShellCommand(c).allowed, c).toBe(false);
+      }
+    });
+
+    it("R2 decline: `bash -n` parses only; `-i` (interactive ignores -n) and a later `-n` argument still run", () => {
+      for (const c of ["bash -in scripts/deploy.sh", "bash -n -i scripts/deploy.sh", "bash -c 'rm x -n'", "bash -c 'crontab /tmp/c' -n"]) {
+        expect(validateShellCommand(c).allowed, c).toBe(false);
+      }
+    });
+
+    it("R2 fold: a write to an allow-listed or *.env file is denied; reads keep the allowlist", () => {
+      const [listed] = [...ENV_READ_ALLOWLIST];
+      expect(listed).toMatch(/\/\.env$/);
+      for (const target of [listed!, "/tmp/prod.env", "/root/claude/x/.env.example", "./.env.local"]) {
+        const writes = [
+          `cp /tmp/x ${target}`, `cp -f /tmp/x "${target}"`, `mv /tmp/x ${target}`, `mv ${target} /tmp/x`, `install -m 600 /tmp/x ${target}`,
+          `rsync /tmp/x ${target}`, `ln -sf /tmp/x ${target}`, `ln ${target} /tmp/x`, `tee ${target} < /tmp/x`, `echo K=v | tee -a ${target}`,
+          `echo K=v > ${target}`, `echo K=v >> ${target}`, `echo K=v >| ${target}`, `printf x &> ${target}`, `cat /tmp/x 1>${target}`,
+          `sed -i s/a/b/ ${target}`, `sed -i.bak -e s/a/b/ ${target}`, `sed --in-place s/a/b/ ${target}`, `perl -pi -e s/a/b/ ${target}`,
+          `dd if=/tmp/x of=${target}`, `nohup cp /tmp/x ${target}`, `exec 3<> ${target}`,
+        ];
+        expect(writes.filter((c) => validateShellCommand(c).allowed), target).toEqual([]);
+      }
+      // reads: today's result (the allow-listed .env and a *.env are readable; cp FROM it is a read)
+      for (const c of [`cat ${listed}`, `grep -n KEY ${listed}`, `cp ${listed} /tmp/k`, "cat /tmp/prod.env", "grep -c x /tmp/prod.env", `sed -n 1p ${listed}`]) {
+        expect(validateShellCommand(c), c).toEqual({ allowed: true });
+      }
+      for (const c of ["cat /root/claude/other/.env", "grep KEY .env"]) {
+        expect(validateShellCommand(c).allowed, c).toBe(false);
+      }
+    });
+
+    it("audit R2 W1: a bare `$X` command word whose variable the command assigns is denied, whatever the value", () => {
+      for (const c of ["X=crontab; $X /tmp/c", "X=c; ${X}rontab x", "X=rm; $X x", "X=foo; \"$X\" x", "X=foo; ${X} x", "X=foo; ${X:-ls} x", "export X=foo; nice $X x", "M=./mc-ctl; $M restart"]) {
+        expect(validateShellCommand(c).allowed, c).toBe(false);
+      }
+      for (const c of ["X=1; echo $X", "D=/tmp/x; ls $D", "$HOME/bin/tool --help", "F=a.txt; cat \"$F\""]) {
+        expect(validateShellCommand(c), c).toEqual({ allowed: true });
+      }
+    });
+
+    it("audit R2 W2: each wrapper × a denied verb is denied; each wrapper × ls stays allowed", () => {
+      const wrappers = [
+        "env", "env FOO=1", "env -C /tmp", "exec", "exec -a foo", "nohup", "setsid", "setsid -w", "command",
+        "time", "time -p", "timeout 5", "timeout -s KILL 5", "timeout --signal=KILL 5", "timeout -k 3 5", "nice", "nice -n 5", "nice -5",
+        "ionice -c 3", "ionice -c3", "stdbuf -o0", "stdbuf -o 0", "chrt 1", "chrt -f 1", "taskset 1", "taskset -c 0", "flock /tmp/l",
+        "flock -w 5 /tmp/l", "flock /tmp/l -c", "watch", "watch -n 5", "strace", "strace -f -o /tmp/o", "ltrace", "ltrace -e x", "numactl -C 0",
+        "numactl --membind=0", "prlimit", "prlimit --nofile=10", "systemd-cat", "systemd-cat -t tag", "cgexec -g cpu:/", "xargs", "xargs -n 1",
+        "xargs -I {}", "parallel", "parallel -j 2", "busybox", "toybox", "busybox sh -c", "toybox sh -c", "unbuffer", "catchsegv", "script -c",
+      ];
+      // `env -i` / `-u` / `-S` are refused on their own (dependency trust audit), so they sit on the DENY side only
+      const denied = [...wrappers, "env -i", "env -u FOO", "env -S"].map((w) => `${w} crontab x`).filter((c) => validateShellCommand(c).allowed);
+      expect(denied).toEqual([]);
+      const allowed = wrappers.map((w) => `${w} ls x`).filter((c) => !validateShellCommand(c).allowed);
+      expect(allowed).toEqual([]);
     });
 
     it("S6 ruling 5a R1 C1: project record create/export is operator-only; the read-only report stays allowed", () => {
@@ -1974,7 +2134,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     allowed(`cd "$HOME"/${relative(process.env.HOME ?? "/root", MC)} && npx tsx x.ts`);
     allowed("cd ${HOME}/" + relative(process.env.HOME ?? "/root", MC) + " && npx tsx x.ts");
     allowed(`cd '${MC}' && npx tsx x.ts`);
-    allowed("P=1; ${P:-2}; npm run build");
+    allowed("P=1; echo ${P:-2}; npm run build");
     allowed("echo ${X:-default}");
     allowed("cat <<'EOF' > /root/claude/mission-control/jarvis/notes.md\nrun npm install later\nEOF");
     // prose that merely contains the phrase, written through cat/tee, stays data

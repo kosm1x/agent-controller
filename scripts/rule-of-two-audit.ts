@@ -36,6 +36,10 @@ import {
 import { CAPABILITY_BY_TOOL } from "../src/lib/v8-3/gated-execution.js";
 import { CAPABILITY_SEEDS, structuralMaxLevel } from "../src/lib/v8-3/seed.js";
 import type { ToolAnnotations } from "../src/tools/types.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("rule-of-two-audit", { tty: false });
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(ROOT, "data", "mc.db");

@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { syncDeleteFromKbMirror, moveFile } from "../src/db/jarvis-fs.js";
 import { pgDelete, isPgvectorEnabled } from "../src/db/pgvector.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 
 const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";
 const KB_ROOT = process.env.JARVIS_KB_MIRROR_DIR ?? "/root/claude/jarvis-kb";
@@ -337,6 +338,8 @@ async function main(): Promise<void> {
 // Only auto-run when invoked as a script — importing for unit tests must not
 // trigger a real cleanup.
 if (isMainModule()) {
+  // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+  requireOperatorContext("cleanup-jarvis-kb", { tty: false });
   main().catch((err) => {
     console.error("[cleanup-jarvis-kb] FAILED:", err);
     process.exitCode = 1;

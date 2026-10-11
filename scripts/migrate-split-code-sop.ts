@@ -29,6 +29,10 @@ import { initDatabase, getDatabase } from "../src/db/index.js";
 import { existsSync, readFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { join, resolve } from "path";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("migrate-split-code-sop", { tty: false });
 
 const DB_PATH = resolve(process.env.MC_DB_PATH ?? "./data/mc.db");
 if (!existsSync(DB_PATH)) {

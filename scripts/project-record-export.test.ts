@@ -558,7 +558,7 @@ describe("CLI entry — operator terminal only (audit R1 C1)", () => {
     );
     expect(r.status).toBe(2);
     // from a login shell the TTY check refuses; from a service/CI cgroup the session check does
-    expect(r.stderr).toMatch(/(not an operator login session|operator terminal required); this script is not callable from a task/);
+    expect(r.stderr).toMatch(/(not an operator login session|operator terminal required|running inside mission-control\.service \(a task\)); this script is not callable from a task/);
     expect(existsSync(db)).toBe(false);
   });
 });

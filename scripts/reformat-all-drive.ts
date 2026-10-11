@@ -18,6 +18,10 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.js";
 import { initDatabase } from "../src/db/index.js";
 import { reformatDriveFiles } from "../src/db/drive-sync.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("reformat-all-drive", { tty: false });
 
 // Standalone-harness bootstrap per the CLAUDE.md validate-harness doctrine
 // (audit W3 fold 2026-07-12): initDatabase is a WRITE path (WAL pragma +

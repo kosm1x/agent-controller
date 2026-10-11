@@ -24,7 +24,11 @@ import { BuiltinToolSource } from "../src/tools/sources/builtin.js";
 import { toolRegistry } from "../src/tools/registry.js";
 import { submitTask } from "../src/dispatch/dispatcher.js";
 import { createEvolutionRitual } from "../src/rituals/evolution.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import "../src/runners/heavy-runner.js"; // side-effect: registers the heavy runner
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("verify-evolution-fix", { tty: false });
 
 const LIVE = "data/mc.db";
 const SNAP = "/tmp/mc-evolution-verify.db";

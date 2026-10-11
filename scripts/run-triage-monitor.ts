@@ -32,6 +32,10 @@ import {
   hasOpenTriageWithin,
 } from "../src/lib/self-healing/persist.js";
 import { runTriageTick } from "../src/lib/self-healing/tick.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("run-triage-monitor", { tty: false });
 
 const DB_PATH =
   process.env.MC_DB_PATH ??

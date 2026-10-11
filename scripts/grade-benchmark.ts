@@ -64,6 +64,7 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import { pathToFileURL } from "node:url";
 // No imports and no env reads at module load — safe ahead of the env guards.
 import { calculateCost, getPricing } from "../src/budget/pricing.js";
@@ -478,6 +479,10 @@ async function main(): Promise<number> {
     console.log("[grade] DRY — pass --run to fire real grader calls.");
     return 3;
   }
+
+  // S6 item 3c: the live grade (copies mc.db, writes data/grade-bench) is
+  // operator-context only; the dry and --summarize paths above touch neither.
+  requireOperatorContext("grade-benchmark", { tty: false });
 
   // --- live env (operator-side), guards, isolated DB — before any other src import ---
   const stripped = Object.keys(process.env).filter((k) => /^CLAUDE/.test(k));

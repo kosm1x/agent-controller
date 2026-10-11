@@ -35,6 +35,10 @@ import {
   confidenceBasis,
   renderOptions,
 } from "../src/lib/v8-2/judgment-format.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("judgments", { tty: false });
 
 // Resolve the DB path relative to THIS script, so the helper works regardless
 // of the invoking cwd (same pattern as scripts/briefing-gate.ts).

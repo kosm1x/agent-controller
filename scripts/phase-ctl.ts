@@ -27,6 +27,10 @@ import {
   extractOpenQueueItems,
   parseSpineTable,
 } from "../src/lib/phase-closure.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("phase-ctl", { tty: false });
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

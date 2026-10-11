@@ -265,7 +265,7 @@ export function pmShimMissing(dir: string = PM_SHIM_DIR): string | null {
 // ---------------------------------------------------------------------------
 
 /** Commands blocked as the base command (first token) of any pipe/chain segment. */
-const DENY_COMMANDS = new Set([
+export const DENY_COMMANDS = new Set([
   "rm",
   "mkfs",
   "dd",
@@ -327,7 +327,9 @@ function spaceRedirections(text: string): string {
  *  put `cp 2>&1 npm zz` in two segments whose second began with `1` (qa R12 C12-1, R13 C13-1). Single
  *  characters, so the first `&` of `&&>f` still separates and `&>f` opens the next segment. */
 const SEGMENT_SPLIT_RE = /[\n;]|(?<![<>])\||(?<![<>])&(?!>)/;
-export function effectiveBaseCommand(segment: string): string {
+/** `busybox rm`, `toybox rm`: a multi-call binary runs the applet it names. */
+const APPLET_HOSTS = new Set(["busybox", "toybox"]);
+export function effectiveBaseCommand(segment: string, applets = false): string {
   const tokens = spaceRedirections(segment.trim()).replace(/^[({]+\s*/, "").split(/\s+/);
   let i = 0;
   while (i < tokens.length) {
@@ -338,7 +340,7 @@ export function effectiveBaseCommand(segment: string): string {
     const base = t.replace(/^.*\//, "");
     if (/^[A-Za-z_]\w*=/.test(t)) { i++; continue; } // VAR=x prefix
     if (REDIRECTION_RE.test(t)) { i += redirectionSpan(tokens, i); continue; } // `2>/dev/null rm …` runs rm (qa R12 C12-1)
-    if (COMMAND_WRAPPERS.has(base)) {
+    if (COMMAND_WRAPPERS.has(base) || (applets && APPLET_HOSTS.has(base))) {
       i++;
       // every wrapper: skip its flags and `--`; numeric args for timeout/nice
       while (i < tokens.length && /^(?:-\S*|\d+(?:\.\d+)?[smhd]?)$/.test(tokens[i]!)) i++;
@@ -349,12 +351,179 @@ export function effectiveBaseCommand(segment: string): string {
   return "";
 }
 
+/**
+ * audit R2 W2: wrappers that run the command after them, with the flags that take a
+ * separate value, the positionals they consume first, and the flags whose value IS a
+ * command (`timeout -s KILL 5 rm`, `taskset -c 0 rm`, `flock /tmp/l -c 'rm x'`).
+ */
+type RunWrapper = { values?: string[]; positionals?: number; command?: string[] };
+const RUN_WRAPPERS = new Map<string, RunWrapper>([
+  ...[...COMMAND_WRAPPERS, ...APPLET_HOSTS, "unbuffer", "catchsegv"].map((w): [string, RunWrapper] => [w, {}]),
+  ["env", { values: ["-u", "--unset", "-C", "--chdir"], command: ["-S", "--split-string"] }],
+  ["sudo", { values: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"] }],
+  ["exec", { values: ["-a"] }],
+  ["time", { values: ["-f", "-o", "--format", "--output"] }],
+  ["timeout", { values: ["-s", "--signal", "-k", "--kill-after"], positionals: 1 }],
+  ["nice", { values: ["-n", "--adjustment"] }],
+  ["ionice", { values: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata"] }],
+  ["stdbuf", { values: ["-i", "-o", "-e", "--input", "--output", "--error"] }],
+  ["chrt", { values: ["-T", "-P", "-D", "--sched-runtime", "--sched-period", "--sched-deadline"], positionals: 1 }],
+  ["taskset", { positionals: 1 }],
+  ["flock", { values: ["-w", "--wait", "--timeout", "-E", "--conflict-exit-code"], positionals: 1, command: ["-c", "--command"] }],
+  ["watch", { values: ["-n", "--interval", "-q", "--equexit"] }],
+  ["strace", { values: ["-e", "-o", "-p", "-s", "-u", "-E", "-a", "-I", "-X", "-P", "-b", "-O", "-S"] }],
+  ["ltrace", { values: ["-e", "-o", "-p", "-s", "-u", "-a", "-n", "-x", "-w", "-A", "-D", "-F"] }],
+  ["numactl", { values: ["-C", "-N", "-m", "-i", "-p", "-P", "-w", "--physcpubind", "--cpunodebind", "--membind", "--interleave", "--preferred"] }],
+  ["prlimit", { values: ["-p", "--pid", "-o", "--output"] }],
+  ["systemd-cat", { values: ["-t", "-p", "--identifier", "--priority", "--stderr-priority"] }],
+  ["cgexec", { values: ["-g"] }],
+  ["xargs", { values: ["-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars"] }],
+  ["parallel", { values: ["-j", "--jobs", "-S", "--sshlogin", "-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "-N", "-P", "-s"] }],
+  ["script", { values: ["-E", "-T", "-I", "-O", "-B", "-m"], command: ["-c", "--command"] }],
+]);
+/** Shells whose `-c` string is judged as a command too (`busybox sh -c 'rm x'`). */
+const C_SHELLS = new Set(["sh", "bash", "dash", "ash", "hush", "zsh", "ksh", "mksh"]);
+/** An unquoted `{a,b}` / `{a..c}` brace expansion inside one word. */
+const BRACE_RE = /\{([^{}\s]*(?:,|\.\.)[^{}\s]*)\}/;
+/** `{rm,x}` → rm, x; `r{m,x}` → rm, rx; `{q..s}m` → qm, rm, sm (single-character ranges). Capped at 64 words. */
+function braceAlternatives(word: string): string[] {
+  let out = [word];
+  for (let pass = 0; pass < 4; pass++) {
+    const next = out.flatMap((w) => {
+      const m = BRACE_RE.exec(w);
+      if (!m) return [w];
+      const range = /^(.)\.\.(.)$/.exec(m[1]!);
+      const items = range
+        ? Array.from({ length: Math.min(64, Math.abs(range[2]!.charCodeAt(0) - range[1]!.charCodeAt(0)) + 1) }, (_, k) =>
+            String.fromCharCode(Math.min(range[1]!.charCodeAt(0), range[2]!.charCodeAt(0)) + k))
+        : m[1]!.split(",");
+      return items.map((a) => w.slice(0, m.index) + a + w.slice(m.index + m[0].length));
+    });
+    if (next.length === out.length && next.every((w, k) => w === out[k])) break;
+    out = next.slice(0, 64);
+  }
+  return out;
+}
+/**
+ * audit R2 W1/W2: every word bash may run as the command of `text` (normalized by
+ * normalizeShellText): through RUN_WRAPPERS with their arity, each alternative of a
+ * `{a,b}` brace word (deny if any is denied), and a shell's `-c` string. Additive:
+ * the deny loop checks these as well as the first token and effectiveBaseCommand.
+ */
+export function commandWords(text: string, depth = 0): string[] {
+  const tokens = spaceRedirections(text.trim()).split(/\s+/).filter(Boolean);
+  const inner = (from: number, head = ""): string[] =>
+    depth < 4 ? commandWords([head, ...tokens.slice(from)].join(" "), depth + 1) : [];
+  let i = 0;
+  while (i < tokens.length) {
+    const raw = tokens[i]!.replace(/^\(+/, "");
+    if (BRACE_RE.test(raw)) {
+      return braceAlternatives(raw).map((a) => a.replace(/^[({]+/, "").replace(/[)}]+$/, "").replace(/^.*\//, ""));
+    }
+    const t = (tokens[i] = raw.replace(/^[({]+/, "").replace(/[)}]+$/, ""));
+    if (!t || /^[A-Za-z_]\w*=/.test(t)) { i++; continue; }
+    if (REDIRECTION_RE.test(t)) { i += redirectionSpan(tokens, i); continue; }
+    const base = t.replace(/^.*\//, "");
+    const w = RUN_WRAPPERS.get(base);
+    if (w) {
+      i++;
+      let positionals = w.positionals ?? 0;
+      while (i < tokens.length) {
+        const a = tokens[i]!;
+        if (/^-./.test(a)) {
+          const flag = a.replace(/=[\s\S]*$/, "");
+          if (w.command?.includes(flag)) return inner(i + 1, a.includes("=") ? a.slice(a.indexOf("=") + 1) : "");
+          i += w.values?.includes(a) ? 2 : 1; // a joined value (`-c3`, `--signal=KILL`) is one token
+        } else if (/^[A-Za-z_]\w*=/.test(a)) {
+          i++; // `env VAR=x`
+        } else if (positionals > 0) {
+          positionals--;
+          i++;
+        } else if (/^\d+(?:\.\d+)?[smhd]?$/.test(a)) {
+          i++;
+        } else {
+          break;
+        }
+      }
+      continue;
+    }
+    if (C_SHELLS.has(base)) {
+      for (let k = i + 1; k < tokens.length && /^[-+]/.test(tokens[k]!); k++) {
+        if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(tokens[k]!)) return [base, ...inner(k + 1)];
+        if (/^[-+][oO]$/.test(tokens[k]!)) k++;
+      }
+    }
+    return [base];
+  }
+  return [];
+}
+/** audit R2 W1: `$X` / `${X…}` as the whole command word. */
+const BARE_VAR_WORD_RE = /^["']?\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)[^}]*\}?)["']?$/; // the walkers strip a closing `}`
+
 /** Patterns checked against the full command string. */
 /** `word` with quotes/backslashes allowed between its letters (`pro''ject`). */
 const quotedWord = (w: string): string => w.split("").join(`[\\\\'"]*`);
 /** As quotedWord, and each letter may be a glob (`*`, `?`, `[…]`): `c*eate`, `rec?rd`. */
 const globbedWord = (w: string): string =>
   w.split("").map((c) => `(?:${c}|[*?]|\\[[^\\]]*\\])`).join(`[\\\\'"]*`);
+
+/** A bash/sh flag that still executes: not a `-n` (noexec) cluster without `i` — `bash -n x.sh` only parses (R2 decline). */
+const SHELL_EXEC_FLAG = `-(?![a-hj-zA-Z]*n[a-hj-zA-Z]*\\s)\\S+`;
+/** Command position: start, a separator or `$(`, then `VAR=x` prefixes and wrappers/interpreters with their flags. */
+const CMD_POSITION =
+  `(?:^|[;&|(\`\\n]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*(?:(?:(?:sudo|nohup|exec|env|time|timeout\\s+\\S+|source|\\.)\\s+(?:-\\S+\\s+|\\w+=\\S*\\s+)*)|(?:(?:bash|sh)\\s+(?:${SHELL_EXEC_FLAG}\\s+)*))*`;
+/** A `/` as bash resolves it: `//` and `/./` too, with quotes/backslashes around it. */
+const PATH_SEP = `[\\\\'"]*\\/+(?:\\.\\/+)*[\\\\'"]*`;
+const DEPLOY_SH = `${globbedWord("deploy")}[\\\\'"]*\\.[\\\\'"]*${quotedWord("sh")}(?![\\w.-])`;
+
+/** mc-ctl subcommands that write or call a gated script — twin of GATED_SUBCOMMANDS (scripts/lib/operator-gate.sh). */
+const MC_CTL_RW = [
+  "start", "stop", "restart", "cancel", "schedule-delete", "schedule-resume", "hindsight-restart",
+  "audit-claim", "jme-dedup", "briefing-gate", "v83-gate", "v83-promote", "rule-of-two",
+  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke",
+  "skills backfill-embeddings", "skills retrieve", "skills certify", "skills archive", "skills revert",
+  "jme-preferences --confirm", "jme-preferences --reject",
+  "events retrieve", "events aggregate", "events seed",
+  "cohort rollup", "gates set-ritual",
+  "mcp-token create", "mcp-token revoke",
+  "monitoring up", "monitoring down",
+];
+
+const MC_CTL_DENY_REASON =
+  "operator-only: mc-ctl RW subcommands and mission-control's scripts/deploy.sh run from the operator terminal, never from a task (read-only mc-ctl subcommands stay open)";
+/** Whether the bash glob `glob` (`*`, `?`, `[…]`, `[!…]`) matches `word`: a linear DP, no regex backtracking. */
+function globMatches(glob: string, word: string): boolean {
+  const parts = glob.match(/\[!?\]?[^\]]*\]|[\s\S]/g) ?? [];
+  let row = [true, ...Array<boolean>(word.length).fill(false)];
+  for (const p of parts) {
+    const next = Array<boolean>(word.length + 1).fill(false);
+    if (p === "*") next[0] = row[0]!;
+    for (let j = 1; j <= word.length; j++) {
+      const c = word[j - 1]!;
+      if (p === "*") next[j] = row[j]! || next[j - 1]!;
+      else if (row[j - 1]) {
+        if (p === "?") next[j] = true;
+        else if (p.length > 1) {
+          const neg = /^\[!/.test(p);
+          const body = p.slice(neg ? 2 : 1, -1);
+          const inClass = [...body.matchAll(/(.)-(.)|(.)/g)].some((m) => (m[3] !== undefined ? m[3] === c : m[1]! <= c && c <= m[2]!));
+          next[j] = inClass !== neg;
+        } else next[j] = p === c;
+      }
+    }
+    row = next;
+  }
+  return row[word.length]!;
+}
+/** audit R2 W4: an `mc-ctl` word followed by an MC_CTL_RW entry, as bash reads them (normalized, globs expanded). */
+function mcCtlGlobDenied(normalized: string): boolean {
+  const words = normalized.split(/\s+/).filter(Boolean).flatMap(braceAlternatives); // `{./mc-ctl,restart}`
+  return words.some(
+    (w, k) =>
+      globMatches(w.replace(/^.*\//, ""), "mc-ctl") &&
+      MC_CTL_RW.some((e) => e.split(" ").every((part, n) => words[k + 1 + n] !== undefined && globMatches(words[k + 1 + n]!, part))),
+  );
+}
 
 const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
@@ -411,6 +580,21 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\btmux\b.*\b(?:send-keys|paste-buffer|load-buffer|run-shell)\b|\bscreen\b.*\s-X\b/,
     reason: "multiplexer keystroke injection blocked — it types into another session's terminal",
+  },
+  // S6 item 3c: mc-ctl RW subcommands (twin of GATED_SUBCOMMANDS in
+  // scripts/lib/operator-gate.sh, pinned by operator-gate.lock.test.ts), mc-ctl
+  // fed its subcommand by xargs, and a `scripts/deploy.sh` (any checkout, by
+  // path tail; `./deploy.sh` after a `cd …scripts`) in command position. A
+  // cheap layer only — the structural gate is the operator-context check in
+  // mc-ctl, deploy.sh and every db/KB-writing script. Read-only subcommands stay open.
+  {
+    pattern: new RegExp(
+      `${globbedWord("mc-ctl")}[\\s'"\\\\]+(?:${MC_CTL_RW.map((e) => e.split(" ").map(globbedWord).join(`[\\s'"\\\\]+`)).join("|")})(?![\\w-])` +
+        `|\\bxargs\\b[^|;&\\n]*${globbedWord("mc-ctl")}` +
+        `|${CMD_POSITION}\\S*${quotedWord("scripts")}${PATH_SEP}${DEPLOY_SH}` +
+        `|^(?=[\\s\\S]*\\b(?:cd|pushd)\\s+\\S*${quotedWord("scripts")}\\/*(?:[\\s;&|)]|$))[\\s\\S]*?${CMD_POSITION}(?:\\.${PATH_SEP})?${DEPLOY_SH}`,
+    ),
+    reason: MC_CTL_DENY_REASON,
   },
 ];
 
@@ -560,6 +744,35 @@ function checkSecretPaths(sanitized: string): { allowed: boolean; reason?: strin
     }
   }
   return { allowed: true };
+}
+
+/** A `.env`, `.env.*` or `*.env` file as a WRITE target. The read allowlist (ENV_READ_ALLOWLIST) covers
+ *  reads only; the file tools refuse every `.env*` write (DANGEROUS_FILE_PREFIXES), and so does the shell. */
+const isEnvWriteTarget = (p: string): boolean => /^\.env|\.env$/.test(p.replace(/\/+$/, "").split("/").pop() ?? "");
+/** Verbs whose every file argument is written, moved or hard-linked (`ln x.env /tmp/y` makes /tmp/y the same inode). */
+const ENV_WRITE_ANY_ARG = new Set(["tee", "mv", "ln"]);
+/** Verbs whose LAST positional is the destination; their sources are reads. */
+const ENV_WRITE_DEST_ARG = new Set(["cp", "install", "rsync"]);
+/** The `.env`-shaped file `segment` (normalized) writes: a redirection target, a tee/mv/ln argument, a
+ *  cp/install/rsync destination, a `sed -i`/`perl -i` file, or `dd of=`. Null when it writes none. */
+function envWriteTarget(segment: string): string | null {
+  const tokens = spaceRedirections(segment).split(/\s+/).filter(Boolean);
+  for (let k = 0; k < tokens.length; k++) {
+    const op = /^(?:\d*|&)(?:>>?|<>)[|&]?/.exec(tokens[k]!)?.[0];
+    if (op === undefined) continue;
+    const target = tokens[k]!.slice(op.length) || tokens[k + 1] || "";
+    if (isEnvWriteTarget(target)) return target;
+  }
+  const verb = effectiveBaseCommand(segment, true);
+  const at = tokens.findIndex((t) => t.replace(/^.*\//, "") === verb);
+  const args = at === -1 ? [] : tokens.slice(at + 1).filter((t) => !REDIRECTION_RE.test(t));
+  const positionals = args.filter((t) => !t.startsWith("-"));
+  let written: string[] = [];
+  if (ENV_WRITE_ANY_ARG.has(verb)) written = positionals;
+  else if (ENV_WRITE_DEST_ARG.has(verb)) written = positionals.slice(-1);
+  else if (/^(?:sed|perl)$/.test(verb) && args.some((t) => /^-(?:[a-zA-Z]*i|-in-place)/.test(t))) written = positionals;
+  else if (verb === "dd") written = args.filter((t) => t.startsWith("of=")).map((t) => t.slice(3));
+  return written.find(isEnvWriteTarget) ?? null;
 }
 
 /** Safe path prefixes for write operations.
@@ -845,7 +1058,7 @@ const HEREDOC_INTERPRETERS = /^(?:bash|sh|zsh|dash|ksh|eval|xargs|node|nodejs|py
  * package manager runs, and copying the real binary under another name. Both
  * are refused as spelled; the shell has no legitimate need for either.
  */
-const ENV_RESET_WORDS = new Set([
+export const ENV_RESET_WORDS = new Set([
   "sudo", "su", "runuser", "setpriv", "chroot", "systemd-run", "at", "batch",
   "machinectl", "nsenter", "unshare", "capsh", "enable", "builtin", "doas",
 ]);
@@ -1026,12 +1239,22 @@ function interpreterHeredocBodies(command: string): string {
  * (qa R1 C3, R2 C-3): `$'npm'`, `"npm"`, `n\pm`, `P=npm; $P install`. Every
  * substitution is a linear regex (no nested quantifiers).
  */
-function normalizeShellText(text: string): string {
+function shellVars(scope: string): Map<string, string> {
   const vars = new Map<string, string>([["HOME", process.env.HOME ?? "/root"]]);
-  for (const m of text.matchAll(/(?:^|[\s;&|(])([A-Za-z_]\w*)=([^\s;&|]+)/g)) {
+  for (const m of scope.matchAll(/(?:^|[\s;&|(])([A-Za-z_]\w*)=([^\s;&|]+)/g)) {
     vars.set(m[1]!, m[2]!.replace(/["'\\]/g, ""));
   }
-  let out = text.replace(/\$'((?:[^'\\]|\\.)*)'/g, "$1");
+  return vars;
+}
+/** `vars`: the assignments in scope — the segment's own by default, the whole command's for the deny-verb check. */
+function normalizeShellText(text: string, vars: Map<string, string> = shellVars(text)): string {
+  // `$'…'` with its `\xHH`, `\uHHHH`, `\UHHHHHHHH` and `\NNN` (octal) escapes decoded: `$'\x72m'` is rm (audit R2 W1).
+  let out = text.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_all, body: string) =>
+    body.replace(/\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3}))/g, (_e, x?: string, u?: string, U?: string, o?: string) => {
+      const n = parseInt(x ?? u ?? U ?? o!, o === undefined ? 16 : 8);
+      return n > 0x10ffff ? "" : String.fromCodePoint(n);
+    }),
+  );
   // `${P:-npm}` `${P-npm}` `${P:=npm}` `${P:+npm}` `${P:?x}` (qa R3 N-2): the
   // expansion is the variable when known, else the default word — innermost
   // first so `${A:-${B:-npm}}` folds in two passes.
@@ -1501,6 +1724,11 @@ export function checkPackageManagerMutation(
   }
 
   if (SHELL_REENTRY.has(base) && !opts.flat) {
+    // `bash -n x.sh` / `sh -n x.sh` only parse (noexec), unless `-i` makes the shell interactive (R2 decline).
+    const leading = rest.slice(0, (rest.findIndex((t) => !t.startsWith("-")) + 1 || rest.length + 1) - 1);
+    if (base !== "eval" && leading.some((t) => /^-[a-hj-zA-Z]*n[a-hj-zA-Z]*$/.test(t)) && !leading.some((t) => /^(?:-[a-zA-Z]*i[a-zA-Z]*|--interactive)$/.test(t))) {
+      return null;
+    }
     // `bash -c "…"` / `eval …`: validate the string as its own command.
     const inner = rest.filter((t) => base === "eval" || !/^-[a-z]+$/.test(t)).join(" ");
     if (inner.trim()) {
@@ -1703,6 +1931,10 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     return { allowed: false, reason: pmRawViolation };
   }
 
+  // Every assignment in the command, for the deny-verb check (audit R2 W1); computed once: linear.
+  const commandVars = shellVars(sanitized);
+  let mcCtlHit = false;
+
   for (const segment of segments) {
     const trimmed = segment.trim();
     if (!trimmed) continue;
@@ -1719,9 +1951,14 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     // `sudo -n systemctl`, `env -i bash`). Additive: checked as well as, not
     // instead of, the first token.
     const effective = effectiveBaseCommand(trimmed);
+    // audit R1 C1b: and as bash reads the word — quotes, backslashes and `$'…'` removed
+    // (`c''rontab`, `\crontab`, `"systemctl"`), with a busybox/toybox applet as its command.
+    // audit R2 W1/W2: `$'\x72m'`, `X=rm; $X` (an assignment anywhere in the command), `{rm,x}`,
+    // and the command behind `timeout -s KILL 5`, `chrt -f 1`, `busybox sh -c` and the other RUN_WRAPPERS.
+    const unquoted = normalizeShellText(trimmed, commandVars);
+    const verb = [baseName, effective, effectiveBaseCommand(unquoted, true), ...commandWords(unquoted)].find((v) => DENY_COMMANDS.has(v));
 
-    if (DENY_COMMANDS.has(baseName) || DENY_COMMANDS.has(effective)) {
-      const verb = DENY_COMMANDS.has(baseName) ? baseName : effective;
+    if (verb) {
       // An unquoted heredoc body is scanned line by line (its text may be a
       // program); literal file content goes through a QUOTED heredoc.
       const hint = /<<-?\s*\w+/.test(sanitized)
@@ -1729,6 +1966,22 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
         : "";
       return { allowed: false, reason: `command '${verb}' is blocked${hint}` };
     }
+    // R2 fold: a write to a `.env`-shaped file is refused even where the read allowlist admits the read.
+    const envWrite = envWriteTarget(unquoted);
+    if (envWrite) {
+      return { allowed: false, reason: `'${envWrite}' is a .env file — writing, moving or linking one from the shell is operator-only (the .env read allowlist covers reads only)` };
+    }
+    // audit R2 W1: a bare `$X` / `${X…}` command word whose variable this command assigns
+    // (`X=crontab; $X`) runs whatever was assigned — spell the command out instead.
+    const bareVar = [effective, ...commandWords(trimmed)]
+      .map((w) => BARE_VAR_WORD_RE.exec(w))
+      .find((m) => m && commandVars.has((m[1] ?? m[2])!));
+    if (bareVar) {
+      return { allowed: false, reason: `command word \`${bareVar[0]}\` is a variable this command assigns — spell the command out` };
+    }
+    // audit R2 W4: a globbed or variable mc-ctl subcommand (`./mc-ctl re*rt`, `C=restart; ./mc-ctl $C`).
+    // Judged after DENY_PATTERNS, whose project-create entry carries the more specific reason.
+    mcCtlHit ||= mcCtlGlobDenied(unquoted);
 
     // Resource guard: unscoped full-suite test runs (2026-07-12 incident).
     const testRunViolation = checkUnscopedTestRun(trimmed);
@@ -1740,6 +1993,11 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     const pmViolation = checkEnvReset(trimmed) ?? checkPackageManagerMutation(trimmed, segmentCwd);
     if (pmViolation) {
       return { allowed: false, reason: pmViolation };
+    }
+    // audit R2 W1: `{x,sudo}`, `busybox sh -c 'su …'`: an env-reset word behind the forms only commandWords reads.
+    const resetWord = commandWords(unquoted).find((w) => ENV_RESET_WORDS.has(w));
+    if (resetWord) {
+      return { allowed: false, reason: `command '${resetWord}' is blocked` };
     }
 
     // Worktree guard: mutating git on the shared primary checkout (P1).
@@ -1756,6 +2014,9 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     if (pattern.test(sanitized)) {
       return { allowed: false, reason };
     }
+  }
+  if (mcCtlHit) {
+    return { allowed: false, reason: MC_CTL_DENY_REASON };
   }
 
   // Secret paths by PATH, not by reader verb (SEC-01 / SEC-03).

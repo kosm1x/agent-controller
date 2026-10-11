@@ -20,6 +20,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { mirrorToDisk } from "../src/db/jarvis-fs.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("mirror-kb-to-disk", { tty: false });
 
 const KB_ROOT = process.env.JARVIS_KB_MIRROR_DIR ?? "/root/claude/jarvis-kb";
 const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";

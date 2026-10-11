@@ -11,6 +11,10 @@ import { initDatabase } from "../src/db/index.js";
 import { getDataLayer } from "../src/finance/data-layer.js";
 import { seedSymbol, formatSeedResult } from "../src/finance/watchlist-seed.js";
 import type { AssetClass } from "../src/finance/types.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("seed-watchlist-weekly", { tty: false });
 
 interface SeedTarget {
   symbol: string;

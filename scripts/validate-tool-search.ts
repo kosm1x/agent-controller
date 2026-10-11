@@ -37,6 +37,10 @@ import { ToolSourceManager } from "../src/tools/source.js";
 import { BuiltinToolSource } from "../src/tools/sources/builtin.js";
 import { queryClaudeSdk } from "../src/inference/claude-sdk.js";
 import { tool as sdkTool } from "@anthropic-ai/claude-agent-sdk";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("validate-tool-search", { tty: false });
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 

@@ -14,6 +14,10 @@ import { writeFileSync } from "node:fs";
 import { infer } from "../src/inference/adapter.js";
 import { toolRegistry } from "../src/tools/registry.js";
 import { getConfig } from "../src/config.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("benchmark", { tty: false });
 
 // ---------------------------------------------------------------------------
 // Test prompts (4 categories × 5 each)

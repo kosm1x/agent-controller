@@ -26,6 +26,10 @@
 import { loadConfig } from "../src/config.js";
 import { getDatabase, initDatabase } from "../src/db/index.js";
 import { assertScorableCase } from "../src/tuning/test-cases.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("add-eval-case", { tty: false });
 
 interface Args {
   message?: string;

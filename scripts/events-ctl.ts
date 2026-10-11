@@ -21,6 +21,10 @@ import {
   retrieveGeneralEvents,
   type AggregateDimension,
 } from "../src/events/retrieval.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("events-ctl", { tty: false });
 
 async function runRetrieve(): Promise<number> {
   const query = process.env.QUERY?.trim() || undefined;

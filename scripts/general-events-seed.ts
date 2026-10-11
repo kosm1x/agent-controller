@@ -26,6 +26,10 @@ import {
   getGeneralEvent,
   type CreateGeneralEventInput,
 } from "../src/events/general-events.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("general-events-seed", { tty: false });
 
 // Resolve the DB path relative to THIS script, not the process cwd — so the
 // seed touches the real mc.db regardless of where it is invoked from (R1-W1

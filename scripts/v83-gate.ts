@@ -19,6 +19,10 @@ import {
   evaluateV83Gate,
   type V83GateCheck,
 } from "../src/lib/v8-3/activation-gate.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("v83-gate", { tty: false });
 
 const DB_PATH = join(
   dirname(fileURLToPath(import.meta.url)),

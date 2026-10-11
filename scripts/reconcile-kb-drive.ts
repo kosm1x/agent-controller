@@ -17,6 +17,10 @@
 
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { googleFetch } from "../src/google/client.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("reconcile-kb-drive", { tty: false });
 
 const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";
 const APPLY = process.argv.includes("--apply");

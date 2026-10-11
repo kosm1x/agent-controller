@@ -66,6 +66,7 @@ import {
 } from "../src/lib/secret-refs.js";
 import { tokenizeQuery, locateMatch } from "../src/db/jarvis-fs.js";
 import { SCORING_VERSION } from "../src/tuning/gate.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
 
 // ------------------------------------------------------------------ census
 
@@ -757,6 +758,8 @@ function main(): number {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+  requireOperatorContext("predeploy-rulings-1-5", { tty: false });
   let code = 2;
   try {
     if (process.argv[2] === "--baseline-evidence") {

@@ -9,6 +9,11 @@
 #   --drain <secs>  wait up to <secs> for running tasks to finish (default 0 = no wait)
 set -e
 cd /root/claude/mission-control
+# S6 item 3c: operator context only (login session, pipes allowed); a task
+# runs inside mission-control.service and is refused before anything runs.
+# shellcheck source=scripts/lib/operator-gate.sh
+source scripts/lib/operator-gate.sh
+require_operator_context
 
 SERVICE="mission-control"
 DB="/root/claude/mission-control/data/mc.db"

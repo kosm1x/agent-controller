@@ -24,6 +24,10 @@ import {
   combineVerdicts,
   COMBINED_VERDICT_LABEL,
 } from "../src/briefing/v82-activation-gate.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("briefing-gate", { tty: false });
 
 const V82_VERDICT_LABEL = {
   pass: "✅ PASS — V8.2 §17 activation gate met",

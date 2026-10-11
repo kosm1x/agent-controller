@@ -9,6 +9,10 @@
 import BetterSqlite3 from "better-sqlite3";
 import { resolve } from "path";
 import { rmSync, mkdirSync } from "fs";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("migrate-unified-fs", { tty: false });
 
 const DB_PATH = resolve(process.cwd(), "data", "mc.db");
 const MIRROR_DIR = resolve(process.cwd(), "data", "jarvis");

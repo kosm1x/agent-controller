@@ -27,6 +27,10 @@ import {
 } from "../src/skills/frontmatter.js";
 import { skillSave } from "../src/skills/lifecycle.js";
 import { runSkillTests } from "../src/skills/test-runner.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("skills-seed-phase5", { tty: false });
 
 const SKILL_NAMES = [
   "planificar-proyecto-por-fases",

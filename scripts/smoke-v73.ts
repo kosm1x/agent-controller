@@ -9,6 +9,10 @@ import { seoLlmsTxtGenerateTool } from "../src/tools/builtin/seo-llms-txt-genera
 import { seoTelemetryTool } from "../src/tools/builtin/seo-telemetry.js";
 import { aiOverviewTrackTool } from "../src/tools/builtin/ai-overview-track.js";
 import { readFileSync } from "node:fs";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("smoke-v73", { tty: false });
 
 try {
   const env = readFileSync("./.env", "utf-8");

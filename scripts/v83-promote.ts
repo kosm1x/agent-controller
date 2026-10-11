@@ -20,6 +20,10 @@ import {
   promoteCapabilityL1toL2,
   renderPromotionAdr,
 } from "../src/lib/v8-3/promotion.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("v83-promote", { tty: false });
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(ROOT, "data", "mc.db");

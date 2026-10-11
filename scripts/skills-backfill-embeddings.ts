@@ -15,6 +15,10 @@
 
 import { initDatabase } from "../src/db/index.js";
 import { backfillSkillEmbeddings } from "../src/skills/backfill-embeddings.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("skills-backfill-embeddings", { tty: false });
 
 async function main(): Promise<number> {
   initDatabase("./data/mc.db");

@@ -25,6 +25,10 @@ import {
   rmSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("validate-swarm", { tty: false });
 
 // 1) Inherit the live service's env (INFERENCE_*, keys, TZ) via /proc — never printed.
 function loadLiveEnv(): string | null {

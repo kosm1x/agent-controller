@@ -16,6 +16,10 @@
  */
 
 import { initDatabase } from "../src/db/index.js";
+import { requireOperatorContext } from "../src/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("validate-migration-runner", { tty: false });
 
 const [mode, dbPath] = process.argv.slice(2);
 if (!mode || !dbPath) {
