@@ -318,12 +318,50 @@ describe("project_update — record present: the record is the write target", ()
   });
 });
 
-describe("project_update — the four operator-only config keys are refused", () => {
-  it("lists exactly mcp, trusted, egress, deny_paths", () => {
-    expect([...OPERATOR_ONLY_CONFIG_KEYS].sort()).toEqual(["deny_paths", "egress", "mcp", "trusted"]);
+describe("project_update — an operator-only key is refused only when its value CHANGES (audit R2 W1)", () => {
+  it("record row: an echoed unchanged kb_readme passes (not written); a changed one is refused", async () => {
+    seedRecord();
+    const kb = getProject("acme-radar")!.config.kb_readme;
+    const ok = JSON.parse(
+      await projectUpdateTool.execute({ slug: "acme-radar", name: "Acme Radar Two", config: { kb_readme: kb } }),
+    );
+    expect(ok.error).toBeUndefined();
+    expect(getProject("acme-radar")!.name).toBe("Acme Radar Two");
+    expect(getProject("acme-radar")!.config.kb_readme).toBe(kb);
+    const before = String(getFile(REL)!.content);
+    const bad = JSON.parse(
+      await projectUpdateTool.execute({ slug: "acme-radar", config: { kb_readme: "projects/elsewhere/README.md" } }),
+    );
+    expect(bad.error).toContain("config.kb_readme");
+    expect(String(getFile(REL)!.content)).toBe(before);
   });
 
-  for (const key of ["mcp", "trusted", "egress", "deny_paths"]) {
+  it("legacy row: echo passes, change refused, adding to a row that lacks it refused", async () => {
+    createProject("legacy-delta", "Legacy Delta", { config: { kb_readme: "projects/legacy-delta/README.md", phase: "one" } });
+    const echo = JSON.parse(
+      await projectUpdateTool.execute({ slug: "legacy-delta", config: { kb_readme: "projects/legacy-delta/README.md", phase: "two" } }),
+    );
+    expect(echo.error).toBeUndefined();
+    expect(rowView("legacy-delta").config).toEqual({ kb_readme: "projects/legacy-delta/README.md", phase: "two" });
+    const changed = JSON.parse(
+      await projectUpdateTool.execute({ slug: "legacy-delta", config: { kb_readme: "projects/other/README.md" } }),
+    );
+    expect(changed.error).toContain("config.kb_readme");
+    createProject("legacy-eps", "Legacy Eps", { config: { phase: "one" } });
+    const added = JSON.parse(
+      await projectUpdateTool.execute({ slug: "legacy-eps", config: { kb_readme: "projects/legacy-eps/README.md" } }),
+    );
+    expect(added.error).toContain("config.kb_readme");
+    expect(rowView("legacy-eps").config).toEqual({ phase: "one" });
+  });
+});
+
+describe("project_update — the operator-only config keys are refused", () => {
+  it("lists exactly mcp, trusted, egress, deny_paths, kb_readme (audit R1 C1)", () => {
+    expect([...OPERATOR_ONLY_CONFIG_KEYS].sort()).toEqual(["deny_paths", "egress", "kb_readme", "mcp", "trusted"]);
+  });
+
+  for (const key of ["mcp", "trusted", "egress", "deny_paths", "kb_readme"]) {
     it(`config.${key}: refused with a record, nothing written`, async () => {
       seedRecord();
       const rowBefore = rowView("acme-radar");

@@ -85,7 +85,7 @@ export interface ProjectApplyResult {
 }
 
 /** JSON with object keys sorted, so equal values compare equal. */
-function stable(v: unknown): string {
+export function stable(v: unknown): string {
   return JSON.stringify(v, (_k, x: unknown) =>
     x && typeof x === "object" && !Array.isArray(x)
       ? Object.fromEntries(

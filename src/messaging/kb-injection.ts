@@ -16,6 +16,8 @@
  */
 
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+import { getProject } from "../db/projects.js";
+import { KB_README_RE } from "../projects/record.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { recordMemoryInjection } from "../observability/prometheus.js";
 import {
@@ -104,7 +106,7 @@ const PROJECT_SLUGS = [
   "presencia-digital-eurekamd",
   "very-light-cms",
   "vlmp",
-  "williams-radar",
+  "williams-entry-radar",
 ];
 
 /** Match project names in message text (slug or natural name). */
@@ -129,7 +131,7 @@ export function detectProjectInMessage(text: string): string | null {
   // "Williams" alone always refers to the Williams Entry Radar in this
   // workspace. We don't alias bare "radar" — "PipeSong Tech Radar" and
   // other project-specific radars would collide.
-  if (/\bwilliams\b/i.test(text)) return "williams-radar";
+  if (/\bwilliams\b/i.test(text)) return "williams-entry-radar";
   return null;
 }
 
@@ -145,6 +147,31 @@ export type KbRowFilter = (row: {
 
 const ALLOW_ALL: KbRowFilter = () => true;
 
+/** S6 ruling 4b: the row's record-derived `config.kb_readme` wins when it is
+ *  a KB-relative .md under `projects/` (audit R1 C1: anything else is ignored,
+ *  never followed); else (no row, no key, an unusable value or a db error)
+ *  `projects/<slug>/README.md`. */
+function projectReadmePath(slug: string): string {
+  const fallback = `projects/${slug}/README.md`;
+  let kbReadme: unknown;
+  try {
+    kbReadme = getProject(slug)?.config.kb_readme;
+  } catch {
+    kbReadme = null;
+  }
+  if (kbReadme === undefined) return fallback;
+  if (
+    typeof kbReadme === "string" &&
+    KB_README_RE.test(kbReadme) &&
+    !kbReadme.includes("\\") &&
+    !kbReadme.split("/").includes("..")
+  ) {
+    return kbReadme;
+  }
+  console.warn(`[kb-injection] ${slug}: kb_readme unusable or unreadable, using the folder README`);
+  return fallback;
+}
+
 function projectReadmeSection(
   messageText: string | undefined,
   logTag: string,
@@ -153,10 +180,11 @@ function projectReadmeSection(
   const projectSlug = detectProjectInMessage(messageText);
   if (!projectSlug) return null;
   try {
-    const readme = getFile(`projects/${projectSlug}/README.md`);
+    const readmePath = projectReadmePath(projectSlug);
+    const readme = getFile(readmePath);
     if (!readme) return null;
     console.log(
-      `[${logTag}] Project README injected: projects/${projectSlug}/README.md (${readme.content.length} chars)`,
+      `[${logTag}] Project README injected: ${readmePath} (${readme.content.length} chars)`,
     );
     // Ruling 3c (audit round 4 B1-b): scrubbed by the builders, which
     // scrub the joined block this section lands in.

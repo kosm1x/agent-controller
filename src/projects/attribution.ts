@@ -188,8 +188,8 @@ const LIVE = (status: string | null) =>
  * (case-insensitive) a PHRASE of the slug (itself, or with spaces for
  * hyphens) win over rows matching one of its hyphen-separated WORDS; within
  * the winning rank exactly one row resolves, a tie is null (logged with the
- * row slugs). Else null. The chat detector returns KB folder names
- * (`williams-radar`) that are not row slugs.
+ * row slugs). Else null. The chat detector returns row slugs since S6
+ * ruling 4b; other callers may still pass names that are not row slugs.
  */
 export function canonicalProjectSlug(
   db: Database.Database,

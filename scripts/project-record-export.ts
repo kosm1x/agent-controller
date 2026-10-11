@@ -15,7 +15,13 @@
  * `parent`|`parent_project`→parent, `schedule_id` (+ --schedule)→schedules[],
  * `kb_path`→kb_folder, repo-class keys holding an absolute local path→repos[]
  * (role primary for the first of local/local_path/path, else other),
- * `urls.site`→links.site. Every other key is copied verbatim under the notes
+ * `urls.site`→links.site. A projector-owned key (PROJECTOR_CONFIG_KEYS, written
+ * by a previous apply) is the record's value and wins: it is the contract
+ * field, never a Legacy config duplicate; a legacy spelling with an equal
+ * value is consumed, a different one stays in the notes (reported in
+ * `differs`), and so does an invalid owned value (apply will overwrite it).
+ * Contract values are written as the schema normalises them. So a `--force` re-export of a projected row reproduces the
+ * record. Every other key is copied verbatim under the notes
  * section `## Legacy config` (urls: `## Legacy urls`), EXCEPT a value the
  * credential classifier calls a secret: it is replaced by a marker and stays
  * only in the row (credentials never enter the KB). `credentials` and
@@ -31,9 +37,12 @@ import { getDatabase } from "../src/db/index.js";
 import { getFile } from "../src/db/jarvis-fs.js";
 import { upsertFromDiskWrite } from "../src/db/jarvis-reindex.js";
 import { isProjectProseSecret, projectEntryLeaves } from "../src/lib/secret-refs.js";
+import { PROJECTOR_CONFIG_KEYS } from "../src/projects/projector.js";
 import {
+  KB_README_RE,
   PROJECT_SLUG_RE,
   parseProjectRecord,
+  projectContractSchema,
   projectRecordRelPath,
   renderProjectRecord,
 } from "../src/projects/record.js";
@@ -91,7 +100,7 @@ const isKbRel = (p: unknown): p is string =>
 export function buildRecordFromRow(
   row: Project,
   opts: ExportOptions = {},
-): { markdown: string; counts: ExportCounts } {
+): { markdown: string; counts: ExportCounts; differs: string[] } {
   const config: Record<string, unknown> = { ...row.config };
   const urls: Record<string, unknown> = { ...row.urls };
   let withheld = 0;
@@ -111,6 +120,15 @@ export function buildRecordFromRow(
     name: row.name,
     status: row.status,
   };
+  /** The record's own (projected) value of an owned key, parsed; undefined when absent or invalid. */
+  const projected = (k: (typeof PROJECTOR_CONFIG_KEYS)[number]): unknown => {
+    if (!(k in config) || secretIn("config", k, config[k])) return undefined;
+    const p = projectContractSchema.safeParse({ slug: "probe", name: "probe", status: "active", [k]: config[k] });
+    return p.success ? p.data[k] : undefined;
+  };
+  /** Warnings: a legacy key that differs from the record's value, or an invalid owned value; both kept in the notes. */
+  const differs: string[] = [];
+  const legacyDiffers = (k: string) => differs.push(`legacy ${k}: differs from record, kept in notes`);
 
   if (
     Array.isArray(config.aliases) &&
@@ -127,26 +145,47 @@ export function buildRecordFromRow(
   }
   for (const k of ["parent", "parent_project"]) {
     const v = config[k];
-    if (json.parent === undefined && typeof v === "string" && PROJECT_SLUG_RE.test(v)) {
+    if (
+      (json.parent === undefined || json.parent === v) &&
+      typeof v === "string" &&
+      PROJECT_SLUG_RE.test(v)
+    ) {
       json.parent = v;
       delete config[k];
+    } else if (k === "parent_project" && json.parent !== undefined && typeof v === "string" && PROJECT_SLUG_RE.test(v)) {
+      legacyDiffers(k);
     }
   }
-  if (isKbRel(config.kb_path)) {
+  const ownedFolder = projected("kb_folder");
+  if (ownedFolder !== undefined) {
+    json.kb_folder = ownedFolder;
+    delete config.kb_folder;
+    if (config.kb_path === ownedFolder) delete config.kb_path;
+    else if (isKbRel(config.kb_path)) legacyDiffers("kb_path");
+  } else if (isKbRel(config.kb_path)) {
     json.kb_folder = config.kb_path;
     delete config.kb_path;
   }
   if (opts.kbReadme !== undefined) json.kb_readme = opts.kbReadme;
 
   const schedules: string[] = [];
-  if (typeof config.schedule_id === "string" && config.schedule_id.trim()) {
-    schedules.push(config.schedule_id.trim());
+  const ownedSchedules = projected("schedules") as string[] | undefined;
+  const legacyId = typeof config.schedule_id === "string" ? config.schedule_id.trim() : "";
+  if (ownedSchedules !== undefined) {
+    schedules.push(...ownedSchedules);
+    delete config.schedules;
+    if (legacyId && schedules.includes(legacyId)) delete config.schedule_id;
+    else if (legacyId) legacyDiffers("schedule_id");
+  } else if (legacyId) {
+    schedules.push(legacyId);
     delete config.schedule_id;
   }
   for (const s of opts.schedules ?? []) if (!schedules.includes(s)) schedules.push(s);
   if (schedules.length > 0) json.schedules = schedules;
 
   // Local repo paths (urls first, then config), primary = first preferred key.
+  // With the record's own `repos`, a legacy path in it is consumed, another kept.
+  const ownedRepos = projected("repos") as Array<{ path: string; role: "primary" | "other" }> | undefined;
   const repos: Array<{ path: string; role: "primary" | "other" }> = [];
   const take = (field: "urls" | "config", src: Record<string, unknown>) => {
     const keys = Object.keys(src)
@@ -159,6 +198,11 @@ export function buildRecordFromRow(
     for (const k of keys) {
       const v = src[k];
       if (typeof v !== "string" || !v.startsWith("/") || secretIn(field, k, v)) continue;
+      if (ownedRepos !== undefined) {
+        if (ownedRepos.some((r) => r.path === v)) delete src[k];
+        else legacyDiffers(k);
+        continue;
+      }
       if (!repos.some((r) => r.path === v)) {
         const primary =
           REPO_KEYS_PRIMARY_FIRST.includes(k) && !repos.some((r) => r.role === "primary");
@@ -169,11 +213,35 @@ export function buildRecordFromRow(
   };
   take("urls", urls);
   take("config", config);
-  if (repos.length > 0) json.repos = repos;
+  if (ownedRepos !== undefined) {
+    delete config.repos;
+    if (ownedRepos.length > 0) json.repos = ownedRepos;
+  } else if (repos.length > 0) json.repos = repos;
 
-  if (typeof urls.site === "string" && urls.site.trim() && !secretIn("urls", "site", urls.site)) {
+  const ownedLinks = projected("links") as { site: string } | undefined;
+  if (ownedLinks !== undefined) {
+    json.links = ownedLinks;
+    delete config.links;
+    if (urls.site === ownedLinks.site) delete urls.site;
+    else if (urls.site !== undefined) legacyDiffers("urls.site");
+  } else if (typeof urls.site === "string" && urls.site.trim() && !secretIn("urls", "site", urls.site)) {
     json.links = { site: urls.site };
     delete urls.site;
+  }
+
+  // The other owned keys (match_priority, success, kb_readme without the
+  // flag): a valid value is the contract field, or a duplicate of the flag's
+  // (dropped). aliases/stall_exempt/parent were decided above (same key).
+  for (const k of PROJECTOR_CONFIG_KEYS) {
+    if (!(k in config) || k === "aliases" || k === "stall_exempt" || k === "parent") continue;
+    const v = projected(k);
+    if (v === undefined) continue;
+    if (json[k] === undefined) json[k] = v;
+    delete config[k];
+  }
+  // An owned key still here is invalid: never lost silently (audit R1 W1).
+  for (const k of PROJECTOR_CONFIG_KEYS) {
+    if (k in config) differs.push(`owned ${k}: invalid, kept in notes, apply will overwrite the row`);
   }
 
   // Legacy sections: verbatim, except credential-style leaves.
@@ -226,14 +294,33 @@ export function buildRecordFromRow(
     );
   }
 
-  const markdown = renderProjectRecord(json, notes.join("\n\n"));
-  parseProjectRecord(markdown, { folderSlug: row.slug }); // throws if invalid
+  // One key order whichever source set a field (legacy, flag or owned key).
+  const ORDER = ["slug", "name", "status", "aliases", "match_priority", "stall_exempt", "parent", "kb_folder", "kb_readme", "schedules", "repos", "success", "links"];
+  // A value equal to the contract default stays implicit, whatever its source.
+  const folder = typeof json.kb_folder === "string" ? json.kb_folder : `projects/${row.slug}/`;
+  const implicit = (k: string, v: unknown) =>
+    (k === "match_priority" && v === 0) ||
+    (k === "kb_folder" && v === `projects/${row.slug}/`) ||
+    (k === "kb_readme" && v === `${folder.replace(/\/+$/, "")}/README.md`);
+  const raw = Object.fromEntries(
+    Object.entries(json)
+      .filter(([k, v]) => !implicit(k, v))
+      .sort(([a], [b]) => ORDER.indexOf(a) - ORDER.indexOf(b)),
+  );
+  // Written as the schema normalises it (trimmed name/aliases/links.site), so
+  // a re-export of the projected row reproduces the record (audit R1 W1).
+  const { contract } = parseProjectRecord(renderProjectRecord(raw, ""), { folderSlug: row.slug }); // throws if invalid
+  const ordered = Object.fromEntries(
+    Object.keys(raw).map((k) => [k, contract[k as keyof typeof contract]]),
+  );
+  const markdown = renderProjectRecord(ordered, notes.join("\n\n"));
   return {
     markdown,
+    differs,
     counts: {
       aliases: Array.isArray(json.aliases) ? json.aliases.length : 0,
       schedules: schedules.length,
-      repos: repos.length,
+      repos: Array.isArray(json.repos) ? json.repos.length : 0,
       parent: json.parent !== undefined,
       kb_folder: json.kb_folder !== undefined,
       kb_readme: json.kb_readme !== undefined,
@@ -275,8 +362,8 @@ export function exportProjectRecord(
   opts: ExportOptions & { dryRun?: boolean; force?: boolean } = {},
 ): ExportResult {
   if (!PROJECT_SLUG_RE.test(slug)) return { ok: false, error: `invalid slug "${slug}"` };
-  if (opts.kbReadme !== undefined && !isKbRel(opts.kbReadme)) {
-    return { ok: false, error: "--kb-readme must be a KB-relative .md path" };
+  if (opts.kbReadme !== undefined && !(isKbRel(opts.kbReadme) && KB_README_RE.test(opts.kbReadme))) {
+    return { ok: false, error: "--kb-readme must be projects/<folder>/<file>.md" };
   }
   const row = getProject(slug);
   if (!row || row.slug !== slug) return { ok: false, error: `no projects row for "${slug}"` };
@@ -296,9 +383,12 @@ export function exportProjectRecord(
         : (err as Error).message,
     };
   }
-  const warnings = unknownSchedules(opts.schedules ?? []).map(
-    (id) => `--schedule ${id} is not in scheduled_tasks (check ./mc-ctl schedules)`,
-  );
+  const warnings = [
+    ...unknownSchedules(opts.schedules ?? []).map(
+      (id) => `--schedule ${id} is not in scheduled_tasks (check ./mc-ctl schedules)`,
+    ),
+    ...built.differs,
+  ];
   if (opts.dryRun) return { ok: true, rel, written: false, counts: built.counts, warnings };
   const projected = upsertFromDiskWrite(rel, built.markdown);
   return {

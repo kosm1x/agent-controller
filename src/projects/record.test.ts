@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  KB_README_RE,
   ProjectRecordError,
   isProjectRecordPath,
   parseProjectRecord,
@@ -182,6 +183,29 @@ describe("parseProjectRecord — every error reason", () => {
       expect(err?.reason, JSON.stringify(bad)).toBe("schema");
       expect(err?.issues.length, JSON.stringify(bad)).toBeGreaterThan(0);
     }
+  });
+
+  it("audit R2b: the derived kb_readme default is set only when it matches KB_README_RE", () => {
+    const parse = (extra: Record<string, unknown>) =>
+      parseProjectRecord(block({ slug: "ok-slug", name: "N", status: "active", ...extra }), { folderSlug: "ok-slug" }).contract;
+    expect(parse({ kb_folder: "knowledge/x" }).kb_readme).toBeUndefined();
+    expect(parse({ kb_folder: "projects/a/b" }).kb_readme).toBeUndefined();
+    expect(parse({}).kb_readme).toBe("projects/ok-slug/README.md");
+  });
+
+  it("audit R2 W2: kb_readme must match KB_README_RE (one .md directly under projects/<folder>/)", () => {
+    for (const bad of ["projects/x/README.MD", "knowledge/x.md", "projects/x/sub/README.md", "projects/x/a\nb.md"]) {
+      let err: ProjectRecordError | undefined;
+      try {
+        parseProjectRecord(block({ slug: "ok-slug", name: "N", status: "active", kb_readme: bad }), { folderSlug: "ok-slug" });
+      } catch (e) {
+        err = e as ProjectRecordError;
+      }
+      expect(err?.reason, JSON.stringify(bad)).toBe("schema");
+      expect(KB_README_RE.test(bad), JSON.stringify(bad)).toBe(false);
+    }
+    const live = "projects/williams-entry-radar/README.md";
+    expect(parseProjectRecord(block({ slug: "ok-slug", name: "N", status: "active", kb_readme: live }), { folderSlug: "ok-slug" }).contract.kb_readme).toBe(live);
   });
 
   it("schema — an unknown top-level key is an error (strict)", () => {

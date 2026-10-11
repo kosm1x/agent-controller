@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../src/db/index.js";
 import { ensureScheduledTasksTable } from "../src/rituals/dynamic.js";
-import { contractToRowPatch } from "../src/projects/projector.js";
+import { applyProjectRecord, contractToRowPatch } from "../src/projects/projector.js";
 import { createProject, getProject } from "../src/db/projects.js";
 import type { Project } from "../src/db/projects.js";
 import { getFile, upsertFile } from "../src/db/jarvis-fs.js";
@@ -207,6 +207,113 @@ describe("buildRecordFromRow — round-trip property", () => {
   });
 });
 
+describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --force export)", () => {
+  const OWNED_AND_LEGACY = {
+    slug: "zeta-desk",
+    name: "Zeta Desk",
+    description: "Synthetic desk for an invented team.",
+    status: "active",
+    urls: { site: "https://zeta.example.test", local: "/srv/work/zeta" },
+    config: {
+      aliases: ["zeta"],
+      parent: "zeta-hub",
+      parent_project: "zeta-group",
+      kb_folder: "projects/zeta-new/",
+      kb_path: "projects/zeta-docs/",
+      local_path: "/srv/work/zeta-old",
+      schedule_id: "sched-z1",
+      match_priority: 3,
+      success: { gates: true },
+      kb_readme: "projects/zeta-docs/OVERVIEW.md",
+      links: { site: "https://zeta.example.test" },
+      repos: [{ path: "/srv/work/zeta", role: "primary" }],
+      schedules: ["sched-z2"],
+      tickers: ["ZZ"],
+      nested: { a: 1 },
+    },
+  };
+
+  /** export → parse → contractToRowPatch → merge onto the row (the real projector) → export. */
+  const reexport = (slug: string, md: string) => {
+    expect(applyProjectRecord(projectRecordRelPath(slug), md).error).toBeUndefined();
+    return buildRecordFromRow(getProject(slug)!).markdown;
+  };
+
+  it.each([
+    ["legacy spellings + owned keys", OWNED_AND_LEGACY, ["sched-z3"]],
+    ["legacy spellings only", ROWS[1]!, []],
+    ["foreign keys only", ROWS[0]!, []],
+    // audit R1 W1: values the schema normalises are written normalised
+    ["padded alias", { slug: "pad-alias", name: "Pad", status: "active", config: { aliases: [" zz "] } }, []],
+    ["padded name", { slug: "pad-name", name: " Zed ", status: "active", config: {} }, []],
+    ["padded site", { slug: "pad-site", name: "Pad", status: "active", urls: { site: " https://z.example.test " }, config: {} }, []],
+  ] as const)("%s: the second export is byte-identical (contract AND notes)", (_n, r, schedules) => {
+    const row = seed(r as (typeof ROWS)[number]);
+    const md1 = buildRecordFromRow(row, { schedules: [...schedules] }).markdown;
+    const md2 = reexport(row.slug, md1);
+    expect(md2).toBe(md1);
+    expect(reexport(row.slug, md2)).toBe(md1);
+  });
+
+  it("the record's (owned) value beats a differing legacy spelling; the legacy one stays in the notes on every run", () => {
+    const row = seed(OWNED_AND_LEGACY as (typeof ROWS)[number]);
+    const { markdown: md1, differs } = buildRecordFromRow(row, { schedules: ["sched-z3"] });
+    const { contract } = parseProjectRecord(md1, { folderSlug: "zeta-desk" });
+    expect(contract).toMatchObject({
+      match_priority: 3,
+      success: { daylog: true, gates: true },
+      kb_folder: "projects/zeta-new/",
+      kb_readme: "projects/zeta-docs/OVERVIEW.md",
+      parent: "zeta-hub",
+      schedules: ["sched-z2", "sched-z3"],
+      repos: [{ path: "/srv/work/zeta", role: "primary" }],
+      links: { site: "https://zeta.example.test" },
+    });
+    expect(differs.sort()).toEqual(
+      ["kb_path", "local_path", "parent_project", "schedule_id"].map((k) => `legacy ${k}: differs from record, kept in notes`),
+    );
+    const kept = {
+      parent_project: "zeta-group",
+      kb_path: "projects/zeta-docs/",
+      local_path: "/srv/work/zeta-old",
+      schedule_id: "sched-z1",
+      tickers: ["ZZ"],
+      nested: { a: 1 },
+    };
+    expect(legacyBlocks(md1)["Legacy config"]).toEqual(kept);
+    expect(legacyBlocks(md1)["Legacy urls"]).toBeUndefined(); // equal site + local consumed
+    const md2 = reexport("zeta-desk", md1);
+    expect(md2).toBe(md1);
+    expect(legacyBlocks(md2)["Legacy config"]).toEqual(kept);
+  });
+
+  it.each([
+    ["match_priority", { match_priority: "high" }],
+    ["kb_readme", { kb_readme: "../../etc/x.md" }],
+    ["parent", { parent: "Bad Slug", parent_project: "good-one" }],
+  ] as const)("audit R1 W1: an invalid owned %s is never lost silently: kept in notes + warned", (key, config) => {
+    const slug = `bad-${key.replace(/_/g, "-")}`;
+    createProject(slug, "Bad", { config: { ...config } });
+    const built = buildRecordFromRow(getProject(slug)!);
+    expect(built.differs).toContain(`owned ${key}: invalid, kept in notes, apply will overwrite the row`);
+    expect(legacyBlocks(built.markdown)["Legacy config"]![key]).toEqual((config as Record<string, unknown>)[key]);
+    const r = exportProjectRecord(slug, { dryRun: true });
+    expect(r.ok && r.warnings).toContain(`owned ${key}: invalid, kept in notes, apply will overwrite the row`);
+  });
+
+  it("an equal legacy spelling is consumed; a differing one is reported by the write path", () => {
+    seed(OWNED_AND_LEGACY as (typeof ROWS)[number]);
+    const r = exportProjectRecord("zeta-desk", { dryRun: true });
+    expect(r.ok && r.warnings).toEqual(
+      expect.arrayContaining(["legacy kb_path: differs from record, kept in notes"]),
+    );
+    const equal = { ...OWNED_AND_LEGACY, slug: "zeta-eq", config: { kb_folder: "projects/zeta-docs/", kb_path: "projects/zeta-docs/", parent: "zeta-hub", parent_project: "zeta-hub" } };
+    const built = buildRecordFromRow(seed(equal as (typeof ROWS)[number]));
+    expect(built.differs).toEqual([]);
+    expect(legacyBlocks(built.markdown)["Legacy config"]).toBeUndefined();
+  });
+});
+
 describe("buildRecordFromRow — credential-shaped name/description (R1 W2)", () => {
   it("refuses the export instead of writing the value into the KB", () => {
     const key = "sk-" + "e".repeat(40);
@@ -297,6 +404,17 @@ describe("exportProjectRecord — write path", () => {
     expect(exportProjectRecord("acme-radar", { schedules: ["sched-ok"], dryRun: true })).toMatchObject({ ok: true, warnings: [] });
     const written = exportProjectRecord("acme-radar", { schedules: ["sched-ok", "sched-nope"] });
     expect(written).toMatchObject({ ok: true, written: true, warnings: [expect.stringContaining("sched-nope")] });
+  });
+
+  it("audit R2 W2: --kb-readme outside KB_README_RE is refused naming the rule, never the value; the live shape passes", () => {
+    seed(ROWS[0]!);
+    for (const bad of ["projects/x/README.MD", "knowledge/x.md", "projects/x/sub/README.md", "projects/x/a\nb.md"]) {
+      expect(exportProjectRecord("acme-radar", { kbReadme: bad, dryRun: true }), JSON.stringify(bad)).toEqual({
+        ok: false,
+        error: "--kb-readme must be projects/<folder>/<file>.md",
+      });
+    }
+    expect(exportProjectRecord("acme-radar", { kbReadme: "projects/williams-entry-radar/README.md", dryRun: true }).ok).toBe(true);
   });
 
   it("unknown slug, bad slug and bad --kb-readme are errors", () => {

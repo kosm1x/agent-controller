@@ -25,6 +25,10 @@ export const PROJECT_STATUSES = [
   "archived",
 ] as const;
 
+/** A `kb_readme` chat may inject: one `.md` file directly under a `projects/<folder>/`
+ *  (audit R1 C1 / R2 W2; shared by the record, the exporter flag and the injector). */
+export const KB_README_RE = /^projects\/[a-z0-9][a-z0-9-]*\/[^/\s]+\.md$/;
+
 /** Canonical KB-relative record path: exactly `projects/<slug>/project.md`. */
 const RECORD_PATH_RE = /^projects\/([a-z0-9][a-z0-9-]{1,62})\/project\.md$/;
 
@@ -72,8 +76,8 @@ export const projectContractSchema = z
     match_priority: z.number().int().default(0),
     stall_exempt: z.boolean().optional(),
     kb_readme: kbPathSchema
-      .refine((p) => p.toLowerCase().endsWith(".md"), {
-        message: "kb_readme must name a .md file",
+      .refine((p) => KB_README_RE.test(p), {
+        message: "kb_readme must be projects/<folder>/<file>.md",
       })
       .optional(),
     trusted: z.boolean().default(false),
@@ -117,7 +121,10 @@ export const projectContractSchema = z
   .transform((c) => {
     // Defaults that depend on the slug (spec §2: kb_folder, kb_readme).
     const kb_folder = c.kb_folder ?? `projects/${c.slug}/`;
-    const kb_readme = c.kb_readme ?? `${kb_folder.replace(/\/+$/, "")}/README.md`;
+    // Audit R2b: a derived default the injector would refuse is left unset
+    // (the injector then uses projects/<slug>/README.md).
+    const derived = `${kb_folder.replace(/\/+$/, "")}/README.md`;
+    const kb_readme = c.kb_readme ?? (KB_README_RE.test(derived) ? derived : undefined);
     return { ...c, kb_folder, kb_readme };
   });
 

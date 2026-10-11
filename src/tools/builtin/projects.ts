@@ -31,6 +31,7 @@ import {
 import {
   PROJECTOR_CONFIG_KEYS,
   applyProjectRecord,
+  stable,
 } from "../../projects/projector.js";
 import {
   isProjectProseSecret,
@@ -123,6 +124,8 @@ export const OPERATOR_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "trusted",
   "egress",
   "deny_paths",
+  // Audit R1 C1: names the README chat injects; only the record sets it.
+  "kb_readme",
 ]);
 
 const OWNED_CONFIG_KEYS: ReadonlySet<string> = new Set(PROJECTOR_CONFIG_KEYS);
@@ -533,6 +536,7 @@ CREDENTIAL STORAGE:
 
   async execute(rawArgs: Record<string, unknown>): Promise<string> {
     const slug = rawArgs.slug as string;
+    const row = typeof slug === "string" ? getProject(slug) : null;
     // Audit R6 should-fix 4: a non-object field, or a prototype key, is
     // refused — never silently dropped or stored as {"0":"h",...}.
     for (const field of ["credentials", "urls", "config"] as const) {
@@ -543,13 +547,19 @@ CREDENTIAL STORAGE:
       }
     }
     if (isPlainObject(rawArgs.config)) {
-      const refused = Object.keys(rawArgs.config).filter((k) =>
-        OPERATOR_ONLY_CONFIG_KEYS.has(k),
-      );
+      // Audit R2 W1: refused only when the value CHANGES; an echo of the
+      // row's own value (get → update) passes and is not written.
+      const config = rawArgs.config;
+      const opOnly = Object.keys(config).filter((k) => OPERATOR_ONLY_CONFIG_KEYS.has(k));
+      const refused = opOnly.filter((k) => stable(config[k]) !== stable(row?.config[k]));
       if (refused.length > 0) {
         return JSON.stringify({
           error: `No guardé: config.${refused.join(", config.")} solo lo cambia el operador en el registro del proyecto (projects/<slug>/project.md), no project_update.`,
         });
+      }
+      if (opOnly.length > 0) {
+        const rest = Object.fromEntries(Object.entries(config).filter(([k]) => !opOnly.includes(k)));
+        rawArgs = { ...rawArgs, config: Object.keys(rest).length > 0 ? rest : undefined };
       }
     }
     const refs = resolveProjectRefs(slug, rawArgs);

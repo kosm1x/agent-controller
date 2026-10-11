@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   conditionMatches,
@@ -25,6 +25,9 @@ vi.mock("../db/jarvis-fs.js", () => ({
   getFile: vi.fn(),
 }));
 import { getFilesByQualifier, getFile } from "../db/jarvis-fs.js";
+
+vi.mock("../db/projects.js", () => ({ getProject: vi.fn() }));
+import { getProject } from "../db/projects.js";
 
 // Ruling 3c (audit round 4 B1-b): one synthetic stored value stands in for
 // the secret store.
@@ -164,8 +167,8 @@ describe("detectProjectInMessage", () => {
     expect(detectProjectInMessage("cómo va pulso")).toBe("pulso-aura-upfront");
   });
 
-  it("aliases bare 'williams' to williams-radar", () => {
-    expect(detectProjectInMessage("Williams ranking")).toBe("williams-radar");
+  it("aliases bare 'williams' to the row slug williams-entry-radar (S6 ruling 4b)", () => {
+    expect(detectProjectInMessage("Williams ranking")).toBe("williams-entry-radar");
   });
 
   it("detects very-light-cms (VLCMS) by short form, spaced and slug names", () => {
@@ -191,6 +194,77 @@ describe("detectProjectInMessage", () => {
 
   it("returns null when no project mentioned", () => {
     expect(detectProjectInMessage("what time is it")).toBe(null);
+  });
+});
+
+describe("project README path resolves from the row (S6 ruling 4b)", () => {
+  const readmeRow = (path: string) => ({
+    id: "r",
+    path,
+    title: "Acme",
+    content: `README-AT-${path}`,
+    tags: "[]",
+    qualifier: "reference",
+    condition: null,
+    priority: 50,
+    related_to: "[]",
+    created_at: "",
+    updated_at: "",
+    user_edit_time: null,
+  });
+  beforeEach(() => {
+    vi.mocked(getFilesByQualifier).mockReset().mockReturnValue([]);
+    vi.mocked(getFile).mockReset().mockImplementation((path: string) => readmeRow(path) as never);
+    vi.mocked(getProject).mockReset();
+  });
+  afterEach(() => {
+    vi.mocked(getProject).mockReset();
+  });
+  const variableFor = (text: string) => buildKnowledgeBaseSections([], text).variable ?? "";
+
+  it("the row's config.kb_readme wins over the folder default", () => {
+    vi.mocked(getProject).mockReturnValue({ config: { kb_readme: "projects/acme-docs/README.md" } } as never);
+    expect(variableFor("Williams ranking")).toContain("README-AT-projects/acme-docs/README.md");
+    expect(vi.mocked(getProject)).toHaveBeenCalledWith("williams-entry-radar");
+    expect(vi.mocked(getFile)).toHaveBeenCalledWith("projects/acme-docs/README.md");
+  });
+
+  it("no row, or a row without kb_readme → projects/<slug>/README.md", () => {
+    vi.mocked(getProject).mockReturnValue(null);
+    expect(variableFor("update vlmp")).toContain("README-AT-projects/vlmp/README.md");
+    vi.mocked(getProject).mockReturnValue({ config: {} } as never);
+    expect(variableFor("update vlmp")).toContain("README-AT-projects/vlmp/README.md");
+  });
+
+  it("a throwing getProject falls back to projects/<slug>/README.md, one warn naming the slug only", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(getProject).mockImplementation(() => {
+      throw new Error("Database not initialized");
+    });
+    expect(variableFor("Williams ranking")).toContain(
+      "README-AT-projects/williams-entry-radar/README.md",
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain("williams-entry-radar");
+    expect(String(warn.mock.calls[0]![0])).not.toContain("Database not initialized");
+    warn.mockRestore();
+  });
+
+  it("audit R1 C1: a kb_readme outside projects/<folder>/*.md is never followed (default + one warn); another project's README is", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const bad of ["notes/x.md", "projects/x/../../notes/x.md", "/projects/x/README.md", "projects/x/README.txt", "projects/x/sub/README.md", "projects/x/a\\b.md", "projects/x/README.MD", "knowledge/x.md", "projects/x/a\nb.md", 42]) {
+      warn.mockClear();
+      vi.mocked(getProject).mockReturnValue({ config: { kb_readme: bad } } as never);
+      const v = variableFor("update vlmp");
+      expect(v, String(bad)).toContain("README-AT-projects/vlmp/README.md");
+      expect(warn, String(bad)).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).not.toContain(String(bad));
+    }
+    vi.mocked(getProject).mockReturnValue({ config: { kb_readme: "projects/other-slug/README.md" } } as never);
+    expect(variableFor("update vlmp")).toContain("README-AT-projects/other-slug/README.md");
+    vi.mocked(getProject).mockReturnValue({ config: { kb_readme: "projects/williams-entry-radar/README.md" } } as never);
+    expect(variableFor("Williams ranking")).toContain("README-AT-projects/williams-entry-radar/README.md");
+    warn.mockRestore();
   });
 });
 
