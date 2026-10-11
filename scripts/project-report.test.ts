@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
+import Database from "better-sqlite3";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -173,8 +174,9 @@ describe("project-report", () => {
     const { code, out } = run(["acme-radar"]);
     expect(code).toBe(0);
     const text = out.join("\n");
-    expect(text).toContain("Attribution: by schedule only");
-    expect(text).toContain("no project_slug columns until WS2");
+    expect(text).toContain(
+      "Attribution: tasks.project_slug UNION tag schedule:<id> (+ sub-tasks), deduped by task_id. Attribution columns: present, first attributed task none yet; older rows are schedule-tag only.",
+    );
     expect(text).toContain("record: yes (projects/acme-radar/project.md)");
     expect(text).toContain("repos: /srv/work/acme (primary)");
     expect(text).toContain("schedules: sched-a, sched-gone");
@@ -185,9 +187,70 @@ describe("project-report", () => {
     expect(out).toContain("  completed_with_concerns: 1 · 1");
     expect(out).toContain("  failed: 0 · 1");
     expect(out).toContain("  total: 3 · 4");
+    expect(out).toContain(
+      "  by source (7 d·30 d): schedule=0·0 parent=0·0 ritual=0·0 inbound=0·0 chat=0·0 thread=0·0 classifier=0·0 tag-only=3·4",
+    );
     expect(out).toContain("  met=2 failed=1 abandoned=1 pending=0");
     expect(out).toContain(`  $1.7500 over 3 ledger rows ${UNAUDITED_COST_LINE}`);
     expect(UNAUDITED_COST_LINE).toBe("(unaudited — run ./mc-ctl audit-claim before quoting)");
+  });
+
+  it("S6 WS2 UNION: a column-only task, a tag-only task and a task with both are each counted once; by source; gates and cost follow", () => {
+    initDatabase(dbPath);
+    try {
+      const db = getDatabase();
+      const task = (id: string, status: string, ageDays: number, slug: string, source: string, tags: string[] | null) =>
+        db
+          .prepare(
+            `INSERT INTO tasks (task_id, title, description, status, metadata, project_slug, project_source, created_at)
+             VALUES (?,?,?,?,?,?,?, datetime('now', ?))`,
+          )
+          .run(id, SECRETISH, SECRETISH, status, tags ? JSON.stringify({ tags }) : null, slug, source, `-${ageDays} days`);
+      task("col-only", "completed", 2, "acme-radar", "chat", null);
+      task("both", "completed", 1, "acme-radar", "schedule", ["schedule:sched-a"]);
+      task("old-col", "failed", 20, "acme-radar", "chat", null);
+      task("other-col", "completed", 1, "other-proj", "chat", null);
+      db.prepare(
+        `INSERT INTO task_gates (task_id, gate_id, criterion, state, source) VALUES ('col-only', 'G9', ?, 'met', 'submission')`,
+      ).run(SECRETISH);
+      const cost = db.prepare(
+        `INSERT INTO cost_ledger (run_id, task_id, agent_type, cost_usd) VALUES ('r', ?, 'fast', ?)`,
+      );
+      cost.run("both", 2);
+      cost.run("other-col", 5);
+    } finally {
+      closeDatabase();
+    }
+    const { out } = run(["acme-radar"]);
+    const text = out.join("\n");
+    expect(text).toMatch(/Attribution columns: present, first attributed task \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2};/);
+    expect(out).toContain("  completed: 4 · 4");
+    expect(out).toContain("  completed_with_concerns: 1 · 1");
+    expect(out).toContain("  failed: 0 · 2");
+    expect(out).toContain("  total: 5 · 7");
+    expect(out).toContain(
+      "  by source (7 d·30 d): schedule=1·1 parent=0·0 ritual=0·0 inbound=0·0 chat=1·2 thread=0·0 classifier=0·0 tag-only=3·4",
+    );
+    expect(out).toContain("  met=3 failed=1 abandoned=1 pending=0");
+    expect(out).toContain(`  $3.7500 over 4 ledger rows ${UNAUDITED_COST_LINE}`);
+    expect(text).not.toContain(SECRETISH);
+  });
+
+  it("before the v9 migration (no columns): the schedule-tag path alone, all tag-only", () => {
+    const raw = new Database(dbPath);
+    raw.exec(`
+      DROP INDEX idx_tasks_project_slug_created;
+      ALTER TABLE tasks DROP COLUMN project_slug;
+      ALTER TABLE tasks DROP COLUMN project_source;
+    `);
+    raw.close();
+    const { code, out } = run(["acme-radar"]);
+    expect(code).toBe(0);
+    expect(out.join("\n")).toContain("Attribution columns: absent (schema < v9); older rows are schedule-tag only.");
+    expect(out).toContain("  total: 3 · 4");
+    expect(out).toContain(
+      "  by source (7 d·30 d): schedule=0·0 parent=0·0 ritual=0·0 inbound=0·0 chat=0·0 thread=0·0 classifier=0·0 tag-only=3·4",
+    );
   });
 
   it("--days narrows the window", () => {

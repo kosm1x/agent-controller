@@ -55,6 +55,7 @@ import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
 import { classifyConcernReason } from "../intelligence/concern-reason.js";
+import { attributeNewTask } from "../projects/attribution.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -170,6 +171,15 @@ export interface TaskSubmission {
    */
   gates?: GateSpec[];
   gatesSource?: GateSource;
+  /**
+   * S6 WS2: a project the submitter names for this task — the chat detector
+   * (`projectSource: "chat"`) or the jarvis-pull seam (`"inbound"`, no
+   * producer yet). One input of `resolveProjectAttribution`
+   * (`projects/attribution.ts`); `tasks.project_slug`/`project_source` are
+   * set once, at the insert.
+   */
+  projectSlug?: string;
+  projectSource?: "inbound" | "chat";
 }
 
 export interface TaskRow {
@@ -520,14 +530,27 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     tools: submission.tools,
   });
 
+  // S6 WS2: the project columns are resolved ONCE here, from the same
+  // origin schedule the gate context reports, and written only by the INSERT
+  // below — a retry is a new row with its own resolution.
+  const gateContext = gateContextFor(taskId, submission);
+  const project = attributeNewTask(db, {
+    originScheduleId: gateContext.originScheduleId,
+    parentTaskId: submission.parentTaskId,
+    ritualId: submission.ritualId,
+    threadId: submission.threadId,
+    projectSlug: submission.projectSlug,
+    projectSource: submission.projectSource,
+  });
+
   // Insert task. retry_count defaults to 0 for fresh submissions; the
   // _isRequiredToolRetry path at line ~471 and the swarm-retry-policy
   // pass retryCount=predecessor.retry_count+1 to budget the per-sub-task
   // retry window (queue #231).
   db.prepare(
     `
-    INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata, retry_count)
-    VALUES (@taskId, @parentTaskId, @spawnType, @title, @description, @priority, 'queued', @agentType, @classification, @input, @metadata, @retryCount)
+    INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata, retry_count, project_slug, project_source)
+    VALUES (@taskId, @parentTaskId, @spawnType, @title, @description, @priority, 'queued', @agentType, @classification, @input, @metadata, @retryCount, @projectSlug, @projectSource)
   `,
   ).run({
     taskId,
@@ -563,6 +586,13 @@ export async function submitTask(submission: TaskSubmission): Promise<{
           })
         : null,
     retryCount: submission.retryCount ?? 0,
+    projectSlug: project?.slug ?? null,
+    projectSource: project?.source ?? null,
+  });
+  emitTraceEvent({
+    taskId,
+    name: "attribution.resolved",
+    attrs: { slug: project?.slug ?? null, source: project?.source ?? null },
   });
 
   // V8.4: the ledger is written before any work happens (rule zero). A
@@ -598,12 +628,7 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   }
 
   // Dispatch asynchronously
-  dispatchTask(
-    taskId,
-    classification.agentType,
-    submission,
-    gateContextFor(taskId, submission),
-  ).catch((err) => {
+  dispatchTask(taskId, classification.agentType, submission, gateContext).catch((err) => {
     log.error({ err, taskId }, "failed to dispatch task");
     updateTaskStatus(taskId, "failed", undefined, String(err));
   });

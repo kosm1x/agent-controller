@@ -177,6 +177,25 @@ import {
   RITUALES_RE,
   handleRitualesCommand,
 } from "../rituals/rituales-command.js";
+import { detectProjectInMessage } from "./kb-injection.js";
+
+/**
+ * S6 WS2: the project an OPERATOR chat turn names (the KB README detector),
+ * as submission fields for `tasks.project_slug` attribution (spec §4,
+ * "operator chat naming a project"). Nothing for a non-operator sender
+ * (no thread key) or when the text names no project — the dispatcher then
+ * falls back to the operator thread's last project.
+ */
+function chatProject(
+  text: string,
+  threadId: string | undefined,
+): { projectSlug?: string; projectSource?: "chat" } {
+  // Only the operator's words: an attached document's extracted text (after
+  // EXTRACTED_FILE_MARKER, telegram.ts) is file content, not a mention.
+  const typed = text.split(EXTRACTED_FILE_MARKER)[0]!;
+  const slug = threadId ? detectProjectInMessage(typed) : null;
+  return slug ? { projectSlug: slug, projectSource: "chat" } : {};
+}
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
 const TASK_TIMEOUT_FINAL_MS = 300_000; // 5 min → second "still working" warning
@@ -1924,6 +1943,7 @@ export class MessageRouter {
           tags: ["messaging", msg.channel, "background-agent"],
           // V8.3 seam origin: operator-initiated → gated tools ledger on this thread.
           threadId: this.operatorThreadKey(msg, tk),
+          ...chatProject(taskText, this.operatorThreadKey(msg, tk)),
           interactive: true, // explicit (W-E): a chat turn has an operator
           replyTracked: true, // pendingReplies below — may ask to confirm
         });
@@ -2961,6 +2981,7 @@ export class MessageRouter {
       // (`executeGatedCapability(…, { threadId: tk })`), so operator rows from
       // both seams stratify on one key. `undefined` for non-operator senders.
       threadId: this.operatorThreadKey(msg, tk),
+      ...chatProject(msg.text, this.operatorThreadKey(msg, tk)),
       interactive: true, // explicit (W-E): a chat turn has an operator
       replyTracked: true, // pendingReplies — may ask to confirm
       onTextChunk: streamController

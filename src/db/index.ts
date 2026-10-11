@@ -1347,6 +1347,45 @@ export function initDatabase(dbPath: string): Database.Database {
         }
       },
     },
+    {
+      version: 9,
+      description:
+        "S6 WS2 project attribution — tasks.project_slug + tasks.project_source (set once at insert) with idx_tasks_project_slug_created, and scheduled_tasks.project_slug (projected from the record's schedules); spec s6-project-contract-spec-2026-10-11 §4",
+      up: (db) => {
+        // Probe first (same reason as v7/v8): a DB pinned back below v9
+        // still carries the columns.
+        const has = (table: string, col: string) =>
+          (
+            db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+              name: string;
+            }>
+          ).some((c) => c.name === col);
+        if (!has("tasks", "project_slug")) {
+          db.exec("ALTER TABLE tasks ADD COLUMN project_slug TEXT DEFAULT NULL");
+        }
+        if (!has("tasks", "project_source")) {
+          db.exec(
+            "ALTER TABLE tasks ADD COLUMN project_source TEXT DEFAULT NULL",
+          );
+        }
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_project_slug_created ON tasks(project_slug, created_at)",
+        );
+        // scheduled_tasks is created lazily by ensureScheduledTasksTable()
+        // (rituals/dynamic.ts), whose CREATE carries project_slug; only a
+        // table that already exists needs the column added here.
+        const sched = db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_tasks'",
+          )
+          .get();
+        if (sched && !has("scheduled_tasks", "project_slug")) {
+          db.exec(
+            "ALTER TABLE scheduled_tasks ADD COLUMN project_slug TEXT DEFAULT NULL",
+          );
+        }
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

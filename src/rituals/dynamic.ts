@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   active          INTEGER DEFAULT 1,
   last_run_at     TEXT,
   created_at      TEXT DEFAULT (datetime('now')),
-  gates           TEXT
+  gates           TEXT,
+  project_slug    TEXT
 );
 `;
 

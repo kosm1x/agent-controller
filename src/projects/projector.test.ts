@@ -18,6 +18,7 @@ import {
   projectAllRecords,
 } from "./projector.js";
 import { parseProjectRecord, projectRecordRelPath } from "./record.js";
+import { ensureScheduledTasksTable } from "../rituals/dynamic.js";
 
 let kbDir: string;
 
@@ -85,7 +86,7 @@ describe("applyProjectRecord — create / update / skip / error", () => {
 
   it("creates the row from a record", () => {
     const r = applyProjectRecord(rel, record(BASE));
-    expect(r).toEqual({ slug: "acme-radar", action: "created" });
+    expect(r).toEqual({ slug: "acme-radar", action: "created", schedulesClaimed: 0, schedulesConflict: 0 });
     const p = getProject("acme-radar")!;
     expect(p.name).toBe("Acme Radar");
     expect(p.description).toBe("Synthetic lead paragraph.");
@@ -107,7 +108,7 @@ describe("applyProjectRecord — create / update / skip / error", () => {
     });
     const id = getProject("acme-radar")!.id;
     const r = applyProjectRecord(rel, record(BASE));
-    expect(r).toEqual({ slug: "acme-radar", action: "updated" });
+    expect(r).toEqual({ slug: "acme-radar", action: "updated", schedulesClaimed: 0, schedulesConflict: 0 });
     const p = getProject("acme-radar")!;
     expect(p.id).toBe(id);
     expect(p.name).toBe("Acme Radar");
@@ -138,7 +139,7 @@ describe("applyProjectRecord — create / update / skip / error", () => {
     applyProjectRecord(rel, record(BASE));
     const p0 = getProject("acme-radar")!;
     const logs0 = getProjectLog(p0.id, 50).length;
-    expect(applyProjectRecord(rel, record(BASE))).toEqual({ slug: "acme-radar", action: "skipped" });
+    expect(applyProjectRecord(rel, record(BASE))).toEqual({ slug: "acme-radar", action: "skipped", schedulesClaimed: 0, schedulesConflict: 0 });
     expect(getProjectLog(p0.id, 50).length).toBe(logs0);
     expect(getProject("acme-radar")!.updated_at).toBe(p0.updated_at);
   });
@@ -171,6 +172,79 @@ describe("applyProjectRecord — create / update / skip / error", () => {
   });
 });
 
+describe("S6 WS2 — scheduled_tasks.project_slug follows the record's schedules", () => {
+  const rel = projectRecordRelPath("acme-radar");
+  const relB = projectRecordRelPath("beta-two");
+  const owner = (id: string) =>
+    (
+      getDatabase()
+        .prepare("SELECT project_slug FROM scheduled_tasks WHERE schedule_id = ?")
+        .get(id) as { project_slug: string | null }
+    ).project_slug;
+
+  beforeEach(() => {
+    ensureScheduledTasksTable();
+    const ins = getDatabase().prepare(
+      "INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr) VALUES (?, 'n', 'd', '0 9 * * 1')",
+    );
+    for (const id of ["sched-0001", "sched-0002", "sched-0003"]) ins.run(id);
+  });
+
+  it("claims every listed schedule that exists; an id with no row is ignored", () => {
+    const r = applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0001", "sched-0002", "sched-gone"] }));
+    expect(r).toMatchObject({ action: "created", schedulesClaimed: 2, schedulesConflict: 0 });
+    expect([owner("sched-0001"), owner("sched-0002"), owner("sched-0003")]).toEqual([
+      "acme-radar",
+      "acme-radar",
+      null,
+    ]);
+  });
+
+  it("an unchanged (skipped) record still claims: a schedule created after the record is picked up", () => {
+    applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0001", "sched-late"] }));
+    getDatabase()
+      .prepare("INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr) VALUES ('sched-late','n','d','0 9 * * 1')")
+      .run();
+    const r = applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0001", "sched-late"] }));
+    expect(r).toMatchObject({ action: "skipped", schedulesClaimed: 2, schedulesConflict: 0 });
+    expect(owner("sched-late")).toBe("acme-radar");
+  });
+
+  it("releases (NULL) a schedule the record no longer lists; an emptied list releases all", () => {
+    applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0001", "sched-0002"] }));
+    const r = applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0002"] }));
+    expect(r).toMatchObject({ action: "updated", schedulesClaimed: 1, schedulesConflict: 0 });
+    expect([owner("sched-0001"), owner("sched-0002")]).toEqual([null, "acme-radar"]);
+    // `undefined` drops the key from the JSON block.
+    expect(applyProjectRecord(rel, record({ ...BASE, schedules: undefined }))).toMatchObject({ schedulesClaimed: 0, schedulesConflict: 0 });
+    expect(owner("sched-0002")).toBeNull();
+  });
+
+  it("a schedule claimed by two records: the second apply does not steal it; counted and logged once with ids only", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    applyProjectRecord(rel, record({ ...BASE, schedules: ["sched-0001"] }));
+    const r = applyProjectRecord(
+      relB,
+      block({ slug: "beta-two", name: "B", status: "active", schedules: ["sched-0001", "sched-0003"] }),
+    );
+    expect(r).toMatchObject({ action: "created", schedulesClaimed: 1, schedulesConflict: 1 });
+    expect([owner("sched-0001"), owner("sched-0003")]).toEqual(["acme-radar", "beta-two"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toBe(
+      "[projector] beta-two: schedule(s) already claimed by another record, left as is: sched-0001",
+    );
+    // The loser releasing its list never touches the winner's claim.
+    applyProjectRecord(relB, block({ slug: "beta-two", name: "B", status: "active" }));
+    expect([owner("sched-0001"), owner("sched-0003")]).toEqual(["acme-radar", null]);
+  });
+
+  it("a parse error claims nothing", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    applyProjectRecord(rel, "no json here");
+    expect(owner("sched-0001")).toBeNull();
+  });
+});
+
 describe("hook points — every registry path projects the content it is handed", () => {
   const rel = projectRecordRelPath("acme-radar");
 
@@ -186,7 +260,7 @@ describe("hook points — every registry path projects the content it is handed"
 
   it("upsertFromDiskWrite: registry row + projection, result returned", () => {
     const r = upsertFromDiskWrite(rel, record(BASE));
-    expect(r).toEqual({ slug: "acme-radar", action: "created" });
+    expect(r).toEqual({ slug: "acme-radar", action: "created", schedulesClaimed: 0, schedulesConflict: 0 });
     expect(getProject("acme-radar")!.name).toBe("Acme Radar");
     expect(upsertFromDiskWrite("knowledge/x.md", "# x")).toBeUndefined();
   });

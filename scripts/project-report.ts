@@ -7,10 +7,12 @@
  * Numbers, ids and the record's own fields only — never a task title,
  * description, output, schedule prompt or `result_summary`.
  *
- * Attribution in this slice is BY SCHEDULE ONLY: tasks tagged
- * `schedule:<id>` for an id in the record's `schedules[]`, plus their
- * sub-tasks (`parent_task_id`, any depth). There are no `project_slug`
- * columns yet (WS2), so chat, ritual and inbound work is not counted.
+ * Attribution (S6 WS2): the task set is `tasks.project_slug = <slug>`
+ * (set once at insert since schema v9) UNION the schedule-tag path — tasks
+ * tagged `schedule:<id>` for an id in the record's `schedules[]` — which
+ * still covers rows inserted before the columns existed; plus sub-tasks of
+ * either (`parent_task_id`, any depth). Deduped by task_id; gates and cost
+ * follow the same set. No backfill writes: the UNION is the back-attribution.
  */
 
 import Database from "better-sqlite3";
@@ -26,6 +28,7 @@ import {
   matchTermsFor,
 } from "../src/detection/stalled-projects.js";
 import { projectRecordRelPath } from "../src/projects/record.js";
+import { PROJECT_SOURCES } from "../src/projects/attribution.js";
 
 export const UNAUDITED_COST_LINE =
   "(unaudited — run ./mc-ctl audit-claim before quoting)";
@@ -70,11 +73,21 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
     .prepare("SELECT 1 FROM jarvis_files WHERE path = ?")
     .get(projectRecordRelPath(slug));
   const win = `-${days} days`;
+  // The columns arrive with schema v9 at deploy; before it the report runs
+  // on the schedule-tag path alone instead of failing.
+  const hasColumns = (
+    db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>
+  ).some((c) => c.name === "project_slug");
+  const since = hasColumns
+    ? (db
+        .prepare("SELECT MIN(created_at) AS t FROM tasks WHERE project_slug IS NOT NULL")
+        .get() as { t: string | null }).t
+    : null;
 
   const out: string[] = [];
   out.push(`=== Project ${slug} (read-only) ===`);
   out.push(
-    `Attribution: by schedule only (tag schedule:<id> + sub-tasks); no project_slug columns until WS2 — chat, ritual and inbound work is not counted. Windows: 7 d / ${days} d.`,
+    `Attribution: tasks.project_slug UNION tag schedule:<id> (+ sub-tasks), deduped by task_id. Attribution columns: ${hasColumns ? `present, first attributed task ${since ?? "none yet"}` : "absent (schema < v9)"}; older rows are schedule-tag only. Windows: 7 d / ${days} d.`,
   );
   out.push("");
   out.push("Record");
@@ -108,17 +121,32 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
     );
   }
 
-  // Tasks: schedule-tagged roots in the window, plus their sub-tasks.
+  // Tasks: column-attributed roots UNION schedule-tagged roots in the
+  // window, plus their sub-tasks; UNION dedupes by task_id.
   const ids: string[] = [];
-  if (schedules.length > 0) {
+  if (schedules.length > 0 || hasColumns) {
     const tags = schedules.map((s) => `schedule:${s}`);
+    const roots: string[] = [];
+    const params: unknown[] = [];
+    if (hasColumns) {
+      roots.push(
+        "SELECT task_id FROM tasks WHERE project_slug = ? AND created_at >= datetime('now', ?)",
+      );
+      params.push(slug, win);
+    }
+    if (tags.length > 0) {
+      roots.push(
+        `SELECT t.task_id FROM tasks t, json_each(t.metadata, '$.tags') j
+          WHERE json_valid(t.metadata) AND json_type(t.metadata, '$.tags') = 'array'
+            AND t.created_at >= datetime('now', ?)
+            AND j.value IN (${placeholders(tags.length)})`,
+      );
+      params.push(win, ...tags);
+    }
     const rows = db
       .prepare(
         `WITH RECURSIVE roots(task_id) AS (
-           SELECT DISTINCT t.task_id FROM tasks t, json_each(t.metadata, '$.tags') j
-            WHERE json_valid(t.metadata) AND json_type(t.metadata, '$.tags') = 'array'
-              AND t.created_at >= datetime('now', ?)
-              AND j.value IN (${placeholders(tags.length)})
+           ${roots.join("\n           UNION\n           ")}
          ), tree(task_id) AS (
            SELECT task_id FROM roots
            UNION
@@ -126,7 +154,7 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
          )
          SELECT task_id FROM tree`,
       )
-      .all(win, ...tags) as Array<{ task_id: string }>;
+      .all(...params) as Array<{ task_id: string }>;
     for (const r of rows) ids.push(r.task_id);
   }
   out.push("");
@@ -145,7 +173,26 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
   );
   if (byStatus.length === 0) out.push("  (none)");
   for (const s of byStatus) out.push(`  ${String(s.status)}: ${Number(s.d7)} · ${Number(s.dn)}`);
-  out.push(`  total: ${byStatus.reduce((a, s) => a + Number(s.d7), 0)} · ${ids.length}`);
+  const total7 = byStatus.reduce((a, s) => a + Number(s.d7), 0);
+  out.push(`  total: ${total7} · ${ids.length}`);
+  // By source: each task's column value; a task with none (a pre-v9 row, or
+  // an unattributed sub-task of a tagged run) is tag-only.
+  const bySource = hasColumns
+    ? inIds(
+        `SELECT COALESCE(project_source, 'tag-only') AS source,
+                COALESCE(SUM(created_at >= datetime('now', '-7 days')), 0) AS d7,
+                COUNT(*) AS dn
+           FROM tasks WHERE task_id IN (__IDS__) GROUP BY 1`,
+      )
+    : [{ source: "tag-only", d7: total7, dn: ids.length }];
+  out.push(
+    `  by source (7 d·${days} d): ${[...PROJECT_SOURCES, "tag-only"]
+      .map((k) => {
+        const r = bySource.find((x) => x.source === k);
+        return `${k}=${Number(r?.d7 ?? 0)}·${Number(r?.dn ?? 0)}`;
+      })
+      .join(" ")}`,
+  );
 
   out.push("");
   out.push(`Gates (${days} d)`);

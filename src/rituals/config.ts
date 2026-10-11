@@ -128,3 +128,12 @@ export const rituals: RitualDefinition[] = [
     enabled: false,
   },
 ];
+
+/**
+ * S6 WS2: the project a code ritual's tasks are attributed to, by ritual id
+ * (spec docs/planning/s6-project-contract-spec-2026-10-11.md §4, source
+ * `ritual`). Consumer: `src/projects/attribution.ts`. Empty by design: every ritual today is operator-level work and
+ * stays unattributed. A ritual that belongs to one project gets one entry
+ * here — never a per-ritual field.
+ */
+export const RITUAL_PROJECT: Readonly<Record<string, string>> = {};

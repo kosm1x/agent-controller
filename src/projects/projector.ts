@@ -74,6 +74,10 @@ export function contractToRowPatch(
 export interface ProjectApplyResult {
   slug: string;
   action: "created" | "updated" | "skipped";
+  /** S6 WS2: listed schedule ids whose `scheduled_tasks.project_slug` is this slug after the apply. */
+  schedulesClaimed?: number;
+  /** Listed schedule ids another record already claims (left with it). */
+  schedulesConflict?: number;
   error?: {
     reason: ProjectRecordErrorReason | "not_a_record_path" | "apply_failed";
     message: string;
@@ -91,6 +95,54 @@ function stable(v: unknown): string {
         )
       : x,
   );
+}
+
+/**
+ * S6 WS2: `scheduled_tasks.project_slug` follows the record's `schedules`.
+ * A listed id is claimed when unclaimed (never taken from another record);
+ * an id this slug holds that the record no longer lists is released. Ids
+ * with no `scheduled_tasks` row are ignored. Pure DB, one transaction.
+ */
+function syncScheduleClaims(
+  slug: string,
+  ids: readonly string[],
+): { schedulesClaimed: number; schedulesConflict: number } {
+  const db = getDatabase();
+  const table = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_tasks'",
+    )
+    .get();
+  // Created lazily by the dynamic scheduler; nothing to claim before it exists.
+  if (!table) return { schedulesClaimed: 0, schedulesConflict: 0 };
+  const listed = [...new Set(ids)];
+  const marks = listed.map(() => "?").join(", ");
+  return db.transaction(() => {
+    db.prepare(
+      listed.length === 0
+        ? "UPDATE scheduled_tasks SET project_slug = NULL WHERE project_slug = ?"
+        : `UPDATE scheduled_tasks SET project_slug = NULL WHERE project_slug = ? AND schedule_id NOT IN (${marks})`,
+    ).run(slug, ...listed);
+    if (listed.length === 0) return { schedulesClaimed: 0, schedulesConflict: 0 };
+    db.prepare(
+      `UPDATE scheduled_tasks SET project_slug = ? WHERE schedule_id IN (${marks}) AND project_slug IS NULL`,
+    ).run(slug, ...listed);
+    const rows = db
+      .prepare(
+        `SELECT schedule_id, project_slug FROM scheduled_tasks WHERE schedule_id IN (${marks})`,
+      )
+      .all(...listed) as Array<{ schedule_id: string; project_slug: string | null }>;
+    const conflict = rows.filter((r) => r.project_slug !== slug).map((r) => r.schedule_id);
+    if (conflict.length > 0) {
+      console.warn(
+        `[projector] ${slug}: schedule(s) already claimed by another record, left as is: ${conflict.join(", ")}`,
+      );
+    }
+    return {
+      schedulesClaimed: rows.length - conflict.length,
+      schedulesConflict: conflict.length,
+    };
+  })();
 }
 
 /**
@@ -119,8 +171,11 @@ export function applyProjectRecord(rel: string, content: string): ProjectApplyRe
         urls: patch.urls,
         config: patch.config,
       });
-      return { slug, action: "created" };
+      return { slug, action: "created", ...syncScheduleClaims(slug, record.contract.schedules ?? []) };
     }
+    // An unchanged row still syncs its claims: a schedule created after the
+    // record, or the column's first boot, is claimed on the next apply.
+    const claims = syncScheduleClaims(slug, record.contract.schedules ?? []);
 
     // Owned keys the record no longer has are removed from the row (null
     // deletes in the merge); keys the record does not own are left alone.
@@ -143,7 +198,7 @@ export function applyProjectRecord(rel: string, content: string): ProjectApplyRe
       !siteChanged &&
       !configChanged
     ) {
-      return { slug, action: "skipped" };
+      return { slug, action: "skipped", ...claims };
     }
     updateProject(slug, {
       name: patch.name,
@@ -154,7 +209,7 @@ export function applyProjectRecord(rel: string, content: string): ProjectApplyRe
         : {}),
       ...(configChanged ? { config: configPatch } : {}),
     });
-    return { slug, action: "updated" };
+    return { slug, action: "updated", ...claims };
   } catch (err) {
     const error =
       err instanceof ProjectRecordError

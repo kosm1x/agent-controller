@@ -1560,6 +1560,58 @@ describe("MessageRouter", () => {
       );
     });
 
+    // S6 WS2: an operator turn naming a project carries it to the dispatcher
+    // (`tasks.project_slug`, source chat); a non-operator turn or a turn
+    // naming none carries nothing (the thread fallback is the dispatcher's).
+    it("passes projectSlug/projectSource=chat for an operator turn naming a project, nothing otherwise", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "revisa el roadmap de pipesong",
+        timestamp: new Date(),
+      });
+      expect(submitTask).toHaveBeenLastCalledWith(
+        expect.objectContaining({ projectSlug: "pipesong", projectSource: "chat" }),
+      );
+
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "agenda algo",
+        timestamp: new Date(),
+      });
+      let last = (submitTask as any).mock.calls.at(-1)[0];
+      expect(last).not.toHaveProperty("projectSlug");
+      expect(last).not.toHaveProperty("projectSource");
+
+      // A project named only inside an attached document's extracted text
+      // is file content, not the operator's mention.
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: 'resume esto\n\n--- Contenido extraído del archivo "a.txt" ---\nroadmap de pipesong\n--- Fin del archivo ---',
+        timestamp: new Date(),
+      });
+      last = (submitTask as any).mock.calls.at(-1)[0];
+      expect(last).not.toHaveProperty("projectSlug");
+
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "grp@g.us",
+        text: "@jarvis revisa el roadmap de pipesong",
+        timestamp: new Date(),
+        metadata: {
+          isGroup: true,
+          groupJid: "grp@g.us",
+          senderJid: "member@s.whatsapp.net",
+        },
+      });
+      last = (submitTask as any).mock.calls.at(-1)[0];
+      expect(last.threadId).toBeUndefined();
+      expect(last).not.toHaveProperty("projectSlug");
+    });
+
     it("should truncate long message titles at 60 chars", async () => {
       const longText = "A".repeat(100);
       const msg: IncomingMessage = {
@@ -1980,6 +2032,36 @@ describe("MessageRouter", () => {
       expect(sub.title).toContain("[oculto]");
       expect(sub.description).toContain("investiga el acceso [oculto]");
       expect(JSON.stringify([sub.title, sub.description])).not.toContain(SCRUB_SYN);
+    });
+
+    // S6 WS2 (R2 W3b): the background-agent submit is the second chat seam.
+    it("S6 WS2: a background agent naming a project carries projectSlug/projectSource=chat; one naming none carries nothing", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza un agente e investiga el roadmap de pipesong",
+          timestamp: new Date(),
+        });
+        let sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+        expect(sub.spawnType).toBe("user-background");
+        expect(sub).toMatchObject({ projectSlug: "pipesong", projectSource: "chat" });
+
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza un agente e investiga el tráfico del sitio",
+          timestamp: new Date(),
+        });
+        sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+        expect(sub.spawnType).toBe("user-background");
+        expect(sub).not.toHaveProperty("projectSlug");
+        expect(sub).not.toHaveProperty("projectSource");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
     });
 
     it("delivers a sanitized reply when the runner output carries harness markers (usability plan Phase 0.1)", async () => {

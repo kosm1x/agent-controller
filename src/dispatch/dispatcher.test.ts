@@ -155,6 +155,30 @@ describe("submitTask", () => {
     expect(args.description).toBe("Check DB call");
   });
 
+  it("S6 WS2: the INSERT carries project_slug/project_source (NULL when nothing attributes the task)", async () => {
+    await submitTask({ title: "Unattributed", description: "d" });
+    const insertSql = mockPrepare.mock.calls
+      .map((c) => c[0])
+      .find((s) => s.includes("INSERT INTO tasks"))!;
+    expect(insertSql).toMatch(/retry_count, project_slug, project_source\)/);
+    expect(insertSql).toMatch(/@retryCount, @projectSlug, @projectSource\)/);
+    expect(mockRun.mock.calls[0][0]).toMatchObject({ projectSlug: null, projectSource: null });
+
+    mockRun.mockClear();
+    // The C1 validator's exact `projects.slug` lookup finds the row.
+    mockGet.mockReturnValueOnce({ slug: "acme-radar" });
+    await submitTask({
+      title: "Chat naming a project",
+      description: "d",
+      projectSlug: "acme-radar",
+      projectSource: "chat",
+    });
+    expect(mockRun.mock.calls[0][0]).toMatchObject({
+      projectSlug: "acme-radar",
+      projectSource: "chat",
+    });
+  });
+
   it("uses default priority 'medium' when none specified", async () => {
     await submitTask({
       title: "Priority test",
@@ -1059,7 +1083,8 @@ describe("dispatchTask trace emits", () => {
       },
     });
     const names = await traceNamesAfterDispatch();
-    expect(names[0]).toBe("task.started");
+    // S6 WS2: the insert-time attribution trace precedes the run.
+    expect(names.slice(0, 2)).toEqual(["attribution.resolved", "task.started"]);
     expect(names.filter((n) => n === "task.completed")).toHaveLength(1);
     expect(names).not.toContain("task.failed");
 
@@ -1096,7 +1121,9 @@ describe("dispatchTask trace emits", () => {
   it("failed-result path: one task.failed carrying the mapped status + error", async () => {
     stubRunner({ success: false, error: "no scope", status: "FAIL" });
     const names = await traceNamesAfterDispatch();
-    expect(names.filter((n) => n !== "task.started")).toEqual(["task.failed"]);
+    expect(
+      names.filter((n) => n !== "task.started" && n !== "attribution.resolved"),
+    ).toEqual(["task.failed"]);
     const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
     expect(terminal.attrs).toMatchObject({ status: "failed", error: "no scope" });
   });

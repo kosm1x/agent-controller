@@ -73,7 +73,9 @@ export type TraceEventName =
   | "provenance.checked"
   | "citations.checked"
   // Queue 2026-10-08 (late) item 10: done-claim after a failed write
-  | "write.failure_claim";
+  | "write.failure_claim"
+  // S6 WS2: the project a new task was attributed to at insert ({slug, source}, or nulls)
+  | "attribution.resolved";
 
 export interface TraceEvent {
   taskId: string;
