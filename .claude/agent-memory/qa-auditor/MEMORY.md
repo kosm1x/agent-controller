@@ -6,6 +6,14 @@
 
 ## Project Knowledge
 
+- [swarm-parent-cost-r2-audit](swarm-parent-cost-r2-audit.md) - 10-09: R2 PASS, W1-W3 closed, 11/11 mutants RED. Guard scans heredocs: spell vit""est.
+- [swarm-parent-cost-r1-audit](swarm-parent-cost-r1-audit.md) - 10-09: PASS-W-WARN, 4/9 survived. CLASS: fixture pins actualModel the producer (plan/reflect) never emits.
+- [sdk-final-turn-selection-r2-audit](sdk-final-turn-selection-r2-audit.md) - 10-09: R2 PASS-W-WARN, C1 closed, 3/5 RED. CLASS: two consumer strippers; mirroring one misses the other.
+- [sdk-final-turn-selection-r1-audit](sdk-final-turn-selection-r1-audit.md) - 10-09: FAIL 1 Crit, 6/9 RED. CLASS: thin-answer length test counted the STATUS trailer the consumer strips.
+- [gdelt-connect-timeout-r1-audit](gdelt-connect-timeout-r1-audit.md) - 10-09: PASS-W-WARN, 3/6 mutants survived. npm undici 7 Agent IS honoured by Node 22 global fetch (stalled-TLS probe).
+- [gate-check-kb-cwd-r1-audit](gate-check-kb-cwd-r1-audit.md) - 10-08: PASS-W-WARN, 6/8 RED, replay 10/132 redirected 0 FP. CLASS: implicit cwd move voids an absolute-path DENY rule.
+
+- [explicit-swarm-request-r1-audit](explicit-swarm-request-r1-audit.md) - 10-08: PASS-W-WARN, 0 live FPs. CLASS: full inbound text = conversations "User:" rows; replay there not titles.
 - [six-item-queue-2026-10-07-r1-audit](six-item-queue-2026-10-07-r1-audit.md) - 10-07: FAIL 1 Crit. CLASS: schema-head bump pinned in a SIBLING test + deploy.sh gate; eval probe blind to STATUS_SUFFIX.
 - [grader-item11-be-r2-audit](grader-item11-be-r2-audit.md) - 10-06: R1 + R2 both PASS-W-WARN, 0 Crit. CLASS: a "never rejects" promise needs a timer callback that cannot throw before resolve().
 - [grader-item11-be-r1-audit](grader-item11-be-r1-audit.md) - 10-06: PASS-W-WARN. CLASS: a nonce fence covers only the sections it wraps (provenance unfenced).
@@ -123,3 +131,16 @@
 - [jarvis-pull-task-seam-r2-audit](jarvis-pull-task-seam-r2-audit.md) - 09-30: FAIL 1 Crit. CLASS: allow-tree-minus-denies policy leaked divorce/health rows.
 - [jarvis-pull-task-seam-r3-audit](jarvis-pull-task-seam-r3-audit.md) - 09-30: FAIL 1 Crit (data). CLASS: leak moved to a whole-tree SEED.
 - [jarvis-pull-task-seam-r4-audit](jarvis-pull-task-seam-r4-audit.md) - 09-30: PASS-W-WARN, 8/8 RED. CLASS: routerRoot = reply route, not operator watching.
+- [evolution-log-metrics-r1-audit](evolution-log-metrics-r1-audit.md) - 10-09: PASS-W-WARN, 3/7 mutants survived. CLASS: mid-day fixtures can't tell a 00:00 from a 06:00 UTC day boundary.
+- [enforce-grade-cap-r1-audit](enforce-grade-cap-r1-audit.md) - 10-09: PASS-W-WARN, 7/8 RED (1 equiv). CLASS: separate-pool mutant killed only by the drain seam, not a cross-mode test.
+- kb-registry-parity-r1-audit - 10-09: PASS-W-WARN, 10/15 mutants RED. CLASS: syncing a disk edit into the registry also syncs its STALE BASE (registry-newer rows) and breaks prior sha8 read-back gates.
+- kb-registry-parity-r2-audit - 10-09: R2 PASS-W-WARN, 0 Crit, 11 files green, tsc clean; first walk refreshes 25 rows. CLASS: a metadata-only updated_at bump fakes 'registry newer'.
+- [write-failure-claim-r1-audit](write-failure-claim-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS-W-NOTES, 7/7 RED. CLASS: recorder inside try misses refusal returns above it; exclude mc.db when rsyncing scratch.
+- [stop-hook-deadline-l5-r1-audit](stop-hook-deadline-l5-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS, 6/6 RED. CLASS: negative derived budget => every gate budgetExhausted => allowed unchecked.
+- [l2-mcp-result-fidelity-r1-audit](l2-mcp-result-fidelity-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS-W-NOTES. CLASS: spec structuredContent dup; key-order compare needs its own reorder test.
+- [s6-ws1-project-record-r1-audit](s6-ws1-project-record-r1-audit.md) - 10-11: FAIL 2 Crit. CLASS: shell_exec deny list is a sibling guard; a hand-written inverse is not the projector.
+- [s6-ws1-project-record-r2-audit](s6-ws1-project-record-r2-audit.md) - 10-11: R2 PASS-W-WARN, 0 Crit. CLASS: delimiter-lookahead misses `<`/`>`; parse-valid != description preserved.
+- [s6-ws1-project-record-r2b-audit](s6-ws1-project-record-r2b-audit.md) - 10-11: R2b PASS-W-WARN, 0 Crit. CLASS: read-back passes an odd fence a later edit re-pairs; `keyword=` blanking admits plaintext creds.
+- [s6-ws2-attribution-r1-audit](s6-ws2-attribution-r1-audit.md) - 10-11: FAIL 2 Crit. CLASS: sliding thread fallback re-reads its own writes (window self-renews; live max gap 14 h).
+- [s6-ws2-attribution-r2-audit](s6-ws2-attribution-r2-audit.md) - 10-11: R2 PASS-W-WARN, 0 Crit, 11/13 RED. CLASS: exact-slug fast path skips the status filter the alias path applies (archived wins).
+- [s6-readme-path-4b-r1-audit](s6-readme-path-4b-r1-audit.md) - 10-11: R1 FAIL -> R2 PASS-W-WARN. CLASS: a fixed injected path made a row POINTER inherits the pointer's write gate.
