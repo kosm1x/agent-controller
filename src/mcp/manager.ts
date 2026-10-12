@@ -402,7 +402,13 @@ export class McpManager {
           },
           callFn,
           deferSet.has(mcpTool.name),
-          config.toolTrust?.[mcpTool.name],
+          // Record flags reach the hints only from a trusted record (audit R1 C1).
+          // Defence in depth: the `trusted` term is unreachable today (untrusted
+          // records are skipped in init above), so a surviving "trusted check
+          // dropped" mutant is equivalent, not a test gap.
+          source?.kind === "record" && source.trusted
+            ? config.toolTrust?.[mcpTool.name]
+            : undefined,
         );
         registry.register(tool);
         toolNames.push(tool.name);
@@ -545,7 +551,12 @@ export class McpManager {
       const hints = resolveMcpToolHints(
         namespacedName,
         undefined,
-        config.toolTrust?.[toolDef.name],
+        // Defence in depth (audit R1 C1): records are never lazy and untrusted
+        // records are skipped in init, so the `trusted` term is unreachable
+        // today; a surviving "trusted check dropped" mutant is equivalent.
+        config.source?.kind === "record" && config.source.trusted
+          ? config.toolTrust?.[toolDef.name]
+          : undefined,
       );
       const tool: Tool = {
         name: namespacedName,

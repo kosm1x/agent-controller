@@ -42,7 +42,13 @@ const HINT_KEYS = [
  * preference: (1) the server's own `tools/list` annotations (the manager
  * passes them for RECORD servers only — service servers keep the curated
  * table, audit R1 W1), (2) the
- * record's per-tool `destructive` flag, (3) the name-pattern lookup
+ * record's per-tool flags (`read_only: true` = a read; else `destructive`
+ * when set; trust assumption: only a `trusted: true` record reaches here,
+ * and only the operator writes one — `project_update` refuses `trusted` and
+ * `capabilities` (`OPERATOR_ONLY_CONFIG_KEYS`), project.md writes are
+ * blocked — so the operator's `read_only` claim outranks the name table: a
+ * record tool named `delete_x` flagged read_only is read-only), (3) the
+ * name-pattern lookup
  * (`getMcpToolHints`). Undefined when no level says anything, so the
  * registry's conservative-unknown defaults (destructive) apply. A field the
  * server leaves out falls to the next level; a read-only tool with no
@@ -52,23 +58,35 @@ const HINT_KEYS = [
 export function resolveMcpToolHints(
   namespacedName: string,
   serverAnnotations?: McpServerAnnotations,
-  recordFlags?: { destructive?: boolean },
+  recordFlags?: { destructive?: boolean; read_only?: boolean },
 ): McpToolHintOverride | undefined {
-  const record: McpToolHintOverride | undefined =
-    recordFlags?.destructive === undefined
-      ? undefined
-      : {
-          readOnlyHint: false,
-          destructiveHint: recordFlags.destructive,
-          idempotentHint: false,
-          openWorldHint: true,
-        };
-  const base = record ?? getMcpToolHints(namespacedName);
   const server = Object.fromEntries(
     HINT_KEYS.filter((k) => typeof serverAnnotations?.[k] === "boolean").map(
       (k) => [k, serverAnnotations![k] as boolean],
     ),
   ) as Partial<McpToolHintOverride>;
+  // A server that says it writes (readOnlyHint false, or destructiveHint
+  // true) drops the record's read_only level entirely (audit R1 W1, R2 W1):
+  // no read/non-destructive/idempotent hints borrowed from a "read".
+  const record: McpToolHintOverride | undefined =
+    recordFlags?.read_only === true &&
+    server.readOnlyHint !== false &&
+    server.destructiveHint !== true
+      ? {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        }
+      : recordFlags?.destructive === undefined
+        ? undefined
+        : {
+            readOnlyHint: false,
+            destructiveHint: recordFlags.destructive,
+            idempotentHint: false,
+            openWorldHint: true,
+          };
+  const base = record ?? getMcpToolHints(namespacedName);
   if (!base && Object.keys(server).length === 0) return undefined;
   const readOnlyHint = server.readOnlyHint ?? base?.readOnlyHint ?? false;
   return {
@@ -206,7 +224,7 @@ export function createMcpTool(
   mcpTool: McpToolInfo,
   callFn: McpCallFn,
   deferred = false,
-  recordFlags?: { destructive?: boolean },
+  recordFlags?: { destructive?: boolean; read_only?: boolean },
 ): Tool {
   const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${mcpTool.name}`;
 

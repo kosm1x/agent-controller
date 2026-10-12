@@ -49,7 +49,7 @@ describe("recordToServerConfig", () => {
         args: ["dist/mcp.js"],
         env: ["ACME_RADAR_TOKEN"],
         trust: "AB",
-        tools: { acme_trigger_run: { trust: "B", destructive: true } },
+        tools: { acme_trigger_run: { trust: "B", destructive: true }, acme_history: { read_only: true } },
         deferred: ["acme_history"],
       },
       "acme-radar",
@@ -66,7 +66,7 @@ describe("recordToServerConfig", () => {
         envSpec: [{ name: "ACME_RADAR_TOKEN", secret: "SECRET_ACME_RADAR_TOKEN" }],
         source: { kind: "record", slug: "acme-radar", trusted: true, secrets: ["SECRET_ACME_RADAR_TOKEN"] },
         trust: "AB",
-        toolTrust: { acme_trigger_run: { trust: "B", destructive: true } },
+        toolTrust: { acme_trigger_run: { trust: "B", destructive: true }, acme_history: { read_only: true } },
         deferredTools: ["acme_history"],
       },
     });
@@ -361,6 +361,18 @@ describe("loadMcpConfig (json + db)", () => {
 
     writeFileSync(cfg.path, JSON.stringify({ svc: { command: "node", envNames: ["lower_case"] } }));
     expect(() => loadMcpConfig()).toThrow(/envNames/);
+  });
+
+  it("audit R1 C1: a service entry's toolTrust is never carried (record-only flags), warned by server id", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    writeFileSync(
+      cfg.path,
+      JSON.stringify({ svc: { command: "node", toolTrust: { svc_zork: { read_only: true } } } }),
+    );
+    const out = loadMcpConfig()!;
+    expect(out.svc).toEqual({ command: "node", source: { kind: "service" } });
+    expect("toolTrust" in out.svc!).toBe(false);
+    expect(warn.mock.calls.flat().join(" ")).toContain('svc: "toolTrust" is record-only');
   });
 
   it("no json and no declaring row → null; records alone still load", () => {

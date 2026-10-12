@@ -1204,3 +1204,46 @@ describe("McpManager dead-server recovery", () => {
     await manager.shutdown();
   });
 });
+
+describe("audit R1 C1: record per-tool flags reach the hints only from a trusted record", () => {
+  const flags = { svc_zork: { read_only: true } };
+
+  it("eager registration: a service tool with a read_only flag stays non-read-only; a trusted record's turns read-only", async () => {
+    mockConnect.mockResolvedValue(undefined);
+    mockListTools.mockResolvedValue(makeMcpTools([{ name: "svc_zork" }]));
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+    await manager.init(
+      {
+        svc: { command: "node", source: { kind: "service" }, toolTrust: flags },
+        rec: { command: "node", source: { kind: "record", slug: "syn-rec", trusted: true }, toolTrust: flags },
+      },
+      registry,
+    );
+    expect(registry.get("svc__svc_zork")?.readOnlyHint).not.toBe(true);
+    expect(registry.get("rec__svc_zork")?.readOnlyHint).toBe(true);
+    await manager.shutdown();
+  });
+
+  it("lazy proxies: a service tool with a read_only flag stays non-read-only; a trusted record's turns read-only", async () => {
+    const registry = new ToolRegistry();
+    const manager = new McpManager();
+    await manager.init(
+      {
+        svc: { command: "node", lazy: true, tools: [{ name: "svc_zork" }], source: { kind: "service" }, toolTrust: flags },
+        rec: {
+          command: "node",
+          lazy: true,
+          tools: [{ name: "svc_zork" }],
+          source: { kind: "record", slug: "syn-rec", trusted: true },
+          toolTrust: flags,
+        },
+      },
+      registry,
+    );
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(registry.get("svc__svc_zork")?.readOnlyHint).not.toBe(true);
+    expect(registry.get("rec__svc_zork")?.readOnlyHint).toBe(true);
+    await manager.shutdown();
+  });
+});

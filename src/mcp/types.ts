@@ -49,7 +49,7 @@ export interface McpServerConfig {
   /** Server-wide Rule-of-Two class from the record. */
   trust?: TrustClass;
   /** Per-tool flags from the record, keyed by the server's own tool name. */
-  toolTrust?: Record<string, { trust?: TrustClass; destructive?: boolean }>;
+  toolTrust?: Record<string, { trust?: TrustClass; destructive?: boolean; read_only?: boolean }>;
   /** Whether this server is enabled (default: true). */
   enabled?: boolean;
   /** Lazy-load: register placeholder tools at startup, connect on first call. */

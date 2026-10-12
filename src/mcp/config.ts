@@ -24,7 +24,7 @@ export interface RecordMcpEntry {
   cwd?: string;
   env?: RecordEnvEntry[];
   trust?: TrustClass;
-  tools?: Record<string, { trust?: TrustClass; destructive?: boolean }>;
+  tools?: Record<string, { trust?: TrustClass; destructive?: boolean; read_only?: boolean }>;
   deferred?: string[];
 }
 
@@ -229,6 +229,13 @@ function loadServiceConfig(): McpConfig | null {
       throw new Error(
         `MCP server "${serverId}": "envNames" must be an array of env names`,
       );
+    }
+    // Per-tool flags are record-only (audit R1 C1): a service entry never
+    // declares its own tools read-only. Stripped, not refused: a throw here
+    // would take every service server down for one stray key.
+    if ("toolTrust" in config) {
+      delete config.toolTrust;
+      console.warn(`[mcp] ${serverId}: "toolTrust" is record-only; ignored for a service server`);
     }
     config.source = { kind: "service" };
   }

@@ -47,7 +47,7 @@ const FULL = {
         cwd: ".",
         env: ["ACME_API_TOKEN"],
         trust: "AB",
-        tools: { acme_run: { trust: "B", destructive: true } },
+        tools: { acme_run: { trust: "B", destructive: true }, acme_list: { read_only: true, destructive: false } },
         deferred: [],
       },
     ],
@@ -351,6 +351,33 @@ describe("parseProjectRecord — every error reason", () => {
         }),
       ),
     ).toBe("slug_mismatch");
+  });
+
+  it("S6 tools.read_only: accepted alone or with destructive:false; read_only+destructive true is refused naming the tool only", () => {
+    const rec = (tools: unknown) =>
+      block({ slug: "ok-slug", name: "N", status: "active", capabilities: { mcp: [{ command: "node", tools }] } });
+    const ok = parseProjectRecord(
+      rec({ syn_list: { read_only: true }, syn_get: { read_only: true, destructive: false }, syn_put: { read_only: false } }),
+      { folderSlug: "ok-slug" },
+    );
+    expect(ok.contract.capabilities?.mcp?.[0]?.tools).toEqual({
+      syn_list: { read_only: true },
+      syn_get: { read_only: true, destructive: false },
+      syn_put: { read_only: false },
+    });
+    let err: ProjectRecordError | undefined;
+    try {
+      parseProjectRecord(rec({ syn_list: { read_only: true }, syn_wipe: { trust: "B", read_only: true, destructive: true } }), {
+        folderSlug: "ok-slug",
+      });
+    } catch (e) {
+      err = e as ProjectRecordError;
+    }
+    expect(err?.reason).toBe("schema");
+    expect(err?.issues.map((i) => i.message)).toEqual(["tool syn_wipe: read_only and destructive are contradictory"]);
+    expect(() => parseProjectRecord(rec({ syn_list: { read_only: "yes" } }), { folderSlug: "ok-slug" })).toThrow(
+      ProjectRecordError,
+    );
   });
 
   it("the error message never carries record content", () => {

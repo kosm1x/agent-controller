@@ -277,7 +277,7 @@ describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --f
               args: ["dist/mcp.js"],
               env: ["ACME_RADAR_API_TOKEN"],
               trust: "AB",
-              tools: { acme_trigger_run: { trust: "B", destructive: true } },
+              tools: { acme_trigger_run: { trust: "B", destructive: true }, acme_history: { read_only: true } },
               deferred: ["acme_history"],
             },
           ],
@@ -291,6 +291,9 @@ describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --f
     expect(md1).not.toContain("credentials");
     const json = parseProjectRecord(md1, { folderSlug: "acme-radar" }).json as Record<string, unknown>;
     expect(json.capabilities).toEqual(getProject("acme-radar")!.config.capabilities);
+    expect((json.capabilities as { mcp: Array<{ tools: Record<string, unknown> }> }).mcp[0]!.tools.acme_history).toEqual({
+      read_only: true,
+    });
     expect(json.trusted).toBe(true);
     expect(json.secrets).toEqual(["SECRET_ACME_RADAR_API_TOKEN"]);
     expect(json.inbound).toEqual({ route: "/api/acme-pull", token_secret: "ACME_INBOUND_TOKEN" });

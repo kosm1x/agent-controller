@@ -747,6 +747,51 @@ describe("S6 WS3 — hint precedence: server annotations > record flags > getMcp
     });
   });
 
+  it("record read_only:true is a read: readOnlyHint true, destructiveHint false, idempotent (also over a destructive name)", () => {
+    const want = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+    expect(resolveMcpToolHints("acme__unknown_thing", undefined, { read_only: true })).toEqual(want);
+    expect(resolveMcpToolHints("acme__unknown_thing", undefined, { read_only: true, destructive: false })).toEqual(want);
+    // `xpoz_trigger_run` is DESTRUCTIVE in the name table
+    expect(ann(createMcpTool("xpoz", { name: "xpoz_trigger_run" }, call, false, { read_only: true }))).toMatchObject(want);
+  });
+
+  it("destructive:false alone is unchanged: a non-destructive WRITE (readOnlyHint false); read_only:false falls through", () => {
+    expect(resolveMcpToolHints("acme__unknown_thing", undefined, { destructive: false })).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    expect(resolveMcpToolHints("acme__unknown_thing", undefined, { read_only: false })).toBeUndefined();
+    expect(resolveMcpToolHints("acme__unknown_thing", undefined, { read_only: false, destructive: true })).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  });
+
+  it("a server readOnlyHint:false annotation beats the record read_only:true", () => {
+    // audit R1 W1: the record's read_only level is dropped entirely — no borrowed non-destructive/idempotent hints
+    expect(resolveMcpToolHints("acme__unknown_thing", { readOnlyHint: false }, { read_only: true })).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    // ... falling back to the record's destructive flag when one is set
+    expect(
+      resolveMcpToolHints("acme__unknown_thing", { readOnlyHint: false }, { read_only: true, destructive: false }),
+    ).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+    // audit R2 W1: a server destructiveHint:true (readOnlyHint omitted) also drops the record read_only level
+    expect(resolveMcpToolHints("acme__unknown_thing", { destructiveHint: true }, { read_only: true })).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    const t = createMcpTool("acme", { name: "acme_list", annotations: { readOnlyHint: false } }, call, false, { read_only: true });
+    expect(ann(t)).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false });
+  });
+
   it("the name table is the fallback; an unknown tool with nothing anywhere stays destructive", () => {
     expect(ann(createMcpTool("browser", { name: "goto" }, call))).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(resolveMcpToolHints("acme__unknown_thing")).toBeUndefined();

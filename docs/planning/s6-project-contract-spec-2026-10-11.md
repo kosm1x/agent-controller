@@ -59,6 +59,7 @@ comm -12 <(sqlite3 -readonly /root/claude/mission-control/data/mc.db "SELECT slu
 | `deny_paths` | path[], narrow only | O | `shell.ts:434,450`, `immutable-core.ts:146,148` |
 | `secrets` | `SECRET_*` names that point into the row's `credentials` | O | `lib/secret-refs.ts:104` (`projectIdentity`); NEW: MCP env (§3) |
 | `capabilities.mcp[]` | §3 | O | `mcp/config.ts:15`, `mcp/manager.ts:107,178`, `rule-of-two.ts:296,312`, `mcp/annotations.ts`, `scope.ts`, `scope-classifier.ts:35,115` |
+| `capabilities.mcp[].tools.<name>.read_only` | bool; `true` = the tool only reads (`readOnlyHint` true, `destructiveHint` false, idempotent); refused together with `destructive: true`. `destructive` alone, `true` or `false`, still declares a write | O | `mcp/bridge.ts:53` (`resolveMcpToolHints`, record level; server annotations still win), so a record read under trust `AB` is no Rule-of-Two trifecta (`tools/types.ts:125`) |
 | `capabilities.brief` | heading of a section in the notes | O | NEW: replaces the DENUE guard at `runners/fast-runner.ts:1178-1311` (model-facing) |
 | `routing.summary` | one line | O | NEW: classifier group line (`scope-classifier.ts:115`; model-facing) |
 | `schedules` | `schedule_id`[] | O | NEW: projected to `scheduled_tasks.project_slug` (§4); `rituals/dynamic.ts:143` |

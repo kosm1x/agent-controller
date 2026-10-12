@@ -89,8 +89,16 @@ const mcpEntrySchema = z.strictObject({
       z.strictObject({
         trust: trustSchema.optional(),
         destructive: z.boolean().optional(),
+        read_only: z.boolean().optional(),
       }),
     )
+    .superRefine((tools, ctx) => {
+      for (const [name, t] of Object.entries(tools)) {
+        if (t.read_only === true && t.destructive === true) {
+          ctx.addIssue({ code: "custom", message: `tool ${name}: read_only and destructive are contradictory` });
+        }
+      }
+    })
     .optional(),
   deferred: z.array(z.string()).optional(),
 });

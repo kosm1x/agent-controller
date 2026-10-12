@@ -18,6 +18,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { mergeRecordServers } from "../mcp/config.js";
 import { getMcpToolHints } from "../mcp/annotations.js";
+import { createMcpTool } from "../mcp/bridge.js";
 import { getToolAnnotations, type Tool } from "./types.js";
 import {
   RULE_OF_TWO_CLASSIFICATION,
@@ -146,6 +147,21 @@ describe("Rule of Two — classification coverage (both directions)", () => {
     expect(resolveRuleOfTwo({ name: "synuntrusted__x" })).toEqual({ untrustedInput: true, sensitiveAccess: true });
     expect(ruleOfTwoMcpPrefixes()).not.toContain("synuntrusted__");
     expect(isRuleOfTwoClassified("syntrusted__x")).toBe(true);
+  });
+
+  it("S6 tools.read_only end-to-end: a record read under trust AB is no trifecta (low); the same tool without the flag is", () => {
+    registerRecordMcpRuleOfTwo({
+      synro: { command: "node", trust: "AB", source: { kind: "record", slug: "syn-ro", trusted: true } },
+    });
+    const call = async () => ({ content: [] });
+    expect(getMcpToolHints("synro__syn_zork")).toBeUndefined();
+    const read = getToolAnnotations(createMcpTool("synro", { name: "syn_zork" }, call, false, { read_only: true }));
+    expect(read).toMatchObject({ readOnlyHint: true, ruleOfTwoTrifecta: false, riskTier: "low", requiresConfirmation: false });
+    const bare = getToolAnnotations(createMcpTool("synro", { name: "syn_zork" }, call));
+    expect(bare).toMatchObject({ ruleOfTwoTrifecta: true, riskTier: "high", requiresConfirmation: true });
+    // "not destructive" is still a write: trifecta under A∧B
+    const nd = getToolAnnotations(createMcpTool("synro", { name: "syn_zork" }, call, false, { destructive: false }));
+    expect(nd).toMatchObject({ readOnlyHint: false, ruleOfTwoTrifecta: true });
   });
 
   it("every MCP per-tool override names a tool under a known prefix", () => {
