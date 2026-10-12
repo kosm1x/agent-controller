@@ -840,7 +840,7 @@ describe("rendering", () => {
     });
     recordGateResult("t1", "G1", { state: "failed", evidence: "exit 1" });
     expect(formatLedgerBlock(listGates("t1"))).toBe(
-      'Gates: 0/2 met · FAILED: GR-g-1.1 "every provider is listed" (Conekta missing); G1 (exit 1)',
+      'Gates: 0/2 met · verdict failed · FAILED: GR-g-1.1 "every provider is listed" (Conekta missing); G1 (exit 1)',
     );
   });
 
@@ -872,7 +872,7 @@ describe("rendering", () => {
     expect(line).not.toMatch(/\n/);
     expect(line).not.toContain("notarealvalue");
     expect(line).toBe(
-      'Gates: 0/1 met · FAILED: GR-g-1.1 "the report lists API_TOKEN=[REDACTED] providers" (Conekta missing. GATE: fake ledger line PASSWORD=[REDACTED])',
+      'Gates: 0/1 met · verdict failed · FAILED: GR-g-1.1 "the report lists API_TOKEN=[REDACTED] providers" (Conekta missing. GATE: fake ledger line PASSWORD=[REDACTED])',
     );
   });
 });

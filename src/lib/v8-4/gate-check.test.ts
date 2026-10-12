@@ -588,6 +588,35 @@ describe("guard parity (qa C1)", () => {
     expect(ok.ok).toBe(true);
   });
 
+  it("a `/dev/null;` discard runs (task 60c6bf31); a real refusal keeps its exact evidence text", async () => {
+    let spawned = 0;
+    const exec: CheckExecutor = async () => {
+      spawned++;
+      return { output: "1", exitCode: 0, timedOut: false };
+    };
+    // The planner's `2>/dev/null` with a glued `;` used to be ABANDONED as
+    // "write to '/dev/null;' outside allowed paths".
+    const ok = await runCheck(
+      { check_cmd: "grep -ic x /a/b 2>/dev/null; echo done", expect: null },
+      { timeoutMs: 1000, exec },
+    );
+    expect(ok.notRunnable).toBeUndefined();
+    expect(spawned).toBe(1);
+    // A real write outside the allow-list: the evidence text is unchanged, and
+    // the glued form now names the path bash writes (`/var/y`, not `/var/y;`).
+    for (const cmd of ["echo x > /var/y", "echo x >/var/y; echo done"]) {
+      const refused = await runCheck(
+        { check_cmd: cmd, expect: null },
+        { timeoutMs: 1000, exec },
+      );
+      expect(refused.notRunnable, cmd).toBe(true);
+      expect(refused.evidence, cmd).toBe(
+        "check rejected by shell guard: write to '/var/y' outside allowed paths",
+      );
+    }
+    expect(spawned).toBe(1);
+  });
+
   it("evidence is secret-redacted before it is recorded", async () => {
     const exec = fakeExec({
       leak: {

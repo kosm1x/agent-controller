@@ -448,15 +448,18 @@ describe("applyCompletionLedger — write-class enforce under shadow", () => {
     const text = (out.output as { text: string }).text;
     expect(out.taskStatus).toBe("completed_with_concerns");
     expect(text).toContain("⚠️ No quedó: KB x.md actualizado y legible");
-    // The shell gate's block covers ONLY the non-read-back population…
-    expect(text).toContain("Gates: 1/1 met");
-    // …and the stored JSON says the same about the same population, with the read-back reported apart.
+    // The block counts the populations apart and states the ONE ledger
+    // verdict (task 60c6bf31): `failed`, the same as «No quedó» and the trace…
+    expect(text).toContain(
+      "Gates: 1/1 met · readback 0/1 met · verdict failed",
+    );
+    // …and the stored JSON carries that verdict, counts per population.
     const gates = (out.output as { gates: Record<string, unknown> }).gates;
     expect(gates).toMatchObject({
       total: 1,
       met: 1,
       failed: 0,
-      verdict: "met",
+      verdict: "failed",
       readback: { total: 1, failed: 1 },
     });
   });

@@ -815,6 +815,70 @@ B`;
       const r = validateShellCommand("echo data > /dev/nullsomething");
       expect(r.allowed).toBe(false);
     });
+
+    // Task 60c6bf31 (2026-10-12): the write target ended only at whitespace, so
+    // `2>/dev/null;` yielded `/dev/null;`, missed the exempt set and was
+    // refused "outside allowed paths". It now ends where bash ends the word.
+    it.each([
+      "grep -ic x /a/b 2>/dev/null;",
+      "grep -ic x /a/b 2>/dev/null; echo done",
+      "cmd 2>/dev/null|wc -l",
+      "cmd >/dev/null&&echo ok",
+      "(cmd >/dev/null)",
+      "(cmd 2>/dev/null; echo x) | wc -l",
+      "cmd >/dev/null 2>/dev/null;",
+    ])("allows a discard sink glued to a metacharacter: %s", (cmd) => {
+      expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+    });
+
+    it.each([
+      ["echo x > /etc/x;", "redirect to system directory"],
+      ["echo x >/etc/passwd;", "redirect to system directory"],
+      ["echo x > /var/y|", "write to '/var/y' outside allowed paths"],
+      ["echo x | tee /etc/x;", "write to '/etc/x' outside allowed paths"],
+      ["echo x | tee /var/y&& echo ok", "write to '/var/y' outside allowed paths"],
+      // A glued metacharacter no longer hides a SECOND write in the same word
+      // (pre-fix `/tmp/a;echo>/var/y` was one target under /tmp/ → allowed).
+      ["echo a >/tmp/a;echo>/var/y", "write to '/var/y' outside allowed paths"],
+      // Escaped or quoted metacharacters stay IN the word, as in bash, so the
+      // `..` walk out of the allow-list is still judged whole.
+      ["echo x >/root/claude/x\\;/../../../var/y", "outside allowed paths"],
+      ["echo x >/root/claude/x';'/../../../var/y", "outside allowed paths"],
+      ['echo x >/root/claude/x";"/../../../var/y', "outside allowed paths"],
+      // The /dev/null exemption still needs an UNESCAPED terminator.
+      ["echo x >/dev/null\\;", "redirect to system directory"],
+      ["echo x >/dev/null')'", "redirect to system directory"],
+    ])("still denies a real write glued to a metacharacter: %s", (cmd, reason) => {
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain(reason);
+    });
+
+    // Audit R1 C1: a quote INSIDE a quoted string must not open a span that
+    // swallows the real redirect — every operator is scanned on its own.
+    it.each([
+      `echo '>/tmp/a"' >/root/.bashrc "'"`,
+      `printf '%s' '>/tmp/q"'; echo x >/root/.bashrc; echo '"'`,
+      `echo '>/tmp/q"' | tee /root/.bashrc # "`,
+      `echo '>/tmp/q"' ; cp a /root/.bashrc # "`,
+      `echo ">/tmp/a'" >/var/y "'"`,
+      `echo '>/tmp/a"' >/root/claude/CLAUDE.md "'"`,
+      `echo '>/tmp/a"' >/root/claude/.claude/settings.json "'"`,
+      `echo '>/tmp/a"' >/root/claude/.mcp.json "'"`,
+      // …and dropping the quoted spans is not the fix: this stays one word.
+      `echo x >/root/claude/x";"/../../../root/.bashrc`,
+    ])("denies a real write hidden behind a quote inside a quoted string: %s", (cmd) => {
+      expect(validateShellCommand(cmd).allowed).toBe(false);
+    });
+
+    it("allows a write INSIDE an allowed root with a trailing `;` (target judged without the `;`)", () => {
+      expect(validateShellCommand("echo x > /tmp/out.txt; echo done")).toEqual({
+        allowed: true,
+      });
+      expect(validateShellCommand("echo x >/tmp/out.txt;")).toEqual({
+        allowed: true,
+      });
+    });
   });
 
   describe("williams-entry-radar write access", () => {
@@ -1248,6 +1312,42 @@ describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-0
   itOnMain("BLOCKS `tee` (overwrite, no -a) of the ritual log", () => {
     const result = validateShellCommand(`echo x | tee ${LOG}`);
     expect(result.allowed).toBe(false);
+  });
+
+  // Task 60c6bf31: the target now ends at a glued metacharacter, so the
+  // append/overwrite tests end there too.
+  it("ALLOWS an append with a stderr dup (`>>LOG 2>&1`) and an escaped backslash before `>>`", () => {
+    expect(validateShellCommand(`echo x >>${LOG} 2>&1`)).toEqual({ allowed: true });
+    // `\\>>` is a literal backslash then a real `>>` append.
+    expect(validateShellCommand(`echo x \\\\>>${LOG}`)).toEqual({ allowed: true });
+  });
+
+  it("ALLOWS an append redirect with a glued `;` to the ritual log", () => {
+    expect(validateShellCommand(`echo "x" >> ${LOG}; echo done`)).toEqual({
+      allowed: true,
+    });
+  });
+
+  // Audit R1 W1/W2: the append exemption belongs to the `>>` match only; any
+  // other write to the log in the same command is judged on its own. The
+  // spaced `>> LOG | tee LOG` was ALLOWED before this change and is DENIED now.
+  itOnMain.each([
+    `echo x >>${LOG}|cp a ${LOG}`,
+    `echo x >>${LOG};mv a ${LOG}`,
+    `echo x >> ${LOG} | tee ${LOG}`,
+    `echo x >>${LOG}>${LOG}`,
+    // Audit R2 W1: an escaped first `>` is text; the second is an overwrite.
+    `echo x \\>>${LOG}`,
+  ])("BLOCKS an overwrite riding beside an append of the ritual log: %s", (cmd) => {
+    const result = validateShellCommand(cmd);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("append-only");
+  });
+
+  itOnMain("BLOCKS a `>` overwrite with a glued `;` of the ritual log", () => {
+    const result = validateShellCommand(`echo "x" > ${LOG}; echo done`);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("append-only");
   });
 });
 

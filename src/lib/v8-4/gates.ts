@@ -598,18 +598,26 @@ export function isGradeRow(
   return isGradeCheck(r.check_kind, r.check_cmd);
 }
 
+/**
+ * `verdict` is the ONE ledger verdict — `ledgerVerdict` over the FULL ledger,
+ * read-back rows included — the same value the `gates.evaluated` trace
+ * carries (task 60c6bf31: a filtered recount said `unverified` while the
+ * trace said `met`). The counts stay per population: plan rows here, read-back
+ * rows under `readback`.
+ */
 export function ledgerSummaryJson(
   rows: readonly GateRow[],
   mode: GatesMode,
+  verdict: LedgerVerdictKind = ledgerVerdict(rows).verdict,
 ): Record<string, unknown> {
-  // One population for the JSON summary and the rendered block: read-back
-  // rows are reported separately (`readback` key) — R2 audit C1.
+  // One population for the counts and the rendered block: read-back rows
+  // are reported separately (`readback` key) — R2 audit C1.
   const readbackRows = rows.filter(isReadbackRowLike);
   rows = rows.filter((r) => !isReadbackRowLike(r));
   const v = ledgerVerdict(rows);
   return {
     mode,
-    verdict: v.verdict,
+    verdict,
     total: v.total,
     met: v.met,
     failed: v.failed,
@@ -640,14 +648,27 @@ export function ledgerSummaryJson(
   };
 }
 
-/** Human-readable ledger block appended to a delivered report (enforce mode). */
-export function formatLedgerBlock(rows: readonly GateRow[]): string {
+/**
+ * Human-readable ledger block appended to a delivered report (enforce mode).
+ * `verdict` is the ONE ledger verdict over the FULL ledger (see
+ * `ledgerSummaryJson`); the plan count stays first (`Gates: N/M met`), the
+ * read-back count follows when there is one, then the verdict.
+ */
+export function formatLedgerBlock(
+  rows: readonly GateRow[],
+  verdict: LedgerVerdictKind = ledgerVerdict(rows).verdict,
+): string {
   // Read-back rows (harness `readback:` payloads) render through their own
-  // Spanish lines (src/lib/v8-4/readback.ts) — never as this English block.
+  // Spanish lines (src/lib/v8-4/readback.ts) — never itemised in this block.
+  const readback = ledgerVerdict(rows.filter(isReadbackRowLike));
   rows = rows.filter((r) => !isReadbackRowLike(r));
   const v = ledgerVerdict(rows);
   if (v.total === 0) return "";
   const parts = [`Gates: ${v.met}/${v.total} met`];
+  if (readback.total > 0) {
+    parts.push(`readback ${readback.met}/${readback.total} met`);
+  }
+  parts.push(`verdict ${verdict}`);
   if (v.failedRows.length) {
     // A grade gate's criterion is prose the report never showed (it lived in
     // the plan) — name it, or "FAILED: GR-g-1.1" says nothing to the reader.

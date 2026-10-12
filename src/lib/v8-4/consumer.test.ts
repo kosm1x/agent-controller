@@ -27,6 +27,11 @@ import { emitTraceEvent } from "../../observability/task-trace.js";
 import { isLedgerLine } from "./ledger-lines.js";
 import { _resetCitationCache } from "./citations.js";
 import { _setLandingExecForTests } from "./landing.js";
+import {
+  _resetReadbacks,
+  declareReadbackGate,
+  registerReadback,
+} from "./readback.js";
 import { runGrader, type GraderResult } from "./grader.js";
 import {
   _peekShadowGradeSpecs,
@@ -175,7 +180,7 @@ describe("applyCompletionLedger — modes", () => {
     expect(out.taskStatus).toBe("completed_with_concerns");
     const output = out.output as Record<string, unknown>;
     expect(output.finalAnswer).toMatch(
-      /^Report\n\nGates: 0\/2 met · FAILED: G1 \(.*exit 1\)\) · unverified: G2$/,
+      /^Report\n\nGates: 0\/2 met · verdict failed · FAILED: G1 \(.*exit 1\)\) · unverified: G2$/,
     );
     expect(output.text).toBe("meta"); // only the first deliverable field is annotated
   });
@@ -186,7 +191,7 @@ describe("applyCompletionLedger — modes", () => {
     const out = await applyCompletionLedger(base());
     expect(out.taskStatus).toBe("completed");
     expect((out.output as { text: string }).text).toBe(
-      "Listo. Hice todo.\n\nGates: 1/1 met",
+      "Listo. Hice todo.\n\nGates: 1/1 met · verdict met",
     );
   });
 
@@ -204,7 +209,7 @@ describe("applyCompletionLedger — modes", () => {
     );
     expect(out.taskStatus).toBe("completed"); // abandoned ≠ failed
     expect(out.output).toBe(
-      "Report body\nABANDON: G1 the sandbox has no network\n\nGates: 0/1 met · ABANDONED: G1 (the sandbox has no network)",
+      "Report body\nABANDON: G1 the sandbox has no network\n\nGates: 0/1 met · verdict unverified · ABANDONED: G1 (the sandbox has no network)",
     );
     expect(listGates("t1")[0]).toMatchObject({ state: "abandoned" });
   });
@@ -844,7 +849,7 @@ describe("applyCompletionLedger — V9 W1 grader shadow (background, trace-only)
     await _drainShadowGradesForTests();
     expect(out.taskStatus).toBe("completed");
     expect((out.output as { text: string }).text).toBe(
-      "Listo. Hice todo.\n\nGates: 0/1 met · unverified: G1",
+      "Listo. Hice todo.\n\nGates: 0/1 met · verdict unverified · unverified: G1",
     );
     expect(listGates("t1")[0]).toMatchObject({ state: "pending", evidence: null });
     expect(mockRunGrader.mock.calls[0]![0].specs.map((s) => s.id)).toEqual([
@@ -939,7 +944,7 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
     const out = await applyCompletionLedger(base());
     expect(out.taskStatus).toBe("completed_with_concerns");
     expect((out.output as { text: string }).text).toBe(
-      'Listo. Hice todo.\n\nGates: 0/1 met · FAILED: GR-g-1.1 "every provider is listed" (Conekta is missing)',
+      'Listo. Hice todo.\n\nGates: 0/1 met · verdict failed · FAILED: GR-g-1.1 "every provider is listed" (Conekta is missing)',
     );
     expect(listGates("t1")[0]).toMatchObject({
       state: "failed",
@@ -959,7 +964,7 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
     graderReturns([{ id: "GR-g-1.1", verdict: "met", evidence: "all three listed" }]);
     const met = await applyCompletionLedger(base());
     expect(met.taskStatus).toBe("completed");
-    expect((met.output as { text: string }).text).toBe("Listo. Hice todo.\n\nGates: 1/1 met");
+    expect((met.output as { text: string }).text).toBe("Listo. Hice todo.\n\nGates: 1/1 met · verdict met");
 
     registerGradeSpecs("t2", PROSE, "do the thing");
     graderReturns(
@@ -969,7 +974,7 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
     const pend = await applyCompletionLedger(base({ taskId: "t2" }));
     expect(pend.taskStatus).toBe("completed");
     expect((pend.output as { text: string }).text).toBe(
-      "Listo. Hice todo.\n\nGates: 0/1 met · unverified: GR-g-1.1",
+      "Listo. Hice todo.\n\nGates: 0/1 met · verdict unverified · unverified: GR-g-1.1",
     );
     expect(listGates("t2")[0]).toMatchObject({ state: "pending" });
     const tr = gradedTraces("t2")[0]!;
@@ -1349,5 +1354,85 @@ describe("applyCompletionLedger — done-claim after a failed write (queue 2026-
     expect(String(output.text)).not.toContain("{");
     expect(output.write_failure).toEqual({ tool: "file_edit", error: "Edit blocked: path outside the allow-list" });
     expect(claims()[0]!.attrs.error).toBe("Edit blocked: path outside the allow-list");
+  });
+});
+
+// Task 60c6bf31 (2026-10-12): the gates.evaluated trace judged the FULL
+// ledger while the footer and output.gates re-judged it without read-back
+// rows — `met` in the trace beside `Gates: 0/1 met` and `unverified`.
+describe("applyCompletionLedger — ONE verdict for trace, footer and output.gates", () => {
+  afterEach(() => _resetReadbacks());
+
+  async function threeVerdicts(planGate: {
+    criterion: string;
+    check?: string;
+  }) {
+    process.env.TASK_GATES_MODE = "enforce";
+    registerReadback("fake_write", async () => ({
+      ok: true,
+      evidence: "KB x.md releído (sha 1234)",
+    }));
+    declareGates("t1", [{ id: "G1", ...planGate }], "plan");
+    expect(
+      declareReadbackGate("t1", "fake_write", "kb:x.md", "KB x.md escrito", {
+        path: "x.md",
+      }),
+    ).toBe(true);
+    const out = await applyCompletionLedger(base());
+    const text = (out.output as { text: string }).text;
+    const footer = text.split("\n").find((l) => l.startsWith("Gates:"));
+    const trace = traceNames("t1").find((e) => e.name === "gates.evaluated");
+    return {
+      out,
+      footer,
+      footerVerdict: footer?.match(/· verdict (\w+)/)?.[1],
+      jsonVerdict: (out.output as { gates: { verdict: string } }).gates.verdict,
+      traceVerdict: trace?.attrs.verdict,
+    };
+  }
+
+  it("1 plan gate ABANDONED by the shell guard + 1 met read-back → met everywhere", async () => {
+    const r = await threeVerdicts({
+      criterion: "report written",
+      check: "echo x > /var/y; true",
+    });
+    const rows = listGates("t1");
+    expect(rows.find((g) => g.gate_id === "G1")).toMatchObject({
+      state: "abandoned",
+      abandon_reason: expect.stringMatching(/^check rejected by shell guard: /),
+    });
+    expect(r.traceVerdict).toBe("met");
+    expect(r.footerVerdict).toBe("met");
+    expect(r.jsonVerdict).toBe("met");
+    expect(r.out.gates?.verdict).toBe("met");
+    // Populations stay apart; the abandoned plan gate is still listed with its reason.
+    expect(r.footer).toMatch(
+      /^Gates: 0\/1 met · readback 1\/1 met · verdict met · ABANDONED: G1 \(check rejected by shell guard: write to '\/var\/y' outside allowed paths\)$/,
+    );
+    expect(isLedgerLine(r.footer!)).toBe(true);
+    expect(r.out.taskStatus).toBe("completed");
+  });
+
+  it("plan gate FAILED + met read-back → failed everywhere (and demoted)", async () => {
+    const r = await threeVerdicts({ criterion: "tests green", check: "false" });
+    expect(r.traceVerdict).toBe("failed");
+    expect(r.footerVerdict).toBe("failed");
+    expect(r.jsonVerdict).toBe("failed");
+    expect(r.out.taskStatus).toBe("completed_with_concerns");
+  });
+
+  it("plan gate still pending (manual) + met read-back → unverified everywhere", async () => {
+    const r = await threeVerdicts({ criterion: "reads well" });
+    expect(r.traceVerdict).toBe("unverified");
+    expect(r.footerVerdict).toBe("unverified");
+    expect(r.jsonVerdict).toBe("unverified");
+    expect(r.out.taskStatus).toBe("completed");
+  });
+
+  it("no rows → no ledger, no footer", async () => {
+    process.env.TASK_GATES_MODE = "enforce";
+    const out = await applyCompletionLedger(base());
+    expect(out.gates).toBeNull();
+    expect((out.output as { text: string }).text).toBe("Listo. Hice todo.");
   });
 });

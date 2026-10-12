@@ -682,7 +682,10 @@ async function completionLedgerStage(
       },
     });
     if (output && typeof output === "object") {
-      output = { ...output, gates: ledgerSummaryJson(gates.rows, mode) };
+      output = {
+        ...output,
+        gates: ledgerSummaryJson(gates.rows, mode, gates.verdict),
+      };
     }
     // Phase 2 (usability plan, write-class enforce): a read-back gate is
     // deterministic, harness-owned proof that a WRITE landed — or did not.
@@ -716,16 +719,20 @@ async function completionLedgerStage(
       });
     }
     if (mode === "enforce") {
-      // Population = the non-read-back gates (read-backs were adjudicated
-      // and rendered above); formatLedgerBlock filters the same way, so the
-      // headline can never contradict a «No quedó» line (R2 audit C1).
-      const others = gates.rows.filter((r) => !isReadbackRow(r));
-      const v = ledgerVerdict(others);
-      if (v.verdict === "failed" && taskStatus === "completed") {
+      // ONE verdict: `gates.verdict` is ledgerVerdict over the FULL ledger —
+      // the value the gates.evaluated trace and output.gates carry — so the
+      // footer can never contradict either (task 60c6bf31: an abandoned plan
+      // gate + a met read-back read `Gates: 0/1 met` beside a `met` trace).
+      // The block itemises plan rows only; read-backs were rendered above as
+      // Spanish lines (R2 audit C1), so it appears only when plan rows exist.
+      if (gates.verdict === "failed" && taskStatus === "completed") {
         taskStatus = "completed_with_concerns";
       }
-      if (others.length > 0) {
-        output = appendToDeliverable(output, formatLedgerBlock(others));
+      if (gates.rows.some((r) => !isReadbackRow(r))) {
+        output = appendToDeliverable(
+          output,
+          formatLedgerBlock(gates.rows, gates.verdict),
+        );
       }
     }
   } catch (err) {

@@ -347,7 +347,7 @@ describe("rendering", () => {
     recordGateResult("t7", "G3", { state: "failed", evidence: "exit 1" });
     const rows = listGates("t7");
     expect(formatLedgerBlock(rows)).toBe(
-      "Gates: 1/3 met · FAILED: G3 (exit 1) · unverified: G2",
+      "Gates: 1/3 met · verdict failed · FAILED: G3 (exit 1) · unverified: G2",
     );
     recordGateResult("t7", "G2", { state: "abandoned", reason: "no oracle" });
     expect(formatLedgerBlock(listGates("t7"))).toContain(
@@ -368,6 +368,99 @@ describe("rendering", () => {
       "G3",
     ]);
     expect(formatLedgerBlock([])).toBe("");
+  });
+});
+
+// Task 60c6bf31 (2026-10-12): ONE verdict — ledgerVerdict over the FULL
+// ledger — reaches the footer and the JSON; read-back rows are counted apart.
+describe("one verdict across ledgerVerdict, formatLedgerBlock and ledgerSummaryJson", () => {
+  type GateRow = ReturnType<typeof listGates>[number];
+  const row = (over: Partial<GateRow>): GateRow => ({
+    task_id: "t",
+    gate_id: "G",
+    criterion: "c",
+    check_kind: "shell",
+    check_cmd: "true",
+    expect: null,
+    state: "pending",
+    evidence: null,
+    abandon_reason: null,
+    source: "plan",
+    frozen_at: null,
+    checked_at: null,
+    created_at: "",
+    ...over,
+  });
+  const rb = (over: Partial<GateRow> = {}): GateRow =>
+    row({
+      gate_id: "RB-1234abcd",
+      check_kind: "manual",
+      check_cmd: 'readback:{"tool":"fake_write","data":{}}',
+      source: "harness",
+      ...over,
+    });
+  const verdicts = (rows: GateRow[]) => ({
+    ledger: ledgerVerdict(rows).verdict,
+    footer: formatLedgerBlock(rows).match(/· verdict (\w+)/)?.[1] ?? "none",
+    json: ledgerSummaryJson(rows, "enforce").verdict,
+  });
+
+  it("abandoned plan gate + met read-back (the 60c6bf31 row set) → met, met, met", () => {
+    const rows = [
+      row({
+        gate_id: "g1.1",
+        state: "abandoned",
+        evidence: "check rejected by shell guard: write to '/x;' outside allowed paths",
+        abandon_reason: "check rejected by shell guard: write to '/x;' outside allowed paths",
+      }),
+      rb({ state: "met", evidence: "KB x.md releído" }),
+    ];
+    expect(verdicts(rows)).toEqual({ ledger: "met", footer: "met", json: "met" });
+    expect(formatLedgerBlock(rows)).toBe(
+      "Gates: 0/1 met · readback 1/1 met · verdict met · ABANDONED: g1.1 (check rejected by shell guard: write to '/x;' outside allowed paths)",
+    );
+    const json = ledgerSummaryJson(rows, "enforce");
+    expect(json).toMatchObject({ total: 1, met: 0, abandoned: 1, readback: { total: 1, met: 1 } });
+  });
+
+  it("failed plan gate + met read-back → failed, failed, failed", () => {
+    const rows = [
+      row({ state: "failed", evidence: "exit 1" }),
+      rb({ state: "met", evidence: "ok" }),
+    ];
+    expect(verdicts(rows)).toEqual({ ledger: "failed", footer: "failed", json: "failed" });
+  });
+
+  it("met plan gate + FAILED read-back → failed everywhere (the footer no longer reads all-met)", () => {
+    const rows = [
+      row({ state: "met", evidence: "ok" }),
+      rb({ state: "failed", evidence: "no existe" }),
+    ];
+    expect(verdicts(rows)).toEqual({ ledger: "failed", footer: "failed", json: "failed" });
+    expect(formatLedgerBlock(rows)).toBe(
+      "Gates: 1/1 met · readback 0/1 met · verdict failed",
+    );
+  });
+
+  it("all pending → unverified everywhere; no rows → none and no footer", () => {
+    const rows = [row({ state: "pending" }), rb({ state: "pending" })];
+    expect(verdicts(rows)).toEqual({
+      ledger: "unverified",
+      footer: "unverified",
+      json: "unverified",
+    });
+    expect(verdicts([])).toEqual({ ledger: "none", footer: "none", json: "none" });
+    expect(formatLedgerBlock([])).toBe("");
+  });
+
+  it("read-back rows alone render no English block (their Spanish lines speak)", () => {
+    expect(formatLedgerBlock([rb({ state: "met", evidence: "ok" })])).toBe("");
+  });
+
+  it("an explicit verdict argument is what both renderers state", () => {
+    const rows = [row({ state: "met", evidence: "ok" })];
+    expect(formatLedgerBlock(rows, "failed")).toBe("Gates: 1/1 met · verdict failed");
+    expect(ledgerSummaryJson(rows, "enforce", "failed").verdict).toBe("failed");
   });
 });
 

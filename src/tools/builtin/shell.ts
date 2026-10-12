@@ -536,10 +536,12 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     // writes — they discard. Allow only those three; everything else
     // under /dev/ stays blocked (e.g. /dev/sda would be catastrophic).
     // The discard exemption requires a hard terminator (whitespace, end of
-    // string, pipe/semicolon/&) so adversarial suffixes like `/dev/null.bak`
-    // or `/dev/null/foo` still hit the deny path with a clear reason.
+    // string, or a shell metacharacter `; | & ( ) < >` — the same set that
+    // ends a WRITE_INDICATORS target) so adversarial suffixes like
+    // `/dev/null.bak` or `/dev/null/foo` still hit the deny path with a clear
+    // reason, while `(cmd >/dev/null)` is the discard it reads as.
     pattern:
-      />\|?\s*\/(?:etc|boot|usr|proc|sys)\/|>\|?\s*\/dev\/(?!(?:null|stderr|stdout)(?:\s|[|;&]|$))/, // `>|` too (qa R14 C14-4)
+      />\|?\s*\/(?:etc|boot|usr|proc|sys)\/|>\|?\s*\/dev\/(?!(?:null|stderr|stdout)(?:[\s;|&()<>]|$))/, // `>|` too (qa R14 C14-4)
     reason: "redirect to system directory",
   },
   {
@@ -851,9 +853,18 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   } as { pattern: RegExp; reason: string },
 ];
 
-/** Heuristic tokens that indicate a write to a path. */
+/** Heuristic tokens that indicate a write to a path. The target ends where
+ *  bash ends the word: at whitespace OR an unquoted, unescaped shell
+ *  metacharacter (`; | & ( ) < >`), so `2>/dev/null;` writes `/dev/null`,
+ *  not `/dev/null;` (task 60c6bf31 — the glued `;` missed
+ *  WRITE_INDICATOR_EXEMPT and the plan gate was refused "outside allowed
+ *  paths"). An escaped character (`\;`, `\ `) or a quoted run (`';'`, `"; "`)
+ *  stays IN the word, as in bash, so `>/root/claude/x\;/../../etc/f` is still
+ *  judged whole (`$(` and backticks are refused before this loop, so a
+ *  quoted run hides no command). The mv/cp SOURCE stays `\S+`: a
+ *  metacharacter glued to it can only over-match, never hide a target. */
 const WRITE_INDICATORS =
-  /(?:>\|?\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/[^\s]+)/g; // `>|` is a plain truncating write (qa R14 C14-4)
+  /(?:>\|?\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/(?:\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|[^\s;|&()<>])+)/g; // `>|` is a plain truncating write (qa R14 C14-4)
 
 /** Count unescaped `"` chars in `s` (for quote-context detection).
  *  Skips over the contents of single-quoted strings — bash single quotes do
@@ -2030,6 +2041,18 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
   WRITE_INDICATORS.lastIndex = 0;
   while ((match = WRITE_INDICATORS.exec(sanitized)) !== null) {
     const rawTarget = match[1];
+    // Resume right after this OPERATOR, not after its target: a quoted span
+    // can swallow a real redirect into a fake target (`echo '>/tmp/a"'
+    // >/root/.bashrc "'"`), so every `>`, `tee`, `mv`, `cp` occurrence is
+    // scanned on its own (audit R1 C1). `>>` skips both chars, or its second
+    // `>` would rescan as an overwrite of the same target — unless the first
+    // `>` is escaped (`\>>LOG` is text `>` + a real `>LOG` overwrite; an odd
+    // backslash run before it escapes it), then skip one (audit R2 W1).
+    let bs = 0;
+    while (sanitized[match.index - 1 - bs] === "\\") bs++;
+    const escapedFirst = bs % 2 === 1;
+    WRITE_INDICATORS.lastIndex =
+      match.index + (match[0].startsWith(">>") && !escapedFirst ? 2 : 1);
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
     // `>` redirect shape but are not real writes — exempt them (raw, pre-realpath)
     // so idioms like `2>/dev/null` don't false-positive.
@@ -2086,9 +2109,12 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
             // Match the RAW redirect target against the original command text —
             // targetPath is now the realpath, which may not appear verbatim.
             const p = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const isAppend = new RegExp(`>>\\s*${p}(?:\\s|$)`).test(sanitized);
+            // Exempt only when THIS match is the `>>` form: every other write
+            // to the log (`>>LOG|cp a LOG`, `>>LOG | tee LOG`) is its own
+            // match and lands here as an overwrite (audit R1 W1).
+            const isAppend = match[0].startsWith(">>");
             const hasOverwrite = new RegExp(
-              `(?:^|[^>])>\\|?\\s*${p}(?:\\s|$)`, // `>|` clobbers too (qa R15 N15-1)
+              `(?:^|[^>])>\\|?\\s*${p}(?:[\\s;|&()<>]|$)`, // `>|` clobbers too (qa R15 N15-1)
             ).test(sanitized);
             if (isAppend && !hasOverwrite) {
               continue;
