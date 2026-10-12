@@ -150,6 +150,8 @@ RW subcommands (`GATED_SUBCOMMANDS` in `scripts/lib/operator-gate.sh`) and `scri
 ./mc-ctl memory-checklist [--stale] [--json]   # Agent-memory playbook 10-item checklist from live mc.db + /metrics (read-only); --stale lists user_facts untouched > 90 d
 ```
 
+`npx tsx scripts/kb-folder-rename.ts projects/<old>/ projects/<new>/ [--dry-run]` — operator terminal only: renames one KB folder at the registry (`moveFile` + old-disk delete + `rmdirSync` of the empty old dirs, exit 3 on a non-empty leftover; idempotent: re-run the same command to finish an interrupted run) and moves the `projects` row `kb_folder`/`kb_path`/`kb_readme` keys; new folder must be lowercase; content links are counted, not rewritten; backs up mc.db + the old folder to `/root/claude-backups/kb-folder-rename-<date>/`; dry-run first, service stopped.
+
 ### Self-audit before reporting aggregate metrics
 
 Before quoting any aggregate metric (utility %, cache-hit ratio, latency, cost, success rate) in a session report, status update, or strategic recommendation, run `mc-ctl audit-claim` and incorporate any warnings. Borne from the 2026-05-03 trilogy incident: aggregate "22.2% utility delivered" headline averaged 88% on mc-operational with 7% on mc-jarvis — the operator's primary bank was in complete collapse, the headline read green. See `feedback_recall_aggregate_hides_bank_collapse.md`.
