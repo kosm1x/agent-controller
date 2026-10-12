@@ -153,3 +153,10 @@
 - **Mistake (WS3 brief):** "prefer server annotations" was written for record servers but the code applied it to service servers too, re-hinting 41/73 playwright tools at zero records → every "prefer X over curated" rule names the population it applies to, and the deploy-transparency check diffs the curated output for ALL existing populations.
 - **Avoid:** uniqueness checked against the static tables but not against earlier entries of the same new kind (record-vs-record) — a second record declassified the first's tools.
 - **Better:** R3's zero-record difference list (spawn env by name, hints n/n, prompt sha, static resolutions) is the deploy-transparency artifact; ask for it explicitly.
+
+## 2026-10-12 — S6 WS3a env entries (found by declaring the first real server)
+- **Mistake (WS3 fixtures):** every env fixture used `ACME_API_TOKEN`/`SECRET_ACME_API_TOKEN`, consistent with the `SECRET_<NAME>` rule, while real refs are `SECRET_<SLUG>_<KEY>` → three audit rounds passed a rule no real server could use. Check that would have caught it: build the fixture from the real producer (`projectCredentialByName` naming) and a real consumer's env list, not from the rule under test.
+- **Mistake (deliverable 6 v1):** "wire the derived groups in the gate" registered module state the scorer never reads (it scores a frozen copy of `CODE_SCOPE_PATTERNS`) → a pin through `runEvaluation`, not through `classifierSystemPrompt()`, is the only pin that measures the gate. Pre-existing: the gate never scored the classifier prompt at all (queue 3j).
+- **Avoid:** a static source scanner as the pin for "value never logged" — an alias (`const lit = entry.value`) or a sibling local (`secret`) evades it; the pin is behavioural (canary values through the real path, every sink captured).
+- **Better:** audit the operator's declaration artifact in the same round as the code (R1/R2 replayed `eurekams-declare.sql` through parse → loader → real spawn and the SQL on a throwaway db): the runbook ships verified, not drafted.
+
