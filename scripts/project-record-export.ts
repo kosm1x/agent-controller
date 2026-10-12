@@ -128,12 +128,43 @@ export function buildRecordFromRow(
     name: row.name,
     status: row.status,
   };
+  // The owned keys are validated TOGETHER, never one at a time: a key's
+  // validity can depend on another (a `capabilities.mcp[].env` `{name, secret}`
+  // must name an entry of `secrets`, src/projects/record.ts:157), so a key
+  // probed alone is judged wrongly (incident 2026-10-12: eurekams lost its
+  // `capabilities`). Pass 1: every present owned key. On failure, the keys an
+  // issue names (`path[0]`) are invalid and the rest are re-probed together
+  // (pass 2); if that fails too, per key.
+  type OwnedKey = (typeof PROJECTOR_CONFIG_KEYS)[number];
+  const ownedValid = new Map<OwnedKey, unknown>();
+  {
+    const probe = (keys: readonly OwnedKey[]) =>
+      projectContractSchema.safeParse({
+        slug: "probe",
+        name: "probe",
+        status: "active",
+        ...Object.fromEntries(keys.map((k) => [k, config[k]])),
+      });
+    const keys = PROJECTOR_CONFIG_KEYS.filter((k) => k in config && !secretIn("config", k, config[k]));
+    const p1 = probe(keys);
+    if (p1.success) {
+      for (const k of keys) ownedValid.set(k, p1.data[k]);
+    } else {
+      const bad = new Set(p1.error.issues.map((i) => i.path[0]));
+      const rest = keys.filter((k) => !bad.has(k));
+      const p2 = rest.length > 0 && rest.length < keys.length ? probe(rest) : undefined;
+      if (p2?.success) {
+        for (const k of rest) ownedValid.set(k, p2.data[k]);
+      } else {
+        for (const k of rest) {
+          const p = probe([k]);
+          if (p.success) ownedValid.set(k, p.data[k]);
+        }
+      }
+    }
+  }
   /** The record's own (projected) value of an owned key, parsed; undefined when absent or invalid. */
-  const projected = (k: (typeof PROJECTOR_CONFIG_KEYS)[number]): unknown => {
-    if (!(k in config) || secretIn("config", k, config[k])) return undefined;
-    const p = projectContractSchema.safeParse({ slug: "probe", name: "probe", status: "active", [k]: config[k] });
-    return p.success ? p.data[k] : undefined;
-  };
+  const projected = (k: OwnedKey): unknown => (k in config ? ownedValid.get(k) : undefined);
   /** Warnings: a legacy key that differs from the record's value, or an invalid owned value; both kept in the notes. */
   const differs: string[] = [];
   const legacyDiffers = (k: string) => differs.push(`legacy ${k}: differs from record, kept in notes`);

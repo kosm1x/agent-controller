@@ -305,6 +305,72 @@ describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --f
     expect(JSON.stringify(getProject("acme-radar")!.config)).not.toContain(CRED);
   });
 
+  describe("incident 2026-10-12: owned keys are validated together (capabilities ⇄ secrets, record.ts:157)", () => {
+    const WARN = "owned capabilities: invalid, kept in notes, apply will overwrite the row";
+    const caps = (ref: string) => ({
+      mcp: [
+        {
+          command: "node",
+          args: ["dist/mcp.js"],
+          env: [
+            { name: "PG_PASSWORD", secret: ref },
+            { name: "PG_DATABASE", value: "acme_widgets" },
+            { name: "PG_PORT", value: "5432" },
+          ],
+        },
+      ],
+    });
+    const contractJson = (slug: string, md: string) =>
+      parseProjectRecord(md, { folderSlug: slug }).json as Record<string, unknown>;
+
+    it("a {secret} env entry whose ref is in secrets: capabilities is the contract field, apply keeps it, --force re-export is byte-identical", () => {
+      const config = { trusted: true, secrets: ["SECRET_ACME_PG_PASSWORD"], capabilities: caps("SECRET_ACME_PG_PASSWORD") };
+      createProject("acme-pg", "Acme PG", { description: "Synthetic warehouse for an invented team.", status: "active", config });
+      const built = buildRecordFromRow(getProject("acme-pg")!);
+      expect(built.differs).toEqual([]);
+      const json = contractJson("acme-pg", built.markdown);
+      expect(json.capabilities).toEqual(config.capabilities);
+      expect(json.secrets).toEqual(config.secrets);
+      expect(legacyBlocks(built.markdown)["Legacy config"]).toBeUndefined();
+
+      const first = exportProjectRecord("acme-pg");
+      expect(first).toMatchObject({ ok: true, written: true, warnings: [] });
+      expect(getProject("acme-pg")!.config.capabilities).toEqual(config.capabilities);
+      expect(getProject("acme-pg")!.config.secrets).toEqual(config.secrets);
+      const md1 = String(getFile(projectRecordRelPath("acme-pg"))!.content);
+      expect(md1).toBe(built.markdown);
+      const second = exportProjectRecord("acme-pg", { force: true });
+      expect(second).toMatchObject({ ok: true, written: true, warnings: [] });
+      expect(String(getFile(projectRecordRelPath("acme-pg"))!.content)).toBe(md1);
+      expect(getProject("acme-pg")!.config.capabilities).toEqual(config.capabilities);
+    });
+
+    it("the {secret} ref NOT in secrets: capabilities invalid, kept in notes + warned; secrets still exported", () => {
+      const config = { trusted: true, secrets: ["SECRET_ACME_OTHER"], capabilities: caps("SECRET_ACME_PG_PASSWORD") };
+      createProject("acme-pg-bad", "Acme PG", { config });
+      const built = buildRecordFromRow(getProject("acme-pg-bad")!);
+      expect(built.differs).toEqual([WARN]);
+      const json = contractJson("acme-pg-bad", built.markdown);
+      expect(json.capabilities).toBeUndefined();
+      expect(json.secrets).toEqual(["SECRET_ACME_OTHER"]);
+      expect(json.trusted).toBe(true);
+      expect(legacyBlocks(built.markdown)["Legacy config"]).toEqual({ capabilities: config.capabilities });
+      const r = exportProjectRecord("acme-pg-bad", { dryRun: true });
+      expect(r.ok && r.warnings).toContain(WARN);
+    });
+
+    it("another invalid owned key does not take a valid capabilities down with it (second pass)", () => {
+      const config = { match_priority: "high", secrets: ["SECRET_ACME_PG_PASSWORD"], capabilities: caps("SECRET_ACME_PG_PASSWORD") };
+      createProject("acme-pg-mix", "Acme PG", { config });
+      const built = buildRecordFromRow(getProject("acme-pg-mix")!);
+      expect(built.differs).toEqual(["owned match_priority: invalid, kept in notes, apply will overwrite the row"]);
+      const json = contractJson("acme-pg-mix", built.markdown);
+      expect(json.capabilities).toEqual(config.capabilities);
+      expect(json.secrets).toEqual(config.secrets);
+      expect(legacyBlocks(built.markdown)["Legacy config"]).toEqual({ match_priority: "high" });
+    });
+  });
+
   it("the record's (owned) value beats a differing legacy spelling; the legacy one stays in the notes on every run", () => {
     const row = seed(OWNED_AND_LEGACY as (typeof ROWS)[number]);
     const { markdown: md1, differs } = buildRecordFromRow(row, { schedules: ["sched-z3"] });

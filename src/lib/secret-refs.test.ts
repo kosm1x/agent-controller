@@ -58,6 +58,7 @@ import {
   encodeSecretForm,
   secretSpans,
   projectCredentialByName,
+  isProjectSecret,
 } from "./secret-refs.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import {
@@ -1787,6 +1788,24 @@ describe("S6 WS3 — record secret NAMES are not secrets; projectCredentialByNam
     expect(leaves[1]!.display).not.toContain(NOT_A_NAME);
     const inbound = projectEntryLeaves("acme-radar", "config", "inbound", { route: "/api/acme", token_secret: INBOUND_NAME });
     expect(inbound.find((l) => l.path.join(".") === "inbound.token_secret")).toMatchObject({ secret: false, display: INBOUND_NAME });
+    // WS3a `{name, secret}` reference (incident 2026-10-12): the ref is a name; a non-name there is still a secret
+    const caps = projectEntryLeaves("acme-radar", "config", "capabilities", {
+      mcp: [{ command: "node", env: [{ name: "PG_PASSWORD", secret: "SECRET_ACME_RADAR_API_TOKEN" }, { name: "PG_TOKEN", secret: NOT_A_NAME }] }],
+    });
+    expect(caps.find((l) => l.path.join(".") === "capabilities.mcp.0.env.0.secret")).toMatchObject({ secret: false, display: "SECRET_ACME_RADAR_API_TOKEN" });
+    expect(caps.find((l) => l.path.join(".") === "capabilities.mcp.0.env.1.secret")!.secret).toBe(true);
+    // audit W1/W2: exactly the schema shape — any other path is judged as without the exemption
+    const at = (v: unknown, p: string) => projectEntryLeaves("acme-radar", "config", "capabilities", v).find((l) => l.path.join(".") === p)!;
+    const REF = "SECRET_ACME_RADAR_API_TOKEN";
+    expect(at({ mcp: [{ env: [{ secret: { x: REF } }] }] }, "capabilities.mcp.0.env.0.secret.x").secret).toBe(true);
+    expect(at({ foo: [{ env: [{ secret: REF }] }] }, "capabilities.foo.0.env.0.secret").secret).toBe(true);
+    expect(at({ mcp: [{ env: [{ password: REF }] }] }, "capabilities.mcp.0.env.0.password").secret).toBe(true);
+    expect(at({ mcp: { password: { env: { token: { secret: REF } } } } }, "capabilities.mcp.password.env.token.secret").secret).toBe(true);
+    expect(at({ mcp: [{ env: { token: { secret: REF } } }] }, "capabilities.mcp.0.env.token.secret").secret).toBe(true);
+    expect(at({ mcp: { password: { env: [{ secret: REF }] } } }, "capabilities.mcp.password.env.0.secret").secret).toBe(true);
+    const nameLeaf = at({ mcp: [{ env: [{ name: REF }] }] }, "capabilities.mcp.0.env.0.name");
+    expect(nameLeaf.secret).toBe(isProjectSecret("name", REF));
+    expect(projectEntryLeaves("acme-radar", "config", "secrets", { password: REF })[0]!.secret).toBe(true);
     // names are not scrubbed out of text; the credential value is
     expect(scrubSecrets(`env ${INBOUND_NAME} from SECRET_ACME_RADAR_API_TOKEN`)).toBe(
       `env ${INBOUND_NAME} from SECRET_ACME_RADAR_API_TOKEN`,

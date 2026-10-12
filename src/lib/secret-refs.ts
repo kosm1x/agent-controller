@@ -237,14 +237,29 @@ function parseObject(raw: unknown): Record<string, unknown> {
 
 /**
  * S6 WS3: record fields projected into `config` that hold the NAMES of
- * secrets, never values — `config.secrets[i]` (`SECRET_<NAME>`) and
- * `config.inbound.token_secret` (an env name). The classifier calls them
- * credentials by key; indexed as values they would be scrubbed out of every
- * text that names them. Exactly the record schema's shapes, nothing wider.
+ * secrets, never values — `config.secrets[i]` (`SECRET_<NAME>`),
+ * `config.inbound.token_secret` (an env name) and the WS3a reference
+ * `config.capabilities.mcp[i].env[j].secret` (`SECRET_<NAME>`). The classifier
+ * calls them credentials by key; indexed as values they would be scrubbed out
+ * of every text that names them (and the exporter would withhold the whole
+ * `capabilities`, incident 2026-10-12). Exactly the record schema's shapes,
+ * nothing wider.
  */
 function isSecretNameLeaf(field: string, path: readonly string[], value: string): boolean {
+  if (
+    field === "config" &&
+    path.length === 6 &&
+    path[0] === "capabilities" &&
+    path[1] === "mcp" &&
+    /^\d+$/.test(path[2]!) &&
+    path[3] === "env" &&
+    /^\d+$/.test(path[4]!) &&
+    path[5] === "secret"
+  ) {
+    return /^SECRET_[A-Z0-9_]+$/.test(value);
+  }
   if (field !== "config" || path.length !== 2) return false;
-  if (path[0] === "secrets") return /^SECRET_[A-Z0-9_]+$/.test(value);
+  if (path[0] === "secrets") return /^\d+$/.test(path[1]!) && /^SECRET_[A-Z0-9_]+$/.test(value);
   return path[0] === "inbound" && path[1] === "token_secret" && /^[A-Z][A-Z0-9_]*$/.test(value);
 }
 
