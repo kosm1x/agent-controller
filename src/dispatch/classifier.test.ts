@@ -16,6 +16,7 @@ import {
   referencesJarvisSelfDev,
   isFanOutTask,
   isExplicitSwarmRequest,
+  isEnumeratedWorkOrder,
 } from "./classifier.js";
 import type {
   RunnerStats,
@@ -1245,6 +1246,123 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
     expect(needsHeavyReasoning("compare the options and pick one")).toBe(true);
     expect(needsHeavyReasoning("investiga las tendencias de AI")).toBe(false); // bare research
     expect(needsHeavyReasoning("cómo estás?")).toBe(false);
+  });
+
+  // Enumerated work order (2026-10-12, task 50e655fe): a numbered four-part
+  // request scored 0 and ran on fast.
+  const WORK_ORDER =
+    "Jarvis, hazme un diagnóstico del warehouse de EurekaMS usando el servidor MCP del proyecto (intelligence-ops): 1) lista las tablas disponibles y agrúpalas por dominio; 2) para las 3 tablas más grandes, describe su esquema, cuenta filas y dime el rango de fechas que cubren; 3) compara lo que encuentres con lo que declara el registro del proyecto EurekaMS en la KB (fuentes de datos declaradas vs lo que existe en la base); 4) propón 3 análisis concretos que podríamos correr la próxima semana con esos datos, con la consulta SQL de cada uno. Entrégame un solo resumen ejecutivo en español, máximo 400 palabras, con las consultas al final.";
+  const chat = (text: string) =>
+    classify({
+      title: `Chat: ${text.slice(0, 60)}`,
+      description: "...",
+      tags: ["messaging"],
+      detectionText: text,
+    });
+
+  it("enumerated work order: the 2026-10-12 misroute → heavy", () => {
+    expect(isEnumeratedWorkOrder(WORK_ORDER)).toBe(true);
+    const result = chat(WORK_ORDER);
+    expect(result.agentType).toBe("heavy");
+    expect(result.reason).toBe("messaging task: challenging reasoning → heavy");
+  });
+
+  it("enumerated work order: '1. 2. 3.' / '(1)' / '1-' variants and real orders with noise → heavy", () => {
+    for (const text of [
+      "1. revisa el correo de hoy y marca lo urgente para el equipo 2. resume los pendientes de la semana con responsables y fechas 3. agenda la junta del lunes con ventas y mándales la invitación",
+      "Para mañana: (1) revisa el correo de hoy y marca lo urgente (2) resume los pendientes de la semana con responsables y fechas (3) agenda la junta del lunes con ventas y mándales la invitación",
+      "Plan del día:\n1- revisa el correo de hoy y marca lo urgente\n2- resume los pendientes de la semana con responsables y fechas\n3- agenda la junta del lunes con ventas y mándales la invitación",
+      // a two-word item counts
+      "Del warehouse de EurekaMS: 1) lista tablas 2) describe el esquema de las tres más grandes 3) propón 3 análisis concretos con su consulta SQL. Entrégame un resumen ejecutivo corto en español.",
+      // a stray "2." inside item 1 is skipped, not a restart
+      "1) revisa si el ratio de ventas sube a 2. Luego 2) describe qué productos explican el cambio en el último trimestre 3) propón tres acciones concretas para el equipo comercial con su costo estimado",
+      "1) actualiza el reporte a la versión 2. Después 2) compara las cifras contra el mes anterior por región y canal 3) propón los ajustes que harías al presupuesto con su justificación breve",
+      // chain 2-3-4 after a one-word answer to item 1
+      "Gracias. Respondiendo: 1) ok 2) lista las tablas del warehouse agrupadas por dominio 3) describe el esquema de las tres más grandes con su rango de fechas 4) propón tres análisis con su consulta SQL",
+    ]) {
+      expect(text.length, text).toBeGreaterThanOrEqual(160);
+      expect(isEnumeratedWorkOrder(text), text).toBe(true);
+      const result = chat(text);
+      expect(result.agentType, text).toBe("heavy");
+      expect(result.reason, text).toBe(
+        "messaging task: challenging reasoning → heavy",
+      );
+    }
+  });
+
+  it("enumerated work order: versions, times, quantities, one or two items, out of order → fast", () => {
+    const dates =
+      "Recordatorio: la junta del 1/10/2026 pasó al 2/10/2026 y la revisión del 3/10/2026 sigue igual. " +
+      "El pago vence el 12.10.2026, el corte es 2026-10-01, luego 2026-10-02 y 2026-10-03. " +
+      "La entrega quedó para el 13.10.2026 a las 10.30 y el cierre el 31.10.2026 a las 18.45. " +
+      "Avísame si el 1.11.2026 o el 2.11.2026 te queda mejor para revisar el reporte con calma. " +
+      "Si no, el 3.11.2026 a las 9.15 también funciona; confirma el 30/10/2026.";
+    expect(dates.length).toBeGreaterThanOrEqual(400);
+    for (const text of [
+      "qué tal v1.2.3 vs 1.2.4",
+      "nos vemos a las 10.30, trae 1.5 kg",
+      "1) revisa el correo",
+      "1) a 2) b",
+      "3) x 2) y 1) z",
+      "sigue con 11) norte 12) sur 13) este",
+      "lee el capítulo 1. luego me cuentas",
+      // Decided false: under 160 chars, and every item is one word.
+      "1) a 3) b 2) c 3) d",
+      "1) a 1) b 1) c",
+      dates,
+    ]) {
+      expect(isEnumeratedWorkOrder(text), text).toBe(false);
+      expect(chat(text).agentType, text).toBe("fast");
+    }
+  });
+
+  it("enumerated work order: lists that are not work orders → fast (qa W1/W2)", () => {
+    const pad =
+      "Oye, te escribo rápido porque voy saliendo de la oficina y no quiero que se me olvide nada de lo que quedamos hoy en la tarde, ";
+    const shortWorkOrder =
+      "hoy: 1) compra pan integral 2) pasa por la leche 3) recoge los huevos"; // items ok, < 160 chars
+    for (const text of [
+      // the four R1 over-fire examples, verbatim
+      "mándale a mi esposa la lista: 1) pan 2) leche 3) huevos",
+      "responde con 1) sí 2) no o 3) luego",
+      "Las opciones: 1- A, 2- B, 3- C",
+      "el 1. de mayo, el 2. de junio y el 3. de julio",
+      shortWorkOrder,
+      // >= 160 chars: one-word items
+      pad + "mándale a mi esposa la lista: 1) pan 2) leche 3) huevos",
+      pad + "y responde con 1) sí 2) no o 3) luego",
+      // only the last item is long — every chosen item must have >= 2 words
+      pad + "1) pan 2) leche 3) huevos frescos de rancho y más",
+      // 1, 2 long, 3 short, 4 long: no consecutive chain (and "4)" ends item 3)
+      pad + "1) a b c d 2) a b c d 3) x 4) otra cosa larga aquí",
+      // glued labels (a1/b2/c3), not enumerators
+      pad + "las etiquetas son a1) cajas de cartón grandes b2) rollos de cinta para empacar c3) tarimas de madera usadas",
+      // out of order
+      pad + "3) revisa el correo de hoy 2) resume los pendientes de la semana 1) agenda la junta del lunes",
+      // a digit (not a letter) after each enumerator
+      pad + "1) 10 tablas de ventas por región 2) 3 joins entre clientes y pedidos 3) 5 queries de validación con fechas",
+      pad + "1) 10 tablas 2) 3 joins 3) 5 queries",
+    ]) {
+      expect(isEnumeratedWorkOrder(text), text).toBe(false);
+      expect(chat(text).agentType, text).toBe("fast");
+    }
+    expect(shortWorkOrder.length).toBeLessThan(160);
+    expect((pad + "1) a b c d 2) a b c d 3) x 4) otra cosa larga aquí").length).toBeGreaterThanOrEqual(160);
+    expect((pad + "y responde con 1) sí 2) no o 3) luego").length).toBeGreaterThanOrEqual(160);
+  });
+
+  it("isEnumeratedWorkOrder stays linear on hostile input", () => {
+    const text =
+      "1)" + " ".repeat(50_000) + "1) ".repeat(20_000) + "(1".repeat(20_000);
+    const t0 = performance.now();
+    const out = isEnumeratedWorkOrder(text);
+    const ms = performance.now() - t0;
+    expect(out).toBe(false);
+    expect(ms).toBeLessThan(100);
+    const restarts = "1) a ".repeat(40_000);
+    const t1 = performance.now();
+    expect(isEnumeratedWorkOrder(restarts)).toBe(false);
+    expect(performance.now() - t1).toBeLessThan(200);
   });
 
   it("INVARIANT: a non-messaging (auto) coding task is containerized → nanoclaw", () => {

@@ -636,12 +636,68 @@ export function isStrategyRelayOrReadback(text: string): boolean {
   );
 }
 
+// Enumerated work order (2026-10-12): a four-part numbered request ("1) lista …
+// 2) describe … 3) compara … 4) propón 3 análisis … con la consulta SQL de cada
+// uno") matched no cue and ran on fast (task 50e655fe) — a numbered list of
+// sub-tasks is multi-step work whatever its verbs. Shape:
+//   - the text (after the "Chat: " strip) is >= 160 chars (the misrouted
+//     request was ~600), which keeps short lists out ("la lista: 1) pan 2) leche
+//     3) huevos", "responde con 1) sí 2) no o 3) luego", "1- A, 2- B, 3- C",
+//     "el 1. de mayo, el 2. de junio y el 3. de julio");
+//   - an enumerator is "1)" / "1." / "1-" / "(1)" (any 1–2 digit number) at the
+//     start of the text or after whitespace or "(", then whitespace and a letter
+//     — so "v1.2.3", "10.30", "1.5 kg", "1) 10 tablas" are not enumerators;
+//   - an item is the text from an enumerator to the next enumerator of any
+//     number (or the end) and counts only with >= 2 words;
+//   - the cue fires when the enumerators, in order of appearance, hold a chain
+//     n, n+1, n+2 (any n >= 1), each step taking the FIRST later enumerator with
+//     that number and a >= 2-word item. Enumerators that do not fit are skipped,
+//     never a restart: "sube a 2. Luego 2) describe …" and "Respondiendo: 1) ok
+//     2) lista … 3) describe … 4) propón …" (chain 2-3-4) still fire.
+// Accepted: a long shopping/option list with 2+-word items still routes heavy
+// (cost only — measured by the eval gate and the 3p readout); "1.lista",
+// "**1.**" and keycap-emoji enumerators are not covered.
+// Linear: one matchAll, then one right-to-left pass over the enumerators.
+const ENUMERATOR = /(?<=^|[\s(])(\d{1,2})[).-]\s+\p{L}/gu;
+const MIN_WORK_ORDER_CHARS = 160;
+const MIN_ITEM_WORDS = 2;
+
+function hasMinWords(item: string): boolean {
+  let n = 0;
+  for (const _ of item.matchAll(/\S+/g)) if (++n >= MIN_ITEM_WORDS) return true;
+  return false;
+}
+
+/** True when the text holds a numbered chain n → n+1 → n+2 of real items. */
+export function isEnumeratedWorkOrder(text: string): boolean {
+  if (text.length < MIN_WORK_ORDER_CHARS) return false;
+  const enums = [...text.matchAll(ENUMERATOR)];
+  // chain[j] = length of the chain starting at enumerator j (0: item too short).
+  const chain = new Array<number>(enums.length).fill(0);
+  // number → nearest later enumerator with that number and a valid item.
+  const firstLater = new Map<number, number>();
+  for (let j = enums.length - 1; j >= 0; j--) {
+    const m = enums[j];
+    const itemStart = (m.index ?? 0) + m[0].length - 1; // the item's first letter
+    const itemEnd = enums[j + 1]?.index ?? text.length;
+    if (!hasMinWords(text.slice(itemStart, itemEnd))) continue;
+    const n = Number(m[1]);
+    const k = firstLater.get(n + 1);
+    chain[j] = 1 + (k === undefined ? 0 : chain[k]);
+    if (chain[j] >= 3) return true;
+    firstLater.set(n, j);
+  }
+  return false;
+}
+
 /**
  * True when a NON-coding request is challenging enough to need heavy's PER loop.
  * Coding is filtered first, so e.g. "redesign" here means a non-code redesign.
  */
 export function needsHeavyReasoning(text: string): boolean {
   const t = text.replace(/^Chat:\s*/, "");
+  // Ahead of the strategy relay/readback exception: an enumerated relay is work.
+  if (isEnumeratedWorkOrder(t)) return true;
   const matched = HEAVY_REASONING_PATTERNS.filter((p) => p.test(t));
   if (matched.length === 0) return false;
   // Only the strategy noun fired, and the request relays/reads back an existing
