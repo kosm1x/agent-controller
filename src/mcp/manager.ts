@@ -6,16 +6,90 @@
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpConfig, McpServerConfig } from "./types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
-import { createMcpTool } from "./bridge.js";
+import { createMcpTool, resolveMcpToolHints } from "./bridge.js";
 import type { McpCallResult } from "./bridge.js";
-import { getMcpToolHints } from "./annotations.js";
 import { getToolAnnotations } from "../tools/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { errMsg } from "../lib/err-msg.js";
+import { getProject } from "../db/projects.js";
+import { projectCredentialByName } from "../lib/secret-refs.js";
+import { applyDeferredHeadRule } from "../projects/scope-groups.js";
+import { ENV_NAME_RE, isDeniedEnvName } from "./env-deny.js";
+import { cachedProjectStatus } from "../lib/project-status-cache.js";
+
+/**
+ * S6 WS3 (names-only env, queue 3a): the child's environment is the SDK's
+ * default safe set plus what the config declares — a service server's fixed
+ * `env` values and `envNames` read from the service env; a record server's
+ * `envNames` ONLY from its project's own credentials (`SECRET_<NAME>` listed
+ * in the record's `secrets`) — any other name, a credential miss or a reserved
+ * name (env-deny.ts) is omitted: the service env never reaches a record child.
+ * A name with no value is omitted (one warn, the NAME only). Never the whole
+ * service env.
+ */
+export function buildSpawnEnv(
+  serverId: string,
+  config: McpServerConfig,
+): Record<string, string> {
+  const env: Record<string, string> = { ...getDefaultEnvironment() };
+  const source = config.source;
+  if (source?.kind !== "record" && config.env) Object.assign(env, config.env);
+  for (const name of config.envNames ?? []) {
+    if (!ENV_NAME_RE.test(name)) {
+      console.warn(`[mcp] ${serverId}: an env name does not match ${ENV_NAME_RE.source} — omitted`);
+      continue;
+    }
+    let value: string | undefined;
+    if (source?.kind === "record") {
+      // Defence in depth behind the record schema and the loader (audit R1 W3).
+      if (isDeniedEnvName(name)) {
+        console.warn(`[mcp] ${serverId}: env ${name} is reserved — omitted`);
+        continue;
+      }
+      // Secrets only: a record child gets a declared name from its project's
+      // own credentials (`SECRET_<NAME>`) or not at all. The service env never
+      // reaches a record child (audit R1 W4, R2 W2).
+      if (!source.secrets?.includes(`SECRET_${name}`)) {
+        warnOnce(
+          `${serverId}\0${name}`,
+          `[mcp] ${serverId}: env ${name} is not in project ${source.slug}'s secrets (SECRET_${name}); omitted`,
+        );
+        continue;
+      }
+      value = projectCredentialByName(source.slug, `SECRET_${name}`);
+      if (value === undefined) {
+        warnOnce(
+          `${serverId}\0${name}`,
+          `[mcp] ${serverId}: env ${name} — SECRET_${name} has no credential in project ${source.slug}; omitted`,
+        );
+        continue;
+      }
+    } else {
+      value = process.env[name];
+    }
+    if (value === undefined) {
+      console.warn(`[mcp] ${serverId}: env ${name} has no value — omitted`);
+      continue;
+    }
+    env[name] = value;
+  }
+  return env;
+}
+
+const warned = new Set<string>();
+/** One warn per key for the process lifetime (reconnects respawn the child). */
+function warnOnce(key: string, msg: string): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(msg);
+}
 
 /** Internal state for a connected MCP server. */
 interface ServerEntry {
@@ -74,6 +148,17 @@ export class McpManager {
   /** Boot DEGRADED alert raised before any alertFn was wired (delivered on setAlertFn). */
   private pendingBootAlert: string | null = null;
   private isShutdown = false;
+  /**
+   * A record server's project status ("missing" for no row), cached
+   * (src/lib/project-status-cache.ts; `updateProject` invalidates). A db
+   * error propagates (the call fails).
+   */
+  private currentProjectStatus(slug: string): string {
+    return cachedProjectStatus(slug, () => {
+      const row = getProject(slug);
+      return row && row.slug === slug ? row.status : "missing";
+    });
+  }
 
   /** Set alert callback for degradation/recovery notifications. */
   setAlertFn(fn: (msg: string) => void): void {
@@ -118,6 +203,16 @@ export class McpManager {
         console.log(`[mcp] ${serverId}: skipped (disabled)`);
         continue;
       }
+      // S6 WS3 (spec §3): nothing from an untrusted record loads before WS7.
+      if (
+        serverConfig.source?.kind === "record" &&
+        !serverConfig.source.trusted
+      ) {
+        console.warn(
+          `[mcp] ${serverId}: not loaded — record ${serverConfig.source.slug} is not trusted`,
+        );
+        continue;
+      }
 
       // Lazy servers: register proxy tools without spawning the process
       if (serverConfig.lazy && serverConfig.tools?.length) {
@@ -147,9 +242,16 @@ export class McpManager {
       }
     }
 
-    const total = serverIds.filter((id) => config[id].enabled !== false).length;
+    const loadable = serverIds.filter(
+      (id) =>
+        config[id].enabled !== false &&
+        !(config[id].source?.kind === "record" && !config[id].source.trusted),
+    );
+    const total = loadable.length;
+    const fromRecords = loadable.filter((id) => config[id].source?.kind === "record").length;
     const parts = [`${connected}/${total - lazyCount} servers`];
     if (lazyCount > 0) parts.push(`${lazyCount} lazy`);
+    if (fromRecords > 0) parts.push(`${fromRecords} from records`);
     parts.push(`${totalTools} tools registered`);
     console.log(`[mcp] ${parts.join(", ")}`);
 
@@ -175,9 +277,8 @@ export class McpManager {
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args ?? [],
-      env: config.env
-        ? ({ ...process.env, ...config.env } as Record<string, string>)
-        : undefined,
+      env: buildSpawnEnv(serverId, config),
+      ...(config.cwd !== undefined && { cwd: config.cwd }),
     });
 
     const client = new Client({
@@ -202,10 +303,21 @@ export class McpManager {
               : ""
         }`,
       );
+    const source = config.source;
     const callFn = async (
       name: string,
       args: Record<string, unknown>,
     ): Promise<McpCallResult> => {
+      // S6 WS3: no runtime unregister — a project that left `active` keeps
+      // its tools registered until restart, and every call is refused.
+      if (source?.kind === "record") {
+        const status = this.currentProjectStatus(source.slug);
+        if (status !== "active") {
+          throw new Error(
+            `project ${source.slug} is ${status}; its server is unloaded at the next restart`,
+          );
+        }
+      }
       if (!isLive()) throw downError();
       try {
         const result = await client.callTool({ name, arguments: args });
@@ -218,7 +330,7 @@ export class McpManager {
     };
 
     // Register each tool in the global registry
-    const deferSet = new Set(config.deferredTools ?? []);
+    let deferSet: ReadonlySet<string> = new Set(config.deferredTools ?? []);
     const unannotatedTools: string[] = [];
     const trifectaTools: string[] = [];
 
@@ -240,6 +352,20 @@ export class McpManager {
       ]);
       ({ tools } = await client.listTools());
       if (this.isShutdown) throw new Error("MCP manager shut down");
+      // Deferred-head rule (CLAUDE.md §Infrastructure) for a record server:
+      // its group has no call distribution yet, so it never defers ALL tools.
+      if (source?.kind === "record") {
+        const kept = applyDeferredHeadRule(
+          tools.map((t) => t.name),
+          deferSet,
+        );
+        if (kept.size !== deferSet.size) {
+          console.warn(
+            `[mcp] ${serverId}: every tool was deferred — ${tools[0]?.name} stays eager (deferred-head rule)`,
+          );
+        }
+        deferSet = kept;
+      }
 
       for (const mcpTool of tools) {
         const tool = createMcpTool(
@@ -248,9 +374,14 @@ export class McpManager {
             name: mcpTool.name,
             description: mcpTool.description,
             inputSchema: mcpTool.inputSchema as Record<string, unknown>,
+            // Server annotations are trusted for RECORD servers only; a
+            // service server keeps the curated name table (audit R1 W1).
+            annotations:
+              source?.kind === "record" ? mcpTool.annotations : undefined,
           },
           callFn,
           deferSet.has(mcpTool.name),
+          config.toolTrust?.[mcpTool.name],
         );
         registry.register(tool);
         toolNames.push(tool.name);
@@ -384,12 +515,17 @@ export class McpManager {
       // the same hint cohort as eager tools. Without this, lazy tools
       // would default to destructive even after the bridge gets
       // activated. INVARIANT: this lookup must produce the same result
-      // as `createMcpTool`'s lookup at activation time (bridge.ts:60),
+      // as `createMcpTool`'s lookup at activation time (resolveMcpToolHints;
+      // server annotations are unknown until the server is spawned),
       // since both pass the same namespaced name to `getMcpToolHints`.
       // If a future split-lookup is introduced, both call sites must
       // remain in agreement or the proxy and post-activation tool will
       // disagree on hints — surface as a regression test before splitting.
-      const hints = getMcpToolHints(namespacedName);
+      const hints = resolveMcpToolHints(
+        namespacedName,
+        undefined,
+        config.toolTrust?.[toolDef.name],
+      );
       const tool: Tool = {
         name: namespacedName,
         deferred: deferSet.has(toolDef.name),
@@ -524,6 +660,27 @@ export class McpManager {
         this.deathTimes.delete(serverId);
         this.abandonedServers.add(serverId);
         continue;
+      }
+
+      // S6 WS3: a record server whose project left `active` is not respawned.
+      const src = state.config.source;
+      if (src?.kind === "record") {
+        let status: string;
+        try {
+          status = this.currentProjectStatus(src.slug);
+        } catch (err) {
+          // Transient (e.g. SQLITE_BUSY): stay in the failed set, retry next tick.
+          console.warn(`[mcp] ${serverId}: project ${src.slug} status unreadable (${errMsg(err)}); retrying next tick`);
+          continue;
+        }
+        if (status !== "active") {
+          console.warn(
+            `[mcp] ${serverId}: not reconnected — project ${src.slug} is ${status}; unloaded until restart`,
+          );
+          this.failedServers.delete(serverId);
+          this.deathTimes.delete(serverId);
+          continue;
+        }
       }
 
       try {

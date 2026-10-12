@@ -57,6 +57,7 @@ import {
   resolveRenderedPlaceholders,
   encodeSecretForm,
   secretSpans,
+  projectCredentialByName,
 } from "./secret-refs.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import {
@@ -1757,4 +1758,49 @@ describe("audit R9 B1 — a later partly-overlapping value changes no tool outpu
     const last = await outputs(r, cases[0]![0]);
     expect(last.join("\n")).not.toContain(V);
   }, 60_000);
+});
+
+describe("S6 WS3 — record secret NAMES are not secrets; projectCredentialByName", () => {
+  const INBOUND_NAME = "ACME_PORTAL_INBOUND_TOKEN";
+  const NOT_A_NAME = "nv-" + "k".repeat(16);
+
+  function seedWs3() {
+    project("acme-radar", {
+      credentials: { api_token: API_TOKEN },
+      config: {
+        secrets: ["SECRET_ACME_RADAR_API_TOKEN", NOT_A_NAME],
+        inbound: { route: "/api/acme", token_secret: INBOUND_NAME },
+      },
+    });
+    invalidateSecretRefs();
+  }
+
+  it("config.secrets[i] (SECRET_ names) and inbound.token_secret (an env name) display in clear and are not indexed", () => {
+    seedWs3();
+    const leaves = projectEntryLeaves("acme-radar", "config", "secrets", [
+      "SECRET_ACME_RADAR_API_TOKEN",
+      NOT_A_NAME,
+    ]);
+    expect(leaves[0]).toEqual({ path: ["secrets", "0"], secret: false, display: "SECRET_ACME_RADAR_API_TOKEN" });
+    // a value under `secrets` that is not name-shaped is still a secret
+    expect(leaves[1]!.secret).toBe(true);
+    expect(leaves[1]!.display).not.toContain(NOT_A_NAME);
+    const inbound = projectEntryLeaves("acme-radar", "config", "inbound", { route: "/api/acme", token_secret: INBOUND_NAME });
+    expect(inbound.find((l) => l.path.join(".") === "inbound.token_secret")).toMatchObject({ secret: false, display: INBOUND_NAME });
+    // names are not scrubbed out of text; the credential value is
+    expect(scrubSecrets(`env ${INBOUND_NAME} from SECRET_ACME_RADAR_API_TOKEN`)).toBe(
+      `env ${INBOUND_NAME} from SECRET_ACME_RADAR_API_TOKEN`,
+    );
+    expect(scrubSecrets(`v=${API_TOKEN}`)).not.toContain(API_TOKEN);
+  });
+
+  it("projectCredentialByName: only the slug's own credentials resolve", () => {
+    seedWs3();
+    expect(projectCredentialByName("acme-radar", "SECRET_ACME_RADAR_API_TOKEN")).toBe(API_TOKEN);
+    expect(projectCredentialByName("acme-portal", "SECRET_ACME_RADAR_API_TOKEN")).toBeUndefined();
+    expect(projectCredentialByName("acme-radar", N.doc)).toBeUndefined();
+    // a user-fact name is never a project credential
+    expect(projectCredentialByName("acme-radar", N.tok)).toBeUndefined();
+    expect(projectCredentialByName("acme-radar", "SECRET_NOPE")).toBeUndefined();
+  });
 });

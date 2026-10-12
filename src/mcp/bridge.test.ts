@@ -7,9 +7,11 @@ import {
   createMcpTool,
   extractText,
   renderResult,
+  resolveMcpToolHints,
   type McpCallFn,
   type McpContentItem,
 } from "./bridge.js";
+import { getToolAnnotations } from "../tools/types.js";
 
 // DNS is mocked: names under .internal.test resolve to loopback, the rest to
 // a public address, so the resolved-URL check never touches a real resolver.
@@ -710,5 +712,48 @@ describe("createMcpTool", () => {
       expect(JSON.parse(result).error).toMatch(/webhook_url:/);
       expect(callFn).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("S6 WS3 — hint precedence: server annotations > record flags > getMcpToolHints", () => {
+  const call: McpCallFn = async () => ({ content: [] });
+  const ann = (t: ReturnType<typeof createMcpTool>) => getToolAnnotations(t);
+
+  it("server annotations win over the record flag and the name table", () => {
+    // `goto` is READ_ONLY in the name table; the record says destructive; the server says write, non-destructive
+    const t = createMcpTool(
+      "browser",
+      { name: "goto", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+      call,
+      false,
+      { destructive: true },
+    );
+    expect(ann(t)).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  });
+
+  it("a server readOnlyHint:true is non-destructive even under a destructive record flag", () => {
+    expect(resolveMcpToolHints("x__close", { readOnlyHint: true }, { destructive: true })).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+  });
+
+  it("the record flag wins over the name table", () => {
+    // `xpoz_trigger_run` is DESTRUCTIVE in the name table
+    const t = createMcpTool("xpoz", { name: "xpoz_trigger_run" }, call, false, { destructive: false });
+    expect(ann(t)).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(ann(createMcpTool("acme", { name: "acme_wipe" }, call, false, { destructive: true }))).toMatchObject({
+      destructiveHint: true,
+    });
+  });
+
+  it("the name table is the fallback; an unknown tool with nothing anywhere stays destructive", () => {
+    expect(ann(createMcpTool("browser", { name: "goto" }, call))).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(resolveMcpToolHints("acme__unknown_thing")).toBeUndefined();
+    expect(ann(createMcpTool("acme", { name: "unknown_thing" }, call))).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    // a non-boolean annotation is ignored, not trusted
+    expect(
+      resolveMcpToolHints("acme__unknown_thing", { readOnlyHint: "yes" } as unknown as { readOnlyHint?: boolean }),
+    ).toBeUndefined();
   });
 });

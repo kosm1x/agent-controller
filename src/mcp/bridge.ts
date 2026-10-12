@@ -9,14 +9,78 @@ import type { Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
 import { validateArgsUrlsResolved } from "../lib/url-safety.js";
 import { getMcpToolHints } from "./annotations.js";
+import type { McpToolHintOverride } from "./annotations.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+
+/** The four MCP-spec hints a server may return with a tool (all optional). */
+export interface McpServerAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
 
 /** MCP tool info as returned by client.listTools(). */
 export interface McpToolInfo {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** `tools/list` annotations, when the server ships them. */
+  annotations?: McpServerAnnotations;
+}
+
+const HINT_KEYS = [
+  "readOnlyHint",
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+] as const;
+
+/**
+ * S6 WS3 — the hints an MCP tool registers with, per field in order of
+ * preference: (1) the server's own `tools/list` annotations (the manager
+ * passes them for RECORD servers only — service servers keep the curated
+ * table, audit R1 W1), (2) the
+ * record's per-tool `destructive` flag, (3) the name-pattern lookup
+ * (`getMcpToolHints`). Undefined when no level says anything, so the
+ * registry's conservative-unknown defaults (destructive) apply. A field the
+ * server leaves out falls to the next level; a read-only tool with no
+ * destructive hint anywhere is non-destructive (MCP spec: destructiveHint
+ * is meaningful only when readOnlyHint is false).
+ */
+export function resolveMcpToolHints(
+  namespacedName: string,
+  serverAnnotations?: McpServerAnnotations,
+  recordFlags?: { destructive?: boolean },
+): McpToolHintOverride | undefined {
+  const record: McpToolHintOverride | undefined =
+    recordFlags?.destructive === undefined
+      ? undefined
+      : {
+          readOnlyHint: false,
+          destructiveHint: recordFlags.destructive,
+          idempotentHint: false,
+          openWorldHint: true,
+        };
+  const base = record ?? getMcpToolHints(namespacedName);
+  const server = Object.fromEntries(
+    HINT_KEYS.filter((k) => typeof serverAnnotations?.[k] === "boolean").map(
+      (k) => [k, serverAnnotations![k] as boolean],
+    ),
+  ) as Partial<McpToolHintOverride>;
+  if (!base && Object.keys(server).length === 0) return undefined;
+  const readOnlyHint = server.readOnlyHint ?? base?.readOnlyHint ?? false;
+  return {
+    readOnlyHint,
+    destructiveHint:
+      server.destructiveHint ??
+      (server.readOnlyHint === true ? false : undefined) ??
+      base?.destructiveHint ??
+      !readOnlyHint,
+    idempotentHint: server.idempotentHint ?? base?.idempotentHint ?? false,
+    openWorldHint: server.openWorldHint ?? base?.openWorldHint ?? true,
+  };
 }
 
 /** MCP callTool result content item. */
@@ -142,16 +206,20 @@ export function createMcpTool(
   mcpTool: McpToolInfo,
   callFn: McpCallFn,
   deferred = false,
+  recordFlags?: { destructive?: boolean },
 ): Tool {
   const namespacedName = `${serverId}${MCP_NAMESPACE_SEP}${mcpTool.name}`;
 
-  // v7.6 Spine 4 W4 (shipped 2026-05-09): hint override by name pattern.
-  // MCP servers don't currently ship hints with their tool schemas, so
-  // every MCP-registered tool would otherwise fall back to
-  // getToolAnnotations defaults (destructive: true) — polluting the
-  // destructive-cohort metric mc-ctl audit-claim reports. When upstream
-  // servers begin supplying hints, prefer those over our pattern lookup.
-  const hints = getMcpToolHints(namespacedName);
+  // v7.6 Spine 4 W4 (shipped 2026-05-09): hint override by name pattern,
+  // so an unannotated MCP tool does not fall back to getToolAnnotations
+  // defaults (destructive: true) and pollute the destructive-cohort metric
+  // mc-ctl audit-claim reports. S6 WS3: the server's own annotations and
+  // the record's per-tool flags come first (resolveMcpToolHints).
+  const hints = resolveMcpToolHints(
+    namespacedName,
+    mcpTool.annotations,
+    recordFlags,
+  );
 
   return {
     name: namespacedName,

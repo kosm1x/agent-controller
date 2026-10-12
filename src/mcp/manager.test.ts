@@ -38,6 +38,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
 
 vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(() => ({})),
+  getDefaultEnvironment: () => ({ PATH: "/usr/bin" }),
 }));
 
 import { McpManager } from "./manager.js";

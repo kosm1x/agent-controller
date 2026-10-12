@@ -120,12 +120,17 @@ function savedSecrets(
  * never through project_update. No row uses one today (spec, verified).
  */
 export const OPERATOR_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set([
-  "mcp",
+  "mcp", // legacy spelling (no row uses it)
   "trusted",
   "egress",
   "deny_paths",
   // Audit R1 C1: names the README chat injects; only the record sets it.
   "kb_readme",
+  // S6 WS3: what spawns, with which secrets, and how chat routes to it.
+  "capabilities",
+  "secrets",
+  "routing",
+  "inbound",
 ]);
 
 const OWNED_CONFIG_KEYS: ReadonlySet<string> = new Set(PROJECTOR_CONFIG_KEYS);

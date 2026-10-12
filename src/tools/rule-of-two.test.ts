@@ -13,7 +13,10 @@ import {
 import { GoogleToolSource } from "./sources/google.js";
 import { MemoryToolSource } from "./sources/memory.js";
 import { SkillsToolSource } from "./sources/skills.js";
-import { readFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { mergeRecordServers } from "../mcp/config.js";
 import { getMcpToolHints } from "../mcp/annotations.js";
 import { getToolAnnotations, type Tool } from "./types.js";
 import {
@@ -25,6 +28,8 @@ import {
   enterRunToolContext,
   outsideRunToolContext,
   isRuleOfTwoClassified,
+  registerRecordMcpRuleOfTwo,
+  ruleOfTwoMcpPrefixes,
   isTrifectaByName,
   priorRunTools,
   recordRunTool,
@@ -93,6 +98,54 @@ describe("Rule of Two — classification coverage (both directions)", () => {
       ).toContain(`${id}__`);
     expect(isRuleOfTwoClassified("browser__goto")).toBe(true);
     expect(isRuleOfTwoClassified("unknown-server__thing")).toBe(false);
+  });
+
+  it("S6 WS3: mcp-servers.json ids + record-declared ids all get a prefix default; record trust maps", () => {
+    const repo = mkdtempSync(join(tmpdir(), "mc-r2-rec-"));
+    try {
+      const cfg = JSON.parse(readFileSync("mcp-servers.json", "utf-8")) as Record<string, { command: string }>;
+      const service = Object.fromEntries(
+        Object.entries(cfg).map(([id, c]) => [id, { ...c, source: { kind: "service" as const } }]),
+      );
+      const row = (slug: string, mcp: unknown[]) => ({
+        slug,
+        status: "active",
+        config: { repos: [{ path: repo, role: "primary" }], trusted: true, capabilities: { mcp } },
+      });
+      const merged = mergeRecordServers(service, [
+        row("syn-alpha", [{ command: "node", trust: "AB", tools: { syn_alpha_read: { trust: "NONE" } } }]),
+        row("syn-beta", [{ id: "synbeta", command: "node", trust: "A" }]),
+        row("syn-gamma", [{ id: "syngamma", command: "node" }]),
+      ]);
+      registerRecordMcpRuleOfTwo(merged);
+      const prefixes = ruleOfTwoMcpPrefixes();
+      for (const id of Object.keys(merged)) expect(prefixes, id).toContain(`${id}__`);
+      expect(resolveRuleOfTwo({ name: "syn-alpha__run" })).toEqual({ untrustedInput: true, sensitiveAccess: true });
+      expect(resolveRuleOfTwo({ name: "syn-alpha__syn_alpha_read" })).toEqual({
+        untrustedInput: false,
+        sensitiveAccess: false,
+      });
+      expect(resolveRuleOfTwo({ name: "synbeta__x" })).toEqual({ untrustedInput: true, sensitiveAccess: false });
+      // no trust declared → the conservative unknown class (true/true), and classified
+      expect(resolveRuleOfTwo({ name: "syngamma__x" })).toEqual({ untrustedInput: true, sensitiveAccess: true });
+      expect(isRuleOfTwoClassified("syngamma__x")).toBe(true);
+      // a service id is never re-registered from the record path
+      expect(prefixes.filter((p) => p === "browser__")).toHaveLength(1);
+      expect(isRuleOfTwoClassified("unregistered-record__x")).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("S6 WS3 audit R2 W1: an untrusted record registers no Rule-of-Two class (never spawned, never shadows)", () => {
+    registerRecordMcpRuleOfTwo({
+      synuntrusted: { command: "node", trust: "NONE", source: { kind: "record", slug: "syn-u", trusted: false } },
+      syntrusted: { command: "node", trust: "AB", source: { kind: "record", slug: "syn-t", trusted: true } },
+    });
+    expect(isRuleOfTwoClassified("synuntrusted__x")).toBe(false);
+    expect(resolveRuleOfTwo({ name: "synuntrusted__x" })).toEqual({ untrustedInput: true, sensitiveAccess: true });
+    expect(ruleOfTwoMcpPrefixes()).not.toContain("synuntrusted__");
+    expect(isRuleOfTwoClassified("syntrusted__x")).toBe(true);
   });
 
   it("every MCP per-tool override names a tool under a known prefix", () => {

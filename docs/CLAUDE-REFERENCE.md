@@ -312,11 +312,14 @@ Recipe:
 
 ### Adding a new MCP server (`mcp-servers.json`)
 
-`src/mcp/manager.ts:140` passes `env: undefined` to `StdioClientTransport` whenever `McpServerConfig.env` is missing — the SDK interprets that as a clean minimal env (HOME/PATH/etc, ~5 vars), **not** parent inheritance. Any truthy `config.env` (including `{}`) flips to `{...process.env, ...config.env}` and the bridge child receives mc's full env.
+S6 WS3: every child spawns with the SDK's default env (HOME, LOGNAME, PATH, SHELL, TERM, USER) plus the names it declares — never `{...process.env}` (lock test `src/mcp/manager-env.test.ts`; one `StdioClientTransport` construction, `buildSpawnEnv` in `src/mcp/manager.ts`).
 
-1. If the bridge needs ANY env var from mc (auth tokens, API keys, etc.), the entry MUST have an `env` key — use `"env": {}` as the minimal trigger when no per-server overrides are needed.
-2. Never put secret values directly in `mcp-servers.json` (the repo is public). Keep secrets in `.env`; they propagate via the inheritance trigger.
-3. Verify post-deploy by inspecting the bridge child's `/proc/<pid>/environ` — count should be 70+ vars (inheritance), not 5 (clean minimal). The xpoz bridge (Session 122) silently 401'd every `POST /run` for a week because it lacked this trigger; GET tools are auth-gate-free so the connection looked healthy.
+1. A bridge that needs env vars from mc lists their NAMES in `envNames` (values come from the service env by name; a missing name is omitted with a warn naming it only). `env` is for fixed non-secret values only.
+2. Never put secret values directly in `mcp-servers.json` (the repo is public). Keep secrets in `.env`.
+3. Verify post-deploy: the bridge child's `/proc/<pid>/environ` holds the default set plus the declared names, nothing else. (The xpoz bridge once 401'd every `POST /run` for a week when it got no token; it now declares `XPOZ_API_TOKEN`.)
+
+**Record-declared servers** (`capabilities.mcp[]` in `projects/<slug>/project.md`, merged by `loadMcpConfig` from active rows): id defaults to the slug; `cwd` must realpath inside the record's repo; `env` names resolve ONLY from the record's own `secrets` (`SECRET_<NAME>` → that project's credential) — record servers: secrets only; the service env never reaches a record child (an unlisted name or a credential miss is omitted, one warn by name). A duplicate id, or one whose `<id>__` overlaps a service, Rule-of-Two or earlier record prefix, is refused (the service entry or the earlier slug wins, operator alert); untrusted records never register a Rule-of-Two class. Only `trusted: true` records load until WS7 (untrusted = declared, one warn); a project that leaves `active` is refused at call time and unloaded at the next restart.
+Trust: the record's `trust` becomes the `<id>__` Rule-of-Two prefix default and `tools.<name>.trust` per-tool overrides; no `trust` = true/true. Hints (record servers): server annotations > record `destructive` flag > `getMcpToolHints`; service servers keep `getMcpToolHints` only; unknown stays destructive. Record env names must match `ENV_NAME_RE` and exclude loader/runtime and service-secret families (`src/mcp/env-deny.ts`, defence in depth, not the boundary); ids never contain `__`. A record with a server or `routing.summary` gets a derived scope group (aliases regex, `<id>__*` tools, one classifier-prompt line) — the paid eval gate is owed at the first real record that adds that line.
 
 ### Prometheus (heavy runner) changes
 

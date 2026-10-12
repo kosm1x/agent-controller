@@ -60,17 +60,43 @@ describe("contractToRowPatch — ownership", () => {
     expect(patch.description).toBe("desc");
     expect(patch.status).toBe("active");
     expect(patch.urls).toEqual({ site: "https://acme.example.test" });
+    // S6 WS3: trusted/egress/secrets are owned (projected) since WS3.
     expect(Object.keys(patch.config).sort()).toEqual(
-      ["aliases", "kb_folder", "kb_readme", "links", "match_priority", "repos", "schedules"].sort(),
+      ["aliases", "egress", "kb_folder", "kb_readme", "links", "match_priority", "repos", "schedules", "secrets", "trusted"].sort(),
     );
     for (const k of Object.keys(patch.config)) {
       expect((PROJECTOR_CONFIG_KEYS as readonly string[]).includes(k), k).toBe(true);
     }
-    // never the DB-owned columns, never a contract field with no consumer here
+    // never the DB-owned columns
     const flat = JSON.stringify(patch);
-    for (const k of ["credentials", "commit_goal_id", "\"id\"", "trusted", "egress", "secrets"]) {
+    for (const k of ["credentials", "commit_goal_id", "\"id\""]) {
       expect(flat, k).not.toContain(k);
     }
+  });
+
+  it("S6 WS3: projects the 7 capability keys; trusted=false (the default) stays off the row", () => {
+    const full = {
+      ...BASE,
+      trusted: true,
+      egress: ["api.acme.example.test:443"],
+      deny_paths: ["/srv/work/acme-radar/private"],
+      secrets: ["SECRET_ACME_RADAR_API_TOKEN"],
+      capabilities: {
+        mcp: [{ command: "node", args: ["dist/mcp.js"], env: ["ACME_RADAR_API_TOKEN"], trust: "AB" }],
+        brief: "Acme radar runs",
+      },
+      routing: { summary: "Acme radar: widget sightings and weekly runs" },
+      inbound: { route: "/api/acme-pull", token_secret: "ACME_INBOUND_TOKEN" },
+    };
+    const { contract } = parseProjectRecord(record(full), { folderSlug: "acme-radar" });
+    const patch = contractToRowPatch(contract, "d");
+    for (const k of ["capabilities", "secrets", "trusted", "routing", "egress", "deny_paths", "inbound"]) {
+      expect(patch.config[k], k).toEqual((full as Record<string, unknown>)[k]);
+    }
+    const { contract: plain } = parseProjectRecord(record({ ...BASE, trusted: false }), {
+      folderSlug: "acme-radar",
+    });
+    expect("trusted" in contractToRowPatch(plain, "d").config).toBe(false);
   });
 
   it("no links.site → no urls in the patch", () => {

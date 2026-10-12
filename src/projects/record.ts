@@ -8,14 +8,16 @@
  * JSON + zod: no new dependency, and the skills frontmatter parser cannot
  * express nested `repos` / `mcp` (spec §2).
  *
- * Parsed and validated but with NO consumer in this slice (WS3/WS4/WS7 wire
- * them, each behind its own gate): `trusted`, `egress`, `capabilities`,
- * `inbound`, `deny_paths`, `secrets`, `routing`. `repos` is validated for
- * shape only; the `realpath ⊂ profile.workspaceRoot` rule lands with WS4.
+ * WS3 consumes `capabilities.mcp`, `trusted`, `secrets` (names) and
+ * `routing.summary` (mcp/config.ts, projects/scope-groups.ts); `egress`,
+ * `inbound`, `deny_paths` are projected with no consumer yet (WS4/WS7).
+ * `repos` is validated for shape only; the `realpath ⊂ profile.workspaceRoot`
+ * rule lands with WS4.
  */
 
 import { z } from "zod";
 import { canonicalKbPath } from "../tools/builtin/immutable-core.js";
+import { isDeniedEnvName } from "../mcp/env-deny.js";
 
 export const PROJECT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 export const PROJECT_STATUSES = [
@@ -41,12 +43,22 @@ const kbPathSchema = z
     (p) => !p.startsWith("/") && !p.includes("\\") && !p.split("/").includes(".."),
     { message: "must be a KB-relative path (no leading /, no .., no backslash)" },
   );
-const envNameSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
+/** An env NAME; loader/runtime names and service-secret families are refused (audit R1 W3). */
+const envNameSchema = z
+  .string()
+  .regex(/^[A-Z][A-Z0-9_]*$/)
+  .refine((n) => !isDeniedEnvName(n), { message: "env name is reserved (loader/runtime or service secret)" });
 const trustSchema = z.enum(["A", "B", "AB", "NONE"]);
 
-/** §3 — declared here, loaded by nobody until WS3. */
+/** §3 — loaded by `mcp/config.ts` (S6 WS3). */
 const mcpEntrySchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/).optional(),
+  // `__` is the MCP namespace separator: an id containing it could shadow
+  // another server's `<id>__` prefix (audit R1 W2).
+  id: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]*$/)
+    .refine((id) => !id.includes("__"), { message: "id must not contain __" })
+    .optional(),
   command: z.string().min(1),
   args: z.array(z.string()).optional(),
   repo: z.string().min(1).optional(),
@@ -63,7 +75,6 @@ const mcpEntrySchema = z.strictObject({
     )
     .optional(),
   deferred: z.array(z.string()).optional(),
-  lazy: z.boolean().optional(),
 });
 
 /** Spec §2 field table, one entry per field. Unknown top-level keys are an error. */
@@ -297,7 +308,7 @@ export function recordSlugFromPath(rel: string): string | null {
 }
 
 /** One key order for a written contract block, whichever source set a field. */
-const RECORD_KEY_ORDER = ["slug", "name", "status", "aliases", "match_priority", "stall_exempt", "parent", "kb_folder", "kb_readme", "schedules", "repos", "success", "links"];
+const RECORD_KEY_ORDER = ["slug", "name", "status", "aliases", "match_priority", "stall_exempt", "parent", "kb_folder", "kb_readme", "schedules", "repos", "trusted", "egress", "deny_paths", "secrets", "capabilities", "routing", "inbound", "success", "links"];
 
 /**
  * The contract block as the operator scripts write it (exporter and create):
@@ -311,6 +322,7 @@ export function normaliseRecordJson(json: Record<string, unknown>): Record<strin
   const folder = typeof json.kb_folder === "string" ? json.kb_folder : `projects/${slug}/`;
   const implicit = (k: string, v: unknown) =>
     (k === "match_priority" && v === 0) ||
+    (k === "trusted" && v === false) ||
     (k === "kb_folder" && v === `projects/${slug}/`) ||
     (k === "kb_readme" && v === `${folder.replace(/\/+$/, "")}/README.md`);
   const raw = Object.fromEntries(

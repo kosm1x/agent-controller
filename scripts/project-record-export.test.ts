@@ -257,6 +257,54 @@ describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --f
     expect(reexport(row.slug, md2)).toBe(md1);
   });
 
+  it("S6 WS3: a row carrying the 7 capability keys (capabilities.mcp included) exports idempotently; credentials never leave the row", () => {
+    const CRED = "cv-" + "j".repeat(18);
+    createProject("acme-radar", "Acme Radar", {
+      description: "Synthetic radar for an invented team.",
+      status: "active",
+      credentials: { api_token: CRED },
+      config: {
+        aliases: ["acme"],
+        repos: [{ path: "/srv/work/acme-radar", role: "primary" }],
+        trusted: true,
+        egress: ["api.acme.example.test:443"],
+        deny_paths: ["/srv/work/acme-radar/private"],
+        secrets: ["SECRET_ACME_RADAR_API_TOKEN"],
+        capabilities: {
+          mcp: [
+            {
+              command: "node",
+              args: ["dist/mcp.js"],
+              env: ["ACME_RADAR_API_TOKEN"],
+              trust: "AB",
+              tools: { acme_trigger_run: { trust: "B", destructive: true } },
+              deferred: ["acme_history"],
+            },
+          ],
+        },
+        routing: { summary: "Acme radar: widget sightings and weekly runs" },
+        inbound: { route: "/api/acme-pull", token_secret: "ACME_INBOUND_TOKEN" },
+      },
+    });
+    const md1 = buildRecordFromRow(getProject("acme-radar")!).markdown;
+    expect(md1).not.toContain(CRED);
+    expect(md1).not.toContain("credentials");
+    const json = parseProjectRecord(md1, { folderSlug: "acme-radar" }).json as Record<string, unknown>;
+    expect(json.capabilities).toEqual(getProject("acme-radar")!.config.capabilities);
+    expect(json.trusted).toBe(true);
+    expect(json.secrets).toEqual(["SECRET_ACME_RADAR_API_TOKEN"]);
+    expect(json.inbound).toEqual({ route: "/api/acme-pull", token_secret: "ACME_INBOUND_TOKEN" });
+    expect(Object.keys(json)).toEqual([
+      "slug", "name", "status", "aliases", "repos", "trusted", "egress", "deny_paths", "secrets", "capabilities", "routing", "inbound",
+    ]);
+    const md2 = reexport("acme-radar", md1);
+    expect(md2).toBe(md1);
+    expect(reexport("acme-radar", md2)).toBe(md1);
+    // the projection never wrote the credential column either way
+    expect(getProject("acme-radar")!.credentials).toEqual({ api_token: CRED });
+    expect(JSON.stringify(getProject("acme-radar")!.config)).not.toContain(CRED);
+  });
+
   it("the record's (owned) value beats a differing legacy spelling; the legacy one stays in the notes on every run", () => {
     const row = seed(OWNED_AND_LEGACY as (typeof ROWS)[number]);
     const { markdown: md1, differs } = buildRecordFromRow(row, { schedules: ["sched-z3"] });

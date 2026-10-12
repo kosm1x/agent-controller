@@ -287,6 +287,33 @@ describe("project-report", () => {
     expect(run(["quiet-one"]).out).toContain("  children: 1 [not-kid]");
   });
 
+  it("S6 WS3: mcp line (declared / loadable when trusted / ids) and scope-group yes/no", () => {
+    const plain = run(["acme-radar"]).out;
+    expect(plain).toContain("  mcp: 0 declared, 0 loadable (trusted), ids: []");
+    expect(plain).toContain("  scope group: no");
+    initDatabase(dbPath);
+    try {
+      const db = getDatabase();
+      const ins = (id: string, slug: string, status: string, config: unknown) =>
+        db.prepare(`INSERT INTO projects (id, slug, name, status, config) VALUES (?,?,?,?,?)`).run(id, slug, SECRETISH, status, JSON.stringify(config));
+      const mcp = [{ command: "node" }, { id: "syn-extra", command: "node" }];
+      ins("m1", "syn-trusted", "active", { trusted: true, capabilities: { mcp } });
+      ins("m2", "syn-untrusted", "active", { capabilities: { mcp } });
+      ins("m3", "syn-paused", "paused", { trusted: true, capabilities: { mcp }, routing: { summary: "S" } });
+      ins("m4", "syn-summary", "active", { routing: { summary: "Summary only" } });
+    } finally {
+      closeDatabase();
+    }
+    const t = run(["syn-trusted"]).out;
+    expect(t).toContain("  mcp: 2 declared, 2 loadable (trusted), ids: [syn-trusted, syn-extra]");
+    expect(t).toContain("  scope group: yes");
+    const u = run(["syn-untrusted"]).out;
+    expect(u).toContain("  mcp: 2 declared, 0 loadable (trusted), ids: [syn-trusted, syn-extra]".replace(/syn-trusted/, "syn-untrusted"));
+    expect(u).toContain("  scope group: no");
+    expect(run(["syn-paused"]).out).toContain("  scope group: no");
+    expect(run(["syn-summary"]).out).toContain("  scope group: yes");
+  });
+
   it("--days narrows the window", () => {
     const { out } = run(["acme-radar", "--days", "7"]);
     expect(out).toContain("  total: 3 · 3");

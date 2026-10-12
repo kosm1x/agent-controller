@@ -1171,6 +1171,41 @@ export const CODE_SCOPE_PATTERNS: ReadonlyArray<Readonly<ScopePattern>> =
   Object.freeze(DEFAULT_SCOPE_PATTERNS.map((p) => Object.freeze({ ...p })));
 
 // ---------------------------------------------------------------------------
+// S6 WS3 — record-derived groups (registered once at boot)
+// ---------------------------------------------------------------------------
+
+/** group (slug) → `<id>__` prefixes of its record's loaded servers. */
+const PROJECT_GROUP_PREFIXES = new Map<string, string[]>();
+/** The live registry's tool names (set at registration; a dead server's tools re-register on reconnect). */
+let registeredToolNames: () => readonly string[] = () => [];
+
+/**
+ * Boot-time registration (`wireProjectScopeGroups`): the regex-fallback
+ * patterns join DEFAULT_SCOPE_PATTERNS (after CODE_SCOPE_PATTERNS was
+ * captured, so the tuning fingerprint is unchanged), and each group's tools
+ * are every registered name under its prefixes.
+ */
+export function registerProjectScopeGroups(
+  groups: ReadonlyArray<{ name: string; prefixes: readonly string[] }>,
+  regexes: ReadonlyArray<ScopePattern>,
+  toolNames: () => readonly string[],
+): void {
+  for (const g of groups) PROJECT_GROUP_PREFIXES.set(g.name, [...g.prefixes]);
+  DEFAULT_SCOPE_PATTERNS.push(...regexes);
+  registeredToolNames = toolNames;
+}
+
+/** Registered tools of the active record-derived groups (none registered ⇒ []). */
+function projectGroupTools(activeGroups: ReadonlySet<string>): string[] {
+  if (PROJECT_GROUP_PREFIXES.size === 0) return [];
+  const prefixes = [...PROJECT_GROUP_PREFIXES]
+    .filter(([g]) => activeGroups.has(g))
+    .flatMap(([, p]) => p);
+  if (prefixes.length === 0) return [];
+  return registeredToolNames().filter((n) => prefixes.some((p) => n.startsWith(p)));
+}
+
+// ---------------------------------------------------------------------------
 // Pure scoping function
 // ---------------------------------------------------------------------------
 
@@ -1576,6 +1611,7 @@ export function scopeToolsForMessage(
   if (activeGroups.has("skills")) {
     tools.push(...SKILL_DISPATCH_TOOLS);
   }
+  tools.push(...projectGroupTools(activeGroups));
   if (options.hasMemory) {
     tools.push("memory_search", "memory_store", "memory_reflect");
   }
@@ -1616,7 +1652,7 @@ const universeCache = new Map<string, Set<string>>();
 export function getAllAvailableTools(options: ScopeOptions): Set<string> {
   const cacheKey = `${options.hasGoogle}|${options.hasWordpress}|${options.hasMemory}|${options.hasCrm}`;
   const cached = universeCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) return withProjectGroupTools(cached);
   const all = new Set<string>([
     ...CORE_TOOLS,
     ...MISC_TOOLS,
@@ -1669,7 +1705,13 @@ export function getAllAvailableTools(options: ScopeOptions): Set<string> {
     all.add("memory_reflect");
   }
   universeCache.set(cacheKey, all);
-  return all;
+  return withProjectGroupTools(all);
+}
+
+/** S6 WS3: the universe plus every record-derived group's tools (a copy; the cache stays code-only). */
+function withProjectGroupTools(all: Set<string>): Set<string> {
+  const extra = projectGroupTools(new Set(PROJECT_GROUP_PREFIXES.keys()));
+  return extra.length === 0 ? all : new Set([...all, ...extra]);
 }
 
 /**

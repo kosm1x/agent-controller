@@ -166,6 +166,34 @@ RESPOND with JSON array only. No explanation. Examples:
 []`;
 
 /**
+ * S6 WS3: GROUPS lines derived from project records (`routing.summary`),
+ * registered once at boot by `wireProjectScopeGroups`. Empty ⇒ the prompt is
+ * CLASSIFIER_SYSTEM_PROMPT byte for byte.
+ */
+const PROJECT_GROUP_LINES: string[] = [];
+
+/** Boot-time registration of record-derived groups (VALID_GROUPS + prompt lines). */
+export function registerProjectClassifierGroups(
+  names: readonly string[],
+  promptLines: readonly string[],
+): void {
+  for (const n of names) VALID_GROUPS.add(n);
+  PROJECT_GROUP_LINES.push(...promptLines);
+}
+
+/** The classifier system prompt: the code's, plus record-derived GROUPS lines before RULES. */
+export function classifierSystemPrompt(): string {
+  if (PROJECT_GROUP_LINES.length === 0) return CLASSIFIER_SYSTEM_PROMPT;
+  const at = CLASSIFIER_SYSTEM_PROMPT.indexOf("\n\nRULES:");
+  return (
+    CLASSIFIER_SYSTEM_PROMPT.slice(0, at) +
+    "\n" +
+    PROJECT_GROUP_LINES.join("\n") +
+    CLASSIFIER_SYSTEM_PROMPT.slice(at)
+  );
+}
+
+/**
  * Classify scope groups using LLM. Returns null on failure (caller uses regex fallback).
  */
 export async function classifyScopeGroups(
@@ -184,7 +212,7 @@ export async function classifyScopeGroups(
         const groups = await jev.classifyScopeGroupsWithJev(
           message,
           recentContext,
-          CLASSIFIER_SYSTEM_PROMPT,
+          classifierSystemPrompt(),
           VALID_GROUPS,
           wholeTurns,
         );
@@ -216,7 +244,7 @@ export async function classifyScopeGroups(
     const result = await withTimeout(
       infer({
         messages: [
-          { role: "system", content: CLASSIFIER_SYSTEM_PROMPT },
+          { role: "system", content: classifierSystemPrompt() },
           { role: "user", content: userContent },
         ],
         max_tokens: 80,

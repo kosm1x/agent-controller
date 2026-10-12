@@ -47,7 +47,6 @@ const FULL = {
         trust: "AB",
         tools: { acme_run: { trust: "B", destructive: true } },
         deferred: [],
-        lazy: false,
       },
     ],
     brief: "Capability brief",
@@ -183,6 +182,46 @@ describe("parseProjectRecord — every error reason", () => {
       expect(err?.reason, JSON.stringify(bad)).toBe("schema");
       expect(err?.issues.length, JSON.stringify(bad)).toBeGreaterThan(0);
     }
+  });
+
+  it("S6 WS3 audit R1: mcp id with `__`, reserved env names (each class) and `lazy` are schema errors", () => {
+    const withMcp = (entry: Record<string, unknown>) => ({
+      slug: "ok-slug",
+      name: "N",
+      status: "active",
+      capabilities: { mcp: [{ command: "node", ...entry }] },
+    });
+    const bad: Array<Record<string, unknown>> = [
+      withMcp({ id: "browser__evil" }),
+      withMcp({ id: "a__" }),
+      withMcp({ lazy: true }),
+      withMcp({ lazy: false }),
+      { slug: "ok-slug", name: "N", status: "active", inbound: { route: "/x", token_secret: "TELEGRAM_BOT_TOKEN" } },
+    ];
+    // exact names + every prefix family
+    for (const name of [
+      "PATH", "HOME", "SHELL", "USER", "LOGNAME", "TERM", "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS",
+      "NODE_TLS_REJECT_UNAUTHORIZED", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "PYTHONPATH", "PYTHONSTARTUP",
+      "PYTHONHOME", "BASH_ENV", "ENV", "PERL5OPT", "PERL5LIB", "RUBYOPT", "GIT_EXEC_PATH", "TMPDIR", "IFS",
+      "LD_X", "DYLD_INSERT_LIBRARIES", "NODE_X", "PYTHONX", "MC_X", "JARVIS_X", "DATABASE_URL", "TELEGRAM_BOT_TOKEN",
+      "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FIREWORKS_API_KEY", "GEMINI_API_KEY", "GOOGLE_X", "SMTP_PASS", "IMAP_PASS",
+    ]) {
+      bad.push(withMcp({ env: [name] }));
+    }
+    for (const b of bad) {
+      let err: ProjectRecordError | undefined;
+      try {
+        parseProjectRecord(block(b), { folderSlug: "ok-slug" });
+      } catch (e) {
+        err = e as ProjectRecordError;
+      }
+      expect(err?.reason, JSON.stringify(b)).toBe("schema");
+    }
+    // the record's own names still pass
+    const ok = parseProjectRecord(block(withMcp({ id: "ok_id-1", env: ["ACME_API_TOKEN", "XPOZ_API_TOKEN"] })), {
+      folderSlug: "ok-slug",
+    });
+    expect(ok.contract.capabilities?.mcp?.[0]?.env).toEqual(["ACME_API_TOKEN", "XPOZ_API_TOKEN"]);
   });
 
   it("audit R2b: the derived kb_readme default is set only when it matches KB_README_RE", () => {

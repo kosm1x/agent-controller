@@ -235,6 +235,19 @@ function parseObject(raw: unknown): Record<string, unknown> {
   }
 }
 
+/**
+ * S6 WS3: record fields projected into `config` that hold the NAMES of
+ * secrets, never values — `config.secrets[i]` (`SECRET_<NAME>`) and
+ * `config.inbound.token_secret` (an env name). The classifier calls them
+ * credentials by key; indexed as values they would be scrubbed out of every
+ * text that names them. Exactly the record schema's shapes, nothing wider.
+ */
+function isSecretNameLeaf(field: string, path: readonly string[], value: string): boolean {
+  if (field !== "config" || path.length !== 2) return false;
+  if (path[0] === "secrets") return /^SECRET_[A-Z0-9_]+$/.test(value);
+  return path[0] === "inbound" && path[1] === "token_secret" && /^[A-Z][A-Z0-9_]*$/.test(value);
+}
+
 /** Secret string/number leaves of a project JSON field (isProjectSecret). */
 function projectEntries(
   slug: string,
@@ -269,6 +282,7 @@ function projectEntries(
   if (typeof value !== "string" && typeof value !== "number") return;
   const str = String(value);
   // Same rule as projectEntryLeaves (index and display stay identical).
+  if (isSecretNameLeaf(field, path, str)) return;
   if (!underSecret && !isProjectSecret(key, str)) return;
   const prefix = field === "credentials" ? [slug] : [slug, field];
   out.push({
@@ -468,6 +482,22 @@ export function expireSecretRefsForTest(): void {
   if (cache) cache = { ...cache, at: 0 };
 }
 
+/**
+ * S6 WS3: the value behind reference `name` when that name is one of
+ * `slug`'s own `credentials` entries (the index names `credentials.<key>`
+ * `SECRET_<SLUG>_<KEY>`); undefined for any other store or project. For a
+ * record MCP server's env (`SECRET_<NAME>` in the record's `secrets` →
+ * env `<NAME>`); never logged, never returned to the model.
+ */
+export function projectCredentialByName(slug: string, name: string): string | undefined {
+  const idx = index();
+  const prefix = projectIdentity(slug, "credentials", []);
+  for (const [identity, n] of idx.nameOf) {
+    if (n === name && identity.startsWith(prefix)) return idx.valueOf.get(name);
+  }
+  return undefined;
+}
+
 /** Reference name of a stored credential, or undefined. */
 export function secretRefName(identity: string): string | undefined {
   return index().nameOf.get(identity);
@@ -543,7 +573,9 @@ export function projectEntryLeaves(
     }
     if (typeof v !== "string" && typeof v !== "number") return;
     const str = String(v);
-    const secret = underSecret || isProjectSecret(leafKey, str);
+    const secret =
+      !isSecretNameLeaf(field, path, str) &&
+      (underSecret || isProjectSecret(leafKey, str));
     out.push({
       path,
       secret,

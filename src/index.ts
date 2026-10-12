@@ -347,6 +347,24 @@ async function main(): Promise<void> {
   );
   log.debug({ tools: toolRegistry.list() }, "tools registered");
 
+  // S6 WS3: scope groups derived from project records (after the projector
+  // above and the MCP tools just registered). No declaring record ⇒ no-op.
+  try {
+    const { wireProjectScopeGroups } = await import("./projects/scope-wiring.js");
+    const { listProjects } = await import("./db/projects.js");
+    const derived = wireProjectScopeGroups(
+      listProjects("active"),
+      mcpSource.recordServerIds(),
+      () => toolRegistry.list(),
+    );
+    log.info(
+      { groups: derived.groups.map((g) => g.name), skipped: derived.skipped },
+      "project scope groups registered",
+    );
+  } catch (err) {
+    log.warn({ err }, "project scope groups not registered (non-fatal)");
+  }
+
   // V8.3 Phase 0+1 — seed the (inert) capability-autonomy ledger now that the
   // tool registry is populated (tool-backed capabilities resolve + hint-check
   // against the live registry). Idempotent; failures log loudly, never crash boot.

@@ -11,6 +11,7 @@ import type {
 import { McpManager } from "../../mcp/manager.js";
 import { loadMcpConfig } from "../../mcp/config.js";
 import type { McpConfig } from "../../mcp/types.js";
+import { registerRecordMcpRuleOfTwo } from "../rule-of-two.js";
 
 export class McpToolSource implements ToolSource {
   readonly manifest: ToolSourceManifest = {
@@ -22,6 +23,21 @@ export class McpToolSource implements ToolSource {
   private manager: McpManager | null = null;
   private config: McpConfig | null = null;
   private alertFn: ((msg: string) => void) | null = null;
+  /** S6 WS3: refused record servers, delivered once an alert channel exists. */
+  private configAlerts: string[] = [];
+
+  private deliverConfigAlerts(): void {
+    if (!this.alertFn) return;
+    const pending = this.configAlerts;
+    this.configAlerts = [];
+    for (const msg of pending) {
+      try {
+        this.alertFn(msg);
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
 
   /**
    * Wire MCP degradation/recovery alerts to a broadcast function (e.g. the
@@ -33,14 +49,31 @@ export class McpToolSource implements ToolSource {
   setAlertFn(fn: (msg: string) => void): void {
     this.alertFn = fn;
     this.manager?.setAlertFn(fn);
+    this.deliverConfigAlerts();
   }
 
   async initialize(): Promise<void> {
-    this.config = loadMcpConfig();
+    this.config = loadMcpConfig({
+      onRefused: (msg) => this.configAlerts.push(msg),
+    });
+    this.deliverConfigAlerts();
     if (!this.config || Object.keys(this.config).length === 0) {
       console.log("[mcp] No MCP config found, skipping");
       this.config = null;
+      return;
     }
+    // Before any server connects: the boot trifecta check reads these.
+    registerRecordMcpRuleOfTwo(this.config);
+  }
+
+  /** S6 WS3: slug → ids of its record servers that load (trusted). */
+  recordServerIds(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const [id, c] of Object.entries(this.config ?? {})) {
+      if (c.source?.kind !== "record" || !c.source.trusted || c.enabled === false) continue;
+      out.set(c.source.slug, [...(out.get(c.source.slug) ?? []), id]);
+    }
+    return out;
   }
 
   async registerTools(registry: ToolRegistry): Promise<string[]> {

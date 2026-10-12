@@ -28,6 +28,9 @@ import {
   matchTermsFor,
 } from "../src/detection/stalled-projects.js";
 import { projectRecordRelPath } from "../src/projects/record.js";
+import { deriveProjectScopeGroups } from "../src/projects/scope-groups.js";
+import { VALID_GROUPS } from "../src/messaging/scope-classifier.js";
+import { DEFAULT_SCOPE_PATTERNS } from "../src/messaging/scope.js";
 import { PROJECT_SOURCES } from "../src/projects/attribution.js";
 
 export const UNAUDITED_COST_LINE =
@@ -112,6 +115,21 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
     out.push(`  parent: ${parent} (row: ${hasRow ? "yes" : "no"})`);
   }
   out.push(`  children: ${children.length}${children.length > 0 ? ` [${children.join(", ")}]` : ""}`);
+  // S6 WS3: record-declared MCP servers (ids only) and the derived scope group.
+  const caps = config.capabilities as { mcp?: unknown } | undefined;
+  const mcpIds = Array.isArray(caps?.mcp)
+    ? (caps.mcp as Array<{ id?: unknown }>).map((e) => (typeof e?.id === "string" ? e.id : slug))
+    : [];
+  const loadable = config.trusted === true ? mcpIds : [];
+  out.push(`  mcp: ${mcpIds.length} declared, ${loadable.length} loadable (trusted), ids: [${mcpIds.join(", ")}]`);
+  const routing = config.routing as { summary?: unknown } | undefined;
+  const scope = deriveProjectScopeGroups(
+    row.status === "active"
+      ? [{ slug, serverIds: loadable, routing: typeof routing?.summary === "string" ? { summary: routing.summary } : undefined }]
+      : [],
+    new Set([...VALID_GROUPS, ...DEFAULT_SCOPE_PATTERNS.map((p) => p.group)]),
+  );
+  out.push(`  scope group: ${scope.groups.length > 0 ? "yes" : "no"}`);
 
   out.push("");
   out.push(`Schedule runs (${days} d)`);

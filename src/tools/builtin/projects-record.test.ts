@@ -12,11 +12,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, initDatabase } from "../../db/index.js";
-import { createProject, getProject } from "../../db/projects.js";
+import { createProject, deleteProject, getProject } from "../../db/projects.js";
 import { getFile, upsertFile } from "../../db/jarvis-fs.js";
 import { upsertFromDiskWrite } from "../../db/jarvis-reindex.js";
 import { parseProjectRecord, projectRecordRelPath } from "../../projects/record.js";
 import { OPERATOR_ONLY_CONFIG_KEYS, projectUpdateTool } from "./projects.js";
+import { cachedProjectStatus } from "../../lib/project-status-cache.js";
 
 let kbDir: string;
 
@@ -336,6 +337,45 @@ describe("project_update — an operator-only key is refused only when its value
     expect(String(getFile(REL)!.content)).toBe(before);
   });
 
+  it("S6 WS3: a record row carrying capabilities/secrets/routing/trusted — echo passes, a change is refused", async () => {
+    const caps = { mcp: [{ command: "node", args: ["dist/mcp.js"], env: ["ACME_RADAR_TOKEN"], trust: "B" }] };
+    const json = {
+      ...parseProjectRecord(RECORD, { folderSlug: "acme-radar" }).json,
+      trusted: true,
+      secrets: ["SECRET_ACME_RADAR_TOKEN"],
+      capabilities: caps,
+      routing: { summary: "Acme radar runs" },
+    };
+    upsertFromDiskWrite(REL, block(json) + "\nSynthetic lead paragraph.\n");
+    const row = getProject("acme-radar")!;
+    expect(row.config.capabilities).toEqual(caps);
+    const echo = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "acme-radar",
+        name: "Acme Radar Three",
+        config: {
+          capabilities: row.config.capabilities,
+          secrets: row.config.secrets,
+          routing: row.config.routing,
+          trusted: row.config.trusted,
+        },
+      }),
+    );
+    expect(echo.error).toBeUndefined();
+    expect(getProject("acme-radar")!.name).toBe("Acme Radar Three");
+    const before = String(getFile(REL)!.content);
+    for (const config of [
+      { capabilities: { mcp: [{ command: "sh", args: ["-c", "id"] }] } },
+      { secrets: ["SECRET_ACME_RADAR_OTHER"] },
+      { trusted: false },
+      { routing: { summary: "something else" } },
+    ]) {
+      const bad = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", config }));
+      expect(bad.error, Object.keys(config)[0]).toContain(`config.${Object.keys(config)[0]}`);
+    }
+    expect(String(getFile(REL)!.content)).toBe(before);
+  });
+
   it("legacy row: echo passes, change refused, adding to a row that lacks it refused", async () => {
     createProject("legacy-delta", "Legacy Delta", { config: { kb_readme: "projects/legacy-delta/README.md", phase: "one" } });
     const echo = JSON.parse(
@@ -357,11 +397,12 @@ describe("project_update — an operator-only key is refused only when its value
 });
 
 describe("project_update — the operator-only config keys are refused", () => {
-  it("lists exactly mcp, trusted, egress, deny_paths, kb_readme (audit R1 C1)", () => {
-    expect([...OPERATOR_ONLY_CONFIG_KEYS].sort()).toEqual(["deny_paths", "egress", "kb_readme", "mcp", "trusted"]);
+  const KEYS = ["capabilities", "deny_paths", "egress", "inbound", "kb_readme", "mcp", "routing", "secrets", "trusted"];
+  it("lists exactly the WS1 keys (audit R1 C1) plus the S6 WS3 capability keys", () => {
+    expect([...OPERATOR_ONLY_CONFIG_KEYS].sort()).toEqual(KEYS);
   });
 
-  for (const key of ["mcp", "trusted", "egress", "deny_paths", "kb_readme"]) {
+  for (const key of KEYS) {
     it(`config.${key}: refused with a record, nothing written`, async () => {
       seedRecord();
       const rowBefore = rowView("acme-radar");
@@ -387,4 +428,31 @@ describe("project_update — the operator-only config keys are refused", () => {
       expect(getProject("brand-new")).toBeNull();
     });
   }
+});
+
+describe("S6 WS3 audit R1 rec b — a status change invalidates the record-server status cache", () => {
+  it("project_update status (legacy row and record row) → the next read re-reads", async () => {
+    createProject("legacy-gamma", "Legacy Gamma", { status: "active" });
+    expect(cachedProjectStatus("legacy-gamma", () => "active")).toBe("active");
+    expect(cachedProjectStatus("legacy-gamma", () => "stale-read")).toBe("active"); // cached
+    await projectUpdateTool.execute({ slug: "legacy-gamma", status: "paused" });
+    expect(cachedProjectStatus("legacy-gamma", () => "re-read")).toBe("re-read");
+
+    seedRecord();
+    expect(cachedProjectStatus("acme-radar", () => "active")).toBe("active");
+    const out = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", status: "paused" }));
+    expect(out.error).toBeUndefined();
+    expect(getProject("acme-radar")!.status).toBe("paused");
+    expect(cachedProjectStatus("acme-radar", () => "re-read")).toBe("re-read");
+  });
+});
+
+describe("S6 WS3 audit R3 — deleteProject invalidates the record-server status cache", () => {
+  it("a deleted project is re-read, never served from the cache", () => {
+    createProject("legacy-delta", "Legacy Delta", { status: "active" });
+    expect(cachedProjectStatus("legacy-delta", () => "active")).toBe("active");
+    expect(cachedProjectStatus("legacy-delta", () => "stale-read")).toBe("active"); // cached
+    expect(deleteProject("legacy-delta")).toBe(true);
+    expect(cachedProjectStatus("legacy-delta", () => "missing")).toBe("missing");
+  });
 });

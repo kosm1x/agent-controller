@@ -11,6 +11,7 @@ import {
   invalidateSecretRefs,
   projectSecretDisplay,
 } from "../lib/secret-refs.js";
+import { invalidateProjectStatus } from "../lib/project-status-cache.js";
 
 export interface Project {
   id: string;
@@ -279,6 +280,7 @@ export function updateProject(
     ...values,
   );
   invalidateSecretRefs();
+  if (updates.status !== undefined) invalidateProjectStatus(project.slug);
 
   const changedFields = Object.keys(updates).join(", ");
   logProjectAction(project.id, "updated", `Fields: ${changedFields}`);
@@ -294,6 +296,7 @@ export function deleteProject(slugOrId: string): boolean {
   const db = getDatabase();
   db.prepare("DELETE FROM projects WHERE id = ?").run(project.id);
   invalidateSecretRefs();
+  invalidateProjectStatus(project.slug);
   return true;
 }
 

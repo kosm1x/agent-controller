@@ -50,6 +50,7 @@
 import { AsyncLocalStorage } from "async_hooks";
 import { exitExecutionContext } from "../inference/execution-context.js";
 import type { Tool, ToolAnnotations } from "./types.js";
+import type { McpConfig, TrustClass } from "../mcp/types.js";
 
 export interface RuleOfTwoClass {
   /** [A] inherent output carries third-party-authored free text. */
@@ -320,6 +321,44 @@ export const RULE_OF_TWO_PREFIX_DEFAULTS: ReadonlyArray<
 
 const UNKNOWN: RuleOfTwoClass = c(true, true);
 
+/**
+ * S6 WS3: the record-declared equivalents of the two tables above, filled at
+ * boot from each record server's `trust` (prefix `<id>__`) and per-tool
+ * `tools.<name>.trust` (override) — no hand edit per project server. A
+ * record server with no `trust` registers true/true (unknown = riskier).
+ */
+const RECORD_MCP_OVERRIDES = new Map<string, RuleOfTwoClass>();
+const RECORD_PREFIX_DEFAULTS = new Map<string, RuleOfTwoClass>();
+const TRUST_CLASS: Readonly<Record<TrustClass, RuleOfTwoClass>> = { A, B, AB, NONE };
+
+/**
+ * Register every TRUSTED record server of a loaded MCP config. Service
+ * entries are skipped, and so are untrusted records: they are never spawned,
+ * so their class must not shadow another prefix (audit R2 W1).
+ */
+export function registerRecordMcpRuleOfTwo(config: McpConfig): void {
+  for (const [id, server] of Object.entries(config)) {
+    if (server.source?.kind !== "record" || server.source.trusted !== true) continue;
+    RECORD_PREFIX_DEFAULTS.set(
+      `${id}__`,
+      server.trust ? TRUST_CLASS[server.trust] : UNKNOWN,
+    );
+    for (const [tool, flags] of Object.entries(server.toolTrust ?? {})) {
+      if (flags.trust) RECORD_MCP_OVERRIDES.set(`${id}__${tool}`, TRUST_CLASS[flags.trust]);
+    }
+  }
+}
+
+/** Every MCP prefix with a default: the static table, then the record-registered ones. */
+export function ruleOfTwoMcpPrefixes(): string[] {
+  return [...RULE_OF_TWO_PREFIX_DEFAULTS.map(([p]) => p), ...RECORD_PREFIX_DEFAULTS.keys()];
+}
+
+function recordPrefixClass(name: string): RuleOfTwoClass | undefined {
+  for (const [p, cls] of RECORD_PREFIX_DEFAULTS) if (name.startsWith(p)) return cls;
+  return undefined;
+}
+
 /** Own-key lookup — prototype-chain names (`constructor`, `toString`, …) must never classify. */
 function own(
   table: Readonly<Record<string, RuleOfTwoClass>>,
@@ -339,7 +378,9 @@ export function resolveRuleOfTwo(
   const byName =
     own(RULE_OF_TWO_CLASSIFICATION, tool.name) ??
     own(RULE_OF_TWO_MCP_OVERRIDES, tool.name) ??
+    RECORD_MCP_OVERRIDES.get(tool.name) ??
     RULE_OF_TWO_PREFIX_DEFAULTS.find(([p]) => tool.name.startsWith(p))?.[1] ??
+    recordPrefixClass(tool.name) ??
     UNKNOWN;
   return {
     untrustedInput: tool.untrustedInputHint ?? byName.untrustedInput,
@@ -352,7 +393,9 @@ export function isRuleOfTwoClassified(name: string): boolean {
   return (
     Object.hasOwn(RULE_OF_TWO_CLASSIFICATION, name) ||
     Object.hasOwn(RULE_OF_TWO_MCP_OVERRIDES, name) ||
-    RULE_OF_TWO_PREFIX_DEFAULTS.some(([p]) => name.startsWith(p))
+    RECORD_MCP_OVERRIDES.has(name) ||
+    RULE_OF_TWO_PREFIX_DEFAULTS.some(([p]) => name.startsWith(p)) ||
+    recordPrefixClass(name) !== undefined
   );
 }
 

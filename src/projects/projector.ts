@@ -40,6 +40,15 @@ export const PROJECTOR_CONFIG_KEYS = [
   "schedules",
   "success",
   "links",
+  // S6 WS3: capability / trust fields, operator-only (OPERATOR_ONLY_CONFIG_KEYS).
+  // `secrets` carries NAMES only; values stay in `projects.credentials`.
+  "capabilities",
+  "secrets",
+  "trusted",
+  "routing",
+  "egress",
+  "deny_paths",
+  "inbound",
 ] as const;
 
 export interface ProjectRowPatch {
@@ -61,6 +70,9 @@ export function contractToRowPatch(
   for (const k of PROJECTOR_CONFIG_KEYS) {
     if (contract[k] !== undefined) config[k] = contract[k];
   }
+  // The default stays implicit on the row too (absent = untrusted), so a
+  // record without `trusted` does not rewrite its row at the next boot.
+  if (config.trusted === false) delete config.trusted;
   const patch: ProjectRowPatch = {
     name: contract.name,
     description,
