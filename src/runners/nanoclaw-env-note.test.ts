@@ -4,7 +4,10 @@ import {
   RO_REPO,
   TARGET_NOT_IN_SANDBOX,
   emittedTargetNotInSandbox,
+  sandboxStopEmitted,
 } from "./nanoclaw-env-note.js";
+import { collectFinalAnswer } from "../prometheus/final-answer.js";
+import type { ExecutionResult, GoalResult } from "../prometheus/types.js";
 
 describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
   it("workspace branch carries the workspace path + delivery mechanics", () => {
@@ -86,5 +89,44 @@ describe("buildEnvironmentNote — nanoclaw sandbox guards", () => {
       emittedTargetNotInSandbox("Fixed the regex and pushed branch fix/foo."),
     ).toBe(false);
     expect(emittedTargetNotInSandbox("")).toBe(false);
+  });
+});
+
+describe("sandboxStopEmitted — judged on RAW goal text, not the extracted deliverable", () => {
+  const goal = (result?: string): GoalResult => ({
+    goalId: "g",
+    ok: true,
+    durationMs: 0,
+    toolCalls: 0,
+    toolNames: [],
+    toolFailures: 0,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    result,
+  });
+  const exec = (results: Record<string, GoalResult>): ExecutionResult => ({
+    goalResults: results,
+    summary: {},
+    totalToolCalls: 0,
+    totalToolNames: [],
+    totalToolFailures: 0,
+    tokenUsage: { promptTokens: 0, completionTokens: 0 },
+    toolRepairs: [],
+  });
+
+  it("detects the sentinel written OUTSIDE a non-empty <deliverable> block", () => {
+    const r = exec({
+      "g-1": goal(
+        `${TARGET_NOT_IN_SANDBOX}: this task targets the landing.\n<deliverable>No se pudo completar.</deliverable>`,
+      ),
+    });
+    // The extraction drops it — the reason the check must not read finalAnswer.
+    expect(collectFinalAnswer(r)).not.toContain(TARGET_NOT_IN_SANDBOX);
+    expect(sandboxStopEmitted("Heuristic score: 0.5.", r)).toBe(true);
+  });
+
+  it("detects it in the reflector summary alone; false when absent everywhere", () => {
+    const r = exec({ "g-1": goal("<deliverable>ok</deliverable>"), "g-2": goal() });
+    expect(sandboxStopEmitted(`quoted ${TARGET_NOT_IN_SANDBOX}`, r)).toBe(true);
+    expect(sandboxStopEmitted("all good", r)).toBe(false);
   });
 });

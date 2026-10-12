@@ -305,14 +305,16 @@ async function buildGoalPrompt(
     `You are executing a single goal as part of a larger plan. Use the available tools to achieve the goal.\n\n` +
     (kb.stable ? `${kb.stable}\n\n` : "") +
     `## Instructions\n` +
-    `- Use tools to accomplish the goal.\n` +
-    `- When all completion criteria are met, respond with a summary of what you achieved.\n` +
+    `- Use tools to accomplish the goal. Never create or modify anything the goal does not ask you to change, not even to meet a criterion.\n` +
+    // collectFinalAnswer() keeps only the last non-empty <deliverable> block
+    // per goal (final-answer.ts): lead-in narration in the final turn reached chat.
+    `- When all completion criteria are met, respond with a summary of what you achieved between <deliverable> and </deliverable>: only that text is delivered, verbatim, to the operator's chat, with no preamble about evidence, tools, retries or criteria; everything outside the markers is discarded.\n` +
     // 2026-09-06: collectFinalAnswer() joins these summaries VERBATIM into the
     // chat reply (finalAnswer is the canonical deliverable) and the goals the
     // planner writes are English, so 5/5 heavy chat replies since 09-05 reached
     // the operator in English. The router's deliverable-filter only flags
     // english_leading; the language has to be right at the source.
-    `- Language: write the summary in Spanish (Mexico) — it is delivered to the operator's chat as-is. Keep code, commands, file paths, tool names, URLs and verbatim quotes unchanged; switch language only if the goal itself asks for another one.\n` +
+    `- Language: write the summary in Spanish (Mexico). Keep code, commands, file paths, tool names, URLs and verbatim quotes unchanged; switch language only if the goal itself asks for another one.\n` +
     `- If you cannot complete the goal, explain what went wrong.`;
 
   const variable =
@@ -557,7 +559,8 @@ export async function executeGoal(
               .map((c: string, i: number) => `${i + 1}. ${c}`)
               .join("\n") +
             `\n\nAssessment: ${assessment.reasoning}\n\n` +
-            `Reflect on what went wrong and try again. Use tools if needed.`,
+            `Reflect on what went wrong and try again. Use tools if needed. ` +
+            `If a criterion can only be met by modifying something the goal does not ask you to change, do not modify it; report the gap as this goal's result.`,
         };
 
         const retryResult = useSdkPath()

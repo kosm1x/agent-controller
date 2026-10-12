@@ -19,9 +19,45 @@ export function collectFinalAnswer(
   execResults: ExecutionResult,
 ): string | null {
   const parts: string[] = [];
+  let delimited = 0;
   for (const goal of Object.values(execResults.goalResults)) {
-    const text = goal.result?.trim();
-    if (text) parts.push(text);
+    const raw = goal.result?.trim();
+    if (!raw) continue;
+    const d = extractDeliverable(raw);
+    const text = d.text.trim();
+    if (!text) continue;
+    if (d.delimited) delimited++;
+    parts.push(text);
   }
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  if (parts.length === 0) return null;
+  // Adoption readout for the <deliverable> contract: counts only, no content.
+  console.info(`[final-answer] goals=${parts.length} delimited=${delimited}`);
+  return parts.join("\n\n");
+}
+
+const DELIVERABLE_BLOCK = /<deliverable\b[^>]*>([\s\S]*?)<\/deliverable\s*>/gi;
+const DELIVERABLE_MARKER = /<\/?deliverable\b[^>]*>/gi;
+
+/**
+ * A goal's `result` is the WHOLE final assistant turn, lead-in narration
+ * ("I have comprehensive, verified evidence…") included. The executor prompt
+ * asks for the user-facing part between `<deliverable>` … `</deliverable>`
+ * (matched case-insensitively, attributes allowed); this returns the LAST
+ * NON-EMPTY well-formed block, trimmed. No such block → the full text
+ * (`delimited: false`), so an answer written without the markers is never
+ * lost. Every path strips stray markers (unclosed, nested, empty blocks) so
+ * none reaches chat.
+ */
+export function extractDeliverable(text: string): {
+  text: string;
+  delimited: boolean;
+} {
+  let last: string | undefined;
+  for (const m of text.matchAll(DELIVERABLE_BLOCK)) {
+    const body = m[1].replace(DELIVERABLE_MARKER, "").trim();
+    if (body) last = body;
+  }
+  return last
+    ? { text: last, delimited: true }
+    : { text: text.replace(DELIVERABLE_MARKER, ""), delimited: false };
 }

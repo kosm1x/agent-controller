@@ -48,6 +48,7 @@ Respond ONLY with a JSON object:
 
 Rules:
 - Top-level goals have parent_id=null and depends_on=[].
+- Criteria describe the outcome the USER asked for. A goal must not create or modify files, KB pages, records or external state the request did not ask to change; if a criterion could only be met by such a change, rewrite the criterion (observe and report), never the world.
 - Use the object form of a completion criterion whenever a shell command can prove it (a test, a typecheck, a curl, a file check); plain strings for outcomes only a reader can judge.
 - A "check" must OBSERVE the artifact (read the file, query the table, curl the URL, run the test). A command whose only data source is a literal — echo, printf, true — proves nothing and is discarded; if no real command can prove the criterion, use the plain-string form.
 - An "expect" must be able to FAIL. For a count (grep -c, wc -l, COUNT(*)) use a comparator — gt 0, gte 3, eq 200 — and make the check print that number as its LAST line ('wc -l < f', not 'wc -l f'; add 2>/dev/null if the command warns; grep -c on ONE file, since several print name:count lines). gte 0 cannot fail and is refused. A /regex/ must name a word; digit-only patterns (/[0-9]/, /[1-9]/, /\d+/) are satisfied by any count, including 0, and are refused.
@@ -100,6 +101,7 @@ You may add new goals, remove failed goals, or change dependencies.
 
 New or revised goals follow the same workload sizing as planning: one execution round (~2 minutes, ~10-15 tool calls) per goal; split enumerable workloads into batches of 3-5 items with criteria bounded to each batch.
 New or revised goals follow the same ownership rule as planning: concurrent siblings have DISJOINT research targets — assign a shared entity to exactly ONE goal, write "Do not research <X> — owned by g-N" in the others, and make a goal that needs an owned fact depends_on its owner.
+- Criteria describe the outcome the USER asked for. A goal must not create or modify files, KB pages, records or external state the request did not ask to change; if a criterion could only be met by such a change, rewrite the criterion (observe and report), never the world.
 
 Respond with a revised goal graph in the same JSON schema:
 {

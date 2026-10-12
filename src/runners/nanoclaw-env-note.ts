@@ -25,6 +25,8 @@
  * All guards apply whether or not a writable workspace was set up.
  */
 
+import type { ExecutionResult } from "../prometheus/types.js";
+
 /** Read-only reference mount of the host repo inside the container (never writable). */
 export const RO_REPO = "/root/claude/mission-control";
 
@@ -39,6 +41,24 @@ export const TARGET_NOT_IN_SANDBOX = "TARGET_NOT_IN_SANDBOX";
 /** True when an agent's final summary signals the sandbox-scope stop. */
 export function emittedTargetNotInSandbox(summary: string): boolean {
   return summary.includes(TARGET_NOT_IN_SANDBOX);
+}
+
+/**
+ * The worker's backstop: the reflector summary OR any goal's RAW final turn
+ * carries the sentinel. Judged on `GoalResult.result` before
+ * collectFinalAnswer's <deliverable> extraction, which would drop a sentinel
+ * written outside the block.
+ */
+export function sandboxStopEmitted(
+  summary: string,
+  execResults: ExecutionResult,
+): boolean {
+  return (
+    emittedTargetNotInSandbox(summary) ||
+    Object.values(execResults.goalResults).some(
+      (g) => !!g.result && emittedTargetNotInSandbox(g.result),
+    )
+  );
 }
 
 export function buildEnvironmentNote(workspace: string | null): string {

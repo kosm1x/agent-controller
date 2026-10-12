@@ -40,7 +40,7 @@ import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from "./container.js";
 import {
   RO_REPO,
   buildEnvironmentNote,
-  emittedTargetNotInSandbox,
+  sandboxStopEmitted,
 } from "./nanoclaw-env-note.js";
 import { errMsg } from "../lib/err-msg.js";
 
@@ -194,11 +194,9 @@ async function main(): Promise<void> {
     // the third-person English verdict to the operator instead of the
     // agent's answer (tasks 7413/7416, 2026-07-12).
     const finalAnswer = collectFinalAnswer(result.executionResults);
-    // Check BOTH texts for the sandbox sentinel: the agent emits it in its
-    // answer; the reflector summary only sometimes quotes it.
-    const targetMissing =
-      emittedTargetNotInSandbox(summary) ||
-      (finalAnswer !== null && emittedTargetNotInSandbox(finalAnswer));
+    // Check the reflector summary AND the goals' RAW answers for the sandbox
+    // sentinel — never the extracted deliverable, which can drop it.
+    const targetMissing = sandboxStopEmitted(summary, result.executionResults);
 
     const output = {
       type: "result",
