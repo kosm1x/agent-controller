@@ -10,7 +10,8 @@ import { getConfig } from "../config.js";
 import type { McpConfig, McpServerConfig, TrustClass } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { listProjects } from "../db/projects.js";
-import { ENV_NAME_RE, isDeniedEnvName } from "./env-deny.js";
+import { ENV_NAME_RE } from "./env-deny.js";
+import { resolveRecordEnv, type RecordEnvEntry } from "./record-env.js";
 import { MCP_NAMESPACE_SEP } from "./types.js";
 import { RULE_OF_TWO_PREFIX_DEFAULTS } from "../tools/rule-of-two.js";
 
@@ -21,7 +22,7 @@ export interface RecordMcpEntry {
   args?: string[];
   repo?: string;
   cwd?: string;
-  env?: string[];
+  env?: RecordEnvEntry[];
   trust?: TrustClass;
   tools?: Record<string, { trust?: TrustClass; destructive?: boolean }>;
   deferred?: string[];
@@ -54,14 +55,8 @@ export function recordToServerConfig(
   if (id.includes(MCP_NAMESPACE_SEP)) {
     return { error: `${slug}/${id}: id must not contain ${MCP_NAMESPACE_SEP}` };
   }
-  const malformed = (entry.env ?? []).filter((n) => typeof n !== "string" || !ENV_NAME_RE.test(n));
-  if (malformed.length > 0) {
-    return { error: `${slug}/${id}: ${malformed.length} env name(s) not matching ${ENV_NAME_RE.source}` };
-  }
-  const denied = (entry.env ?? []).filter((n) => isDeniedEnvName(n));
-  if (denied.length > 0) {
-    return { error: `${slug}/${id}: env name(s) reserved: ${denied.join(", ")}` };
-  }
+  const env = resolveRecordEnv(entry.env, secrets);
+  if ("error" in env) return { error: `${slug}/${id}: ${env.error}` };
   let repo: RecordRepo | undefined;
   if (entry.repo !== undefined) {
     const byPath = repos.find((r) => r.path === entry.repo);
@@ -89,7 +84,7 @@ export function recordToServerConfig(
     cwd,
     source: { kind: "record", slug, trusted, ...(secrets.length > 0 && { secrets: [...secrets] }) },
   };
-  if (entry.env && entry.env.length > 0) config.envNames = [...entry.env];
+  if (env.spec.length > 0) config.envSpec = env.spec;
   if (entry.trust !== undefined) config.trust = entry.trust;
   if (entry.tools !== undefined) config.toolTrust = entry.tools;
   if (entry.deferred && entry.deferred.length > 0) config.deferredTools = [...entry.deferred];

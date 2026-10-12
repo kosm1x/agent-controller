@@ -121,7 +121,14 @@ export function buildProjectReport(db: Db, slug: string, days = 30): string[] | 
     ? (caps.mcp as Array<{ id?: unknown }>).map((e) => (typeof e?.id === "string" ? e.id : slug))
     : [];
   const loadable = config.trusted === true ? mcpIds : [];
-  out.push(`  mcp: ${mcpIds.length} declared, ${loadable.length} loadable (trusted), ids: [${mcpIds.join(", ")}]`);
+  // WS3a: env entries by kind — counts only, never a literal's value.
+  const envEntries = Array.isArray(caps?.mcp)
+    ? (caps.mcp as Array<{ env?: unknown }>).flatMap((e) => (Array.isArray(e?.env) ? (e.env as unknown[]) : []))
+    : [];
+  const literals = envEntries.filter((e) => typeof e === "object" && e !== null && "value" in e).length;
+  out.push(
+    `  mcp: ${mcpIds.length} declared, ${loadable.length} loadable (trusted), ids: [${mcpIds.join(", ")}], env: ${envEntries.length} names (${envEntries.length - literals} secret, ${literals} literal)`,
+  );
   const routing = config.routing as { summary?: unknown } | undefined;
   const scope = deriveProjectScopeGroups(
     row.status === "active"

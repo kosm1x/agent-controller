@@ -22,17 +22,19 @@ import { getProject } from "../db/projects.js";
 import { projectCredentialByName } from "../lib/secret-refs.js";
 import { applyDeferredHeadRule } from "../projects/scope-groups.js";
 import { ENV_NAME_RE, isDeniedEnvName } from "./env-deny.js";
+import { ENV_VALUE_FORBIDDEN_RE } from "./record-env.js";
 import { cachedProjectStatus } from "../lib/project-status-cache.js";
 
 /**
  * S6 WS3 (names-only env, queue 3a): the child's environment is the SDK's
- * default safe set plus what the config declares — a service server's fixed
- * `env` values and `envNames` read from the service env; a record server's
- * `envNames` ONLY from its project's own credentials (`SECRET_<NAME>` listed
- * in the record's `secrets`) — any other name, a credential miss or a reserved
- * name (env-deny.ts) is omitted: the service env never reaches a record child.
- * A name with no value is omitted (one warn, the NAME only). Never the whole
- * service env.
+ * default safe set plus what the config declares. A service server: its
+ * fixed `env` values and `envNames` read from the service env. A record
+ * server (WS3a): its `envSpec` ONLY — a credential reference resolved from
+ * its own project (`projectCredentialByName`; the reference must be in the
+ * record's `secrets`) or a literal non-secret value; a reference miss, an
+ * unlisted reference or a reserved name (env-deny.ts) is omitted — the
+ * service env never reaches a record child. Warnings carry NAMES only.
+ * Never the whole service env.
  */
 export function buildSpawnEnv(
   serverId: string,
@@ -40,40 +42,59 @@ export function buildSpawnEnv(
 ): Record<string, string> {
   const env: Record<string, string> = { ...getDefaultEnvironment() };
   const source = config.source;
-  if (source?.kind !== "record" && config.env) Object.assign(env, config.env);
-  for (const name of config.envNames ?? []) {
-    if (!ENV_NAME_RE.test(name)) {
-      console.warn(`[mcp] ${serverId}: an env name does not match ${ENV_NAME_RE.source} — omitted`);
-      continue;
-    }
-    let value: string | undefined;
-    if (source?.kind === "record") {
+  if (source?.kind === "record") {
+    for (const entry of config.envSpec ?? []) {
+      const name = entry.name;
+      if (!ENV_NAME_RE.test(name)) {
+        console.warn(`[mcp] ${serverId}: an env name does not match ${ENV_NAME_RE.source} — omitted`);
+        continue;
+      }
       // Defence in depth behind the record schema and the loader (audit R1 W3).
       if (isDeniedEnvName(name)) {
         console.warn(`[mcp] ${serverId}: env ${name} is reserved — omitted`);
         continue;
       }
-      // Secrets only: a record child gets a declared name from its project's
-      // own credentials (`SECRET_<NAME>`) or not at all. The service env never
-      // reaches a record child (audit R1 W4, R2 W2).
-      if (!source.secrets?.includes(`SECRET_${name}`)) {
+      if ("value" in entry) {
+        if (ENV_VALUE_FORBIDDEN_RE.test(entry.value)) {
+          warnOnce(`${serverId}\0${name}`, `[mcp] ${serverId}: env ${name} has a newline or NUL; omitted`);
+          continue;
+        }
+        env[name] = entry.value;
+        continue;
+      }
+      // Secrets only: from the project's own credentials or not at all
+      // (audit R1 W4, R2 W2).
+      if (!source.secrets?.includes(entry.secret)) {
         warnOnce(
           `${serverId}\0${name}`,
-          `[mcp] ${serverId}: env ${name} is not in project ${source.slug}'s secrets (SECRET_${name}); omitted`,
+          `[mcp] ${serverId}: env ${name} is not in project ${source.slug}'s secrets (${entry.secret}); omitted`,
         );
         continue;
       }
-      value = projectCredentialByName(source.slug, `SECRET_${name}`);
-      if (value === undefined) {
+      const secret = projectCredentialByName(source.slug, entry.secret);
+      if (secret === undefined) {
         warnOnce(
           `${serverId}\0${name}`,
-          `[mcp] ${serverId}: env ${name} — SECRET_${name} has no credential in project ${source.slug}; omitted`,
+          `[mcp] ${serverId}: env ${name} — ${entry.secret} has no credential in project ${source.slug}; omitted`,
         );
         continue;
       }
-    } else {
-      value = process.env[name];
+      // Node's spawn error echoes a value with NUL: never let it fire.
+      if (ENV_VALUE_FORBIDDEN_RE.test(secret)) {
+        warnOnce(`${serverId}\0${name}`, `[mcp] ${serverId}: env ${name} has a newline or NUL; omitted`);
+        continue;
+      }
+      env[name] = secret;
     }
+    return env;
+  }
+  if (config.env) Object.assign(env, config.env);
+  for (const name of config.envNames ?? []) {
+    if (!ENV_NAME_RE.test(name)) {
+      console.warn(`[mcp] ${serverId}: an env name does not match ${ENV_NAME_RE.source} — omitted`);
+      continue;
+    }
+    const value = process.env[name];
     if (value === undefined) {
       console.warn(`[mcp] ${serverId}: env ${name} has no value — omitted`);
       continue;

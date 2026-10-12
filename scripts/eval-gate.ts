@@ -435,16 +435,25 @@ async function main(): Promise<void> {
   // population a --run would probe. Same setup as validate-swarm.ts plus the
   // sources production adds beside builtin.
   const { toolRegistry } = await import("../src/tools/registry.js");
-  const { registerEvalGateTools } =
+  const { registerEvalGateTools, wireEvalGateProjectScopeGroups } =
     await import("../src/tuning/gate-tools.js");
   await registerEvalGateTools(toolRegistry);
   console.log(
     `[eval-gate] registered ${toolRegistry.list().length} tools (builtin + Google + skills + memory; no MCP servers)`,
   );
+  // S6 WS3a: record-derived scope groups, as boot wires them (names only).
+  const derivedScope = await wireEvalGateProjectScopeGroups(toolRegistry);
+  console.log(
+    `[eval-gate] project scope groups: ${derivedScope.names.length === 0 ? "none" : derivedScope.names.join(", ")} (scored by regex; the classifier prompt line is unmeasured; their MCP tools are not registered)`,
+  );
 
   // Gate-only opt-in to multi-round probes; runEvaluation's default (1) keeps
   // the overnight tuning loop unchanged.
   const sandbox: SandboxConfig = { probeRounds };
+  // S6 WS3a: score the record-derived regex groups (code patterns + derived).
+  if (derivedScope.scopePatternOverrides) {
+    sandbox.scopePatternOverrides = derivedScope.scopePatternOverrides;
+  }
   if (probeRounds !== DEFAULT_PROBE_ROUNDS) {
     console.log(
       `[eval-gate] EXPERIMENT: --probe-rounds=${probeRounds} (default ${DEFAULT_PROBE_ROUNDS})`,

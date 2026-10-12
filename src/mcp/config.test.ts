@@ -63,7 +63,7 @@ describe("recordToServerConfig", () => {
         command: "node",
         args: ["dist/mcp.js"],
         cwd: repo,
-        envNames: ["ACME_RADAR_TOKEN"],
+        envSpec: [{ name: "ACME_RADAR_TOKEN", secret: "SECRET_ACME_RADAR_TOKEN" }],
         source: { kind: "record", slug: "acme-radar", trusted: true, secrets: ["SECRET_ACME_RADAR_TOKEN"] },
         trust: "AB",
         toolTrust: { acme_trigger_run: { trust: "B", destructive: true } },
@@ -130,8 +130,70 @@ describe("recordToServerConfig — audit R1 refusals", () => {
 
   it("an env name not matching ENV_NAME_RE is refused (count only, no name echoed)", () => {
     expect(recordToServerConfig({ command: "node", env: ["ACME_TOKEN", "lower_case", "1BAD"] }, "acme-radar", primary(), true)).toEqual({
-      error: "acme-radar/acme-radar: 2 env name(s) not matching ^[A-Z][A-Z0-9_]*$",
+      error: "acme-radar/acme-radar: 2 env entry(ies) malformed or not matching ^[A-Z][A-Z0-9_]*$",
     });
+  });
+
+  it("WS3a: the three env shapes normalise; each loader refusal names the env NAME only", () => {
+    const cfg = (env: unknown[], secrets: string[] = []) =>
+      recordToServerConfig({ command: "node", env: env as never }, "acme-radar", primary(), true, secrets);
+    const ok = cfg(
+      ["SYN_A", { name: "PG_PASSWORD", secret: "SECRET_ACME_RADAR_PG_PASSWORD" }, { name: "PG_HOST", value: "db.example.test" }],
+      ["SECRET_ACME_RADAR_PG_PASSWORD"],
+    );
+    expect("config" in ok && ok.config.envSpec).toEqual([
+      { name: "SYN_A", secret: "SECRET_SYN_A" },
+      { name: "PG_PASSWORD", secret: "SECRET_ACME_RADAR_PG_PASSWORD" },
+      { name: "PG_HOST", value: "db.example.test" },
+    ]);
+    const err = (r: ReturnType<typeof cfg>) => ("error" in r ? r.error : "accepted");
+    expect(err(cfg([{ name: "PG_PASSWORD", value: "hunter2-synthetic" }]))).toBe(
+      'acme-radar/acme-radar: env PG_PASSWORD: literal name contains "PASS" (secret-shaped; store it in credentials and use {name, secret})',
+    );
+    expect(err(cfg([{ name: "CLIENTSECRET", value: "x" }]))).toBe(
+      'acme-radar/acme-radar: env CLIENTSECRET: literal name contains "SECRET" (secret-shaped; store it in credentials and use {name, secret})',
+    );
+    expect(err(cfg([{ name: "SYN_SETTING", value: "" }]))).toBe("acme-radar/acme-radar: env SYN_SETTING: literal is empty");
+    expect(err(cfg([{ name: "SYN_SETTING", value: "sk-ant-api03-" + "a".repeat(40) }]))).toMatch(
+      /^acme-radar\/acme-radar: env SYN_SETTING: literal is secret-shaped/,
+    );
+    expect(err(cfg([{ name: "SYN_SETTING", value: "a\nb" }]))).toBe("acme-radar/acme-radar: env SYN_SETTING: literal contains a newline or NUL");
+    expect(err(cfg([{ name: "SYN_SETTING", value: "a\0b" }]))).toBe("acme-radar/acme-radar: env SYN_SETTING: literal contains a newline or NUL");
+    expect(err(cfg([{ name: "SYN_SETTING", value: "x".repeat(512) }]))).toBe("accepted"); // boundary
+    expect(err(cfg([{ name: "SYN_SETTING", value: "x".repeat(513) }]))).toBe(
+      "acme-radar/acme-radar: env SYN_SETTING: literal exceeds 512 characters",
+    );
+    expect(err(cfg(["SYN_A", { name: "SYN_A", value: "1" }]))).toBe("acme-radar/acme-radar: env SYN_A declared twice");
+    expect(err(cfg([{ name: "PG_PASSWORD", secret: "SECRET_UNLISTED" }]))).toBe(
+      "acme-radar/acme-radar: env PG_PASSWORD: secret SECRET_UNLISTED is not in the record's secrets",
+    );
+    expect(err(cfg([{ name: "NODE_OPTIONS", value: "--x" }]))).toBe("acme-radar/acme-radar: env name(s) reserved: NODE_OPTIONS");
+    expect(err(cfg([{ name: "lower", value: "1" }, { name: "SYN_A", secret: "SECRET_X", extra: 1 }]))).toBe(
+      "acme-radar/acme-radar: 2 env entry(ies) malformed or not matching ^[A-Z][A-Z0-9_]*$",
+    );
+    for (const r of [cfg([{ name: "PG_PASSWORD", value: "hunter2-synthetic" }])]) {
+      expect(JSON.stringify(r)).not.toContain("hunter2-synthetic");
+    }
+  });
+
+  it("WS3a R1 C2: a literal whose name CONTAINS a secret fragment, or a hex-blob value, is refused; real setting names pass", () => {
+    const lit = (name: string, value = "plain") =>
+      recordToServerConfig({ command: "node", env: [{ name, value }] }, "acme-radar", primary(), true);
+    for (const name of [
+      "PGPASSWORD", "PGPASS", "DBPASS", "CLIENTSECRET", "DB_PWD", "SLACKTOKEN", "APIKEY", "BASICAUTH",
+      "DBCRED", "MICLAVE", "CONTRASENA", "PRIVATEPEM", "TLSCERT",
+    ]) {
+      expect("error" in lit(name), name).toBe(true);
+    }
+    // the only entropy-style rule that exists: a 40+ hex blob (redactSecrets)
+    expect(lit("PG_OPTS", "ab12".repeat(10))).toEqual({
+      error: "acme-radar/acme-radar: env PG_OPTS: literal is secret-shaped (store it in credentials and use {name, secret})",
+    });
+    for (const name of [
+      "IOMCP_DIALECT", "PG_HOST", "PG_PORT", "PG_DATABASE", "PG_USER", "PG_SSL", "MAX_RESULT_ROWS", "AUDIT_DB_PATH", "STUDIO_DB_PATH",
+    ]) {
+      expect("error" in lit(name, "postgres"), name).toBe(false);
+    }
   });
 
   it("a reserved env name is refused, naming the names only", () => {
@@ -291,7 +353,11 @@ describe("loadMcpConfig (json + db)", () => {
     const out = loadMcpConfig()!;
     expect(Object.keys(out)).toEqual(["svc", "acme-radar"]);
     expect(out.svc).toEqual({ command: "node", envNames: ["SVC_TOKEN"], source: { kind: "service" } });
-    expect(out["acme-radar"]).toMatchObject({ cwd: repo, envNames: ["ACME_RADAR_TOKEN"] });
+    expect(out["acme-radar"]).toMatchObject({
+      cwd: repo,
+      envSpec: [{ name: "ACME_RADAR_TOKEN", secret: "SECRET_ACME_RADAR_TOKEN" }],
+    });
+    expect(out["acme-radar"]!.envNames).toBeUndefined();
 
     writeFileSync(cfg.path, JSON.stringify({ svc: { command: "node", envNames: ["lower_case"] } }));
     expect(() => loadMcpConfig()).toThrow(/envNames/);

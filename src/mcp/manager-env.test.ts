@@ -91,6 +91,9 @@ async function boot(id: string, config: McpServerConfig): Promise<ToolRegistry> 
   return registry;
 }
 
+/** Bare "NAME" record entries as the loader normalises them. */
+const refs = (...names: string[]) => names.map((name) => ({ name, secret: `SECRET_${name}` }));
+
 const call = (r: ToolRegistry, name: string, args: Record<string, unknown> = {}) =>
   r.get(name)!.execute(args);
 
@@ -125,7 +128,7 @@ describe("spawn env is the SDK default env + declared names only", () => {
       command: process.execPath,
       args: [script],
       cwd: join(dir, "repo", "srv"),
-      envNames: ["ACME_API_TOKEN", "SYN_DECLARED_NAME", "ACME_MISSING"],
+      envSpec: refs("ACME_API_TOKEN", "SYN_DECLARED_NAME", "ACME_MISSING"),
       env: { IGNORED_FOR_RECORDS: "1" },
       source: { kind: "record", slug: "acme", trusted: true, secrets: ["SECRET_ACME_API_TOKEN"] },
     });
@@ -150,7 +153,7 @@ describe("spawn env is the SDK default env + declared names only", () => {
     const r = await boot("other", {
       command: process.execPath,
       args: [script],
-      envNames: ["ACME_API_TOKEN"],
+      envSpec: refs("ACME_API_TOKEN"),
       // names the other project's credential: not its own → not resolved
       source: { kind: "record", slug: "other", trusted: true, secrets: ["SECRET_ACME_API_TOKEN"] },
     });
@@ -333,10 +336,150 @@ describe("audit R1 W1 — server annotations apply to RECORD servers only", () =
   });
 });
 
+describe("WS3a — record env entries reach a real child under the server's own names", () => {
+  it("{name, secret} delivers PG_PASSWORD from credential pg_password; {name, value} a literal; a missing ref is never filled from the parent env", async () => {
+    createProject("acme", "Acme", {
+      status: "active",
+      credentials: { pg_password: SYNTHETIC_TOKEN, pg_host: "db.example.test" },
+    });
+    process.env.PG_SSL = "parent-canary";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = await boot("acme", {
+        command: process.execPath,
+        args: [script],
+        envSpec: [
+          { name: "PG_PASSWORD", secret: "SECRET_ACME_PG_PASSWORD" },
+          { name: "PG_HOST", value: "db.example.test" },
+          { name: "PG_SSL", secret: "SECRET_ACME_PG_SSL" }, // listed, no credential
+          ...refs("ACME_API_TOKEN"), // string form: unlisted → omitted
+        ],
+        source: {
+          kind: "record",
+          slug: "acme",
+          trusted: true,
+          secrets: ["SECRET_ACME_PG_PASSWORD", "SECRET_ACME_PG_SSL"],
+        },
+      });
+      expect(await call(r, "acme__env_eq", { name: "PG_PASSWORD", expected: SYNTHETIC_TOKEN })).toBe("true");
+      expect(await call(r, "acme__env_eq", { name: "PG_HOST", expected: "db.example.test" })).toBe("true");
+      const keys = JSON.parse(await call(r, "acme__env_keys")) as string[];
+      expect(keys).not.toContain("PG_SSL");
+      expect(keys).not.toContain("ACME_API_TOKEN");
+      const msgs = warn.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(msgs).toContain("[mcp] acme: env PG_SSL — SECRET_ACME_PG_SSL has no credential in project acme; omitted");
+      expect(msgs).not.toContain(SYNTHETIC_TOKEN);
+      expect(msgs).not.toContain("parent-canary");
+    } finally {
+      delete process.env.PG_SSL;
+    }
+  });
+
+  it("string entries still resolve through SECRET_<NAME> when listed", async () => {
+    createProject("acme", "Acme", { status: "active", credentials: { api_token: SYNTHETIC_TOKEN } });
+    const r = await boot("acme", {
+      command: process.execPath,
+      args: [script],
+      envSpec: refs("ACME_API_TOKEN"),
+      source: { kind: "record", slug: "acme", trusted: true, secrets: ["SECRET_ACME_API_TOKEN"] },
+    });
+    expect(await call(r, "acme__env_eq", { name: "ACME_API_TOKEN", expected: SYNTHETIC_TOKEN })).toBe("true");
+  });
+
+  it("WS3a R1 W1: a resolved value with a newline or NUL is omitted, warned by name only", () => {
+    createProject("acme", "Acme", { status: "active", credentials: { pg_password: "line-one\nline-two" } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const env = buildSpawnEnv("acme-w1", {
+      command: "node",
+      envSpec: [
+        { name: "PG_PASSWORD", secret: "SECRET_ACME_PG_PASSWORD" },
+        { name: "SYN_NUL", value: "a\0b" },
+        { name: "SYN_OK", value: "fine" },
+      ],
+      source: { kind: "record", slug: "acme", trusted: true, secrets: ["SECRET_ACME_PG_PASSWORD"] },
+    });
+    expect(env.PG_PASSWORD).toBeUndefined();
+    expect(env.SYN_NUL).toBeUndefined();
+    expect(env.SYN_OK).toBe("fine");
+    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    expect(msgs).toEqual([
+      "[mcp] acme-w1: env PG_PASSWORD has a newline or NUL; omitted",
+      "[mcp] acme-w1: env SYN_NUL has a newline or NUL; omitted",
+    ]);
+    expect(msgs.join("\n")).not.toContain("line-one");
+  });
+
+  it("a record server ignores envNames and the env object", () => {
+    process.env.ACME_API_TOKEN = "service-side-value";
+    const env = buildSpawnEnv("acme-ign", {
+      command: "node",
+      envNames: ["ACME_API_TOKEN"],
+      env: { FIXED: "1" },
+      source: { kind: "record", slug: "acme", trusted: true },
+    });
+    expect(Object.keys(env).sort()).toEqual(Object.keys(getDefaultEnvironment()).sort());
+  });
+});
+
+describe("WS3a R2 W1 — behavioural value pin: no env value reaches any console call", () => {
+  it("success and every omit path through the real manager boot; neither canary appears in any captured string", async () => {
+    // Runtime-assembled canaries (never a literal in the source).
+    const CRED = ["syn", "cred", "canary", "k".repeat(16)].join("-");
+    const LIT = ["syn", "lit", "canary", "m".repeat(16)].join("-");
+    createProject("acme", "Acme", {
+      status: "active",
+      credentials: { pg_password: CRED, crlf_password: CRED + "\r\n" + CRED },
+    });
+    process.env.ACME_API_TOKEN = CRED; // an unlisted bare name must not pull it from the parent
+    process.env.PG_SSL = LIT;
+    const captured: string[] = [];
+    for (const m of ["log", "warn", "error", "info", "debug", "trace"] as const) {
+      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
+        captured.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a) ?? String(a))).join(" "));
+      });
+    }
+    const r = await boot("canary", {
+      command: process.execPath,
+      args: [script],
+      envSpec: [
+        { name: "PG_PASSWORD", secret: "SECRET_ACME_PG_PASSWORD" }, // success (credential)
+        { name: "PG_HOST", value: LIT }, // success (literal)
+        { name: "PG_CRLF", secret: "SECRET_ACME_CRLF_PASSWORD" }, // credential with \r\n → omitted
+        { name: "PG_SSL", secret: "SECRET_ACME_PG_SSL" }, // listed, no credential → omitted
+        { name: "SYN_NUL", value: LIT + "\0" }, // literal with NUL → omitted
+        ...refs("ACME_API_TOKEN"), // unlisted bare name → omitted
+      ],
+      source: {
+        kind: "record",
+        slug: "acme",
+        trusted: true,
+        secrets: ["SECRET_ACME_PG_PASSWORD", "SECRET_ACME_CRLF_PASSWORD", "SECRET_ACME_PG_SSL"],
+      },
+    });
+    try {
+      // The success paths really ran (the child holds both canaries) …
+      expect(await call(r, "canary__env_eq", { name: "PG_PASSWORD", expected: CRED })).toBe("true");
+      expect(await call(r, "canary__env_eq", { name: "PG_HOST", expected: LIT })).toBe("true");
+      const keys = JSON.parse(await call(r, "canary__env_keys")) as string[];
+      for (const k of ["PG_CRLF", "PG_SSL", "SYN_NUL", "ACME_API_TOKEN"]) expect(keys).not.toContain(k);
+      // … and each omit path warned (by name), each on its own branch.
+      const all = captured.join("\n");
+      expect(all).toContain("[mcp] canary: env PG_CRLF has a newline or NUL; omitted");
+      expect(all).toContain("[mcp] canary: env PG_SSL — SECRET_ACME_PG_SSL has no credential in project acme; omitted");
+      expect(all).toContain("[mcp] canary: env SYN_NUL has a newline or NUL; omitted");
+      expect(all).toContain("[mcp] canary: env ACME_API_TOKEN is not in project acme's secrets (SECRET_ACME_API_TOKEN); omitted");
+      expect(all).not.toContain(CRED);
+      expect(all).not.toContain(LIT);
+    } finally {
+      delete process.env.PG_SSL;
+    }
+  });
+});
+
 describe("audit R1 W3/W4 — record env names (buildSpawnEnv)", () => {
   const rec = (envNames: string[], secrets: string[] = []): McpServerConfig => ({
     command: "node",
-    envNames,
+    envSpec: refs(...envNames),
     source: { kind: "record", slug: "acme", trusted: true, secrets },
   });
 
@@ -404,5 +547,29 @@ describe("lock: names-only env has one spawn site", () => {
       .filter((f) => !f.endsWith(".test.ts"))
       .flatMap((f) => readFileSync(f, "utf-8").split(ctor).length - 1 > 0 ? [[f, readFileSync(f, "utf-8").split(ctor).length - 1] as const] : []);
     expect(sites).toEqual([[join(process.cwd(), "src", "mcp", "manager.ts"), 1]]);
+  });
+  it("WS3a: no log/stringify call and no template literal in the env path touches a value (a literal is never logged)", () => {
+    // `secret` = buildSpawnEnv's resolved-credential local (a bare identifier;
+    // `entry.secret` is the reference NAME). An alias (`const lit = …`) is not
+    // scannable — the behavioural pin above is the real lock (audit WS3a R2 W1).
+    const interp = /\$\{[^}]*(?:\.value\b|(?<![.\w])secret\b)/;
+    const valueRef = /\.value\b|\[\s*["']value["']\s*\]|envSpec|(?<![.\w])secret\b/;
+    const callStart = /\b(?:console\.\w+|log\.\w+|JSON\.stringify)\s*\(/g;
+    for (const f of ["manager.ts", "config.ts", "record-env.ts"]) {
+      const src = readFileSync(join(process.cwd(), "src", "mcp", f), "utf-8");
+      expect(interp.test(src), f).toBe(false);
+      for (const m of src.matchAll(callStart)) {
+        // the call's argument text, by paren depth
+        let depth = 0;
+        let i = m.index! + m[0].length - 1;
+        const start = i;
+        for (; i < src.length; i++) {
+          if (src[i] === "(") depth++;
+          else if (src[i] === ")" && --depth === 0) break;
+        }
+        const args = src.slice(start, i + 1);
+        expect(valueRef.test(args), `${f}: ${args.slice(0, 80)}`).toBe(false);
+      }
+    }
   });
 });

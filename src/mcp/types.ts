@@ -2,6 +2,8 @@
  * MCP integration types — configuration schema and constants.
  */
 
+import type { EnvSpecEntry } from "./record-env.js";
+
 /** Rule-of-Two trust class a record declares (spec §3): A, B, both, or neither. */
 export type TrustClass = "A" | "B" | "AB" | "NONE";
 
@@ -28,12 +30,18 @@ export interface McpServerConfig {
    */
   env?: Record<string, string>;
   /**
-   * Names passed through to the child (S6 WS3, names only): a service server
-   * reads each from the service env; a record server ONLY from its project's
-   * credentials (`SECRET_<NAME>` in the record's `secrets`) — secrets only, the
-   * service env never reaches a record child. A name with no value is omitted.
+   * Service servers only (S6 WS3, names only): names read from the service
+   * env and passed to the child; a name with no value is omitted. A record
+   * server uses `envSpec` instead — the service env never reaches it.
    */
   envNames?: string[];
+  /**
+   * Record servers only (S6 WS3a): the normalised record `env` entries — a
+   * credential reference (`SECRET_…` from the record's `secrets`) or a literal
+   * non-secret value, each delivered to the child under `name`. A record
+   * server ignores `env` and `envNames`.
+   */
+  envSpec?: EnvSpecEntry[];
   /** Working directory of the child (record servers: inside their repo). */
   cwd?: string;
   /** Set by the loader; absent in `mcp-servers.json` (= service). */

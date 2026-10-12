@@ -3,6 +3,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   KB_README_RE,
   ProjectRecordError,
@@ -222,6 +224,87 @@ describe("parseProjectRecord — every error reason", () => {
       folderSlug: "ok-slug",
     });
     expect(ok.contract.capabilities?.mcp?.[0]?.env).toEqual(["ACME_API_TOKEN", "XPOZ_API_TOKEN"]);
+  });
+
+  it("S6 WS3a: env entries — three shapes accepted; secret literals, duplicates, unlisted refs, bad names refused", () => {
+    const rec = (env: unknown[], secrets?: string[]) =>
+      block({
+        slug: "ok-slug",
+        name: "N",
+        status: "active",
+        ...(secrets && { secrets }),
+        capabilities: { mcp: [{ command: "node", env }] },
+      });
+    const ok = parseProjectRecord(
+      rec(
+        [
+          "SYN_A",
+          { name: "PG_PASSWORD", secret: "SECRET_OK_SLUG_PG_PASSWORD" },
+          { name: "PG_HOST", value: "db.example.test" },
+          { name: "PG_PORT", value: "5432" },
+          { name: "MAX_RESULT_ROWS", value: "500" },
+        ],
+        ["SECRET_OK_SLUG_PG_PASSWORD"],
+      ),
+      { folderSlug: "ok-slug" },
+    );
+    expect(ok.contract.capabilities?.mcp?.[0]?.env).toHaveLength(5);
+    // 512 characters is the boundary: accepted
+    expect(() =>
+      parseProjectRecord(rec([{ name: "SYN_SETTING", value: "x".repeat(512) }]), { folderSlug: "ok-slug" }),
+    ).not.toThrow();
+    const LITERAL = "hunter2-synthetic";
+    for (const [env, secrets] of [
+      [[{ name: "PG_PASSWORD", value: LITERAL }]],
+      [[{ name: "SYN_SETTING", value: "sk-ant-api03-" + "a".repeat(40) }]],
+      [[{ name: "SYN_SETTING", value: "a\nb" }]],
+      [[{ name: "SYN_SETTING", value: "x".repeat(513) }]],
+      [[{ name: "SYN_SETTING", value: "a\0b" }]],
+      [[{ name: "SYN_SETTING", value: "" }]],
+      [[{ name: "PGPASSWORD", value: "x" }]],
+      [[{ name: "CLIENTSECRET", value: "x" }]],
+      [["SYN_A", { name: "SYN_A", value: "1" }]],
+      [[{ name: "PG_PASSWORD", secret: "SECRET_UNLISTED" }], ["SECRET_OTHER"]],
+      [[{ name: "PG_PASSWORD", secret: "not_a_ref" }]],
+      [[{ name: "lower_case", value: "1" }]],
+      [[{ name: "NODE_OPTIONS", value: "--x" }]],
+      [[{ name: "LD_PRELOAD", secret: "SECRET_X" }], ["SECRET_X"]],
+      [[{ name: "SYN_A", value: "1", secret: "SECRET_X" }], ["SECRET_X"]],
+      [[{ name: "SYN_A" }]],
+    ] as Array<[unknown[], string[]?]>) {
+      let err: ProjectRecordError | undefined;
+      try {
+        parseProjectRecord(rec(env, secrets), { folderSlug: "ok-slug" });
+      } catch (e) {
+        err = e as ProjectRecordError;
+      }
+      expect(err?.reason, JSON.stringify(env)).toBe("schema");
+      expect(JSON.stringify(err?.issues), "issues never echo a literal").not.toContain(LITERAL);
+    }
+    // the refusal names the entry and the fragment, never the value (audit WS3a R2)
+    const issuesOf = (env: unknown[]): string => {
+      try {
+        parseProjectRecord(rec(env), { folderSlug: "ok-slug" });
+      } catch (e) {
+        return JSON.stringify((e as ProjectRecordError).issues);
+      }
+      return "accepted";
+    };
+    expect(issuesOf([{ name: "SYN_SETTING", value: "" }])).toContain("env SYN_SETTING: literal is empty");
+    expect(issuesOf([{ name: "PGPASSWORD", value: LITERAL }])).toContain('env PGPASSWORD: literal name contains \\"PASS\\"');
+  });
+
+  it("S6 WS3a R1 W2: the spec §3 example record fragment parses verbatim", () => {
+    const spec = readFileSync(join(process.cwd(), "docs", "planning", "s6-project-contract-spec-2026-10-11.md"), "utf-8");
+    const at = spec.indexOf("**Declaring a server in the record:**");
+    const m = /```json\n([\s\S]*?)\n```/.exec(spec.slice(at));
+    expect(at).toBeGreaterThan(-1);
+    const fragment = m![1]!;
+    const parsed = parseProjectRecord(
+      "```json\n{ \"slug\": \"acme-radar\", \"name\": \"Acme\", \"status\": \"active\",\n" + fragment + " }\n```\n",
+      { folderSlug: "acme-radar" },
+    );
+    expect(parsed.contract.capabilities?.mcp?.[0]?.env).toHaveLength(3);
   });
 
   it("audit R2b: the derived kb_readme default is set only when it matches KB_README_RE", () => {

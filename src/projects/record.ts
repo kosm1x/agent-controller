@@ -18,6 +18,7 @@
 import { z } from "zod";
 import { canonicalKbPath } from "../tools/builtin/immutable-core.js";
 import { isDeniedEnvName } from "../mcp/env-deny.js";
+import { SECRET_REF_RE, literalEnvValueError } from "../mcp/record-env.js";
 
 export const PROJECT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 export const PROJECT_STATUSES = [
@@ -49,6 +50,20 @@ const envNameSchema = z
   .regex(/^[A-Z][A-Z0-9_]*$/)
   .refine((n) => !isDeniedEnvName(n), { message: "env name is reserved (loader/runtime or service secret)" });
 const trustSchema = z.enum(["A", "B", "AB", "NONE"]);
+/**
+ * WS3a: `"NAME"` (credential `SECRET_<NAME>`), `{name, secret}` (an explicit
+ * listed credential reference, delivered as NAME) or `{name, value}` (a
+ * literal NON-secret setting; a secret-shaped one is refused).
+ */
+const envEntrySchema = z.union([
+  envNameSchema,
+  z.strictObject({ name: envNameSchema, secret: z.string().regex(SECRET_REF_RE) }),
+  z.strictObject({ name: envNameSchema, value: z.string() }).superRefine((o, ctx) => {
+    const err = literalEnvValueError(o.name, o.value);
+    if (err) ctx.addIssue({ code: "custom", message: err });
+  }),
+]);
+const envEntryName = (e: z.infer<typeof envEntrySchema>): string => (typeof e === "string" ? e : e.name);
 
 /** §3 — loaded by `mcp/config.ts` (S6 WS3). */
 const mcpEntrySchema = z.strictObject({
@@ -63,7 +78,10 @@ const mcpEntrySchema = z.strictObject({
   args: z.array(z.string()).optional(),
   repo: z.string().min(1).optional(),
   cwd: z.string().optional(),
-  env: z.array(envNameSchema).optional(),
+  env: z
+    .array(envEntrySchema)
+    .refine((es) => new Set(es.map(envEntryName)).size === es.length, { message: "env name declared twice" })
+    .optional(),
   trust: trustSchema.optional(),
   tools: z
     .record(
@@ -131,6 +149,20 @@ export const projectContractSchema = z
       })
       .optional(),
     links: z.strictObject({ site: z.string().trim().min(1) }).optional(),
+  })
+  .superRefine((c, ctx) => {
+    // WS3a: an explicit `{name, secret}` must name a credential the record lists.
+    for (const [i, m] of (c.capabilities?.mcp ?? []).entries()) {
+      for (const [j, e] of (m.env ?? []).entries()) {
+        if (typeof e === "object" && "secret" in e && !(c.secrets ?? []).includes(e.secret)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["capabilities", "mcp", i, "env", j, "secret"],
+            message: `env ${e.name}: ${e.secret} is not in secrets`,
+          });
+        }
+      }
+    }
   })
   .transform((c) => {
     // Defaults that depend on the slug (spec §2: kb_folder, kb_readme).

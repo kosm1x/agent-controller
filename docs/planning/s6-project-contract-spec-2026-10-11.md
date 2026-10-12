@@ -104,15 +104,17 @@ MCP traffic in the trace window: `browser__*` 100, `playwright__*` 37, one `mcp_
 **Declaring a server in the record:**
 
 ```json
+"secrets": ["SECRET_ACME_API_TOKEN", "SECRET_ACME_RADAR_PG_PASSWORD"],
 "capabilities": { "mcp": [ { "id": "acme-radar", "command": "node", "args": ["dist/mcp.js"], "repo": "primary", "cwd": ".",
-  "env": ["ACME_API_TOKEN"], "trust": "AB", "tools": { "acme_trigger_run": { "trust": "B", "destructive": true } },
+  "env": ["ACME_API_TOKEN", { "name": "PG_PASSWORD", "secret": "SECRET_ACME_RADAR_PG_PASSWORD" }, { "name": "PG_HOST", "value": "db.example.test" }],
+  "trust": "AB", "tools": { "acme_trigger_run": { "trust": "B", "destructive": true } },
   "deferred": [] } ] }
 ```
 
 Field rules:
 - `id` defaults to the slug; every tool name, trace and Rule-of-Two row derives from it. Ids must be unique across records and `mcp-servers.json`; a duplicate is refused at boot with an alert.
 - `cwd` resolves inside the named repo, and its `realpath` must start with that repo's path.
-- `env` lists NAMES only. Each value is resolved from the project's `secrets` (the row's `credentials`, through `secret-refs.ts`) — record servers: secrets only; the service env never reaches a record child (audit R2 W2, orchestrator deviation from the original "else from the service environment", flagged to the operator). Service servers in `mcp-servers.json` get the same names-only rule under the service-hardening item (ruling 3).
+- `env` entries name what the child reads, in three shapes (WS3a): `"NAME"` = the credential whose reference name is `SECRET_<NAME>`; `{ "name": NAME, "secret": "SECRET_…" }` = an explicit credential reference the record lists in `secrets`, delivered as NAME (a credential keyed `<key>` in slug `<slug>` is referenced as `SECRET_<SLUG>_<KEY>`, uppercased, each non-alphanumeric run → `_`: key `pg_password` in `acme-radar` = `SECRET_ACME_RADAR_PG_PASSWORD`); `{ "name": NAME, "value": "…" }` = a literal NON-secret setting (host, port, flags), refused when its name contains `PASS`/`PWD`/`SECRET`/`TOKEN`/`KEY`/`AUTH`/`CRED`/`CLAVE`/`CONTRASENA`/`PRIVATE`/`CERT` (substring) or otherwise looks like a credential, when its value has a credential shape or a 40+ hex blob (no general entropy rule exists), holds a newline or NUL, is empty, or exceeds 512 characters — secrets never live in a record. Known false refusals of the substring rule: settings such as `MAX_KEYS`, `AUTHOR`, `CERTAINTY`, `PASSAGE`, `TOKENIZER_PATH`, and any literal containing a 40+ hex run; the route is to store the value as a credential and reference it with `{name, secret}` (refinement queued as 3k). A resolved value with a newline or NUL is omitted at spawn (warned by name). Every NAME matches `^[A-Z][A-Z0-9_]*$`, is outside the deny-list (`mcp/env-deny.ts`) and appears once. Record servers: listed credential references and non-secret literals only; the service env never reaches a record child (audit R2 W2, orchestrator deviation from the original "else from the service environment", flagged to the operator). Service servers in `mcp-servers.json` get the same names-only rule under the service-hardening item (ruling 3).
 - Operator-wide SERVICE servers (browser, playwright, graphify, xpoz) stay in `mcp-servers.json`; they are not project records.
 
 **Loading.** `loadMcpConfig()` (`mcp/config.ts:15`) merges `mcp-servers.json` with the `mcp[]` entries of records whose `status` is `active`. Each spawn gets the SDK's default safe environment plus the declared names. It never gets `{...process.env, ...config.env}`, which `manager.ts:178-180` passes today whenever an `env` key exists. That means the `xpoz` child currently inherits every secret in the service env — a service-hardening fix at the manager, queued, independent of the contract.
@@ -121,7 +123,7 @@ Field rules:
 - **Scope.** One scope group per project that declares `mcp[]` or `routing.summary` (not one per active row: 43 active rows would mean up to 43 new groups), named after its slug. It is added to `VALID_GROUPS` (`scope-classifier.ts:35`) at boot.
   - The regex fallback comes from `aliases` (the `scope.ts:1086-1093` pattern).
   - The group's tool list is every `<id>__*` tool (`scope.ts:1564`).
-  - The classifier-prompt line comes from `routing.summary`. This is model-facing text, so it needs the eval gate.
+  - The classifier-prompt line comes from `routing.summary`. This is model-facing text, so it needs the eval gate. The gate wires the derived groups as boot does (`wireEvalGateProjectScopeGroups`, WS3a; MCP config loaded for record server ids, no server spawned) and scores the derived regex group (code patterns + derived ones passed as `scopePatternOverrides`); the classifier prompt line is unmeasured until a prompt scorer exists (queue 3j) — the gate never scored the classifier prompt. The group's tool list is empty in the gate, which registers no MCP tools.
   - The deferred-head rule still applies (CLAUDE.md §Infrastructure).
 - **Rule-of-Two.** `trust` becomes a `RULE_OF_TWO_PREFIX_DEFAULTS` entry `<id>__` (`rule-of-two.ts:312`); per-tool `trust` becomes `RULE_OF_TWO_MCP_OVERRIDES` (`:296`). A server with no `trust` stays true/true, the file's existing "unknown = riskier" rule. The coverage test moves from reading `mcp-servers.json` ids to reading `mcp-servers.json` plus record ids.
 - **Hints.** In order of preference:
