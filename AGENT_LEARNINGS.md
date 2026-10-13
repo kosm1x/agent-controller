@@ -146,3 +146,7 @@
 - **Mistake:** declared a record's read tools `destructive:false` and assumed "not destructive" meant read-only; the bridge mapped any destructive flag to readOnlyHint:false, and the boot log had printed the TRIFECTA warning for all 15 tools since the first load → the check is the boot `TRIFECTA` line after every record declaration.
 - **Avoid:** a per-field precedence merge of two annotation sources (server vs record): a partial override left a server-declared write non-destructive and idempotent; merge by LEVEL (drop the weaker source entirely when the stronger contradicts it).
 - **Better:** a regex cue tuned twice is replaced, not patched (R1 floor+restart missed real orders; the chain rule n,n+1,n+2 pinned the misses and the over-fires in one pass); verify a deploy with a request shaped to hit the changed code path and check the runner it landed on FIRST.
+
+## 2026-10-13 — 3q shell-guard lexer (R3→R5)
+- **Mistake:** three qa-auditors in a row were stopped by their safety classifier on this item even after the coverage-review reframing; the fourth round was replayed by the main session instead of a fourth dispatch (3-strike on the brief shape) → for a validator audit, hand the auditor a probe TABLE to replay (string → expected verdict) and ask only for mismatches; never ask it to "find" paths.
+- **Better:** a "too slow" finding is attributed before it is folded: time the same input on `git archive HEAD` first (43 000 × `$((` was 18.5 s on BOTH); a pre-existing cost is queued with its numbers, not fixed in the security diff.
