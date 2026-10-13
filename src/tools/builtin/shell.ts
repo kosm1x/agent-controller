@@ -537,7 +537,7 @@ const DENY_PATTERNS: { pattern: RegExp; reason: string }[] = [
     // under /dev/ stays blocked (e.g. /dev/sda would be catastrophic).
     // The discard exemption requires a hard terminator (whitespace, end of
     // string, or a shell metacharacter `; | & ( ) < >` — the same set that
-    // ends a WRITE_INDICATORS target) so adversarial suffixes like
+    // ends a captureWriteTargets word) so adversarial suffixes like
     // `/dev/null.bak` or `/dev/null/foo` still hit the deny path with a clear
     // reason, while `(cmd >/dev/null)` is the discard it reads as.
     pattern:
@@ -795,7 +795,7 @@ function getAllowWritePrefixes(): string[] {
 }
 
 /** Standard /dev/null sinks used as discard targets in shell idioms.
- *  These match WRITE_INDICATORS' shape (`>` redirect to absolute path) but
+ *  These match captureWriteTargets' shape (`>` redirect to absolute path) but
  *  are not actual writes — they discard. Exempting them here prevents
  *  false-positive blocks on `2>/dev/null`, `&>/dev/null`, `>/dev/null`. */
 const WRITE_INDICATOR_EXEMPT = new Set([
@@ -853,18 +853,358 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   } as { pattern: RegExp; reason: string },
 ];
 
-/** Heuristic tokens that indicate a write to a path. The target ends where
- *  bash ends the word: at whitespace OR an unquoted, unescaped shell
- *  metacharacter (`; | & ( ) < >`), so `2>/dev/null;` writes `/dev/null`,
- *  not `/dev/null;` (task 60c6bf31 — the glued `;` missed
- *  WRITE_INDICATOR_EXEMPT and the plan gate was refused "outside allowed
- *  paths"). An escaped character (`\;`, `\ `) or a quoted run (`';'`, `"; "`)
- *  stays IN the word, as in bash, so `>/root/claude/x\;/../../etc/f` is still
- *  judged whole (`$(` and backticks are refused before this loop, so a
- *  quoted run hides no command). The mv/cp SOURCE stays `\S+`: a
- *  metacharacter glued to it can only over-match, never hide a target. */
-const WRITE_INDICATORS =
-  /(?:>\|?\s*|>>\s*|tee\s+|mv\s+\S+\s+|cp\s+\S+\s+)(\/(?:\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|[^\s;|&()<>])+)/g; // `>|` is a plain truncating write (qa R14 C14-4)
+/** Shell operators at the start of an unquoted token, longest spelling first. */
+const SHELL_OPERATOR = /&>>|&>|>>|>&|>\||<<<|<<-|<<|<>|<&|>|<|&&|\|\||\|&|[;|&()]/y;
+/** Redirections that open their word for writing (`<>` is a read-write open, which creates the file). */
+const WRITE_REDIRECTIONS = new Set([">", ">|", ">>", ">&", "&>", "&>>", "<>"]);
+/** Operators that end a simple command. */
+const COMMAND_SEPARATORS = new Set([";", "|", "&", "(", ")", "&&", "||", "|&"]);
+/** Verbs whose arguments are written (tee: every file; mv/cp/scp: the destination). */
+const WRITE_VERBS = new Set(["tee", "mv", "cp", "scp"]);
+/** Shell binaries: one anywhere in a command may run any text the command produces. */
+const SHELL_BINARIES = new Set(["sh", "bash", "dash", "zsh", "ksh", "ash", "rbash", "static-sh", "busybox"]);
+/** Builtins that run text as commands; they count in command position only. */
+const SHELL_BUILTINS = new Set(["eval", "source", "."]);
+/** Shells whose quoting is bash's (`$'…'`): text they run is lexed under re-entry rules. */
+const BASH_DIALECT_SHELLS = new Set(["bash", "zsh", "ksh", "rbash"]);
+/** Words after which the next word is still in command position. */
+const COMMAND_PREFIXES = new Set(["exec", "env", "sudo", "timeout", "nice", "nohup", "xargs", "command", "time", "{", "!", "if", "then", "do", "else", "elif", "while", "until"]);
+/** Text judged as commands (a heredoc body, a quoted string) is nested at most this deep. */
+const MAX_TEXT_DEPTH = 4;
+/** A flat brace group with more alternatives than this is not judged. */
+const MAX_BRACE_ALTERNATIVES = 64;
+const PROCESS_SUBSTITUTION_REASON = "process substitution <() or >() is blocked";
+
+/** A file a command writes: the word as spelled (`raw`), its value after quote
+ *  removal (`value`, what is judged) and whether the write appends (`>>`, `&>>`,
+ *  `tee -a`); or, with `refuse`, why the command is refused without judging. */
+type WriteTarget = { raw: string; value: string; isAppend: boolean; refuse?: string };
+/** A shell word: as spelled, after quote removal, with every quoted or escaped character as NUL,
+ *  and whether any part of it was quoted or escaped. */
+type ShellWord = { raw: string; value: string; bare: string; quoted: boolean };
+
+/**
+ * The words a brace expansion of `w` produces when bash expands it: `w` itself
+ * (no unquoted `{…,…}` / `{…..…}` group), the alternatives of ONE flat comma
+ * group (`x{,.bak}`, `{a,b}`), or undefined when the expansion is not judged
+ * (a sequence group, a `$` inside the group, two groups — so any nesting —,
+ * more than MAX_BRACE_ALTERNATIVES alternatives). `${…}` is not a group; a
+ * literal `{x}` around a group stays literal. Linear in the word.
+ */
+function braceExpansion(w: ShellWord): ShellWord[] | undefined {
+  type Frame = { open: number; param: boolean; commas: number[]; dots: boolean; dollar: boolean };
+  const stack: Frame[] = [];
+  const groups: { open: number; close: number; commas: number[] }[] = [];
+  let judged = true;
+  const { bare, value } = w;
+  for (let k = 0; k < bare.length; k++) {
+    const ch = bare[k];
+    const top = stack[stack.length - 1];
+    if (ch === "{") stack.push({ open: k, param: bare[k - 1] === "$", commas: [], dots: false, dollar: false });
+    else if (!top) continue;
+    else if (ch === ",") top.commas.push(k);
+    else if (ch === "." && bare[k + 1] === ".") top.dots = true;
+    else if (ch === "$") top.dollar = true;
+    else if (ch === "}") {
+      stack.pop();
+      if (top.param || (top.commas.length === 0 && !top.dots)) continue;
+      if (top.dollar || top.commas.length === 0) judged = false; // a `$` inside, or a sequence
+      groups.push({ open: top.open, close: k, commas: top.commas });
+    }
+  }
+  if (groups.length === 0) return [w];
+  const g = groups[0]!;
+  if (!judged || groups.length > 1 || g.commas.length >= MAX_BRACE_ALTERNATIVES) return undefined;
+  const cuts = [g.open, ...g.commas, g.close];
+  const head = value.slice(0, g.open);
+  const tail = value.slice(g.close + 1);
+  return cuts.slice(1).map((cut, k) => ({ raw: w.raw, value: head + value.slice(cuts[k]! + 1, cut) + tail, bare: "", quoted: w.quoted }));
+}
+
+/**
+ * Every file `s` writes through a redirection or a tee/mv/cp/scp verb, as
+ * `/bin/sh` reads it. shell_exec runs `/bin/sh -c`, which is dash (POSIX sh),
+ * so the dialect modelled is dash; bash rules apply only through re-entry
+ * (`bash -c "…"`, text a bash/zsh/ksh word may run), where `opts.reentry` is set.
+ *
+ * One left-to-right pass splits `s` into words and unquoted operators. A quote
+ * (`'…'`, `"…"`) or a backslash escape keeps its characters in the word, so a
+ * `>` or a verb inside a quoted span is text (`echo '>/tmp/a"' >/root/.bashrc
+ * "'"` writes `/root/.bashrc`, audit R1 C1; `\>>LOG` is text `>` then an
+ * overwrite, audit R2 W1). Each word is unquoted once: single quotes are
+ * literal; double quotes keep `\"`, `\\`, `\$`, `` \` `` as escapes; `\x`
+ * outside quotes is `x`; `\`+newline is nothing. dash has no `$'…'` / `$"…"`:
+ * `$'\x2f'` is `$` and a plain single-quoted string. Under bash re-entry those
+ * two forms read differently, and a word holding one is refused. An unterminated
+ * quote runs to the end (dash refuses that line). A `#` at the start of a word
+ * comments out the rest of the line. `$(` and backticks are refused before the
+ * write scan, so a quoted run hides no command.
+ *
+ * A here-document body runs from the newline that ends its opener line to the
+ * line that is its delimiter (`<<-`: after leading tabs), or to the end of `s`
+ * (dash closes it there and runs the command); the opener line is scanned as
+ * usual. The body is lexed as its own text, so a quote in it never reaches the
+ * outer command (audit R2 C2). Any receiver can run a body (`| sh`, `| $SHELL`,
+ * a file later run by `sh`), so an UNQUOTED body (`<<EOF`, `<<-EOF`) is always
+ * judged as commands (audit R3 C1/C2). A QUOTED body (`<<'EOF'`, `<<"EOF"`,
+ * `<<\EOF`) and a quoted word are data, unless a shell word is in the command
+ * (`sh`, `bash`, `busybox` anywhere unquoted, or `eval` / `source` / `.` / a
+ * quoted shell name as a command): then each of them, and each simple command's
+ * words joined, is judged as commands too (audit R3 C3: `printf 'cp a /x' | sh`).
+ * A command name from a variable (`| $SHELL`, `$0`) is refused. Judged text is
+ * lexed with dash rules, or bash's when the shell word is bash/zsh/ksh/rbash,
+ * nested at most MAX_TEXT_DEPTH deep. Linear in the length of `s` per depth.
+ */
+function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: number; shell?: boolean; quotedText?: boolean } = {}): WriteTarget[] {
+  type Token = ShellWord | { op: string };
+  const tokens: Token[] = [];
+  const out: WriteTarget[] = [];
+  const refuse = (raw: string, reason: string): void => {
+    out.push({ raw, value: "", isAppend: false, refuse: reason });
+  };
+  const heredocs: { delim: string; tabs: boolean; quoted: boolean }[] = [];
+  const bodies: { text: string; quoted: boolean }[] = [];
+  let delimTabs: boolean | undefined; // set by `<<` / `<<-`: the next word is a heredoc delimiter
+  // Text judged as commands (a body or a string a shell runs): an unquoted substitution in it runs before
+  // any path exists to judge, so it is refused here with the outer check's reasons (3q R4 C1). One in
+  // double quotes is refused one level down, where the shell-word rule judges the quoted string itself.
+  const commandText = (opts.depth ?? 0) >= 1;
+  const substitution = (j: number): void => {
+    if (!commandText) return;
+    if (s[j] === "`") refuse("`", "backtick substitution is blocked");
+    else if (s[j] === "$" && s[j + 1] === "(" && s[j + 2] !== "(") refuse("$(", "command substitution $(...) is blocked");
+  };
+  const n = s.length;
+  let i = 0;
+  while (i < n) {
+    const c = s[i]!;
+    SHELL_OPERATOR.lastIndex = i;
+    const op = SHELL_OPERATOR.exec(s)?.[0];
+    if (c === " " || c === "\t") i++;
+    else if (c === "\\" && s[i + 1] === "\n") i += 2;
+    else if (c === "\n") {
+      tokens.push({ op: ";" });
+      i++;
+      for (const h of heredocs) {
+        const start = i;
+        let end = n;
+        while (i < n) {
+          const nl = s.indexOf("\n", i);
+          const line = s.slice(i, nl < 0 ? n : nl);
+          const atDelim = (h.tabs ? line.replace(/^\t+/, "") : line) === h.delim;
+          if (atDelim) end = i;
+          i = nl < 0 ? n : nl + 1;
+          if (atDelim) break;
+        }
+        bodies.push({ text: s.slice(start, end), quoted: h.quoted });
+      }
+      heredocs.length = 0;
+      delimTabs = undefined;
+    } else if (c === "#") while (i < n && s[i] !== "\n") i++; // a comment: `#` at the start of a word
+    else if (op !== undefined) {
+      tokens.push({ op });
+      i += op.length;
+      delimTabs = op === "<<-" ? true : op === "<<" ? false : undefined;
+      // `<(…)` / `>(…)` glued to a word (`a<(cat)`, `''<(cat)`): dash rejects it, bash re-entry would run it.
+      if (/[<>]$/.test(op) && s[i] === "(") refuse(`${op}(`, PROCESS_SUBSTITUTION_REASON);
+    } else {
+      // A word. `bare` mirrors its value with every quoted or escaped character replaced by NUL.
+      const start = i;
+      let value = "";
+      let bare = "";
+      let quoted = false;
+      let dollarQuote = false;
+      while (i < n && !" \t\n;|&()<>".includes(s[i]!)) {
+        const ch = s[i]!;
+        if (ch === "\\") {
+          if (s[i + 1] !== "\n" && i + 1 < n) {
+            value += s[i + 1];
+            bare += "\0";
+          }
+          quoted = true;
+          i += 2;
+        } else if (ch === "'") {
+          const close = s.indexOf("'", i + 1);
+          const end = close < 0 ? n : close;
+          value += s.slice(i + 1, end);
+          bare += "\0".repeat(end - i - 1);
+          quoted = true;
+          i = end + 1;
+        } else if (ch === '"') {
+          let j = i + 1;
+          for (; j < n && s[j] !== '"'; j++) {
+            if (s[j] === "\\" && s[j + 1] === "\n") j++;
+            else if (s[j] === "\\" && '\\"$`'.includes(s[j + 1] ?? "x")) value += s[++j];
+            else value += s[j];
+            bare += "\0";
+          }
+          quoted = true;
+          i = j + 1;
+        } else if (ch === "$" && s[i + 1] === "(" && s[i + 2] === "(") {
+          // `$((3*4))` is one word: its `(`, `)` and `*` are not operators or a command name.
+          let j = i + 1;
+          for (let open = 0; j < n; j++) {
+            substitution(j);
+            if (s[j] === "(") open++;
+            else if (s[j] === ")" && --open === 0) break;
+          }
+          value += s.slice(i, j + 1);
+          bare += s.slice(i, j + 1);
+          i = j + 1;
+        } else {
+          dollarQuote ||= ch === "$" && (s[i + 1] === "'" || s[i + 1] === '"');
+          substitution(i);
+          value += ch;
+          bare += ch;
+          i++;
+        }
+      }
+      const raw = s.slice(start, Math.min(i, n));
+      if (opts.reentry && dollarQuote) refuse(raw, `ANSI-C/locale quoting is not judged under bash re-entry: ${raw}`);
+      if (delimTabs !== undefined) heredocs.push({ delim: value, tabs: delimTabs, quoted });
+      delimTabs = undefined;
+      tokens.push({ raw, value, bare, quoted });
+    }
+  }
+
+  // A judged word: every word its brace expansion produces; an expansion that is not judged is
+  // refused when it can produce an absolute path (`/…`, `{…`); a relative one stays relative.
+  const judge = (w: ShellWord, isAppend: boolean): void => {
+    const alts = braceExpansion(w);
+    if (!alts) {
+      if (/^[/{]/.test(w.value)) refuse(w.raw, `brace expansion in a write target is not judged: ${w.raw}`);
+      return;
+    }
+    for (const a of alts) if (a.value.startsWith("/")) out.push({ raw: a.raw, value: a.value, isAppend });
+  };
+  // The arguments of one simple command (redirections and their words removed). The first word whose
+  // value, without a directory, is a verb opens the scan, anywhere in the command (`sudo cp`, `xargs
+  // cp`, `"cp"`, `c\p`, `/bin/cp`); later verb words are plain arguments, so the scan stays linear.
+  const judgeCommand = (words: ShellWord[]): void => {
+    const at = words.findIndex((w) => WRITE_VERBS.has(w.value.replace(/^.*\//, "")));
+    if (at < 0) return;
+    const op = words[at]!.value.replace(/^.*\//, "");
+    // Brace expansion runs before the verb reads its arguments: `cp {a,b} DIR` copies into DIR.
+    const args: ShellWord[] = [];
+    for (const w of words.slice(at + 1)) {
+      const alts = braceExpansion(w);
+      if (alts) args.push(...alts);
+      else if (/^[/{]/.test(w.value)) refuse(w.raw, `brace expansion in a write target is not judged: ${w.raw}`);
+      else args.push(w);
+    }
+    let isAppend = false;
+    let optsDone = false;
+    let pendingDir = false;
+    let pendingValue = false;
+    const dirs: ShellWord[] = [];
+    const files: ShellWord[] = [];
+    for (const w of args) {
+      const v = w.value;
+      if (pendingDir) {
+        dirs.push(w);
+        pendingDir = false;
+      } else if (pendingValue) pendingValue = false;
+      else if (optsDone || v[0] !== "-" || v === "-") files.push(w);
+      else if (v === "--") optsDone = true;
+      else if (op === "tee") isAppend ||= /^(?:-\w*a\w*|--append)$/.test(v);
+      else if (op === "scp") {
+        // `-P port`, `-i file`, `-o opt`, …: a value option last in its cluster takes the next word.
+        const k = v.slice(1).search(/[cFiJloPSX]/);
+        pendingValue = k >= 0 && k === v.length - 2;
+      } else {
+        // mv/cp `-t DIR`, `-rtDIR`, `--target-directory[=DIR]` or any prefix of it (`--target=DIR`).
+        // `-S SUFFIX` takes the rest of its cluster or the next word: the `t` in `-S.out` is no `-t`.
+        const long = /^--([\w-]+)(?:=([\s\S]*))?$/.exec(v);
+        const short = long ? null : /^-[^-]*?([tS])([\s\S]*)$/.exec(v);
+        if (short?.[1] === "S") pendingValue = !short[2];
+        else if (long ? "target-directory".startsWith(long[1]!) : short) {
+          const glued = long ? long[2] : short![2] || undefined;
+          if (glued === undefined) pendingDir = true;
+          else dirs.push({ ...w, value: glued });
+        }
+      }
+    }
+    // tee writes every file. mv/cp/scp write the `-t` directory and the destination, which is never
+    // the first file and not always the last (`find -exec cp {} DIR \;`), so every later file is
+    // judged; a remote scp word (`host:/x`) does not start with `/` and is not.
+    for (const w of op === "tee" ? files : [...dirs, ...files.slice(1)]) {
+      if (w.value.startsWith("/")) out.push({ raw: w.raw, value: w.value, isAppend });
+    }
+  };
+
+  // Shell words in one simple command, its command name from a variable, and its quoted text.
+  let shell = opts.shell === true;
+  let bashDialect = opts.reentry === true;
+  const texts: string[] = [];
+  const scanCommand = (words: ShellWord[]): void => {
+    let at = 0;
+    for (;;) {
+      while (at < words.length && /^[A-Za-z_]\w*=/.test(words[at]!.value)) at++; // `X=1 cmd`
+      const prefix = words[at]?.value.replace(/^.*\//, "");
+      if (prefix === undefined || !COMMAND_PREFIXES.has(prefix)) break;
+      at++;
+      while (at < words.length && words[at]!.value.startsWith("-")) at++; // `sudo -n`, `nice -n 5`
+      if (prefix === "timeout" && at < words.length) at++; // its duration
+    }
+    words.forEach((w, k) => {
+      const base = w.value.replace(/^.*\//, "");
+      if ((SHELL_BINARIES.has(base) && (!w.quoted || k === at)) || (k === at && SHELL_BUILTINS.has(base))) {
+        shell = true;
+        bashDialect ||= BASH_DIALECT_SHELLS.has(base);
+      }
+    });
+    // `$SHELL`, `"$0"`, `${X:-sh}`, `${X}rontab`: the variable picks the command. `$HOME/bin/tool` only picks a
+    // directory. Not in a quoted string read as commands: `echo "$x" | sh` is an over-approximation already.
+    const name = words[at];
+    if (!opts.quotedText && name?.value.startsWith("$")) {
+      const variable = /^\$(?:\{[^}]*\}|\w+|[#?$!@*-])/.exec(name.value)?.[0];
+      if (!variable || !name.value.startsWith("/", variable.length)) {
+        refuse(name.raw, `command name from a variable is not judged: ${name.raw}`);
+      }
+    }
+    // `/bin/s?`, `/usr/bin/ba*h`: an unquoted glob picks the command the same way (no glob parser). `[` is test.
+    if (!opts.quotedText && name && /[?*[]/.test(name.bare) && name.value !== "[" && name.value !== "[[") {
+      refuse(name.raw, `command name from a glob is not judged: ${name.raw}`);
+    }
+    if (!words.some((w) => w.quoted)) return;
+    for (const w of words) if (w.quoted) texts.push(w.value);
+    texts.push(words.map((w) => w.value).join(" ")); // `echo "cp a" "/x" | sh` prints one command line
+  };
+
+  let words: ShellWord[] = [];
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k]!;
+    if ("value" in t) words.push(t);
+    else if (COMMAND_SEPARATORS.has(t.op)) {
+      judgeCommand(words);
+      scanCommand(words);
+      words = [];
+    } else {
+      // A redirection consumes the next word. `>&1`, `>&-`, `>&$fd` are dups: their word is not absolute.
+      const next = tokens[k + 1];
+      if (next && "value" in next) {
+        k++;
+        if (WRITE_REDIRECTIONS.has(t.op)) judge(next, t.op === ">>" || t.op === "&>>");
+      }
+    }
+  }
+  judgeCommand(words);
+  scanCommand(words);
+
+  // Text a shell in this command may run: every unquoted heredoc body; with a shell word, every
+  // quoted body and quoted text as well. Each is lexed on its own, so its quotes stay inside it.
+  const depth = (opts.depth ?? 0) + 1;
+  const judgeText = (text: string, quotedText: boolean): void => {
+    if (depth > MAX_TEXT_DEPTH) {
+      refuse(text.slice(0, 40), `text nested ${depth} deep (a heredoc body or a quoted string) is not judged`);
+      return;
+    }
+    for (const t of captureWriteTargets(text, { reentry: bashDialect, depth, shell, quotedText })) out.push(t);
+  };
+  for (const b of bodies) if (!b.quoted || shell) judgeText(b.text, opts.quotedText === true);
+  if (shell) for (const t of texts) judgeText(t, true);
+  return out;
+}
 
 /** Count unescaped `"` chars in `s` (for quote-context detection).
  *  Skips over the contents of single-quoted strings — bash single quotes do
@@ -891,8 +1231,9 @@ function countOpenDoubleQuotes(s: string): number {
  *  expansion, no command substitution — so the body is opaque data piped to
  *  the receiving process. Scanning it for shell metacharacters produces false
  *  positives on every JS/TS/JSON/Python file Jarvis writes via `cat > path
- *  << 'EOF' ... EOF`. The first-line redirect stays intact so WRITE_INDICATORS
- *  still catches the target path. Unquoted heredocs (`<< EOF`) DO expand vars
+ *  << 'EOF' ... EOF`. The rest of the opener line (its redirects, pipes, a
+ *  `$(`) stays intact; it used to go with the body, so `cat <<'EOF' > /x` hid
+ *  its target (3q P1). Unquoted heredocs (`<< EOF`) DO expand vars
  *  and command-subs, so we deliberately do not strip those.
  *
  *  Quote-context guard (audit Critical): `<<'X'…X` *inside* a double-quoted
@@ -912,23 +1253,25 @@ function stripQuotedHeredocs(command: string): string {
   // Two passes: <<- first (tab-indented closer permitted), then plain <<.
   // The non-greedy body match in pass 1 is bounded by the FIRST `\n\t*\1`
   // sequence; pass 2 only matches `<<` (excluding `<<-` already handled).
+  // The rest of the opener line (`cat <<'EOF' > /x`, `<<'EOF' | bash`) is
+  // shell syntax and is kept; only the body and the delimiter line go.
   const replaceWithQuoteGuard = (input: string, re: RegExp): string =>
-    input.replace(re, (match: string, _delim: string, offset: number) => {
+    input.replace(re, (match: string, _delim: string, opener: string, offset: number) => {
       const before = input.slice(0, offset);
       if (countOpenDoubleQuotes(before) % 2 === 1) {
         // Inside open "…" — bash sees this as text, not a heredoc.
         return match;
       }
-      return "<<HEREDOC_STRIPPED";
+      return `<<HEREDOC_STRIPPED${opener}`;
     });
 
   let out = replaceWithQuoteGuard(
     command,
-    /<<-\s*['"]([^'"\s]+)['"][\s\S]*?\n\t*\1(?=\s|$)/g,
+    /<<-\s*['"]([^'"\s]+)['"]([^\n]*)\n(?:[\s\S]*?\n)?\t*\1(?=\s|$)/g,
   );
   out = replaceWithQuoteGuard(
     out,
-    /<<(?!-)\s*['"]([^'"\s]+)['"][\s\S]*?\n\1(?=\s|$)/g,
+    /<<(?!-)\s*['"]([^'"\s]+)['"]([^\n]*)\n(?:[\s\S]*?\n)?\1(?=\s|$)/g,
   );
   return out;
 }
@@ -2035,32 +2378,18 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
   if (!secretVerdict.allowed) return secretVerdict;
 
   // Check write paths — if command writes to absolute paths, verify they're safe.
-  // Use `sanitized` so the only `>` redirect we see is the heredoc opener's
-  // redirect, not arrow functions or template-literal characters in the body.
-  let match: RegExpExecArray | null;
-  WRITE_INDICATORS.lastIndex = 0;
-  while ((match = WRITE_INDICATORS.exec(sanitized)) !== null) {
-    const rawTarget = match[1];
-    // Resume right after this OPERATOR, not after its target: a quoted span
-    // can swallow a real redirect into a fake target (`echo '>/tmp/a"'
-    // >/root/.bashrc "'"`), so every `>`, `tee`, `mv`, `cp` occurrence is
-    // scanned on its own (audit R1 C1). `>>` skips both chars, or its second
-    // `>` would rescan as an overwrite of the same target — unless the first
-    // `>` is escaped (`\>>LOG` is text `>` + a real `>LOG` overwrite; an odd
-    // backslash run before it escapes it), then skip one (audit R2 W1).
-    let bs = 0;
-    while (sanitized[match.index - 1 - bs] === "\\") bs++;
-    const escapedFirst = bs % 2 === 1;
-    WRITE_INDICATORS.lastIndex =
-      match.index + (match[0].startsWith(">>") && !escapedFirst ? 2 : 1);
+  // The raw command: captureWriteTargets skips every heredoc body itself and
+  // judges the opener line, so the stripped form's heuristics do not steer it.
+  for (const { raw: rawTarget, value, isAppend, refuse } of captureWriteTargets(command, { reentry: opts.reentry })) {
+    if (refuse) return { allowed: false, reason: refuse };
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
-    // `>` redirect shape but are not real writes — exempt them (raw, pre-realpath)
-    // so idioms like `2>/dev/null` don't false-positive.
-    if (WRITE_INDICATOR_EXEMPT.has(rawTarget)) continue;
+    // `>` redirect shape but are not real writes — exempt them (the unquoted
+    // word, pre-realpath) so idioms like `2>/dev/null` don't false-positive.
+    if (WRITE_INDICATOR_EXEMPT.has(value)) continue;
     // realpath so an in-domain symlink can't point the write outside the gates.
     // Security decisions below use this resolved path; the ritual-doc append regex
     // further down still matches the RAW target against the original command text.
-    const targetPath = realResolve(rawTarget);
+    const targetPath = realResolve(value);
     // SG3: Immutable core — blocked even on jarvis/* branches
     if (isImmutableCorePath(targetPath).immutable) {
       return {
@@ -2095,13 +2424,13 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
         // a single entry via a whole-file write). Keying the exemption on the
         // operator (not just the path) blocks those overwrite redirects here.
         //
-        // BEST-EFFORT, NOT AIRTIGHT: this lives inside the WRITE_INDICATORS loop,
-        // so truncation primitives that regex doesn't capture still slip past —
+        // BEST-EFFORT, NOT AIRTIGHT: this lives inside the captureWriteTargets loop,
+        // so truncation primitives it doesn't capture still slip past —
         // `>|` clobber, `truncate -s 0`, `sed -i`, and RELATIVE paths (the service
         // cwd is /root/claude/mission-control, so `> docs/EVOLUTION-LOG.md` hits
         // the real log with no absolute match). This is defense-in-depth against
         // the realistic ritual mistake (`>` vs `>>`); durable git persistence is
-        // the only real backstop against truncation. See the WRITE_INDICATORS
+        // the only real backstop against truncation. See the write-target
         // hardening follow-up + memory feedback_evolution_log_truncation.
         if (targetPath.includes("/mission-control/")) {
           const rel = targetPath.replace(/.*\/mission-control\//, "");
@@ -2109,10 +2438,9 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
             // Match the RAW redirect target against the original command text —
             // targetPath is now the realpath, which may not appear verbatim.
             const p = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            // Exempt only when THIS match is the `>>` form: every other write
-            // to the log (`>>LOG|cp a LOG`, `>>LOG | tee LOG`) is its own
+            // Exempt only when THIS match is an append (`>>`, `&>>`, `tee -a`): every
+            // other write to the log (`>>LOG|cp a LOG`, `>>LOG | tee LOG`) is its own
             // match and lands here as an overwrite (audit R1 W1).
-            const isAppend = match[0].startsWith(">>");
             const hasOverwrite = new RegExp(
               `(?:^|[^>])>\\|?\\s*${p}(?:[\\s;|&()<>]|$)`, // `>|` clobbers too (qa R15 N15-1)
             ).test(sanitized);

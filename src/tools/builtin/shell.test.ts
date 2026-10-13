@@ -43,7 +43,7 @@ vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/secret-refs.js")>()),
   secretEnvForCommand: (c: string) =>
     /\$\{?SECRET_T\b/.test(c) ? { SECRET_T: SECRET_SYN } : {},
-  scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
+  scrubSecrets: (t: string) => t.split(SCRUB_SYN).join("[oculto]"),
 }));
 
 // The checkout under test: the package-manager gate resolves `npx` bins against
@@ -881,6 +881,284 @@ B`;
     });
   });
 
+  describe("quoted / fd-redirect / flag-form write targets (3q)", () => {
+    // The target capture only matched a word whose FIRST character was an
+    // unquoted `/`, knew no `>&`/`&>` operators, needed a character after the
+    // `/`, and read the word right after `tee` / after one `mv`/`cp` word as the
+    // target. Each probe below was allowed. The target is now a bash word,
+    // unquoted before it is judged.
+    const W = "write to '/opt/example/out.txt' outside allowed paths";
+    it.each([
+      ["echo x > '/root/.bashrc'", "write to '/root/.bashrc' outside allowed paths"],
+      ['cp a "/root/.bashrc"', "write to '/root/.bashrc' outside allowed paths"],
+      ["mv a '/root/.bashrc'", "write to '/root/.bashrc' outside allowed paths"],
+      ["echo x >&/root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["echo x >& /root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["echo x &>/root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["echo x &>>/root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["cp a /", "write to '/' outside allowed paths"],
+      ["echo x | tee -a /root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["cp -r a /root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["mv -f a /root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ["cp a b /root/x/", "write to '/root/x' outside allowed paths"],
+      ["cp -t /root/x a", "write to '/root/x' outside allowed paths"],
+      ["cp -rt/root/x a", "write to '/root/x' outside allowed paths"],
+      ["cp --target=/root/x a", "write to '/root/x' outside allowed paths"],
+      ["echo x | tee /tmp/a /root/x", "write to '/root/x' outside allowed paths"],
+      ["cp a /root/.bashrc 2>/dev/null", "write to '/root/.bashrc' outside allowed paths"],
+      ["cp a /root/.bashrc -v", "write to '/root/.bashrc' outside allowed paths"],
+      ["cp -- -a /root/x", "write to '/root/x' outside allowed paths"],
+      // A verb starts at a word boundary (after `|`, `(`); scp judges its local destination.
+      ["echo x | tee /root/x", "write to '/root/x' outside allowed paths"],
+      ["(cp a /root/x)", "write to '/root/x' outside allowed paths"],
+      ["/usr/bin/cp a /root/x", "write to '/root/x' outside allowed paths"],
+      ["scp host:/x /root/y", "write to '/root/y' outside allowed paths"],
+      ["scp -i/tmp/keyS host:/x /root/y", "write to '/root/y' outside allowed paths"],
+      // A verb is the unquoted VALUE of a word (audit R1 C-pre-1).
+      ['"cp" a /opt/example/out.txt', "write to '/opt/example/out.txt' outside allowed paths"],
+      ["c\\p a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["echo x | 'tee' /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      // `<>` opens read-write and creates the file: a write.
+      ["cat <> /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["exec 3<> /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["echo x 2>> /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cp --target-directory /opt/example a", "write to '/opt/example' outside allowed paths"],
+      // A heredoc body is lexed as its own text: a quote in it opens nothing in the outer command (audit
+      // R2 C2). Any receiver can run a body, so an UNQUOTED body is judged as commands (audit R3 C1/C2).
+      ["sh <<EOF\nx > /opt/example/out.txt\nEOF", W],
+      ["cat <<EOF | bash\ncp a /opt/example/out.txt\nEOF", W],
+      ["cat <<EOF |\ncp a /opt/example/out.txt\nEOF\nsh", W], // the pipeline continues on the delimiter's next line
+      ["cat <<EOF | rbash\ncp a /opt/example/out.txt\nEOF", W],
+      ["cat <<EOF | static-sh\ncp a /opt/example/out.txt\nEOF", W],
+      ["cat <<EOF | busybox ash\ncp a /opt/example/out.txt\nEOF", W],
+      ["{ cat <<EOF\ncp a /opt/example/out.txt\nEOF\n} | sh", W],
+      ["cat <<EOF > /tmp/example/s.sh\ncp a /opt/example/out.txt\nEOF\nsh /tmp/example/s.sh", W],
+      ["sh <<EOF\ncp a /opt/example/out.txt", W], // no delimiter: dash ends the body at the end of input and runs it
+      // Pre-existing (HEAD denied it too): prose in an unquoted body reads as a command line.
+      ["cat <<EOF > /tmp/example/notes\nuse x > /opt/example/out.txt to test\nEOF", W],
+      ["cat <<-EOF\n\tcp a /opt/example/out.txt\n\tEOF", W],
+      // A variable command name may be any shell.
+      ["cat <<EOF | $SHELL\ncp a /tmp/example/x\nEOF", "command name from a variable is not judged: $SHELL"],
+      ['cat <<EOF | "$0"\ncp a /tmp/example/x\nEOF', 'command name from a variable is not judged: "$0"'],
+      ["nice -n5 ${CMD} x", "command name from a variable is not judged: ${CMD}"],
+      // With a shell word in the command, quoted bodies and quoted strings are judged as commands too (audit R3 C3).
+      ["bash <<'EOF'\ncp a /opt/example/out.txt\nEOF", W],
+      ["sh <<'EOF'\ncp a /opt/example/out.txt\nEOF", W],
+      ['echo "cp a /opt/example/out.txt" | sh', W],
+      ["printf '%s\\n' 'cp a /opt/example/out.txt' | sh", W],
+      ['echo "cp a" "/opt/example/out.txt" | dash', W],
+      // The shell word may sit on any line of the command.
+      ["cat <<'EOF' |\ncp a /opt/example/out.txt\nEOF\nsh", W],
+      ["printf 'cp a /opt/example/out.txt' |\nsh", W],
+      ["echo 'cp a /opt/example/out.txt' | \"sh\"", W], // a quoted shell name is still the command
+      ["echo 'cp a /opt/example/out.txt' > /tmp/example/s.sh; . /tmp/example/s.sh", W],
+      ["bash <<'EOF'\necho $'\\' > /opt/example/out.txt #'\nEOF", "ANSI-C/locale quoting is not judged under bash re-entry"],
+      ["cat <<EOF > /tmp/example/x\nDon't forget\nEOF\ncp a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ['cat <<EOF > /tmp/example/x\nsay "hi\nEOF\ncp a /opt/example/out.txt', "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cat <<\\EOF > /tmp/example/x\nDon't forget\nEOF\ncp a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cat <<-EOF > /tmp/example/x\nDon't\n\t\tEOF\ncp a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      // The delimiter line is the delimiter and nothing else: `EOF x` is body (dash).
+      ["cat <<'EOF'\nEOF x\nDon't\nEOF\ncp a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      // The rest of a quoted heredoc's opener line is shell syntax (audit R2 P1).
+      ["cat <<'EOF' > /opt/example/out.txt\nbody\nEOF", "write to '/opt/example/out.txt' outside allowed paths"],
+      ['cat <<"EOF" >> /opt/example/out.txt\nbody\nEOF', "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cat << 'EOF' | tee /opt/example/out.txt\nbody\nEOF", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cat <<'EOF' > /tmp/example/x $(id)\nbody\nEOF", "command substitution $(...) is blocked"],
+      // Brace expansion: one flat comma group is expanded and every alternative judged; a nested,
+      // sequence or `$` group is refused when it can produce an absolute path (audit R2 W2).
+      ["cp a /tmp/example/{x,../../opt/example/out}", "write to '/opt/example/out' outside allowed paths"],
+      ["cp {a,/opt/example/out.txt}", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["echo x > /tmp/example/{x,../../opt/example/out}", "write to '/opt/example/out' outside allowed paths"],
+      ["cp a /tmp/example/{1..3}", "brace expansion in a write target is not judged: /tmp/example/{1..3}"],
+      ["cp a /tmp/example/{x,{y,../../../opt}}", "brace expansion in a write target is not judged: /tmp/example/{x,{y,../../../opt}}"],
+      ["cp a /tmp/example/{x,$D}", "brace expansion in a write target is not judged: /tmp/example/{x,$D}"],
+      ["cp a /tmp/{a,b}/{c,../../opt}", "brace expansion in a write target is not judged: /tmp/{a,b}/{c,../../opt}"],
+      ["cp a /tmp/x" + "{" + ",".repeat(64) + "}", "brace expansion in a write target is not judged"],
+      // `-S SUFFIX` takes a value: the `t` in `-S.out` is not `-t` (audit R2 W3).
+      ["cp -S.out a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["mv -S.dat a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      // A newline ends a command and a comment; `\`+newline joins (audit R2 W4).
+      ["# x\ncp a /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["cp a /tmp/x\ncp b /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["echo x > /tmp/\\\n../opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      ["echo x > \\\n /opt/example/out.txt", "write to '/opt/example/out.txt' outside allowed paths"],
+      // `<(…)` / `>(…)` glued to a word (audit R2 W5).
+      ["cp ''<(cat) /opt/example/out.txt", "process substitution <() or >() is blocked"],
+      ["cp a<(cat) /opt/example/out.txt", "process substitution <() or >() is blocked"],
+      ["echo x >(cat)", "process substitution <() or >() is blocked"],
+      // find/xargs: the destination is not the last word of the list.
+      ["find . -exec cp {} /root/x \\;", "write to '/root/x' outside allowed paths"],
+      ["find . -exec cp {} /root/x \\; -exec ls -t \\;", "write to '/root/x' outside allowed paths"],
+      // Quoted runs and escapes INSIDE the word are removed before the path is resolved.
+      ["echo x > /root/claude/'../../root/.bashrc'", "write to '/root/.bashrc' outside allowed paths"],
+      ["echo x > /root/claude/\\.\\./\\.\\./root/.bashrc", "write to '/root/.bashrc' outside allowed paths"],
+      ['echo x > "/root/claude/\\"/../../../root/.bashrc"', "write to '/root/.bashrc' outside allowed paths"],
+      // A space inside quotes stays in the ONE target.
+      ["echo x > '/root/claude/x /../../../root/.bashrc'", "write to '/root/.bashrc' outside allowed paths"],
+      // dash has no `$'…'`: `$'\'` is `$` and the string `\`, so the `>` after it is an operator (audit R2 C1).
+      ["echo $'\\' > /opt/example/out.txt #'", "write to '/opt/example/out.txt' outside allowed paths"],
+      [">| '/root/.bashrc'", "write to '/root/.bashrc' outside allowed paths"],
+    ])("denies %s", (cmd, reason) => {
+      const r = validateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toContain(reason);
+    });
+
+    it.each([
+      "echo x > '/root/claude/foo/x'",
+      'cp a "/tmp/x"',
+      "echo x | tee -a /root/claude/foo/log",
+      "cmd 2>&1",
+      "cmd >&2",
+      "cmd >&-",
+      "cmd &>/dev/null",
+      "cmd > '/dev/null'",
+      "cmd >& /dev/null",
+      "cmd >/dev/null 2>&1",
+      "mv -t /tmp/x a",
+      "cp -r a /tmp/d/",
+      "echo x > '/root/claude/x y'",
+      // Sources are reads: only the destination is judged.
+      "cp /var/log/syslog /tmp/s",
+      "cp -t /tmp/x /var/log/syslog",
+      // A comment ends the list.
+      "echo x | tee /tmp/a # /root/x",
+      // A word that only ENDS in a verb is not that verb.
+      "echo committee met at /var/hall",
+      "echo rsvp mv /var/x",
+      "/usr/bin/rcp a /var/x",
+      "scp /tmp/a host:/x",
+      "scp -P 22 host:/x /tmp/y",
+      "scp -P 22 -F /var/scp.cfg host:/x /tmp/y", // an option's value is not a destination
+      // A verb or `>` inside a quoted span is text (audit R1 W1).
+      'echo "use tee x /var/y" > /tmp/z',
+      "echo 'a > /opt/b' > /tmp/z",
+      "cp a /tmp/example/x",
+      "cp a '/tmp/example/{x,../../opt/example/out}'", // a quoted brace is text
+      "mv foo.{txt,md}", // a relative expansion stays relative
+      "exec 3<>/tmp/x",
+      "echo x >>& /opt/example/out.txt", // a bash syntax error: `>>` has no word, nothing is written
+      // A quote in a body stays in the body; a quoted body or a quoted string is data without a shell word.
+      "cat <<EOF > /tmp/example/x\nDon't forget\nEOF\ncp a /tmp/example/y",
+      "cat <<'EOF' > /tmp/example/x\ncp a /opt/example/out.txt\nEOF",
+      'echo "don\'t" > /tmp/example/x',
+      'grep "sh" /tmp/example/f',
+      'echo "cp a /opt/example/out.txt is wrong" > /tmp/example/notes',
+      "sh <<'EOF'\ncp a /tmp/example/x\nEOF",
+      "sh <<'EOF'\necho $'a' > /tmp/example/x\nEOF", // dash: `$` and the string `a`
+      "$HOME/bin/tool --help", // the variable names a directory, not the command
+      // Flat brace groups whose every alternative is inside the prefixes (the backup idiom).
+      "cp /tmp/example/x.ts{,.bak}",
+      "mv /tmp/example/x{.tmp,}",
+      "cp {a,b} /tmp/example/",
+      "cp -S .bak a /tmp/example/x",
+      // A newline and a comment end a command: the next line's words are not its files.
+      "cp a /tmp/example/x # cp b /opt/example/out.txt\ncp c /tmp/example/y",
+      "cp a /tmp/example/x\necho /opt/example/out.txt",
+      // dash reads `$'…'` as `$` + a single-quoted string: these targets are relative words.
+      "echo x > $'\\057opt/example/out.txt'",
+      "echo x > $'/opt/example/out.txt'",
+      "echo x > $'/root/.bashrc'",
+      "echo x > $'\\x2froot/.bashrc'",
+      "echo $'a\\'b'",
+    ])("allows %s", (cmd) => {
+      expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+    });
+
+    // Under bash re-entry (`bash -c`, a shell heredoc) `$'…'` / `$"…"` read differently from dash: refused.
+    it.each([
+      "echo x > $'\\057opt/example/out.txt'",
+      "echo x > $'/opt/example/out.txt'",
+      "echo x > $'/root/.bashrc'",
+      "echo x > $'\\x2froot/.bashrc'",
+      "echo $'a\\'b'",
+      'echo $"x" > /tmp/example/x',
+    ])("refuses %s under bash re-entry", (cmd) => {
+      expect(validateShellCommand(cmd, { reentry: true }).reason).toMatch(/^ANSI-C\/locale quoting is not judged under bash re-entry: \$/);
+    });
+
+    // A substitution in text judged as commands runs before any path exists: the outer check's reasons (R4 C1).
+    it.each([
+      ["sh <<'EOF'\ncp a $(echo /opt/example/out.txt)\nEOF", "command substitution $(...) is blocked"],
+      ["bash <<'EOF'\necho hi > $(echo /opt/example/out.txt)\nEOF", "command substitution $(...) is blocked"],
+      ["cat <<'EOF' | sh\ncp a \"$(printf /opt/example/out.txt)\"\nEOF", "command substitution $(...) is blocked"],
+      ["sh <<'EOF'\ncp a `echo /opt/example/out.txt`\nEOF", "backtick substitution is blocked"],
+      ["cat <<'EOF' | sh\ncp a $(cd /opt/example && pwd)/out.txt\nEOF", "command substitution $(...) is blocked"],
+    ])("refuses the substitution in %s", (cmd, reason) => {
+      expect(validateShellCommand(cmd)).toEqual({ allowed: false, reason });
+    });
+    it.each([
+      "cat <<'EOF' > /tmp/example/x\nuse $(date) here\nEOF",
+      "cat <<'EOF' > /tmp/example/notes\nsee '$(x)' and `y`\nEOF",
+      "grep -n 'sh' /tmp/example/f",
+      "echo $((3*4)) $(($n+1)) > /tmp/example/x", // arithmetic is one word, not a `3*4` command
+    ])("allows a substitution in data: %s", (cmd) => {
+      expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+    });
+    it("leaves a single-quoted `$(` outside a heredoc to the outer check, unchanged", () => {
+      expect(validateShellCommand("echo 'see $(x)' > /tmp/example/notes")).toEqual({
+        allowed: false,
+        reason: "command substitution $(...) is blocked",
+      });
+    });
+
+    // A glob in command position picks the command (`/bin/s?` is `/bin/sh`): refused like a variable (R4 W1).
+    it.each([
+      "echo 'cp a /opt/example/out.txt' | /bin/s?",
+      "echo 'cp a /opt/example/out.txt' | /bin/s[h]",
+      "echo 'cp a /opt/example/out.txt' | /usr/bin/ba*h",
+      "/bin/s? -c 'cp a /opt/example/out.txt'",
+    ])("refuses the glob command name in %s", (cmd) => {
+      expect(validateShellCommand(cmd).reason).toMatch(/^command name from a glob is not judged: \/(bin\/s|usr\/bin\/ba)/);
+    });
+    it.each(["cp *.txt /tmp/example/", "ls -la s?", "find . -name '*.ts'", "[ -f /tmp/example/x ] && echo y"])(
+      "allows an argument glob: %s",
+      (cmd) => {
+        expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+      },
+    );
+
+    it("refuses a benign 5-deep nested unquoted heredoc (R4 W4)", () => {
+      // Intentional: MAX_TEXT_DEPTH = 4 bounds the recursion, and text past it is refused, not
+      // allowed unjudged (fail-closed). No real command nests five heredocs.
+      expect(validateShellCommand("cat <<A\ncat <<B\ncat <<C\ncat <<D\ncat <<E\nx\nE\nD\nC\nB\nA").reason).toMatch(
+        /^text nested 5 deep/,
+      );
+    });
+
+    it("refuses `$'…'` in a bash heredoc body and stays bounded on nested bodies and strings", () => {
+      expect(validateShellCommand("bash <<EOF\necho x > $'/opt/example/out.txt'\nEOF").reason).toBe(
+        "ANSI-C/locale quoting is not judged under bash re-entry: $'/opt/example/out.txt'",
+      );
+      for (const nested of ["sh <<a\n".repeat(16383), "cat <<a\n".repeat(16383), `sh -c ${"\"'".repeat(30_000)}`]) {
+        const t = performance.now();
+        validateShellCommand(nested);
+        expect(performance.now() - t, nested.slice(0, 8)).toBeLessThan(1500);
+      }
+      expect(validateShellCommand("cat <<a\n".repeat(16383)).reason).toMatch(/nested 5 deep \(a heredoc body or a quoted string\) is not judged/);
+    });
+
+    it("stays linear on hostile operator-dense input (one pass, no rescans)", () => {
+      // A benign 20 000-char line of 2 000 `cp` words (audit R1 W2: a rescan budget refused it).
+      const line = "cp /tmp/a ".repeat(2000);
+      expect(line.length).toBe(20_000);
+      let t = performance.now();
+      expect(validateShellCommand(line)).toEqual({ allowed: true });
+      expect(performance.now() - t).toBeLessThan(1500);
+      // A brace scan over 120 000 commas (audit R2 W1: the regex form took 11 s). The unclosed form
+      // (`cp a /tmp/{,,,…`) still takes ~18 s in the deny-verb BRACE_RE, outside this scan (queued).
+      t = performance.now();
+      validateShellCommand("cp a /tmp/x{" + ",".repeat(120_000) + "}");
+      expect(performance.now() - t).toBeLessThan(1500);
+      for (const unit of ["cp ", "tee a ", "mv -t ", "cp '", "2>&1 cp ", ">'", '>"', "&> ", ">& ", "cat <<a\n"]) {
+        const cmd = unit.repeat(Math.floor(130_000 / unit.length));
+        t = performance.now();
+        validateShellCommand(cmd);
+        expect(performance.now() - t, unit).toBeLessThan(1500); // the same bound as the package-manager gate's linear test
+      }
+    });
+  });
+
   describe("williams-entry-radar write access", () => {
     // The radar repo is Jarvis's autonomous build. He needs write access
     // for tooling/scripts the operator authorizes (see CLAUDE.md in the
@@ -1290,6 +1568,12 @@ describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-0
   it("ALLOWS a heredoc append (`cat >> log << 'ENTRY'`) to the ritual log", () => {
     const cmd = `cat >> ${LOG} << 'ENTRY'\n## 2026-06-18\nbody\nENTRY`;
     expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+    // 3q P1: the opener line after `<<'EOF'` is judged; the append there is allowed too.
+    expect(validateShellCommand(`cat <<'EOF' >> ${LOG}\n## 2026-06-18 > x\nEOF`)).toEqual({ allowed: true });
+  });
+
+  itOnMain("BLOCKS an overwrite after a quoted heredoc opener (3q P1)", () => {
+    expect(validateShellCommand(`cat <<'EOF' > ${LOG}\nbody\nEOF`).reason).toContain("append-only");
   });
 
   itOnMain("BLOCKS a bare `>` overwrite of the ritual log (truncation)", () => {
@@ -1313,6 +1597,23 @@ describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-0
     const result = validateShellCommand(`echo x | tee ${LOG}`);
     expect(result.allowed).toBe(false);
   });
+
+  // 3q: `tee -a` and `&>>` are appends; `&>` and a `-a` after `--` (a file name) are not.
+  it("ALLOWS `tee -a` and `&>>` appends to the ritual log", () => {
+    expect(validateShellCommand(`echo x | tee -a ${LOG}`)).toEqual({ allowed: true });
+    expect(validateShellCommand(`echo x | tee --append ${LOG}`)).toEqual({ allowed: true });
+    expect(validateShellCommand(`echo x &>>${LOG}`)).toEqual({ allowed: true });
+    expect(validateShellCommand(`echo x >> '${LOG}'`)).toEqual({ allowed: true });
+  });
+
+  itOnMain.each([`echo x &>${LOG}`, `echo x | tee -- -a ${LOG}`, `echo x > '${LOG}'`, `echo x >>${LOG}; echo y >| ${LOG}`])(
+    "BLOCKS an overwrite of the ritual log: %s",
+    (cmd) => {
+      const result = validateShellCommand(cmd);
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("append-only");
+    },
+  );
 
   // Task 60c6bf31: the target now ends at a glued metacharacter, so the
   // append/overwrite tests end there too.
@@ -2236,7 +2537,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     allowed(`cd '${MC}' && npx tsx x.ts`);
     allowed("P=1; echo ${P:-2}; npm run build");
     allowed("echo ${X:-default}");
-    allowed("cat <<'EOF' > /root/claude/mission-control/jarvis/notes.md\nrun npm install later\nEOF");
+    allowed("cat <<'EOF' > /root/claude/example/notes.md\nrun npm install later\nEOF"); // a mission-control target is a write-guard denial since 3q P1
     // prose that merely contains the phrase, written through cat/tee, stays data
     allowed("cat <<'EOF' > /tmp/notes.md\nrun npm install foo later\nEOF");
     allowed("tee /tmp/x.md <<'EOF'\npip install requests is how you do it\nEOF");
