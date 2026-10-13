@@ -9,6 +9,7 @@ import { execFileSync, execSync } from "child_process";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
@@ -69,6 +70,7 @@ export function getCurrentBranch(cwd: string): string {
       cwd,
       timeout: 5000,
       encoding: "utf-8",
+      env: buildChildEnv(),
     }).trim();
   } catch {
     return "HEAD";
@@ -141,6 +143,9 @@ function runArgs(
     encoding: "utf-8" as const,
     timeout,
     stdio: ["pipe", "pipe", "pipe"],
+    // Base allow-list, never the service env (queue 3h): git reads its
+    // config and gh its auth through HOME; a pre-commit hook runs tests.
+    env: buildChildEnv(),
   }).trim();
 }
 
@@ -150,6 +155,7 @@ function run(cmd: string, timeout = 30_000, cwd?: string): string {
     cwd: resolveWorkDir(cwd),
     encoding: "utf-8" as const,
     timeout,
+    env: buildChildEnv(),
   }).trim();
 }
 
@@ -783,7 +789,8 @@ Returns the PR URL on success.`,
           cwd: workDir,
           timeout: 60_000,
           encoding: "utf-8",
-          env: { ...process.env, GH_TOKEN: JARVIS_GH_TOKEN },
+          // Base allow-list + GH_TOKEN only, never the service env (queue 3h).
+          env: buildChildEnv({ GH_TOKEN: JARVIS_GH_TOKEN }),
         }).trim();
       } else {
         result = runArgs("gh", prArgs, 60_000, workDir);

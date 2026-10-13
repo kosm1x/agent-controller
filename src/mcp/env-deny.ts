@@ -62,3 +62,37 @@ export const DENIED_ENV_PREFIXES: readonly string[] = [
 export function isDeniedEnvName(name: string): boolean {
   return DENIED_ENV_NAMES.has(name) || DENIED_ENV_PREFIXES.some((p) => name.startsWith(p));
 }
+
+/**
+ * Queue 3h: the env a builtin tool's child process may inherit — the MCP SDK's
+ * default set (HOME LOGNAME PATH SHELL TERM USER) plus locale/time/temp/node
+ * knobs. Same WS3 rule as `buildSpawnEnv`: an allow-list, never the service
+ * env (which carries every key the service loads from `.env`).
+ */
+export const CHILD_ENV_BASE: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  "TMPDIR",
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "CI",
+];
+
+/** The base names read from the service env, plus `extra` set explicitly by the caller. */
+export function buildChildEnv(
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of CHILD_ENV_BASE) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return { ...env, ...extra };
+}

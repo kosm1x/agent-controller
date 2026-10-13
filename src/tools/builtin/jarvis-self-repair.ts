@@ -10,6 +10,7 @@ import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
 import { execGroupKill } from "./shell.js";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 import {
   relatedScopeSummary,
   relatedTestCommand,
@@ -289,7 +290,7 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
           cwd: MC_DIR,
           timeout: 60_000,
           maxBuffer: 1024 * 1024,
-          env: process.env,
+          env: buildChildEnv(),
         });
         lines.push("✅ Typecheck: PASS");
       } catch (err) {
@@ -315,7 +316,7 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
               cwd: MC_DIR,
               timeout: 120_000,
               maxBuffer: 1024 * 1024,
-              env: process.env,
+              env: buildChildEnv(),
             },
           );
           const summary = output.match(/Tests\s+(\d+)\s+passed/);

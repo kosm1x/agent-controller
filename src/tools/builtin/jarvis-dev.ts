@@ -18,6 +18,7 @@ import {
   resolveTestScope,
 } from "./changed-tests.js";
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 
 // The test gate MUST run async: a synchronous exec blocks mission-control's
 // event loop for the whole run (the full suite took ~2 min before ruling 4
@@ -48,7 +49,7 @@ export function ensureJarvisWorktree(): void {
     execFileSync(
       "git",
       ["-C", PRIMARY_DIR, "worktree", "add", "--detach", MC_DIR],
-      { timeout: 60_000, encoding: "utf-8" },
+      { timeout: 60_000, encoding: "utf-8", env: buildChildEnv() },
     );
   }
   const nm = join(MC_DIR, "node_modules");
@@ -208,6 +209,8 @@ function run(args: string[], opts?: { timeout?: number }): string {
     cwd: MC_DIR,
     timeout: opts?.timeout ?? GIT_TIMEOUT_MS,
     encoding: "utf-8",
+    // Base allow-list (queue 3h): push authenticates through HOME's gh config.
+    env: buildChildEnv(),
   }).trim();
 }
 
@@ -500,6 +503,9 @@ async function runTestGate(branch: string): Promise<string> {
         timeout: EXEC_TIMEOUT_MS,
         encoding: "utf-8",
         maxBuffer: EXEC_MAX_BUFFER,
+        // systemd-run --scope execs the command with this env: the base
+        // allow-list, never the service env (queue 3h).
+        env: buildChildEnv(),
       },
     );
     results.typecheck = "PASS";
@@ -528,6 +534,7 @@ async function runTestGate(branch: string): Promise<string> {
           timeout: EXEC_TIMEOUT_MS,
           encoding: "utf-8",
           maxBuffer: EXEC_MAX_BUFFER,
+          env: buildChildEnv(),
         },
       );
       const summaryMatch = stdout.match(/Tests\s+(\d+)\s+passed/);
@@ -689,6 +696,7 @@ async function actionPr(title: string, body: string): Promise<string> {
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
       maxBuffer: EXEC_MAX_BUFFER,
+      env: buildChildEnv(),
     });
     const changed = changedPathsFromPorcelainZ(porcelain).filter(
       (f) => !SENSITIVE.some((s) => f.toLowerCase().includes(s)),
@@ -751,6 +759,8 @@ async function actionPr(title: string, body: string): Promise<string> {
       cwd: MC_DIR,
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
+      // Operator's own gh auth via HOME; no GH_TOKEN (queue 3h).
+      env: buildChildEnv(),
     }).trim();
 
   let prUrl: string;

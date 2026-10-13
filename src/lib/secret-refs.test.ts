@@ -1823,3 +1823,278 @@ describe("S6 WS3 — record secret NAMES are not secrets; projectCredentialByNam
     expect(projectCredentialByName("acme-radar", "SECRET_NOPE")).toBeUndefined();
   });
 });
+
+describe("queue 3l — a capabilities.mcp[i].env[j].value literal is judged by its sibling name", () => {
+  const LIT = "synthetic-literal-" + "1";
+  const HOST = "db.example.internal";
+  const HEX40 = "ab12".repeat(10);
+  const REF = "SECRET_ACME_ENV_PG_TOKEN";
+  const caps = {
+    mcp: [
+      {
+        command: "node",
+        env: [
+          { name: "PG_PASSWORD", value: LIT },
+          { name: "PG_HOST", value: HOST },
+          { name: "API_SETTING", value: HEX40 },
+          { name: "PG_TOKEN", secret: REF },
+        ],
+      },
+    ],
+  };
+  const leaf = (p: string) =>
+    projectEntryLeaves("acme-env", "config", "capabilities", caps).find((l) => l.path.join(".") === p)!;
+
+  it("display (project_get / exporter): secret-named and secret-valued literals are secret; a plain literal and a reference NAME are not", () => {
+    project("acme-env", { config: { capabilities: caps } });
+    invalidateSecretRefs();
+    const pw = leaf("capabilities.mcp.0.env.0.value");
+    expect(pw.secret).toBe(true);
+    expect(pw.display).not.toContain(LIT);
+    expect(leaf("capabilities.mcp.0.env.1.value")).toMatchObject({ secret: false, display: HOST });
+    const hex = leaf("capabilities.mcp.0.env.2.value");
+    expect(hex.secret).toBe(true);
+    expect(hex.display).not.toContain(HEX40);
+    expect(leaf("capabilities.mcp.0.env.3.secret")).toMatchObject({ secret: false, display: REF });
+    expect(leaf("capabilities.mcp.0.env.0.name")).toMatchObject({ secret: false, display: "PG_PASSWORD" });
+  });
+
+  it("index (scrubSecrets over KB text): the literal is scrubbed and named like its display; the plain literal is not", () => {
+    project("acme-env", { config: { capabilities: caps } });
+    invalidateSecretRefs();
+    const text = `PG_PASSWORD=${LIT} PG_HOST=${HOST} API_SETTING=${HEX40} via ${REF}`;
+    const out = scrubSecrets(text);
+    expect(out).not.toContain(LIT);
+    expect(out).not.toContain(HEX40);
+    expect(out).toContain(HOST);
+    expect(out).toContain(REF);
+    const name = secretRefName(projectIdentity("acme-env", "config", ["capabilities", "mcp", "0", "env", "0", "value"]));
+    expect(name).toMatch(/^SECRET_ACME_ENV_/);
+    expect(leaf("capabilities.mcp.0.env.0.value").display).toBe(secretPlaceholder(name!));
+  });
+});
+
+describe("queue 3l ruling — the record-env name-fragment rule judges an env literal's sibling name", () => {
+  // Substring rule (SECRET_NAME_FRAGMENTS): PASSAGE_ID ("PASS") and AUTHOR
+  // ("AUTH") are refused by record-env today, so they are withheld here too.
+  const L2 = "synthetic-literal-" + "2";
+  const L3 = "synthetic-literal-" + "3";
+  const L4 = "synthetic-literal-" + "4";
+  const env = [
+    { name: "PGPASSWORD", value: L2 },
+    { name: "DBPASS", value: L3 },
+    { name: "CLIENTSECRET", value: L4 },
+    { name: "PASSAGE_ID", value: "p-12" },
+    { name: "AUTHOR", value: "ada" },
+    { name: "PG_HOST", value: "db.example.internal" },
+  ];
+  const caps = { mcp: [{ command: "node", env }] };
+
+  it("display: every fragment-named literal is secret and hidden; the plain one is not", () => {
+    project("acme-frag", { config: { capabilities: caps } });
+    invalidateSecretRefs();
+    const leaves = projectEntryLeaves("acme-frag", "config", "capabilities", caps);
+    env.forEach((e, j) => {
+      const l = leaves.find((x) => x.path.join(".") === `capabilities.mcp.0.env.${j}.value`)!;
+      const plain = e.name === "PG_HOST";
+      expect(l.secret, e.name).toBe(!plain);
+      if (plain) expect(l.display).toBe(e.value);
+      else expect(l.display, e.name).not.toContain(e.value);
+    });
+  });
+
+  it("index: the fragment-named literals are scrubbed out of KB text", () => {
+    project("acme-frag", { config: { capabilities: caps } });
+    invalidateSecretRefs();
+    const out = scrubSecrets(`a=${L2} b=${L3} c=${L4} host=db.example.internal`);
+    for (const v of [L2, L3, L4]) expect(out).not.toContain(v);
+    expect(out).toContain("db.example.internal");
+  });
+});
+
+describe("queue 3l audit R1 C1 — {name|key, value} literals and fragment-named env maps anywhere under config", () => {
+  const V = (s: string) => "synthetic-literal-9" + s;
+  const config = {
+    db_env: [{ name: "PG_PASSWORD", value: V("a") }, { name: "PG_HOST", value: "db.example.internal" }],
+    db: [{ key: "PG_PASSWORD", value: V("b") }],
+    pgenv: { PGPASSWORD: V("c") },
+    capcase: [{ Name: "PG_PASSWORD", Value: V("d") }],
+    mcp: [{ env: [{ name: "PG_PASSWORD", value: V("e") }] }],
+    routing: { env: [{ name: "PG_PASSWORD", value: V("f") }] },
+    capabilities: { mcp: [{ command: "node", env: { PGPASSWORD: V("g") } }] },
+    meta: [{ name: "AUTHOR", value: "ada" }],
+    notes: { CERTAINTY: 0.9, auth_url: "https://auth.example.test/login", cert_path: "/etc/ssl/certs/example.pem" },
+    contacto_clave: "Persona Ejemplo Uno",
+    db_cols_key: "id, nombre, estado, fecha",
+    Db_Cols_Key: "id, nombre, estado, fecha",
+    author: "Persona Ejemplo Dos",
+    Author: "Persona Ejemplo Tres",
+    keywords: "aprendizaje automatico",
+  };
+  const WITHHELD_AT = [
+    "db_env.0.value",
+    "db.0.value",
+    "pgenv.PGPASSWORD",
+    "capcase.0.Value",
+    "mcp.0.env.0.value",
+    "routing.env.0.value",
+    "capabilities.mcp.0.env.PGPASSWORD",
+  ];
+  const leaves = () =>
+    Object.entries(config).flatMap(([k, v]) => projectEntryLeaves("acme-wide", "config", k, v));
+
+  it("display: each shape is secret and hidden; PG_HOST, AUTHOR=ada and CERTAINTY=0.9 render", () => {
+    project("acme-wide", { config });
+    invalidateSecretRefs();
+    const all = leaves();
+    for (const p of WITHHELD_AT) {
+      const l = all.find((x) => x.path.join(".") === p);
+      expect(l, p).toBeDefined();
+      expect(l!.secret, p).toBe(true);
+      expect(l!.display, p).not.toMatch(/synthetic-literal-9/);
+      expect(l!.display, p).toContain("$SECRET_ACME_WIDE_");
+    }
+    expect(all.find((x) => x.path.join(".") === "db_env.1.value")).toMatchObject({ secret: false, display: "db.example.internal" });
+    expect(all.find((x) => x.path.join(".") === "meta.0.value")).toMatchObject({ secret: false, display: "ada" });
+    expect(all.find((x) => x.path.join(".") === "notes.CERTAINTY")).toMatchObject({ secret: false, display: "0.9" });
+    // the leaf-key fragment rule applies to ENV-shaped (uppercase) keys only:
+    // snake / mixed-case fragment keys (AUTH, KEY) render
+    for (const k of ["author", "Author", "keywords"]) {
+      expect(all.find((x) => x.path.join(".") === k), k).toMatchObject({ secret: false, display: config[k as keyof typeof config] });
+    }
+    // contacto_clave / db_cols_key: 3l adds nothing; the pre-existing own-key
+    // classifier decides (it withholds them today, independent of this rule)
+    for (const k of ["contacto_clave", "db_cols_key", "Db_Cols_Key"]) {
+      const v = config[k as keyof typeof config] as string;
+      expect(all.find((x) => x.path.join(".") === k)!.secret, k).toBe(isProjectSecret(k, v));
+    }
+    // the leaf-key fragment rule skips a URL or a path
+    expect(all.find((x) => x.path.join(".") === "notes.auth_url")).toMatchObject({ secret: false, display: "https://auth.example.test/login" });
+    expect(all.find((x) => x.path.join(".") === "notes.cert_path")).toMatchObject({ secret: false, display: "/etc/ssl/certs/example.pem" });
+  });
+
+  it("index: every withheld literal is scrubbed out of KB text; the rendered ones are not", () => {
+    project("acme-wide", { config });
+    invalidateSecretRefs();
+    const text = ["a", "b", "c", "d", "e", "f", "g"].map((s) => `${s}=${V(s)}`).join(" ") + " host=db.example.internal author=ada c=0.9";
+    const out = scrubSecrets(text);
+    expect(out).not.toMatch(/synthetic-literal-9/);
+    expect(out).toContain("host=db.example.internal author=ada c=0.9");
+    expect(scrubSecrets("by Persona Ejemplo Dos, Persona Ejemplo Tres on aprendizaje automatico")).toBe(
+      "by Persona Ejemplo Dos, Persona Ejemplo Tres on aprendizaje automatico",
+    );
+  });
+});
+
+describe("queue 3l audit R2 — env-shaped sibling names, the config root pair, wider pair spellings, numbers; index/display lockstep", () => {
+  const V = (s: string) => "synthetic-literal-9" + s;
+  // One project per fixture (the root pair needs `config` itself to be the pair).
+  const FIXTURES: Record<string, Record<string, unknown>> = {
+    "acme-r2-env": {
+      db_env: [
+        { name: "PGPASSWORD", value: V("Z1") },
+        { name: "DBPASS", value: V("Z2") },
+        { name: "CLIENTSECRET", value: V("Z3") },
+        { name: "GITHUBTOKEN", value: V("Z4") },
+        { name: "PG_HOST", value: "db.example.internal" },
+      ],
+      // a different value: the index is global, so a withheld "ada-lovelace" would scrub the rendered one
+      elsewhere: [{ name: "AUTHOR", value: "grace-hopper" }],
+      lower: [{ name: "author", value: "ada-lovelace" }],
+    },
+    "acme-r2-root": { name: "PG_PASSWORD", value: V("R1") },
+    "acme-r2-w1": {
+      kv: [{ key: "PG_PASSWORD", val: V("W1") }],
+      ev: [{ env: "PG_PASSWORD", value: V("W2") }],
+      vv: [{ variable: "PG_PASSWORD", VAL: V("W3") }],
+    },
+    "acme-r2-num": {
+      pgenv: { PGPASSWORD: 87654321 },
+      pg7: { PGPASSWORD: "1234567" },
+      pg8: { PGPASSWORD: "12345678" },
+      notes: { CERTAINTY: 0.9, PORT: 8080 },
+    },
+    "acme-r2-r1": {
+      db_env: [{ name: "PG_PASSWORD", value: V("a") }],
+      db: [{ key: "PG_PASSWORD", value: V("b") }],
+      pgenv: { PGPASSWORD: V("c") },
+      capcase: [{ Name: "PG_PASSWORD", Value: V("d") }],
+      mcp: [{ env: [{ name: "PG_PASSWORD", value: V("e") }] }],
+      routing: { env: [{ name: "PG_PASSWORD", value: V("f") }] },
+      capabilities: { mcp: [{ command: "node", env: { PGPASSWORD: V("g") } }] },
+      meta: [{ name: "AUTHOR", value: "ada" }],
+      author: "Persona Ejemplo Dos",
+    },
+    "acme-r2-exact": {
+      capabilities: {
+        mcp: [{ command: "node", env: [{ name: "PASSAGE_ID", value: "p-12" }, { name: "PG_PASSWORD", secret: "SECRET_ACME_R2_EXACT_PG" }] }],
+      },
+    },
+  };
+  const seedAll = () => {
+    for (const [slug, config] of Object.entries(FIXTURES)) project(slug, { config });
+    invalidateSecretRefs();
+  };
+  const leavesOf = (slug: string) => {
+    const config = FIXTURES[slug]!;
+    return Object.entries(config).flatMap(([k, v]) => projectEntryLeaves(slug, "config", k, v, config));
+  };
+  const at = (slug: string, p: string) => leavesOf(slug).find((l) => l.path.join(".") === p)!;
+
+  it("C1: an env-shaped sibling name is judged by fragment anywhere under config; a lowercase one is not", () => {
+    seedAll();
+    for (const j of [0, 1, 2, 3]) {
+      const l = at("acme-r2-env", `db_env.${j}.value`);
+      expect(l.secret, `db_env.${j}`).toBe(true);
+      expect(l.display).not.toMatch(/synthetic-literal-9/);
+    }
+    expect(at("acme-r2-env", "db_env.4.value")).toMatchObject({ secret: false, display: "db.example.internal" });
+    // AUTHOR is env-shaped and carries AUTH: judged like an env key (accepted)
+    expect(at("acme-r2-env", "elsewhere.0.value").secret).toBe(true);
+    expect(at("acme-r2-env", "lower.0.value")).toMatchObject({ secret: false, display: "ada-lovelace" });
+  });
+
+  it("C2: the config ROOT pair is withheld in display (root passed by the caller) as in the index", () => {
+    seedAll();
+    const l = at("acme-r2-root", "value");
+    expect(l.secret).toBe(true);
+    expect(l.display).not.toContain(V("R1"));
+  });
+
+  it("W1: {key, val}, {env, value}, {variable, VAL} pairs are withheld", () => {
+    seedAll();
+    for (const p of ["kv.0.val", "ev.0.value", "vv.0.VAL"]) {
+      expect(at("acme-r2-w1", p).secret, p).toBe(true);
+    }
+  });
+
+  it("W3/W4: an 8+ digit number and an 8+ char string under an env fragment key are withheld; 7 chars, 0.9 and PORT 8080 render", () => {
+    seedAll();
+    expect(at("acme-r2-num", "pgenv.PGPASSWORD").secret).toBe(true);
+    expect(at("acme-r2-num", "pg8.PGPASSWORD").secret).toBe(true);
+    expect(at("acme-r2-num", "pg7.PGPASSWORD")).toMatchObject({ secret: false, display: "1234567" });
+    expect(at("acme-r2-num", "notes.CERTAINTY")).toMatchObject({ secret: false, display: "0.9" });
+    expect(at("acme-r2-num", "notes.PORT")).toMatchObject({ secret: false, display: "8080" });
+  });
+
+  it("index: every withheld literal is scrubbed; the rendered ones are not", () => {
+    seedAll();
+    const lits = ["Z1", "Z2", "Z3", "Z4", "R1", "W1", "W2", "W3", "a", "b", "c", "d", "e", "f", "g"].map(V);
+    const out = scrubSecrets(lits.join(" ") + " n=87654321 s=12345678 a=grace-hopper | db.example.internal ada-lovelace 1234567");
+    for (const v of lits) expect(out, v).not.toContain(v);
+    expect(out).not.toContain("87654321");
+    expect(out).not.toContain("12345678");
+    expect(out).toContain("db.example.internal ada-lovelace 1234567");
+    expect(out).not.toContain("grace-hopper");
+  });
+
+  it("LOCKSTEP: for every leaf of every fixture, display secret === indexed (secretRefName defined)", () => {
+    seedAll();
+    for (const slug of Object.keys(FIXTURES)) {
+      for (const l of leavesOf(slug)) {
+        const indexed = secretRefName(projectIdentity(slug, "config", l.path)) !== undefined;
+        expect(l.secret, `${slug} config.${l.path.join(".")}`).toBe(indexed);
+      }
+    }
+  });
+});

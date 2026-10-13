@@ -113,7 +113,7 @@ export function buildRecordFromRow(
   const urls: Record<string, unknown> = { ...row.urls };
   let withheld = 0;
   const secretIn = (field: "config" | "urls", k: string, v: unknown) =>
-    projectEntryLeaves(row.slug, field, k, v).some((l) => l.secret);
+    projectEntryLeaves(row.slug, field, k, v, field === "config" ? row.config : row.urls).some((l) => l.secret);
 
   // Credentials never enter the KB (R1 W2): a credential-shaped name or
   // description stops the export; the operator cleans the row first.
@@ -301,7 +301,7 @@ export function buildRecordFromRow(
   const scrub = (field: "config" | "urls", src: Record<string, unknown>) => {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(src)) {
-      const leaves = projectEntryLeaves(row.slug, field, k, v);
+      const leaves = projectEntryLeaves(row.slug, field, k, v, field === "config" ? row.config : row.urls);
       if (!leaves.some((l) => l.secret)) {
         out[k] = v;
         continue;

@@ -225,7 +225,7 @@ export function buildCensus(facts: FactRow[], projects: ProjectRow[]): Census {
       // The display path the tools use, per top-level entry (real function).
       const display = new Map<string, boolean>();
       for (const [k, v] of Object.entries(obj)) {
-        for (const leaf of projectEntryLeaves(p.slug, field, k, v)) {
+        for (const leaf of projectEntryLeaves(p.slug, field, k, v, obj)) {
           display.set(leaf.path.join("\0"), leaf.secret);
         }
       }

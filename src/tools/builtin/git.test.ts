@@ -2,7 +2,7 @@
  * Git tool tests — verify arg validation and sensitive file blocking.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 const mockExecSync = vi.fn().mockReturnValue("");
 const mockExecFileSync = vi.fn().mockReturnValue("");
@@ -18,6 +18,7 @@ import {
   gitPushTool,
   ghRepoCreateTool,
   ghCreatePrTool,
+  getCurrentBranch,
 } from "./git.js";
 
 describe("git tools", () => {
@@ -584,6 +585,94 @@ describe("git tools", () => {
     });
   });
 
+  describe("child env is the base allow-list, never the service env (queue 3h)", () => {
+    const CANARIES: Record<string, string> = {
+      CANARY_API_KEY: "canary-value-1",
+      FIREWORKS_API_KEY: "canary-value-2",
+      TELEGRAM_BOT_TOKEN: "canary-value-3",
+      SOME_UNRELATED_SETTING: "canary-value-4",
+    };
+    beforeEach(() => {
+      for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
+      mockExecSync.mockClear();
+      mockExecFileSync.mockClear();
+    });
+    const expectBaseEnv = (opts: unknown) => {
+      const env = (opts as { env?: Record<string, string> }).env;
+      expect(env).toBeDefined();
+      expect(env).not.toBe(process.env);
+      expect(env!.PATH).toBe(process.env.PATH);
+      expect(env!.HOME).toBe(process.env.HOME);
+      expect(env).not.toHaveProperty("GH_TOKEN");
+      for (const name of Object.keys(CANARIES))
+        expect(env).not.toHaveProperty(name);
+      expect(JSON.stringify(env)).not.toContain("canary-value");
+    };
+
+    it("git_status: the execSync run() children", async () => {
+      mockExecSync.mockReturnValueOnce("").mockReturnValueOnce("main");
+      await gitStatusTool.execute({});
+      expect(mockExecSync).toHaveBeenCalledTimes(2);
+      for (const c of mockExecSync.mock.calls) expectBaseEnv(c[1]);
+    });
+
+    it("git_diff: the execFileSync runArgs() child", async () => {
+      mockExecFileSync.mockReturnValue("diff --git a/x b/x");
+      await gitDiffTool.execute({});
+      const call = mockExecFileSync.mock.calls.find((c) => c[0] === "git");
+      expect(call).toBeDefined();
+      expectBaseEnv(call![2]);
+    });
+
+    it("git_push on a non-jarvis branch: `gh repo view` (run) and `git push` (runArgs), no GH_TOKEN", async () => {
+      mockExecSync
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockImplementationOnce(() => {
+          throw new Error("error: No such remote 'origin'");
+        }) // git remote get-url → none
+        .mockReturnValueOnce('{"name":"r"}') // gh repo view o/r
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFileSync
+        .mockReturnValueOnce("") // git remote add origin
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("") // git branch -r
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("main") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce("main -> main"); // git push
+      const result = await gitPushTool.execute({
+        cwd: "/root/claude/trustr",
+        remote: "https://github.com/o/r.git",
+      });
+      expect(result).toContain("main -> main");
+      const view = mockExecSync.mock.calls.find((c) =>
+        String(c[0]).startsWith("gh repo view"),
+      );
+      expect(view).toBeDefined();
+      expectBaseEnv(view![1]);
+      const push = mockExecFileSync.mock.calls.find(
+        (c) => c[0] === "git" && (c[1] as string[])[0] === "push",
+      );
+      expect(push).toBeDefined();
+      expectBaseEnv(push![2]);
+    });
+
+    it("getCurrentBranch: the `git branch --show-current` child", () => {
+      mockExecFileSync.mockReturnValueOnce("main\n");
+      expect(getCurrentBranch("/root/claude/myrepo")).toBe("main");
+      const call = mockExecFileSync.mock.calls.at(-1)!;
+      expect(call[1]).toEqual(["branch", "--show-current"]);
+      expectBaseEnv(call[2]);
+    });
+
+    it("gh_repo_create: the runArgs gh child, no GH_TOKEN", async () => {
+      mockExecFileSync.mockReturnValue("https://github.com/o/r");
+      await ghRepoCreateTool.execute({ name: "r" });
+      const gh = mockExecFileSync.mock.calls.find((c) => c[0] === "gh");
+      expect(gh).toBeDefined();
+      expectBaseEnv(gh![2]);
+    });
+  });
+
   describe("gh_create_pr", () => {
     it("requires title and body", async () => {
       const r1 = await ghCreatePrTool.execute({ body: "desc" });
@@ -614,6 +703,40 @@ describe("git tools", () => {
       expect(argv[argv.indexOf("--head") + 1]).toBe("feature-x");
       const opts = ghCall[2] as { cwd: string };
       expect(opts.cwd).toBe("/root/claude/myrepo");
+    });
+
+    it("jarvis/* PR: the gh child gets the base + GH_TOKEN only, never the service env (queue 3h)", async () => {
+      const canaries: Record<string, string> = {
+        CANARY_API_KEY: "canary-value-1",
+        FIREWORKS_API_KEY: "canary-value-2",
+        TELEGRAM_BOT_TOKEN: "canary-value-3",
+        SOME_UNRELATED_SETTING: "canary-value-4",
+      };
+      for (const [k, v] of Object.entries(canaries)) vi.stubEnv(k, v);
+      vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+      vi.resetModules();
+      const { ghCreatePrTool: freshPrTool } = await import("./git.js");
+      mockExecFileSync
+        .mockReturnValueOnce("jarvis/feat/x\n") // getCurrentBranch(workDir)
+        .mockReturnValueOnce("jarvis/feat/x\n") // isJarvisBranch → getCurrentBranch
+        .mockReturnValueOnce("https://github.com/o/r/pull/7"); // gh pr create
+      const result = await freshPrTool.execute({
+        title: "t",
+        body: "b",
+        cwd: "/root/claude/myrepo",
+      });
+      expect(result).toContain("pull/7");
+      const ghCall = mockExecFileSync.mock.calls.at(-1)!;
+      expect(ghCall[0]).toBe("gh");
+      const env = (ghCall[2] as { env: Record<string, string> }).env;
+      expect(env).not.toBe(process.env);
+      expect(env.GH_TOKEN).toBe("canary-gh-token");
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.HOME).toBe(process.env.HOME);
+      expect(env).not.toHaveProperty("JARVIS_GH_TOKEN");
+      for (const name of Object.keys(canaries))
+        expect(env).not.toHaveProperty(name);
+      expect(JSON.stringify(env)).not.toContain("canary-value");
     });
 
     it("refuses when cwd is on the base branch — the pre-fix wrong-checkout failure mode", async () => {

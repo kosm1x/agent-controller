@@ -26,6 +26,7 @@
 import type { Tool } from "../types.js";
 import { execFile } from "node:child_process";
 import { getAccessToken, isGoogleConfigured } from "../../google/auth.js";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 
 const GWS_BINARY = "gws";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -304,13 +305,11 @@ RESPONSE SHAPE: { "ok": true, "result": <parsed JSON> } on success, or { "ok": f
 
     const argv = buildGwsArgv(args);
 
-    // Inject the token into the child env. Never log it. Strip unrelated
-    // Jarvis env that could confuse gws behavior (none currently, but keep
-    // the env surface minimal).
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      GOOGLE_WORKSPACE_CLI_TOKEN: token,
-    };
+    // Inject the token into the child env. Never log it. The child gets the
+    // base allow-list + its token only (queue 3h): the GOOGLE_CLIENT_* /
+    // GOOGLE_REFRESH_TOKEN names are read by the wrapper's refresh above,
+    // never by gws, and the service env never reaches it.
+    const childEnv = buildChildEnv({ GOOGLE_WORKSPACE_CLI_TOKEN: token });
 
     const result = await runSubprocess(GWS_BINARY, argv, childEnv, timeoutMs);
 

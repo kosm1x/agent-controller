@@ -133,8 +133,49 @@ describe("google_workspace_cli", () => {
     expect(capturedEnv!.GOOGLE_WORKSPACE_CLI_TOKEN).toBe(
       "ya29.MOCK_TOKEN_abc123",
     );
-    // Jarvis env should still be present (PATH, etc.) — we merged with process.env.
+    // The base allow-list (PATH, etc.) is still present.
     expect(capturedEnv!.PATH).toBeDefined();
+  });
+
+  describe("child env is an allow-list, never the service env (queue 3h)", () => {
+    const CANARIES: Record<string, string> = {
+      CANARY_API_KEY: "canary-value-1",
+      FIREWORKS_API_KEY: "canary-value-2",
+      TELEGRAM_BOT_TOKEN: "canary-value-3",
+      SOME_UNRELATED_SETTING: "canary-value-4",
+      // Read by the wrapper's token refresh, never by the gws child.
+      GOOGLE_CLIENT_SECRET: "canary-value-5",
+      GOOGLE_REFRESH_TOKEN: "canary-value-6",
+    };
+    beforeEach(() => {
+      for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("gws gets the base + GOOGLE_WORKSPACE_CLI_TOKEN and none of the canaries", async () => {
+      let capturedEnv: NodeJS.ProcessEnv | null = null;
+      mockExecFileOnce("{}", "", 0, {
+        captureEnv: (env) => {
+          capturedEnv = env;
+        },
+      });
+      await googleWorkspaceCliTool.execute({
+        service: "tasks",
+        resource: "tasklists",
+        method: "list",
+      });
+      expect(capturedEnv).not.toBeNull();
+      const env = capturedEnv!;
+      expect(env).not.toBe(process.env);
+      expect(env.GOOGLE_WORKSPACE_CLI_TOKEN).toBe("ya29.MOCK_TOKEN_abc123");
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.HOME).toBe(process.env.HOME);
+      for (const name of Object.keys(CANARIES))
+        expect(env).not.toHaveProperty(name);
+      expect(JSON.stringify(env)).not.toContain("canary-value");
+    });
   });
 
   it("builds argv with service, resource segments, method, params, and json", async () => {

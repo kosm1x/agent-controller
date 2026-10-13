@@ -20,6 +20,7 @@
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 
 export const CHANGED_BASE_REF = "origin/main";
 /** Above this many changed .ts files a scoped run is refused — typecheck only. */
@@ -52,6 +53,7 @@ function gitIn(cwd: string): (args: string[]) => string {
       maxBuffer: 8 * 1024 * 1024,
       // stderr is captured into the error, never the service journal.
       stdio: ["ignore", "pipe", "pipe"],
+      env: buildChildEnv(),
     });
 }
 

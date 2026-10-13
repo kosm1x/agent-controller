@@ -214,3 +214,31 @@ export function redactDeep(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * A record env literal (`capabilities.mcp[].env[]` `{name, value}`) whose
+ * UPPERCASED name contains any of these is refused outright (substring, no
+ * tokenising: `PGPASSWORD`, `DBPASS`, `CLIENTSECRET`; audit WS3a R1 C2).
+ * Over-refusal is the safe side: the entry moves to `{secret}`. Lives here
+ * (no imports) so the record schema (src/mcp/record-env.ts) and the project
+ * leaf walkers (src/lib/secret-refs.ts) share it without an import cycle.
+ */
+export const SECRET_NAME_FRAGMENTS: readonly string[] = [
+  "PASS",
+  "PWD",
+  "SECRET",
+  "TOKEN",
+  "KEY",
+  "AUTH",
+  "CRED",
+  "CLAVE",
+  "CONTRASENA",
+  "PRIVATE",
+  "CERT",
+];
+
+/** The first SECRET_NAME_FRAGMENTS entry the uppercased name contains, or undefined. */
+export function secretNameFragment(name: string): string | undefined {
+  const upper = name.toUpperCase();
+  return SECRET_NAME_FRAGMENTS.find((f) => upper.includes(f));
+}

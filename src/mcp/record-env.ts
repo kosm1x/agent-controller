@@ -11,7 +11,7 @@
  * loader; `buildSpawnEnv` resolves the normalised spec.
  */
 
-import { redactSecrets } from "../api/mcp-server/redact.js";
+import { redactSecrets, secretNameFragment } from "../api/mcp-server/redact.js";
 import { isSecretValueName } from "../db/user-facts.js";
 import { isProjectSecret } from "../lib/secret-refs.js";
 import { ENV_NAME_RE, isDeniedEnvName } from "./env-deny.js";
@@ -24,24 +24,6 @@ export type EnvSpecEntry = { name: string; secret: string } | { name: string; va
 
 export const SECRET_REF_RE = /^SECRET_[A-Z0-9_]+$/;
 export const ENV_LITERAL_MAX_CHARS = 512;
-/**
- * A literal whose UPPERCASED name contains any of these is refused outright
- * (substring, no tokenising: `PGPASSWORD`, `DBPASS`, `CLIENTSECRET`; audit
- * WS3a R1 C2). Over-refusal is the safe side: the entry moves to `{secret}`.
- */
-export const SECRET_NAME_FRAGMENTS: readonly string[] = [
-  "PASS",
-  "PWD",
-  "SECRET",
-  "TOKEN",
-  "KEY",
-  "AUTH",
-  "CRED",
-  "CLAVE",
-  "CONTRASENA",
-  "PRIVATE",
-  "CERT",
-];
 /** Characters a child env value never carries (Node's spawn echoes the value on `\0`). */
 export const ENV_VALUE_FORBIDDEN_RE = /[\r\n\0]/;
 
@@ -50,8 +32,7 @@ export function literalEnvValueError(name: string, value: string): string | unde
   if (value.length === 0) return `env ${name}: literal is empty`;
   if (value.length > ENV_LITERAL_MAX_CHARS) return `env ${name}: literal exceeds ${ENV_LITERAL_MAX_CHARS} characters`;
   if (ENV_VALUE_FORBIDDEN_RE.test(value)) return `env ${name}: literal contains a newline or NUL`;
-  const upper = name.toUpperCase();
-  const fragment = SECRET_NAME_FRAGMENTS.find((f) => upper.includes(f));
+  const fragment = secretNameFragment(name);
   if (fragment) {
     return `env ${name}: literal name contains "${fragment}" (secret-shaped; store it in credentials and use {name, secret})`;
   }

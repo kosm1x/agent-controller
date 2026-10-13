@@ -83,7 +83,8 @@ describe("project_update — no record: today's behaviour (snapshot of the pre-c
     const out = await projectUpdateTool.execute({
       slug: "fresh-beta",
       name: "Fresh Beta",
-      config: { stall_exempt: true },
+      // Queue 3b: stall_exempt became operator-only; a plain key keeps the snapshot.
+      config: { phase: "one" },
     });
     expect(out).toBe(
       '{"action":"created","project":{"slug":"fresh-beta","name":"Fresh Beta","status":"active","credential_keys":[]}}',
@@ -95,7 +96,7 @@ describe("project_update — no record: today's behaviour (snapshot of the pre-c
       status: "active",
       urls: {},
       credentials: {},
-      config: { stall_exempt: true },
+      config: { phase: "one" },
       commit_goal_id: null,
     });
   });
@@ -397,8 +398,8 @@ describe("project_update — an operator-only key is refused only when its value
 });
 
 describe("project_update — the operator-only config keys are refused", () => {
-  const KEYS = ["capabilities", "deny_paths", "egress", "inbound", "kb_readme", "mcp", "routing", "secrets", "trusted"];
-  it("lists exactly the WS1 keys (audit R1 C1) plus the S6 WS3 capability keys", () => {
+  const KEYS = ["capabilities", "deny_paths", "egress", "inbound", "kb_readme", "mcp", "routing", "secrets", "stall_exempt", "trusted"];
+  it("lists exactly the WS1 keys (audit R1 C1) plus the S6 WS3 capability keys and stall_exempt (queue 3b)", () => {
     expect([...OPERATOR_ONLY_CONFIG_KEYS].sort()).toEqual(KEYS);
   });
 

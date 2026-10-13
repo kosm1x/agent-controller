@@ -63,13 +63,13 @@ describe("jarvis_test_run — group-kill runner, same output shape", () => {
       cwd: MC_DIR,
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
-      env: process.env,
+      env: expect.any(Object),
     });
     expect(execGroupKill).toHaveBeenNthCalledWith(2, RELATED_CMD, {
       cwd: MC_DIR,
       timeout: 120_000,
       maxBuffer: 1024 * 1024,
-      env: process.env,
+      env: expect.any(Object),
     });
     // The changed set is computed in the cwd the tool runs in.
     for (const c of execFileSync.mock.calls.filter((c) =>
@@ -134,6 +134,40 @@ describe("jarvis_test_run — group-kill runner, same output shape", () => {
     const out = await jarvisTestRunTool.execute({ typecheck_only: true });
     expect(out).toContain("✅ Typecheck: PASS");
     expect(execGroupKill).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Queue 3h: the tsc / vitest children run task-writable code (a test file can
+// read its env), so they get the base allow-list, never the service env.
+describe("jarvis_test_run — child env is an allow-list, never the service env (queue 3h)", () => {
+  const CANARIES: Record<string, string> = {
+    CANARY_API_KEY: "canary-value-1",
+    FIREWORKS_API_KEY: "canary-value-2",
+    TELEGRAM_BOT_TOKEN: "canary-value-3",
+    SOME_UNRELATED_SETTING: "canary-value-4",
+  };
+  beforeEach(() => {
+    for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("tsc --noEmit and vitest related get PATH/HOME and none of the canaries", async () => {
+    execGroupKill
+      .mockImplementationOnce(() => ok())
+      .mockImplementationOnce(() => ok("Tests  1 passed (1)"));
+    await jarvisTestRunTool.execute({});
+    expect(execGroupKill).toHaveBeenCalledTimes(2);
+    for (const call of execGroupKill.mock.calls) {
+      const opts = (call as unknown[])[1] as { env: Record<string, string> };
+      expect(opts.env).not.toBe(process.env);
+      expect(opts.env.PATH).toBe(process.env.PATH);
+      expect(opts.env.HOME).toBe(process.env.HOME);
+      for (const name of Object.keys(CANARIES))
+        expect(opts.env).not.toHaveProperty(name);
+      expect(JSON.stringify(opts.env)).not.toContain("canary-value");
+    }
   });
 });
 

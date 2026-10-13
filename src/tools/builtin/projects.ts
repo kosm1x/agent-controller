@@ -33,6 +33,7 @@ import {
   applyProjectRecord,
   stable,
 } from "../../projects/projector.js";
+import { MIN_ALIAS_CHARS, aliasChars } from "../../projects/scope-groups.js";
 import {
   isProjectProseSecret,
   isProjectSecret,
@@ -65,7 +66,7 @@ function resolveProjectRefs(
     const resolved = r.value as Record<string, unknown>;
     for (const path of r.resolvedPaths) {
       const top = path[0]!;
-      const leaf = projectEntryLeaves(slug, field, top, resolved[top]).find(
+      const leaf = projectEntryLeaves(slug, field, top, resolved[top], resolved).find(
         (l) => l.path.join("\0") === path.join("\0"),
       );
       if (!leaf?.secret) {
@@ -97,7 +98,7 @@ function savedSecrets(
     for (const [k, v] of Object.entries(obj)) {
       // Nested values carry their own names (audit R3 S4).
       if (v && typeof v === "object") {
-        for (const leaf of projectEntryLeaves(slug, field, k, v)) {
+        for (const leaf of projectEntryLeaves(slug, field, k, v, obj as Record<string, unknown>)) {
           if (leaf.secret) out[`${field}.${leaf.path.join(".")}`] = leaf.display;
         }
         continue;
@@ -117,7 +118,8 @@ function savedSecrets(
 /**
  * `config` keys that decide what code runs or what it may reach (spec §2,
  * "Write paths"): changed only through an operator upsert of the record,
- * never through project_update. No row uses one today (spec, verified).
+ * never through project_update. No row uses one today (spec, verified),
+ * except `stall_exempt`: the operator's documented flag (queue 3b).
  */
 export const OPERATOR_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "mcp", // legacy spelling (no row uses it)
@@ -131,7 +133,67 @@ export const OPERATOR_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "secrets",
   "routing",
   "inbound",
+  // Queue 3b: switches off the Morning Sync stall signal for the row.
+  "stall_exempt",
 ]);
+
+/**
+ * Queue 3b audit R1, R2-audit W1, R3-audit W1: a sent list may not be longer
+ * than this, or than the stored list when the operator stored more.
+ */
+const MAX_LEGACY_ALIASES = 20;
+
+/**
+ * Queue 3b audit R2, R2-audit W3: control, format and default-ignorable code points
+ * (Unicode classes, not a hand list). Default_Ignorable adds what Cc/Cf miss
+ * (U+3164 Hangul filler, variation selectors such as U+FE0F).
+ */
+const INVISIBLE_ALIAS_RE = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
+/**
+ * The two allowed uses, removed before INVISIBLE_ALIAS_RE runs: a ZWJ between
+ * two pictographs (a skin-tone modifier or U+FE0F may precede it), and the
+ * tag characters of a U+1F3F4 subdivision flag.
+ */
+const EMOJI_ZWJ_RE = /\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\uFE0F]?\u200D(?=\p{Extended_Pictographic})/gu;
+const SUBDIVISION_FLAG_RE = /\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}/gu;
+/** A U+FE0F right after a pictograph is its presentation selector, ZWJ or not. */
+const EMOJI_PRESENTATION_RE = /(?<=\p{Extended_Pictographic})\uFE0F/gu;
+const hasInvisible = (a: string): boolean =>
+  INVISIBLE_ALIAS_RE.test(
+    a.replace(EMOJI_ZWJ_RE, "").replace(SUBDIVISION_FLAG_RE, "").replace(EMOJI_PRESENTATION_RE, ""),
+  );
+
+/**
+ * Queue 3b: `config.aliases` on a row without a record follows the scope
+ * regex's alias rule (`MIN_ALIAS_CHARS`, measured by `aliasChars`). A record
+ * row is validated by the record schema instead. null deletes, as for any key.
+ * An element byte-identical to one of the row's stored aliases is exempt
+ * (audit W1; exact, R2 W2): only NEW elements are judged.
+ */
+function legacyAliasesProblem(v: unknown, stored: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) return "config.aliases debe ser una lista de textos";
+  const storedList = Array.isArray(stored) ? stored : [];
+  const kept = new Set(storedList.filter((a): a is string => typeof a === "string"));
+  let firstNew = -1;
+  for (let i = 0; i < v.length; i++) {
+    const a: unknown = v[i];
+    if (typeof a !== "string") return `config.aliases[${i}] no es texto`;
+    if (kept.has(a)) continue;
+    if (firstNew < 0) firstNew = i;
+    if (hasInvisible(a)) {
+      return `config.aliases[${i}] tiene un carácter de control o invisible`;
+    }
+    if (aliasChars(a) < MIN_ALIAS_CHARS) {
+      return `config.aliases[${i}] tiene menos de ${MIN_ALIAS_CHARS} caracteres (regla de alias: al menos ${MIN_ALIAS_CHARS})`;
+    }
+  }
+  const bound = Math.max(MAX_LEGACY_ALIASES, storedList.length);
+  if (v.length > bound) {
+    return `config.aliases[${firstNew >= 0 ? firstNew : bound}] haría pasar la lista del máximo de ${MAX_LEGACY_ALIASES} alias`;
+  }
+  return undefined;
+}
 
 const OWNED_CONFIG_KEYS: ReadonlySet<string> = new Set(PROJECTOR_CONFIG_KEYS);
 
@@ -185,7 +247,7 @@ function updateThroughRecord(
         rowUrls[k] = v;
         continue;
       }
-      if (projectEntryLeaves(slug, "urls", k, v).some((l) => l.secret)) {
+      if (projectEntryLeaves(slug, "urls", k, v, args.urls).some((l) => l.secret)) {
         return JSON.stringify({
           error:
             "No guardé: urls.site parece una credencial; las credenciales no entran al registro del proyecto — guárdala en credentials.",
@@ -204,7 +266,7 @@ function updateThroughRecord(
         rowConfig[k] = v;
         continue;
       }
-      if (projectEntryLeaves(slug, "config", k, v).some((l) => l.secret)) {
+      if (projectEntryLeaves(slug, "config", k, v, args.config).some((l) => l.secret)) {
         return JSON.stringify({
           error: `No guardé: config.${k} parece una credencial; las credenciales no entran al registro del proyecto — guárdala en credentials.`,
         });
@@ -439,7 +501,7 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
       for (const [k, v] of Object.entries(project.credentials)) {
         // A nested entry shows each value under its own name (audit R3 S4).
         if (v && typeof v === "object") {
-          for (const leaf of projectEntryLeaves(project.slug, "credentials", k, v)) {
+          for (const leaf of projectEntryLeaves(project.slug, "credentials", k, v, project.credentials)) {
             lines.push(`  ${leaf.path.join(".")}: ${leaf.display}`);
           }
           continue;
@@ -558,8 +620,17 @@ CREDENTIAL STORAGE:
       const opOnly = Object.keys(config).filter((k) => OPERATOR_ONLY_CONFIG_KEYS.has(k));
       const refused = opOnly.filter((k) => stable(config[k]) !== stable(row?.config[k]));
       if (refused.length > 0) {
+        const keys = `config.${refused.join(", config.")}`;
+        const recSlug = row?.slug ?? slug;
+        const hasRecord =
+          typeof recSlug === "string" &&
+          PROJECT_SLUG_RE.test(recSlug) &&
+          getFile(projectRecordRelPath(recSlug)) !== null;
+        // Audit S2: a row without a record has no project.md to point at.
         return JSON.stringify({
-          error: `No guardé: config.${refused.join(", config.")} solo lo cambia el operador en el registro del proyecto (projects/<slug>/project.md), no project_update.`,
+          error: hasRecord
+            ? `No guardé: ${keys} solo lo cambia el operador en el registro del proyecto (projects/<slug>/project.md), no project_update.`
+            : `No guardé: ${keys} solo lo cambia el operador: este proyecto aún no tiene registro; el operador lo crea con scripts/project-record-export.ts y lo cambia ahí, no project_update.`,
         });
       }
       if (opOnly.length > 0) {
@@ -580,6 +651,11 @@ CREDENTIAL STORAGE:
       const record = getFile(projectRecordRelPath(recordSlug));
       if (record) return updateThroughRecord(recordSlug, args, String(record.content));
     }
+
+    const aliasProblem = isPlainObject(args.config)
+      ? legacyAliasesProblem(args.config.aliases, row?.config.aliases)
+      : undefined;
+    if (aliasProblem) return JSON.stringify({ error: `No guardé: ${aliasProblem}.` });
 
     const existing = getProject(slug);
 

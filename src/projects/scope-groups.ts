@@ -47,6 +47,9 @@ export interface DerivedProjectScope {
  */
 export const MIN_ALIAS_CHARS = 4;
 
+/** An alias's length as the scope regex measures it: NFC, trimmed, code points. */
+export const aliasChars = (t: string): number => [...t.normalize("NFC").trim()].length;
+
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -78,7 +81,7 @@ export function deriveProjectScopeGroups(
     if (summary) out.promptLines.push(`- ${r.slug}: ${summary}`);
     // Lookarounds, not \b: an accented alias edge has no ASCII word boundary.
     const aliases = (r.aliases ?? []).map((t) => t.normalize("NFC").trim()).filter((t) => t.length > 0);
-    const kept = aliases.filter((t) => [...t].length >= MIN_ALIAS_CHARS);
+    const kept = aliases.filter((t) => aliasChars(t) >= MIN_ALIAS_CHARS);
     if (kept.length < aliases.length) {
       out.shortAliases.push({ slug: r.slug, dropped: aliases.length - kept.length });
     }

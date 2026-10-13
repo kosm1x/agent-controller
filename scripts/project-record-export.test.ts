@@ -15,7 +15,7 @@ import { applyProjectRecord, contractToRowPatch } from "../src/projects/projecto
 import { createProject, getProject } from "../src/db/projects.js";
 import type { Project } from "../src/db/projects.js";
 import { getFile, upsertFile } from "../src/db/jarvis-fs.js";
-import { parseProjectRecord, projectRecordRelPath } from "../src/projects/record.js";
+import { parseProjectRecord, projectContractSchema, projectRecordRelPath } from "../src/projects/record.js";
 import {
   WITHHELD,
   buildRecordFromRow,
@@ -371,6 +371,152 @@ describe("buildRecordFromRow — idempotent over its own projection (S6, 2nd --f
       expect(json.capabilities).toEqual(config.capabilities);
       expect(json.secrets).toEqual(config.secrets);
       expect(legacyBlocks(built.markdown)["Legacy config"]).toEqual({ match_priority: "high" });
+    });
+
+    // Queue 3l: a schema-refused literal is judged by its sibling env NAME (and
+    // its value shape), never copied into the notes verbatim.
+    describe("queue 3l: a refused env literal in Legacy config is withheld", () => {
+      const LIT = "synthetic-literal-" + "1";
+      const HOST = "db.example.internal";
+      const HEX40 = "ab12".repeat(10);
+      const legacyEnv = (md: string) =>
+        ((legacyBlocks(md)["Legacy config"]!.capabilities as { mcp: Array<{ env: unknown[] }> }).mcp[0]!.env);
+      const refused = (env: unknown[]) =>
+        projectContractSchema.safeParse({ slug: "probe", name: "probe", status: "active", capabilities: { mcp: [{ command: "node", env }] } }).success;
+
+      it("(a)(b)(d) {name: PG_PASSWORD, value} is withheld like any secret leaf; a plain literal and a {secret} reference NAME are rendered", () => {
+        const env = [
+          { name: "PG_PASSWORD", value: LIT },
+          { name: "PG_HOST", value: HOST },
+          { name: "PG_TOKEN", secret: "SECRET_ACME_PG_TOKEN" },
+        ];
+        expect(refused(env)).toBe(false);
+        const config = { secrets: ["SECRET_ACME_PG_TOKEN"], capabilities: { mcp: [{ command: "node", env }] } };
+        createProject("acme-lit", "Acme Lit", { config });
+        const built = buildRecordFromRow(getProject("acme-lit")!);
+        expect(built.markdown).not.toContain(LIT);
+        expect(contractJson("acme-lit", built.markdown).capabilities).toBeUndefined();
+        expect(legacyEnv(built.markdown)).toEqual([
+          { name: "PG_PASSWORD", value: WITHHELD },
+          { name: "PG_HOST", value: HOST },
+          { name: "PG_TOKEN", secret: "SECRET_ACME_PG_TOKEN" },
+        ]);
+        expect(built.counts.withheld_values).toBe(1);
+        // the write path (registry + mirror) carries the same text
+        expect(exportProjectRecord("acme-lit")).toMatchObject({ ok: true, written: true });
+        expect(String(getFile(projectRecordRelPath("acme-lit"))!.content)).not.toContain(LIT);
+      });
+
+      it("(c) a value-shaped secret under an innocent name (40 hex) is withheld", () => {
+        const env = [{ name: "API_SETTING", value: HEX40 }];
+        expect(refused(env)).toBe(false);
+        createProject("acme-hex", "Acme Hex", { config: { capabilities: { mcp: [{ command: "node", env }] } } });
+        const built = buildRecordFromRow(getProject("acme-hex")!);
+        expect(built.markdown).not.toContain(HEX40);
+        expect(legacyEnv(built.markdown)).toEqual([{ name: "API_SETTING", value: WITHHELD }]);
+      });
+
+      it("ruling: the name-fragment rule (PGPASSWORD, DBPASS, CLIENTSECRET; PASSAGE_ID and AUTHOR are refused by it too) withholds the literal", () => {
+        const L2 = "synthetic-literal-" + "2";
+        const env = [
+          { name: "PGPASSWORD", value: L2 },
+          { name: "DBPASS", value: "synthetic-literal-" + "3" },
+          { name: "CLIENTSECRET", value: "synthetic-literal-" + "4" },
+          { name: "PASSAGE_ID", value: "p-12" },
+          { name: "AUTHOR", value: "ada" },
+        ];
+        for (const e of env) expect(refused([e]), e.name).toBe(false);
+        createProject("acme-frag", "Acme Frag", { config: { capabilities: { mcp: [{ command: "node", env }] } } });
+        const built = buildRecordFromRow(getProject("acme-frag")!);
+        for (const e of env.slice(0, 3)) expect(built.markdown).not.toContain(e.value);
+        expect(legacyEnv(built.markdown)).toEqual(env.map((e) => ({ name: e.name, value: WITHHELD })));
+        expect(built.counts.withheld_values).toBe(5);
+      });
+
+      it("audit R1 C1: {name|key, value} literals and fragment-named env maps anywhere under config are withheld in the record, registry and mirror file", () => {
+        const V = (x: string) => "synthetic-literal-9" + x;
+        const config = {
+          db_env: [{ name: "PG_PASSWORD", value: V("a") }, { name: "PG_HOST", value: HOST }],
+          db: [{ key: "PG_PASSWORD", value: V("b") }],
+          pgenv: { PGPASSWORD: V("c") },
+          capcase: [{ Name: "PG_PASSWORD", Value: V("d") }],
+          mcp: [{ env: [{ name: "PG_PASSWORD", value: V("e") }] }],
+          routing: { env: [{ name: "PG_PASSWORD", value: V("f") }] },
+          capabilities: { mcp: [{ command: "node", env: { PGPASSWORD: V("g") } }] },
+          meta: [{ name: "AUTHOR", value: "ada" }],
+          notes: { CERTAINTY: 0.9 },
+          author: "Persona Ejemplo Dos",
+          Author: "Persona Ejemplo Tres",
+          keywords: "aprendizaje automatico",
+        };
+        createProject("acme-wide", "Acme Wide", { config });
+        const built = buildRecordFromRow(getProject("acme-wide")!);
+        expect(built.markdown).not.toMatch(/synthetic-literal-9/);
+        const legacy = legacyBlocks(built.markdown)["Legacy config"]!;
+        expect(legacy).toEqual({
+          db_env: [{ name: "PG_PASSWORD", value: WITHHELD }, { name: "PG_HOST", value: HOST }],
+          // pre-existing: the classifier already judges a `key` leaf by its own key
+          db: [{ key: WITHHELD, value: WITHHELD }],
+          pgenv: { PGPASSWORD: WITHHELD },
+          capcase: [{ Name: "PG_PASSWORD", Value: WITHHELD }],
+          mcp: [{ env: [{ name: "PG_PASSWORD", value: WITHHELD }] }],
+          routing: { env: [{ name: "PG_PASSWORD", value: WITHHELD }] },
+          capabilities: { mcp: [{ command: "node", env: { PGPASSWORD: WITHHELD } }] },
+          meta: [{ name: "AUTHOR", value: "ada" }],
+          notes: { CERTAINTY: 0.9 },
+          author: "Persona Ejemplo Dos",
+          Author: "Persona Ejemplo Tres",
+          keywords: "aprendizaje automatico",
+        });
+        expect(built.counts.withheld_values).toBe(8);
+        const r = exportProjectRecord("acme-wide");
+        expect(r).toMatchObject({ ok: true, written: true });
+        const rel = projectRecordRelPath("acme-wide");
+        const reg = String(getFile(rel)!.content);
+        const mirror = readFileSync(join(kbDir, rel), "utf-8");
+        expect(mirror).toBe(reg);
+        expect(reg).not.toMatch(/synthetic-literal-9/);
+        expect(mirror).not.toMatch(/synthetic-literal-9/);
+        expect(mirror).toContain(HOST);
+        expect(mirror).toContain("Persona Ejemplo Dos");
+        expect(mirror).toContain("aprendizaje automatico");
+      });
+
+      it("audit R2: env-shaped sibling names (PGPASSWORD, DBPASS, CLIENTSECRET) and the config ROOT pair are withheld in the record, registry and mirror file", () => {
+        const V = (x: string) => "synthetic-literal-9" + x;
+        const config = {
+          name: "PG_PASSWORD",
+          value: V("R1"),
+          db_env: [
+            { name: "PGPASSWORD", value: V("Z1") },
+            { name: "DBPASS", value: V("Z2") },
+            { name: "CLIENTSECRET", value: V("Z3") },
+            { name: "PG_HOST", value: HOST },
+          ],
+          lower: [{ name: "author", value: "ada-lovelace" }],
+        };
+        createProject("acme-r2", "Acme R2", { config });
+        const built = buildRecordFromRow(getProject("acme-r2")!);
+        expect(built.markdown).not.toMatch(/synthetic-literal-9/);
+        expect(legacyBlocks(built.markdown)["Legacy config"]).toEqual({
+          name: "PG_PASSWORD",
+          value: WITHHELD,
+          db_env: [
+            { name: "PGPASSWORD", value: WITHHELD },
+            { name: "DBPASS", value: WITHHELD },
+            { name: "CLIENTSECRET", value: WITHHELD },
+            { name: "PG_HOST", value: HOST },
+          ],
+          lower: [{ name: "author", value: "ada-lovelace" }],
+        });
+        expect(built.counts.withheld_values).toBe(4);
+        expect(exportProjectRecord("acme-r2")).toMatchObject({ ok: true, written: true });
+        const rel = projectRecordRelPath("acme-r2");
+        const mirror = readFileSync(join(kbDir, rel), "utf-8");
+        expect(mirror).toBe(String(getFile(rel)!.content));
+        expect(mirror).not.toMatch(/synthetic-literal-9/);
+        expect(mirror).toContain("ada-lovelace");
+      });
     });
   });
 

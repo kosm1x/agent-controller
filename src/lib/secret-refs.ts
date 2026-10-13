@@ -25,6 +25,7 @@
 import { createHash } from "node:crypto";
 import { getDatabase } from "../db/index.js";
 import { createLogger } from "./logger.js";
+import { redactSecrets, secretNameFragment } from "../api/mcp-server/redact.js";
 import {
   isCredentialFact,
   isSecretValueName,
@@ -263,6 +264,79 @@ function isSecretNameLeaf(field: string, path: readonly string[], value: string)
   return path[0] === "inbound" && path[1] === "token_secret" && /^[A-Z][A-Z0-9_]*$/.test(value);
 }
 
+/** A string that is a URL (`scheme://`) or a filesystem path, never a secret by its key alone. */
+const URL_OR_PATH_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/|~\/|\.\.?\/)/i;
+/** An env-variable-shaped key (`PGPASSWORD`); snake/mixed-case keys (`contacto_clave`) are not. */
+const ENV_KEY_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/** Keys of a pair member that NAMES the pair's value (`{name|key|env|var|variable, value|val}`). */
+const PAIR_NAME_RE = /^(?:name|key|env|var|variable)$/i;
+/** Keys of a pair member that holds the value. */
+const PAIR_VALUE_RE = /^(?:value|val)$/i;
+
+/**
+ * Queue 3l: a `config` literal judged by more than its own key, so a value the
+ * record schema refuses never reaches the exporter's `## Legacy config`, the
+ * walkers' display or the KB in clear (the legacy `project_update` path
+ * writes any non-operator `config` key as-is).
+ *   - Pair rule: a `value`/`val` leaf (any case) whose object holds a string
+ *     sibling `name`/`key`/`env`/`var`/`variable` (any case) — env entries in
+ *     `db_env[0]`, `mcp[0].env[0]`, `routing.env[0]`, or the config root
+ *     itself — is judged by that sibling: `isProjectSecret(sibling, value)`,
+ *     a secret-shaped value (the 40+ hex rule included), or, for an
+ *     ENV-shaped sibling (`PGPASSWORD`, `DBPASS`, also `AUTHOR`), the
+ *     name-fragment rule under the length gate below: an env-shaped sibling
+ *     name is judged like an env key (lowercase `author` is not). At the
+ *     record schema's exact path `capabilities.mcp[i].env[j].value`
+ *     (src/mcp/record-env.ts) the fragment rule applies to any sibling and
+ *     any value, as the schema does.
+ *   - Env-key rule: an uppercase env-shaped map key carrying a fragment
+ *     (`pgenv: {PGPASSWORD: …}`; `isProjectSecret` reads it as one token) is
+ *     judged by fragment, so AUTHOR / PASSAGE_ID / KEYBOARD_LAYOUT /
+ *     TOKENIZER keys are withheld too. Snake / mixed-case keys
+ *     (`contacto_clave`, `Db_Cols_Key`) are left to the own-key classifier.
+ *   - Length gate (both fragment rules off the exact path): a string of 8+
+ *     characters that is not a URL or a path, or a number with 8+ digits
+ *     (`AUTHOR: "ada"`, `"1234567"`, `CERTAINTY: 0.9`, `PORT: 8080` render).
+ * Fragment/value rules come from src/api/mcp-server/redact.ts (record-env
+ * imports this module, so not `literalEnvValueError` itself).
+ */
+function isSecretConfigLiteral(
+  field: string,
+  path: readonly string[],
+  leafKey: string,
+  parent: Record<string, unknown> | undefined,
+  raw: string | number,
+): boolean {
+  if (field !== "config") return false;
+  const value = String(raw);
+  const gated =
+    typeof raw === "string"
+      ? value.length >= 8 && !URL_OR_PATH_RE.test(value)
+      : value.replace(/[^0-9]/g, "").length >= 8;
+  const envFragment = (n: string) => ENV_KEY_RE.test(n) && secretNameFragment(n) !== undefined;
+  if (gated && envFragment(leafKey)) return true;
+  const exact =
+    path.length === 6 &&
+    path[0] === "capabilities" &&
+    path[1] === "mcp" &&
+    /^\d+$/.test(path[2]!) &&
+    path[3] === "env" &&
+    /^\d+$/.test(path[4]!) &&
+    path[5] === "value";
+  const names = Object.entries(parent ?? {})
+    .filter(([k, v]) => PAIR_NAME_RE.test(k) && typeof v === "string")
+    .map(([, v]) => v as string);
+  if (!exact && !(PAIR_VALUE_RE.test(path[path.length - 1]!) && names.length > 0)) return false;
+  if (names.length === 0) names.push("");
+  return (
+    (exact && names.some((n) => secretNameFragment(n) !== undefined)) ||
+    (gated && names.some(envFragment)) ||
+    names.some((n) => isProjectSecret(n, value)) ||
+    redactSecrets(value) !== value
+  );
+}
+
 /** Secret string/number leaves of a project JSON field (isProjectSecret). */
 function projectEntries(
   slug: string,
@@ -272,6 +346,7 @@ function projectEntries(
   key: string,
   out: Entry[],
   underSecret = false,
+  parent?: Record<string, unknown>,
 ): void {
   if (value === null || value === undefined || value === "") return;
   if (Array.isArray(value)) {
@@ -290,6 +365,7 @@ function projectEntries(
         k,
         out,
         underSecret || isSecretAncestorName(k),
+        value as Record<string, unknown>,
       );
     }
     return;
@@ -298,7 +374,7 @@ function projectEntries(
   const str = String(value);
   // Same rule as projectEntryLeaves (index and display stay identical).
   if (isSecretNameLeaf(field, path, str)) return;
-  if (!underSecret && !isProjectSecret(key, str)) return;
+  if (!underSecret && !isProjectSecret(key, str) && !isSecretConfigLiteral(field, path, key, parent, value)) return;
   const prefix = field === "credentials" ? [slug] : [slug, field];
   out.push({
     identity: projectIdentity(slug, field, path),
@@ -558,12 +634,15 @@ export function projectSecretDisplay(
  * `config` key `key`), with its path from that key and its display form —
  * the same identity and name the index gives a nested value (audit R3 S4).
  * A scalar entry yields one leaf with path `[key]`.
+ * Callers pass `root`, the whole field object the entry belongs to, so a
+ * top-level leaf is judged with the same parent the index walk gives it.
  */
 export function projectEntryLeaves(
   slug: string,
   field: "credentials" | "urls" | "config",
   key: string,
   value: unknown,
+  root?: Record<string, unknown>,
 ): Array<{ path: string[]; secret: boolean; display: string }> {
   const out: Array<{ path: string[]; secret: boolean; display: string }> = [];
   // Audit round 4 (3d-a): a leaf is secret when its own key/value says so OR
@@ -574,6 +653,7 @@ export function projectEntryLeaves(
     path: string[],
     leafKey: string,
     underSecret: boolean,
+    parent?: Record<string, unknown>,
   ): void => {
     if (v === null || v === undefined || v === "") return;
     if (Array.isArray(v)) {
@@ -582,7 +662,7 @@ export function projectEntryLeaves(
     }
     if (typeof v === "object") {
       for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-        walk(x, [...path, k], k, underSecret || isSecretAncestorName(k));
+        walk(x, [...path, k], k, underSecret || isSecretAncestorName(k), v as Record<string, unknown>);
       }
       return;
     }
@@ -590,7 +670,7 @@ export function projectEntryLeaves(
     const str = String(v);
     const secret =
       !isSecretNameLeaf(field, path, str) &&
-      (underSecret || isProjectSecret(leafKey, str));
+      (underSecret || isProjectSecret(leafKey, str) || isSecretConfigLiteral(field, path, leafKey, parent, v));
     out.push({
       path,
       secret,
@@ -599,7 +679,9 @@ export function projectEntryLeaves(
   };
   // The entry key itself is an ancestor of every leaf below an object/array.
   const nested = value !== null && typeof value === "object";
-  walk(value, [key], key, nested && isSecretAncestorName(key));
+  // `root` (the whole field object) is the parent of a top-level entry, as in
+  // the index walk (queue 3l R2 C2: a `{name, value}` pair at the root).
+  walk(value, [key], key, nested && isSecretAncestorName(key), root);
   return out;
 }
 

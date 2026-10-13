@@ -23,6 +23,13 @@ import {
 } from "../../lib/secret-refs.js";
 import { projectGetTool, projectListTool, projectUpdateTool } from "./projects.js";
 import { ToolRegistry } from "../registry.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getFile } from "../../db/jarvis-fs.js";
+import { upsertFromDiskWrite } from "../../db/jarvis-reindex.js";
+import { parseProjectRecord, projectRecordRelPath } from "../../projects/record.js";
+import { MIN_ALIAS_CHARS } from "../../projects/scope-groups.js";
 
 // Synthetic credential values, assembled at runtime (never a key-shaped
 // literal in source — the repo is public).
@@ -572,4 +579,327 @@ describe("audit R6 should-fix 4 — non-object fields and prototype keys are ref
       expect(getProject("r6-proto")).toBeNull();
     }
   });
+});
+
+describe("queue 3b — legacy rows: stall_exempt is operator-only, aliases follow the record's alias rule", () => {
+  const update = async (args: Record<string, unknown>) =>
+    JSON.parse(await projectUpdateTool.execute(args)) as Record<string, unknown>;
+
+  it("(a) stall_exempt set where the row had none → refused as operator-only, row unchanged", async () => {
+    createProject("legacy-s", "Legacy S", { config: { phase: "one" } });
+    const out = await update({ slug: "legacy-s", config: { stall_exempt: true, phase: "two" } });
+    expect(String(out.error)).toContain("config.stall_exempt");
+    expect(String(out.error)).toContain("solo lo cambia el operador");
+    expect(getProject("legacy-s")!.config).toEqual({ phase: "one" });
+    // A change from true to false is refused the same way.
+    createProject("legacy-t", "Legacy T", { config: { stall_exempt: true } });
+    const off = await update({ slug: "legacy-t", config: { stall_exempt: false } });
+    expect(String(off.error)).toContain("config.stall_exempt");
+    expect(getProject("legacy-t")!.config).toEqual({ stall_exempt: true });
+  });
+
+  it("(b) stall_exempt echoed with the row's own value → passes, the rest is written", async () => {
+    createProject("legacy-e", "Legacy E", { config: { stall_exempt: true, phase: "one" } });
+    const out = await update({ slug: "legacy-e", config: { stall_exempt: true, phase: "two" } });
+    expect(out.error).toBeUndefined();
+    expect(out.action).toBe("updated");
+    expect(getProject("legacy-e")!.config).toEqual({ stall_exempt: true, phase: "two" });
+  });
+
+  it("(c) an alias shorter than MIN_ALIAS_CHARS → refused naming the index and the minimum, nothing written", async () => {
+    createProject("legacy-a", "Legacy A", { config: { phase: "one" } });
+    const out = await update({ slug: "legacy-a", name: "Renamed", config: { aliases: ["ab"], phase: "two" } });
+    expect(String(out.error)).toContain("config.aliases[0]");
+    expect(String(out.error)).toContain(String(MIN_ALIAS_CHARS));
+    const row = getProject("legacy-a")!;
+    expect(row.name).toBe("Legacy A");
+    expect(row.config).toEqual({ phase: "one" });
+    // The offending element is named by its own index, past a valid one; the
+    // measure is the scope regex's (trimmed): "  abc " is 3 characters.
+    const second = await update({ slug: "legacy-a", config: { aliases: ["alpha-four", "  abc "] } });
+    expect(String(second.error)).toContain("config.aliases[1]");
+    expect(getProject("legacy-a")!.config).toEqual({ phase: "one" });
+    // Exactly the minimum passes.
+    const edge = await update({ slug: "legacy-a", config: { aliases: ["abcd"] } });
+    expect(edge.error).toBeUndefined();
+    expect(getProject("legacy-a")!.config).toEqual({ phase: "one", aliases: ["abcd"] });
+    // A create is the same legacy path: refused, no row.
+    const created = await update({ slug: "brand-new-a", name: "N", config: { aliases: ["ab"] } });
+    expect(String(created.error)).toContain("config.aliases[0]");
+    expect(getProject("brand-new-a")).toBeNull();
+  });
+
+  it("(d) valid aliases → accepted and stored", async () => {
+    createProject("legacy-d", "Legacy D", { config: { phase: "one" } });
+    const out = await update({ slug: "legacy-d", config: { aliases: ["alpha-four", "beta-four"] } });
+    expect(out.error).toBeUndefined();
+    expect(getProject("legacy-d")!.config).toEqual({ phase: "one", aliases: ["alpha-four", "beta-four"] });
+    // null still deletes the entry (the merge rule for every config key).
+    const cleared = await update({ slug: "legacy-d", config: { aliases: null } });
+    expect(cleared.error).toBeUndefined();
+    expect(getProject("legacy-d")!.config).toEqual({ phase: "one" });
+  });
+
+  it("(e) a non-array, or a non-string element → refused, nothing written", async () => {
+    createProject("legacy-n", "Legacy N", { config: { aliases: ["keep-this"] } });
+    const out = await update({ slug: "legacy-n", config: { aliases: "notalist" } });
+    expect(String(out.error)).toContain("config.aliases");
+    const elem = await update({ slug: "legacy-n", config: { aliases: ["alpha-four", 7] } });
+    expect(String(elem.error)).toContain("config.aliases[1]");
+    const obj = await update({ slug: "legacy-n", config: { aliases: { 0: "alpha-four" } } });
+    expect(String(obj.error)).toContain("config.aliases");
+    expect(getProject("legacy-n")!.config).toEqual({ aliases: ["keep-this"] });
+  });
+});
+
+describe("queue 3b (f) — a record-backed row keeps the record's own alias validation", () => {
+  let kbDir: string;
+  let prevMirror: string | undefined;
+  const REL = projectRecordRelPath("acme-radar");
+  const RECORD =
+    "# Acme Radar\n\n```json\n" +
+    JSON.stringify({ slug: "acme-radar", name: "Acme Radar", status: "active", aliases: ["acme"] }, null, 2) +
+    "\n```\n\nSynthetic lead paragraph.\n";
+  const recordAliases = () =>
+    parseProjectRecord(String(getFile(REL)!.content), { folderSlug: "acme-radar" }).json.aliases;
+
+  beforeEach(() => {
+    kbDir = mkdtempSync(join(tmpdir(), "mc-proj3b-"));
+    prevMirror = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbDir;
+    upsertFromDiskWrite(REL, RECORD);
+  });
+  afterEach(() => {
+    rmSync(kbDir, { recursive: true, force: true });
+    if (prevMirror === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = prevMirror;
+  });
+
+  it("a short alias is the record schema's call (min 1): stored in the record, no legacy refusal", async () => {
+    const out = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", config: { aliases: ["ab"] } }));
+    expect(out.error).toBeUndefined();
+    expect(out.record).toBe(REL);
+    expect(recordAliases()).toEqual(["ab"]);
+  });
+
+  it("valid aliases go into the record", async () => {
+    const out = JSON.parse(
+      await projectUpdateTool.execute({ slug: "acme-radar", config: { aliases: ["alpha-four", "beta-four"] } }),
+    );
+    expect(out.error).toBeUndefined();
+    expect(recordAliases()).toEqual(["alpha-four", "beta-four"]);
+    expect(getProject("acme-radar")!.config.aliases).toEqual(["alpha-four", "beta-four"]);
+  });
+
+  it("a non-array is refused by the record validation, never by the legacy rule; nothing written", async () => {
+    const out = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", config: { aliases: "notalist" } }));
+    expect(String(out.error)).toContain("inválido (aliases)");
+    expect(String(out.error)).not.toContain("config.aliases");
+    expect(String(getFile(REL)!.content)).toBe(RECORD);
+  });
+
+  it("stall_exempt is operator-only on the record path too (the check runs before the routing)", async () => {
+    const out = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", config: { stall_exempt: true } }));
+    expect(String(out.error)).toContain("config.stall_exempt");
+    expect(String(getFile(REL)!.content)).toBe(RECORD);
+  });
+});
+
+describe("queue 3b audit folds — stored aliases are exempt; cap, invisible characters, NFC; refusal wording", () => {
+  const update = async (args: Record<string, unknown>) =>
+    JSON.parse(await projectUpdateTool.execute(args)) as Record<string, unknown>;
+
+  it("W1: a stored short alias does not block adding a new one; only NEW elements are judged", async () => {
+    createProject("legacy-jme", "Legacy JME", { config: { aliases: ["jme", "journal"] } });
+    const add = await update({ slug: "legacy-jme", config: { aliases: ["jme", "journal", "memoria-jme"] } });
+    expect(add.error).toBeUndefined();
+    expect(getProject("legacy-jme")!.config.aliases).toEqual(["jme", "journal", "memoria-jme"]);
+    // R2 audit W2: the echo must be byte-exact; " jme " is a NEW element (length 3).
+    const padded = await update({ slug: "legacy-jme", config: { aliases: [" jme ", "journal"] } });
+    expect(String(padded.error)).toContain("config.aliases[0]");
+    const bad = await update({ slug: "legacy-jme", config: { aliases: ["jme", "ab"] } });
+    expect(String(bad.error)).toContain("config.aliases[1]");
+    expect(String(bad.error)).not.toContain("config.aliases[0]");
+    expect(getProject("legacy-jme")!.config.aliases).toEqual(["jme", "journal", "memoria-jme"]);
+    // A create has no stored aliases: every element is judged.
+    const created = await update({ slug: "brand-new-jme", name: "N", config: { aliases: ["jme"] } });
+    expect(String(created.error)).toContain("config.aliases[0]");
+    expect(getProject("brand-new-jme")).toBeNull();
+  });
+
+  it("W2: the length is counted after NFC — three decomposed é are 3 characters", async () => {
+    createProject("legacy-nfc", "Legacy NFC", { config: { phase: "one" } });
+    const decomposed = "ééé";
+    expect(decomposed.length).toBe(6);
+    const out = await update({ slug: "legacy-nfc", config: { aliases: [decomposed] } });
+    expect(String(out.error)).toContain("config.aliases[0]");
+    expect(getProject("legacy-nfc")!.config).toEqual({ phase: "one" });
+  });
+
+  it("R1: at most 20 aliases — 20 accepted, 21 refused naming the cap; stored elements never count", async () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => `alias-${String(i).padStart(2, "0")}`);
+    const ok = await update({ slug: "cap-twenty", name: "N", config: { aliases: list(20) } });
+    expect(ok.error).toBeUndefined();
+    expect(getProject("cap-twenty")!.config.aliases).toEqual(list(20));
+    const over = await update({ slug: "cap-twenty", config: { aliases: [...list(20), "alias-new"] } });
+    expect(String(over.error)).toContain("config.aliases[20]");
+    expect(String(over.error)).toContain("20");
+    expect(getProject("cap-twenty")!.config.aliases).toEqual(list(20));
+    // R2 audit W1: the cap bounds the resulting list; the reason names the FIRST new element.
+    const created = await update({ slug: "cap-21", name: "N", config: { aliases: list(21) } });
+    expect(String(created.error)).toContain("config.aliases[0]");
+    expect(getProject("cap-21")).toBeNull();
+    // An operator-stored list longer than the cap echoes back fine.
+    createProject("cap-stored", "Cap Stored", { config: { aliases: list(25) } });
+    const echo = await update({ slug: "cap-stored", config: { aliases: list(25) } });
+    expect(echo.error).toBeUndefined();
+  });
+
+  it("R2: a NEW element with a control or invisible character is refused by index; real scripts and emoji pass", async () => {
+    createProject("legacy-inv", "Legacy Inv", { config: { aliases: ["a\nstored"] } });
+    for (const bad of ["ab\u0000cd", "a\nbcd", "​".repeat(4), "abcd\u007f", "ab‍cd", "﻿abcd"]) {
+      const out = await update({ slug: "legacy-inv", config: { aliases: ["alpha-four", bad] } });
+      expect(String(out.error), JSON.stringify(bad)).toContain("config.aliases[1]");
+    }
+    expect(getProject("legacy-inv")!.config.aliases).toEqual(["a\nstored"]);
+    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+    const good = await update({ slug: "legacy-inv", config: { aliases: ["a\nstored", "東京都庁", family] } });
+    expect(good.error).toBeUndefined();
+    expect(getProject("legacy-inv")!.config.aliases).toEqual(["a\nstored", "東京都庁", family]);
+  });
+
+  it("S2: a row without a record is pointed at the exporter; a new slug too", async () => {
+    createProject("legacy-s2", "Legacy S2", { config: { phase: "one" } });
+    const out = await update({ slug: "legacy-s2", config: { stall_exempt: true } });
+    expect(String(out.error)).toContain("config.stall_exempt");
+    expect(String(out.error)).toContain("scripts/project-record-export.ts");
+    expect(String(out.error)).not.toContain("project.md");
+    const fresh = await update({ slug: "brand-new-s2", name: "N", config: { trusted: true } });
+    expect(String(fresh.error)).toContain("scripts/project-record-export.ts");
+  });
+});
+
+describe("queue 3b audit S2 — a record row keeps the record wording", () => {
+  let kbDir: string;
+  let prevMirror: string | undefined;
+  beforeEach(() => {
+    kbDir = mkdtempSync(join(tmpdir(), "mc-proj3b-s2-"));
+    prevMirror = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbDir;
+    upsertFromDiskWrite(
+      projectRecordRelPath("acme-radar"),
+      "# Acme Radar\n\n```json\n" +
+        JSON.stringify({ slug: "acme-radar", name: "Acme Radar", status: "active" }, null, 2) +
+        "\n```\n\nSynthetic lead paragraph.\n",
+    );
+  });
+  afterEach(() => {
+    rmSync(kbDir, { recursive: true, force: true });
+    if (prevMirror === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = prevMirror;
+  });
+
+  it("names projects/<slug>/project.md, not the exporter", async () => {
+    const out = JSON.parse(await projectUpdateTool.execute({ slug: "acme-radar", config: { stall_exempt: true } }));
+    expect(String(out.error)).toContain("projects/<slug>/project.md");
+    expect(String(out.error)).not.toContain("project-record-export");
+  });
+});
+
+describe("queue 3b R2 audit folds — cap bounds the result, byte-exact echo, Unicode-class invisibles", () => {
+  const update = async (args: Record<string, unknown>) =>
+    JSON.parse(await projectUpdateTool.execute(args)) as Record<string, unknown>;
+  const list = (n: number) => Array.from({ length: n }, (_, i) => `alias-${String(i).padStart(2, "0")}`);
+
+  it("W1: the cap bounds the RESULTING list at max(20, stored count); a stored list above it is echoed or shrunk, never grown", async () => {
+    createProject("cap-25", "Cap 25", { config: { aliases: list(25) } });
+    const prepend = await update({ slug: "cap-25", config: { aliases: ["fresh-one", ...list(25)] } });
+    expect(String(prepend.error)).toContain("config.aliases[0]");
+    expect(String(prepend.error)).toContain("20");
+    expect(getProject("cap-25")!.config.aliases).toEqual(list(25));
+    expect((await update({ slug: "cap-25", config: { aliases: list(25) } })).error).toBeUndefined();
+    // R3 audit W1: repeating a STORED alias grows the list too: refused at the first index past the bound.
+    const repeat = await update({ slug: "cap-25", config: { aliases: [...list(25), "alias-03"] } });
+    expect(String(repeat.error)).toContain("config.aliases[25]");
+    expect(getProject("cap-25")!.config.aliases).toEqual(list(25));
+    createProject("cap-one", "Cap One", { config: { aliases: ["only-one"] } });
+    const many = await update({ slug: "cap-one", config: { aliases: Array(500).fill("only-one") } });
+    expect(String(many.error)).toContain("config.aliases[20]");
+    expect(getProject("cap-one")!.config.aliases).toEqual(["only-one"]);
+    // 18 stored + two equal NEW elements: 20, within the cap (duplicates are not judged).
+    createProject("cap-18", "Cap 18", { config: { aliases: list(18) } });
+    const dup = await update({ slug: "cap-18", config: { aliases: [...list(18), "fresh-one", "fresh-one"] } });
+    expect(dup.error).toBeUndefined();
+    // Swapping one stored alias for a new one keeps the length (25): allowed, the list does not grow.
+    const swap = [...list(24), "fresh-one"];
+    expect((await update({ slug: "cap-25", config: { aliases: swap } })).error).toBeUndefined();
+    expect(getProject("cap-25")!.config.aliases).toEqual(swap);
+    expect((await update({ slug: "cap-25", config: { aliases: list(24) } })).error).toBeUndefined();
+    expect(getProject("cap-25")!.config.aliases).toEqual(list(24));
+
+    createProject("cap-19", "Cap 19", { config: { aliases: list(19) } });
+    const first = await update({ slug: "cap-19", config: { aliases: ["fresh-one", ...list(19)] } });
+    expect(first.error).toBeUndefined();
+    expect(getProject("cap-19")!.config.aliases).toHaveLength(20);
+
+    createProject("cap-20", "Cap 20", { config: { aliases: list(20) } });
+    const grow = await update({ slug: "cap-20", config: { aliases: ["fresh-one", ...list(20)] } });
+    expect(String(grow.error)).toContain("config.aliases[0]");
+    const growEnd = await update({ slug: "cap-20", config: { aliases: [...list(20), "fresh-one"] } });
+    expect(String(growEnd.error)).toContain("config.aliases[20]");
+    expect(getProject("cap-20")!.config.aliases).toEqual(list(20));
+  });
+
+  it("W2: only a byte-exact echo of a stored alias is exempt (trim() would let U+FEFF / tab / space ride in)", async () => {
+    createProject("legacy-exact", "Legacy Exact", { config: { aliases: ["jme"] } });
+    const bom = await update({ slug: "legacy-exact", config: { aliases: ["jme\ufeff"] } });
+    expect(String(bom.error)).toContain("config.aliases[0] tiene un carácter de control o invisible");
+    const tab = await update({ slug: "legacy-exact", config: { aliases: ["\tjme"] } });
+    expect(String(tab.error)).toContain("config.aliases[0] tiene un carácter de control o invisible");
+    // A trailing space is no longer an echo: judged as new, refused by length.
+    const space = await update({ slug: "legacy-exact", config: { aliases: ["jme "] } });
+    expect(String(space.error)).toContain(`config.aliases[0] tiene menos de ${MIN_ALIAS_CHARS} caracteres`);
+    expect(getProject("legacy-exact")!.config.aliases).toEqual(["jme"]);
+    expect((await update({ slug: "legacy-exact", config: { aliases: ["jme"] } })).error).toBeUndefined();
+  });
+
+  const ACCEPTED: Array<[string, string]> = [
+    ["family ZWJ emoji", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
+    ["heart on fire", "\u2764\uFE0F\u200D\u{1F525}"],
+    ["England subdivision flag", "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"],
+    ["regional-indicator flag + letters", "\u{1F1F2}\u{1F1FD}abcd"],
+    ["CJK", "東京都庁"],
+    ["U+FE0F after a pictograph, no ZWJ (sun)", "sol \u2600\uFE0F"],
+    ["U+FE0F after a pictograph, no ZWJ (heart)", "\u2764\uFE0F rojo"],
+  ];
+  const REFUSED: Array<[string, string]> = [
+    ["soft hyphen", "ab\u00ADcd"],
+    ["RLO", "ab\u202Ecd"],
+    ["LRM", "ab\u200Ecd"],
+    ["lone tag character after letters", "abcd\u{E0041}"],
+    ["NEL U+0085", "ab\u0085cd"],
+    ["Hangul filler U+3164", "ab\u3164cd"],
+    ["U+FE0F after letters", "abcd\uFE0F"],
+    ["lone ZWJ", "\u200D\u200D\u200D\u200D"],
+    ["word joiner U+2060", "ab\u2060cd"],
+    ["BOM U+FEFF", "ab\uFEFFcd"],
+    ["tab", "ab\tcd"],
+    ["ZWJ between letters", "ab\u200Dcd"],
+    ["skin-tone emoji + ZWJ + letter", "\u{1F44D}\u{1F3FD}\u200Dxyzw"],
+    ["interlinear annotation anchor U+FFF9 (Cf, not default-ignorable)", "ab\uFFF9cd"],
+  ];
+  for (const [label, alias] of ACCEPTED) {
+    it(`W3 accepted: ${label}`, async () => {
+      const out = await update({ slug: "w3-ok", name: "N", config: { aliases: [alias] } });
+      expect(out.error).toBeUndefined();
+      expect(getProject("w3-ok")!.config.aliases).toEqual([alias]);
+    });
+  }
+  for (const [label, alias] of REFUSED) {
+    it(`W3 refused: ${label}`, async () => {
+      const out = await update({ slug: "w3-bad", name: "N", config: { aliases: ["alpha-four", alias] } });
+      expect(String(out.error)).toContain("config.aliases[1] tiene un carácter de control o invisible");
+      expect(getProject("w3-bad")).toBeNull();
+    });
+  }
 });

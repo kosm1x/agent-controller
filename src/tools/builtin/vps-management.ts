@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import type { Tool } from "../types.js";
 import { execGroupKill } from "./shell.js";
+import { buildChildEnv } from "../../mcp/env-deny.js";
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 import {
   CHANGED_BASE_REF,
@@ -204,7 +205,7 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
           cwd: MC_DIR,
           timeout: 60_000,
           maxBuffer: 1024 * 1024,
-          env: process.env,
+          env: buildChildEnv(),
         });
         lines.push("✅ Build: PASS");
       } catch (err) {
@@ -230,7 +231,7 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
               cwd: MC_DIR,
               timeout: 120_000,
               maxBuffer: 1024 * 1024,
-              env: process.env,
+              env: buildChildEnv(),
             },
           );
           const match = output.match(/Tests\s+(\d+)\s+passed/);
