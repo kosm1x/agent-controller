@@ -115,7 +115,32 @@ describe("resolveProjectAttribution — priority order, first match wins", () =>
     ).toEqual({ slug: "acme-radar", source: "chat" });
   });
 
-  it("6. thread: no name → the thread's last explicit mention within 24 h, source thread", () => {
+  it("6. classifier (ruling 3t): the turn's single project scope group beats the thread fallback", () => {
+    expect(
+      resolveProjectAttribution({
+        ...none,
+        submitted: { slug: "acme-radar", source: "classifier" },
+        thread: { slug: "other-proj", createdAtMs: NOW - 1000 },
+      }),
+    ).toEqual({ slug: "acme-radar", source: "classifier" });
+  });
+
+  it("chat beats classifier (one submission carries one source; the router sends chat when a project is named)", () => {
+    // The pure order: chat is checked first, so a chat submission never reaches the classifier branch.
+    expect(
+      resolveProjectAttribution({ ...none, submitted: { slug: "acme-radar", source: "chat" } }),
+    ).toEqual({ slug: "acme-radar", source: "chat" });
+    expect(
+      resolveProjectAttribution({
+        ...none,
+        ritualId: "r-1",
+        ritualProjects: { "r-1": "other-proj" },
+        submitted: { slug: "acme-radar", source: "classifier" },
+      }),
+    ).toEqual({ slug: "other-proj", source: "ritual" });
+  });
+
+  it("7. thread: no name → the thread's last explicit mention within 24 h, source thread", () => {
     expect(
       resolveProjectAttribution({
         ...none,
@@ -137,7 +162,7 @@ describe("resolveProjectAttribution — priority order, first match wins", () =>
     expect(resolveProjectAttribution({ ...none, submitted: { slug: "acme-radar" } })).toBeNull();
   });
 
-  it("the enum: classifier is declared (no producer); the ritual map ships empty", () => {
+  it("the enum: classifier has a producer since ruling 3t (router chatProject); the ritual map ships empty", () => {
     expect(PROJECT_SOURCES).toEqual(["schedule", "parent", "ritual", "inbound", "chat", "thread", "classifier"]);
     expect(RITUAL_PROJECT).toEqual({});
   });
@@ -233,6 +258,33 @@ describe("readAttributionInput / attributeNewTask — the db adapter", () => {
     expect(logWarn.mock.calls[0]![0]).toMatchObject({ source: "schedule", err: expect.stringMatching(/no such table/) });
   });
 
+  it("ruling 3t: a classifier task never renews or changes the thread — the next unnamed turn resolves from the LAST chat row", () => {
+    const db = getDatabase();
+    const insert = (id: string, at: number, a: { slug: string; source: string } | null) =>
+      db
+        .prepare(
+          `INSERT INTO tasks (task_id, title, description, metadata, project_slug, project_source, created_at) VALUES (?,?,?,?,?,?,?)`,
+        )
+        .run(id, "t", "d", JSON.stringify({ threadId: "th-3t" }), a?.slug ?? null, a?.source ?? null, sqliteAt(at));
+    insert("3t-chat", NOW - 3 * 3600_000, { slug: "acme-radar", source: "chat" });
+    const scoped = attributeNewTask(
+      db,
+      { threadId: "th-3t", projectSlug: "other-proj", projectSource: "classifier" },
+      NOW - 3600_000,
+    );
+    expect(scoped).toEqual({ slug: "other-proj", source: "classifier" });
+    insert("3t-cls", NOW - 3600_000, scoped);
+    expect(readAttributionInput(db, { threadId: "th-3t" }, NOW).thread).toEqual({
+      slug: "acme-radar",
+      createdAtMs: NOW - 3 * 3600_000,
+    });
+    expect(attributeNewTask(db, { threadId: "th-3t" }, NOW)).toEqual({ slug: "acme-radar", source: "thread" });
+    // A classifier row alone never feeds the fallback.
+    insert("3t-only", NOW - 60_000, { slug: "other-proj", source: "classifier" });
+    db.prepare("UPDATE tasks SET metadata = ? WHERE task_id = '3t-only'").run(JSON.stringify({ threadId: "th-3t-b" }));
+    expect(attributeNewTask(db, { threadId: "th-3t-b" }, NOW)).toBeNull();
+  });
+
   it("C2: the window never renews itself — named at t0, unnamed at +20 h → thread, unnamed at +40 h → null", () => {
     const db = getDatabase();
     const t0 = NOW - 48 * 3600_000;
@@ -278,6 +330,69 @@ describe("canonicalProjectSlug — C1: every resolved slug must name a projects 
     expect(
       attributeNewTask(db, { projectSlug: "acme-radar-journal", projectSource: "chat" }),
     ).toBeNull();
+  });
+
+  it("ruling 3t: a classifier slug binds only to a live row (an archived exact slug → null)", () => {
+    const db = getDatabase();
+    expect(canonicalProjectSlug(db, "acme-radar-journal", "classifier")).toBeNull();
+    expect(canonicalProjectSlug(db, "acme-entry-radar", "classifier")).toBe("acme-entry-radar");
+    expect(canonicalProjectSlug(db, "twin-two", "classifier")).toBe("twin-two"); // paused is live
+  });
+
+  it("ruling 3t (audit W2): a classifier slug naming an archived row falls through to the live thread default; with no thread → null", () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, metadata, project_slug, project_source, created_at) VALUES (?,?,?,?,?,?,?)`,
+    ).run(
+      "w2-chat",
+      "t",
+      "d",
+      JSON.stringify({ threadId: "th-w2" }),
+      "acme-entry-radar",
+      "chat",
+      new Date(NOW - 3600_000).toISOString().replace("T", " ").slice(0, 19),
+    );
+    expect(
+      attributeNewTask(db, { threadId: "th-w2", projectSlug: "acme-radar-journal", projectSource: "classifier" }, NOW),
+    ).toEqual({ slug: "acme-entry-radar", source: "thread" });
+    expect(
+      attributeNewTask(db, { threadId: "th-none", projectSlug: "acme-radar-journal", projectSource: "classifier" }, NOW),
+    ).toBeNull();
+    expect(attributeNewTask(db, { projectSlug: "acme-radar-journal", projectSource: "classifier" }, NOW)).toBeNull();
+    // chat keeps its behaviour: a rejected chat slug is null, never the thread.
+    expect(
+      attributeNewTask(db, { threadId: "th-w2", projectSlug: "acme-radar-journal", projectSource: "chat" }, NOW),
+    ).toBeNull();
+  });
+
+  it("ruling 3t (audit R2-W2): a rejected chat or inbound slug stays null even with a live chat thread row in the window", () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, metadata, project_slug, project_source, created_at) VALUES (?,?,?,?,?,?,?)`,
+    ).run(
+      "r2w2-chat",
+      "t",
+      "d",
+      JSON.stringify({ threadId: "th-r2w2" }),
+      "acme-entry-radar",
+      "chat",
+      new Date(NOW - 3600_000).toISOString().replace("T", " ").slice(0, 19),
+    );
+    expect(attributeNewTask(db, { threadId: "th-r2w2" }, NOW)).toEqual({ slug: "acme-entry-radar", source: "thread" });
+    for (const projectSource of ["chat", "inbound"] as const) {
+      expect(
+        attributeNewTask(db, { threadId: "th-r2w2", projectSlug: "acme-radar-journal", projectSource }, NOW),
+      ).toBeNull();
+    }
+  });
+
+  it("ruling 3t: only a classifier slug re-resolves — a rejected record claim is validated once", () => {
+    const db = getDatabase();
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, project_slug, project_source) VALUES ('p-twin','t','d','twin','parent')",
+    ).run();
+    expect(attributeNewTask(db, { parentTaskId: "p-twin" }, NOW)).toBeNull();
+    expect(logWarn).toHaveBeenCalledTimes(1); // the alias tie, once
   });
 
   it("R2: a whole-phrase alias outranks a single hyphen-word alias; the tie rule applies within the winning rank", () => {

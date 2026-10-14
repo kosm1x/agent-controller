@@ -268,6 +268,7 @@ import {
   argsSha256,
 } from "./confirmations.js";
 import { scopeMissFallbackLine } from "./scope-miss.js";
+import { registerProjectScopeGroups, _resetProjectScopeGroups } from "./scope.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import { formatForTelegram } from "./formatter.js";
@@ -1612,6 +1613,182 @@ describe("MessageRouter", () => {
       expect(last).not.toHaveProperty("projectSlug");
     });
 
+    // Ruling 3t (2026-10-14): explicit request scope overrides the thread
+    // default — a turn naming no project whose scope resolved to exactly one
+    // record-derived group carries that group's slug as `classifier`.
+    describe("ruling 3t: record-derived scope group → projectSource=classifier", () => {
+      const ownerTurn = (text: string): IncomingMessage => ({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text,
+        timestamp: new Date(),
+      });
+      beforeEach(() => {
+        registerProjectScopeGroups(
+          [
+            { name: "eurekams", prefixes: ["eurekams__"] },
+            { name: "acme-proj", prefixes: ["acme__"] },
+          ],
+          [],
+          () => [],
+        );
+      });
+      afterEach(() => _resetProjectScopeGroups());
+
+      it("an operator turn naming no project scoped to ONE project group carries it as classifier", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams", "google"]));
+        await router.handleInbound(ownerTurn("dame el estado del expediente del cliente"));
+        expect(submitTask).toHaveBeenLastCalledWith(
+          expect.objectContaining({ projectSlug: "eurekams", projectSource: "classifier" }),
+        );
+      });
+
+      // Audit W1: only THIS turn's own request scope counts — never the
+      // sticky prior union, inherited prior scope or the history safety net.
+      it("W1 sticky: prior turn scoped to the project group, current turn classifies {google} → no projectSource", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+        await router.handleInbound(ownerTurn("dame el estado del expediente del cliente"));
+        expect(submitTask).toHaveBeenLastCalledWith(
+          expect.objectContaining({ projectSlug: "eurekams", projectSource: "classifier" }),
+        );
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["google"]));
+        await router.handleInbound(ownerTurn("ahora revisa mi correo de gmail por favor"));
+        const last = (submitTask as any).mock.calls.at(-1)[0];
+        expect(last).not.toHaveProperty("projectSlug");
+        expect(last).not.toHaveProperty("projectSource");
+      });
+
+      it("W1 inherited: semantic empty, prior scope holds the project group → no projectSource", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+        await router.handleInbound(ownerTurn("dame el estado del expediente del cliente"));
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set());
+        await router.handleInbound(ownerTurn("y luego qué más queda pendiente de revisar ahí"));
+        const last = (submitTask as any).mock.calls.at(-1)[0];
+        expect(last).not.toHaveProperty("projectSlug");
+        expect(last).not.toHaveProperty("projectSource");
+      });
+
+      it("W1 safety net: the alias two turns back, not in the current message → no projectSource", async () => {
+        _resetProjectScopeGroups();
+        registerProjectScopeGroups(
+          [{ name: "eurekams", prefixes: ["eurekams__"] }],
+          [{ pattern: /\bexpediente\b/i, group: "eurekams" }],
+          () => [],
+        );
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        _testSeedThread("whatsapp", [
+          { text: "User: revisa el expediente del cliente\nJarvis: listo, aquí está" },
+          { text: "User: gracias, otra cosa\nJarvis: dime" },
+        ]);
+        try {
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["google"]));
+          await router.handleInbound(ownerTurn("ahora revisa mi correo de gmail por favor"));
+          const last = (submitTask as any).mock.calls.at(-1)[0];
+          expect(last).not.toHaveProperty("projectSlug");
+          expect(last).not.toHaveProperty("projectSource");
+        } finally {
+          _testSeedThread("whatsapp", []);
+        }
+      });
+
+      it("W1 regex fallback: classifier unavailable, alias only in history → no projectSource; alias in the current text → classifier", async () => {
+        _resetProjectScopeGroups();
+        registerProjectScopeGroups(
+          [{ name: "eurekams", prefixes: ["eurekams__"] }],
+          [{ pattern: /\bexpediente\b/i, group: "eurekams" }],
+          () => [],
+        );
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        _testSeedThread("whatsapp", [
+          { text: "User: revisa el expediente del cliente\nJarvis: listo, aquí está" },
+        ]);
+        try {
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(null);
+          await router.handleInbound(ownerTurn("y qué más tiene pendiente"));
+          const last = (submitTask as any).mock.calls.at(-1)[0];
+          expect(last).not.toHaveProperty("projectSlug");
+          expect(last).not.toHaveProperty("projectSource");
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(null);
+          await router.handleInbound(ownerTurn("abre el expediente del cliente nuevo"));
+          expect(submitTask).toHaveBeenLastCalledWith(
+            expect.objectContaining({ projectSlug: "eurekams", projectSource: "classifier" }),
+          );
+        } finally {
+          _testSeedThread("whatsapp", []);
+        }
+      });
+
+      // Audit R2-W1: an attached file's extracted body is not the request —
+      // with the marker, attribution re-derives groups from the caption only.
+      describe("R2-W1 attached file", () => {
+        const withFile = (caption: string) =>
+          `${caption}\n\n--- Contenido extraído del archivo "a.txt" ---\nel expediente del cliente\n--- Fin del archivo ---`;
+        beforeEach(() => {
+          _resetProjectScopeGroups();
+          registerProjectScopeGroups(
+            [{ name: "eurekams", prefixes: ["eurekams__"] }],
+            [{ pattern: /\bexpediente\b/i, group: "eurekams" }],
+            () => [],
+          );
+        });
+
+        it("caption naming nothing, alias only in the body, semantic {eurekams} → no projectSource", async () => {
+          const { classifyScopeGroups } = await import("./scope-classifier.js");
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+          await router.handleInbound(ownerTurn(withFile("resume esto")));
+          const last = (submitTask as any).mock.calls.at(-1)[0];
+          expect(last).not.toHaveProperty("projectSlug");
+          expect(last).not.toHaveProperty("projectSource");
+        });
+
+        it("caption naming the alias → classifier", async () => {
+          const { classifyScopeGroups } = await import("./scope-classifier.js");
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+          await router.handleInbound(ownerTurn(withFile("resume este expediente")));
+          expect(submitTask).toHaveBeenLastCalledWith(
+            expect.objectContaining({ projectSlug: "eurekams", projectSource: "classifier" }),
+          );
+        });
+      });
+
+      it("two project groups active → no projectSlug/projectSource", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams", "acme-proj"]));
+        await router.handleInbound(ownerTurn("dame el estado del expediente del cliente"));
+        const last = (submitTask as any).mock.calls.at(-1)[0];
+        expect(last).not.toHaveProperty("projectSlug");
+        expect(last).not.toHaveProperty("projectSource");
+      });
+
+      it("a turn naming a project AND scoped to a different project group carries the chat one", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+        await router.handleInbound(ownerTurn("revisa el roadmap de pipesong"));
+        expect(submitTask).toHaveBeenLastCalledWith(
+          expect.objectContaining({ projectSlug: "pipesong", projectSource: "chat" }),
+        );
+      });
+
+      it("a non-operator turn scoped to one project group carries nothing", async () => {
+        const { classifyScopeGroups } = await import("./scope-classifier.js");
+        vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["eurekams"]));
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "grp@g.us",
+          text: "@jarvis dame el estado del expediente del cliente",
+          timestamp: new Date(),
+          metadata: { isGroup: true, groupJid: "grp@g.us", senderJid: "member@s.whatsapp.net" },
+        });
+        const last = (submitTask as any).mock.calls.at(-1)[0];
+        expect(last.threadId).toBeUndefined();
+        expect(last).not.toHaveProperty("projectSlug");
+        expect(last).not.toHaveProperty("projectSource");
+      });
+    });
+
     it("should truncate long message titles at 60 chars", async () => {
       const longText = "A".repeat(100);
       const msg: IncomingMessage = {
@@ -2061,6 +2238,57 @@ describe("MessageRouter", () => {
         expect(sub).not.toHaveProperty("projectSource");
       } finally {
         dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("ruling 3t R2-W1: a background agent with the project alias only in an attached file's body carries nothing", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      registerProjectScopeGroups(
+        [{ name: "eurekams", prefixes: ["eurekams__"] }],
+        [{ pattern: /\bexpediente\b/i, group: "eurekams" }],
+        () => [],
+      );
+      dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: 'lanza un agente e investiga esto\n\n--- Contenido extraído del archivo "a.txt" ---\nel expediente del cliente\n--- Fin del archivo ---',
+          timestamp: new Date(),
+        });
+        const sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+        expect(sub.spawnType).toBe("user-background");
+        expect(sub).not.toHaveProperty("projectSlug");
+        expect(sub).not.toHaveProperty("projectSource");
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        _resetProjectScopeGroups();
+      }
+    });
+
+    // Ruling 3t: the background-agent seam reads the groups its own scoping
+    // already computed (regex, no classifier run).
+    it("ruling 3t: a background agent naming no project, scoped to one project group, carries it as classifier", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      registerProjectScopeGroups(
+        [{ name: "eurekams", prefixes: ["eurekams__"] }],
+        [{ pattern: /\bexpediente\b/i, group: "eurekams" }],
+        () => [],
+      );
+      dbStatusGet.mockReturnValue({ cnt: 0 }); // running background agents
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza un agente e investiga el expediente del cliente",
+          timestamp: new Date(),
+        });
+        const sub = vi.mocked(submitTask).mock.calls.at(-1)![0];
+        expect(sub.spawnType).toBe("user-background");
+        expect(sub).toMatchObject({ projectSlug: "eurekams", projectSource: "classifier" });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        _resetProjectScopeGroups();
       }
     });
 

@@ -9,12 +9,15 @@
  *   3. ritual   — `RITUAL_PROJECT[ritualId]` (`rituals/config.ts`; empty today).
  *   4. inbound  — the jarvis-pull seam names a slug (no producer until WS4/WS7).
  *   5. chat     — the chat detector named a project (explicit mention).
- *   6. thread   — inherited from the thread's last EXPLICIT mention (`chat`)
+ *   6. classifier — the chat turn's scope resolved to exactly one
+ *                 record-derived scope group (router `chatProject`, via
+ *                 `scope.ts activeProjectGroups`; group name = slug). Ruling
+ *                 3t: the request's scope wins for THAT TASK ONLY.
+ *   7. thread   — inherited from the thread's last EXPLICIT mention (`chat`)
  *                 within CHAT_THREAD_WINDOW_MS; never from another inherited
- *                 row, so the window cannot renew itself.
+ *                 or `classifier` row, so the window cannot renew itself and
+ *                 a classifier task never changes the thread's project.
  *   null        — operator-level work.
- * `classifier` is a declared value with NO producer: no record maps a scope
- * group to a slug yet (spec §3).
  *
  * `attributeNewTask` is the thin db adapter the dispatcher calls once, before
  * its INSERT; it validates every resolved slug against `projects`
@@ -55,8 +58,8 @@ export interface AttributionInput {
   parent: { slug: string | null; source: string | null } | null;
   ritualId?: string;
   ritualProjects: Readonly<Record<string, string>>;
-  /** A slug the submitter named: the chat detector or the jarvis-pull seam. */
-  submitted?: { slug?: string; source?: "inbound" | "chat" };
+  /** A slug the submitter named: the chat detector, the chat turn's single project scope group, or the jarvis-pull seam. */
+  submitted?: { slug?: string; source?: "inbound" | "chat" | "classifier" };
   /** The newest explicit mention (`project_source = 'chat'`) on the same chat thread. */
   thread: { slug: string; createdAtMs: number } | null;
   nowMs: number;
@@ -81,6 +84,7 @@ export function resolveProjectAttribution(
   const named = input.submitted?.slug;
   if (named && input.submitted?.source === "inbound") return { slug: named, source: "inbound" };
   if (named && input.submitted?.source === "chat") return { slug: named, source: "chat" };
+  if (named && input.submitted?.source === "classifier") return { slug: named, source: "classifier" };
   if (input.thread && input.nowMs - input.thread.createdAtMs <= CHAT_THREAD_WINDOW_MS) {
     return { slug: input.thread.slug, source: "thread" };
   }
@@ -103,7 +107,7 @@ export interface NewTaskFacts {
   ritualId?: string;
   threadId?: string;
   projectSlug?: string;
-  projectSource?: "inbound" | "chat";
+  projectSource?: "inbound" | "chat" | "classifier";
 }
 
 /** One lookup's failure is logged and read as "no value"; the next source still resolves. */
@@ -141,10 +145,11 @@ export function readAttributionInput(
         return row ? { slug: str(row.project_slug), source: str(row.project_source) } : null;
       });
   // Only explicit mentions (`chat`) feed the fallback: an inherited
-  // (`thread`) row never renews the window. Bounded by the 24 h predicate
-  // and LIMIT 1; no index.
+  // (`thread`) or `classifier` row never renews the window. Bounded by the 24 h predicate
+  // and LIMIT 1; no index. A `classifier` submission still reads it: its slug
+  // may fail validation and fall through to the thread (`attributeNewTask`).
   const thread: AttributionInput["thread"] =
-    !facts.threadId || facts.projectSlug
+    !facts.threadId || (facts.projectSlug && facts.projectSource !== "classifier")
       ? null
       : lookup("thread", null, () => {
           const row = db
@@ -175,9 +180,15 @@ export function readAttributionInput(
 }
 
 /** Sources that name a project from words (chat, its thread, an inbound
- *  caller): they bind only to a live (active/paused) row. A record's own
- *  claims (schedule, parent, ritual) keep any status. */
-const LIVE_ONLY_SOURCES: ReadonlySet<ProjectSource> = new Set(["chat", "thread", "inbound"]);
+ *  caller) or from a scope group (classifier: a record-derived group exists
+ *  only for an active record): they bind only to a live (active/paused)
+ *  row. A record's own claims (schedule, parent, ritual) keep any status. */
+const LIVE_ONLY_SOURCES: ReadonlySet<ProjectSource> = new Set([
+  "chat",
+  "thread",
+  "inbound",
+  "classifier",
+]);
 const LIVE = (status: string | null) =>
   ["active", "paused"].includes((status ?? "active").toLowerCase());
 
@@ -224,17 +235,24 @@ export function canonicalProjectSlug(
 /**
  * The dispatcher's one call, before its INSERT. A failed lookup skips only
  * its own source; the resolved slug is validated against `projects` (an
- * unknown slug is never stored).
+ * unknown slug is never stored). A `classifier` slug that fails validation
+ * (a record archived after boot keeps its group until restart) re-resolves
+ * without the submission — the thread default, else null — validated too.
  */
 export function attributeNewTask(
   db: Database.Database,
   facts: NewTaskFacts,
   nowMs = Date.now(),
 ): ProjectAttribution | null {
-  const resolved = resolveProjectAttribution(readAttributionInput(db, facts, nowMs));
+  const input = readAttributionInput(db, facts, nowMs);
+  const resolved = resolveProjectAttribution(input);
   if (!resolved) return null;
-  const slug = lookup("validate", null, () =>
-    canonicalProjectSlug(db, resolved.slug, resolved.source),
-  );
-  return slug ? { slug, source: resolved.source } : null;
+  const validate = (r: ProjectAttribution) =>
+    lookup("validate", null, () => canonicalProjectSlug(db, r.slug, r.source));
+  const slug = validate(resolved);
+  if (slug) return { slug, source: resolved.source };
+  if (resolved.source !== "classifier") return null;
+  const fallback = resolveProjectAttribution({ ...input, submitted: undefined });
+  const fallbackSlug = fallback ? validate(fallback) : null;
+  return fallback && fallbackSlug ? { slug: fallbackSlug, source: fallback.source } : null;
 }

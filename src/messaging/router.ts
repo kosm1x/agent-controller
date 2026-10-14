@@ -129,6 +129,7 @@ import {
   DEFAULT_SCOPE_PATTERNS,
   CONVERSATIONAL_PATTERN,
   applyCommunityChannelScopeOverride,
+  activeProjectGroups,
 } from "./scope.js";
 import {
   classifyScopeGroups,
@@ -182,19 +183,34 @@ import { detectProjectInMessage } from "./kb-injection.js";
 /**
  * S6 WS2: the project an OPERATOR chat turn names (the KB README detector),
  * as submission fields for `tasks.project_slug` attribution (spec §4,
- * "operator chat naming a project"). Nothing for a non-operator sender
- * (no thread key) or when the text names no project — the dispatcher then
- * falls back to the operator thread's last project.
+ * "operator chat naming a project"). Ruling 3t (2026-10-14): a turn naming
+ * none whose OWN request scope (`requestGroups`: this message's classifier
+ * answer or regex matches, never prior-turn scope) holds EXACTLY ONE
+ * record-derived group carries that group's slug as `classifier` — the
+ * request's scope wins for that task only (the thread fallback reads `chat`
+ * rows alone). With an attached file, the groups are re-derived from the
+ * typed caption alone (regex, current text only): the file body is not the
+ * request. Nothing for a non-operator sender (no thread key), or when
+ * neither applies — the dispatcher then falls back to the operator thread's
+ * last project.
  */
 function chatProject(
   text: string,
   threadId: string | undefined,
-): { projectSlug?: string; projectSource?: "chat" } {
+  requestGroups: readonly string[],
+): { projectSlug?: string; projectSource?: "chat" | "classifier" } {
+  if (!threadId) return {};
   // Only the operator's words: an attached document's extracted text (after
   // EXTRACTED_FILE_MARKER, telegram.ts) is file content, not a mention.
   const typed = text.split(EXTRACTED_FILE_MARKER)[0]!;
-  const slug = threadId ? detectProjectInMessage(typed) : null;
-  return slug ? { projectSlug: slug, projectSource: "chat" } : {};
+  const slug = detectProjectInMessage(typed);
+  if (slug) return { projectSlug: slug, projectSource: "chat" };
+  const groups = activeProjectGroups(
+    text.includes(EXTRACTED_FILE_MARKER)
+      ? detectActiveGroups(typed, [], DEFAULT_SCOPE_PATTERNS)
+      : requestGroups,
+  );
+  return groups.length === 1 ? { projectSlug: groups[0]!, projectSource: "classifier" } : {};
 }
 
 const TASK_TIMEOUT_INTERIM_MS = 120_000; // 2 min → "still working"
@@ -641,7 +657,12 @@ function scopeToolsForMessage(
   conversationHistory: ConversationTurn[],
   semanticGroups?: Set<string> | null,
   priorScope?: Set<string>,
-): { tools: string[]; activeGroups: string[]; baseGroups: string[] } {
+): {
+  tools: string[];
+  activeGroups: string[];
+  baseGroups: string[];
+  requestGroups: string[];
+} {
   // Scope from recent user messages. Previously slice(-2) to avoid scope
   // accumulation on hallucinated assistant content, but user messages are
   // trusted. Widened to -4 so confirmation chains ("Lista X" → "Elimina 6 y 7"
@@ -688,6 +709,16 @@ function scopeToolsForMessage(
     currentMessage,
   );
   const activeGroups = decision.groups;
+  // Ruling 3t (audit W1): the groups THIS message produced on its own — the
+  // classifier's answer (before the sticky union and the history safety
+  // net) or the patterns the current text matches; inherited scope → none.
+  // Read by chat attribution only (`chatProject`).
+  const requestGroups =
+    decision.source === "semantic"
+      ? [...decision.base]
+      : decision.source === "inherited"
+        ? []
+        : [...detectActiveGroups(currentMessage, [], DEFAULT_SCOPE_PATTERNS)];
   if (decision.source === "semantic") {
     console.log(
       `[router] Scope groups (semantic): ${[...activeGroups].join(", ")}`,
@@ -738,6 +769,7 @@ function scopeToolsForMessage(
     tools,
     activeGroups: [...activeGroups],
     baseGroups: [...decision.base],
+    requestGroups,
   };
 }
 
@@ -1887,7 +1919,8 @@ export class MessageRouter {
           return true;
         }
 
-        const { tools: scopedTools } = scopeToolsForMessage(taskText, []);
+        const { tools: scopedTools, requestGroups: agentGroups } =
+          scopeToolsForMessage(taskText, []);
         const enrichment = await boundedInboundStage(
           "enrichment",
           enrichContext(taskText, msg.channel),
@@ -1943,7 +1976,7 @@ export class MessageRouter {
           tags: ["messaging", msg.channel, "background-agent"],
           // V8.3 seam origin: operator-initiated → gated tools ledger on this thread.
           threadId: this.operatorThreadKey(msg, tk),
-          ...chatProject(taskText, this.operatorThreadKey(msg, tk)),
+          ...chatProject(taskText, this.operatorThreadKey(msg, tk), agentGroups),
           interactive: true, // explicit (W-E): a chat turn has an operator
           replyTracked: true, // pendingReplies below — may ask to confirm
         });
@@ -2764,7 +2797,7 @@ export class MessageRouter {
     const priorAt = previousScopeAt.get(tk);
     const priorWithinTtl =
       priorAt !== undefined && Date.now() - priorAt <= STICKY_SCOPE_TTL_MS;
-    let { tools, activeGroups, baseGroups } = scopeToolsForMessage(
+    let { tools, activeGroups, baseGroups, requestGroups } = scopeToolsForMessage(
       normalizedText,
       conversationHistory,
       semanticGroups,
@@ -2981,7 +3014,7 @@ export class MessageRouter {
       // (`executeGatedCapability(…, { threadId: tk })`), so operator rows from
       // both seams stratify on one key. `undefined` for non-operator senders.
       threadId: this.operatorThreadKey(msg, tk),
-      ...chatProject(msg.text, this.operatorThreadKey(msg, tk)),
+      ...chatProject(msg.text, this.operatorThreadKey(msg, tk), requestGroups),
       interactive: true, // explicit (W-E): a chat turn has an operator
       replyTracked: true, // pendingReplies — may ask to confirm
       onTextChunk: streamController

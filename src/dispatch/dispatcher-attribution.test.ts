@@ -100,6 +100,31 @@ describe("submitTask — project attribution at insert", () => {
     expect(cols(otherThread.taskId)).toEqual({ project_slug: null, project_source: null });
   });
 
+  it("ruling 3t: a classifier submission stores (slug, classifier), emits it, and the thread's next unnamed turn does NOT inherit it", async () => {
+    const named = await submitTask({ ...base, threadId: "th-3t", projectSlug: "acme-radar", projectSource: "chat" });
+    const scoped = await submitTask({
+      ...base,
+      threadId: "th-3t",
+      projectSlug: "other-proj",
+      projectSource: "classifier",
+    });
+    expect(cols(scoped.taskId)).toEqual({ project_slug: "other-proj", project_source: "classifier" });
+    const ev = emitTrace.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "attribution.resolved" && e.taskId === scoped.taskId);
+    expect(ev).toEqual([
+      { taskId: scoped.taskId, name: "attribution.resolved", attrs: { slug: "other-proj", source: "classifier" } },
+    ]);
+    // The thread keeps its stored project: the next unnamed turn resolves from the chat row.
+    const next = await submitTask({ ...base, threadId: "th-3t" });
+    expect(cols(next.taskId)).toEqual({ project_slug: "acme-radar", project_source: "thread" });
+    expect(cols(named.taskId)).toEqual({ project_slug: "acme-radar", project_source: "chat" });
+    // A thread whose only attributed row is a classifier one inherits nothing.
+    await submitTask({ ...base, threadId: "th-3t-b", projectSlug: "other-proj", projectSource: "classifier" });
+    const lone = await submitTask({ ...base, threadId: "th-3t-b" });
+    expect(cols(lone.taskId)).toEqual({ project_slug: null, project_source: null });
+  });
+
   it("a detector folder name is stored as its row slug; an unknown one is not stored", async () => {
     const folder = await submitTask({ ...base, threadId: "th-9", projectSlug: "acme-folder", projectSource: "chat" });
     expect(cols(folder.taskId)).toEqual({ project_slug: "acme-radar", project_source: "chat" });

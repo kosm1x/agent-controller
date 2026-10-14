@@ -1195,6 +1195,28 @@ export function registerProjectScopeGroups(
   registeredToolNames = toolNames;
 }
 
+/**
+ * The active groups that are registered record-derived groups (group name =
+ * project slug), sorted and deduped. Read by the router's chat attribution
+ * (`chatProject`, source `classifier`, ruling 3t).
+ */
+export function activeProjectGroups(
+  activeGroups: ReadonlySet<string> | readonly string[],
+): string[] {
+  return [...new Set(activeGroups)].filter((g) => PROJECT_GROUP_PREFIXES.has(g)).sort();
+}
+
+/** Test-only: drop every registered record-derived group and its regex patterns. */
+export function _resetProjectScopeGroups(): void {
+  for (let i = DEFAULT_SCOPE_PATTERNS.length - 1; i >= 0; i--) {
+    if (PROJECT_GROUP_PREFIXES.has(DEFAULT_SCOPE_PATTERNS[i]!.group)) {
+      DEFAULT_SCOPE_PATTERNS.splice(i, 1);
+    }
+  }
+  PROJECT_GROUP_PREFIXES.clear();
+  registeredToolNames = () => [];
+}
+
 /** Registered tools of the active record-derived groups (none registered ⇒ []). */
 function projectGroupTools(activeGroups: ReadonlySet<string>): string[] {
   if (PROJECT_GROUP_PREFIXES.size === 0) return [];

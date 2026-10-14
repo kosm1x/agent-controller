@@ -173,13 +173,14 @@ export interface TaskSubmission {
   gatesSource?: GateSource;
   /**
    * S6 WS2: a project the submitter names for this task — the chat detector
-   * (`projectSource: "chat"`) or the jarvis-pull seam (`"inbound"`, no
-   * producer yet). One input of `resolveProjectAttribution`
+   * (`projectSource: "chat"`), the chat turn's single record-derived scope
+   * group (`"classifier"`, ruling 3t) or the jarvis-pull seam (`"inbound"`,
+   * no producer yet). One input of `resolveProjectAttribution`
    * (`projects/attribution.ts`); `tasks.project_slug`/`project_source` are
    * set once, at the insert.
    */
   projectSlug?: string;
-  projectSource?: "inbound" | "chat";
+  projectSource?: "inbound" | "chat" | "classifier";
 }
 
 export interface TaskRow {

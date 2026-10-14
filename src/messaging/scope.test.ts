@@ -33,6 +33,9 @@ import {
   XPOZ_TOOLS,
   COMMUNITY_EMAIL_TOOLS,
   applyCommunityChannelScopeOverride,
+  activeProjectGroups,
+  registerProjectScopeGroups,
+  _resetProjectScopeGroups,
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
@@ -3578,5 +3581,40 @@ describe("skills dispatch scope group", () => {
   it("the trio is in the chat universe (reachability invariant feed)", () => {
     const universe = getAllAvailableTools(ALL_ON);
     for (const t of SKILL_DISPATCH_TOOLS) expect(universe.has(t)).toBe(true);
+  });
+});
+
+describe("activeProjectGroups (ruling 3t: record-derived group → chat attribution)", () => {
+  afterEach(() => _resetProjectScopeGroups());
+
+  it("none registered → []", () => {
+    expect(activeProjectGroups(new Set(["eurekams", "coding"]))).toEqual([]);
+  });
+
+  it("one registered and active → [name] (deduped, other groups ignored)", () => {
+    registerProjectScopeGroups([{ name: "eurekams", prefixes: ["eurekams__"] }], [], () => []);
+    expect(activeProjectGroups(new Set(["coding", "eurekams"]))).toEqual(["eurekams"]);
+    expect(activeProjectGroups(["eurekams", "eurekams", "google"])).toEqual(["eurekams"]);
+  });
+
+  it("registered but not active → []", () => {
+    registerProjectScopeGroups([{ name: "eurekams", prefixes: ["eurekams__"] }], [], () => []);
+    expect(activeProjectGroups(new Set(["coding"]))).toEqual([]);
+  });
+
+  it("two registered and active → both, sorted; the reset drops the groups and their regexes", () => {
+    const before = DEFAULT_SCOPE_PATTERNS.length;
+    registerProjectScopeGroups(
+      [
+        { name: "zeta-proj", prefixes: ["zeta__"] },
+        { name: "alpha-proj", prefixes: ["alpha__"] },
+      ],
+      [{ pattern: /\balpha\b/i, group: "alpha-proj" }],
+      () => [],
+    );
+    expect(activeProjectGroups(["zeta-proj", "alpha-proj"])).toEqual(["alpha-proj", "zeta-proj"]);
+    _resetProjectScopeGroups();
+    expect(DEFAULT_SCOPE_PATTERNS.length).toBe(before);
+    expect(activeProjectGroups(["zeta-proj", "alpha-proj"])).toEqual([]);
   });
 });
