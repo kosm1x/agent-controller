@@ -118,6 +118,9 @@ vi.mock("./checkpoint.js", () => ({
   writeCheckpoint: vi.fn(),
 }));
 
+// PROMPT_DUMP_DIR: the call site is pinned below (audit R1 W2).
+vi.mock("./prompt-dump.js", () => ({ dumpPrompt: vi.fn() }));
+
 // Retry-outcome counter: spied on by Test C.
 vi.mock("../observability/prometheus.js", () => ({
   recordFastRetryOutcome: vi.fn(),
@@ -184,6 +187,7 @@ vi.mock("../messaging/confirmation-verbs.js", () => ({
 import { fastRunner } from "./fast-runner.js";
 import { inferWithTools } from "../inference/adapter.js";
 import { writeCheckpoint } from "./checkpoint.js";
+import { dumpPrompt } from "./prompt-dump.js";
 import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
@@ -2205,5 +2209,57 @@ describe("external request (jarvis-pull)", () => {
     const cap = mockQuerySdk.mock.calls[0]![0].maxTurns;
     expect(cap).toBeLessThan(500);
     expect(cap).toBeGreaterThan(8);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// PROMPT_DUMP_DIR call site (queue 3v, audit R1 W2): one dump of the
+// assembled array, before the provider branch, on both paths.
+// ────────────────────────────────────────────────────────────────────
+describe("prompt dump call site (PROMPT_DUMP_DIR)", () => {
+  const mockDump = vi.mocked(dumpPrompt);
+  const DUMP_DIR = "/nonexistent/prompt-dumps";
+  const input = {
+    taskId: "task-dump",
+    runId: "run-dump",
+    title: "t",
+    description: "d",
+  };
+
+  it("claude-sdk path: dumps once, before queryClaudeSdk", async () => {
+    mockGetConfig.mockReturnValue({ ...SDK_CONFIG, promptDumpDir: DUMP_DIR });
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await fastRunner.execute(input);
+    expect(mockDump).toHaveBeenCalledTimes(1);
+    expect(mockDump.mock.calls[0]![0]).toBe(DUMP_DIR);
+    expect(mockDump.mock.calls[0]![1]).toBe("task-dump");
+    expect(mockDump.mock.invocationCallOrder[0]).toBeLessThan(
+      mockQuerySdk.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("claude-sdk path: never called when promptDumpDir is unset", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await fastRunner.execute(input);
+    expect(mockQuerySdk).toHaveBeenCalled();
+    expect(mockDump).not.toHaveBeenCalled();
+  });
+
+  it("openai path: dumps once, the same messages array inferWithTools gets", async () => {
+    mockGetConfig.mockReturnValue({
+      ...SDK_CONFIG,
+      inferencePrimaryProvider: "openai",
+      promptDumpDir: DUMP_DIR,
+    });
+    mockInferWithTools.mockResolvedValueOnce(makeInferResult());
+    await fastRunner.execute(input);
+    expect(mockDump).toHaveBeenCalledTimes(1);
+    expect(mockDump.mock.calls[0]![2]).toBe(
+      mockInferWithTools.mock.calls[0]![0],
+    );
+    expect(mockDump.mock.invocationCallOrder[0]).toBeLessThan(
+      mockInferWithTools.mock.invocationCallOrder[0]!,
+    );
   });
 });

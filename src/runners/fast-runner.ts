@@ -30,6 +30,7 @@ import {
 import { isReadOnlyTool } from "../inference/guards.js";
 import { terminationFromExit } from "./termination.js";
 import { writeCheckpoint } from "./checkpoint.js";
+import { dumpPrompt } from "./prompt-dump.js";
 import {
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
@@ -1433,6 +1434,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         !/\?|busca|crea|haz|envía|envia|manda|agenda|programa|genera|analiz|revis|actualiz|configur|escrib|dime|dame|traduce|calcula|publica|corre|lista|muestra|borra|elimina|verifica|checa|consulta|resume|apaga|prende|sube|baja|instala|arregla|corrige/i.test(
           rawUserMsg,
         );
+
+      // PROMPT_DUMP_DIR (queue 3v): the assembled array, before either
+      // provider path reshapes it. Never throws.
+      const promptDumpDir = getConfig().promptDumpDir;
+      if (promptDumpDir) dumpPrompt(promptDumpDir, input.taskId, messages);
 
       // ---------------------------------------------------------------
       // Claude SDK path: delegate to Agent SDK when configured.

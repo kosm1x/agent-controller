@@ -3,14 +3,15 @@
  *
  * Runs at 6:00 AM daily, before the morning briefing (7:00 AM).
  * Scans multiple sources for relevant signals, scores them by relevance
- * to active projects and interests, and stores a structured digest.
+ * to active projects and interests, and emails a structured digest.
  *
  * Inspired by DevPulse signal intelligence architecture:
  * - Collection is mechanical (web_search, rss_read, exa_search)
  * - Scoring uses relevance × risk multiplier
  * - Synthesis uses the fast runner (sequential tool chain)
  *
- * The morning briefing can then reference the digest via user_fact_list.
+ * The digest is delivered by email and recorded in ritual_deliveries only;
+ * it is not stored as a user fact.
  */
 
 import type { TaskSubmission } from "../dispatch/dispatcher.js";
@@ -26,7 +27,7 @@ export function createSignalIntelligence(
 ## Objective
 
 Scan the web for signals relevant to Fede's active projects and interests.
-Store a structured digest that the morning briefing can reference.${movesBlock}
+Email a structured digest.${movesBlock}
 
 ## Step 0: Check the Intelligence Depot first
 
@@ -36,7 +37,6 @@ Call intel_query with hours=24 to get signals already collected by the depot (ea
 
 Call user_fact_list to retrieve:
 - Active projects (category "projects") — these define what's relevant
-- Any existing signal preferences (category "intelligence")
 
 ## Step 2: Collect signals (3 parallel scans — supplement depot data)
 
@@ -69,34 +69,7 @@ For each signal found, assess:
 
 Keep only signals with priority score >= 5.0. Aim for 5-10 top signals.
 
-## Step 4: Store digest
-
-Call user_fact_set with:
-- category: "intelligence"
-- key: "signal_digest_${dateLabel}"
-- value: JSON with structure:
-  {
-    "date": "${dateLabel}",
-    "signals": [
-      {
-        "title": "...",
-        "source_url": "...",
-        "summary": "one sentence",
-        "relevance": 8,
-        "risk": "HIGH",
-        "priority": 12.0,
-        "project": "which project this relates to",
-        "action": "suggested next step"
-      }
-    ],
-    "meta": {
-      "sources_scanned": number,
-      "signals_found": number,
-      "signals_kept": number
-    }
-  }
-
-## Step 5: Send digest via email
+## Step 4: Send digest via email
 
 Send the digest via gmail_send to fede@eurekamd.net with subject "🔍 Señales del día — ${dateLabel}".
 
@@ -125,7 +98,6 @@ IMPORTANT:
     agentType: "fast",
     tools: [
       "user_fact_list",
-      "user_fact_set",
       "web_search",
       "web_read",
       "exa_search",
@@ -135,6 +107,6 @@ IMPORTANT:
       "intel_query",
       "intel_alert_history",
     ],
-    requiredTools: ["exa_search", "user_fact_set", "gmail_send"],
+    requiredTools: ["exa_search", "gmail_send"],
   };
 }

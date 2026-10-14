@@ -662,10 +662,20 @@ describe("task templates", () => {
     expect(task.agentType).toBe("fast");
     expect(task.tools).toContain("exa_search");
     expect(task.tools).toContain("web_search");
-    expect(task.tools).toContain("user_fact_set");
     expect(task.tools).toContain("gmail_send");
     expect(task.requiredTools).toContain("exa_search");
     expect(task.description).toContain("signal");
+  });
+
+  it("signal intelligence does not store the digest as a user fact (queue 3v 2c)", () => {
+    const task = createSignalIntelligence("2026-10-15", "");
+    expect(task.description).not.toContain("user_fact_set");
+    expect(task.description).not.toContain("signal_digest");
+    expect(task.tools).not.toContain("user_fact_set");
+    expect(task.requiredTools).not.toContain("user_fact_set");
+    expect(task.requiredTools).toEqual(
+      expect.arrayContaining(["exa_search", "gmail_send"]),
+    );
   });
 
   it("evolution ritual has correct structure", () => {

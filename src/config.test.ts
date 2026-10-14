@@ -5,8 +5,8 @@
  * NANOCLAW_RUNTIME_DRIVER aborts startup"; adopted 2026-09-01).
  */
 
-import { describe, it, expect } from "vitest";
-import { parseSandboxBackend } from "./config.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { loadConfig, parseSandboxBackend } from "./config.js";
 
 describe("parseSandboxBackend", () => {
   it.each([
@@ -31,5 +31,27 @@ describe("parseSandboxBackend", () => {
     expect(() => parseSandboxBackend(raw)).toThrow(
       /SANDBOX_BACKEND must be "docker" or "opensandbox"/,
     );
+  });
+});
+
+describe("promptDumpDir (PROMPT_DUMP_DIR)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function load(dumpDir: string | undefined) {
+    vi.stubEnv("MC_API_KEY", "test");
+    vi.stubEnv("INFERENCE_PRIMARY_PROVIDER", "claude-sdk");
+    vi.stubEnv("SANDBOX_BACKEND", "");
+    vi.stubEnv("PROMPT_DUMP_DIR", dumpDir);
+    return loadConfig();
+  }
+
+  it("unset → null (dump off)", () => {
+    expect(load(undefined).promptDumpDir).toBeNull();
+  });
+
+  it("set → the directory string", () => {
+    expect(load("/tmp/dumps").promptDumpDir).toBe("/tmp/dumps");
   });
 });

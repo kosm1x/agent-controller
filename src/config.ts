@@ -10,6 +10,8 @@ export interface Config {
   port: number;
   /** SQLite database file path. */
   dbPath: string;
+  /** PROMPT_DUMP_DIR: when set, the fast runner writes each task's assembled messages there (debugging aid; off when null). */
+  promptDumpDir: string | null;
 
   /** Primary inference provider type: 'openai' (default, DashScope/OpenAI-compatible) or 'claude-sdk' (Agent SDK). */
   inferencePrimaryProvider: "openai" | "claude-sdk";
@@ -219,6 +221,7 @@ export function loadConfig(): Config {
     apiKey: required("MC_API_KEY"),
     port: int("MC_PORT", 8080),
     dbPath: process.env.MC_DB_PATH ?? "./data/mc.db",
+    promptDumpDir: process.env.PROMPT_DUMP_DIR ?? null,
 
     inferencePrimaryProvider: provider,
     // Primary URL/key/model are only required for the openai (raw HTTP) path.
