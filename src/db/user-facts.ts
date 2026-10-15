@@ -737,13 +737,35 @@ function scoreFact(fact: UserFact, messageWords: Set<string>): number {
   return score;
 }
 
+/** Group fact lines under `### <category>`, in first-seen category order. */
+function formatFactSections(
+  entries: Array<{ category: string; line: string }>,
+): string {
+  const byCategory = new Map<string, string[]>();
+  for (const { category, line } of entries) {
+    const list = byCategory.get(category) ?? [];
+    list.push(line);
+    byCategory.set(category, list);
+  }
+  const sections: string[] = [];
+  for (const [category, lines] of byCategory) {
+    sections.push(`### ${category}\n${lines.join("\n")}`);
+  }
+  return sections.join("\n\n");
+}
+
 /**
- * Format user facts as a prompt block, relevance-scored per message.
+ * User facts as two prompt blocks with different cache lifetimes.
  *
- * Always injects: personal, contact, preferences (core identity).
- * Other categories: scored by keyword overlap with the current message,
- * top-N included up to MAX_FACTS_CHARS budget. Long signal digests and
- * ephemeral intelligence reports don't bloat every prompt.
+ * STABLE — `formatStableUserFactsBlock()`: the ALWAYS_INJECT_CATEGORIES
+ * facts (personal, contact, preferences — core identity). Never reads the
+ * message, so it is byte-identical across turns until a row changes; the
+ * router places it in the cached (stable) half of the system prompt.
+ *
+ * VARIABLE — `formatRelevantUserFactsBlock(message)`: every other category,
+ * scored by keyword overlap with the current message, top-N up to the
+ * MAX_FACTS_CHARS budget. Long signal digests and ephemeral intelligence
+ * reports don't bloat every prompt. Rides the per-turn (variable) half.
  *
  * Relevance floor (2026-09-06 qa-audit C1): when a message is given, a fact
  * with score 0 is never injected — otherwise the sort collapses to recency
@@ -751,15 +773,28 @@ function scoreFact(fact: UserFact, messageWords: Set<string>): number {
  * three session tokens, a password and an auth token). Only a call WITHOUT
  * a message (none in production — the router always passes msg.text) keeps
  * recency order; a message with no scorable word («?») injects nothing.
+ *
+ * `formatUserFactsBlock(message)` = stable + relevant (the categories are
+ * disjoint, so the fact lines are the same as the former single block).
  */
-export function formatUserFactsBlock(currentMessage?: string): string {
-  const facts = getUserFacts();
-  if (facts.length === 0) return "";
+export function formatStableUserFactsBlock(): string {
+  const entries = getUserFacts()
+    .filter((f) => ALWAYS_INJECT_CATEGORIES.has(f.category))
+    .map((f) => ({
+      category: f.category,
+      line: `- **${f.key}**: ${factDisplayValue(f)}`,
+    }));
+  if (entries.length === 0) return "";
 
-  // Split into always-inject vs scored
-  const alwaysFacts: UserFact[] = [];
-  const scoredFacts: Array<{ fact: UserFact; score: number }> = [];
+  return (
+    "\n\n## Perfil del usuario (hechos confirmados)\n" +
+    "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
+    formatFactSections(entries)
+  );
+}
 
+/** Message-scored user facts (see `formatStableUserFactsBlock`). */
+export function formatRelevantUserFactsBlock(currentMessage?: string): string {
   const messageWords = new Set(
     (currentMessage ?? "")
       .toLowerCase()
@@ -767,54 +802,37 @@ export function formatUserFactsBlock(currentMessage?: string): string {
       .filter((w) => w.length >= 3),
   );
 
-  for (const f of facts) {
-    if (ALWAYS_INJECT_CATEGORIES.has(f.category)) {
-      alwaysFacts.push(f);
-    } else {
-      const score = scoreFact(f, messageWords);
-      scoredFacts.push({ fact: f, score });
-    }
-  }
+  const scoredFacts = getUserFacts()
+    .filter((f) => !ALWAYS_INJECT_CATEGORIES.has(f.category))
+    .map((fact) => ({ fact, score: scoreFact(fact, messageWords) }));
 
-  // Sort scored facts: relevant first, then by recency
+  // Relevant first, then by recency
   scoredFacts.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     return (b.fact.updated_at ?? "").localeCompare(a.fact.updated_at ?? "");
   });
 
-  // Build output: always-inject unconditionally, then scored facts within
-  // their own budget (see MAX_FACTS_CHARS).
-  const byCategory = new Map<string, string[]>();
+  // Up to budget — relevant ones only when a message is known
+  const entries: Array<{ category: string; line: string }> = [];
   let totalChars = 0;
-
-  // Always-inject first — not counted against the scored budget
-  for (const f of alwaysFacts) {
-    const line = `- **${f.key}**: ${factDisplayValue(f)}`;
-    const list = byCategory.get(f.category) ?? [];
-    list.push(line);
-    byCategory.set(f.category, list);
-  }
-
-  // Then scored facts up to budget — relevant ones only when a message is known
   const requireRelevance = currentMessage !== undefined;
   for (const { fact: f, score } of scoredFacts) {
     if (requireRelevance && score === 0) continue;
     const line = `- **${f.key}**: ${factDisplayValue(f)}`;
     if (totalChars + line.length > MAX_FACTS_CHARS) continue;
-    const list = byCategory.get(f.category) ?? [];
-    list.push(line);
-    byCategory.set(f.category, list);
+    entries.push({ category: f.category, line });
     totalChars += line.length;
   }
-
-  const sections: string[] = [];
-  for (const [category, lines] of byCategory) {
-    sections.push(`### ${category}\n${lines.join("\n")}`);
-  }
+  if (entries.length === 0) return "";
 
   return (
-    "\n\n## Perfil del usuario (hechos confirmados)\n" +
-    "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
-    sections.join("\n\n")
+    "\n\n## Hechos del usuario relacionados con este mensaje\n" +
+    "Estos datos los proporcionó Fede y se relacionan con este mensaje. NUNCA los olvides ni los contradigas.\n\n" +
+    formatFactSections(entries)
   );
+}
+
+/** Stable profile + message-relevant facts, in that order. */
+export function formatUserFactsBlock(currentMessage?: string): string {
+  return formatStableUserFactsBlock() + formatRelevantUserFactsBlock(currentMessage);
 }

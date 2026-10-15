@@ -881,7 +881,8 @@ export const fastRunner: Runner = {
       //
       // v8 S1: split description on CACHE_BREAK_MARKER (router emits
       // `stable + MARKER + variable + extras`) and emit cache-friendly:
-      //   1. STABLE: stable persona + STATUS_SUFFIX
+      //   1. STABLE: stable persona (incl. user profile + active projects)
+      //      + STATUS_SUFFIX
       //   2. VARIABLE: essentials (cacheable: false)
       //   3. STABLE: enforce + always-read KB rows
       //   4. VARIABLE: variable persona + per-call extras
@@ -1021,7 +1022,7 @@ export const fastRunner: Runner = {
           messages.push({ role: "system", content: kbResult.stable });
         }
         // 4. VARIABLE: variable persona + per-call extras (pattern,
-        // checkpoint, userFacts, enrichment) come right after the cache
+        // checkpoint, relevant userFacts, enrichment) come right after the cache
         // boundary. Tagged `cacheable: false` so the claude-sdk shim routes
         // it to a user-message prefix; without this, per-task byte-drift
         // here invalidates the entire systemPrompt cache prefix (the SDK

@@ -54,7 +54,11 @@ import {
 } from "../intelligence/outcome-tracker.js";
 import { enrichContext } from "../intelligence/enrichment.js";
 import { extractAndPersistCorrection } from "../intelligence/correction-loop.js";
-import { formatUserFactsBlock, setUserFact } from "../db/user-facts.js";
+import {
+  formatRelevantUserFactsBlock,
+  formatStableUserFactsBlock,
+  setUserFact,
+} from "../db/user-facts.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { formatProjectsBlock } from "../db/projects.js";
 import {
@@ -342,9 +346,16 @@ export function stripCacheMarker(text: string): string {
  * v8 S1: Returns `{ stable, variable }` so runners can place the variable
  * portion AFTER stable content (essentials, enforce-KB, always-read-KB) for
  * cache stability. See `CACHE_BREAK_MARKER` and `feedback_cache_prefix_variability.md`.
+ *
+ * User facts are split by cache lifetime (2026-10-15): `stableProfileBlock`
+ * (always-inject profile facts + active projects — byte-stable for days) is
+ * the LAST P2 entry, so it rides the cached stable half and is the first P2
+ * section the budget loop drops; `userFactsBlock` carries only the
+ * message-relevant facts and stays in P4 (variable half).
  */
-function buildJarvisSystemPrompt(
+export function buildJarvisSystemPrompt(
   tools: string[],
+  stableProfileBlock: string,
   userFactsBlock: string,
   enrichmentBlock: string,
   personaContent: string | null = null,
@@ -408,6 +419,10 @@ function buildJarvisSystemPrompt(
   if (flags.hasUserFacts) p2.push(personalDataSection());
   p2.push(correctionMemorySection());
   p2.push(figuresProvenanceSection());
+  // User profile + active projects: byte-stable across turns (no message
+  // input), so it belongs in the cached half. Last P2 entry = first P2
+  // casualty of the budget loop. Never for an external caller.
+  if (stableProfileBlock && !external) p2.push(stableProfileBlock);
 
   // P3: Domain-specific (VARIABLE — varies by tool scope)
   if (flags.hasBrowser) p3.push(verificationSection());
@@ -425,8 +440,8 @@ function buildJarvisSystemPrompt(
   const skillsBlock = availableSkillsSection(listSkillsForTools(tools));
   if (skillsBlock) p3.push(skillsBlock);
 
-  // P4: Supplementary data (VARIABLE — per-call user facts, enrichment)
-  if (userFactsBlock) p4.push(userFactsBlock);
+  // P4: Supplementary data (VARIABLE — message-relevant user facts, enrichment)
+  if (userFactsBlock && !external) p4.push(userFactsBlock);
   if (enrichmentBlock) p4.push(enrichmentBlock);
 
   // Assemble with budget check across both halves combined
@@ -485,7 +500,11 @@ function buildJarvisSystemPrompt(
   // Empty blocks pass through (the recorder drops ≤ 0) so the call site is
   // observable in tests; only a block the loop popped is skipped.
   const survived = (block: string) => !block || p4.includes(block);
-  if (survived(userFactsBlock)) recordMemoryInjection("user_facts", userFactsBlock.length);
+  // user_facts = profile+projects (P2) + relevant facts (P4) that survived.
+  const factsChars =
+    (p2.includes(stableProfileBlock) ? stableProfileBlock.length : 0) +
+    (survived(userFactsBlock) ? userFactsBlock.length : 0);
+  recordMemoryInjection("user_facts", factsChars);
   if (survived(enrichmentBlock)) recordMemoryInjection("enrichment", enrichmentBlock.length);
 
   console.log(
@@ -502,7 +521,7 @@ export function buildExternalJarvisSystemPrompt(tools: string[]): {
   stable: string;
   variable: string;
 } {
-  return buildJarvisSystemPrompt(tools, "", "", null, false, true);
+  return buildJarvisSystemPrompt(tools, "", "", "", null, false, true);
 }
 
 /**
@@ -1938,6 +1957,7 @@ export class MessageRouter {
           buildJarvisSystemPrompt(
             scopedTools,
             "",
+            "",
             enrichment.contextBlock,
             spChannel?.personaContent ?? null,
             isOwnerChannel(msg.channel, spChannel?.mode),
@@ -2782,10 +2802,14 @@ export class MessageRouter {
       ),
     ]);
 
-    // User profile facts + projects — always injected so the LLM never forgets context
+    // User profile facts + projects — always injected so the LLM never forgets
+    // context. Profile + projects never read the message (stable, cached
+    // half); only the relevance-scored facts depend on it (variable half).
+    let stableProfileBlock = "";
     let userFactsBlock = "";
     try {
-      userFactsBlock = formatUserFactsBlock(msg.text) + formatProjectsBlock();
+      stableProfileBlock = formatStableUserFactsBlock() + formatProjectsBlock();
+      userFactsBlock = formatRelevantUserFactsBlock(msg.text);
     } catch {
       // Non-fatal — DB may not have the tables yet
     }
@@ -2892,6 +2916,7 @@ export class MessageRouter {
     const spChannel = chan;
     const { stable: stableSP, variable: variableSP } = buildJarvisSystemPrompt(
       tools,
+      stableProfileBlock,
       userFactsBlock,
       enrichment.contextBlock,
       // Per-channel persona — set on email adapters when EMAIL_<ID>_PERSONA_FILE
@@ -3079,6 +3104,7 @@ export class MessageRouter {
         buildDescription: (widenedTools: string[]) => {
           const sp = buildJarvisSystemPrompt(
             widenedTools,
+            stableProfileBlock,
             userFactsBlock,
             enrichment.contextBlock,
             spChannel?.personaContent ?? null,

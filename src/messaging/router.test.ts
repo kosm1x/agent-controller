@@ -88,7 +88,10 @@ vi.mock("./community-reply-gate.js", () => ({
   COMMUNITY_REPLY_FALLBACK: "FALLBACK_TEXT_FOR_TEST",
 }));
 
-import { recordMemoryInjection } from "../observability/prometheus.js";
+import {
+  recordMemoryInjection,
+  recordPromptSectionDropped,
+} from "../observability/prometheus.js";
 vi.mock("../observability/prometheus.js", () => ({
   recordCommunityGateVerdict: vi.fn(),
   // agent-memory P0 memory-tax telemetry (router + kb-injection call sites)
@@ -238,6 +241,35 @@ vi.mock("../db/index.js", () => ({
   }),
 }));
 
+// 2026-10-15 profile split: synthetic user_facts + projects rows, shared by
+// the prompt-split describe and the scope-rerun harness. `beeshake_notes`
+// scores against the rerun harness message ("…modelo de negocio").
+const PROFILE_FIXTURE = {
+  PROFILE: "## Perfil del usuario",
+  PROJECTS: "## Proyectos activos",
+  RELEVANT: "## Hechos del usuario relacionados con este mensaje",
+  FACT_ROWS: [
+    { category: "personal", key: "city", value: "Ciudad Demo", source: "conversation", updated_at: "2026-10-01" },
+    { category: "preferences", key: "tone", value: "directo", source: "conversation", updated_at: "2026-10-01" },
+    { category: "work", key: "acme_launch", value: "lanzamiento en noviembre", source: "conversation", updated_at: "2026-10-02" },
+    { category: "health", key: "diet", value: "alta en proteína", source: "conversation", updated_at: "2026-10-03" },
+    { category: "work", key: "beeshake_notes", value: "modelo de negocio sintético", source: "conversation", updated_at: "2026-10-04" },
+  ],
+  PROJECT_ROWS: [
+    { id: "proj-1", slug: "demo-site", name: "Demo Site", description: "sitio sintético", status: "active", urls: "{}", credentials: "{}", config: "{}", commit_goal_id: null, created_at: "2026-10-01", updated_at: "2026-10-01" },
+  ],
+};
+/** Point `.all()` at the profile fixture; reset with `dbAll.mockReset().mockImplementation(() => [])`. */
+function loadProfileFixture(): void {
+  dbAll.mockImplementation((sql: string) =>
+    sql.includes("FROM user_facts")
+      ? PROFILE_FIXTURE.FACT_ROWS
+      : sql.includes("FROM projects")
+        ? PROFILE_FIXTURE.PROJECT_ROWS
+        : [],
+  );
+}
+
 import {
   MessageRouter,
   threadKey,
@@ -251,8 +283,15 @@ import {
   holdScopeAsks,
   formatConfirmationResult,
   buildExternalJarvisSystemPrompt,
+  buildJarvisSystemPrompt,
+  CACHE_BREAK_MARKER,
   dayLogEntryText,
 } from "./router.js";
+import {
+  formatRelevantUserFactsBlock,
+  formatStableUserFactsBlock,
+} from "../db/user-facts.js";
+import { formatProjectsBlock } from "../db/projects.js";
 import { detectToolFlags, fileSystemSection } from "./prompt-sections.js";
 import {
   pinFromExchange,
@@ -2463,6 +2502,54 @@ describe("MessageRouter", () => {
         expect(rerun.description).not.toContain(SCRUB_SYN);
       } finally {
         memoryRecallSpy.mockResolvedValue({ memories: [] });
+      }
+    });
+
+    it("2026-10-15: the scope re-run's rebuilt description keeps profile + projects stable and relevant facts variable", async () => {
+      const mocked = vi.mocked(submitTask);
+      loadProfileFixture();
+      try {
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-123",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "test-task-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result:
+              '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const rerun = mocked.mock.calls.at(-1)![0];
+        expect(rerun.tags).toContain("scope-rerun");
+        const [stable, variable] = rerun.description.split(CACHE_BREAK_MARKER);
+        expect(stable).toContain(PROFILE_FIXTURE.PROFILE);
+        expect(stable).toContain(PROFILE_FIXTURE.PROJECTS);
+        expect(stable).toContain("**Demo Site** (demo-site)");
+        expect(stable).not.toContain(PROFILE_FIXTURE.RELEVANT);
+        expect(variable).not.toContain(PROFILE_FIXTURE.PROFILE);
+        expect(variable).not.toContain(PROFILE_FIXTURE.PROJECTS);
+        expect(variable).toContain(PROFILE_FIXTURE.RELEVANT);
+        expect(variable).toContain("**beeshake_notes**: modelo de negocio sintético");
+      } finally {
+        dbAll.mockReset().mockImplementation(() => []);
       }
     });
 
@@ -6552,6 +6639,144 @@ describe("buildExternalJarvisSystemPrompt — no host paths (jarvis-pull)", () =
     const prompt = `${stable}\n${variable}`;
     expect(prompt).not.toContain("LOCAL\" = este VPS");
     expect(prompt).not.toContain("/root/claude");
+  });
+});
+
+// 2026-10-15: the user profile (always-inject facts) + active projects are
+// byte-stable for days — they ride the cached STABLE half; only the
+// message-relevant facts stay in the per-turn VARIABLE half.
+describe("buildJarvisSystemPrompt — profile + projects in the stable half", () => {
+  const { PROFILE, PROJECTS, RELEVANT } = PROFILE_FIXTURE;
+  const tools = ["web_search", "user_fact_set", "memory_store"];
+  const msgA = "cómo va el lanzamiento de acme";
+  const msgB = "ajusta mi dieta con más proteína";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadProfileFixture();
+  });
+  afterEach(() => {
+    dbAll.mockReset().mockImplementation(() => []);
+  });
+
+  const stableProfile = () => formatStableUserFactsBlock() + formatProjectsBlock();
+
+  it("(a) same tools, two different messages → stable byte-identical; relevant facts only in variable", () => {
+    const a = buildJarvisSystemPrompt(tools, stableProfile(), formatRelevantUserFactsBlock(msgA), "");
+    const b = buildJarvisSystemPrompt(tools, stableProfile(), formatRelevantUserFactsBlock(msgB), "");
+    expect(a.stable).toBe(b.stable);
+    expect(a.variable).not.toBe(b.variable);
+    expect(a.variable).toContain(RELEVANT);
+    expect(a.variable).toContain("acme_launch");
+    expect(b.variable).toContain("**diet**");
+    expect(a.stable).not.toContain(RELEVANT);
+    expect(b.stable).not.toContain(RELEVANT);
+  });
+
+  it("(a) call site: two chat turns → the stable half of the task description is byte-identical", async () => {
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    vi.mocked(submitTask).mockResolvedValue({
+      taskId: "test-task-123",
+      agentType: "fast",
+      classification: { score: 1, reason: "test", explicit: false },
+    } as Awaited<ReturnType<typeof submitTask>>);
+    const router = new MessageRouter();
+    router.registerChannel(createMockAdapter("whatsapp"));
+    for (const text of [msgA, msgB]) {
+      await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text, timestamp: new Date() });
+    }
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(submitTask).mock.calls.map((c) => c[0]);
+    // Precondition: both turns scope to the same tools, so the whole stable
+    // half must be byte-identical (any per-message byte in P1/P2 busts it).
+    expect(calls[0].tools).toEqual(calls[1].tools);
+    const halves = calls.map((c) => c.description.split(CACHE_BREAK_MARKER));
+    const [stableA, variableA] = halves[0];
+    const [stableB, variableB] = halves[1];
+    expect(stableA).toContain(PROFILE);
+    expect(stableA).toContain(PROJECTS);
+    expect(stableA).toBe(stableB);
+    expect(variableA).not.toContain(PROFILE);
+    expect(variableA).not.toContain(PROJECTS);
+    expect(variableA).toContain("acme_launch");
+    expect(variableB).toContain("**diet**");
+    expect(stableA).not.toContain(RELEVANT);
+  });
+
+  it("(b) stable carries the profile and projects; variable carries neither; telemetry counts both blocks", () => {
+    const profile = stableProfile();
+    const relevant = formatRelevantUserFactsBlock(msgA);
+    const { stable, variable } = buildJarvisSystemPrompt(tools, profile, relevant, "");
+    expect(stable).toContain(PROFILE);
+    expect(stable).toContain(PROJECTS);
+    expect(stable).toContain("**Demo Site** (demo-site)");
+    expect(variable).not.toContain(PROFILE);
+    expect(variable).not.toContain(PROJECTS);
+    expect(variable).toContain(relevant);
+    // Profile is the LAST stable section (first P2 casualty of the budget).
+    expect(stable.endsWith(profile)).toBe(true);
+    expect(vi.mocked(recordMemoryInjection)).toHaveBeenCalledWith(
+      "user_facts",
+      profile.length + relevant.length,
+    );
+  });
+
+  it("(c) over budget: P4 then P3 drain before the profile leaves the stable half", () => {
+    const profile = stableProfile();
+    const relevant = formatRelevantUserFactsBlock(msgA);
+    const baseline = buildJarvisSystemPrompt(tools, profile, relevant, "");
+    expect(baseline.variable.length).toBeGreaterThan(relevant.length); // P3 is populated
+
+    // Oversize enrichment alone: P4 drops, the profile stays.
+    vi.mocked(recordPromptSectionDropped).mockClear();
+    const enr = "\n\n## enrichment sintético\n" + "e".repeat(60_000);
+    const one = buildJarvisSystemPrompt(tools, profile, relevant, enr);
+    expect(one.stable).toBe(baseline.stable);
+    expect(one.variable).not.toContain("e".repeat(1_000));
+    expect(vi.mocked(recordPromptSectionDropped).mock.calls.map((c) => c[0])).not.toContain("p2");
+
+    // Oversize profile: P4 and P3 are fully drained first, then the profile
+    // (and only the profile) leaves P2.
+    vi.mocked(recordPromptSectionDropped).mockClear();
+    vi.mocked(recordMemoryInjection).mockClear();
+    const bigProfile = profile + "\n" + "p".repeat(60_000);
+    const two = buildJarvisSystemPrompt(tools, bigProfile, relevant, "\n\n## enrichment corto");
+    const tiers = vi.mocked(recordPromptSectionDropped).mock.calls.map((c) => c[0]);
+    expect(two.variable).toBe("");
+    expect(two.stable).not.toContain(PROFILE);
+    expect(tiers.filter((t) => t === "p2")).toHaveLength(1);
+    expect(tiers.at(-1)).toBe("p2");
+    expect(tiers.lastIndexOf("p4")).toBeLessThan(tiers.indexOf("p3"));
+    expect(tiers.lastIndexOf("p3")).toBeLessThan(tiers.indexOf("p2"));
+    // The P2 section before the profile survived.
+    expect(baseline.stable.startsWith(two.stable)).toBe(true);
+    // Nothing of the user facts survived → no positive observation.
+    expect(vi.mocked(recordMemoryInjection)).toHaveBeenCalledWith("user_facts", 0);
+  });
+
+  it("(d) external caller (jarvis-pull): no profile, projects or user facts in either half", () => {
+    const ext = buildExternalJarvisSystemPrompt(tools);
+    for (const half of [ext.stable, ext.variable]) {
+      expect(half).not.toContain(PROFILE);
+      expect(half).not.toContain(PROJECTS);
+      expect(half).not.toContain(RELEVANT);
+      expect(half).not.toContain("Demo Site");
+    }
+    // Even if a caller hands the blocks over with external=true, they are not emitted.
+    const forced = buildJarvisSystemPrompt(
+      tools,
+      stableProfile(),
+      formatRelevantUserFactsBlock(msgA),
+      "",
+      null,
+      false,
+      true,
+    );
+    for (const half of [forced.stable, forced.variable]) {
+      expect(half).not.toContain(PROFILE);
+      expect(half).not.toContain(PROJECTS);
+      expect(half).not.toContain(RELEVANT);
+    }
   });
 });
 

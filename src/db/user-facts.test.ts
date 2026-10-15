@@ -4,6 +4,8 @@ import {
   getUserFacts,
   deleteUserFact,
   formatUserFactsBlock,
+  formatStableUserFactsBlock,
+  formatRelevantUserFactsBlock,
   isCredentialFact,
   isSecretValueName,
   CREDENTIAL_FACT_PLACEHOLDER,
@@ -976,7 +978,9 @@ describe("user-facts", () => {
       expect(formatUserFactsBlock()).toBe(
         "\n\n## Perfil del usuario (hechos confirmados)\n" +
           "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
-          "### personal\n- **age**: 30\n- **name**: Ana\n\n" +
+          "### personal\n- **age**: 30\n- **name**: Ana" +
+          "\n\n## Hechos del usuario relacionados con este mensaje\n" +
+          "Estos datos los proporcionó Fede y se relacionan con este mensaje. NUNCA los olvides ni los contradigas.\n\n" +
           "### health\n- **diet**: high protein",
       );
     });
@@ -1082,7 +1086,8 @@ describe("user-facts", () => {
 
       const block = formatUserFactsBlock("Cómo está la ofensiva de SEA?");
 
-      expect(block).toContain("Perfil del usuario");
+      // No always-inject facts and nothing relevant → no block at all.
+      expect(block).toBe("");
       expect(block).not.toContain("cookie-value");
       expect(block).not.toContain("secret-value");
     });
@@ -1127,6 +1132,84 @@ describe("user-facts", () => {
 
       expect(block).toContain("**fantasy_one**:");
       expect(block).not.toContain("**fantasy_two**:");
+    });
+  });
+
+  // 2026-10-15: the profile (always-inject) block rides the cached stable
+  // half of the system prompt; only the scored facts depend on the message.
+  describe("stable / relevant split", () => {
+    const rows = [
+      { category: "personal", key: "age", value: "30", source: "conversation", updated_at: "2026-03-18" },
+      { category: "preferences", key: "tone", value: "directo", source: "conversation", updated_at: "2026-03-18" },
+      { category: "health", key: "diet", value: "high protein", source: "conversation", updated_at: "2026-03-17" },
+      { category: "work", key: "acme_launch", value: "lanzamiento en noviembre", source: "conversation", updated_at: "2026-03-19" },
+    ];
+    const RELEVANT_HEADER = "## Hechos del usuario relacionados con este mensaje";
+    const PROFILE_HEADER = "## Perfil del usuario (hechos confirmados)";
+    beforeEach(() => {
+      mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue(rows) });
+    });
+
+    it("the stable block ignores the message: two different messages → byte-identical", () => {
+      const a = formatStableUserFactsBlock();
+      // The relevant block for these two messages differs, the stable one must not.
+      expect(formatRelevantUserFactsBlock("dieta y proteína: high protein")).not.toBe(
+        formatRelevantUserFactsBlock("cómo va acme"),
+      );
+      expect(formatStableUserFactsBlock()).toBe(a);
+      expect(a).toBe(
+        `\n\n${PROFILE_HEADER}\n` +
+          "Estos datos los proporcionó Fede directamente. NUNCA los olvides ni los contradigas.\n\n" +
+          "### personal\n- **age**: 30\n\n### preferences\n- **tone**: directo",
+      );
+      expect(a).not.toContain("diet");
+      expect(a).not.toContain("acme_launch");
+      expect(a).not.toContain(RELEVANT_HEADER);
+    });
+
+    it("the relevant block carries only scored categories with a relevance hit", () => {
+      const block = formatRelevantUserFactsBlock("cómo va acme");
+      expect(block).toBe(
+        `\n\n${RELEVANT_HEADER}\n` +
+          "Estos datos los proporcionó Fede y se relacionan con este mensaje. NUNCA los olvides ni los contradigas.\n\n" +
+          "### work\n- **acme_launch**: lanzamiento en noviembre",
+      );
+      expect(block).not.toContain(PROFILE_HEADER);
+      expect(block).not.toContain("**age**");
+    });
+
+    it("relevance floor: an unrelated message → empty relevant block", () => {
+      expect(formatRelevantUserFactsBlock("Cómo está la ofensiva de SEA?")).toBe("");
+      expect(formatRelevantUserFactsBlock("?")).toBe("");
+    });
+
+    it("the relevant block honours MAX_FACTS_CHARS (newest relevant first)", () => {
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([
+          { category: "projects", key: "fantasy_one", value: "a".repeat(2_000), source: "conversation", updated_at: "2026-09-05" },
+          { category: "projects", key: "fantasy_two", value: "b".repeat(2_000), source: "conversation", updated_at: "2026-09-04" },
+        ]),
+      });
+      const block = formatRelevantUserFactsBlock("fantasy");
+      expect(block).toContain("**fantasy_one**:");
+      expect(block).not.toContain("**fantasy_two**:");
+    });
+
+    it("the wrapper is exactly stable + relevant", () => {
+      for (const m of ["cómo va acme", "high protein diet", "?", undefined]) {
+        expect(formatUserFactsBlock(m)).toBe(
+          formatStableUserFactsBlock() + formatRelevantUserFactsBlock(m),
+        );
+      }
+    });
+
+    it("empty cases: no rows → both empty; no always-inject rows → stable empty", () => {
+      mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue([]) });
+      expect(formatStableUserFactsBlock()).toBe("");
+      expect(formatRelevantUserFactsBlock("acme")).toBe("");
+      mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue(rows.slice(2)) });
+      expect(formatStableUserFactsBlock()).toBe("");
+      expect(formatRelevantUserFactsBlock("acme")).toContain("acme_launch");
     });
   });
 });
