@@ -41,7 +41,9 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
       ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
     ),
     hasUserFacts: tools.includes("user_fact_set"),
-    hasWebResearch: tools.some((t) => ["web_search", "web_read"].includes(t)),
+    hasWebResearch: tools.some((t) =>
+      ["web_search", "web_read", "expand_read"].includes(t),
+    ),
   };
 }
 
@@ -636,7 +638,7 @@ Tienes herramientas para analizar documentos en profundidad:
 export function sourceGroundingSection(): string {
   return `## REGLA CRÍTICA: Fuentes externas verificables
 Cuando cites trabajos externos (papers, estudios, artículos, autores, estadísticas):
-- Cada cita DEBE provenir de un resultado de web_search/web_read de ESTA conversación y DEBE llevar la URL de donde la leíste.
+- Cada cita DEBE provenir de un resultado de web_search/web_read/expand_read de ESTA conversación y DEBE llevar la URL de donde la leíste.
 - Menciones sueltas de un turno anterior ("el paper de X") NO son citas: si te piden escribir "con las fuentes" y los metadatos (autores, venue, año, URL) no están en tu contexto, RE-BUSCA con web_search para recuperarlos ANTES de escribir. "Ya lo tengo en el contexto" no aplica a bibliografías.
 - NUNCA inventes ni completes de memoria autores, títulos, venues, años o cifras. Una estadística sin URL de origen en esta conversación no se usa — punto.
 - Si no puedes verificar una fuente, márcala explícitamente como "(sin verificar — de memoria)" u omítela y dilo.

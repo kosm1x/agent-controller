@@ -395,7 +395,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-09-11: 192 → 193 (email_verify — TS closed-box SMTP mailbox verifier).
     // 2026-09-29: 193 → 194 (run_schedule — run an existing schedule now).
     // 2026-10-06: 194 → 193 (northstar_sync retired with the COMMIT app).
-    expect(ALL_TOOLS.length).toBe(193);
+    // 2026-10-15: 193 → 194 (expand_read — Expand fetch + Highlights with citation links).
+    expect(ALL_TOOLS.length).toBe(194);
   });
 
   // ──────────────────────────────────────────────────────────────────

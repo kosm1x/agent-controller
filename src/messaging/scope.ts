@@ -22,6 +22,7 @@ export const CORE_TOOLS = [
   "web_search",
   "web_read",
   "exa_search",
+  "expand_read", // 2026-10-15: Expand fetch with citations; dormant without EXPAND_API_KEY
   "skill_save",
   "skill_list",
   "file_read", // Always available — reads .txt, .docx, downloaded attachments

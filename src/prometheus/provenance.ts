@@ -16,7 +16,7 @@ import { errMsg } from "../lib/err-msg.js";
 // ---------------------------------------------------------------------------
 
 const SEARCH_TOOLS = new Set(["web_search", "exa_search"]);
-const FETCH_TOOLS = new Set(["web_read"]);
+const FETCH_TOOLS = new Set(["web_read", "expand_read"]);
 
 /** Regex to detect URLs in LLM output text. */
 const URL_REGEX = /https?:\/\/[^\s)>"'\]]+/g;

@@ -127,3 +127,9 @@
 - **Avoid:** any Bash command that NAMES `.env.example` (grep, diff, numstat, add) — denied every time this session; the operator edits and commits that file, hand them the `printf >>` + `git add` lines.
 - **Better:** ship-it on a 2-item bundle ran R1 FAIL → fold → R2 PASS WITH WARNINGS → fold → R3 PASS with 17 RED mutants, zero rework after commit; the auditor that wrote R1 verified its own closures in R2/R3 (same agent via SendMessage keeps the probe scripts).
 
+
+## 2026-10-15 — Expand setup for Jarvis (`expand_read` tool)
+- **Mistake:** the builder brief for a NEW TOOL listed the scope/guard/provenance lists that name `web_read` but missed the Rule-of-Two row and the three evidence regexes (`EVIDENCE_TOOL_RE`, `CHECKABLE_SOURCE_RE`, `TOOL_NAME_RE`) → before writing a new-tool brief, read CLAUDE.md § "New tool" + § Provenance and grep `\bweb_read\b` across `src` (not only `"web_read"`): every hit is a list to judge, in or out, in the brief.
+- **Mistake:** the brief wrote a test assertion (`fuenteIsCheckable(...)` true outside a run) that contradicts the function's run-context contract; the builder caught it → when a brief dictates an assertion for a function I have not read, say "assert the contract, follow the existing pin style" instead of dictating the value.
+- **Avoid:** a vendor "agent setup" page (`start.md`) is a harness installer, not the integration; for Jarvis the right path was the HTTP API digest (request/response union, error table) with no new dependency → fetch the raw docs with `curl`, digest schemas with a `python3 -I` extractor, hand the builder the digest + file paths, never the 64 KB reference.
+- **Better:** R1 auditor ran 21 of its own mutants (9 RED, 12 survived) and listed every surviving one with the missing test → fold the survivors as named tests in the fix round, so R2 can re-run the same mutant set.

@@ -75,6 +75,7 @@ describe("detectToolFlags", () => {
   it("detects web research tools by name match", () => {
     expect(detectToolFlags(["web_search"]).hasWebResearch).toBe(true);
     expect(detectToolFlags(["web_read"]).hasWebResearch).toBe(true);
+    expect(detectToolFlags(["expand_read"]).hasWebResearch).toBe(true);
     expect(detectToolFlags(["gemini_research"]).hasWebResearch).toBe(false);
   });
 

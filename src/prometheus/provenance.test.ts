@@ -147,6 +147,32 @@ describe("extractProvenance", () => {
     );
   });
 
+  it("extracts expand_read URLs and marks them as fetched (2026-10-15)", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "tc-x",
+            type: "function" as const,
+            function: {
+              name: "expand_read",
+              arguments: JSON.stringify({ url: "https://example.com/x" }),
+            },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc-x", content: "{\"content\":\"x\"}" },
+    ];
+
+    const extraction = extractProvenance(messages);
+    expect(extraction.records).toHaveLength(1);
+    expect(extraction.records[0].tool_name).toBe("expand_read");
+    expect(extraction.records[0].url).toBe("https://example.com/x");
+    expect(extraction.fetchedUrls.has("https://example.com/x")).toBe(true);
+  });
+
   it("extracts exa_search results", () => {
     const messages: ChatMessage[] = [
       exaSearchToolCall("tc-3", "AI safety research"),

@@ -2582,6 +2582,10 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
     expect(withMemory.has("memory_reflect")).toBe(true);
   });
 
+  it("expand_read is CORE (2026-10-15)", () => {
+    expect(CORE_TOOLS).toContain("expand_read");
+  });
+
   it("memory_forget is CORE, reachable even when hasMemory is false (Hindsight is off in prod)", () => {
     expect(CORE_TOOLS).toContain("memory_forget");
     expect(getAllAvailableTools({ ...ALL_ON, hasMemory: false }).has("memory_forget")).toBe(true);

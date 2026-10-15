@@ -326,6 +326,15 @@ describe("R4 audit pins", () => {
     expect(fuenteIsCheckable("denue")).toBe(false);
   });
 
+  it("2026-10-15: an expand_read fuente is checkable once expand_read ran in this run", () => {
+    seedTask("t-expand", "x");
+    enterRunToolContext("t-expand", () => {
+      expect(fuenteIsCheckable("expand_read https://example.com/x")).toBe(false);
+      recordRunTool("expand_read");
+      expect(fuenteIsCheckable("expand_read https://example.com/x")).toBe(true);
+    });
+  });
+
   it("trace attrs: artifact and fuente are redacted BEFORE their 120/80-char cuts", () => {
     // Built at runtime — no key-shaped literal in the (public) repo.
     const key = "AIza" + "b".repeat(35);

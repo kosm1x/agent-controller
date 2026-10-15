@@ -254,7 +254,7 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
           return JSON.stringify({
             error: `Failed to read URL: ${response.status} ${response.statusText}${reason ? ` — ${reason}` : ""}`,
             url,
-            hint: "Jina Reader refused this URL; the page itself may be fine. Retry with browser__goto on this URL, then browser__markdown.",
+            hint: "Jina Reader refused this URL; the page itself may be fine. Retry with browser__goto on this URL, then browser__markdown, or expand_read if it is available.",
           });
         }
         return JSON.stringify({

@@ -11,6 +11,8 @@ import {
   annotateUnverified,
   auditNumbers,
   blockAround,
+  CHECKABLE_SOURCE_RE,
+  EVIDENCE_TOOL_RE,
   extractFigures,
   formatUnverifiedFooter,
   numbersAnnotateEnabled,
@@ -322,6 +324,14 @@ describe("annotateUnverified", () => {
     expect(out.annotated).toBe(8);
     expect(out.text).toMatch(/⚠️ Y 3 cifras más sin respaldo/);
     expect(out.text.startsWith("$1,100 USD (sin verificar)")).toBe(true);
+  });
+});
+
+describe("expand_read (2026-10-15)", () => {
+  it("counts as an evidence tool and as a checkable source, with or without a URL", () => {
+    expect(EVIDENCE_TOOL_RE.test("expand_read")).toBe(true);
+    expect(CHECKABLE_SOURCE_RE.test("expand_read https://example.com/x")).toBe(true);
+    expect(CHECKABLE_SOURCE_RE.test("expand_read precio del plan")).toBe(true);
   });
 });
 

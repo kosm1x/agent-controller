@@ -1,6 +1,6 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-09-26 (tool surface re-verified against code: static enumeration of the exported tool objects = **194** — builtin 150 + WordPress 10 + CRM 1 + `google_workspace_cli` 1 + Google 22 + memory 5 + skills 5; live registry **234** at the 2026-09-26 03:21 UTC boot. Earlier: `memory_forget` added 2026-09-12, CORE + confirm-gated; every tool description passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list)
+> **Last updated**: 2026-10-15 (tool surface re-verified against code: static enumeration of the exported tool objects = **195** — builtin 151 + WordPress 10 + CRM 1 + `google_workspace_cli` 1 + Google 22 + memory 5 + skills 5; live registry **234** at the 2026-09-26 03:21 UTC boot, not re-measured since. Earlier: `expand_read` added 2026-10-15, CORE; `memory_forget` added 2026-09-12, CORE + confirm-gated; every tool description passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list)
 > **Source of truth for tool registration**: `src/tools/sources/builtin.ts` (+ `google.ts`, `memory.ts`, `skills.ts`, `mcp.ts`; wired in `src/index.ts`). **Source of truth for scope groups**: the `*_TOOLS` arrays in `src/messaging/scope.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
@@ -13,7 +13,7 @@
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runners                         | 5 types: fast, nanoclaw, heavy (Prometheus), swarm, a2a                                                                                                                                           |
 | Total tools available to Jarvis | **234** — live registry per service log (2026-09-26 03:21 UTC boot), 5 ToolSources: builtin 162 + mcp 43 + google 22 + memory 2 (KG/pgvector only; Hindsight backend off) + skills 5              |
-| Tools gated by deferral         | 143 of the 194 static tools declare `deferred: true` (2026-09-26); MCP tools not counted                                                                                                          |
+| Tools gated by deferral         | 143 of the 195 static tools declare `deferred: true` (2026-10-15); MCP tools not counted                                                                                                          |
 | Scope groups                    | 35 regex groups (`DEFAULT_SCOPE_PATTERNS` in `src/messaging/scope.ts`); 26 classifier groups (`VALID_GROUPS` in `src/messaging/scope-classifier.ts`)                                              |
 | Core deps                       | 18 + 2 messaging (20 in `package.json`, 2026-09-26)                                                                                                                                               |
 | Tests                           | 9,441 (full suite 2026-09-26; 488 `*.test.ts` files under `src/` + `scripts/`)                                                                                                                    |
@@ -130,6 +130,7 @@ Each tool has `deferred: true|false` controlling whether it loads at prompt-cons
 - `web_search` — Brave Search API
 - `web_read` — extract article text from a URL (Jina Reader + stealth-browser fallback)
 - `exa_search` — semantic search over Exa's corpus
+- `expand_read` — fetch a public URL through Expand (real browser capture); optional `query` returns ranked passages with citation links to the capture; dormant without `EXPAND_API_KEY`
 - `user_fact_set` / `user_fact_list` / `user_fact_delete` — user profile
 - `memory_forget` — 2026-09-12, deferred, confirm-gated: invalidates the active knowledge-graph facts of a subject (temporal, history kept) and/or deletes ONE correction-loop entry `corrections/<12 hex>.md` from the pgvector KB via `pgDelete`; NOT for personal facts (`user_fact_delete`) or KB files (`jarvis_file_delete`)
 - `skill_save` / `skill_list` — reusable skill vault

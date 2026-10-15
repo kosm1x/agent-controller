@@ -142,6 +142,13 @@ describe("checkAnalysisParalysis", () => {
     const available = new Set<string>(); // no non-read-only tools
     expect(checkAnalysisParalysis(calls, called, available, 0)).toBe(1);
   });
+
+  it("counts expand_read as read-only (2026-10-15)", () => {
+    const calls = [tc("expand_read")];
+    const called = new Set(["expand_read"]);
+    const available = new Set<string>();
+    expect(checkAnalysisParalysis(calls, called, available, 0)).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
