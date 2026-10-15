@@ -113,6 +113,7 @@ Recipes → §Patterns. Rules:
 - **Batch tool**: iterate the single-item function — do NOT bypass its invariants; cap 50 checked BEFORE any work.
 - **New runner**: Chat tasks never reach the score-based path — wire a messaging-branch check behind a `MESSAGING_*_ESCALATION` kill switch. `task.completed` `result` is the raw OBJECT; don't "fix" a serialization path assuming a string.
 - **MCP server**: a bridge needing mc env vars MUST list their NAMES in `envNames` (values come from the service env by name). Never put secret values directly in `mcp-servers.json` (the repo is public).
+- **System prompt sections**: `buildJarvisSystemPrompt` returns `{stable, variable}`; byte-stable blocks (identity, core, cohort, always-inject profile + projects) go in P1/P2 BEFORE `CACHE_BREAK_MARKER`, anything that reads the message (scored facts, enrichment, scope-conditional sections) goes in P3/P4 after it. A new block or a moved one is proven by whole-stable-half byte identity across two messages with equal tools (builder AND `handleInbound`), by every call site of the changed signature (main, scope-rerun `buildDescription`, worker, external), and by the ledger (`cache_creation_tokens`/task before vs after) — the eval gate probes the EXTERNAL builder and cannot see profile/projects.
 - **Prometheus**: `plan()`/`replan()`/`reflect()` return `{…, usage}` — always destructure; SDK calls go through `queryClaudeSdkTiered`, NOT `queryClaudeSdkComplexWithFallback` directly. Kill switch `PROMETHEUS_ECONOMY_MODEL=false` (systemd drop-in, not `.env`).
 
 ## Git

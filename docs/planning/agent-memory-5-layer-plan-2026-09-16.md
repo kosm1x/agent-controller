@@ -43,7 +43,7 @@ What the paper adds that Jarvis has no equivalent for:
 ### L1 Working memory — PRESENT, one handoff missing
 - Prompt tiers P1–P4, budget `SYSTEM_PROMPT_TOKEN_BUDGET` 12,000 (`src/config/constants.ts:91`), drop order P4→P3→P2 (`router.ts:338-386`). KB block 8,000 chars + `capStableContent` (`kb-injection.ts:151,211-256`).
 - Compaction: OpenAI path `compactConversation` L0–L3 (`adapter-openai.ts:1334-1420`, `prometheus/compaction-pipeline.ts:190`); SDK path `CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000` (`claude-sdk.ts:808`), SDK-internal.
-- **Gap G1**: no compaction → memory write. **Gap G2**: user-facts + enrichment live in P4, the first tier dropped; no counter says how often. (09-06 gave user-facts its own budget; whether P4 still drops at 12 k is unmeasured.)
+- **Gap G1**: no compaction → memory write. **Gap G2**: user-facts + enrichment live in P4, the first tier dropped; no counter says how often. (09-06 gave user-facts its own budget; whether P4 still drops at 12 k is unmeasured.) **Update 2026-10-15 (`b6a1c7d`)**: the always-inject profile + active projects moved to the LAST P2 entry (stable half); only message-scored facts + enrichment remain in P4. Live 7 d before the move: 60 of 381 builds truncated, the profile dropped once.
 
 ### L2 Episodic — STORES PRESENT, RETRIEVAL WRONG-SHAPED
 - Stores: `tasks`/`runs`/`task_outcomes` (`schema.sql:3,39,100`), day-log (sole writer `router.ts:1258`, model writes blocked), `conversations` `mc-operational` bank via `auto-persist.ts` with `outcome:*` tags + `outcome-bias.ts`, `task_gates` (V8.4 ledger = the validity signal the paper asks for), `recall_audit`.
@@ -53,7 +53,7 @@ What the paper adds that Jarvis has no equivalent for:
 
 ### L3 Semantic — FRAGMENTED, NO ONTOLOGY, NO CONFLICT DETECTION
 - Stores and their supersession rules: `user_facts` (272 rows; UNIQUE upsert, silent overwrite), `jme_facts` (482; cosine 0.85 dedup / 0.95 skip, per-category TTL `jme.ts:9-14`, identity-inversion guard `:769`), `knowledge_triples` (3,507; `valid_from`/`valid_to` latest-wins `knowledge-graph.ts:45-85`), `conversations` (9,544; trust tiers 1–4 + decay), `jarvis_files` KB, pgvector (dead without `COMMIT_DB_KEY`).
-- Always-inject: `formatUserFactsBlock` 3,000 chars (`db/user-facts.ts:89,119`) → P4; `essentials.ts` (12 facts/1,200 chars) only in fast-runner + reflection, **not** the router prompt.
+- Always-inject: `formatUserFactsBlock` 3,000 chars (`db/user-facts.ts:89,119`) → P4 (**since 2026-10-15: `formatStableUserFactsBlock()` → P2 stable; `formatRelevantUserFactsBlock(msg)` → P4**); `essentials.ts` (12 facts/1,200 chars) only in fast-runner + reflection, **not** the router prompt.
 - **Gap G4**: no entity/relation registry with TTL + validation. **Gap G5**: no contradiction detection across stores; no `status`/`superseded_by`/`confirmed_at` on `user_facts`. **Gap G6**: `memory_search/store/reflect` unreachable in prod (`scope.ts:1559,1647`).
 
 ### L4 Procedural — STRONGEST LAYER, LOOP NOT CLOSED
@@ -108,7 +108,7 @@ Exit: contradiction test GREEN; a seeded conflict appears in `mc-ctl memory-conf
 Goal: continuity test across a compaction.
 1. OpenAI path: after `compactConversation` L2 produces the summary, write its "decisions made / constraints discovered" section to `mc-operational` tagged `source:compaction`, `task:<id>`, outcome `unknown` (never positive), via the existing retain path (governance rate limit applies).
 2. SDK path: verify whether the Agent SDK exposes a PreCompact hook to Jarvis; if yes, same writer; if not, document that the SDK path relies on its own summary and record the gap (no speculative code).
-3. Act on the P4-drop counter from Phase 0: if `mc_prompt_section_dropped_total{tier="P4"}` > 5 % of builds, move `user_facts` block to P3 (one constant) and re-run eval:gate.
+3. Act on the P4-drop counter from Phase 0: if `mc_prompt_section_dropped_total{tier="P4"}` > 5 % of builds, move `user_facts` block to P3 (one constant) and re-run eval:gate. **Overtaken 2026-10-15**: the always-inject profile now rides P2 (stable, cache-prefix) for cost reasons, not drop-rate; `mc_memory_injection_tokens{block=user_facts}` now sums the surviving profile (P2) + surviving relevant facts (P4).
 Exit: continuity test (fact stated before a forced compaction is recalled after it) GREEN live.
 
 ### Phase 4 — Close the skill loop (1 session)

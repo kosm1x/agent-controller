@@ -61,7 +61,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 
 **Status (shipped 2026-04-26; cache-read validated 2026-05-27)** — _Shipped_:
 
-- ✅ `buildJarvisSystemPrompt` returns `{stable, variable}` instead of one concatenated string. Stable = P1+P2 (identity, safety, capabilities, personalData, correctionMemory). Variable = P3+P4 (scope-conditional sections + userFacts + enrichment).
+- ✅ `buildJarvisSystemPrompt` returns `{stable, variable}` instead of one concatenated string. Stable = P1+P2 (identity, safety, capabilities, personalData, correctionMemory, and since 2026-10-15 the always-inject user profile + active projects as the LAST P2 entry). Variable = P3+P4 (scope-conditional sections + message-scored user facts + enrichment).
 - ✅ New `buildKnowledgeBaseSections(scopedTools, messageText, logTag)` exposes split KB: stable = enforce + always-read, variable = conditional + project README.
 - ✅ Router callers concatenate as `stable + CACHE_BREAK_MARKER + variable + extras`. Per-call extras (patternBlock, checkpointBlock, time context, agent boilerplate) attach to the variable half.
 - ✅ Fast-runner chat branch splits `input.description` on the marker and emits messages in cache-friendly order: stable persona + STATUS_SUFFIX → essentials → stable KB → variable persona → variable KB → precedent → deferredCatalog. Read-only path keeps legacy enforce-only KB call (already stable).
@@ -70,6 +70,7 @@ V8 capabilities (§4) cannot land credibly until these five substrate items clos
 - ✅ Dispatcher persistence strips the marker before INSERT into `tasks.description`, `runs.input`, and event emissions (audit W1 fix). DB stays clean; runners still receive the marker via in-memory submission.
 - ✅ 7 new unit tests (4 for `buildKnowledgeBaseSections`, 3 for `stripCacheMarker`).
 - ✅ **Validated**: cache-read ratio sustained ≥80% at v8 prompt sizes — the V8.1 §13 activation gate reads 82–85% over 70+ daily runs (2026-05-27 onward), clearing S1's test bar (`cost_ledger.cache_read_tokens / cost_ledger.prompt_tokens`).
+- ✅ **2026-10-15 stable-profile move (`b6a1c7d`, deployed build `5ce4830`)**: live prompt dumps showed ~11k tokens per chat turn still sent uncacheable, ~4k of them the always-inject user profile (`personal/contact/preferences`) + active projects, which change only every few days. `formatUserFactsBlock` split into `formatStableUserFactsBlock()` (never reads the message) + `formatRelevantUserFactsBlock(msg)` (scored, header `## Hechos del usuario relacionados con este mensaje`); `buildJarvisSystemPrompt(tools, stableProfileBlock, userFactsBlock, …)` pushes profile + `formatProjectsBlock()` last in P2 (first P2 casualty under the budget), external/worker builders pass "". Trade-off: a profile or project edit now busts the KB block too (one SDK cache breakpoint). Proof = fast-tier `cache_creation_tokens`/task vs the 7-d baseline to 10-15 (p50 47,926, read 78.3 %); the eval gate cannot see this move (its Jarvis probe uses the external builder).
 
 ### S2 — Self-audit before reporting
 

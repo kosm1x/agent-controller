@@ -215,6 +215,14 @@ teaches Jarvis to read the `Modo:` tag, sign as the community manager (not as
 "Jarvis"), decline admin requests with a polite acknowledgement-only reply,
 and keep tone professional in the sender's language (Spanish by default).
 
+**Known, ruling open (qa audit 2026-10-15):** the operator profile block (always-inject
+`user_facts`) and the active-projects block (project names, site URLs, credential
+KEY names — never values) are gated on `external` only, not on `ownerChannel`, so
+they also reach community-manager prompts. This predates the 2026-10-15 cache
+split (they rode the variable half before, the stable half now). Dropping them
+for non-owner channels is a one-line gate in `buildJarvisSystemPrompt`; whether
+the community persona needs the project list is the operator's call.
+
 ## Security / robustness
 
 - **Server-side sender scope (owner-only).** Each `owner-only` account's IMAP

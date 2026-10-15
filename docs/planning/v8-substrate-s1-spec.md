@@ -132,6 +132,8 @@ Every Jarvis LLM call follows this skeleton:
 
 The `<!--CACHE_BREAK-->` marker is the explicit boundary. Everything above is sent with `cache_control: { type: 'ephemeral' }` per Anthropic API. Everything below is plain content.
 
+> **As shipped (router `buildJarvisSystemPrompt`, marker `CACHE_BREAK_v1`)**: block [4] was NOT in the stable half from 2026-04-26 to 2026-10-15 — user facts and the active-project list rode P4 (variable) and were re-sent as fresh input on every turn (~4k tokens of the ~11k uncacheable system tokens measured in prompt dumps 2026-10-14/15). `b6a1c7d` (2026-10-15) moved the always-inject profile (`personal/contact/preferences`) + active projects to the last P2 entry, i.e. this layout's [4]; only message-scored facts, enrichment and the scope-conditional sections stay below the marker. NorthStar entries are not injected into the system prompt (the day-log is the work-truth). The fast runner collapses all stable system messages into ONE SDK cache breakpoint, so a change to [1]–[4] busts the whole prefix; profile/project edits are rare (facts 5 of 14 days, projects 2 of 14) and the KB stable block shares that breakpoint.
+
 ### Why this layout
 
 - **Standing rules first**: never vary, longest TTL benefit
