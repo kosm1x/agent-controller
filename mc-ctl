@@ -5,7 +5,8 @@
 if (return 0 2>/dev/null); then echo "mc-ctl must be executed, not sourced" >&2; return 2; fi
 set -euo pipefail
 
-PROJECT_DIR="/root/claude/mission-control"
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 SERVICE_NAME="mission-control"
 DB_PATH="${PROJECT_DIR}/data/mc.db"
 # S6 item 3c: sql/sql_raw open the db read-only unless the router cleared this
