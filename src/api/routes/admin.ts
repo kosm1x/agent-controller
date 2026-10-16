@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { getDatabase } from "../../db/index.js";
 import { cancelTask } from "../../dispatch/dispatcher.js";
 import { checkDrift, summarizeDrift } from "../../observability/drift.js";
@@ -130,26 +131,45 @@ admin.get("/autonomous-status", (c) => {
 });
 
 /**
- * POST /api/admin/drive-backfill
+ * Optional `?prefix=<path prefix>&limit=<n>` for the Drive bulk passes. A
+ * limit that is not a positive integer is ignored.
+ */
+function driveBatchQuery(c: Context): { pathPrefix?: string; limit?: number } {
+  const prefix = c.req.query("prefix");
+  const limit = c.req.query("limit");
+  return {
+    ...(prefix ? { pathPrefix: prefix } : {}),
+    ...(limit && /^[1-9]\d*$/.test(limit) ? { limit: Number(limit) } : {}),
+  };
+}
+
+/**
+ * POST /api/admin/drive-backfill[?prefix=<path prefix>&limit=<n>]
  *
- * One-time backfill: uploads all jarvis_files to Google Drive.
+ * One-time backfill: uploads jarvis_files rows without a Drive copy. `prefix`
+ * restricts it to paths starting with that string; `limit` is a canary, not
+ * paging: the first N rows by path after the prefix, rows that already have a
+ * Drive copy count toward it.
  * Requires DRIVE_KB_FOLDER_ID env var.
  */
 admin.post("/drive-backfill", async (c) => {
   const { backfillToDrive } = await import("../../db/drive-sync.js");
-  const result = await backfillToDrive();
+  const result = await backfillToDrive(driveBatchQuery(c));
   return c.json(result);
 });
 
 /**
- * POST /api/admin/drive-reformat
+ * POST /api/admin/drive-reformat[?prefix=<path prefix>&limit=<n>]
  *
- * Updates all existing Drive files with Obsidian-native formatting
- * (YAML frontmatter + wikilinks). Use after format changes.
+ * Updates existing Drive files with Obsidian-native formatting
+ * (YAML frontmatter + wikilinks). Use after format changes; `prefix` and
+ * `limit` allow a canary pass before the full run. `limit` is not paging: it
+ * takes the first N rows by path after the prefix, rows without a Drive copy
+ * count toward it.
  */
 admin.post("/drive-reformat", async (c) => {
   const { reformatDriveFiles } = await import("../../db/drive-sync.js");
-  const result = await reformatDriveFiles();
+  const result = await reformatDriveFiles(driveBatchQuery(c));
   return c.json(result);
 });
 

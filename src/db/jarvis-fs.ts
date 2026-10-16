@@ -21,7 +21,11 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
 import type { DriveMetadata } from "./drive-sync.js";
-import { syncToDrive, syncDeleteToDrive } from "./drive-sync.js";
+import {
+  syncToDrive,
+  syncDeleteToDrive,
+  isDriveSyncEnabled,
+} from "./drive-sync.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 
@@ -315,13 +319,21 @@ export function upsertFile(
   // Dual-write to pgvector (fire-and-forget, async, non-blocking)
   syncToPgvector(path, title, content, tags, qualifier, priority, condition);
 
-  // Sync to Google Drive for Obsidian (fire-and-forget, async, non-blocking)
+  // Sync to Google Drive for Obsidian (fire-and-forget, async, non-blocking).
+  // updated_at feeds the Drive `updated:` key so the copy depends on the row;
+  // read only when the sync is on.
+  const stamp = isDriveSyncEnabled()
+    ? (db
+        .prepare("SELECT updated_at FROM jarvis_files WHERE path = ?")
+        .get(path) as { updated_at: string | null } | undefined)
+    : undefined;
   const driveMeta: DriveMetadata = {
     tags,
     qualifier,
     priority,
     condition,
     relatedTo,
+    updatedAt: stamp?.updated_at ?? undefined,
   };
   syncToDrive(path, title, content, driveMeta);
 
