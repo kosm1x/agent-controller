@@ -298,6 +298,25 @@ describe("mc-ctl — RW subcommands are operator-context gated", () => {
     expect(run.stdout).toContain("Mission Control Admin CLI");
   });
 
+  it("mc-ctl and its sourced libs carry no host path (CI runners cannot read /root)", () => {
+    // A hardcoded PROJECT_DIR made `source ${PROJECT_DIR}/scripts/lib/operator-gate.sh` read the
+    // VPS checkout: green here, "Permission denied" on every GitHub run (red since 2026-10-11).
+    const libDir = join(ROOT, "scripts/lib");
+    const files = ["mc-ctl", ...readdirSync(libDir).filter((f) => f.endsWith(".sh")).map((f) => `scripts/lib/${f}`)];
+    expect(files.length).toBeGreaterThan(1);
+    const hits = files.flatMap((f) =>
+      readFileSync(join(ROOT, f), "utf8")
+        .split("\n")
+        .flatMap((l, i) => (l.includes("/root/") ? [`${f}:${i + 1}: ${l.trim()}`] : [])),
+    );
+    expect(hits, "host path in mc-ctl or scripts/lib/*.sh").toEqual([]);
+    // Self-locating, symlink-resolved: the operator runs it as /usr/local/bin/mc-ctl -> <checkout>/mc-ctl.
+    // Two lines, so an unset BASH_SOURCE aborts under `set -u` instead of `dirname ""` → $PWD.
+    expect(MC_CTL).toMatch(/^_self="\$\(readlink -f "\$\{BASH_SOURCE\[0\]\}"\)"\nPROJECT_DIR="\$\(cd "\$\(dirname "\$_self"\)" && pwd\)"$/m);
+    // One assignment: a later `PROJECT_DIR=~/claude/…` override would dodge the `/root/` scan.
+    expect(MC_CTL.match(/^PROJECT_DIR=/gm)).toHaveLength(1);
+  });
+
   it("scripts/deploy.sh is gated before it does anything", () => {
     const deploy = readFileSync(join(ROOT, "scripts/deploy.sh"), "utf8");
     const cmds = deploy.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"));

@@ -1130,13 +1130,35 @@ B`;
       expect(validateShellCommand("bash <<EOF\necho x > $'/opt/example/out.txt'\nEOF").reason).toBe(
         "ANSI-C/locale quoting is not judged under bash re-entry: $'/opt/example/out.txt'",
       );
-      for (const nested of ["sh <<a\n".repeat(16383), "cat <<a\n".repeat(16383), `sh -c ${"\"'".repeat(30_000)}`]) {
+      // Scaling, not wall clock: the same input at 8 192 and 16 383 lines (57 344 → 114 681 chars for
+      // `sh <<a`, 65 536 → 131 064 for `cat <<a`), median of 3 each. Measured under vitest on the VPS
+      // 2026-10-16: ~0.5 s → ~0.9 s (`sh`), ~0.19 s → ~0.4 s (`cat`); ratio 1.86-2.28 over 3 runs of
+      // this file. A charCodeAt rescan of the remainder per heredoc body line (quadratic) measured
+      // 3.8 s → 15.2 s, ratio 4.01. No absolute bound is both CI-safe and tight: 1500 ms flaked at
+      // 2174 ms on a shared GitHub runner, while that quadratic passed a 15 000 ms bound here and
+      // would run ~8 s on a 2x faster box. A runner slow by a constant factor keeps the ratio.
+      // The 20 s per call is a sanity bound (testTimeout is 30 s per test, raised for this one).
+      const time = (input: string): number => {
         const t = performance.now();
-        validateShellCommand(nested);
-        expect(performance.now() - t, nested.slice(0, 8)).toBeLessThan(1500);
+        validateShellCommand(input);
+        const ms = performance.now() - t;
+        expect(ms, `${JSON.stringify(input.slice(0, 8))}… ${input.length} chars`).toBeLessThan(20_000);
+        return ms;
+      };
+      const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[1]!;
+      for (const line of ["sh <<a\n", "cat <<a\n"]) {
+        const half: number[] = [];
+        const full: number[] = [];
+        for (let r = 0; r < 3; r++) {
+          half.push(time(line.repeat(8192)));
+          full.push(time(line.repeat(16383)));
+        }
+        const ratio = median(full) / median(half);
+        expect(ratio, `${line.trim()}: 16383 lines ${median(full).toFixed(0)} ms / 8192 lines ${median(half).toFixed(0)} ms`).toBeLessThan(3);
       }
+      time(`sh -c ${"\"'".repeat(30_000)}`); // ~20 ms: too fast for a stable ratio, the sanity bound only
       expect(validateShellCommand("cat <<a\n".repeat(16383)).reason).toMatch(/nested 5 deep \(a heredoc body or a quoted string\) is not judged/);
-    });
+    }, 120_000);
 
     it("stays linear on hostile operator-dense input (one pass, no rescans)", () => {
       // A benign 20 000-char line of 2 000 `cp` words (audit R1 W2: a rescan budget refused it).
