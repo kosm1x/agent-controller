@@ -24,6 +24,12 @@ vi.mock("../../memory/recall-compare.js", () => ({
   }),
 }));
 
+const driveMocks = vi.hoisted(() => ({
+  backfillToDrive: vi.fn(),
+  reformatDriveFiles: vi.fn(),
+}));
+vi.mock("../../db/drive-sync.js", () => driveMocks);
+
 import { admin } from "./admin.js";
 import { Hono } from "hono";
 
@@ -251,5 +257,35 @@ describe("GET /admin/tools (usefulness audit U16 — mc-ctl tools called a route
     expect(body.tools).toEqual([...body.tools].sort());
     expect(body.byPrefix.zz).toBe(2);
     expect(body.byPrefix.mcp).toBe(1);
+  });
+});
+
+describe("POST /admin/drive-backfill and /admin/drive-reformat (prefix + limit)", () => {
+  beforeEach(() => {
+    driveMocks.backfillToDrive.mockReset().mockResolvedValue({ uploaded: 1, skipped: 0, failed: 0 });
+    driveMocks.reformatDriveFiles.mockReset().mockResolvedValue({ updated: 2, skipped: 0, failed: 0 });
+  });
+
+  it("drive-backfill passes prefix and limit through; defaults to no options", async () => {
+    const app = createTestApp();
+    const res = await app.request("/admin/drive-backfill?prefix=skills%2F&limit=5", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ uploaded: 1, skipped: 0, failed: 0 });
+    expect(driveMocks.backfillToDrive).toHaveBeenCalledWith({ pathPrefix: "skills/", limit: 5 });
+    await app.request("/admin/drive-backfill", { method: "POST" });
+    expect(driveMocks.backfillToDrive).toHaveBeenLastCalledWith({});
+  });
+
+  it("drive-reformat passes prefix and ignores a limit that is not a positive integer", async () => {
+    const app = createTestApp();
+    for (const bad of ["0", "-3", "2.5", "abc"]) {
+      await app.request(`/admin/drive-reformat?prefix=workspace%2F&limit=${bad}`, { method: "POST" });
+      expect(driveMocks.reformatDriveFiles).toHaveBeenLastCalledWith({ pathPrefix: "workspace/" });
+    }
+    const res = await app.request("/admin/drive-reformat?limit=3", { method: "POST" });
+    expect(await res.json()).toEqual({ updated: 2, skipped: 0, failed: 0 });
+    expect(driveMocks.reformatDriveFiles).toHaveBeenLastCalledWith({ limit: 3 });
   });
 });

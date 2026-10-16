@@ -1,4 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Spy on the Drive hand-off only; everything else in drive-sync stays real
+// (syncToDrive is a no-op here anyway: DRIVE_KB_FOLDER_ID is unset). The
+// enabled flag drives jarvis-fs's own gate on the updated_at read.
+const driveSync = vi.hoisted(() => ({ syncToDrive: vi.fn(), enabled: true }));
+vi.mock("./drive-sync.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./drive-sync.js")>()),
+  syncToDrive: driveSync.syncToDrive,
+  isDriveSyncEnabled: () => driveSync.enabled,
+}));
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -387,5 +397,35 @@ describe("getFilesByQualifier — tags for the external KB policy", () => {
     const tagsOf = (p: string) => rows.find((r) => r.path === p)?.tags;
     expect(JSON.parse(tagsOf("knowledge/shared.md")!)).toEqual(["crm", "external"]);
     expect(JSON.parse(tagsOf("knowledge/private.md")!)).toEqual([]);
+  });
+});
+
+describe("upsertFile — Drive hand-off carries the row's updated_at", () => {
+  it("passes updatedAt in SQLite datetime shape, equal to the stored row", () => {
+    driveSync.syncToDrive.mockClear();
+    upsertFile("knowledge/drive/stamp.md", "Stamp", "x", ["t"], "reference", 50, null, [], {
+      skipUserEdit: true,
+    });
+    const row = getDatabase()
+      .prepare("SELECT updated_at FROM jarvis_files WHERE path = ?")
+      .get("knowledge/drive/stamp.md") as { updated_at: string };
+    expect(driveSync.syncToDrive).toHaveBeenCalledTimes(1);
+    const [path, title, content, meta] = driveSync.syncToDrive.mock.calls[0];
+    expect([path, title, content]).toEqual(["knowledge/drive/stamp.md", "Stamp", "x"]);
+    expect(meta.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(meta.updatedAt).toBe(row.updated_at);
+    expect(meta.tags).toEqual(["t"]);
+  });
+
+  it("skips the updated_at read when Drive sync is disabled", () => {
+    driveSync.syncToDrive.mockClear();
+    driveSync.enabled = false;
+    try {
+      upsertFile("knowledge/drive/off.md", "Off", "x");
+    } finally {
+      driveSync.enabled = true;
+    }
+    expect(driveSync.syncToDrive).toHaveBeenCalledTimes(1);
+    expect(driveSync.syncToDrive.mock.calls[0][3].updatedAt).toBeUndefined();
   });
 });
