@@ -154,11 +154,10 @@ describe("scoringVersionMismatch (2026-10-04)", () => {
       baseline: committed,
       baselinePath: "/repo/src/tuning/eval-baseline.json",
     });
-    // FLIP AT RE-CAPTURE: the committed file is the v3 incumbent until the
-    // operator runs `npm run eval:gate -- --run --update-baseline` on the
-    // pushed HEAD; then change 3 → SCORING_VERSION and the refusal → null.
-    expect((committed as EvalBaseline).scoringVersion).toBe(3);
-    expect(refusal).toMatch(/older scoring .*re-capture with --run --update-baseline/);
+    // Re-captured 2026-10-17 22:03 UTC under scoring v4 (overall 78.63): the
+    // committed file is the incumbent; a compare must not refuse before spend.
+    expect((committed as EvalBaseline).scoringVersion).toBe(SCORING_VERSION);
+    expect(refusal).toBeNull();
   });
 
   it("a full v3 baseline (the pre-3j capture shape) is refused before spend (exit 2 contract)", () => {
