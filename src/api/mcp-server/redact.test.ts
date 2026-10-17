@@ -14,8 +14,10 @@ import {
   redactCredentialsForPersist,
   redactDeep,
   redactSecrets,
+  secretNameFragment,
   stringifyRedacted,
 } from "./redact.js";
+import { literalEnvValueError } from "../../mcp/record-env.js";
 
 // Fragment-assembled fake fixtures (see file header).
 const SK = "sk-" + "abcdefghijklmnop1234567890ABCD";
@@ -146,6 +148,11 @@ describe("redactSecrets", () => {
       expect(out).not.toContain(tok);
       expect(out).toContain("/file/bot[REDACTED_KEY]/documents/file_7.html");
     }
+  });
+
+  it("WS3b R1 W4 sweep: a BEARER-named assignment is redacted by name", () => {
+    expect(redactSecrets("X_API_BEARER__acmenews=tok-x")).toBe("X_API_BEARER__acmenews=[REDACTED]");
+    expect(redactSecrets("ACME_BEARER=tok-y done")).toBe("ACME_BEARER=[REDACTED] done");
   });
 
   it("passes null/undefined through as empty string", () => {
@@ -315,5 +322,14 @@ describe("durable-sink helpers (redactCredentialsForPersist / stringifyRedacted)
     const cyclic: Record<string, unknown> = { a: "x" };
     cyclic.self = cyclic;
     expect(() => stringifyRedacted(cyclic)).toThrow(TypeError);
+  });
+});
+
+describe("WS3b R1 W4 sweep: BEARER is a secret-shaped record env literal name", () => {
+  it("refuses a literal named *_BEARER (names the fragment, never the value)", () => {
+    expect(secretNameFragment("ACME_API_BEARER")).toBe("BEARER");
+    const err = literalEnvValueError("ACME_API_BEARER", "synthetic-literal");
+    expect(err).toContain('"BEARER"');
+    expect(err).not.toContain("synthetic-literal");
   });
 });

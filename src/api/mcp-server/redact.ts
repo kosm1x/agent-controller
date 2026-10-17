@@ -28,7 +28,7 @@ const HEX_BLOB_RULE: [RegExp, string] = [
 ];
 
 const SECRET_NAME_RE =
-  /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|JWT|AUTH)(?:[_\d]|$)/i;
+  /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|JWT|AUTH|BEARER)(?:[_\d]|$)/i;
 
 /** A regex rule, or a function for a rule one replace() cannot express. */
 type Rule = [RegExp, string] | ((s: string) => string);
@@ -235,6 +235,8 @@ export const SECRET_NAME_FRAGMENTS: readonly string[] = [
   "CONTRASENA",
   "PRIVATE",
   "CERT",
+  // WS3b R1 W4 sweep: per-account X API bearer (`X_API_BEARER__<handle>`)
+  "BEARER",
 ];
 
 /** The first SECRET_NAME_FRAGMENTS entry the uppercased name contains, or undefined. */

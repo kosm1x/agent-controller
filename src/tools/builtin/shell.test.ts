@@ -97,8 +97,18 @@ describe("env scrub — shell_exec child cannot inherit secrets (H1)", () => {
       "EMAIL_COMUNIDADES_PASSWORD",
       "X_AUTH_TOKEN__iooking4ward", // _TOKEN is mid-name, not a suffix
       "X_CT0__mexiconecesario", // no secret keyword at all — prefix rule
+      "X_API_BEARER__acmenews", // WS3b R1 W4: BEARER keyword
     ];
     for (const k of secret) expect(isSecretEnvKey(k)).toBe(true);
+  });
+
+  it("WS3b R1 W4: an X API bearer env var never reaches the shell_exec child env", () => {
+    process.env.X_API_BEARER__acmenews = "synthetic-bearer";
+    try {
+      expect(buildScrubbedEnv().X_API_BEARER__acmenews).toBeUndefined();
+    } finally {
+      delete process.env.X_API_BEARER__acmenews;
+    }
   });
 
   it("leaves plain operational vars alone", () => {

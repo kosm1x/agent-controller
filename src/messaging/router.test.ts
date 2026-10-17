@@ -310,6 +310,7 @@ import { scopeMissFallbackLine } from "./scope-miss.js";
 import { registerProjectScopeGroups, _resetProjectScopeGroups } from "./scope.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
+import { listXAccounts } from "../lib/x-poster/config.js";
 import { formatForTelegram } from "./formatter.js";
 import { TelegramStreamController } from "./channels/telegram-stream.js";
 import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
@@ -6072,6 +6073,74 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(getPendingConfirmation(tk)?.args).toEqual({ id: 7 });
     expect(waAdapter.sentMessages.at(-1)!.text).toContain("¿Procedo?");
     expect(gatedExec.executeGatedCapability).not.toHaveBeenCalled();
+  });
+
+  it("S6 ruling 5b: a confirmed tweet_post resolves the X accounts of the task's project only", async () => {
+    const X_ENV = ["X_AUTH_TOKEN__acmenews", "X_CT0__acmenews", "X_AUTH_TOKEN__acmebrand", "X_CT0__acmebrand"];
+    for (const k of X_ENV) process.env[k] = "synthetic";
+    const record = (slug: string, h: string) => ({
+      slug,
+      config: JSON.stringify({ secrets: [`SECRET_X_AUTH_TOKEN__${h}`, `SECRET_X_CT0__${h}`] }),
+    });
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("FROM projects") ? [record("acme-news", "ACMENEWS"), record("acme-brand", "ACMEBRAND")] : [],
+    );
+    let reached: string[] | undefined;
+    gatedExec.executeGatedCapability.mockImplementation(async () => {
+      reached = listXAccounts();
+      return JSON.stringify({ ok: true });
+    });
+    try {
+      queueTask("task-tweet");
+      await say("publica el tuit del día");
+      runOutput({ toolName: "tweet_post", args: { text: "hola" } });
+      complete("task-tweet", "Voy a publicar «hola». ¿Procedo?");
+      expect(getPendingConfirmation(tk)?.taskId).toBe("task-tweet");
+      dbStatusGet
+        .mockReset()
+        .mockImplementation((id: unknown) => (id === "task-tweet" ? { project_slug: "acme-news" } : undefined));
+      queueTask("task-cont");
+      await say("sí");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+      expect(reached).toEqual(["acmenews"]);
+    } finally {
+      for (const k of X_ENV) delete process.env[k];
+      dbAll.mockReset().mockImplementation(() => []);
+    }
+  });
+
+  it("WS3b R1 W1: a card re-armed at boot (no task id) reaches no X account in record mode; env mode unchanged", async () => {
+    const X_ENV = ["X_AUTH_TOKEN__acmenews", "X_CT0__acmenews", "X_AUTH_TOKEN__acmebrand", "X_CT0__acmebrand"];
+    for (const k of X_ENV) process.env[k] = "synthetic";
+    const record = (slug: string, h: string) => ({
+      slug,
+      config: JSON.stringify({ secrets: [`SECRET_X_AUTH_TOKEN__${h}`, `SECRET_X_CT0__${h}`] }),
+    });
+    let reached: string[] | undefined;
+    gatedExec.executeGatedCapability.mockImplementation(async () => {
+      reached = listXAccounts();
+      return JSON.stringify({ ok: true });
+    });
+    const confirmRearmed = async () => {
+      storePendingConfirmation(tk, "tweet_post", { text: "hola" }, "Publicar «hola»");
+      expect(getPendingConfirmation(tk)?.taskId).toBeUndefined();
+      reached = undefined;
+      await say("sí");
+      await vi.advanceTimersByTimeAsync(0);
+      return reached;
+    };
+    try {
+      dbAll.mockImplementation((sql: string) =>
+        sql.includes("FROM projects") ? [record("acme-news", "ACMENEWS"), record("acme-brand", "ACMEBRAND")] : [],
+      );
+      expect(await confirmRearmed()).toEqual([]);
+      dbAll.mockReset().mockImplementation(() => []);
+      expect(await confirmRearmed()).toEqual(["acmebrand", "acmenews"]);
+    } finally {
+      for (const k of X_ENV) delete process.env[k];
+      dbAll.mockReset().mockImplementation(() => []);
+    }
   });
 
   it("confirm → the action runs ONCE → exactly one continuation carrying the no-repeat context", async () => {

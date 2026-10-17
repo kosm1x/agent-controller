@@ -32,7 +32,7 @@ export function getXRouter(account?: string): XPostRouter | null {
   return new XPostRouter([new CookieBackend(handle), new ApiBackend(handle)]);
 }
 
-/** Probe every configured account → { account, probe } per account. */
+/** Probe every account `listXAccounts` returns (a record-scoped run: its project's) → { account, probe }. */
 export async function probeAllAccounts(): Promise<
   Array<{ account: string; probe: RouterProbe }>
 > {

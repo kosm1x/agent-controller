@@ -3,7 +3,7 @@
  * Real in-memory db + scratch KB mirror. Synthetic rows only.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -669,6 +669,70 @@ describe("exportProjectRecord — write path", () => {
     expect(exportProjectRecord("acme-radar", { schedules: ["sched-ok"], dryRun: true })).toMatchObject({ ok: true, warnings: [] });
     const written = exportProjectRecord("acme-radar", { schedules: ["sched-ok", "sched-nope"] });
     expect(written).toMatchObject({ ok: true, written: true, warnings: [expect.stringContaining("sched-nope")] });
+  });
+
+  it("WS3b R1 C1: a legacy config.schedule_id missing from scheduled_tasks is dropped with a warning; a live one stays", () => {
+    seed(ROWS[1]!);
+    ensureScheduledTasksTable();
+    const dead = exportProjectRecord("beta-portal", { dryRun: true });
+    expect(dead).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([
+        "legacy config.schedule_id sched-beta-1 not found in scheduled_tasks; dropped from the record",
+      ]),
+    });
+    const written = exportProjectRecord("beta-portal");
+    expect(written.ok).toBe(true);
+    const md = String(getFile(projectRecordRelPath("beta-portal"))!.content);
+    expect(md).not.toContain("sched-beta-1");
+    expect(parseProjectRecord(md, { folderSlug: "beta-portal" }).contract.schedules).toBeUndefined();
+
+    getDatabase()
+      .prepare("INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr) VALUES ('sched-beta-1','n','d','0 9 * * 1')")
+      .run();
+    const live = exportProjectRecord("beta-portal", { dryRun: true, force: true });
+    expect(live.ok && live.warnings.some((w) => w.includes("sched-beta-1"))).toBe(false);
+    expect(exportProjectRecord("beta-portal", { force: true }).ok).toBe(true);
+    const md2 = String(getFile(projectRecordRelPath("beta-portal"))!.content);
+    expect(parseProjectRecord(md2, { folderSlug: "beta-portal" }).contract.schedules).toEqual(["sched-beta-1"]);
+  });
+
+  it("WS3b R2 W-B: a schedule lookup that THROWS keeps the legacy id (old behaviour) with no drop warning", () => {
+    seed(ROWS[1]!);
+    ensureScheduledTasksTable();
+    const db = getDatabase();
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      if (sql.includes("FROM scheduled_tasks")) throw new Error("synthetic lookup failure");
+      return prepare(sql);
+    }) as typeof db.prepare);
+    try {
+      const r = exportProjectRecord("beta-portal");
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.warnings.some((w) => w.includes("dropped"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    const md = String(getFile(projectRecordRelPath("beta-portal"))!.content);
+    expect(parseProjectRecord(md, { folderSlug: "beta-portal" }).contract.schedules).toEqual(["sched-beta-1"]);
+  });
+
+  it("WS3b R2 W-B: a dead legacy id is dropped while a live --schedule in the same export is kept (C1 runbook path)", () => {
+    seed(ROWS[1]!);
+    ensureScheduledTasksTable();
+    getDatabase()
+      .prepare("INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr) VALUES ('sched-live','n','d','0 13 * * *')")
+      .run();
+    const r = exportProjectRecord("beta-portal", { schedules: ["sched-live"] });
+    expect(r).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([
+        "legacy config.schedule_id sched-beta-1 not found in scheduled_tasks; dropped from the record",
+      ]),
+    });
+    const md = String(getFile(projectRecordRelPath("beta-portal"))!.content);
+    expect(md).not.toContain("sched-beta-1");
+    expect(parseProjectRecord(md, { folderSlug: "beta-portal" }).contract.schedules).toEqual(["sched-live"]);
   });
 
   it("audit R2 W2: --kb-readme outside KB_README_RE is refused naming the rule, never the value; the live shape passes", () => {

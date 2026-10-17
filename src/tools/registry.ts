@@ -29,6 +29,7 @@ import {
   scrubJsonText,
 } from "../lib/secret-refs.js";
 import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
+import { isToolOfferedToCurrentRun } from "../projects/capabilities.js";
 import { createLogger } from "../lib/logger.js";
 import { jsonSchemaToZod, validateArgs } from "./schema-validator.js";
 import {
@@ -335,6 +336,8 @@ export class ToolRegistry {
     if (excludeDeferred) {
       tools = tools.filter((t) => !t.deferred);
     }
+    // S6 ruling 5b: a record-gated tool only for its project's runs.
+    tools = tools.filter((t) => isToolOfferedToCurrentRun(t.name));
     return tools.map((t) => t.definition);
   }
 
@@ -353,6 +356,7 @@ export class ToolRegistry {
     } else {
       tools = Array.from(this.tools.values()).filter((t) => t.deferred);
     }
+    tools = tools.filter((t) => isToolOfferedToCurrentRun(t.name));
     if (tools.length === 0) return null;
     const lines = tools.map((t) => {
       let line = `- **${t.name}**: ${t.definition.function.description.slice(0, 120)}`;

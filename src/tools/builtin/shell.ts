@@ -189,6 +189,8 @@ const SECRET_ENV_KEYWORDS = [
   "JWT",
   "APIKEY",
   "AUTH",
+  // X API bearer per account (`X_API_BEARER__<handle>`; WS3b R1 W4)
+  "BEARER",
 ];
 
 /**

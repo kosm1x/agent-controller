@@ -14,6 +14,7 @@ import {
 } from "../observability/prometheus.js";
 import { toolRegistry } from "../tools/registry.js";
 import { executeGatedCapability } from "../lib/v8-3/trigger.js";
+import { withAttributedTask } from "../projects/capabilities.js";
 import {
   SYSTEM_PROMPT_TOKEN_BUDGET,
   INBOUND_STAGE_DEADLINE_MS,
@@ -2294,10 +2295,16 @@ export class MessageRouter {
           // never gets the actual deletion. Queue #17 audit W2 (2026-05-15).
           // V8.3 L1-L2: route operator-confirmed gated capabilities through the
           // decision ledger (dormant/passthrough unless V83_ENABLED + canary).
-          const result = await executeGatedCapability(
-            approved.toolName,
-            { ...approved.args, confirmed: true },
-            { threadId: tk },
+          // S6 ruling 5b: the confirmed call resolves project capabilities (X
+          // accounts) as the task that showed the card; a card re-armed at
+          // boot carries no task id (tool_approvals has none) and resolves
+          // as attributed to no task (nothing record-gated in record mode).
+          const result = await withAttributedTask(approved.taskId ?? null, () =>
+            executeGatedCapability(
+              approved.toolName,
+              { ...approved.args, confirmed: true },
+              { threadId: tk },
+            ),
           );
           // Format result for user — human-readable confirmation
           let userResponse: string;

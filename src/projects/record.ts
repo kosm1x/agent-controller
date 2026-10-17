@@ -9,7 +9,9 @@
  * express nested `repos` / `mcp` (spec §2).
  *
  * WS3 consumes `capabilities.mcp`, `trusted`, `secrets` (names) and
- * `routing.summary` (mcp/config.ts, projects/scope-groups.ts); `egress`,
+ * `routing.summary` (mcp/config.ts, projects/scope-groups.ts); ruling 5b
+ * consumes `capabilities.tools` and the X-account `secrets` names
+ * (projects/capabilities.ts, lib/x-poster/config.ts); `egress`,
  * `inbound`, `deny_paths` are projected with no consumer yet (WS4/WS7).
  * `repos` is validated for shape only; the `realpath ⊂ profile.workspaceRoot`
  * rule lands with WS4.
@@ -21,6 +23,8 @@ import { isDeniedEnvName } from "../mcp/env-deny.js";
 import { SECRET_REF_RE, literalEnvValueError } from "../mcp/record-env.js";
 
 export const PROJECT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
+/** Ruling 5b: core tools that are a project's capability (`capabilities.tools`; consumer `./capabilities.ts`). */
+export const RECORD_GATED_TOOLS = ["crm_query"] as const;
 export const PROJECT_STATUSES = [
   "active",
   "paused",
@@ -143,6 +147,12 @@ export const projectContractSchema = z
       .strictObject({
         mcp: z.array(mcpEntrySchema).optional(),
         brief: z.string().trim().min(1).optional(),
+        // Ruling 5b: core tools that are this project's capability
+        // (`./capabilities.ts`); a run of another project is not offered them.
+        tools: z
+          .array(z.enum(RECORD_GATED_TOOLS))
+          .refine((ts) => new Set(ts).size === ts.length, { message: "tool declared twice" })
+          .optional(),
       })
       .optional(),
     routing: z.strictObject({ summary: z.string().trim().min(1).max(200) }).optional(),

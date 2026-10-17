@@ -38,6 +38,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodType } from "zod";
 import { toolRegistry } from "../tools/registry.js";
+import { isToolOfferedToCurrentRun } from "../projects/capabilities.js";
 import { getToolAnnotations, type Tool } from "../tools/types.js";
 import { MCP_NAMESPACE_SEP } from "../mcp/types.js";
 import { sanitizeSurrogates, safeSlice } from "../lib/unicode-safe.js";
@@ -472,6 +473,9 @@ export function buildMcpServer(
   }
 
   const registryTools = toolNames
+    // S6 ruling 5b: the same offer filter as `getDefinitions` (a record-gated
+    // tool only for its project's runs), so both inference paths agree.
+    .filter((n) => isToolOfferedToCurrentRun(n))
     .map((n) => toolRegistry.get(n))
     .filter((t): t is Tool => t !== undefined)
     .map(wrapToolCached);

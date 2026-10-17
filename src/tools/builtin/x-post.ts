@@ -15,11 +15,20 @@ import {
   listXAccounts,
   resolveAccount,
   anyXAccountConfigured,
+  currentXAccountScope,
   readMentions,
 } from "../../lib/x-poster/index.js";
 
 const NOT_CONFIGURED =
   "X posting not configured. Set X_AUTH_TOKEN__<handle> + X_CT0__<handle> (session cookies from a logged-in x.com browser) and X_DEFAULT_ACCOUNT in the environment.";
+
+/** No reachable account: env-keyed (NOT_CONFIGURED) or none declared for this task's project (ruling 5b). */
+function notConfigured(): string {
+  const scope = currentXAccountScope();
+  return scope.mode === "record"
+    ? `No X account is reachable for this task's project (${scope.slug ?? "none"}): a task reaches an X account only through its project record's secrets (SECRET_X_AUTH_TOKEN__<HANDLE> + SECRET_X_CT0__<HANDLE>).`
+    : NOT_CONFIGURED;
+}
 
 const REFRESH_GUIDANCE =
   "X cookies are expired/invalid for this account (every backend returned auth-expiry). " +
@@ -35,24 +44,19 @@ function weightedLength(text: string): number {
 
 function noAccountError(account?: string): string {
   const accts = listXAccounts();
-  if (accts.length === 0) return NOT_CONFIGURED;
+  if (accts.length === 0) return notConfigured();
   return account
     ? `Unknown X account "${account}". Configured: ${accts.join(", ")}. Use one of these EXACT labels (do not re-spell).`
     : `No default X account (set X_DEFAULT_ACCOUNT). Configured: ${accts.join(", ")}. Pass account: explicitly.`;
 }
 
 /**
- * Ground-truth account list injected into the tool descriptions at load time, so
- * the model reads the REAL configured labels (not a hardcoded example handle that
- * can drift — the 2026-06-23 `iooking4ward`→`lookin4ward` mangling). Env loads at
- * boot before tools register; a changed list needs a restart anyway.
+ * Account guidance shared by the X tool descriptions. Static (S6 ruling 5b,
+ * WS3b R1 W2): a description is read by every task, so it names no handle —
+ * the accounts a task reaches are its project's, listed by tweet_probe.
  */
-function accountsHint(): string {
-  const accts = listXAccounts();
-  return accts.length
-    ? `CONFIGURED ACCOUNTS (use these EXACT labels verbatim — do NOT re-spell, "correct", or normalize them; e.g. a leading lowercase "i" is intentional): ${accts.join(", ")}.`
-    : "No X accounts configured yet.";
-}
+const ACCOUNTS_HINT =
+  "Accounts reachable by this task are those its project's record declares; omit `account` to use the project's only/default account; tweet_probe lists them. Use account labels EXACTLY as tweet_probe returns them (do NOT re-spell, \"correct\", or normalize them; e.g. a leading lowercase \"i\" is intentional).";
 
 export const tweetPostTool: Tool = {
   name: "tweet_post",
@@ -89,7 +93,7 @@ or look up auth_token/ct0 cookies in user_facts or mc.db for X — that path is
 RETIRED. Cookies live in the environment and are handled internally by this tool;
 you never need them. If auth is stale this tool says so.
 
-MULTI-ACCOUNT: pass account:"<handle>". ${accountsHint()} Omit account to use the
+MULTI-ACCOUNT: pass account:"<handle>". ${ACCOUNTS_HINT} Omit account to use the
 default. On expired cookies it returns refresh guidance — do NOT retry with
 variants; surface it. Keep text ≤280 weighted chars.
 
@@ -108,7 +112,7 @@ happen.`,
           account: {
             type: "string",
             description:
-              "X account handle to post as — must EXACTLY match a configured label (see the tool description's CONFIGURED ACCOUNTS list). Do not re-spell or normalize it. Omit for the default account.",
+              "X account handle to post as — an EXACT account label (as tweet_probe lists it). Omit for the project's default account.",
           },
           reply_to_id: {
             type: "string",
@@ -134,7 +138,7 @@ happen.`,
 
     if (!text) return JSON.stringify({ error: "text is required" });
     if (!anyXAccountConfigured())
-      return JSON.stringify({ error: NOT_CONFIGURED });
+      return JSON.stringify({ error: notConfigured() });
 
     const weighted = weightedLength(text);
     if (weighted > 280) {
@@ -209,17 +213,17 @@ USE WHEN:
 
 THIS is how you check X access. Do NOT use shell_exec or hunt for cookies in
 user_facts/mc.db — cookies live in the environment and this tool reads them
-internally. ${accountsHint()}
+internally. ${ACCOUNTS_HINT}
 
 Pass account:"<handle>" (an EXACT configured label) to check one account; omit to
-check ALL configured accounts. Returns per-account/backend {ok, detail, authExpired}.`,
+check every account this task's project can use. Returns per-account/backend {ok, detail, authExpired}.`,
       parameters: {
         type: "object",
         properties: {
           account: {
             type: "string",
             description:
-              'Handle to probe (e.g. "mexiconecesario"). Omit to probe all accounts.',
+              "Handle to probe (an EXACT account label). Omit to probe every account this task's project can use.",
           },
         },
       },
@@ -228,7 +232,7 @@ check ALL configured accounts. Returns per-account/backend {ok, detail, authExpi
 
   async execute(args: Record<string, unknown>): Promise<string> {
     if (!anyXAccountConfigured()) {
-      return JSON.stringify({ healthy: false, error: NOT_CONFIGURED });
+      return JSON.stringify({ healthy: false, error: notConfigured() });
     }
     const account =
       typeof args.account === "string" && args.account.trim() !== ""
@@ -305,7 +309,7 @@ USE WHEN:
   tweet_post with \`reply_to_id\` set to it.
 
 THIS is how you read X mentions. Do NOT use shell_exec, Playwright/.cjs scripts,
-or user_facts/mc.db. ${accountsHint()}
+or user_facts/mc.db. ${ACCOUNTS_HINT}
 
 Returns newest-first; each item: \`tweet_id\`, \`author\` (handle), \`name\`,
 \`text\`, \`created_at\`, optional \`in_reply_to\`. An empty list means no
@@ -316,7 +320,7 @@ mentions, not an error.`,
           account: {
             type: "string",
             description:
-              "Account whose mentions to read — an EXACT configured label (see CONFIGURED ACCOUNTS). Omit for the default account.",
+              "Account whose mentions to read — an EXACT account label (as tweet_probe lists it). Omit for the default account.",
           },
           limit: {
             type: "number",
@@ -329,7 +333,7 @@ mentions, not an error.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     if (!anyXAccountConfigured())
-      return JSON.stringify({ error: NOT_CONFIGURED });
+      return JSON.stringify({ error: notConfigured() });
     const account =
       typeof args.account === "string" && args.account.trim() !== ""
         ? args.account.trim()

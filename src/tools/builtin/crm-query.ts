@@ -5,9 +5,16 @@
  * activities, team, and alerts without needing the CRM's full tool set.
  *
  * v5.0 S4: A2A mesh — Jarvis ↔ CRM bidirectional integration.
+ *
+ * S6 ruling 5b: `pulso-aura-upfront`'s capability, not a core exception — a
+ * run is offered it only when its attributed project's record declares
+ * `capabilities.tools: ["crm_query"]` (`projects/capabilities.ts`; the
+ * registry filters the offer, `execute` refuses the call). This thin client
+ * is the capability's implementation.
  */
 
 import type { Tool } from "../types.js";
+import { recordGatedToolScope } from "../../projects/capabilities.js";
 
 function getCrmConfig() {
   return {
@@ -74,6 +81,12 @@ DO NOT USE WHEN:
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    const scope = recordGatedToolScope("crm_query");
+    if (!scope.offered) {
+      return JSON.stringify({
+        error: `crm_query is not a capability of this task's project (${scope.slug ?? "none"}); only a project whose record declares capabilities.tools ["crm_query"] reaches it.`,
+      });
+    }
     const endpoint = args.endpoint as CrmEndpoint;
 
     if (!VALID_ENDPOINTS.includes(endpoint)) {

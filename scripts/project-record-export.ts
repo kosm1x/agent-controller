@@ -75,6 +75,11 @@ export interface ExportOptions {
   schedules?: string[];
   /** Overrides the legacy `parent_project`/`parent` mapping (S6 ruling 5a). */
   parent?: string;
+  /**
+   * Whether a schedule id exists in `scheduled_tasks` (null: unknown, a db
+   * error). The export passes the db check; pure callers omit it.
+   */
+  scheduleExists?: (id: string) => boolean | null;
 }
 
 export interface ExportCounts {
@@ -223,7 +228,14 @@ export function buildRecordFromRow(
 
   const schedules: string[] = [];
   const ownedSchedules = projected("schedules") as string[] | undefined;
-  const legacyId = typeof config.schedule_id === "string" ? config.schedule_id.trim() : "";
+  let legacyId = typeof config.schedule_id === "string" ? config.schedule_id.trim() : "";
+  // WS3b R1 C1: a dead legacy id (its schedule is gone) must not become the
+  // record's claim — the live schedule would stay unattributed. Dropped, named.
+  if (legacyId && opts.scheduleExists?.(legacyId) === false) {
+    differs.push(`legacy config.schedule_id ${legacyId} not found in scheduled_tasks; dropped from the record`);
+    delete config.schedule_id;
+    legacyId = "";
+  }
   if (ownedSchedules !== undefined) {
     schedules.push(...ownedSchedules);
     delete config.schedules;
@@ -390,6 +402,15 @@ function unknownSchedules(ids: string[]): string[] {
   }
 }
 
+/** One schedule id in `scheduled_tasks`; null when the lookup fails. */
+function scheduleExists(id: string): boolean | null {
+  try {
+    return !!getDatabase().prepare("SELECT 1 FROM scheduled_tasks WHERE schedule_id = ?").get(id);
+  } catch {
+    return null;
+  }
+}
+
 /** Read the row, build the record, write it through the registry path. */
 export function exportProjectRecord(
   slug: string,
@@ -410,7 +431,7 @@ export function exportProjectRecord(
   }
   let built: ReturnType<typeof buildRecordFromRow>;
   try {
-    built = buildRecordFromRow(row, opts);
+    built = buildRecordFromRow(row, { ...opts, scheduleExists });
   } catch (err) {
     const reason = (err as { reason?: string }).reason;
     return {

@@ -12,7 +12,27 @@
  * a tool call omits `account`. For migration ease, a bare `X_AUTH_TOKEN`/`X_CT0`
  * pair (no handle) is treated as the default account's cookies if no explicit
  * `X_AUTH_TOKEN__<default>` is set.
+ *
+ * S6 ruling 5b — an X ACCOUNT is a project capability. Inside a dispatcher run
+ * whose world has any record declaring an X account (`secrets` names
+ * `SECRET_X_AUTH_TOKEN__<HANDLE>` / `SECRET_X_CT0__<HANDLE>`, optional
+ * `SECRET_X_API_BEARER__<HANDLE>`), the run sees ONLY the accounts its
+ * attributed project's record declares, and reads only the env names those
+ * references name (`SECRET_<NAME>` → `<NAME>`, handle case-insensitive; the
+ * bare pair still stands in for `X_DEFAULT_ACCOUNT` when that handle is
+ * declared). MIGRATION: while no record declares any X account, a run keeps
+ * the env-keyed behaviour and logs one fallback line per task; outside a run
+ * (probe cron, boot, the interactive confirm seam) it is env-keyed, untraced.
  */
+
+import {
+  currentRunProject,
+  projectConfigs,
+  traceLookupFailure,
+  traceOncePerTask,
+  warnRecordFindingOnce,
+} from "../../projects/capabilities.js";
+import { errMsg } from "../err-msg.js";
 
 /**
  * Public X web-client bearer token — a well-known PUBLIC constant shipped in
@@ -60,6 +80,138 @@ export function getProbeUrl(): string {
 }
 
 const ACCT_TOKEN_RE = /^X_AUTH_TOKEN__(.+)$/;
+const ACCT_CRED_RE = /^X_(AUTH_TOKEN|CT0|API_BEARER)__(.+)$/;
+
+export type XCredKind = "AUTH_TOKEN" | "CT0" | "API_BEARER";
+/** A record secret NAME declaring one X credential of one account (ruling 5b). */
+const RECORD_X_SECRET_RE = /^SECRET_X_(AUTH_TOKEN|CT0|API_BEARER)__([A-Z0-9_]+)$/;
+
+/** handle → the credential kinds a record's `secrets` NAMES declare for it. Pure. */
+export function recordXAccounts(secrets: unknown): Map<string, Set<XCredKind>> {
+  const out = new Map<string, Set<XCredKind>>();
+  if (!Array.isArray(secrets)) return out;
+  for (const name of secrets) {
+    if (typeof name !== "string") continue;
+    const m = RECORD_X_SECRET_RE.exec(name);
+    if (!m) continue;
+    const handle = normalizeHandle(m[2]!);
+    const kinds = out.get(handle) ?? new Set<XCredKind>();
+    kinds.add(m[1] as XCredKind);
+    out.set(handle, kinds);
+  }
+  return out;
+}
+
+export type XAccountScope =
+  | { mode: "env" }
+  | { mode: "record"; slug: string | null; accounts: ReadonlyMap<string, ReadonlySet<XCredKind>> };
+
+const ENV_SCOPE: XAccountScope = { mode: "env" };
+
+/**
+ * Which accounts the caller may reach: `env` outside a run or while no record
+ * declares an X account (migration fallback, traced once per task); else the
+ * run's attributed project's declared accounts (none for a project without
+ * any, or an unattributed task). A db error inside a run fails closed.
+ */
+export function currentXAccountScope(): XAccountScope {
+  let run: ReturnType<typeof currentRunProject>;
+  let configs: ReturnType<typeof projectConfigs>;
+  try {
+    run = currentRunProject();
+    if (!run) return ENV_SCOPE;
+    configs = projectConfigs();
+  } catch (err) {
+    console.warn(`[x-poster] project record lookup failed (${errMsg(err)}); no X account reachable`);
+    traceLookupFailure("x-poster");
+    return { mode: "record", slug: null, accounts: new Map() };
+  }
+  // An unparseable row may be a declaring one: record mode (fail closed).
+  let declaresAny = configs.some((c) => c.invalid);
+  let own: Map<string, Set<XCredKind>> = new Map();
+  const owners = new Map<string, string[]>();
+  for (const c of configs) {
+    const accts = recordXAccounts(c.config.secrets);
+    if (accts.size === 0) continue;
+    declaresAny = true;
+    if (c.slug === run.slug) own = accts;
+    for (const h of accts.keys()) owners.set(h, [...(owners.get(h) ?? []), c.slug]);
+  }
+  // Two records declaring one handle is an operator error (records are
+  // operator-only writes): named once per process; both keep reaching it.
+  for (const [handle, slugs] of owners) {
+    if (slugs.length < 2) continue;
+    const sorted = [...slugs].sort();
+    warnRecordFindingOnce(
+      `handle\0${handle}\0${sorted.join(",")}`,
+      `[x-poster] X account ${handle} is declared by ${sorted.length} project records (${sorted.join(", ")}); each of them reaches it`,
+      "capability.handle_shared",
+      { handle, slugs: sorted },
+    );
+  }
+  if (!declaresAny) {
+    traceOncePerTask(
+      run.taskId,
+      `[x-poster] no record-declared accounts for project ${run.slug ?? "none"}; env-keyed fallback`,
+      { slug: run.slug, mode: "fallback" },
+    );
+    return ENV_SCOPE;
+  }
+  const handles = [...own.keys()].sort();
+  traceOncePerTask(
+    run.taskId,
+    `[x-poster] project ${run.slug ?? "none"} reaches ${handles.length} record-declared X account(s)`,
+    { slug: run.slug, mode: "record", handles },
+  );
+  return { mode: "record", slug: run.slug, accounts: own };
+}
+
+/** `X_DEFAULT_ACCOUNT`, normalised, or undefined. */
+function explicitDefault(): string | undefined {
+  const explicit = nonEmpty(process.env.X_DEFAULT_ACCOUNT);
+  return explicit ? normalizeHandle(explicit) : undefined;
+}
+
+/**
+ * One handle's env credentials: `X_<KIND>__<handle>` (case-insensitive
+ * suffix), limited to `kinds` when given; the bare pair when none is set and
+ * `h` is `defaultHandle`.
+ */
+function readHandleCreds(
+  h: string,
+  defaultHandle: string | undefined,
+  kinds?: ReadonlySet<XCredKind>,
+): AccountCreds | null {
+  const want = (k: XCredKind) => !kinds || kinds.has(k);
+  let authToken: string | undefined;
+  let ct0: string | undefined;
+  let apiBearer: string | undefined;
+  for (const key of Object.keys(process.env)) {
+    const m = key.match(ACCT_CRED_RE);
+    if (!m || normalizeHandle(m[2]) !== h || !want(m[1] as XCredKind)) continue;
+    const v = nonEmpty(process.env[key]);
+    if (m[1] === "AUTH_TOKEN") authToken = v;
+    else if (m[1] === "CT0") ct0 = v;
+    else apiBearer = v;
+  }
+  // Bare-var fallback for the default account.
+  if (!authToken && !ct0 && defaultHandle === h) {
+    if (want("AUTH_TOKEN")) authToken = nonEmpty(process.env.X_AUTH_TOKEN);
+    if (want("CT0")) ct0 = nonEmpty(process.env.X_CT0);
+    if (want("API_BEARER")) apiBearer = apiBearer ?? nonEmpty(process.env.X_API_BEARER);
+  }
+  if (!authToken && !ct0 && !apiBearer) return null;
+  return { handle: h, authToken, ct0, apiBearer };
+}
+
+/** The record-scoped account list: declared handles with a set auth token. */
+function recordAccounts(scope: Extract<XAccountScope, { mode: "record" }>): string[] {
+  const def = explicitDefault();
+  return [...scope.accounts]
+    .filter(([h, kinds]) => readHandleCreds(h, def, kinds)?.authToken)
+    .map(([h]) => h)
+    .sort();
+}
 
 /** Synthetic handle for a bare `X_AUTH_TOKEN`/`X_CT0` pair with no `X_DEFAULT_ACCOUNT`. */
 const BARE_ACCOUNT = "default";
@@ -71,17 +223,36 @@ export function normalizeHandle(h: string): string {
 
 /** The default account name (`X_DEFAULT_ACCOUNT`, else the sole discovered one). */
 export function getDefaultAccount(): string | undefined {
+  const scope = currentXAccountScope();
+  if (scope.mode === "record") {
+    const accts = recordAccounts(scope);
+    const def = explicitDefault();
+    if (def && accts.includes(def)) return def;
+    return accts.length === 1 ? accts[0] : undefined;
+  }
+  return envDefaultAccount();
+}
+
+function envDefaultAccount(): string | undefined {
   const explicit = nonEmpty(process.env.X_DEFAULT_ACCOUNT);
   if (explicit) return normalizeHandle(explicit);
   // A bare X_AUTH_TOKEN with no explicit default → the synthetic "default" account
   // (so a migrating operator's bare pair works + is discoverable, not silently invisible).
   if (nonEmpty(process.env.X_AUTH_TOKEN)) return BARE_ACCOUNT;
-  const all = listXAccounts();
+  const all = envListXAccounts();
   return all.length === 1 ? all[0] : undefined;
 }
 
-/** All configured account handles (those with a non-empty auth_token). */
+/**
+ * All configured account handles (those with a non-empty auth_token) — inside
+ * a record-scoped run, only the run's project's declared ones.
+ */
 export function listXAccounts(): string[] {
+  const scope = currentXAccountScope();
+  return scope.mode === "record" ? recordAccounts(scope) : envListXAccounts();
+}
+
+function envListXAccounts(): string[] {
   const handles = new Set<string>();
   for (const key of Object.keys(process.env)) {
     const m = key.match(ACCT_TOKEN_RE);
@@ -99,26 +270,14 @@ export function listXAccounts(): string[] {
 /** Resolve one account's credentials (handle → tokens), or null if unconfigured. */
 export function getAccountCreds(handle: string): AccountCreds | null {
   const h = normalizeHandle(handle);
+  const scope = currentXAccountScope();
+  if (scope.mode === "record") {
+    // Ruling 5b: only a declared account, only its declared names.
+    const kinds = scope.accounts.get(h);
+    return kinds ? readHandleCreds(h, explicitDefault(), kinds) : null;
+  }
   // Per-handle env vars take precedence; case-insensitive match on the suffix.
-  let authToken: string | undefined;
-  let ct0: string | undefined;
-  let apiBearer: string | undefined;
-  for (const key of Object.keys(process.env)) {
-    const m = key.match(/^X_(AUTH_TOKEN|CT0|API_BEARER)__(.+)$/);
-    if (!m || normalizeHandle(m[2]) !== h) continue;
-    const v = nonEmpty(process.env[key]);
-    if (m[1] === "AUTH_TOKEN") authToken = v;
-    else if (m[1] === "CT0") ct0 = v;
-    else apiBearer = v;
-  }
-  // Bare-var fallback for the default account.
-  if (!authToken && !ct0 && getDefaultAccount() === h) {
-    authToken = nonEmpty(process.env.X_AUTH_TOKEN);
-    ct0 = nonEmpty(process.env.X_CT0);
-    apiBearer = apiBearer ?? nonEmpty(process.env.X_API_BEARER);
-  }
-  if (!authToken && !ct0 && !apiBearer) return null;
-  return { handle: h, authToken, ct0, apiBearer };
+  return readHandleCreds(h, envDefaultAccount());
 }
 
 /** Resolve the account to act on: explicit arg → default → sole account. */

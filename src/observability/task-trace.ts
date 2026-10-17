@@ -75,7 +75,13 @@ export type TraceEventName =
   // Queue 2026-10-08 (late) item 10: done-claim after a failed write
   | "write.failure_claim"
   // S6 WS2: the project a new task was attributed to at insert ({slug, source}, or nulls)
-  | "attribution.resolved";
+  | "attribution.resolved"
+  // S6 ruling 5b: a record-gated capability decision (fallback / refusal / the
+  // record-scoped X accounts; slugs + names only), and a project row whose
+  // config does not parse (record mode forced) or a handle two records declare
+  | "capability.scope"
+  | "capability.record_invalid"
+  | "capability.handle_shared";
 
 export interface TraceEvent {
   taskId: string;
