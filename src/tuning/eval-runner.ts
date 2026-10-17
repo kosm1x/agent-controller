@@ -275,13 +275,21 @@ async function evalScopePrompt(
   // Which classifier answered (provider label only). A classifier that does
   // not report: "unreported" for an answer, "none" for null / a throw.
   let provider: string | undefined;
-  const row = (score: number, details: Record<string, unknown>): CaseScore => ({
+  // expected_groups / answered_groups: group names only (queue 4e listing);
+  // an errored row answered nothing.
+  const row = (
+    score: number,
+    details: Record<string, unknown>,
+    answered: string[] = [],
+  ): CaseScore => ({
     caseId: tc.case_id,
     category: "scope_prompt",
     score,
     weight: tc.weight,
     details: {
       ...details,
+      expected_groups: [...(tc.expected.scope_groups ?? [])],
+      answered_groups: answered,
       provider: provider ?? (details.error !== undefined ? "none" : "unreported"),
       sourceGroup: tc.sourceGroup ?? "seed",
     },
@@ -302,7 +310,7 @@ async function evalScopePrompt(
       });
     }
     const { score, details } = scoreScopeAccuracy(tc.expected, groups);
-    return row(score, details);
+    return row(score, details, [...groups]);
   } catch (err) {
     return row(0, { error: String(err) });
   }

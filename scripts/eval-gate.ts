@@ -391,6 +391,7 @@ const {
   percaseOutputRows,
   scopePromptBreakdown,
   scopePromptDrift,
+  scopePromptRowLines,
   scopePromptRefusal,
   DEFAULT_EPSILON,
   DEFAULT_PROBE_ROUNDS,
@@ -408,6 +409,15 @@ function printBreakdown(r: EvalResult): void {
       ? `  scope_prompt (LLM classifier, live prompt): not run — ${nScopeCases} active scope_accuracy case(s) = ${nScopeCases} classifier call(s) under --run`
       : `  scope_prompt (LLM classifier, live prompt): cases ${sp.cases}  exact ${sp.exact}  partial ${sp.partial}  wrong ${sp.wrong}  errored ${sp.errored}  subscore ${sp.subscore.toFixed(2)}  answered by: ${Object.entries(sp.providers).map(([p, n]) => `${p} ${n}`).join(", ")}`,
   );
+  if (sp.cases > 0) {
+    const notExact = scopePromptRowLines(r.perCase);
+    console.log(
+      notExact.length === 0
+        ? "  scope_prompt rows not exact: none"
+        : `  scope_prompt rows not exact (${notExact.length}):`,
+    );
+    for (const line of notExact) console.log(line);
+  }
   console.log(
     `  tool_selection by source (probe rounds ${probeRounds}): group  cases  hit-r1  hit-r2+  forbidden-only-pass  violation  called-other  called-nothing  errored  subscore`,
   );

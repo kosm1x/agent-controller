@@ -44,6 +44,7 @@ import {
   scopePromptRefusal,
   scopePromptBreakdown,
   scopePromptDrift,
+  scopePromptRowLines,
   gateDecision,
   parseEpsilonFlag,
   parsePromptEpsilon,
@@ -580,6 +581,74 @@ describe("scope_prompt refusal + breakdown (queue 3j)", () => {
       ]).providers,
     ).toEqual({ jev: 1, sonnet: 2, none: 1 });
     expect(scopePromptBreakdown([]).subscore).toBe(0);
+  });
+});
+
+describe("scopePromptRowLines (queue 4e: non-exact rows, ids + group names only)", () => {
+  const sp = (caseId: string, score: number, details: Record<string, unknown> = {}): CaseScore => ({
+    caseId,
+    category: "scope_prompt",
+    score,
+    weight: 1,
+    details,
+  });
+
+  it("omits exact rows and non-scope_prompt rows; formats partial / wrong / errored exactly, sorted by caseId", () => {
+    const lines = scopePromptRowLines([
+      sp("sc-d", 0, { expected_groups: ["wordpress"], answered_groups: ["coding"], provider: "sonnet" }),
+      sp("sc-a", 1, { expected_groups: ["coding"], answered_groups: ["coding"], provider: "sonnet" }),
+      sp("sc-c", 0, { expected_groups: ["google", "coding"], answered_groups: [], provider: "none", error: "classifier returned null" }),
+      sp("sc-b", 0.5, { expected_groups: ["coding", "google"], answered_groups: ["coding"], provider: "jev" }),
+      { ...sp("sc-0", 0, { expected_groups: ["coding"], answered_groups: [], provider: "sonnet" }), category: "scope_accuracy" },
+    ]);
+    expect(lines).toEqual([
+      "    sc-b  partial  expected=coding,google  answered=coding  provider=jev",
+      "    sc-c  errored  expected=google,coding  answered=-  provider=none",
+      "    sc-d  wrong  expected=wordpress  answered=coding  provider=sonnet",
+    ]);
+  });
+
+  it("an empty group list prints '-' on both sides; a missing provider prints 'unreported'", () => {
+    expect(scopePromptRowLines([sp("sc-neg", 0, { expected_groups: [], answered_groups: [] })])).toEqual([
+      "    sc-neg  wrong  expected=-  answered=-  provider=unreported",
+    ]);
+  });
+
+  it("all-exact (or no rows) = empty list", () => {
+    expect(
+      scopePromptRowLines([
+        sp("sc-1", 1, { expected_groups: ["coding"], answered_groups: ["coding"], provider: "sonnet" }),
+        sp("sc-2", 1, { expected_groups: [], answered_groups: ["coding"], provider: "jev" }),
+      ]),
+    ).toEqual([]);
+    expect(scopePromptRowLines([])).toEqual([]);
+  });
+
+  it("never prints message text, input or error text, whatever else details carries", () => {
+    const out = scopePromptRowLines([
+      sp("sc-x", 0, {
+        message: "SENTINEL-MSG",
+        input: { message: "SENTINEL-2" },
+        error: "SENTINEL-ERR",
+        text: "SENTINEL-TXT",
+        prompt: "SENTINEL-PROMPT",
+        expected_groups: ["coding"],
+        answered_groups: [],
+        provider: "none",
+      }),
+      sp("sc-y", 0.5, {
+        message: "SENTINEL-MSG",
+        input: { message: "SENTINEL-2" },
+        expected_groups: ["coding", "google"],
+        answered_groups: ["coding"],
+        provider: "sonnet",
+      }),
+    ]).join("\n");
+    expect(out).toBe(
+      "    sc-x  errored  expected=coding  answered=-  provider=none\n" +
+        "    sc-y  partial  expected=coding,google  answered=coding  provider=sonnet",
+    );
+    expect(out).not.toContain("SENTINEL");
   });
 });
 

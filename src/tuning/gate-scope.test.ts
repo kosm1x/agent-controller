@@ -171,6 +171,20 @@ describe("wireEvalGateProjectScopeGroups", () => {
     expect(src.indexOf("if (epsilonArg !== undefined && doUpdate)")).toBeLessThan(src.indexOf("const snapDir = mkdtempSync("));
   });
 
+  it("queue 4e: printBreakdown lists the non-exact scope_prompt rows via scopePromptRowLines, only when rows exist", () => {
+    const src = readFileSync(join(process.cwd(), "scripts", "eval-gate.ts"), "utf-8");
+    const start = src.indexOf("function printBreakdown(r: EvalResult): void {");
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf("\n}\n", start);
+    const body = src.slice(start, end);
+    expect(body).toMatch(
+      /\n  if \(sp\.cases > 0\) \{\n    const notExact = scopePromptRowLines\(r\.perCase\);\n/,
+    );
+    expect(body).toContain('"  scope_prompt rows not exact: none"');
+    expect(body).toContain("`  scope_prompt rows not exact (${notExact.length}):`");
+    expect(body).toContain("for (const line of notExact) console.log(line);");
+  });
+
   it("zero declaring records: the classifier prompt stays byte-identical to HEAD's", async () => {
     const { names, overrides, classifier } = await setup([["syn-plain", { aliases: ["Synplain"] }]]);
     expect(names).toEqual([]);

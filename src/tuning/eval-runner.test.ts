@@ -650,6 +650,12 @@ describe("scope_prompt: scope cases replayed through the LLM classifier (queue 3
       sourceGroup: "seed",
     });
     expect(prompt[2].details).toMatchObject({ misses: ["wordpress"], violations: ["coding"] });
+    // queue 4e: every row carries the group names the gate lists
+    expect(prompt.map((c) => [c.details.expected_groups, c.details.answered_groups])).toEqual([
+      [["coding"], ["coding"]],
+      [["coding", "google"], ["coding"]],
+      [["wordpress"], ["coding"]],
+    ]);
     expect(prompt.every((c) => c.details.error === undefined)).toBe(true);
     // the answering classifier is recorded (Sonnet path: Jev is off here)
     expect(prompt.map((c) => c.details.provider)).toEqual(["sonnet", "sonnet", "sonnet"]);
@@ -706,6 +712,7 @@ describe("scope_prompt: scope cases replayed through the LLM classifier (queue 3
     expect(row.score).toBe(0);
     expect(row.details.error).toMatch(/^classifier returned null/);
     expect(row.details.provider).toBe("none");
+    expect([row.details.expected_groups, row.details.answered_groups]).toEqual([[], []]);
     // the regex row is unaffected (forbidden-only case, no coding keyword)
     expect(r.perCase.find((c) => c.category === "scope_accuracy")!.score).toBe(1);
 
@@ -724,6 +731,26 @@ describe("scope_prompt: scope cases replayed through the LLM classifier (queue 3
     );
     const row3 = r3.perCase.find((c) => c.category === "scope_prompt")!;
     expect([row3.score, row3.details.error, row3.details.provider]).toEqual([0, "Error: boom", "none"]);
+    expect(row3.details.answered_groups).toEqual([]);
+  });
+
+  it("queue 4e: an errored row with labels keeps expected_groups and answers nothing (null and throw)", async () => {
+    insertTestCase(makeScopeCase({ case_id: "sc-p-err", expected: { scope_groups: ["coding"] } }));
+    const { scopePromptRowLines } = await import("./gate.js");
+    for (const scopePromptClassifier of [
+      async () => null,
+      async () => {
+        throw new Error("boom");
+      },
+    ]) {
+      const r = await runEvaluation({ scopePromptClassifier }, { category: "scope_accuracy" });
+      const row = r.perCase.find((c) => c.category === "scope_prompt")!;
+      expect(row.details.error).toBeDefined();
+      expect([row.details.expected_groups, row.details.answered_groups]).toEqual([["coding"], []]);
+      expect(scopePromptRowLines(r.perCase)).toEqual([
+        "    sc-p-err  errored  expected=coding  answered=-  provider=none",
+      ]);
+    }
   });
 
   it("mirrors the router's inputs: normalized message, recentContext = last turn + raw message, wholeTurns", async () => {

@@ -380,6 +380,31 @@ export function scopePromptBreakdown(perCase: CaseScore[]): ScopePromptBreakdown
   return out;
 }
 
+/**
+ * One line per NON-exact scope_prompt row (partial / wrong / errored), sorted
+ * by caseId — ids and group names only, printed under --run (queue 4e). Reads
+ * only `caseId`, `score`, `details.expected_groups`, `details.answered_groups`,
+ * `details.provider` and whether `details.error` is set: never the error text
+ * or any other details key (no message text reaches the console).
+ */
+export function scopePromptRowLines(perCase: CaseScore[]): string[] {
+  const names = (v: unknown): string => {
+    const list = Array.isArray(v) ? v.filter((g): g is string => typeof g === "string") : [];
+    return list.length > 0 ? list.join(",") : "-";
+  };
+  return perCase
+    .filter(
+      (c) => c.category === "scope_prompt" && (c.details.error !== undefined || c.score < 1),
+    )
+    .sort((a, b) => (a.caseId < b.caseId ? -1 : a.caseId > b.caseId ? 1 : 0))
+    .map((c) => {
+      const outcome =
+        c.details.error !== undefined ? "errored" : c.score > 0 ? "partial" : "wrong";
+      const provider = typeof c.details.provider === "string" ? c.details.provider : "unreported";
+      return `    ${c.caseId}  ${outcome}  expected=${names(c.details.expected_groups)}  answered=${names(c.details.answered_groups)}  provider=${provider}`;
+    });
+}
+
 /** tool_selection rows whose probe threw (the evaluator records `details.error`). */
 export function countErroredProbes(perCase: CaseScore[]): number {
   return perCase.filter(
