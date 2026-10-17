@@ -17,9 +17,10 @@ import {
   provenanceMode,
 } from "./provenance-gate.js";
 
-vi.mock("../../db/jarvis-sync.js", () => ({
+vi.mock("../../db/drive-sync.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../db/drive-sync.js")>()),
   syncToDrive: vi.fn(),
-  syncFileToDrive: vi.fn(),
+  syncDeleteToDrive: vi.fn(),
 }));
 const google = vi.hoisted(() => ({ googleFetch: vi.fn() }));
 vi.mock("../../google/client.js", () => ({ googleFetch: google.googleFetch }));

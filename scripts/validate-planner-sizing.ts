@@ -37,6 +37,7 @@ for (const kv of environ.split("\0")) {
   const eq = kv.indexOf("=");
   if (eq > 0) process.env[kv.slice(0, eq)] ??= kv.slice(eq + 1);
 }
+delete process.env.DRIVE_KB_FOLDER_ID;
 
 // DB snapshot (plan() reads memory + knowledge maps + KB via SQLite).
 const SRC = "/root/claude/mission-control/data/mc.db";

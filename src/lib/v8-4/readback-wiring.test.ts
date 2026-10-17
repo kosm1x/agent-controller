@@ -14,7 +14,7 @@ import { listGates } from "./gates.js";
 import { _resetReadbacks, parseReadback, readbackGateId, sha8 } from "./readback.js";
 import { registerReadbackVerifiers } from "./readback-verifiers.js";
 
-vi.mock("../../db/jarvis-sync.js", () => ({ syncToDrive: vi.fn(), syncFileToDrive: vi.fn() }));
+vi.mock("../../db/drive-sync.js", async (orig) => ({ ...(await orig<object>()), syncToDrive: vi.fn(), syncDeleteToDrive: vi.fn() }));
 vi.mock("../../db/jarvis-reindex.js", async (orig) => ({ ...(await orig<object>()), }));
 const google = vi.hoisted(() => ({ googleFetch: vi.fn() }));
 vi.mock("../../google/client.js", () => ({ googleFetch: google.googleFetch }));

@@ -19,6 +19,10 @@ requireOperatorContext("backfill-kb-drive", { tty: false });
 
 initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
 const r = await backfillToDrive();
+if (r.refused) {
+  console.error("[backfill-kb-drive] REFUSED: open db is not the live mc.db — nothing uploaded");
+  process.exit(2);
+}
 console.log(
   `[backfill-kb-drive] uploaded=${r.uploaded} skipped=${r.skipped} failed=${r.failed}`,
 );

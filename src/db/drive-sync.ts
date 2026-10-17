@@ -12,6 +12,7 @@
 import { googleFetch } from "../google/client.js";
 import { getDatabase } from "./index.js";
 import { errMsg } from "../lib/err-msg.js";
+import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "./live-db.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -692,6 +693,25 @@ export function isDriveSyncEnabled(): boolean {
   return !!ROOT_FOLDER_ID;
 }
 
+// The Drive copy belongs to exactly one database (queue 4a, 2026-10-16): a
+// process with DRIVE_KB_FOLDER_ID that opened any other db (scratch, snapshot,
+// :memory:, vitest) has an empty or foreign drive_file_map, so its writes
+// CREATE duplicate Drive files or PATCH live copies. Every Drive write path
+// asks driveWritesAllowed() first: same realpath rule as the disk mirror
+// (live-db.ts), no override. Reads stay ungated.
+let driveDisabledLogged = false;
+function driveWritesAllowed(): boolean {
+  const dbFile = openDbFile();
+  if (isLiveDatabaseFile(dbFile, LIVE_DB_PATH)) return true;
+  if (!driveDisabledLogged) {
+    driveDisabledLogged = true;
+    console.warn(
+      `[drive-sync] Drive sync DISABLED for this process: open db "${dbFile || "(none/memory)"}" is not the live ${LIVE_DB_PATH} — nothing will be created in, updated in or trashed from Drive`,
+    );
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Drive file map (SQLite)
 // ---------------------------------------------------------------------------
@@ -802,7 +822,7 @@ export function syncToDrive(
   content: string,
   driveMetadata?: DriveMetadata,
 ): void {
-  if (!isDriveSyncEnabled()) return;
+  if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
   (async () => {
     try {
@@ -871,7 +891,7 @@ export function syncToDrive(
  * Moves the Drive file to trash.
  */
 export function syncDeleteToDrive(path: string): void {
-  if (!isDriveSyncEnabled()) return;
+  if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
   (async () => {
     try {
@@ -951,10 +971,18 @@ export async function backfillToDrive(
   uploaded: number;
   skipped: number;
   failed: number;
+  /** Set when the live-db guard refused the whole pass (nothing was read or written). */
+  refused?: true;
 }> {
   if (!isDriveSyncEnabled()) {
     console.warn("[drive-sync] DRIVE_KB_FOLDER_ID not set, skipping backfill");
     return { uploaded: 0, skipped: 0, failed: 0 };
+  }
+  if (!driveWritesAllowed()) {
+    console.warn(
+      "[drive-sync] backfillToDrive REFUSED: the open db is not the live mc.db — nothing uploaded",
+    );
+    return { uploaded: 0, skipped: 0, failed: 0, refused: true };
   }
 
   ensureMapTable();
@@ -1051,10 +1079,18 @@ export async function reformatDriveFiles(
   updated: number;
   skipped: number;
   failed: number;
+  /** Set when the live-db guard refused the whole pass (nothing was read or written). */
+  refused?: true;
 }> {
   if (!isDriveSyncEnabled()) {
     console.warn("[drive-sync] DRIVE_KB_FOLDER_ID not set, skipping reformat");
     return { updated: 0, skipped: 0, failed: 0 };
+  }
+  if (!driveWritesAllowed()) {
+    console.warn(
+      "[drive-sync] reformatDriveFiles REFUSED: the open db is not the live mc.db — nothing updated",
+    );
+    return { updated: 0, skipped: 0, failed: 0, refused: true };
   }
 
   ensureMapTable();

@@ -51,6 +51,7 @@ function loadLiveEnv(): string | null {
         if (!(k in process.env)) process.env[k] = kv.slice(i + 1);
       }
     }
+    delete process.env.DRIVE_KB_FOLDER_ID;
     return pid;
   }
   return null;

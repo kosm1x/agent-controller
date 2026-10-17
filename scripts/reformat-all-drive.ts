@@ -9,9 +9,13 @@
  *
  * Progress is written to /tmp/reformat-drive-progress.log
  * Run `tail -f /tmp/reformat-drive-progress.log` in another terminal to watch.
+ *
+ * It runs on a snapshot by design, so since 2026-10-17 the live-db guard refuses every run (exit 2).
+ * The sanctioned path for a format change is `POST /api/admin/drive-reformat?prefix=<folder>/&limit=N` in the live process.
+ * Retiring this script is an operator decision (queue 4a).
  */
 
-import { copyFileSync, existsSync, mkdtempSync, chmodSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,7 +69,18 @@ async function main(): Promise<void> {
   log("=== reformat-all-drive START ===");
   log(`Log file: ${LOG_FILE}`);
 
-  const { updated, skipped, failed } = await reformatDriveFiles();
+  const { updated, skipped, failed, refused } = await reformatDriveFiles();
+  if (refused) {
+    // Synchronous append: log()'s async append would lose this line to exit.
+    const line = `[${new Date().toISOString()}] REFUSED: open db is not the live mc.db — nothing updated\n`;
+    process.stderr.write(line);
+    try {
+      appendFileSync(LOG_FILE, line);
+    } catch {
+      // ignore
+    }
+    process.exit(2);
+  }
 
   log(`=== reformat-all-drive DONE ===`);
   log(`  updated : ${updated}`);

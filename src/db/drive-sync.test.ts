@@ -12,9 +12,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // import time, and every Drive call is mocked.
 const drive = vi.hoisted(() => {
   process.env.DRIVE_KB_FOLDER_ID = "kb-root-test";
-  return { googleFetch: vi.fn() };
+  return { googleFetch: vi.fn(), isLive: true };
 });
 vi.mock("../google/client.js", () => ({ googleFetch: drive.googleFetch }));
+// The live-db predicate (queue 4a): tests open :memory:, which the real
+// predicate refuses, so it is mocked; `drive.isLive` picks the answer.
+vi.mock("./live-db.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./live-db.js")>();
+  return {
+    ...real,
+    isLiveDatabaseFile: vi.fn(() => drive.isLive),
+  };
+});
 
 import {
   toObsidianContent,
@@ -24,6 +33,8 @@ import {
   splitFrontmatter,
   reformatDriveFiles,
   backfillToDrive,
+  syncToDrive,
+  syncDeleteToDrive,
 } from "./drive-sync.js";
 import { initDatabase, closeDatabase, getDatabase } from "./index.js";
 
@@ -1216,5 +1227,106 @@ describe("QA round 3 — block scalar list item and flow-quote escapes", () => {
     expect(splitFrontmatter(content).malformedReason).toBeUndefined();
     const out = toObsidianContent("notes/a.md", "A", content, { tags: ["kb"] });
     expect(headLines(out)).toContain('tags: [kb, "it\'s]", b]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4a — Drive writes refuse unless the open db is the live mc.db
+// ---------------------------------------------------------------------------
+describe("Drive live-db guard", () => {
+  const DISABLED = "[drive-sync] Drive sync DISABLED for this process";
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string) =>
+      url.includes("uploadType=multipart") ? { id: "new-id" } : { files: [{ id: "folder" }] },
+    );
+  });
+
+  afterEach(() => {
+    drive.isLive = true;
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  it("predicate false: no write path calls googleFetch and DISABLED logs once", async () => {
+    // A fresh module instance, so the once-per-process flag starts unset.
+    vi.resetModules();
+    const ds = await import("./drive-sync.js");
+    const idx = await import("./index.js");
+    const liveDb = await import("./live-db.js");
+    drive.isLive = false;
+    idx.initDatabase(":memory:");
+    const db = idx.getDatabase();
+    db.prepare(
+      "INSERT INTO jarvis_files (id, path, title, content) VALUES ('x', 'knowledge/x.md', 'X', 'body')",
+    ).run();
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS drive_file_map (path TEXT PRIMARY KEY, drive_id TEXT NOT NULL, updated_at TEXT DEFAULT (datetime('now')))",
+    );
+    db.prepare("INSERT OR REPLACE INTO drive_file_map (path, drive_id) VALUES ('knowledge/x.md', 'id-x')").run();
+    // No mockClear: initDatabase's seed upserts (-> syncToDrive) count too.
+
+    for (let round = 0; round < 2; round++) {
+      ds.syncToDrive("knowledge/new.md", "New", "body");
+      ds.syncToDrive("knowledge/x.md", "X", "body");
+      ds.syncDeleteToDrive("knowledge/x.md");
+      expect(await ds.backfillToDrive()).toEqual({ uploaded: 0, skipped: 0, failed: 0, refused: true });
+      expect(await ds.reformatDriveFiles()).toEqual({ updated: 0, skipped: 0, failed: 0, refused: true });
+      await flush();
+    }
+
+    expect(drive.googleFetch).not.toHaveBeenCalled();
+    const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith(DISABLED));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("is not the live /root/claude/mission-control/data/mc.db");
+    // Bulk passes log their refusal on EVERY call (the admin route's caller
+    // must not read all-zero counts as "nothing to do").
+    const all = warn.mock.calls.map((c) => String(c[0]));
+    expect(all.filter((l) => l.startsWith("[drive-sync] backfillToDrive REFUSED"))).toHaveLength(2);
+    expect(all.filter((l) => l.startsWith("[drive-sync] reformatDriveFiles REFUSED"))).toHaveLength(2);
+    // The guard asks the shared predicate about the live path, not a copy of it.
+    expect(liveDb.isLiveDatabaseFile).toHaveBeenCalledWith(
+      expect.any(String),
+      liveDb.LIVE_DB_PATH,
+    );
+    // The map row is untouched (the trash path did not run).
+    expect(
+      db.prepare("SELECT drive_id FROM drive_file_map WHERE path = 'knowledge/x.md'").get(),
+    ).toEqual({ drive_id: "id-x" });
+    idx.closeDatabase(); // the fresh instance's db; afterEach closes the original's
+  });
+
+  it("predicate true: syncToDrive creates and syncDeleteToDrive trashes as before", async () => {
+    drive.isLive = true;
+    initDatabase(":memory:");
+    await flush(); // let the seed's fire-and-forget calls settle
+    drive.googleFetch.mockClear();
+    warn.mockClear();
+
+    syncToDrive("knowledge/guard/new.md", "New", "body");
+    await vi.waitFor(() => {
+      const posts = drive.googleFetch.mock.calls.filter((c) =>
+        String(c[0]).includes("uploadType=multipart"),
+      );
+      expect(posts).toHaveLength(1);
+    });
+    const db = getDatabase();
+    expect(
+      db.prepare("SELECT drive_id FROM drive_file_map WHERE path = 'knowledge/guard/new.md'").get(),
+    ).toEqual({ drive_id: "new-id" });
+
+    drive.googleFetch.mockClear();
+    syncDeleteToDrive("knowledge/guard/new.md");
+    await vi.waitFor(() => expect(drive.googleFetch).toHaveBeenCalledTimes(1));
+    const [url, init] = drive.googleFetch.mock.calls[0];
+    expect(String(url)).toContain("/files/new-id");
+    expect(init).toEqual({ method: "PATCH", body: { trashed: true } });
+    const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith(DISABLED));
+    expect(lines).toHaveLength(0);
   });
 });

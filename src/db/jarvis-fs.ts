@@ -10,13 +10,7 @@
  */
 
 import { getDatabase } from "./index.js";
-import {
-  writeFileSync,
-  mkdirSync,
-  rmSync,
-  existsSync,
-  realpathSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { syncToPgvector, syncDeleteToPgvector } from "./pgvector-sync.js";
@@ -28,6 +22,9 @@ import {
 } from "./drive-sync.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "./live-db.js";
+
+export { isLiveDatabaseFile } from "./live-db.js";
 
 // Mirror to /root/claude/jarvis-kb/ — outside mission-control, in Jarvis's dominium.
 // This is readable/writable by Jarvis's file_read/file_write tools.
@@ -67,7 +64,7 @@ function explicitMirrorDir(env: NodeJS.ProcessEnv): string | undefined {
 // through resolveMirrorWriteDir: with no env-chosen dir, the default is
 // returned only when the open db file is, kernel-resolved, the live mc.db;
 // any other db (scratch, snapshot, :memory:, none open) gets null = no mirror.
-const LIVE_DB_PATH = "/root/claude/mission-control/data/mc.db";
+// LIVE_DB_PATH and the predicate live in live-db.ts (shared with drive-sync).
 
 export interface KbMirrorTarget {
   defaultDir: string;
@@ -77,16 +74,6 @@ const LIVE_TARGET: KbMirrorTarget = {
   defaultDir: DEFAULT_MIRROR_DIR,
   liveDbPath: LIVE_DB_PATH,
 };
-
-/** True only when `dbFile` and `liveDbPath` realpath to the same file. */
-export function isLiveDatabaseFile(dbFile: string, liveDbPath: string): boolean {
-  if (!dbFile) return false; // "" = :memory: / temp db
-  try {
-    return realpathSync.native(dbFile) === realpathSync.native(liveDbPath);
-  } catch {
-    return false; // either side missing
-  }
-}
 
 /** Where mirror writes/deletes may go; null = mirroring disabled. Pure. */
 export function resolveMirrorWriteDir(
@@ -99,19 +86,6 @@ export function resolveMirrorWriteDir(
   return isLiveDatabaseFile(openDbFile(), target.liveDbPath)
     ? target.defaultDir
     : null;
-}
-
-/** Absolute file of the open main db as SQLite resolved it; "" if none. */
-function openDbFile(): string {
-  try {
-    const rows = getDatabase().pragma("database_list") as Array<{
-      name: string;
-      file: string;
-    }>;
-    return rows.find((r) => r.name === "main")?.file ?? "";
-  } catch {
-    return ""; // no db open → not the live db
-  }
 }
 
 let mirrorDisabledLogged = false;

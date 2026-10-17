@@ -288,4 +288,13 @@ describe("POST /admin/drive-backfill and /admin/drive-reformat (prefix + limit)"
     expect(await res.json()).toEqual({ updated: 2, skipped: 0, failed: 0 });
     expect(driveMocks.reformatDriveFiles).toHaveBeenLastCalledWith({ limit: 3 });
   });
+
+  it("a live-db guard refusal reaches the caller unchanged (refused: true)", async () => {
+    const app = createTestApp();
+    const refused = { uploaded: 0, skipped: 0, failed: 0, refused: true };
+    driveMocks.backfillToDrive.mockResolvedValue(refused);
+    const res = await app.request("/admin/drive-backfill", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(refused);
+  });
 });
