@@ -5,6 +5,9 @@
  * - tool_selection: calls inferWithTools to see which tools the LLM chooses (costs API tokens)
  * - scope_accuracy: runs pure scopeTools function (free, deterministic)
  * - classification: runs pure classify function (free, deterministic)
+ * - scope_prompt (queue 3j): each scope_accuracy case replayed through the LLM
+ *   scope classifier (`sandbox.scopePromptClassifier`; one call per case,
+ *   eval gate --run only), scored with the scope_accuracy metric
  */
 
 import type {
@@ -14,6 +17,7 @@ import type {
   EvalFilter,
   CaseScore,
   ToolReachability,
+  ScopePromptClassifier,
 } from "./types.js";
 import { EST_COST_PER_INFERENCE_USD } from "./types.js";
 import { getActiveTestCases } from "./schema.js";
@@ -25,6 +29,8 @@ import {
 } from "./scorer.js";
 import { detectActiveGroups, CODE_SCOPE_PATTERNS } from "../messaging/scope.js";
 import { classify, type ClassificationInput } from "../dispatch/classifier.js";
+import { normalizeForMatching } from "../messaging/normalize.js";
+import { recentContextOf } from "./jev-scope-chain.js";
 import type { ChatMessage, ToolDefinition } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 
@@ -249,6 +255,60 @@ function evalScopeAccuracy(tc: TestCase, sandbox: SandboxConfig): CaseScore {
 }
 
 /**
+ * Queue 3j: replay a scope_accuracy case through the LLM scope classifier and
+ * score the groups it returns against the case's labels with the
+ * scope_accuracy metric. Inputs mirror the router (src/messaging/router.ts):
+ * the message normalized, `recentContext` = the last history turn + the raw
+ * message (150 chars each, `recentContextOf`), `wholeTurns` = those turns'
+ * text. Only the classifier's own answer is scored (the regex union and the
+ * sticky prior are the scope_accuracy row's / the router's business). Never
+ * throws: a null answer (timeout, provider error, unparseable reply — the
+ * live router falls back to regex) or a throw scores 0 with `details.error`.
+ */
+async function evalScopePrompt(
+  tc: TestCase,
+  classifyFn: ScopePromptClassifier,
+): Promise<CaseScore> {
+  const history = tc.input.conversationHistory ?? [];
+  const recentContext = recentContextOf(history, tc.input.message).text;
+  const wholeTurns = [...history.map((t) => t.content), tc.input.message].slice(-2);
+  // Which classifier answered (provider label only). A classifier that does
+  // not report: "unreported" for an answer, "none" for null / a throw.
+  let provider: string | undefined;
+  const row = (score: number, details: Record<string, unknown>): CaseScore => ({
+    caseId: tc.case_id,
+    category: "scope_prompt",
+    score,
+    weight: tc.weight,
+    details: {
+      ...details,
+      provider: provider ?? (details.error !== undefined ? "none" : "unreported"),
+      sourceGroup: tc.sourceGroup ?? "seed",
+    },
+  });
+  try {
+    const groups = await classifyFn(
+      normalizeForMatching(tc.input.message),
+      recentContext || undefined,
+      wholeTurns,
+      (p) => {
+        provider = p;
+      },
+    );
+    if (groups === null) {
+      return row(0, {
+        error:
+          "classifier returned null (timeout, provider error or unparseable reply; live routing falls back to regex)",
+      });
+    }
+    const { score, details } = scoreScopeAccuracy(tc.expected, groups);
+    return row(score, details);
+  } catch (err) {
+    return row(0, { error: String(err) });
+  }
+}
+
+/**
  * Evaluate a classification case (deterministic, no LLM call).
  */
 function evalClassification(tc: TestCase): CaseScore {
@@ -400,11 +460,15 @@ export async function runEvaluation(
         details: { error: String(err), sourceGroup: tc.sourceGroup ?? "seed" },
       });
     }
+    // Outside the try: a regex-path throw must not skip the prompt replay.
+    if (tc.category === "scope_accuracy" && sandbox.scopePromptClassifier) {
+      results.push(await evalScopePrompt(tc, sandbox.scopePromptClassifier));
+    }
   }
 
   const { compositeScore, subscores } = computeCompositeScore(results);
-  const toolSelectionCount = results.filter(
-    (r) => r.category === "tool_selection",
+  const llmCallCount = results.filter(
+    (r) => r.category === "tool_selection" || r.category === "scope_prompt",
   ).length;
 
   return {
@@ -413,8 +477,10 @@ export async function runEvaluation(
     perCase: results,
     reachability: summarizeReachability(results, excluded),
     totalTokens,
-    // Per-probe estimate, calibrated on single-round probes (ignores probeRounds).
-    estimatedCostUsd: toolSelectionCount * EST_COST_PER_INFERENCE_USD,
+    // Per-call estimate, calibrated on single-round probes (ignores
+    // probeRounds); a scope_prompt classifier call (80 output tokens) counts
+    // as one call too, an upper bound.
+    estimatedCostUsd: llmCallCount * EST_COST_PER_INFERENCE_USD,
     durationMs: Date.now() - startMs,
   };
 }

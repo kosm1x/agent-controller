@@ -3,12 +3,14 @@
  *
  * Three sub-metrics:
  * - Tool selection accuracy (50%): did the LLM call the right tools?
- * - Scope accuracy (30%): did scopeTools include the right groups?
+ * - Scope accuracy (30%): did scopeTools include the right groups? When the
+ *   eval gate --run scores scope_prompt rows (the LLM classifier, queue 3j)
+ *   the 30% splits: regex scope 15% + scope_prompt 15%.
  * - Classification accuracy (20%): did classify() return the right agent_type?
  */
 
 import type { TestCaseExpected, CaseScore, EvalSubscores } from "./types.js";
-import { METRIC_WEIGHTS } from "./types.js";
+import { METRIC_WEIGHTS, SCOPE_PROMPT_WEIGHT } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Per-case scoring
@@ -219,7 +221,9 @@ export function scoreClassification(
  * Compute composite score from per-case results.
  *
  * Groups cases by category, computes weighted average per category,
- * then combines using METRIC_WEIGHTS.
+ * then combines using METRIC_WEIGHTS. When scope_prompt rows exist (eval gate
+ * --run, queue 3j) they take SCOPE_PROMPT_WEIGHT out of the scope weight
+ * (regex scope 0.15 + prompt 0.15); with none the composite is unchanged.
  */
 export function computeCompositeScore(cases: CaseScore[]): {
   compositeScore: number;
@@ -229,6 +233,7 @@ export function computeCompositeScore(cases: CaseScore[]): {
     tool_selection: [] as CaseScore[],
     scope_accuracy: [] as CaseScore[],
     classification: [] as CaseScore[],
+    scope_prompt: [] as CaseScore[],
   };
 
   for (const c of cases) {
@@ -254,10 +259,16 @@ export function computeCompositeScore(cases: CaseScore[]): {
     scopeAccuracy: weightedAvg(byCategory.scope_accuracy),
     classification: weightedAvg(byCategory.classification),
   };
+  const promptWeight =
+    byCategory.scope_prompt.length > 0 ? SCOPE_PROMPT_WEIGHT : 0;
+  if (promptWeight > 0) {
+    subscores.scopePrompt = weightedAvg(byCategory.scope_prompt);
+  }
 
   const compositeScore =
     subscores.toolSelection * METRIC_WEIGHTS.toolSelection +
-    subscores.scopeAccuracy * METRIC_WEIGHTS.scopeAccuracy +
+    subscores.scopeAccuracy * (METRIC_WEIGHTS.scopeAccuracy - promptWeight) +
+    (subscores.scopePrompt ?? 0) * promptWeight +
     subscores.classification * METRIC_WEIGHTS.classification;
 
   return { compositeScore, subscores };

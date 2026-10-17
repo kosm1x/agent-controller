@@ -41,7 +41,15 @@ import {
   priorBaseline,
   populationIds,
   preSpendPopulationRefusal,
+  scopePromptRefusal,
+  scopePromptBreakdown,
+  scopePromptDrift,
+  gateDecision,
+  parseEpsilonFlag,
+  parsePromptEpsilon,
+  SCOPE_PROMPT_EPSILON,
   type EvalBaseline,
+  type GateDecisionInput,
 } from "./gate.js";
 import type { CaseScore } from "./types.js";
 
@@ -130,31 +138,54 @@ describe("resolveEpsilon", () => {
 });
 
 describe("scoringVersionMismatch (2026-10-04)", () => {
-  it("the current scoring generation is 3 (multi-round probe)", () => {
-    expect(SCORING_VERSION).toBe(3);
+  it("the current scoring generation is 4 (scope_prompt, queue 3j)", () => {
+    expect(SCORING_VERSION).toBe(4);
   });
 
-  it("the committed baseline is the v3 capture and passes the pre-spend check", () => {
+  it("the committed baseline passes the pre-spend check when captured under v4, else it exits 2 naming the re-capture", () => {
     const committed = readBaseline(() =>
       readFileSync(new URL("./eval-baseline.json", import.meta.url), "utf8"),
     );
     expect(committed).not.toBeInstanceOf(Error);
+    const refusal = preSpendRefusal({
+      run: true,
+      updateBaseline: false,
+      experiment: false,
+      baseline: committed,
+      baselinePath: "/repo/src/tuning/eval-baseline.json",
+    });
+    // FLIP AT RE-CAPTURE: the committed file is the v3 incumbent until the
+    // operator runs `npm run eval:gate -- --run --update-baseline` on the
+    // pushed HEAD; then change 3 → SCORING_VERSION and the refusal → null.
+    expect((committed as EvalBaseline).scoringVersion).toBe(3);
+    expect(refusal).toMatch(/older scoring .*re-capture with --run --update-baseline/);
+  });
+
+  it("a full v3 baseline (the pre-3j capture shape) is refused before spend (exit 2 contract)", () => {
+    const v3: EvalBaseline = {
+      overall: 85.01,
+      scoringVersion: 3,
+      toolSelectionProbedIds: [],
+      toolSelectionExcludedIds: [],
+    };
     expect(
       preSpendRefusal({
         run: true,
         updateBaseline: false,
         experiment: false,
-        baseline: committed,
+        baseline: v3,
         baselinePath: "/repo/src/tuning/eval-baseline.json",
       }),
-    ).toBeNull();
+    ).toBe(
+      "baseline captured under an older scoring (scoringVersion 3, current 4); re-capture with --run --update-baseline",
+    );
   });
 
   it("a baseline with no scoringVersion is generation 1 → older-scoring refusal naming the re-capture", () => {
     const msg = scoringVersionMismatch({ overall: 36.7 });
     expect(msg).toMatch(/older scoring/);
     expect(msg).toMatch(/re-capture with --run --update-baseline/);
-    expect(msg).toMatch(/scoringVersion 1, current 3/);
+    expect(msg).toMatch(/scoringVersion 1, current 4/);
   });
 
   it("an explicitly older version is refused the same way", () => {
@@ -304,6 +335,7 @@ const goodBaseline = (): EvalBaseline => ({
   scoringVersion: SCORING_VERSION,
   toolSelectionProbedIds: [],
   toolSelectionExcludedIds: [],
+  scopePromptCaseIds: [],
 });
 
 describe("preSpendRefusal (W4: checked before any inference)", () => {
@@ -336,6 +368,12 @@ describe("preSpendRefusal (W4: checked before any inference)", () => {
         baseline: { overall: 80, scoringVersion: SCORING_VERSION },
       }),
     ).toMatch(/records no tool_selection population/);
+    // v4 without the scope_prompt population (queue 3j)
+    const noPrompt = goodBaseline();
+    delete noPrompt.scopePromptCaseIds;
+    expect(preSpendRefusal({ ...base, baseline: noPrompt })).toBe(
+      "baseline records no scope_prompt population (scopePromptCaseIds); re-capture with --run --update-baseline",
+    );
   });
 
   it("does not apply to DRY, --update-baseline or experiment runs", () => {
@@ -370,16 +408,20 @@ describe("population digests + drift (W3)", () => {
     const d = caseIdDigest("synthetic-case-1");
     expect(d).toMatch(/^[0-9a-f]{16}$/);
     expect(caseIdDigest("synthetic-case-1")).toBe(d);
-    const p = populationDigests(["s-b", "s-a"], ["s-c"]);
+    const p = populationDigests(["s-b", "s-a"], ["s-c"], ["sc-y", "sc-x"]);
     expect(p.toolSelectionProbedIds).toEqual(
       [caseIdDigest("s-b"), caseIdDigest("s-a")].sort(),
     );
     expect(p.toolSelectionExcludedIds).toEqual([caseIdDigest("s-c")]);
+    expect(p.scopePromptCaseIds).toEqual(
+      [caseIdDigest("sc-y"), caseIdDigest("sc-x")].sort(),
+    );
     expect(JSON.stringify(p)).not.toContain("s-a");
+    expect(JSON.stringify(p)).not.toContain("sc-x");
   });
 
   it("a case the baseline probed that is now excluded is an error naming it", () => {
-    const baseline = populationDigests(["s-1", "s-2"], ["s-3"]);
+    const baseline = populationDigests(["s-1", "s-2"], ["s-3"], []);
     const drift = populationDrift(baseline, ["s-1"], ["s-2", "s-3"]);
     expect(drift.newlyExcluded).toEqual(["s-2"]);
     expect(drift.error).toBe(
@@ -388,7 +430,7 @@ describe("population digests + drift (W3)", () => {
   });
 
   it("new, removed and newly-probed cases are counts, not errors", () => {
-    const baseline = populationDigests(["s-1", "s-2"], ["s-3"]);
+    const baseline = populationDigests(["s-1", "s-2"], ["s-3"], []);
     // s-2 removed, s-3 now probed, s-4 new probed, s-5 new excluded.
     const drift = populationDrift(baseline, ["s-1", "s-3", "s-4"], ["s-5"]);
     expect(drift).toEqual({
@@ -400,8 +442,20 @@ describe("population digests + drift (W3)", () => {
     });
   });
 
+  it("scope_prompt population drift is counts only", () => {
+    const baseline = populationDigests([], [], ["sc-1", "sc-2"]);
+    expect(scopePromptDrift(baseline, ["sc-1", "sc-3", "sc-4"])).toEqual({
+      newSinceBaseline: 2,
+      goneSinceBaseline: 1,
+    });
+    expect(scopePromptDrift(baseline, ["sc-2", "sc-1"])).toEqual({
+      newSinceBaseline: 0,
+      goneSinceBaseline: 0,
+    });
+  });
+
   it("an unchanged population has no drift", () => {
-    const baseline = populationDigests(["s-1"], ["s-3"]);
+    const baseline = populationDigests(["s-1"], ["s-3"], []);
     expect(populationDrift(baseline, ["s-1"], ["s-3"])).toEqual({
       newlyExcluded: [],
       newlyProbed: 0,
@@ -471,6 +525,65 @@ describe("errored probes (R2-W1)", () => {
   });
 });
 
+describe("scope_prompt refusal + breakdown (queue 3j)", () => {
+  const sp = (caseId: string, score: number, details: Record<string, unknown> = {}): CaseScore => ({
+    caseId,
+    category: "scope_prompt",
+    score,
+    weight: 1,
+    details,
+  });
+
+  it("a complete, clean scope_prompt population may judge / capture", () => {
+    expect(scopePromptRefusal([sp("sc-1", 1), sp("sc-2", 0.5)], 2)).toBeNull();
+    expect(scopePromptRefusal([], 0)).toBeNull();
+  });
+
+  it("any errored classifier call = no verdict and no capture", () => {
+    expect(
+      scopePromptRefusal([sp("sc-1", 1), sp("sc-2", 0, { error: "classifier returned null" })], 2),
+    ).toBe("1 scope_prompt classifier call(s) errored (scored 0) — rerun when inference is healthy");
+  });
+
+  it("fewer scope_prompt rows than active scope_accuracy cases (scorer not wired) is refused", () => {
+    expect(scopePromptRefusal([], 43)).toBe(
+      "scope_prompt replayed 0 of 43 active scope_accuracy cases — the prompt scorer must run on every one",
+    );
+    // scope_accuracy rows do not count as replayed
+    expect(
+      scopePromptRefusal([{ ...sp("sc-1", 1), category: "scope_accuracy" }], 1),
+    ).toMatch(/replayed 0 of 1/);
+  });
+
+  it("breakdown partitions exact / partial / wrong / errored and weights the subscore", () => {
+    const b = scopePromptBreakdown([
+      sp("sc-1", 1),
+      sp("sc-2", 0.5),
+      sp("sc-3", 0),
+      sp("sc-4", 0, { error: "Error: x" }),
+      { ...sp("sc-5", 1), category: "scope_accuracy" },
+    ]);
+    expect(b).toEqual({
+      cases: 4,
+      providers: { unreported: 4 },
+      exact: 1,
+      partial: 1,
+      wrong: 1,
+      errored: 1,
+      subscore: 37.5,
+    });
+    expect(
+      scopePromptBreakdown([
+        sp("sc-1", 1, { provider: "jev" }),
+        sp("sc-2", 1, { provider: "sonnet" }),
+        sp("sc-3", 1, { provider: "sonnet" }),
+        sp("sc-4", 0, { provider: "none", error: "classifier returned null" }),
+      ]).providers,
+    ).toEqual({ jev: 1, sonnet: 2, none: 1 });
+    expect(scopePromptBreakdown([]).subscore).toBe(0);
+  });
+});
+
 describe("readBaseline / priorBaseline (R2-W2)", () => {
   it("absent file → null; prior {}", () => {
     expect(readBaseline(() => null)).toBeNull();
@@ -532,18 +645,34 @@ describe("pre-spend population check (R2-N1)", () => {
           slotsScopedOut: 0,
         },
       }),
-    ).toEqual({ probedIds: ["s-1"], excludedIds: ["s-2"] });
+    ).toEqual({ probedIds: ["s-1"], excludedIds: ["s-2"], scopePromptIds: [] });
+    expect(
+      populationIds({
+        perCase: [
+          ts("s-1"),
+          { ...ts("sc-1"), category: "scope_accuracy" },
+          { ...ts("sc-1"), category: "scope_prompt" },
+        ],
+        reachability: {
+          casesExcluded: 0,
+          excludedCases: [],
+          slotsOffered: 0,
+          slotsNotRegistered: 0,
+          slotsScopedOut: 0,
+        },
+      }).scopePromptIds,
+    ).toEqual(["sc-1"]);
   });
 
   it("refuses before spend when a baseline-probed case is now excluded", async () => {
-    const baseline = populationDigests(["s-1", "s-2"], []);
+    const baseline = populationDigests(["s-1", "s-2"], [], []);
     expect(
       await preSpendPopulationRefusal(baseline, free(["s-1"], ["s-2"])),
     ).toMatch(/now excluded: s-2\)$/);
   });
 
   it("allows an unchanged or grown population", async () => {
-    const baseline = populationDigests(["s-1"], ["s-3"]);
+    const baseline = populationDigests(["s-1"], ["s-3"], []);
     expect(
       await preSpendPopulationRefusal(baseline, free(["s-1", "s-9"], ["s-3"])),
     ).toBeNull();
@@ -660,5 +789,126 @@ describe("toolSelectionBreakdown (counts only)", () => {
 
   it("omits empty groups", () => {
     expect(toolSelectionBreakdown([])).toEqual([]);
+  });
+});
+
+describe("--prompt-epsilon + gateDecision (queue 3j R1 W1/W3)", () => {
+  it("--prompt-epsilon parses as a value flag; absent = SCOPE_PROMPT_EPSILON 10; bad values are errors", () => {
+    expect(SCOPE_PROMPT_EPSILON).toBe(10);
+    const a = parseEvalGateArgs(["--run", "--prompt-epsilon=5"]);
+    expect(a.ok && a.args.promptEpsilon).toBe("5");
+    expect(parseEvalGateArgs(["--prompt-epsilon"]).ok).toBe(false);
+    expect(parsePromptEpsilon(undefined)).toEqual({ ok: true, epsilon: 10 });
+    expect(parsePromptEpsilon("2.5")).toEqual({ ok: true, epsilon: 2.5 });
+    expect(parsePromptEpsilon("0")).toEqual({ ok: true, epsilon: 0 });
+    for (const bad of ["-1", "abc", "Infinity", " "]) {
+      expect(parsePromptEpsilon(bad).ok).toBe(false);
+    }
+  });
+
+  it("--epsilon parses strictly (R2 Rec 1): absent = undefined (resolveEpsilon decides); bad values are errors, never a silent fallback", () => {
+    expect(parseEpsilonFlag(undefined)).toEqual({ ok: true, epsilon: undefined });
+    expect(parseEpsilonFlag("1.5")).toEqual({ ok: true, epsilon: 1.5 });
+    expect(parseEpsilonFlag("0")).toEqual({ ok: true, epsilon: 0 });
+    for (const bad of ["-1", "abc", "Infinity", "NaN", " ", ""]) {
+      const r = parseEpsilonFlag(bad);
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error).toContain("--epsilon takes a number >= 0");
+    }
+  });
+
+  const incumbent = (): EvalBaseline => ({
+    overall: 85,
+    epsilon: 2,
+    scoringVersion: SCORING_VERSION,
+    subscores: { toolSelection: 70, scopeAccuracy: 100, classification: 100, scopePrompt: 90 },
+    toolSelectionProbedIds: [],
+    toolSelectionExcludedIds: [],
+    scopePromptCaseIds: [],
+  });
+  const input = (o: Partial<GateDecisionInput> = {}): GateDecisionInput => ({
+    updateBaseline: false,
+    captureRefusal: null,
+    erroredRefusal: null,
+    promptRefusal: null,
+    driftError: null,
+    overall: 85,
+    scopePrompt: 90,
+    baseline: incumbent(),
+    epsilon: 2,
+    promptEpsilon: SCOPE_PROMPT_EPSILON,
+    ...o,
+  });
+
+  it("capture: refuses on a tool_selection capture refusal or a scope_prompt refusal, else captures", () => {
+    expect(gateDecision(input({ updateBaseline: true, baseline: null }))).toEqual({ action: "capture", reasons: [] });
+    expect(gateDecision(input({ updateBaseline: true, captureRefusal: "refusing to capture: x" }))).toEqual({
+      action: "refuse",
+      reasons: ["refusing to capture: x"],
+    });
+    expect(gateDecision(input({ updateBaseline: true, promptRefusal: "1 scope_prompt classifier call(s) errored" }))).toEqual({
+      action: "refuse",
+      reasons: ["1 scope_prompt classifier call(s) errored"],
+    });
+    // compare-only inputs never block a capture
+    expect(gateDecision(input({ updateBaseline: true, erroredRefusal: "e", driftError: "d" })).action).toBe("capture");
+  });
+
+  it("compare: refuses on no baseline, an errored probe, a scope_prompt refusal or drift", () => {
+    expect(gateDecision(input({ baseline: null }))).toEqual({ action: "refuse", reasons: ["baseline unavailable"] });
+    expect(gateDecision(input({ erroredRefusal: "2 tool_selection probe(s) errored" })).reasons).toEqual([
+      "2 tool_selection probe(s) errored",
+    ]);
+    const p = gateDecision(input({ promptRefusal: "scope_prompt replayed 0 of 43" }));
+    expect([p.action, p.reasons]).toEqual(["refuse", ["scope_prompt replayed 0 of 43"]]);
+    expect(gateDecision(input({ driftError: "scoping/registry changed" })).action).toBe("refuse");
+    // a refusal wins over a composite that would PASS
+    expect(gateDecision(input({ promptRefusal: "x", overall: 99, scopePrompt: 100 })).action).toBe("refuse");
+  });
+
+  it("compare: a scope_prompt subscore on one side only is refused", () => {
+    const noBaseSp = incumbent();
+    delete noBaseSp.subscores!.scopePrompt;
+    expect(gateDecision(input({ baseline: noBaseSp })).reasons).toEqual([
+      "baseline records no scope_prompt subscore; re-capture with --run --update-baseline",
+    ]);
+    expect(gateDecision(input({ scopePrompt: undefined })).reasons).toEqual([
+      "this run scored no scope_prompt rows but the baseline has a scope_prompt subscore",
+    ]);
+    // neither side (no active scope case): composite only
+    const r = gateDecision(input({ baseline: noBaseSp, scopePrompt: undefined }));
+    expect([r.action, r.prompt]).toEqual(["pass", undefined]);
+  });
+
+  it("compare: the composite rule (incumbent - epsilon, inclusive)", () => {
+    const pass = gateDecision(input({ overall: 83 }));
+    expect([pass.action, pass.composite!.threshold]).toEqual(["pass", 83]);
+    const fail = gateDecision(input({ overall: 82.99 }));
+    expect(fail.action).toBe("fail");
+    expect(fail.reasons).toEqual(["composite 82.99 < threshold 83.00 (incumbent 85.00 - epsilon 2)"]);
+  });
+
+  it("compare: the scope_prompt floor FAILS a run the composite epsilon would PASS (W1)", () => {
+    // composite unchanged, prompt subscore -13: hidden by the 2-point composite epsilon
+    const r = gateDecision(input({ overall: 85, scopePrompt: 77 }));
+    expect(r.action).toBe("fail");
+    expect(r.prompt).toEqual({ incumbent: 90, candidate: 77, delta: -13, epsilon: 10, floor: 80, regressed: true });
+    expect(r.reasons).toEqual(["scope_prompt 77.00 < floor 80.00 (incumbent 90.00 - prompt epsilon 10)"]);
+    // inclusive boundary
+    expect(gateDecision(input({ scopePrompt: 80 })).action).toBe("pass");
+    // the explicit override moves the floor
+    expect(gateDecision(input({ scopePrompt: 77, promptEpsilon: 15 })).action).toBe("pass");
+    // a bad epsilon never widens the floor
+    expect(gateDecision(input({ scopePrompt: 77, promptEpsilon: Number.NaN })).action).toBe("fail");
+    // both rules failing: both reasons
+    expect(gateDecision(input({ overall: 80, scopePrompt: 70 })).reasons).toHaveLength(2);
+  });
+
+  it("compare: an unchanged run PASSes and reports the prompt delta", () => {
+    const r = gateDecision(input());
+    expect(r.action).toBe("pass");
+    expect(r.reasons).toEqual([]);
+    expect(r.prompt!.delta).toBe(0);
+    expect(r.composite!.verdict).toBe("PASS");
   });
 });

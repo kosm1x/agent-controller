@@ -60,9 +60,17 @@ export type CaseSourceGroup = "seed" | "mined" | "flywheel";
 // Scoring
 // ---------------------------------------------------------------------------
 
+/**
+ * What a scored row measures: a stored case category, or `scope_prompt` —
+ * a scope_accuracy case replayed through the LLM scope classifier
+ * (`classifyScopeGroups`, live `classifierSystemPrompt()`), queue 3j. Never a
+ * stored category: it is derived at eval time from the scope_accuracy cases.
+ */
+export type ScoredCategory = TestCaseCategory | "scope_prompt";
+
 export interface CaseScore {
   caseId: string;
-  category: TestCaseCategory;
+  category: ScoredCategory;
   score: number; // 0.0 - 1.0
   weight?: number; // from TestCase.weight (defaults to 1.0 if missing)
   details: Record<string, unknown>;
@@ -98,6 +106,8 @@ export interface EvalSubscores {
   toolSelection: number; // 0-100
   scopeAccuracy: number; // 0-100
   classification: number; // 0-100
+  /** 0-100; present only when scope_prompt rows were scored (eval gate --run). */
+  scopePrompt?: number;
 }
 
 export interface EvalResult {
@@ -139,7 +149,26 @@ export interface SandboxConfig {
    * the overnight tuning loop stays on 1.
    */
   probeRounds?: number;
+  /**
+   * Queue 3j: when set, every scope_accuracy case is ALSO replayed through
+   * this classifier (the eval gate passes `classifyScopeGroups`: live
+   * prompt, one classifier call per case) and scored as a `scope_prompt` row
+   * against the same labelled groups. Absent = no scope_prompt rows (overnight
+   * loop, baseline.ts, the gate's DRY and pre-spend passes).
+   */
+  scopePromptClassifier?: ScopePromptClassifier;
 }
+
+/**
+ * `classifyScopeGroups`' signature: null = no answer (live falls back to
+ * regex); `onAnswer` names the classifier that answered (jev / sonnet / none).
+ */
+export type ScopePromptClassifier = (
+  message: string,
+  recentContext?: string,
+  wholeTurns?: readonly string[],
+  onAnswer?: (provider: "jev" | "sonnet" | "none") => void,
+) => Promise<Set<string> | null>;
 
 // ---------------------------------------------------------------------------
 // Experiments
@@ -216,6 +245,13 @@ export const METRIC_WEIGHTS = {
   scopeAccuracy: 0.3,
   classification: 0.2,
 } as const;
+
+/**
+ * Composite weight of the scope_prompt subscore, taken out of
+ * `METRIC_WEIGHTS.scopeAccuracy` (regex scope keeps the rest) — only when
+ * scope_prompt rows exist; otherwise the composite is unchanged.
+ */
+export const SCOPE_PROMPT_WEIGHT = 0.15;
 
 /** Estimated cost per LLM inference call in USD (DashScope). */
 export const EST_COST_PER_INFERENCE_USD = 0.03;

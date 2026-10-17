@@ -193,6 +193,9 @@ export function classifierSystemPrompt(): string {
   );
 }
 
+/** Which classifier answered a `classifyScopeGroups` call ("none" = null returned). */
+export type ScopeClassifierProvider = "jev" | "sonnet" | "none";
+
 /**
  * Classify scope groups using LLM. Returns null on failure (caller uses regex fallback).
  */
@@ -201,7 +204,19 @@ export async function classifyScopeGroups(
   recentContext?: string,
   /** The turns behind `recentContext`, uncut — read by the Jev vendor filter. */
   wholeTurns?: readonly string[],
+  /**
+   * Told which classifier answered (eval gate scope_prompt rows, queue 3j).
+   * Optional; a throwing callback never changes the answer.
+   */
+  onAnswer?: (provider: ScopeClassifierProvider) => void,
 ): Promise<Set<string> | null> {
+  const told = (provider: ScopeClassifierProvider) => {
+    try {
+      onAnswer?.(provider);
+    } catch {
+      /* observer only */
+    }
+  };
   try {
     // Jev first when enabled (operator ruling 2026-09-21); any non-answer —
     // error, timeout, withheld text — falls through to Sonnet below. Its own
@@ -216,7 +231,10 @@ export async function classifyScopeGroups(
           VALID_GROUPS,
           wholeTurns,
         );
-        if (groups) return withDeterministicGroups(message, groups);
+        if (groups) {
+          told("jev");
+          return withDeterministicGroups(message, groups);
+        }
       }
     } catch (err) {
       console.warn(
@@ -266,11 +284,13 @@ export async function classifyScopeGroups(
         `[scope-classifier] Unparseable response → regex fallback: "${raw.slice(0, 120)}"`,
       );
     }
+    told(parsed === null ? "none" : "sonnet");
     return parsed;
   } catch (err) {
     console.warn(
       `[scope-classifier] Classify failed → regex fallback: ${err instanceof Error ? err.message : String(err)}`,
     );
+    told("none");
     return null;
   }
 }

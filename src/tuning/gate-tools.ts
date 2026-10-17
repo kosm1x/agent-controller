@@ -44,8 +44,9 @@ export async function registerEvalGateTools(
  * `CODE_SCOPE_PATTERNS`), so the derived regexes come back as
  * `scopePatternOverrides` = code patterns + derived ones (undefined when no
  * record declares a group: the gate then runs exactly as before). The
- * classifier-prompt line is registered but no gate case reads it: it stays
- * unmeasured until a prompt scorer exists (queue 3j). MCP tools are never
+ * classifier-prompt line is registered too, and under --run the scope_prompt
+ * replay (queue 3j) sends the live `classifierSystemPrompt()` that carries it,
+ * so the record's routing summary is measured. MCP tools are never
  * registered here, so a derived group's tool list is empty in the gate.
  * Call once, after `registerEvalGateTools`, before any case runs.
  */

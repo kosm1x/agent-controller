@@ -606,3 +606,204 @@ describe("defaultInferFunction (gate -> infer link)", () => {
     expect(out.toolsCalled).toEqual(["tool_a"]);
   });
 });
+
+describe("scope_prompt: scope cases replayed through the LLM classifier (queue 3j)", () => {
+  // The REAL classifyScopeGroups, its `infer` = the mocked adapter above.
+  // Sonnet path forced: the Jev vendor path must never run in a test.
+  beforeEach(() => {
+    vi.stubEnv("SCOPE_CLASSIFIER_PROVIDER", "sonnet");
+    adapterInfer.mockReset();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const reply = (content: string) =>
+    adapterInfer.mockResolvedValue({ content, usage: { prompt_tokens: 1, completion_tokens: 1 } });
+
+  async function classifier() {
+    return (await import("../messaging/scope-classifier.js")).classifyScopeGroups;
+  }
+
+  function seedThree() {
+    insertTestCase(makeScopeCase({ case_id: "sc-p-exact", input: { message: "Revisa el código" }, expected: { scope_groups: ["coding"] } }));
+    insertTestCase(makeScopeCase({ case_id: "sc-p-partial", input: { message: "Revisa el código y el correo" }, expected: { scope_groups: ["coding", "google"] } }));
+    insertTestCase(makeScopeCase({ case_id: "sc-p-wrong", input: { message: "Publica el post" }, expected: { scope_groups: ["wordpress"], not_scope_groups: ["coding"] } }));
+  }
+
+  it("scores the classifier's groups against the labels: correct 1, partial 0.5, incorrect 0", async () => {
+    seedThree();
+    reply('["coding"]');
+    const result = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    const prompt = result.perCase.filter((c) => c.category === "scope_prompt");
+    expect(prompt.map((c) => [c.caseId, c.score])).toEqual([
+      ["sc-p-exact", 1],
+      ["sc-p-partial", 0.5],
+      ["sc-p-wrong", 0],
+    ]);
+    expect(prompt[1].details).toMatchObject({
+      expectedGroups: ["coding", "google"],
+      activeGroups: ["coding"],
+      hits: ["coding"],
+      misses: ["google"],
+      sourceGroup: "seed",
+    });
+    expect(prompt[2].details).toMatchObject({ misses: ["wordpress"], violations: ["coding"] });
+    expect(prompt.every((c) => c.details.error === undefined)).toBe(true);
+    // the answering classifier is recorded (Sonnet path: Jev is off here)
+    expect(prompt.map((c) => c.details.provider)).toEqual(["sonnet", "sonnet", "sonnet"]);
+    // the regex rows are still scored beside them
+    expect(result.perCase.filter((c) => c.category === "scope_accuracy")).toHaveLength(3);
+    // one classifier call per case, with the LIVE prompt
+    expect(adapterInfer).toHaveBeenCalledTimes(3);
+    const { classifierSystemPrompt } = await import("../messaging/scope-classifier.js");
+    const sent = adapterInfer.mock.calls[0][0].messages;
+    expect(sent[0]).toEqual({ role: "system", content: classifierSystemPrompt() });
+    expect(sent[1].content).toContain("User message:\nRevisa el código");
+  });
+
+  it("the category is in the aggregate (own subscore, 0.15 of the scope weight) and the cost", async () => {
+    seedThree();
+    reply('["coding"]');
+    const r = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    expect(r.subscores.scopePrompt).toBeCloseTo(50, 10);
+    expect(r.compositeScore).toBeCloseTo(
+      r.subscores.scopeAccuracy * 0.15 + 50 * 0.15,
+      10,
+    );
+    expect(r.estimatedCostUsd).toBeCloseTo(3 * 0.03, 10);
+  });
+
+  it("the category is in the population digest", async () => {
+    seedThree();
+    reply('["coding"]');
+    const { populationIds, populationDigests, caseIdDigest } = await import("./gate.js");
+    const r = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    const ids = populationIds(r);
+    expect(ids.scopePromptIds).toEqual(["sc-p-exact", "sc-p-partial", "sc-p-wrong"]);
+    const d = populationDigests(ids.probedIds, ids.excludedIds, ids.scopePromptIds);
+    expect(d.scopePromptCaseIds).toEqual(
+      ["sc-p-exact", "sc-p-partial", "sc-p-wrong"].map(caseIdDigest).sort(),
+    );
+  });
+
+  it("an inference error scores the case 0 with an error reason, never a throw", async () => {
+    insertTestCase(makeScopeCase({ case_id: "sc-p-neg", input: { message: "hola" }, expected: { not_scope_groups: ["coding"] } }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    adapterInfer.mockRejectedValue(new Error("synthetic outage"));
+    const r = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    const row = r.perCase.find((c) => c.category === "scope_prompt")!;
+    expect(row.score).toBe(0);
+    expect(row.details.error).toMatch(/^classifier returned null/);
+    expect(row.details.provider).toBe("none");
+    // the regex row is unaffected (forbidden-only case, no coding keyword)
+    expect(r.perCase.find((c) => c.category === "scope_accuracy")!.score).toBe(1);
+
+    // an unparseable reply is a null answer too
+    reply("no idea");
+    const r2 = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    expect(r2.perCase.find((c) => c.category === "scope_prompt")!.details.error).toMatch(/^classifier returned null/);
+
+    // a classifier that throws is recorded, not propagated
+    const r3 = await runEvaluation(
+      { scopePromptClassifier: async () => { throw new Error("boom"); } },
+      { category: "scope_accuracy" },
+    );
+    const row3 = r3.perCase.find((c) => c.category === "scope_prompt")!;
+    expect([row3.score, row3.details.error, row3.details.provider]).toEqual([0, "Error: boom", "none"]);
+  });
+
+  it("mirrors the router's inputs: normalized message, recentContext = last turn + raw message, wholeTurns", async () => {
+    insertTestCase(
+      makeScopeCase({
+        case_id: "sc-p-hist",
+        input: {
+          message: "y ahora el otro",
+          conversationHistory: [
+            { role: "user", content: "primer turno sintetico" },
+            { role: "assistant", content: "respuesta sintetica" },
+          ],
+        },
+        expected: { scope_groups: ["coding"] },
+      }),
+    );
+    const seen: unknown[][] = [];
+    const r = await runEvaluation(
+      { scopePromptClassifier: async (...args) => { seen.push(args); return new Set(["coding"]); } },
+      { category: "scope_accuracy" },
+    );
+    expect(typeof seen[0][3]).toBe("function"); // the provider callback
+    expect(seen.map((args) => args.slice(0, 3))).toEqual([
+      [
+        "y ahora el otro",
+        "assistant: respuesta sintetica\nuser: y ahora el otro",
+        ["respuesta sintetica", "y ahora el otro"],
+      ],
+    ]);
+    expect(r.perCase.find((c) => c.category === "scope_prompt")!.score).toBe(1);
+  });
+
+  it("classifyScopeGroups reports sonnet / none, and a throwing callback never changes the answer", async () => {
+    const classify = await classifier();
+    reply('["coding"]');
+    const told: string[] = [];
+    expect(await classify("Revisa el código", undefined, undefined, (p) => told.push(p))).toEqual(new Set(["coding"]));
+    const thrower = () => {
+      throw new Error("observer bug");
+    };
+    expect(await classify("Revisa el código", undefined, undefined, thrower)).toEqual(new Set(["coding"]));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    adapterInfer.mockRejectedValue(new Error("synthetic outage"));
+    expect(await classify("Revisa el código", undefined, undefined, (p) => told.push(p))).toBeNull();
+    expect(told).toEqual(["sonnet", "none"]);
+  });
+
+  it("records the provider the classifier reports, 'unreported' when it reports none", async () => {
+    insertTestCase(makeScopeCase({ case_id: "sc-p-prov" }));
+    const jev = await runEvaluation(
+      { scopePromptClassifier: async (_m, _c, _w, onAnswer) => { onAnswer?.("jev"); return new Set(["coding"]); } },
+      { category: "scope_accuracy" },
+    );
+    expect(jev.perCase.find((c) => c.category === "scope_prompt")!.details.provider).toBe("jev");
+    const silent = await runEvaluation(
+      { scopePromptClassifier: async () => new Set(["coding"]) },
+      { category: "scope_accuracy" },
+    );
+    expect(silent.perCase.find((c) => c.category === "scope_prompt")!.details.provider).toBe("unreported");
+  });
+
+  it("absent scopePromptClassifier: no scope_prompt rows, no call, composite unchanged (overnight loop / DRY)", async () => {
+    seedThree();
+    const r = await runEvaluation({}, { category: "scope_accuracy" });
+    expect(r.perCase.every((c) => c.category === "scope_accuracy")).toBe(true);
+    expect(r.subscores).not.toHaveProperty("scopePrompt");
+    expect(r.compositeScore).toBeCloseTo(r.subscores.scopeAccuracy * 0.3, 10);
+    expect(adapterInfer).not.toHaveBeenCalled();
+  });
+
+  it("scope_prompt rows carry no message text (--percase-out)", async () => {
+    const msg = "Mensaje sintetico unico qx7 sobre el código";
+    insertTestCase(makeScopeCase({ case_id: "sc-p-msg", input: { message: msg } }));
+    reply('["coding"]');
+    const r = await runEvaluation(
+      { scopePromptClassifier: await classifier() },
+      { category: "scope_accuracy" },
+    );
+    const rows = r.perCase.filter((c) => c.category === "scope_prompt");
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain("qx7");
+  });
+});

@@ -32,6 +32,7 @@ export interface EvalBaseline {
     toolSelection: number;
     scopeAccuracy: number;
     classification: number;
+    scopePrompt?: number;
   };
   /**
    * Scoring generation the incumbent was captured under ({@link SCORING_VERSION}).
@@ -45,6 +46,15 @@ export interface EvalBaseline {
    */
   toolSelectionProbedIds?: string[];
   toolSelectionExcludedIds?: string[];
+  /**
+   * Sorted {@link caseIdDigest}s of the scope_accuracy cases the incumbent
+   * replayed through the LLM scope classifier (scope_prompt rows, v4).
+   */
+  scopePromptCaseIds?: string[];
+  /** sha256 of the `classifierSystemPrompt()` the incumbent was captured with (provenance). */
+  classifierPromptSha256?: string;
+  /** Whether the Jev-first classifier chain was on at capture (`jevScopeEnabled()`; never a key). */
+  classifierJevEnabled?: boolean;
   /** Free-form provenance metadata (model, capturedAt, source, note...) — ignored by the math. */
   [key: string]: unknown;
 }
@@ -61,8 +71,14 @@ export interface EvalBaseline {
  *      of env.
  *  3 — 2026-10-06: multi-round probe (`probeRounds`), an expected tool hit in
  *      any round counts.
+ *  4 — 2026-10-17 (queue 3j): scope_prompt — every active scope_accuracy
+ *      case is replayed through `classifyScopeGroups` (live
+ *      `classifierSystemPrompt()`, record-derived GROUPS lines included) and
+ *      scored with the scope_accuracy metric; it takes 0.15 of the scope
+ *      weight in the composite (regex scope 0.15). The baseline records the
+ *      replayed population (`scopePromptCaseIds`).
  */
-export const SCORING_VERSION = 3;
+export const SCORING_VERSION = 4;
 
 /**
  * Null when the baseline was captured under the current scoring, else the
@@ -82,6 +98,7 @@ export interface EvalGateArgs {
   run: boolean;
   updateBaseline: boolean;
   epsilon?: string;
+  promptEpsilon?: string;
   percaseOut?: string;
   casesFile?: string;
   probeSystem?: string;
@@ -91,6 +108,7 @@ export interface EvalGateArgs {
 const GATE_BOOL_FLAGS = { "--run": "run", "--update-baseline": "updateBaseline" } as const;
 const GATE_VALUE_FLAGS = {
   "--epsilon": "epsilon",
+  "--prompt-epsilon": "promptEpsilon",
   "--percase-out": "percaseOut",
   "--cases-file": "casesFile",
   "--probe-system": "probeSystem",
@@ -263,6 +281,9 @@ export function preSpendRefusal(opts: {
   ) {
     return "baseline records no tool_selection population (toolSelectionProbedIds / toolSelectionExcludedIds); re-capture with --run --update-baseline";
   }
+  if (!Array.isArray(b.scopePromptCaseIds)) {
+    return "baseline records no scope_prompt population (scopePromptCaseIds); re-capture with --run --update-baseline";
+  }
   return null;
 }
 
@@ -289,6 +310,74 @@ export function baselineCaptureRefusal(
     return `refusing to capture: probed ${probed} of ${activeToolSelection} active tool_selection cases (need > 0 and >= ${MIN_PROBED_SHARE * 100}%) — fix the registry/scoping first`;
   }
   return null;
+}
+
+/**
+ * scope_prompt rows of a run: how many scored, how many ERRORED (the
+ * classifier returned null or threw — scored 0). Null = the population is
+ * complete and clean; else the reason for no verdict / no capture (exit 2): an
+ * errored call would read as a prompt regression (or become a ~0 incumbent),
+ * and a run that replayed fewer cases than the active scope_accuracy ones
+ * (the scorer was not wired) has a composite with other weights.
+ */
+export function scopePromptRefusal(
+  perCase: CaseScore[],
+  activeScopeCases: number,
+): string | null {
+  const rows = perCase.filter((c) => c.category === "scope_prompt");
+  const errored = rows.filter((c) => c.details.error !== undefined).length;
+  if (errored > 0) {
+    return `${errored} scope_prompt classifier call(s) errored (scored 0) — rerun when inference is healthy`;
+  }
+  if (rows.length !== activeScopeCases) {
+    return `scope_prompt replayed ${rows.length} of ${activeScopeCases} active scope_accuracy cases — the prompt scorer must run on every one`;
+  }
+  return null;
+}
+
+export interface ScopePromptBreakdown {
+  cases: number;
+  /** Rows per answering classifier (`details.provider`: jev / sonnet / none / unreported). */
+  providers: Record<string, number>;
+  /** score 1 (every label right). */
+  exact: number;
+  /** 0 < score < 1. */
+  partial: number;
+  /** score 0 with an answer. */
+  wrong: number;
+  /** null answer or throw (scored 0). */
+  errored: number;
+  /** Weighted scope_prompt subscore, 0-100. */
+  subscore: number;
+}
+
+/** Counts-only outcome split of the scope_prompt rows (printed on every --run). */
+export function scopePromptBreakdown(perCase: CaseScore[]): ScopePromptBreakdown {
+  const rows = perCase.filter((c) => c.category === "scope_prompt");
+  const out: ScopePromptBreakdown = {
+    cases: rows.length,
+    providers: {},
+    exact: 0,
+    partial: 0,
+    wrong: 0,
+    errored: 0,
+    subscore: 0,
+  };
+  let wSum = 0;
+  let wScore = 0;
+  for (const c of rows) {
+    const p = typeof c.details.provider === "string" ? c.details.provider : "unreported";
+    out.providers[p] = (out.providers[p] ?? 0) + 1;
+    if (c.details.error !== undefined) out.errored++;
+    else if (c.score >= 1) out.exact++;
+    else if (c.score > 0) out.partial++;
+    else out.wrong++;
+    const w = c.weight ?? 1.0;
+    wSum += w;
+    wScore += c.score * w;
+  }
+  out.subscore = wSum > 0 ? (wScore / wSum) * 100 : 0;
+  return out;
 }
 
 /** tool_selection rows whose probe threw (the evaluator records `details.error`). */
@@ -349,15 +438,22 @@ export function priorBaseline(
 
 // --------------------------------------------------- scored population
 
-/** Probed / excluded tool_selection case ids of a result (reachability needs no inference). */
+/**
+ * Probed / excluded tool_selection case ids of a result (reachability needs no
+ * inference), and the scope_prompt (replayed) case ids — empty for a run
+ * without the prompt scorer (DRY, pre-spend).
+ */
 export function populationIds(
   r: Pick<EvalResult, "perCase" | "reachability">,
-): { probedIds: string[]; excludedIds: string[] } {
+): { probedIds: string[]; excludedIds: string[]; scopePromptIds: string[] } {
   return {
     probedIds: r.perCase
       .filter((c) => c.category === "tool_selection")
       .map((c) => c.caseId),
     excludedIds: r.reachability.excludedCases.map((c) => c.caseId),
+    scopePromptIds: r.perCase
+      .filter((c) => c.category === "scope_prompt")
+      .map((c) => c.caseId),
   };
 }
 
@@ -366,16 +462,39 @@ export function caseIdDigest(caseId: string): string {
   return createHash("sha256").update(caseId).digest("hex").slice(0, 16);
 }
 
-/** Sorted digests of the probed / excluded tool_selection case ids. */
+/** Sorted digests of the probed / excluded tool_selection and the scope_prompt case ids. */
 export function populationDigests(
   probedIds: string[],
   excludedIds: string[],
-): { toolSelectionProbedIds: string[]; toolSelectionExcludedIds: string[] } {
+  scopePromptIds: string[],
+): {
+  toolSelectionProbedIds: string[];
+  toolSelectionExcludedIds: string[];
+  scopePromptCaseIds: string[];
+} {
   const digest = (ids: string[]) => ids.map(caseIdDigest).sort();
   return {
     toolSelectionProbedIds: digest(probedIds),
     toolSelectionExcludedIds: digest(excludedIds),
+    scopePromptCaseIds: digest(scopePromptIds),
   };
+}
+
+/**
+ * scope_prompt population vs the baseline's, counts only (cases come and go
+ * with the scope_accuracy set; no exclusion exists for them).
+ */
+export function scopePromptDrift(
+  baseline: Pick<EvalBaseline, "scopePromptCaseIds">,
+  scopePromptIds: string[],
+): { newSinceBaseline: number; goneSinceBaseline: number } {
+  const base = new Set(baseline.scopePromptCaseIds ?? []);
+  const current = new Set(scopePromptIds.map(caseIdDigest));
+  let newSinceBaseline = 0;
+  for (const d of current) if (!base.has(d)) newSinceBaseline++;
+  let goneSinceBaseline = 0;
+  for (const d of base) if (!current.has(d)) goneSinceBaseline++;
+  return { newSinceBaseline, goneSinceBaseline };
 }
 
 export interface PopulationDrift {
@@ -504,6 +623,154 @@ export function percaseOutRefusal(
     return `${dirReal} is not gitignored`;
   }
   return null;
+}
+
+/**
+ * Floor on the scope_prompt SUBSCORE (0-100) on a compare run, queue 3j R1
+ * W1: the composite epsilon (2 points) would hide a prompt regression of up
+ * to ~13 subscore points (scope_prompt is 0.15 of the composite). 10.0 fails
+ * at 5 lost cases of 43 (2.33 points each). Override only with an explicit
+ * `--prompt-epsilon=<n>` (refused by --update-baseline); the operator may
+ * re-tune the constant.
+ */
+export const SCOPE_PROMPT_EPSILON = 10.0;
+
+/**
+ * `--prompt-epsilon=<n>`: absent = {@link SCOPE_PROMPT_EPSILON}; a value
+ * that is not a finite number >= 0 is an error (exit 2) — never a silent
+ * fallback that could widen the floor.
+ */
+export function parsePromptEpsilon(
+  value: string | undefined,
+): { ok: true; epsilon: number } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, epsilon: SCOPE_PROMPT_EPSILON };
+  return parseNonNegativeFlag("--prompt-epsilon", value);
+}
+
+/**
+ * `--epsilon=<n>` (queue 3j R2): absent = undefined ({@link resolveEpsilon}
+ * then picks the baseline's value or the default); a value that is not a
+ * finite number >= 0 is an error (exit 2), never a silent fallback.
+ */
+export function parseEpsilonFlag(
+  value: string | undefined,
+): { ok: true; epsilon: number | undefined } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, epsilon: undefined };
+  return parseNonNegativeFlag("--epsilon", value);
+}
+
+function parseNonNegativeFlag(
+  flag: string,
+  value: string,
+): { ok: true; epsilon: number } | { ok: false; error: string } {
+  const n = Number(value);
+  if (value.trim() === "" || !Number.isFinite(n) || n < 0) {
+    return { ok: false, error: `${flag} takes a number >= 0 (got "${value}")` };
+  }
+  return { ok: true, epsilon: n };
+}
+
+export type GateAction = "capture" | "pass" | "fail" | "refuse";
+
+export interface GateDecisionInput {
+  /** --update-baseline (capture) vs a compare run. */
+  updateBaseline: boolean;
+  /** {@link baselineCaptureRefusal} of the run (read on capture only). */
+  captureRefusal: string | null;
+  /** {@link erroredProbeRefusal} of the run (read on compare only). */
+  erroredRefusal: string | null;
+  /** {@link scopePromptRefusal} of the run (both paths). */
+  promptRefusal: string | null;
+  /** {@link populationDrift}`.error` (read on compare only). */
+  driftError: string | null;
+  /** Candidate composite (0-100). */
+  overall: number;
+  /** Candidate scope_prompt subscore; undefined = no scope_prompt row scored. */
+  scopePrompt: number | undefined;
+  /** The incumbent (compare); null = unavailable. */
+  baseline: EvalBaseline | null;
+  /** Composite tolerance ({@link resolveEpsilon}). */
+  epsilon: number;
+  /** scope_prompt subscore floor tolerance ({@link parsePromptEpsilon}). */
+  promptEpsilon: number;
+}
+
+export interface GateDecision {
+  action: GateAction;
+  /** Why refuse / fail (empty for capture / pass). */
+  reasons: string[];
+  /** Composite compare (compare runs that reached a verdict). */
+  composite?: GateResult;
+  /** scope_prompt floor (compare runs where both sides scored it). */
+  prompt?: {
+    incumbent: number;
+    candidate: number;
+    delta: number;
+    epsilon: number;
+    floor: number;
+    regressed: boolean;
+  };
+}
+
+/**
+ * The gate's capture / verdict decision after the paid run, in one place so
+ * the fail-closed rules are unit-tested (queue 3j R1 W3). Capture: refuse on
+ * a capture refusal or a scope_prompt refusal, else capture. Compare: refuse
+ * on no baseline, an errored probe, a scope_prompt refusal, population drift,
+ * or a scope_prompt subscore present on one side only; else FAIL when the
+ * composite falls below incumbent − epsilon OR the scope_prompt subscore
+ * below incumbent − promptEpsilon, else PASS.
+ */
+export function gateDecision(i: GateDecisionInput): GateDecision {
+  const present = (xs: Array<string | null>) =>
+    xs.filter((x): x is string => x !== null);
+  if (i.updateBaseline) {
+    const reasons = present([i.captureRefusal, i.promptRefusal]);
+    return reasons.length > 0 ? { action: "refuse", reasons } : { action: "capture", reasons: [] };
+  }
+  if (i.baseline === null) {
+    return { action: "refuse", reasons: ["baseline unavailable"] };
+  }
+  const reasons = present([i.erroredRefusal, i.promptRefusal, i.driftError]);
+  const baseScopePrompt = i.baseline.subscores?.scopePrompt;
+  const hasBase = typeof baseScopePrompt === "number" && Number.isFinite(baseScopePrompt);
+  const hasRun = i.scopePrompt !== undefined;
+  if (hasBase !== hasRun) {
+    reasons.push(
+      hasRun
+        ? "baseline records no scope_prompt subscore; re-capture with --run --update-baseline"
+        : "this run scored no scope_prompt rows but the baseline has a scope_prompt subscore",
+    );
+  }
+  if (reasons.length > 0) return { action: "refuse", reasons };
+
+  const composite = compareToBaseline(i.overall, i.baseline.overall, i.epsilon);
+  const out: GateDecision = { action: "pass", reasons: [], composite };
+  if (composite.regressed) {
+    out.reasons.push(
+      `composite ${composite.overall.toFixed(2)} < threshold ${composite.threshold.toFixed(2)} (incumbent ${composite.incumbent.toFixed(2)} - epsilon ${composite.epsilon})`,
+    );
+  }
+  if (hasBase && hasRun) {
+    const eps = Number.isFinite(i.promptEpsilon) && i.promptEpsilon >= 0 ? i.promptEpsilon : SCOPE_PROMPT_EPSILON;
+    const floor = (baseScopePrompt as number) - eps;
+    const candidate = i.scopePrompt as number;
+    out.prompt = {
+      incumbent: baseScopePrompt as number,
+      candidate,
+      delta: candidate - (baseScopePrompt as number),
+      epsilon: eps,
+      floor,
+      regressed: candidate < floor,
+    };
+    if (out.prompt.regressed) {
+      out.reasons.push(
+        `scope_prompt ${candidate.toFixed(2)} < floor ${floor.toFixed(2)} (incumbent ${(baseScopePrompt as number).toFixed(2)} - prompt epsilon ${eps})`,
+      );
+    }
+  }
+  if (out.reasons.length > 0) out.action = "fail";
+  return out;
 }
 
 export type Verdict = "PASS" | "FAIL";

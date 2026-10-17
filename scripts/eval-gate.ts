@@ -53,8 +53,37 @@
  *    slots (not registered / scoped out), so a shrinking scored population is
  *    visible, never silent. `--percase-out` keeps the per-case detail
  *    (`proportionalScore` = the old hits/n rule, for comparison).
- *  - Signal volume: the scope + classification cases are DETERMINISTIC (no
- *    LLM) — they never move on a model swap and dilute the signal. Scope
+ *  - Scope prompt (scoring version 4, queue 3j): under --run every active
+ *    scope_accuracy case is ALSO replayed through `classifyScopeGroups`
+ *    (the LIVE `classifierSystemPrompt()`, record-derived GROUPS lines
+ *    included; Jev first when the inherited env enables it, then Sonnet —
+ *    the live chain) and scored against the same labels with the
+ *    scope_accuracy metric as a `scope_prompt` row: one classifier call per
+ *    case, sequential. It takes 0.15 of the scope weight in the composite
+ *    (regex scope 0.15). A null answer or a throw scores 0 and means no
+ *    verdict and no capture (like an errored probe); the baseline records
+ *    the replayed population (`scopePromptCaseIds`), and a baseline without
+ *    it exits 2 before any spend. DRY and the pre-spend pass never call it;
+ *    EXPERIMENT runs (`--cases-file`, `--probe-system`, `--probe-rounds`) do
+ *    spend them (one per active scope case in the run). Because the
+ *    composite epsilon would hide a prompt regression of up to ~13 subscore
+ *    points, a compare run also FAILS when the scope_prompt subscore drops
+ *    below incumbent − SCOPE_PROMPT_EPSILON (src/tuning/gate.ts, 10.0: fails
+ *    at 5 lost cases of 43, 2.33 points each; `--prompt-epsilon=<n>`
+ *    overrides it for one compare run).
+ *    Each row records which classifier answered (`details.provider`); the
+ *    capture records the Jev on/off state and the prompt's sha256, and a
+ *    compare prints "classifier chain: same|changed" and "prompt changed vs
+ *    incumbent: yes|no". The verdict / capture rule is
+ *    `gateDecision` (src/tuning/gate.ts), unit-tested.
+ *    OPERATOR SEQUENCE (scoring v4): once this ships, run
+ *      cd /root/claude/mission-control && npm run eval:gate -- --run --update-baseline
+ *    ONCE on the pushed HEAD (the v4 incumbent; it pins the incumbent to
+ *    whatever HEAD it runs on — prompt, tool texts, registry), commit
+ *    src/tuning/eval-baseline.json, then give every later prompt/tool-text
+ *    change a compare run (`npm run eval:gate -- --run`).
+ *  - Signal volume: the regex scope + classification cases are DETERMINISTIC
+ *    (no LLM) — they never move on a model swap and dilute the signal. Scope
  *    accuracy currently rests on the hand-written cases only: the mined
  *    scope cases are inactive. A model-
  *    swap gate lives or dies on the probed tool_selection cases; the counts
@@ -95,7 +124,10 @@
  *       # ~$5.60 / ~15 min was measured with ONE round at 263 cases (2026-09-19);
  *       # the multi-round cost is not yet measured (expect more).
  *   npm run eval:gate -- --run --update-baseline   # set the incumbent to the current score
- *   npm run eval:gate -- --run --epsilon=1.0       # override tolerance for this run
+ *   npm run eval:gate -- --run --epsilon=1.0       # override tolerance for this
+ *       # compare run (a number >= 0; refused with --update-baseline)
+ *   npm run eval:gate -- --run --prompt-epsilon=5  # override the scope_prompt floor
+ *       # for this compare run (refused with --update-baseline)
  *   npm run eval:gate -- --run --percase-out=data/predeploy/eval-percase.json
  *       # also write per-case results (tool names + scores, no messages; mode
  *       # 600; only under the repo's gitignored data/; excluded cases included
@@ -111,12 +143,15 @@
  *       # off by default — the default probe sends no system message
  *
  * EXIT CODES
- *   0 = PASS (>= incumbent - epsilon)  |  1 = FAIL (regressed beyond epsilon)
+ *   0 = PASS (composite >= incumbent - epsilon AND scope_prompt >= its
+ *       incumbent - SCOPE_PROMPT_EPSILON)  |  1 = FAIL (either fell below)
  *   2 = error, no verdict. Before any spend: bad/unknown flag, missing or
  *       unreadable baseline, other-scoring-version baseline, baseline without
- *       population ids, a case the baseline probed is now excluded (checked
+ *       population ids (tool_selection or scope_prompt), a case the baseline probed is now excluded (checked
  *       with a free mock pass). After the run: any tool_selection probe
  *       errored (compare: no verdict; --update-baseline: nothing written);
+ *       any scope_prompt classifier call errored, or fewer scope_prompt rows
+ *       than active scope_accuracy cases (same);
  *       --update-baseline probed 0 or < 50 % of active tool_selection cases
  *       (nothing written); the drift re-check; no cases; thrown.
  *   3 = DRY (no --run)  |  4 = EXPERIMENT run scored (--cases-file / --probe-system /
@@ -151,6 +186,8 @@ requireOperatorContext("eval-gate", { tty: false });
 const {
   parseEvalGateArgs,
   parseProbeRounds,
+  parseEpsilonFlag,
+  parsePromptEpsilon,
   percaseOutRefusal,
   preSpendRefusal,
   readBaseline,
@@ -164,6 +201,7 @@ const {
   run: doRun,
   updateBaseline: doUpdate,
   epsilon: epsilonArg,
+  promptEpsilon: promptEpsilonArg,
   percaseOut,
   casesFile,
   probeSystem,
@@ -175,6 +213,18 @@ if (!parsedRounds.ok) {
   process.exit(2);
 }
 const probeRounds = parsedRounds.rounds;
+const parsedPromptEpsilon = parsePromptEpsilon(promptEpsilonArg);
+if (!parsedPromptEpsilon.ok) {
+  console.error(`[eval-gate] ${parsedPromptEpsilon.error}`);
+  process.exit(2);
+}
+const promptEpsilon = parsedPromptEpsilon.epsilon;
+const parsedEpsilon = parseEpsilonFlag(epsilonArg);
+if (!parsedEpsilon.ok) {
+  console.error(`[eval-gate] ${parsedEpsilon.error}`);
+  process.exit(2);
+}
+const flagEpsilon = parsedEpsilon.epsilon;
 
 // 1) Inherit the live service's env (INFERENCE_*, keys, TZ) via /proc — never printed.
 //    Mirrors scripts/validate-swarm.ts so the gate hits the REAL inference backend.
@@ -198,13 +248,13 @@ function loadLiveEnv(): string | null {
         if (!(k in process.env)) process.env[k] = kv.slice(i + 1);
       }
     }
+    delete process.env.DRIVE_KB_FOLDER_ID;
     return pid;
   }
   return null;
 }
 const livePid = loadLiveEnv();
 
-const flagEpsilon = epsilonArg !== undefined ? Number(epsilonArg) : undefined;
 // An experiment run scores a subset or a non-default probe: never a verdict
 // against (or a write of) the incumbent, which was captured on neither.
 const experiment =
@@ -224,6 +274,16 @@ function badFlag(msg: string): never {
 }
 if (probeSystem !== undefined && probeSystem !== "jarvis") {
   badFlag(`--probe-system takes only "jarvis" (got "${probeSystem}")`);
+}
+if (epsilonArg !== undefined && doUpdate) {
+  badFlag(
+    "--update-baseline refuses --epsilon: a capture keeps the incumbent's epsilon (edit src/tuning/eval-baseline.json to move it); --epsilon applies to compare runs only.",
+  );
+}
+if (promptEpsilonArg !== undefined && doUpdate) {
+  badFlag(
+    "--update-baseline refuses --prompt-epsilon: the scope_prompt floor applies to compare runs only (SCOPE_PROMPT_EPSILON in src/tuning/gate.ts).",
+  );
 }
 if (experiment && doUpdate) {
   badFlag(
@@ -318,7 +378,7 @@ initDatabase(snapPath);
 const { getActiveTestCases } = await import("../src/tuning/schema.js");
 const { runEvaluation } = await import("../src/tuning/eval-runner.js");
 const {
-  compareToBaseline,
+  gateDecision,
   resolveEpsilon,
   baselineCaptureRefusal,
   countErroredProbes,
@@ -329,6 +389,9 @@ const {
   preSpendPopulationRefusal,
   priorBaseline,
   percaseOutputRows,
+  scopePromptBreakdown,
+  scopePromptDrift,
+  scopePromptRefusal,
   DEFAULT_EPSILON,
   DEFAULT_PROBE_ROUNDS,
   SCORING_VERSION,
@@ -339,6 +402,12 @@ import type { EvalBaseline } from "../src/tuning/gate.js";
 
 /** Source group x probe outcome, counts only — printed on EVERY run. */
 function printBreakdown(r: EvalResult): void {
+  const sp = scopePromptBreakdown(r.perCase);
+  console.log(
+    sp.cases === 0
+      ? `  scope_prompt (LLM classifier, live prompt): not run — ${nScopeCases} active scope_accuracy case(s) = ${nScopeCases} classifier call(s) under --run`
+      : `  scope_prompt (LLM classifier, live prompt): cases ${sp.cases}  exact ${sp.exact}  partial ${sp.partial}  wrong ${sp.wrong}  errored ${sp.errored}  subscore ${sp.subscore.toFixed(2)}  answered by: ${Object.entries(sp.providers).map(([p, n]) => `${p} ${n}`).join(", ")}`,
+  );
   console.log(
     `  tool_selection by source (probe rounds ${probeRounds}): group  cases  hit-r1  hit-r2+  forbidden-only-pass  violation  called-other  called-nothing  errored  subscore`,
   );
@@ -388,9 +457,15 @@ function printAggregate(r: EvalResult): void {
   console.log(
     `  Tool selection:   ${r.subscores.toolSelection.toFixed(2)} / 100  (weight 50%)`,
   );
+  const promptScored = r.subscores.scopePrompt !== undefined;
   console.log(
-    `  Scope accuracy:   ${r.subscores.scopeAccuracy.toFixed(2)} / 100  (weight 30%)`,
+    `  Scope accuracy:   ${r.subscores.scopeAccuracy.toFixed(2)} / 100  (weight ${promptScored ? "15" : "30"}%, regex)`,
   );
+  if (promptScored) {
+    console.log(
+      `  Scope prompt:     ${r.subscores.scopePrompt!.toFixed(2)} / 100  (weight 15%, LLM classifier)`,
+    );
+  }
   console.log(
     `  Classification:   ${r.subscores.classification.toFixed(2)} / 100  (weight 20%)`,
   );
@@ -401,6 +476,11 @@ function printAggregate(r: EvalResult): void {
   console.log("─".repeat(48));
 }
 
+/** Active scope_accuracy cases in this run = scope_prompt classifier calls under --run. */
+let nScopeCases = 0;
+/** Jev-first classifier chain on in this process (`jevScopeEnabled()`). */
+let classifierJevEnabled = false;
+
 async function main(): Promise<void> {
   const allCases = getActiveTestCases();
   const cases = caseIds
@@ -408,6 +488,7 @@ async function main(): Promise<void> {
     : allCases;
   const nCases = cases.length;
   const nToolSel = cases.filter((c) => c.category === "tool_selection").length;
+  nScopeCases = cases.filter((c) => c.category === "scope_accuracy").length;
 
   if (nCases === 0) {
     console.error(
@@ -419,7 +500,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `[eval-gate] livePid=${livePid ?? "?"} db=${dbPath} (snapshot) cases=${nCases} (tool_selection=${nToolSel})${caseIds ? ` SUBSET of ${allCases.length} (--cases-file; ${caseIds.length} ids)` : ""}`,
+    `[eval-gate] livePid=${livePid ?? "?"} db=${dbPath} (snapshot) cases=${nCases} (tool_selection=${nToolSel}, scope_prompt=${nScopeCases})${caseIds ? ` SUBSET of ${allCases.length} (--cases-file; ${caseIds.length} ids)` : ""}`,
   );
   if (!caseIds && nToolSel < 100) {
     console.log(
@@ -444,7 +525,22 @@ async function main(): Promise<void> {
   // S6 WS3a: record-derived scope groups, as boot wires them (names only).
   const derivedScope = await wireEvalGateProjectScopeGroups(toolRegistry);
   console.log(
-    `[eval-gate] project scope groups: ${derivedScope.names.length === 0 ? "none" : derivedScope.names.join(", ")} (scored by regex; the classifier prompt line is unmeasured; their MCP tools are not registered)`,
+    `[eval-gate] project scope groups: ${derivedScope.names.length === 0 ? "none" : derivedScope.names.join(", ")} (scored by regex and, under --run, through the classifier prompt; their MCP tools are not registered)`,
+  );
+  // Queue 3j: the prompt text the scope_prompt rows certify (after the wiring
+  // above added any record-derived GROUPS lines).
+  const { classifierSystemPrompt, classifyScopeGroups } =
+    await import("../src/messaging/scope-classifier.js");
+  // The chain the replay runs (Jev first or Sonnet only), from the same
+  // check the classifier reads — a boolean, never the key.
+  const { jevScopeEnabled } = await import("../src/messaging/scope-classifier-jev.js");
+  classifierJevEnabled = jevScopeEnabled();
+  const { createHash } = await import("node:crypto");
+  const classifierPromptSha256 = createHash("sha256")
+    .update(classifierSystemPrompt())
+    .digest("hex");
+  console.log(
+    `[eval-gate] classifier prompt sha256 ${classifierPromptSha256.slice(0, 16)} (${classifierSystemPrompt().length} chars); chain: ${classifierJevEnabled ? "Jev first, then Sonnet" : "Sonnet only"}`,
   );
 
   // Gate-only opt-in to multi-round probes; runEvaluation's default (1) keeps
@@ -517,8 +613,14 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log("[eval-gate] running real eval...\n");
-  const res = await runEvaluation(sandbox, filter); // default inferFn = real adapter
+  console.log(
+    `[eval-gate] running real eval... (scope_prompt: ${nScopeCases} classifier call(s))\n`,
+  );
+  // default inferFn = real adapter; scope_prompt = the live classifier.
+  const res = await runEvaluation(
+    { ...sandbox, scopePromptClassifier: classifyScopeGroups },
+    filter,
+  );
   printAggregate(res);
 
   if (percaseOut !== undefined && percaseOutPath) {
@@ -565,21 +667,55 @@ async function main(): Promise<void> {
     process.exit(4);
   }
 
-  const { probedIds, excludedIds } = populationIds(res);
+  const { probedIds, excludedIds, scopePromptIds } = populationIds(res);
   const errored = countErroredProbes(res.perCase);
   console.log(`  errored tool_selection probes: ${errored}`);
 
-  // ---- --update-baseline: set the incumbent to what we just measured ----
-  if (doUpdate) {
-    const captureRefusal = baselineCaptureRefusal(
-      probedIds.length,
-      nToolSel,
-      errored,
+  // Compare-only context, printed before the decision (counts + provenance).
+  const baseline =
+    baselineRead === null || baselineRead instanceof Error ? null : baselineRead;
+  let driftError: string | null = null;
+  if (!doUpdate && baseline) {
+    const drift = populationDrift(baseline, probedIds, excludedIds);
+    driftError = drift.error;
+    console.log(
+      `\n  population vs baseline: ${drift.newSinceBaseline} new case(s), ${drift.goneSinceBaseline} removed/deactivated, ${drift.newlyProbed} baseline-excluded now probed, ${drift.newlyExcluded.length} baseline-probed now excluded`,
     );
-    if (captureRefusal) {
-      console.error(`\n[eval-gate] ${captureRefusal}. Baseline NOT written. exit 2.`);
-      process.exit(2);
-    }
+    const promptDrift = scopePromptDrift(baseline, scopePromptIds);
+    console.log(
+      `  scope_prompt population vs baseline: ${promptDrift.newSinceBaseline} new case(s), ${promptDrift.goneSinceBaseline} removed/deactivated`,
+    );
+    console.log(
+      `  classifier chain: ${baseline.classifierJevEnabled === classifierJevEnabled ? "same" : "changed"} (Jev first: incumbent ${baseline.classifierJevEnabled ?? "not recorded"}, now ${classifierJevEnabled})`,
+    );
+    console.log(
+      `  prompt changed vs incumbent: ${baseline.classifierPromptSha256 === undefined ? "unknown (not recorded)" : baseline.classifierPromptSha256 === classifierPromptSha256 ? "no" : "yes"}`,
+    );
+  }
+
+  // One pure decision (src/tuning/gate.ts gateDecision): capture / pass / fail / refuse.
+  const decision = gateDecision({
+    updateBaseline: doUpdate,
+    captureRefusal: baselineCaptureRefusal(probedIds.length, nToolSel, errored),
+    erroredRefusal: erroredProbeRefusal(errored),
+    promptRefusal: scopePromptRefusal(res.perCase, nScopeCases),
+    driftError,
+    overall: res.compositeScore,
+    scopePrompt: res.subscores.scopePrompt,
+    baseline,
+    epsilon: resolveEpsilon(baseline?.epsilon, flagEpsilon),
+    promptEpsilon,
+  });
+
+  if (decision.action === "refuse") {
+    console.error(
+      `\n[eval-gate] ${doUpdate ? "refusing to capture" : "NO VERDICT"}: ${decision.reasons.join("; ")}.${doUpdate ? " Baseline NOT written." : ""} exit 2.`,
+    );
+    process.exit(2);
+  }
+
+  // ---- --update-baseline: set the incumbent to what we just measured ----
+  if (decision.action === "capture") {
     // Read before the run with the safe reader: {} when absent or corrupt.
     const prior = priorBaseline(baselineRead);
     const next: EvalBaseline = {
@@ -590,6 +726,9 @@ async function main(): Promise<void> {
         toolSelection: Number(res.subscores.toolSelection.toFixed(4)),
         scopeAccuracy: Number(res.subscores.scopeAccuracy.toFixed(4)),
         classification: Number(res.subscores.classification.toFixed(4)),
+        ...(res.subscores.scopePrompt !== undefined && {
+          scopePrompt: Number(res.subscores.scopePrompt.toFixed(4)),
+        }),
       },
       model: process.env.INFERENCE_PRIMARY_PROVIDER
         ? `INFERENCE_PRIMARY_PROVIDER=${process.env.INFERENCE_PRIMARY_PROVIDER}`
@@ -599,8 +738,12 @@ async function main(): Promise<void> {
       toolSelectionCases: nToolSel,
       toolSelectionProbed: probedIds.length,
       toolSelectionExcluded: excludedIds.length,
+      scopePromptCases: scopePromptIds.length,
+      scopePromptProviders: scopePromptBreakdown(res.perCase).providers,
+      classifierPromptSha256,
+      classifierJevEnabled,
       // Digests, not ids: mined ids embed a hash of the user's message.
-      ...populationDigests(probedIds, excludedIds),
+      ...populationDigests(probedIds, excludedIds, scopePromptIds),
       source:
         "Captured by eval-gate --update-baseline (gate registry: src/tuning/gate-tools.ts). Gate-native incumbent.",
       note: "Refresh with `npm run eval:gate -- --run --update-baseline` after a confirmed-good model swap. epsilon is composite points on the 0-100 scale.",
@@ -616,40 +759,26 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ---- Compare against the committed incumbent ----
-  // Existence, parse, scoringVersion, population ids and population drift
-  // were checked before any spend; drift is re-checked on the real result.
-  const baseline = baselineRead;
-  if (baseline === null || baseline instanceof Error) {
-    console.error("[eval-gate] baseline unavailable. exit 2.");
-    process.exit(2);
-  }
-  const erroredRefusal = erroredProbeRefusal(errored);
-  if (erroredRefusal) {
-    console.error(`\n[eval-gate] NO VERDICT: ${erroredRefusal}. exit 2.`);
-    process.exit(2);
-  }
-  const drift = populationDrift(baseline, probedIds, excludedIds);
-  console.log(
-    `\n  population vs baseline: ${drift.newSinceBaseline} new case(s), ${drift.goneSinceBaseline} removed/deactivated, ${drift.newlyProbed} baseline-excluded now probed, ${drift.newlyExcluded.length} baseline-probed now excluded`,
-  );
-  if (drift.error) {
-    console.error(`\n[eval-gate] NO VERDICT: ${drift.error}. exit 2.`);
-    process.exit(2);
-  }
-  const epsilon = resolveEpsilon(baseline.epsilon, flagEpsilon);
-  const g = compareToBaseline(res.compositeScore, baseline.overall, epsilon);
-
+  // ---- Compare against the committed incumbent: pass / fail ----
+  const g = decision.composite!;
   console.log(
     `\n  incumbent ${g.incumbent.toFixed(2)}  candidate ${g.overall.toFixed(2)}  delta ${g.delta >= 0 ? "+" : ""}${g.delta.toFixed(2)}`,
   );
   console.log(
     `  threshold ${g.threshold.toFixed(2)} (incumbent - epsilon ${g.epsilon})`,
   );
+  const pr = decision.prompt;
   console.log(
-    `\nVERDICT: ${g.verdict}${g.verdict === "FAIL" ? " — tool-adherence/scope REGRESSION beyond tolerance. Do NOT ship this swap." : " — no regression beyond tolerance."}`,
+    pr
+      ? `  scope_prompt incumbent ${pr.incumbent.toFixed(2)}  candidate ${pr.candidate.toFixed(2)}  delta ${pr.delta >= 0 ? "+" : ""}${pr.delta.toFixed(2)}  floor ${pr.floor.toFixed(2)} (incumbent - prompt epsilon ${pr.epsilon})`
+      : "  scope_prompt: no active scope_accuracy case on either side (no floor)",
   );
-  process.exit(g.verdict === "PASS" ? 0 : 1);
+  console.log(
+    decision.action === "fail"
+      ? `\nVERDICT: FAIL — ${decision.reasons.join("; ")}. Do NOT ship this change.`
+      : "\nVERDICT: PASS — no regression beyond tolerance.",
+  );
+  process.exit(decision.action === "pass" ? 0 : 1);
 }
 
 main().catch((err) => {
