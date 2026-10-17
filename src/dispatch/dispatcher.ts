@@ -19,7 +19,12 @@ import {
 import { taskStarted, taskCompleted } from "../observability/prometheus.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { terminationFromTaskStatus } from "../runners/termination.js";
-import type { AgentType, RunnerInput, Runner } from "../runners/types.js";
+import type {
+  AgentType,
+  RunnerInput,
+  Runner,
+  RunnerOutput,
+} from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
 import { stripCacheMarker } from "../messaging/router.js";
 import { getRouter } from "../messaging/index.js";
@@ -39,6 +44,7 @@ import { getMemoryService } from "../memory/index.js";
 import type { MemoryBank } from "../memory/types.js";
 import { errMsg } from "../lib/err-msg.js";
 import {
+  redactCredentials,
   redactCredentialsForPersist,
   stringifyRedacted,
 } from "../api/mcp-server/redact.js";
@@ -51,7 +57,15 @@ import {
   type GateSource,
   type GateSpec,
 } from "../lib/v8-4/gates.js";
-import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
+import {
+  appendToDeliverable,
+  applyCompletionLedger,
+} from "../lib/v8-4/consumer.js";
+import { REPORT_PERSIST_PREFIX } from "../lib/v8-4/ledger-lines.js";
+import { upsertFile } from "../db/jarvis-fs.js";
+import { deriveTopicSlug } from "../memory/auto-persist.js";
+import { scrubSecrets } from "../lib/secret-refs.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
 import { classifyConcernReason } from "../intelligence/concern-reason.js";
@@ -753,6 +767,70 @@ export function extractPersistText(output: unknown): string | null {
   return extractDeliverableText(output)?.trim() || null;
 }
 
+/** Queue 4f (B): a root swarm/heavy deliverable longer than this is saved to the KB. */
+export const LONG_ANSWER_PERSIST_MIN_CHARS = 4000;
+
+/** Queue 4f (B) R1 W1: only a delivered success is saved — never a failed / blocked run. */
+const REPORT_PERSIST_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "completed_with_concerns",
+]);
+
+/**
+ * Queue 4f (B): a long root swarm/heavy answer otherwise lives only in the
+ * chat reply and `tasks.output` — no tool reads it back. Save it to
+ * `workspace/reports/<task-id-8>-<slug>-<YYYY-MM-DD MX>.md` (same task → same
+ * path, so a re-run overwrites) and append ONE harness footer line naming the
+ * path. Mechanical: no model call. Runs after the completion ledger, so the
+ * saved text is what the user receives (inline `(sin verificar)` marks
+ * included) and the footer is never numbers-audited; it is not a tool call,
+ * so it records no run write and no tool evidence. Non-fatal: on any throw
+ * the output passes through unchanged (no footer).
+ *
+ * Only answers an operator reads (R1 W2): never a ritual (`ritualId`), a
+ * scheduled run (`schedule:<id>` tag — the delivery policy's key), or a
+ * background agent (spawnType `user-background` / tag `background-agent` —
+ * the `unattended` markers of `gateContextFor`). Only `finalAnswer` / `text`
+ * count: the reflector's `content` is a meta-summary, not the answer (W1).
+ */
+function persistLongRootAnswer(
+  taskId: string,
+  submission: TaskSubmission,
+  agentType: AgentType,
+  taskStatus: string,
+  output: RunnerOutput["output"],
+): RunnerOutput["output"] {
+  if ((submission.spawnType ?? "root") !== "root") return output;
+  if (agentType !== "swarm" && agentType !== "heavy") return output;
+  if (!REPORT_PERSIST_STATUSES.has(taskStatus)) return output;
+  if (submission.ritualId) return output;
+  const tags = submission.tags ?? [];
+  if (tags.some((t) => t.startsWith("schedule:"))) return output;
+  if (tags.includes("background-agent")) return output;
+  if (!output || typeof output !== "object") return output;
+  const text = extractDeliverableText(output);
+  if (!text || (text !== output.finalAnswer && text !== output.text)) {
+    return output;
+  }
+  if (text.length <= LONG_ANSWER_PERSIST_MIN_CHARS) return output;
+  try {
+    const safeTitle = redactCredentials(scrubSecrets(submission.title));
+    const path = `workspace/reports/${taskId.slice(0, 8)}-${deriveTopicSlug(safeTitle)}-${nowMexIsoDate()}.md`;
+    upsertFile(
+      path,
+      safeTitle.slice(0, 120),
+      redactCredentials(scrubSecrets(text)),
+      ["report", agentType],
+      "workspace",
+    );
+    log.info({ taskId, path, chars: text.length }, "[report-persist] saved");
+    return appendToDeliverable(output, `${REPORT_PERSIST_PREFIX} ${path}`);
+  } catch (err) {
+    log.warn({ taskId, err: errMsg(err) }, "[report-persist] failed");
+    return output;
+  }
+}
+
 /**
  * Execute a task that already has any required container slot acquired.
  * Releases the slot on completion.
@@ -1181,7 +1259,13 @@ async function dispatchWithSlot(
       taskStatus,
     });
     taskStatus = ledgerOutcome.taskStatus;
-    result.output = ledgerOutcome.output;
+    result.output = persistLongRootAnswer(
+      taskId,
+      submission,
+      effectiveAgentType,
+      taskStatus,
+      ledgerOutcome.output,
+    );
 
     updateTaskStatus(taskId, taskStatus, result.output, result.error);
 

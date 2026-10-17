@@ -15,6 +15,12 @@ export const GRADE_PREFIX = "grade:";
 /** V9 W1: gate-id namespace of grader gates, reserved for source=harness. */
 export const GRADE_ID_PREFIX = "GR-";
 
+/**
+ * Queue 4f (B): the dispatcher's footer naming the KB path where it saved a
+ * long root swarm/heavy answer verbatim — a harness line, never a model claim.
+ */
+export const REPORT_PERSIST_PREFIX = "📄 Reporte guardado:";
+
 /** Prefixes of every line the completion ledger can append to a deliverable. */
 export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "✔ Verificado:",
@@ -25,6 +31,7 @@ export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "⚠️ Y ", // "⚠️ Y N cifras más sin respaldo…" (inline-annotation overflow)
   "⚠️ Cifras sin respaldo",
   "⚠️ Quité ", // "⚠️ Quité N referencias que no existen…"
+  REPORT_PERSIST_PREFIX,
 ];
 
 export function isLedgerLine(line: string): boolean {

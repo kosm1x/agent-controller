@@ -227,3 +227,73 @@ describe("task_history search_output (paper plan A.1 — output is the episode l
     expect(matchSnippet("alpha", ["zzz"])).toBeUndefined();
   });
 });
+
+// Queue 4f (A): swarm/heavy rows are `{content, finalAnswer, …}` with no
+// `text`; the preview and the snippet read the canonical deliverable.
+describe("task_history surfaces the swarm/heavy deliverable (queue 4f A)", () => {
+  function seedOutput(taskId: string, title: string, agentType: string, output: string): void {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, status, agent_type) VALUES (?, ?, 'd', 'completed', ?)`,
+    ).run(taskId, title, agentType);
+    db.prepare(
+      `INSERT INTO runs (run_id, task_id, agent_type, input, output, status) VALUES (?, ?, ?, '{}', ?, 'completed')`,
+    ).run(`run-${taskId}`, taskId, agentType, output);
+  }
+  // Final answer longer than the 500-char preview, keyword past the preview.
+  const FINAL = "Informe final de cobertura. " + "p".repeat(600) + " Zacatecas 41 sucursales nuevas. " + "q".repeat(100);
+
+  it("swarm shape: preview = first 500 chars of finalAnswer (not the reflector content); snippet quotes the match", async () => {
+    seedOutput(
+      "t-swarm",
+      "Chat: cobertura regional",
+      "swarm",
+      JSON.stringify({ content: "Meta resumen del reflector.", score: 0.95, learnings: [], goalSummary: {}, finalAnswer: FINAL }),
+    );
+    const res = JSON.parse(await taskHistoryTool.execute({ query: "cobertura Zacatecas" }));
+    expect(res.results.map((r: { taskId: string }) => r.taskId)).toEqual(["t-swarm"]);
+    expect(res.results[0].outputPreview).toBe(FINAL.slice(0, 500) + "...");
+    expect(res.results[0].outputMatch).toContain("Zacatecas 41 sucursales");
+    expect(res.results[0].matchedIn).toBe("output");
+  });
+
+  it("heavy shape: preview and snippet come from finalAnswer", async () => {
+    seedOutput(
+      "t-heavy",
+      "Chat: inventario",
+      "heavy",
+      JSON.stringify({ content: "Resumen del reflector.", score: 0.8, learnings: ["l"], finalAnswer: "Inventario: Durango 17 unidades." }),
+    );
+    const res = JSON.parse(await taskHistoryTool.execute({ query: "inventario Durango" }));
+    expect(res.results[0].taskId).toBe("t-heavy");
+    expect(res.results[0].outputPreview).toBe("Inventario: Durango 17 unidades.");
+    expect(res.results[0].outputMatch).toContain("Durango 17 unidades");
+  });
+
+  it("heavy shape with an empty finalAnswer falls back to content (canonical order)", async () => {
+    seedOutput(
+      "t-heavy-c",
+      "Chat: fallback",
+      "heavy",
+      JSON.stringify({ content: "Solo el reflector habló de Colima.", finalAnswer: "" }),
+    );
+    const res = JSON.parse(await taskHistoryTool.execute({ query: "fallback Colima" }));
+    expect(res.results[0].outputPreview).toBe("Solo el reflector habló de Colima.");
+  });
+
+  it("legacy {text} row is unchanged: preview from text, toolCalls still parsed", async () => {
+    const res = JSON.parse(await taskHistoryTool.execute({ query: "Oaxaca" }));
+    expect(res.results[0].taskId).toBe("t-dent");
+    expect(res.results[0].outputPreview).toBe("Oaxaca de Juárez: 626 consultorios, 23.10 por 10k habitantes.");
+    expect(res.results[0].toolsCalled).toEqual(["shell_exec"]);
+  });
+
+  it("raw-string row is unchanged: preview = first 500 raw chars, no ellipsis; snippet quotes the match", async () => {
+    const raw = "Texto plano antiguo. " + "r".repeat(600) + " Tlaxcala 9 tiendas.";
+    seedOutput("t-raw", "Chat: legado", "fast", raw);
+    const res = JSON.parse(await taskHistoryTool.execute({ query: "legado Tlaxcala" }));
+    expect(res.results[0].taskId).toBe("t-raw");
+    expect(res.results[0].outputPreview).toBe(raw.slice(0, 500));
+    expect(res.results[0].outputMatch).toContain("Tlaxcala 9 tiendas");
+  });
+});

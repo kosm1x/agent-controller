@@ -163,7 +163,7 @@ function replaceDeliverable(
   return { output, replaced: false };
 }
 
-function appendToDeliverable(
+export function appendToDeliverable(
   output: RunnerOutput["output"],
   suffix: string,
 ): RunnerOutput["output"] {

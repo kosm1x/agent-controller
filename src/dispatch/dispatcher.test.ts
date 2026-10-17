@@ -73,12 +73,22 @@ vi.mock("../observability/task-trace.js", () => ({
 
 vi.mock("../rituals/scheduler.js", () => ({ recordRitualFailure: vi.fn() }));
 
+// Shared so the queue-4f tests can read the `[report-persist]` line.
+const logMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../lib/logger.js", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => logMock,
+}));
+
+// Queue 4f (B): the KB write and the secret scrub are seams — never the real db.
+const upsertFileMock = vi.hoisted(() => vi.fn());
+vi.mock("../db/jarvis-fs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../db/jarvis-fs.js")>()),
+  upsertFile: upsertFileMock,
+}));
+const scrubSecretsMock = vi.hoisted(() => vi.fn((t: string) => t));
+vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
+  scrubSecrets: scrubSecretsMock,
 }));
 
 import {
@@ -91,7 +101,9 @@ import {
   registerRunner,
   undeclaredRunFailure,
   gateContextFor,
+  LONG_ANSWER_PERSIST_MIN_CHARS,
 } from "./dispatcher.js";
+import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordRitualFailure } from "../rituals/scheduler.js";
 import { createTaskExecutor, undeclaredToolError } from "../tools/task-executor.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -1703,5 +1715,230 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
     expect(ctxs.get("grandchild")!.originScheduleId).toBe("sch-1");
     expect(JSON.parse(outcome.get("grandchild")!)).toEqual({ error: undeclaredToolError("gmail_send") });
     expect(registry.execute).not.toHaveBeenCalled();
+  });
+});
+
+// Queue 4f (B): a long root swarm/heavy answer is saved to the KB by the
+// harness and the delivered text gains one ledger footer naming the path.
+describe("dispatchTask persists a long root swarm/heavy answer (queue 4f B)", () => {
+  // Digit-free so the numbers audit leaves the text untouched.
+  const body = (n: number) => "Informe de cobertura regional. ".padEnd(n, "x");
+  const TITLE = "Chat: cobertura regional Zacatecas";
+  const SLUG = "chat-cobertura-regional";
+
+  beforeEach(() => {
+    // 03:30 UTC Oct 18 = 21:30 Oct 17 in Mexico City: the path date is MX.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-18T03:30:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  async function run(opts: {
+    agentType: "swarm" | "heavy" | "fast";
+    finalAnswer: string;
+    spawnType?: "root" | "subtask" | "user-background";
+    title?: string;
+    success?: boolean;
+    status?: RunnerOutput["status"];
+    output?: RunnerOutput["output"];
+    ritualId?: string;
+    tags?: string[];
+  }): Promise<{ taskId: string; delivered: Record<string, unknown> }> {
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: opts.agentType,
+      score: 9,
+      reason: "spec",
+      explicit: true,
+      modelTier: "standard",
+    } as ReturnType<typeof classify>);
+    registerRunner({
+      type: opts.agentType,
+      execute: async () =>
+        ({
+          success: opts.success ?? true,
+          ...(opts.status && { status: opts.status }),
+          output: opts.output ?? { content: "Meta resumen del reflector.", score: 0.9, finalAnswer: opts.finalAnswer },
+        }) as RunnerOutput,
+    });
+    const { taskId } = await submitTask({
+      title: opts.title ?? TITLE,
+      description: "persist spec",
+      ...(opts.spawnType && { spawnType: opts.spawnType }),
+      ...(opts.spawnType === "subtask" && { parentTaskId: "parent-0001" }),
+      ...(opts.ritualId && { ritualId: opts.ritualId }),
+      ...(opts.tags && { tags: opts.tags }),
+    });
+    const terminal = (c: unknown[]) =>
+      (c[0] === "task.completed" || c[0] === "task.failed") && (c[1] as { task_id: string }).task_id === taskId;
+    await vi.waitFor(() => {
+      if (!emitEventMock.mock.calls.some(terminal)) throw new Error("terminal event not emitted yet");
+    });
+    const ev = emitEventMock.mock.calls.find(terminal)!;
+    return { taskId, delivered: ev[1].result as Record<string, unknown> };
+  }
+
+  /** The `tasks` status write (positional: status-specific UPDATE, output JSON). */
+  function taskOutputWrites(): string {
+    return JSON.stringify(mockRun.mock.calls.filter((c) => typeof c[0] !== "object"));
+  }
+
+  it("root swarm > 4000 chars: one upsertFile with the exact path, verbatim content, tags + section; footer appended", async () => {
+    const FINAL = body(LONG_ANSWER_PERSIST_MIN_CHARS + 1);
+    const { taskId, delivered } = await run({ agentType: "swarm", finalAnswer: FINAL });
+    const path = `workspace/reports/${taskId.slice(0, 8)}-${SLUG}-2026-10-17.md`;
+    expect(upsertFileMock).toHaveBeenCalledTimes(1);
+    expect(upsertFileMock).toHaveBeenCalledWith(path, TITLE, FINAL, ["report", "swarm"], "workspace");
+    const footer = `📄 Reporte guardado: ${path}`;
+    expect(delivered.finalAnswer).toBe(`${FINAL}\n\n${footer}`);
+    expect(delivered.content).toBe("Meta resumen del reflector.");
+    // tasks.output carries the same footer (the status write).
+    expect(JSON.stringify(mockRun.mock.calls)).toContain(JSON.stringify(footer).slice(1, -1));
+    // The footer is ONE harness line.
+    const last = String(delivered.finalAnswer).split("\n").at(-1)!;
+    expect(last).toBe(footer);
+    expect(isLedgerLine(last)).toBe(true);
+    expect(logMock.info).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId, path }),
+      "[report-persist] saved",
+    );
+  });
+
+  it("3999 and exactly 4000 chars: no write, no footer", async () => {
+    for (const n of [LONG_ANSWER_PERSIST_MIN_CHARS - 1, LONG_ANSWER_PERSIST_MIN_CHARS]) {
+      const FINAL = body(n);
+      const { delivered } = await run({ agentType: "swarm", finalAnswer: FINAL });
+      expect(delivered.finalAnswer).toBe(FINAL);
+    }
+    expect(LONG_ANSWER_PERSIST_MIN_CHARS).toBe(4000);
+    expect(upsertFileMock).not.toHaveBeenCalled();
+  });
+
+  it("root heavy > 4000 chars: written with the heavy tag", async () => {
+    const FINAL = body(5000);
+    const { taskId, delivered } = await run({ agentType: "heavy", finalAnswer: FINAL });
+    const path = `workspace/reports/${taskId.slice(0, 8)}-${SLUG}-2026-10-17.md`;
+    expect(upsertFileMock).toHaveBeenCalledTimes(1);
+    expect(upsertFileMock).toHaveBeenCalledWith(path, TITLE, FINAL, ["report", "heavy"], "workspace");
+    expect(delivered.finalAnswer).toBe(`${FINAL}\n\n📄 Reporte guardado: ${path}`);
+  });
+
+  it("a child (subtask / user-background) swarm never persists", async () => {
+    const FINAL = body(6000);
+    for (const spawnType of ["subtask", "user-background"] as const) {
+      const { delivered } = await run({ agentType: "swarm", finalAnswer: FINAL, spawnType });
+      expect(delivered.finalAnswer).toBe(FINAL);
+    }
+    expect(upsertFileMock).not.toHaveBeenCalled();
+  });
+
+  it("a fast root never persists", async () => {
+    const FINAL = body(6000);
+    const { delivered } = await run({ agentType: "fast", finalAnswer: FINAL });
+    expect(delivered.finalAnswer).toBe(FINAL);
+    expect(upsertFileMock).not.toHaveBeenCalled();
+  });
+
+  it("upsertFile throws: delivered text intact, no footer, task still completes, one [report-persist] warn", async () => {
+    upsertFileMock.mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+    const FINAL = body(5000);
+    const { taskId, delivered } = await run({ agentType: "swarm", finalAnswer: FINAL });
+    expect(upsertFileMock).toHaveBeenCalledTimes(1);
+    expect(delivered.finalAnswer).toBe(FINAL);
+    expect(JSON.stringify(delivered)).not.toContain("Reporte guardado");
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).filter((e) => e.taskId === taskId).at(-1)!;
+    expect(terminal.name).toBe("task.completed");
+    expect(logMock.warn).toHaveBeenCalledWith(
+      { taskId, err: "disk full" },
+      "[report-persist] failed",
+    );
+  });
+
+  it("the saved text is the DELIVERED text: persisted after the completion ledger (its inline marks included)", async () => {
+    const FINAL = body(5000) + " Ventas del trimestre: $9,400,000 en la región.";
+    const { delivered } = await run({ agentType: "swarm", finalAnswer: FINAL });
+    const content = upsertFileMock.mock.calls[0]![2] as string;
+    expect(content).toContain("(sin verificar)");
+    expect(String(delivered.finalAnswer).startsWith(content)).toBe(true);
+    expect(content).not.toContain("Reporte guardado");
+  });
+
+  it("secrets never reach the path, title or saved content (scrubSecrets on title and text)", async () => {
+    // Built at runtime — synthetic marker, scrubbed by the mocked index.
+    const SECRET = "zz" + "Q".repeat(12);
+    scrubSecretsMock.mockImplementation((t: string) => t.split(SECRET).join("ref"));
+    try {
+      const FINAL = body(5000) + ` clave ${SECRET}`;
+      const { taskId } = await run({ agentType: "swarm", finalAnswer: FINAL, title: `Chat: ${SECRET} cobertura` });
+      const [path, title, content] = upsertFileMock.mock.calls[0]!;
+      expect(path).toBe(`workspace/reports/${taskId.slice(0, 8)}-chat-ref-cobertura-2026-10-17.md`);
+      expect(title).toBe("Chat: ref cobertura");
+      expect(content).toBe(FINAL.split(SECRET).join("ref"));
+      expect(JSON.stringify(upsertFileMock.mock.calls)).not.toContain(SECRET);
+    } finally {
+      scrubSecretsMock.mockImplementation((t: string) => t);
+    }
+  });
+
+  it("key-shaped tokens are pattern-redacted in the saved title and content (redactCredentials)", async () => {
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const KEY = "sk-" + "a".repeat(24);
+    const FINAL = body(5000) + ` clave ${KEY} fin`;
+    await run({ agentType: "swarm", finalAnswer: FINAL, title: `Chat: llave ${KEY}` });
+    const [, title, content] = upsertFileMock.mock.calls[0]!;
+    expect(content).toBe(body(5000) + " clave [REDACTED_KEY] fin");
+    expect(title).toBe("Chat: llave [REDACTED_KEY]");
+    expect(JSON.stringify(upsertFileMock.mock.calls)).not.toContain(KEY);
+  });
+
+  it("a failed heavy root (6k finalAnswer) never persists: no write, no footer", async () => {
+    const FINAL = body(6000);
+    const { delivered } = await run({ agentType: "heavy", finalAnswer: FINAL, success: false });
+    expect(upsertFileMock).not.toHaveBeenCalled();
+    expect(delivered.finalAnswer).toBe(FINAL);
+    expect(taskOutputWrites()).not.toContain("Reporte guardado");
+  });
+
+  it("a completed_with_concerns swarm root persists", async () => {
+    const FINAL = body(5000);
+    const { taskId, delivered } = await run({ agentType: "swarm", finalAnswer: FINAL, status: "DONE_WITH_CONCERNS" });
+    const path = `workspace/reports/${taskId.slice(0, 8)}-${SLUG}-2026-10-17.md`;
+    expect(upsertFileMock).toHaveBeenCalledWith(path, TITLE, FINAL, ["report", "swarm"], "workspace");
+    expect(delivered.finalAnswer).toBe(`${FINAL}\n\n📄 Reporte guardado: ${path}`);
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).filter((e) => e.taskId === taskId).at(-1)!;
+    expect(terminal.attrs).toMatchObject({ status: "completed_with_concerns" });
+  });
+
+  it("producers nobody reads in chat never persist: ritual, scheduled run, background-agent tag", async () => {
+    const FINAL = body(6000);
+    const cases = [
+      { ritualId: "evolution-log" },
+      { tags: ["scheduled", "schedule:sched-0001"] },
+      { tags: ["messaging", "telegram", "background-agent"] },
+    ];
+    for (const c of cases) {
+      const { delivered } = await run({ agentType: "heavy", finalAnswer: FINAL, ...c });
+      expect(delivered.finalAnswer).toBe(FINAL);
+    }
+    expect(upsertFileMock).not.toHaveBeenCalled();
+  });
+
+  it("a content-only deliverable (reflector meta-summary) over 4000 chars never persists", async () => {
+    const CONTENT = body(5000);
+    const { delivered } = await run({
+      agentType: "heavy",
+      finalAnswer: "",
+      output: { content: CONTENT, score: 0.9, finalAnswer: null },
+    });
+    expect(upsertFileMock).not.toHaveBeenCalled();
+    expect(delivered.content).toBe(CONTENT);
+  });
+
+  it("a `text`-carried answer over 4000 chars persists (finalAnswer / text both count)", async () => {
+    const TEXT = body(5000);
+    const { taskId } = await run({ agentType: "swarm", finalAnswer: "", output: { text: TEXT, content: "meta" } });
+    const path = `workspace/reports/${taskId.slice(0, 8)}-${SLUG}-2026-10-17.md`;
+    expect(upsertFileMock).toHaveBeenCalledWith(path, TITLE, TEXT, ["report", "swarm"], "workspace");
   });
 });

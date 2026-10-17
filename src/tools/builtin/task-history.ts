@@ -11,6 +11,7 @@
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
+import { extractDeliverableText } from "../../lib/deliverable.js";
 
 /** ~200 chars around the first case-insensitive occurrence of any of the
  * `terms` in `text` (earliest position wins); undefined when none is present
@@ -200,8 +201,13 @@ Returns the last N executions matching the query (tasks still running sort last)
           exitReason = parsed.exitReason;
           roundsCompleted = parsed.roundsCompleted;
           maxRounds = parsed.maxRounds;
-          if (parsed.text) {
-            outputText = String(parsed.text);
+          // Queue 4f (A): the canonical extractor (finalAnswer → text →
+          // content), not `parsed.text` — a swarm/heavy row is
+          // `{content, finalAnswer, …}` and surfaced no preview or snippet.
+          // The parsed OBJECT, so a text-less envelope stays undefined (W5).
+          const text = extractDeliverableText(parsed);
+          if (text) {
+            outputText = text;
             outputPreview =
               outputText.length > 500
                 ? outputText.slice(0, 500) + "..."
