@@ -4,6 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
+import { ensureV84Tables } from "../lib/v8-4/schema.js";
 
 // Shared subscribers array — cleared in beforeEach
 const subscribers: Array<{
@@ -226,19 +229,29 @@ import { recordRitualFailure } from "../rituals/scheduler.js";
 // `.run()` write (day-log) are observable, keyed by the SQL text.
 const dbAll = vi.hoisted(() => vi.fn((_sql: string, ..._a: unknown[]) => [] as unknown[]));
 const dbRun = vi.hoisted(() => vi.fn((_sql: string, ..._a: unknown[]) => undefined));
+// Queue 4g: a test can answer one `.get()` by its SQL (anything else falls
+// through to dbStatusGet), or point getDatabase at a real :memory: db.
+const dbGetBySql = vi.hoisted(() =>
+  vi.fn((_sql: string, ..._a: unknown[]): unknown => undefined),
+);
+const realDb = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("../db/index.js", () => ({
-  getDatabase: () => ({
-    prepare: (sql: string) => ({
-      get: dbStatusGet,
-      run: (...a: unknown[]) => {
-        dbRun(sql, ...a);
-        return { changes: 1 };
-      },
-      all: (...a: unknown[]) => dbAll(sql, ...a),
-    }),
-    // ritual delivery-policy ledger (ensure table / insert) — no-op in tests
-    exec: () => undefined,
-  }),
+  getDatabase: () =>
+    realDb.db ?? {
+      prepare: (sql: string) => ({
+        get: (...a: unknown[]) => {
+          const bySql = dbGetBySql(sql, ...a);
+          return bySql !== undefined ? bySql : dbStatusGet(...a);
+        },
+        run: (...a: unknown[]) => {
+          dbRun(sql, ...a);
+          return { changes: 1 };
+        },
+        all: (...a: unknown[]) => dbAll(sql, ...a),
+      }),
+      // ritual delivery-policy ledger (ensure table / insert) — no-op in tests
+      exec: () => undefined,
+    },
 }));
 
 // 2026-10-15 profile split: synthetic user_facts + projects rows, shared by
@@ -275,6 +288,8 @@ import {
   threadKey,
   isOwnerChannel,
   isPoisonedExchange,
+  hasExchangeEvidence,
+  capThreadReply,
   threadImageLive,
   _testSeedThread,
   _testPushToThread,
@@ -4850,6 +4865,505 @@ describe("MessageRouter", () => {
           "Preparé el correo, pero hay un don't ask mode activo, así que necesito que lo envíes tú.",
         ),
       ).toBe(true);
+    });
+  });
+
+  describe("queue 4g: thread-buffer poison filter evidence gate", () => {
+    // SYNTHETIC fixtures (never real task text). (a) a success report whose
+    // last paragraph starts "No tengo una herramienta…" after a list of
+    // written files; (b) a mid-sentence capability remark; (c) a whole-reply
+    // refusal with zero tools; (d) the don't-ask confabulation (patterns
+    // 28-30, 0-based); (e) a system-error line.
+    const FIX_A =
+      "Guardé las notas en el KB:\n- notas/alfa.md\n- notas/beta.md\n- notas/gamma.md\n\nNo tengo una herramienta para exportar a PDF, así que las dejé en Markdown.";
+    const FIX_B =
+      "Te dejé el resumen en el KB (como no tengo acceso al original, usé la copia guardada).";
+    const FIX_C =
+      "No tengo acceso a herramientas de actualización. Tendrías que hacerlo manualmente.";
+    const FIX_D =
+      "El tool de Gmail está bloqueado en esta sesión (modo 'don't ask').";
+    const FIX_E =
+      "Guardé dos notas.\n\n🔴 ERROR DE SISTEMA: la tercera escritura no respondió.";
+    // Audit R1 replay (14 zero-tool refusal shapes); the last-but-two also
+    // carries the don't-ask "bloqueada en esta sesión" signature.
+    const REPLAY = [
+      "No tengo acceso a Gmail.",
+      "Lo siento, no tengo acceso a Gmail.",
+      "Lo siento, pero no tengo una herramienta para eso.",
+      "**No tengo acceso** a esa cuenta.",
+      "❌ No tengo acceso a Supabase.",
+      "¡No tengo acceso!",
+      "Entendido: no tengo acceso a esa herramienta.",
+      "Desafortunadamente no tengo herramienta para enviar correos.",
+      "- No tengo acceso a Drive",
+      "> No tengo acceso",
+      "Hola, no tengo acceso a mcp__supabase__query en esta sesión.",
+      "La herramienta está bloqueada en esta sesión, no tengo acceso.",
+      "Ok. No tengo ninguna herramienta de calendario.",
+      "(No tengo acceso a eso)",
+    ];
+    const DONT_ASK_ROW =
+      "La herramienta está bloqueada en esta sesión, no tengo acceso.";
+    const OWNER = "owner@s.whatsapp.net";
+
+    /** A real :memory: db with the production DDL (schema.sql + task_gates). */
+    function memDb(): Database.Database {
+      const db = new Database(":memory:");
+      db.exec(
+        readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8"),
+      );
+      ensureV84Tables(db);
+      return db;
+    }
+
+    it("W3 un-anchored refusal family: every replay row, (b) and (c) are caught when unverified", () => {
+      for (const s of [...REPLAY, FIX_B, FIX_C]) {
+        expect(isPoisonedExchange(s), s).toBe(true);
+        expect(isPoisonedExchange(s, { verified: false }), s).toBe(true);
+      }
+    });
+
+    it("W2 verified exempts ONLY the refusal family", () => {
+      // Refusal family → kept when verified.
+      for (const s of [FIX_A, FIX_B, FIX_C, ...REPLAY.filter((r) => r !== DONT_ASK_ROW)]) {
+        expect(isPoisonedExchange(s, { verified: true }), s).toBe(false);
+      }
+      // Every other family still strips a verified reply.
+      expect(isPoisonedExchange(FIX_D, { verified: true })).toBe(true);
+      expect(isPoisonedExchange(FIX_E, { verified: true })).toBe(true);
+      expect(isPoisonedExchange(DONT_ASK_ROW, { verified: true })).toBe(true);
+    });
+
+    it("a verified push keeps a refusal-family reply (a, b) and survives getThreadTurns", () => {
+      const tk = "telegram-4g-verified";
+      _testSeedThread(tk, []);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        _testPushToThread(tk, `User: guarda las notas\nJarvis: ${FIX_A}`, undefined, {
+          verified: true,
+        });
+        _testPushToThread(tk, `User: resume\nJarvis: ${FIX_B}`, undefined, {
+          verified: true,
+        });
+        expect(_testThreadEntries(tk)).toEqual([
+          { text: `User: guarda las notas\nJarvis: ${FIX_A}`, verified: true },
+          { text: `User: resume\nJarvis: ${FIX_B}`, verified: true },
+        ]);
+        expect(_testThreadTurns(tk)).toEqual([
+          { role: "user", content: "guarda las notas" },
+          { role: "assistant", content: FIX_A },
+          { role: "user", content: "resume" },
+          { role: "assistant", content: FIX_B },
+        ]);
+        expect(
+          logSpy.mock.calls.flat().join(" "),
+        ).not.toContain("poisoned");
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("a verified push of a don't-ask or system-error reply is still stripped (d, e)", () => {
+      const tk = "telegram-4g-verified-other";
+      _testSeedThread(tk, []);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        _testPushToThread(tk, `User: manda el correo\nJarvis: ${FIX_D}`, undefined, {
+          verified: true,
+        });
+        _testPushToThread(tk, `User: guarda tres\nJarvis: ${FIX_E}`, undefined, {
+          verified: true,
+        });
+        expect(_testThreadEntries(tk)).toEqual([
+          { text: "User: manda el correo\nJarvis: ", verified: true },
+          { text: "User: guarda tres\nJarvis: ", verified: true },
+        ]);
+        expect(_testThreadTurns(tk)).toEqual([
+          { role: "user", content: "manda el correo" },
+          { role: "user", content: "guarda tres" },
+        ]);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("a verified entry seeded with a don't-ask reply is stripped at load time too", () => {
+      const tk = "telegram-4g-load-other";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [{ content: `User: manda\nJarvis: ${FIX_D}`, verified: 1 }]
+          : [],
+      );
+      expect(_testThreadTurns(tk)).toEqual([{ role: "user", content: "manda" }]);
+    });
+
+    it("an unverified poisoned push keeps the user turn and drops the reply (c, d)", () => {
+      const tk = "telegram-4g-unverified";
+      _testSeedThread(tk, []);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        _testPushToThread(tk, `User: actualiza el registro\nJarvis: ${FIX_C}`);
+        _testPushToThread(tk, `User: manda el correo\nJarvis: ${FIX_D}`);
+        expect(_testThreadEntries(tk)).toEqual([
+          { text: "User: actualiza el registro\nJarvis: " },
+          { text: "User: manda el correo\nJarvis: " },
+        ]);
+        expect(_testThreadTurns(tk)).toEqual([
+          { role: "user", content: "actualiza el registro" },
+          { role: "user", content: "manda el correo" },
+        ]);
+        const blocked = logSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.includes("Blocked poisoned exchange"));
+        expect(blocked[0]).toBe(
+          `[router] Blocked poisoned exchange from thread buffer: ${FIX_C.slice(0, 80)}...`,
+        );
+        expect(FIX_C.length).toBeGreaterThan(80);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("a thread hydrated after a restart keeps a verified row's reply and strips an unverified one", () => {
+      const tk = "telegram-4g-hydrate";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [
+              // newest first, as the query orders them
+              { content: `User: otra\nJarvis: ${FIX_C}`, verified: 0 },
+              { content: `User: guarda las notas\nJarvis: ${FIX_A}`, verified: 1 },
+            ]
+          : [],
+      );
+      expect(_testThreadTurns(tk)).toEqual([
+        { role: "user", content: "guarda las notas" },
+        { role: "assistant", content: FIX_A },
+        { role: "user", content: "otra" },
+      ]);
+      const call = dbAll.mock.calls.find((c) =>
+        String(c[0]).includes("FROM conversations"),
+      )!;
+      expect(call[1]).toBe("thread-verified");
+    });
+
+    it("W4 the production hydration query on a real db: tagged → verified, untagged → not, NULL tags → not hydrated", () => {
+      const db = memDb();
+      const ins = db.prepare(
+        "INSERT INTO conversations (bank, tags, content, created_at) VALUES ('mc-jarvis', ?, ?, ?)",
+      );
+      ins.run(
+        JSON.stringify(["telegram", "conversation", "outcome:success", "thread-verified"]),
+        `User: guarda\nJarvis: ${FIX_A}`,
+        "2026-10-17 01:00:00",
+      );
+      ins.run(
+        JSON.stringify(["telegram", "conversation"]),
+        `User: actualiza\nJarvis: ${FIX_C}`,
+        "2026-10-17 02:00:00",
+      );
+      ins.run(null, `User: nulo\nJarvis: ${FIX_A}`, "2026-10-17 03:00:00");
+      realDb.db = db;
+      try {
+        // A fresh compound key hydrates from the `telegram` channel tag.
+        const tk = "telegram:4g-w4";
+        const turns = _testThreadTurns(tk);
+        expect(_testThreadEntries(tk)).toEqual([
+          { text: `User: guarda\nJarvis: ${FIX_A}`, verified: true },
+          { text: `User: actualiza\nJarvis: ${FIX_C}` },
+        ]);
+        expect(turns).toEqual([
+          { role: "user", content: "guarda" },
+          { role: "assistant", content: FIX_A },
+          { role: "user", content: "actualiza" },
+        ]);
+      } finally {
+        realDb.db = null;
+        db.close();
+      }
+    });
+
+    it("W1 hasExchangeEvidence on a real db: own tools, own/child harness gates", () => {
+      const db = memDb();
+      const task = db.prepare(
+        "INSERT INTO tasks (task_id, parent_task_id, title, description) VALUES (?, ?, 't', 'd')",
+      );
+      const gate = db.prepare(
+        "INSERT INTO task_gates (task_id, gate_id, criterion, source, state) VALUES (?, ?, 'c', ?, ?)",
+      );
+      task.run("own-met", null);
+      gate.run("own-met", "G1", "harness", "met");
+      task.run("own-failed", null);
+      gate.run("own-failed", "G1", "harness", "failed");
+      gate.run("own-failed", "G2", "plan", "met");
+      task.run("swarm-ok", null);
+      task.run("swarm-ok-c1", "swarm-ok");
+      task.run("swarm-ok-c2", "swarm-ok");
+      gate.run("swarm-ok-c2", "G1", "harness", "met");
+      task.run("swarm-plan", null);
+      task.run("swarm-plan-c1", "swarm-plan");
+      gate.run("swarm-plan-c1", "G1", "plan", "met");
+      gate.run("swarm-plan-c1", "G2", "harness", "failed");
+      task.run("other-root", null);
+      task.run("other-child", "other-root");
+      gate.run("other-child", "G1", "harness", "met");
+      task.run("lonely", null);
+      realDb.db = db;
+      try {
+        expect(hasExchangeEvidence("lonely", ["jarvis_file_write"])).toBe(true);
+        expect(hasExchangeEvidence("lonely", ["ToolSearch"])).toBe(false);
+        expect(hasExchangeEvidence("lonely", [])).toBe(false);
+        expect(hasExchangeEvidence("own-met", [])).toBe(true);
+        expect(hasExchangeEvidence("own-failed", [])).toBe(false);
+        // swarm parent: 0 own tools, one child with a met harness gate
+        expect(hasExchangeEvidence("swarm-ok", [])).toBe(true);
+        // swarm parent whose children carry only plan (and failed) gates
+        expect(hasExchangeEvidence("swarm-plan", [])).toBe(false);
+      } finally {
+        realDb.db = null;
+        db.close();
+      }
+    });
+
+    describe("completion call site", () => {
+      async function complete(
+        run: { output: string | null; tool_calls?: string | null },
+        harnessMet: number,
+        result: string = FIX_A,
+      ) {
+        const tk = threadKey("whatsapp", OWNER);
+        _testSeedThread(tk, []);
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: OWNER,
+          text: "guarda las notas",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        dbStatusGet.mockReturnValue(run);
+        dbGetBySql.mockImplementation((sql: string) =>
+          sql.includes("FROM task_gates") ? { n: harnessMet } : undefined,
+        );
+        try {
+          findHandler("task.completed")!({
+            data: {
+              task_id: "test-task-123",
+              agent_id: "fast",
+              result,
+              duration_ms: 1,
+            },
+          });
+        } finally {
+          dbStatusGet.mockReturnValue(undefined);
+          dbGetBySql.mockReset().mockImplementation(() => undefined);
+        }
+        const retainTags = memoryRetainSpy.mock.calls
+          .map((c) => (c[1] as { tags: string[] }).tags)
+          .find((t) => t.includes("conversation"))!;
+        return { entry: _testThreadEntries(tk).at(-1)!, retainTags };
+      }
+
+      it("verified=true for a fast result with output.toolCalls", async () => {
+        const { entry, retainTags } = await complete(
+          { output: JSON.stringify({ toolCalls: ["jarvis_file_write"] }) },
+          0,
+        );
+        expect(entry.verified).toBe(true);
+        expect(entry.text).toBe(`User: guarda las notas\nJarvis: ${FIX_A}`);
+        expect(retainTags).toContain("thread-verified");
+      });
+
+      it("W1 verified=true for a heavy run whose tool calls are only in runs.tool_calls (output not JSON)", async () => {
+        const { entry, retainTags } = await complete(
+          { output: "texto plano", tool_calls: JSON.stringify(["shell_exec"]) },
+          0,
+        );
+        expect(entry.verified).toBe(true);
+        expect(entry.text).toBe(`User: guarda las notas\nJarvis: ${FIX_A}`);
+        expect(retainTags).toContain("thread-verified");
+      });
+
+      it("verified=true for 0 tool calls but a met harness gate (own or child)", async () => {
+        const { entry, retainTags } = await complete(
+          { output: JSON.stringify({ toolCalls: [] }), tool_calls: "[]" },
+          1,
+        );
+        expect(entry.verified).toBe(true);
+        expect(entry.text).toBe(`User: guarda las notas\nJarvis: ${FIX_A}`);
+        expect(retainTags).toContain("thread-verified");
+      });
+
+      it("verified=false with neither (no met harness gate; ToolSearch only in either column)", async () => {
+        for (const run of [
+          { output: JSON.stringify({ toolCalls: [] }), tool_calls: "[]" },
+          { output: JSON.stringify({ toolCalls: ["ToolSearch"] }), tool_calls: '["ToolSearch"]' },
+        ]) {
+          memoryRetainSpy.mockClear();
+          const { entry, retainTags } = await complete(run, 0);
+          expect(entry.verified).toBeUndefined();
+          // Unverified → the refusal family applies: user turn kept, reply dropped.
+          expect(entry.text).toBe("User: guarda las notas\nJarvis: ");
+          expect(retainTags).not.toContain("thread-verified");
+        }
+      });
+
+      it("4h the stored reply is bounded at 12,000 chars and keeps its ledger tail", async () => {
+        const body = "x".repeat(21_000);
+        const tail = "📄 Reporte guardado: workspace/reports/demo.md";
+        const { entry } = await complete(
+          { output: JSON.stringify({ toolCalls: ["jarvis_file_write"] }) },
+          0,
+          `${body}\n\n${tail}`,
+        );
+        expect(entry.text).toBe(
+          `User: guarda las notas\nJarvis: ${"x".repeat(12_000)}…\n\n${tail}`,
+        );
+      });
+    });
+  });
+
+  describe("queue 4h: read-time thread reply cap", () => {
+    // SYNTHETIC: a long reply whose last lines are the harness ledger tail.
+    const TAIL =
+      "📄 Reporte guardado: workspace/reports/demo-reporte.md\n✔ Verificado: workspace/reports/demo-reporte.md";
+    const LONG_BODY = Array.from({ length: 2_700 }, (_, i) => `palabra${i}`).join(" ");
+    const LONG = `${LONG_BODY}\n\n${TAIL}`;
+
+    it("caps the head, keeps the ledger tail verbatim, and leaves short replies untouched", () => {
+      expect(LONG_BODY.length).toBeGreaterThan(21_000);
+      // The 12,000 boundary falls mid-word.
+      expect(LONG_BODY[11_999]).not.toBe(" ");
+      expect(LONG_BODY[12_000]).not.toBe(" ");
+      expect(capThreadReply(LONG, 12_000)).toBe(
+        `${LONG_BODY.slice(0, 12_000)}…\n\n${TAIL}`,
+      );
+      expect(capThreadReply(LONG, 3_000)).toBe(
+        `${LONG_BODY.slice(0, 3_000)}…\n\n${TAIL}`,
+      );
+      const short = "y".repeat(2_500);
+      expect(capThreadReply(short, 3_000)).toBe(short);
+      // Ledger lines never count against the limit.
+      const atLimit = `${"z".repeat(3_000)}\n\n${TAIL}`;
+      expect(capThreadReply(atLimit, 3_000)).toBe(atLimit);
+      // Idempotent on its own output (the stored bound re-read at 12k).
+      const once = capThreadReply(LONG, 12_000);
+      expect(capThreadReply(once, 12_000)).toBe(once);
+    });
+
+    it("bounds the kept ledger tail to its last 800 chars behind a leading «…» (idempotent across store → read)", () => {
+      const body = "x".repeat(21_000);
+      const lines = Array.from(
+        { length: 30 },
+        (_, i) => `✔ Verificado: workspace/notas/nota-${String(i).padStart(2, "0")}.md`,
+      );
+      const tail = lines.join("\n");
+      expect(tail.length).toBeGreaterThan(800);
+      const reply = `${body}\n\n${tail}`;
+      const read3k = capThreadReply(reply, 3_000);
+      expect(read3k).toBe(`${body.slice(0, 3_000)}…\n\n…${tail.slice(-800)}`);
+      expect(read3k.endsWith(lines.at(-1)!)).toBe(true);
+      // Stored at 12k, then read at 3k (aged) or 12k (newest): same windows.
+      const stored = capThreadReply(reply, 12_000);
+      expect(stored).toBe(`${body.slice(0, 12_000)}…\n\n…${tail.slice(-800)}`);
+      expect(capThreadReply(stored, 12_000)).toBe(stored);
+      expect(capThreadReply(stored, 3_000)).toBe(read3k);
+      // One long enforce-mode "Gates:" line: its cut copy survives a re-cap.
+      const gates = `Gates: ${Array.from({ length: 300 }, (_, i) => `G${i} met`).join(" · ")}`;
+      const gReply = `${body}\n\n${gates}`;
+      const gStored = capThreadReply(gReply, 12_000);
+      expect(gStored).toBe(`${body.slice(0, 12_000)}…\n\n…${gates.slice(-800)}`);
+      expect(capThreadReply(gStored, 3_000)).toBe(capThreadReply(gReply, 3_000));
+      // The cut never starts on the low half of a surrogate pair.
+      const astral = `Gates: ${"a".repeat(900)}📄${"b".repeat(799)}`;
+      expect(capThreadReply(`${body}\n\n${astral}`, 3_000)).toBe(
+        `${body.slice(0, 3_000)}…\n\n…${"b".repeat(799)}`,
+      );
+    });
+
+    it("the push-time check reads the 3,000-char window: a refusal phrase at char 5,000 is stored intact and kept once aged", () => {
+      const tk = "telegram-4h-push-window";
+      _testSeedThread(tk, []);
+      const head = "Informe listo. " + "x".repeat(5_000);
+      const reply = `${head}\n\nNo tengo acceso a la API de pagos.\n\n${"y".repeat(500)}`;
+      expect(isPoisonedExchange(reply)).toBe(true);
+      expect(isPoisonedExchange(capThreadReply(reply, 3_000))).toBe(false);
+      _testPushToThread(tk, `User: informe\nJarvis: ${reply}`);
+      expect(_testThreadEntries(tk)).toEqual([
+        { text: `User: informe\nJarvis: ${reply}` },
+      ]);
+      _testPushToThread(tk, "User: gracias\nJarvis: de nada");
+      expect(_testThreadTurns(tk)).toEqual([
+        { role: "user", content: "informe" },
+        { role: "assistant", content: `${reply.slice(0, 3_000)}…` },
+        { role: "user", content: "gracias" },
+        { role: "assistant", content: "de nada" },
+      ]);
+    });
+
+    it("the newest entry gets 12,000 + tail; after one more push it gets 3,000 + tail", () => {
+      const tk = "telegram-4h-read";
+      _testSeedThread(tk, []);
+      _testPushToThread(tk, `User: informe\nJarvis: ${LONG}`);
+      expect(_testThreadTurns(tk).at(-1)).toEqual({
+        role: "assistant",
+        content: `${LONG_BODY.slice(0, 12_000)}…\n\n${TAIL}`,
+      });
+      _testPushToThread(tk, "User: gracias\nJarvis: de nada");
+      expect(_testThreadTurns(tk)).toEqual([
+        { role: "user", content: "informe" },
+        { role: "assistant", content: `${LONG_BODY.slice(0, 3_000)}…\n\n${TAIL}` },
+        { role: "user", content: "gracias" },
+        { role: "assistant", content: "de nada" },
+      ]);
+    });
+
+    it("the shared tail walk keeps the background notice's failure line past the 500-char cap", async () => {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: resumen",
+        status: "completed",
+        agent_type: "fast",
+      });
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lanza el agente",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: `[timeout after 900s — partial response below]\nResumen parcial. ${"x".repeat(700)}`,
+            duration_ms: 1,
+          },
+        });
+        const text = waAdapter.sentMessages.at(-1)!.text;
+        expect(text).toContain("Agente terminó");
+        expect(text).toContain("..."); // the body WAS capped
+        expect(text).toContain(
+          "La tarea se cortó por tiempo — lo de arriba es parcial. ¿Sigo desde donde quedó?",
+        );
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("hydrated entries (stored full) obey the same read-time rule", () => {
+      const tk = "telegram-4h-hydrate";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [
+              { content: "User: gracias\nJarvis: de nada" },
+              { content: `User: informe\nJarvis: ${LONG}` },
+            ]
+          : [],
+      );
+      expect(_testThreadTurns(tk)[1]).toEqual({
+        role: "assistant",
+        content: `${LONG_BODY.slice(0, 3_000)}…\n\n${TAIL}`,
+      });
     });
   });
 });

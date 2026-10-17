@@ -916,15 +916,75 @@ export function holdScopeAsks(stream: {
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
 const THREAD_BUFFER_SIZE = 15;
-/** Max chars per Jarvis response stored in the thread buffer.
- *  Higher cap preserves more context for multi-turn workflows where
- *  Jarvis needs to remember file contents, data, or analysis from prior turns. */
+/** Max chars of a Jarvis response a turn sees from an OLDER thread entry
+ *  (read-time, getThreadTurns). Higher cap preserves more context for
+ *  multi-turn workflows where Jarvis needs to remember file contents, data,
+ *  or analysis from prior turns. */
 const THREAD_RESPONSE_CAP = 3000;
+/** Queue 4h: the newest entry's limit (same "only the newest entry" rule as
+ *  threadImageLive), and the storage bound every pushed reply is capped to —
+ *  a 21k swarm reply entered the thread at 14 % and the next turn could not
+ *  see a fact stated later in it. */
+const THREAD_LAST_RESPONSE_CAP = 12_000;
+
+/** `text` split into its body and the trailing run of ledger / blank lines
+ *  (plus any trimmed line `alsoTail` accepts). Shared by the
+ *  background-notification cap and capThreadReply. */
+function splitLedgerTail(
+  text: string,
+  alsoTail: (trimmedLine: string) => boolean = () => false,
+): { body: string; tail: string } {
+  const lines = text.split("\n");
+  let cut = lines.length;
+  while (
+    cut > 0 &&
+    (isLedgerLine(lines[cut - 1]) ||
+      lines[cut - 1].trim() === "" ||
+      alsoTail(lines[cut - 1].trim()))
+  ) {
+    cut--;
+  }
+  return {
+    body: lines.slice(0, cut).join("\n").trimEnd(),
+    tail: lines.slice(cut).join("\n").trim(),
+  };
+}
+
+/** Queue 4h: the kept ledger tail is bounded like the background notice's —
+ *  its LAST chars, since the lines appended last are the ones to keep. */
+const THREAD_TAIL_CAP = 800;
+
+/** Queue 4h: cap a thread reply's HEAD at `limit` chars and always keep its
+ *  trailing ledger block (the harness lines appended last — «📄 Reporte
+ *  guardado», gates — which a head-only cut lost first), bounded to its last
+ *  THREAD_TAIL_CAP chars behind a leading "…". Ledger lines never count
+ *  against the limit. Idempotent on its own output: a line starting with "…"
+ *  in the tail run is the bounded tail's cut first line. */
+export function capThreadReply(text: string, limit: number): string {
+  const { body, tail } = splitLedgerTail(text, (t) => t.startsWith("…"));
+  if (body.length <= limit) return text;
+  const head = safeSlice(body, limit) + "…";
+  if (!tail) return head;
+  let kept = tail;
+  if (kept.length > THREAD_TAIL_CAP) {
+    kept = kept.slice(-THREAD_TAIL_CAP);
+    // Never start on the low half of a surrogate pair.
+    if (/^[\uDC00-\uDFFF]/.test(kept)) kept = kept.slice(1);
+    kept = "…" + kept;
+  }
+  return `${head}\n\n${kept}`;
+}
 
 interface ThreadEntry {
   text: string; // "User: ...\nJarvis: ..."
   imageUrl?: string; // base64 data URL — preserved so follow-up turns see the image
+  /** Queue 4g: the exchange's task ran a tool or met a harness gate, so the
+   *  poison filter (written for zero-tool refusals) skips it at push AND load. */
+  verified?: boolean;
 }
+
+/** Queue 4g: conversations tag that carries `verified` across a restart. */
+const THREAD_VERIFIED_TAG = "thread-verified";
 
 const conversationThreads = new Map<string, ThreadEntry[]>();
 const threadLastAccess = new Map<string, number>();
@@ -1146,21 +1206,33 @@ function pushToThread(
   channel: string,
   exchange: string,
   imageUrl?: string,
+  opts: { verified?: boolean } = {},
 ): void {
   hydrateThreadIfNeeded(channel);
   // Ruling 3c: a stored credential pasted in chat is not kept in clear.
   exchange = scrubSecrets(exchange);
+  const verified = opts.verified === true;
   // Check for poisoned responses before adding to the thread buffer.
   // Without this, poisoned entries live in-memory until the next restart
   // and teach the LLM learned helplessness for the rest of the session.
+  // Queue 4g (2026-10-17): a verified exchange (its task ran tools or met a
+  // harness gate) is not the zero-tool refusal the refusal family exists
+  // for, so only that family is skipped for it. A match keeps the user turn
+  // and empties the reply, the same result the load-time strip gives.
+  // Queue 4h: judged on the 3,000-char read window (head + ledger tail) —
+  // the old push-time window and what the entry shows once it ages.
   const jarvisIdx = exchange.indexOf("\nJarvis: ");
   if (jarvisIdx !== -1) {
     const jarvisText = exchange.slice(jarvisIdx + "\nJarvis: ".length).trim();
-    if (isPoisonedExchange(jarvisText)) {
+    if (
+      isPoisonedExchange(capThreadReply(jarvisText, THREAD_RESPONSE_CAP), {
+        verified,
+      })
+    ) {
       console.log(
         `[router] Blocked poisoned exchange from thread buffer: ${jarvisText.slice(0, 80)}...`,
       );
-      return;
+      exchange = exchange.slice(0, jarvisIdx + "\nJarvis: ".length);
     }
   }
   const thread = conversationThreads.get(channel)!;
@@ -1168,7 +1240,7 @@ function pushToThread(
   // older base64 data URLs are dead weight — up to 15 per channel held for
   // the thread TTL (audit 2026-09-22). Drop them as a new entry lands.
   for (const entry of thread) delete entry.imageUrl;
-  thread.push({ text: exchange, imageUrl });
+  thread.push({ text: exchange, imageUrl, ...(verified ? { verified } : {}) });
   if (thread.length > THREAD_BUFFER_SIZE) thread.shift();
   // Phase 4.1: every exchange that enters the thread buffer also feeds the
   // pin ledger (URLs created/shared in this thread). Single seam — every
@@ -1183,6 +1255,26 @@ function pushToThread(
   // and never be TTL-evicted.
   threadLastAccess.set(channel, Date.now());
 }
+
+/**
+ * Tool refusals (LLM claims it can't use available tools). Queue 4g
+ * (2026-10-17): the ONLY family a verified exchange (its task ran a tool or
+ * met a harness gate) skips — over the prior 30 days the first pattern made
+ * 12/12 push-time blocks, every one on a task that had run tools (3 with
+ * harness gates met): a sentence inside a real success report, not the
+ * zero-tool whole-reply refusal this family exists for. That false-positive
+ * class is handled by the evidence gate, so the patterns stay un-anchored and
+ * still catch every zero-tool refusal ("Lo siento, no tengo acceso a …").
+ */
+const REFUSAL_PATTERNS: readonly RegExp[] = [
+  /no tengo (?:acceso|(?:la|una|ninguna)\s+herramienta|herramienta)/i,
+  /no tengo disponible/i,
+  /no tengo.*(?:wp_|gmail_|gsheets_)/i,
+  /no tengo.*wp_publish/i,
+  /no pude completar la acci[oó]n/i,
+  /no (?:puedo|es posible) (?:renombrar|cambiar el nombre|actualizar el nombre)/i,
+  /necesitas? hacer.{0,20}(?:manualmente|desde la interfaz)/i,
+];
 
 /**
  * Detect poisoned exchanges — hallucinated success, system errors, or
@@ -1206,14 +1298,9 @@ const POISONED_RESPONSE_PATTERNS = [
   /🔴 ERROR DE SISTEMA/i,
   /el sistema encontr[oó] un error/i,
   /herramientas? no est[aá](?:n)? respondiendo/i,
-  // Tool refusals (LLM claims it can't use available tools)
-  /no tengo (?:acceso|(?:la|una|ninguna)\s+herramienta|herramienta)/i,
-  /no tengo disponible/i,
-  /no tengo.*(?:wp_|gmail_|gsheets_)/i,
-  /no tengo.*wp_publish/i,
-  /no pude completar la acci[oó]n/i,
-  /no (?:puedo|es posible) (?:renombrar|cambiar el nombre|actualizar el nombre)/i,
-  /necesitas? hacer.{0,20}(?:manualmente|desde la interfaz)/i,
+  // Tool refusals (LLM claims it can't use available tools) — the one family
+  // a verified exchange skips (REFUSAL_PATTERNS above, queue 4g).
+  ...REFUSAL_PATTERNS,
   // Learned helplessness — LLM gives up or reports inability to continue.
   // Require sentence-start position (^|\n|[.!?]\s+) to avoid matching
   // inside capability reports ("No puedo hacer búsquedas" as status vs refusal).
@@ -1264,8 +1351,10 @@ const POISONED_RESPONSE_PATTERNS = [
   // "don't ask" in legitimate prose ("you said don't ask, so I just did it")
   // can't strip a real answer (2026-06-17 FP fix; the bare /\bdon.?t ask\b/
   // form was over-broad). A real don't-ask refusal also carries a
-  // `bloqueado … don't ask` clause (next pattern) or `no tengo acceso`, so the
-  // don't-ask class stays caught even if this signature drifts. NOTE: that
+  // `bloqueado … don't ask` clause (next pattern) or `no tengo acceso` (the
+  // latter only when unverified: a verified exchange skips the refusal
+  // family, queue 4g), so the don't-ask class stays caught even if this
+  // signature drifts. NOTE: that
   // sibling net is specific to the don't-ask class — it does NOT backstop the
   // sentence-anchored self-error patterns above.
   /(?:modo\s*['"]?\s*don.?t[\s-]?ask|don.?t[\s-]?ask[\s'"-]*mode)/i,
@@ -1273,8 +1362,18 @@ const POISONED_RESPONSE_PATTERNS = [
   /requiere\s+(?:permiso|autorizaci[oó]n|confirmaci[oó]n)\s+(?:del|de)\s+sistema/i,
 ];
 
-export function isPoisonedExchange(jarvisResponse: string): boolean {
-  return POISONED_RESPONSE_PATTERNS.some((p) => p.test(jarvisResponse));
+/** `verified` (queue 4g) exempts only REFUSAL_PATTERNS; every other family
+ *  (system errors, hallucination replacement, learned helplessness, false
+ *  capability, don't-ask) still strips a verified reply. */
+export function isPoisonedExchange(
+  jarvisResponse: string,
+  opts: { verified?: boolean } = {},
+): boolean {
+  return POISONED_RESPONSE_PATTERNS.some(
+    (p) =>
+      !(opts.verified && REFUSAL_PATTERNS.includes(p)) &&
+      p.test(jarvisResponse),
+  );
 }
 
 /**
@@ -1294,6 +1393,33 @@ export function threadImageLive(index: number, length: number): boolean {
   return index === length - 1;
 }
 
+/**
+ * Queue 4g: evidence that a completed chat task's reply is not a zero-tool
+ * refusal — a tool call other than ToolSearch (which only loads schemas), or
+ * a met harness gate on the task or on any child task (a swarm parent runs
+ * no tools itself; its children's gates live under their own task ids).
+ * A DB failure counts as no evidence: the filter applies as before.
+ */
+export function hasExchangeEvidence(
+  taskId: string,
+  toolCalls: readonly string[],
+): boolean {
+  if (toolCalls.some((t) => t !== "ToolSearch")) return true;
+  try {
+    const row = getDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM task_gates
+         WHERE source = 'harness' AND state = 'met'
+         AND (task_id = ? OR task_id IN
+           (SELECT task_id FROM tasks WHERE parent_task_id = ?))`,
+      )
+      .get(taskId, taskId) as { n?: number } | undefined;
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Test-only: seed a thread buffer directly (the production path fills it
  *  on task completion, which unit tests don't reach). */
 export function _testSeedThread(
@@ -1310,12 +1436,13 @@ export function _testPushToThread(
   channel: string,
   exchange: string,
   imageUrl?: string,
+  opts?: { verified?: boolean },
 ): void {
-  pushToThread(channel, exchange, imageUrl);
+  pushToThread(channel, exchange, imageUrl, opts);
 }
 export function _testThreadEntries(
   channel: string,
-): Array<{ text: string; imageUrl?: string }> {
+): Array<{ text: string; imageUrl?: string; verified?: boolean }> {
   return [...(conversationThreads.get(channel) ?? [])];
 }
 
@@ -1364,14 +1491,18 @@ function getThreadTurns(channel: string): ConversationTurn[] {
       : undefined;
 
     const userText = text.slice("User: ".length, jarvisIdx).trim();
-    const assistantText = text
-      .slice(jarvisIdx + "\nJarvis: ".length)
-      .trim();
+    // Queue 4h: read-time cap — the newest entry gets the 12k limit, older
+    // ones 3000; hydrated rows (stored full) obey the same rule.
+    const assistantText = capThreadReply(
+      text.slice(jarvisIdx + "\nJarvis: ".length).trim(),
+      i === thread.length - 1 ? THREAD_LAST_RESPONSE_CAP : THREAD_RESPONSE_CAP,
+    );
 
     // Poisoned exchanges: keep the user message (it carries valid scope
     // keywords for follow-up inheritance) but drop the assistant response
     // (it teaches learned helplessness / hallucinated success).
-    if (isPoisonedExchange(assistantText)) {
+    // Queue 4g: a verified entry skips only the refusal family.
+    if (isPoisonedExchange(assistantText, { verified: entry.verified })) {
       poisonedCount++;
       if (userText) {
         turns.push({
@@ -1422,13 +1553,18 @@ function hydrateThreadIfNeeded(tk: string): void {
     const db = getDatabase();
     const rows = db
       .prepare(
-        `SELECT content FROM conversations
+        `SELECT content,
+           EXISTS (SELECT 1 FROM json_each(tags) jv WHERE jv.value = ?) AS verified
+         FROM conversations
          WHERE bank = 'mc-jarvis'
          AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = ?)
          ORDER BY created_at DESC
          LIMIT ?`,
       )
-      .all(baseChannel, THREAD_BUFFER_SIZE) as { content: string }[];
+      .all(THREAD_VERIFIED_TAG, baseChannel, THREAD_BUFFER_SIZE) as {
+      content: string;
+      verified?: number;
+    }[];
 
     if (rows.length > 0) {
       // Reverse to chronological order (query returns newest-first)
@@ -1437,7 +1573,11 @@ function hydrateThreadIfNeeded(tk: string): void {
       // (or before the value was saved) come back scrubbed.
       const thread: ThreadEntry[] = rows
         .reverse()
-        .map((r) => ({ text: scrubSecrets(r.content) }));
+        .map((r) => ({
+          text: scrubSecrets(r.content),
+          // Queue 4g: a verified exchange survives a restart unfiltered.
+          ...(r.verified === 1 ? { verified: true } : {}),
+        }));
       conversationThreads.set(tk, thread);
     } else {
       conversationThreads.set(tk, []);
@@ -2674,10 +2814,10 @@ export class MessageRouter {
         this.sendToChannel(msg.channel, msg.from, response);
         appendDayLog("JARVIS", response);
 
-        const cappedResponse =
-          response.length > THREAD_RESPONSE_CAP
-            ? safeSlice(response, THREAD_RESPONSE_CAP) + "..."
-            : response;
+        const cappedResponse = capThreadReply(
+          response,
+          THREAD_LAST_RESPONSE_CAP,
+        );
         pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
         try {
@@ -3612,6 +3752,10 @@ export class MessageRouter {
       // Read tool calls once — shared by extractPattern + auto-persist + background extraction
       // (C1 audit fix: hoisted above all consumers to eliminate duplicate DB read)
       let taskToolCalls: string[] = [];
+      // Queue 4g W1: heavy/nanoclaw put toolCalls at the result's top level,
+      // which the dispatcher writes to the `runs.tool_calls` column (a JSON
+      // array of names) — only the fast runner fills output.toolCalls.
+      let runColumnToolCalls: string[] = [];
       let taskPendingConfirmation: {
         toolName: string;
         args: Record<string, unknown>;
@@ -3619,9 +3763,22 @@ export class MessageRouter {
       try {
         const toolRow = getDatabase()
           .prepare(
-            "SELECT output FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+            "SELECT output, tool_calls FROM runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
           )
-          .get(taskId) as { output: string | null } | undefined;
+          .get(taskId) as
+          | { output: string | null; tool_calls?: string | null }
+          | undefined;
+        if (toolRow?.tool_calls) {
+          try {
+            const col: unknown = JSON.parse(toolRow.tool_calls);
+            if (Array.isArray(col))
+              runColumnToolCalls = col.filter(
+                (x): x is string => typeof x === "string",
+              );
+          } catch {
+            /* malformed column — no evidence from it */
+          }
+        }
         if (toolRow?.output) {
           const parsedOutput = JSON.parse(toolRow.output);
           taskToolCalls = parsedOutput.toolCalls ?? [];
@@ -3665,18 +3822,11 @@ export class MessageRouter {
         // body, never the notice that the turn failed. Same for the V8.4
         // read-back lines («✔ Verificado» / «⚠️ No quedó»), which the
         // completion ledger appends last.
-        const lines = resultText.split("\n");
-        let cut = lines.length;
-        while (
-          cut > 0 &&
-          (isLedgerLine(lines[cut - 1]) ||
-            lines[cut - 1].trim() === "" ||
-            (sanitized?.failureLine &&
-              lines[cut - 1].trim() === sanitized.failureLine))
-        ) {
-          cut--;
-        }
-        const rawTail = lines.slice(cut).join("\n").trim();
+        const failureLine = sanitized?.failureLine;
+        const { body, tail: rawTail } = splitLedgerTail(
+          resultText,
+          (t) => !!failureLine && t === failureLine,
+        );
         // Keep the END: the ledger block / read-back lines are appended
         // last, after the numbers footer and the citation note (Phase 3 R2
         // audit W-7 — a start-anchored cap cut «No quedó» first).
@@ -3685,7 +3835,6 @@ export class MessageRouter {
             ? "…" + rawTail.slice(-800)
             : rawTail
           : undefined;
-        const body = lines.slice(0, cut).join("\n").trimEnd();
         const capped = body.length > 500 ? body.slice(0, 500) + "..." : body;
         const summary = tail ? `${capped}\n\n${tail}` : capped;
         const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}${confirmLine ? `\n\n${confirmLine}` : ""}\n\n_Escribe "mis agentes" para ver el historial._`;
@@ -3716,15 +3865,21 @@ export class MessageRouter {
         }
       }
 
-      // Push to in-memory conversation thread (chronological, instant)
-      const cappedResult =
-        resultText.length > THREAD_RESPONSE_CAP
-          ? safeSlice(resultText, THREAD_RESPONSE_CAP) + "..."
-          : resultText;
+      // Queue 4g: verified exchanges skip the refusal family of the
+      // thread-buffer poison filter, here and after a restart (tag below).
+      const verified = hasExchangeEvidence(taskId, [
+        ...taskToolCalls,
+        ...runColumnToolCalls,
+      ]);
+
+      // Push to in-memory conversation thread (chronological, instant).
+      // Queue 4h: stored up to the 12k bound; the 3000 cut is read-time.
+      const cappedResult = capThreadReply(resultText, THREAD_LAST_RESPONSE_CAP);
       pushToThread(
         pending.tk,
         `User: ${pending.originalText}\nJarvis: ${cappedResult}`,
         pending.imageUrl,
+        { verified },
       );
 
       // Retain the exchange in conversation memory (works with any backend)
@@ -3733,7 +3888,12 @@ export class MessageRouter {
         getMemoryService()
           .retain(exchange, {
             bank: "mc-jarvis",
-            tags: [pending.channel, "conversation", getOutcomeTag(taskId)],
+            tags: [
+              pending.channel,
+              "conversation",
+              getOutcomeTag(taskId),
+              ...(verified ? [THREAD_VERIFIED_TAG] : []),
+            ],
             async: true,
             trustTier: 2, // inferred — conversation exchange
             source: "router",
@@ -4145,10 +4305,7 @@ export class MessageRouter {
     if (deliveredRunnerText) {
       // qa-audit I3: cap like the completed path — a long `blocked`
       // description must not enter the thread buffer uncapped.
-      const cappedMsg =
-        failMsg.length > THREAD_RESPONSE_CAP
-          ? safeSlice(failMsg, THREAD_RESPONSE_CAP) + "..."
-          : failMsg;
+      const cappedMsg = capThreadReply(failMsg, THREAD_LAST_RESPONSE_CAP);
       pushToThread(
         pending.tk,
         `User: ${pending.originalText}\nJarvis: ${cappedMsg}`,
