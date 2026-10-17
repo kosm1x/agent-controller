@@ -1631,9 +1631,14 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // still count as the run's one recovery leg, or a capped partial
         // containing "401" fires a third full-size leg via the auth gate.
         let recoveryLegUsed = false;
+        // Queue 3r: a pending confirmation ends the run's turn — no recovery
+        // leg (cap resume or auth retry) runs after it in this context.
+        const turnEnded = (): boolean =>
+          taskContext.getPendingConfirmation() !== null;
         if (
           sdkCapped(sdkResult.text) &&
-          !(rawUserMsg.length > 0 && isConversational)
+          !(rawUserMsg.length > 0 && isConversational) &&
+          !turnEnded()
         ) {
           console.log(
             `[recovery] auto-resume after cap, ${sdkResult.numTurns} turns (task ${input.taskId})`,
@@ -1681,7 +1686,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // an operator rotation mid-run heals), then escalate in clean
         // Spanish. Never both legs (≤1 extra call per run — gated on the
         // BEFORE-await flag, R3 audit W2).
-        if (!recoveryLegUsed && sdkAuthFailed(sdkResult.text)) {
+        if (
+          !recoveryLegUsed &&
+          sdkAuthFailed(sdkResult.text) &&
+          !turnEnded()
+        ) {
           console.log(
             `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
           );

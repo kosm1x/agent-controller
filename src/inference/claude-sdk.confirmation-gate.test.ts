@@ -56,8 +56,14 @@ vi.mock("./adapter.js", async (importOriginal) => {
   };
 });
 
-import { wrapToolCached } from "./claude-sdk.js";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  wrapToolCached,
+  queryClaudeSdk,
+  PENDING_TURN_ENDED_ABORT_REASON,
+} from "./claude-sdk.js";
 import { SecretScrubUnavailableError } from "./adapter.js";
+import { providerMetrics } from "./adapter-openai.js";
 import {
   TaskExecutionContext,
   currentExecutionContext,
@@ -232,11 +238,99 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       call("gmail_send", { to: "a@b.com" }),
     );
     expect(reg.execute).not.toHaveBeenCalled();
-    expect(JSON.parse(second).error).toContain(
-      "Ya hay una confirmación pendiente",
-    );
+    const error = JSON.parse(second).error as string;
+    expect(error).toContain("Ya hay una confirmación pendiente");
+    // Queue 3r: names the pending tool and ends the turn.
+    expect(error).toContain("(wp_delete)");
+    expect(error).toContain("NO se ejecutó");
+    expect(error).toContain("Tu turno terminó");
+    expect(error).toContain("no llames más herramientas");
     expect(ctx.getPendingConfirmation()?.toolName).toBe("wp_delete");
     expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send"]);
+    expect(emitTraceMock).toHaveBeenLastCalledWith({
+      taskId: "t-two",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "refused_already_pending", origin: "operator" },
+    });
+  });
+
+  // Queue 3r: the model kept calling tools after the first pending card,
+  // one paid turn per refusal. The pending ends the turn for EVERY call.
+  it("3r: the first pending result already says the turn is over and further calls will be refused", async () => {
+    const ctx = fastChatRoot("t-3r-first");
+    const text = await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    const message = JSON.parse(text).message as string;
+    expect(message).toContain("Tu turno terminó");
+    expect(message).toContain(
+      "cualquier otra llamada en esta respuesta será rechazada sin ejecutarse",
+    );
+  });
+
+  it("3r: an UNGATED call after the pending is refused (refused_turn_ended), never executed", async () => {
+    const ctx = fastChatRoot("t-3r-ungated");
+    await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("web_search", { q: "x" }),
+    );
+    expect(reg.execute).not.toHaveBeenCalled();
+    const error = JSON.parse(text).error as string;
+    expect(error).toContain("(wp_delete)");
+    expect(error).toContain("NO se ejecutó");
+    expect(error).toContain("Tu turno terminó");
+    // It never ran: the fast runner's withoutGated drops it from "ran".
+    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "web_search"]);
+    expect(ctx.getPendingConfirmation()).toEqual({
+      toolName: "wp_delete",
+      args: { id: 7 },
+    });
+    expect(emitTraceMock).toHaveBeenLastCalledWith({
+      taskId: "t-3r-ungated",
+      name: "tool.gated",
+      tool: "web_search",
+      attrs: { decision: "refused_turn_ended", origin: "operator" },
+    });
+  });
+
+  it("3r: with no pending, an ungated call executes and emits no gate trace (regression lock)", async () => {
+    const ctx = fastChatRoot("t-3r-none");
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("web_search", { q: "y" }),
+    );
+    expect(reg.execute).toHaveBeenCalledWith("web_search", { q: "y" });
+    expect(JSON.parse(text)).toEqual({ ok: true, name: "web_search" });
+    expect(ctx.getGatedCalls()).toEqual([]);
+    expect(emitTraceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "tool.gated" }),
+    );
+  });
+
+  it("3r: the turn-ended refusal comes before the external-request guard", async () => {
+    const ctx = new TaskExecutionContext(
+      "t-3r-ext",
+      true,
+      { routerRoot: true, canAskOperator: true, chatOrigin: true },
+      ["web_search"],
+    );
+    ctx.setPendingConfirmation("wp_delete", { id: 7 });
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("memory_search", { query: "x" }),
+    );
+    expect(JSON.parse(text).error).toContain("Tu turno terminó");
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("3r: a refuse after a pending keeps its own text and the undeclared accounting", async () => {
+    const ctx = dispatcherCtx("t-3r-refuse", false, {
+      inheritedDeclaredTools: ["web_search"],
+    });
+    ctx.setPendingConfirmation("wp_delete", { id: 7 });
+    const text = await inRun(BACKGROUND, ctx, () =>
+      call("gmail_send", { to: "a@b.com" }),
+    );
+    expect(JSON.parse(text)).toEqual({ error: undeclaredToolError("gmail_send") });
+    expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);
+    expect(reg.execute).not.toHaveBeenCalled();
   });
 
   it("background populations (ritual, scheduled, cron, retry of either) execute high-risk tools exactly as before", async () => {
@@ -593,5 +687,157 @@ describe("wrapTool external guard (jarvis-pull on the claude-sdk path)", () => {
       call("memory_search", { query: "x" }),
     );
     expect(JSON.parse(text)).toEqual({ ok: true, name: "memory_search" });
+  });
+});
+
+// Queue 3r (audit R1 W1): the first call after a pending confirmation also
+// ends the SDK loop — the real queryClaudeSdk over a scripted query() whose
+// tool calls go through the real wrapTool handlers.
+describe("3r: a call after a pending confirmation ends the SDK loop", () => {
+  const sdkQuery = vi.mocked(query);
+  const assistantText = (text: string) => ({
+    type: "assistant",
+    message: { id: "m1", content: [{ type: "text", text }] },
+  });
+  type Seen = {
+    controller?: AbortController;
+    abortedAfterFirst?: boolean;
+    refusal?: string;
+    reason?: unknown;
+  };
+  /** A model turn: optional text, the gated call, then `next`. */
+  function scripted(
+    seen: Seen,
+    text: string | null,
+    next: (ac: AbortController) => AsyncGenerator<Record<string, unknown>>,
+  ) {
+    sdkQuery.mockImplementationOnce(((args: {
+      options: { abortController: AbortController };
+    }) => {
+      const ac = args.options.abortController;
+      seen.controller = ac;
+      return (async function* () {
+        if (text !== null) yield assistantText(text);
+        await call("wp_delete", { id: 7 });
+        seen.abortedAfterFirst = ac.signal.aborted;
+        yield* next(ac);
+      })();
+    }) as never);
+  }
+  const run = (ctx: TaskExecutionContext) =>
+    inRun(OPERATOR, ctx, () =>
+      queryClaudeSdk({
+        prompt: "Borra el post 7",
+        systemPrompt: "sys",
+        toolNames: [],
+        costLedger: false,
+      }),
+    );
+  /** The model fires one more call; the SDK throws once aborted. */
+  const oneMoreCall = (seen: Seen) =>
+    async function* (ac: AbortController) {
+      seen.refusal = await call("web_search", { q: "x" });
+      seen.reason = ac.signal.reason;
+      if (ac.signal.aborted) {
+        throw Object.assign(new Error("Claude Code process aborted by user"), {
+          name: "AbortError",
+        });
+      }
+      yield {
+        type: "result",
+        subtype: "success",
+        result: "SIGUIÓ EL LOOP",
+        num_turns: 3,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 10,
+      };
+    };
+
+  beforeEach(() => {
+    sdkQuery.mockReset();
+  });
+
+  it("the second call returns the refusal AND aborts the query with our reason; the run ends clean with the text so far", async () => {
+    const metrics = vi.spyOn(providerMetrics, "record");
+    const seen: Seen = {};
+    scripted(seen, "Voy a borrar el post 7. ¿Procedo?", oneMoreCall(seen));
+    const ctx = fastChatRoot("t-3r-loop");
+    const result = await run(ctx);
+
+    expect(seen.abortedAfterFirst).toBe(false);
+    expect(JSON.parse(seen.refusal!).error).toContain("Tu turno terminó");
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(PENDING_TURN_ENDED_ABORT_REASON).toBe(
+      "pending_confirmation_turn_ended",
+    );
+    // A clean end: the model's text, no abort/timeout marker, no failure.
+    expect(result.text).toBe("Voy a borrar el post 7. ¿Procedo?");
+    expect(metrics).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ success: true }),
+      expect.any(String),
+    );
+    expect(ctx.getPendingConfirmation()).toEqual({
+      toolName: "wp_delete",
+      args: { id: 7 },
+    });
+    expect(reg.execute).not.toHaveBeenCalled();
+    metrics.mockRestore();
+  });
+
+  it("with no text before the abort the result is empty (the fast runner shows the card), never an abort error", async () => {
+    const seen: Seen = {};
+    scripted(seen, null, oneMoreCall(seen));
+    const result = await run(fastChatRoot("t-3r-empty"));
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(result.text).toBe("");
+  });
+
+  it("the first pending alone does not abort: the model closes its turn, and the finished query is released", async () => {
+    const seen: Seen = {};
+    scripted(seen, null, async function* () {
+      yield assistantText("Voy a borrar el post 7. ¿Procedo?");
+      yield {
+        type: "result",
+        subtype: "success",
+        result: "Voy a borrar el post 7. ¿Procedo?",
+        num_turns: 2,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 10,
+      };
+    });
+    const ctx = fastChatRoot("t-3r-close");
+    const result = await run(ctx);
+    expect(seen.abortedAfterFirst).toBe(false);
+    expect(seen.controller!.signal.aborted).toBe(false);
+    expect(result.text).toBe("Voy a borrar el post 7. ¿Procedo?");
+    // A later call in the same context is refused but cannot reach the
+    // query that already ended.
+    const later = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
+    expect(JSON.parse(later).error).toContain("Tu turno terminó");
+    expect(seen.controller!.signal.aborted).toBe(false);
+  });
+
+  it("an abort that is not ours keeps the abort classification (regression lock)", async () => {
+    const caller = new AbortController();
+    sdkQuery.mockImplementationOnce((() =>
+      (async function* () {
+        caller.abort();
+        throw Object.assign(new Error("Claude Code process aborted by user"), {
+          name: "AbortError",
+        });
+      })()) as never);
+    const result = await inRun(OPERATOR, fastChatRoot("t-3r-other"), () =>
+      queryClaudeSdk({
+        prompt: "x",
+        systemPrompt: "sys",
+        toolNames: [],
+        costLedger: false,
+        abortSignal: caller.signal,
+      }),
+    );
+    expect(result.text).toContain("query aborted");
   });
 });

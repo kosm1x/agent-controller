@@ -1397,8 +1397,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
 
     it("the only call was stopped by the confirmation gate → plain retry", async () => {
       const [first, retry] = await prompts(async () => {
+        // Stopped without a pending (a pending skips the retry: queue 3r).
         const ctx = currentExecutionContext()!;
-        ctx.setPendingConfirmation("file_write", { path: "x" });
         ctx.recordGatedCall("file_write");
         return makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_write"] });
       });
@@ -1914,18 +1914,17 @@ describe("confirmation gate on the claude-sdk path", () => {
   });
 
   it("the resume leg after a cap does not list a gated call as already executed", async () => {
-    mockQuerySdk.mockImplementationOnce(
-      gatingLeg(
-        "[error_max_turns — max turns reached] parcial\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
-      ),
-    );
+    // A call the gate stopped without a pending (e.g. a placeholder refusal).
     mockQuerySdk.mockImplementationOnce(async () => {
-      // Same context across legs: first pending still set.
-      expect(
-        currentExecutionContext()!.getPendingConfirmation()?.toolName,
-      ).toBe("wp_delete");
-      return makeSdkResult({ text: "STATUS: DONE\n¿Procedo con el borrado?" });
+      currentExecutionContext()!.recordGatedCall("wp_delete");
+      return makeSdkResult({
+        text: "[error_max_turns — max turns reached] parcial\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+        toolCalls: ["wp_list_posts", "wp_delete"],
+      });
     });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "STATUS: DONE\nListo el análisis." }),
+    );
     const result = await fastRunner.execute({
       taskId: "sdk-gate-resume",
       runId: "run-sdk-gate-resume",
@@ -1937,6 +1936,46 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(resumePrompt).toContain("wp_list_posts");
     expect(resumePrompt).not.toContain("wp_delete");
     expect(result.toolCalls).not.toContain("wp_delete");
+  });
+
+  // Queue 3r: the pending confirmation ended the turn; a recovery leg in the
+  // same context would only meet refusals (and pay for them).
+  it("3r: a cap after a pending confirmation runs NO resume leg", async () => {
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg(
+        "[error_max_turns — max turns reached] parcial\n\nSTATUS: DONE_WITH_CONCERNS — partial.",
+      ),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-cap-3r",
+      runId: "run-sdk-gate-cap-3r",
+      title: "Analiza y borra",
+      description: "Analiza los posts y borra el 7",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    expect(result.toolCalls).not.toContain("wp_delete");
+  });
+
+  it("3r: an auth-class failure after a pending confirmation runs NO auth retry", async () => {
+    mockQuerySdk.mockImplementationOnce(
+      gatingLeg(
+        "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+      ),
+    );
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-auth-3r",
+      runId: "run-sdk-gate-auth-3r",
+      title: "Borra el post 7",
+      description: "Borra el post 7",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(
+      (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
+    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
   });
 
   it("W4: a confirmation gated on the RESUME leg reaches the output (the leg runs in the task's context)", async () => {

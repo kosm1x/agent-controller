@@ -60,7 +60,10 @@ import {
   makeGatesStopHook,
   STOP_HOOK_SDK_TIMEOUT_S,
 } from "../lib/v8-4/stop-hook.js";
-import { currentExecutionContext } from "./execution-context.js";
+import {
+  currentExecutionContext,
+  type TaskExecutionContext,
+} from "./execution-context.js";
 import {
   externalToolArgs,
   externalToolRefusal,
@@ -211,7 +214,37 @@ function runsConcurrently(t: Tool): boolean {
 
 /** Tool result for a call the gate paused (model-facing, Spanish). */
 const CONFIRMATION_PENDING_MESSAGE =
-  "Acción en espera de confirmación del operador: NO se ejecutó. Detente aquí: no la reintentes, no llames más herramientas y no digas que ya se hizo. Termina tu respuesta explicando qué vas a hacer y pregunta '¿Procedo?'. Si el operador confirma, la acción se ejecutará y se retomará lo que falte.";
+  "Acción en espera de confirmación del operador: NO se ejecutó. Tu turno terminó: no la reintentes, no llames más herramientas (cualquier otra llamada en esta respuesta será rechazada sin ejecutarse) y no digas que ya se hizo. Termina tu respuesta ahora explicando qué vas a hacer y pregunta '¿Procedo?'. Si el operador confirma, la acción se ejecutará y se retomará lo que falte.";
+
+/**
+ * Abort reason when a call after the run's pending confirmation ends the SDK
+ * loop (queue 3r): a clean end of the turn, never a timeout or a failure.
+ */
+export const PENDING_TURN_ENDED_ABORT_REASON = "pending_confirmation_turn_ended";
+
+/** The run's live SDK queries, so the gate can end the turn (queue 3r). */
+const liveQueries = new WeakMap<TaskExecutionContext, Set<AbortController>>();
+
+/** Track `controller` as a live query of `ctx`'s run; returns the release. */
+function registerLiveQuery(
+  ctx: TaskExecutionContext,
+  controller: AbortController,
+): () => void {
+  let set = liveQueries.get(ctx);
+  if (!set) {
+    set = new Set();
+    liveQueries.set(ctx, set);
+  }
+  set.add(controller);
+  return () => set.delete(controller);
+}
+
+/** Tool result for any call after the run's pending confirmation (queue 3r). */
+function turnEndedRefusal(pendingTool: string): string {
+  return JSON.stringify({
+    error: `Ya hay una confirmación pendiente en esta respuesta (${pendingTool}). Esta acción NO se ejecutó. Tu turno terminó: cierra tu respuesta ahora explicando qué harás cuando el operador responda y no llames más herramientas.`,
+  });
+}
 
 /**
  * The confirmation gate on the SDK path (the production path — `permissionMode:
@@ -221,7 +254,9 @@ const CONFIRMATION_PENDING_MESSAGE =
  * execution context: the dispatcher enters one around every runner (so heavy,
  * swarm and Prometheus runs are gated too — they cannot ask, so they refuse),
  * and the fast runner enters its own, the only one that may ask.
- * First pending wins: a later gated call in the same run is refused.
+ * First pending wins and ends the turn: every later call in the same run is
+ * refused unexecuted (queue 3r) — the approved action runs later, in the
+ * router, outside this run.
  */
 function gateSdkToolCall(
   name: string,
@@ -261,6 +296,25 @@ function gateSdkToolCall(
     return JSON.stringify({ error: NO_CONFIRM_IN_CHAT_ERROR });
   }
   const gate = confirmationGate(toolRegistry, ctx, name, args);
+  // Queue 3r: once the run holds a pending confirmation the turn is over —
+  // every later call is refused unexecuted. A refuse keeps its own text and
+  // accounting (undeclared → dispatcher).
+  const pending = ctx.getPendingConfirmation();
+  if (pending && gate.action !== "refuse") {
+    ctx.recordGatedCall(name);
+    trace(
+      gate.action === "confirm"
+        ? "refused_already_pending"
+        : "refused_turn_ended",
+      ctx.taskId,
+    );
+    // The refusal is returned, and the SDK loop ends: the model already had
+    // its chance to close the turn after the pending result.
+    for (const c of liveQueries.get(ctx) ?? []) {
+      c.abort(PENDING_TURN_ENDED_ABORT_REASON);
+    }
+    return turnEndedRefusal(pending.toolName);
+  }
   if (gate.action === "proceed") return null;
   if (gate.action === "confirm") {
     // No card for a call the registry would refuse after the approval
@@ -283,13 +337,6 @@ function gateSdkToolCall(
       trace("refused_cannot_ask", ctx.taskId);
     }
     return JSON.stringify({ error: gate.error });
-  }
-  const pending = ctx.getPendingConfirmation();
-  if (pending) {
-    trace("refused_already_pending", ctx.taskId);
-    return JSON.stringify({
-      error: `Ya hay una confirmación pendiente en esta respuesta (${pending.toolName}). Esta acción NO se ejecutó; pídela de nuevo cuando el operador responda.`,
-    });
   }
   ctx.setPendingConfirmation(name, args);
   trace("confirmation_required", ctx.taskId);
@@ -1230,6 +1277,12 @@ export async function queryClaudeSdk(opts: {
   // (first one: since queryStart) is the turn's observable latency.
   let lastTurnEndedAt = queryStart;
   const q = releaseProbeOnThrow(() => query({ prompt: sdkPrompt, options }));
+  const runCtx = currentExecutionContext();
+  const releaseLiveQuery = runCtx
+    ? registerLiveQuery(runCtx, abortController)
+    : () => {};
+  const turnEndedByGate = (): boolean =>
+    abortController.signal.reason === PENDING_TURN_ENDED_ABORT_REASON;
 
   try {
     for await (const message of q) {
@@ -1563,7 +1616,8 @@ export async function queryClaudeSdk(opts: {
     // the result so whatever Jarvis produced before the abort isn't lost.
     // The fast-runner's safety net promotes BLOCKED/NEEDS_CONTEXT with >100
     // chars to DONE_WITH_CONCERNS so the partial delivery reaches the user.
-    if (!resultText) {
+    // The gate's turn end (queue 3r) is handled below, not as a crash.
+    if (!resultText && !turnEndedByGate()) {
       if (streamingText) {
         // Partial content pre-abort = provider was working until we killed it.
         providerOutcome ??= "success";
@@ -1577,6 +1631,15 @@ export async function queryClaudeSdk(opts: {
   }
 
   clearTimeout(timeoutTimer);
+  releaseLiveQuery();
+
+  // Queue 3r: the gate ended the turn after a pending confirmation — a
+  // working provider and a clean end. The text is what the model produced so
+  // far (may be empty: the fast runner then shows the confirmation card).
+  if (turnEndedByGate()) {
+    providerOutcome = "success";
+    if (!resultText) resultText = streamingText;
+  }
 
   // Timeout with zero content is always a failure signal regardless of
   // what the for-await loop classified it as — the provider couldn't
@@ -1671,7 +1734,8 @@ export async function queryClaudeSdk(opts: {
       (typeof dominantUsage?.thinkingTokens === "number"
         ? ` thinking=${dominantUsage.thinkingTokens}`
         : "") +
-      (timedOut ? " [TIMED OUT]" : ""),
+      (timedOut ? " [TIMED OUT]" : "") +
+      (turnEndedByGate() ? " [TURN ENDED: pending confirmation]" : ""),
   );
 
   // Seam metering (V8.5 Phase 3.3): the ONE spot every host-side SDK call
