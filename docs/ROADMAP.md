@@ -57,4 +57,4 @@ V8.1 active (§13 gate v2 scores the Morning Sync); V8.2 judgments in shadow; V8
 | 2026-10-17 (night) | 4e, 3r, 4f, 4g+4h | `1d5d3a9`…`c44655f` | Deployed `e93b01e` (archive) | Proofs after deploy (archive) |
 | 2026-10-18 (early) | 4i notice + 4d guessed-KB-root checks; 8 rulings incl. W3 1–3 | `66ed68a` `604a941` | Deployed `202cd79` (archive) | Proofs (archive) |
 | 2026-10-18 (morning) | 5a psql gate, 4l confirmation list, 3f records applied | `d6d9e7d` `87d4e1c` | Deployed `859c93b`; eval compare PASS 78.55 (archive) | Proofs (archive) |
-| 2026-10-18 | Beta doc + roadmap trim (cloud, docs only) | #PR | `docs/BETA.md` written; this page 104 → ≤60 lines, detail moved verbatim to `docs/archive/`; LANDSCAPE versions refreshed | W3 step 2 build; operator profile |
+| 2026-10-18 | Beta doc + roadmap trim (cloud, docs only) | [#63](https://github.com/kosm1x/agent-controller/pull/63) | `docs/BETA.md` written; this page 104 → ≤60 lines, detail moved verbatim to `docs/archive/`; LANDSCAPE versions refreshed | W3 step 2 build; operator profile |
