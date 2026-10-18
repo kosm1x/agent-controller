@@ -335,7 +335,10 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
  * This ensures derived/dependent knowledge is flagged for re-evaluation
  * when its source changes.
  *
- * Uses PostgREST array containment operator: related_to @> [path]
+ * Uses PostgREST containment operator: related_to @> '["<path>"]'.
+ * `related_to` is jsonb, so the filter value must be a JSON array
+ * (`cs.["<path>"]`); the Postgres-array form `cs.{<path>}` is rejected
+ * with HTTP 400 "invalid input syntax for type json".
  */
 export async function pgCascadeStale(
   path: string,
@@ -344,40 +347,48 @@ export async function pgCascadeStale(
   const key = apiKey ?? getApiKey();
   if (!key) return 0;
 
+  const filter = `related_to=cs.${encodeURIComponent(JSON.stringify([path]))}&stale=is.false`;
+
   try {
     // Find entries whose related_to contains this path (PostgREST cs. operator)
     const searchRes = await fetch(
-      `${SUPABASE_URL}/kb_entries?related_to=cs.{${encodeURIComponent(path)}}&stale=is.false&select=path`,
+      `${SUPABASE_URL}/kb_entries?${filter}&select=path`,
       {
         headers: supabaseHeaders(key),
         signal: AbortSignal.timeout(10_000),
       },
     );
 
-    if (!searchRes.ok) return 0;
+    if (!searchRes.ok) {
+      console.warn(
+        `[pgvector] Cascade stale search failed: ${searchRes.status} (source: ${path})`,
+      );
+      return 0;
+    }
     const related = (await searchRes.json()) as Array<{ path: string }>;
     if (related.length === 0) return 0;
 
     // Mark them stale via PATCH
-    const patchRes = await fetch(
-      `${SUPABASE_URL}/kb_entries?related_to=cs.{${encodeURIComponent(path)}}&stale=is.false`,
-      {
-        method: "PATCH",
-        headers: {
-          ...supabaseHeaders(key),
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({
-          stale: true,
-          updated_at: new Date().toISOString(),
-        }),
-        signal: AbortSignal.timeout(10_000),
+    const patchRes = await fetch(`${SUPABASE_URL}/kb_entries?${filter}`, {
+      method: "PATCH",
+      headers: {
+        ...supabaseHeaders(key),
+        Prefer: "return=minimal",
       },
-    );
+      body: JSON.stringify({
+        stale: true,
+        updated_at: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
 
     if (patchRes.ok) {
       console.log(
         `[pgvector] Cascade stale: ${related.length} entries marked stale (source: ${path})`,
+      );
+    } else {
+      console.warn(
+        `[pgvector] Cascade stale patch failed: ${patchRes.status} (source: ${path})`,
       );
     }
     return related.length;

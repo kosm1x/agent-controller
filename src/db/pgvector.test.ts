@@ -285,6 +285,98 @@ describe("pgCascadeStale", () => {
     expect(count).toBe(0);
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  // 4n: related_to is jsonb — the filter must be a JSON array, not a
+  // Postgres array literal (`cs.{path}` → HTTP 400 invalid json).
+  it("search URL filters related_to with a JSON-array containment value", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    await pgCascadeStale("source/original.md");
+
+    const [url] = mockFetch.mock.calls[0];
+    const decoded = decodeURIComponent(url as string);
+    expect(decoded).toContain('related_to=cs.["source/original.md"]');
+    expect(decoded).toContain("stale=is.false");
+    expect(decoded).not.toContain("cs.{");
+  });
+
+  it("PATCH URL carries the same JSON-array containment filter", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ path: "derived/entry1.md" }],
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await pgCascadeStale("source/original.md");
+
+    const [patchUrl, patchOpts] = mockFetch.mock.calls[1];
+    expect(patchOpts.method).toBe("PATCH");
+    const decoded = decodeURIComponent(patchUrl as string);
+    expect(decoded).toContain('related_to=cs.["source/original.md"]');
+    expect(decoded).toContain("stale=is.false");
+    expect(decoded).not.toContain("cs.{");
+  });
+
+  it("encodes reserved characters in the path so the query is not split", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    const p = 'projects/a b/x,y&"q"#.md';
+
+    await pgCascadeStale(p);
+
+    const [url] = mockFetch.mock.calls[0];
+    const parsed = new URL(url as string);
+    expect(parsed.searchParams.get("related_to")).toBe(
+      "cs." + JSON.stringify([p]),
+    );
+    expect([...parsed.searchParams.keys()]).toEqual([
+      "related_to",
+      "stale",
+      "select",
+    ]);
+  });
+
+  it("warns once with the status when the PATCH reply is not ok", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ path: "derived/entry1.md" }],
+    });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403 });
+
+    const count = await pgCascadeStale("source/original.md");
+
+    expect(count).toBe(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const msg = String(warnSpy.mock.calls[0][0]);
+    expect(msg).toContain("403");
+    expect(msg).toContain("patch");
+  });
+
+  it("returns 0 and warns once when the search reply is not ok", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => "invalid input syntax for type json",
+      json: async () => ({}),
+    });
+
+    const count = await pgCascadeStale("source/original.md");
+
+    expect(count).toBe(0);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const msg = String(warnSpy.mock.calls[0][0]);
+    expect(msg).toContain("400");
+    expect(msg).toContain("search");
+    expect(msg).not.toContain("invalid input syntax");
+  });
 });
 
 // ---------------------------------------------------------------------------
