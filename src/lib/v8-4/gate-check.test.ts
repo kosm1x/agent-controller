@@ -12,14 +12,16 @@ vi.mock("../../tools/builtin/shell.js", async (importOriginal) => {
   return { ...actual, pmShimMissing: (dir?: string) => shimProbe.missing ?? actual.pmShimMissing(dir) };
 });
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
-import { declareGates, listGates, recordGateResult } from "./gates.js";
+import { declareGates, gateSpecsFromGoal, listGates, recordGateResult } from "./gates.js";
 import {
   DEFAULT_LEDGER_BUDGET_MS,
   evaluateLedger,
   evidenceTail,
   expectMatches,
   hasRunnableGates,
+  isReadOnlyCheck,
   ledgerBudgetMs,
+  resolveCheckCommand,
   resolveCheckCwd,
   runCheck,
   runShellCheck,
@@ -751,7 +753,90 @@ describe("container shell-skip (qa W1) + ledger budget (qa W5) + env guards", ()
 // ---------------------------------------------------------------------------
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+/** The live read-only shapes (queue 4d): moved to the KB root / rewritten when they name a KB path. */
+const READ_ONLY = (p: string, q: string): string[] => [
+  `grep -c '^# ' ${p}`,
+  `test -f ${p}`,
+  `wc -l ${p}`,
+  `diff ${p} ${q}`,
+  `jq .x ${p}`,
+  `cat ${p} | head -5`,
+  `grep -c '^# ' ${p} | wc -l`,
+  `test -f ${p} && grep -q x ${p}`,
+  `grep 'a;b' ${p}`,
+  `grep 'a''b' ${p}`,
+  `grep -c x ${p} 2>/dev/null`,
+  `grep 'a\\.b' ${p}`,
+  `grep -q x ${p} 2>/dev/null | wc -l`,
+];
+
+/** Shapes that can write (qa R1 + R2, verified on the host): never moved, never rewritten. */
+const NOT_READ_ONLY = (p: string): string[] => [
+  `awk -i inplace '{print}' ${p}`,
+  `sed --i s/a/b/ ${p}`,
+  `sed --in-pl s/a/b/ ${p}`,
+  `sed -n 1p ${p}`,
+  `sort --o=${p} ${p}`,
+  `sort --outp ${p} ${p}`,
+  `uniq ${p} ${p}`,
+  `sed 's/a/b/gw ${p}' ${p}`,
+  `sed -n 1w${p} ${p}`,
+  `sed 's|x|cmd|ge' ${p}`,
+  `xargs --process-slot-var grep curl -o ${p} https://example.com/a`,
+  `curl -s -o ${p} https://example.com/a`,
+  `wget -q -O ${p} https://example.com/a`,
+  `rsync -a /tmp/x/ ${p}`,
+  `tar -xf a.tar -C ${p}`,
+  `chmod 000 ${p}`,
+  `find ${p} -delete`,
+  `find ${p} -exec rm {} ;`,
+  `python3 -c 'open("x","w")' ${p}`,
+  `node -e 'require("fs")' ${p}`,
+  `cat ${p} | tee ${p}`,
+  `cat ${p} | xargs -0 curl -o ${p}`,
+  `env VAR=1 curl -o ${p} https://example.com/a`,
+  `FOO=1 curl -o ${p} https://example.com/a`,
+  `command curl -o ${p} https://example.com/a`,
+  `\\curl -o ${p} https://example.com/a`,
+  `cu''rl -o ${p} https://example.com/a`,
+  `grep x ${p} || curl -o ${p} https://example.com/a`,
+  `cp /tmp/a ${p}`,
+  // qa R3: an escaped quote opens no span in dash, so the "quoted" text runs.
+  `grep -c x ${p} \\'; sed -i s/a/PWNED/ ${p}; echo \\'`,
+  `grep x ${p} \\'> E2 \\'`,
+  `grep x ${p} \\'; sh -c id; touch E3; echo \\'`,
+  `grep x ${p} # '\ntouch E4\n'`,
+  `grep x ${p} && echo \\' && cp /tmp/a E5 && echo \\'`,
+  // qa W1: substitutions inside double quotes, a heredoc body.
+  `echo "$(touch x)"; grep -c x ${p}`,
+  `echo "\`touch x\`"; grep -c x ${p}`,
+  `grep x ${p} <<E\n$(touch x)\nE\ntrue`,
+  `grep "'" ${p}; touch E8; echo "'"`,
+  `grep x ${p} # c`,
+  `grep 'x ${p}`,
+  `grep x ${p} & touch E6`,
+  `grep x ${p} |& tail -1`,
+  // qa R4 W1/W2: no assignment prefix is skipped, quoted or not.
+  `VAR=1 grep x ${p}`,
+  `'X'=y cat ${p}`,
+  `X'='y cat ${p}`,
+  `'X=y' cat ${p}`,
+  `LD_PRELOAD=/tmp/x.so cat ${p}`,
+  `HOME=projects jq . ${p}`,
+  // Only the literal word 2>/dev/null is a tolerated redirect.
+  `grep x ${p} 2>&1 | tail -1`,
+  `grep x ${p} 2>&1`,
+  `grep x ${p} 2>/dev/null/`,
+  `grep x ${p} 2>/dev/nul`,
+  `grep x ${p} 2> /dev/null`,
+  `grep x ${p} >/dev/null`,
+  `grep x ${p} 1>/dev/null`,
+  `grep x ${p}2>/dev/null`,
+  `grep x < ${p}`,
+  `grep 'a\nb' ${p}`,
+];
 
 describe("resolveCheckCwd — KB-relative paths run from the KB root (swarm 19b7d51a, 2026-10-08)", () => {
   let kbRoot: string;
@@ -775,12 +860,12 @@ describe("resolveCheckCwd — KB-relative paths run from the KB root (swarm 19b7
     ).toBe("/explicit");
   });
 
-  it("a path that exists only under the KB root resolves to the KB root (the live grep and wc shapes)", () => {
+  it("a path that exists only under the KB root resolves to the KB root (the live grep shape; the wc `<` shape no longer moves, queue 4d R3)", () => {
     const deps = { kbRoot, processCwd: procCwd };
     expect(resolveCheckCwd("grep -c 'Índice propuesto' projects/bet-book/README.md", deps)).toBe(kbRoot);
-    expect(resolveCheckCwd("wc -c < projects/bet-book/README.md", deps)).toBe(kbRoot);
+    expect(resolveCheckCwd("wc -c < projects/bet-book/README.md", deps)).toBeUndefined();
     writeFileSync(join(kbRoot, "projects/bet-book/marco-legal-2026-10-07.md"), "x".repeat(10));
-    expect(resolveCheckCwd("wc -c <projects/bet-book/marco-legal-2026-10-07.md", deps)).toBe(kbRoot);
+    expect(resolveCheckCwd("wc -c <projects/bet-book/marco-legal-2026-10-07.md", deps)).toBeUndefined();
   });
 
   it("a path that exists under BOTH the checkout and the KB root keeps the default cwd (qa W2)", () => {
@@ -824,13 +909,15 @@ describe("resolveCheckCwd — KB-relative paths run from the KB root (swarm 19b7
     ]) {
       expect(resolveCheckCwd(cmd, deps), cmd).toBeUndefined();
     }
-    // Harmless redirects and quoted '>' still move.
+    // Only the literal 2>/dev/null redirect is tolerated (queue 4d R3).
+    for (const cmd of ["grep -c x projects/a.md 2>&1 | tail -1", "grep -c x projects/a.md >/dev/stderr"]) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBeUndefined();
+    }
+    // The literal 2>/dev/null and a quoted '>' still move.
     for (const cmd of [
       "grep -c x projects/a.md 2>/dev/null",
-      "grep -c x projects/a.md 2>&1 | tail -1",
-      "grep -c x projects/a.md >/dev/stderr",
       "grep -c '>' projects/a.md",
-      "sed -n 1p projects/a.md",
+      "head -1 projects/a.md",
     ]) {
       expect(resolveCheckCwd(cmd, deps), cmd).toBe(kbRoot);
     }
@@ -870,10 +957,10 @@ describe("resolveCheckCwd — KB-relative paths run from the KB root (swarm 19b7
     expect(seen).toEqual([]);
   });
 
-  it("single- and double-quoted path tokens resolve", () => {
+  it("a single-quoted path token resolves; a double-quoted one is outside the grammar (queue 4d R3)", () => {
     const deps = { kbRoot, processCwd: procCwd };
     expect(resolveCheckCwd("grep -c x 'projects/bet-book/README.md'", deps)).toBe(kbRoot);
-    expect(resolveCheckCwd('wc -c < "projects/bet-book/README.md"', deps)).toBe(kbRoot);
+    expect(resolveCheckCwd('grep -c x "projects/bet-book/README.md"', deps)).toBeUndefined();
   });
 });
 
@@ -929,6 +1016,258 @@ describe("evaluateLedger — shell gates on KB-relative paths run from the KB ro
     const row = listGates("t-kbcwd-ab")[0]!;
     expect(row.state).toBe("abandoned");
     expect(row.abandon_reason).toMatch(/^check references undefined variable/);
+  });
+});
+
+describe("resolveCheckCommand — an absolute path on the guessed root is rewritten to the KB (queue 4d, 2026-10-17)", () => {
+  // Synthetic layout: KB at /x/kb, the checkout at /x/repo; /x/projects does not exist.
+  const files = new Set([
+    "/x/kb/projects/bet-book/README.md",
+    "/x/kb/projects/y.md",
+    "/x/kb/directives/core.md",
+    "/x/repo/src/x.ts",
+    "/x/repo/src/foo.test.ts",
+    "/x/repo/projects/xpoz-pipeline/README.md",
+  ]);
+  const deps = {
+    kbRoot: "/x/kb",
+    processCwd: "/x/repo",
+    kbTopDirs: ["projects", "directives", "workspace"],
+    exists: (p: string) => files.has(p),
+  };
+
+  it("the live shape is rewritten, cwd untouched", () => {
+    expect(resolveCheckCommand("grep -c '^# ' /x/projects/bet-book/README.md", deps)).toEqual({
+      cwd: undefined,
+      command: "grep -c '^# ' /x/kb/projects/bet-book/README.md",
+      rewritten: ["/x/projects/bet-book/README.md"],
+    });
+  });
+
+  it("every occurrence is replaced, and only whole tokens; a repeated token is listed once", () => {
+    expect(
+      resolveCheckCommand("diff /x/projects/y.md /x/projects/y.md && wc -c /x/projects/y.md.bak", deps),
+    ).toEqual({
+      cwd: undefined,
+      command: "diff /x/kb/projects/y.md /x/kb/projects/y.md && wc -c /x/projects/y.md.bak",
+      rewritten: ["/x/projects/y.md"],
+    });
+  });
+
+  it("a token that merely ends with the guessed path is not touched (leading boundary)", () => {
+    expect(resolveCheckCommand("diff /x/projects/y.md /z/x/projects/y.md", deps).command).toBe(
+      "diff /x/kb/projects/y.md /z/x/projects/y.md",
+    );
+  });
+
+  it("a token with a .. or . segment is never rewritten, even when it would land on a real file", () => {
+    const d = { ...deps, exists: (p: string) => p === "/x/kb/mission-control/package.json" || files.has(p) };
+    for (const cmd of [
+      "grep -c x /x/projects/bet-book/../../../mission-control/package.json",
+      "grep -c x /x/projects/./bet-book/README.md",
+    ]) {
+      expect(resolveCheckCommand(cmd, d), cmd).toEqual({ cwd: undefined, command: cmd, rewritten: [] });
+    }
+  });
+
+  it("single-quoted tokens are rewritten with their quotes kept; a double quote is outside the grammar (queue 4d R3)", () => {
+    expect(
+      resolveCheckCommand(`grep -c x '/x/projects/y.md' '/x/projects/bet-book/README.md'`, deps).command,
+    ).toBe(`grep -c x '/x/kb/projects/y.md' '/x/kb/projects/bet-book/README.md'`);
+    const dq = `grep -c x "/x/projects/y.md"`;
+    expect(resolveCheckCommand(dq, deps)).toEqual({ cwd: undefined, command: dq, rewritten: [] });
+  });
+
+  it("an absolute token that exists on disk is untouched", () => {
+    const d = { ...deps, exists: (p: string) => p === "/x/projects/y.md" || files.has(p) };
+    expect(resolveCheckCommand("grep -c x /x/projects/y.md", d)).toEqual({
+      cwd: undefined,
+      command: "grep -c x /x/projects/y.md",
+      rewritten: [],
+    });
+  });
+
+  it("a missing file inside an existing first-level dir of the guessed root is untouched (a real tree, not the KB)", () => {
+    const d = { ...deps, exists: (p: string) => p === "/x/projects/bet-book" || files.has(p) };
+    expect(resolveCheckCommand("grep -c x /x/projects/bet-book/README.md", d)).toEqual({
+      cwd: undefined,
+      command: "grep -c x /x/projects/bet-book/README.md",
+      rewritten: [],
+    });
+  });
+
+  it("a token whose KB counterpart does not exist is untouched (the check still fails)", () => {
+    expect(resolveCheckCommand("grep -c x /x/projects/missing.md", deps).rewritten).toEqual([]);
+  });
+
+  it("a write-shaped command is never rewritten (second guard: a read-only verb with a redirect)", () => {
+    for (const cmd of [
+      "cat /x/projects/bet-book/README.md > /x/projects/y.md",
+      "grep x /x/projects/y.md >> /x/projects/y.md",
+    ]) {
+      expect(resolveCheckCommand(cmd, deps), cmd).toEqual({ cwd: undefined, command: cmd, rewritten: [] });
+    }
+  });
+
+  it("no command in the not-read-only table is rewritten (qa C1 replay)", () => {
+    for (const cmd of NOT_READ_ONLY("/x/projects/y.md")) {
+      expect(resolveCheckCommand(cmd, deps), cmd).toEqual({ cwd: undefined, command: cmd, rewritten: [] });
+    }
+  });
+
+  it("every command in the read-only table is rewritten", () => {
+    for (const cmd of READ_ONLY("/x/projects/y.md", "/x/projects/bet-book/README.md")) {
+      const r = resolveCheckCommand(cmd, deps);
+      expect(r.rewritten, cmd).toContain("/x/projects/y.md");
+      expect(r.command, cmd).toContain(" /x/kb/projects/y.md");
+    }
+  });
+
+  it("an explicit cwd wins and nothing is rewritten", () => {
+    expect(resolveCheckCommand("grep -c x /x/projects/y.md", { ...deps, cwd: "/explicit" })).toEqual({
+      cwd: "/explicit",
+      command: "grep -c x /x/projects/y.md",
+      rewritten: [],
+    });
+  });
+
+  it("relative, checkout, $VAR and ~ tokens are never rewritten", () => {
+    for (const [cmd, cwd] of [
+      ["npx vitest run src/foo.test.ts", undefined],
+      ["grep -c x projects/xpoz-pipeline/README.md", undefined],
+      ["grep -c x projects/y.md", "/x/kb"],
+      ["grep -c x $HOME/projects/y.md", undefined],
+      ["grep -c x ~/projects/y.md", undefined],
+    ] as const) {
+      expect(resolveCheckCommand(cmd, deps), cmd).toEqual({ cwd, command: cmd, rewritten: [] });
+    }
+  });
+
+  it("the mixed-command rule is kept, and a KB-only relative path plus a rewritten one moves to the KB root", () => {
+    expect(resolveCheckCommand("diff src/x.ts projects/y.md", deps)).toEqual({
+      cwd: undefined,
+      command: "diff src/x.ts projects/y.md",
+      rewritten: [],
+    });
+    expect(resolveCheckCommand("diff projects/y.md /x/projects/bet-book/README.md", deps)).toEqual({
+      cwd: "/x/kb",
+      command: "diff projects/y.md /x/kb/projects/bet-book/README.md",
+      rewritten: ["/x/projects/bet-book/README.md"],
+    });
+  });
+});
+
+describe("isReadOnlyCheck — the primary guard before a check is moved or rewritten (queue 4d qa C1/R2)", () => {
+  it("every command in the read-only table passes", () => {
+    for (const cmd of READ_ONLY("projects/a.md", "projects/b.md")) {
+      expect(isReadOnlyCheck(cmd), cmd).toBe(true);
+    }
+  });
+
+  it("every command in the not-read-only table fails", () => {
+    for (const cmd of NOT_READ_ONLY("projects/a.md")) {
+      expect(isReadOnlyCheck(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("resolveCheckCwd moves nothing in the not-read-only table onto the KB root, and moves everything in the read-only table", () => {
+    const kb = new Set(["/x/kb/projects/a.md", "/x/kb/projects/b.md"]);
+    const deps = { kbRoot: "/x/kb", processCwd: "/x/repo", exists: (p: string) => kb.has(p) };
+    for (const cmd of NOT_READ_ONLY("projects/a.md")) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBeUndefined();
+    }
+    for (const cmd of READ_ONLY("projects/a.md", "projects/b.md")) {
+      expect(resolveCheckCwd(cmd, deps), cmd).toBe("/x/kb");
+    }
+  });
+  it("a grammar-accepted check that names a write verb as an argument is NOT moved or rewritten (second guard, accepted false refusal, qa R4 W3)", () => {
+    const kb = new Set(["/x/kb/projects/a.md"]);
+    const deps = { kbRoot: "/x/kb", processCwd: "/x/repo", exists: (p: string) => kb.has(p), kbTopDirs: ["projects"] };
+    expect(isReadOnlyCheck("grep -c mv projects/a.md")).toBe(true);
+    expect(resolveCheckCwd("grep -c mv projects/a.md", deps)).toBeUndefined();
+    expect(resolveCheckCwd("grep -c x projects/a.md", deps)).toBe("/x/kb");
+    expect(resolveCheckCommand("grep -c mv /x/projects/a.md", deps)).toEqual({
+      cwd: undefined,
+      command: "grep -c mv /x/projects/a.md",
+      rewritten: [],
+    });
+    expect(resolveCheckCommand("grep -c x /x/projects/a.md", deps).rewritten).toEqual(["/x/projects/a.md"]);
+  });
+});
+
+describe("evaluateLedger — rewritten checks run on the KB path with [cwd=kb-rewrite] evidence (queue 4d)", () => {
+  let kbRoot: string;
+  let savedKb: string | undefined;
+  beforeEach(() => {
+    kbRoot = mkdtempSync(join(tmpdir(), "gate-rw-kb-"));
+    mkdirSync(join(kbRoot, "zz4drw/bet-book"), { recursive: true });
+    writeFileSync(join(kbRoot, "zz4drw/bet-book/README.md"), "# Uno\n");
+    writeFileSync(join(kbRoot, "zz4drw/bet-book/notes.md"), "x\n");
+    savedKb = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbRoot;
+  });
+  afterEach(() => {
+    if (savedKb === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = savedKb;
+    rmSync(kbRoot, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("runs the rewritten command, logs the token once per gate, prefixes the evidence once even when the cwd also moved", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const guessed = join(dirname(kbRoot), "zz4drw/bet-book/README.md");
+    const real = join(kbRoot, "zz4drw/bet-book/README.md");
+    const cmd1 = `grep -c '^# ' ${guessed}`;
+    const cmd2 = `cat zz4drw/bet-book/notes.md ${guessed} ${guessed} | wc -l`;
+    declareGates(
+      "t-rw",
+      [
+        { criterion: "headings", check: cmd1, expect: "gte 1" },
+        { criterion: "both files", check: cmd2, expect: "gte 1" },
+      ],
+      "plan",
+    );
+    const seen: Array<[string, string | undefined]> = [];
+    const exec: CheckExecutor = async (cmd, opts) => {
+      seen.push([cmd, opts.cwd]);
+      return { output: "1\n", exitCode: 0, timedOut: false };
+    };
+    const v = await evaluateLedger({ taskId: "t-rw", exec, timeoutMs: 1000 });
+    expect(v.verdict).toBe("met");
+    expect(seen).toEqual([
+      [`grep -c '^# ' ${real}`, undefined],
+      [`cat zz4drw/bet-book/notes.md ${real} ${real} | wc -l`, kbRoot],
+    ]);
+    const rows = Object.fromEntries(listGates("t-rw").map((r) => [r.gate_id, r]));
+    expect(rows["G1"]).toMatchObject({ state: "met", evidence: "[cwd=kb-rewrite] 1" });
+    expect(rows["G2"]).toMatchObject({ state: "met", evidence: "[cwd=kb-rewrite] 1" });
+    // The stored criterion and command are untouched — the ledger is additions only.
+    expect(rows["G1"]!.check_cmd).toBe(cmd1);
+    const logged = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("rewritten to the KB root"));
+    expect(logged).toEqual([
+      `[gates] t-rw G1: absolute KB path rewritten to the KB root: ${guessed}`,
+      `[gates] t-rw G2: absolute KB path rewritten to the KB root: ${guessed}`,
+    ]);
+  });
+
+  it("a plan gate refused at declaration is skipped by evaluation and never FAILS", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const specs = gateSpecsFromGoal("g-1", {
+      gates: [
+        {
+          criterion: "README written",
+          check: `grep -c '^# ' ${join(dirname(kbRoot), "zz4drw/bet-book/README.md")}`,
+          expect: "gte 1",
+        },
+      ],
+    });
+    declareGates("t-rw-ab", specs, "plan");
+    const exec: CheckExecutor = async () => {
+      throw new Error("must not spawn");
+    };
+    const v = await evaluateLedger({ taskId: "t-rw-ab", exec, timeoutMs: 1000 });
+    expect(v).toMatchObject({ ran: 0, failed: 0, abandoned: 1 });
+    expect(listGates("t-rw-ab")[0]).toMatchObject({ state: "abandoned", check_kind: "manual" });
   });
 });
 

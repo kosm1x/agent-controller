@@ -6,7 +6,7 @@ import client from "prom-client";
 
 /** plan = planner goal (abandoned row) · spec = API/CLI payload (rejected) · declare = the declareGates floor caught a producer that skipped validation. */
 export type GateRefusalSource = "plan" | "spec" | "declare";
-export type GateRefusalReason = "literal_check" | "unsettleable_expect";
+export type GateRefusalReason = "literal_check" | "unsettleable_expect" | "kb_path_check";
 
 const NAME = "mc_gate_refusals_total";
 

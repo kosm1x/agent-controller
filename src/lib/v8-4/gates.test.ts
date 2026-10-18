@@ -2,7 +2,10 @@
  * V8.4 completion ledger — the harness-owned gates table and its invariants:
  * additions only, met needs evidence, abandoned is final, unknown mode = off.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, initDatabase } from "../../db/index.js";
 import { gateRefusalsTotal } from "./gate-metrics.js";
 import {
@@ -13,6 +16,7 @@ import {
   gateSpecsFromGoal,
   isLiteralSourcedCheck,
   gatesMode,
+  namesGuessedKbRoot,
   hasGates,
   ledgerSummaryJson,
   ledgerVerdict,
@@ -714,5 +718,148 @@ describe("gateSpecsFromGoal", () => {
     expect(by["g-10.1"]!.state).toBe("pending"); // "g-1." must not match "g-10."
     expect(by["S1"]!.state).toBe("pending"); // submission gates are never touched
     expect(abandonPlanGatesForGoals("t10", [], "x")).toBe(0);
+  });
+});
+
+describe("namesGuessedKbRoot — a check on the KB root guessed one level up (queue 4d, 2026-10-17)", () => {
+  // Synthetic layout: KB at /x/kb (top dirs below); /x/projects does not exist.
+  const files = new Set([
+    "/x/kb/projects/bet-book/README.md",
+    "/x/kb/directives/core.md",
+    "/x/repo/src/foo.test.ts",
+  ]);
+  const deps = {
+    kbRoot: "/x/kb",
+    kbTopDirs: ["projects", "directives", "workspace", "logs"],
+    exists: (p: string) => files.has(p),
+  };
+
+  it("the live shape: an absolute path on the guessed root is refused", () => {
+    expect(namesGuessedKbRoot("grep -c '^# ' /x/projects/bet-book/README.md", deps)).toBe(true);
+    expect(namesGuessedKbRoot("wc -c < /x/projects/bet-book/capitulo-4-draft-1.md", deps)).toBe(true);
+    expect(namesGuessedKbRoot("grep -c x '/x/projects/bet-book/README.md'", deps)).toBe(true);
+  });
+
+  it("a write-shaped command on the guessed root is refused too", () => {
+    expect(namesGuessedKbRoot("cp /tmp/a /x/projects/bet-book/README.md", deps)).toBe(true);
+  });
+
+  it("an absolute token that exists on disk is not refused", () => {
+    const withReal = { ...deps, exists: (p: string) => p === "/x/projects/bet-book/README.md" || files.has(p) };
+    expect(namesGuessedKbRoot("grep -c '^# ' /x/projects/bet-book/README.md", withReal)).toBe(false);
+  });
+
+  it("a not-yet-written file inside an existing first-level dir of the guessed root names that real tree, not the KB", () => {
+    const withRepo = { ...deps, exists: (p: string) => p === "/x/projects/real-repo" || files.has(p) };
+    expect(namesGuessedKbRoot("test -f /x/projects/real-repo/index.html", withRepo)).toBe(false);
+    expect(namesGuessedKbRoot("test -f /x/projects/bet-book/index.html", withRepo)).toBe(true);
+  });
+
+  it("correct absolute KB paths and relative KB paths are NOT refused (they keep running)", () => {
+    for (const cmd of [
+      "grep -c x /x/kb/projects/bet-book/README.md",
+      "grep -c x directives/core.md",
+      "grep -c x projects/bet-book/README.md",
+      "npx vitest run src/foo.test.ts",
+    ]) {
+      expect(namesGuessedKbRoot(cmd, deps), cmd).toBe(false);
+    }
+  });
+
+  it("a trailing-slash directory token, a dot segment, other roots and non-KB dirs are not refused", () => {
+    for (const cmd of [
+      "ls /x/logs/",
+      "grep -c x /x/projects/bet-book/../../../mission-control/package.json",
+      "grep -c x /x/projects/./bet-book/README.md",
+      "grep -c x $HOME/projects/bet-book/README.md",
+      "curl -s https://example.com/projects/bet-book/README.md",
+      "grep -c x /y/projects/bet-book/README.md",
+      "grep -c x /x/mission-control/src/index.ts",
+      "grep -c x /x/projects",
+    ]) {
+      expect(namesGuessedKbRoot(cmd, deps), cmd).toBe(false);
+    }
+  });
+
+  it("without injected top dirs it reads the KB root's directories (files are not top dirs)", () => {
+    const kb = mkdtempSync(join(tmpdir(), "gate-kbpath-"));
+    try {
+      mkdirSync(join(kb, "projects"));
+      writeFileSync(join(kb, "INDEX.md"), "x\n");
+      const d = { kbRoot: kb, exists: () => false };
+      const up = dirname(kb);
+      expect(namesGuessedKbRoot(`grep -c x ${up}/projects/a.md`, d)).toBe(true);
+      expect(namesGuessedKbRoot(`grep -c x ${up}/INDEX.md/a`, d)).toBe(false);
+      expect(namesGuessedKbRoot(`grep -c x ${up}/notes/a.md`, d)).toBe(false);
+    } finally {
+      rmSync(kb, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("gateSpecsFromGoal — a check on a guessed KB root lands ABANDONED (queue 4d)", () => {
+  let kbRoot: string;
+  let savedKb: string | undefined;
+  beforeEach(() => {
+    kbRoot = mkdtempSync(join(tmpdir(), "gate-kbspec-"));
+    mkdirSync(join(kbRoot, "zz4dproj/bet-book"), { recursive: true });
+    savedKb = process.env.JARVIS_KB_MIRROR_DIR;
+    process.env.JARVIS_KB_MIRROR_DIR = kbRoot;
+  });
+  afterEach(() => {
+    if (savedKb === undefined) delete process.env.JARVIS_KB_MIRROR_DIR;
+    else process.env.JARVIS_KB_MIRROR_DIR = savedKb;
+    rmSync(kbRoot, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("refuses visibly, keeps the criterion, leaves relative and correct KB checks alone, and keeps the numbering", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = await refusals("plan", "kb_path_check");
+    const guessed = `grep -c '^# ' ${join(dirname(kbRoot), "zz4dproj/bet-book/README.md")}`;
+    const correct = `grep -c '^# ' ${join(kbRoot, "zz4dproj/bet-book/README.md")}`;
+    const specs = gateSpecsFromGoal("g-3", {
+      gates: [
+        { criterion: "README has chapter headings", check: guessed, expect: "gte 1" },
+        { criterion: "draft written", check: "wc -c < zz4dproj/bet-book/capitulo-4-draft-1.md", expect: "gt 0" },
+        { criterion: "same README by its real path", check: correct, expect: "gte 1" },
+        { criterion: "typecheck", check: "npx tsc --noEmit" },
+      ],
+    });
+    expect(specs).toEqual([
+      {
+        id: "g-3.1",
+        criterion: "README has chapter headings",
+        kind: "manual",
+        abandonReason: `check names a guessed KB root — the harness read-back proves the write: ${guessed}`,
+      },
+      {
+        id: "g-3.2",
+        criterion: "draft written",
+        check: "wc -c < zz4dproj/bet-book/capitulo-4-draft-1.md",
+        expect: "gt 0",
+        kind: "shell",
+      },
+      { id: "g-3.3", criterion: "same README by its real path", check: correct, expect: "gte 1", kind: "shell" },
+      { id: "g-3.4", criterion: "typecheck", check: "npx tsc --noEmit", kind: "shell" },
+    ]);
+    expect(await refusals("plan", "kb_path_check")).toBe(before + 1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[gates\] g-3: plan gate 1 abandoned — check names a guessed KB root: grep -c/),
+    );
+
+    // Declared: ABANDONED with the reason, no check stored, never FAILED.
+    expect(declareGates("t-kbspec", specs, "plan")).toBe(4);
+    const rows = listGates("t-kbspec");
+    expect(rows.map((r) => [r.gate_id, r.state, r.check_kind])).toEqual([
+      ["g-3.1", "abandoned", "manual"],
+      ["g-3.2", "pending", "shell"],
+      ["g-3.3", "pending", "shell"],
+      ["g-3.4", "pending", "shell"],
+    ]);
+    expect(rows[0]!.check_cmd).toBeNull();
+    expect(rows[0]!.abandon_reason).toMatch(/^check names a guessed KB root — the harness read-back proves the write: grep -c/);
+    expect(ledgerVerdict(rows)).toMatchObject({ failed: 0, abandoned: 1, pending: 3 });
+    expect(formatLedgerBlock(rows)).not.toContain("FAILED");
   });
 });

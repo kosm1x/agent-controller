@@ -24,8 +24,11 @@
  * `completed_with_concerns` and the ledger block is appended to the report).
  * Unknown values resolve to `off` (dormant is the safe direction).
  */
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { isUnsettleableExpect } from "./expect.js";
 import { countGateRefusal } from "./gate-metrics.js";
 import { redactSecrets } from "../../api/mcp-server/redact.js";
@@ -208,6 +211,101 @@ export function isLiteralSourcedCheck(check: string): boolean {
   return LITERAL_SOURCE_RE.test(check);
 }
 
+/**
+ * The path-shaped tokens of a check, tokenized like `resolveCheckCwd`
+ * (gate-check.ts): split on shell separators, outer quotes stripped, tokens
+ * without a `/` or with `://` (URLs) dropped.
+ */
+export function checkPathTokens(check: string): string[] {
+  const out: string[] = [];
+  for (const raw of check.split(/[\s|;&<>()]+/)) {
+    const token = raw.replace(/^['"]+|['"]+$/g, "");
+    if (!token.includes("/") || token.includes("://")) continue;
+    out.push(token);
+  }
+  return out;
+}
+
+/** Top-level directories of the KB root (directories only; [] when unreadable). */
+export function readKbTopDirs(kbRoot: string): string[] {
+  try {
+    return readdirSync(kbRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * For an absolute token shaped `<dirname(kbRoot)>/<seg>/<rest>`, where `<seg>`
+ * is a top-level KB directory, the path it was meant to name:
+ * `<kbRoot>/<seg>/<rest>`. Null for any other token, and for one with a `.`
+ * or `..` segment. That check alone keeps the target inside `<kbRoot>/`:
+ * `<seg>` is a real directory name and no segment can climb back out.
+ */
+export function kbSiblingPath(
+  token: string,
+  kbRoot: string,
+  kbTopDirs: readonly string[],
+): string | null {
+  const parent = dirname(kbRoot);
+  if (!token.startsWith(`${parent}/`)) return null;
+  const rest = token.slice(parent.length + 1);
+  const slash = rest.indexOf("/");
+  if (slash <= 0 || slash === rest.length - 1) return null;
+  if (!kbTopDirs.includes(rest.slice(0, slash))) return null;
+  if (rest.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return `${kbRoot}/${rest}`;
+}
+
+/**
+ * The KB path an absolute token on the guessed root (`<dirname(kbRoot)>/…`)
+ * was meant to name, or null. Null when the token is not KB-sibling shaped,
+ * exists on disk, or sits inside an EXISTING first-level directory: that
+ * parent can be real (other repos live under `<dirname(kbRoot)>/projects/`),
+ * and a not-yet-written file in a real tree names that tree, not the KB.
+ */
+export function guessedRootKbPath(
+  token: string,
+  kbRoot: string,
+  kbTopDirs: readonly string[],
+  exists: (p: string) => boolean,
+): string | null {
+  const target = kbSiblingPath(token, kbRoot, kbTopDirs);
+  if (target === null || exists(token)) return null;
+  const base = dirname(kbRoot).length + 1;
+  const second = token.indexOf("/", token.indexOf("/", base) + 1);
+  if (second > 0 && exists(token.slice(0, second))) return null;
+  return target;
+}
+
+export interface KbPathDeps {
+  kbRoot?: string;
+  exists?: (p: string) => boolean;
+  kbTopDirs?: readonly string[];
+}
+
+/**
+ * True when a check names a GUESSED KB root (queue 4d, 2026-10-17: a heavy
+ * child's KB deliverables were read-back MET, yet two planner shell checks
+ * naming `<dirname(kbRoot)>/projects/bet-book/…` — the KB root guessed one
+ * level too high — died "No such file" and the task ended "Gates: 2/4 met —
+ * FAILED"). A token qualifies when it is absolute
+ * `<dirname(kbRoot)>/<seg>/…`, `<seg>` a top-level KB directory, and neither
+ * the token nor its first-level directory exists (`guessedRootKbPath`).
+ * Correct absolute KB paths and relative KB paths are NOT refused: they keep
+ * running (relative ones from the KB root, `resolveCheckCwd`).
+ */
+export function namesGuessedKbRoot(check: string, deps: KbPathDeps = {}): boolean {
+  const tokens = checkPathTokens(check).filter((t) => t.startsWith("/"));
+  if (tokens.length === 0) return false;
+  const kbRoot = resolvePath(deps.kbRoot ?? getJarvisKbRoot());
+  const exists = deps.exists ?? existsSync;
+  const topDirs = deps.kbTopDirs ?? readKbTopDirs(kbRoot);
+  return tokens.some((t) => guessedRootKbPath(t, kbRoot, topDirs, exists) !== null);
+}
+
 /** Plan gate ids are `<goal>.<n>`; the goal part is sanitised like this. */
 function planGateIdPrefix(goalId: string): string {
   return `${goalId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 24)}.`;
@@ -271,6 +369,21 @@ export function gateSpecsFromGoal(
         criterion: o.criterion.trim().slice(0, MAX_CRITERION),
         kind: "manual",
         abandonReason: `check is literal-sourced — observes nothing: ${check.slice(0, 120)}`,
+      });
+      return;
+    }
+    if (namesGuessedKbRoot(check)) {
+      // Same visible surrender: a KB deliverable is proven by the harness
+      // read-back, never by a shell check on a guessed root (queue 4d).
+      console.warn(
+        `[gates] ${goalId}: plan gate ${i + 1} abandoned — check names a guessed KB root: ${check.slice(0, 80)}`,
+      );
+      countGateRefusal("plan", "kb_path_check");
+      out.push({
+        id: `${prefix}${i + 1}`,
+        criterion: o.criterion.trim().slice(0, MAX_CRITERION),
+        kind: "manual",
+        abandonReason: `check names a guessed KB root — the harness read-back proves the write: ${check.slice(0, 120)}`,
       });
       return;
     }

@@ -28,9 +28,12 @@ import { pmShimMissing, validateShellCommand, withPmShimPath } from "../../tools
 import { redactSecrets } from "../../api/mcp-server/redact.js";
 import {
   MAX_EVIDENCE,
+  checkPathTokens,
   freezeGates,
   gatesMode,
   isGradeRow,
+  guessedRootKbPath,
+  readKbTopDirs,
   ledgerVerdict,
   listGates,
   parseAbandonLines,
@@ -331,6 +334,105 @@ export function isWriteShapedCheck(command: string): boolean {
   return false;
 }
 
+/**
+ * PRIMARY guard for moving a check's cwd or rewriting its paths onto the KB
+ * (queue 4d qa C1/R2/R3, route A): `isWriteShapedCheck` is a deny-list, and
+ * `curl -o`, `wget -O`, `rsync`, `chmod`, `sed -i` and friends all pass it.
+ * A check is moved/rewritten only when it is written in a restricted grammar
+ * AND the head word of every segment is one of these verbs, none of which
+ * has a write mode (a verb that CAN write is simply not on the list).
+ * `isWriteShapedCheck` stays as the second guard (defense in depth).
+ */
+const READ_ONLY_HEADS = new Set([
+  "grep", "egrep", "fgrep", "wc", "cat", "head", "tail", "ls", "stat", "test",
+  "[", "jq", "cmp", "diff", "cut", "tr", "sha256sum", "md5sum", "echo",
+  "printf", "true",
+]);
+
+/** Characters a word may carry outside quotes. */
+const BARE_WORD_CHAR_RE = /[A-Za-z0-9_./=,:+@%^*?-]/;
+/** The one tolerated redirect, matched as a literal word. */
+const DEV_NULL_STDERR = "2>/dev/null";
+
+/**
+ * True when the command is in the restricted grammar and every segment's head
+ * word is in `READ_ONLY_HEADS`. The grammar is a subset where this splitter
+ * and dash agree by construction: every accepted word is a bare word or a
+ * single-quoted literal, with no assignments, no expansions and no redirects
+ * except the literal `2>/dev/null`. One left-to-right scan:
+ *   - outside quotes only `[A-Za-z0-9_./=,:+@%^*?-]`, space and the
+ *     separators `|`, `;`, `&&`, `||` are legal (a lone `&`, `|&` and `;;`
+ *     are refused, as is any other character: backslash, `"`, `$`, backtick,
+ *     parentheses, braces, `#`, `<`, `>`, `!`, `~`, tab, newline, non-ASCII);
+ *   - the ONLY tolerated redirect is the literal word `2>/dev/null`, standing
+ *     alone (after a segment start or a space, before the end, a space or a
+ *     separator); any other `<` or `>` is refused;
+ *   - `'…'` is a literal span: anything but `'` and newline (a backslash is
+ *     literal there); an unterminated quote is refused; adjacent spans join;
+ *   - segments split only at those separators; the FIRST word of every
+ *     segment must be in the set (no `NAME=value` prefix is skipped, so an
+ *     assignment, quoted or not, is refused); an empty segment is refused.
+ * `isWriteShapedCheck` still runs second and may refuse a read-only check
+ * that names a write verb as an argument (`grep -c mv p`); accepted.
+ */
+export function isReadOnlyCheck(command: string): boolean {
+  const segments: string[][] = [];
+  let words: string[] = [];
+  let word = "";
+  let started = false;
+  const endWord = (): void => {
+    if (started) words.push(word);
+    word = "";
+    started = false;
+  };
+  const endSegment = (): void => {
+    endWord();
+    segments.push(words);
+    words = [];
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (c === "'") {
+      const close = command.indexOf("'", i + 1);
+      if (close < 0) return false;
+      const body = command.slice(i + 1, close);
+      if (body.includes("\n")) return false;
+      word += body;
+      started = true;
+      i = close;
+    } else if (
+      !started &&
+      command.startsWith(DEV_NULL_STDERR, i) &&
+      /^(?:$| |\||;|&&)/.test(command.slice(i + DEV_NULL_STDERR.length))
+    ) {
+      i += DEV_NULL_STDERR.length - 1;
+    } else if (c === " ") {
+      endWord();
+    } else if (c === "|") {
+      if (command[i + 1] === "&") return false;
+      if (command[i + 1] === "|") i++;
+      endSegment();
+    } else if (c === ";") {
+      if (command[i + 1] === ";") return false;
+      endSegment();
+    } else if (c === "&") {
+      if (command[i + 1] !== "&") return false;
+      i++;
+      endSegment();
+    } else if (BARE_WORD_CHAR_RE.test(c)) {
+      word += c;
+      started = true;
+    } else {
+      return false;
+    }
+  }
+  endSegment();
+  return segments.every((seg) => {
+    const head = seg[0];
+    return head !== undefined && READ_ONLY_HEADS.has(head);
+  });
+}
+
 export function resolveCheckCwd(
   checkCmd: string,
   deps: {
@@ -341,7 +443,7 @@ export function resolveCheckCwd(
   } = {},
 ): string | undefined {
   if (deps.cwd !== undefined) return deps.cwd;
-  if (isWriteShapedCheck(checkCmd)) return undefined;
+  if (!isReadOnlyCheck(checkCmd) || isWriteShapedCheck(checkCmd)) return undefined;
   const exists = deps.exists ?? existsSync;
   const processCwd = deps.processCwd ?? process.cwd();
   let kbRoot: string | undefined;
@@ -357,6 +459,66 @@ export function resolveCheckCwd(
     if (inKb && !inCheckout) kbOnly = true;
   }
   return kbOnly ? kbRoot : undefined;
+}
+
+export interface ResolvedCheck {
+  /** Where the check runs (see `resolveCheckCwd`). */
+  cwd: string | undefined;
+  /** The command to run — the stored one, or with KB paths rewritten. */
+  command: string;
+  /** The absolute tokens that were rewritten to the KB root ([] = none). */
+  rewritten: string[];
+}
+
+/**
+ * `resolveCheckCwd` plus one narrow rewrite (queue 4d, 2026-10-17): a planner
+ * check naming `<dirname(kbRoot)>/projects/bet-book/README.md` — the KB root
+ * guessed one level too high — died "No such file" while the read-back on
+ * the same file was MET. An absolute token `<dirname(kbRoot)>/<seg>/<rest>`,
+ * `<seg>` a top-level KB directory, that does not exist on disk while
+ * `<kbRoot>/<seg>/<rest>` does, is replaced (every occurrence, quotes kept)
+ * by the KB path. Never rewritten: an explicit cwd, a command that is not
+ * read-only (`isReadOnlyCheck`, then `isWriteShapedCheck`: a check must
+ * never write the KB), a token that exists on disk or sits in
+ * an existing first-level directory of the guessed root (`guessedRootKbPath`).
+ */
+export function resolveCheckCommand(
+  checkCmd: string,
+  deps: {
+    cwd?: string;
+    kbRoot?: string;
+    processCwd?: string;
+    exists?: (p: string) => boolean;
+    kbTopDirs?: readonly string[];
+  } = {},
+): ResolvedCheck {
+  const cwd = resolveCheckCwd(checkCmd, deps);
+  if (
+    deps.cwd !== undefined ||
+    !isReadOnlyCheck(checkCmd) ||
+    isWriteShapedCheck(checkCmd)
+  ) {
+    return { cwd, command: checkCmd, rewritten: [] };
+  }
+  const exists = deps.exists ?? existsSync;
+  let kbRoot: string | undefined;
+  let topDirs = deps.kbTopDirs;
+  let command = checkCmd;
+  const rewritten: string[] = [];
+  for (const token of checkPathTokens(checkCmd)) {
+    if (!token.startsWith("/") || rewritten.includes(token)) continue;
+    kbRoot ??= resolvePath(deps.kbRoot ?? getJarvisKbRoot());
+    topDirs ??= readKbTopDirs(kbRoot);
+    const target = guessedRootKbPath(token, kbRoot, topDirs, exists);
+    if (target === null || !exists(target)) continue;
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    command = command.replace(
+      new RegExp(`(^|[\\s|;&<>()'"])${escaped}(?=$|[\\s|;&<>()'"])`, "g"),
+      (_m, lead: string) => `${lead}${target}`,
+    );
+    rewritten.push(token);
+  }
+  return { cwd, command, rewritten };
 }
 
 export interface EvaluateOptions {
@@ -492,9 +654,17 @@ export async function evaluateLedger(
         shellSkipped++;
         continue;
       }
-      const cwd = resolveCheckCwd(row.check_cmd ?? "", { cwd: opts.cwd });
+      const resolved = resolveCheckCommand(row.check_cmd ?? "", {
+        cwd: opts.cwd,
+      });
+      const cwd = resolved.cwd;
       const ranInKb = opts.cwd === undefined && cwd !== undefined;
-      const outcome = await runCheck(row, {
+      if (resolved.rewritten.length > 0) {
+        console.warn(
+          `[gates] ${opts.taskId} ${row.gate_id}: absolute KB path rewritten to the KB root: ${resolved.rewritten.join(", ")}`,
+        );
+      }
+      const outcome = await runCheck({ ...row, check_cmd: resolved.command }, {
         cwd,
         timeoutMs: Math.min(
           timeoutMs,
@@ -506,7 +676,9 @@ export async function evaluateLedger(
       ran++;
       // The ledger row says where the check ran when it was redirected; an
       // abandoned row (nothing ran) keeps its plain reason.
-      if (ranInKb && !outcome.notRunnable) {
+      if (!outcome.notRunnable && resolved.rewritten.length > 0) {
+        outcome.evidence = `[cwd=kb-rewrite] ${outcome.evidence}`.slice(0, MAX_EVIDENCE);
+      } else if (ranInKb && !outcome.notRunnable) {
         outcome.evidence = `[cwd=kb] ${outcome.evidence}`.slice(0, MAX_EVIDENCE);
       }
       if (outcome.notRunnable) abandonedNow++;
