@@ -8,11 +8,11 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 
 | Source | Ours | Where to read releases |
 | --- | --- | --- |
-| Claude Agent SDK (TS) | 0.3.245 exact | https://raw.githubusercontent.com/anthropics/claude-agent-sdk-typescript/main/CHANGELOG.md, https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk |
+| Claude Agent SDK (TS) | 0.3.285 exact (live since 2026-10-07, `de1f882`) | https://raw.githubusercontent.com/anthropics/claude-agent-sdk-typescript/main/CHANGELOG.md, https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk |
 | Anthropic SDK (TS) | 0.111.0 exact (peer only) | https://raw.githubusercontent.com/anthropics/anthropic-sdk-typescript/main/CHANGELOG.md |
 | Claude platform docs (Managed Agents, tool use) | n/a | https://platform.claude.com/llms.txt |
 | MCP specification | 2025-11-25 via SDK | https://modelcontextprotocol.io/specification/latest |
-| `@modelcontextprotocol/sdk` | `^1.32.0`, installed 1.32.0 (2026-10-10) | https://registry.npmjs.org/@modelcontextprotocol/sdk |
+| `@modelcontextprotocol/sdk` | `^1.32.0` (1.32.x line), lockfile 1.32.0 (adopted 2026-10-10) | https://registry.npmjs.org/@modelcontextprotocol/sdk |
 | A2A protocol | bespoke, pre-0.3 dialect | https://raw.githubusercontent.com/a2aproject/A2A/main/CHANGELOG.md |
 | OTel GenAI semantic conventions | none | https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/main/CHANGELOG.md |
 | LangGraph, OpenAI Agents SDK, Google ADK, Microsoft Agent Framework | none (ideas only) | registry JSON on npm / PyPI; docs pages listed in the review note |
@@ -21,12 +21,12 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 
 | Item | Verdict | Trigger | Owner | Last reviewed |
 | --- | --- | --- | --- | --- |
-| Agent SDK 0.3.245 → 0.3.288 bump (umbrella for the L1 rows below) | adopt | operator VPS session with `eval:gate` | L1 | 2026-10-03 |
+| Agent SDK 0.3.245 → 0.3.288 bump (umbrella for the L1 rows below) | adopt | **done as 0.3.285, deployed 2026-10-07** (`de1f882`, rebuild `dcac186`; covered by the 10-07 eval baseline). The next target is re-picked at the 11-01 upstream review | L1 | 2026-10-18 |
 | Stop hook own deadline + trace (gap exists at the current pin) [a16] | build | **built 2026-10-09** (`STOP_HOOK_DEADLINE_MS` 150 s < SDK 180 s; deadline/abort ⇒ `gates.hook_released reason=deadline\|aborted`; all hook traces carry `elapsed_ms`) | L5 | 2026-10-09 |
-| `verbatimPrompts` [a17] | adopt | pin bump | L1 | 2026-10-03 |
-| `systemPrompt` snapshot default (0.3.267) [a18] | adopt (check cache_diag) | pin bump | L1 | 2026-10-03 |
-| Telemetry discontinuity at the bump (0.3.246, 0.3.257) [a19] | adopt (caveat in `audit-claim`) | pin bump | L1 | 2026-10-03 |
-| MCP server timeout / handshake (0.3.248, 0.3.281) [a20] | adopt | pin bump | L1 | 2026-10-03 |
+| `verbatimPrompts` [a17] | adopt | available since 0.3.285 went live 2026-10-07 (added in 0.3.280), not adopted yet (`grep verbatimPrompts src` = 0); next touch of the SDK call options or the 11-01 review | L1 | 2026-10-18 |
+| `systemPrompt` snapshot default (0.3.267) [a18] | adopt (check cache_diag) | pin bump fired 2026-10-07 (0.3.285); effect not yet checked, re-check at the 11-01 upstream review | L1 | 2026-10-18 |
+| Telemetry discontinuity at the bump (0.3.246, 0.3.257) [a19] | adopt (caveat in `audit-claim`) | pin bump fired 2026-10-07 (0.3.285); effect not yet checked, re-check at the 11-01 upstream review | L1 | 2026-10-18 |
+| MCP server timeout / handshake (0.3.248, 0.3.281) [a20] | adopt | pin bump fired 2026-10-07 (0.3.285); effect not yet checked, re-check at the 11-01 upstream review | L1 | 2026-10-18 |
 | `permissionMode` default change (0.3.286) [a21] | ignore (explicit `dontAsk`) | none | L1 checks a test pins it | 2026-10-03 |
 | New stop reasons [a22] | ignore now | a new subtype in the journal | L1 | 2026-10-03 |
 | Model deprecations (Sonnet 4.5, Opus 4.1) [a23] | ignore (neither used) | none | none | 2026-10-03 |
@@ -51,8 +51,8 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | Drop deprecated `logging` capability on `/mcp` [b6] | adopt at the next touch of `/mcp` | MCP v2 migration | operator ruling | 2026-10-03 |
 | MCP MRTR, tasks extension, OAuth/CIMD [b7–b9] | ignore | a configured server needs it; `/mcp` exposed wider | none / operator | 2026-10-03 |
 | `traceparent` in MCP `_meta` [b10] | borrow later | multi-hop MCP debugging needed | L4 | 2026-10-03 |
-| A2A retire [c6] | ignore (retire candidate; operator ruling) | zero A2A use (VPS data) | L3 → operator ruling | 2026-10-03 |
-| A2A 1.0 shim (methods, version header, parts/states) [c1, c2, c4] | build (shim), pending L3 ruling; retire is the alternative | VPS data on A2A use | L3 → operator ruling | 2026-10-03 |
+| A2A retire [c6] | ignore (**RULED 2026-10-09: A2A stays; never propose retiring it**, queue §2026-10-08 (late) item 8) | none | operator (standing) | 2026-10-18 |
+| A2A 1.0 shim (methods, version header, parts/states) [c1, c2, c4] | build (shim) | the operator names the date of the first A2A consumer (unset as of 2026-10-18) | L3 → operator | 2026-10-18 |
 | A2A card hygiene (`agent-card.json`, no `stateTransitionHistory`) [c3] | borrow, with the shim | L3 picks the shim | L3 | 2026-10-03 |
 | `@a2a-js/sdk` type shapes [c5] | borrow (the dependency needs discussion) | L3 picks the shim | operator ruling | 2026-10-03 |
 | Per-goal Prometheus snapshot + format version + pending approval [d1–d4] | borrow | a task lost to shutdown with completed goals (VPS data) | W2 | 2026-10-03 |
