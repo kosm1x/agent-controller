@@ -366,7 +366,7 @@ describe("validateShellCommand", () => {
         "! test -f /tmp/x",
         "ls /root/claude/mission-control/*.json",
         "ls /root/claude/*",
-        "docker exec -i supabase-db psql -U x -c 'select 1'", // ruling 5: psql through supabase-db only (crm-hindsight is refused below)
+        "docker exec supabase-db psql -U mcp_readonly -c 'select 1'", // ruling 5/5a: read-only psql through supabase-db only (crm-hindsight is refused below)
         "find /root/claude/vlved -name '*.ts'",
       ];
       for (const cmd of allowed) {
@@ -2675,17 +2675,14 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) refused(cmd);
   });
 
-  it("the one exec form is `docker exec [-i|-t|-it|-ti|--interactive|--tty] supabase-db psql …`", () => {
+  it("the one exec form is `docker exec [-t|--tty|-e PG…] supabase-db psql …` (ruling 5a requires a read-only role)", () => {
     for (const cmd of [
-      "docker exec supabase-db psql -U postgres -d postgres -c 'select 1'",
-      "docker exec -i supabase-db psql -U postgres < /tmp/q.sql",
-      "docker exec -t supabase-db psql",
-      "docker exec -it supabase-db psql -U postgres",
-      "docker exec -ti supabase-db psql",
-      "docker exec --interactive --tty supabase-db psql",
-      "docker container exec supabase-db psql -c 'select 1'",
-      "timeout 60 docker exec supabase-db psql -c 'select 1'",
-      "docker exec supabase-db psql -c 'select 1' 2>&1 | head -20",
+      "docker exec supabase-db psql -U mcp_readonly -d postgres -c 'select 1'",
+      "docker exec -t supabase-db psql -U mcp_readonly",
+      "docker exec --tty supabase-db psql -U longevidad_ro",
+      "docker container exec supabase-db psql -U mcp_readonly -c 'select 1'",
+      "timeout 60 docker exec supabase-db psql -U mcp_readonly -c 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -c 'select 1' 2>&1 | head -20",
     ]) allowed(cmd);
     for (const cmd of [
       "docker exec -u root supabase-db psql",
@@ -2704,24 +2701,40 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       "docker exec",
       `docker exec ${"-i ".repeat(64)}supabase-db psql`, // the 64th flag token refuses (cap = 64)
     ]) refused(cmd);
-    // The psql arguments still meet the rest of the gate.
-    refused("docker exec supabase-db psql -f /root/.ssh/id_rsa", /\.ssh/);
+    // -i/-it/--interactive now refused by ruling 5a (stdin), not by a bad flag.
+    for (const cmd of [
+      "docker exec -i supabase-db psql -U mcp_readonly < /tmp/q.sql",
+      "docker exec -it supabase-db psql -U mcp_readonly",
+      "docker exec -ti supabase-db psql -U mcp_readonly",
+      "docker exec --interactive --tty supabase-db psql -U mcp_readonly",
+    ]) refused(cmd, /stdin.*ruling 5a/);
+    // psql arguments are a closed allow-list (ruling 5a): -f and -o are refused as flags.
+    refused("docker exec supabase-db psql -U mcp_readonly -f /root/.ssh/id_rsa", /flag not allowed \(-f\).*ruling 5a/);
+    refused("docker exec supabase-db psql -U mcp_readonly -c 'select 1' -o /root/.ssh/x", /flag not allowed \(-o\).*ruling 5a/);
   });
 
-  it("ruling 5b (2026-10-03): `-e`/`--env` only on the supabase-db psql form, only for PG* names", () => {
+  it("ruling 5b (2026-10-03): `-e`/`--env` only on the supabase-db psql form, only for PG* names (role via ruling 5a)", () => {
     for (const cmd of [
-      "docker exec -e PGPASSWORD=x supabase-db psql",
-      "docker exec --env PGUSER=y supabase-db psql",
-      "docker exec --env=PGDATABASE=z supabase-db psql",
-      "docker exec -ePGHOST=h supabase-db psql", // pflag: an attached value
-      "docker exec -e PGPASSWORD supabase-db psql", // no assignment: passed through from the caller's env
-      "docker exec -ie PGUSER=u supabase-db psql -c 'select 1'", // `e` last in a cluster takes the next token
-      "docker exec -it -e PGPASSWORD=x -e PGUSER=y supabase-db psql -U postgres",
-      "docker exec -e PG=1 supabase-db psql",
-      "docker exec -e PGPASSWORD=$SECRET_T supabase-db psql -c 'select 1'", // ruling 3c by-name use
-      "docker container exec --env PGSSLMODE=disable supabase-db psql",
-      "timeout 60 docker exec -e PGOPTIONS=x supabase-db psql",
+      "docker exec --env PGDATABASE=d supabase-db psql -U mcp_readonly",
+      "docker exec --env=PGDATABASE=z supabase-db psql -U mcp_readonly",
+      "docker exec -ePGDATABASE=h supabase-db psql -U mcp_readonly", // pflag: an attached value
+      "docker exec -e PGPASSWORD supabase-db psql -U mcp_readonly", // no assignment: passed through from the caller's env
+      "docker exec -te PGUSER=mcp_readonly supabase-db psql -U mcp_readonly -c 'select 1'", // `e` last in a cluster takes the next token
+      "docker exec -t -e PGPASSWORD=$SECRET_T -e PGUSER=mcp_readonly supabase-db psql -U mcp_readonly", // -U and -e PGUSER agree
+      "docker exec -e PGPASSWORD=$SECRET_T supabase-db psql -U mcp_readonly -c 'select 1'", // ruling 3c by-name use
+      "docker container exec --env PGDATABASE=postgres supabase-db psql -U mcp_readonly",
+      "timeout 60 docker exec -e PGUSER=mcp_readonly -e PGDATABASE=postgres supabase-db psql -U mcp_readonly",
     ]) allowed(cmd);
+    // Fold 2 (qa R2): on the psql form the env NAMES are PGUSER / PGDATABASE / PGPASSWORD only (ruling 5a).
+    for (const [cmd, why] of [
+      ["docker exec -e PGPASSWORD=x supabase-db psql -U mcp_readonly", /PGPASSWORD only.*ruling 5a/], // a literal secret
+      ["docker exec -ePGHOST=h supabase-db psql -U mcp_readonly", /env name not allowed on the psql form \(PGHOST\).*ruling 5a/],
+      ["docker exec -e PG=1 supabase-db psql -U mcp_readonly", /env name not allowed.*\(PG\).*ruling 5a/],
+      ["docker container exec --env PGSSLMODE=disable supabase-db psql -U mcp_readonly", /\(PGSSLMODE\).*ruling 5a/],
+      ["timeout 60 docker exec -e PGOPTIONS=x supabase-db psql -U mcp_readonly", /\(PGOPTIONS\).*ruling 5a/],
+      ["docker exec -e PGDATABASE supabase-db psql -U mcp_readonly", /database name.*ruling 5a/], // pass-through dbname
+      ["docker exec -e PGUSER supabase-db psql -U mcp_readonly", /read-only role.*ruling 5a/], // pass-through role
+    ] as [string, RegExp][]) refused(cmd, why);
     for (const cmd of [
       "docker exec -e LD_PRELOAD=/tmp/x.so supabase-db psql",
       "docker exec --env PSQLRC=/tmp/rc supabase-db psql", // read by psql, but not PG*
@@ -2745,6 +2758,177 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       `docker exec ${"-e PGX=1 ".repeat(64)}supabase-db psql`, // the cap counts flags, values included
     ]) refused(cmd);
     refused("docker exec -e PATH=/tmp supabase-db psql", /PATH/); // the PATH-rewrite rule answers first
+  });
+
+  it("ruling 5a (2026-10-18): the supabase-db psql form runs only as an allow-listed read-only role", () => {
+    // ACCEPTED: an explicit read-only role, no backslash, no stdin/file/URI.
+    for (const cmd of [
+      "docker exec supabase-db psql -U mcp_readonly -At -c 'select 1'",
+      "docker exec supabase-db psql -U longevidad_ro -c 'select 1'",
+      "docker exec supabase-db psql --username=mcp_readonly -c 'select 1'",
+      "docker exec supabase-db psql --username longevidad_ro -c 'select 1'",
+      "docker exec -e PGUSER=mcp_readonly supabase-db psql -U mcp_readonly -c 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -d postgres -c 'select 1'", // plain dbname
+      // The ruling-5a fold's closed grammar (qa R1): bare words + one whole '…' per -c value.
+      "docker exec supabase-db psql -U mcp_readonly -At -c 'select count(*) from x'",
+      "docker exec supabase-db psql -U longevidad_ro -d longevidad -c 'select 1' -c 'select 2'",
+      "docker exec -e PGUSER=mcp_readonly supabase-db psql -U mcp_readonly -qAt -F , -c 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -c 'select 1' 2>/dev/null | head -5",
+      "docker exec supabase-db psql -U mcp_readonly -c 'select 1' 2>&1 | wc -l",
+      "docker exec supabase-db psql --username=mcp_readonly --dbname=postgres --csv --no-psqlrc --command 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -XAtx1E -c 'select $1'", // switch cluster; $ is literal inside '…'
+      "docker exec supabase-db psql -U mcp_readonly --set=ON_ERROR_STOP=1 -R :: -c 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -c 'select 1' ; docker exec supabase-db psql -U longevidad_ro -c 'select 2'", // every invocation read-only
+      "docker exec supabase-db psql -U mcp_readonly -At -F , -q -c 'select 1'",
+      "docker exec supabase-db psql -U mcp_readonly -c 'select count(*) from t where pobtot > 0'", // > inside the SQL body
+      "docker exec supabase-db psql -U mcp_readonly -c 'select 1 where x=1'", // = inside the SQL body, not a conninfo
+      "docker exec supabase-db psql -U mcp_readonly template1 -c 'select 1'", // single positional dbname
+      "docker exec -e PGUSER=mcp_readonly -e PGPASSWORD=$SECRET_T supabase-db psql -U mcp_readonly -c 'select 1'", // -U and -e PGUSER agree
+      "docker exec supabase-db psql -U mcp_readonly -v ON_ERROR_STOP=1 -c 'select 1'", // -v allowed (no backslash can be introduced)
+    ]) allowed(cmd);
+    // REFUSED, each with a reason naming ruling 5a.
+    const refuse5a: [string, RegExp][] = [
+      ["docker exec supabase-db psql -U postgres -c 'select 1'", /read-only role.*ruling 5a/],
+      ["docker exec supabase-db psql -c 'select 1'", /read-only role.*ruling 5a/], // no -U at all
+      ["docker exec supabase-db psql -U denue_api -c 'select 1'", /read-only role.*ruling 5a/],
+      ["docker exec -e PGUSER=postgres supabase-db psql -U mcp_readonly -c 'select 1'", /same read-only role.*ruling 5a/], // disagree
+      ["docker exec -e PGUSER=postgres supabase-db psql -c 'select 1'", /read-only role.*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly -c '\\c - postgres'", /backslash.*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly -c 'select 1' -c '\\! id'", /backslash.*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly -c 'select 1' && echo \\x", /backslash.*ruling 5a/], // backslash elsewhere
+      ["docker exec supabase-db psql -U mcp_readonly -f /tmp/x.sql", /flag not allowed \(-f\).*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly --file=/tmp/x.sql", /flag not allowed \(--file=\).*ruling 5a/],
+      ["docker exec -i supabase-db psql -U mcp_readonly -c 'select 1'", /stdin.*ruling 5a/],
+      ["docker exec -i supabase-db psql -U mcp_readonly <<EOF\nselect 1\nEOF", /stdin.*ruling 5a/], // heredoc
+      ["docker exec supabase-db psql -U mcp_readonly < /tmp/q.sql", /stdin.*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly postgresql://u@h/db", /argument grammar.*ruling 5a/], // `@` is not a bare-word char
+      ["docker exec supabase-db psql -U mcp_readonly postgresql:///db", /URI\/conninfo.*ruling 5a/],
+      ["docker exec supabase-db psql -U mcp_readonly -d 'user=postgres'", /argument grammar.*ruling 5a/], // a quoted dbname
+      ["docker exec -e PGUSER=mcp_readonly supabase-db psql -U mcp_readonly template1 postgres", /second positional.*ruling 5a/],
+      ["docker exec -e PGUSER=mcp_readonly supabase-db psql template1 postgres", /second positional.*ruling 5a/], // positional user overrides -e PGUSER
+      ["docker exec -e PGUSER=mcp_readonly supabase-db psql -c 'select 1'", /read-only role.*ruling 5a/], // -U is required exactly once
+      ["docker exec supabase-db psql -U mcp_readonly -U mcp_readonly -c 'select 1'", /read-only role.*ruling 5a/],
+      ["bash -c \"docker exec supabase-db psql -U mcp_readonly -c 'select 1'\"", /shell re-entry.*ruling 5a/],
+      ["env PGUSER=postgres docker exec supabase-db psql -c 'select 1'", /must start its segment.*ruling 5a/], // fold 2: env is a wrapper
+      ["timeout 5 docker exec supabase-db psql -U postgres -c 'select 1'", /read-only role.*ruling 5a/],
+    ];
+    for (const [cmd, why] of refuse5a) refused(cmd, why);
+  });
+
+  it("ruling 5a fold (qa R1): psql arguments are a closed grammar on the RAW text, not a parse of shell text", () => {
+    const D = "docker exec supabase-db psql";
+    const GRAMMAR = /argument grammar.*role must be a bare word.*ruling 5a/;
+    const FLAG = /flag not allowed.*ruling 5a/;
+    const refuseFold: [string, RegExp][] = [
+      // C1: quote-fused flags reach psql as `-Upostgres` (last -U wins) — the grammar refuses any quote in a flag.
+      [`${D} -U'postgres' -c 'select 1'`, GRAMMAR],
+      [`${D} "-Upostgres" -c 'select 1'`, GRAMMAR],
+      [`${D} -Upost'gres' -c 'select 1'`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' -U'postgres'`, GRAMMAR],
+      [`${D} -U'mcp_readonly' -c 'select 1'`, GRAMMAR], // W1: a quoted role is refused by design (bare word only)
+      [`${D} -U "mcp_readonly" -c 'select 1'`, GRAMMAR],
+      [`${D} -Umcp_readonly -c 'select 1'`, FLAG], // fused bare form: not in the allow-list
+      [`${D} -Upostgres -c 'select 1'`, FLAG],
+      // C2: output/log files are written as the postgres OS user.
+      [`${D} -U mcp_readonly -c 'select 1' -o /var/lib/postgresql/data/postgresql.conf`, /flag not allowed \(-o\).*ruling 5a/],
+      [`${D} -U mcp_readonly -c 'select 1' --output /tmp/x`, /flag not allowed \(--output\).*ruling 5a/],
+      [`${D} -U mcp_readonly -c 'select 1' --output=/tmp/x`, /flag not allowed \(--output=\).*ruling 5a/],
+      [`${D} -U mcp_readonly -c 'select 1' -L /tmp/x`, /flag not allowed \(-L\).*ruling 5a/],
+      [`${D} -U mcp_readonly -c 'select 1' --log-file=/tmp/x`, /flag not allowed \(--log-file=\).*ruling 5a/],
+      [`${D} -U mcp_readonly -c 'select 1' --log-file /tmp/x`, FLAG],
+      // -c takes exactly one whole single-quoted span.
+      [`${D} -U mcp_readonly --command='select 1'`, GRAMMAR],
+      [`${D} -U mcp_readonly -c "select 1"`, GRAMMAR],
+      [`${D} -U mcp_readonly -c $'select 1'`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'sel'"ect 1"`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1''x'`, GRAMMAR],
+      [`${D} -U mcp_readonly -c select`, GRAMMAR], // bare -c value
+      [`${D} -U mcp_readonly -c`, GRAMMAR], // no value
+      [`${D} -U mcp_readonly -c 'select 1';${D} -U postgres -c 'select 1'`, GRAMMAR], // `;` fused to the quote
+      // Database names: [A-Za-z0-9_]+, so no URI or conninfo.
+      [`${D} -U mcp_readonly -d postgresql:///db -c 'select 1'`, /database name.*ruling 5a/],
+      [`${D} -U mcp_readonly -d service=x -c 'select 1'`, /database name.*ruling 5a/],
+      [`${D} -U mcp_readonly --dbname=host=h -c 'select 1'`, /database name.*ruling 5a/],
+      [`${D} -U mcp_readonly user=postgres -c 'select 1'`, /database name.*ruling 5a/], // positional conninfo
+      // Clusters may hold only switch letters.
+      [`${D} -Uo mcp_readonly -c 'select 1'`, FLAG],
+      [`${D} -U mcp_readonly -tAc 'select 1'`, FLAG],
+      [`${D} -U mcp_readonly -Ad postgres -c 'select 1'`, FLAG],
+      [`${D} -U mcp_readonly -Atf /tmp/q -c 'select 1'`, FLAG],
+      [`${D} -U mcp_readonly -AtL /tmp/l -c 'select 1'`, FLAG],
+      // One database slot: a second positional (or one beside -d) is psql's username slot.
+      [`${D} -U mcp_readonly -At -c 'select 1' db1 extra_positional`, /second positional.*ruling 5a/],
+      [`${D} -U mcp_readonly -d postgres -c 'select 1' postgres`, /second positional.*ruling 5a/],
+      // Every flag outside the allow-list.
+      ...["-P pager=off", "--pset=pager=off", "-e", "--echo-all", "-l", "--list", "-w", "-W", "--password", "-h localhost",
+        "--host=h", "-p 5432", "--port=5432", "-S", "-H", "--html", "-T x", "-n", "-s", "-b", "-z", "-0", "--help",
+        "--version", "--", "--usern=postgres", "--user=postgres", "--set ON_ERROR_STOP"].map(
+        (f): [string, RegExp] => [`${D} -U mcp_readonly ${f} -c 'select 1'`, f === "--set ON_ERROR_STOP" ? GRAMMAR : FLAG],
+      ),
+      // Variables: NAME=bare only.
+      [`${D} -U mcp_readonly -v x -c 'select 1'`, GRAMMAR],
+      [`${D} -U mcp_readonly -v 'x=1' -c 'select 1'`, GRAMMAR],
+      [`${D} -U mcp_readonly -F 'abcd' -c 'select 1'`, GRAMMAR],
+      // Everything else in the command is bare too, or a terminator / 2>&1 / 2>/dev/null at the end.
+      [`${D} -U mcp_readonly -c 'select 1' > /tmp/out`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' >/tmp/out`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' &`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' 2>/dev/null extra`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' | grep "x"`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' $(echo -U postgres)`, /substitution.*blocked|argument grammar/], // the substitution gate answers first
+      [`${D} -U mcp_readonly -c 'select 1' \`echo x\``, /substitution.*blocked|argument grammar/],
+      [`${D} -U mcp_readonly -c 'select 1' $PGX`, GRAMMAR],
+      [`${D} -U mcp_readonly -c 'select 1' -U\\ postgres`, /backslash.*ruling 5a/], // an escaped space joins words
+      [`${D}\t-U\tpostgres -c 'select 1'`, GRAMMAR], // a tab is not this splitter's separator: no bare anchor
+      [`docker exec supabase-db "psql" -U postgres -c 'select 1'`, GRAMMAR], // the walk confirms a form the raw text does not spell bare
+      [`docker exec "supabase-db" psql -U postgres -c 'select 1'`, GRAMMAR],
+      [`echo supabase-db psql -U mcp_readonly ; docker exec "supabase-db" psql -U postgres`, /must start its segment|argument grammar/], // decoy anchor
+      [`${D} -U mcp_readonly -c 'select 1' ; ${D} -U postgres -c 'select 1'`, /read-only role.*ruling 5a/], // every invocation
+      [`${D} -U mcp_readonly -c 'select 1' <<< 'select 2'`, /stdin.*ruling 5a/],
+    ];
+    for (const [cmd, why] of refuseFold) refused(cmd, why);
+    // Fold 2 (qa R2): the psql form is the HEAD of its segment — nothing in front may append arguments.
+    const HEAD = /psql form must start its segment.*argument-appending wrappers refused.*ruling 5a/;
+    for (const [cmd, why] of [
+      [`echo -U postgres | xargs ${D} -U mcp_readonly -c 'select 1'`, HEAD], // xargs appends: psql takes the last -U
+      [`echo postgres | xargs ${D} -U mcp_readonly -c 'select 1'`, HEAD], // positional username slot
+      [`echo -o /var/lib/postgresql/data/x | xargs ${D} -U mcp_readonly -c 'select 1'`, HEAD], // reopens C2
+      [`xargs -a /tmp/claude-0/args ${D} -U mcp_readonly -c 'select 1'`, HEAD], // args file: -c with a meta-command
+      [`echo x | timeout 5 xargs ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`env ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`nice -n 5 ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`nohup ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`stdbuf -o0 ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`command ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`timeout -s KILL 5 ${D} -U mcp_readonly -c 'select 1'`, HEAD], // only `timeout <n>`
+      [`timeout 5 timeout 5 ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`timeout five ${D} -U mcp_readonly -c 'select 1'`, HEAD],
+      [`/usr/bin/docker exec supabase-db psql -U mcp_readonly -c 'select 1'`, HEAD], // exactly `docker`
+      [`echo ok && xargs ${D} -U mcp_readonly -c 'select 1'`, HEAD], // the segment, not the command, starts at docker
+      [`${D} -U mcp_readonly -c 'select 1' | xargs ${D} -U mcp_readonly -c 'select 2'`, HEAD], // every invocation
+      [`docker exec -e PGSYSCONFDIR=/tmp supabase-db psql -U mcp_readonly -c 'select 1'`, /\(PGSYSCONFDIR\).*ruling 5a/],
+      [`docker exec -e PGOPTIONS=-crole=postgres supabase-db psql -U mcp_readonly -c 'select 1'`, /\(PGOPTIONS\).*ruling 5a/],
+      [`docker exec --env PGSERVICE=x supabase-db psql -U mcp_readonly -c 'select 1'`, /\(PGSERVICE\).*ruling 5a/],
+      [`docker exec -e PGSERVICEFILE=/tmp/s supabase-db psql -U mcp_readonly`, /\(PGSERVICEFILE\).*ruling 5a/],
+      [`docker exec -e PGPASSFILE=/tmp/p supabase-db psql -U mcp_readonly`, /\(PGPASSFILE\).*ruling 5a/],
+      [`docker exec -e PGPORT=1 supabase-db psql -U mcp_readonly`, /\(PGPORT\).*ruling 5a/],
+      [`docker exec -e PGCLIENTENCODING=SJIS supabase-db psql -U mcp_readonly`, /\(PGCLIENTENCODING\).*ruling 5a/],
+      [`docker exec --env=PGHOST=h supabase-db psql -U mcp_readonly`, /\(PGHOST\).*ruling 5a/],
+      [`docker exec -te PGHOST=h supabase-db psql -U mcp_readonly`, /\(PGHOST\).*ruling 5a/],
+      [`docker exec -e PGDATABASE=a=b supabase-db psql -U mcp_readonly`, /database name.*ruling 5a/],
+    ] as [string, RegExp][]) refused(cmd, why);
+    for (const cmd of [
+      `timeout 30 ${D} -U mcp_readonly -At -c 'select 1'`,
+      `timeout 30s ${D} -U mcp_readonly -At -c 'select 1' | head -5`,
+      `timeout 30 ${D} -U mcp_readonly -At -c 'select 1' 2>&1 | wc -l`,
+      `docker exec -e PGUSER=mcp_readonly -e PGDATABASE=postgres supabase-db psql -U mcp_readonly -At -c 'select 1'`,
+      `echo start ; ${D} -U mcp_readonly -c 'select 1' && ${D} -U longevidad_ro -c 'select 2'`,
+    ]) allowed(cmd);
+    // The raw command is judged once per command, so a long chain of valid invocations stays linear.
+    const chain = `${D} -U mcp_readonly -c 'select 1' ; `.repeat(2000);
+    const t0 = Date.now();
+    expect(validateShellCommand(chain).allowed).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(1500);
   });
 
   it("finds the docker word behind wrappers, paths, global flags, separators and shell re-entry", () => {
@@ -2822,7 +3006,6 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       "docker -l debug ps", "docker -D ps", "timeout 5 docker ps", "watch -n 5 docker stats --no-stream",
       // `bash -c` re-validation strips `-x` flags from the string; the docker rule reads it from the outer walk intact
       "bash -c 'docker -l debug ps'", "sh -c \"docker compose -f x.yml ps\"", "bash -c 'docker logs -f --tail 5 supabase-db'",
-      "bash -c 'docker exec -it supabase-db psql -c \"select 1\"'",
       // LIFECYCLE (not ruled: allowed at HEAD, still allowed)
       "docker start x", "docker stop x", "docker restart supabase-db", "docker kill x", "docker rm x", "docker rmi x",
       "docker pause x", "docker unpause x", "docker pull postgres:16", "docker tag a b", "docker rename a b",
@@ -2883,7 +3066,7 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       "DOCKER_HOST=tcp://x docker exec supabase-db psql",
       "docker exec -e DOCKER_HOST=tcp://x supabase-db psql", // not PG*, and DOCKER_HOST= is refused anywhere
     ]) refused(cmd);
-    refused("docker exec -e PGHOST=/var/run/docker.sock supabase-db psql", /Docker API socket/);
+    refused("docker exec -e PGHOST=/var/run/docker.sock supabase-db psql -U mcp_readonly", /\(PGHOST\).*ruling 5a|Docker API socket/);
   });
 
   it("ruling 5d: ANY `DOCKER_*=` assignment is refused, wherever it appears; reads and lowercase are not", () => {
@@ -3004,7 +3187,7 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     try {
       writeFileSync(
         join(tmp, "package.json"),
-        JSON.stringify({ scripts: { "docker:logs": "docker logs --tail 20 db", "docker:sh": "docker exec -it db sh", "db:psql": "docker exec -i supabase-db psql -U postgres" } }),
+        JSON.stringify({ scripts: { "docker:logs": "docker logs --tail 20 db", "docker:sh": "docker exec -it db sh", "db:psql": "docker exec supabase-db psql -U mcp_readonly -c 'select 1'" } }),
       );
       allowed(`cd ${tmp} && npm run docker:logs`);
       allowed(`cd ${tmp} && npm run db:psql`);
@@ -3029,10 +3212,11 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     for (const cmd of [
       "bash <<< 'docker ps'",
       "bash <<<'docker ps'",
-      "bash <<< 'docker exec supabase-db psql -c \"select 1\"'",
       "cat <<< 'docker frob'", // not fed to a shell: argument data
       "cat <<< hello",
     ]) allowed(cmd);
+    // The psql form via a here-string is a shell re-entry — ruling 5a refuses it.
+    refused("bash <<< 'docker exec supabase-db psql -U mcp_readonly -c \"select 1\"'", /shell re-entry.*ruling 5a/);
   });
 
   it("short flags follow pflag: the first value letter takes the rest of the token (audit fold 1, C2)", () => {
@@ -3061,7 +3245,7 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     for (const cmd of [
       "docker --log-level debug ps", // MB: --log-level takes a value
       "docker 2>/dev/null ps", // MG: a redirection before the verb is skipped
-      "docker exec 2>/dev/null supabase-db psql -c 'select 1'",
+      "docker exec 2>/dev/null supabase-db psql -U mcp_readonly -c 'select 1'",
       `docker ${"-D ".repeat(63)}ps`, // 63 flag tokens pass
     ]) allowed(cmd);
     for (const cmd of [

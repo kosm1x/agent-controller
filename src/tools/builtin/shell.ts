@@ -1771,21 +1771,297 @@ function dockerPositional(tokens: string[], k: number, valueFlag: RegExp | null,
  * refused; on any other exec form the container/command check refuses first.
  */
 const DOCKER_EXEC_ENV_RE = /^PG\w*(?:=|$)/;
+
+/**
+ * Ruling 5a (2026-10-18, operator option a — gate only): `docker exec … supabase-db psql …` runs only as a
+ * read-only role. Inside the container the socket is peer/trust, so `-U postgres` (the sole superuser)
+ * connects with no password, and `\c - postgres` over that socket switches an exec'd psql to the superuser
+ * (verified read-only: current_user=postgres, rolsuper=t). The gate does not parse SQL and does not try to
+ * read shell text with a parser simpler than the shell (qa R1 C1: quote-fused `-U'postgres'`). It restricts
+ * the INPUT to a closed grammar on which this tokenizer and the shell agree by construction:
+ *   - Once a psql form is confirmed, every raw token of the command is a BARE word
+ *     (`[A-Za-z0-9_.,:/=-]+`: no quotes, `$`, backslash, globs, parens, redirections), one of the
+ *     terminators `|` `;` `&&` `||` `2>&1` `2>/dev/null` (or a newline), a docker env value
+ *     `PG…=$SECRET_X` (ruling 3c), or — only as a psql `-c`/`--command` value — ONE whole single-quoted
+ *     span with no `'`, backslash or newline inside. The shell gives each such token to its program
+ *     literally, so what the gate reads is what psql receives. Anything else: "psql argument grammar".
+ *   - psql arguments are a positive allow-list (getopt consumption mirrored): `-U`/`--username[=]` with a
+ *     role in PSQL_RO_ROLES, exactly once (docker `-e PGUSER=` may also appear and must agree);
+ *     `-d`/`--dbname[=]` or ONE positional (not both) matching `[A-Za-z0-9_]+` (no `=` `/` `:` — so no URI or
+ *     conninfo); `-c '<sql>'` / `--command '<sql>'` (repeatable); `-v`/`--set`/`--variable` `NAME=value`;
+ *     `-F`/`-R`/`--field-separator=`/`--record-separator=` with a 1–3 char value; the switches `-A -t -q -X -x
+ *     -E -1 --csv --tuples-only --no-align --quiet --no-psqlrc --single-transaction --expanded` and short
+ *     clusters made only of those letters. Every other flag (`-o`, `-L`, `-f`, `-P`, `-h`, `-p`, `-e`, `-l`,
+ *     `-W`, `-0`, `--`, any abbreviation, …) is refused: `-o`/`-L` write container files as the postgres OS
+ *     user (qa R1 C2), `-f`/stdin bring unseen meta-commands.
+ *   - Defense in depth: a backslash anywhere, any `<<`, docker `-i`/`--interactive`, stdin redirection and a
+ *     shell re-entry (`bash -c`, `eval`, here-string to a shell) are refused. `-v` values cannot run a
+ *     meta-command (no backslash can reach the text).
+ *   - Every bare `supabase-db psql` invocation in the command is checked, and the normalized walk may not
+ *     confirm more psql forms than the raw text spells bare (a quoted, `$`-built or interpreter-embedded
+ *     form is refused).
+ *   - Rulings 5/5b (only `-e PG*` env on docker exec, container exactly `supabase-db`) are unchanged.
+ *   - Residual by construction (qa R3 I1/W1): the gate judges only the literal command text. A script file
+ *     (`sh x.sh`, `node x.js`, `make`) or `npm run <script> -- <args>` (argv appended after the checked body)
+ *     can carry `-U postgres` past it; only a DB-side control (pg_hba for `postgres`, ruling 5a option b)
+ *     closes that route. Queue 4m.
+ */
+const PSQL_RO_ROLES = new Set(["mcp_readonly", "longevidad_ro"]);
+const PSQL_ROLE_REASON =
+  "psql on supabase-db runs only as a read-only role, given once as a bare word (-U mcp_readonly | -U longevidad_ro); ruling 5a 2026-10-18";
+const psql5a = (what: string): string => `psql on supabase-db: ${what}; ruling 5a 2026-10-18`;
+const PSQL_REENTRY_REASON = psql5a("read-only form not allowed via a shell re-entry (bash -c/eval)");
+const PSQL_STDIN_REASON = psql5a("-i / stdin / heredoc refused");
+const PSQL_BACKSLASH_REASON = psql5a("backslash (meta-command) refused");
+const PSQL_GRAMMAR_REASON = psql5a(
+  "psql argument grammar — every token must be a bare word [A-Za-z0-9_.,:/=-] or, as a -c value only, one whole single-quoted span; the role must be a bare word",
+);
+const PSQL_DBNAME_REASON = psql5a("database name must match [A-Za-z0-9_]+ (no URI/conninfo)");
+const PSQL_POSITIONAL_REASON = psql5a("a second positional or a positional beside -d (username slot) is refused (use -U mcp_readonly | -U longevidad_ro)");
+const PSQL_DISAGREE_REASON = psql5a("-U and -e PGUSER must name the same read-only role");
+const psqlFlagRefusal = (flag: string): string => psql5a(`flag not allowed (${flag})`);
+const PSQL_HEAD_REASON = psql5a(
+  "psql form must start its segment (docker …, or timeout <n> docker …); argument-appending wrappers refused",
+);
+const PSQL_PGPASSWORD_REASON = psql5a("PGPASSWORD only as -e PGPASSWORD=$SECRET_… or a bare -e PGPASSWORD (rulings 3c/5b)");
+const PSQL_TIMEOUT_RE = /^[0-9]+[smh]?$/;
+
+const PSQL_BARE_RE = /^[A-Za-z0-9_.,:/=-]+$/;
+const PSQL_SQUOTED_RE = /^'[^'\\\n]*'$/;
+const PSQL_DBNAME_RE = /^[A-Za-z0-9_]+$/;
+const PSQL_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.-]+$/;
+const PSQL_SEP_RE = /^[A-Za-z0-9_.,:/=-]{1,3}$/;
+/** Ruling 3c by-name secret use as a docker env value, e.g. `-e PGPASSWORD=$SECRET_T`. */
+const PSQL_SECRET_ENV_RE = /^PG[A-Z0-9_]*=\$SECRET_[A-Z0-9_]+$/;
+const PSQL_SWITCH_LETTERS = new Set(["A", "t", "q", "X", "x", "E", "1"]);
+const PSQL_SWITCH_LONG = new Set([
+  "--csv", "--tuples-only", "--no-align", "--quiet", "--no-psqlrc", "--single-transaction", "--expanded",
+]);
+/** Command terminators; a newline token is "\n". */
+const PSQL_END = new Set(["|", ";", "&&", "||", "\n"]);
+/** Redirections allowed only at the end of an invocation (a later token must be a terminator or the end). */
+const PSQL_REDIR_END = new Set(["2>&1", "2>/dev/null"]);
+
+/**
+ * Split the RAW command on unquoted spaces (and unquoted newlines, emitted as a "\n" token); a quoted span
+ * stays inside its token verbatim, quotes included. Linear. Token CONTENT is judged by the grammar, never
+ * interpreted here, so a spelling this splitter does not understand is simply a token that fails the grammar.
+ */
+function psqlRawTokens(s: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  let has = false;
+  let q: string | null = null;
+  const flush = () => {
+    if (has) out.push(buf);
+    buf = "";
+    has = false;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (q !== null) {
+      buf += ch;
+      if (ch === q) q = null;
+      continue;
+    }
+    if (ch === " ") { flush(); continue; }
+    if (ch === "\n") { flush(); out.push("\n"); continue; }
+    if (ch === "'" || ch === '"') q = ch;
+    buf += ch;
+    has = true;
+  }
+  flush();
+  return out;
+}
+
+/** Indices `p` where `toks[p-1]` is `supabase-db` and `toks[p]` is `psql` (both bare). */
+function psqlAnchors(toks: string[]): number[] {
+  const out: number[] = [];
+  for (let p = 1; p < toks.length; p++) if (toks[p] === "psql" && toks[p - 1] === "supabase-db") out.push(p);
+  return out;
+}
+
+/**
+ * Validate one psql argument span starting at `j` (the token after `psql`) against the closed grammar.
+ * Returns the refusal, or the index one past the span (the terminator or the end) and its role.
+ */
+function checkPsqlSpan(toks: string[], j: number): string | { end: number; role: string } {
+  let role: string | undefined;
+  let roles = 0;
+  let positional = 0;
+  let dbFlags = 0;
+  const val = (): string | undefined => {
+    const n = toks[j + 1];
+    if (n === undefined || PSQL_END.has(n) || PSQL_REDIR_END.has(n)) return undefined;
+    j++;
+    return n;
+  };
+  for (; j < toks.length; j++) {
+    const t = toks[j]!;
+    if (PSQL_END.has(t)) break;
+    if (PSQL_REDIR_END.has(t)) {
+      const n = toks[j + 1];
+      if (n !== undefined && !PSQL_END.has(n) && !PSQL_REDIR_END.has(n)) return PSQL_GRAMMAR_REASON; // args after a redirection
+      continue;
+    }
+    if (t.startsWith("<")) return PSQL_STDIN_REASON;
+    if (!PSQL_BARE_RE.test(t)) return PSQL_GRAMMAR_REASON;
+    let roleVal: string | undefined | null = null; // null = this token is not a role flag
+    if (t === "-U" || t === "--username") roleVal = val();
+    else if (t.startsWith("--username=")) roleVal = t.slice("--username=".length);
+    if (roleVal !== null) {
+      if (roleVal !== undefined && !PSQL_BARE_RE.test(roleVal)) return PSQL_GRAMMAR_REASON;
+      if (roleVal === undefined || !PSQL_RO_ROLES.has(roleVal)) return PSQL_ROLE_REASON;
+      role = roleVal;
+      roles++;
+      continue;
+    }
+    if (t === "-d" || t === "--dbname" || t.startsWith("--dbname=")) {
+      const v = t.startsWith("--dbname=") ? t.slice("--dbname=".length) : val();
+      if (v !== undefined && !PSQL_BARE_RE.test(v)) return PSQL_GRAMMAR_REASON;
+      if (v === undefined || !PSQL_DBNAME_RE.test(v)) return PSQL_DBNAME_REASON;
+      dbFlags++;
+      continue;
+    }
+    if (t === "-c" || t === "--command") {
+      const v = val();
+      if (v === undefined || !PSQL_SQUOTED_RE.test(v)) return PSQL_GRAMMAR_REASON;
+      continue;
+    }
+    if (t === "-v" || t === "--set" || t === "--variable" || t.startsWith("--set=") || t.startsWith("--variable=")) {
+      const eq = t.startsWith("--") ? t.indexOf("=") : -1;
+      const v = eq !== -1 ? t.slice(eq + 1) : val();
+      if (v === undefined || !PSQL_VAR_RE.test(v)) return PSQL_GRAMMAR_REASON;
+      continue;
+    }
+    if (t === "-F" || t === "-R" || t.startsWith("--field-separator=") || t.startsWith("--record-separator=")) {
+      const v = t.startsWith("--") ? t.slice(t.indexOf("=") + 1) : val();
+      if (v === undefined || !PSQL_SEP_RE.test(v)) return PSQL_GRAMMAR_REASON;
+      continue;
+    }
+    if (PSQL_SWITCH_LONG.has(t)) continue;
+    if (/^-[A-Za-z0-9]+$/.test(t)) {
+      for (const L of t.slice(1)) if (!PSQL_SWITCH_LETTERS.has(L)) return psqlFlagRefusal(t);
+      continue;
+    }
+    if (t.startsWith("-")) return psqlFlagRefusal(t.replace(/=.*/, "="));
+    positional++;
+    if (!PSQL_DBNAME_RE.test(t)) return PSQL_DBNAME_REASON;
+  }
+  // One positional = the database. A second one (or one beside -d) lands in psql's username slot.
+  if (positional > 1 || (positional === 1 && dbFlags > 0)) return PSQL_POSITIONAL_REASON;
+  if (roles !== 1 || role === undefined) return PSQL_ROLE_REASON;
+  return { end: j, role };
+}
+
+/**
+ * Fold 2 (qa R2): a psql form is the HEAD of its segment (raw tokens between terminators): exactly `docker …`
+ * or `timeout <n> docker …`. Anything in front (`xargs`, `env`, `nice`, `find -exec`, a path, a variable)
+ * may append words the grammar never saw — `echo -U postgres | xargs docker exec … psql -U mcp_readonly`
+ * makes psql take the LAST -U. Then docker's `-e`/`--env` names on the form are an allow-list: PGUSER=<bare>
+ * (its role must agree with -U), PGDATABASE=<dbname>, PGPASSWORD (bare pass-through or =$SECRET_…); every
+ * other name (PGOPTIONS, PGSERVICE, PGSYSCONFDIR, PGHOST, PGPASSFILE, …) can redirect the connection or its
+ * options. `start` = the segment's first token, `db` = the index of `supabase-db`; the docker flags in
+ * between were already shaped by checkDockerExec (only i/t/e clusters, --tty, --interactive, --env[=]).
+ */
+function checkPsqlHead(toks: string[], start: number, db: number): string | null {
+  let k = start;
+  if (toks[k] === "timeout") {
+    if (!PSQL_TIMEOUT_RE.test(toks[k + 1] ?? "")) return PSQL_HEAD_REASON;
+    k += 2;
+  }
+  if (toks[k] !== "docker") return PSQL_HEAD_REASON;
+  for (k++; k < db; k++) {
+    const t = toks[k]!;
+    let v: string | undefined;
+    if (t === "--env") v = toks[++k];
+    else if (t.startsWith("--env=")) v = t.slice("--env=".length);
+    else {
+      const m = /^-[it]*e(.*)$/.exec(t);
+      if (m) v = m[1] || toks[++k];
+    }
+    if (v === undefined) continue;
+    const name = v.replace(/=.*/s, "");
+    if (name === "PGUSER") {
+      if (!/^PGUSER=[A-Za-z0-9_]+$/.test(v)) return PSQL_ROLE_REASON; // the role itself is compared with -U
+    } else if (name === "PGDATABASE") {
+      if (!/^PGDATABASE=[A-Za-z0-9_]+$/.test(v)) return PSQL_DBNAME_REASON;
+    } else if (name === "PGPASSWORD") {
+      if (v !== "PGPASSWORD" && !/^PGPASSWORD=\$SECRET_[A-Z0-9_]+$/.test(v)) return PSQL_PGPASSWORD_REASON;
+    } else return psql5a(`env name not allowed on the psql form (${name})`);
+  }
+  return null;
+}
+
+/** Per-command state for the ruling-5a check: the raw text, its one-time grammar verdict, confirmed forms. */
+type PsqlCtx = { raw: string; confirmed: number; parsed?: { verdict: string | null; anchors: number; roles: Set<string> } };
+
+/** The grammar verdict for the whole raw command: every bare `supabase-db psql` span + every token outside them. */
+function parsePsqlRaw(raw: string): NonNullable<PsqlCtx["parsed"]> {
+  const roles = new Set<string>();
+  const done = (verdict: string | null, anchors = 0) => ({ verdict, anchors, roles });
+  if (raw.includes("\\")) return done(PSQL_BACKSLASH_REASON);
+  if (raw.includes("<<")) return done(PSQL_STDIN_REASON);
+  const toks = psqlRawTokens(raw);
+  const anchors = psqlAnchors(toks);
+  const inSpan = new Uint8Array(toks.length);
+  const segStart = new Uint32Array(toks.length);
+  for (let i = 0, st = 0; i < toks.length; i++) {
+    segStart[i] = st;
+    if (PSQL_END.has(toks[i]!)) st = i + 1;
+  }
+  for (const p of anchors) {
+    const head = checkPsqlHead(toks, segStart[p]!, p - 1);
+    if (head) return done(head);
+    const span = checkPsqlSpan(toks, p + 1);
+    if (typeof span === "string") return done(span);
+    roles.add(span.role);
+    inSpan.fill(1, p + 1, span.end);
+  }
+  for (let i = 0; i < toks.length; i++) {
+    if (inSpan[i]) continue;
+    const t = toks[i]!;
+    if (PSQL_END.has(t) || PSQL_REDIR_END.has(t) || PSQL_BARE_RE.test(t) || PSQL_SECRET_ENV_RE.test(t)) continue;
+    return done(t.startsWith("<") ? PSQL_STDIN_REASON : PSQL_GRAMMAR_REASON);
+  }
+  return done(null, anchors.length);
+}
+
+/**
+ * Called once per psql form the normalized walk confirms. The raw command is judged once (parsePsqlRaw, so
+ * a long chain stays linear); the walk may not confirm more psql forms than the raw text spells bare.
+ * `envUser` is this invocation's docker `-e PGUSER=` value; every span's -U must equal it (a chained
+ * command agrees throughout).
+ */
+function checkPsqlReadonly(ctx: PsqlCtx, envUser: string | undefined): string | null {
+  ctx.confirmed++;
+  ctx.parsed ??= parsePsqlRaw(ctx.raw);
+  const { verdict, anchors, roles } = ctx.parsed;
+  if (verdict) return verdict;
+  if (ctx.confirmed > anchors) return PSQL_GRAMMAR_REASON;
+  if (envUser !== undefined && [...roles].some((r) => r !== envUser)) return PSQL_DISAGREE_REASON;
+  return null;
+}
+
 /**
  * `exec [-i|-t|--interactive|--tty|-e PG…|--env PG…] supabase-db psql …` is the one exec form; `k` is the
  * index after `exec`. Short flags follow pflag: `i`/`t` are booleans, `e` takes the rest of its token as
- * its value (`-ePGHOST=h`, `-ie PGUSER=u` takes the next token); any other letter is refused.
+ * its value (`-ePGHOST=h`, `-ie PGUSER=u` takes the next token); any other letter is refused. Once the
+ * `supabase-db psql` form is confirmed, ruling 5a (read-only role) applies via checkPsqlReadonly.
  */
-function checkDockerExec(tokens: string[], k: number, label: string): string | null {
+function checkDockerExec(tokens: string[], k: number, label: string, reentry: boolean, psql: PsqlCtx): string | null {
   let bad: string | undefined;
   let c = -1;
+  let interactive = false;
+  let envUser: string | undefined;
   for (let n = 0; k < tokens.length; n++) {
     if (n >= DOCKER_SCAN_CAP) break;
     const t = tokens[k]!;
     if (REDIRECTION_RE.test(t)) { k += redirectionSpan(tokens, k); continue; }
     if (!t.startsWith("-") || t === "-") { c = k; break; }
     k++;
-    if (t === "--interactive" || t === "--tty") continue;
+    if (t === "--interactive") { interactive = true; continue; }
+    if (t === "--tty") continue;
     let value: string | undefined;
     if (t === "--env") value = tokens[k++] ?? "";
     else if (t.startsWith("--env=")) value = t.slice("--env=".length);
@@ -1794,9 +2070,14 @@ function checkDockerExec(tokens: string[], k: number, label: string): string | n
       const e = letters.indexOf("e");
       const bools = e === -1 ? letters : letters.slice(0, e);
       if (!/^[it]*$/.test(bools)) { bad = t; break; }
+      if (bools.includes("i")) interactive = true;
       if (e !== -1) value = letters.slice(e + 1) || (tokens[k++] ?? "");
     } else { bad = t; break; }
-    if (value !== undefined && !DOCKER_EXEC_ENV_RE.test(value)) { bad = `${t} ${value}`.trim(); break; }
+    if (value !== undefined) {
+      if (!DOCKER_EXEC_ENV_RE.test(value)) { bad = `${t} ${value}`.trim(); break; }
+      const u = /^PGUSER=(.*)$/.exec(value);
+      if (u) envUser = u[1];
+    }
   }
   if (c === -1 && !bad && k >= tokens.length) c = tokens.length;
   let cmd = c + 1;
@@ -1804,7 +2085,10 @@ function checkDockerExec(tokens: string[], k: number, label: string): string | n
   if (bad || c === -1 || tokens[c] !== "supabase-db" || tokens[cmd] !== "psql") {
     return dockerRefusal(`${label} ${bad ?? (c === -1 ? "…" : `${tokens[c] ?? ""} ${tokens[cmd] ?? ""}`.trim())}`);
   }
-  return null;
+  // Ruling 5a (2026-10-18): the supabase-db psql form runs read-only only.
+  if (reentry) return PSQL_REENTRY_REASON;
+  if (interactive) return PSQL_STDIN_REASON;
+  return checkPsqlReadonly(psql, envUser);
 }
 
 /**
@@ -1832,8 +2116,8 @@ function checkVolumeCreate(tokens: string[], k: number): string | null {
   return null;
 }
 
-/** The docker word at `tokens[i]`; `strict` = command position (an unknown verb is refused there). */
-function checkDockerAt(tokens: string[], i: number, strict: boolean): string | null {
+/** The docker word at `tokens[i]`; `strict` = command position (an unknown verb is refused there). `reentry` = behind a shell re-entry (bash -c/eval); `psql` = the ruling-5a state (raw command + confirmed psql forms). */
+function checkDockerAt(tokens: string[], i: number, strict: boolean, reentry: boolean, psql: PsqlCtx): string | null {
   const bin = tokens[i]!.replace(/^.*\//, "");
   const flags: string[] = [];
   let k = i;
@@ -1858,7 +2142,7 @@ function checkDockerAt(tokens: string[], i: number, strict: boolean): string | n
   }
   if (cls === undefined) return strict ? dockerRefusal(`${label} (unknown verb)`) : null;
   if (redirect) return dockerRefusal(`docker ${redirect}`);
-  if (cls === "exec") return checkDockerExec(tokens, k + 1, label);
+  if (cls === "exec") return checkDockerExec(tokens, k + 1, label, reentry, psql);
   if (cls === "refuse") return dockerRefusal(label);
   return verb === "volume" && tokens[k] === "create" ? checkVolumeCreate(tokens, k + 1) : null;
 }
@@ -1884,6 +2168,7 @@ export function checkPackageManagerRaw(
   const scan = spaceRedirections(normalizeShellText(`${stripQuotedHeredocs(command)}\n${interpreterHeredocBodies(command)}`));
   const assignDefault = opts.docker !== false ? DOCKER_ASSIGN_DEFAULT_RE.exec(command)?.[0] : undefined;
   if (assignDefault) return dockerRefusal(assignDefault);
+  const psqlCtx: PsqlCtx = { raw: command, confirmed: 0 };
   // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
   // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
   // rules see the whole segment from each package-manager word onward
@@ -1934,7 +2219,7 @@ export function checkPackageManagerRaw(
       if (DOCKER_ENV_ASSIGN_RE.test(t)) return dockerRefusal(t.replace(/=.*/, "="));
       const word = t.replace(/^.*\//, "");
       if (DOCKER_WORD_RE.test(word)) {
-        const verdict = checkDockerAt(dTokens, i, !inDocker && (lead || behindWrapper));
+        const verdict = checkDockerAt(dTokens, i, !inDocker && (lead || behindWrapper), reentry, psqlCtx);
         if (verdict) return verdict;
         inDocker = true;
       }

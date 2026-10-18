@@ -583,7 +583,7 @@ describe("guard parity (qa C1)", () => {
     }
     expect(spawned).toBe(0);
     const ok = await runCheck(
-      { check_cmd: "docker exec supabase-db psql -U postgres -tAc 'select 1'", expect: "1" },
+      { check_cmd: "docker exec supabase-db psql -U mcp_readonly -tA -c 'select 1'", expect: "1" },
       { timeoutMs: 1000, exec },
     );
     expect(spawned).toBe(1);
