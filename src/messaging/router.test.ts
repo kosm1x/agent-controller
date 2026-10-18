@@ -321,7 +321,7 @@ import {
   storePendingConfirmation,
   argsSha256,
 } from "./confirmations.js";
-import { scopeMissFallbackLine } from "./scope-miss.js";
+import { scopeMissFallbackLine, SCOPE_RERUN_NOTICE } from "./scope-miss.js";
 import { registerProjectScopeGroups, _resetProjectScopeGroups } from "./scope.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
@@ -2609,9 +2609,10 @@ describe("MessageRouter", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      // Only the ack reached the channel — never the ask.
-      expect(waAdapter.sentMessages).toHaveLength(1);
+      // The ack and the re-run notice reached the channel — never the ask.
+      expect(waAdapter.sentMessages).toHaveLength(2);
       expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+      expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
       // The same turn was resubmitted with tweet_post (social group) in scope.
       const rerun = mocked.mock.calls.at(-1)![0] as {
         tools: string[];
@@ -2634,8 +2635,8 @@ describe("MessageRouter", () => {
           duration_ms: 500,
         },
       });
-      expect(waAdapter.sentMessages).toHaveLength(2);
-      expect(waAdapter.sentMessages[1].text).toContain("Publicado");
+      expect(waAdapter.sentMessages).toHaveLength(3);
+      expect(waAdapter.sentMessages[2].text).toContain("Publicado");
     });
 
     it("usability Phase 1.2 on Telegram (R1 audit C1): the streamed ask never reaches the placeholder and the re-run answers IN the same placeholder", async () => {
@@ -2701,8 +2702,9 @@ describe("MessageRouter", () => {
       });
       await Promise.resolve();
       await Promise.resolve();
-      // The placeholder was reset — the ask is no longer what the screen shows.
-      expect(edits.at(-1)?.text).toBe("⏳");
+      // The placeholder was reset — the ask is no longer what the screen shows;
+      // the re-run notice now does.
+      expect(edits.at(-1)?.text).toBe(SCOPE_RERUN_NOTICE);
       // The re-run streams into the SAME message and finalizes it there.
       const rerunCall = mocked.mock.calls.at(-1)![0] as {
         onTextChunk?: (c: string) => void;
@@ -2764,7 +2766,8 @@ describe("MessageRouter", () => {
       await Promise.resolve();
       await Promise.resolve();
       // Not delivered; re-run with the SAME tool list + a system correction.
-      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
       const rerun = mocked.mock.calls.at(-1)![0] as {
         tools: string[];
         tags: string[];
@@ -2873,8 +2876,9 @@ describe("MessageRouter", () => {
           duration_ms: 1,
         },
       });
-      expect(waAdapter.sentMessages).toHaveLength(2);
-      expect(waAdapter.sentMessages[1].text).toContain("Publicado el tweet");
+      expect(waAdapter.sentMessages).toHaveLength(3);
+      expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
+      expect(waAdapter.sentMessages[2].text).toContain("Publicado el tweet");
     });
 
     it("usability Phase 1.2: a scope-ask on the re-run itself delivers the honest fallback line, never a keyword to retype", async () => {
@@ -2885,6 +2889,7 @@ describe("MessageRouter", () => {
         text: "háblame de beeshake.com",
         timestamp: new Date(),
       });
+      const callsBefore = mocked.mock.calls.length;
       router.startEventListeners();
       mocked.mockResolvedValueOnce({
         taskId: "test-task-rerun2",
@@ -2911,11 +2916,324 @@ describe("MessageRouter", () => {
           duration_ms: 500,
         },
       });
-      expect(waAdapter.sentMessages).toHaveLength(2);
-      const text = waAdapter.sentMessages[1].text;
+      // ack, ONE re-run notice, the fallback: the re-run's own ask is refused
+      // a second re-run (rerunOf set), so no second notice.
+      expect(waAdapter.sentMessages).toHaveLength(3);
+      expect(
+        waAdapter.sentMessages.filter((m) => m.text === SCOPE_RERUN_NOTICE),
+      ).toHaveLength(1);
+      expect(
+        mocked.mock.calls
+          .slice(callsBefore)
+          .filter((c) => c[0].tags?.includes("scope-rerun")),
+      ).toHaveLength(1);
+      const text = waAdapter.sentMessages[2].text;
       expect(text).not.toContain("usa gemini");
       expect(text).not.toContain("gemini_image");
       expect(text).toContain("ni al reintentar");
+    });
+
+    it("2026-10-18 re-run notice: a submitted scope re-run sends exactly ONE harness notice to the original chat; the ask never reaches it and the notice never enters the thread", async () => {
+      const mocked = vi.mocked(submitTask);
+      // The LLM-text seam (sanitizeDeliverable via filterForDelivery): the
+      // answer passes it, the harness notice never does.
+      const seam = vi.spyOn(
+        router as unknown as { filterForDelivery(t: string, s: string): string },
+        "filterForDelivery",
+      );
+      mocked.mockResolvedValueOnce({
+        taskId: "notice-task-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "notice-task-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "notice-task-1",
+          agent_id: "fast",
+          result:
+            '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mocked.mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+      const notices = waAdapter.sentMessages.filter(
+        (m) => m.text === SCOPE_RERUN_NOTICE,
+      );
+      expect(notices).toEqual([
+        {
+          channel: "whatsapp",
+          to: "owner@s.whatsapp.net",
+          text: SCOPE_RERUN_NOTICE,
+        },
+      ]);
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      expect(
+        waAdapter.sentMessages.some((m) => m.text.includes("tweet_post")),
+      ).toBe(false);
+
+      findHandler("task.completed")!({
+        data: {
+          task_id: "notice-task-rerun",
+          agent_id: "fast",
+          result: "Beeshake vende suscripciones B2B; margen bruto ~60 %.",
+          duration_ms: 500,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(3);
+      expect(waAdapter.sentMessages[2].text).toContain("Beeshake vende");
+      // Still one notice; the thread records the answer, never the notice.
+      expect(
+        waAdapter.sentMessages.filter((m) => m.text === SCOPE_RERUN_NOTICE),
+      ).toHaveLength(1);
+      const entries = _testThreadEntries(
+        threadKey("whatsapp", "owner@s.whatsapp.net"),
+      );
+      expect(entries.some((e) => e.text.includes("Beeshake vende"))).toBe(true);
+      expect(entries.some((e) => e.text.includes(SCOPE_RERUN_NOTICE))).toBe(
+        false,
+      );
+      const seamTexts = seam.mock.calls.map((c) => c[0]);
+      expect(seamTexts.some((t) => t.includes("Beeshake vende"))).toBe(true);
+      expect(seamTexts.some((t) => t.includes(SCOPE_RERUN_NOTICE))).toBe(false);
+    });
+
+    it("2026-10-18 re-run notice on Telegram: the notice replaces the ⏳ placeholder WITHOUT finalizing it — the re-run still streams and finalizes its answer in the same message", async () => {
+      const edits: { messageId: number; text: string }[] = [];
+      const fakeBot = {
+        api: {
+          sendMessage: vi.fn().mockResolvedValue({ message_id: 778 }),
+          editMessageText: vi
+            .fn()
+            .mockImplementation(
+              async (_chat: string, messageId: number, text: string) => {
+                edits.push({ messageId, text });
+                return true;
+              },
+            ),
+        },
+      };
+      const tgAdapter = Object.assign(createMockAdapter("telegram"), {
+        getBot: () => fakeBot,
+      });
+      router.registerChannel(tgAdapter as unknown as ChannelAdapter);
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "tg-notice-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "telegram",
+        from: "12345",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "tg-notice-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "tg-notice-1",
+          agent_id: "fast",
+          result:
+            '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      // The notice is an edit of the placeholder, not a second message.
+      expect(edits.at(-1)).toEqual({ messageId: 778, text: SCOPE_RERUN_NOTICE });
+      expect(fakeBot.api.sendMessage).toHaveBeenCalledTimes(1); // the ⏳ placeholder
+      expect(tgAdapter.sentMessages).toHaveLength(0);
+      // Not finalized: the re-run's chunks still stream into the message …
+      const rerunCall = mocked.mock.calls.at(-1)![0] as {
+        onTextChunk?: (c: string) => void;
+        tags: string[];
+      };
+      expect(rerunCall.tags).toContain("scope-rerun");
+      rerunCall.onTextChunk!("Beeshake vende");
+      vi.advanceTimersByTime(2000);
+      expect(edits.at(-1)?.text).toContain("Beeshake vende");
+      // … and its finalize delivers the answer in place.
+      findHandler("task.completed")!({
+        data: {
+          task_id: "tg-notice-rerun",
+          agent_id: "fast",
+          result: "Beeshake vende suscripciones B2B; margen bruto ~60 %.",
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      router.unregisterChannel("telegram");
+      expect(edits.at(-1)?.messageId).toBe(778);
+      expect(edits.at(-1)?.text).toContain("margen bruto");
+      expect(tgAdapter.sentMessages).toHaveLength(0);
+      expect(fakeBot.api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(edits.filter((e) => e.text === SCOPE_RERUN_NOTICE)).toHaveLength(1);
+    });
+
+    it("2026-10-18 re-run notice: a FAILED re-run submit sends only the error fallback line, never the notice", async () => {
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "notice-fail-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockRejectedValueOnce(new Error("dispatcher down"));
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        findHandler("task.completed")!({
+          data: {
+            task_id: "notice-fail-1",
+            agent_id: "fast",
+            result:
+              '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+            duration_ms: 500,
+          },
+        });
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      } finally {
+        errSpy.mockRestore();
+      }
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([
+        expect.stringContaining("Recibido"),
+        scopeMissFallbackLine("error"),
+      ]);
+    });
+
+    it("2026-10-18 re-run notice: an email turn gets NO notice (and no «Recibido») — only the re-run's answer is sent", async () => {
+      const sent: OutgoingMessage[] = [];
+      const emailAdapter = {
+        name: "email:owner",
+        mode: "owner-only" as const,
+        sentMessages: sent,
+        start: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(async (msg: OutgoingMessage) => {
+          sent.push(msg);
+          return "id";
+        }),
+        onMessage: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        isConnected: () => true,
+      };
+      router.registerChannel(emailAdapter as never);
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "email-notice-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "email:owner" as never,
+        from: "owner@example.com",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "email-notice-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      findHandler("task.completed")!({
+        data: {
+          task_id: "email-notice-1",
+          agent_id: "fast",
+          result:
+            '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+          duration_ms: 500,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mocked.mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+      findHandler("task.completed")!({
+        data: {
+          task_id: "email-notice-rerun",
+          agent_id: "fast",
+          result: "Beeshake vende suscripciones B2B; margen bruto ~60 %.",
+          duration_ms: 500,
+        },
+      });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      router.unregisterChannel("email:owner" as never);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].text).toContain("Beeshake vende");
+      expect(sent[0].to).toBe("owner@example.com");
+      expect(waAdapter.sentMessages).toHaveLength(0);
+    });
+
+    it("2026-10-18 re-run interim: a re-run still running at +2 min sends «Sigo trabajando en eso...» after the notice (the first run's interim was cleared)", async () => {
+      const mocked = vi.mocked(submitTask);
+      mocked.mockResolvedValueOnce({
+        taskId: "interim-task-1",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "háblame de beeshake.com y su modelo de negocio",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      mocked.mockResolvedValueOnce({
+        taskId: "interim-task-rerun",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      // The first run ends well under 2 min with the ask: its timers clear.
+      vi.advanceTimersByTime(30_000);
+      findHandler("task.completed")!({
+        data: {
+          task_id: "interim-task-1",
+          agent_id: "fast",
+          result:
+            '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+          duration_ms: 30_000,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([
+        expect.stringContaining("Recibido"),
+        SCOPE_RERUN_NOTICE,
+      ]);
+      vi.advanceTimersByTime(119_000);
+      expect(waAdapter.sentMessages).toHaveLength(2);
+      vi.advanceTimersByTime(1_000);
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([
+        expect.stringContaining("Recibido"),
+        SCOPE_RERUN_NOTICE,
+        "Sigo trabajando en eso...",
+      ]);
+      expect(waAdapter.sentMessages[2].to).toBe("owner@s.whatsapp.net");
     });
 
     it("a markers-only result delivers one Spanish failure line, never the raw marker (mutation guard for the filter wiring)", async () => {
@@ -3347,9 +3665,10 @@ describe("MessageRouter", () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        // Only the ack reached the channel — never the ask.
-        expect(waAdapter.sentMessages).toHaveLength(1);
+        // The ack and the re-run notice reached the channel — never the ask.
+        expect(waAdapter.sentMessages).toHaveLength(2);
         expect(waAdapter.sentMessages[0].text).toContain("Recibido");
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
         const rerun = mocked.mock.calls.at(-1)![0] as {
           tools: string[];
           tags: string[];
@@ -3374,8 +3693,8 @@ describe("MessageRouter", () => {
         });
         await Promise.resolve();
         expect(mocked.mock.calls.length).toBe(calls);
-        expect(waAdapter.sentMessages).toHaveLength(2);
-        expect(waAdapter.sentMessages[1].text).toBe(
+        expect(waAdapter.sentMessages).toHaveLength(3);
+        expect(waAdapter.sentMessages[2].text).toBe(
           scopeMissFallbackLine("rerun_missed"),
         );
       } finally {
@@ -3620,7 +3939,8 @@ describe("MessageRouter", () => {
         });
         await Promise.resolve();
         await Promise.resolve();
-        expect(waAdapter.sentMessages).toHaveLength(1);
+        expect(waAdapter.sentMessages).toHaveLength(2);
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
         const rerun = mocked.mock.calls.at(-1)![0] as { tags: string[] };
         expect(rerun.tags).toContain("scope-rerun");
       } finally {
@@ -3716,15 +4036,16 @@ describe("MessageRouter", () => {
         failHeavy("test-task-123");
         await Promise.resolve();
         await Promise.resolve();
-        expect(waAdapter.sentMessages).toHaveLength(1); // the ack only
+        expect(waAdapter.sentMessages).toHaveLength(2); // the ack + the re-run notice
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
         const rerun = mocked.mock.calls.at(-1)![0] as { tags: string[]; tools: string[] };
         expect(rerun.tags).toContain("scope-rerun");
         expect(rerun.tools).toContain("shell_exec");
 
         failHeavy("test-task-heavy-rerun");
         await Promise.resolve();
-        expect(waAdapter.sentMessages).toHaveLength(2);
-        expect(waAdapter.sentMessages[1].text).toBe(
+        expect(waAdapter.sentMessages).toHaveLength(3);
+        expect(waAdapter.sentMessages[2].text).toBe(
           scopeMissFallbackLine("rerun_missed"),
         );
       } finally {
@@ -3770,10 +4091,11 @@ describe("MessageRouter", () => {
         failHeavy("test-task-123");
         await Promise.resolve();
         await Promise.resolve();
-        expect(waAdapter.sentMessages).toHaveLength(1); // first run: silent re-run
+        expect(waAdapter.sentMessages).toHaveLength(2); // first run: re-run + its notice
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
         failHeavy("test-task-heavy-rerun2");
         await Promise.resolve();
-        const sent = waAdapter.sentMessages[1].text;
+        const sent = waAdapter.sentMessages[2].text;
         expect(sent).toContain("no se completó al 100%");
         expect(sent).toContain("Fase 2 — Cierre: margen estable.");
         expect(sent).not.toContain("Necesito `shell_exec`");

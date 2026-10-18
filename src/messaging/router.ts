@@ -170,6 +170,7 @@ import {
   groupsForTool,
   scopeMissFallbackLine,
   looksLikeScopeAsk,
+  SCOPE_RERUN_NOTICE,
 } from "./scope-miss.js";
 import {
   pinFromExchange,
@@ -4414,7 +4415,6 @@ export class MessageRouter {
     to: string,
     isCodingTask: boolean,
     opts: {
-      rerun?: boolean;
       stream?: TelegramStreamController;
       /** `/loop`: no abandon timer, repeating progress nudge instead. */
       unlimited?: boolean;
@@ -4424,11 +4424,11 @@ export class MessageRouter {
     finalTimer: ReturnType<typeof setTimeout>;
     abandonTimer: ReturnType<typeof setTimeout>;
   } {
-    // A scope re-run is the same user turn: the first run already sent the
-    // interim notice, so the re-run arms a no-op interim (R2 audit info).
+    // A scope re-run arms the same interim line: the first run's timers are
+    // cleared on completion, so a first run under 2 min never sent it and the
+    // re-run's first progress line was the 5-min one (2026-10-18).
     const interimTimer = setTimeout(() => {
-      if (!opts.rerun)
-        this.sendToChannel(channel, to, "Sigo trabajando en eso...");
+      this.sendToChannel(channel, to, "Sigo trabajando en eso...");
     }, TASK_TIMEOUT_INTERIM_MS);
 
     const finalTimer = setTimeout(() => {
@@ -4810,7 +4810,6 @@ export class MessageRouter {
           pending.to,
           spec.isCodingTask,
           {
-            rerun: true,
             stream: stream ?? undefined,
             unlimited: spec.tags.includes("loop"),
           },
@@ -4841,6 +4840,13 @@ export class MessageRouter {
         console.log(
           `[router] scope-miss re-run of ${taskId} → task ${result.taskId}`,
         );
+        // Harness notice, not the task's reply: on Telegram it replaces the ⏳
+        // placeholder (reset, never finalize — the re-run streams and
+        // finalizes in the same message); elsewhere one plain send. Email is
+        // skipped like the «Recibido» ack (inbox noise).
+        if (stream) stream.reset(SCOPE_RERUN_NOTICE);
+        else if (!isEmailChannel(pending.channel))
+          this.sendToChannel(pending.channel, pending.to, SCOPE_RERUN_NOTICE);
       })
       .catch((err) => {
         console.error(`[router] scope-miss re-run submit failed:`, err);

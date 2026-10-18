@@ -202,3 +202,7 @@ export function scopeMissFallbackLine(
       return "No pude reintentar este turno. ¿Lo vuelvo a intentar?";
   }
 }
+
+/** Harness notice on a submitted scope re-run: the re-run can take minutes and the withheld ask left the chat silent (2026-10-18, 11 min). */
+export const SCOPE_RERUN_NOTICE =
+  "Un momento — reintento con las herramientas correctas, puede tardar unos minutos.";
