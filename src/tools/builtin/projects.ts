@@ -35,6 +35,7 @@ import {
 } from "../../projects/projector.js";
 import { MIN_ALIAS_CHARS, aliasChars } from "../../projects/scope-groups.js";
 import {
+  configSecretLiterals,
   isProjectProseSecret,
   isProjectSecret,
   projectEntryLeaves,
@@ -525,6 +526,32 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
 // project_update
 // ---------------------------------------------------------------------------
 
+/** The value at `path` (object keys / list indices) of a JSON value, or undefined. */
+function valueAt(v: unknown, path: readonly string[]): unknown {
+  for (const k of path) {
+    if (v === null || typeof v !== "object") return undefined;
+    v = (v as Record<string, unknown>)[k];
+  }
+  return v;
+}
+
+/**
+ * Queue 3l ruling A: the first credential literal next to its name that the
+ * payload would ADD to the stored config (merged as updateProject merges),
+ * or undefined. A hit the stored config already has, same path and value,
+ * is not new.
+ */
+function configLiteralProblem(
+  stored: Record<string, unknown>,
+  payload: unknown,
+): { path: string[]; fragment: string } | undefined {
+  if (!isPlainObject(payload)) return undefined;
+  const merged = mergeProjectEntries(stored, payload);
+  const key = (obj: unknown, path: string[]) => `${path.join("\0")}\0${stable(valueAt(obj, path))}`;
+  const old = new Set(configSecretLiterals(stored).map((h) => key(stored, h.path)));
+  return configSecretLiterals(merged).find((h) => !old.has(key(merged, h.path)));
+}
+
 export const projectUpdateTool: Tool = {
   name: "project_update",
   readOnlyHint: false,
@@ -637,6 +664,18 @@ CREDENTIAL STORAGE:
         const rest = Object.fromEntries(Object.entries(config).filter(([k]) => !opOnly.includes(k)));
         rawArgs = { ...rawArgs, config: Object.keys(rest).length > 0 ? rest : undefined };
       }
+    }
+    // Queue 3l ruling A: a credential literal next to its name never enters
+    // `config` (row or record). Judged on the config as it would be stored
+    // (the payload merged over the row, so a name and a literal sent in two
+    // calls meet), before stored references resolve to their values. A pair
+    // the row already holds with the same value is not new and passes, as an
+    // operator-only echo does. Names the path and fragment only.
+    const literal = configLiteralProblem(row?.config ?? {}, rawArgs.config);
+    if (literal) {
+      return JSON.stringify({
+        error: `No guardé: config.${literal.path.join(".")} es un valor literal junto a un nombre con "${literal.fragment}" (forma de credencial); guarda el valor en credentials y usa la referencia {name, secret}, no un valor literal.`,
+      });
     }
     const refs = resolveProjectRefs(slug, rawArgs);
     if ("error" in refs) return refs.error;

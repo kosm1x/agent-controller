@@ -148,7 +148,7 @@ const rowsOf = () =>
 
 describe("walkProjectField", () => {
   it("walks nested objects and arrays; credential-named ancestors hide their children", () => {
-    const leaves = walkProjectField(JSON.parse(PROJECTS[0]!.credentials as string));
+    const leaves = walkProjectField(JSON.parse(PROJECTS[0]!.credentials as string), "credentials");
     const byPath = new Map(leaves.map((l) => [l.path.join("."), l]));
     expect([...byPath.keys()].sort()).toEqual(
       [`${KEYS}.0`, `${KEYS}.1`, "db.host", `db.${PW}`, "db.port", PW, "usuario", `${PWS}.primario`, `${PWS}.respaldo`].sort(),
@@ -217,7 +217,7 @@ describe("buildCensus", () => {
     let leaves = 0;
     for (const p of projects) {
       for (const field of ["credentials", "urls", "config"] as const) {
-        for (const leaf of walkProjectField(parse(p[field]))) {
+        for (const leaf of walkProjectField(parse(p[field]), field)) {
           leaves++;
           const name = secretRefName(projectIdentity(String(p.slug), field, leaf.path));
           if (leaf.secret) {
