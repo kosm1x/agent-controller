@@ -334,11 +334,12 @@ describe("pgCascadeStale", () => {
     expect([...parsed.searchParams.keys()]).toEqual([
       "related_to",
       "stale",
+      "updated_at",
       "select",
     ]);
   });
 
-  it("warns once with the status when the PATCH reply is not ok", async () => {
+  it("returns null and warns once with the status when the PATCH reply is not ok", async () => {
     process.env.COMMIT_DB_KEY = "test-key";
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockFetch.mockResolvedValueOnce({
@@ -349,7 +350,7 @@ describe("pgCascadeStale", () => {
 
     const count = await pgCascadeStale("source/original.md");
 
-    expect(count).toBe(1);
+    expect(count).toBeNull();
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenCalledOnce();
     const msg = String(warnSpy.mock.calls[0][0]);
@@ -357,7 +358,7 @@ describe("pgCascadeStale", () => {
     expect(msg).toContain("patch");
   });
 
-  it("returns 0 and warns once when the search reply is not ok", async () => {
+  it("returns null and warns once when the search reply is not ok", async () => {
     process.env.COMMIT_DB_KEY = "test-key";
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockFetch.mockResolvedValueOnce({
@@ -369,7 +370,7 @@ describe("pgCascadeStale", () => {
 
     const count = await pgCascadeStale("source/original.md");
 
-    expect(count).toBe(0);
+    expect(count).toBeNull();
     expect(mockFetch).toHaveBeenCalledOnce();
     expect(warnSpy).toHaveBeenCalledOnce();
     const msg = String(warnSpy.mock.calls[0][0]);
@@ -796,5 +797,295 @@ describe("coerceKbQualifier", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('"future_qualifier"'),
     );
+  });
+});
+
+// 4o: lineage is preserved on re-upsert — merge-duplicates overwrites only
+// the columns in the body, so `related_to` must be absent when not passed.
+describe("related_to body contract (4o)", () => {
+  const valid = {
+    path: "lineage/a.md",
+    title: "A",
+    content: "a body that clears the twenty char gate",
+  };
+
+  it("pgUpsert omits related_to when the caller did not pass it", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+    const { pgUpsert } = await import("./pgvector.js");
+    await pgUpsert(valid);
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("related_to");
+    expect(body.stale).toBe(false);
+  });
+
+  it("pgUpsert sends related_to when passed", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+    const { pgUpsert } = await import("./pgvector.js");
+    await pgUpsert({ ...valid, related_to: ["src/m.md"] });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.related_to).toEqual(["src/m.md"]);
+  });
+
+  it("pgBatchUpsert omits related_to when undefined, sends it when passed", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true });
+    const { pgBatchUpsert } = await import("./pgvector.js");
+    await pgBatchUpsert([valid]);
+    await pgBatchUpsert([{ ...valid, related_to: ["src/m.md"] }]);
+    const first = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const second = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(first[0]).not.toHaveProperty("related_to");
+    expect(first[0].stale).toBe(false);
+    expect(second[0].related_to).toEqual(["src/m.md"]);
+  });
+});
+
+describe("pgUpsert cascade (4o)", () => {
+  const entry = {
+    path: "lineage/manifest.md",
+    title: "M",
+    content: "docSlug: x\nchunks: 3\nsha256: deadbeef",
+  };
+
+  it("default: no hash read, cascade fire-and-forget after the POST", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+    const { pgUpsert } = await import("./pgvector.js");
+    await pgUpsert(entry);
+    expect(mockFetch.mock.calls[0][1].method).toBe("POST");
+    expect(mockFetch.mock.calls[1][0]).toContain("related_to=cs.");
+  });
+
+  it("skipCascade: only the POST", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+    const { pgUpsert } = await import("./pgvector.js");
+    await pgUpsert(entry, { skipCascade: true });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("pgUpsertLineageSource (4o)", () => {
+  const entry = {
+    path: "lineage/manifest.md",
+    title: "M",
+    content: "docSlug: x\nchunks: 3\nsha256: deadbeef",
+  };
+
+  /** Stub: stored hash, search/PATCH status; records a label per call. */
+  function stub(opts: {
+    stored: Array<{ content_hash: string }>;
+    searchStatus?: number;
+    patchStatus?: number;
+  }): string[] {
+    const seen: string[] = [];
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("select=content_hash")) {
+        seen.push("hash");
+        return { ok: true, json: async () => opts.stored };
+      }
+      if (method === "GET") {
+        seen.push("search");
+        const status = opts.searchStatus ?? 200;
+        return {
+          ok: status < 300,
+          status,
+          json: async () => [{ path: "d/1" }],
+        };
+      }
+      if (method === "PATCH") {
+        seen.push("patch");
+        const status = opts.patchStatus ?? 200;
+        return { ok: status < 300, status };
+      }
+      seen.push("post");
+      return { ok: true, json: async () => [] };
+    });
+    return seen;
+  }
+
+  it("changed hash: cascade search + PATCH run BEFORE the manifest POST", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const seen = stub({ stored: [{ content_hash: "older" }] });
+    const { pgUpsertLineageSource } = await import("./pgvector.js");
+    expect(await pgUpsertLineageSource(entry)).toBe("written");
+    expect(seen).toEqual(["hash", "search", "patch", "post"]);
+  });
+
+  it("new row (no stored hash): cascade runs, then the POST", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const seen = stub({ stored: [] });
+    const { pgUpsertLineageSource } = await import("./pgvector.js");
+    expect(await pgUpsertLineageSource(entry)).toBe("written");
+    expect(seen).toEqual(["hash", "search", "patch", "post"]);
+  });
+
+  it("unchanged hash: no cascade, POST only", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const seen = stub({
+      stored: [{ content_hash: contentHash(entry.content) }],
+    });
+    const { pgUpsertLineageSource } = await import("./pgvector.js");
+    expect(await pgUpsertLineageSource(entry)).toBe("unchanged");
+    expect(seen).toEqual(["hash", "post"]);
+  });
+
+  it("cascade PATCH 500: manifest NOT written (old hash kept for the retry)", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const seen = stub({
+      stored: [{ content_hash: "older" }],
+      patchStatus: 500,
+    });
+    const { pgUpsertLineageSource } = await import("./pgvector.js");
+    expect(await pgUpsertLineageSource(entry)).toBe("cascade_failed");
+    expect(seen).toEqual(["hash", "search", "patch"]);
+  });
+
+  it("cascade search 503: manifest NOT written", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const seen = stub({
+      stored: [{ content_hash: "older" }],
+      searchStatus: 503,
+    });
+    const { pgUpsertLineageSource } = await import("./pgvector.js");
+    expect(await pgUpsertLineageSource(entry)).toBe("cascade_failed");
+    expect(seen).toEqual(["hash", "search"]);
+  });
+});
+
+describe("pgCascadeStale updated_at bound (4o)", () => {
+  it("search and PATCH carry the same updated_at=lt.<start>, not after now", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ path: "d/1" }],
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true });
+    expect(await pgCascadeStale("src/m.md")).toBe(1);
+    const bound = (url: string) =>
+      new URL(url).searchParams.get("updated_at") ?? "";
+    const searchBound = bound(mockFetch.mock.calls[0][0] as string);
+    const patchBound = bound(mockFetch.mock.calls[1][0] as string);
+    expect(searchBound).toMatch(/^lt\.\d{4}-\d{2}-\d{2}T/);
+    expect(patchBound).toBe(searchBound);
+    expect(Date.parse(searchBound.slice(3))).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+describe("pgBatchUpsert homogeneous bodies (4o)", () => {
+  const base = {
+    title: "T",
+    content: "a body that clears the twenty char gate",
+  };
+
+  it("heterogeneous key sets → one POST per key set, each homogeneous", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true });
+    const { pgBatchUpsert } = await import("./pgvector.js");
+    const out = await pgBatchUpsert([
+      { ...base, path: "p/plain" },
+      { ...base, path: "p/linked", related_to: ["src/m.md"] },
+      { ...base, path: "p/table", modality: "table" },
+      { ...base, path: "p/plain-2" },
+    ]);
+    expect(out).toEqual({ success: 4, failed: 0, rejected: 0 });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const bodies = mockFetch.mock.calls.map(
+      (c) => JSON.parse(c[1].body) as Array<Record<string, unknown>>,
+    );
+    for (const body of bodies) {
+      const sig = Object.keys(body[0]).sort().join(",");
+      for (const row of body) {
+        expect(Object.keys(row).sort().join(",")).toBe(sig);
+      }
+    }
+    expect(bodies[0].map((r) => r.path)).toEqual(["p/plain", "p/plain-2"]);
+    expect(bodies[1][0].related_to).toEqual(["src/m.md"]);
+    expect(bodies[2][0].modality).toBe("table");
+  });
+
+  it("a homogeneous batch is one POST", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true });
+    const { pgBatchUpsert } = await import("./pgvector.js");
+    await pgBatchUpsert([
+      { ...base, path: "p/a", related_to: ["m"] },
+      { ...base, path: "p/b", related_to: ["m"] },
+    ]);
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("cascade throw path (4o)", () => {
+  const entry = {
+    path: "lineage/manifest.md",
+    title: "M",
+    content: "docSlug: x\nchunks: 3\nsha256: deadbeef",
+  };
+
+  for (const failing of ["search", "patch"] as const) {
+    it(`${failing} fetch rejects → pgCascadeStale null, no manifest POST`, async () => {
+      process.env.COMMIT_DB_KEY = "test-key";
+      const seen: string[] = [];
+      mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (method === "GET" && url.includes("select=content_hash")) {
+          seen.push("hash");
+          return { ok: true, json: async () => [{ content_hash: "older" }] };
+        }
+        if (method === "GET") {
+          seen.push("search");
+          if (failing === "search") throw new Error("timeout");
+          return { ok: true, json: async () => [{ path: "d/1" }] };
+        }
+        if (method === "PATCH") {
+          seen.push("patch");
+          throw new Error("timeout");
+        }
+        seen.push("post");
+        return { ok: true };
+      });
+      const { pgUpsertLineageSource } = await import("./pgvector.js");
+      expect(await pgCascadeStale(entry.path)).toBeNull();
+      seen.length = 0;
+      expect(await pgUpsertLineageSource(entry)).toBe("cascade_failed");
+      expect(seen).not.toContain("post");
+      expect(seen).toEqual(
+        failing === "search" ? ["hash", "search"] : ["hash", "search", "patch"],
+      );
+    });
+  }
+});
+
+describe("pgBatchUpsert per-group batchSize (4o)", () => {
+  it("25 + 5 + 1 rows over three key sets, batchSize 20 → [20, 5, 5, 1]", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    mockFetch.mockResolvedValue({ ok: true });
+    const { pgBatchUpsert } = await import("./pgvector.js");
+    const row = (path: string) => ({
+      path,
+      title: "T",
+      content: "a body that clears the twenty char gate",
+    });
+    const entries = [
+      ...Array.from({ length: 25 }, (_, i) => row(`a/${i}`)),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        ...row(`b/${i}`),
+        related_to: ["m"],
+      })),
+      { ...row("c/0"), modality: "table" as const },
+    ];
+    const out = await pgBatchUpsert(entries, 20);
+    expect(out).toEqual({ success: 31, failed: 0, rejected: 0 });
+    const lengths = mockFetch.mock.calls.map(
+      (c) => (JSON.parse(c[1].body) as unknown[]).length,
+    );
+    expect(lengths).toEqual([20, 5, 5, 1]);
   });
 });

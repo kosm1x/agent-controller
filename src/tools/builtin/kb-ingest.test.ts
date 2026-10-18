@@ -2,7 +2,7 @@
  * kb_ingest_pdf_structured + kb_batch_insert tool tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mocks — set up before the tool imports
@@ -20,6 +20,7 @@ vi.mock("../../memory/embeddings.js", () => ({
 
 const mockIsPgvectorEnabled = vi.fn();
 const mockPgBatchUpsert = vi.fn();
+const mockPgUpsertLineageSource = vi.fn();
 vi.mock("../../db/pgvector.js", async () => {
   const actual = await vi.importActual<typeof import("../../db/pgvector.js")>(
     "../../db/pgvector.js",
@@ -28,8 +29,19 @@ vi.mock("../../db/pgvector.js", async () => {
     ...actual,
     isPgvectorEnabled: () => mockIsPgvectorEnabled(),
     pgBatchUpsert: (...args: unknown[]) => mockPgBatchUpsert(...args),
+    pgUpsertLineageSource: (...args: unknown[]) =>
+      mockPgUpsertLineageSource(...args),
   };
 });
+
+const MANIFEST = {
+  path: "pdf-ingest/test-doc.manifest.md",
+  title: "test-doc (manifest)",
+  content: "docSlug: test-doc\nchunks: 2\nsha256: abc",
+  type: "ingested",
+  qualifier: "pdf",
+  tags: ["pdf", "manifest"],
+};
 
 import { kbIngestPdfStructuredTool, kbBatchInsertTool } from "./kb-ingest.js";
 
@@ -47,6 +59,7 @@ describe("kbIngestPdfStructuredTool", () => {
       failed: 0,
       rejected: 0,
     });
+    mockPgUpsertLineageSource.mockResolvedValue("written");
   });
 
   it("returns error when pdf_path missing", async () => {
@@ -75,6 +88,7 @@ describe("kbIngestPdfStructuredTool", () => {
     mockIngestPdf.mockResolvedValue({
       parentDocId: "11111111-2222-3333-4444-555555555555",
       docTitle: "test-doc",
+      manifest: MANIFEST,
       chunks: [
         {
           path: "pdf-ingest/test-doc/intro/0000",
@@ -118,6 +132,7 @@ describe("kbIngestPdfStructuredTool", () => {
     mockIngestPdf.mockResolvedValue({
       parentDocId: fixedUuid,
       docTitle: "t",
+      manifest: MANIFEST,
       chunks: [],
       counts: { text: 0, table: 0, sections: 0, truncated: false },
     });
@@ -152,6 +167,7 @@ describe("kbIngestPdfStructuredTool", () => {
     mockIngestPdf.mockResolvedValue({
       parentDocId: "p",
       docTitle: "t",
+      manifest: MANIFEST,
       chunks: [
         {
           path: "p/t/s/0000",
@@ -175,6 +191,7 @@ describe("kbIngestPdfStructuredTool", () => {
     mockIngestPdf.mockResolvedValue({
       parentDocId: "p",
       docTitle: "t",
+      manifest: MANIFEST,
       chunks: [],
       counts: { text: 500, table: 0, sections: 50, truncated: true },
     });
@@ -182,6 +199,194 @@ describe("kbIngestPdfStructuredTool", () => {
       pdf_path: "/tmp/big.pdf",
     })) as string;
     expect(out).toMatch(/TRUNCATED/);
+  });
+
+  // 4o lineage: the manifest goes first through pgUpsertLineageSource.
+  it("upserts the manifest as a lineage source before the chunks", async () => {
+    mockIngestPdf.mockResolvedValue({
+      parentDocId: "p",
+      docTitle: "t",
+      manifest: MANIFEST,
+      chunks: [],
+      counts: { text: 0, table: 0, sections: 0, truncated: false },
+    });
+    const out = (await kbIngestPdfStructuredTool.execute({
+      pdf_path: "/tmp/t.pdf",
+    })) as string;
+    expect(mockPgUpsertLineageSource).toHaveBeenCalledWith(MANIFEST);
+    expect(mockPgUpsertLineageSource.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPgBatchUpsert.mock.invocationCallOrder[0],
+    );
+    expect(out).toContain("Manifest: pdf-ingest/test-doc.manifest.md");
+  });
+
+  it("summary flags a failed manifest upsert", async () => {
+    mockPgUpsertLineageSource.mockResolvedValue("failed");
+    mockIngestPdf.mockResolvedValue({
+      parentDocId: "p",
+      docTitle: "t",
+      manifest: MANIFEST,
+      chunks: [],
+      counts: { text: 0, table: 0, sections: 0, truncated: false },
+    });
+    const out = (await kbIngestPdfStructuredTool.execute({
+      pdf_path: "/tmp/t.pdf",
+    })) as string;
+    expect(out).toMatch(/upsert FAILED/);
+  });
+
+  describe("fetch order with the real pgUpsertLineageSource + pgBatchUpsert", () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const origKey = process.env.COMMIT_DB_KEY;
+    const chunk = {
+      path: "pdf-ingest/test-doc/intro/0000",
+      title: "test-doc — Intro",
+      content: "a chunk long enough to pass the quality gate",
+      type: "ingested",
+      qualifier: "pdf",
+      related_to: [MANIFEST.path],
+    };
+
+    beforeEach(async () => {
+      calls.length = 0;
+      process.env.COMMIT_DB_KEY = "test-key";
+      const actual = await vi.importActual<
+        typeof import("../../db/pgvector.js")
+      >("../../db/pgvector.js");
+      mockPgUpsertLineageSource.mockImplementation(
+        actual.pgUpsertLineageSource as (...a: unknown[]) => unknown,
+      );
+      mockPgBatchUpsert.mockImplementation(
+        actual.pgBatchUpsert as (...a: unknown[]) => unknown,
+      );
+      mockIngestPdf.mockResolvedValue({
+        parentDocId: "p",
+        docTitle: "test-doc",
+        manifest: MANIFEST,
+        chunks: [{ ...chunk }],
+        counts: { text: 1, table: 0, sections: 1, truncated: false },
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      if (origKey === undefined) delete process.env.COMMIT_DB_KEY;
+      else process.env.COMMIT_DB_KEY = origKey;
+    });
+
+    function stubFetch(
+      storedHash: string | null,
+      fail: { search?: number; patch?: number } = {},
+    ) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          const method = init?.method ?? "GET";
+          calls.push({
+            url,
+            method,
+            body: init?.body ? JSON.parse(init.body as string) : undefined,
+          });
+          if (method === "GET" && url.includes("select=content_hash")) {
+            return {
+              ok: true,
+              json: async () =>
+                storedHash === null ? [] : [{ content_hash: storedHash }],
+            };
+          }
+          if (method === "GET" && url.includes("related_to=cs.")) {
+            // Slow search: an un-awaited cascade would let a write overtake it.
+            await new Promise((r) => setTimeout(r, 30));
+            if (fail.search) return { ok: false, status: fail.search };
+            return { ok: true, json: async () => [{ path: chunk.path }] };
+          }
+          if (method === "PATCH" && fail.patch) {
+            return { ok: false, status: fail.patch };
+          }
+          return { ok: true, json: async () => [] };
+        }),
+      );
+    }
+
+    const label = (c: { url: string; method: string; body: unknown }) =>
+      c.method === "GET" && c.url.includes("select=content_hash")
+        ? "hash-read"
+        : c.method === "GET"
+          ? "cascade-search"
+          : c.method === "PATCH"
+            ? "cascade-patch"
+            : Array.isArray(c.body)
+              ? "chunks-post"
+              : "manifest-post";
+
+    it("changed manifest: hash read → cascade search → cascade patch → manifest → chunks", async () => {
+      stubFetch("an-older-hash");
+      const out = (await kbIngestPdfStructuredTool.execute({
+        pdf_path: "/tmp/t.pdf",
+      })) as string;
+      expect(calls.map(label)).toEqual([
+        "hash-read",
+        "cascade-search",
+        "cascade-patch",
+        "manifest-post",
+        "chunks-post",
+      ]);
+      const chunks = calls[4].body as Array<Record<string, unknown>>;
+      expect(chunks[0].stale).toBe(false);
+      expect(chunks[0].related_to).toEqual([MANIFEST.path]);
+      expect(calls[3].body).not.toHaveProperty("related_to");
+      expect(out).toContain("previous chunks marked stale");
+    });
+
+    it("unchanged manifest: no cascade at all, chunks still written", async () => {
+      const { contentHash } = await vi.importActual<
+        typeof import("../../db/pgvector.js")
+      >("../../db/pgvector.js");
+      stubFetch(contentHash(MANIFEST.content));
+      await kbIngestPdfStructuredTool.execute({ pdf_path: "/tmp/t.pdf" });
+      expect(calls.map(label)).toEqual([
+        "hash-read",
+        "manifest-post",
+        "chunks-post",
+      ]);
+    });
+
+    for (const [name, fail, failed] of [
+      [
+        "cascade PATCH 500",
+        { patch: 500 },
+        ["cascade-search", "cascade-patch"],
+      ],
+      ["cascade search 503", { search: 503 }, ["cascade-search"]],
+    ] as const) {
+      it(`${name}: no manifest POST, chunks written, summary flags; a healthy re-ingest retries the cascade`, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        stubFetch("an-older-hash", fail);
+        const out = (await kbIngestPdfStructuredTool.execute({
+          pdf_path: "/tmp/t.pdf",
+        })) as string;
+        expect(calls.map(label)).toEqual([
+          "hash-read",
+          ...failed,
+          "chunks-post",
+        ]);
+        expect(out).toContain(
+          "cascade FAILED, manifest not advanced: next ingest retries",
+        );
+
+        // The stored hash was not advanced, so the next ingest cascades.
+        calls.length = 0;
+        stubFetch("an-older-hash");
+        await kbIngestPdfStructuredTool.execute({ pdf_path: "/tmp/t.pdf" });
+        expect(calls.map(label)).toEqual([
+          "hash-read",
+          "cascade-search",
+          "cascade-patch",
+          "manifest-post",
+          "chunks-post",
+        ]);
+      });
+    }
   });
 });
 
@@ -273,5 +478,29 @@ describe("kbBatchInsertTool", () => {
     const call = mockPgBatchUpsert.mock.calls[0];
     expect(call[0][0].modality).toBe("table");
     expect(call[0][0].parent_doc_id).toBe("doc-1");
+  });
+
+  it("source_path sets related_to on every entry (opt-in lineage)", async () => {
+    await kbBatchInsertTool.execute({
+      source_path: "notes/source.md",
+      entries: [
+        { path: "a", title: "A", content: "alpha" },
+        { path: "b", title: "B", content: "beta" },
+      ],
+    });
+    const sent = mockPgBatchUpsert.mock.calls[0][0];
+    expect(sent.map((e: { related_to?: string[] }) => e.related_to)).toEqual([
+      ["notes/source.md"],
+      ["notes/source.md"],
+    ]);
+  });
+
+  it("without source_path entries carry no related_to", async () => {
+    await kbBatchInsertTool.execute({
+      entries: [{ path: "a", title: "A", content: "alpha" }],
+    });
+    expect(mockPgBatchUpsert.mock.calls[0][0][0]).not.toHaveProperty(
+      "related_to",
+    );
   });
 });

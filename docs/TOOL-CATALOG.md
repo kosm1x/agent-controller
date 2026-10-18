@@ -298,6 +298,7 @@ MCP bridges to two browser stacks.
 
 - `memory_kg_query` — knowledge-graph query (memory ToolSource; registered without Hindsight since `01f8d7a`)
 - `kb_ingest_pdf_structured` / `kb_batch_insert` — structured PDF ingestion + batch insert into the pgvector KB (scope group: `kb_ingest`)
+  - Lineage (4o): each PDF gets a manifest row `<namespace>/<docSlug>.manifest.md` written before its chunks (cascade awaited, skipped when the hash is unchanged); every chunk's `related_to` names it, so re-ingesting a changed PDF marks the old chunk set stale. `kb_batch_insert` lineage is opt-in via `source_path`. Pre-4o chunks: operator runs `scripts/backfill-kb-lineage.ts` (`--dry-run` default, `--apply` writes).
 - `graphify-code__*` — code knowledge graph (7 tools via external Python MCP; scope group: `graph`)
 - `xpoz__*` — xpoz-pipeline MCP (5 tools: trigger_run, get_topics, get_digest, get_history, get_job_status; scope group: `xpoz`)
 

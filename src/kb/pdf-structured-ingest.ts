@@ -14,7 +14,7 @@
  *  - Caps at max_chunks (default 500) for pathological inputs
  */
 
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { basename, extname } from "path";
 import { extractPdfToMarkdown } from "../lib/pdf.js";
 import type { KbEntry } from "../db/pgvector.js";
@@ -40,6 +40,14 @@ export interface IngestOptions {
 export interface IngestResult {
   parentDocId: string;
   docTitle: string;
+  /**
+   * Lineage source for the chunks (v6.4 G1 / 4o): one row per document at
+   * `manifestPath(namespace, docSlug)`; every chunk's `related_to` names it.
+   * Its content hashes the chunk contents, so re-ingesting an unchanged PDF
+   * leaves it identical and a changed PDF supersedes it. Stored `stale: true`
+   * so it never surfaces in search.
+   */
+  manifest: KbEntry;
   chunks: KbEntry[];
   counts: {
     text: number;
@@ -166,9 +174,28 @@ export function structureMarkdown(
     }
   }
 
+  const mPath = manifestPath(namespace, docSlug);
+  for (const chunk of chunks) chunk.related_to = [mPath];
+  const digest = createHash("sha256");
+  for (const chunk of chunks) {
+    digest.update(`${chunk.path}\n${chunk.content}\n`);
+  }
+  const manifest: KbEntry = {
+    path: mPath,
+    title: `${docTitle} (manifest)`.slice(0, 200),
+    content: `docSlug: ${docSlug}\nchunks: ${chunks.length}\nsha256: ${digest.digest("hex")}`,
+    type: "ingested",
+    qualifier: "pdf",
+    tags: [...(opts.tags ?? []), "pdf", "manifest"],
+    // A lineage source, not content: stale keeps it out of kb_hybrid_search
+    // and the decay sweep; the cascade and the hash read ignore the flag.
+    stale: true,
+  };
+
   return {
     parentDocId,
     docTitle,
+    manifest,
     chunks,
     counts: {
       text: textCount,
@@ -359,6 +386,11 @@ function buildChunkTitle(
     sectionPath.length > 0 ? ` — ${sectionPath.join(" / ")}` : "";
   const modalityTag = modality === "table" ? " (table)" : "";
   return `${docTitle}${sectionSuffix}${modalityTag}`.slice(0, 200);
+}
+
+/** Deterministic manifest path for one ingested document. */
+export function manifestPath(namespace: string, docSlug: string): string {
+  return `${namespace}/${docSlug}.manifest.md`;
 }
 
 function buildPath(
