@@ -3325,3 +3325,138 @@ describe("ruling 3c — $SECRET_X is exported only into the child that names it"
     }
   });
 });
+
+describe("container-runtime CLIs are refused like docker exec (queue 4k, ruling 5)", () => {
+  const refused = (cmd: string, why: RegExp = /container runtime CLIs.*operator ruling 5, 2026-10-01/) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(why);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+  const FORMS: Record<string, string> = {
+    ctr: "ctr -n moby task exec --exec-id q abc psql -U postgres -c 'select 1'",
+    "containerd-ctr": "containerd-ctr -n moby task exec --exec-id q abc psql -U postgres",
+    runc: "runc --root /run/docker/runtime-runc/moby exec abc psql -U postgres",
+    crictl: "crictl exec -it abc psql -U postgres",
+    podman: "podman exec supabase-db psql -U postgres",
+    nerdctl: "nerdctl -n moby exec supabase-db psql -U postgres",
+    "podman-compose": "podman-compose exec db psql -U postgres",
+  };
+
+  it("refuses each runtime word at segment head", () => {
+    for (const cmd of Object.values(FORMS)) refused(cmd);
+    for (const cmd of ["ctr version", "runc list", "podman ps", "nerdctl compose up", "/usr/bin/runc --help"]) refused(cmd);
+  });
+
+  it("refuses each runtime word behind sudo and the standard wrappers", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`sudo ${cmd}`, /refused|operator/); // sudo is already an env-reset refusal; the runtime word may never pass behind it
+      refused(`env A=1 ${cmd}`);
+      refused(`timeout 5 ${cmd}`);
+      refused(`nice -n 5 ${cmd}`);
+      refused(`echo abc | xargs ${cmd}`);
+    }
+  });
+
+  it("refuses each runtime word inside bash -c / eval strings", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`bash -c "${cmd}"`);
+      refused(`sh -c "${cmd}"`);
+      refused(`eval "${cmd}"`);
+    }
+  });
+
+  it("refuses each runtime word in a heredoc fed to a shell", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`bash <<'EOF'\n${cmd}\nEOF`);
+      refused(`bash <<EOF\n${cmd}\nEOF`);
+    }
+  });
+
+  it("off command position: refused when a runtime verb follows, an argument otherwise", () => {
+    refused("find /run -maxdepth 0 -exec runc exec abc psql -U postgres ;");
+    refused("echo ctr task exec abc");
+    allowed("grep -rn runc src");
+    allowed("ls -l /usr/bin/ctr");
+  });
+
+  it("accepts unrelated words that contain the substrings", () => {
+    for (const cmd of [
+      "echo contractor",
+      "ls /opt/runcmd/bin",
+      "cat src/runcmd/notes.txt",
+      "echo ctrl",
+      "grep -rn ctrl src",
+      "ls podmanx nerdctl2 runc.d",
+    ]) allowed(cmd);
+  });
+});
+
+describe("npm run / npx appended argv carries no psql-shaped token (queue 4m, ruling 5a)", () => {
+  const refused = (cmd: string) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(/appends argv after the checked script body.*queue 4m.*ruling 5a/);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("refuses a role or psql passed as appended argv", () => {
+    for (const cmd of [
+      "npm run db -- -U postgres",
+      "npm run db -U postgres",
+      "npm run db -- -Upostgres",
+      "npm run db -- -U'postgres'",
+      "npm run db -- -AtU postgres",
+      "npm run db -- --username postgres",
+      "npm run db -- --username=postgres",
+      "npm run db -- --user=postgres",
+      "npm run db -- PGUSER=postgres",
+      "npm run db -- psql",
+      "npm run db -- -c 'select 1'",
+      "npm run db -- -c \"DROP TABLE x\"",
+      "npm run db -- --command='select 1'",
+      "npm run db -- -c '\\c - postgres'",
+      "npm run-script db -- -U postgres",
+      "npm test -- -U postgres",
+      "npm start -- --username=postgres",
+      "pnpm db -U postgres",
+      "yarn run db -U postgres",
+      "npx tsx scripts/q.ts -U postgres",
+      "npx tsx scripts/q.ts --username=postgres",
+      "timeout 30 npm run db -- -U postgres",
+      "bash -c 'npm run db -- -U postgres'",
+      "npm run build; npm run db -- -U postgres",
+    ]) refused(cmd);
+  });
+
+  it("stays linear on 120 KB package-manager-dense input (fold W1)", () => {
+    const cmd = "echo " + "yarn ".repeat(24_000);
+    expect(Buffer.byteLength(cmd)).toBeGreaterThan(119_000);
+    const t = performance.now();
+    const r = validateShellCommand(cmd);
+    const ms = performance.now() - t;
+    expect(r.reason ?? "").not.toMatch(/command too long/);
+    console.log(`[4m-W1] 120 KB echo yarn… validated in ${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(2000);
+  });
+
+  it("refuses appended argv past the 64-token scan cap (fold W1)", () => {
+    refused(`npm run db -- ${"a ".repeat(70)}-U postgres`);
+    refused(`npm run db -- ${"a ".repeat(70)}`); // past the cap refuses whatever follows
+    allowed(`npm run build -- ${"a ".repeat(50)}`);
+  });
+
+  it("keeps the existing npm run allow-list", () => {
+    for (const cmd of [
+      "npm run build",
+      "npm run typecheck",
+      "npm run lint -- --fix",
+      "npm run build -- --verbose",
+      "npm run lint -- -c .eslintrc.json",
+      "npx tsx scripts/q.ts --dry-run",
+      "npx vitest run src/tools/builtin/shell.test.ts",
+      "npm run build -- -DUSE_X", // fold W2: a cluster with a non-psql letter is not -U
+      "npm run build -- -Wall -DUNICODE",
+    ]) allowed(cmd);
+  });
+});

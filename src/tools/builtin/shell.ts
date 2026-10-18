@@ -1689,6 +1689,17 @@ const DOCKER_SUBS: Record<string, Map<string, DockerClass>> = {
 };
 /** `docker`, and the CLI plugins run as their own binaries (`docker-compose up` = `docker compose up`). */
 const DOCKER_WORD_RE = /^docker(?:-compose|-buildx|-model)?$/;
+/**
+ * Queue 4k (ruling 5): the other container-runtime CLIs reach the same containers around the docker gate —
+ * `ctr -n moby task exec …` and `runc --root /run/docker/runtime-runc/moby exec …` open a process in
+ * supabase-db with no `supabase-db psql` form for ruling 5a to judge. The word itself is refused: at command
+ * position always; elsewhere (an argument, like `grep runc src`) only when a RUNTIME_VERBS word follows it in
+ * the segment, the way prose naming a refused docker verb is refused.
+ */
+const RUNTIME_WORD_RE = /^(?:ctr|containerd-ctr|runc|crictl|podman|podman-compose|nerdctl)$/;
+const RUNTIME_VERBS = new Set(
+  "exec run create start task tasks t container containers c attach cp restore checkpoint debug mount unshare compose up".split(" "),
+);
 // pflag: in a short-flag token the first value-taking letter takes the rest of the token as its value, and the
 // next token only when it is the last character (`-lfatal ps` = log-level fatal, verb ps; `-Dl x ps` = verb ps).
 const DOCKER_VALUE_FLAG_RE = /^(?:--(?:config|context|host|log-level|tlscacert|tlscert|tlskey)|-(?:(?![cHl])[A-Za-z])*[cHl])$/;
@@ -1752,6 +1763,20 @@ const DOCKER_SCAN_CAP = 64;
 const dockerRefusal = (what: string): string =>
   `\`${what}\` is refused — container file access and new containers are operator-only (operator ruling 2026-10-01); \`docker exec supabase-db psql …\` and the read verbs (ps, logs, inspect, images, stats) are available`;
 
+const runtimeRefusal = (what: string): string =>
+  `\`${what}\` is refused — container runtime CLIs (ctr, runc, crictl, podman, nerdctl) reach container exec and file access around the docker gate; operator-only (operator ruling 5, 2026-10-01); \`docker exec supabase-db psql …\` and the docker read verbs (ps, logs, inspect, images, stats) are available`;
+/** The runtime word at `tokens[i]`; `strict` = command position. Off command position the next DOCKER_SCAN_CAP tokens are scanned for a verb; a longer tail refuses. */
+function checkRuntimeAt(tokens: string[], i: number, strict: boolean): string | null {
+  const bin = tokens[i]!.replace(/^.*\//, "");
+  if (strict) return runtimeRefusal(bin);
+  const end = Math.min(tokens.length, i + 1 + DOCKER_SCAN_CAP);
+  for (let k = i + 1; k < end; k++) {
+    const verb = tokens[k]!.replace(/^.*\//, "");
+    if (RUNTIME_VERBS.has(verb)) return runtimeRefusal(`${bin} ${verb}`);
+  }
+  return end < tokens.length ? runtimeRefusal(`${bin} …`) : null;
+}
+
 /** Index of the first positional at or after `k` (flags and redirections skipped, collected into `flags`); -1 past the cap. */
 function dockerPositional(tokens: string[], k: number, valueFlag: RegExp | null, flags: string[]): number {
   for (let n = 0; k < tokens.length; n++) {
@@ -1801,10 +1826,11 @@ const DOCKER_EXEC_ENV_RE = /^PG\w*(?:=|$)/;
  *     confirm more psql forms than the raw text spells bare (a quoted, `$`-built or interpreter-embedded
  *     form is refused).
  *   - Rulings 5/5b (only `-e PG*` env on docker exec, container exactly `supabase-db`) are unchanged.
+ *   - `npm run <script> -- <args>` / `npx <bin> <args>` (argv appended after the checked body) are refused
+ *     when the appended args carry a psql-shaped token (queue 4m, checkAppendedArgv).
  *   - Residual by construction (qa R3 I1/W1): the gate judges only the literal command text. A script file
- *     (`sh x.sh`, `node x.js`, `make`) or `npm run <script> -- <args>` (argv appended after the checked body)
- *     can carry `-U postgres` past it; only a DB-side control (pg_hba for `postgres`, ruling 5a option b)
- *     closes that route. Queue 4m.
+ *     (`sh x.sh`, `node x.js`, `make`) can carry `-U postgres` past it; only a DB-side control (pg_hba for
+ *     `postgres`, ruling 5a option b) closes that route.
  */
 const PSQL_RO_ROLES = new Set(["mcp_readonly", "longevidad_ro"]);
 const PSQL_ROLE_REASON =
@@ -2169,6 +2195,7 @@ export function checkPackageManagerRaw(
   const assignDefault = opts.docker !== false ? DOCKER_ASSIGN_DEFAULT_RE.exec(command)?.[0] : undefined;
   if (assignDefault) return dockerRefusal(assignDefault);
   const psqlCtx: PsqlCtx = { raw: command, confirmed: 0 };
+  const psqlMeta = PSQL_META_RE.test(command); // once per walk: a per-word raw rescan is quadratic (4m fold W1)
   // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
   // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
   // rules see the whole segment from each package-manager word onward
@@ -2224,6 +2251,10 @@ export function checkPackageManagerRaw(
         inDocker = true;
       }
       if (inDocker) continue;
+      if (RUNTIME_WORD_RE.test(word)) {
+        const verdict = checkRuntimeAt(dTokens, i, lead || behindWrapper);
+        if (verdict) return verdict;
+      }
       if (lead && REDIRECTION_RE.test(t)) {
         if (!(reentry && /^\d*<<<$/.test(t))) i += redirectionSpan(dTokens, i) - 1;
         continue;
@@ -2236,9 +2267,71 @@ export function checkPackageManagerRaw(
       if (!PM_WORD_RE.test(pmWord(tokens[i]!))) continue;
       const verdict = checkPackageManagerMutation(verbWindow(tokens, i).join(" "), cwd, { flat: i !== 0 });
       if (verdict) return verdict;
+      const argv = checkAppendedArgv(tokens, i, psqlMeta); // after the mutation rules, so their reasons win
+      if (argv) return argv;
     }
   }
   return null;
+}
+
+/**
+ * Queue 4m (ruling 5a, operator option a): `npm run <script> -- <args>` (and `npx <bin> <args>`) appends argv
+ * after the script body this gate checked, so `npm run db -- -U postgres` hands a superuser role to a
+ * `psql` inside the script. The appended args — everything after the script name (or after the bin for
+ * npx, after the verb for the `test`/`start`/`stop`/`restart` shorthands and the pnpm/yarn/bun `<script>`
+ * shorthand) up to the end of the segment — may not carry a psql-shaped token: `-U`, a cluster of psql
+ * boolean short flags ending in `U` or a fused value (`-AtU`, `-Upostgres`; `-DUSE_X` passes), `--username`
+ * or an abbreviation (`--user=`), `PGUSER=`, `psql`, `-c`/`--command` followed by an SQL keyword, or a
+ * `\c`/`\connect` meta-command (tokens are normalized, so the backslash is read from the raw command, once
+ * per walk). Script files stay a documented limit (5a block).
+ * Cost: getopt_long prefix matching makes `--user`/`--u…` resolve to psql's `--username`, so another tool's
+ * `--user=` in appended args is refused too.
+ * Linear (fold W1): the scan covers the DOCKER_SCAN_CAP tokens after the manager word; a longer segment refuses
+ * (a real `npm run x -- <args>` never carries 64+ args), like checkRuntimeAt.
+ */
+const NPM_SCRIPT_VERBS = /^(?:run|run-script|rum|urn|exec|x|dlx)$/;
+const NPM_SHORTHAND_VERBS = /^(?:test|t|tst|start|stop|restart)$/;
+/** psql's boolean short options may precede `-U` in one cluster (`-AtU`); a value-taking letter would eat the U. */
+const PSQL_USER_FLAG_RE = /^(?:-[aAbeEHlnqsStwWxXzZ01V]*U|--u(?:s(?:e(?:r(?:n(?:a(?:m(?:e)?)?)?)?)?)?)?(?:=|$))/;
+const SQL_WORD_RE =
+  /^(?:select|insert|update|delete|alter|drop|create|grant|revoke|set|reset|copy|truncate|do|call|begin|commit|rollback|show|with|explain|vacuum|analyze|comment|reindex|lock|listen|notify|prepare|execute|declare|refresh|table|values)$/i;
+const PSQL_META_RE = /\\c(?:onnect)?(?![A-Za-z])/;
+function checkAppendedArgv(tokens: string[], i: number, meta: boolean): string | null {
+  const base = pmWord(tokens[i]!);
+  if (base !== "npx" && !NODE_PM_RE.test(base)) return null;
+  const end = Math.min(tokens.length, i + 1 + DOCKER_SCAN_CAP);
+  const capped = end < tokens.length;
+  let k = i + 1;
+  const positional = (): string | undefined => {
+    while (k < end && tokens[k]!.startsWith("-") && tokens[k] !== "--") k += PM_VALUE_FLAGS.has(tokens[k]!) ? 2 : 1;
+    return k < end ? tokens[k++] : undefined;
+  };
+  const pastCap = (label: string): string =>
+    psql5a(`\`${label} …\` appends argv after the checked script body past the ${DOCKER_SCAN_CAP}-token scan cap (queue 4m) — put the arguments inside the script`);
+  const verb = positional();
+  if (!verb) return capped ? pastCap(base) : null;
+  // npm: only the script runners append argv; other managers: any verb may be a script shorthand.
+  if (base === "npm" && !NPM_SCRIPT_VERBS.test(verb) && !NPM_SHORTHAND_VERBS.test(verb)) return null;
+  const script = base === "npx" || NPM_SHORTHAND_VERBS.test(verb) || !NPM_SCRIPT_VERBS.test(verb) ? verb : positional();
+  const label = [base, base === "npx" ? "" : verb, script === verb ? "" : script].filter(Boolean).join(" ");
+  if (script === undefined && capped) return pastCap(label);
+  for (let a = k; a < end; a++) {
+    const t = tokens[a]!;
+    const word = t.replace(/^.*\//, "");
+    const command = /^(?:-c|--command)$/.test(t) ? tokens[a + 1] : /^(?:-c(?!-)|--command=)(.+)$/.exec(t)?.[1];
+    if (
+      PSQL_USER_FLAG_RE.test(t) ||
+      t.includes("PGUSER=") ||
+      word === "psql" ||
+      (command !== undefined && SQL_WORD_RE.test(command)) ||
+      (meta && /^(?:c|connect)$/.test(t))
+    ) {
+      return psql5a(
+        `\`${label} … ${t}\` appends argv after the checked script body and carries a psql-shaped argument (queue 4m) — put the role inside the script`,
+      );
+    }
+  }
+  return capped ? pastCap(label) : null;
 }
 
 /** Tokens from `start` until 8 positionals are collected; flags beyond 64 are dropped, not counted. */
