@@ -43,6 +43,9 @@ export type TraceEventName =
   | "confirmation.expired"
   // One failed attempt at the expiry notice (audit A3; bounded retries)
   | "confirmation.expiry_notice_failed"
+  // A confirmed card's item failed; the items after it never ran (queue 4l)
+  | "confirmation.list_aborted"
+  | "confirmation.partial_reply_refused"
   // openai path dropped tool definitions outside the run's declared list
   // (audit S2, rulings 1–2)
   | "tools.declared_filtered"

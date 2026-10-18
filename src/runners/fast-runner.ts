@@ -1814,6 +1814,10 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // handleTaskFailed, and an empty one would store nothing.
         const pendingConfirmation = taskContext.getPendingConfirmation();
         if (pendingConfirmation) {
+          // Queue 4l: the card may hold several gated calls (`items`).
+          const pendingNames = pendingConfirmation.items
+            .map((i) => i.toolName)
+            .join(", ");
           if (
             parsed.status === "BLOCKED" ||
             parsed.status === "NEEDS_CONTEXT"
@@ -1822,14 +1826,17 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               ...parsed,
               status: "DONE_WITH_CONCERNS",
               concerns: [
-                `Original status: ${parsed.status}. Awaiting operator confirmation for ${pendingConfirmation.toolName}.`,
+                `Original status: ${parsed.status}. Awaiting operator confirmation for ${pendingNames}.`,
               ],
             };
           }
           if (parsed.cleanContent.trim() === "") {
             parsed = {
               ...parsed,
-              cleanContent: `Esta acción requiere tu confirmación: ${pendingConfirmation.toolName}. ¿Procedo?`,
+              cleanContent:
+                pendingConfirmation.items.length > 1
+                  ? `Estas ${pendingConfirmation.items.length} acciones requieren tu confirmación: ${pendingNames}. ¿Procedo?`
+                  : `Esta acción requiere tu confirmación: ${pendingNames}. ¿Procedo?`,
             };
           }
         }

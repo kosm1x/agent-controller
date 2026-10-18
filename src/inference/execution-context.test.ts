@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TaskExecutionContext } from "./execution-context.js";
+import { TaskExecutionContext, CONFIRMATION_LIST_MAX } from "./execution-context.js";
 
 describe("TaskExecutionContext", () => {
   describe("destructive locks", () => {
@@ -77,6 +77,49 @@ describe("TaskExecutionContext", () => {
       for (let i = 0; i < 5; i++) ctxA.tryMemoryStore();
       expect(ctxA.tryMemoryStore()).toBe(false);
       expect(ctxB.tryMemoryStore()).toBe(true); // B unaffected
+    });
+  });
+
+  // Queue 4l + qa R2: the card dedups on tool AND args sha, then caps.
+  describe("addPendingConfirmation", () => {
+    it("no pending card → full (nothing to add to)", () => {
+      const ctx = new TaskExecutionContext("t");
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 7 })).toBe("full");
+      expect(ctx.getPendingConfirmation()).toBeNull();
+    });
+
+    it("same args, different tool → queued", () => {
+      const ctx = new TaskExecutionContext("t");
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      expect(ctx.addPendingConfirmation("wp_unpublish", { id: 7 })).toBe("queued");
+      expect(ctx.getPendingConfirmation()!.items.map((i) => i.toolName)).toEqual(["wp_delete", "wp_unpublish"]);
+    });
+
+    it("same tool, different args → queued", () => {
+      const ctx = new TaskExecutionContext("t");
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 8 })).toBe("queued");
+      expect(ctx.getPendingConfirmation()!.items).toHaveLength(2);
+    });
+
+    it("same tool, same args (any key order, any item) → duplicate, nothing added", () => {
+      const ctx = new TaskExecutionContext("t");
+      ctx.setPendingConfirmation("gmail_send", { to: "a@b.com", subject: "x" });
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 7 })).toBe("queued");
+      expect(ctx.addPendingConfirmation("gmail_send", { subject: "x", to: "a@b.com" })).toBe("duplicate");
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 7 })).toBe("duplicate");
+      expect(ctx.getPendingConfirmation()!.items).toHaveLength(2);
+    });
+
+    it("cap order: a new call past CONFIRMATION_LIST_MAX → full; a repeat at the cap → duplicate", () => {
+      const ctx = new TaskExecutionContext("t");
+      ctx.setPendingConfirmation("wp_delete", { id: 1 });
+      for (let i = 2; i <= CONFIRMATION_LIST_MAX; i++) {
+        expect(ctx.addPendingConfirmation("wp_delete", { id: i })).toBe("queued");
+      }
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 99 })).toBe("full");
+      expect(ctx.addPendingConfirmation("wp_delete", { id: 3 })).toBe("duplicate");
+      expect(ctx.getPendingConfirmation()!.items).toHaveLength(CONFIRMATION_LIST_MAX);
     });
   });
 });

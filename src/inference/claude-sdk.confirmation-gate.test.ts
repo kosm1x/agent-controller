@@ -69,6 +69,7 @@ import {
   currentExecutionContext,
   runWithExecutionContext,
   runnerExecutionContext,
+  CONFIRMATION_LIST_MAX,
   type ConfirmationFacts,
 } from "./execution-context.js";
 import {
@@ -86,6 +87,13 @@ import {
 import type { Tool } from "../tools/types.js";
 
 const OPERATOR: RunOrigin = { source: "operator", threadId: "telegram:1" };
+
+/** A one-call card (queue 4l shape: the first call's fields + `items`). */
+const WP_DELETE_CARD = {
+  toolName: "wp_delete",
+  args: { id: 7 },
+  items: [{ toolName: "wp_delete", args: { id: 7 } }],
+};
 const BACKGROUND: RunOrigin = { source: "background", threadId: "background" };
 
 function makeTool(name: string): Tool {
@@ -181,10 +189,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
     expect(parsed.tool).toBe("wp_delete");
     expect(parsed.message).toContain("NO se ejecutó");
-    expect(ctx.getPendingConfirmation()).toEqual({
-      toolName: "wp_delete",
-      args: { id: 7 },
-    });
+    expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
     expect(ctx.getGatedCalls()).toEqual(["wp_delete"]);
     expect(emitTraceMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -231,45 +236,143 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     expect(JSON.parse(ok).error).toBe("CONFIRMATION_REQUIRED");
   });
 
-  it("first pending wins: a second gated call is refused and not executed", async () => {
+  // Queue 4l (ruling a): two gated calls in one response produced two cards
+  // and two full re-reads; the second now joins the first card.
+  it("4l: a second gated call is QUEUED on the same card — not executed, no abort, traced queued_with_pending", async () => {
     const ctx = fastChatRoot("t-two");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
     const second = await inRun(OPERATOR, ctx, () =>
       call("gmail_send", { to: "a@b.com" }),
     );
     expect(reg.execute).not.toHaveBeenCalled();
-    const error = JSON.parse(second).error as string;
+    const parsed = JSON.parse(second);
+    expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
+    expect(parsed.tool).toBe("gmail_send");
+    expect(parsed.message).toContain("NO se ejecutó");
+    expect(parsed.message).toContain("No la reintentes");
+    expect(parsed.message).toContain("(2 en total)");
+    expect(ctx.getPendingConfirmation()).toEqual({
+      toolName: "wp_delete",
+      args: { id: 7 },
+      items: [
+        { toolName: "wp_delete", args: { id: 7 } },
+        { toolName: "gmail_send", args: { to: "a@b.com" } },
+      ],
+    });
+    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send"]);
+    expect(emitTraceMock).toHaveBeenLastCalledWith({
+      taskId: "t-two",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "queued_with_pending", origin: "operator" },
+    });
+  });
+
+  it("4l: the card holds at most CONFIRMATION_LIST_MAX calls; the next gated call is refused_already_pending", async () => {
+    expect(CONFIRMATION_LIST_MAX).toBe(8);
+    const ctx = fastChatRoot("t-cap");
+    for (let i = 1; i <= CONFIRMATION_LIST_MAX; i++) {
+      const text = await inRun(OPERATOR, ctx, () => call("wp_delete", { id: i }));
+      expect(JSON.parse(text).error).toBe("CONFIRMATION_REQUIRED");
+    }
+    expect(ctx.getPendingConfirmation()!.items.map((c) => c.args.id)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    const ninth = await inRun(OPERATOR, ctx, () =>
+      call("gmail_send", { to: "a@b.com" }),
+    );
+    const error = JSON.parse(ninth).error as string;
     expect(error).toContain("Ya hay una confirmación pendiente");
-    // Queue 3r: names the pending tool and ends the turn.
     expect(error).toContain("(wp_delete)");
     expect(error).toContain("NO se ejecutó");
     expect(error).toContain("Tu turno terminó");
     expect(error).toContain("no llames más herramientas");
-    expect(ctx.getPendingConfirmation()?.toolName).toBe("wp_delete");
-    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send"]);
+    expect(ctx.getPendingConfirmation()!.items).toHaveLength(CONFIRMATION_LIST_MAX);
+    expect(ctx.getGatedCalls()).toHaveLength(CONFIRMATION_LIST_MAX + 1);
+    expect(reg.execute).not.toHaveBeenCalled();
     expect(emitTraceMock).toHaveBeenLastCalledWith({
-      taskId: "t-two",
+      taskId: "t-cap",
       name: "tool.gated",
       tool: "gmail_send",
       attrs: { decision: "refused_already_pending", origin: "operator" },
     });
   });
 
+  it("4l: a queued call carrying a rendered placeholder is refused, never added to the card", async () => {
+    const ctx = fastChatRoot("t-q-ph");
+    await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    const ph = "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
+    const text = await inRun(OPERATOR, ctx, () =>
+      call("gmail_send", { to: "a@b.com", body: `clave: ${ph}` }),
+    );
+    expect(JSON.parse(text).error).toMatch(/^No ejecuté gmail_send/);
+    expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
+    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send"]);
+    expect(reg.execute).not.toHaveBeenCalled();
+    // qa R1 W5: visible like every other gated decision.
+    expect(emitTraceMock).toHaveBeenCalledWith({
+      taskId: "t-q-ph",
+      name: "tool.gated",
+      tool: "gmail_send",
+      attrs: { decision: "refused_placeholder", origin: "operator" },
+    });
+  });
+
+  // qa R1 W1: the same call twice in one response would put two identical
+  // rows on the card (and run the action twice on one yes).
+  it("4l: a repeat of a call already on the card (same tool, same args) is answered as queued but not added — traced queued_duplicate", async () => {
+    const ctx = fastChatRoot("t-dup");
+    await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    const again = await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    const parsed = JSON.parse(again);
+    expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
+    expect(parsed.message).toContain("NO se ejecutó");
+    // R2: the wording says it was already on the card, not "añadida".
+    expect(parsed.message).toContain("ya estaba en la confirmación pendiente");
+    expect(parsed.message).toContain("(1 en total)");
+    expect(parsed.message).not.toContain("añadida");
+    expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
+    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "wp_delete"]);
+    expect(emitTraceMock).toHaveBeenLastCalledWith({
+      taskId: "t-dup",
+      name: "tool.gated",
+      tool: "wp_delete",
+      attrs: { decision: "queued_duplicate", origin: "operator" },
+    });
+    // Same tool, other args: a new item.
+    await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 8 }));
+    expect(ctx.getPendingConfirmation()!.items.map((i) => i.args)).toEqual([{ id: 7 }, { id: 8 }]);
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
   // Queue 3r: the model kept calling tools after the first pending card,
   // one paid turn per refusal. The pending ends the turn for EVERY call.
-  it("3r: the first pending result already says the turn is over and further calls will be refused", async () => {
+  // Queue 4l fold 1: the first card states the REAL rule — other gated
+  // calls of the same request join the card; anything ungated ends the turn.
+  // The old "no llames más herramientas" told the model never to issue the
+  // 2nd gated call, so the 4l list could never form.
+  it("3r+4l: the first pending result invites same-request gated calls onto the card and says ungated calls end the turn", async () => {
     const ctx = fastChatRoot("t-3r-first");
     const text = await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
     const message = JSON.parse(text).message as string;
-    expect(message).toContain("Tu turno terminó");
+    expect(message).toContain("NO se ejecutó");
+    expect(message).toContain("no la reintentes");
+    expect(message).toContain("no digas que ya se hizo");
     expect(message).toContain(
-      "cualquier otra llamada en esta respuesta será rechazada sin ejecutarse",
+      `se añadirán a la misma tarjeta (hasta ${CONFIRMATION_LIST_MAX}) sin ejecutarse`,
     );
+    expect(message).toContain(
+      "Cualquier llamada que no requiera confirmación será rechazada y terminará tu turno",
+    );
+    expect(message).not.toContain("no llames más herramientas");
+    expect(message).not.toContain("Tu turno terminó");
   });
 
   it("3r: an UNGATED call after the pending is refused (refused_turn_ended), never executed", async () => {
     const ctx = fastChatRoot("t-3r-ungated");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
+    // Queue 4l: a queued second gated call does not change 3r for the next.
+    await inRun(OPERATOR, ctx, () => call("gmail_send", { to: "a@b.com" }));
     const text = await inRun(OPERATOR, ctx, () =>
       call("web_search", { q: "x" }),
     );
@@ -279,11 +382,11 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     expect(error).toContain("NO se ejecutó");
     expect(error).toContain("Tu turno terminó");
     // It never ran: the fast runner's withoutGated drops it from "ran".
-    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "web_search"]);
-    expect(ctx.getPendingConfirmation()).toEqual({
-      toolName: "wp_delete",
-      args: { id: 7 },
-    });
+    expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send", "web_search"]);
+    expect(ctx.getPendingConfirmation()!.items.map((c) => c.toolName)).toEqual([
+      "wp_delete",
+      "gmail_send",
+    ]);
     expect(emitTraceMock).toHaveBeenLastCalledWith({
       taskId: "t-3r-ungated",
       name: "tool.gated",
@@ -778,10 +881,7 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
       expect.objectContaining({ success: true }),
       expect.any(String),
     );
-    expect(ctx.getPendingConfirmation()).toEqual({
-      toolName: "wp_delete",
-      args: { id: 7 },
-    });
+    expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
     expect(reg.execute).not.toHaveBeenCalled();
     metrics.mockRestore();
   });
@@ -818,6 +918,86 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
     const later = await inRun(OPERATOR, ctx, () => call("web_search", { q: "x" }));
     expect(JSON.parse(later).error).toContain("Tu turno terminó");
     expect(seen.controller!.signal.aborted).toBe(false);
+  });
+
+  /** The model fires `calls` more calls; the SDK throws once aborted. */
+  const moreCalls = (
+    seen: Seen & { texts?: string[]; abortedAt?: number[] },
+    calls: Array<[string, Record<string, unknown>]>,
+  ) =>
+    async function* (ac: AbortController) {
+      seen.texts = [];
+      seen.abortedAt = [];
+      for (const [name, args] of calls) {
+        seen.texts.push(await call(name, args));
+        seen.abortedAt.push(ac.signal.aborted ? 1 : 0);
+        if (ac.signal.aborted) {
+          seen.reason = ac.signal.reason;
+          throw Object.assign(new Error("Claude Code process aborted by user"), {
+            name: "AbortError",
+          });
+        }
+      }
+      yield {
+        type: "result",
+        subtype: "success",
+        result: "Voy a borrar los posts. ¿Procedo?",
+        num_turns: 2,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 10,
+      };
+    };
+
+  it("4l: a second gated call in the same response joins the card and does NOT abort the query", async () => {
+    const seen: Seen & { texts?: string[]; abortedAt?: number[] } = {};
+    scripted(seen, null, moreCalls(seen, [["gmail_send", { to: "a@b.com" }]]));
+    const ctx = fastChatRoot("t-4l-loop");
+    const result = await run(ctx);
+    expect(seen.abortedAt).toEqual([0]);
+    expect(seen.controller!.signal.aborted).toBe(false);
+    expect(JSON.parse(seen.texts![0]).error).toBe("CONFIRMATION_REQUIRED");
+    expect(result.text).toBe("Voy a borrar los posts. ¿Procedo?");
+    expect(ctx.getPendingConfirmation()!.items.map((c) => c.toolName)).toEqual([
+      "wp_delete",
+      "gmail_send",
+    ]);
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("4l: the 9th gated call (past the cap) is refused and aborts the query with our reason", async () => {
+    const seen: Seen & { texts?: string[]; abortedAt?: number[] } = {};
+    const extra: Array<[string, Record<string, unknown>]> = Array.from(
+      { length: CONFIRMATION_LIST_MAX },
+      (_, i) => ["gmail_send", { to: `u${i}@b.com` }],
+    );
+    scripted(seen, "Voy a borrar el post 7. ¿Procedo?", moreCalls(seen, extra));
+    const ctx = fastChatRoot("t-4l-cap-loop");
+    const result = await run(ctx);
+    // Calls 2..8 queued without an abort; call 9 refused + aborted.
+    expect(seen.abortedAt).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(JSON.parse(seen.texts!.at(-1)!).error).toContain("Tu turno terminó");
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(result.text).toBe("Voy a borrar el post 7. ¿Procedo?");
+    expect(ctx.getPendingConfirmation()!.items).toHaveLength(CONFIRMATION_LIST_MAX);
+    expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  it("4l: an UNGATED call after a queued card still ends the turn (3r unchanged)", async () => {
+    const seen: Seen & { texts?: string[]; abortedAt?: number[] } = {};
+    scripted(
+      seen,
+      null,
+      moreCalls(seen, [
+        ["gmail_send", { to: "a@b.com" }],
+        ["web_search", { q: "x" }],
+      ]),
+    );
+    await run(fastChatRoot("t-4l-ungated-loop"));
+    expect(seen.abortedAt).toEqual([0, 1]);
+    expect(JSON.parse(seen.texts![1]).error).toContain("Tu turno terminó");
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(reg.execute).not.toHaveBeenCalled();
   });
 
   it("an abort that is not ours keeps the abort classification (regression lock)", async () => {

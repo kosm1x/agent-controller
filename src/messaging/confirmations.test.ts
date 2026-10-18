@@ -1417,3 +1417,198 @@ describe("audit A2/A3: boot notice once, never stale; notified only on a deliver
     expect(recordRitualFailure).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Queue 4l (ruling a, 2026-10-18): one card, N actions — real :memory: DB.
+// ---------------------------------------------------------------------------
+
+import {
+  storePendingConfirmationList,
+  markApprovalItemsDeclined,
+} from "./confirmations.js";
+import { CONFIRMATION_LIST_MAX } from "../inference/execution-context.js";
+
+describe("queue 4l: a confirmation card holds a list of actions", () => {
+  const tk = "telegram:4242";
+  const TTL = 5 * 60 * 1000;
+  const docA = { service: "docs", resource: "documents", method: "batchUpdate", params: { documentId: "A" } };
+  const docB = { service: "docs", resource: "documents", method: "batchUpdate", params: { documentId: "B" } };
+  const mail = { to: "a@b.mx", subject: "Hola" };
+  const items = [
+    { toolName: "google_workspace_cli", args: docA, summary: "gws A" },
+    { toolName: "google_workspace_cli", args: docB, summary: "gws B" },
+    { toolName: "gmail_send", args: mail, summary: "mail" },
+  ];
+  type R = { id: number; tool: string; args_sha256: string; decision: string; approver: string | null; requested_at: string; summary: string };
+  const all = (): R[] =>
+    getDatabase()
+      .prepare("SELECT id, tool, args_sha256, decision, approver, requested_at, summary FROM tool_approvals WHERE thread_key = ? ORDER BY id")
+      .all(tk) as R[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("stores N rows in one write — each with its own sha and approval id, same requested_at — and ONE card in order", () => {
+    storePendingConfirmationList(tk, items, undefined, "task-card");
+    const r = all();
+    expect(r.map((x) => [x.tool, x.decision, x.summary])).toEqual([
+      ["google_workspace_cli", "pending", "gws A"],
+      ["google_workspace_cli", "pending", "gws B"],
+      ["gmail_send", "pending", "mail"],
+    ]);
+    expect(r.map((x) => x.args_sha256)).toEqual([argsSha256(docA), argsSha256(docB), argsSha256(mail)]);
+    expect(new Set(r.map((x) => x.requested_at)).size).toBe(1);
+    const card = getPendingConfirmation(tk)!;
+    expect(card.items.map((i) => [i.toolName, i.args, i.summary, i.argsSha256, i.approvalId])).toEqual(
+      r.map((x, n) => [x.tool, items[n].args, items[n].summary, x.args_sha256, x.id]),
+    );
+    // The top-level fields are the first item's (pre-4l readers).
+    expect([card.toolName, card.args, card.summary, card.approvalId]).toEqual(["google_workspace_cli", docA, "gws A", r[0].id]);
+    expect(card.taskId).toBe("task-card");
+  });
+
+  it("supersedes the PREVIOUS card once and never a sibling of the new one", () => {
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "old");
+    storePendingConfirmationList(tk, items);
+    expect(all().map((x) => [x.tool, x.decision])).toEqual([
+      ["wp_delete", "superseded"],
+      ["google_workspace_cli", "pending"],
+      ["google_workspace_cli", "pending"],
+      ["gmail_send", "pending"],
+    ]);
+  });
+
+  it("confirming decides the whole card: every row confirmed by the approver, the whole list returned", () => {
+    storePendingConfirmationList(tk, items);
+    const approved = resolvePendingConfirmation(tk, "confirmed", "sender-1")!;
+    expect(approved.items.map((i) => i.args)).toEqual([docA, docB, mail]);
+    expect(all().map((x) => [x.decision, x.approver])).toEqual([
+      ["confirmed", "sender-1"],
+      ["confirmed", "sender-1"],
+      ["confirmed", "sender-1"],
+    ]);
+    expect(getPendingConfirmation(tk)).toBeNull();
+  });
+
+  it("declining declines every row", () => {
+    storePendingConfirmationList(tk, items);
+    expect(resolvePendingConfirmation(tk, "declined", "sender-1")).toBeNull();
+    expect(all().map((x) => x.decision)).toEqual(["declined", "declined", "declined"]);
+  });
+
+  it("the args-hash re-check applies to EVERY item: a tampered later item voids the card (nothing returned, all superseded)", () => {
+    storePendingConfirmationList(tk, items);
+    const card = getPendingConfirmation(tk)!;
+    (card.items[2].args as Record<string, unknown>).to = "attacker@evil.mx";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolvePendingConfirmation(tk, "confirmed", "sender-1")).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("args hash mismatch for gmail_send"));
+    expect(all().map((x) => x.decision)).toEqual(["superseded", "superseded", "superseded"]);
+  });
+
+  it("the TTL covers the whole card: every row expires together, ONE notice naming every action", () => {
+    const notify = vi.fn();
+    storePendingConfirmationList(tk, items, notify, "task-ttl");
+    vi.advanceTimersByTime(TTL);
+    expect(all().map((x) => x.decision)).toEqual(["expired", "expired", "expired"]);
+    expect(notify.mock.calls).toEqual([
+      ["⏱ La aprobación para 3 acciones (`gws A`; `gws B`; `mail`) venció sin respuesta. Si aún las quieres, pídemelo de nuevo."],
+    ]);
+    const traced = getTrace("task-ttl").filter((e) => e.name === "confirmation.expired");
+    expect(traced).toHaveLength(1);
+    expect(JSON.parse(traced[0].attrs ?? "{}")).toMatchObject({ reason: "notified", items: 3 });
+    vi.advanceTimersByTime(10 * TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unclear reply (clear) supersedes the whole card", () => {
+    storePendingConfirmationList(tk, items);
+    clearPendingConfirmation(tk);
+    expect(all().map((x) => x.decision)).toEqual(["superseded", "superseded", "superseded"]);
+  });
+
+  it(`caps the card at CONFIRMATION_LIST_MAX (${CONFIRMATION_LIST_MAX}): extra items are dropped (logged), never stored or run`, () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const many = Array.from({ length: CONFIRMATION_LIST_MAX + 2 }, (_, i) => ({
+      toolName: "wp_delete",
+      args: { id: i },
+      summary: `del ${i}`,
+    }));
+    storePendingConfirmationList(tk, many);
+    expect(all()).toHaveLength(CONFIRMATION_LIST_MAX);
+    expect(getPendingConfirmation(tk)!.items.map((i) => i.args.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`capped at ${CONFIRMATION_LIST_MAX} of ${CONFIRMATION_LIST_MAX + 2}`));
+  });
+
+  it("a restart regroups the card from its rows (same write), in order; an older card left pending is not part of it", () => {
+    storePendingConfirmation(tk, "wp_delete", { id: 7 }, "old");
+    // Simulate a lost supersede write of the older card, from an earlier ms.
+    getDatabase().prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?").run(new Date(Date.now() - 1000).toISOString(), tk);
+    vi.advanceTimersByTime(5);
+    storePendingConfirmationList(tk, items);
+    getDatabase().prepare("UPDATE tool_approvals SET decision = 'pending' WHERE thread_key = ?").run(tk);
+    _resetPendingConfirmationsForTests(); // restart
+    const card = getPendingConfirmation(tk)!;
+    expect(card.items.map((i) => i.summary)).toEqual(["gws A", "gws B", "mail"]);
+    const approved = resolvePendingConfirmation(tk, "confirmed", "op")!;
+    expect(approved.items.map((i) => i.args)).toEqual([docA, docB, mail]);
+    expect(all().map((x) => [x.tool, x.decision])).toEqual([
+      ["wp_delete", "pending"],
+      ["google_workspace_cli", "confirmed"],
+      ["google_workspace_cli", "confirmed"],
+      ["gmail_send", "confirmed"],
+    ]);
+  });
+
+  it("a restart with one tampered row voids the whole regrouped card", () => {
+    storePendingConfirmationList(tk, items);
+    const last = all()[2].id;
+    getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE id = ?").run(JSON.stringify({ to: "x@evil.mx" }), last);
+    _resetPendingConfirmationsForTests();
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(all().map((x) => x.decision)).toEqual(["superseded", "superseded", "superseded"]);
+  });
+
+  it("the boot sweep re-arms the whole card: one notice for all of it at the TTL", () => {
+    storePendingConfirmationList(tk, items);
+    // Request time on the fake clock (the DB default is wall time).
+    getDatabase().prepare("UPDATE tool_approvals SET requested_at = ? WHERE thread_key = ?").run(new Date(Date.now()).toISOString(), tk);
+    _resetPendingConfirmationsForTests();
+    const notify = vi.fn();
+    expect(rearmPendingConfirmationsAtBoot(() => notify)).toEqual({ armed: 1, lapsed: 0 });
+    expect(getPendingConfirmation(tk)!.items).toHaveLength(3);
+    vi.advanceTimersByTime(TTL);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0]).toContain("3 acciones");
+    expect(all().map((x) => x.decision)).toEqual(["expired", "expired", "expired"]);
+  });
+
+  it("markApprovalItemsDeclined flips only the named CONFIRMED rows", () => {
+    storePendingConfirmationList(tk, items);
+    resolvePendingConfirmation(tk, "confirmed", "op");
+    const r = all();
+    markApprovalItemsDeclined([r[1].id, r[2].id]);
+    expect(all().map((x) => x.decision)).toEqual(["confirmed", "declined", "declined"]);
+    storePendingConfirmation(tk, "wp_delete", { id: 1 }, "p");
+    const pendingId = all()[3].id;
+    markApprovalItemsDeclined([pendingId]);
+    expect(all()[3].decision).toBe("pending");
+  });
+
+  it("a one-item list is exactly the single-item card (notice wording unchanged)", () => {
+    const notify = vi.fn();
+    storePendingConfirmationList(tk, [items[2]], notify);
+    vi.advanceTimersByTime(TTL);
+    expect(notify.mock.calls).toEqual([[renderExpiryNotice("mail")]]);
+    expect(renderExpiryNotice(["mail"])).toBe(renderExpiryNotice("mail"));
+  });
+});

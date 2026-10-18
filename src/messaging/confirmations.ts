@@ -22,7 +22,7 @@
  * map keeps working when the DB is unavailable (tests, early boot).
  */
 
-import { createHash } from "crypto";
+import { argsSha256 } from "../lib/args-sha256.js";
 import { getDatabase } from "../db/index.js";
 import { buildGwsArgv } from "../tools/builtin/google-workspace-cli.js";
 import { toolRegistry } from "../tools/registry.js";
@@ -32,20 +32,52 @@ import {
 } from "../tools/task-executor.js";
 import { describeCron } from "../rituals/cron-next.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { CONFIRMATION_LIST_MAX } from "../inference/execution-context.js";
 
-/** Pending confirmation waiting for user approval. */
-export interface PendingConfirmation {
+/** One action on a confirmation card (queue 4l: a card lists 1..N). */
+export interface PendingConfirmationItem {
   toolName: string;
   args: Record<string, unknown>;
-  timestamp: number;
-  /** Human-readable summary for logging. */
+  /** Harness-rendered line for this action (renderConfirmationSummary). */
   summary: string;
   /** sha256 over sorted-key JSON of `args` — the identity the approval binds to. */
   argsSha256: string;
-  /** Row id in `tool_approvals`, when the durable write succeeded. */
+  /** Its row in `tool_approvals`, when the durable write succeeded. */
   approvalId?: number;
+}
+
+/**
+ * Pending confirmation waiting for user approval: ONE card (one yes/no, one
+ * TTL) holding `items` in the order they will run. The top-level tool /
+ * args / summary / sha / approvalId are the first item's (pre-4l shape).
+ */
+export interface PendingConfirmation extends PendingConfirmationItem {
+  /** Queue 4l: every action on the card, in order; `items[0]` is the first. */
+  items: PendingConfirmationItem[];
+  timestamp: number;
   /** Task whose run showed the card (in memory only; the trace key at expiry). */
   taskId?: string;
+}
+
+/** The card for `items` (non-empty), the first item's fields on top. */
+function cardOf(
+  items: PendingConfirmationItem[],
+  timestamp: number,
+  taskId?: string,
+): PendingConfirmation {
+  return { ...items[0], items, timestamp, ...(taskId !== undefined && { taskId }) };
+}
+
+/** The card's durable row ids, in item order. */
+function approvalIdsOf(pending: PendingConfirmation): number[] {
+  return pending.items.flatMap((i) =>
+    i.approvalId === undefined ? [] : [i.approvalId],
+  );
+}
+
+/** `?, ?, …` for an `IN (…)` over `n` values. */
+function marks(n: number): string {
+  return Array.from({ length: n }, () => "?").join(", ");
 }
 
 /** Why an expiry ended the way it did (trace `confirmation.expired`). */
@@ -121,22 +153,8 @@ function cancelNoticeRetries(threadKey: string): void {
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    return `{${Object.keys(o)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${stableStringify(o[k])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-/** Exact-action identity: sha256 over sorted-key JSON (order-insensitive, lossless). */
-export function argsSha256(args: Record<string, unknown>): string {
-  return createHash("sha256").update(stableStringify(args)).digest("hex");
-}
+/** Exact-action identity (moved to a leaf module for the queue 4l dedup). */
+export { argsSha256 };
 
 /**
  * Fields named first in a confirmation line — who receives it, what it
@@ -269,8 +287,14 @@ function renderRiskyToolList(risky: string[]): string {
  * lapses unanswered — the same harness summary the card showed, never
  * raw args or model text. Not a question: nothing is pending after it.
  */
-export function renderExpiryNotice(summary: string): string {
-  return `⏱ La aprobación para \`${summary}\` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.`;
+export function renderExpiryNotice(summary: string | readonly string[]): string {
+  const summaries = typeof summary === "string" ? [summary] : summary;
+  if (summaries.length === 1) {
+    return `⏱ La aprobación para \`${summaries[0]}\` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.`;
+  }
+  // Queue 4l: one card, one notice naming every action it held.
+  const list = summaries.map((s) => `\`${s}\``).join("; ");
+  return `⏱ La aprobación para ${summaries.length} acciones (${list}) venció sin respuesta. Si aún las quieres, pídemelo de nuevo.`;
 }
 
 /** Best-effort durable write; never throws (DB may be absent in tests / early boot). */
@@ -322,17 +346,19 @@ function lapsePendingConfirmation(
     const notify = expiryNotifiers.get(threadKey);
     const current = pendingConfirmations.get(threadKey);
     clearInMemory(threadKey);
+    // Queue 4l: the card's rows lapse together (one card, one TTL).
+    const ids = approvalIdsOf(pending);
     const closed =
-      pending.approvalId === undefined
+      ids.length === 0
         ? undefined
         : dbWrite(
             () =>
               getDatabase()
                 .prepare(
                   `UPDATE tool_approvals SET decision = 'expired', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                   WHERE id = ? AND decision = 'pending'`,
+                   WHERE id IN (${marks(ids.length)}) AND decision = 'pending'`,
                 )
-                .run(pending.approvalId).changes === 1,
+                .run(...ids).changes >= 1,
           );
     markThreadRows(threadKey, "expired");
     // No durable row (or the DB is down): fall back to the in-memory identity.
@@ -418,7 +444,7 @@ function deliverExpiryNotice(
   };
   let sent: void | Promise<void>;
   try {
-    sent = notify(renderExpiryNotice(pending.summary));
+    sent = notify(renderExpiryNotice(pending.items.map((i) => i.summary)));
   } catch (err) {
     onFailed(err);
     return;
@@ -458,6 +484,7 @@ function traceExpiry(
       notified: reason === "notified",
       reason,
       ...(attempts > 1 && { attempts }),
+      ...(pending.items.length > 1 && { items: pending.items.length }),
       ...(pending.approvalId !== undefined && {
         approval_id: pending.approvalId,
       }),
@@ -481,6 +508,38 @@ export function storePendingConfirmation(
   onExpire?: ExpiryNotifier,
   taskId?: string,
 ): void {
+  storePendingConfirmationList(
+    threadKey,
+    [{ toolName, args, summary }],
+    onExpire,
+    taskId,
+  );
+}
+
+/**
+ * Queue 4l (ruling a): store ONE card holding `items` (in run order, at most
+ * CONFIRMATION_LIST_MAX — extra items are dropped, logged, never shown or
+ * run). The thread's earlier pending rows are superseded ONCE, then one row
+ * per item is written in a single INSERT (same `requested_at`, which is how
+ * a restart regroups the card), each with its own sha and approval id.
+ */
+export function storePendingConfirmationList(
+  threadKey: string,
+  items: ReadonlyArray<{
+    toolName: string;
+    args: Record<string, unknown>;
+    summary: string;
+  }>,
+  onExpire?: ExpiryNotifier,
+  taskId?: string,
+): void {
+  if (items.length === 0) return;
+  if (items.length > CONFIRMATION_LIST_MAX) {
+    console.warn(
+      `[confirmations] card for ${threadKey} capped at ${CONFIRMATION_LIST_MAX} of ${items.length} action(s)`,
+    );
+  }
+  const list = items.slice(0, CONFIRMATION_LIST_MAX);
   // Clear existing timer if any
   const existing = expiryTimers.get(threadKey);
   if (existing) clearTimeout(existing);
@@ -488,32 +547,37 @@ export function storePendingConfirmation(
   cancelNoticeRetries(threadKey);
   markThreadRows(threadKey, "superseded");
 
-  const sha = argsSha256(args);
-  const approvalId = dbWrite(
-    () =>
-      getDatabase()
-        .prepare(
-          `INSERT INTO tool_approvals (thread_key, tool, args_sha256, args_json, summary)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(
+  const shas = list.map((i) => argsSha256(i.args));
+  const ids = dbWrite(() => {
+    const rows = getDatabase()
+      .prepare(
+        `INSERT INTO tool_approvals (thread_key, tool, args_sha256, args_json, summary)
+         VALUES ${list.map(() => "(?, ?, ?, ?, ?)").join(", ")} RETURNING id`,
+      )
+      .all(
+        ...list.flatMap((i, n) => [
           threadKey,
-          toolName,
-          sha,
-          JSON.stringify(args),
-          summary.slice(0, 2000),
-        ).lastInsertRowid as number,
-  );
+          i.toolName,
+          shas[n],
+          JSON.stringify(i.args),
+          i.summary.slice(0, 2000),
+        ]),
+      ) as Array<{ id: number }>;
+    return rows.map((r) => r.id).sort((a, b) => a - b);
+  });
+  const withIds = ids !== undefined && ids.length === list.length;
 
-  const pending: PendingConfirmation = {
-    toolName,
-    args,
-    timestamp: Date.now(),
-    summary,
-    argsSha256: sha,
-    ...(approvalId !== undefined && { approvalId }),
-    ...(taskId !== undefined && { taskId }),
-  };
+  const pending = cardOf(
+    list.map((i, n) => ({
+      toolName: i.toolName,
+      args: i.args,
+      summary: i.summary,
+      argsSha256: shas[n],
+      ...(withIds && { approvalId: ids[n] }),
+    })),
+    Date.now(),
+    taskId,
+  );
   pendingConfirmations.set(threadKey, pending);
   if (onExpire) expiryNotifiers.set(threadKey, onExpire);
   armExpiryTimer(threadKey, pending, CONFIRMATION_TTL_MS);
@@ -547,48 +611,70 @@ interface ApprovalRow {
   requested_at: string;
 }
 
-/** Restart recovery: newest pending row for the thread, if still inside the TTL. */
+/**
+ * Queue 4l: the thread's newest card from the DB — its pending rows written
+ * by the same INSERT (equal `requested_at`), in item order. Throws on a DB
+ * failure (callers wrap it).
+ */
+function loadCardRows(threadKey: string): ApprovalRow[] {
+  return getDatabase()
+    .prepare(
+      `SELECT id, tool, args_sha256, args_json, summary, requested_at
+       FROM tool_approvals WHERE thread_key = ? AND decision = 'pending'
+         AND requested_at = (
+           SELECT requested_at FROM tool_approvals
+           WHERE thread_key = ? AND decision = 'pending'
+           ORDER BY id DESC LIMIT 1)
+       ORDER BY id ASC LIMIT ?`,
+    )
+    .all(threadKey, threadKey, CONFIRMATION_LIST_MAX) as ApprovalRow[];
+}
+
+/**
+ * The card's items from its rows, or null when any row is unparseable or no
+ * longer hashes to its sha (the whole card is then void: one card).
+ */
+function itemsFromRows(rows: ApprovalRow[]): PendingConfirmationItem[] | null {
+  const items: PendingConfirmationItem[] = [];
+  for (const row of rows) {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(row.args_json) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    if (argsSha256(args) !== row.args_sha256) return null;
+    items.push({
+      toolName: row.tool,
+      args,
+      summary: row.summary ?? row.tool,
+      argsSha256: row.args_sha256,
+      approvalId: row.id,
+    });
+  }
+  return items;
+}
+
+/** Restart recovery: the thread's newest card, if still inside the TTL. */
 function rehydrateFromDb(threadKey: string): PendingConfirmation | null {
-  const row = dbWrite(
-    () =>
-      getDatabase()
-        .prepare(
-          `SELECT id, tool, args_sha256, args_json, summary, requested_at
-           FROM tool_approvals WHERE thread_key = ? AND decision = 'pending'
-           ORDER BY id DESC LIMIT 1`,
-        )
-        .get(threadKey) as ApprovalRow | undefined,
-  );
-  if (!row) return null;
-  const requestedAt = Date.parse(row.requested_at);
+  const rows = dbWrite(() => loadCardRows(threadKey));
+  if (!rows || rows.length === 0) return null;
+  const requestedAt = Date.parse(rows[0].requested_at);
   if (!Number.isFinite(requestedAt) || Date.now() - requestedAt > CONFIRMATION_TTL_MS) {
     markThreadRows(threadKey, "expired");
     return null;
   }
-  let args: Record<string, unknown>;
-  try {
-    args = JSON.parse(row.args_json) as Record<string, unknown>;
-  } catch {
+  const items = itemsFromRows(rows);
+  if (!items) {
     markThreadRows(threadKey, "superseded");
     return null;
   }
-  if (argsSha256(args) !== row.args_sha256) {
-    markThreadRows(threadKey, "superseded");
-    return null;
-  }
-  const pending: PendingConfirmation = {
-    toolName: row.tool,
-    args,
-    timestamp: requestedAt,
-    summary: row.summary ?? row.tool,
-    argsSha256: row.args_sha256,
-    approvalId: row.id,
-  };
+  const pending = cardOf(items, requestedAt);
   pendingConfirmations.set(threadKey, pending);
   // Re-arm expiry for the remaining TTL so a silent thread still closes the
   // row — through the one lapse path (trace, and the notice when the boot
   // sweep's resolver knows the chat).
-  const notify = resolveBootNotifier(threadKey, row.id);
+  const notify = resolveBootNotifier(threadKey, rows[0].id);
   if (notify) expiryNotifiers.set(threadKey, notify);
   armExpiryTimer(
     threadKey,
@@ -678,28 +764,20 @@ export function rearmPendingConfirmationsAtBoot(
       if (seen.has(row.thread_key)) continue; // older row of the same chat
       seen.add(row.thread_key);
       if (pendingConfirmations.has(row.thread_key)) continue;
-      let args: Record<string, unknown>;
-      try {
-        args = JSON.parse(row.args_json) as Record<string, unknown>;
-      } catch {
+      // Queue 4l: the whole card this newest row belongs to.
+      const cardRows = loadCardRows(row.thread_key);
+      const items = cardRows.length > 0 ? itemsFromRows(cardRows) : null;
+      if (!items) {
         markThreadRows(row.thread_key, "superseded");
         continue;
       }
-      if (argsSha256(args) !== row.args_sha256) {
-        markThreadRows(row.thread_key, "superseded");
-        continue;
-      }
-      const requestedAt = Date.parse(row.requested_at);
-      const pending: PendingConfirmation = {
-        toolName: row.tool,
-        args,
-        timestamp: Number.isFinite(requestedAt) ? requestedAt : 0,
-        summary: row.summary ?? row.tool,
-        argsSha256: row.args_sha256,
-        approvalId: row.id,
-      };
+      const requestedAt = Date.parse(cardRows[0].requested_at);
+      const pending = cardOf(
+        items,
+        Number.isFinite(requestedAt) ? requestedAt : 0,
+      );
       pendingConfirmations.set(row.thread_key, pending);
-      const notify = resolveBootNotifier(row.thread_key, row.id);
+      const notify = resolveBootNotifier(row.thread_key, cardRows[0].id);
       if (notify) expiryNotifiers.set(row.thread_key, notify);
       const remaining = CONFIRMATION_TTL_MS - (Date.now() - pending.timestamp);
       if (remaining <= 0) {
@@ -748,7 +826,9 @@ export function getPendingConfirmation(
  * Resolve the pending confirmation: record WHO decided WHAT, verify the
  * args still hash to the approved identity, and clear it. Returns the
  * approved operation on `confirmed`, or null when nothing valid is pending
- * (the caller must not execute anything in that case).
+ * (the caller must not execute anything in that case). Queue 4l: the card is
+ * decided whole — every item's args are re-hashed (one mismatch voids the
+ * card) and every item's row gets the decision.
  */
 export function resolvePendingConfirmation(
   threadKey: string,
@@ -757,25 +837,29 @@ export function resolvePendingConfirmation(
 ): PendingConfirmation | null {
   const pending = getPendingConfirmation(threadKey);
   if (!pending) return null;
-  if (argsSha256(pending.args) !== pending.argsSha256) {
+  const tampered = pending.items.find(
+    (i) => argsSha256(i.args) !== i.argsSha256,
+  );
+  if (tampered) {
     console.warn(
-      `[confirmations] args hash mismatch for ${pending.toolName} on ${threadKey} — refusing to execute`,
+      `[confirmations] args hash mismatch for ${tampered.toolName} on ${threadKey} — refusing to execute`,
     );
     clearPendingConfirmation(threadKey, "superseded");
     return null;
   }
-  // Pin the decision to the ONE row the user saw (qa-audit W-2: a thread
-  // predicate stamped every pending row, including one the user never saw
-  // when an earlier supersede write was lost). Thread fallback only when the
-  // durable insert itself failed and there is no id.
+  // Pin the decision to the rows the user saw — the card's (qa-audit W-2: a
+  // thread predicate stamped every pending row, including one the user never
+  // saw when an earlier supersede write was lost). Thread fallback only when
+  // the durable insert itself failed and there is no id.
+  const ids = approvalIdsOf(pending);
   dbWrite(() =>
-    pending.approvalId !== undefined
+    ids.length > 0
       ? getDatabase()
           .prepare(
             `UPDATE tool_approvals SET decision = ?, approver = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE id = ? AND decision = 'pending'`,
+             WHERE id IN (${marks(ids.length)}) AND decision = 'pending'`,
           )
-          .run(decision, approver.slice(0, 200), pending.approvalId)
+          .run(decision, approver.slice(0, 200), ...ids)
       : getDatabase()
           .prepare(
             `UPDATE tool_approvals SET decision = ?, approver = ?, decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -785,6 +869,22 @@ export function resolvePendingConfirmation(
   );
   clearInMemory(threadKey);
   return decision === "confirmed" ? pending : null;
+}
+
+/**
+ * Queue 4l: confirmed items the router did NOT run (an earlier item on the
+ * card failed) are recorded as `declined` — the yes never reached them.
+ */
+export function markApprovalItemsDeclined(approvalIds: readonly number[]): void {
+  if (approvalIds.length === 0) return;
+  dbWrite(() =>
+    getDatabase()
+      .prepare(
+        `UPDATE tool_approvals SET decision = 'declined', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id IN (${marks(approvalIds.length)}) AND decision = 'confirmed'`,
+      )
+      .run(...approvalIds),
+  );
 }
 
 function clearInMemory(threadKey: string): void {

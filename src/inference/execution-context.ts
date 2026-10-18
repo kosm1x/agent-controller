@@ -10,8 +10,29 @@
  */
 
 import { AsyncLocalStorage } from "async_hooks";
+import { argsSha256 } from "../lib/args-sha256.js";
 
 const MAX_MEMORY_STORES_PER_TASK = 5;
+
+/**
+ * Queue 4l (ruling a, 2026-10-18): at most this many gated calls share one
+ * confirmation card; a later one is refused and ends the turn (queue 3r).
+ */
+export const CONFIRMATION_LIST_MAX = 8;
+
+/** One gated call waiting for the operator's yes. */
+export interface PendingCall {
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * The run's pending card: the first call's fields (as before queue 4l) plus
+ * `items`, every queued call in order (`items[0]` is the first call).
+ */
+export interface PendingCallList extends PendingCall {
+  items: PendingCall[];
+}
 
 /** Who can be asked to confirm a high-risk call in this run (all default false). */
 export interface ConfirmationFacts {
@@ -52,10 +73,7 @@ export class TaskExecutionContext {
   private memoryStoreCount = 0;
 
   /** Pending tool confirmation — set when a high-risk tool is blocked. */
-  private _pendingConfirmation: {
-    toolName: string;
-    args: Record<string, unknown>;
-  } | null = null;
+  private _pendingConfirmation: PendingCallList | null = null;
 
   /** Tool calls the confirmation gate stopped (never executed) in this run. */
   private readonly _gatedCalls: string[] = [];
@@ -148,13 +166,35 @@ export class TaskExecutionContext {
     toolName: string,
     args: Record<string, unknown>,
   ): void {
-    this._pendingConfirmation = { toolName, args };
+    this._pendingConfirmation = { toolName, args, items: [{ toolName, args }] };
   }
 
-  getPendingConfirmation(): {
-    toolName: string;
-    args: Record<string, unknown>;
-  } | null {
+  /**
+   * Queue 4l: append a gated call to the pending card. "duplicate" (nothing
+   * added) when the card already holds the same tool with args of equal
+   * argsSha256; "full" (nothing added) when no card is pending or it already
+   * holds CONFIRMATION_LIST_MAX.
+   */
+  addPendingConfirmation(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): "queued" | "duplicate" | "full" {
+    const pending = this._pendingConfirmation;
+    if (!pending) return "full";
+    const sha = argsSha256(args);
+    if (
+      pending.items.some(
+        (i) => i.toolName === toolName && argsSha256(i.args) === sha,
+      )
+    ) {
+      return "duplicate";
+    }
+    if (pending.items.length >= CONFIRMATION_LIST_MAX) return "full";
+    pending.items.push({ toolName, args });
+    return "queued";
+  }
+
+  getPendingConfirmation(): PendingCallList | null {
     return this._pendingConfirmation;
   }
 

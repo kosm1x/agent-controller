@@ -1817,6 +1817,13 @@ describe("DENUE guard fires only on a DENUE mention the user wrote (2026-09-29)"
 // the execution context fast-runner entered (the real module), exactly as
 // the MCP bridge handler does.
 // ────────────────────────────────────────────────────────────────────
+/** The run's one-call card (queue 4l shape: first call's fields + `items`). */
+const WP_DELETE_CARD = {
+  toolName: "wp_delete",
+  args: { id: 7 },
+  items: [{ toolName: "wp_delete", args: { id: 7 } }],
+};
+
 describe("confirmation gate on the claude-sdk path", () => {
   beforeEach(() => {
     mockGetConfig.mockReturnValue(SDK_CONFIG);
@@ -1854,10 +1861,7 @@ describe("confirmation gate on the claude-sdk path", () => {
       toolCalls: string[];
       text: string;
     };
-    expect(output.pendingConfirmation).toEqual({
-      toolName: "wp_delete",
-      args: { id: 7 },
-    });
+    expect(output.pendingConfirmation).toEqual(WP_DELETE_CARD);
     expect(result.toolCalls).toEqual(["wp_list_posts"]);
     expect(output.toolCalls).toEqual(["wp_list_posts"]);
     expect(output.text).toContain("¿Procedo?");
@@ -1891,6 +1895,36 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect((result.output as { text: string }).text).toBe(
       "Esta acción requiere tu confirmación: wp_delete. ¿Procedo?",
     );
+  });
+
+  it("queue 4l: a card with two queued calls reaches the output whole, in order; the empty-reply question names both", async () => {
+    mockQuerySdk.mockImplementationOnce(async () => {
+      const ctx = currentExecutionContext()!;
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      ctx.recordGatedCall("wp_delete");
+      expect(ctx.addPendingConfirmation("gmail_send", { to: "a@b.com" })).toBe("queued");
+      ctx.recordGatedCall("gmail_send");
+      return makeSdkResult({ text: "", toolCalls: ["wp_delete", "gmail_send"] });
+    });
+    const result = await fastRunner.execute({
+      taskId: "sdk-gate-list",
+      runId: "run-sdk-gate-list",
+      title: "Borra y avisa",
+      description: "Borra el post 7 y avisa a a@b.com",
+    });
+    const output = result.output as { pendingConfirmation?: unknown; text: string };
+    expect(output.pendingConfirmation).toEqual({
+      toolName: "wp_delete",
+      args: { id: 7 },
+      items: [
+        { toolName: "wp_delete", args: { id: 7 } },
+        { toolName: "gmail_send", args: { to: "a@b.com" } },
+      ],
+    });
+    expect(output.text).toBe(
+      "Estas 2 acciones requieren tu confirmación: wp_delete, gmail_send. ¿Procedo?",
+    );
+    expect(result.toolCalls).toEqual([]);
   });
 
   it("a non-interactive run enters the context with interactive=false", async () => {
@@ -1956,7 +1990,7 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(result.success).toBe(true);
     expect(
       (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
-    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    ).toEqual(WP_DELETE_CARD);
     expect(result.toolCalls).not.toContain("wp_delete");
   });
 
@@ -1975,7 +2009,7 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(mockQuerySdk).toHaveBeenCalledTimes(1);
     expect(
       (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
-    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    ).toEqual(WP_DELETE_CARD);
   });
 
   it("W4: a confirmation gated on the RESUME leg reaches the output (the leg runs in the task's context)", async () => {
@@ -2003,7 +2037,7 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(
       (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
-    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    ).toEqual(WP_DELETE_CARD);
     expect(outer.getPendingConfirmation()).toBeNull();
     expect(result.toolCalls).not.toContain("wp_delete");
   });
@@ -2032,7 +2066,7 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(
       (result.output as { pendingConfirmation?: unknown }).pendingConfirmation,
-    ).toEqual({ toolName: "wp_delete", args: { id: 7 } });
+    ).toEqual(WP_DELETE_CARD);
     expect(outer.getPendingConfirmation()).toBeNull();
   });
 

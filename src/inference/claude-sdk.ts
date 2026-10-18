@@ -62,6 +62,7 @@ import {
 } from "../lib/v8-4/stop-hook.js";
 import {
   currentExecutionContext,
+  CONFIRMATION_LIST_MAX,
   type TaskExecutionContext,
 } from "./execution-context.js";
 import {
@@ -213,8 +214,15 @@ function runsConcurrently(t: Tool): boolean {
 }
 
 /** Tool result for a call the gate paused (model-facing, Spanish). */
-const CONFIRMATION_PENDING_MESSAGE =
-  "Acción en espera de confirmación del operador: NO se ejecutó. Tu turno terminó: no la reintentes, no llames más herramientas (cualquier otra llamada en esta respuesta será rechazada sin ejecutarse) y no digas que ya se hizo. Termina tu respuesta ahora explicando qué vas a hacer y pregunta '¿Procedo?'. Si el operador confirma, la acción se ejecutará y se retomará lo que falte.";
+const CONFIRMATION_PENDING_MESSAGE = `Acción en espera de confirmación del operador: NO se ejecutó; no la reintentes y no digas que ya se hizo. Si esta misma solicitud necesita OTRAS acciones que también requieren confirmación, llámalas ahora en esta misma respuesta: se añadirán a la misma tarjeta (hasta ${CONFIRMATION_LIST_MAX}) sin ejecutarse. Cualquier llamada que no requiera confirmación será rechazada y terminará tu turno. Luego explica qué vas a hacer y pregunta '¿Procedo?'. Si el operador confirma, se ejecutarán en orden y se retomará lo que falte.`;
+
+/** Tool result for a gated call queued onto the pending card (queue 4l). */
+function confirmationQueuedMessage(total: number, duplicate = false): string {
+  if (duplicate) {
+    return `Esta acción ya estaba en la confirmación pendiente del operador (${total} en total): NO se ejecutó y no se añadió de nuevo. No la repitas y no digas que ya se hizo. Si el operador confirma, se ejecutarán todas en orden.`;
+  }
+  return `Acción añadida a la confirmación pendiente del operador junto con la(s) anterior(es) (${total} en total): NO se ejecutó. No la reintentes y no digas que ya se hizo. Si el operador confirma, se ejecutarán todas en orden.`;
+}
 
 /**
  * Abort reason when a call after the run's pending confirmation ends the SDK
@@ -254,9 +262,11 @@ function turnEndedRefusal(pendingTool: string): string {
  * execution context: the dispatcher enters one around every runner (so heavy,
  * swarm and Prometheus runs are gated too — they cannot ask, so they refuse),
  * and the fast runner enters its own, the only one that may ask.
- * First pending wins and ends the turn: every later call in the same run is
- * refused unexecuted (queue 3r) — the approved action runs later, in the
- * router, outside this run.
+ * First pending opens the card and ends the turn: a later call that would
+ * also ask is queued onto the same card (queue 4l, up to
+ * CONFIRMATION_LIST_MAX); every other later call — and a gated one past the
+ * cap — is refused unexecuted and aborts the query (queue 3r). The approved
+ * actions run later, in the router, outside this run.
  */
 function gateSdkToolCall(
   name: string,
@@ -300,6 +310,36 @@ function gateSdkToolCall(
   // every later call is refused unexecuted. A refuse keeps its own text and
   // accounting (undeclared → dispatcher).
   const pending = ctx.getPendingConfirmation();
+  // Queue 4l (ruling a): another call that would ask joins the pending card
+  // (up to CONFIRMATION_LIST_MAX) instead of ending the turn, so one yes
+  // covers every gated call the response made. Unexecuted, like the first.
+  if (pending && gate.action === "confirm") {
+    const refused = placeholderRefusalBeforeGate(name, args, ctx.taskId);
+    if (refused !== null) {
+      // Visible like every other gated decision; no abort (qa R1 W5).
+      ctx.recordGatedCall(name);
+      trace("refused_placeholder", ctx.taskId);
+      return refused;
+    }
+    // A repeat of a call already on the card (same tool, same args sha) gets
+    // the same answer but is not added twice (qa R1 W1).
+    const queued = ctx.addPendingConfirmation(name, args);
+    if (queued !== "full") {
+      ctx.recordGatedCall(name);
+      trace(
+        queued === "duplicate" ? "queued_duplicate" : "queued_with_pending",
+        ctx.taskId,
+      );
+      return JSON.stringify({
+        error: "CONFIRMATION_REQUIRED",
+        message: confirmationQueuedMessage(
+          pending.items.length,
+          queued === "duplicate",
+        ),
+        tool: name,
+      });
+    }
+  }
   if (pending && gate.action !== "refuse") {
     ctx.recordGatedCall(name);
     trace(
