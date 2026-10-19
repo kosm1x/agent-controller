@@ -10,11 +10,11 @@
  *
  * PHASE 4 IS THE HARNESS. Judgment construction and the `proposed_briefings`
  * write path are V8.1 Phase 6 — the prompt below is an honest placeholder and
- * the tool allowlist is read-only-only. `runReflection` now FIRES in production
- * via the Phase-7 triggers (n-turn.ts + idle-detect.ts) — so it runs live on the
- * Phase-6 placeholder judgment prompt below until Phase 6 ships real judgment
- * construction. (Updated 2026-07-05: the prior "nothing triggers it yet" note
- * drifted once the triggers were wired.)
+ * the tool allowlist is read-only-only. The Phase-7 triggers (n-turn.ts +
+ * idle-detect.ts) that call `runReflection` are gated OFF until Phase 6 by
+ * `REFLECTION_OUTPUT_HAS_CONSUMER` below: the pass's output had no consumer
+ * (queue ruling 4s, 2026-10-19, option a). `cron_morning` does not go through
+ * this runner and is unaffected.
  *
  * Cursor contract: a successful pass advances the cursor to the scope's
  * `lastProcessedEventId`; a failed pass leaves it, so the next pass retries
@@ -32,6 +32,20 @@ import {
   type ReflectionTrigger,
 } from "./scope.js";
 import { errMsg } from "../lib/err-msg.js";
+
+/**
+ * Kill switch for the n-turn and idle-detect reflection triggers. Queue ruling
+ * 4s (2026-10-19, option a): the pass's output reaches no table, briefing or
+ * consumer until V8.1 Phase 6 ships one, so both triggers skip the pass and
+ * leave their cursors untouched. Phase 6 flips this to `true`. A code
+ * constant on purpose, never an env knob.
+ */
+export const REFLECTION_OUTPUT_HAS_CONSUMER: boolean = false;
+
+/** Read through a function so tests can mock it without touching the constant. */
+export function reflectionOutputHasConsumer(): boolean {
+  return REFLECTION_OUTPUT_HAS_CONSUMER;
+}
 
 /**
  * Read-only tool allowlist for the reflection pass. PHASE 6 adds the

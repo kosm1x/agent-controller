@@ -36,11 +36,15 @@ import {
 import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { gateSpecsFromGoal, gatesMode } from "../lib/v8-4/gates.js";
+import { SWARM_FOOTER_PREFIX } from "../lib/v8-4/ledger-lines.js";
 import {
   proseGradeSpecsFromGoal,
   registerGradeSpecs,
 } from "../lib/v8-4/grade-specs.js";
-import { reverifyChildLedger } from "../lib/v8-4/consumer.js";
+import {
+  appendToDeliverable,
+  reverifyChildLedger,
+} from "../lib/v8-4/consumer.js";
 import { renderConversationContext } from "./conversation-context.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
@@ -75,6 +79,8 @@ interface SubTaskTracker {
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   output?: string;
   error?: string;
+  /** Queue 4s-1 (c): no runnable gate (none, all refused, or a gateless retry) — completion checked by nothing. */
+  ungated?: boolean;
 }
 
 // goalId -> taskId
@@ -413,6 +419,8 @@ function attemptSubtaskRetry(
   if (tracker) {
     tracker.status = "pending";
     tracker.error = undefined;
+    // Queue 4s-1 (W2): the retry is submitted without gates.
+    tracker.ungated = true;
   }
   return true;
 }
@@ -964,6 +972,9 @@ export const swarmRunner: Runner = {
             goalId: goal.id,
             taskId: result.taskId,
             status: "pending",
+            // "Gated" = at least one runnable gate; a refused spec
+            // (abandonReason) checks nothing (queue 4s-1, audit W1).
+            ungated: !childGates.some((g) => !g.abandonReason),
           });
 
           console.log(
@@ -1082,9 +1093,39 @@ export const swarmRunner: Runner = {
     emitSwarmProgress(input.taskId, 100, "Swarm complete");
 
     const summary = graph.summary();
-    console.log(
-      `[swarm] Task ${input.taskId}: complete — ${summary.completed}/${summary.total} goals, score=${reflectionResult.score.toFixed(2)}`,
+    // Queue 4s-1 (c): visibility only — children submitted without gate rows
+    // were checked by nothing, so the self-score is unverified. success,
+    // status, score and concerns are deliberately untouched.
+    const submittedChildren = Array.from(trackers.values()).filter(
+      (t) => t.taskId,
     );
+    const ungatedChildren = submittedChildren
+      .filter((t) => t.ungated)
+      .map((t) => t.goalId);
+    const ungatedFooter =
+      ungatedChildren.length > 0
+        ? `${SWARM_FOOTER_PREFIX}${ungatedChildren.length} de ${submittedChildren.length} hijos sin compuerta (${ungatedChildren.join(", ")}); autoevaluación no verificada`
+        : undefined;
+    console.log(
+      `[swarm] Task ${input.taskId}: complete — ${summary.completed}/${summary.total} goals, score=${reflectionResult.score.toFixed(2)}, ungated=${ungatedChildren.length}`,
+    );
+
+    const structuredOutput = {
+      content: abandonedNote
+        ? `${reflectionResult.summary}\n\n[${abandonedNote}]`
+        : reflectionResult.summary,
+      score: reflectionResult.score,
+      ungatedChildren,
+      // True = every child declared at least one runnable gate, not "verified".
+      selfScoreVerified: ungatedChildren.length === 0,
+      learnings: reflectionResult.learnings,
+      goalSummary: summary,
+      // Agent's actual report (joined per-goal answers) — the deliverable.
+      // Without it, chat-routed swarm tasks (isFanOutTask) deliver the
+      // reflector meta-summary (same class as the 07-11 heavy / 07-12
+      // nanoclaw incidents; swarm was the last unswept producer).
+      finalAnswer: collectFinalAnswer(executionResults),
+    };
 
     return {
       success: reflectionResult.success,
@@ -1097,19 +1138,11 @@ export const swarmRunner: Runner = {
           status: "DONE_WITH_CONCERNS" as const,
           concerns: [abandonedNote],
         }),
-      output: {
-        content: abandonedNote
-          ? `${reflectionResult.summary}\n\n[${abandonedNote}]`
-          : reflectionResult.summary,
-        score: reflectionResult.score,
-        learnings: reflectionResult.learnings,
-        goalSummary: summary,
-        // Agent's actual report (joined per-goal answers) — the deliverable.
-        // Without it, chat-routed swarm tasks (isFanOutTask) deliver the
-        // reflector meta-summary (same class as the 07-11 heavy / 07-12
-        // nanoclaw incidents; swarm was the last unswept producer).
-        finalAnswer: collectFinalAnswer(executionResults),
-      },
+      // The footer goes on the field the operator sees (finalAnswer first,
+      // DELIVERABLE_FIELDS order), so it reaches the chat reply.
+      output: ungatedFooter
+        ? appendToDeliverable(structuredOutput, ungatedFooter)
+        : structuredOutput,
       durationMs: Date.now() - start,
       goalGraph: graph.toJSON(),
       tokenUsage: parentUsage,
@@ -1118,6 +1151,7 @@ export const swarmRunner: Runner = {
         goalId,
         taskId: t.taskId,
         status: t.status,
+        ungated: t.ungated === true,
       })),
     };
   },

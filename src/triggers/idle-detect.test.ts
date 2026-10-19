@@ -8,8 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 
 const runReflectionMock = vi.fn();
+// Queue 4s (a): stubbed true for the "fires" tests; false in the no-consumer test.
+const hasConsumerMock = vi.fn<() => boolean>();
 vi.mock("../reflection/runner.js", () => ({
   runReflection: (...a: unknown[]) => runReflectionMock(...a),
+  reflectionOutputHasConsumer: () => hasConsumerMock(),
 }));
 
 const detectStalledMock = vi.fn();
@@ -33,6 +36,8 @@ beforeEach(() => {
   initDatabase(":memory:");
   runReflectionMock.mockReset();
   runReflectionMock.mockResolvedValue({ ran: true, scope: {} });
+  hasConsumerMock.mockReset();
+  hasConsumerMock.mockReturnValue(true);
   detectStalledMock.mockReset();
   detectStalledMock.mockReturnValue([{ kind: "stalled_project" }]);
 });
@@ -94,6 +99,21 @@ describe("runIdleDetectCheck", () => {
       )
       .get() as { c: number };
     expect(idleRows.c).toBe(0);
+  });
+
+  it("does not fire and writes no row when reflection output has no consumer (queue 4s a)", async () => {
+    hasConsumerMock.mockReturnValue(false);
+    const result = await runIdleDetectCheck();
+    expect(result).toEqual({
+      fired: false,
+      reason: "no-consumer",
+      stalledCount: 1,
+    });
+    expect(runReflectionMock).not.toHaveBeenCalled();
+    const rows = getDatabase()
+      .prepare(`SELECT COUNT(*) AS c FROM trigger_runs`)
+      .get() as { c: number };
+    expect(rows.c).toBe(0);
   });
 
   it("records a fired trigger_runs row on a real fire", async () => {

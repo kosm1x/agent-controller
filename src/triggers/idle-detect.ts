@@ -23,7 +23,10 @@
 
 import { getDatabase } from "../db/index.js";
 import { detectStalledProjects } from "../detection/index.js";
-import { runReflection } from "../reflection/runner.js";
+import {
+  reflectionOutputHasConsumer,
+  runReflection,
+} from "../reflection/runner.js";
 import { createLogger } from "../lib/logger.js";
 import {
   isThrottled,
@@ -45,7 +48,8 @@ export interface IdleDetectResult {
     | "not-idle"
     | "no-stalled-project"
     | "throttled"
-    | "budget-exhausted";
+    | "budget-exhausted"
+    | "no-consumer";
   stalledCount: number;
 }
 
@@ -81,6 +85,16 @@ export async function runIdleDetectCheck(): Promise<IdleDetectResult> {
   const stalled = detectStalledProjects();
   if (stalled.length === 0) {
     return { fired: false, reason: "no-stalled-project", stalledCount: 0 };
+  }
+
+  if (!reflectionOutputHasConsumer()) {
+    // Queue 4s (a): no consumer for the pass's output until Phase 6. Write no
+    // row, so the 12h throttle is not consumed (same as a budget skip).
+    return {
+      fired: false,
+      reason: "no-consumer",
+      stalledCount: stalled.length,
+    };
   }
 
   if (isThrottled("idle_detect", IDLE_THROTTLE_WINDOW)) {
