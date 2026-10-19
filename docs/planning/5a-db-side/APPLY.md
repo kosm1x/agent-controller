@@ -1,4 +1,6 @@
-# Ruling 5a option (b): operator recipe for the LIVE `supabase-db` (DRAFT rev 3, 2026-10-19; qa R1 FAIL → R2 FAIL → R3 PASS WITH WARNINGS, folded)
+# Ruling 5a option (b): operator recipe for the LIVE `supabase-db` (rev 3, 2026-10-19; qa R1 FAIL → R2 FAIL → R3 PASS WITH WARNINGS, folded)
+
+**APPLIED 2026-10-19 21:08 UTC by the operator via `step1-host-consumers.sh` (21:01 PASS) and `step2-apply-and-verify.sh` (Recipe C, SL; healthy in 11 s; Step 3 14/14). PROVEN 21:20 UTC: `step1-host-consumers.sh --run-only` → backup 2.19 GB exit 0, mat-view refresh Result=success. Re-run the checks any time: `bash /root/claude/mission-control/docs/planning/5a-db-side/step2-apply-and-verify.sh --check-only`.**
 
 Run everything from the Panel terminal. Nothing here was run against the live container. Evidence: `PROOF.md`
 (§0–§5 rev 1, §6 rev 2, §7 rev 3).

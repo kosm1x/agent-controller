@@ -124,7 +124,7 @@ fi
 
 say "summary"
 if [ "$fail" = 0 ]; then
-  echo "STEP 1 PASS. Next: APPLY.md Step 2 (Recipe C), then Step 3, then run this script again with --run-only."
+  if [ "$DO_EDIT" = 1 ]; then echo "STEP 1 PASS. Next: APPLY.md Step 2 (Recipe C), then Step 3, then run this script again with --run-only."; else echo "STEP 1 PASS under the current DB rules."; fi
 else
   echo "STEP 1 FAIL: fix the FAIL lines above before the apply. Rollback of backup.sh: cp -p $BACKUP_SH.bak-5a-20261019 $BACKUP_SH ; of the refresh script: git -C $DENUE_REPO checkout HEAD~1 -- scripts/refresh-matviews.sh (if this run committed it)."
   exit 1
