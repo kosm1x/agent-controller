@@ -145,3 +145,7 @@
 ## 2026-10-18 (late) — 4o G1 lineage · swarm rating · reflection-budget readout
 - **Mistake:** a `cd` inside one Bash call moved the SESSION cwd, and the next relative `data/mc.db` reads failed ("unable to open database") → absolute paths for every db/file argument; never `cd` for a side read.
 - **Better:** tripwire paths are `logs/day-logs/` (198 + today's file) and `find projects/eurekams -type f` (26, recursive); a top-level `ls` reads 0 and 14 and looks like an incident. Swarm rating recipe: gate rows (`gates.evaluated` met/failed per child) · `numbers.audited` found/unverified · artifact shape (lines/headings/URLs, never content) · delivery chunks · cost vs 30-day heavy average ($0.56) — each axis separately; the swarm's own `score=1.00` is a claim.
+
+## 2026-10-19 — rulings drain, 4p write-gate narrowing
+- **Mistake (4p brief):** I specified the narrowing by the NAME's key only ("spaced string is a name only under a name/label/env key"); the audit showed `{description:"Stripe secret key", value}` then stored in CLEAR, a shape display never masked → when narrowing a refusal rule, enumerate what the rule was the ONLY defence for (here: `title`/`description` + `value` pairs, covered by the write gate and nothing else) and gate the narrowing on the judged SIBLING's key too, not just the name's.
+- **Better:** a gate narrowing ships with the admitted shapes pinned as tests ("accepted residual" comment) so a later flip is visible, and with one journal line per refusal so the first live hit is a fact, not a guess.
