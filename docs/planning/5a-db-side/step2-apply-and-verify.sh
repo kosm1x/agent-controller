@@ -59,7 +59,7 @@ if [ "$DO_EDIT" = 1 ]; then
   install -m 644 "$SRC/pg_hba.conf.socket-and-loopback" "$HBA_DIR/pg_hba.conf" && ok "pg_hba.conf installed" || bad "install pg_hba.conf"
   install -m 644 "$SRC/pg_ident.conf.proposed" "$HBA_DIR/pg_ident.conf" && ok "pg_ident.conf installed" || bad "install pg_ident.conf"
   head -1 "$HBA_DIR/pg_hba.conf" | grep -q . && ok "pg_hba.conf non-empty ($(wc -l < "$HBA_DIR/pg_hba.conf") lines)" || bad "pg_hba.conf empty"
-  grep -qxF 'local all mcp_readonly,longevidad_ro,denue_api,denue_sage trust' "$HBA_DIR/pg_hba.conf" \
+  grep -qE '^local[[:space:]]+all[[:space:]]+mcp_readonly,longevidad_ro,denue_api,denue_sage[[:space:]]+trust([[:space:]]|$)' "$HBA_DIR/pg_hba.conf" \
     && ok "RO/DENUE trust line present" || bad "RO/DENUE trust line missing from installed pg_hba.conf"
   grep -qE '^m5a[[:space:]]+postgres[[:space:]]+supabase_admin' "$HBA_DIR/pg_ident.conf" && ok "m5a map present" || bad "m5a map missing"
 
