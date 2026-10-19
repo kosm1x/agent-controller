@@ -83,7 +83,7 @@
 # use another authentication method.
 
 # ---------------------------------------------------------------------------
-# Ruling 5a option (b), variant SL "socket + loopback" (draft 2026-10-19, rev 3: + peer map m5a, + denue roles on trust).
+# Ruling 5a option (b), variant SL "socket + loopback" (draft 2026-10-19, rev 4: + peer map m5a, + denue roles on trust, + minisu on trust).
 # Derived from the in-use $PGDATA/pg_hba.conf (initdb default + entrypoint line).
 # Change: as variant S over the socket, and loopback TCP (127.0.0.1 / ::1)
 # moves from trust to scram-sha-256 for every role, so
@@ -104,7 +104,11 @@
 # with no password: mcp_readonly/longevidad_ro (mission-control shell gate),
 # denue_api (denue-analyzer.service, src/api/db/psql-runner.ts) and denue_sage
 # (Sage, src/api/sage/sql-gate.ts; the role has no password by design).
-local   all             mcp_readonly,longevidad_ro,denue_api,denue_sage      trust
+# rev 4 (queue 4w (ii), 2026-10-19): + minisu, column-level SELECT on two
+# minisu.* tables only (minisu-role.sql), for the Jarvis-workspace scripts
+# minisu-batch-generator.py / minisu-loop.sh, which `docker exec` psql as root
+# and were `-U postgres` until 5a refused that. No password; scram on TCP refuses it.
+local   all             mcp_readonly,longevidad_ro,denue_api,denue_sage,minisu  trust
 # Host jobs (backup.sh, refresh-matviews.sh, ...) reach postgres/supabase_admin
 # only as OS user postgres (`docker exec -u postgres ...`), via peer + map m5a
 # (ident_file must be the m5a pg_ident.conf). Root and any other OS user are
