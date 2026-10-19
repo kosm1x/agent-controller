@@ -99,11 +99,19 @@ below: `./mc-ctl audit-claim`.
 | `26651b19-207d-4dfc-a590-8c1c96e1e6d4` | 2026-10-18 05:01 | met | completed | - | really done | no | root; operator accepted the Opus pre-label 10-19 (reader checked deliverable, gate rows, artifacts). scheduled evolution-report ritual; recompute differs by 1 row (timing); runner figures match. |
 | `2ab1c8c1-0d31-4ee9-8dee-f10c4063a1bb` | 2026-10-19 05:01 | met | completed | - | really done | no | root; operator accepted the Opus pre-label 10-19 (reader checked deliverable, gate rows, artifacts). scheduled evolution-report ritual; figures recomputed and match. |
 
+## Rows — count 2 (grader prompt v2, from 2026-10-19 19:55 UTC)
+
+Opened after count 1 missed the FP budget (3 > 2) and the grader was fixed (queue 4v: `db5bb68`, DEPLOYED 2026-10-19 19:55 UTC as build `17c4ff5`). Only grades whose `gates.graded` trace carries `prompt_v=2` count here; the count-1 rows above stay as history and are never relabelled. Seed query: the one above with `AND json_extract(e.attrs,'\$.prompt_v') = 2` added to the WHERE clause. First readout owed ~2026-10-26 (~12–16 gradeable heavy tasks per week → 30 labels in 2–3 weeks).
+
+| task_id | graded (UTC) | grader | final status | signal | label | catch | note |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+
 ## Tally (recompute from the rows, newest run first)
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-10-19 20:xx | 56 | 34 | 3 | 8.8 % (n=34; causes: stale ground truth ×1 (item 11), unmeetable criterion ×1, evidence ordering ×1 (queue 4v)) — **BUDGET MISSED (≤2)** | 3 | 2 | 19 (swarm children of the 10-17/10-18 batches, no failed verdicts) |
+| 2026-10-19 19:55 (count 2 opened, `prompt_v=2` only) | 0 | 0 | 0 | – | 0 | 0 | 0 |
+| 2026-10-19 18:0x (count 1 CLOSED) | 56 | 34 | 3 | 8.8 % (n=34; causes: stale ground truth ×1 (item 11), unmeetable criterion ×1, evidence ordering ×1 (queue 4v)) — **BUDGET MISSED (≤2)** | 3 | 2 | 19 (swarm children of the 10-17/10-18 batches, no failed verdicts) |
 | 2026-10-09 07:0x | 18 | 17 | 1 | 5.9 % (n=17; the FP's cause = stale ground truth, item 11) | 1 | 1 | 0 |
 | 2026-10-09 06:4x | 18 | 3 | 1 | 33 % (n=3; the FP's cause = stale ground truth, item 11) | 1 | 1 | 14 |
 | 2026-10-09 06:2x | 18 | 1 | 1 | 100 % (n=1; cause = stale ground truth, item 11) | 1 | 1 | 16 |
@@ -118,7 +126,7 @@ Grader population proxy = heavy tasks completed per ISO week (roots + swarm chil
 
 ## Activation checklist (all three, §6)
 
-- [ ] ≥ 30 rows labelled `really done` with ≤ 2 false positives (0/30 is the only count that bounds the true rate at 10 %). **34/30 as of 2026-10-19 but 3 FP: MISSED. Per the rule below: fix the grader (queue 4v: unmeetable-criterion + evidence-ordering defects), then restart the count in a new Rows section.** Earlier: 17/30 as of 2026-10-09, 1 FP (stale-registry cause, item 11). Operator rule for labelling, ruled 10-09: a task is `really done` when the operator got what they needed from it when it arrived; no re-read required.**
+- [ ] ≥ 30 rows labelled `really done` with ≤ 2 false positives (0/30 is the only count that bounds the true rate at 10 %). **34/30 as of 2026-10-19 but 3 FP: MISSED. Per the rule below: fix the grader (queue 4v: unmeetable-criterion + evidence-ordering defects), then restart the count in a new Rows section.** **Count 1 CLOSED at 34 really done / 3 FP; grader fixed (4v `db5bb68`, DEPLOYED 2026-10-19 19:55 UTC); count 2 OPEN from 19:55 UTC on `prompt_v=2` grades: 0/30.** Earlier: 17/30 as of 2026-10-09, 1 FP (stale-registry cause, item 11). Operator rule for labelling, ruled 10-09: a task is `really done` when the operator got what they needed from it when it arrived; no re-read required.**
 - [x] ≥ 1 confirmed catch — `359a48f0` (2026-10-19: consolidation claimed four reports integrated, one integrated) and `ca333512` (2026-10-09, operator read): completed-claim with no artifact, grader failed 3/3 criteria.
 - [ ] Median added latency and cost per graded task reported (`./mc-ctl gates graded 30`, `cost_ledger` agent_type `v9:grader`) and accepted by the operator. **Reported 2026-10-09 (n=15, 10-06 → 10-09, read-only SQL over `gates.graded` + `cost_ledger`; `mc-ctl audit-claim` has no grader metric, operator re-reads with `./mc-ctl gates graded 30`):** latency median 20.4 s (min 9.2 s, max 30.5 s; shadow runs in the background so no task waited; under enforce this is added wall-clock per graded task) · cost median $0.20 per task, total $3.11, 15 ledger rows under `v9:grader` match the 15 traces · 64 criteria graded (4.3 per task). Acceptance = operator.
 - [x] Before enforce: queue §2026-10-06 item 1 (enforce-mode concurrency cap) shipped — `e7629fa` 2026-10-09 (one 4-slot pool across modes; over the cap the grade rows are ABANDONED `skipped_concurrency`, never demoted; 3 tests, 8 mutants caught, audit R1 folded). DEPLOYED 2026-10-09 05:12 UTC as build `a87ddb8` (PID 2596714, health 200, 0 startup errors).
