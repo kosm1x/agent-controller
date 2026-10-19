@@ -458,8 +458,9 @@ export function isReadOnlyDiagnostic(command: string): boolean {
 }
 
 /** Read-only psql invocation (2026-09-09 DENUE dentist-density lockout).
- *  Every DENUE SQL call opens with `docker exec supabase-db psql -U postgres
- *  -d postgres`, so three failed queries inside one 5-min window (a guessed
+ *  Every DENUE SQL call opens with `docker exec supabase-db psql -U mcp_readonly
+ *  -d postgres` (ruling 5a 2026-10-18: the gate allows only the read-only
+ *  roles), so three failed queries inside one 5-min window (a guessed
  *  column that does not exist, a `\dt | grep` with no match) struck every
  *  later query on the shared "docker" token — novel `\d table` reads
  *  included — across four chat turns, and Jarvis handed the SQL back to the

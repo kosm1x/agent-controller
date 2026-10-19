@@ -1233,17 +1233,18 @@ Then pass that literal value as header \`X-Api-Key: <value>\` on every subsequen
 |                                       | \`/api/analytics/licensed-pharmacies-by-ageb?cvegeo=\`                    |
 | Establishment detail by CLEE          | \`/api/establishment/:clee\`                                               |
 
-═══ SQL PATH (no API endpoint exists — first tool = \`shell_exec\` with \`docker exec supabase-db psql -U postgres -d postgres -c "<SQL>"\`) ═══
+═══ SQL PATH (no API endpoint exists — first tool = \`shell_exec\` with \`docker exec supabase-db psql -U mcp_readonly -d postgres -c '<SQL>'\`) ═══
+**Quoting (shell gate, ruling 5a):** the SQL goes inside single quotes as ONE span on ONE line — never a \`'\`, a backslash or a newline inside it. Write string literals with dollar quoting (\`$$0000$$\`, not \`'0000'\`). One statement per call.
 
 **Pattern: Demographic ranking** ("top N munis por [demografía]", "más densidad de [grupo]", "% de [característica]"):
-Tabla \`censo_iter\` (290 cols, ALL \`text\` — cast \`::int\` o \`::numeric\`). Filter \`loc='0000'\` for muni-rollup.
+Tabla \`censo_iter\` (290 cols, ALL \`text\` — cast \`::int\` o \`::numeric\`). Filter \`loc=$$0000$$\` for muni-rollup.
 \`\`\`sql
 SELECT entidad, mun, nom_ent, nom_mun,
        pobtot::int AS pob_total,
        <metric>::int AS pob_metric,
        ROUND(<metric>::numeric / NULLIF(pobtot::int, 0) * 100, 2) AS pct
 FROM censo_iter
-WHERE loc='0000' AND pobtot::int >= 10000
+WHERE loc=$$0000$$ AND pobtot::int >= 10000
 ORDER BY pct DESC LIMIT N;
 \`\`\`
 Columnas comunes: \`pob65_mas\`, \`p_60ymas\`, \`pob85_mas\`, \`p_18a24\`, \`p_25a59\`, \`pobfem\`, \`pobmas\`, \`psinder\`, \`pder_imss\`, \`vph_inter\`, \`vph_autom\`, \`graproes\`.
@@ -1257,8 +1258,8 @@ SELECT c.entidad, c.mun, c.nom_ent, c.nom_mun,
        c.pobtot::int AS pob_total,
        ROUND(COUNT(*)::numeric / NULLIF(c.pobtot::int, 0) * 10000, 2) AS por_10k_hab
 FROM establecimientos e
-JOIN censo_iter c ON c.entidad || c.mun = e.area_geo AND c.loc = '0000'
-WHERE e.clase_actividad_id = '<SCIAN6>' AND c.pobtot::int >= 10000
+JOIN censo_iter c ON c.entidad || c.mun = e.area_geo AND c.loc = $$0000$$
+WHERE e.clase_actividad_id = $$<SCIAN6>$$ AND c.pobtot::int >= 10000
 GROUP BY c.entidad, c.mun, c.nom_ent, c.nom_mun, c.pobtot
 ORDER BY por_10k_hab DESC LIMIT N;
 \`\`\`
@@ -1266,8 +1267,8 @@ Caveat: ~35 establecimientos (0.05%) sit in post-2020 municipios with no census 
 For a single state, \`/api/analytics/municipios?entidad=NN\` already returns \`poblacion\` + \`establecimientos\` + \`farmacias\` per municipio (API path, no SQL).
 
 **\`establecimientos\` table — schema cheatsheet** (cast carefully; some fields are \`text\` even when numeric):
-- \`entidad\` (2-char state code, INDEXED) — use this for state-only filters: \`WHERE entidad='09'\`
-- \`area_geo\` (5-char concat = entidad+mun, INDEXED) — use this for muni-level filters: \`WHERE area_geo='09014'\` ← **NOTE: column is \`area_geo\` NOT \`cve_mun\`**
+- \`entidad\` (2-char state code, INDEXED) — use this for state-only filters: \`WHERE entidad=$$09$$\`
+- \`area_geo\` (5-char concat = entidad+mun, INDEXED) — use this for muni-level filters: \`WHERE area_geo=$$09014$$\` ← **NOTE: column is \`area_geo\` NOT \`cve_mun\`**
 - \`municipio\` (text — muni name in Spanish, NOT the code)
 - \`clase_actividad_id\` (6 chars, INDEXED) — full SCIAN
 - \`sector_actividad_id\` (2), \`subsector_actividad_id\` (3), \`rama_actividad_id\` (4), \`subrama_actividad_id\` (5)
@@ -1278,7 +1279,7 @@ For a single state, \`/api/analytics/municipios?entidad=NN\` already returns \`p
 \`\`\`sql
 SELECT razon_social, COUNT(*) AS n
 FROM establecimientos
-WHERE razon_social ILIKE '%MARCA%' OR nombre ILIKE '%MARCA%'
+WHERE razon_social ILIKE $$%MARCA%$$ OR nombre ILIKE $$%MARCA%$$
 GROUP BY razon_social ORDER BY n DESC LIMIT 20;
 \`\`\`
 
@@ -1286,11 +1287,11 @@ GROUP BY razon_social ORDER BY n DESC LIMIT 20;
 \`\`\`sql
 -- State-level (use entidad)
 SELECT COUNT(*) FROM establecimientos
-WHERE clase_actividad_id IN ('464111','464112') AND entidad='09';
+WHERE clase_actividad_id IN ($$464111$$,$$464112$$) AND entidad=$$09$$;
 
 -- Muni-level (use area_geo, NOT cve_mun)
 SELECT COUNT(*) FROM establecimientos
-WHERE clase_actividad_id IN ('464111','464112') AND area_geo='09014';
+WHERE clase_actividad_id IN ($$464111$$,$$464112$$) AND area_geo=$$09014$$;
 \`\`\`
 SCIAN dispatch by length: 2→\`sector_actividad_id\`, 3→\`subsector_actividad_id\`, 4→\`rama_actividad_id\`, 5→\`subrama_actividad_id\`, 6→\`clase_actividad_id\`.
 
@@ -1299,7 +1300,7 @@ SCIAN dispatch by length: 2→\`sector_actividad_id\`, 3→\`subsector_actividad
 SELECT razon_social, COUNT(*) AS sucursales,
        ROUND(100.0*COUNT(*)/SUM(COUNT(*)) OVER (), 2) AS pct_share
 FROM establecimientos
-WHERE clase_actividad_id IN ('464111','464112') AND area_geo='14039'
+WHERE clase_actividad_id IN ($$464111$$,$$464112$$) AND area_geo=$$14039$$
   AND razon_social IS NOT NULL
 GROUP BY razon_social ORDER BY sucursales DESC LIMIT 10;
 \`\`\`

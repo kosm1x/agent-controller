@@ -197,6 +197,7 @@ import { shadowMemoryRecall } from "../jev/shadow.js";
 import { getEssentialFacts } from "../memory/essentials.js";
 import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
 import { TOOL_NOT_AVAILABLE } from "../tools/external-tool-guard.js";
+import { validateShellCommand } from "../tools/builtin/shell.js";
 import {
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
@@ -1784,6 +1785,55 @@ describe("DENUE guard fires only on a DENUE mention the user wrote (2026-09-29)"
     );
     expect(guard).toContain("⛔ DENUE ANALYZER QUERY DETECTED.");
     expect(guard).toContain("API PATH");
+  });
+
+  it("(c2) SQL path teaches the read-only role (ruling 5a 2026-10-18)", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    expect(guard).toContain("psql -U mcp_readonly");
+    expect(guard).not.toContain("psql -U postgres");
+    const header = guard!.split("\n").find((l) => l.startsWith("═══ SQL PATH"));
+    expect(header).toContain("-c '");
+    expect(header).not.toContain('-c "');
+  });
+
+  it("(c3) every fenced SQL example passes the ruling-5a shell gate as taught", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    const head = "docker exec supabase-db psql -U mcp_readonly -d postgres -c ";
+    // One statement per call, one line (the gate refuses a newline in the span).
+    const statements = [...guard!.matchAll(/```sql\n([\s\S]*?)```/g)].flatMap((m) =>
+      m[1]!
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("--"))
+        .join(" ")
+        .replace(/<metric>/g, "pob65_mas")
+        .replace(/<SCIAN6>/g, "621211")
+        .replace(/LIMIT N\b/g, "LIMIT 10")
+        .replace(/\s+/g, " ")
+        .split(";")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((x) => `${x};`),
+    );
+    expect(statements.length).toBe(6);
+    for (const sql of statements) {
+      expect(validateShellCommand(`${head}'${sql}'`), sql).toMatchObject({ allowed: true });
+    }
+    expect(validateShellCommand(`${head}"${statements[0]}"`).allowed).toBe(false);
+  });
+
+  it("(c4) no single-quoted literal anywhere in the SQL PATH block, prose included", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    const start = guard!.indexOf("═══ SQL PATH");
+    const end = guard!.indexOf("═══ HARD RULES");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(guard!.slice(start, end).match(/(=|IN \(|LIKE)\s*'/i)).toBeNull();
   });
 
   it("(d) DENUE mention, interactive, no shell/http → advisory", async () => {
