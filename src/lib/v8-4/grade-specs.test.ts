@@ -969,6 +969,7 @@ describe("buildGradedAttrs", () => {
       },
       costUsd: 0.123456789,
       reason: `interrupted — failed: ${'"'.repeat(400)}` as const,
+      promptVersion: 2,
     };
     const a = buildGradedAttrs(args);
     expect(TRACE_ATTRS_MAX_CHARS).toBe(ATTRS_MAX_CHARS);
@@ -976,6 +977,7 @@ describe("buildGradedAttrs", () => {
     expect(JSON.stringify(a).length).toBeLessThanOrEqual(2000);
     expect(a.counts).toEqual({ met: 5, failed: 5, pending: 4 });
     expect(a.criteria_total).toBe(14);
+    expect(a.prompt_v).toBe(2); // queue 4v: survives every shrink step
     expect(a.model).toBe(args.model);
     expect(a.usage).toEqual(args.usage);
     expect(a.cost_usd).toBe(args.costUsd);
@@ -986,6 +988,7 @@ describe("buildGradedAttrs", () => {
     const stored = traces("t-w2")[0]!.attrs;
     expect(stored.truncated).toBeUndefined();
     expect(stored.counts).toEqual({ met: 5, failed: 5, pending: 4 });
+    expect(stored.prompt_v).toBe(2);
     expect(stored.mode).toBe("shadow");
   });
 
