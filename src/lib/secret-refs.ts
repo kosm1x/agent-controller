@@ -373,6 +373,11 @@ function settingNameFragment(s: string): string | undefined {
   return SETTING_NAME_RE.test(t) ? secretNameFragment(t) : undefined;
 }
 
+/** A key that names its value (`name`/`key`/`env`/`var`/`variable`, `label`, or env-shaped). */
+function isNameKey(k: string): boolean {
+  return PAIR_NAME_RE.test(k) || /^label$/i.test(k) || ENV_KEY_RE.test(k);
+}
+
 /**
  * A scalar long enough to be a credential: a string of 8+ characters (a URL
  * or a path too: the display exemption URL_OR_PATH_RE does not apply here)
@@ -390,7 +395,12 @@ function isGatedScalar(v: unknown): boolean {
  * A hit is any object or list (tuple) that holds a name-shaped string
  * (SETTING_NAME_RE) carrying a secretNameFragment, next to a sibling member
  * (another value of the same object/list, whatever the keys are) that is a
- * gated scalar (isGatedScalar). A `SECRET_<NAME>` string is never a gated
+ * gated scalar (isGatedScalar). A member string with whitespace inside it
+ * is a name under a name-shaped key (isNameKey: `{name: "X API Key"}`);
+ * under any other key it judges only a value-keyed or credential-keyed
+ * sibling (`{title: "GitHub token", value: …}` is a hit, `{title: "Passport
+ * renewal", date: …}` is not), so in a list (every key an index) it is
+ * never a name. A `SECRET_<NAME>` string is never a gated
  * value; it is a REFERENCE (not a name either) only by position: under a
  * `secret` key (any case) or as the second element of a bare
  * `[NAME, SECRET_X]` tuple — anywhere else it is a name (`SECRET_KEY`). In
@@ -429,20 +439,24 @@ export function configSecretLiterals(config: unknown): Array<{ path: string[]; f
       SECRET_REF_NAME_RE.test(x) &&
       (isList ? entries.length === 2 && at === 1 : SECRET_MEMBER_RE.test(k));
     const refForm = !isList && entries.some(([k, x], at) => SECRET_MEMBER_RE.test(k) && isRef(k, x, at));
-    const names: Array<{ at: number; fragment: string }> = [];
+    // `weak`: a spaced member string under a key that does not name its value.
+    const names: Array<{ at: number; fragment: string; weak: boolean }> = [];
     entries.forEach(([k, x], at) => {
-      const fragment = typeof x === "string" && !isRef(k, x, at) ? settingNameFragment(x) : undefined;
-      if (fragment) names.push({ at, fragment });
+      if (typeof x !== "string" || isRef(k, x, at)) return;
+      const weak = /\s/.test(x.trim()) && !isNameKey(k.trim());
+      const fragment = settingNameFragment(x);
+      if (fragment) names.push({ at, fragment, weak });
     });
-    if (label) names.push({ at: -1, fragment: label });
+    if (label) names.push({ at: -1, fragment: label, weak: false });
     for (let at = 0; at < entries.length; at++) {
       const [k, x] = entries[at]!;
       if (!isGatedScalar(x)) continue;
       // Reference form: a member name judges only a value-keyed or
       // credential-keyed scalar; the parent key's label judges every one.
-      const judged =
-        !refForm || PAIR_VALUE_RE.test(k.trim()) || settingNameFragment(k) !== undefined || isSecretAncestorName(k);
-      const name = names.find((n) => n.at !== at && (judged || n.at === -1));
+      // A weak name judges only such a scalar too.
+      const valueKey = PAIR_VALUE_RE.test(k.trim()) || settingNameFragment(k) !== undefined || isSecretAncestorName(k);
+      const judged = !refForm || valueKey;
+      const name = names.find((n) => n.at !== at && (judged || n.at === -1) && (!n.weak || valueKey));
       if (name) out.push({ path: [...path, entries[at]![0]], fragment: name.fragment });
     }
     for (const [k, x] of entries) {

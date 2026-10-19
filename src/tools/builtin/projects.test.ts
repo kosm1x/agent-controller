@@ -6,7 +6,7 @@
  * gone); each is shown by its by-name placeholder and used by that name.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import {
   createProject,
@@ -989,6 +989,24 @@ describe("queue 3l ruling A — project_update refuses a credential literal next
     const changed = await update({ slug: "lit-legacy", config: { db: { value: LIT + "2" } } });
     expect(String(changed.error)).toContain("No guardé: config.db.value ");
     expect((getProject("lit-legacy")!.config.db as Record<string, unknown>).value).toBe(LIT);
+  });
+
+  it("queue 4p ruling (c): a spaced title next to a date is stored, not refused", async () => {
+    const out = await update({ slug: "lit-4p", name: "Lit 4p", config: { title: "Passport renewal", date: "2026-10-18" } });
+    expect(String(out.error ?? "")).not.toContain("No guardé");
+    expect(getProject("lit-4p")!.config).toEqual({ title: "Passport renewal", date: "2026-10-18" });
+  });
+
+  it("queue 4p ruling (a): a refusal logs path, fragment and slug only, never the value", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await update({ slug: "lit-log", config: { opts: { label: "DB_PASS", default: LIT } } });
+      const lines = warn.mock.calls.map((c) => c.map(String).join(" "));
+      expect(lines).toContain("[projects] 3l write gate refused config.opts.default (fragment PASS) for lit-log");
+      expect(lines.join("\n")).not.toContain(LIT);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("names the matched fragment in the reason", async () => {

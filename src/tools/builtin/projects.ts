@@ -673,6 +673,9 @@ CREDENTIAL STORAGE:
     // operator-only echo does. Names the path and fragment only.
     const literal = configLiteralProblem(row?.config ?? {}, rawArgs.config);
     if (literal) {
+      console.warn(
+        `[projects] 3l write gate refused config.${literal.path.join(".")} (fragment ${literal.fragment}) for ${slug}`,
+      );
       return JSON.stringify({
         error: `No guardé: config.${literal.path.join(".")} es un valor literal junto a un nombre con "${literal.fragment}" (forma de credencial); guarda el valor en credentials y usa la referencia {name, secret}, no un valor literal.`,
       });

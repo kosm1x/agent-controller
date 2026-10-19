@@ -2123,6 +2123,26 @@ describe("queue 3l ruling A — configSecretLiterals (the write gate's predicate
     expect(configSecretLiteral({ keywords: ["cafeteria centro", "tostador artesanal"] })).toBeUndefined();
     expect(configSecretLiteral(undefined)).toBeUndefined();
   });
+  it("queue 4p ruling (c): a spaced member string is a name only under a name/label/env-shaped key", () => {
+    expect(configSecretLiteral({ title: "Passport renewal", date: "2026-10-18" })).toBeUndefined();
+    expect(configSecretLiteral({ note: "Auth meeting notes", when: "2026-10-18T10:00" })).toBeUndefined();
+    expect(configSecretLiteral({ name: "X API Key", value: LIT })).toEqual({ path: ["value"], fragment: "KEY" });
+    expect(configSecretLiteral({ label: "DB Pass word", default: LIT })?.path).toEqual(["default"]);
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", value: LIT }] })?.path).toEqual(["e", "0", "value"]);
+    // In a list the key is the index: a spaced name in a bare tuple is not a name; an unspaced one still is.
+    expect(configSecretLiteral({ env: [["X API Key", LIT]] })).toBeUndefined();
+    expect(configSecretLiteral({ env: [["PGPASSWORD", LIT]] })).toEqual({ path: ["env", "0", "1"], fragment: "PASS" });
+    // R1 W1: under any other key a spaced name still judges a value-keyed or credential-keyed sibling.
+    expect(configSecretLiteral({ description: "Stripe secret key", value: LIT })).toEqual({ path: ["value"], fragment: "SECRET" });
+    expect(configSecretLiteral({ title: "GitHub token", value: LIT })).toEqual({ path: ["value"], fragment: "TOKEN" });
+    expect(configSecretLiteral({ desc: "PG PASSWORD", val: LIT })).toEqual({ path: ["val"], fragment: "PASS" });
+    expect(configSecretLiteral({ desc: "PG PASSWORD", password: LIT })?.path).toEqual(["password"]);
+    // accepted residual (4p ruling a): neutral key beside a spaced name
+    expect(configSecretLiteral({ desc: "PG PASSWORD", v: LIT })).toBeUndefined();
+    // R1 W3: the env-shaped and the trimmed name-key arms.
+    expect(configSecretLiteral({ DB_NAME: "PG PASSWORD", v: LIT })).toEqual({ path: ["v"], fragment: "PASS" });
+    expect(configSecretLiteral({ " name ": "Db Pass", v: LIT })).toEqual({ path: ["v"], fragment: "PASS" });
+  });
 });
 
 describe("queue 3l — the census walker judges every leaf with the exported predicate (lockstep with projectEntryLeaves)", () => {
