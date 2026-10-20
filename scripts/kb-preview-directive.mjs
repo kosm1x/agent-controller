@@ -1,5 +1,6 @@
-import { initDatabase } from "/root/claude/mission-control/dist/db/index.js";
+import { initDatabase, closeDatabase } from "/root/claude/mission-control/dist/db/index.js";
 import { upsertFile, mirrorToDisk, getFile } from "/root/claude/mission-control/dist/db/jarvis-fs.js";
+import { drainKbWrites } from "/root/claude/mission-control/dist/db/kb-write-drain.js";
 
 initDatabase(process.env.MC_DB_PATH ?? "/root/claude/mission-control/data/mc.db");
 
@@ -64,3 +65,6 @@ upsertFile(
 mirrorToDisk(path, content);
 const back = getFile(path);
 console.log("READBACK:", back ? `${back.title} (${back.content.length} chars, qualifier=${back.qualifier})` : "MISSING");
+// upsertFile's pgvector/Drive syncs and the INDEX.md regeneration outlive the call (the INDEX timer is unref'd): settle them, then close.
+await drainKbWrites();
+closeDatabase();

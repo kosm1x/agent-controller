@@ -204,6 +204,25 @@ describe("runRepair candidates", () => {
     );
   });
 
+  it("duplicate parent folders: walks the oldest, warns once, and the 0-candidates line names the case", async () => {
+    drive.googleFetch.mockImplementation(async (url: string) => {
+      const q = decodeURIComponent(url);
+      if (q.includes("mimeType='application/vnd.google-apps.folder'")) {
+        return { files: [{ id: "dir-old" }, { id: "dir-new" }] };
+      }
+      return { files: q.includes("'dir-old' in parents") ? [] : drive.files };
+    });
+    expect((await runRepair({ path: P, apply: true })).ok).toBe(false);
+    const warns = (console.warn as unknown as { mock: { calls: string[][] } }).mock.calls.map((c) => c[0]!);
+    expect(warns.filter((w) => w.includes("duplicate Drive folder"))).toEqual([
+      '[drive-sync] duplicate Drive folder name="directives" parent=kb-root-test: using oldest id=dir-old, also found id=dir-new',
+    ]);
+    expect(lines()).toContain("  candidates=0");
+    expect(lines().at(-1)).toContain("newer of two same-named folders");
+    expect(lines().at(-1)).toContain("a duplicate-folder warning prints on stderr");
+    expect(mapRows()).toEqual([]);
+  });
+
   it("a Drive error fails without writing", async () => {
     drive.googleFetch.mockRejectedValue(new Error("401 unauthorized"));
     expect((await runRepair({ path: P, apply: true })).ok).toBe(false);

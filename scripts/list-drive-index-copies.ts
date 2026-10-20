@@ -17,6 +17,7 @@
 
 import Database from "better-sqlite3";
 import { googleFetch } from "../src/google/client.js";
+import { escapeDriveQueryValue } from "../src/google/drive-query.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
 
 // S6 item 3c: operator context only (login session or operator unit), before any db/Drive call.
@@ -91,8 +92,7 @@ async function kbLocation(parents: string[] | undefined): Promise<string> {
 }
 
 async function listByName(name: string): Promise<DriveFile[]> {
-  const escaped = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-  const q = encodeURIComponent(`name = '${escaped}' and trashed = false`);
+  const q = encodeURIComponent(`name = '${escapeDriveQueryValue(name)}' and trashed = false`);
   const fields = "nextPageToken,files(id,name,createdTime,modifiedTime,size,parents)";
   const out: DriveFile[] = [];
   let pageToken: string | undefined;

@@ -21,13 +21,11 @@ import { getFile } from "../src/db/jarvis-fs.js";
 import { findFolder, getDriveMapEntry, isDriveSyncEnabled, recordDriveId } from "../src/db/drive-sync.js";
 import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "../src/db/live-db.js";
 import { googleFetch } from "../src/google/client.js";
+import { escapeDriveQueryValue } from "../src/google/drive-query.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import { errMsg } from "../src/lib/err-msg.js";
 
 type Candidate = { id: string; name: string; createdTime: string };
-
-/** Drive query string literal: backslash and single quote escaped. */
-const quoteDrive = (s: string) => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 
 /** Why this path cannot be repaired here, or null. Reads sqlite only. */
 function refusal(path: string): string | null {
@@ -53,7 +51,7 @@ export async function runRepair(opts: { path: string; apply: boolean }): Promise
   try {
     const parentId = await findFolder(dir);
     if (parentId) {
-      const query = `name=${quoteDrive(name)} and '${parentId}' in parents and mimeType='text/markdown' and trashed=false`;
+      const query = `name='${escapeDriveQueryValue(name)}' and '${escapeDriveQueryValue(parentId)}' in parents and mimeType='text/markdown' and trashed=false`;
       const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,createdTime)&orderBy=createdTime&pageSize=100`;
       candidates = (await googleFetch<{ files: Candidate[] }>(url)).files ?? [];
     } else console.log(`  folder "${dir}" not found on Drive`);
@@ -65,7 +63,7 @@ export async function runRepair(opts: { path: string; apply: boolean }): Promise
   for (const c of candidates) console.log(`  candidate id=${c.id} createdTime=${c.createdTime}`);
   if (candidates.length === 0) {
     console.log(
-      `FAIL ${path} no Drive file to map; nothing written. The search only sees files with mimeType='text/markdown' and trashed=false directly under the path's folder: a copy re-saved under another mime type, trashed or moved reads as 0 here. Otherwise the next ordinary upsert of the path (from the service, or kb-import-from-disk --apply) creates and maps it.`,
+      `FAIL ${path} no Drive file to map; nothing written. The search only sees files with mimeType='text/markdown' and trashed=false directly under the path's folder: a copy re-saved under another mime type, trashed or moved reads as 0 here, and so does a copy under the newer of two same-named folders (the search walks the oldest; a duplicate-folder warning prints on stderr). Otherwise the next ordinary upsert of the path (from the service, or kb-import-from-disk --apply) creates and maps it.`,
     );
     return { ok: false };
   }

@@ -1438,6 +1438,185 @@ describe("settleDriveSyncs / findFolder / map helpers", () => {
     for (const [, init] of drive.googleFetch.mock.calls) expect(init).toBeUndefined(); // GETs only
   });
 
+  it("searchFolder escapes ' and \\ in the folder name and asks oldest-first", async () => {
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockResolvedValue({ files: [] });
+    expect(await findFolder("it's")).toBeNull();
+    expect(await findFolder("back\\slash")).toBeNull();
+    const urls = drive.googleFetch.mock.calls.map((c) => String(c[0]));
+    const qs = urls.map((u) => decodeURIComponent(u));
+    expect(qs[0]).toContain("name='it\\'s' and 'kb-root-test' in parents");
+    expect(qs[1]).toContain("name='back\\\\slash' and 'kb-root-test' in parents");
+    for (const u of urls) {
+      expect(u).toContain("&orderBy=createdTime&pageSize=2");
+      expect(u).not.toContain("pageSize=1");
+    }
+  });
+
+  it("searchFolder: two same-named folders resolve to the oldest and warn once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockResolvedValue({ files: [{ id: "id-old" }, { id: "id-new" }] });
+    expect(await findFolder("dup")).toBe("id-old");
+    const dupWarns = warn.mock.calls.filter((c) => String(c[0]).includes("duplicate Drive folder"));
+    expect(dupWarns).toHaveLength(1);
+    expect(String(dupWarns[0]![0])).toBe(
+      '[drive-sync] duplicate Drive folder name="dup" parent=kb-root-test: using oldest id=id-old, also found id=id-new',
+    );
+    warn.mockRestore();
+  });
+
+  it("searchFolder: one folder, no duplicate warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockResolvedValue({ files: [{ id: "id-only" }] });
+    expect(await findFolder("single")).toBe("id-only");
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("duplicate Drive folder"))).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("ensureFolder (via syncToDrive) files under the oldest of two duplicate folders", async () => {
+    await settleDriveSyncs();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string) => {
+      if (url.includes("uploadType=multipart")) return { id: "file-dup" };
+      if (url.includes("vnd.google-apps.folder")) return { files: [{ id: "dup-old" }, { id: "dup-new" }] };
+      return { files: [] };
+    });
+    syncToDrive("dupfold/x.md", "X", "body");
+    await settleDriveSyncs();
+    const upload = drive.googleFetch.mock.calls.find((c) => String(c[0]).includes("uploadType=multipart"));
+    expect(String(upload?.[1]?.rawBody)).toContain('"parents":["dup-old"]');
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("duplicate Drive folder"))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  /** Fake Drive for folder creation: every folder search misses; folder POSTs are counted. */
+  function folderCreateDrive(
+    opts: { failFirstCreate?: boolean; attempts?: string[]; onCreate?: (name: string) => void } = {},
+  ) {
+    const folderPosts: string[] = [];
+    let fail = opts.failFirstCreate ?? false;
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string, init?: { body?: { mimeType?: string; name?: string } }) => {
+      await ticks(2);
+      if (url.includes("uploadType=multipart")) return { id: `file-${Math.random()}` };
+      if (init?.body?.mimeType === "application/vnd.google-apps.folder") {
+        opts.attempts?.push(init.body.name!);
+        opts.onCreate?.(init.body.name!);
+        if (fail) {
+          fail = false;
+          throw new Error("500 create failed");
+        }
+        folderPosts.push(init.body.name!);
+        return { id: `folder-${init.body.name}-${folderPosts.length}` };
+      }
+      return { files: [] };
+    });
+    return folderPosts;
+  }
+  const uploadParents = () =>
+    drive.googleFetch.mock.calls
+      .filter((c) => String(c[0]).includes("uploadType=multipart"))
+      .map((c) => /"parents":\["([^"]+)"\]/.exec(String(c[1]?.rawBody))?.[1]);
+
+  it("ensureFolder: two concurrent writes under one new directory create it ONCE", async () => {
+    await settleDriveSyncs();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const folderPosts = folderCreateDrive();
+    syncToDrive("concnew/sub/a.md", "A", "body");
+    syncToDrive("concnew/sub/b.md", "B", "body");
+    await settleDriveSyncs();
+    expect(folderPosts).toEqual(["concnew", "sub"]);
+    expect(uploadParents()).toEqual(["folder-sub-2", "folder-sub-2"]);
+    vi.restoreAllMocks();
+  });
+
+  it("ensureFolder: a LATE caller arriving just after the create settled reuses the folder (no gap between map and cache)", async () => {
+    await settleDriveSyncs();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let late = false;
+    const folderPosts = folderCreateDrive({
+      onCreate: (name) => {
+        if (name !== "sub" || late) return;
+        late = true;
+        // Runs after this create's promise chain has settled (well past ensureFolder's
+        // .then handler) but before any timer tick.
+        let p: Promise<void> = Promise.resolve();
+        for (let i = 0; i < 30; i++) p = p.then(() => {});
+        void p.then(() => syncToDrive("concnew2/sub/c.md", "C", "body"));
+      },
+    });
+    syncToDrive("concnew2/sub/a.md", "A", "body");
+    syncToDrive("concnew2/sub/b.md", "B", "body");
+    await settleDriveSyncs();
+    expect(late).toBe(true);
+    expect(folderPosts).toEqual(["concnew2", "sub"]);
+    expect(uploadParents()).toEqual(["folder-sub-2", "folder-sub-2", "folder-sub-2"]);
+    vi.restoreAllMocks();
+  });
+
+  it("ensureFolder: concurrent writes share ONE rejected create; a later write creates it once", async () => {
+    await settleDriveSyncs();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const attempts: string[] = [];
+    const folderPosts = folderCreateDrive({ failFirstCreate: true, attempts });
+    syncToDrive("sharedfail/a.md", "A", "body");
+    syncToDrive("sharedfail/b.md", "B", "body");
+    await settleDriveSyncs();
+    expect(attempts).toEqual(["sharedfail"]);
+    expect(uploadParents()).toEqual([]);
+    const failed = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[drive-sync] Failed for"));
+    expect(failed).toEqual(["[drive-sync] Failed for sharedfail/a.md:", "[drive-sync] Failed for sharedfail/b.md:"]);
+    syncToDrive("sharedfail/c.md", "C", "body");
+    await settleDriveSyncs();
+    expect(attempts).toEqual(["sharedfail", "sharedfail"]);
+    expect(folderPosts).toEqual(["sharedfail"]);
+    expect(uploadParents()).toEqual(["folder-sharedfail-1"]);
+    vi.restoreAllMocks();
+  });
+
+  it("ensureFolder: a rejected folder create does not poison the next attempt", async () => {
+    await settleDriveSyncs();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const folderPosts = folderCreateDrive({ failFirstCreate: true });
+    syncToDrive("retrynew/a.md", "A", "body");
+    await settleDriveSyncs();
+    expect(folderPosts).toEqual([]);
+    expect(uploadParents()).toEqual([]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("Failed for retrynew/a.md"))).toBe(true);
+    syncToDrive("retrynew/b.md", "B", "body");
+    await settleDriveSyncs();
+    expect(folderPosts).toEqual(["retrynew"]);
+    expect(uploadParents()).toEqual(["folder-retrynew-1"]);
+    vi.restoreAllMocks();
+  });
+
+  it("searchFolder follows nextPageToken past an empty page (bounded), and an empty last page is missing", async () => {
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string) => {
+      const q = decodeURIComponent(url);
+      if (q.includes("name='paged'")) {
+        return q.includes("pageToken=a+b/c=") ? { files: [{ id: "id-paged" }] } : { files: [], nextPageToken: "a+b/c=" };
+      }
+      if (q.includes("name='endless'")) return { files: [], nextPageToken: "tok-more" };
+      return { files: [] };
+    });
+    expect(await findFolder("paged")).toBe("id-paged");
+    expect(decodeURIComponent(String(drive.googleFetch.mock.calls[0]![0]))).toContain("&fields=nextPageToken,files(id,name)&");
+    expect(drive.googleFetch).toHaveBeenCalledTimes(2);
+    expect(String(drive.googleFetch.mock.calls[1]![0])).toContain("&pageToken=a%2Bb%2Fc%3D");
+
+    drive.googleFetch.mockClear();
+    expect(await findFolder("emptyend")).toBeNull();
+    expect(drive.googleFetch).toHaveBeenCalledTimes(1);
+
+    drive.googleFetch.mockClear();
+    expect(await findFolder("endless")).toBeNull();
+    expect(drive.googleFetch).toHaveBeenCalledTimes(5);
+  });
+
   it("getDriveMapEntry reads without creating the table; recordDriveId creates + upserts", () => {
     const db = getDatabase();
     db.exec("DROP TABLE IF EXISTS drive_file_map");

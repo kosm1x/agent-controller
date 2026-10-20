@@ -10,6 +10,7 @@
  */
 
 import { googleFetch } from "../google/client.js";
+import { escapeDriveQueryValue } from "../google/drive-query.js";
 import { getDatabase } from "./index.js";
 import { errMsg } from "../lib/err-msg.js";
 import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "./live-db.js";
@@ -689,6 +690,13 @@ export function toObsidianContent(
 /** Cache of path-prefix → Drive folder ID (avoids repeated lookups). */
 const folderCache = new Map<string, string>();
 
+/**
+ * path-prefix → the in-flight search-or-create of that folder, so concurrent
+ * syncToDrive writes under one new directory create it once. Removed when it
+ * settles (the id moves to folderCache; a rejection leaves nothing behind).
+ */
+const folderInFlight = new Map<string, Promise<string>>();
+
 /** In-flight fire-and-forget Drive writes; settleDriveSyncs() drains them. */
 const inFlight = new Set<Promise<void>>();
 
@@ -792,15 +800,38 @@ function removeDriveId(path: string): void {
 // Folder management — create Drive folders matching path hierarchy
 // ---------------------------------------------------------------------------
 
-/** Id of the folder `name` directly under `parentId`, or null. Read-only. */
-async function searchFolder(name: string, parentId: string): Promise<string | null> {
-  const query = `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&pageSize=1`;
+/** Pages searchFolder follows while Drive returns an empty page with a nextPageToken. */
+const SEARCH_MAX_PAGES = 5;
 
-  const search = await googleFetch<{ files: Array<{ id: string }> }>(
-    searchUrl,
-  );
-  return search.files.length > 0 ? search.files[0].id : null;
+/**
+ * Id of the folder `name` directly under `parentId`, or null. Read-only.
+ * Duplicates (same name, same parent): a fresh lookup resolves to the OLDEST
+ * folder and reports the duplicate once; concurrent creates in one process
+ * share one in-flight promise (ensureFolder). Drive may return an empty page
+ * with a nextPageToken, so empty pages are followed (at most SEARCH_MAX_PAGES).
+ */
+async function searchFolder(name: string, parentId: string): Promise<string | null> {
+  const query = `name='${escapeDriveQueryValue(name)}' and '${escapeDriveQueryValue(parentId)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name)&orderBy=createdTime&pageSize=2`;
+
+  let files: Array<{ id: string }> = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < SEARCH_MAX_PAGES; page++) {
+    const search = await googleFetch<{ files: Array<{ id: string }>; nextPageToken?: string }>(
+      pageToken ? `${searchUrl}&pageToken=${encodeURIComponent(pageToken)}` : searchUrl,
+    );
+    files = search.files;
+    if (files.length > 0 || !search.nextPageToken) break;
+    pageToken = search.nextPageToken;
+  }
+  if (files.length === 0) return null;
+  const oldest = files[0].id;
+  if (files.length > 1) {
+    console.warn(
+      `[drive-sync] duplicate Drive folder name="${name}" parent=${parentId}: using oldest id=${oldest}, also found id=${files[1].id}`,
+    );
+  }
+  return oldest;
 }
 
 /**
@@ -819,6 +850,24 @@ export async function findFolder(dirPath: string): Promise<string | null> {
     parentId = found;
   }
   return parentId;
+}
+
+/** Id of the folder `name` under `parentId`, creating it when missing. */
+async function searchOrCreateFolder(name: string, parentId: string): Promise<string> {
+  const found = await searchFolder(name, parentId);
+  if (found) return found;
+  const created = await googleFetch<{ id: string }>(
+    "https://www.googleapis.com/drive/v3/files?fields=id",
+    {
+      method: "POST",
+      body: {
+        name,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [parentId],
+      },
+    },
+  );
+  return created.id;
 }
 
 /**
@@ -844,28 +893,23 @@ async function ensureFolder(dirPath: string): Promise<string> {
       continue;
     }
 
-    // Search for existing folder
-    const found = await searchFolder(segments[i], parentId);
-
-    if (found) {
-      parentId = found;
-    } else {
-      // Create folder
-      const created = await googleFetch<{ id: string }>(
-        "https://www.googleapis.com/drive/v3/files?fields=id",
-        {
-          method: "POST",
-          body: {
-            name: segments[i],
-            mimeType: "application/vnd.google-apps.folder",
-            parents: [parentId],
-          },
+    // One search-or-create per folder at a time: a concurrent caller awaits it.
+    let pending = folderInFlight.get(partialPath);
+    if (!pending) {
+      pending = searchOrCreateFolder(segments[i], parentId).then(
+        (id) => {
+          folderCache.set(partialPath, id);
+          folderInFlight.delete(partialPath);
+          return id;
+        },
+        (err: unknown) => {
+          folderInFlight.delete(partialPath);
+          throw err;
         },
       );
-      parentId = created.id;
+      folderInFlight.set(partialPath, pending);
     }
-
-    folderCache.set(partialPath, parentId);
+    parentId = await pending;
   }
 
   return parentId;
