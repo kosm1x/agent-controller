@@ -57,7 +57,7 @@ api_key() {
 env_value() {
   local key="$1" env_file="${PROJECT_DIR}/.env"
   [ -f "$env_file" ] || return 0
-  grep -oP "(?<=^${key}=).*" "$env_file" 2>/dev/null | head -1 | tr -d '"' | tr -d "'"
+  grep -oP "(?<=^${key}=).*" "$env_file" 2>/dev/null | head -1 | tr -d '"' | tr -d "'" || true
 }
 
 api() {
