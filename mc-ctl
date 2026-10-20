@@ -2099,6 +2099,7 @@ usage() {
   echo -e "  ${GREEN}sandboxes${NC}            Sandbox runtime: active backend, OpenSandbox server health, live sandbox-* containers, DOCKER-USER guard"
   echo -e "  ${GREEN}schedule-resume${NC} <id>  Re-activate a scheduled task paused by the [PAUSAR-SCHEDULE] sentinel"
   echo -e "  ${GREEN}usability${NC} [days]      Usability KPIs vs the 2026-08-22 critic review (friction, scope-asks, harness strings, pushes/day); --json"
+  echo -e "  ${GREEN}eval${NC} [days]           V9 W3 internal eval: finished/ledger/horizon per side × agent_type, boundary, Q1-Q4 populations (read-only, default 90 d); --json"
   echo -e "  ${GREEN}project${NC} <slug> [--days N]  One project's record: schedule runs, tasks, gates, cost (unaudited), last day-log mention, stall state (read-only)"
   echo -e "  ${GREEN}judgments${NC} [id]       V8.2 shadow judgments — list/detail + §17 gate-readiness header"
   echo ""
@@ -3264,6 +3265,24 @@ cmd_usability() {
       npx --no-install tsx scripts/usability-metrics.ts "$@" )
 }
 
+cmd_eval() {
+  # mc-ctl eval [days] [--json] — V9 W3 step 2 internal eval report
+  # (docs/planning/v9-w3-inventory-2026-10-09.md §7, rulings 2026-10-18).
+  # Read-only (readonly better-sqlite3, never initDatabase); aggregates only.
+  # The archive threshold must match the SERVICE's TASKS_RETENTION_DAYS (its
+  # EnvironmentFile is .env), not this shell's: one key via env_value(),
+  # never sourcing .env; absent → the script's default (90), as the service.
+  local ret_days
+  ret_days=$(env_value TASKS_RETENTION_DAYS)
+  if [ -n "$ret_days" ]; then
+    ( cd "$PROJECT_DIR" && MC_DB_PATH="${DB_PATH}" TASKS_RETENTION_DAYS="$ret_days" W3_LIVE_DAYS_SOURCE=service \
+        npx --no-install tsx scripts/w3-eval-report.ts "$@" )
+  else
+    ( cd "$PROJECT_DIR" && unset TASKS_RETENTION_DAYS && MC_DB_PATH="${DB_PATH}" W3_LIVE_DAYS_SOURCE=default \
+        npx --no-install tsx scripts/w3-eval-report.ts "$@" )
+  fi
+}
+
 cmd_project() {
   # mc-ctl project <slug> [--days N] — S6 WS1: one project's record from its
   # record-declared schedules (runs, tasks, gates, cost, day-log, stall state).
@@ -3399,6 +3418,7 @@ case "$cmd" in
   gates)             cmd_gates "$@" ;;
   sandboxes)         cmd_sandboxes ;;
   usability)         cmd_usability "$@" ;;
+  eval)              cmd_eval "$@" ;;
   project)           cmd_project "$@" ;;
   project-create)    cmd_project_create "$@" ;;
   judgments)         cmd_judgments "$@" ;;

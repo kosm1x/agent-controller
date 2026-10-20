@@ -129,7 +129,7 @@ describe("scripts/*.ts — db/KB writers are operator-context gated", () => {
 const RW_COMMANDS = [
   "start", "stop", "restart", "cancel", "schedule-delete", "schedule-resume", "hindsight-restart",
   "audit-claim", "jme-dedup", "briefing-gate", "v83-gate", "v83-promote", "rule-of-two",
-  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke",
+  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke", "eval",
 ];
 /** RW for the operator, read-only elsewhere (V8.4 gate checks run `mc-ctl db "SELECT …"` from tasks). */
 const SPLIT_COMMANDS = ["db"];

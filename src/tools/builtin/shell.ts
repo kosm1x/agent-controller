@@ -482,7 +482,8 @@ const DEPLOY_SH = `${globbedWord("deploy")}[\\\\'"]*\\.[\\\\'"]*${quotedWord("sh
 const MC_CTL_RW = [
   "start", "stop", "restart", "cancel", "schedule-delete", "schedule-resume", "hindsight-restart",
   "audit-claim", "jme-dedup", "briefing-gate", "v83-gate", "v83-promote", "rule-of-two",
-  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke",
+  // "eval" is read-only but gated: the operator's eval of Jarvis, which Jarvis must not read through shell_exec.
+  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke", "eval",
   "skills backfill-embeddings", "skills retrieve", "skills certify", "skills archive", "skills revert",
   "jme-preferences --confirm", "jme-preferences --reject",
   "events retrieve", "events aggregate", "events seed",
@@ -492,7 +493,7 @@ const MC_CTL_RW = [
 ];
 
 const MC_CTL_DENY_REASON =
-  "operator-only: mc-ctl RW subcommands and mission-control's scripts/deploy.sh run from the operator terminal, never from a task (read-only mc-ctl subcommands stay open)";
+  "operator-only: mc-ctl RW subcommands, the operator's eval report and mission-control's scripts/deploy.sh run from the operator terminal, never from a task (other read-only mc-ctl subcommands stay open)";
 /** Whether the bash glob `glob` (`*`, `?`, `[…]`, `[!…]`) matches `word`: a linear DP, no regex backtracking. */
 function globMatches(glob: string, word: string): boolean {
   const parts = glob.match(/\[!?\]?[^\]]*\]|[\s\S]/g) ?? [];
