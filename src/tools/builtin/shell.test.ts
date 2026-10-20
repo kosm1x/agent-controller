@@ -33,6 +33,7 @@ import {
   DOCKER_CONFIG_DIR,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
+import { enterRunToolContext } from "../rule-of-two.js";
 
 // Ruling 3c: a stored secret reaches ONLY the child whose command names it.
 // The store is replaced by one synthetic reference, SECRET_T.
@@ -3322,6 +3323,51 @@ describe("ruling 3c — $SECRET_X is exported only into the child that names it"
     for (const out of [r.stdout, r.stderr]) {
       expect(out.slice(9995)).toBe("[oculto]".slice(0, 5));
       expect(out).not.toContain(SCRUB_SYN.slice(0, 5));
+    }
+  });
+});
+
+describe("queue 4aa — the child env names the current run's task as MC_TASK_ID", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("inside a run: MC_TASK_ID is the run's task id", async () => {
+    const r = JSON.parse(
+      await enterRunToolContext("task-4aa-probe", () =>
+        shellTool.execute({ command: 'echo "$MC_TASK_ID"' }),
+      ),
+    );
+    expect(r.exit_code).toBe(0);
+    expect(r.stdout).toBe("task-4aa-probe\n");
+  });
+
+  it("inside a run: the run's id overrides an MC_TASK_ID inherited from the parent env", async () => {
+    const saved = process.env.MC_TASK_ID;
+    process.env.MC_TASK_ID = "stale";
+    try {
+      const r = JSON.parse(
+        await enterRunToolContext("task-4aa-override", () =>
+          shellTool.execute({ command: 'echo "$MC_TASK_ID"' }),
+        ),
+      );
+      expect(r.stdout).toBe("task-4aa-override\n");
+    } finally {
+      if (saved === undefined) delete process.env.MC_TASK_ID;
+      else process.env.MC_TASK_ID = saved;
+    }
+  });
+
+  it("outside a run: the key is absent from the child env", async () => {
+    const saved = process.env.MC_TASK_ID;
+    delete process.env.MC_TASK_ID;
+    try {
+      const r = JSON.parse(
+        await shellTool.execute({ command: "printenv MC_TASK_ID || echo absent" }),
+      );
+      expect(r.stdout.trim()).toBe("absent");
+    } finally {
+      if (saved !== undefined) process.env.MC_TASK_ID = saved;
     }
   });
 });

@@ -1,8 +1,8 @@
 [
   {
     "id": "G1",
-    "criterion": "El script post-mexiconecesario.cjs dejó un recibo de envío confirmado por X en los últimos 60 min en data/x-post-receipts/mexiconecesario.jsonl",
-    "check": "find /root/claude/mission-control/data/x-post-receipts -name mexiconecesario.jsonl -mmin -60 | grep -c .",
+    "criterion": "El script post-mexiconecesario.cjs dejó un recibo de envío confirmado por X para esta tarea en data/x-post-receipts/mexiconecesario.jsonl",
+    "check": "grep -cF \"\\\"task_id\\\":\\\"$MC_TASK_ID\\\"\" /root/claude/mission-control/data/x-post-receipts/mexiconecesario.jsonl",
     "expect": "gt 0"
   }
 ]

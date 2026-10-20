@@ -22,6 +22,7 @@ import {
 } from "../flailing-guard.js";
 import { redactCredentials, redactSecrets } from "../../api/mcp-server/redact.js";
 import { scrubSecrets, secretEnvForCommand } from "../../lib/secret-refs.js";
+import { currentRunTaskId } from "../rule-of-two.js";
 
 /**
  * Async command runner. Uses child_process.exec (not execSync) so it does NOT
@@ -218,6 +219,12 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
     if (isSecretEnvKey(key)) delete scrubbed[key];
   }
   return scrubbed;
+}
+
+/** `{ MC_TASK_ID }` for the current run's task; `{}` outside a run (queue 4aa). */
+function taskIdEnv(): NodeJS.ProcessEnv {
+  const taskId = currentRunTaskId();
+  return taskId ? { MC_TASK_ID: taskId } : {};
 }
 
 /**
@@ -2963,7 +2970,9 @@ RESTRICTIONS:
         // PATH starts with the package-manager shim (see PM_SHIM_DIR).
         // Ruling 3c: plus exactly the stored secrets this command names as $SECRET_X.
         // Audit B3: withPmShimPath also pins DOCKER_CONFIG so a HOME override cannot move the docker config.
-        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command) },
+        // Queue 4aa: MC_TASK_ID names the current run's task (absent outside a run) so a
+        // child can bind a receipt to it; the gate harness injects the same name.
+        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command), ...taskIdEnv() },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret

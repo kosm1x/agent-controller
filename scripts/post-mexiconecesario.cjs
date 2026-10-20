@@ -158,6 +158,7 @@ function readStdin() {
           account: who,
           url: page.url(),
           toast: toastText.trim() || null,
+          task_id: process.env.MC_TASK_ID || null,
         });
       } catch (err) {
         console.log('RECEIPT_WRITE_FAILED: ' + (err && err.message ? err.message : String(err)));
