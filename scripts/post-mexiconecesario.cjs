@@ -11,7 +11,7 @@
 // Refresh them with `user_fact_set` (or `sqlite3 data/mc.db "UPDATE user_facts..."`)
 //
 // Exit codes:
-//   0  TWEET_PUBLICADO
+//   0  TWEET_PUBLICADO (only when the toast confirms the send, "sent" or "se envió": appends a JSON receipt to data/x-post-receipts/mexiconecesario.jsonl, else prints RECEIPT_SKIPPED; a failed write prints RECEIPT_WRITE_FAILED; exit stays 0)
 //   2  no compose box (likely cookie expired)
 //   3  tweet too long (>280 weighted; trim and retry)
 //   4  exception
@@ -149,6 +149,21 @@ function readStdin() {
       console.log('TWEET_PUBLICADO account=' + who + ' toast="' + toastText.trim() + '"');
     } else {
       console.log('TWEET_PUBLICADO account=' + who + ' url=' + page.url());
+    }
+    if (/\bsent\b|se envi[oó]/i.test(toastText)) {
+      try {
+        const { appendReceipt } = require('./lib/x-post-receipt.cjs');
+        appendReceipt(path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.jsonl'), {
+          ts: new Date().toISOString(),
+          account: who,
+          url: page.url(),
+          toast: toastText.trim() || null,
+        });
+      } catch (err) {
+        console.log('RECEIPT_WRITE_FAILED: ' + (err && err.message ? err.message : String(err)));
+      }
+    } else {
+      console.log('RECEIPT_SKIPPED: toast did not confirm the send (' + (toastText.trim() || 'no toast') + ')');
     }
 
     await browser.close();
