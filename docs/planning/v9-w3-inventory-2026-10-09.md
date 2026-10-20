@@ -38,7 +38,7 @@ Rows: all / 90 d / 30 d. "Op/deleg" = whether operator-directed and delegated ta
 | `reflection_baselines` | 154 / 147 / 66 | 04-14 → 10-09 | `score` 0–1 | partial (`task_type` prefix `chat:` = 45) | `task_type` carries request text: never select it beyond the prefix |
 | `signal_baselines` | **0** | none | none | none | no population |
 | `task_provenance` | 368 / 213 / 99 | 04-03 → 10-08 | `status` verified/inferred/unverified | via `task_id` | research tools only |
-| `task_mutations` | 69 / 0 / 0 | 04-06 → 04-11 | none | none | dead since April |
+| `task_mutations` | 69 / 0 / 0 | 04-06 → 04-11 | none | none | dead since April. **Update 2026-10-20 (queue 4t):** silent since the SDK cutover of 04-11 (the SDK tool callback skipped the executor wrapper), not retired; writer re-hooked on both paths, table removed from the eval's dead list. Still no reader. |
 | `skill_test_runs` | 2,704 / 2,196 / 2,196 | 05-19 → 10-09 | `result` pass 2,686 / fail 2 / error 16 | n/a | skill regression, not task outcome |
 | `backtest_runs` | 1 / 0 / 0 | 04-19 | trading metrics | n/a | out of scope |
 | `schedule_runs` | 855 / 420 / 132 | 04-09 → 10-09 | `status` completed 838 / delivery_miss 9 / failed 3 / running 5 | delegated by definition | 54 distinct schedules |

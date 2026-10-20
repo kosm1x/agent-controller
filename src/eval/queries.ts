@@ -95,7 +95,7 @@ export function liveTaskDays(env: NodeJS.ProcessEnv = process.env): number {
 /** Horizon run: a bucket counts only with n ≥ this. */
 export const MIN_BUCKET_N = 5;
 export const TRACE_RETENTION_DAYS = 30;
-export const DEAD_TABLES = ["tune_eval_results", "signal_baselines", "task_mutations", "commit_tasks", "backtest_runs"];
+export const DEAD_TABLES = ["tune_eval_results", "signal_baselines", "commit_tasks", "backtest_runs"];
 
 export type ToolSource = "trace" | "runs.tool_calls" | "output.toolCalls";
 

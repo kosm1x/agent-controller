@@ -16,7 +16,7 @@ import { createLogger } from "../lib/logger.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { resolveRenderedPlaceholders } from "../lib/secret-refs.js";
 import { traceSecretRefRefused } from "../lib/secret-ref-trace.js";
-import { classifyMutation, recordMutation } from "../db/task-mutations.js";
+import { recordMutationFromResult } from "../db/task-mutations.js";
 
 import { existsSync } from "fs";
 
@@ -442,42 +442,9 @@ export function createTaskExecutor(
     const result = await registry.execute(name, args);
 
     // v6.2 S3: Record file mutations after successful tool execution.
-    // Centralized here so individual tool handlers don't need modification.
-    // Only records if the tool is a file-mutating tool and didn't return an error.
-    try {
-      // Detect error results — don't record failed mutations (C1 audit fix).
-      // "Error:" prefix = MCP-passthrough leg: MCP servers' plain-text outputs
-      // aren't ours to converge. Builtin tools no longer return "Error:"
-      // strings (converged on {error} JSON, 2026-07-05).
-      let isError = result.startsWith("Error:");
-      if (!isError) {
-        try {
-          const parsed = JSON.parse(result);
-          // {error: ...} is THE builtin failure convention. The
-          // `success === false` leg survives only for the remaining dynamic
-          // envelope producers: jarvis_files_batch_* (`success: errors === 0`,
-          // documented partial-error contract) and gemini_upload
-          // (`success: state === "ACTIVE"`). No literal {success:false}
-          // failure sites remain in src/tools.
-          if (parsed.error || parsed.success === false) isError = true;
-        } catch {
-          // Non-JSON result — not an error
-        }
-      }
-      if (!isError) {
-        const mutation = classifyMutation(name, args);
-        if (mutation) {
-          recordMutation(
-            context.taskId,
-            name,
-            mutation.operation,
-            mutation.filePath,
-          );
-        }
-      }
-    } catch {
-      // Non-fatal — mutation log is best-effort
-    }
+    // Centralized so individual tool handlers don't need modification; the
+    // error convention lives in the helper (shared with the SDK path).
+    recordMutationFromResult(context.taskId, name, args, result);
 
     return result;
   };

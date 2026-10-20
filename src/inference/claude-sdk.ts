@@ -77,6 +77,7 @@ import {
   noteUndeclaredRefusal,
 } from "../tools/task-executor.js";
 import { currentRunOrigin, currentRunTaskId } from "../tools/rule-of-two.js";
+import { recordMutationFromResult } from "../db/task-mutations.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
 // db/config/pricing — no static cycle back into the inference layer.
 import {
@@ -431,6 +432,10 @@ function wrapTool(t: Tool) {
           t.name,
           args as Record<string, unknown>,
         );
+        // Queue 4t: record from raw, before the external filter (the mutation happened regardless).
+        const runTaskId = currentRunTaskId();
+        if (runTaskId !== undefined)
+          recordMutationFromResult(runTaskId, t.name, args, raw);
         const result = external
           ? filterExternalToolResult(t.name, raw, args)
           : raw;

@@ -297,7 +297,7 @@ describe("ledger, boundary, Q4, Q1/Q3, dead tables", () => {
 
   it("dead tables report a row count or absence, never pruned", () => {
     const byName = Object.fromEntries(data.other.deadTables.map((t) => [t.name, t.rows]));
-    expect(Object.keys(byName)).toEqual(["tune_eval_results", "signal_baselines", "task_mutations", "commit_tasks", "backtest_runs"]);
+    expect(Object.keys(byName)).toEqual(["tune_eval_results", "signal_baselines", "commit_tasks", "backtest_runs"]);
     expect(byName.tune_eval_results).toBe(0);
     expect(byName.commit_tasks).toBeNull(); // no writer creates it in a fresh schema
   });

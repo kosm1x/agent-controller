@@ -149,7 +149,8 @@ describe("3. every tool call gets a result", () => {
     const sdk = readFileSync(new URL("../inference/claude-sdk.ts", import.meta.url), "utf8");
     const sdkStart = sdk.indexOf("await toolRegistry.execute(");
     expect(sdkStart).toBeGreaterThan(0);
-    expect(sdk.slice(sdkStart, sdkStart + 1200)).toMatch(
+    // window covers the queue 4t record block before the external filter
+    expect(sdk.slice(sdkStart, sdkStart + 1600)).toMatch(
       /catch\s*\(\s*\w+\s*\)\s*\{(?:(?!\bthrow\b)[\s\S])*?isError: true/,
     );
 

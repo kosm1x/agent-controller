@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { classifyMutation } from "./task-mutations.js";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  classifyMutation,
+  getMutations,
+  recordMutationFromResult,
+} from "./task-mutations.js";
+import { closeDatabase, initDatabase } from "./index.js";
 
 describe("classifyMutation", () => {
   describe("filesystem tools", () => {
@@ -123,5 +128,77 @@ describe("classifyMutation", () => {
     it("returns null for unknown tools", () => {
       expect(classifyMutation("unknown_tool", { foo: "bar" })).toBeNull();
     });
+  });
+});
+
+// Queue 4t: the shared "record if the call succeeded" helper used by both the
+// task executor and the Claude SDK tool bridge.
+describe("recordMutationFromResult", () => {
+  beforeAll(() => {
+    initDatabase(":memory:");
+  });
+  afterAll(() => {
+    closeDatabase();
+  });
+
+  it("records a row for a successful file_write", () => {
+    recordMutationFromResult(
+      "t-ok",
+      "file_write",
+      { path: "/tmp/a.txt" },
+      JSON.stringify({ ok: true, bytes: 3 }),
+    );
+    const rows = getMutations("t-ok");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tool_name: "file_write",
+      operation: "modify",
+      file_path: "/tmp/a.txt",
+    });
+  });
+
+  it("records a row for a non-JSON success result", () => {
+    recordMutationFromResult("t-plain", "file_edit", { path: "/tmp/b" }, "ok");
+    expect(getMutations("t-plain")).toHaveLength(1);
+  });
+
+  it('records nothing for an {"error": …} result', () => {
+    recordMutationFromResult(
+      "t-err-json",
+      "file_write",
+      { path: "/tmp/a.txt" },
+      JSON.stringify({ error: "x" }),
+    );
+    expect(getMutations("t-err-json")).toEqual([]);
+  });
+
+  it("records nothing for a success === false envelope", () => {
+    recordMutationFromResult(
+      "t-success-false",
+      "file_write",
+      { path: "/tmp/a.txt" },
+      JSON.stringify({ success: false }),
+    );
+    expect(getMutations("t-success-false")).toEqual([]);
+  });
+
+  it("records nothing for an Error: result", () => {
+    recordMutationFromResult(
+      "t-err-text",
+      "file_write",
+      { path: "/tmp/a.txt" },
+      "Error: disk full",
+    );
+    expect(getMutations("t-err-text")).toEqual([]);
+  });
+
+  it("records nothing for a non-mutating tool", () => {
+    recordMutationFromResult(
+      "t-read",
+      "file_read",
+      { path: "/tmp/a.txt" },
+      JSON.stringify({ content: "x" }),
+    );
+    expect(getMutations("t-read")).toEqual([]);
   });
 });

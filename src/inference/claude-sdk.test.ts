@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
 
 type MockMessage = Record<string, unknown>;
 
@@ -4026,5 +4035,91 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
     expect(hook).toHaveBeenCalledTimes(1);
     expect(out).toEqual({ decision: "block", reason: "r" });
     expect(opts.hooks?.Stop?.[0]?.timeout).toBe(STOP_HOOK_SDK_TIMEOUT_S);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4t: the SDK tool bridge records file mutations in task_mutations
+// (bypassed since 2026-04-11 — only the task executor recorded).
+// ---------------------------------------------------------------------------
+
+describe("task_mutations on the SDK tool path (queue 4t)", () => {
+  type Handler = (
+    args: Record<string, unknown>,
+  ) => Promise<{ content: Array<{ text: string }> }>;
+  type GateRegistry = {
+    getEffectiveRiskTier?: unknown;
+    has?: unknown;
+  };
+
+  beforeAll(async () => {
+    const { initDatabase } = await import("../db/index.js");
+    initDatabase(":memory:");
+  });
+  afterAll(async () => {
+    const { closeDatabase } = await import("../db/index.js");
+    closeDatabase();
+  });
+
+  async function callFileWrite(result: string): Promise<string> {
+    const { toolRegistry } = await import("../tools/registry.js");
+    const reg = toolRegistry as unknown as GateRegistry;
+    reg.getEffectiveRiskTier = () => "low";
+    reg.has = () => false;
+    const exec = vi.spyOn(toolRegistry, "execute").mockResolvedValue(result);
+    try {
+      const w = wrapToolCached(
+        fakeTool({ name: "file_write" }),
+      ) as unknown as { handler: Handler };
+      const out = await w.handler({ path: "/tmp/4t-probe.txt" });
+      expect(exec).toHaveBeenCalledTimes(1);
+      return out.content[0].text;
+    } finally {
+      exec.mockRestore();
+      delete reg.getEffectiveRiskTier;
+      delete reg.has;
+    }
+  }
+
+  it("a successful file_write inside a run leaves one row for the run's task", async () => {
+    const { enterRunToolContext } = await import("../tools/rule-of-two.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    await enterRunToolContext("task-4t-probe", () =>
+      callFileWrite(JSON.stringify({ ok: true })),
+    );
+    const rows = getMutations("task-4t-probe");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tool_name: "file_write",
+      operation: "modify",
+      file_path: "/tmp/4t-probe.txt",
+    });
+  });
+
+  it("a failed file_write inside a run records nothing", async () => {
+    const { enterRunToolContext } = await import("../tools/rule-of-two.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    await enterRunToolContext("task-4t-failed", () =>
+      callFileWrite(JSON.stringify({ error: "EACCES" })),
+    );
+    expect(getMutations("task-4t-failed")).toEqual([]);
+  });
+
+  it("outside a run context nothing is recorded", async () => {
+    const { getDatabase } = await import("../db/index.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    getMutations("ensure-table"); // creates the table if no test did
+    const before = (
+      getDatabase()
+        .prepare("SELECT COUNT(*) AS n FROM task_mutations")
+        .get() as { n: number }
+    ).n;
+    await callFileWrite(JSON.stringify({ ok: true }));
+    const after = (
+      getDatabase()
+        .prepare("SELECT COUNT(*) AS n FROM task_mutations")
+        .get() as { n: number }
+    ).n;
+    expect(after).toBe(before);
   });
 });
