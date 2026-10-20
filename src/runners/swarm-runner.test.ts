@@ -848,6 +848,7 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     error?: string | null;
     retryCount?: number;
     toolCalls?: string[];
+    metadata?: Record<string, unknown>;
   }): {
     graph: GoalGraph;
     trackers: Map<string, Tracker>;
@@ -886,6 +887,7 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
           description: "Test goal",
           completionCriteria: [],
           dependsOn: [],
+          ...(opts.metadata && { metadata: opts.metadata }),
         },
       ],
     ]);
@@ -980,9 +982,134 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     expect(submission.description).not.toContain("⚠️ IMPORTANT");
     // Tracker reset to pending — NOT marked failed
     expect(trackers.get("g-1")!.status).toBe("pending");
-    // Queue 4s-1 W2: the retry is submitted without gates → counted ungated.
+    // Queue 4u: the retry forwards the plan gates; this goal has none →
+    // no gates key and counted ungated.
+    expect(submission).not.toHaveProperty("gates");
+    expect(submission).not.toHaveProperty("gatesSource");
     expect(trackers.get("g-1")!.ungated).toBe(true);
     expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.IN_PROGRESS);
+  });
+
+  it("enabled mode + gated goal → the respawn carries the goal's plan gates and is NOT ungated (queue 4u)", async () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+        metadata: {
+          gates: [{ criterion: "typecheck", check: "npx tsc --noEmit" }],
+        },
+      });
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+      const submission = mockSubmitTask.mock.calls[0][0];
+      // Same spec + id prefix the first spawn derives (gateSpecsFromGoal).
+      expect(submission.gates).toEqual([
+        {
+          id: "g-1.1",
+          criterion: "typecheck",
+          check: "npx tsc --noEmit",
+          kind: "shell",
+        },
+      ]);
+      expect(submission.gatesSource).toBe("plan");
+      expect(trackers.get("g-1")!.status).toBe("pending");
+      expect(trackers.get("g-1")!.ungated).toBe(false);
+      // Once the submit resolves, the tracker names the respawn (W1).
+      await vi.waitFor(() => expect(goalTaskMap.get("g-1")).toBe("task-2"));
+      expect(trackers.get("g-1")!.taskId).toBe("task-2");
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
+  });
+
+  it("enabled mode + only a refused (literal-sourced) plan gate → spec forwarded with abandonReason, tracker IS ungated (queue 4u)", () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+        metadata: { gates: [{ criterion: "done", check: "echo ok" }] },
+      });
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      const submission = mockSubmitTask.mock.calls[0][0];
+      expect(submission.gates).toHaveLength(1);
+      expect(submission.gates![0]).toMatchObject({
+        id: "g-1.1",
+        kind: "manual",
+      });
+      expect(submission.gates![0].abandonReason).toBeTruthy();
+      expect(submission.gatesSource).toBe("plan");
+      expect(trackers.get("g-1")!.ungated).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
+  });
+
+  it("enabled mode → the respawn registers the goal's prose grade specs on the NEW task id (queue 4u, V9 W1)", async () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+      });
+      goalsById.get("g-1")!.completionCriteria = ["fee per transaction quoted"];
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      await vi.waitFor(() => expect(goalTaskMap.get("g-1")).toBe("task-2"));
+      expect(mockRegisterGradeSpecs).toHaveBeenCalledTimes(1);
+      const [taskId, specs, description] = mockRegisterGradeSpecs.mock.calls[0];
+      expect(taskId).toBe("task-2");
+      expect(specs).toEqual([
+        {
+          id: "GR-sw.g-1.1",
+          criterion: "fee per transaction quoted",
+          origin: "prose",
+        },
+      ]);
+      expect(description).toBe(mockSubmitTask.mock.calls[0][0].description);
+      expect(trackers.get("g-1")!.taskId).toBe("task-2");
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
   });
 
   it("hallucination recovery prepends the sterner addendum to the retry description", async () => {

@@ -364,6 +364,8 @@ function attemptSubtaskRetry(
     baseDescription,
     decision.recoveryMode,
   );
+  // Queue 4u: the retry carries the goal's plan gates, same as the first spawn.
+  const childGates = gateSpecsFromGoal(goal.id, goal.metadata);
 
   // submitTask is async; fire-and-forget here matches the existing
   // dispatcher pattern at dispatcher.ts:471 (_isRequiredToolRetry path).
@@ -386,9 +388,27 @@ function attemptSubtaskRetry(
     agentType: failedTask.agent_type ?? undefined,
     tools: retryContext.tools,
     retryCount: failedTask.retry_count + 1,
+    ...(childGates.length > 0 && {
+      gates: childGates,
+      gatesSource: "plan" as const,
+    }),
   })
     .then((result) => {
+      // Queue 4u: the respawn is graded like the first spawn (V9 W1).
+      registerGradeSpecs(
+        result.taskId,
+        proseGradeSpecsFromGoal(
+          goal.id,
+          goal.completionCriteria,
+          goal.metadata,
+          "swarm",
+        ),
+        retryDescription,
+      );
       goalTaskMap.set(goalId, result.taskId);
+      // Queue 4u: re-verification + trace name the respawn, not the predecessor.
+      const t = trackers.get(goalId);
+      if (t) t.taskId = result.taskId;
       console.log(
         `[swarm-retry] respawned goal=${goalId}: ` +
           `${failedTask.task_id} (retry_count=${failedTask.retry_count}) → ` +
@@ -419,8 +439,9 @@ function attemptSubtaskRetry(
   if (tracker) {
     tracker.status = "pending";
     tracker.error = undefined;
-    // Queue 4s-1 (W2): the retry is submitted without gates.
-    tracker.ungated = true;
+    // Queue 4u: the retry forwards the plan gates; "gated" = at least one
+    // runnable gate, same rule as the first spawn (queue 4s-1, audit W1).
+    tracker.ungated = !childGates.some((g) => !g.abandonReason);
   }
   return true;
 }
