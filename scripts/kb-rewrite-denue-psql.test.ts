@@ -69,25 +69,63 @@ describe("module entry", () => {
     expect(gate.calls).toBe(0);
   });
 
-  it("main runs the operator gate before opening the database", () => {
+  const orderDeps = (order: string[], written = 0) => ({
+    requireOperatorContext: vi.fn(() => void order.push("gate")),
+    initDatabase: vi.fn(() => void order.push("init")),
+    closeDatabase: vi.fn(() => void order.push("close")),
+    runRewrite: vi.fn(() => {
+      order.push("run");
+      return { ok: true, written };
+    }),
+    drainKbWrites: vi.fn(async (): Promise<void> => void order.push("drain")),
+  });
+  const withArgv = async <T>(args: string[], fn: () => Promise<T>): Promise<T> => {
+    const prev = process.argv;
+    process.argv = [prev[0]!, prev[1]!, ...args];
+    try {
+      return await fn();
+    } finally {
+      process.argv = prev;
+    }
+  };
+
+  it("main runs the operator gate before opening the database", async () => {
     const order: string[] = [];
-    const deps = {
-      requireOperatorContext: vi.fn(() => void order.push("gate")),
-      initDatabase: vi.fn(() => void order.push("init")),
-      closeDatabase: vi.fn(() => void order.push("close")),
-      runRewrite: vi.fn(() => {
-        order.push("run");
-        return { ok: true };
-      }),
-    };
-    expect(main(deps)).toBe(0);
+    const deps = orderDeps(order);
+    expect(await withArgv([], () => main(deps))).toBe(0);
+    // Dry run: nothing written, nothing to drain.
     expect(order).toEqual(["gate", "init", "run", "close"]);
     deps.requireOperatorContext.mockImplementation(() => {
       throw new Error("refused");
     });
     deps.initDatabase.mockClear();
-    expect(() => main(deps)).toThrow("refused");
+    await expect(main(deps)).rejects.toThrow("refused");
     expect(deps.initDatabase).not.toHaveBeenCalled();
+  });
+
+  it("--apply that wrote rows drains the syncs and INDEX.md before closing the database", async () => {
+    const order: string[] = [];
+    expect(await withArgv(["--apply"], () => main(orderDeps(order, 2)))).toBe(0);
+    expect(order).toEqual(["gate", "init", "run", "drain", "close"]);
+  });
+
+  it("--apply that wrote nothing does not drain (no INDEX.md rewrite)", async () => {
+    const order: string[] = [];
+    expect(await withArgv(["--apply"], () => main(orderDeps(order, 0)))).toBe(0);
+    expect(order).toEqual(["gate", "init", "run", "close"]);
+  });
+
+  it("--apply: a drain still in flight holds closeDatabase back", async () => {
+    const order: string[] = [];
+    const deps = orderDeps(order, 1);
+    let release!: () => void;
+    deps.drainKbWrites.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    const run = withArgv(["--apply"], () => main(deps));
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(deps.closeDatabase).not.toHaveBeenCalled();
+    release();
+    expect(await run).toBe(0);
+    expect(order.at(-1)).toBe("close");
   });
 });
 
@@ -266,6 +304,7 @@ describe("runRewrite", () => {
     const run = runRewrite({ apply: true, paths: PATHS });
     expect(run.ok).toBe(true);
     expect(run.results.map((r) => r.status)).toEqual(["rewritten", "rewritten", "nothing-to-do"]);
+    expect(run.written).toBe(2); // main drains only when this is > 0
     expect(run.results[1]).toMatchObject({ roleSwaps: 2, quoteSwaps: 2 });
     PATHS.forEach((p, i) => {
       const row = getFile(p)!;
@@ -289,6 +328,7 @@ describe("runRewrite", () => {
     const again = runRewrite({ apply: true, paths: PATHS });
     expect(again.ok).toBe(true);
     expect(again.results.map((r) => r.status)).toEqual(["nothing-to-do", "nothing-to-do", "nothing-to-do"]);
+    expect(again.written).toBe(0);
   });
 
   it("dry run writes nothing", () => {
@@ -316,6 +356,7 @@ describe("runRewrite", () => {
     const run = runRewrite({ apply: true, paths: PATHS });
     expect(run.ok).toBe(false);
     expect(run.results.map((r) => r.status)).toEqual(["rewritten", "rewritten", "refused"]);
+    expect(run.written).toBe(0);
     expect(getFile(PATHS[0]!)!.content).toBe(DIRECTIVE);
     expect(getFile(PATHS[2]!)!.content).toBe(text);
     untouched(PATHS);

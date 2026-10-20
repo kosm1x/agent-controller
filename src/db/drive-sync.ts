@@ -689,6 +689,25 @@ export function toObsidianContent(
 /** Cache of path-prefix → Drive folder ID (avoids repeated lookups). */
 const folderCache = new Map<string, string>();
 
+/** In-flight fire-and-forget Drive writes; settleDriveSyncs() drains them. */
+const inFlight = new Set<Promise<void>>();
+
+function track(p: Promise<void>): void {
+  inFlight.add(p);
+  void p.finally(() => inFlight.delete(p));
+}
+
+/**
+ * Resolves once no Drive write started by this process is in flight (writes
+ * started while waiting count too). For short-lived operator scripts: call it
+ * before closeDatabase() — a CREATE records its new file id in drive_file_map
+ * only after the upload, so closing first leaves the Drive file unmapped and
+ * the next upsert creates a duplicate (2026-10-20).
+ */
+export async function settleDriveSyncs(): Promise<void> {
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+}
+
 export function isDriveSyncEnabled(): boolean {
   return !!ROOT_FOLDER_ID;
 }
@@ -743,6 +762,27 @@ function setDriveId(path: string, driveId: string): void {
   ).run(path, driveId);
 }
 
+/** The drive_file_map row for `path`, or null (no row, or no map table yet). Read-only. */
+export function getDriveMapEntry(
+  path: string,
+): { driveId: string; updatedAt: string | null } | null {
+  const db = getDatabase();
+  const table = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drive_file_map'")
+    .get();
+  if (!table) return null;
+  const row = db
+    .prepare("SELECT drive_id, updated_at FROM drive_file_map WHERE path = ?")
+    .get(path) as { drive_id: string; updated_at: string | null } | undefined;
+  return row ? { driveId: row.drive_id, updatedAt: row.updated_at } : null;
+}
+
+/** Record an existing Drive file for `path` (operator repair: scripts/kb-drive-map-repair.ts). */
+export function recordDriveId(path: string, driveId: string): void {
+  ensureMapTable();
+  setDriveId(path, driveId);
+}
+
 function removeDriveId(path: string): void {
   const db = getDatabase();
   db.prepare("DELETE FROM drive_file_map WHERE path = ?").run(path);
@@ -751,6 +791,35 @@ function removeDriveId(path: string): void {
 // ---------------------------------------------------------------------------
 // Folder management — create Drive folders matching path hierarchy
 // ---------------------------------------------------------------------------
+
+/** Id of the folder `name` directly under `parentId`, or null. Read-only. */
+async function searchFolder(name: string, parentId: string): Promise<string | null> {
+  const query = `name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&pageSize=1`;
+
+  const search = await googleFetch<{ files: Array<{ id: string }> }>(
+    searchUrl,
+  );
+  return search.files.length > 0 ? search.files[0].id : null;
+}
+
+/**
+ * Read-only twin of ensureFolder: the Drive folder id for `dirPath` (the KB
+ * root for ""), or null when any level is missing. Never creates a folder.
+ */
+export async function findFolder(dirPath: string): Promise<string | null> {
+  if (!dirPath || dirPath === ".") return ROOT_FOLDER_ID;
+  const cached = folderCache.get(dirPath);
+  if (cached) return cached;
+
+  let parentId = ROOT_FOLDER_ID;
+  for (const segment of dirPath.split("/").filter(Boolean)) {
+    const found = await searchFolder(segment, parentId);
+    if (!found) return null;
+    parentId = found;
+  }
+  return parentId;
+}
 
 /**
  * Ensure a folder exists in Drive for the given directory path.
@@ -776,15 +845,10 @@ async function ensureFolder(dirPath: string): Promise<string> {
     }
 
     // Search for existing folder
-    const query = `name='${segments[i]}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&pageSize=1`;
+    const found = await searchFolder(segments[i], parentId);
 
-    const search = await googleFetch<{ files: Array<{ id: string }> }>(
-      searchUrl,
-    );
-
-    if (search.files.length > 0) {
-      parentId = search.files[0].id;
+    if (found) {
+      parentId = found;
     } else {
       // Create folder
       const created = await googleFetch<{ id: string }>(
@@ -824,7 +888,7 @@ export function syncToDrive(
 ): void {
   if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
-  (async () => {
+  track((async () => {
     try {
       ensureMapTable();
       const obsidianContent = toObsidianContent(
@@ -883,7 +947,7 @@ export function syncToDrive(
     } catch (err) {
       console.warn(`[drive-sync] Failed for ${path}:`, errMsg(err));
     }
-  })();
+  })());
 }
 
 /**
@@ -893,7 +957,7 @@ export function syncToDrive(
 export function syncDeleteToDrive(path: string): void {
   if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
-  (async () => {
+  track((async () => {
     try {
       ensureMapTable();
       const driveId = getDriveId(path);
@@ -907,7 +971,7 @@ export function syncDeleteToDrive(path: string): void {
     } catch (err) {
       console.warn(`[drive-sync] Delete failed for ${path}:`, errMsg(err));
     }
-  })();
+  })());
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import { initDatabase, closeDatabase, getDatabase } from "../src/db/index.js";
 import { reindexJarvisKb, walkKbDir } from "../src/db/jarvis-reindex.js";
 import { relative } from "node:path";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { drainKbWrites } from "../src/db/kb-write-drain.js";
 
 // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
 requireOperatorContext("reindex-jarvis-kb", { tty: false });
@@ -58,15 +59,17 @@ function dryRun() {
   closeDatabase();
 }
 
-function apply() {
+async function apply() {
   initDatabase(DB_PATH);
   const result = reindexJarvisKb({ kbRoot: KB_ROOT });
   console.log(
     `[reindex] FS=${result.fsCount} DB=${result.dbCount} drift=${result.drift} upserted=${result.upserted} errored=${result.errored} (${result.durationMs}ms) mode=APPLY`,
   );
+  // upsertFile's syncs + INDEX.md outlive the call (new projects/<x>/ rows change INDEX): drain while the db is open.
+  if (result.upserted + result.refreshed > 0) await drainKbWrites();
   closeDatabase();
 }
 
 const shouldApply = process.argv.includes("--apply");
-if (shouldApply) apply();
+if (shouldApply) await apply();
 else dryRun();

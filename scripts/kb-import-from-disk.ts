@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase } from "../src/db/index.js";
 import { getFile, getKbMirrorWriteDir, upsertFile } from "../src/db/jarvis-fs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { drainKbWrites } from "../src/db/kb-write-drain.js";
 
 type Plan = { path: string; fail: string | null; disk: string; changed: number };
 
@@ -54,11 +55,13 @@ function plan(path: string, mirrorDir: string | null): Plan {
   return p;
 }
 
-export function runImport(opts: { apply: boolean; paths: string[] }): { ok: boolean } {
+/** `written` = rows passed to upsertFile (each one leaves syncs + an INDEX.md mark to drain). */
+export function runImport(opts: { apply: boolean; paths: string[] }): { ok: boolean; written: number } {
   const mirrorDir = getKbMirrorWriteDir();
   const plans = opts.paths.map((path) => plan(path, mirrorDir));
   const blocked = plans.some((p) => p.fail !== null);
   let ok = !blocked;
+  let written = 0;
   for (const p of plans) {
     const row = p.fail ? null : getFile(p.path);
     if (!row) {
@@ -84,11 +87,12 @@ export function runImport(opts: { apply: boolean; paths: string[] }): { ok: bool
     const tags = JSON.parse(row.tags) as string[];
     const related = JSON.parse(row.related_to) as string[];
     upsertFile(p.path, row.title, p.disk, tags, row.qualifier, row.priority, row.condition, related);
+    written++;
     const verified = getFile(p.path)?.content === p.disk;
     if (!verified) ok = false;
     console.log(`${verified ? "PASS" : "FAIL"} ${p.path} ${counts}${verified ? " imported" : " (row differs after write)"}`);
   }
-  return { ok };
+  return { ok, written };
 }
 
 /** `--path <rel>` (repeatable) and `--apply`; anything else is an error. */
@@ -107,14 +111,21 @@ type MainDeps = {
   requireOperatorContext: (tag: string, opts: { tty: boolean }) => void;
   initDatabase: (path: string) => unknown;
   closeDatabase: () => void;
-  runImport: (opts: { apply: boolean; paths: string[] }) => { ok: boolean };
+  runImport: (opts: { apply: boolean; paths: string[] }) => { ok: boolean; written: number };
+  drainKbWrites: () => Promise<void>;
 };
 
 /** Operator entry: the gate runs before any db/KB side effect. Returns the exit code. */
-export function main(
+export async function main(
   argv: string[] = process.argv.slice(2),
-  deps: MainDeps = { requireOperatorContext, initDatabase, closeDatabase, runImport },
-): number {
+  deps: MainDeps = {
+    requireOperatorContext,
+    initDatabase,
+    closeDatabase,
+    runImport,
+    drainKbWrites,
+  },
+): Promise<number> {
   deps.requireOperatorContext("kb-import-from-disk", { tty: false });
   const args = parseArgs(argv);
   if ("error" in args) {
@@ -122,7 +133,9 @@ export function main(
     return 1;
   }
   deps.initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
-  const { ok } = deps.runImport(args);
+  const { ok, written } = deps.runImport(args);
+  // upsertFile's syncs + INDEX.md outlive the call: drain while the db is open.
+  if (written > 0) await deps.drainKbWrites();
   deps.closeDatabase();
   if (!args.apply) console.log("[kb-import] dry run — pass --apply to write");
   return ok ? 0 : 1;
@@ -138,5 +151,5 @@ export function isMainModule(): boolean {
   }
 }
 
-// No process.exit: the fire-and-forget pgvector/Drive syncs drain before exit.
-if (isMainModule()) process.exitCode = main();
+// No process.exit: main drains the fire-and-forget pgvector/Drive syncs and INDEX.md (drainKbWrites) before closing the db.
+if (isMainModule()) process.exitCode = await main();

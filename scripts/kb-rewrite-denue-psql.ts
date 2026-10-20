@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase } from "../src/db/index.js";
 import { getFile, getKbMirrorWriteDir, upsertFile } from "../src/db/jarvis-fs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { drainKbWrites } from "../src/db/kb-write-drain.js";
 import { validateShellCommand } from "../src/tools/builtin/shell.js";
 
 export const TARGET_PATHS = [
@@ -178,6 +179,8 @@ function readMirror(dir: string, path: string): string | null {
 export function runRewrite(opts: { apply: boolean; paths?: string[] }): {
   results: Array<{ path: string; status: Status; roleSwaps: number; quoteSwaps: number }>;
   ok: boolean;
+  /** Rows passed to upsertFile (each one leaves syncs + an INDEX.md mark to drain). */
+  written: number;
 } {
   // Pass 1: plan + judge every path; nothing is written here.
   const plans = (opts.paths ?? TARGET_PATHS).map((path) => {
@@ -199,6 +202,7 @@ export function runRewrite(opts: { apply: boolean; paths?: string[] }): {
   const blocked = plans.some((p) => p.status !== "rewritten" && p.status !== "nothing-to-do");
   if (opts.apply && blocked) console.log("[kb-rewrite] nothing written: a path is missing or refused");
   // Pass 2: apply only when no path is blocked.
+  let written = 0;
   const results = plans.map(({ path, row, r, status: planned }) => {
     let status: Status = planned;
     let tag = "";
@@ -215,6 +219,7 @@ export function runRewrite(opts: { apply: boolean; paths?: string[] }): {
       upsertFile(path, row.title, r.content, tags, row.qualifier, row.priority, row.condition, related, {
         skipUserEdit: true,
       });
+      written++;
       if (getFile(path)?.content !== r.content) [status, tag] = ["verify-failed", " (row differs)"];
       else if (readMirror(mirrorDir, path) !== r.content) [status, tag] = ["verify-failed", " (mirror differs)"];
     }
@@ -224,7 +229,7 @@ export function runRewrite(opts: { apply: boolean; paths?: string[] }): {
     );
     return { path, status, roleSwaps: r.roleSwaps, quoteSwaps: r.quoteSwaps };
   });
-  return { results, ok: !blocked && results.every((x) => x.status === "rewritten" || x.status === "nothing-to-do") };
+  return { results, written, ok: !blocked && results.every((x) => x.status === "rewritten" || x.status === "nothing-to-do") };
 }
 
 /** True only when this file is the process entry point (never when a test imports it). */
@@ -241,20 +246,31 @@ type MainDeps = {
   requireOperatorContext: (tag: string, opts: { tty: boolean }) => void;
   initDatabase: (path: string) => unknown;
   closeDatabase: () => void;
-  runRewrite: (opts: { apply: boolean }) => { ok: boolean };
+  runRewrite: (opts: { apply: boolean }) => { ok: boolean; written: number };
+  drainKbWrites: () => Promise<void>;
 };
 
 /** Operator entry: the gate runs before any db/KB side effect. Returns the exit code. */
-export function main(deps: MainDeps = { requireOperatorContext, initDatabase, closeDatabase, runRewrite }): number {
+export async function main(
+  deps: MainDeps = {
+    requireOperatorContext,
+    initDatabase,
+    closeDatabase,
+    runRewrite,
+    drainKbWrites,
+  },
+): Promise<number> {
   // S6 item 3c: operator context only, before any db/KB side effect.
   deps.requireOperatorContext("kb-rewrite-denue-psql", { tty: false });
   const apply = process.argv.includes("--apply");
   deps.initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
-  const { ok } = deps.runRewrite({ apply });
+  const { ok, written } = deps.runRewrite({ apply });
+  // upsertFile's syncs + INDEX.md outlive the call: drain while the db is open.
+  if (written > 0) await deps.drainKbWrites();
   deps.closeDatabase();
   if (!apply) console.log("[kb-rewrite] dry run — pass --apply to write");
   return ok ? 0 : 1;
 }
 
-// No process.exit: the fire-and-forget pgvector/Drive syncs drain before exit.
-if (isMainModule()) process.exitCode = main();
+// No process.exit: main drains the fire-and-forget pgvector/Drive syncs and INDEX.md (drainKbWrites) before closing the db.
+if (isMainModule()) process.exitCode = await main();

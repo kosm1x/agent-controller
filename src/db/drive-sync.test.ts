@@ -35,6 +35,10 @@ import {
   backfillToDrive,
   syncToDrive,
   syncDeleteToDrive,
+  settleDriveSyncs,
+  findFolder,
+  getDriveMapEntry,
+  recordDriveId,
 } from "./drive-sync.js";
 import { initDatabase, closeDatabase, getDatabase } from "./index.js";
 
@@ -1328,5 +1332,122 @@ describe("Drive live-db guard", () => {
     expect(init).toEqual({ method: "PATCH", body: { trashed: true } });
     const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith(DISABLED));
     expect(lines).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-20 — operator scripts drain Drive writes before closeDatabase
+// ---------------------------------------------------------------------------
+describe("settleDriveSyncs / findFolder / map helpers", () => {
+  const ticks = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+  };
+
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    drive.isLive = true;
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string) =>
+      url.includes("uploadType=multipart") ? { id: "seed-id" } : { files: [{ id: "folder" }] },
+    );
+    initDatabase(":memory:");
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  it("resolves only after an in-flight CREATE has recorded its drive_file_map row", async () => {
+    await settleDriveSyncs(); // the seed upserts' syncs
+    let upload!: (v: { id: string }) => void;
+    drive.googleFetch.mockImplementation((url: string) =>
+      url.includes("uploadType=multipart")
+        ? new Promise((r) => (upload = r))
+        : Promise.resolve({ files: [{ id: "folder" }] }),
+    );
+    syncToDrive("knowledge/settle/new.md", "New", "body");
+    let settled = false;
+    const done = settleDriveSyncs().then(() => (settled = true));
+    await vi.waitFor(() => expect(upload).toBeTypeOf("function"));
+    await ticks(20);
+    expect(settled).toBe(false);
+    expect(getDriveMapEntry("knowledge/settle/new.md")).toBeNull();
+    upload({ id: "created-id" });
+    await done;
+    expect(getDriveMapEntry("knowledge/settle/new.md")?.driveId).toBe("created-id");
+  });
+
+  it("waits for a CREATE started while it is already waiting", async () => {
+    await settleDriveSyncs();
+    const uploads: Array<(v: { id: string }) => void> = [];
+    drive.googleFetch.mockImplementation((url: string) =>
+      url.includes("uploadType=multipart")
+        ? new Promise((r) => uploads.push(r))
+        : Promise.resolve({ files: [{ id: "folder" }] }),
+    );
+    syncToDrive("knowledge/settle/a.md", "A", "body");
+    let settled = false;
+    const done = settleDriveSyncs().then(() => (settled = true));
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    syncToDrive("knowledge/settle/b.md", "B", "body");
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    uploads[0]!({ id: "id-a" });
+    await ticks(20);
+    expect(settled).toBe(false);
+    expect(getDriveMapEntry("knowledge/settle/b.md")).toBeNull();
+    uploads[1]!({ id: "id-b" });
+    await done;
+    expect(getDriveMapEntry("knowledge/settle/a.md")?.driveId).toBe("id-a");
+    expect(getDriveMapEntry("knowledge/settle/b.md")?.driveId).toBe("id-b");
+  });
+
+  it("also waits for writes started while it is waiting, and for deletes", async () => {
+    await settleDriveSyncs();
+    recordDriveId("knowledge/settle/old.md", "old-id");
+    let trash!: () => void;
+    drive.googleFetch.mockImplementation((_url: string, init?: { body?: unknown }) =>
+      init?.body && (init.body as { trashed?: boolean }).trashed
+        ? new Promise((r) => (trash = () => r({})))
+        : Promise.resolve({ files: [{ id: "folder" }] }),
+    );
+    syncDeleteToDrive("knowledge/settle/old.md");
+    let settled = false;
+    const done = settleDriveSyncs().then(() => (settled = true));
+    await vi.waitFor(() => expect(trash).toBeTypeOf("function"));
+    await ticks(20);
+    expect(settled).toBe(false);
+    trash();
+    await done;
+    expect(getDriveMapEntry("knowledge/settle/old.md")).toBeNull();
+  });
+
+  it("findFolder walks existing levels read-only and returns null on a missing one", async () => {
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(async (url: string) => {
+      const q = decodeURIComponent(url);
+      if (q.includes("name='a' and 'kb-root-test' in parents")) return { files: [{ id: "id-a" }] };
+      if (q.includes("name='b' and 'id-a' in parents")) return { files: [{ id: "id-b" }] };
+      return { files: [] };
+    });
+    expect(await findFolder("")).toBe("kb-root-test");
+    expect(await findFolder("a/b")).toBe("id-b");
+    expect(await findFolder("a/missing")).toBeNull();
+    expect(await findFolder("zz/b")).toBeNull();
+    for (const [, init] of drive.googleFetch.mock.calls) expect(init).toBeUndefined(); // GETs only
+  });
+
+  it("getDriveMapEntry reads without creating the table; recordDriveId creates + upserts", () => {
+    const db = getDatabase();
+    db.exec("DROP TABLE IF EXISTS drive_file_map");
+    expect(getDriveMapEntry("knowledge/x.md")).toBeNull();
+    expect(
+      db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'drive_file_map'").get(),
+    ).toBeUndefined();
+    recordDriveId("knowledge/x.md", "id-1");
+    recordDriveId("knowledge/x.md", "id-2");
+    expect(getDriveMapEntry("knowledge/x.md")).toMatchObject({ driveId: "id-2" });
+    expect(getDriveMapEntry("knowledge/x.md")?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2} /);
   });
 });

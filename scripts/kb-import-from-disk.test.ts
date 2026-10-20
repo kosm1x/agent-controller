@@ -9,7 +9,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../src/db/index.js";
 import { getFile, upsertFile } from "../src/db/jarvis-fs.js";
+import { cancelPendingRegeneration } from "../src/db/jarvis-index.js";
+import { drainKbWrites } from "../src/db/kb-write-drain.js";
 import { isMainModule, main, parseArgs, runImport } from "./kb-import-from-disk.js";
+
+// pgvector and Drive syncs off (no key / folder; :memory: is not the live db either).
+vi.hoisted(() => {
+  delete process.env.COMMIT_DB_KEY;
+  delete process.env.DRIVE_KB_FOLDER_ID;
+});
 
 /** Main must never run on import: the operator gate is the first thing main calls, so it throws here. */
 const gate = vi.hoisted(() => ({ calls: 0 }));
@@ -217,41 +225,93 @@ describe("module entry", () => {
     requireOperatorContext: vi.fn(),
     initDatabase: vi.fn(),
     closeDatabase: vi.fn(),
-    runImport: vi.fn(() => ({ ok })),
+    runImport: vi.fn(() => ({ ok, written: 0 })),
+    drainKbWrites: vi.fn(async () => {}),
   });
 
-  it("main refuses bad arguments before opening the database", () => {
+  it("main refuses bad arguments before opening the database", async () => {
     for (const argv of [["--bogus"], ["--path", A, "--bogus"], ["--path", "--x"], []]) {
       const deps = spyDeps(true);
-      expect(main(argv, deps), argv.join(" ")).toBe(1);
+      expect(await main(argv, deps), argv.join(" ")).toBe(1);
       expect(deps.requireOperatorContext).toHaveBeenCalledOnce();
       expect(deps.initDatabase).not.toHaveBeenCalled();
     }
   });
 
-  it("main returns 1 when the import fails", () => {
-    expect(main(["--path", A], spyDeps(false))).toBe(1);
+  it("main returns 1 when the import fails", async () => {
+    expect(await main(["--path", A], spyDeps(false))).toBe(1);
   });
 
-  it("main runs the operator gate before opening the database", () => {
+  const orderDeps = (order: string[], written = 0) => ({
+    requireOperatorContext: vi.fn(() => void order.push("gate")),
+    initDatabase: vi.fn(() => void order.push("init")),
+    closeDatabase: vi.fn(() => void order.push("close")),
+    runImport: vi.fn(() => {
+      order.push("run");
+      return { ok: true, written };
+    }),
+    drainKbWrites: vi.fn(async (): Promise<void> => void order.push("drain")),
+  });
+
+  it("main runs the operator gate before opening the database", async () => {
     const order: string[] = [];
-    const deps = {
-      requireOperatorContext: vi.fn(() => void order.push("gate")),
-      initDatabase: vi.fn(() => void order.push("init")),
-      closeDatabase: vi.fn(() => void order.push("close")),
-      runImport: vi.fn(() => {
-        order.push("run");
-        return { ok: true };
-      }),
-    };
-    expect(main(["--path", A], deps)).toBe(0);
+    const deps = orderDeps(order);
+    expect(await main(["--path", A], deps)).toBe(0);
+    // Dry run: nothing written, nothing to drain.
     expect(order).toEqual(["gate", "init", "run", "close"]);
     expect(deps.runImport).toHaveBeenCalledWith({ paths: [A], apply: false });
     deps.requireOperatorContext.mockImplementation(() => {
       throw new Error("refused");
     });
     deps.initDatabase.mockClear();
-    expect(() => main(["--path", A], deps)).toThrow("refused");
+    await expect(main(["--path", A], deps)).rejects.toThrow("refused");
     expect(deps.initDatabase).not.toHaveBeenCalled();
+  });
+
+  it("--apply that wrote rows drains the syncs and INDEX.md before closing the database", async () => {
+    const order: string[] = [];
+    expect(await main(["--path", A, "--apply"], orderDeps(order, 1))).toBe(0);
+    expect(order).toEqual(["gate", "init", "run", "drain", "close"]);
+  });
+
+  it("--apply that wrote nothing does not drain (no INDEX.md rewrite)", async () => {
+    const order: string[] = [];
+    expect(await main(["--path", A, "--apply"], orderDeps(order, 0))).toBe(0);
+    expect(order).toEqual(["gate", "init", "run", "close"]);
+  });
+
+  it("--apply: a drain still in flight holds closeDatabase back", async () => {
+    const order: string[] = [];
+    const deps = orderDeps(order, 1);
+    let release!: () => void;
+    deps.drainKbWrites.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    const run = main(["--path", A, "--apply"], deps);
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(deps.closeDatabase).not.toHaveBeenCalled();
+    release();
+    expect(await run).toBe(0);
+    expect(order.at(-1)).toBe("close");
+  });
+
+  it("real runImport + real drainKbWrites: INDEX.md is current before closeDatabase (syncs off)", async () => {
+    // A row inserted behind upsertFile's back: INDEX.md does not list its project yet.
+    seed(A, "old\n", "new\n");
+    getDatabase()
+      .prepare("INSERT INTO jarvis_files (id, path, title, content) VALUES ('p', 'projects/zeta-syn/a.md', 'P', 'x')")
+      .run();
+    expect(getFile("INDEX.md")?.content ?? "").not.toContain("zeta-syn");
+    let indexAtClose: string | undefined;
+    const deps = {
+      requireOperatorContext: vi.fn(),
+      initDatabase: vi.fn(),
+      closeDatabase: vi.fn(() => void (indexAtClose = getFile("INDEX.md")?.content)),
+      runImport,
+      drainKbWrites,
+    };
+    expect(await main(["--path", A, "--apply"], deps)).toBe(0);
+    expect(getFile(A)?.content).toBe("new\n");
+    expect(indexAtClose).toContain("[[projects/zeta-syn/|zeta-syn]]");
+    await new Promise((r) => setTimeout(r, 50)); // the late dynamic-import mark
+    cancelPendingRegeneration();
   });
 });
