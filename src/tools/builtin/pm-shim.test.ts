@@ -180,6 +180,15 @@ describe("pm-shim — refused verbs never reach the real binary", () => {
       expect(r.out).toBe("");
     });
   }
+
+  it("pip/pip3 by name is the SYSTEM pip: the reason names the venv's pip (operator ruling 2026-10-21)", () => {
+    for (const n of ["pip", "pip3"]) {
+      const r = run(n, ["install", "requests"]);
+      expect(r.code, r.err).toBe(1);
+      expect(r.err).toMatch(new RegExp(`^\\[pm-shim\\] refused: \`${n} install\` by name is the SYSTEM pip \\(no venv is active\\) — use <venv>/bin/pip install`));
+      expect(r.out).toBe("");
+    }
+  });
 });
 
 describe("pm-shim — read-only verbs pass through to the real binary", () => {
