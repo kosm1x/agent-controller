@@ -3506,3 +3506,67 @@ describe("npm run / npx appended argv carries no psql-shaped token (queue 4m, ru
     ]) allowed(cmd);
   });
 });
+
+describe("python path is an interpreter for the argument rule (operator ruling 2026-10-21)", () => {
+  // Route 1 after a 3-strike stop: string-only, no fs, no cwd. A `<dir>/python[3]` token is not a
+  // manager binary for checkEnvReset's ARGUMENT rule unless a copy word is in the segment; the verb
+  // rules and the COPY rule still see it.
+  const refused = (cmd: string) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(/operator decision/);
+  };
+  const allowed = (cmd: string) =>
+    expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("allows a python path behind a wrapper or as an unknown program's operand", () => {
+    for (const cmd of [
+      "xvfb-run -a /tmp/pr_test/bin/python /tmp/pr_test/test_pr.py 2>&1 | tail -30", // live refusal 2026-10-21 02:51 UTC
+      "cd /tmp/pr_test && timeout 55 xvfb-run -a ./bin/python test_pr.py 2>&1 | tail -30", // live refusal 02:55 UTC
+      "timeout 60 /tmp/v/bin/python3 s.py",
+      "xvfb-run -a /usr/bin/python3.12 s.py",
+      'xvfb-run -a /tmp/v/bin/python -c "print(1)"',
+      "nohup /tmp/v/bin/python s.py &",
+      "xvfb-run -a /usr/bin/python3 s.py", // bare-name parity: `python3 s.py` was always allowed
+    ]) allowed(cmd);
+  });
+
+  it("keeps the verb, copy, PATH/env and manager-path rules", () => {
+    for (const cmd of [
+      "/tmp/v/bin/pip install x",
+      "/tmp/v/bin/python -m pip install x",
+      "xvfb-run -a /tmp/v/bin/python -m pip install x",
+      "timeout 5 /tmp/v/bin/python -m pip install x",
+      "xvfb-run -a /tmp/v/bin/python -m pip uninstall -y x", // no copy word: the verb rule alone refuses it
+      "cp /usr/bin/python3 /tmp/p",
+      "cd /usr/bin && cp python3 /tmp/p", // bare name: the COPY rule alone decides it
+      "timeout 5 cp /tmp/v/bin/python zz",
+      "xvfb-run -a cp /tmp/v/bin/python /tmp/p", // cp not at command position: the copy word keeps the argument rule
+      "xvfb-run -a ln -s /tmp/v/bin/python /tmp/p",
+      "xvfb-run -a /bin/cp /tmp/v/bin/python /tmp/p", // copy word by PATH: copySeen strips the dir (qa R4 W3)
+      "xvfb-run -a /usr/bin/ln -s /tmp/v/bin/python /tmp/p",
+      "PATH=/x /tmp/v/bin/python s.py",
+      "env -i /tmp/v/bin/python s.py",
+      "cp /usr/bin/pip3 /tmp/p && /tmp/p install x",
+      "xvfb-run -a /usr/bin/npm install x",
+      "xvfb-run -a /usr/bin/npm ls", // read verb: only the argument rule refuses a non-python manager path
+      "xvfb-run -a /tmp/v/bin/pip3 list",
+      "xvfb-run -a /opt/python3/bin/pip3 list", // the shape is the BASENAME, not a `python` dir in the path
+      "xvfb-run -a /usr/lib/node_modules/npm/bin/npm-cli.js install",
+      `node -e "require('fs').symlinkSync('/usr/bin/npm','/tmp/zz')"`,
+      "/tmp/zz -m pip install x",
+    ]) refused(cmd);
+  });
+
+  it("records the verdicts this ruling does not change", () => {
+    // Not python-shaped manager words, allowed at HEAD too.
+    allowed("xvfb-run -a /tmp/v/bin/pythonx s.py");
+    // Never blocked (audit doc §12): the interpreter itself can create a venv or run pip from a script.
+    allowed("python3 -m venv /tmp/x");
+    allowed("python3 -m ensurepip");
+    allowed(`python3 -c "import pip; pip.main(['install','x'])"`);
+    allowed("/tmp/v/bin/python -m venv /tmp/y");
+    // Disclosed residue: an interpreter copy of a python path is allowed; `-m pip` on the copy is refused above.
+    allowed(`node -e "require('fs').copyFileSync('/tmp/v/bin/python','/tmp/zz')"`);
+  });
+});

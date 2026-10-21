@@ -1495,11 +1495,13 @@ export function checkEnvReset(segment: string): string | null {
   let lastPath = -1;
   let lastEq = -1;
   let lastPm = -1;
+  let copySeen = false; // a copy word anywhere in the segment, at command position or not (`xvfb-run -a cp …`)
   for (let k = 0; k < tokens.length; k++) {
     const a = tokens[k]!;
     if (/^PATH(?:=|$)/.test(a)) lastPath = k;
     if (a.includes("=")) lastEq = k;
     if (isPmBinaryPath(a) || PM_WORD_RE.test(a)) lastPm = k;
+    if (COPY_WORDS.has(a.replace(/^.*\//, ""))) copySeen = true;
   }
   // Command position: the first token, and every token after a wrapper, `xargs`, `busybox`,
   // `-exec`, a leading assignment or a leading flag (`env -i bash`). Behind a wrapper it is
@@ -1529,7 +1531,13 @@ export function checkEnvReset(segment: string): string | null {
     // `shutil.copy('/usr/bin/npm', …)`, `busybox cp /usr/bin/npm zz`) — qa R5 W5-2. Behind a wrapper the
     // read exemption holds only while READ words alone have been seen (a decoy `flock /var/lock/ls` cannot
     // buy it for a later `node`/`cp`/`dd`; an unknown word buys nothing either — qa R11 C11-2).
-    if (isPmBinaryPath(t)) {
+    // A `<dir>/python` or `<dir>/python3` path is an interpreter for THIS rule, not a manager binary, when no copy
+    // word is in the segment (operator ruling 2026-10-21, route 1 after a 3-strike stop). Bare-name parity: python is
+    // not shimmed, and every command this lets through has a twin with the path replaced by `python3` that was already
+    // allowed (qa R4 replay: 388 allowed lines unchanged, only the 3 target refusals newly allowed). The verb rules and
+    // the COPY rule below still see it (`timeout 5 cp <p>/python zz`, `<p>/python -m pip install x`); what the `-m`
+    // verb rule misses by bare name it misses here too (audit doc §12).
+    if (isPmBinaryPath(t) && (copySeen || !/^python3?$/.test(word))) {
       const entry = PM_ENTRY_RE.test(t) && /^(?:node|nodejs|python3?)$/.test(sticky ? lastKnown : cmdWord); // `node …/npm-cli.js <verb>` stays with the verb rules
       if (!sticky && !cmdPos && !READ_WORDS.has(cmdWord) && !entry) return copies(`${cmdWord} ${t}`);
       if (sticky && !(readSeen && !otherSeen) && !entry) return copies(`${lastKnown || cmdWord} ${t}`);
