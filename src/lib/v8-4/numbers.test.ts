@@ -408,3 +408,10 @@ describe("write-outcome collector (queue 2026-10-08 late item 10)", () => {
     expect(writeFailureMode({ TASK_GATES_WRITE_FAILURE: "yes" })).toBe("shadow");
   });
 });
+
+describe("jina_search (2026-10-22)", () => {
+  it("counts as an evidence tool and as a checkable source", () => {
+    expect(EVIDENCE_TOOL_RE.test("jina_search")).toBe(true);
+    expect(CHECKABLE_SOURCE_RE.test("jina_search precio del plan")).toBe(true);
+  });
+});

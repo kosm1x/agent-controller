@@ -197,6 +197,37 @@ describe("extractProvenance", () => {
     expect(extraction.searchQueries).toEqual(["AI safety research"]);
   });
 
+  it("extracts jina_search results", () => {
+    const call = exaSearchToolCall("tc-4", "synthetic query");
+    call.tool_calls![0].function.name = "jina_search";
+    const messages: ChatMessage[] = [
+      call,
+      {
+        role: "tool",
+        tool_call_id: "tc-4",
+        content: JSON.stringify({
+          query: "synthetic query",
+          results: [
+            {
+              title: "Example",
+              url: "https://example.com/j",
+              description: "Synthetic snippet",
+            },
+          ],
+          count: 1,
+          page: 1,
+        }),
+      },
+    ];
+
+    const extraction = extractProvenance(messages);
+    expect(extraction.records).toHaveLength(1);
+    expect(extraction.records[0].tool_name).toBe("jina_search");
+    expect(extraction.records[0].url).toBe("https://example.com/j");
+    expect(extraction.records[0].snippet).toBe("Synthetic snippet");
+    expect(extraction.searchQueries).toEqual(["synthetic query"]);
+  });
+
   it("returns empty for conversations with no research tools", () => {
     const messages: ChatMessage[] = [
       {

@@ -2586,6 +2586,10 @@ describe("getAllAvailableTools — fullCount producer/consumer coupling", () => 
     expect(CORE_TOOLS).toContain("expand_read");
   });
 
+  it("jina_search is CORE (2026-10-22)", () => {
+    expect(CORE_TOOLS).toContain("jina_search");
+  });
+
   it("memory_forget is CORE, reachable even when hasMemory is false (Hindsight is off in prod)", () => {
     expect(CORE_TOOLS).toContain("memory_forget");
     expect(getAllAvailableTools({ ...ALL_ON, hasMemory: false }).has("memory_forget")).toBe(true);
