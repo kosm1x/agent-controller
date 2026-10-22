@@ -2942,7 +2942,10 @@ export class MessageRouter {
    * pure-feedback ack. With no open window, an operator's "excelente" rates
    * the task whose reply was the last thing shown in its chat (lastTaskReply)
    * when that is also the latest outcome on its thread — that id is NOT returned
-   * as feedbackTaskId, so the implicit block can never overwrite it.
+   * as feedbackTaskId, so the implicit block can never overwrite it. Same for
+   * a window task that just received an explicit non-neutral signal: a
+   * "No, haz X" that falls through to a task must stay "negative", not be
+   * re-rated implicit_positive by the scope comparison.
    */
   private recordFeedbackWindowSignal(
     msg: IncomingMessage,
@@ -2974,12 +2977,14 @@ export class MessageRouter {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     let praiseAttributed = false;
+    let explicitApplied = false;
     if (feedbackTaskId) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
       // Jev shadow (dormant unless armed): log-only, never awaited.
       shadowFeedback(feedbackTaskId, msg.text, previousMessages.get(tk), signal);
       if (signal !== "neutral") {
         this.applyExplicitFeedback(feedbackTaskId, signal);
+        explicitApplied = true;
         praiseAttributed = signal === "positive";
         // v6.4 H1: When user rephrases, extract what changed and persist
         // as a correction so the enrichment pipeline recalls it on future
@@ -3016,7 +3021,11 @@ export class MessageRouter {
         }
       }
     }
-    return { feedbackTaskId, praiseAttributed, broadcastTaskId: null };
+    return {
+      feedbackTaskId: explicitApplied ? null : feedbackTaskId,
+      praiseAttributed,
+      broadcastTaskId: null,
+    };
   }
 
   /**

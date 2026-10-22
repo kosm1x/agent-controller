@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectFeedbackSignal,
   detectImplicitFeedback,
+  isExclusivelyNegative,
   isExclusivelyPraise,
   isFeedbackMessage,
 } from "./feedback.js";
@@ -111,6 +112,104 @@ describe("feedback", () => {
 
     it("should not intercept neutral messages", () => {
       expect(isFeedbackMessage("muéstrame las tareas")).toBe(false);
+    });
+
+    // A bare negation is acked without a task; a "no" carrying an answer or
+    // an instruction must run (swallowed: "No encontré el archivo. Entonces A.").
+    it("intercepts a pure negation", () => {
+      for (const text of [
+        "no",
+        "No",
+        "no, mal",
+        "eso no",
+        "otra vez",
+        "incorrecto",
+        "No, tampoco",
+        "nope",
+        "[Grupo: X, De: Y]\nno",
+        "no quedó excelente", // negated eval word: the broadcast-rating gate needs it
+        "no sirve",
+        "no funciona",
+        "no gracias",
+        "no está bien",
+        "no es así",
+        "No está mal",
+        "no era",
+        "no es lo que pedí",
+        "No, Gracias",
+      ]) {
+        expect(isFeedbackMessage(text), text).toBe(true);
+        // The intercept acks by signal; a neutral signal would be swallowed silently.
+        expect(detectFeedbackSignal(text), text).toBe("negative");
+      }
+    });
+
+    it("'no.' / 'todo mal' are not intercepted: NEGATIVE_PATTERNS misses them, so their signal is neutral", () => {
+      // Intercepting them would return true with no ack sent (silent swallow).
+      for (const text of ["no.", "todo mal"]) {
+        expect(detectFeedbackSignal(text), text).toBe("neutral");
+        expect(isFeedbackMessage(text), text).toBe(false);
+      }
+    });
+
+    it("does not intercept a negation that carries a payload", () => {
+      for (const text of [
+        "No encontré el archivo. Entonces A.",
+        "No, hazlo con B",
+        "No encontré nada, sigue con el plan",
+        "No hace falta, cierra el tema",
+        "No, usa la versión de ayer",
+        "no es ese archivo, es el otro",
+        "Entonces A.",
+        "Sí, A",
+        "muéstrame las tareas",
+        // One leftover word outside the verdict list: an option, a number,
+        // a name, a pick, a time, a command.
+        "No, B",
+        "no, b",
+        "No, es B",
+        "no, la 2",
+        "No, Drive",
+        "No, el 2024",
+        "No, A.",
+        "No, el otro",
+        "no es ese, el otro",
+        "no, ayer",
+        "No, cancela",
+        "no, sigue",
+        "no, espera",
+        "No, repítelo",
+        "mal, repítelo",
+        "Error, es el otro",
+        "no, el pdf",
+        "no es urgente",
+        "No está listo",
+        "no sé",
+        "No, ese",
+        "No, para",
+        "No, todo",
+        "No, otra",
+        // A verdict word plus a command is still a command.
+        "No funciona, reinícialo",
+      ]) {
+        expect(isFeedbackMessage(text), text).toBe(false);
+      }
+    });
+
+    it("isExclusivelyNegative requires a leading negation", () => {
+      // A lone verdict word leaves a verdict leftover: only the negation
+      // precheck keeps it out of the intercept.
+      expect(isExclusivelyNegative("gracias")).toBe(false);
+      expect(isFeedbackMessage("gracias")).toBe(false);
+      expect(isFeedbackMessage("bien")).toBe(false);
+      expect(isFeedbackMessage("Sí.")).toBe(false);
+    });
+
+    it("a payload-bearing negation still records the negative signal", () => {
+      expect(detectFeedbackSignal("No, hazlo con B")).toBe("negative");
+      expect(detectFeedbackSignal("No encontré el archivo. Entonces A.")).toBe(
+        "negative",
+      );
     });
   });
 

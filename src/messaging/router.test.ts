@@ -1027,6 +1027,31 @@ describe("MessageRouter", () => {
           expect(sent()).toEqual([ACK_NEG]);
         });
 
+        it("a short 'No, …' carrying an instruction is not acked: it reaches task creation", async () => {
+          await router.handleInbound(turn("No, hazlo con B"));
+          expect(sent()).not.toContain(ACK_NEG);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        it("a 'No, …' instruction in an open window keeps its explicit negative: the implicit block never sees the task", async () => {
+          const { checkFeedbackWindow } =
+            await import("../intelligence/outcome-tracker.js");
+          const { classifyScopeGroups } = await import("./scope-classifier.js");
+          // Prior turn on one topic, the negation on another: were the rated
+          // window task handed to the implicit block, it would be re-rated
+          // implicit_positive (last write wins on task_outcomes).
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["google"]));
+          await router.handleInbound(turn("revisa mi correo de gmail por favor"));
+          vi.mocked(checkFeedbackWindow).mockImplementation(() => "task-win");
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+          try {
+            await router.handleInbound(turn("No, dame el precio del bitcoin hoy"));
+          } finally {
+            vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+          }
+          expect(feedbackWrites()).toEqual([["negative", "task-win"]]);
+        });
+
         it("bare 'no' with an open window still rates the window task (unchanged)", async () => {
           const { checkFeedbackWindow } =
             await import("../intelligence/outcome-tracker.js");

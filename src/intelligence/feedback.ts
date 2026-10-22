@@ -88,12 +88,92 @@ export function isExclusivelyPraise(text: string): boolean {
 }
 
 /**
+ * Negation vocabulary that can accompany the leading negative without
+ * turning the message into an instruction. Each word, and why it is here:
+ * - no, nope, tampoco — the negation itself ("no", "No, tampoco").
+ * - incorrecto/incorrecta, equivocado/equivocada, mal, error — the verdict
+ *   words NEGATIVE_PATTERNS anchors on, both genders ("está mal").
+ * - "otra vez" — as a phrase only (another failed attempt); a lone "otra"
+ *   picks an option ("No, otra") and must survive.
+ * - eso, es, está, así, fue — the copula/demonstrative frame of a bare
+ *   verdict ("eso no", "no es así", "no fue eso").
+ * - excelente — the eval word negated ("no quedó excelente"): a verdict, and
+ *   the broadcast-rating gate (router.ts broadcastRatingTarget) requires it
+ *   to pass isFeedbackMessage.
+ * Deliberately NOT here: "otro"/"ese"/"esto" (they pick an item), "todo"
+ * ("No, todo" is an answer), and any verb or noun — a command word must
+ * survive to count as payload.
+ * Unicode-aware boundaries: `\b` is ASCII-only and never fires next to "á"/"í".
+ */
+const NEGATIVE_ADJUNCTS =
+  /(?<!\p{L})(no|nope|tampoco|incorrect[oa]|equivocad[oa]|mal|error|otra\s+vez|eso|es|est[áa]|as[íi]|fue|excelente)(?!\p{L})/giu;
+
+/**
+ * Stopwords for the negative path: articles, prepositions and possessives
+ * only. Unlike STOPWORDS it keeps the demonstratives (ese/esa/este/esta/esto:
+ * "No, ese" picks an item) and "para" ("No, para" is a stop command).
+ */
+const NEGATIVE_STOPWORDS =
+  /(?<!\p{L})(el|la|lo|los|las|un|una|unos|unas|de|del|al|qu[eé]|con|por|tu|su|mi)(?!\p{L})/giu;
+
+/**
+ * The closed list of single words that may remain after a negation and still
+ * leave it a pure verdict. Anything else — an option ("B", "2"), a name, a
+ * verb ("cancela", "sigue"), a time ("ayer") — is an answer or an instruction.
+ * - sirve, funciona — "no sirve", "no funciona": the result does not work.
+ * - gracias — "no gracias": a decline, nothing to run.
+ * - quedó, quedo — "no quedó (excelente)": the result fell short.
+ * - era — "no, eso no era": the result was not what was meant.
+ * - pedí, pedi — "no es lo que pedí": the result missed the request.
+ * - bien — "no está bien": a verdict on the result.
+ * - así, asi — "no así": a verdict on the manner (with or without accent).
+ * Compared lowercased after the accent-stripping that NFD input undergoes
+ * (the combining mark is not a letter), hence both spellings.
+ */
+const VERDICT_WORDS = new Set([
+  "sirve",
+  "funciona",
+  "gracias",
+  "quedó",
+  "quedo",
+  "era",
+  "pedí",
+  "pedi",
+  "bien",
+  "así",
+  "asi",
+]);
+
+/**
+ * True when the message is a negation and nothing else: after removing the
+ * negation vocabulary, the articles/prepositions and everything but letters
+ * and digits, nothing remains, or one word from VERDICT_WORDS ("no, eso no
+ * era" → "era" → still pure). Any other leftover = an answer or an
+ * instruction rides on the "no" ("No encontré el archivo. Entonces A.",
+ * "No, B", "No, cancela"); the message must NOT be intercepted.
+ */
+export function isExclusivelyNegative(text: string): boolean {
+  const trimmed = stripGroupPrefix(text);
+  if (!NEGATIVE_PATTERNS.test(trimmed)) return false;
+  const leftover = trimmed
+    .replace(NEGATIVE_ADJUNCTS, " ")
+    .replace(NEGATIVE_STOPWORDS, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  if (leftover === "") return true;
+  const words = leftover.split(/\s+/);
+  return words.length <= 1 && VERDICT_WORDS.has(words[0].toLowerCase());
+}
+
+/**
  * Is this message short enough and signal-bearing to be pure feedback
  * rather than a new command? If true, the router can skip task creation.
  *
  * Positive branch: exclusively-praise messages only (see contract above) —
  * an embedded instruction alongside "excelente" falls through to normal
  * processing while the feedback window still records the positive signal.
+ * Negative branch: same rule via isExclusivelyNegative — "No, hazlo con B"
+ * runs; the feedback window still records the negative signal upstream.
  */
 export function isFeedbackMessage(text: string): boolean {
   const trimmed = stripGroupPrefix(text);
@@ -101,9 +181,9 @@ export function isFeedbackMessage(text: string): boolean {
 
   if (isExclusivelyPraise(trimmed)) return true;
 
-  // Negative signals keep the original short-message gate.
+  // Negative signals: the 8-word cap stays as an outer bound.
   if (wordCount > 8) return false;
-  return NEGATIVE_PATTERNS.test(trimmed);
+  return isExclusivelyNegative(trimmed);
 }
 
 /**
