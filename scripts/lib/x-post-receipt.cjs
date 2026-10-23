@@ -8,4 +8,12 @@ function appendReceipt(file, receipt) {
   fs.appendFileSync(file, JSON.stringify(receipt) + '\n');
 }
 
-module.exports = { appendReceipt };
+// The toast is the only evidence the publisher sees that X accepted the post. Only an
+// explicit "sent" / "se envió" confirms it; anything else (no toast, a daily-limit
+// warning that mentions "posts") is unconfirmed.
+function classifyToast(toastText) {
+  const raw = toastText || '';
+  return { confirmed: /\bsent\b|se envi[oó]/i.test(raw), toast: raw.trim() };
+}
+
+module.exports = { appendReceipt, classifyToast };
