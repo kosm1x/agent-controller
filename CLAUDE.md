@@ -43,7 +43,7 @@ Rules only; mechanism + history → §Invariants.
 
 | Invariant | Rule |
 | --- | --- |
-| Inference | Claude Agent SDK primary when `INFERENCE_PRIMARY_PROVIDER=claude-sdk`; OpenAI-compat when `=openai`. Runners spawn via `spawnSandbox()` (`SANDBOX_BACKEND`). Never bypass the seam in a runner. |
+| Inference | Claude Agent SDK primary when `INFERENCE_PRIMARY_PROVIDER=claude-sdk`; OpenAI-compat when `=openai`. `INFERENCE_SDK_LASTLINE_ENABLED=true` arms the `fallback` provider as a LOUD last line only after both SDK legs fail (journal line + `inference.lastline` trace + real model in the ledger; never on budget/abort/refusal or after a side-effecting tool; `onlyProvider` pins it — never a silent leak, queue 4ai). Runners spawn via `spawnSandbox()` (`SANDBOX_BACKEND`). Never bypass the seam in a runner. |
 | Deps | The two Anthropic SDKs are EXACT-pinned (no caret); `@alibaba-group/opensandbox` EXACT-pinned 0.1.11. Do not add deps without discussion. |
 | Schema | NEW column adds/drops go in the append-only `SCHEMA_MIGRATIONS` list — never as bare ALTER probes in the init body. `deploy.sh` ABORTS on an unexpected schema signature (`MC_SKIP_MIGRATION_GATE=1` to override). **Never reset the DB without explicit user approval.** |
 | Budget | `budgetEnabled`/`budgetEnforce` default false; limits NEVER block/throttle a dispatch. Do not describe them as "binding." Operator ruling 2026-07-13: hard-cap enforcement is CLOSED — do not propose arming it. |
