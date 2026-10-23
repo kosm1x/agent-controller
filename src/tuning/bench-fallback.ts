@@ -445,7 +445,11 @@ export function parseSkuPrice(model: CatalogModel): Price | null {
 export function catalogRows(models: CatalogModel[]): CatalogRow[] {
   return models.map((m) => ({
     id: normalizeModelId(m.name),
-    contextLength: typeof m.contextLength === "number" ? m.contextLength : null,
+    // Fireworks returns contextLength 0 for some live models: unknown, not a size.
+    contextLength:
+      typeof m.contextLength === "number" && Number.isInteger(m.contextLength) && m.contextLength > 0
+        ? m.contextLength
+        : null,
     deprecation: deprecationOf(m.deprecationDate),
     price: parseSkuPrice(m),
     usageIdentifier: pickServerlessMode(m)?.usageIdentifier ?? null,
@@ -1156,10 +1160,22 @@ export function renderMarkdown(result: BenchResult, apiKey: string): string {
   if (!result.catalog.loaded) {
     out.push(`not loaded: ${result.catalog.warning ?? "unknown"}`);
   } else {
-    out.push("| id | context | deprecation | $/1M in/out |", "|---|---|---|---|");
+    out.push(
+      "| id | context | deprecation | $/1M in/out | price source |",
+      "|---|---|---|---|---|",
+    );
+    const catalogPrices = new Map(result.catalog.rows.map((r) => [r.id, r.price]));
     for (const r of result.catalog.rows) {
+      const p = priceFor(r.id, catalogPrices);
       out.push(
-        `| ${r.id} | ${r.contextLength ?? "n/a"} | ${r.deprecation ?? "—"} | ${fmtPrice(r.price)} |`,
+        `| ${r.id} | ${r.contextLength ?? "n/a"} | ${r.deprecation ?? "—"} | ${fmtPrice(p.price)} | ${p.source} |`,
+      );
+    }
+    const unpriced = result.catalog.rows.filter((r) => r.price === null).length;
+    if (unpriced > 0) {
+      out.push(
+        "",
+        `\`${unpriced}/${result.catalog.rows.length}\` catalog rows had no parseable \`skuInfos\` (Fireworks fills serverless prices on its serverless-models list, not on ListModels/GetModel); the \`price source\` column says which of them fell back to the builtin table`,
       );
     }
   }

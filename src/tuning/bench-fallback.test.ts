@@ -110,6 +110,24 @@ const noSleep = async () => {};
 
 const money = (units: string, nanos: number) => ({ currencyCode: "USD", units, nanos });
 
+// GET /v1/accounts/fireworks/models/qwen3p8-max, captured 2026-10-23 18:31 UTC (ListModels row identical).
+// serverlessModes empty, contextLength 0 are the API's values, not a fixture shortcut.
+const LIVE_ROW_RAW = {
+  name: "accounts/fireworks/models/qwen3p8-max",
+  displayName: "Qwen 3.8 Max",
+  state: "READY",
+  kind: "HF_BASE_MODEL",
+  public: true,
+  contextLength: 0,
+  trainingContextLength: 65536,
+  supportsTools: true,
+  supportsImageInput: true,
+  supportsServerless: true,
+  deprecationDate: null,
+  serverlessModes: [],
+};
+const LIVE_CATALOG_ROW_QWEN3P8_MAX: CatalogModel = LIVE_ROW_RAW;
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -357,6 +375,26 @@ describe("pricing", () => {
     expect(priceFor("kimi-k3", cat)).toEqual({ price: BUILTIN_PRICES["kimi-k3"], source: "builtin" });
     expect(priceFor("ember-1", new Map([["ember-1", null]])).source).toBe("builtin");
     expect(priceFor("mystery", cat)).toEqual({ price: null, source: "n/a" });
+  });
+
+  it("live qwen3p8-max row (empty serverlessModes, contextLength 0) → nulls, builtin price", () => {
+    const rows = catalogRows([LIVE_CATALOG_ROW_QWEN3P8_MAX]);
+    expect(rows).toEqual([
+      { id: "qwen3p8-max", contextLength: null, deprecation: null, price: null, usageIdentifier: null },
+    ]);
+    expect(priceFor("qwen3p8-max", new Map(rows.map((r) => [r.id, r.price])))).toEqual({
+      price: BUILTIN_PRICES["qwen3p8-max"],
+      source: "builtin",
+    });
+  });
+
+  it("a non-positive or non-integer contextLength is unknown (null); a positive one is kept", () => {
+    const ctx = (contextLength: number) =>
+      catalogRows([{ name: "accounts/fireworks/models/m", contextLength }])[0].contextLength;
+    expect(ctx(0)).toBeNull();
+    expect(ctx(-1)).toBeNull();
+    expect(ctx(1.5)).toBeNull();
+    expect(ctx(262144)).toBe(262144);
   });
 });
 
@@ -936,6 +974,61 @@ describe("runBenchmark (injected fetch, no network)", () => {
     expect(out.result.catalog.warning).toMatch(/HTTP 500/);
     expect(renderMarkdown(out.result, FAKE_KEY)).not.toContain(FAKE_KEY);
     expect(renderJson(out.result, "")).not.toContain(FAKE_KEY); // redacted at record time too
+  });
+
+  const NO_SKU_NOTE =
+    "catalog rows had no parseable `skuInfos` (Fireworks fills serverless prices on its serverless-models list, not on ListModels/GetModel); the `price source` column says which of them fell back to the builtin table";
+  const renderWithCatalog = async (models: CatalogModel[]): Promise<string> => {
+    const out = await runBenchmark({
+      config: config(["good"]),
+      cases,
+      unreachable: [],
+      deps: { fetch: fakeFetch({}), now: () => 0, sleep: noSleep },
+    });
+    if (out.kind === "bad_key") throw new Error("unexpected");
+    return renderMarkdown(
+      { ...out.result, catalog: { loaded: true, warning: null, rows: catalogRows(models) } },
+      FAKE_KEY,
+    );
+  };
+
+  it("catalog table prints the price source and a note when rows carried no skuInfos", async () => {
+    const live = await renderWithCatalog([LIVE_CATALOG_ROW_QWEN3P8_MAX]);
+    const b = BUILTIN_PRICES["qwen3p8-max"];
+    expect(live).toContain("| id | context | deprecation | $/1M in/out | price source |");
+    expect(live).toContain(
+      `| qwen3p8-max | n/a | — | ${b.in.toFixed(2)} / ${b.out.toFixed(2)} | builtin |`,
+    );
+    expect(live).toContain(`\`1/1\` ${NO_SKU_NOTE}`);
+    const priced = await renderWithCatalog([
+      {
+        name: "accounts/fireworks/models/glm-5p3",
+        contextLength: 262144,
+        serverlessModes: [
+          {
+            skuInfos: [
+              { sku: "input", amount: money("1", 0), unit: "1M tokens" },
+              { sku: "output", amount: money("3", 0), unit: "1M tokens" },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(priced).toContain("| glm-5p3 | 262144 | — | 1.00 / 3.00 | catalog |");
+    expect(priced).not.toContain(NO_SKU_NOTE);
+  });
+
+  it("a row with no catalog and no builtin price renders n/a source; the note counts it", async () => {
+    const md = await renderWithCatalog([
+      LIVE_CATALOG_ROW_QWEN3P8_MAX,
+      { name: "accounts/fireworks/models/mystery" },
+    ]);
+    const b = BUILTIN_PRICES["qwen3p8-max"];
+    expect(md).toContain("| mystery | n/a | — | n/a | n/a |");
+    expect(md).toContain(
+      `| qwen3p8-max | n/a | — | ${b.in.toFixed(2)} / ${b.out.toFixed(2)} | builtin |`,
+    );
+    expect(md).toContain(`\`2/2\` ${NO_SKU_NOTE}`);
   });
 
   it("a 401 aborts the whole run as bad_key", async () => {

@@ -51,3 +51,7 @@ none
 | nemotron-lightning-3p5-30b-a3b | 262144 | 2026-11-07 | n/a |
 | qwen3p8-2p4t-a95b | 262144 | — | n/a |
 | qwen3p8-max | 0 | — | n/a |
+
+Note (added after this run): all 15 rows show `n/a` because this account's ListModels/GetModel return `serverlessModes: []` (verified 2026-10-23 18:31 UTC; the serverless-list endpoint answers 403), so the Scores prices came from the builtin table (`price src` column).
+`qwen3p8-max` context `0` is the API's own value, not a parse error.
+The renderer now prints a `price source` column here and maps a non-positive context to `n/a`.
