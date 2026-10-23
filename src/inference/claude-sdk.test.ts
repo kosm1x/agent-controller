@@ -3900,6 +3900,25 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
     expect(emitTraceMock).not.toHaveBeenCalled();
   });
 
+  // Queue 3p readout 2026-10-23: Prometheus goal legs reach the SDK through
+  // queryClaudeSdkAsInferWithTools, which dropped `trace`.
+  it("queryClaudeSdkAsInferWithTools forwards trace: tool.called rows carry the task and run", async () => {
+    mockMessages.value = twoTurnFixture();
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "goal" }],
+      [],
+      async () => "unused",
+      { trace: { taskId: "task-p", runId: "run-p" } },
+    );
+    const calls = emitTraceMock.mock.calls.map((c) => c[0]);
+    expect(
+      calls.filter((e) => e.name === "tool.called").map((e) => e.tool),
+    ).toEqual(["web_search", "jarvis_file_read"]);
+    for (const e of calls) {
+      expect(e).toMatchObject({ taskId: "task-p", runId: "run-p" });
+    }
+  });
+
   // Queue 4ah-c (ruling 2026-10-23): tool.called rows carry the KEY NAMES of
   // the tool_use input, never the values.
   const toolUseTurn = (blocks: Record<string, unknown>[]): MockMessage[] => [
@@ -4253,6 +4272,24 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
       trace: { taskId: "task-1", runId: "run-1" },
     });
     expect(stopHookFactory.calls).toEqual(["task-1"]);
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("hooks");
+  });
+
+  // Queue 3p readout 2026-10-23: a Prometheus goal leg's trace is rows only.
+  // The hook judges the whole task ledger, so a sibling goal's plan gate
+  // would block this leg; plan gates never block by contract.
+  it("queryClaudeSdkAsInferWithTools with a trace never arms the wall, even when the factory would", async () => {
+    stopHookFactory.impl = () =>
+      vi.fn(async () => ({ decision: "block", reason: "r" }));
+    okResult();
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "goal" }],
+      [],
+      async () => "unused",
+      { trace: { taskId: "task-g", runId: "run-g" } },
+    );
+    expect(stopHookFactory.calls).toEqual([]);
     const opts = lastQueryArgs.value?.options as Record<string, unknown>;
     expect(opts).not.toHaveProperty("hooks");
   });

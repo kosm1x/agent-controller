@@ -86,6 +86,8 @@ async function executeInProcess(input: RunnerInput): Promise<RunnerOutput> {
         goalTimeoutMs: config.goalTimeoutMs,
         timeoutMs: config.orchestratorTimeoutMs,
         maxIterations: config.orchestratorMaxIterations,
+        // Goal legs' trace rows carry the run (queue 3p readout 2026-10-23).
+        runId: input.runId,
       },
       input.tools,
       snapshot,

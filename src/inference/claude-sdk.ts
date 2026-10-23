@@ -1013,6 +1013,14 @@ export async function queryClaudeSdk(opts: {
    * a trace failure never fails the query.
    */
   trace?: { taskId: string; runId?: string };
+  /**
+   * false = `trace` emits rows only and the V8.4 Stop hook stays unarmed.
+   * Prometheus goal legs (queryClaudeSdkAsInferWithTools) pass false: the
+   * hook judges the WHOLE task ledger, so a goal leg would be blocked by a
+   * sibling goal's plan gate, and plan gates never block by contract
+   * (orchestrator.ts). Queue 3p readout 2026-10-23.
+   */
+  gatesStopHook?: false;
 }): Promise<ClaudeSdkResult> {
   // Budget enforcement gate (V8.5 Phase 3.3) — dormant unless the operator
   // arms BOTH existing flags (BUDGET_ENABLED + BUDGET_ENFORCE, default off).
@@ -1216,9 +1224,10 @@ export async function queryClaudeSdk(opts: {
   // while a runnable acceptance gate is FAILED. Null when dormant
   // (TASK_GATES_STOP_HOOK unset / mode off / task has no ledger / no task id)
   // so the options object below is byte-for-byte today's shape.
-  const rawGatesStopHook = opts.trace?.taskId
-    ? releaseProbeOnThrow(() => makeGatesStopHook(opts.trace!.taskId))
-    : null;
+  const rawGatesStopHook =
+    opts.trace?.taskId && opts.gatesStopHook !== false
+      ? releaseProbeOnThrow(() => makeGatesStopHook(opts.trace!.taskId))
+      : null;
   // The block reason quotes gate evidence (command output) back to the model.
   const gatesStopHook = rawGatesStopHook
     ? scrubHookOutput(rawGatesStopHook)
@@ -2296,6 +2305,8 @@ export async function queryClaudeSdkAsInferWithTools(
     model?: string;
     effort?: "low" | "medium" | "high" | "max";
     costLedger?: CostLedgerAttribution | false;
+    /** Rows only — the Stop hook stays unarmed (queue 3p readout 2026-10-23). */
+    trace?: { taskId: string; runId?: string };
   },
 ): Promise<{
   content: string;
@@ -2355,6 +2366,7 @@ export async function queryClaudeSdkAsInferWithTools(
     taskBudgetTokens,
     abortSignal: options?.signal,
     costLedger: options?.costLedger,
+    ...(options?.trace && { trace: options.trace, gatesStopHook: false }),
   });
 
   // Build a synthetic assistant turn with all tool calls collapsed into one

@@ -72,17 +72,18 @@ function isNonInteractiveMeta(meta: {
  * First high-risk tool (gmail_send, tweet_post, …) the failed attempt already
  * called, or null. Reads the latest run's `tool_calls` (written on the
  * dispatcher's task.failed path) UNION the `tool.called` trace rows (written
- * per call by the fast runner's in-process SDK loop, so a watchdog-killed run
- * whose `tool_calls` is still NULL is covered). Heavy in-process failures
- * (non-promoted result or orchestrate() throw) return the run context's
- * calls (a swarm sub-task: only its own), so a heavy task's prior send is
- * detected. Gaps: a WATCHDOG-killed
- * heavy run (its `tool_calls` is still NULL and heavy emits no
- * `tool.called` rows); a containerized heavy/nanoclaw run whose worker died
- * or threw (the calls ran in the worker process and no names came back);
- * swarm parents (their sub-tasks' calls live on the sub-task rows); a2a
- * (the remote agent's calls are invisible). A call that failed counts as
- * sent: fail toward not duplicating. No record → null (retry as before).
+ * per call by the in-process SDK loops of the fast runner and, since queue
+ * 3p readout 2026-10-23, the in-process heavy runner's Prometheus goal legs,
+ * so a watchdog-killed run whose `tool_calls` is still NULL is covered).
+ * Heavy in-process failures (non-promoted result or orchestrate() throw)
+ * return the run context's calls (a swarm sub-task: only its own), so a
+ * heavy task's prior send is detected. Gaps (queue 3p readout 2026-10-23):
+ * a containerized heavy run and any nanoclaw run (the worker writes its trace
+ * rows to the container's own throwaway DB, and a worker that died or threw
+ * sends no names back); swarm parents (their sub-tasks' calls live on the
+ * sub-task rows); a2a (the remote agent's calls are invisible). A call that
+ * failed counts as sent: fail toward not duplicating. No record → null
+ * (retry as before).
  */
 function highRiskCallOf(db: Database.Database, taskId: string): string | null {
   const names = new Set<string>();

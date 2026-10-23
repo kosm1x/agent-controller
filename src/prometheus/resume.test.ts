@@ -6,7 +6,13 @@ afterEach(() => {
 
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus } from "./types.js";
-import { resetFromGoal } from "./resume.js";
+import { resetFromGoal, resumeFromGoal } from "./resume.js";
+import { executeGraph } from "./executor.js";
+import { reflect } from "./reflector.js";
+
+// resumeFromGoal's executor + reflector seams (queue 3p readout 2026-10-23).
+vi.mock("./executor.js", () => ({ executeGraph: vi.fn() }));
+vi.mock("./reflector.js", () => ({ reflect: vi.fn() }));
 
 describe("resetFromGoal", () => {
   it("resets target and transitive dependents", () => {
@@ -119,5 +125,45 @@ describe("resetFromGoal", () => {
     const ready = g.getReady();
     expect(ready.map((r) => r.id)).toEqual(["g-2"]);
     // g-3 pending but g-2 not completed → g-3 NOT ready
+  });
+});
+
+// Queue 3p readout 2026-10-23: a resumed run's goal legs emit tool.called
+// rows under the task and run, like orchestrate().
+describe("resumeFromGoal — SDK trace", () => {
+  it("executeGraph receives { taskId, runId } from the task id and config.runId", async () => {
+    const g = new GoalGraph();
+    g.addGoal({ id: "g-1", description: "A" });
+    g.updateStatus("g-1", GoalStatus.COMPLETED);
+    const usage = { promptTokens: 0, completionTokens: 0 };
+    vi.mocked(executeGraph).mockResolvedValueOnce({
+      goalResults: {},
+      summary: {},
+      totalToolCalls: 0,
+      totalToolNames: [],
+      totalToolFailures: 0,
+      tokenUsage: usage,
+      toolRepairs: [],
+    } as never);
+    vi.mocked(reflect).mockResolvedValueOnce({
+      result: { success: true, score: 1, learnings: [], summary: "ok" },
+      usage,
+    } as never);
+
+    await resumeFromGoal(
+      "t-1",
+      "Test task",
+      "g-1",
+      {
+        goalGraph: g.toJSON(),
+        executionResults: { goalResults: {} },
+      } as never,
+      { runId: "r-1" },
+    );
+
+    expect(vi.mocked(executeGraph).mock.calls[0][6]).toStrictEqual({
+      taskId: "t-1",
+      runId: "r-1",
+    });
   });
 });

@@ -1145,7 +1145,11 @@ export const swarmRunner: Runner = {
       // Without it, chat-routed swarm tasks (isFanOutTask) deliver the
       // reflector meta-summary (same class as the 07-11 heavy / 07-12
       // nanoclaw incidents; swarm was the last unswept producer).
-      finalAnswer: collectFinalAnswer(executionResults),
+      // Children's results are already extracted: no adoption count here
+      // (queue 3p readout 2026-10-23).
+      finalAnswer: collectFinalAnswer(executionResults, {
+        source: "swarm-root",
+      }),
     };
 
     return {

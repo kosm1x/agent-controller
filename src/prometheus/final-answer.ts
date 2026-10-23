@@ -17,6 +17,7 @@ import type { ExecutionResult } from "./types.js";
  */
 export function collectFinalAnswer(
   execResults: ExecutionResult,
+  opts?: { source?: "swarm-root" },
 ): string | null {
   const parts: string[] = [];
   let delimited = 0;
@@ -31,7 +32,16 @@ export function collectFinalAnswer(
   }
   if (parts.length === 0) return null;
   // Adoption readout for the <deliverable> contract: counts only, no content.
-  console.info(`[final-answer] goals=${parts.length} delimited=${delimited}`);
+  // The swarm root joins children whose markers their own run already
+  // stripped, so its line carries no `delimited` count (queue 3p readout
+  // 2026-10-23: it read delimited=0 and polluted the readout).
+  if (opts?.source === "swarm-root") {
+    console.info(
+      `[final-answer] source=swarm-root goals=${parts.length} (children, already extracted)`,
+    );
+  } else {
+    console.info(`[final-answer] goals=${parts.length} delimited=${delimited}`);
+  }
   return parts.join("\n\n");
 }
 

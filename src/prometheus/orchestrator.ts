@@ -262,6 +262,8 @@ export async function orchestrate(
         cfg.goalTimeoutMs,
         timeoutController.signal,
         useOpus,
+        // Goal legs emit per-tool trace rows (queue 3p readout 2026-10-23).
+        { taskId, runId: cfg.runId },
       );
       // Merge: keep prior snapshot results + add newly executed results
       executionResults = {

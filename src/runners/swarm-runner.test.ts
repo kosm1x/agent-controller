@@ -627,6 +627,51 @@ describe("swarm final answer — '## Shared findings' never reaches the operator
     expect(delivered).not.toContain("SECRET-");
     expect(delivered).not.toContain(SHARED_FINDINGS_HEADING);
   });
+
+  // Queue 3p readout 2026-10-23: the root's [final-answer] line is the
+  // children line, never an adoption count (it always read delimited=0).
+  it("the swarm root logs source=swarm-root for its joined final answer, never a delimited count", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Research Clip fees" });
+    graph.addGoal({ id: "g-2", description: "Research Kustodia fees" });
+    mockPlan.mockResolvedValue({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(
+      async () => ({ taskId: `root-child-${++n}`, agentType: "fast" }) as never,
+    );
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({
+          task_id: id,
+          status: "completed",
+          output: JSON.stringify({ text: `Reporte ${id}.` }),
+        }) as never,
+    );
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      await swarmRunner.execute({
+        taskId: "root-parent",
+        runId: "run-root",
+        title: "Compare fees",
+        description: "Compare Clip and Kustodia fees",
+      });
+      const lines = info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.startsWith("[final-answer]"));
+      expect(lines).toEqual([
+        "[final-answer] source=swarm-root goals=2 (children, already extracted)",
+      ]);
+    } finally {
+      info.mockRestore();
+    }
+  });
 });
 
 describe("V9 W1 — swarm children get their goal's prose criteria as grade specs", () => {

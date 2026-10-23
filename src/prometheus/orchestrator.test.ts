@@ -196,6 +196,32 @@ describe("orchestrate", () => {
     expect(mockReflect).toHaveBeenCalledTimes(1);
   });
 
+  // Queue 3p readout 2026-10-23: the goal legs' SDK trace (tool.called rows)
+  // carries the task id and the dispatcher's run id.
+  it.each([
+    [{ runId: "r-1" }, { taskId: "t-1", runId: "r-1" }],
+    [undefined, { taskId: "t-1", runId: undefined }],
+  ])(
+    "executeGraph receives trace from the task id and config.runId (config %j)",
+    async (config, expected) => {
+      mockPlan.mockResolvedValueOnce({
+        graph: makeGraph(),
+        usage: { promptTokens: 0, completionTokens: 0 },
+      });
+      mockExecuteGraph.mockResolvedValueOnce(makeExecResult());
+      mockReflect.mockResolvedValueOnce({
+        result: makeReflection(),
+        usage: { promptTokens: 0, completionTokens: 0 },
+      });
+
+      await orchestrate("t-1", "Test task", config);
+
+      expect(mockExecuteGraph).toHaveBeenCalledTimes(1);
+      expect(mockExecuteGraph.mock.calls[0]).toHaveLength(7);
+      expect(mockExecuteGraph.mock.calls[0][6]).toStrictEqual(expected);
+    },
+  );
+
   it("V9 W1: registers each goal's PROSE criteria (runnable plan-gate criteria excluded) as grade specs, once, with the task text", async () => {
     const graph = new GoalGraph();
     graph.addGoal({
@@ -687,6 +713,11 @@ describe("orchestrate", () => {
     // across the replan boundary (trace failures persist, so the post-
     // replan pass may also vote soft).
     expect(mockExecuteGraph.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // Queue 3p readout 2026-10-23: every pass, the deferred second one and
+    // the post-replan ones included, carries the goal legs' trace.
+    for (const call of mockExecuteGraph.mock.calls) {
+      expect(call[6]).toStrictEqual({ taskId: "task-4", runId: undefined });
+    }
     expect(result.success).toBe(true);
     // Verify the k=2 defer fired at least once
     const deferEvents = result.trace.filter(

@@ -158,4 +158,28 @@ describe("collectFinalAnswer — <deliverable> boundary", () => {
     expect(info).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith("[final-answer] goals=3 delimited=2");
   });
+
+  // Queue 3p readout 2026-10-23: the swarm root joins children whose markers
+  // their own run already stripped; its line must not read as delimited=0.
+  it("source=swarm-root logs the children line, never a delimited count; extraction unchanged", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const results = execResults({
+      "c-1": goal({ goalId: "c-1", result: "Reporte uno." }),
+      "c-2": goal({ goalId: "c-2", result: "Reporte dos.</deliverable>" }),
+      "c-3": goal({ goalId: "c-3", result: "   " }),
+    });
+    const out = collectFinalAnswer(results, { source: "swarm-root" });
+    expect(out).toBe("Reporte uno.\n\nReporte dos.");
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith(
+      "[final-answer] source=swarm-root goals=2 (children, already extracted)",
+    );
+    for (const call of info.mock.calls) {
+      expect(String(call[0])).not.toContain("delimited=");
+    }
+    // Same input without the option: the adoption line, byte for byte.
+    info.mockClear();
+    expect(collectFinalAnswer(results)).toBe(out);
+    expect(info).toHaveBeenCalledWith("[final-answer] goals=2 delimited=0");
+  });
 });

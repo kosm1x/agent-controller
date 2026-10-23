@@ -91,6 +91,8 @@ export async function resumeFromGoal(
       cfg.goalTimeoutMs,
       timeoutController.signal,
       useOpus,
+      // Goal legs emit per-tool trace rows (queue 3p readout 2026-10-23).
+      { taskId, runId: cfg.runId },
     );
   } finally {
     clearTimeout(timer);
