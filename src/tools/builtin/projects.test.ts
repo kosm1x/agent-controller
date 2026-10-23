@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import {
   createProject,
+  findCredential,
+  findProjectBySiteUrl,
   formatProjectsBlock,
   getProject,
   getProjectLog,
@@ -1037,5 +1039,17 @@ describe("queue 3l ruling A — project_update refuses a credential literal next
       expect(out.error, what).toBeUndefined();
     }
     expect(getProject("lit-ok")!.config.db_env).toEqual([{ name: "PG_HOST", value: "db.example.invalid" }]);
+  });
+});
+
+describe("queue 4ac — nested urls/credentials values are never read as strings", () => {
+  it("findCredential skips an object credential; findProjectBySiteUrl does not throw on an object urls.site", () => {
+    createProject("nested-vals", "Nested Vals", {
+      urls: { site: { primary: "https://nested.example.com" } },
+      credentials: { ftp: { host: "ftp.example.com", user: "deploy" } },
+    });
+    expect(findCredential("ftp")).toBeNull();
+    expect(() => findProjectBySiteUrl("https://nested.example.com/x")).not.toThrow();
+    expect(findProjectBySiteUrl("https://nested.example.com/x")).toBeNull();
   });
 });
