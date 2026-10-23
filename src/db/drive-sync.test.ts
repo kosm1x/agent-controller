@@ -14,7 +14,10 @@ const drive = vi.hoisted(() => {
   process.env.DRIVE_KB_FOLDER_ID = "kb-root-test";
   return { googleFetch: vi.fn(), isLive: true };
 });
-vi.mock("../google/client.js", () => ({ googleFetch: drive.googleFetch }));
+vi.mock("../google/client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../google/client.js")>()),
+  googleFetch: drive.googleFetch,
+}));
 // The live-db predicate (queue 4a): tests open :memory:, which the real
 // predicate refuses, so it is mocked; `drive.isLive` picks the answer.
 vi.mock("./live-db.js", async (importOriginal) => {
@@ -39,8 +42,12 @@ import {
   findFolder,
   getDriveMapEntry,
   recordDriveId,
+  syncMoveToDrive,
+  withPathLock,
 } from "./drive-sync.js";
 import { initDatabase, closeDatabase, getDatabase } from "./index.js";
+import { GoogleApiError } from "../google/client.js";
+import { upsertFile, appendToFile, updateMetadata, moveFile } from "./jarvis-fs.js";
 
 describe("toObsidianContent", () => {
   it("prepends YAML frontmatter with title, qualifier, priority, path, updated", () => {
@@ -1628,5 +1635,296 @@ describe("settleDriveSyncs / findFolder / map helpers", () => {
     recordDriveId("knowledge/x.md", "id-2");
     expect(getDriveMapEntry("knowledge/x.md")).toMatchObject({ driveId: "id-2" });
     expect(getDriveMapEntry("knowledge/x.md")?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2} /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4a (b) (c) (f) — stale id recreate, every KB writer, per-path lock
+// ---------------------------------------------------------------------------
+describe("Drive sync: stale id, every KB writer, per-path serialization", () => {
+  const ticks = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+  };
+  let warn: ReturnType<typeof vi.spyOn>;
+  let created = 0;
+
+  /** Default fake Drive: folder `X` → `fold-X`; a CREATE returns `id-<n>`. */
+  async function fakeDrive(url: string, init?: { method?: string; body?: unknown }) {
+    if (url.includes("uploadType=multipart")) return { id: `id-${++created}` };
+    const q = decodeURIComponent(url);
+    const name = /name='([^']+)'/.exec(q)?.[1];
+    if (name && q.includes("vnd.google-apps.folder")) return { files: [{ id: `fold-${name}` }] };
+    void init;
+    return {};
+  }
+
+  /** Every non-GET Drive call (writes), as [method, url, body|rawBody]. */
+  const writes = () =>
+    drive.googleFetch.mock.calls
+      .filter((c) => c[1]?.method)
+      .map((c) => [c[1].method, String(c[0]), c[1].rawBody ?? c[1].body] as [string, string, unknown]);
+  const warnLines = () => warn.mock.calls.map((c) => String(c[0]));
+
+  beforeEach(async () => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    drive.isLive = true;
+    drive.googleFetch.mockReset();
+    drive.googleFetch.mockImplementation(fakeDrive);
+    initDatabase(":memory:");
+    await settleDriveSyncs(); // the seed upserts' syncs
+    created = 0;
+    drive.googleFetch.mockClear();
+    warn.mockClear();
+  });
+
+  afterEach(async () => {
+    await settleDriveSyncs();
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  it("GoogleApiError carries the status and keeps the message text", () => {
+    const e = new GoogleApiError(404, "Google API 404: gone");
+    expect(e).toBeInstanceOf(Error);
+    expect(e.status).toBe(404);
+    expect(e.message).toBe("Google API 404: gone");
+  });
+
+  // (b) ---------------------------------------------------------------------
+  it("(b) a 404 on the update drops the stale id and creates the file ONCE", async () => {
+    recordDriveId("knowledge/b/x.md", "id-x");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url.includes("/files/id-x?uploadType=media")) throw new GoogleApiError(404, "Google API 404: File not found");
+      return fakeDrive(url, init);
+    });
+    syncToDrive("knowledge/b/x.md", "X", "body");
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w.map(([m, u]) => [m, u.replace(/\?.*$/, "")])).toEqual([
+      ["PATCH", "https://www.googleapis.com/upload/drive/v3/files/id-x"],
+      ["POST", "https://www.googleapis.com/upload/drive/v3/files"],
+    ]);
+    expect(String(w[1]![2])).toContain('"parents":["fold-b"]');
+    expect(getDriveMapEntry("knowledge/b/x.md")?.driveId).toBe("id-1");
+    expect(warnLines()).toEqual(["[drive-sync] Drive id for knowledge/b/x.md is gone (404): recreating"]);
+  });
+
+  it("(b) a 403 on the update creates nothing, keeps the map row, warns Failed once", async () => {
+    recordDriveId("knowledge/b/y.md", "id-y");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url.includes("/files/id-y?uploadType=media")) throw new GoogleApiError(403, "Google API 403: forbidden");
+      return fakeDrive(url, init);
+    });
+    syncToDrive("knowledge/b/y.md", "Y", "body");
+    await settleDriveSyncs();
+    expect(writes()).toHaveLength(1);
+    expect(getDriveMapEntry("knowledge/b/y.md")?.driveId).toBe("id-y");
+    expect(warnLines()).toEqual(["[drive-sync] Failed for knowledge/b/y.md:"]);
+  });
+
+  it("(b) a 404 on the re-create after a 404 update is one Failed warn and no third call", async () => {
+    recordDriveId("knowledge/b/z.md", "id-z");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (init?.method) throw new GoogleApiError(404, "Google API 404: nope");
+      return fakeDrive(url, init);
+    });
+    syncToDrive("knowledge/b/z.md", "Z", "body");
+    await settleDriveSyncs();
+    expect(writes().map(([m]) => m)).toEqual(["PATCH", "POST"]);
+    expect(getDriveMapEntry("knowledge/b/z.md")).toBeNull();
+    const lines = warnLines();
+    expect(lines.filter((l) => l.startsWith("[drive-sync] Failed for"))).toEqual(["[drive-sync] Failed for knowledge/b/z.md:"]);
+    expect(lines.filter((l) => l.includes("is gone (404)"))).toHaveLength(1);
+  });
+
+  // (c) ---------------------------------------------------------------------
+  async function seed(path: string, content: string, tags: string[] = []): Promise<string> {
+    upsertFile(path, "Seed", content, tags);
+    await settleDriveSyncs();
+    const id = getDriveMapEntry(path)!.driveId;
+    drive.googleFetch.mockClear();
+    warn.mockClear();
+    return id;
+  }
+
+  it("(c) appendToFile rewrites the Drive copy with the new tail (one media PATCH)", async () => {
+    const id = await seed("knowledge/c/app.md", "body one");
+    expect(appendToFile("knowledge/c/app.md", "TAIL-LINE")).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w).toHaveLength(1);
+    expect(w[0]![0]).toBe("PATCH");
+    expect(w[0]![1]).toBe(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`);
+    expect(String(w[0]![2])).toContain("body one\n\nTAIL-LINE");
+  });
+
+  it("(c) updateMetadata rewrites the frontmatter with the new tag (one media PATCH)", async () => {
+    const id = await seed("knowledge/c/meta.md", "meta body", ["old"]);
+    expect(updateMetadata("knowledge/c/meta.md", { tags: ["fresh-tag"], priority: 7 })).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w).toHaveLength(1);
+    expect(w[0]![1]).toBe(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`);
+    const frontmatter = String(w[0]![2]).split("---\n")[1]!;
+    expect(frontmatter).toContain("fresh-tag");
+    expect(frontmatter).not.toContain("old");
+    expect(frontmatter).toContain("priority: 7");
+    expect(String(w[0]![2])).toContain("meta body");
+  });
+
+  it("(c) moveFile re-parents and renames the mapped file, moves the map row, rewrites the copy", async () => {
+    const id = await seed("knowledge/c/mv.md", "move body");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) =>
+      url.endsWith(`/files/${id}?fields=parents`) ? { parents: ["fold-c"] } : fakeDrive(url, init),
+    );
+    expect(moveFile("knowledge/c/mv.md", "knowledge/d/moved.md")).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w.map(([m, u]) => [m, u])).toEqual([
+      ["PATCH", `https://www.googleapis.com/drive/v3/files/${id}?addParents=fold-d&removeParents=fold-c&fields=id`],
+      ["PATCH", `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`],
+    ]);
+    expect(w[0]![2]).toEqual({ name: "moved.md" });
+    expect(String(w[1]![2])).toContain('path: "knowledge/d/moved.md"');
+    expect(getDriveMapEntry("knowledge/c/mv.md")).toBeNull();
+    expect(getDriveMapEntry("knowledge/d/moved.md")?.driveId).toBe(id);
+    expect(warnLines()).toEqual([]);
+  });
+
+  it("(c) a same-folder rename sends neither addParents nor removeParents", async () => {
+    const id = await seed("knowledge/c/ren.md", "rename body");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) =>
+      url.endsWith(`/files/${id}?fields=parents`) ? { parents: ["fold-c"] } : fakeDrive(url, init),
+    );
+    expect(moveFile("knowledge/c/ren.md", "knowledge/c/renamed.md")).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w[0]).toEqual(["PATCH", `https://www.googleapis.com/drive/v3/files/${id}?fields=id`, { name: "renamed.md" }]);
+    expect(w).toHaveLength(2);
+  });
+
+  it("(c) moveFile over an existing target trashes the target's copy first, then moves", async () => {
+    const idA = await seed("knowledge/c/src.md", "source body");
+    const idB = await seed("knowledge/d/dst.md", "target body");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) =>
+      url.endsWith(`/files/${idA}?fields=parents`) ? { parents: ["fold-c"] } : fakeDrive(url, init),
+    );
+    expect(moveFile("knowledge/c/src.md", "knowledge/d/dst.md")).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w).toEqual([
+      ["PATCH", `https://www.googleapis.com/drive/v3/files/${idB}`, { trashed: true }],
+      ["PATCH", `https://www.googleapis.com/drive/v3/files/${idA}?addParents=fold-d&removeParents=fold-c&fields=id`, { name: "dst.md" }],
+      ["PATCH", `https://www.googleapis.com/upload/drive/v3/files/${idA}?uploadType=media`, expect.stringContaining("source body")],
+    ]);
+    expect(getDriveMapEntry("knowledge/c/src.md")).toBeNull();
+    expect(getDriveMapEntry("knowledge/d/dst.md")?.driveId).toBe(idA);
+  });
+
+  it("(c) moveFile of a path with no Drive id creates the copy at the new path", async () => {
+    getDatabase()
+      .prepare("INSERT INTO jarvis_files (id, path, title, content) VALUES ('knowledge/c/nomap.md', 'knowledge/c/nomap.md', 'NoMap', 'unmapped body')")
+      .run();
+    expect(moveFile("knowledge/c/nomap.md", "knowledge/e/landed.md")).toBe(true);
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w).toHaveLength(1);
+    expect(w[0]![0]).toBe("POST");
+    expect(w[0]![1]).toContain("uploadType=multipart");
+    expect(String(w[0]![2])).toContain('"name":"landed.md"');
+    expect(String(w[0]![2])).toContain('"parents":["fold-e"]');
+    expect(String(w[0]![2])).toContain("unmapped body");
+    expect(getDriveMapEntry("knowledge/e/landed.md")?.driveId).toBe("id-1");
+  });
+
+  it("(c) a move whose mapped id is gone (404) drops it and creates at the new path", async () => {
+    recordDriveId("knowledge/c/ghost.md", "id-ghost");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url.includes("/files/id-ghost")) throw new GoogleApiError(404, "Google API 404: gone");
+      return fakeDrive(url, init);
+    });
+    syncMoveToDrive("knowledge/c/ghost.md", "knowledge/c/ghost2.md", "G", "ghost body");
+    await settleDriveSyncs();
+    expect(writes().map(([m]) => m)).toEqual(["POST"]);
+    expect(getDriveMapEntry("knowledge/c/ghost.md")).toBeNull();
+    expect(getDriveMapEntry("knowledge/c/ghost2.md")?.driveId).toBe("id-1");
+    expect(warnLines()).toEqual(["[drive-sync] Drive id for knowledge/c/ghost.md is gone (404): recreating"]);
+  });
+
+  // (f) ---------------------------------------------------------------------
+  it("(f) two writes to one NEW path before the first resolves: one CREATE, then one PATCH", async () => {
+    let upload!: (v: { id: string }) => void;
+    drive.googleFetch.mockImplementation((url: string, init?: { method?: string }) =>
+      url.includes("uploadType=multipart")
+        ? new Promise((r) => (upload = r))
+        : fakeDrive(url, init),
+    );
+    syncToDrive("knowledge/f/new.md", "N", "first");
+    syncToDrive("knowledge/f/new.md", "N", "second");
+    await vi.waitFor(() => expect(upload).toBeTypeOf("function"));
+    await ticks(20);
+    expect(writes()).toHaveLength(1);
+    upload({ id: "f-id" });
+    await settleDriveSyncs();
+    const w = writes();
+    expect(w.map(([m, u]) => [m, u])).toEqual([
+      ["POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id"],
+      ["PATCH", "https://www.googleapis.com/upload/drive/v3/files/f-id?uploadType=media"],
+    ]);
+    expect(String(w[1]![2])).toContain("second");
+    expect(getDriveMapEntry("knowledge/f/new.md")?.driveId).toBe("f-id");
+  });
+
+  it("(f) a delete issued right after a write to a NEW path waits and trashes the created id", async () => {
+    let upload!: (v: { id: string }) => void;
+    drive.googleFetch.mockImplementation((url: string, init?: { method?: string }) =>
+      url.includes("uploadType=multipart")
+        ? new Promise((r) => (upload = r))
+        : fakeDrive(url, init),
+    );
+    syncToDrive("knowledge/f/del.md", "D", "body");
+    syncDeleteToDrive("knowledge/f/del.md");
+    await vi.waitFor(() => expect(upload).toBeTypeOf("function"));
+    await ticks(20);
+    expect(writes()).toHaveLength(1);
+    upload({ id: "del-id" });
+    await settleDriveSyncs();
+    expect(writes().map(([m, u, b]) => [m, u, b]).slice(1)).toEqual([
+      ["PATCH", "https://www.googleapis.com/drive/v3/files/del-id", { trashed: true }],
+    ]);
+    expect(getDriveMapEntry("knowledge/f/del.md")).toBeNull();
+  });
+
+  it("(f) a body that rejects does not block the next body on the same path", async () => {
+    const first = withPathLock(["knowledge/lock/x.md"], async () => {
+      await ticks(1);
+      throw new Error("boom");
+    });
+    let ran = false;
+    const second = withPathLock(["knowledge/lock/x.md"], async () => {
+      ran = true;
+    });
+    await expect(first).rejects.toThrow("boom");
+    await second;
+    expect(ran).toBe(true);
+    await settleDriveSyncs();
+  });
+
+  it("(f) a move and a reverse move of the same two paths do not deadlock", async () => {
+    recordDriveId("knowledge/f/p.md", "id-p");
+    drive.googleFetch.mockImplementation(async (url: string, init?: { method?: string }) =>
+      url.endsWith("?fields=parents") ? { parents: ["fold-f"] } : fakeDrive(url, init),
+    );
+    syncMoveToDrive("knowledge/f/p.md", "knowledge/f/q.md", "P", "p body");
+    syncMoveToDrive("knowledge/f/q.md", "knowledge/f/p.md", "P", "p body");
+    const outcome = await Promise.race([
+      settleDriveSyncs().then(() => "settled"),
+      new Promise((r) => setTimeout(() => r("deadlock"), 2000)),
+    ]);
+    expect(outcome).toBe("settled");
+    expect(getDriveMapEntry("knowledge/f/p.md")?.driveId).toBe("id-p");
+    expect(getDriveMapEntry("knowledge/f/q.md")).toBeNull();
+    expect(writes().filter(([, u]) => u.includes("fields=id") && !u.includes("upload"))).toHaveLength(2);
   });
 });

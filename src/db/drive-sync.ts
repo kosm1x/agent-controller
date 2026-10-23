@@ -9,7 +9,7 @@
  * Drive folder structure mirrors jarvis_files paths (subfolders created on demand).
  */
 
-import { googleFetch } from "../google/client.js";
+import { googleFetch, GoogleApiError } from "../google/client.js";
 import { escapeDriveQueryValue } from "../google/drive-query.js";
 import { getDatabase } from "./index.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -716,6 +716,35 @@ export async function settleDriveSyncs(): Promise<void> {
   while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
 }
 
+/**
+ * path → tail of the Drive operations queued on it (queue 4a f). Every write,
+ * trash and move runs after the previous operation on the same path(s), so two
+ * back-to-back writes to a NEW path make one CREATE and one PATCH instead of
+ * two CREATEs. A multi-path operation takes all its paths in one synchronous
+ * step (sorted), so a move and a reverse move cannot wait on each other.
+ * In-process only; the entry is removed when its chain drains.
+ */
+const pathLocks = new Map<string, Promise<void>>();
+
+/** @internal Exported for tests only. */
+export function withPathLock(paths: string[], fn: () => Promise<void>): Promise<void> {
+  const keys = [...new Set(paths)].sort();
+  const held = keys.flatMap((k) => pathLocks.get(k) ?? []);
+  // Uncontended: start now, exactly as before the lock existed.
+  const run = held.length === 0 ? fn() : Promise.all(held).then(fn);
+  const tail = run.catch(() => {});
+  for (const k of keys) pathLocks.set(k, tail);
+  void tail.then(() => {
+    for (const k of keys) if (pathLocks.get(k) === tail) pathLocks.delete(k);
+  });
+  return run;
+}
+
+/** A Drive 404: the mapped file id no longer exists. */
+function isDriveNotFound(err: unknown): boolean {
+  return err instanceof GoogleApiError && err.status === 404;
+}
+
 export function isDriveSyncEnabled(): boolean {
   return !!ROOT_FOLDER_ID;
 }
@@ -919,6 +948,93 @@ async function ensureFolder(dirPath: string): Promise<string> {
 // Sync operations
 // ---------------------------------------------------------------------------
 
+/** The Drive folder path of a KB path ("" for a root-level file). */
+function dirOf(path: string): string {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+}
+
+/** The Drive file name of a KB path. */
+function baseName(path: string): string {
+  return path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
+}
+
+/** Multipart CREATE of `path` under its (ensured) folder; records the new id. */
+async function createDriveFile(path: string, obsidianContent: string): Promise<void> {
+  const parentId = await ensureFolder(dirOf(path));
+
+  const boundary = "jarvis_drive_sync";
+  const fileMeta = JSON.stringify({
+    name: baseName(path),
+    mimeType: "text/markdown",
+    parents: [parentId],
+  });
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${fileMeta}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: text/markdown\r\n\r\n` +
+    `${obsidianContent}\r\n` +
+    `--${boundary}--`;
+
+  const result = await googleFetch<{ id: string }>(
+    `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`,
+    {
+      method: "POST",
+      rawBody: body,
+      contentType: `multipart/related; boundary=${boundary}`,
+    },
+  );
+  setDriveId(path, result.id);
+}
+
+/**
+ * Create or update the Drive copy of `path`. Runs under the path lock. A 404
+ * on the update (the mapped file is gone) drops the map row and creates the
+ * file ONCE; any other failure, or a failed re-create, is one warning.
+ */
+async function writeDriveFile(
+  path: string,
+  title: string,
+  content: string,
+  driveMetadata?: DriveMetadata,
+): Promise<void> {
+  try {
+    ensureMapTable();
+    const obsidianContent = toObsidianContent(
+      path,
+      title,
+      content,
+      driveMetadata,
+    );
+    const existingDriveId = getDriveId(path);
+
+    if (existingDriveId) {
+      // UPDATE existing file
+      try {
+        await googleFetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${existingDriveId}?uploadType=media`,
+          {
+            method: "PATCH",
+            rawBody: obsidianContent,
+            contentType: "text/markdown",
+          },
+        );
+      } catch (err) {
+        if (!isDriveNotFound(err)) throw err;
+        removeDriveId(path);
+        console.warn(`[drive-sync] Drive id for ${path} is gone (404): recreating`);
+        await createDriveFile(path, obsidianContent);
+      }
+    } else {
+      // CREATE new file — ensure parent folder exists
+      await createDriveFile(path, obsidianContent);
+    }
+  } catch (err) {
+    console.warn(`[drive-sync] Failed for ${path}:`, errMsg(err));
+  }
+}
+
 /**
  * Sync a jarvis_files upsert to Google Drive (fire-and-forget).
  * Creates the file if new, updates content if existing.
@@ -932,66 +1048,11 @@ export function syncToDrive(
 ): void {
   if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
-  track((async () => {
-    try {
-      ensureMapTable();
-      const obsidianContent = toObsidianContent(
-        path,
-        title,
-        content,
-        driveMetadata,
-      );
-      const existingDriveId = getDriveId(path);
-
-      if (existingDriveId) {
-        // UPDATE existing file
-        await googleFetch(
-          `https://www.googleapis.com/upload/drive/v3/files/${existingDriveId}?uploadType=media`,
-          {
-            method: "PATCH",
-            rawBody: obsidianContent,
-            contentType: "text/markdown",
-          },
-        );
-      } else {
-        // CREATE new file — ensure parent folder exists
-        const dirPath = path.includes("/")
-          ? path.slice(0, path.lastIndexOf("/"))
-          : "";
-        const parentId = await ensureFolder(dirPath);
-        const fileName = path.includes("/")
-          ? path.slice(path.lastIndexOf("/") + 1)
-          : path;
-
-        const boundary = "jarvis_drive_sync";
-        const fileMeta = JSON.stringify({
-          name: fileName,
-          mimeType: "text/markdown",
-          parents: [parentId],
-        });
-        const body =
-          `--${boundary}\r\n` +
-          `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-          `${fileMeta}\r\n` +
-          `--${boundary}\r\n` +
-          `Content-Type: text/markdown\r\n\r\n` +
-          `${obsidianContent}\r\n` +
-          `--${boundary}--`;
-
-        const result = await googleFetch<{ id: string }>(
-          `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`,
-          {
-            method: "POST",
-            rawBody: body,
-            contentType: `multipart/related; boundary=${boundary}`,
-          },
-        );
-        setDriveId(path, result.id);
-      }
-    } catch (err) {
-      console.warn(`[drive-sync] Failed for ${path}:`, errMsg(err));
-    }
-  })());
+  track(
+    withPathLock([path], () =>
+      writeDriveFile(path, title, content, driveMetadata),
+    ),
+  );
 }
 
 /**
@@ -1001,7 +1062,7 @@ export function syncToDrive(
 export function syncDeleteToDrive(path: string): void {
   if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
 
-  track((async () => {
+  track(withPathLock([path], async () => {
     try {
       ensureMapTable();
       const driveId = getDriveId(path);
@@ -1015,7 +1076,65 @@ export function syncDeleteToDrive(path: string): void {
     } catch (err) {
       console.warn(`[drive-sync] Delete failed for ${path}:`, errMsg(err));
     }
-  })());
+  }));
+}
+
+/**
+ * Sync a jarvis_files move/rename to Google Drive (fire-and-forget). With a
+ * Drive id for `oldPath`: the file is renamed and re-parented in place (its
+ * current parents come from the file itself), the map row moves to `newPath`,
+ * and the copy is rewritten, since its frontmatter carries the path. Without
+ * one (or when that id is gone): the copy is created at `newPath`. Holds both
+ * path locks. A failed move leaves the map row and the Drive file where they were.
+ */
+export function syncMoveToDrive(
+  oldPath: string,
+  newPath: string,
+  title: string,
+  content: string,
+  driveMetadata?: DriveMetadata,
+): void {
+  if (!isDriveSyncEnabled() || !driveWritesAllowed()) return;
+
+  track(withPathLock([oldPath, newPath], async () => {
+    try {
+      ensureMapTable();
+      const driveId = getDriveId(oldPath);
+      if (driveId) {
+        let parents: string[] | null = null;
+        try {
+          const file = await googleFetch<{ parents?: string[] }>(
+            `https://www.googleapis.com/drive/v3/files/${driveId}?fields=parents`,
+          );
+          parents = file.parents ?? [];
+        } catch (err) {
+          if (!isDriveNotFound(err)) throw err;
+          removeDriveId(oldPath);
+          console.warn(`[drive-sync] Drive id for ${oldPath} is gone (404): recreating`);
+        }
+        if (parents) {
+          const newParent = await ensureFolder(dirOf(newPath));
+          // A same-folder rename touches neither list (adding and removing one
+          // parent in a single call is not a no-op to rely on).
+          const remove = parents.filter((p) => p !== newParent);
+          const query = [
+            parents.includes(newParent) ? "" : `addParents=${encodeURIComponent(newParent)}&`,
+            remove.length > 0 ? `removeParents=${encodeURIComponent(remove.join(","))}&` : "",
+          ].join("");
+          await googleFetch(
+            `https://www.googleapis.com/drive/v3/files/${driveId}?${query}fields=id`,
+            { method: "PATCH", body: { name: baseName(newPath) } },
+          );
+          removeDriveId(oldPath);
+          setDriveId(newPath, driveId);
+        }
+      }
+    } catch (err) {
+      console.warn(`[drive-sync] Move failed for ${oldPath} -> ${newPath}:`, errMsg(err));
+      return;
+    }
+    await writeDriveFile(newPath, title, content, driveMetadata);
+  }));
 }
 
 // ---------------------------------------------------------------------------

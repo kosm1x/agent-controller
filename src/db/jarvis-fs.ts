@@ -18,6 +18,7 @@ import type { DriveMetadata } from "./drive-sync.js";
 import {
   syncToDrive,
   syncDeleteToDrive,
+  syncMoveToDrive,
   isDriveSyncEnabled,
 } from "./drive-sync.js";
 import { errMsg } from "../lib/err-msg.js";
@@ -230,6 +231,38 @@ export function mirrorToDisk(
 const asText = (v: unknown): string =>
   typeof v === "string" ? v : v == null ? "" : String(v);
 
+/**
+ * The Drive copy's metadata, read from the stored row. updated_at feeds the
+ * Drive `updated:` key so the copy depends on the row; read only when the
+ * sync is on (an empty object otherwise, which syncToDrive never uses).
+ */
+function driveMetadataFor(path: string): DriveMetadata {
+  if (!isDriveSyncEnabled()) return {};
+  const row = getDatabase()
+    .prepare(
+      "SELECT tags, qualifier, priority, condition, related_to, updated_at FROM jarvis_files WHERE path = ?",
+    )
+    .get(path) as
+    | {
+        tags: string;
+        qualifier: string;
+        priority: number;
+        condition: string | null;
+        related_to: string;
+        updated_at: string | null;
+      }
+    | undefined;
+  if (!row) return {};
+  return {
+    tags: parseTagsSafe(row.tags),
+    qualifier: row.qualifier,
+    priority: row.priority,
+    condition: row.condition,
+    relatedTo: parseTagsSafe(row.related_to),
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
 /** Upsert a file. SQLite write + filesystem mirror. */
 export function upsertFile(
   path: string,
@@ -294,22 +327,7 @@ export function upsertFile(
   syncToPgvector(path, title, content, tags, qualifier, priority, condition);
 
   // Sync to Google Drive for Obsidian (fire-and-forget, async, non-blocking).
-  // updated_at feeds the Drive `updated:` key so the copy depends on the row;
-  // read only when the sync is on.
-  const stamp = isDriveSyncEnabled()
-    ? (db
-        .prepare("SELECT updated_at FROM jarvis_files WHERE path = ?")
-        .get(path) as { updated_at: string | null } | undefined)
-    : undefined;
-  const driveMeta: DriveMetadata = {
-    tags,
-    qualifier,
-    priority,
-    condition,
-    relatedTo,
-    updatedAt: stamp?.updated_at ?? undefined,
-  };
-  syncToDrive(path, title, content, driveMeta);
+  syncToDrive(path, title, content, driveMetadataFor(path));
 
   // Debounced INDEX.md regeneration (skip if we're writing INDEX.md itself)
   if (path !== "INDEX.md") {
@@ -375,6 +393,7 @@ export function appendToFile(path: string, content: string): boolean {
       meta.qualifier,
       meta.priority,
     );
+    syncToDrive(path, meta.title, newContent, driveMetadataFor(path));
   }
 
   if (path !== "INDEX.md") {
@@ -405,6 +424,12 @@ export function updateMetadata(
   db.prepare(
     "UPDATE jarvis_files SET tags = ?, qualifier = ?, priority = ?, updated_at = datetime('now') WHERE path = ?",
   ).run(newTags, newQualifier, newPriority, path);
+
+  // The Drive frontmatter carries tags/qualifier/priority: rewrite the copy.
+  if (isDriveSyncEnabled()) {
+    const row = getFile(path);
+    if (row) syncToDrive(path, row.title, row.content, driveMetadataFor(path));
+  }
   return true;
 }
 
@@ -432,6 +457,9 @@ export function moveFile(oldPath: string, newPath: string): boolean {
     .prepare("SELECT * FROM jarvis_files WHERE path = ?")
     .get(oldPath) as JarvisFile | undefined;
   if (!existing) return false;
+  // A move onto itself is a no-op (queue 4a R1 W1): the overwrite branch below
+  // would delete the source row and trash its Drive copy.
+  if (oldPath === newPath) return true;
 
   // Check target doesn't already exist
   const targetExists = db
@@ -440,6 +468,8 @@ export function moveFile(oldPath: string, newPath: string): boolean {
   if (targetExists) {
     // Delete target first (overwrite)
     db.prepare("DELETE FROM jarvis_files WHERE path = ?").run(newPath);
+    // Trash the target's Drive copy; the per-path lock runs it before the move.
+    syncDeleteToDrive(newPath);
   }
 
   db.prepare("UPDATE jarvis_files SET path = ?, id = ? WHERE path = ?").run(
@@ -458,6 +488,14 @@ export function moveFile(oldPath: string, newPath: string): boolean {
     parseTagsSafe(existing.tags),
     existing.qualifier,
     existing.priority,
+  );
+
+  syncMoveToDrive(
+    oldPath,
+    newPath,
+    existing.title,
+    existing.content,
+    driveMetadataFor(newPath),
   );
 
   if (newPath !== "INDEX.md") {

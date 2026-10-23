@@ -3,10 +3,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // Spy on the Drive hand-off only; everything else in drive-sync stays real
 // (syncToDrive is a no-op here anyway: DRIVE_KB_FOLDER_ID is unset). The
 // enabled flag drives jarvis-fs's own gate on the updated_at read.
-const driveSync = vi.hoisted(() => ({ syncToDrive: vi.fn(), enabled: true }));
+const driveSync = vi.hoisted(() => ({
+  syncToDrive: vi.fn(),
+  syncDeleteToDrive: vi.fn(),
+  syncMoveToDrive: vi.fn(),
+  enabled: true,
+}));
 vi.mock("./drive-sync.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./drive-sync.js")>()),
   syncToDrive: driveSync.syncToDrive,
+  syncDeleteToDrive: driveSync.syncDeleteToDrive,
+  syncMoveToDrive: driveSync.syncMoveToDrive,
   isDriveSyncEnabled: () => driveSync.enabled,
 }));
 import { mkdtempSync, rmSync } from "node:fs";
@@ -20,6 +27,8 @@ import {
   getFile,
   getFilesByQualifier,
   appendToFile,
+  updateMetadata,
+  moveFile,
   deleteFile,
   syncDeleteFromKbMirror,
   listFiles,
@@ -427,5 +436,65 @@ describe("upsertFile — Drive hand-off carries the row's updated_at", () => {
     }
     expect(driveSync.syncToDrive).toHaveBeenCalledTimes(1);
     expect(driveSync.syncToDrive.mock.calls[0][3].updatedAt).toBeUndefined();
+  });
+  it("appendToFile hands Drive the appended content and the row's metadata (queue 4a c)", () => {
+    upsertFile("knowledge/drive/app.md", "App", "first", ["t"], "workspace", 20);
+    driveSync.syncToDrive.mockClear();
+    expect(appendToFile("knowledge/drive/app.md", "second")).toBe(true);
+    expect(driveSync.syncToDrive).toHaveBeenCalledTimes(1);
+    const [path, title, content, meta] = driveSync.syncToDrive.mock.calls[0];
+    expect([path, title, content]).toEqual(["knowledge/drive/app.md", "App", "first\n\nsecond"]);
+    expect(meta).toMatchObject({ tags: ["t"], qualifier: "workspace", priority: 20 });
+    expect(meta.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it("updateMetadata hands Drive the unchanged content with the NEW metadata (queue 4a c)", () => {
+    upsertFile("knowledge/drive/meta.md", "Meta", "body", ["old"], "reference", 50, null, ["knowledge/x.md"]);
+    driveSync.syncToDrive.mockClear();
+    expect(updateMetadata("knowledge/drive/meta.md", { tags: ["new"], priority: 5 })).toBe(true);
+    expect(driveSync.syncToDrive).toHaveBeenCalledTimes(1);
+    const [path, title, content, meta] = driveSync.syncToDrive.mock.calls[0];
+    expect([path, title, content]).toEqual(["knowledge/drive/meta.md", "Meta", "body"]);
+    expect(meta).toMatchObject({ tags: ["new"], qualifier: "reference", priority: 5, relatedTo: ["knowledge/x.md"] });
+  });
+
+  it("updateMetadata with Drive sync off reads no row back and hands Drive nothing (queue 4a R1 W2)", () => {
+    upsertFile("knowledge/drive/off-meta.md", "OffMeta", "body", ["a"]);
+    driveSync.syncToDrive.mockClear();
+    const db = getDatabase();
+    const prepare = vi.spyOn(db, "prepare");
+    driveSync.enabled = false;
+    try {
+      expect(updateMetadata("knowledge/drive/off-meta.md", { tags: ["b"] })).toBe(true);
+    } finally {
+      driveSync.enabled = true;
+    }
+    const sql = prepare.mock.calls.map((c) => String(c[0]));
+    prepare.mockRestore();
+    expect(sql.filter((q) => q.startsWith("SELECT *"))).toEqual([]);
+    expect(sql).toHaveLength(2); // the existing-row SELECT and the UPDATE
+    expect(driveSync.syncToDrive).not.toHaveBeenCalled();
+  });
+
+  it("moveFile onto its own path keeps the row and makes no Drive call (queue 4a R1 W1)", () => {
+    upsertFile("knowledge/drive/self.md", "Self", "keep me");
+    driveSync.syncToDrive.mockClear();
+    driveSync.syncDeleteToDrive.mockClear();
+    driveSync.syncMoveToDrive.mockClear();
+    expect(moveFile("knowledge/drive/self.md", "knowledge/drive/self.md")).toBe(true);
+    expect(getFile("knowledge/drive/self.md")?.content).toBe("keep me");
+    expect(driveSync.syncToDrive).not.toHaveBeenCalled();
+    expect(driveSync.syncDeleteToDrive).not.toHaveBeenCalled();
+    expect(driveSync.syncMoveToDrive).not.toHaveBeenCalled();
+  });
+
+  it("moveFile onto its own path of a nonexistent file returns false, no Drive call (queue 4a R2)", () => {
+    driveSync.syncToDrive.mockClear();
+    driveSync.syncDeleteToDrive.mockClear();
+    driveSync.syncMoveToDrive.mockClear();
+    expect(moveFile("knowledge/drive/nope.md", "knowledge/drive/nope.md")).toBe(false);
+    expect(driveSync.syncToDrive).not.toHaveBeenCalled();
+    expect(driveSync.syncDeleteToDrive).not.toHaveBeenCalled();
+    expect(driveSync.syncMoveToDrive).not.toHaveBeenCalled();
   });
 });
