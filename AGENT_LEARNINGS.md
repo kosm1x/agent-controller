@@ -146,3 +146,4 @@
 
 ## 2026-10-23 — 4ag ruling: Jarvis spoke in the dev-session register
 - **Better:** every proof command handed to the operator for Jarvis carries the ruling line, so the decision sits in the same thread window as the request; Jarvis's project README stays a stable card (hashes, PIDs, snapshots → history.md), because an injected README full of build facts is what makes it talk like a deploy session.
+- **Mistake:** two docs stamps replaced the full-suite count GLOBALLY in PROJECT-STATUS, rewriting six historical rows (13,520…13,562 → 13,637) → a count lives in the header line and the new row only; restored 10-23 from each row's introducing commit.
