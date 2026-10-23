@@ -6,7 +6,12 @@
  * Fastest runner type — no containers, no planning overhead.
  */
 
-import { inferWithTools } from "../inference/adapter.js";
+import {
+  inferWithTools,
+  inferWithToolsLastline,
+  lastlineEligible,
+  sdkLastline,
+} from "../inference/adapter.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { toolRegistry } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
@@ -218,6 +223,7 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 import { withTimeout } from "../lib/with-timeout.js";
 import { getEventBus } from "../lib/event-bus.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
@@ -243,6 +249,23 @@ const AUTH_ERROR_RE =
  *  armed; every other built-in is disabled). A fresh leg must re-run it to
  *  load deferred schemas, so it never counts as already-done work. */
 const SDK_READ_ONLY_BUILTINS = new Set(["ToolSearch"]);
+
+/** SDK API-error classes meaning "the Anthropic side is unavailable" — the
+ *  only ones the SDK last line answers. Request faults (invalid_request,
+ *  max_output_tokens, model_not_found) are excluded: a wrong model id or an
+ *  oversized prompt must fail loudly, not degrade to another provider;
+ *  authentication_failed keeps its own retry path. */
+const LASTLINE_API_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "overloaded",
+  "rate_limit",
+  "server_error",
+  "unknown",
+  "account_on_hold",
+  "billing_error",
+  "oauth_org_not_allowed",
+  "verification_required",
+  "cloud_credential_error",
+]);
 
 /** Cut `text` at `i`, together with the newline run right before it. */
 function cutWithLeadingNewlines(text: string, i: number): string {
@@ -1442,12 +1465,41 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       const promptDumpDir = getConfig().promptDumpDir;
       if (promptDumpDir) dumpPrompt(promptDumpDir, input.taskId, messages);
 
+      // SDK last line (2026-10-23): set when the SDK leg(s) failed and the
+      // fallback provider is armed (sdkLastline) — `break sdkPath` then runs
+      // the request on the openai path below, with its post-processing.
+      let lastline: { model: string } | null = null;
+      // One journal line + one trace event per engagement (emitTraceEvent
+      // never throws — tracing must not break the traced task).
+      const engageLastline = (
+        armed: { model: string },
+        reason: "throw" | "auth" | "api_error",
+        errorClass?: string,
+        cause?: string,
+      ): { model: string } => {
+        console.warn(
+          `[fast-runner] sdk last line engaged task=${input.taskId} reason=${reason}${errorClass ? ` class=${errorClass}` : ""} model=${armed.model}${cause ? ` err=${cause}` : ""}`,
+        );
+        emitTraceEvent({
+          taskId: input.taskId,
+          runId: input.runId,
+          name: "inference.lastline",
+          attrs: {
+            provider: "fallback",
+            model: armed.model,
+            reason,
+            ...(errorClass && { errorClass }),
+          },
+        });
+        return armed;
+      };
+
       // ---------------------------------------------------------------
       // Claude SDK path: delegate to Agent SDK when configured.
       // All prompt building above is reused; we just extract the parts
       // the SDK needs and bypass inferWithTools entirely.
       // ---------------------------------------------------------------
-      if (getConfig().inferencePrimaryProvider === "claude-sdk") {
+      sdkPath: if (getConfig().inferencePrimaryProvider === "claude-sdk") {
         const { queryClaudeSdk } = await import("../inference/claude-sdk.js");
         type ClaudeSdkImage =
           import("../inference/claude-sdk.js").ClaudeSdkImage;
@@ -1522,25 +1574,39 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
 
         // The confirmation gate on the SDK path reads this context (wrapTool →
         // confirmationGate); entered around every queryClaudeSdk leg below.
-        let sdkResult = await runWithExecutionContext(taskContext, () =>
-          queryClaudeSdk({
-            prompt: userPrompt,
-            systemPrompt,
-            toolNames: allToolNames,
-            maxTurns: maxRounds,
-            unlimited: input.unlimited,
-            abortSignal: input.signal,
-            // Metered by the dispatcher aggregate over result.tokenUsage (and
-            // by recordReflectionCost when reflection invokes this runner
-            // directly) — seam recording here would double-count. (3.3)
-            costLedger: false,
-            // Phase 6: per-turn/per-tool timeline correlated to this task.
-            // Reflection invokes execute() without a real task row — those
-            // emits still land and prune with the 30d window; harmless.
-            trace: { taskId: input.taskId, runId: input.runId },
-            ...(sdkImages.length > 0 && { images: sdkImages }),
-          }),
-        );
+        let sdkResult: Awaited<ReturnType<typeof queryClaudeSdk>>;
+        try {
+          sdkResult = await runWithExecutionContext(taskContext, () =>
+            queryClaudeSdk({
+              prompt: userPrompt,
+              systemPrompt,
+              toolNames: allToolNames,
+              maxTurns: maxRounds,
+              unlimited: input.unlimited,
+              abortSignal: input.signal,
+              // Metered by the dispatcher aggregate over result.tokenUsage (and
+              // by recordReflectionCost when reflection invokes this runner
+              // directly) — seam recording here would double-count. (3.3)
+              costLedger: false,
+              // Phase 6: per-turn/per-tool timeline correlated to this task.
+              // Reflection invokes execute() without a real task row — those
+              // emits still land and prune with the 30d window; harmless.
+              trace: { taskId: input.taskId, runId: input.runId },
+              ...(sdkImages.length > 0 && { images: sdkImages }),
+            }),
+          );
+        } catch (sdkErr) {
+          const armed = lastlineEligible(sdkErr) ? sdkLastline() : null;
+          if (!armed) throw sdkErr;
+          lastline = engageLastline(
+            armed,
+            "throw",
+            undefined,
+            // One journal line, bounded: a stack or a CLI dump stays out.
+            errMsg(sdkErr).replace(/\s+/g, " ").slice(0, 200),
+          );
+          break sdkPath;
+        }
 
         // ── Phase 4.3 on the PRODUCTION path (R1 audit C1: the first cut
         // lived only on the openai branch, which this box never runs). ──
@@ -1636,6 +1702,38 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // leg (cap resume or auth retry) runs after it in this context.
         const turnEnded = (): boolean =>
           taskContext.getPendingConfirmation() !== null;
+        // Replay guard, not provenance (EVIDENCE_TOOL_RE decides evidence):
+        // a tool declaring readOnlyHint changes nothing, so redoing it is
+        // safe — and leg 2 never saw its result. Unknown or unhinted (MCP)
+        // tools count as side-effecting. Leg 1's value — shared by the
+        // api_error last line below and the auth retry.
+        const sideEffectsOf = (calls: string[]): string[] =>
+          withoutGated(calls).filter(
+            (name) =>
+              !SDK_READ_ONLY_BUILTINS.has(name) &&
+              toolRegistry.get(name)?.readOnlyHint !== true,
+          );
+        const sideEffecting = sideEffectsOf(sdkResult.toolCalls);
+        const ranTools = sideEffecting.length > 0;
+
+        // Leg 1 ended on an allow-listed API error (Anthropic unavailable):
+        // the last line, unless it is auth-class (that keeps its own retry
+        // below), a confirmation ended the turn, or leg 1 ran a
+        // side-effecting tool (never replayed on another provider).
+        if (
+          sdkResult.errorClass !== undefined &&
+          LASTLINE_API_ERROR_CLASSES.has(sdkResult.errorClass) &&
+          !sdkAuthFailed(sdkResult.text) &&
+          !turnEnded() &&
+          !ranTools
+        ) {
+          const armed = sdkLastline();
+          if (armed) {
+            lastline = engageLastline(armed, "api_error", sdkResult.errorClass);
+            break sdkPath;
+          }
+        }
+
         if (
           sdkCapped(sdkResult.text) &&
           !(rawUserMsg.length > 0 && isConversational) &&
@@ -1700,16 +1798,6 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // Leg 1's error marker is stripped so the 401 text is not echoed
           // back and misread as a second auth failure.
           const firstLegText = sdkResult.text;
-          // Replay guard, not provenance (EVIDENCE_TOOL_RE decides evidence):
-          // a tool declaring readOnlyHint changes nothing, so redoing it is
-          // safe — and leg 2 never saw its result. Unknown or unhinted (MCP)
-          // tools count as side-effecting.
-          const sideEffecting = withoutGated(sdkResult.toolCalls).filter(
-            (name) =>
-              !SDK_READ_ONLY_BUILTINS.has(name) &&
-              toolRegistry.get(name)?.readOnlyHint !== true,
-          );
-          const ranTools = sideEffecting.length > 0;
           try {
             const authLeg = await runWithExecutionContext(taskContext, () =>
               queryClaudeSdk({
@@ -1738,6 +1826,19 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                 `[recovery] auth retry succeeded (task ${input.taskId})`,
               );
             } else {
+              // Last line only when NEITHER leg ran a side-effecting tool
+              // (side effects are never replayed on another provider) and no
+              // confirmation ended the turn during the auth leg.
+              const authLegRanTools =
+                sideEffectsOf(authLeg.toolCalls).length > 0;
+              const armed =
+                ranTools || authLegRanTools || turnEnded()
+                  ? null
+                  : sdkLastline();
+              if (armed) {
+                lastline = engageLastline(armed, "auth");
+                break sdkPath;
+              }
               sdkResult = {
                 ...mergeSdkLegs(sdkResult, authLeg),
                 text: "⚠️ Credenciales del proveedor de inferencia inválidas, expiradas o revocadas. Reintenté una vez sin éxito — no reintentaré más. Operador: `claude /login` en el VPS (o rotar el token).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
@@ -1914,7 +2015,10 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         };
       }
 
-      let result = await inferWithTools(messages, definitions, taskExecutor, {
+      // Under the last line every leg below (main, resume, auth retry,
+      // narration retry) runs on the fallback provider, never back on the SDK.
+      const runInfer = lastline ? inferWithToolsLastline : inferWithTools;
+      let result = await runInfer(messages, definitions, taskExecutor, {
         maxRounds,
         providerName,
         effort: tierToEffort(input.modelTier),
@@ -1946,7 +2050,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           `[recovery] auto-resume after ${result.exitReason} round ${result.roundsCompleted}/${maxRounds} (task ${input.taskId})`,
         );
         try {
-          const resumeResult = await inferWithTools(
+          const resumeResult = await runInfer(
             [
               ...result.messages,
               {
@@ -2032,7 +2136,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
         );
         try {
-          const authRetry = await inferWithTools(
+          const authRetry = await runInfer(
             messages,
             definitions,
             taskExecutor,
@@ -2342,7 +2446,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           }
           retryMessages.push({ role: "user", content: retryContent });
 
-          const retryResult = await inferWithTools(
+          const retryResult = await runInfer(
             retryMessages,
             definitions,
             taskExecutor,

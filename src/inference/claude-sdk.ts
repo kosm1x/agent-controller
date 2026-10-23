@@ -849,6 +849,13 @@ export interface ClaudeSdkResult {
    */
   costAuthoritative: boolean;
   durationMs: number;
+  /**
+   * Typed class of an `[error_api_response — …]` terminal (the CLI's
+   * `SDKAssistantMessageError`: `overloaded`, `authentication_failed`, …;
+   * "unknown" when the CLI sent none). Unset on every other result. Read by
+   * the fast-runner's SDK last line (2026-10-23).
+   */
+  errorClass?: string;
 }
 
 /** Vision input: base64 image payload already split from the data URL. */
@@ -1311,6 +1318,8 @@ export async function queryClaudeSdk(opts: {
   /** Typed error class the CLI stamps on its synthetic error assistant
    *  message (`authentication_failed`, `overloaded`, …). */
   let assistantErrorClass: string | null = null;
+  /** Stamped on the result when the run ended on an API error (is_error). */
+  let errorClass: string | undefined;
   let usage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -1574,6 +1583,8 @@ export async function queryClaudeSdk(opts: {
             const rawErrText = resolvedResult.trim();
             const errText = rawErrText || "unknown";
             const marker = `[error_api_response — ${assistantErrorClass ?? "unknown"}, status ${success.api_error_status ?? "n/a"}: ${errText}]`;
+            // Both variants below (partial and zero-output BLOCKED) carry it.
+            errorClass = assistantErrorClass ?? "unknown";
             console.warn(`[claude-sdk] result is_error: ${marker}`);
             // The CLI streams the same error text as a synthetic assistant
             // message — that is not content. Strip every copy, and only a
@@ -1746,6 +1757,10 @@ export async function queryClaudeSdk(opts: {
       (providerOutcome === "success" && resultText.trim().length > 0) ||
       streamingText.trim().length > 0;
     providerOutcome = "success";
+    // A refused turn is not an API outage: never hand the caller a typed
+    // error class (the fast-runner would send the refused request to the
+    // SDK last line).
+    errorClass = undefined;
     if (!hadRealAnswer) {
       const cat = refusalCategory ? ` (category: ${refusalCategory})` : "";
       resultText =
@@ -1868,6 +1883,7 @@ export async function queryClaudeSdk(opts: {
     costUsd,
     costAuthoritative,
     durationMs,
+    ...(errorClass !== undefined && { errorClass }),
   };
   benchmarkOverride?.tap?.(result);
   return result;

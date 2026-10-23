@@ -10,7 +10,30 @@
  * future refactors of the providers chain can't silently regress.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// Mutable config: the SDK last-line specs arm the flag + fallback triple.
+const BASE_CFG = {
+  inferencePrimaryProvider: "claude-sdk",
+  inferencePrimaryUrl: "",
+  inferencePrimaryKey: "",
+  inferencePrimaryModel: "",
+  inferenceFallbackUrl: "",
+  inferenceFallbackKey: "",
+  inferenceFallbackModel: "",
+  inferenceSdkLastlineEnabled: false,
+  inferenceTertiaryUrl: "",
+  inferenceTertiaryKey: "",
+  inferenceTertiaryModel: "",
+  inferenceTimeoutMs: 5000,
+  inferenceMaxTokens: 4096,
+  inferenceMaxRetries: 2,
+  inferenceContextLimit: 128000,
+  compressionThreshold: 0.85,
+  heavyRunnerContainerized: false,
+  budgetEnabled: false,
+};
+const cfg = vi.hoisted(() => ({}) as Record<string, unknown>);
 
 const sdkCalls: Array<{
   fn: "infer" | "inferWithTools";
@@ -19,6 +42,14 @@ const sdkCalls: Array<{
 }> = [];
 let sonnetShouldThrow = false;
 let haikuShouldThrow = false;
+// Error classes to throw instead of the generic synthetic failure.
+let sonnetErrName: string | null = null;
+let haikuErrName: string | null = null;
+const namedErr = (name: string): Error => {
+  const e = new Error(`synthetic ${name}`);
+  e.name = name;
+  return e;
+};
 
 vi.mock("./claude-sdk.js", () => {
   const SONNET_MODEL_ID = "claude-sonnet-4-6";
@@ -39,10 +70,14 @@ vi.mock("./claude-sdk.js", () => {
         const model = opts?.model ?? SONNET_MODEL_ID;
         stamp("infer", model);
         if (model === SONNET_MODEL_ID && sonnetShouldThrow) {
-          throw new Error("synthetic Sonnet failure");
+          throw sonnetErrName
+            ? namedErr(sonnetErrName)
+            : new Error("synthetic Sonnet failure");
         }
         if (model === HAIKU_MODEL_ID && haikuShouldThrow) {
-          throw new Error("synthetic Haiku failure");
+          throw haikuErrName
+            ? namedErr(haikuErrName)
+            : new Error("synthetic Haiku failure");
         }
         return {
           content: `routed via ${model}`,
@@ -82,29 +117,29 @@ vi.mock("./claude-sdk.js", () => {
 });
 
 vi.mock("../config.js", () => ({
-  getConfig: () => ({
-    inferencePrimaryProvider: "claude-sdk",
-    inferencePrimaryUrl: "",
-    inferencePrimaryKey: "",
-    inferencePrimaryModel: "",
-    inferenceFallbackUrl: "",
-    inferenceFallbackKey: "",
-    inferenceFallbackModel: "",
-    inferenceTertiaryUrl: "",
-    inferenceTertiaryKey: "",
-    inferenceTertiaryModel: "",
-    inferenceTimeoutMs: 5000,
-    inferenceMaxTokens: 4096,
-    inferenceMaxRetries: 2,
-    inferenceContextLimit: 128000,
-    compressionThreshold: 0.85,
-    heavyRunnerContainerized: false,
-    budgetEnabled: false,
-  }),
+  getConfig: () => cfg,
 }));
 
 vi.mock("../tools/registry.js", () => ({
-  toolRegistry: { has: vi.fn(() => true), findClosest: vi.fn() },
+  toolRegistry: {
+    has: vi.fn(() => true),
+    findClosest: vi.fn(),
+    // The last-line tool-loop specs run real tool rounds.
+    validate: vi.fn(() => ({ valid: true, success: true })),
+    get: vi.fn(() => undefined),
+  },
+}));
+
+// Compaction runs inside the tool loop; a spec hooks it to call infer() from
+// within the last-line scope.
+const compactHook = vi.hoisted(() => ({
+  fn: null as null | (() => Promise<void>),
+}));
+vi.mock("../prometheus/compaction-pipeline.js", () => ({
+  compactConversation: vi.fn(async (messages: unknown[]) => {
+    await compactHook.fn?.();
+    return { messages, level: "L1", removedCount: 0 };
+  }),
 }));
 
 vi.mock("../prometheus/context-compressor.js", () => ({
@@ -113,12 +148,31 @@ vi.mock("../prometheus/context-compressor.js", () => ({
   estimateTokens: vi.fn(() => 0),
 }));
 
-import { infer, inferWithTools } from "./adapter.js";
+import {
+  infer,
+  inferWithTools,
+  lastlineEligible,
+  sdkLastline,
+} from "./adapter.js";
+import { inferViaOpenAi } from "./adapter-openai.js";
+import { SecretScrubUnavailableError } from "./outbound-scrub.js";
+import { shouldCompress } from "../prometheus/context-compressor.js";
+import { circuitRegistry } from "../lib/circuit-breaker.js";
 
 beforeEach(() => {
   sdkCalls.length = 0;
   sonnetShouldThrow = false;
   haikuShouldThrow = false;
+  sonnetErrName = null;
+  haikuErrName = null;
+  for (const k of Object.keys(cfg)) delete cfg[k];
+  Object.assign(cfg, BASE_CFG);
+  compactHook.fn = null;
+});
+
+// Specs that fail the `fallback` provider record on a shared breaker.
+afterEach(() => {
+  circuitRegistry.reset();
 });
 
 describe("infer() with claude-sdk primary", () => {
@@ -342,5 +396,448 @@ describe("inferWithTools() with options.model override (queue #228 symmetry)", (
       async () => "",
     );
     expect(r.content).toBe("tool-route via claude-sonnet-4-6");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-23 — SDK last line: the OpenAI-compat `fallback` provider runs only
+// after BOTH SDK legs failed, only behind INFERENCE_SDK_LASTLINE_ENABLED, and
+// never on a budget refusal or an abort. fetch is the proof of traffic.
+// ---------------------------------------------------------------------------
+
+describe("SDK last line (INFERENCE_SDK_LASTLINE_ENABLED)", () => {
+  const FW_URL = "https://fw.test/v1";
+  const FW_MODEL = "accounts/fireworks/models/x-test";
+  const arm = (model = FW_MODEL) =>
+    Object.assign(cfg, {
+      inferenceSdkLastlineEnabled: true,
+      inferenceFallbackUrl: FW_URL,
+      inferenceFallbackKey: "synthetic-key",
+      inferenceFallbackModel: model,
+    });
+  const okFetch = () =>
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "fw answer" } }],
+            usage: { prompt_tokens: 11, completion_tokens: 3, total_tokens: 14 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+  const fetchCall = (spy: ReturnType<typeof okFetch>, i: number) => {
+    const [url, init] = spy.mock.calls[i] as [string, RequestInit];
+    return {
+      url,
+      body: JSON.parse(String(init.body)) as { model: string },
+      headers: init.headers as Record<string, string>,
+    };
+  };
+
+  it("(i) flag off: both SDK legs fail → the error bubbles, no fetch", async () => {
+    Object.assign(cfg, {
+      inferenceFallbackUrl: FW_URL,
+      inferenceFallbackKey: "synthetic-key",
+      inferenceFallbackModel: FW_MODEL,
+    });
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toThrow(/synthetic Haiku failure/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("(ii) armed: both SDK legs fail → exactly one fetch to the fallback, model stamped", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = okFetch();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = await infer({ messages: [{ role: "user", content: "hi" }] });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const call = fetchCall(fetchSpy, 0);
+      expect(call.url).toBe(`${FW_URL}/chat/completions`);
+      expect(call.body.model).toBe(FW_MODEL);
+      expect(call.headers.Authorization).toBeDefined();
+      expect(r.content).toBe("fw answer");
+      expect(r.model).toBe(FW_MODEL);
+      expect(r.provider).toBe("fallback");
+      expect(sdkCalls.map((c) => c.model)).toEqual([
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+      ]);
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes(
+            `claude-sdk both legs failed (synthetic Haiku failure) → last line fallback/${FW_MODEL}`,
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("(iii) armed: a BudgetExhaustedError from Sonnet is rethrown, no fetch", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    sonnetErrName = "BudgetExhaustedError";
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toMatchObject({ name: "BudgetExhaustedError" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("(iii-b) armed: a BudgetExhaustedError from the Haiku leg is rethrown, no fetch", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    haikuErrName = "BudgetExhaustedError";
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toMatchObject({ name: "BudgetExhaustedError" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("(iv) armed: an AbortError from the Haiku leg is rethrown, no fetch", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    haikuErrName = "AbortError";
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("(v) armed, inferWithTools: both legs fail → one fetch to the fallback, model = fallback", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = okFetch();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = await inferWithTools(
+        [{ role: "user", content: "hi" }],
+        [],
+        async () => "",
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const call = fetchCall(fetchSpy, 0);
+      expect(call.url).toBe(`${FW_URL}/chat/completions`);
+      expect(call.body.model).toBe(FW_MODEL);
+      expect(r.content).toBe("fw answer");
+      // The dispatcher books tokenUsage.actualModel from this field; unset
+      // it would book the fallback's spend as Sonnet.
+      expect(r.model).toBe(FW_MODEL);
+      // The tool loop's per-round infer() stayed on the fallback — no third
+      // SDK call after the two failed legs.
+      expect(sdkCalls.map((c) => c.model)).toEqual([
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+      ]);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("(vi) flag on but INFERENCE_FALLBACK_MODEL empty → sdkLastline() null, error bubbles", async () => {
+    arm("");
+    expect(sdkLastline()).toBeNull();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toThrow(/synthetic Haiku failure/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("lastlineEligible: budget refusals and both abort signatures are never eligible", () => {
+    const named = (name: string) => Object.assign(new Error("x"), { name });
+    expect(lastlineEligible(new Error("synthetic Haiku failure"))).toBe(true);
+    expect(lastlineEligible(named("BudgetExhaustedError"))).toBe(false);
+    expect(lastlineEligible(named("AbortError"))).toBe(false);
+    // The SDK's own abort marker (queryClaudeSdkComplexWithFallback mirror).
+    expect(lastlineEligible(new Error("Error: query aborted — signal"))).toBe(
+      false,
+    );
+    // A local scrub fault: the fallback request would face the same scrub.
+    expect(
+      lastlineEligible(new SecretScrubUnavailableError(new Error("down"))),
+    ).toBe(false);
+  });
+
+  it("onlyProvider naming an unconfigured provider throws before any fetch", async () => {
+    const fetchSpy = okFetch();
+    try {
+      await expect(
+        inferViaOpenAi(
+          { messages: [{ role: "user", content: "hi" }] },
+          { onlyProvider: "fallback" },
+        ),
+      ).rejects.toThrow('No inference provider named "fallback" is configured');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("sdkLastline() is null off claude-sdk and with the flag off; armed returns the model", () => {
+    arm();
+    expect(sdkLastline()).toEqual({ model: FW_MODEL });
+    cfg.inferencePrimaryProvider = "openai";
+    expect(sdkLastline()).toBeNull();
+    cfg.inferencePrimaryProvider = "claude-sdk";
+    cfg.inferenceSdkLastlineEnabled = false;
+    expect(sdkLastline()).toBeNull();
+  });
+
+  const toolDef = {
+    type: "function" as const,
+    function: {
+      name: "t1",
+      description: "d",
+      parameters: { type: "object", properties: {} },
+    },
+  };
+  const json = (o: unknown, status = 200) =>
+    new Response(JSON.stringify(o), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const toolCallResp = () =>
+    json({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "c1",
+                type: "function",
+                function: { name: "t1", arguments: "{}" },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+    });
+  const textResp = (t: string) =>
+    json({
+      choices: [
+        { message: { role: "assistant", content: t }, finish_reason: "stop" },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+    });
+
+  it("(xvi) work a tool starts in the background is NOT pinned to the fallback after the loop", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    let n = 0;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => {
+        n++;
+        return n === 1 ? toolCallResp() : textResp(`fw ${n}`);
+      });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let deferred: Promise<{ provider: string }> | undefined;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // Shape of submitTask(): dispatchTask(...) un-awaited, runs later.
+    const executor = async () => {
+      deferred = gate.then(() =>
+        infer({ messages: [{ role: "user", content: "child task" }] }),
+      );
+      return "ok";
+    };
+    try {
+      const r = await inferWithTools(
+        [{ role: "user", content: "hi" }],
+        [toolDef],
+        executor,
+      );
+      expect(r.model).toBe(FW_MODEL);
+      // The loop's own rounds stayed on the fallback.
+      expect(sdkCalls).toHaveLength(2);
+      // The SDK has recovered; the child task now runs.
+      sonnetShouldThrow = false;
+      haikuShouldThrow = false;
+      const fetchesBefore = fetchSpy.mock.calls.length;
+      release();
+      const bg = await deferred!;
+      expect(bg.provider).toBe("claude-sdk");
+      expect(sdkCalls).toHaveLength(3);
+      expect(fetchSpy.mock.calls.length).toBe(fetchesBefore);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("(xvii) an infer() inside the last-line loop (compaction) carries the fallback model", async () => {
+    arm();
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    let n = 0;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => {
+        n++;
+        return n === 1 ? toolCallResp() : textResp(`fw ${n}`);
+      });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const inner: Array<{ model?: string; provider: string }> = [];
+    compactHook.fn = async () => {
+      const res = await infer({
+        messages: [{ role: "user", content: "summarise" }],
+      });
+      inner.push({ model: res.model, provider: res.provider });
+    };
+    vi.mocked(shouldCompress).mockReturnValueOnce(true);
+    try {
+      await inferWithTools([{ role: "user", content: "hi" }], [toolDef], async () => "ok");
+      expect(inner).toEqual([{ model: FW_MODEL, provider: "fallback" }]);
+      expect(sdkCalls).toHaveLength(2);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("(xviii) tool-path last line with a primary configured: the fallback 400s → primary never fetched", async () => {
+    arm();
+    Object.assign(cfg, {
+      inferencePrimaryUrl: "https://primary.test/v1",
+      inferencePrimaryKey: "synthetic-primary-key",
+      inferencePrimaryModel: "primary-x",
+      inferenceMaxRetries: 1,
+    });
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url) =>
+        String(url).startsWith(FW_URL)
+          ? new Response("down", { status: 400 })
+          : textResp("primary answered"),
+      );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await inferWithTools(
+        [{ role: "user", content: "hi" }],
+        [toolDef],
+        async () => "ok",
+      ).catch(() => undefined);
+      const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+      expect(urls.length).toBeGreaterThan(0);
+      expect(urls.every((u) => u.startsWith(FW_URL))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+      err.mockRestore();
+    }
+  });
+
+  it("(xix) flag off, inferWithTools: both legs fail → the Haiku error surfaces, no last-line line", async () => {
+    Object.assign(cfg, {
+      inferenceFallbackUrl: FW_URL,
+      inferenceFallbackKey: "synthetic-key",
+      inferenceFallbackModel: FW_MODEL,
+    });
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = okFetch();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        inferWithTools([{ role: "user", content: "hi" }], [], async () => ""),
+      ).rejects.toThrow(/synthetic Haiku failure/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes("→ last line")),
+      ).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  // Kept last: it records three failures on the shared `fallback` breaker.
+  it("(xiv) armed with a primary configured too: fallback 500s → error bubbles, primary never fetched", async () => {
+    arm();
+    Object.assign(cfg, {
+      inferencePrimaryUrl: "https://primary.test/v1",
+      inferencePrimaryKey: "synthetic-primary-key",
+      inferencePrimaryModel: "primary-x",
+      inferenceMaxRetries: 3,
+    });
+    sonnetShouldThrow = true;
+    haikuShouldThrow = true;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response("upstream down", {
+          status: 500,
+          // Retry-After 0: no backoff sleep between the three attempts.
+          headers: { "Retry-After": "0" },
+        }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(
+        infer({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toThrow(/All inference providers failed/);
+      const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+      expect(urls).toEqual([
+        `${FW_URL}/chat/completions`,
+        `${FW_URL}/chat/completions`,
+        `${FW_URL}/chat/completions`,
+      ]);
+      expect(urls.some((u) => u.startsWith("https://primary.test"))).toBe(
+        false,
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      warn.mockRestore();
+      err.mockRestore();
+    }
   });
 });

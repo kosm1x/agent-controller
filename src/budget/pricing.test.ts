@@ -86,6 +86,12 @@ describe("pricing", () => {
       expect(p.promptCostPer1k).toBe(0.0003);
       expect(p.completionCostPer1k).toBe(0.0012);
     });
+
+    it("prices the full-path SDK last-line model at its alias (glm-5p3-flash)", () => {
+      const p = getPricing("accounts/fireworks/models/glm-5p3-flash");
+      expect(p.promptCostPer1k).toBe(0.00015);
+      expect(p.completionCostPer1k).toBe(0.0005);
+    });
   });
 
   describe("loadPricingOverride", () => {

@@ -12,6 +12,7 @@
  *     importers (health route, observability, tests) are unchanged.
  */
 
+import { AsyncLocalStorage } from "async_hooks";
 import { getConfig } from "../config.js";
 import type { CompactionLevel } from "../prometheus/compaction-pipeline.js";
 import { inferViaOpenAi, inferWithToolsViaOpenAi } from "./adapter-openai.js";
@@ -222,6 +223,50 @@ export {
 // ---------------------------------------------------------------------------
 
 /**
+ * SDK last line (2026-10-23): the OpenAI-compat `fallback` provider runs only
+ * after BOTH Claude SDK legs failed, only behind INFERENCE_SDK_LASTLINE_ENABLED,
+ * and every use is loud (a journal line at each engagement, the real model
+ * in the cost ledger). Returns null whenever it is not armed.
+ */
+export function sdkLastline(): { model: string } | null {
+  const config = getConfig();
+  if (
+    config.inferenceSdkLastlineEnabled &&
+    config.inferencePrimaryProvider === "claude-sdk" &&
+    config.inferenceFallbackUrl &&
+    config.inferenceFallbackModel
+  ) {
+    return { model: config.inferenceFallbackModel };
+  }
+  return null;
+}
+
+/**
+ * A budget refusal or an abort never reaches the last line — the same
+ * abort signatures `queryClaudeSdkComplexWithFallback` (claude-sdk.ts) skips.
+ * Neither does a secret-scrub failure: a local fault, and the fallback
+ * request would face the same scrub.
+ */
+export function lastlineEligible(err: unknown): boolean {
+  const name =
+    err instanceof Error ? err.name : ((err as { name?: string })?.name ?? "");
+  if (
+    name === "BudgetExhaustedError" ||
+    name === "AbortError" ||
+    name === "SecretScrubUnavailableError"
+  )
+    return false;
+  return !/aborted/i.test(errMsg(err));
+}
+
+/**
+ * Set while a last-line tool loop runs: the OpenAI-compat tool loop calls
+ * infer() for every round, compaction summary and wrap-up, and under
+ * claude-sdk infer() would send those back to the SDK that just failed.
+ */
+const lastlineScope = new AsyncLocalStorage<true>();
+
+/**
  * Claude Agent SDK path with Sonnet→Haiku fallback.
  *
  * Used when INFERENCE_PRIMARY_PROVIDER=claude-sdk to route all infer() callers
@@ -295,18 +340,33 @@ async function inferViaClaudeSdk(
     console.warn(
       `[inference] claude-sdk ${primaryModel} failed (${errMsg(err)}), retrying with Haiku`,
     );
-    return await queryClaudeSdkAsInfer(request.messages, {
-      signal: options?.signal,
-      // Retry leg uses Haiku regardless of primary — Haiku is the cheaper
-      // last-line provider. If primaryModel WAS already Haiku we're just
-      // retrying it (provider-level transient).
-      model: HAIKU_MODEL_ID,
-      tools: request.tools,
-      probeRounds: request.probeRounds,
-      // effort deliberately NOT forwarded: Haiku 4.5 has no effort support;
-      // the last-line fallback carries the minimal request.
-      costLedger: request.costLedger,
-    });
+    try {
+      return await queryClaudeSdkAsInfer(request.messages, {
+        signal: options?.signal,
+        // Retry leg uses Haiku regardless of primary — Haiku is the cheaper
+        // last-line provider. If primaryModel WAS already Haiku we're just
+        // retrying it (provider-level transient).
+        model: HAIKU_MODEL_ID,
+        tools: request.tools,
+        probeRounds: request.probeRounds,
+        // effort deliberately NOT forwarded: Haiku 4.5 has no effort support;
+        // the last-line fallback carries the minimal request.
+        costLedger: request.costLedger,
+      });
+    } catch (haikuErr) {
+      const lastline = lastlineEligible(haikuErr) ? sdkLastline() : null;
+      if (!lastline) throw haikuErr;
+      console.warn(
+        `[inference] claude-sdk both legs failed (${errMsg(haikuErr)}) → last line fallback/${lastline.model}`,
+      );
+      // inferViaOpenAi leaves `model` unset — stamp the real one for the ledger.
+      const res = await inferViaOpenAi(request, {
+        ...options,
+        providerName: "fallback",
+        onlyProvider: "fallback",
+      });
+      return { ...res, model: lastline.model };
+    }
   }
 }
 
@@ -381,11 +441,51 @@ async function inferWithToolsViaClaudeSdk(
     console.warn(
       `[inference] claude-sdk ${primaryModel} (with tools) failed (${errMsg(err)}), retrying with Haiku`,
     );
-    return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
-      ...passthrough,
-      model: HAIKU_MODEL_ID,
-    });
+    try {
+      return await queryClaudeSdkAsInferWithTools(messages, tools, executor, {
+        ...passthrough,
+        model: HAIKU_MODEL_ID,
+      });
+    } catch (haikuErr) {
+      const lastline = lastlineEligible(haikuErr) ? sdkLastline() : null;
+      if (!lastline) throw haikuErr;
+      console.warn(
+        `[inference] claude-sdk both legs failed (${errMsg(haikuErr)}) → last line fallback/${lastline.model}`,
+      );
+      return inferWithToolsLastline(messages, tools, executor, options);
+    }
   }
+}
+
+/**
+ * The last line's tool loop — the OpenAI-compat path pinned to the `fallback`
+ * provider, with `model` set to the fallback model (the OpenAI path leaves it
+ * undefined and the dispatcher would book the spend as Sonnet). The
+ * fast-runner's entry (runners never import adapter-openai.ts). Refuses when
+ * the last line is not armed.
+ */
+export async function inferWithToolsLastline(
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  executor: ToolExecutor,
+  options: InferWithToolsOptions | undefined,
+): Promise<Awaited<ReturnType<typeof inferWithToolsViaOpenAi>>> {
+  const lastline = sdkLastline();
+  if (!lastline) throw new Error("sdk last line is not armed");
+  // Tools run OUTSIDE the scope: work a tool starts in the background
+  // (dispatchTask, executeScheduleNow, queue drains) must not stay pinned to
+  // the fallback after this loop returns. Rounds, wrap-ups and compaction
+  // stay pinned.
+  const unpinned: ToolExecutor = (name, args) =>
+    lastlineScope.exit(() => executor(name, args));
+  const res = await lastlineScope.run(true, () =>
+    inferWithToolsViaOpenAi(messages, tools, unpinned, {
+      ...options,
+      providerName: "fallback",
+      onlyProvider: "fallback",
+    }),
+  );
+  return { ...res, model: lastline.model };
 }
 
 /**
@@ -396,6 +496,8 @@ export interface InferOptions {
   onTextChunk?: OnTextChunk;
   signal?: AbortSignal;
   providerName?: string;
+  /** OpenAI-compat path only: consider ONLY this provider (no failover). */
+  onlyProvider?: string;
 }
 
 export async function infer(
@@ -412,6 +514,16 @@ export async function infer(
   // caller, including those unaware of the SDK branch (fast-runner has its
   // own SDK path; this covers the rest).
   if (config.inferencePrimaryProvider === "claude-sdk") {
+    // Inside a last-line tool loop every nested call stays on the fallback.
+    if (lastlineScope.getStore()) {
+      const res = await inferViaOpenAi(request, {
+        ...options,
+        providerName: "fallback",
+        onlyProvider: "fallback",
+      });
+      // Same stamp as the catch below: the real model reaches the ledger.
+      return { ...res, model: config.inferenceFallbackModel || res.model };
+    }
     return inferViaClaudeSdk(request, options);
   }
 
@@ -430,6 +542,9 @@ export interface InferWithToolsOptions {
   onTextChunk?: OnTextChunk;
   signal?: AbortSignal;
   providerName?: string;
+  /** OpenAI-compat path only: every round's infer() considers ONLY this
+   *  provider (no failover). Set by the SDK last line. */
+  onlyProvider?: string;
   /**
    * Reasoning-effort knob (V8.5 Phase 2.3), honored on the claude-sdk path
    * only. Fast-runner maps the classifier's modelTier here (flash→low,

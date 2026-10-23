@@ -2827,6 +2827,8 @@ describe("queryClaudeSdk provider metrics", () => {
       `[error_api_response — authentication_failed, status 401: ${DEAD_LOGIN}]`,
     );
     expect(result.text).toContain("STATUS: BLOCKED");
+    // Typed class on the result (SDK last line reads it, 2026-10-23).
+    expect(result.errorClass).toBe("authentication_failed");
     spy.mockRestore();
     // this describe never resets the breaker; one more recorded failure would
     // open it for the abort spec below
@@ -2865,6 +2867,7 @@ describe("queryClaudeSdk provider metrics", () => {
     expect(result.text).toContain("overloaded, status n/a: API Error: 529]");
     expect(result.text).toContain("Hallazgos parciales.");
     expect(result.text).toContain("STATUS: DONE_WITH_CONCERNS");
+    expect(result.errorClass).toBe("overloaded");
     // the error text appears once (the marker), not again as "content"
     expect(result.text.split("API Error: 529").length - 1).toBe(1);
     spy.mockRestore();
@@ -2915,6 +2918,7 @@ describe("queryClaudeSdk provider metrics", () => {
     ];
     const withText = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
     expect(withText.text).toContain("[error_api_response — unknown, status n/a: API Error: 529]");
+    expect(withText.errorClass).toBe("unknown");
     expect(withText.text).not.toContain("authentication_failed");
     expect(withText.text.split("API Error: 529").length - 1).toBe(1);
 
@@ -2935,7 +2939,9 @@ describe("queryClaudeSdk provider metrics", () => {
       { type: "result", subtype: "error_during_execution", errors: ["boom"] },
     ];
 
-    await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    const result = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    // Only an is_error terminal carries the typed class.
+    expect(result.errorClass).toBeUndefined();
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][0]).toBe("claude-sdk");
@@ -3019,6 +3025,34 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(r.text).toContain("[refusal]");
     expect(r.text).toContain("category: cyber");
     expect(r.text).toContain("STATUS: BLOCKED");
+  });
+
+  it("a refused turn that ended success+is_error carries no errorClass (never an SDK last line)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          stop_reason: "refusal",
+          stop_details: { category: "cyber" },
+          content: [],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result:
+          "API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy",
+        num_turns: 1,
+      },
+    ];
+    const r = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+    expect(r.text).toContain("[refusal]");
+    expect(r.errorClass).toBeUndefined();
   });
 
   it("a refused turn does NOT trip the circuit breaker (working provider, not an outage)", async () => {
