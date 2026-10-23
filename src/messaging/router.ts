@@ -5164,9 +5164,19 @@ export class MessageRouter {
         // placeholder (reset, never finalize — the re-run streams and
         // finalizes in the same message); elsewhere one plain send. Email is
         // skipped like the «Recibido» ack (inbox noise).
-        if (stream) stream.reset(SCOPE_RERUN_NOTICE);
-        else if (!isEmailChannel(pending.channel))
-          this.sendToChannel(pending.channel, pending.to, SCOPE_RERUN_NOTICE);
+        const via = stream
+          ? "stream.reset"
+          : isEmailChannel(pending.channel)
+            ? null
+            : "sendToChannel";
+        if (via) {
+          console.log(
+            `[router] scope-rerun notice sent channel=${pending.channel} via=${via} task=${result.taskId}`,
+          );
+          if (stream) stream.reset(SCOPE_RERUN_NOTICE);
+          else
+            this.sendToChannel(pending.channel, pending.to, SCOPE_RERUN_NOTICE);
+        }
       })
       .catch((err) => {
         console.error(`[router] scope-miss re-run submit failed:`, err);

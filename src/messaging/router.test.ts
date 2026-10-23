@@ -2728,17 +2728,34 @@ describe("MessageRouter", () => {
         agentType: "fast",
         classification: { score: 1, reason: "test", explicit: false },
       });
-      findHandler("task.completed")!({
-        data: {
-          task_id: "tg-task-1",
-          agent_id: "fast",
-          result:
-            '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
-          duration_ms: 500,
-        },
-      });
-      await Promise.resolve();
-      await Promise.resolve();
+      // 2026-10-23: the stream path's journal line names `via=stream.reset`.
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        findHandler("task.completed")!({
+          data: {
+            task_id: "tg-task-1",
+            agent_id: "fast",
+            result:
+              '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(
+          logSpy.mock.calls.filter(
+            ([l]) =>
+              typeof l === "string" &&
+              l.startsWith("[router] scope-rerun notice sent"),
+          ),
+        ).toEqual([
+          [
+            "[router] scope-rerun notice sent channel=telegram via=stream.reset task=tg-task-rerun",
+          ],
+        ]);
+      } finally {
+        logSpy.mockRestore();
+      }
       // The placeholder was reset — the ask is no longer what the screen shows;
       // the re-run notice now does.
       expect(edits.at(-1)?.text).toBe(SCOPE_RERUN_NOTICE);
@@ -3224,6 +3241,112 @@ describe("MessageRouter", () => {
       expect(sent[0].text).toContain("Beeshake vende");
       expect(sent[0].to).toBe("owner@example.com");
       expect(waAdapter.sentMessages).toHaveLength(0);
+    });
+
+    it("2026-10-23 re-run notice journal line: a sent notice logs ONE `[router] scope-rerun notice sent` line (channel + path + task, never the recipient or the notice text); an email re-run logs none", async () => {
+      const NOTICE_LOG_RE =
+        /^\[router\] scope-rerun notice sent channel=\S+ via=(stream\.reset|sendToChannel)/;
+      const ASK =
+        '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.';
+      const mocked = vi.mocked(submitTask);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        mocked.mockResolvedValueOnce({
+          taskId: "log-notice-1",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "log-notice-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "log-notice-1",
+            agent_id: "fast",
+            result: ASK,
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
+        const noticeLogs = logSpy.mock.calls.filter(
+          ([l]) => typeof l === "string" && NOTICE_LOG_RE.test(l),
+        );
+        expect(noticeLogs).toEqual([
+          [
+            "[router] scope-rerun notice sent channel=whatsapp via=sendToChannel task=log-notice-rerun",
+          ],
+        ]);
+        for (const args of logSpy.mock.calls) {
+          const joined = args.map(String).join(" ");
+          expect(joined).not.toContain(SCOPE_RERUN_NOTICE);
+          expect(joined).not.toContain("owner@s.whatsapp.net");
+        }
+
+        // Email: the notice is skipped, so the line must be too.
+        const emailAdapter = {
+          name: "email:owner",
+          mode: "owner-only" as const,
+          start: vi.fn().mockResolvedValue(undefined),
+          send: vi.fn().mockResolvedValue("id"),
+          onMessage: vi.fn(),
+          stop: vi.fn().mockResolvedValue(undefined),
+          isConnected: () => true,
+        };
+        router.registerChannel(emailAdapter as never);
+        logSpy.mockClear();
+        mocked.mockResolvedValueOnce({
+          taskId: "log-email-1",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "email:owner" as never,
+          from: "owner@example.com",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        mocked.mockResolvedValueOnce({
+          taskId: "log-email-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "log-email-1",
+            agent_id: "fast",
+            result: ASK,
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        router.unregisterChannel("email:owner" as never);
+        expect(mocked.mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+        // The submit's .then ran (its own line is there), so 0 is not vacuous.
+        expect(logSpy.mock.calls.map(([l]) => l)).toContain(
+          "[router] scope-miss re-run of log-email-1 → task log-email-rerun",
+        );
+        expect(
+          logSpy.mock.calls.filter(
+            ([l]) =>
+              typeof l === "string" &&
+              l.startsWith("[router] scope-rerun notice sent"),
+          ),
+        ).toHaveLength(0);
+      } finally {
+        logSpy.mockRestore();
+      }
     });
 
     it("2026-10-18 re-run interim: a re-run still running at +2 min sends «Sigo trabajando en eso...» after the notice (the first run's interim was cleared)", async () => {
