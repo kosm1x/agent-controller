@@ -1,0 +1,6937 @@
+{
+  "config": {
+    "models": [
+      "minimax-m3",
+      "minimax-m3p1-flash",
+      "glm-5p3-flash",
+      "glm-5p3",
+      "deepseek-v4p1-flash",
+      "kimi-k3",
+      "qwen3p8-max",
+      "gpt-oss-120b"
+    ],
+    "date": "2026-10-23",
+    "toolCount": 193,
+    "toolSources": {
+      "registered": [
+        "builtin",
+        "builtin WP/CRM/GWS groups",
+        "google",
+        "skills",
+        "memory(backend_independent)"
+      ],
+      "skipped": []
+    },
+    "caseCount": 34,
+    "unreachableCases": [
+      "ts-wp-publish-01",
+      "ts-wp-status-01",
+      "ts-http-01",
+      "ts-batch-decompose-01"
+    ],
+    "chatPrompts": 5,
+    "concurrency": 2,
+    "maxTokens": 1024,
+    "temperature": 0,
+    "systemPrompt": "none (mirrors the eval gate's default probe)",
+    "gateComparability": "probe rounds 1 (gate default 3); unweighted mean (gate weights by case weight)",
+    "perCaseToolCount": {
+      "min": 30,
+      "median": 43,
+      "max": 78
+    }
+  },
+  "catalog": {
+    "loaded": true,
+    "warning": null,
+    "rows": [
+      {
+        "id": "deepseek-v4p1-flash",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "deepseek-v4p1-flash-1017",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "ember-1",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "glm-5p3",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "glm-5p3-flash",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "gpt-oss-120b",
+        "contextLength": 131072,
+        "deprecation": "2026-11-07",
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "inkling",
+        "contextLength": 1048576,
+        "deprecation": "2026-11-07",
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "kimi-k3",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "minimax-m3",
+        "contextLength": 512000,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "minimax-m3p1-flash",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "muse-spark-open",
+        "contextLength": 1048576,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "nemotron-3-ultra-nvfp4",
+        "contextLength": 262144,
+        "deprecation": "2026-11-07",
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "nemotron-lightning-3p5-30b-a3b",
+        "contextLength": 262144,
+        "deprecation": "2026-11-07",
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "qwen3p8-2p4t-a95b",
+        "contextLength": 262144,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      },
+      {
+        "id": "qwen3p8-max",
+        "contextLength": 0,
+        "deprecation": null,
+        "price": null,
+        "usageIdentifier": null
+      }
+    ]
+  },
+  "dropped": [],
+  "scores": [
+    {
+      "model": "minimax-m3",
+      "scoredCases": 34,
+      "accuracy": 0.5882352941176471,
+      "toolCallValidity": 1,
+      "p50ToolMs": 1454,
+      "p95ToolMs": 4027,
+      "p50ChatMs": 2483,
+      "p95ChatMs": 4570,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 0.3,
+        "out": 1.2
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.1838223,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "scoredCases": 34,
+      "accuracy": 0.5882352941176471,
+      "toolCallValidity": 1,
+      "p50ToolMs": 1435,
+      "p95ToolMs": 3062,
+      "p50ChatMs": 3735,
+      "p95ChatMs": 7901,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 28,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 0.15,
+        "out": 0.6
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.09352260000000001,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "glm-5p3-flash",
+      "scoredCases": 34,
+      "accuracy": 0.6176470588235294,
+      "toolCallValidity": 1,
+      "p50ToolMs": 2146,
+      "p95ToolMs": 4363,
+      "p50ChatMs": 7939,
+      "p95ChatMs": 8739,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 0.15,
+        "out": 0.5
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.09043804999999998,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "glm-5p3",
+      "scoredCases": 34,
+      "accuracy": 0.5882352941176471,
+      "toolCallValidity": 1,
+      "p50ToolMs": 2877,
+      "p95ToolMs": 33969,
+      "p50ChatMs": 11750,
+      "p95ChatMs": 15857,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 1.4,
+        "out": 4.4
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.8552481999999998,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "scoredCases": 34,
+      "accuracy": 0.5882352941176471,
+      "toolCallValidity": 1,
+      "p50ToolMs": 1675,
+      "p95ToolMs": 2819,
+      "p50ChatMs": 4461,
+      "p95ChatMs": 10047,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 0.3,
+        "out": 1.2
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.18803790000000004,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "kimi-k3",
+      "scoredCases": 34,
+      "accuracy": 0.5882352941176471,
+      "toolCallValidity": 1,
+      "p50ToolMs": 7047,
+      "p95ToolMs": 13778,
+      "p50ChatMs": 19333,
+      "p95ChatMs": 30610,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 3,
+        "out": 15
+      },
+      "priceSource": "builtin",
+      "costUsd": 1.7731619999999995,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "qwen3p8-max",
+      "scoredCases": 34,
+      "accuracy": 0.6764705882352942,
+      "toolCallValidity": 1,
+      "p50ToolMs": 2296,
+      "p95ToolMs": 4321,
+      "p50ChatMs": 2162,
+      "p95ChatMs": 6602,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 2,
+        "out": 6
+      },
+      "priceSource": "builtin",
+      "costUsd": 1.2341159999999993,
+      "unrankedReason": null,
+      "routedVia": null
+    },
+    {
+      "model": "gpt-oss-120b",
+      "scoredCases": 34,
+      "accuracy": 0.6176470588235294,
+      "toolCallValidity": 1,
+      "p50ToolMs": 1476,
+      "p95ToolMs": 4043,
+      "p50ChatMs": 1006,
+      "p95ChatMs": 5796,
+      "thinkingLeaks": 0,
+      "reasoningContentCalls": 39,
+      "errors": 0,
+      "calls": 39,
+      "http404or401": false,
+      "price": {
+        "in": 0.15,
+        "out": 0.6
+      },
+      "priceSource": "builtin",
+      "costUsd": 0.07700759999999998,
+      "unrankedReason": null,
+      "routedVia": null
+    }
+  ],
+  "ranking": [
+    "qwen3p8-max",
+    "gpt-oss-120b",
+    "glm-5p3-flash",
+    "minimax-m3p1-flash",
+    "minimax-m3",
+    "deepseek-v4p1-flash",
+    "glm-5p3",
+    "kimi-k3"
+  ],
+  "recommended": "qwen3p8-max",
+  "records": [
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 2352,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15858,
+      "completionTokens": 181,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 1319,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12121,
+      "completionTokens": 86,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 1083,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12123,
+      "completionTokens": 64,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 2045,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21374,
+      "completionTokens": 126,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 3768,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21365,
+      "completionTokens": 357,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 1502,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12121,
+      "completionTokens": 76,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 970,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12115,
+      "completionTokens": 63,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 1672,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21366,
+      "completionTokens": 119,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 1382,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12118,
+      "completionTokens": 99,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 1768,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18782,
+      "completionTokens": 97,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1454,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18779,
+      "completionTokens": 153,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 2082,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20082,
+      "completionTokens": 179,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 1330,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12116,
+      "completionTokens": 56,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 1017,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13211,
+      "completionTokens": 41,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 1685,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 28026,
+      "completionTokens": 61,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1863,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17632,
+      "completionTokens": 150,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 6009,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13243,
+      "completionTokens": 808,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 1746,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12117,
+      "completionTokens": 147,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status",
+        "list_schedules",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1275,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17628,
+      "completionTokens": 71,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1098,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12118,
+      "completionTokens": 68,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 1181,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15876,
+      "completionTokens": 84,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 2881,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21334,
+      "completionTokens": 293,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 1279,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15265,
+      "completionTokens": 66,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 2900,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22955,
+      "completionTokens": 261,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "task_history"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 4027,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 27495,
+      "completionTokens": 458,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 1160,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13234,
+      "completionTokens": 83,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 941,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18784,
+      "completionTokens": 51,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 2863,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22666,
+      "completionTokens": 246,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 1155,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13416,
+      "completionTokens": 71,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 942,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12113,
+      "completionTokens": 46,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1235,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22513,
+      "completionTokens": 46,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 2953,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20084,
+      "completionTokens": 274,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_search",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 2219,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17631,
+      "completionTokens": 193,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 1304,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17211,
+      "completionTokens": 60,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 1908,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 138,
+      "completionTokens": 127,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 2483,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 145,
+      "completionTokens": 167,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 4570,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 141,
+      "completionTokens": 603,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 4434,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 144,
+      "completionTokens": 460,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 2169,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 141,
+      "completionTokens": 199,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 2124,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15931,
+      "completionTokens": 223,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 1374,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12194,
+      "completionTokens": 143,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 1094,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12196,
+      "completionTokens": 39,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 2041,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21447,
+      "completionTokens": 189,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "skill_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 2693,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21438,
+      "completionTokens": 358,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 2210,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12194,
+      "completionTokens": 322,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_search",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 960,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12188,
+      "completionTokens": 112,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 2543,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21439,
+      "completionTokens": 229,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 2179,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12191,
+      "completionTokens": 245,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 921,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18855,
+      "completionTokens": 56,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status",
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1435,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18852,
+      "completionTokens": 45,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 3062,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20155,
+      "completionTokens": 226,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "project_list",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 602,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12189,
+      "completionTokens": 34,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 938,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13284,
+      "completionTokens": 25,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 1585,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 28099,
+      "completionTokens": 40,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1440,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17705,
+      "completionTokens": 158,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 2852,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13316,
+      "completionTokens": 413,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 1409,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12190,
+      "completionTokens": 165,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 776,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17701,
+      "completionTokens": 56,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1033,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12191,
+      "completionTokens": 136,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 2719,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15949,
+      "completionTokens": 289,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 2795,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21407,
+      "completionTokens": 420,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 762,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15338,
+      "completionTokens": 52,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 1670,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23028,
+      "completionTokens": 201,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "gdrive_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 4409,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 27568,
+      "completionTokens": 703,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_dir",
+        "list_dir",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 1138,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13307,
+      "completionTokens": 133,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 940,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18857,
+      "completionTokens": 41,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status",
+        "git_diff"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 1703,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22739,
+      "completionTokens": 203,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "task_history"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 1195,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13489,
+      "completionTokens": 158,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 631,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12186,
+      "completionTokens": 28,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 980,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22586,
+      "completionTokens": 28,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": false,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 1780,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20157,
+      "completionTokens": 195,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 1806,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17704,
+      "completionTokens": 146,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "list_schedules",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 1129,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17284,
+      "completionTokens": 114,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 1262,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 211,
+      "completionTokens": 119,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 2109,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 218,
+      "completionTokens": 214,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 6654,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 214,
+      "completionTokens": 1007,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 7901,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 217,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "minimax-m3p1-flash",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 3735,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 214,
+      "completionTokens": 475,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 2738,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15480,
+      "completionTokens": 181,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 1494,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11796,
+      "completionTokens": 69,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 2090,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11798,
+      "completionTokens": 85,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 2360,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20933,
+      "completionTokens": 178,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 3326,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20924,
+      "completionTokens": 274,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 4363,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11796,
+      "completionTokens": 554,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 3610,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11790,
+      "completionTokens": 443,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 3286,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20937,
+      "completionTokens": 101,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 1734,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11794,
+      "completionTokens": 74,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 3135,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18359,
+      "completionTokens": 176,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "shell_exec",
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1414,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18354,
+      "completionTokens": 61,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 3375,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19640,
+      "completionTokens": 267,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 1818,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11792,
+      "completionTokens": 44,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 3050,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12869,
+      "completionTokens": 26,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 2017,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 27486,
+      "completionTokens": 36,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1907,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17258,
+      "completionTokens": 160,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 1623,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12896,
+      "completionTokens": 148,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 2146,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11792,
+      "completionTokens": 112,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1516,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17252,
+      "completionTokens": 67,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1825,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11793,
+      "completionTokens": 138,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 3020,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15496,
+      "completionTokens": 242,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 2366,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20876,
+      "completionTokens": 183,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 2030,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14913,
+      "completionTokens": 56,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 3648,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22495,
+      "completionTokens": 318,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_research",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 3490,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 26993,
+      "completionTokens": 277,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 2517,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12888,
+      "completionTokens": 138,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "intel_baseline"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 1718,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18359,
+      "completionTokens": 66,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 5156,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22207,
+      "completionTokens": 355,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 2009,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13071,
+      "completionTokens": 136,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 1344,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11788,
+      "completionTokens": 33,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1376,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22032,
+      "completionTokens": 59,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 2832,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19643,
+      "completionTokens": 159,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 3467,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17256,
+      "completionTokens": 272,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "project_list",
+        "list_dir"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 1626,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16793,
+      "completionTokens": 78,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 4611,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 24,
+      "completionTokens": 336,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 6678,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 32,
+      "completionTokens": 851,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 8313,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 30,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 8739,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 31,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3-flash",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 7939,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 31,
+      "completionTokens": 566,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 7432,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15480,
+      "completionTokens": 344,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 1697,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11796,
+      "completionTokens": 65,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 5198,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11798,
+      "completionTokens": 81,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 3517,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20933,
+      "completionTokens": 143,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 6308,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20924,
+      "completionTokens": 369,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 6410,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11796,
+      "completionTokens": 486,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 1916,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11790,
+      "completionTokens": 80,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 2593,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20937,
+      "completionTokens": 161,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 1635,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11794,
+      "completionTokens": 97,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 3046,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18359,
+      "completionTokens": 141,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status",
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 50076,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18354,
+      "completionTokens": 62,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 10560,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19640,
+      "completionTokens": 769,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 2048,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11792,
+      "completionTokens": 39,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 1199,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12869,
+      "completionTokens": 31,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 2877,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 27486,
+      "completionTokens": 64,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 3056,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17258,
+      "completionTokens": 234,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 33969,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12896,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 2836,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11792,
+      "completionTokens": 231,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1051,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17252,
+      "completionTokens": 69,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 2237,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11793,
+      "completionTokens": 148,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 5541,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15496,
+      "completionTokens": 372,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 4314,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20876,
+      "completionTokens": 208,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 1413,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14913,
+      "completionTokens": 57,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 8083,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22495,
+      "completionTokens": 637,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "task_history"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 7720,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 26993,
+      "completionTokens": 570,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 2845,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12888,
+      "completionTokens": 130,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "intel_baseline"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 1523,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18359,
+      "completionTokens": 63,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 4757,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22207,
+      "completionTokens": 272,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 1860,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13071,
+      "completionTokens": 146,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 787,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11788,
+      "completionTokens": 31,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1440,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22032,
+      "completionTokens": 36,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 4781,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19643,
+      "completionTokens": 389,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 5428,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17256,
+      "completionTokens": 555,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "list_schedules",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 2462,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16793,
+      "completionTokens": 145,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 5240,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 24,
+      "completionTokens": 397,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 11750,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 32,
+      "completionTokens": 959,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 11821,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 30,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 15857,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 31,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "glm-5p3",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 7444,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 31,
+      "completionTokens": 818,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 2074,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16000,
+      "completionTokens": 172,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 1557,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12248,
+      "completionTokens": 163,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 1303,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12251,
+      "completionTokens": 86,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 2688,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21638,
+      "completionTokens": 152,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 2186,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21630,
+      "completionTokens": 200,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 1587,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12251,
+      "completionTokens": 182,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 1435,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12244,
+      "completionTokens": 138,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 1964,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21606,
+      "completionTokens": 183,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 2689,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12247,
+      "completionTokens": 310,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 1673,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19010,
+      "completionTokens": 107,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status",
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1944,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19004,
+      "completionTokens": 177,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "glob",
+        "list_dir"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 2417,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20334,
+      "completionTokens": 190,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 878,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12245,
+      "completionTokens": 59,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 1567,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13369,
+      "completionTokens": 106,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 1086,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 28388,
+      "completionTokens": 60,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1662,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17863,
+      "completionTokens": 171,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 2010,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13395,
+      "completionTokens": 196,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 2858,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12247,
+      "completionTokens": 267,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1196,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17856,
+      "completionTokens": 82,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1298,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12248,
+      "completionTokens": 137,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 1392,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16017,
+      "completionTokens": 137,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 2485,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21602,
+      "completionTokens": 252,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 1542,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15461,
+      "completionTokens": 169,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 2527,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23250,
+      "completionTokens": 330,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list",
+        "list_dir"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 2819,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 27869,
+      "completionTokens": 228,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 1351,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13387,
+      "completionTokens": 136,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "intel_baseline"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 1675,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19010,
+      "completionTokens": 98,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 2406,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22954,
+      "completionTokens": 283,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 1569,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13569,
+      "completionTokens": 156,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 1294,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12240,
+      "completionTokens": 40,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1859,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22748,
+      "completionTokens": 41,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 2535,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20336,
+      "completionTokens": 209,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 2786,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17859,
+      "completionTokens": 242,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 1988,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17464,
+      "completionTokens": 127,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 2648,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 45,
+      "completionTokens": 298,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 4461,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 53,
+      "completionTokens": 575,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 7664,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 48,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 10047,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 50,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "deepseek-v4p1-flash",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 1849,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 49,
+      "completionTokens": 170,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 10649,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14445,
+      "completionTokens": 322,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 4384,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11048,
+      "completionTokens": 130,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 4854,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11054,
+      "completionTokens": 157,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 8277,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19603,
+      "completionTokens": 267,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 8598,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19597,
+      "completionTokens": 291,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 9858,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11051,
+      "completionTokens": 364,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 4368,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11046,
+      "completionTokens": 130,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 5664,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19488,
+      "completionTokens": 180,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 4264,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11048,
+      "completionTokens": 140,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 4068,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17204,
+      "completionTokens": 85,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 4819,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17197,
+      "completionTokens": 104,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 12204,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18424,
+      "completionTokens": 385,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 3060,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11047,
+      "completionTokens": 75,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 2510,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12074,
+      "completionTokens": 58,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 4291,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 25746,
+      "completionTokens": 71,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 7088,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16104,
+      "completionTokens": 289,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 9369,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12082,
+      "completionTokens": 308,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "intel_query"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 9729,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11049,
+      "completionTokens": 294,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 3409,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16095,
+      "completionTokens": 110,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 5976,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11048,
+      "completionTokens": 171,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 8048,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14491,
+      "completionTokens": 228,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 8467,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19369,
+      "completionTokens": 256,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 4730,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14027,
+      "completionTokens": 108,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 17246,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21091,
+      "completionTokens": 574,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_research",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 8952,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 25222,
+      "completionTokens": 287,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 8916,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12074,
+      "completionTokens": 307,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 3392,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17203,
+      "completionTokens": 106,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 13778,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20815,
+      "completionTokens": 390,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 8932,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12266,
+      "completionTokens": 283,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 2503,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11041,
+      "completionTokens": 65,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 3601,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20585,
+      "completionTokens": 77,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 8988,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18425,
+      "completionTokens": 298,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 7721,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16100,
+      "completionTokens": 237,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 7047,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15757,
+      "completionTokens": 211,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 13144,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 104,
+      "completionTokens": 413,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 18162,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 114,
+      "completionTokens": 575,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 30610,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 107,
+      "completionTokens": 1005,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 30294,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 112,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "kimi-k3",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 19333,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 111,
+      "completionTokens": 743,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 3257,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16212,
+      "completionTokens": 242,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 2296,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12340,
+      "completionTokens": 149,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 1488,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12341,
+      "completionTokens": 81,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 3188,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21832,
+      "completionTokens": 158,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 2859,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21824,
+      "completionTokens": 182,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 4558,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12339,
+      "completionTokens": 437,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 2286,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12333,
+      "completionTokens": 157,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 2647,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21847,
+      "completionTokens": 158,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 2044,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12337,
+      "completionTokens": 158,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 2136,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19156,
+      "completionTokens": 106,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status",
+        "shell_exec"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1893,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19153,
+      "completionTokens": 140,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read",
+        "list_dir"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 2885,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20470,
+      "completionTokens": 185,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 1294,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12334,
+      "completionTokens": 50,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 1267,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13442,
+      "completionTokens": 32,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 1807,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 28641,
+      "completionTokens": 47,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1979,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17977,
+      "completionTokens": 159,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 2982,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13482,
+      "completionTokens": 270,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 1682,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12337,
+      "completionTokens": 94,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1834,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17974,
+      "completionTokens": 66,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1887,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12335,
+      "completionTokens": 132,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 2984,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16235,
+      "completionTokens": 234,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_list",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 3510,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 21716,
+      "completionTokens": 384,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image",
+        "project_list"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 1829,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15553,
+      "completionTokens": 83,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 4321,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23457,
+      "completionTokens": 355,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search",
+        "gdrive_list",
+        "gemini_research"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 3491,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 28098,
+      "completionTokens": 154,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_audio_overview"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 2137,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13474,
+      "completionTokens": 107,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query",
+        "web_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 2310,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19158,
+      "completionTokens": 120,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status",
+        "git_diff"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 3378,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23139,
+      "completionTokens": 212,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "task_history"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 3488,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 13647,
+      "completionTokens": 223,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history",
+        "list_schedules"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 1057,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12332,
+      "completionTokens": 33,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1692,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23023,
+      "completionTokens": 33,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 3418,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 20474,
+      "completionTokens": 177,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "list_schedules",
+        "jarvis_file_search",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 2694,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17977,
+      "completionTokens": 216,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search",
+        "list_schedules",
+        "user_fact_list"
+      ],
+      "argsParseOk": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 2498,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17590,
+      "completionTokens": 121,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list",
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true,
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 2162,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 63,
+      "completionTokens": 173,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 1162,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 72,
+      "completionTokens": 90,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 6602,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 68,
+      "completionTokens": 682,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 2455,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 69,
+      "completionTokens": 187,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "qwen3p8-max",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 1738,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 71,
+      "completionTokens": 125,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-web-search-01",
+      "kind": "tool",
+      "latencyMs": 1948,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12948,
+      "completionTokens": 115,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-web-search-02",
+      "kind": "tool",
+      "latencyMs": 866,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9979,
+      "completionTokens": 66,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-web-read-01",
+      "kind": "tool",
+      "latencyMs": 831,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9981,
+      "completionTokens": 64,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gmail-01",
+      "kind": "tool",
+      "latencyMs": 1766,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17664,
+      "completionTokens": 151,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-calendar-01",
+      "kind": "tool",
+      "latencyMs": 2332,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17656,
+      "completionTokens": 226,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "calendar_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-northstar-create-01",
+      "kind": "tool",
+      "latencyMs": 3377,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9979,
+      "completionTokens": 464,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_write"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-northstar-list-01",
+      "kind": "tool",
+      "latencyMs": 1196,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9973,
+      "completionTokens": 118,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-northstar-no-create-01",
+      "kind": "tool",
+      "latencyMs": 1655,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17561,
+      "completionTokens": 66,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-user-fact-01",
+      "kind": "tool",
+      "latencyMs": 908,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9976,
+      "completionTokens": 69,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-shell-01",
+      "kind": "tool",
+      "latencyMs": 841,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15538,
+      "completionTokens": 34,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-file-read-01",
+      "kind": "tool",
+      "latencyMs": 1476,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15535,
+      "completionTokens": 103,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "file_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-schedule-01",
+      "kind": "tool",
+      "latencyMs": 4813,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16634,
+      "completionTokens": 564,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-project-01",
+      "kind": "tool",
+      "latencyMs": 842,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9975,
+      "completionTokens": 67,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "project_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-skill-01",
+      "kind": "tool",
+      "latencyMs": 1007,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 10974,
+      "completionTokens": 65,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "skill_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gdrive-01",
+      "kind": "tool",
+      "latencyMs": 2249,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 23215,
+      "completionTokens": 65,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gdrive_list"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-chart-01",
+      "kind": "tool",
+      "latencyMs": 1944,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14594,
+      "completionTokens": 177,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-multi-tool-01",
+      "kind": "tool",
+      "latencyMs": 1198,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 10899,
+      "completionTokens": 143,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-greeting-01",
+      "kind": "tool",
+      "latencyMs": 1312,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9976,
+      "completionTokens": 108,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "user_fact_set"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-rss-01",
+      "kind": "tool",
+      "latencyMs": 1266,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14590,
+      "completionTokens": 97,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "rss_read"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-delete-01",
+      "kind": "tool",
+      "latencyMs": 1535,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9976,
+      "completionTokens": 197,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-followup-01",
+      "kind": "tool",
+      "latencyMs": 1398,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12967,
+      "completionTokens": 100,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "web_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-image-gen-01",
+      "kind": "tool",
+      "latencyMs": 1836,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 17502,
+      "completionTokens": 177,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_image"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gemini-upload-01",
+      "kind": "tool",
+      "latencyMs": 1106,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 12724,
+      "completionTokens": 67,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "gemini_upload"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gemini-research-01",
+      "kind": "tool",
+      "latencyMs": 2076,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 19024,
+      "completionTokens": 116,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "jarvis_file_search"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gemini-podcast-01",
+      "kind": "tool",
+      "latencyMs": 2606,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 22786,
+      "completionTokens": 173,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-intel-query-01",
+      "kind": "tool",
+      "latencyMs": 1624,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 10891,
+      "completionTokens": 122,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "intel_query"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-git-commit-01",
+      "kind": "tool",
+      "latencyMs": 2652,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 15540,
+      "completionTokens": 203,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "git_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-gmail-send-01",
+      "kind": "tool",
+      "latencyMs": 4043,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18754,
+      "completionTokens": 324,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-task-history-01",
+      "kind": "tool",
+      "latencyMs": 1026,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 11070,
+      "completionTokens": 125,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "task_history"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-vps-status-01",
+      "kind": "tool",
+      "latencyMs": 771,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 9971,
+      "completionTokens": 52,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-vps-status-02",
+      "kind": "tool",
+      "latencyMs": 1340,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 18502,
+      "completionTokens": 53,
+      "finishReason": "tool_calls",
+      "toolCalls": [
+        "vps_status"
+      ],
+      "argsParseOk": [
+        true
+      ],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-schedule-task-01",
+      "kind": "tool",
+      "latencyMs": 3549,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 16636,
+      "completionTokens": 398,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-dashboard-01",
+      "kind": "tool",
+      "latencyMs": 3074,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14594,
+      "completionTokens": 330,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "ts-screenshot-01",
+      "kind": "tool",
+      "latencyMs": 1225,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 14353,
+      "completionTokens": 99,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false,
+      "score": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "chat-01",
+      "kind": "chat",
+      "latencyMs": 867,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 83,
+      "completionTokens": 136,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "chat-02",
+      "kind": "chat",
+      "latencyMs": 673,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 91,
+      "completionTokens": 98,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "chat-03",
+      "kind": "chat",
+      "latencyMs": 5796,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 87,
+      "completionTokens": 1024,
+      "finishReason": "length",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "chat-04",
+      "kind": "chat",
+      "latencyMs": 5102,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 90,
+      "completionTokens": 784,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    },
+    {
+      "model": "gpt-oss-120b",
+      "caseId": "chat-05",
+      "kind": "chat",
+      "latencyMs": 1006,
+      "httpStatus": 200,
+      "errorClass": null,
+      "error": null,
+      "promptTokens": 88,
+      "completionTokens": 162,
+      "finishReason": "stop",
+      "toolCalls": [],
+      "argsParseOk": [],
+      "reasoningContent": true,
+      "thinkInContent": false
+    }
+  ]
+}
