@@ -143,3 +143,6 @@
 - **Mistake:** the 4ah brief listed every consumer list but not `registry.test.ts`; the builder ran 12 scoped files and the lock test was not one of them → a new-tool brief names the lock tests to run by path (registry, description-lint, rule-of-two).
 - **Better:** a paid endpoint ships cheap by default (`no-content`, key-gated, cost named in the description) and stays out of anonymous-sender allow-lists; the eval gate line goes to the operator with the deploy line, never run from here.
 - **Mistake:** promised a parameter-level proof ("Jarvis uses `selector`") on a signal the harness never persists (trace rows, `runs.tool_calls` and scope telemetry store tool NAMES only) → before promising any proof, name the row, column or journal line that will carry it; if none exists, the proof is "tool ran" and say so.
+
+## 2026-10-23 — 4ag ruling: Jarvis spoke in the dev-session register
+- **Better:** every proof command handed to the operator for Jarvis carries the ruling line, so the decision sits in the same thread window as the request; Jarvis's project README stays a stable card (hashes, PIDs, snapshots → history.md), because an injected README full of build facts is what makes it talk like a deploy session.
