@@ -3781,8 +3781,16 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       message: {
         usage: { input_tokens: 100, output_tokens: 20 },
         content: [
-          { type: "tool_use", name: "mcp__jarvis__web_search" },
-          { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          {
+            type: "tool_use",
+            name: "mcp__jarvis__web_search",
+            input: { query: "q" },
+          },
+          {
+            type: "tool_use",
+            name: "mcp__jarvis__jarvis_file_read",
+            input: { path: "p" },
+          },
         ],
       },
     },
@@ -3833,6 +3841,11 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       round: 1,
     });
     expect(calls[1]).toMatchObject({ tool: "jarvis_file_read", round: 1 });
+    expect(calls[0].attrs).toEqual({ arg_keys: ["query"] });
+    expect(calls[1].attrs).toEqual({ arg_keys: ["path"] });
+    // arg_keys belong to tool.called rows only, never to turn.completed.
+    expect(calls[2].attrs?.arg_keys).toBeUndefined();
+    expect(calls[3].attrs?.arg_keys).toBeUndefined();
     // Turn tokens are per-turn (incl. cache read), not cumulative.
     expect(calls[2]).toMatchObject({ round: 1, tokensIn: 100, tokensOut: 20 });
     expect(calls[3]).toMatchObject({
@@ -3851,6 +3864,207 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       toolNames: [],
     });
     expect(emitTraceMock).not.toHaveBeenCalled();
+  });
+
+  // Queue 4ah-c (ruling 2026-10-23): tool.called rows carry the KEY NAMES of
+  // the tool_use input, never the values.
+  const toolUseTurn = (blocks: Record<string, unknown>[]): MockMessage[] => [
+    {
+      type: "assistant",
+      message: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        content: blocks.map((b) => ({ type: "tool_use", ...b })),
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      result: "ok",
+      num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  ];
+  const toolCalledEvents = async (blocks: Record<string, unknown>[]) => {
+    mockMessages.value = toolUseTurn(blocks);
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-ak" },
+    });
+    return emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "tool.called");
+  };
+
+  it("tool.called attrs carry the input's key names in order, never its values", async () => {
+    const [ev] = await toolCalledEvents([
+      {
+        name: "mcp__jarvis__web_read",
+        input: {
+          url: "https://example.com/zz-private-path",
+          selector: "#zz-secret",
+          opts: { token: "zz-nested" },
+        },
+      },
+    ]);
+    expect(ev.tool).toBe("web_read");
+    expect(ev.attrs).toEqual({ arg_keys: ["url", "selector", "opts"] });
+    const json = JSON.stringify(ev.attrs);
+    expect(json).not.toContain("example.com");
+    expect(json).not.toContain("zz-secret");
+    expect(json).not.toContain("zz-private-path");
+    expect(json).not.toContain("zz-nested");
+    expect(json).not.toContain("token");
+  });
+
+  it("tool.called with an empty input object carries arg_keys: []", async () => {
+    const [ev] = await toolCalledEvents([
+      { name: "mcp__jarvis__web_search", input: {} },
+    ]);
+    expect(ev.attrs).toEqual({ arg_keys: [] });
+  });
+
+  it("tool.called with missing / non-object input carries no attrs", async () => {
+    const evs = await toolCalledEvents([
+      { name: "mcp__jarvis__a" },
+      { name: "mcp__jarvis__b", input: null },
+      { name: "mcp__jarvis__c", input: "zz-string-input" },
+      { name: "mcp__jarvis__d", input: 7 },
+      { name: "mcp__jarvis__e", input: ["zz-array-item"] },
+    ]);
+    expect(evs.map((e) => e.tool)).toEqual(["a", "b", "c", "d", "e"]);
+    for (const ev of evs) expect(ev).not.toHaveProperty("attrs");
+  });
+
+  it("tool.called lists only the input's own keys, never inherited ones", async () => {
+    const input = Object.create({ zz_inherited: 1 }) as Record<string, unknown>;
+    input.own = 2;
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs).toEqual({ arg_keys: ["own"] });
+  });
+
+  it("tool.called caps arg_keys at 32 and flags arg_keys_truncated", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [`k${i}`, `zz-v${i}`]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs.arg_keys).toEqual(
+      Array.from({ length: 32 }, (_, i) => `k${i}`),
+    );
+    expect(ev.attrs.arg_keys_truncated).toBe(true);
+    expect(Object.keys(ev.attrs).sort()).toEqual([
+      "arg_keys",
+      "arg_keys_truncated",
+    ]);
+  });
+
+  it("tool.called with exactly 32 keys keeps all and sets no truncated flag", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 32 }, (_, i) => [`k${i}`, i]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs.arg_keys).toHaveLength(32);
+    expect(ev.attrs).not.toHaveProperty("arg_keys_truncated");
+  });
+
+  it("tool.called cuts each key to 48 chars", async () => {
+    const longKey = "q".repeat(100);
+    const [ev] = await toolCalledEvents([
+      { name: "mcp__jarvis__x", input: { [longKey]: 1, short: 2 } },
+    ]);
+    expect(ev.attrs).toEqual({ arg_keys: ["q".repeat(48), "short"] });
+  });
+
+  it("worst case (40 keys of 100 chars) is stored whole by the real emitTraceEvent, no truncated wrapper", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [
+        String(i).padStart(2, "0") + "w".repeat(98),
+        i,
+      ]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    const actual = await vi.importActual<
+      typeof import("../observability/task-trace.js")
+    >("../observability/task-trace.js");
+    const { initDatabase, closeDatabase } = await import("../db/index.js");
+    initDatabase(":memory:");
+    try {
+      actual.emitTraceEvent(ev);
+      const [row] = actual.getTrace(ev.taskId);
+      expect(row.attrs!.length).toBeLessThan(actual.ATTRS_MAX_CHARS);
+      const stored = JSON.parse(row.attrs!);
+      expect(stored).not.toHaveProperty("truncated");
+      expect(stored.arg_keys).toHaveLength(32);
+      for (const k of stored.arg_keys) expect(k).toHaveLength(48);
+      expect(stored.arg_keys_truncated).toBe(true);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+  it("a second assistant turn's tool.called row carries the turn-2 keys", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          id: "msg-1",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__jarvis__web_read",
+              input: { url: "u" },
+            },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          id: "msg-2",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__jarvis__web_search",
+              input: { query: "q", limit: 3 },
+            },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 2,
+        usage: { input_tokens: 2, output_tokens: 2 },
+      },
+    ];
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-ak2" },
+    });
+    const evs = emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "tool.called");
+    expect(evs.map((e) => [e.round, e.tool, e.attrs])).toEqual([
+      [1, "web_read", { arg_keys: ["url"] }],
+      [2, "web_search", { arg_keys: ["query", "limit"] }],
+    ]);
+  });
+
+  it("two tool_use blocks in one turn each keep their own keys", async () => {
+    const evs = await toolCalledEvents([
+      { name: "mcp__jarvis__web_read", input: { url: "u", selector: "s" } },
+      { name: "mcp__jarvis__web_search", input: { query: "q" } },
+    ]);
+    expect(evs.map((e) => [e.tool, e.attrs])).toEqual([
+      ["web_read", { arg_keys: ["url", "selector"] }],
+      ["web_search", { arg_keys: ["query"] }],
+    ]);
   });
 
   // V8.1 gate instrumentation (ruling 2026-10-06): per-turn cache split.

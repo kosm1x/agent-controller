@@ -200,6 +200,32 @@ function finalTurnBodyLength(text: string): number {
   return text.slice(0, end).trim().length;
 }
 
+/** Queue 4ah-c: caps for the `tool.called` trace row's `arg_keys`. 32 keys
+ *  of 48 chars + the truncated flag stay under task-trace's ATTRS_MAX_CHARS
+ *  (2,000), so a worst-case row is never stored as a `truncated` wrapper. */
+const TRACE_ARG_KEYS_MAX = 32;
+const TRACE_ARG_KEY_MAX_CHARS = 48;
+
+/**
+ * `tool.called` trace attrs (operator ruling 2026-10-23): the KEY NAMES of a
+ * tool_use `input`, in insertion order — values NEVER leave this function.
+ * Non-object / array / null input → undefined (the row carries no attrs).
+ */
+function toolArgKeysAttrs(
+  input: unknown,
+): Record<string, unknown> | undefined {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return undefined;
+  }
+  const keys = Object.keys(input);
+  const argKeys = keys
+    .slice(0, TRACE_ARG_KEYS_MAX)
+    .map((k) => k.slice(0, TRACE_ARG_KEY_MAX_CHARS));
+  return keys.length > TRACE_ARG_KEYS_MAX
+    ? { arg_keys: argKeys, arg_keys_truncated: true }
+    : { arg_keys: argKeys };
+}
+
 /**
  * Concurrency is decided here, not by editing readOnlyHint (which feeds the
  * Rule-of-Two resolver). MCP-bridged tools stay serial: the browser server
@@ -944,7 +970,8 @@ export async function queryClaudeSdk(opts: {
   /**
    * Task-trace correlation (V8.5 Phase 6). When set, every assistant turn
    * emits `turn.completed` (turn tokens + wall-clock latency) and every
-   * tool_use block emits `tool.called` (round + bare tool name) to
+   * tool_use block emits `tool.called` (round + bare tool name +
+   * `attrs.arg_keys` = the input's key names, never values) to
    * task_trace_events. Unset (all non-task callers: chat fast-path,
    * briefing, critics) = zero overhead. Emits are best-effort by contract —
    * a trace failure never fails the query.
@@ -1422,13 +1449,18 @@ export async function queryClaudeSdk(opts: {
         // from turnUsage (per-call, not cumulative).
         if (opts.trace) {
           const turnLatencyMs = Date.now() - lastTurnEndedAt;
-          for (const tool of toolCallNames.slice(toolCountBeforeTurn)) {
+          // Queue 4ah-c (ruling 2026-10-23): each row carries the KEY NAMES
+          // of its own tool_use input (toolCallsWithArgs is index-aligned
+          // with toolCallNames), never the values.
+          for (let i = toolCountBeforeTurn; i < toolCallNames.length; i++) {
+            const attrs = toolArgKeysAttrs(toolCallsWithArgs[i]?.input);
             emitTraceEvent({
               taskId: opts.trace.taskId,
               runId: opts.trace.runId,
               name: "tool.called",
               round: assistantTurns,
-              tool,
+              tool: toolCallNames[i],
+              ...(attrs ? { attrs } : {}),
             });
           }
           emitTraceEvent({

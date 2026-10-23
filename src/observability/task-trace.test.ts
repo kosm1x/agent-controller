@@ -83,6 +83,19 @@ describe("emitTraceEvent / getTrace", () => {
     expect(getTrace("ghost")).toEqual([]);
   });
 
+  it("round-trips tool.called arg_keys attrs (queue 4ah-c)", () => {
+    emitTraceEvent({
+      taskId: "t-ak",
+      name: "tool.called",
+      round: 1,
+      tool: "web_read",
+      attrs: { arg_keys: ["url", "selector"] },
+    });
+    const [row] = getTrace("t-ak");
+    expect(row.tool).toBe("web_read");
+    expect(JSON.parse(row.attrs!)).toEqual({ arg_keys: ["url", "selector"] });
+  });
+
   it("caps oversized attrs instead of storing them whole", () => {
     emitTraceEvent({
       taskId: "t-big",
