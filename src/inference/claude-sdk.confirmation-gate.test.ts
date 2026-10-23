@@ -61,6 +61,7 @@ import {
   wrapToolCached,
   queryClaudeSdk,
   PENDING_TURN_ENDED_ABORT_REASON,
+  pendingSetListenerCount,
 } from "./claude-sdk.js";
 import { SecretScrubUnavailableError } from "./adapter.js";
 import { providerMetrics } from "./adapter-openai.js";
@@ -861,7 +862,7 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
     sdkQuery.mockReset();
   });
 
-  it("the second call returns the refusal AND aborts the query with our reason; the run ends clean with the text so far", async () => {
+  it("the second call returns the refusal AND aborts the query with our reason; the run ends clean without the pre-card text", async () => {
     const metrics = vi.spyOn(providerMetrics, "record");
     const seen: Seen = {};
     scripted(seen, "Voy a borrar el post 7. ¿Procedo?", oneMoreCall(seen));
@@ -874,8 +875,10 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
     expect(PENDING_TURN_ENDED_ABORT_REASON).toBe(
       "pending_confirmation_turn_ended",
     );
-    // A clean end: the model's text, no abort/timeout marker, no failure.
-    expect(result.text).toBe("Voy a borrar el post 7. ¿Procedo?");
+    // A clean end: no abort/timeout marker, no failure. The text streamed
+    // before the gated call is cut (3r residual): no closing turn → empty,
+    // the fast runner shows the card.
+    expect(result.text).toBe("");
     expect(metrics).toHaveBeenLastCalledWith(
       expect.any(String),
       expect.objectContaining({ success: true }),
@@ -978,7 +981,8 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
     expect(seen.abortedAt).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
     expect(JSON.parse(seen.texts!.at(-1)!).error).toContain("Tu turno terminó");
     expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
-    expect(result.text).toBe("Voy a borrar el post 7. ¿Procedo?");
+    // Pre-card text is cut (3r residual); no closing turn → empty.
+    expect(result.text).toBe("");
     expect(ctx.getPendingConfirmation()!.items).toHaveLength(CONFIRMATION_LIST_MAX);
     expect(reg.execute).not.toHaveBeenCalled();
   });
@@ -998,6 +1002,196 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
     expect(JSON.parse(seen.texts![1]).error).toContain("Tu turno terminó");
     expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
     expect(reg.execute).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 3r residual: a two-turn script. Turn 1 streams `turn1` and makes the
+   * gated call (the card opens); turn 2 streams `turn2` (null = none), makes
+   * the optional `joinCard` gated call, then an UNGATED call that ends the
+   * turn. `onAbort` runs between the abort and the SDK's throw.
+   */
+  function twoTurns(
+    seen: Seen,
+    turn1: string,
+    turn2: string | null,
+    opts: { joinCard?: boolean; onAbort?: () => void } = {},
+  ) {
+    sdkQuery.mockImplementationOnce(((args: {
+      options: { abortController: AbortController };
+    }) => {
+      const ac = args.options.abortController;
+      seen.controller = ac;
+      return (async function* () {
+        if (turn1) yield assistantText(turn1);
+        await call("wp_delete", { id: 7 });
+        if (turn2 !== null) yield assistantText(turn2);
+        if (opts.joinCard) await call("gmail_send", { to: "a@b.com" });
+        seen.refusal = await call("web_search", { q: "x" });
+        seen.reason = ac.signal.reason;
+        if (ac.signal.aborted) {
+          opts.onAbort?.();
+          throw Object.assign(new Error("Claude Code process aborted by user"), {
+            name: "AbortError",
+          });
+        }
+        yield {
+          type: "result",
+          subtype: "success",
+          result: "SIGUIÓ EL LOOP",
+          num_turns: 3,
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0.001,
+          duration_ms: 10,
+        };
+      })();
+    }) as never);
+  }
+  const gatedDecisions = () =>
+    emitTraceMock.mock.calls
+      .map(([e]) => e as { name: string; attrs?: { decision?: string } })
+      .filter((e) => e.name === "tool.gated")
+      .map((e) => e.attrs?.decision);
+
+  it("3r residual: the turn end delivers only the closing turn, never the narration before the gated call", async () => {
+    const metrics = vi.spyOn(providerMetrics, "record");
+    const seen: Seen = {};
+    twoTurns(
+      seen,
+      "Voy a publicar el tweet ahora.",
+      "Necesito tu confirmación para publicar. ¿Procedo?",
+    );
+    const result = await run(fastChatRoot("t-3r-cut"));
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(result.text).toBe(
+      "Necesito tu confirmación para publicar. ¿Procedo?",
+    );
+    expect(metrics).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ success: true }),
+      expect.any(String),
+    );
+    expect(gatedDecisions()).toEqual([
+      "confirmation_required",
+      "refused_turn_ended",
+    ]);
+    expect(reg.execute).not.toHaveBeenCalled();
+    metrics.mockRestore();
+  });
+
+  it("3r residual: an empty closing turn stays empty (the fast runner fills the card), even with narration before the card", async () => {
+    const seen: Seen = {};
+    twoTurns(seen, "Voy a publicar el tweet ahora.", null);
+    const result = await run(fastChatRoot("t-3r-cut-empty"));
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(result.text).toBe("");
+  });
+
+  it("3r residual: a gated call that JOINS the card does not move the cut — the closing turn is delivered whole", async () => {
+    const seen: Seen = {};
+    const ctx = fastChatRoot("t-3r-cut-join");
+    twoTurns(
+      seen,
+      "Voy a publicar el tweet ahora.",
+      "Necesito tu confirmación para publicar. ¿Procedo?",
+      { joinCard: true },
+    );
+    const result = await run(ctx);
+    expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+    expect(result.text).toBe(
+      "Necesito tu confirmación para publicar. ¿Procedo?",
+    );
+    expect(gatedDecisions()).toEqual([
+      "confirmation_required",
+      "queued_with_pending",
+      "refused_turn_ended",
+    ]);
+    expect(ctx.getPendingConfirmation()!.items.map((c) => c.toolName)).toEqual([
+      "wp_delete",
+      "gmail_send",
+    ]);
+  });
+
+  it("3r residual: the 15-min timer firing between the gate's abort and the unwind does not flip the turn end to a failure", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const metrics = vi.spyOn(providerMetrics, "record");
+    try {
+      const seen: Seen = {};
+      twoTurns(seen, "", null, {
+        onAbort: () => vi.advanceTimersByTime(15 * 60_000),
+      });
+      const result = await run(fastChatRoot("t-3r-cut-timer"));
+      expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+      expect(result.text).toBe("");
+      expect(metrics).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({ success: true }),
+        expect.any(String),
+      );
+    } finally {
+      metrics.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("3r residual: a late timer after the gate's abort leaves a non-empty closing turn verbatim — no timeout banner, success", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const metrics = vi.spyOn(providerMetrics, "record");
+    try {
+      const seen: Seen = {};
+      twoTurns(
+        seen,
+        "Voy a publicar el tweet ahora.",
+        "Necesito tu confirmación para publicar. ¿Procedo?",
+        { onAbort: () => vi.advanceTimersByTime(15 * 60_000) },
+      );
+      const result = await run(fastChatRoot("t-3r-cut-timer-closer"));
+      expect(seen.reason).toBe(PENDING_TURN_ENDED_ABORT_REASON);
+      expect(result.text).toBe(
+        "Necesito tu confirmación para publicar. ¿Procedo?",
+      );
+      expect(result.text).not.toContain("[timeout");
+      expect(metrics).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({ success: true }),
+        expect.any(String),
+      );
+    } finally {
+      metrics.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("3r residual: a finished query releases its pending-set listener — the run holds only the live query's", async () => {
+    const ctx = fastChatRoot("t-3r-release");
+    const during: number[] = [];
+    const closeTurn = (n: number) => ({
+      type: "result",
+      subtype: "success",
+      result: `turno ${n}`,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      duration_ms: 10,
+    });
+    // Query 1 opens the card and closes its turn.
+    sdkQuery.mockImplementationOnce((() =>
+      (async function* () {
+        during.push(pendingSetListenerCount(ctx));
+        await call("wp_delete", { id: 7 });
+        yield closeTurn(1);
+      })()) as never);
+    // Query 2 of the same run.
+    sdkQuery.mockImplementationOnce((() =>
+      (async function* () {
+        during.push(pendingSetListenerCount(ctx));
+        yield closeTurn(2);
+      })()) as never);
+    await run(ctx);
+    expect(pendingSetListenerCount(ctx)).toBe(0);
+    await run(ctx);
+    expect(during).toEqual([1, 1]);
+    expect(pendingSetListenerCount(ctx)).toBe(0);
+    expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
   });
 
   it("an abort that is not ours keeps the abort classification (regression lock)", async () => {

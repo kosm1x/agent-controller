@@ -274,6 +274,32 @@ function registerLiveQuery(
   return () => set.delete(controller);
 }
 
+/**
+ * The run's live queries' "pending set" listeners: called once, when the gate
+ * opens the run's card, so each query marks where its closing turn starts
+ * (queue 3r residual).
+ */
+const pendingSetListeners = new WeakMap<TaskExecutionContext, Set<() => void>>();
+
+/** @internal Live "pending set" listeners of `ctx`'s run (test-only). */
+export function pendingSetListenerCount(ctx: TaskExecutionContext): number {
+  return pendingSetListeners.get(ctx)?.size ?? 0;
+}
+
+/** Call `onPendingSet` when `ctx`'s card is opened; returns the release. */
+function registerPendingSetListener(
+  ctx: TaskExecutionContext,
+  onPendingSet: () => void,
+): () => void {
+  let set = pendingSetListeners.get(ctx);
+  if (!set) {
+    set = new Set();
+    pendingSetListeners.set(ctx, set);
+  }
+  set.add(onPendingSet);
+  return () => set.delete(onPendingSet);
+}
+
 /** Tool result for any call after the run's pending confirmation (queue 3r). */
 function turnEndedRefusal(pendingTool: string): string {
   return JSON.stringify({
@@ -406,6 +432,9 @@ function gateSdkToolCall(
     return JSON.stringify({ error: gate.error });
   }
   ctx.setPendingConfirmation(name, args);
+  for (const onPendingSet of pendingSetListeners.get(ctx) ?? []) {
+    onPendingSet();
+  }
   trace("confirmation_required", ctx.taskId);
   return JSON.stringify({
     error: "CONFIRMATION_REQUIRED",
@@ -1155,6 +1184,8 @@ export async function queryClaudeSdk(opts: {
   const timeoutTimer = opts.unlimited
     ? undefined
     : setTimeout(() => {
+        // Queue 3r: an abort that already happened is never a timeout.
+        if (abortController.signal.aborted) return;
         console.warn(
           `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
         );
@@ -1361,6 +1392,14 @@ export async function queryClaudeSdk(opts: {
   const runCtx = currentExecutionContext();
   const releaseLiveQuery = runCtx
     ? registerLiveQuery(runCtx, abortController)
+    : () => {};
+  // Queue 3r residual: where the accumulator stood when the gate opened the
+  // run's card — the turn-ended path delivers only the text after it.
+  let pendingMark: number | null = null;
+  const releasePendingSet = runCtx
+    ? registerPendingSetListener(runCtx, () => {
+        pendingMark = streamingText.length;
+      })
     : () => {};
   const turnEndedByGate = (): boolean =>
     abortController.signal.reason === PENDING_TURN_ENDED_ABORT_REASON;
@@ -1720,19 +1759,25 @@ export async function queryClaudeSdk(opts: {
 
   clearTimeout(timeoutTimer);
   releaseLiveQuery();
+  releasePendingSet();
 
   // Queue 3r: the gate ended the turn after a pending confirmation — a
-  // working provider and a clean end. The text is what the model produced so
-  // far (may be empty: the fast runner then shows the confirmation card).
+  // working provider and a clean end. The text is the closing turn only:
+  // what the model streamed after the card opened, never the narration
+  // before the gated call (may be empty: the fast runner then shows the
+  // confirmation card).
   if (turnEndedByGate()) {
     providerOutcome = "success";
-    if (!resultText) resultText = streamingText;
+    if (!resultText) {
+      resultText = streamingText.slice(pendingMark ?? 0).trimStart();
+    }
   }
 
   // Timeout with zero content is always a failure signal regardless of
   // what the for-await loop classified it as — the provider couldn't
-  // answer within 15 minutes.
-  if (timedOut && !streamingText) {
+  // answer within 15 minutes. Not after the gate's turn end: the timer can
+  // still fire between that abort and the unwind (queue 3r residual).
+  if (timedOut && !streamingText && !turnEndedByGate()) {
     providerOutcome = "failure";
   }
 
@@ -1805,7 +1850,8 @@ export async function queryClaudeSdk(opts: {
 
   // If the loop ended without a "result" success message but streaming text
   // exists (e.g. abort signaled externally), fall back to streamed text.
-  if (!resultText && streamingText) {
+  // Not after the gate's turn end: an empty closing turn stays empty.
+  if (!resultText && streamingText && !turnEndedByGate()) {
     resultText = streamingText;
   }
 
