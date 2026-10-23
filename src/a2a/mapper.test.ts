@@ -47,6 +47,7 @@ function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
     updated_at: "2026-01-01T00:00:00",
     started_at: null,
     completed_at: null,
+    retry_count: 0,
     ...overrides,
   };
 }

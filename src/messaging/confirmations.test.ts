@@ -1151,7 +1151,7 @@ describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
       storePendingConfirmation(key, "gmail_send", args, summary);
     }
     _resetPendingConfirmationsForTests();
-    const resolver = vi.fn(() => {
+    const resolver = vi.fn((_threadKey: string) => {
       throw new Error("router gone");
     });
     expect(rearmPendingConfirmationsAtBoot(resolver, 2)).toEqual({ armed: 2, lapsed: 0 });

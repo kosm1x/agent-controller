@@ -653,6 +653,7 @@ describe("critic-named KB paths extend the re-author ledger (append-only)", () =
       retrieved_at: NOW,
     };
     vi.mocked(runCriticLoop).mockImplementation(async (input, deps) => {
+      if (input.judgmentId === undefined) throw new Error("no judgmentId");
       appendEvidenceRef(input.judgmentId, op); // another run's append, mid-loop
       reAuthored = await deps.reAuthor(input, CRITIQUE);
       return { ...approvedVerdict, iterations: 2 };

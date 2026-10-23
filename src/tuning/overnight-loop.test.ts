@@ -302,6 +302,13 @@ describe("detectPerCaseRegressions", () => {
       weight: 1.0,
       details: {},
     })),
+    reachability: {
+      casesExcluded: 0,
+      excludedCases: [],
+      slotsOffered: 0,
+      slotsNotRegistered: 0,
+      slotsScopedOut: 0,
+    },
     totalTokens: 0,
     estimatedCostUsd: 0,
     durationMs: 0,

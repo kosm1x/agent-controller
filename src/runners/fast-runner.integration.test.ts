@@ -14,6 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatMessage } from "../inference/adapter.js";
+import type { JmeRecallResult } from "../memory/jme.js";
+import type { RunnerOutput } from "./types.js";
 
 // `registerRunner` auto-fires on `fast-runner.ts` import — make it a no-op
 // so import doesn't pollute the dispatcher singleton in unrelated tests.
@@ -157,7 +159,9 @@ vi.mock("../jev/shadow-kb.js", () => ({ shadowKbRows: vi.fn() }));
 vi.mock("../jev/shadow.js", () => ({ shadowMemoryRecall: vi.fn() }));
 // The JME recall, so the memory shadow's inputs can be read. Empty by
 // default: the block is skipped, as it is today when embed() times out.
-const mockQueryMemory = vi.hoisted(() => vi.fn(async () => []));
+const mockQueryMemory = vi.hoisted(() =>
+  vi.fn<typeof import("../memory/jme.js").queryMemory>(async () => []),
+);
 vi.mock("../memory/jme.js", async () => ({
   queryMemory: mockQueryMemory,
   orderForInjection: <T>(facts: T[]) => facts,
@@ -211,6 +215,10 @@ import {
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
 const mockRecordRetry = vi.mocked(recordFastRetryOutcome);
+
+/** The structured output's `text`; undefined when the output is a plain string or absent. */
+const outputText = (r: RunnerOutput) =>
+  typeof r.output === "object" ? r.output.text : undefined;
 
 /** Default inferWithTools result shape — tests override fields they care about. */
 function makeInferResult(
@@ -633,11 +641,11 @@ describe("fastRunner.execute() — integration (R-4)", () => {
   });
 
   describe("Jev memory shadow wiring", () => {
-    const facts = [
+    const facts: JmeRecallResult[] = [
       {
         id: 7,
         factText: "el demo vive en vlmp-demo",
-        category: "fact",
+        category: "project",
         sourceTask: "t0",
         score: 0.9,
         ts: 1,
@@ -680,7 +688,7 @@ describe("fastRunner.execute() — integration (R-4)", () => {
   });
 
   describe("JME recall gate + data framing (hardening 2026-09-30)", () => {
-    const fact = {
+    const fact: JmeRecallResult = {
       id: 9,
       factText: "Fede prefers tables for competitive analysis",
       category: "preference",
@@ -941,7 +949,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
     expect(result.tokenUsage?.completionTokens).toBe(700);
     // Completed second leg → no checkpoint, no ¿Sigo?
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text).not.toContain("¿Sigo?");
+    expect(outputText(result)).not.toContain("¿Sigo?");
   });
 
   it("double cap: delivers partial + ¿Sigo? and writes ONE checkpoint with summed rounds", async () => {
@@ -968,7 +976,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
     });
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("¿Sigo?");
+    expect(outputText(result)).toContain("¿Sigo?");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
     const cp = mockWriteCheckpoint.mock.calls[0][0];
     expect(cp.exitReason).toBe("max_rounds");
@@ -992,7 +1000,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
       description: "Haz algo largo",
     });
 
-    expect(result.output?.text).toContain("Avance parcial real.");
+    expect(outputText(result)).toContain("Avance parcial real.");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
   });
 });
@@ -1019,7 +1027,7 @@ describe("Phase 4.3 auth-failure retry", () => {
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("still-failing auth escalates in Spanish — never delivers the raw 401", async () => {
@@ -1040,8 +1048,8 @@ describe("Phase 4.3 auth-failure retry", () => {
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("rotar el token");
-    expect(result.output?.text).not.toContain("authentication_error");
+    expect(outputText(result)).toContain("rotar el token");
+    expect(outputText(result)).not.toContain("authentication_error");
   });
 });
 
@@ -1181,7 +1189,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("¿Sigo?");
+    expect(outputText(result)).toContain("¿Sigo?");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
     expect(mockWriteCheckpoint.mock.calls[0][0].roundsCompleted).toBe(48);
   });
@@ -1218,7 +1226,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("still-failing auth escalates in Spanish, never the raw 401", async () => {
@@ -1236,8 +1244,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("rotar el token");
-    expect(result.output?.text).not.toContain("authentication_error");
+    expect(outputText(result)).toContain("rotar el token");
+    expect(outputText(result)).not.toContain("authentication_error");
   });
 
   // Hermes #106546 class: an auth failure on turn N must not replay the
@@ -1293,8 +1301,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       title: "Tarea",
       description: "Escribe el resumen en un Doc",
     });
-    expect(result.output?.text).toContain("punto clave");
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).toContain("punto clave");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("plain retry (no leg-1 tools) never splices leg-1's partial into a thin leg 2", async () => {
@@ -1316,8 +1324,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(mockQuerySdk.mock.calls[1][0].prompt).toBe(
       mockQuerySdk.mock.calls[0][0].prompt,
     );
-    expect(result.output?.text).toContain("Listo.");
-    expect(result.output?.text).not.toContain("frase descartada");
+    expect(outputText(result)).toContain("Listo.");
+    expect(outputText(result)).not.toContain("frase descartada");
   });
 
   it("auth retry with NO leg-1 tools is the plain original prompt (regression pin)", async () => {
@@ -1453,8 +1461,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("claude /login");
-    expect(result.output?.text).not.toContain("error_api_response");
+    expect(outputText(result)).toContain("claude /login");
+    expect(outputText(result)).not.toContain("error_api_response");
   });
 
   it("R2 C2: leg-1's streamed work survives when leg-2 returns only a thin closer", async () => {
@@ -1475,7 +1483,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       title: "Analiza",
       description: "Analiza el corpus",
     });
-    expect(result.output?.text).toContain("hallazgo relevante");
+    expect(outputText(result)).toContain("hallazgo relevante");
   });
 
   it("R2 W4: a [timeout leg does NOT auto-resume (router already abandoned the reply)", async () => {
@@ -1506,7 +1514,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       description: "Explica por qué mi API devuelve 401",
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(1);
-    expect(result.output?.text).toContain("Authorization");
+    expect(outputText(result)).toContain("Authorization");
   });
 });
 
@@ -1536,7 +1544,7 @@ describe("R4 audit W1 — a thrown resume still counts as THE recovery leg", () 
     });
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("Parte 1");
+    expect(outputText(result)).toContain("Parte 1");
   });
 });
 
@@ -2162,7 +2170,7 @@ describe("confirmation gate on the claude-sdk path", () => {
 // read-only enforce-only collapse), never operator-private memory (JME
 // recall, essentials), and a hard tool-round cap.
 describe("external request (jarvis-pull)", () => {
-  const fact = {
+  const fact: JmeRecallResult = {
     id: 11,
     factText: "Fede prefers tables for competitive analysis",
     category: "preference",
@@ -2287,7 +2295,7 @@ describe("external request (jarvis-pull)", () => {
     }
     const result = await turn({ maxRounds: 8 });
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+    expect(outputText(result) ?? "").not.toContain("¿Sigo?");
   });
 
   it("SDK path: a double cap writes no checkpoint and asks no ¿Sigo?", async () => {
@@ -2301,7 +2309,7 @@ describe("external request (jarvis-pull)", () => {
     mockQuerySdk.mockResolvedValueOnce(capped("Parte 2…"));
     const result = await turn({ maxRounds: 8 });
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+    expect(outputText(result) ?? "").not.toContain("¿Sigo?");
   });
 
   it("control: the same read-only turn without the flag collapses the KB and injects essentials + JME", async () => {

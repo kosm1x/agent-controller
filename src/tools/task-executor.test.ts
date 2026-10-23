@@ -273,6 +273,8 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
 describe("confirmationGate", () => {
   const reg = (tier: "low" | "medium" | "high") => ({
     getEffectiveRiskTier: vi.fn().mockReturnValue(tier),
+    // Every name these cases use is a registered tool.
+    has: vi.fn().mockReturnValue(true),
   });
   const interactive = askable("g");
   const background = new TaskExecutionContext("g", false);

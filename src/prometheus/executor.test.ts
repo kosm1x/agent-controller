@@ -108,6 +108,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Listo" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
@@ -132,6 +135,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Goal achieved successfully" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
     });
 
@@ -173,6 +179,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Done with tools" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 200, completion_tokens: 100 },
     });
 
@@ -192,6 +201,9 @@ describe("executeGoal", () => {
           { role: "assistant", content: "Succeeded on retry" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       });
 
@@ -230,6 +242,9 @@ describe("executeGoal", () => {
           { role: "assistant", content: "Succeeded after breaker recovered" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 20, completion_tokens: 10 },
       });
 
@@ -264,6 +279,9 @@ describe("executeGoal", () => {
         content: "ok",
         messages: [{ role: "assistant", content: "ok" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 10 },
       };
     });
@@ -286,6 +304,9 @@ describe("executeGraph", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     }));
     const graph = new GoalGraph();
@@ -349,6 +370,9 @@ describe("executeGraph", () => {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -381,6 +405,9 @@ describe("executeGraph", () => {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -565,6 +592,9 @@ describe("selfAssess", () => {
         { role: "assistant", content: "Goal output" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       // no `model` from the main call (mock doesn't surface it)
     });
@@ -597,6 +627,9 @@ describe("executeGoal self-assessment integration", () => {
           { role: "assistant", content: "Partial result without chart" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       })
       // Second inferWithTools: after reflection, produces complete output
@@ -607,6 +640,9 @@ describe("executeGoal self-assessment integration", () => {
           { role: "assistant", content: "Complete result with chart included" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 150, completion_tokens: 60 },
       });
 
@@ -654,6 +690,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 
@@ -671,6 +710,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Still incomplete",
       messages: [{ role: "assistant", content: "Still incomplete" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 
@@ -707,6 +749,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
     mockInfer.mockResolvedValueOnce({
@@ -731,6 +776,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
     const goal = makeGoal({ completionCriteria: [] });

@@ -853,7 +853,16 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     graph: GoalGraph;
     trackers: Map<string, Tracker>;
     goalTaskMap: Map<string, string>;
-    goalsById: Map<string, { id: string; description: string }>;
+    goalsById: Map<
+      string,
+      {
+        id: string;
+        description: string;
+        completionCriteria: string[];
+        dependsOn: string[];
+        metadata?: Record<string, unknown>;
+      }
+    >;
   } {
     const graph = new GoalGraph();
     graph.addGoal({ id: "g-1", description: "Test goal" });

@@ -31,6 +31,7 @@ import {
   startDynamicScheduler,
   stopDynamicScheduler,
   watchScheduledTask,
+  type CreateScheduleParams,
 } from "./dynamic.js";
 
 beforeEach(() => {
@@ -192,7 +193,7 @@ describe("scheduled_tasks.gates", () => {
 // schedule's own prompt, never the description with the appended blocks.
 describe("schedule submissions carry detectionText (2026-09-29)", () => {
   afterEach(() => stopDynamicScheduler());
-  const create = (delivery: string) =>
+  const create = (delivery: CreateScheduleParams["delivery"]) =>
     createSchedule({
       scheduleId: "s-dt",
       name: "DT",

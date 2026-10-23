@@ -95,6 +95,8 @@ describe("blocking", () => {
           abandonedRows: [],
           ran: 1,
           abandonedNow: 0,
+          shellSkipped: 0,
+          budgetExhausted: 0,
           rows,
           ...(opts.rerun && {}),
         };
@@ -172,6 +174,8 @@ describe("blocking", () => {
           abandonedRows: [],
           ran: 1,
           abandonedNow: 0,
+          shellSkipped: 0,
+          budgetExhausted: 0,
           rows: [...listGates("t5"), rb],
         };
       },
@@ -346,6 +350,8 @@ describe("ruling 3c, audit round 5 — evidence scrubbed before the 160-char cut
           abandonedRows: [],
           ran: 1,
           abandonedNow: 0,
+          shellSkipped: 0,
+          budgetExhausted: 0,
           rows,
         };
       },

@@ -25,7 +25,7 @@ afterAll(() => {
 
 describe("output-path validators follow symlinks", () => {
   it.each([
-    ["diagram_generate", () => diagramOut(`${dir}/lnk/x.svg`, "svg")],
+    ["diagram_generate", () => diagramOut(`${dir}/lnk/x.svg`, "graphviz")],
     ["infographic_generate", () => infographicOut(`${dir}/lnk/x.svg`, "svg")],
     ["file_convert", () => convertOut(`${dir}/lnk/x.pdf`, "pdf")],
     ["market_chart_render", () => chartOut(`${dir}/lnk/x.svg`, "svg")],
@@ -61,7 +61,7 @@ describe("output-path validators follow symlinks", () => {
   });
 
   it("keeps a plain path under /tmp/", () => {
-    expect(diagramOut(`${dir}/x.svg`, "svg").ok).toBe(true);
+    expect(diagramOut(`${dir}/x.svg`, "graphviz").ok).toBe(true);
     expect(convertOut(`${dir}/x.pdf`, "pdf").ok).toBe(true);
     expect(chartOut(`${dir}/x.svg`, "svg").ok).toBe(true);
   });

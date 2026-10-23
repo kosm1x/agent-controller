@@ -50,8 +50,8 @@ describe("renderFrameworkPrompt", () => {
   });
 
   it("throws on unknown framework id", () => {
-    // @ts-expect-error intentional invalid id
     expect(() =>
+      // @ts-expect-error intentional invalid id
       renderFrameworkPrompt("NOPE", {
         brand: "b",
         audience: "a",

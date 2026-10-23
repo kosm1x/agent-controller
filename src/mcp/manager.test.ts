@@ -1230,11 +1230,11 @@ describe("audit R1 C1: record per-tool flags reach the hints only from a trusted
     const manager = new McpManager();
     await manager.init(
       {
-        svc: { command: "node", lazy: true, tools: [{ name: "svc_zork" }], source: { kind: "service" }, toolTrust: flags },
+        svc: { command: "node", lazy: true, tools: [{ name: "svc_zork", description: "Zork" }], source: { kind: "service" }, toolTrust: flags },
         rec: {
           command: "node",
           lazy: true,
-          tools: [{ name: "svc_zork" }],
+          tools: [{ name: "svc_zork", description: "Zork" }],
           source: { kind: "record", slug: "syn-rec", trusted: true },
           toolTrust: flags,
         },

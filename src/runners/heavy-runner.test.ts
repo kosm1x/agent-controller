@@ -51,7 +51,7 @@ vi.mock("../observability/prometheus.js", () => ({
 
 import { heavyRunner } from "./heavy-runner.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
-import { getConfig } from "../config.js";
+import { getConfig, type Config } from "../config.js";
 import {
   spawnContainer,
   imageExistsLocally,
@@ -72,7 +72,8 @@ const mockMissingHostDistAssets = vi.mocked(missingHostDistAssets);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 const mockRecordNanoclawImageDrift = vi.mocked(recordNanoclawImageDrift);
 
-function makeConfig(containerized = false) {
+/** The Config fields the heavy runner reads; the rest stay unset. */
+function makeConfig(containerized = false): Config {
   return {
     apiKey: "test-key",
     port: 8080,
@@ -96,7 +97,7 @@ function makeConfig(containerized = false) {
     heavyRunnerContainerized: containerized,
     heavyRunnerImage: "mission-control:latest",
     heavyRunnerTimeoutMs: 900_000,
-  };
+  } as Config;
 }
 
 function makeOrchestratorResult(

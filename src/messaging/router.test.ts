@@ -3,7 +3,7 @@
  * Mocks submitTask and event bus to test inbound/outbound message flow.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { ensureV84Tables } from "../lib/v8-4/schema.js";
@@ -183,7 +183,9 @@ vi.mock("../rituals/rituales-command.js", () => ({
 
 // Confirmation gate (2026-09-29): the confirmed action's execution seam.
 const gatedExec = vi.hoisted(() => ({
-  executeGatedCapability: vi.fn(async () => JSON.stringify({ ok: true })),
+  executeGatedCapability: vi.fn<
+    typeof import("../lib/v8-3/trigger.js").executeGatedCapability
+  >(async () => JSON.stringify({ ok: true })),
 }));
 vi.mock("../lib/v8-3/trigger.js", () => gatedExec);
 
@@ -347,6 +349,7 @@ import type {
 function createMockAdapter(name: "whatsapp" | "telegram"): ChannelAdapter & {
   sentMessages: OutgoingMessage[];
   messageHandler: ((msg: IncomingMessage) => void) | null;
+  send: Mock<ChannelAdapter["send"]>;
 } {
   const adapter = {
     name,
@@ -363,6 +366,7 @@ function createMockAdapter(name: "whatsapp" | "telegram"): ChannelAdapter & {
         adapter.messageHandler = handler;
       }),
     stop: vi.fn().mockResolvedValue(undefined),
+    isConnected: vi.fn(() => true),
   };
   return adapter;
 }
@@ -4852,7 +4856,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         semantic,
         prior,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "confirmo eliminación",
       );
       expect(result.source).toBe("semantic");
@@ -4864,7 +4868,7 @@ describe("MessageRouter", () => {
       const d = decideActiveGroups(
         new Set<string>(),
         new Set(["meta"]),
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "continúa",
       );
       expect(d.source).toBe("inherited");
@@ -4880,7 +4884,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         semantic,
         prior,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "gracias",
       );
       expect([...result.groups]).toEqual(["google"]);
@@ -4891,7 +4895,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         new Set(["google"]),
         undefined,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "abre el sheet",
       );
       expect([...result.groups]).toEqual(["google"]);

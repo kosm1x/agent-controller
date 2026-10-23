@@ -33,6 +33,16 @@ vi.mock("../../db/drive-sync.js", () => driveMocks);
 import { admin } from "./admin.js";
 import { Hono } from "hono";
 
+// Response bodies as the routes in ./admin.ts build them.
+type KillBody = {
+  status: string;
+  autonomous_improvement_enabled: boolean;
+  cancelled_tasks: string[];
+  timestamp: string;
+};
+type StatusBody = { autonomous_improvement_enabled: boolean; timestamp: string };
+type ErrorBody = { error: string };
+
 function createTestApp(): Hono {
   const app = new Hono();
   app.route("/admin", admin);
@@ -70,7 +80,7 @@ describe("admin routes", () => {
         method: "POST",
       });
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = (await res.json()) as KillBody;
       expect(body.status).toBe("disabled");
       expect(body.autonomous_improvement_enabled).toBe(false);
       expect(process.env.AUTONOMOUS_IMPROVEMENT_ENABLED).toBe("false");
@@ -85,7 +95,7 @@ describe("admin routes", () => {
       const res = await app.request("/admin/kill-autonomous", {
         method: "POST",
       });
-      const body = await res.json();
+      const body = (await res.json()) as KillBody;
       expect(body.cancelled_tasks).toEqual(["t1", "t2"]);
       expect(mockAll.cancelTask).toHaveBeenCalledTimes(2);
       expect(mockAll.cancelTask).toHaveBeenCalledWith("t1");
@@ -132,7 +142,7 @@ describe("admin routes", () => {
       const res = await app.request("/admin/kill-autonomous", {
         method: "POST",
       });
-      const body = await res.json();
+      const body = (await res.json()) as KillBody;
       expect(body.cancelled_tasks).toEqual([]);
     });
   });
@@ -142,7 +152,7 @@ describe("admin routes", () => {
       process.env.AUTONOMOUS_IMPROVEMENT_ENABLED = "true";
       const app = createTestApp();
       const res = await app.request("/admin/autonomous-status");
-      const body = await res.json();
+      const body = (await res.json()) as StatusBody;
       expect(body.autonomous_improvement_enabled).toBe(true);
     });
 
@@ -150,7 +160,7 @@ describe("admin routes", () => {
       process.env.AUTONOMOUS_IMPROVEMENT_ENABLED = "false";
       const app = createTestApp();
       const res = await app.request("/admin/autonomous-status");
-      const body = await res.json();
+      const body = (await res.json()) as StatusBody;
       expect(body.autonomous_improvement_enabled).toBe(false);
     });
 
@@ -158,7 +168,7 @@ describe("admin routes", () => {
       delete process.env.AUTONOMOUS_IMPROVEMENT_ENABLED;
       const app = createTestApp();
       const res = await app.request("/admin/autonomous-status");
-      const body = await res.json();
+      const body = (await res.json()) as StatusBody;
       expect(body.autonomous_improvement_enabled).toBe(false);
     });
   });
@@ -172,7 +182,7 @@ describe("admin routes", () => {
         headers: { "Content-Type": "application/json" },
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as ErrorBody;
       expect(body.error).toMatch(/query/i);
     });
 
@@ -184,7 +194,7 @@ describe("admin routes", () => {
         headers: { "Content-Type": "application/json" },
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as ErrorBody;
       expect(body.error).toMatch(/bank/i);
     });
 

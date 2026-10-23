@@ -611,7 +611,7 @@ describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () 
       user_edit_time: null,
     });
     vi.mocked(getFile).mockImplementation((path: string) =>
-      path === "projects/vlmp/README.md" ? readme(path, "README-PRIVATE") : undefined,
+      path === "projects/vlmp/README.md" ? readme(path, "README-PRIVATE") : null,
     );
 
     const { stable, variable } = buildKnowledgeBaseSections(
@@ -665,7 +665,7 @@ describe("buildKnowledgeBaseSections (v8 S1 — split for cache stability)", () 
             updated_at: "",
             user_edit_time: null,
           }
-        : undefined,
+        : null,
     );
     const ext = buildKnowledgeBaseSections([], "status del CRM", "runner", isExternalKbInjectable);
     expect(`${ext.stable ?? ""}\n${ext.variable ?? ""}`).not.toContain("README-PULSO-DEVLOG");
@@ -758,7 +758,7 @@ describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
     vi.mocked(getFile).mockImplementation((path: string) => {
       if (path === "knowledge/Rumi/INDEX.md") return rumiIndex;
       if (path.includes("sop-verificacion")) return rumiSop;
-      return undefined;
+      return null;
     });
 
     const { variable } = buildKnowledgeBaseSections(
@@ -786,7 +786,7 @@ describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
         },
       ];
     });
-    vi.mocked(getFile).mockReturnValue(undefined);
+    vi.mocked(getFile).mockReturnValue(null);
 
     const { variable } = buildKnowledgeBaseSections(
       [],
@@ -903,7 +903,7 @@ describe("buildKnowledgeBaseSections — preview guardrail (2026-09-19)", () => 
     vi.mocked(getFilesByQualifier).mockReset();
     vi.mocked(getFile).mockReset();
     vi.mocked(getFile).mockImplementation((path: string) =>
-      path === directive.path ? directive : undefined,
+      path === directive.path ? directive : null,
     );
   });
 
@@ -986,7 +986,7 @@ describe("buildKnowledgeBaseSection — conditional rows reach heavy/swarm goals
   beforeEach(() => {
     vi.mocked(getFilesByQualifier).mockReset();
     vi.mocked(getFile).mockReset();
-    vi.mocked(getFile).mockImplementation((path: string) => (path === preview.path ? (preview as never) : undefined));
+    vi.mocked(getFile).mockImplementation((path: string) => (path === preview.path ? (preview as never) : null));
   });
 
   it("a matching conditional row is delivered although the mandatory layer is past 8000 chars", () => {

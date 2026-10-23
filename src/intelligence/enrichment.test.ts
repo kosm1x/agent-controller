@@ -37,7 +37,7 @@ vi.mock("../skills/retrieval.js", () => ({
 // speed-01 test below turns it on.
 const pg = vi.hoisted(() => ({
   enabled: vi.fn(() => false),
-  search: vi.fn(async () => [
+  search: vi.fn(async (_embedding: number[], _text: string) => [
     {
       combined_score: 0.9,
       title: "Nota",
@@ -92,6 +92,9 @@ describe("enrichment", () => {
         success: 1,
         feedback_signal: "none",
         tags: "[]",
+        model_tier: null,
+        concern_reason: null,
+        concern_detail: null,
         created_at: "2026-03-16",
       })),
     );

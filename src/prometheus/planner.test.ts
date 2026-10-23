@@ -147,7 +147,9 @@ describe("plan", () => {
     // Queue 4d: a KB deliverable never takes a shell check — the sentence is in PLAN_SYSTEM once.
     const kbRule =
       "- A deliverable under the KB (projects/, directives/, workspace/, logs/, …) never takes a shell check: its criterion is a plain string and the harness read-back proves the write.";
-    expect(sysMsg!.content.split(kbRule).length - 1).toBe(1);
+    const sysText = sysMsg!.content;
+    if (typeof sysText !== "string") throw new Error("system prompt is not a string");
+    expect(sysText.split(kbRule).length - 1).toBe(1);
     expect(sysMsg!.content).toMatch(/never silently drop items/i);
   });
 

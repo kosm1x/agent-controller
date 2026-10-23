@@ -78,7 +78,7 @@ app.route("/api", jarvisPull);
 
 const QUERY = "¿Qué anunciantes de retail están subiendo inversión digital?";
 
-const post = (body: unknown) =>
+const post = async (body: unknown): Promise<Response> =>
   app.request("/api/jarvis-pull", {
     method: "POST",
     headers: { "content-type": "application/json" },

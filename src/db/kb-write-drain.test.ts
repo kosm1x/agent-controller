@@ -4,7 +4,7 @@
  * real upsertFile with pgvector and Drive both off; scratch KB mirror.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.hoisted(() => {
   // Both syncs off: no pgvector key, no Drive folder (and :memory: is not the live db).
@@ -50,7 +50,7 @@ describe("drainKbWrites — real upsertFile, both syncs off", () => {
 });
 
 describe("drainKbWrites — order", () => {
-  const orderDeps = (order: string[]): KbWriteDrainDeps & Record<string, ReturnType<typeof vi.fn>> => ({
+  const orderDeps = (order: string[]): { [K in keyof KbWriteDrainDeps]: Mock<KbWriteDrainDeps[K]> } => ({
     settlePgvectorSyncs: vi.fn(async (): Promise<void> => void order.push("settle-pg")),
     settleDriveSyncs: vi.fn(async (): Promise<void> => void order.push("settle-drive")),
     regenerateIndex: vi.fn(() => void order.push("regen")),
