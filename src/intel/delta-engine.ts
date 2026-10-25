@@ -74,7 +74,7 @@ export const METRICS: MetricDefinition[] = [
   },
   // Geopolitical
   {
-    source: "gdelt",
+    source: "geo_rss",
     key: "conflict_articles",
     type: "count",
     threshold: 50,
