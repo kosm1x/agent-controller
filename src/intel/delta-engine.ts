@@ -83,8 +83,9 @@ export const METRICS: MetricDefinition[] = [
   {
     source: "gdelt",
     key: "goldstein_avg",
-    type: "numeric",
-    threshold: 15,
+    // umbral en puntos Goldstein absolutos (escala −10..+10); el promedio ronda 0, un umbral porcentual dispara en cada poll
+    type: "count",
+    threshold: 1.0,
     riskSensitive: true,
     direction: "down_is_bad",
   },

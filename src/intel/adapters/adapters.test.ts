@@ -32,7 +32,7 @@ afterEach(() => {
 
 function testAdapterContract(
   adapter: CollectorAdapter,
-  format: "json" | "xml" = "json",
+  format: "json" | "xml" | "text" = "json",
 ): void {
   describe(`${adapter.source} adapter contract`, () => {
     beforeEach(() => {
@@ -82,7 +82,7 @@ function testAdapterContract(
       expect(err.message.length).toBe("HTTP 502 — ".length + 200);
     });
 
-    it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : "JSON"}`, async () => {
+    it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : format === "text" ? "an export listing" : "JSON"}`, async () => {
       const body = "Queries containing OR'd terms must be…";
       mockFetch.mockResolvedValue({
         ok: true,
@@ -91,7 +91,11 @@ function testAdapterContract(
         arrayBuffer: async () => new TextEncoder().encode(body).buffer,
       });
       await expect(adapter.collect()).rejects.toThrow(
-        format === "xml" ? /not an RSS\/Atom feed/ : /JSON/,
+        format === "xml"
+          ? /not an RSS\/Atom feed/
+          : format === "text"
+            ? /no export file/
+            : /JSON/,
       );
     });
   });
@@ -99,6 +103,7 @@ function testAdapterContract(
 
 // Run contract tests for all adapters
 testAdapterContract(usgsAdapter);
+testAdapterContract(gdeltAdapter, "text");
 testAdapterContract(nwsAdapter);
 testAdapterContract(geoRssAdapter, "xml");
 testAdapterContract(frankfurterAdapter);
@@ -374,6 +379,50 @@ describe("geo_rss adapter", () => {
   it("throws when every feed fails", async () => {
     mockFetch.mockRejectedValue(new Error("network error"));
     await expect(geoRssAdapter.collect()).rejects.toThrow("network error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CISA KEV-specific
+// ---------------------------------------------------------------------------
+
+describe("cisa-kev adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("produces vuln count + individual CVE signals", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        title: "CISA KEV Catalog",
+        catalogVersion: "2026.04.03",
+        dateReleased: today,
+        count: 1200,
+        vulnerabilities: [
+          {
+            cveID: "CVE-2026-1234",
+            vendorProject: "Apache",
+            product: "Struts",
+            vulnerabilityName: "RCE in Struts",
+            dateAdded: today,
+            shortDescription: "Remote code execution vulnerability",
+            requiredAction: "Apply update",
+            dueDate: "2026-04-10",
+            knownRansomwareCampaignUse: "Known",
+          },
+        ],
+      }),
+    });
+
+    const signals = await cisaKevAdapter.collect();
+    const count = signals.find((s) => s.key === "new_vulns");
+    expect(count).toBeDefined();
+    expect(count!.valueNumeric).toBeGreaterThanOrEqual(1);
+
+    const cve = signals.find((s) => s.key === "CVE-2026-1234");
+    expect(cve).toBeDefined();
+    expect(cve!.signalType).toBe("alert");
+    expect(cve!.metadata).toHaveProperty("ransomware");
   });
 });
 
