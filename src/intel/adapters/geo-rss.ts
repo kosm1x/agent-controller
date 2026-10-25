@@ -17,7 +17,7 @@ import {
 export const GEO_FEEDS: { name: string; url: string; filter: boolean }[] = [
   {
     name: "google_news",
-    url: "https://news.google.com/rss/search?q=(conflict+OR+crisis+OR+sanctions)+when:1h&hl=en-US&gl=US&ceid=US:en",
+    url: "https://news.google.com/rss/search?q=(war+OR+ceasefire+OR+sanctions+OR+missile+OR+invasion+OR+coup+OR+%22armed+conflict%22+OR+%22military+strike%22+OR+troops+OR+%22humanitarian+crisis%22)+-%22home+invasion%22+-%22war+chest%22+when:1h&hl=en-US&gl=US&ceid=US:en",
     filter: false,
   },
   { name: "bbc", url: "https://feeds.bbci.co.uk/news/world/rss.xml", filter: true },

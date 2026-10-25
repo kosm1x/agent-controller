@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { usgsAdapter } from "./usgs.js";
 import { nwsAdapter } from "./nws.js";
 import { gdeltAdapter } from "./gdelt.js";
-import { geoRssAdapter } from "./geo-rss.js";
+import { geoRssAdapter, GEO_FEEDS } from "./geo-rss.js";
 import { deflateRawSync } from "node:zlib";
 import { frankfurterAdapter } from "./frankfurter.js";
 import { cisaKevAdapter } from "./cisa-kev.js";
@@ -415,6 +415,16 @@ describe("geo_rss adapter", () => {
   it("throws when every feed fails", async () => {
     mockFetch.mockRejectedValue(new Error("network error"));
     await expect(geoRssAdapter.collect()).rejects.toThrow("network error");
+  });
+
+  it("queries Google News with qualified terms, not bare crisis/conflict", () => {
+    const google = GEO_FEEDS.find((f) => f.name === "google_news");
+    expect(google?.filter).toBe(false);
+    const url = google!.url;
+    expect(url).toContain("when:1h");
+    expect(url).toContain("%22humanitarian+crisis%22");
+    expect(url).not.toContain("crisis+OR");
+    expect(url).not.toContain("(conflict+OR");
   });
 });
 
