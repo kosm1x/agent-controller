@@ -76,10 +76,12 @@ function testAdapterContract(
         text: async () => `<html>\n<h1>Bad\tGateway</h1>\n${"x".repeat(500)}`,
       });
       const err: Error = await adapter.collect().catch((e) => e);
-      expect(err.message).toMatch(
-        /^HTTP 502 — <html> <h1>Bad Gateway<\/h1> x+$/,
-      );
-      expect(err.message.length).toBe("HTTP 502 — ".length + 200);
+      // gdelt appends the file that failed after the bounded body
+      const suffix = adapter.source === "gdelt" ? " (lastupdate.txt)" : "";
+      expect(err.message.endsWith(suffix)).toBe(true);
+      const msg = err.message.slice(0, err.message.length - suffix.length);
+      expect(msg).toMatch(/^HTTP 502 — <html> <h1>Bad Gateway<\/h1> x+$/);
+      expect(msg.length).toBe("HTTP 502 — ".length + 200);
     });
 
     it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : format === "text" ? "an export listing" : "JSON"}`, async () => {
@@ -332,6 +334,19 @@ describe("gdelt adapter (event files)", () => {
     await expect(gdeltAdapter.collect()).rejects.toThrow("HTTP 503");
   });
 
+  it("names the export zip when it 404s", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          "1 x http://data.gdeltproject.org/gdeltv2/20261025161500.export.CSV.zip",
+      })
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "" });
+    await expect(gdeltAdapter.collect()).rejects.toThrow(
+      "HTTP 404 (20261025161500.export.CSV.zip)",
+    );
+  });
+
   it("never calls the rate-limited API host", async () => {
     mockFetch.mockResolvedValue({ ok: true, text: async () => "nothing" });
     await gdeltAdapter.collect().catch(() => {});
@@ -357,23 +372,45 @@ describe("geo_rss adapter", () => {
   });
 
   it("dedups by URL, filters unrelated items and tolerates a failing feed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockFetch.mockImplementation(async (url: string) => {
-      if (!String(url).includes("bbci.co.uk")) throw new Error("boom");
-      return respond(
-        rss(
-          item("War crisis deepens", "https://x.example/a") +
-            item("Cooking tips", "https://x.example/b"),
-        ),
-      );
+      const u = String(url);
+      if (u.includes("bbci.co.uk")) {
+        return respond(
+          rss(
+            item("War crisis deepens", "https://x.example/a") +
+              item("Missile strike reported", "https://x.example/c") +
+              item("Cooking tips", "https://x.example/b"),
+          ),
+        );
+      }
+      if (u.includes("aljazeera.com")) {
+        return respond(rss(item("War crisis deepens", "https://x.example/a")));
+      }
+      throw new Error("boom");
     });
     const signals = await geoRssAdapter.collect();
     const articles = signals.filter((s) => s.signalType === "article");
-    const urls = articles.map((s) => s.metadata?.url);
-    expect(new Set(urls).size).toBe(urls.length);
-    expect(urls).toContain("https://x.example/a");
-    expect(urls).not.toContain("https://x.example/b");
+    const urls = articles.map((s) => s.metadata?.url).sort();
+    expect(urls).toEqual(["https://x.example/a", "https://x.example/c"]);
     expect(signals[0].key).toBe("conflict_articles");
-    expect(signals[0].valueNumeric).toBe(articles.length);
+    expect(signals[0].valueNumeric).toBe(2);
+    const warned = warn.mock.calls.map((c) => String(c[0]));
+    expect(warned).toEqual([
+      "[intel] geo_rss feed failed: news.google.com: boom",
+      "[intel] geo_rss feed failed: rss.dw.com: boom",
+      "[intel] geo_rss feed failed: www.france24.com: boom",
+      "[intel] geo_rss feed failed: reliefweb.int: boom",
+    ]);
+  });
+
+  it("warns nothing when every feed answers", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockImplementation(async () =>
+      respond(rss(item("War crisis deepens", "https://x.example/a"))),
+    );
+    await geoRssAdapter.collect();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("throws when every feed fails", async () => {

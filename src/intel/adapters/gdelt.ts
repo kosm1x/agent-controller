@@ -52,7 +52,11 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), GDELT_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw await httpError(res);
+    if (!res.ok) {
+      // Name the file: lastupdate.txt and the export zip 404 for different reasons.
+      const file = new URL(url).pathname.split("/").pop();
+      throw new Error(`${(await httpError(res)).message} (${file})`);
+    }
     return res;
   } finally {
     clearTimeout(timeout);

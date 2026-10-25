@@ -7,6 +7,7 @@
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
 import { httpError } from "./http-error.js";
+import { errMsg } from "../../lib/err-msg.js";
 import {
   decodeFeedBody,
   parseFeed,
@@ -103,6 +104,13 @@ export const geoRssAdapter: CollectorAdapter = {
         ? first.reason
         : new Error("all geopolitical feeds failed");
     }
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(
+          `[intel] geo_rss feed failed: ${new URL(GEO_FEEDS[i].url).host}: ${errMsg(r.reason)}`,
+        );
+      }
+    });
     const seen = new Set<string>();
     const articles: Signal[] = [];
     for (const s of ok.flatMap((r) => r.value)) {
