@@ -3225,3 +3225,29 @@ Jarvis could not re-read KB files after writing them, so some writes were unveri
 
 ### Research notes
 The agent is moving from assistant to economically self-directed actor, since Jarvis now has a mandate to cover its own cost. That is a notable milestone for the co-evolution paper. Fede's delegation is bounded by explicit limits on budget, deadline and risk.
+
+## 2026-10-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 35 |
+| Total tasks | 4603 |
+| Conversations today | 27 (telegram: 27) |
+| Streak days | 79 |
+
+### Interactions summary
+The day centered on the GDELT HTTP 429 problem: diagnosis, choosing a replacement (GDELT file archives plus geopolitical RSS), implementation, PR #64 on agent-controller, and follow-up review fixes (C1 and W2 in delta-engine). Later topics were a KB note on VPS backup verification, a question on 40 Hz sound studies, and registering the local-inference-studio repo under the project now renamed Local Brain (3 docs updated). The most used tools were jarvis_dev (branch/test/pr), file reads and writes, and project/KB updates.
+
+### What Jarvis learned
+The operator separates "remove the API" from "remove the source", so Jarvis should check which one he means before answering. He also supplies exact procedures himself (e.g. the backup script command), so Jarvis should ask for the method instead of improvising a note. Confirmation cards reject partial replies; "sí a todo" is the format that works.
+
+### Friction points
+- The jarvis_dev branch approval expired and the operator had to repeat the order.
+- Partial confirmations ("Confirmo, ambas", "Procede", "sí") were rejected, and Jarvis had to clarify that nothing had run.
+- jarvis_dev pr failed twice (tests, then gh pr create). The code was pushed, but the PR update outcome is unconfirmed.
+- The backup note was first saved with an invented method and later corrected.
+- README and roadmap reads were partial, as Jarvis itself said.
+
+### Research notes
+The agent-user loop is in a mature, collaborative phase: the operator approves plans and Jarvis executes through gated confirmations. The main friction is in the confirmation protocol, not in understanding. The memory_search and memory_reflect tools were not available in this run's scope, so this entry rests on the day narrative and project_list. Local Brain is the one project that clearly moved today (renamed, repo registered, docs updated).
