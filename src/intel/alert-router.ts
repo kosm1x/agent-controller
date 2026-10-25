@@ -88,6 +88,7 @@ function domainForSource(source: string): string {
     usgs: "weather",
     nws: "weather",
     gdelt: "geopolitical",
+    geo_rss: "geopolitical",
     frankfurter: "financial",
     cisa_kev: "cyber",
     coingecko: "financial",

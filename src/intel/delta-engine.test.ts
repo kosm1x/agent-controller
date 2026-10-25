@@ -82,6 +82,15 @@ describe("computeDelta", () => {
     expect(delta!.changeRatio).toBe(0);
     expect(delta!.severity).toBe("normal");
   });
+
+  it("gdelt goldstein_avg uses absolute points, not percent", () => {
+    expect(computeDelta("gdelt", "goldstein_avg", -0.07, 0.5)!.severity).toBe(
+      "normal",
+    );
+    expect(computeDelta("gdelt", "goldstein_avg", -1.6, 0.5)!.severity).toBe(
+      "high",
+    );
+  });
 });
 
 describe("METRICS", () => {
