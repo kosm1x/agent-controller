@@ -104,6 +104,7 @@ Harness recipe, cutover/revert scripts, scope classifier, JME, Hindsight → §I
 - **Managed namespaces**: when adding a new tool whose authority is non-FS, add the prefix to `MANAGED_NAMESPACES` (`src/db/jarvis-reindex.ts`) so its wipes can't be undone by the hourly walk.
 - **JME**: never re-await `embed()` bare on the chat hot path.
 - **Hindsight**: DEMOTED; `HINDSIGHT_RECALL_ENABLED=false` + `HINDSIGHT_ENABLED=false` are the defaults.
+- **mission-control knobs** (drop-ins under `mission-control.service.d/`): `GOAL_TIMEOUT_MS=300000`, `ORCHESTRATOR_TIMEOUT_MS=900000`, `SCOPE_CLASSIFIER_TIMEOUT_MS` (default 8000). After setting any knob prove the CONSUMER (`grep -rn "config\.<field>" src`); env presence is not evidence. `EnvironmentFile=` beats `Environment=` drop-ins.
 
 ## Patterns
 
