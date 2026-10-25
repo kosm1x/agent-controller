@@ -77,6 +77,7 @@ export const METRICS: MetricDefinition[] = [
     source: "geo_rss",
     key: "conflict_articles",
     type: "count",
+    // 5 feeds × 10 articles = 50 cap; ruled 2026-10-25 to stay (reliefweb dropped: 406-blocked)
     threshold: 50,
     riskSensitive: true,
   },

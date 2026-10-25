@@ -32,7 +32,6 @@ export const GEO_FEEDS: { name: string; url: string; filter: boolean }[] = [
     url: "https://www.france24.com/en/rss",
     filter: true,
   },
-  { name: "reliefweb", url: "https://reliefweb.int/updates/rss.xml", filter: false },
 ];
 const KEYWORDS =
   /conflict|crisis|sanction|war\b|attack|strike|missile|ceasefire|troops|military|invasion|hostage|protest|coup|refugee|humanitarian/i;

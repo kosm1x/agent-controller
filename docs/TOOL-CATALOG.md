@@ -183,7 +183,7 @@ Signals ingested from 8 sources, queryable.
 - `intel_status` — adapter health
 - `intel_alert_history` — recent alerts
 - `intel_baseline` — compute baseline for a signal
-- Sources behind intel_query (`src/intel/adapters/`): `usgs`, `nws`, `gdelt` (15-min export files from `data.gdeltproject.org` since `a8d328c4`, 2026-10-25), `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`, `geo_rss` (6 geopolitical feeds)
+- Sources behind intel_query (`src/intel/adapters/`): `usgs`, `nws`, `gdelt` (15-min export files from `data.gdeltproject.org` since `a8d328c4`, 2026-10-25), `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`, `geo_rss` (5 geopolitical feeds; reliefweb dropped 2026-10-25, HTTP 406)
 
 ### Markets (scope groups: `finance`, `alpha`, `backtest`, `paper`, `pm_alpha`, `pm_paper`, `market_ritual`, `chart`)
 

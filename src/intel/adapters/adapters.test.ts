@@ -400,7 +400,6 @@ describe("geo_rss adapter", () => {
       "[intel] geo_rss feed failed: news.google.com: boom",
       "[intel] geo_rss feed failed: rss.dw.com: boom",
       "[intel] geo_rss feed failed: www.france24.com: boom",
-      "[intel] geo_rss feed failed: reliefweb.int: boom",
     ]);
   });
 
