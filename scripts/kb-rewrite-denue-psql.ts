@@ -15,12 +15,12 @@
  *   npx tsx scripts/kb-rewrite-denue-psql.ts --apply    # write, then verify row + mirror
  */
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase } from "../src/db/index.js";
 import { getFile, getKbMirrorWriteDir, upsertFile } from "../src/db/jarvis-fs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 import { drainKbWrites } from "../src/db/kb-write-drain.js";
 import { validateShellCommand } from "../src/tools/builtin/shell.js";
 
@@ -234,12 +234,7 @@ export function runRewrite(opts: { apply: boolean; paths?: string[] }): {
 
 /** True only when this file is the process entry point (never when a test imports it). */
 export function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  return isEntryModule(import.meta.url);
 }
 
 type MainDeps = {

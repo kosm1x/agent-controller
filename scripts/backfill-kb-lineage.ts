@@ -21,8 +21,6 @@
  * read from a file and never printed.
  */
 
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   contentHash,
   getApiKey,
@@ -30,6 +28,7 @@ import {
 } from "../src/db/pgvector.js";
 import { manifestPath, slugify } from "../src/kb/pdf-structured-ingest.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 const SUPABASE_URL = "https://db.mycommit.net/rest/v1";
 const PAGE = 1000;
@@ -224,17 +223,7 @@ export async function runBackfill(
   return { plan, done, failed };
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
-  }
-};
-if (
-  process.argv[1] !== undefined &&
-  real(fileURLToPath(import.meta.url)) === real(process.argv[1])
-) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error(`backfill-kb-lineage: ${err instanceof Error ? err.message : err}`);
     process.exit(1);

@@ -16,9 +16,7 @@
  */
 
 import Database from "better-sqlite3";
-import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   STALE_DAYS,
   SCAN_WINDOW_DAYS,
@@ -32,6 +30,7 @@ import { deriveProjectScopeGroups } from "../src/projects/scope-groups.js";
 import { VALID_GROUPS } from "../src/messaging/scope-classifier.js";
 import { DEFAULT_SCOPE_PATTERNS } from "../src/messaging/scope.js";
 import { PROJECT_SOURCES } from "../src/projects/attribution.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 export const UNAUDITED_COST_LINE =
   "(unaudited — run ./mc-ctl audit-claim before quoting)";
@@ -306,14 +305,7 @@ export function runProjectReport(argv: string[], dbPath: string, print = console
   }
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
-};
-if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   const dbPath = process.env.MC_DB_PATH ?? resolve(process.cwd(), "data/mc.db");
   process.exit(runProjectReport(process.argv.slice(2), dbPath));
 }

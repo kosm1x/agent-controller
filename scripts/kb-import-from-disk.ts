@@ -14,10 +14,10 @@
 
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase } from "../src/db/index.js";
 import { getFile, getKbMirrorWriteDir, upsertFile } from "../src/db/jarvis-fs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 import { drainKbWrites } from "../src/db/kb-write-drain.js";
 
 type Plan = { path: string; fail: string | null; disk: string; changed: number };
@@ -143,12 +143,7 @@ export async function main(
 
 /** True only when this file is the process entry point (never when a test imports it). */
 export function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  return isEntryModule(import.meta.url);
 }
 
 // No process.exit: main drains the fire-and-forget pgvector/Drive syncs and INDEX.md (drainKbWrites) before closing the db.

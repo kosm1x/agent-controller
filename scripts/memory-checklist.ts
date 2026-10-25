@@ -18,9 +18,9 @@
  */
 
 import Database from "better-sqlite3";
-import { realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 export type RowStatus = "green" | "amber" | "red";
 
@@ -258,14 +258,7 @@ async function main(): Promise<void> {
   }
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
-};
-if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error("memory-checklist failed:", err instanceof Error ? err.message : String(err));
     process.exit(3);

@@ -31,13 +31,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmdirSync, realpathSync } from "node:fs";
+import { mkdirSync, rmdirSync } from "node:fs";
 import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { syncDeleteFromKbMirror, moveFile } from "../src/db/jarvis-fs.js";
 import { pgDelete, isPgvectorEnabled } from "../src/db/pgvector.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";
 const KB_ROOT = process.env.JARVIS_KB_MIRROR_DIR ?? "/root/claude/jarvis-kb";
@@ -128,19 +128,6 @@ function tryRmdir(rel: string): void {
     rmdirSync(`${KB_ROOT}/${rel}`);
   } catch {
     /* not empty or already gone — fine */
-  }
-}
-
-/** True when this file is the process entry point (not imported by a test). */
-function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return (
-      realpathSync(process.argv[1]) ===
-      realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
-    return false;
   }
 }
 
@@ -337,7 +324,7 @@ async function main(): Promise<void> {
 
 // Only auto-run when invoked as a script — importing for unit tests must not
 // trigger a real cleanup.
-if (isMainModule()) {
+if (isMainModule(import.meta.url)) {
   // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
   requireOperatorContext("cleanup-jarvis-kb", { tty: false });
   main().catch((err) => {

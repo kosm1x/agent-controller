@@ -18,10 +18,9 @@
 import { initDatabase, closeDatabase, getDatabase } from "../src/db/index.js";
 import { reindexJarvisKb, walkKbDir } from "../src/db/jarvis-reindex.js";
 import type { ReindexResult } from "../src/db/jarvis-reindex.js";
-import { realpathSync } from "node:fs";
 import { relative } from "node:path";
-import { fileURLToPath } from "node:url";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 import { drainKbWrites } from "../src/db/kb-write-drain.js";
 
 export type ReindexDeps = {
@@ -109,12 +108,7 @@ export async function main(
 
 /** True only when this file is the process entry point (never when a test imports it). */
 export function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  return isEntryModule(import.meta.url);
 }
 
 if (isMainModule()) await main();

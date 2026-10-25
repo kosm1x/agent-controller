@@ -52,7 +52,6 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { isCredentialFact, isCredentialName } from "../src/db/user-facts.js";
 import {
   factIdentity,
@@ -67,6 +66,7 @@ import {
 import { tokenizeQuery, locateMatch } from "../src/db/jarvis-fs.js";
 import { SCORING_VERSION } from "../src/tuning/gate.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 // ------------------------------------------------------------------ census
 
@@ -764,7 +764,7 @@ function main(): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
   requireOperatorContext("predeploy-rulings-1-5", { tty: false });
   let code = 2;

@@ -229,9 +229,12 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
     );
 
     try {
-      // Build query: combine user query with parent filter
+      // Build query: combine user query with parent filter. The user query is
+      // parenthesised so an `or` in a well-formed query cannot escape the
+      // parent/trashed filters (unbalanced parentheses still can; this is not a
+      // security boundary: parent_folder_id is optional).
       const queryParts: string[] = [];
-      if (query) queryParts.push(query);
+      if (query) queryParts.push(`(${query})`);
       if (parentFolderId)
         queryParts.push(`'${escapeDriveQueryValue(parentFolderId)}' in parents`);
       queryParts.push("trashed = false");

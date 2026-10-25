@@ -72,11 +72,12 @@ function writes(src: string): boolean {
   return imported && opens === 0; // imported but opened some other way: judged a writer
 }
 
-describe("scripts/*.ts — db/KB writers are operator-context gated", () => {
-  const scripts = readdirSync(join(ROOT, "scripts")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+describe("scripts/*.{ts,mjs} — db/KB writers are operator-context gated", () => {
+  const scripts = readdirSync(join(ROOT, "scripts")).filter((f) => /\.(?:ts|mjs)$/.test(f) && !f.endsWith(".test.ts"));
 
   it("finds the scripts", () => {
     expect(scripts.length).toBeGreaterThan(50);
+    expect(scripts).toContain("kb-preview-directive.mjs");
   });
 
   it.each(scripts)("%s", (file) => {
@@ -109,6 +110,7 @@ describe("scripts/*.ts — db/KB writers are operator-context gated", () => {
     ["openSync for append", "import { openSync } from 'node:fs';\nopenSync(p, 'a');", true],
     ["execSync sqlite3", 'import { execSync } from "node:child_process";\nexecSync(`sqlite3 data/mc.db "DELETE FROM t"`);', true],
     ["dynamic import of the db module", 'const m = await import("../src/db/index.js");\nm.x();', true],
+    ["dist db import in an .mjs one-shot", 'import { initDatabase } from "../dist/db/index.js";\ninitDatabase(p);', true],
     ["read-only better-sqlite3", 'import Database from "better-sqlite3";\nconst db = new Database(p, { readonly: true, fileMustExist: true });', false],
     ["type-only import", 'import type Database from "better-sqlite3";\nlet db: Database.Database;', false],
     ["fs/promises read only", 'import { readFile } from "node:fs/promises";\nawait readFile(p, "utf8");', false],

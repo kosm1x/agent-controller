@@ -24,9 +24,8 @@
  * path and field COUNTS only.
  */
 
-import { existsSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { getProject } from "../src/db/projects.js";
 import { getDatabase } from "../src/db/index.js";
 import { getFile, getJarvisKbRoot } from "../src/db/jarvis-fs.js";
@@ -43,6 +42,7 @@ import {
   projectRecordRelPath,
   renderProjectRecord,
 } from "../src/projects/record.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 export interface CreateOptions {
   name: string;
@@ -273,14 +273,7 @@ async function main(): Promise<number> {
   }
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
-};
-if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   // Audit R1 C1 / R2: an operator login session with a terminal, no override.
   requireOperatorTerminal("project-record-create");
   main().then((code) => process.exit(code));

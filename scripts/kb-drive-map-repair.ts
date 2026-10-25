@@ -14,8 +14,6 @@
  *   npx tsx scripts/kb-drive-map-repair.ts --path <kb rel path> --apply   # write the map row + verify
  */
 
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase } from "../src/db/index.js";
 import { getFile } from "../src/db/jarvis-fs.js";
 import { findFolder, getDriveMapEntry, isDriveSyncEnabled, recordDriveId } from "../src/db/drive-sync.js";
@@ -23,6 +21,7 @@ import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "../src/db/live-db.
 import { googleFetch } from "../src/google/client.js";
 import { escapeDriveQueryValue } from "../src/google/drive-query.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 import { errMsg } from "../src/lib/err-msg.js";
 
 type Candidate = { id: string; name: string; createdTime: string };
@@ -127,12 +126,7 @@ export async function main(
 
 /** True only when this file is the process entry point (never when a test imports it). */
 export function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  return isEntryModule(import.meta.url);
 }
 
 // runRepair writes sqlite synchronously and starts no fire-and-forget sync: nothing to drain.

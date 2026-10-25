@@ -1,6 +1,10 @@
 import { initDatabase, closeDatabase } from "/root/claude/mission-control/dist/db/index.js";
 import { upsertFile, mirrorToDisk, getFile } from "/root/claude/mission-control/dist/db/jarvis-fs.js";
 import { drainKbWrites } from "/root/claude/mission-control/dist/db/kb-write-drain.js";
+import { requireOperatorContext } from "/root/claude/mission-control/dist/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("kb-preview-directive", { tty: false });
 
 initDatabase(process.env.MC_DB_PATH ?? "/root/claude/mission-control/data/mc.db");
 

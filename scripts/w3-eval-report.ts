@@ -17,10 +17,10 @@
  */
 
 import Database from "better-sqlite3";
-import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 import { readW1Labels } from "../src/eval/labels.js";
 import { collectEval, liveTaskDays } from "../src/eval/queries.js";
 import { buildReportModel, renderJson, renderMarkdown } from "../src/eval/report.js";
@@ -121,12 +121,7 @@ export function main(argv: string[] = process.argv.slice(2), deps: MainDeps = de
 
 /** True only when this file is the process entry point (never when a test imports it). */
 export function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  return isEntryModule(import.meta.url);
 }
 
 if (isMainModule()) process.exitCode = main();

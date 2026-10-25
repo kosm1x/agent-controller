@@ -390,7 +390,16 @@ describe("gdrive_list — parent folder query", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     await gdriveListTool.execute({ query: "name contains 'report'", parent_folder_id: "par-1" });
     const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
-    expect(q).toContain("q=name contains 'report' and 'par-1' in parents and trashed = false");
+    expect(q).toContain("q=(name contains 'report') and 'par-1' in parents and trashed = false");
+    vi.restoreAllMocks();
+  });
+
+  it("parenthesises a user query holding ` or ` so it cannot escape the parent filter", async () => {
+    mocks.mockGoogleFetch.mockResolvedValue({ files: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await gdriveListTool.execute({ query: "name = 'a' or name = 'b'", parent_folder_id: "par-1" });
+    const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
+    expect(q).toContain("&q=(name = 'a' or name = 'b') and 'par-1' in parents and trashed = false");
     vi.restoreAllMocks();
   });
 

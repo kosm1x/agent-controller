@@ -65,9 +65,9 @@ import {
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
-import { pathToFileURL } from "node:url";
 // No imports and no env reads at module load — safe ahead of the env guards.
 import { calculateCost, getPricing } from "../src/budget/pricing.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for scripts/grade-benchmark.test.ts)
@@ -634,7 +634,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     (err) => {

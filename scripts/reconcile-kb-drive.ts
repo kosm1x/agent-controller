@@ -27,12 +27,11 @@
  * exactly the failures. Drive "trash" is recoverable for 30 days.
  */
 
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "../src/db/live-db.js";
 import { googleFetch } from "../src/google/client.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";
 const CONCURRENCY = 5;
@@ -267,20 +266,7 @@ async function main(flags: Flags): Promise<number> {
   }
 }
 
-/** True when this file is the process entry point (not imported by a test). */
-function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return (
-      realpathSync(process.argv[1]) ===
-      realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
-    return false;
-  }
-}
-
-if (isMainModule()) {
+if (isMainModule(import.meta.url)) {
   // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
   requireOperatorContext("reconcile-kb-drive", { tty: false });
   const flags = parseFlags(process.argv.slice(2));
