@@ -1,6 +1,6 @@
 # Roadmap — one page
 
-> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines); one short line per row, detail in the linked docs. Last updated 2026-10-26 (PR #63 rebased: trimmed from 136 lines; nothing deleted). Row text as it stood before each trim, verbatim: `docs/archive/roadmap-detail-2026-10-18.md`, `docs/archive/roadmap-detail-2026-10-26.md` (header note, stage, bets, blocked) and `docs/archive/roadmap-session-log-2026-10.md` (Session log). Production state of record: `docs/PROJECT-STATUS.md` header + `docs/planning/next-sessions-queue.md`.
+> Read this first in every session; end every session by adding a row to the Session log. Hard cap: one page (~60 lines); one short line per row, detail in the linked docs. Last updated 2026-10-26 (PR #63 merged with 10-26 main: trimmed from 136 lines; nothing deleted). Row text as it stood before each trim, verbatim: `docs/archive/roadmap-detail-2026-10-18.md`, `docs/archive/roadmap-detail-2026-10-26.md` (header note, stage, bets, blocked) and `docs/archive/roadmap-session-log-2026-10.md` (Session log). Production state of record: `docs/PROJECT-STATUS.md` header + `docs/planning/next-sessions-queue.md`.
 
 **Destination: Beta 1.0**, defined in `docs/BETA.md` (from `docs/V8-VISION.md` §8): it works for the first operator with evidence AND any other operator could adopt it. The first operator's setup becomes the first operator profile.
 
@@ -13,7 +13,7 @@
 | Replicability | Inventory (1,700 sites) + project contract; S6 WS1–WS3b + 3c operator-context gate LIVE; 3f records applied 10-18 | Operator profile (KB file, RULED 10-11), WS4 allow-list, WS6 replicability suite |
 | Teachability | Vision, plan docs and first-operator guides only | Onboarding guide (after the profile); one transfer attempt |
 | Scalability | Single process; channels clean; projects via records | Language (949 lines), identity, timezone, paths behind the profile |
-| Credibility | Honest-done ENFORCE; eval gate v4 (78.63; compare PASS 10-22 at 80.38); W1 count 1 MISSED (34 really done, 3 FP > 2) → count 2 on `prompt_v=2` since 10-19 19:55 UTC: 16 graded, 0 labelled 10-26; W3 step 2 BUILT `c4baf04` + PROVEN 10-20 (`mc-ctl eval`) | W1 count-2 labels to 30 with ≤ 2 FP; W3 step-3 rulings A/B/C |
+| Credibility | Honest-done ENFORCE; eval gate v4 (78.63; last compare PASS 10-25, 78.13); W1 count 1 MISSED (34 really done, 3 FP > 2) → count 2 on `prompt_v=2` since 10-19 19:55 UTC: 16 graded, 0 labelled 10-26; W3 step 2 BUILT `c4baf04` + PROVEN 10-20 (`mc-ctl eval`) | W1 count-2 labels to 30 with ≤ 2 FP; W3 step-3 rulings A/B/C |
 
 ## Current stage
 
@@ -24,7 +24,7 @@ V8.1 active (§13 gate v2 on the Morning Sync since 10-06, unproven); V8.2 judgm
 | Bet | Gate | Next step | Owner |
 | --- | --- | --- | --- |
 | W1 verify gate | FP ≤10 % on ≥30 `really done` labels | Count 2 labels in `docs/planning/v9-w1-labels.md` (0/30 labelled of 16 graded), accept latency/cost (n=42: median 16.0 s, $0.20/task), arm `enforce` | Operator |
-| W3 internal eval | Read-only report; gate-definition changes logged | Step 2 live as `mc-ctl eval [days] [--json]`; next: rulings A build pick · B cadence · C delegated rating (queue §2026-10-09 (late) item 4) | Operator (weekly `./mc-ctl eval 7`) |
+| W3 internal eval | Read-only report; gate-definition changes logged | Step 2 live as `mc-ctl eval [days] [--json]`; next: rulings A build pick · B cadence · C delegated rating (queue §2026-10-09 (late) W3 rulings, item 4) | Operator (weekly `./mc-ctl eval 7`) |
 | S6 operator abstraction + project contract | `docs/BETA.md` merged ✔ (this PR); replicability suite green | WS1–WS3b, 3c gate, 3f records LIVE; 5a CLOSED 10-19; next: operator profile, WS4, WS6, `tool_approvals.task_id` | S6 |
 | Rulings 1–5 in production | Each seen working on a real task | Deployed 10-04, unproven by real use (queue §2026-10-04); ruling 6 parked | VPS |
 | L3 A2A | RULED 10-09: stays; never propose retiring | Shim to A2A 1.0 when the operator names the first consumer's date | Operator |
@@ -46,7 +46,7 @@ V8.1 active (§13 gate v2 on the Morning Sync since 10-06, unproven); V8.2 judgm
 - W1: label count 2 → accept the latency/cost readout → `enforce` ruling. W3: step-3 rulings A/B/C. L3: name the date of the first A2A consumer.
 - Rulings (queue): 4an (a)–(d) and the 4am siblings; 4y(i) gate ruling; 4w/4al residuals. VPS: diff the live mc-guard hook against `.claude/hooks/mc-guard.sh` (open since 10-03).
 - Open proofs (queue): 4am nightly proof 04:30 UTC 10-27 (lag < 0.5 s, `Sync complete: 1296 pushed`) · 3r `182b02a5`, 4a Drive `6b7dc893`, 4ai `8b4fb68f` UNPROVEN · 3h UNPROVEN.
-- Eval gate: nothing owed; committed incumbent v4 78.63 (`src/tuning/eval-baseline.json`, `f606d04` 10-17), last compare PASS 2026-10-22 (80.38, 4ah `59c34a64`); the next prompt, tool-description or classifier change runs `npm run eval:gate -- --run`.
+- Eval gate: nothing owed; committed incumbent v4 78.63 (`src/tuning/eval-baseline.json`, `f606d04` 10-17), last compare PASS 2026-10-25 (78.13 vs 78.63, PR #64 `a8d328c4`; best candidate 80.38 on 10-22, 4ah); the next prompt, tool-description or classifier change runs `npm run eval:gate -- --run`.
 
 ## Session log (older rows: `docs/archive/roadmap-session-log-2026-10.md`)
 
@@ -57,4 +57,4 @@ V8.1 active (§13 gate v2 on the Morning Sync since 10-06, unproven); V8.2 judgm
 | 2026-10-25 | INCIDENT 10-24 23:15 UTC: a test harness broadcast SIGINT to every process; recovered 00:04 UTC | — | kill-guard PreToolUse hook LIVE on VPS and PC (archive) | 4al (a)-(e) |
 | 2026-10-26 | 4am nightly `kb-backup` blocked the event loop 8-12 s | `d5a44eb3` | Deployed 05:23 UTC build `1d1095e1`; `MCEventLoopBlock` LIVE 05:24 UTC | Proof 04:30 UTC 10-27; siblings (queue 4am) |
 | 2026-10-26 | 4an Rumi SOP guardrail injected a frozen path list | `b918425e` | Deployed 07:05 UTC + PROVEN 07:08 UTC (task 12557) | Rulings 4an (a)–(d) |
-| 2026-10-26 | PR #63 verified + rebased (cloud draft of 10-18) | [#63](https://github.com/kosm1x/agent-controller/pull/63) | `docs/BETA.md` merged, figures refreshed to 10-26; this page 136 → ≤60 lines, every line archived verbatim; LANDSCAPE versions confirmed against the lockfile | W3 step-3 rulings; operator profile |
+| 2026-10-26 | PR #63 checked + merged with 10-26 main (cloud draft of 10-18) | [#63](https://github.com/kosm1x/agent-controller/pull/63) | `docs/BETA.md` merged, figures refreshed to 10-26; this page 136 → ≤60 lines, every line archived verbatim; LANDSCAPE versions confirmed against the lockfile | W3 step-3 rulings; operator profile |

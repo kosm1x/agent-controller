@@ -17,7 +17,7 @@
 
 ## Moved 2026-10-18 (roadmap trim)
 
-Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-18, when the page was 104 lines against its ~60-line cap. Order kept as it was on the page (the 2026-10-15 cache-split row sat last). The rows of the other sections moved the same day are in `roadmap-detail-2026-10-18.md`.
+Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-18, when the page was 104 lines against its ~60-line cap. Order kept as it was on the page (the 2026-10-15 cache-split row sat last). The rows of the other sections moved the same day are in `roadmap-detail-2026-10-18.md`. Main never took this trim (PR #63 stayed open until 2026-10-26), so these 40 rows reappear verbatim under "Moved 2026-10-26" below; the 2026-10-12 S6 3c session row sat inside the Active bets table that day and is in `roadmap-detail-2026-10-18.md`, not here.
 
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
