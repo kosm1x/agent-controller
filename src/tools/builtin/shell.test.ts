@@ -54,14 +54,17 @@ vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
 // elsewhere).
 const MC = fileURLToPath(new URL("../../..", import.meta.url)).replace(/\/$/, "");
 
-// Linear-time pins take the minimum of 5 runs of process CPU time (queue 4ap; method of queue 4q
+// Linear-time pins take the minimum of 3 runs of process CPU time (queue 4ap; method of queue 4q
 // `d638bb05`): wall clock flaked at 1517-1574 ms on a 1500 ms bound on CI on 2026-10-26 with no code
 // change. The minimum does most of the de-flaking (wall vs CPU differ by only 5-25 % on the VPS);
 // CPU time only drops scheduler waits, and `process.cpuUsage` still counts V8 GC/helper threads.
-function minCpuMs<T>(fn: () => T): { ms: number; result: T } {
+// It yields to the event loop between runs: a test that ran ~60 s synchronously on the slower CI
+// runner starved the worker's RPC ("Timeout calling onTaskUpdate", CI run 40418307601).
+async function minCpuMs<T>(fn: () => T): Promise<{ ms: number; result: T }> {
   let ms = Infinity;
   let result!: T;
-  for (let r = 0; r < 5; r++) {
+  for (let r = 0; r < 3; r++) {
+    if (r > 0) await new Promise<void>((resolve) => setImmediate(resolve));
     const c0 = process.cpuUsage();
     result = fn();
     const d = process.cpuUsage(c0);
@@ -70,23 +73,51 @@ function minCpuMs<T>(fn: () => T): { ms: number; result: T } {
   return { ms, result };
 }
 
+// Speed normalisation: a bound tuned on the VPS sits at the linear edge on a runner ~3x slower.
+// refCpuMs is the min-of-3 CPU cost of a fixed pure-JS scan (4 passes over a 2.1 MB string counting
+// spaces), measured once at module load; bounds scale by how much slower this box runs it than the
+// VPS did, never below 1x. REF_CPU_MS_VPS: 28.2-40.0 ms measured under vitest on the 4 vCPU VPS on
+// 2026-10-26 (5 file runs); 40 is the top of that spread, so the VPS keeps a factor of ~1.
+const REF_CPU_MS_VPS = 40;
+const REF_TEXT = "ab cd ".repeat(350_000);
+function refScanCpuMs(): number {
+  let best = Infinity;
+  let spaces = 0;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let pass = 0; pass < 4; pass++) {
+      for (let i = 0; i < REF_TEXT.length; i++) if (REF_TEXT.charCodeAt(i) === 32) spaces++;
+    }
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  if (spaces !== 3 * 4 * 2 * 350_000) throw new Error(`reference scan counted ${spaces} spaces`);
+  return best;
+}
+function boundFor(base: number, ref: number): number {
+  return base * Math.max(1, ref / REF_CPU_MS_VPS);
+}
+const refCpuMs = refScanCpuMs();
+const linearBound = (base: number): number => boundFor(base, refCpuMs);
+console.log(`[4ap] refCpuMs=${refCpuMs.toFixed(1)} speedFactor=${boundFor(1, refCpuMs).toFixed(2)}`);
+
 describe("minCpuMs — the timing helper the linear-time pins use (queue 4ap)", () => {
-  it("calls fn exactly 5 times", () => {
+  it("calls fn exactly 3 times", async () => {
     let calls = 0;
-    minCpuMs(() => ++calls);
-    expect(calls).toBe(5);
+    await minCpuMs(() => ++calls);
+    expect(calls).toBe(3);
   });
 
-  it("reports the cheapest run, not the first or the most expensive", () => {
-    // Call i burns (6 - i) units of CPU: the first run is 5x the last.
+  it("reports the cheapest run, not the first or the most expensive", async () => {
+    // Call i burns (4 - i) units of CPU: the first run is 3x the last.
     const inner: number[] = [];
     let call = 0;
     let sink = 0;
-    const { ms } = minCpuMs(() => {
+    const { ms } = await minCpuMs(() => {
       call++;
       const c0 = process.cpuUsage();
       let x = call;
-      for (let k = 0, n = 20_000_000 * (6 - call); k < n; k++) x = (x * 31 + k) | 0;
+      for (let k = 0, n = 20_000_000 * (4 - call); k < n; k++) x = (x * 31 + k) | 0;
       sink ^= x;
       const d = process.cpuUsage(c0);
       inner.push((d.user + d.system) / 1000);
@@ -96,10 +127,17 @@ describe("minCpuMs — the timing helper the linear-time pins use (queue 4ap)", 
     expect(ms).toBeLessThan(inner[0]! / 2);
   });
 
-  it("returns the result of the last call", () => {
+  it("returns the result of the last call", async () => {
     let call = 0;
-    const { result } = minCpuMs(() => ({ index: ++call }));
-    expect(result.index).toBe(5);
+    const { result } = await minCpuMs(() => ({ index: ++call }));
+    expect(result.index).toBe(3);
+  });
+
+  it("scales a bound by the box's reference speed, never below the VPS bound", () => {
+    expect(linearBound(1500)).toBeGreaterThanOrEqual(1500);
+    expect(boundFor(1500, 2 * REF_CPU_MS_VPS)).toBe(3000);
+    expect(boundFor(1500, REF_CPU_MS_VPS / 2)).toBe(1500);
+    expect(boundFor(2000, 3 * REF_CPU_MS_VPS)).toBe(6000);
   });
 });
 
@@ -1188,12 +1226,13 @@ B`;
       );
     });
 
-    it("refuses `$'…'` in a bash heredoc body and stays bounded on nested bodies and strings", () => {
+    it("refuses `$'…'` in a bash heredoc body and stays bounded on nested bodies and strings", async () => {
       expect(validateShellCommand("bash <<EOF\necho x > $'/opt/example/out.txt'\nEOF").reason).toBe(
         "ANSI-C/locale quoting is not judged under bash re-entry: $'/opt/example/out.txt'",
       );
       // Scaling, not wall clock: the same input at 8 192 and 16 383 lines (57 344 → 114 681 chars for
-      // `sh <<a`, 65 536 → 131 064 for `cat <<a`), process CPU time, minimum of 5 each.
+      // `sh <<a`, 65 536 → 131 064 for `cat <<a`), process CPU time, minimum of 3 each (minCpuMs,
+      // which yields between runs; queue 4ap moved this test off its own minimum-of-5 loop).
       // validateShellCommand is synchronous and CPU-bound, so CPU time excludes scheduler waits and
       // the ratio no longer depends on load. Wall clock did: a median of 3 flaked at 3.01 under load
       // 7-10 on 2026-10-18, and a wall-clock minimum of 5 still drifted to 2.66 (`cat`) under load
@@ -1205,47 +1244,40 @@ B`;
       // 12.7 s, ratio 3.82 (CPU, minimum of 5). No absolute bound is both CI-safe and tight: 1500 ms
       // flaked at 2174 ms on a shared GitHub runner, while that quadratic passed a 15 000 ms bound
       // here and would run ~8 s on a 2x faster box. A runner slow by a constant factor keeps the ratio.
-      // The 20 s of CPU per call is a sanity bound (testTimeout is 30 s per test, raised for this one).
-      const time = (input: string): number => {
-        const c0 = process.cpuUsage();
-        validateShellCommand(input);
-        const d = process.cpuUsage(c0);
-        const ms = (d.user + d.system) / 1000;
+      // The 20 s of CPU per input is a sanity bound (testTimeout is 30 s per test, raised for this one).
+      const time = async (input: string): Promise<number> => {
+        const { ms } = await minCpuMs(() => validateShellCommand(input));
         expect(ms, `${JSON.stringify(input.slice(0, 8))}… ${input.length} chars`).toBeLessThan(20_000);
         return ms;
       };
       for (const line of ["sh <<a\n", "cat <<a\n"]) {
-        const half: number[] = [];
-        const full: number[] = [];
-        for (let r = 0; r < 5; r++) {
-          half.push(time(line.repeat(8192)));
-          full.push(time(line.repeat(16383)));
-        }
-        const ratio = Math.min(...full) / Math.min(...half);
-        expect(ratio, `${line.trim()}: 16383 lines ${Math.min(...full).toFixed(0)} ms / 8192 lines ${Math.min(...half).toFixed(0)} ms`).toBeLessThan(3);
+        const half = await time(line.repeat(8192));
+        const full = await time(line.repeat(16383));
+        const ratio = full / half;
+        expect(ratio, `${line.trim()}: 16383 lines ${full.toFixed(0)} ms / 8192 lines ${half.toFixed(0)} ms`).toBeLessThan(3);
       }
-      time(`sh -c ${"\"'".repeat(30_000)}`); // ~20 ms: too fast for a stable ratio, the sanity bound only
+      await time(`sh -c ${"\"'".repeat(30_000)}`); // ~20 ms: too fast for a stable ratio, the sanity bound only
       expect(validateShellCommand("cat <<a\n".repeat(16383)).reason).toMatch(/nested 5 deep \(a heredoc body or a quoted string\) is not judged/);
     }, 120_000);
 
-    it("stays linear on hostile operator-dense input (one pass, no rescans)", () => {
+    it("stays linear on hostile operator-dense input (one pass, no rescans)", async () => {
       // A benign 20 000-char line of 2 000 `cp` words (audit R1 W2: a rescan budget refused it).
       const line = "cp /tmp/a ".repeat(2000);
       expect(line.length).toBe(20_000);
-      // 1500 ms of CPU, minimum of 5 (minCpuMs; wall clock flaked on CI 2026-10-26, queue 4ap).
-      let m = minCpuMs(() => validateShellCommand(line));
+      // 1500 ms of CPU x speed factor, minimum of 3 (minCpuMs, linearBound; queue 4ap).
+      let m = await minCpuMs(() => validateShellCommand(line));
       expect(m.result).toEqual({ allowed: true });
-      expect(m.ms).toBeLessThan(1500);
+      expect(m.ms).toBeLessThan(linearBound(1500));
       // A brace scan over 120 000 commas (audit R2 W1: the regex form took 11 s). The unclosed form
       // (`cp a /tmp/{,,,…`) still takes ~18 s in the deny-verb BRACE_RE, outside this scan (queued).
-      m = minCpuMs(() => validateShellCommand("cp a /tmp/x{" + ",".repeat(120_000) + "}"));
-      expect(m.ms).toBeLessThan(1500);
+      m = await minCpuMs(() => validateShellCommand("cp a /tmp/x{" + ",".repeat(120_000) + "}"));
+      expect(m.ms).toBeLessThan(linearBound(1500));
       for (const unit of ["cp ", "tee a ", "mv -t ", "cp '", "2>&1 cp ", ">'", '>"', "&> ", ">& ", "cat <<a\n"]) {
         const cmd = unit.repeat(Math.floor(130_000 / unit.length));
-        m = minCpuMs(() => validateShellCommand(cmd));
-        expect(m.ms, unit).toBeLessThan(1500); // the same bound as the package-manager gate's linear test
+        m = await minCpuMs(() => validateShellCommand(cmd));
+        expect(m.ms, unit).toBeLessThan(linearBound(1500)); // the same bound as the package-manager gate's linear test
       }
-    }, 120_000); // 5 runs per input: ~21 s on the VPS, above the 30 s default on a slower runner
+    }, 120_000); // 3 runs per input: ~13 s on the VPS, ~3x that on the CI runner
   });
 
   describe("williams-entry-radar write access", () => {
@@ -2538,7 +2570,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     expect(validateShellCommand("cat " + "/proc/a/".repeat(1_000) + "environ").allowed).toBe(false);
   });
 
-  it("stays linear on hostile input — no regex over the command text (qa R2 C-4)", () => {
+  it("stays linear on hostile input — no regex over the command text (qa R2 C-4)", async () => {
     for (const cmd of [
       "npm " + "--a-b-c ".repeat(40) + "!",
       "npm " + "--foo-bar-baz ".repeat(200) + "!",
@@ -2565,15 +2597,16 @@ describe("package-manager gate — shell_exec has no install authority (dependen
       "ls " + ">|x ".repeat(20000),
       "cp>/tmp/o ".repeat(10000) + "a b",
     ]) {
-      const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
+      const { ms, result: r } = await minCpuMs(() => validateShellCommand(cmd));
       // Every input stays under MAX_COMMAND_BYTES: one refused by the cap scans nothing.
       expect(r.reason ?? "", `len=${cmd.length}`).not.toMatch(/command too long/);
       // Linear worst case ~440 ms on the VPS, ~520 ms on CI; 1500 ms leaves headroom for a loaded pre-commit run and still separates linear from the quadratic shapes measured at this size (5-27 s).
-      // CPU time, minimum of 5 (minCpuMs): the wall-clock form failed at 1517 and 1574 ms on the
-      // `len=120000` input on the GitHub runner on 2026-10-26 with no code change (queue 4ap).
-      expect(ms, `len=${cmd.length}`).toBeLessThan(1500);
+      // CPU time, minimum of 3, scaled by the box's speed (minCpuMs, linearBound): the wall-clock
+      // form failed at 1517 and 1574 ms on the `len=120000` input on the GitHub runner on
+      // 2026-10-26 with no code change (queue 4ap).
+      expect(ms, `len=${cmd.length}`).toBeLessThan(linearBound(1500));
     }
-  }, 120_000); // 5 runs per input: ~23 s on the VPS, above the 30 s default on a slower runner
+  }, 120_000); // 3 runs per input: ~13 s on the VPS, ~3x that on the CI runner
 
   it("allows local bins, repo scripts and read-only npm queries", () => {
     allowed("npx tsc --noEmit");
@@ -2872,7 +2905,7 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     for (const [cmd, why] of refuse5a) refused(cmd, why);
   });
 
-  it("ruling 5a fold (qa R1): psql arguments are a closed grammar on the RAW text, not a parse of shell text", () => {
+  it("ruling 5a fold (qa R1): psql arguments are a closed grammar on the RAW text, not a parse of shell text", async () => {
     const D = "docker exec supabase-db psql";
     const GRAMMAR = /argument grammar.*role must be a bare word.*ruling 5a/;
     const FLAG = /flag not allowed.*ruling 5a/;
@@ -2983,11 +3016,11 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) allowed(cmd);
     // The raw command is judged once per command, so a long chain of valid invocations stays linear.
     const chain = `${D} -U mcp_readonly -c 'select 1' ; `.repeat(2000);
-    // CPU time, minimum of 5 (minCpuMs), not wall clock: a shared runner's scheduler waits are not
-    // the algorithm's cost (queue 4ap).
-    const m = minCpuMs(() => validateShellCommand(chain));
+    // CPU time, minimum of 3, scaled by the box's speed (minCpuMs, linearBound), not wall clock: a
+    // shared runner's scheduler waits are not the algorithm's cost (queue 4ap).
+    const m = await minCpuMs(() => validateShellCommand(chain));
     expect(m.result.allowed).toBe(true);
-    expect(m.ms).toBeLessThan(1500);
+    expect(m.ms).toBeLessThan(linearBound(1500));
   });
 
   it("finds the docker word behind wrappers, paths, global flags, separators and shell re-entry", () => {
@@ -3316,7 +3349,7 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) refused(cmd);
   });
 
-  it("stays linear on 131,072-byte docker-dense input", () => {
+  it("stays linear on 131,072-byte docker-dense input", async () => {
     for (const cmd of [
       ("docker ".repeat(20_000)).slice(0, 131_072),
       ("docker exec ".repeat(11_000)).slice(0, 131_072),
@@ -3329,13 +3362,13 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       ("docker compose " + "-papp ".repeat(21_000)).slice(0, 131_072),
     ]) {
       expect(Buffer.byteLength(cmd)).toBeLessThanOrEqual(131_072);
-      const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
+      const { ms, result: r } = await minCpuMs(() => validateShellCommand(cmd));
       expect(r.reason ?? "", `len=${cmd.length}`).not.toMatch(/command too long/);
       // Same bound as the hostile-input pin above (linear worst case ~440 ms on the VPS), measured
-      // the same way: CPU time, minimum of 5 (minCpuMs; wall clock flaked on CI 2026-10-26, 4ap).
-      expect(ms, `len=${cmd.length}`).toBeLessThan(1500);
+      // the same way: CPU time, minimum of 3, scaled by the box's speed (minCpuMs, linearBound; 4ap).
+      expect(ms, `len=${cmd.length}`).toBeLessThan(linearBound(1500));
     }
-  }, 120_000); // 5 runs per input: ~8 s on the VPS
+  }, 120_000); // 3 runs per input: ~5 s on the VPS
 });
 
 describe("ruling 3c — $SECRET_X is exported only into the child that names it", () => {
@@ -3532,15 +3565,15 @@ describe("npm run / npx appended argv carries no psql-shaped token (queue 4m, ru
     ]) refused(cmd);
   });
 
-  it("stays linear on 120 KB package-manager-dense input (fold W1)", () => {
+  it("stays linear on 120 KB package-manager-dense input (fold W1)", async () => {
     const cmd = "echo " + "yarn ".repeat(24_000);
     expect(Buffer.byteLength(cmd)).toBeGreaterThan(119_000);
-    // CPU time, minimum of 5 (minCpuMs), not wall clock: the same 120 KB shape flaked at 1500 ms
-    // of wall clock on the GitHub runner on 2026-10-26 (queue 4ap).
-    const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
+    // CPU time, minimum of 3, scaled by the box's speed (minCpuMs, linearBound), not wall clock:
+    // the same 120 KB shape flaked at 1500 ms of wall clock on the GitHub runner on 2026-10-26 (4ap).
+    const { ms, result: r } = await minCpuMs(() => validateShellCommand(cmd));
     expect(r.reason ?? "").not.toMatch(/command too long/);
-    expect(ms).toBeLessThan(2000);
-  }, 120_000); // 5 runs
+    expect(ms).toBeLessThan(linearBound(2000));
+  }, 120_000); // 3 runs
 
   it("refuses appended argv past the 64-token scan cap (fold W1)", () => {
     refused(`npm run db -- ${"a ".repeat(70)}-U postgres`);
