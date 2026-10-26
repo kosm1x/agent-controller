@@ -46,6 +46,8 @@ const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
  */
 export function ensureJarvisWorktree(): void {
   if (!existsSync(MC_DIR)) {
+    // Stays sync on purpose: a one-time bootstrap, runs only while MC_DIR
+    // is missing.
     execFileSync(
       "git",
       ["-C", PRIMARY_DIR, "worktree", "add", "--detach", MC_DIR],
@@ -204,19 +206,30 @@ export interface WorkingTreeState {
   now_ms: number;
 }
 
-function run(args: string[], opts?: { timeout?: number }): string {
-  return execFileSync("git", args, {
+// Async on purpose: execFileSync blocks mission-control's event loop for the
+// whole child (`push` is network-bound, seconds) — a 6.05 s block fired
+// MCEventLoopBlock (> 5 s max lag) on 2026-10-26.
+// Unlike execFileSync, execFile leaves the child's stdin open: a child that
+// reads it (a git hook, a gh prompt) would hang to the timeout. Every
+// git/gh child here closes stdin before the await so it fails fast.
+async function run(
+  args: string[],
+  opts?: { timeout?: number },
+): Promise<string> {
+  const p = execFileAsync("git", args, {
     cwd: MC_DIR,
     timeout: opts?.timeout ?? GIT_TIMEOUT_MS,
     encoding: "utf-8",
     // Base allow-list (queue 3h): push authenticates through HOME's gh config.
     env: buildChildEnv(),
-  }).trim();
+  });
+  p.child.stdin?.end();
+  return (await p).stdout.trim();
 }
 
-function currentBranch(): string {
+async function currentBranch(): Promise<string> {
   try {
-    return run(["branch", "--show-current"]);
+    return await run(["branch", "--show-current"]);
   } catch {
     return "HEAD";
   }
@@ -254,8 +267,10 @@ export function computeDirtyHash(inputs: {
   return hasher.digest("hex").slice(0, 16);
 }
 
-function readUntrackedContents(): Array<{ path: string; bytes: Buffer }> {
-  const list = run(["ls-files", "--others", "--exclude-standard"])
+async function readUntrackedContents(): Promise<
+  Array<{ path: string; bytes: Buffer }>
+> {
+  const list = (await run(["ls-files", "--others", "--exclude-standard"]))
     .split("\n")
     .filter(Boolean);
   const out: Array<{ path: string; bytes: Buffer }> = [];
@@ -271,14 +286,17 @@ function readUntrackedContents(): Array<{ path: string; bytes: Buffer }> {
   return out;
 }
 
-function computeWorkingTreeState(): Omit<WorkingTreeState, "now_ms"> | null {
+async function computeWorkingTreeState(): Promise<Omit<
+  WorkingTreeState,
+  "now_ms"
+> | null> {
   try {
-    const branch = currentBranch();
-    const head_sha = run(["rev-parse", "HEAD"]);
-    const porcelain = run(["status", "--porcelain"]);
-    const diffUnstaged = run(["diff"]);
-    const diffStaged = run(["diff", "--staged"]);
-    const untracked = readUntrackedContents();
+    const branch = await currentBranch();
+    const head_sha = await run(["rev-parse", "HEAD"]);
+    const porcelain = await run(["status", "--porcelain"]);
+    const diffUnstaged = await run(["diff"]);
+    const diffStaged = await run(["diff", "--staged"]);
+    const untracked = await readUntrackedContents();
     const dirty_hash = computeDirtyHash({
       porcelain,
       diffUnstaged,
@@ -342,8 +360,10 @@ export function isCacheFresh(
   return true;
 }
 
-function getFreshPassingCache(branch: string): TestCacheEntry | null {
-  const wt = computeWorkingTreeState();
+async function getFreshPassingCache(
+  branch: string,
+): Promise<TestCacheEntry | null> {
+  const wt = await computeWorkingTreeState();
   if (!wt || wt.branch !== branch) return null;
   const cache = readTestCache();
   return isCacheFresh(cache, { ...wt, now_ms: Date.now() }) ? cache : null;
@@ -354,11 +374,11 @@ function getFreshPassingCache(branch: string): TestCacheEntry | null {
 // ---------------------------------------------------------------------------
 
 /** @internal exported for tests — `git` runs in MC_DIR in production. */
-export function actionBranch(
+export async function actionBranch(
   type: string,
   slug: string,
-  git: (args: string[]) => string = run,
-): string {
+  git: (args: string[]) => string | Promise<string> = run,
+): Promise<string> {
   const branchName = `jarvis/${type}/${slug}`;
   if (!["feat", "fix", "refactor"].includes(type)) {
     return JSON.stringify({
@@ -384,7 +404,7 @@ export function actionBranch(
   // Every git failure below is returned, never swallowed.
   let dirty: string;
   try {
-    dirty = git(["status", "--porcelain"]);
+    dirty = await git(["status", "--porcelain"]);
   } catch (err) {
     return failure("git status failed", err);
   }
@@ -399,7 +419,7 @@ export function actionBranch(
   }
 
   try {
-    git(["fetch", "origin", "main"]);
+    await git(["fetch", "origin", "main"]);
   } catch (err) {
     return failure(
       "git fetch origin main failed — not branching from a stale base",
@@ -409,13 +429,19 @@ export function actionBranch(
 
   let exists = true;
   try {
-    git(["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`]);
+    await git([
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branchName}`,
+    ]);
   } catch {
     exists = false;
   }
   try {
-    if (exists) git(["checkout", branchName]);
-    else git(["checkout", "--no-track", "-b", branchName, "origin/main"]);
+    if (exists) await git(["checkout", branchName]);
+    else
+      await git(["checkout", "--no-track", "-b", branchName, "origin/main"]);
   } catch (err) {
     return failure(
       `Failed to ${exists ? "check out" : "create"} ${branchName}`,
@@ -429,7 +455,7 @@ export function actionBranch(
     null;
   if (exists) {
     try {
-      const log = git(["log", "--format=%h %s", "origin/main..HEAD"]);
+      const log = await git(["log", "--format=%h %s", "origin/main..HEAD"]);
       resumed = {
         commits_not_on_origin_main: log ? log.split("\n").slice(0, 20) : [],
         note: "Every commit listed here ships in this branch's PR. If any is not this task's work, start a new branch with a different slug.",
@@ -461,7 +487,7 @@ function testsGreen(tests: string): boolean {
 }
 
 async function actionTest(): Promise<string> {
-  const branch = currentBranch();
+  const branch = await currentBranch();
   if (!JARVIS_BRANCH_RE.test(branch)) {
     return JSON.stringify({
       error: `Not on a jarvis/* branch (current: "${branch}"). Create one first with action="branch".`,
@@ -491,7 +517,7 @@ async function runTestGate(branch: string): Promise<string> {
   // concurrent mutation (another turn's file_write, a background process,
   // etc.) and refuse to cache a result bound to code that's no longer
   // on disk.
-  const preState = computeWorkingTreeState();
+  const preState = await computeWorkingTreeState();
 
   // Typecheck
   try {
@@ -551,7 +577,7 @@ async function runTestGate(branch: string): Promise<string> {
   // Re-snapshot AFTER tests ran. If the working tree changed during the
   // suite, `tests: PASS` describes code that is no longer on disk — we
   // must not cache a green result for a state that wasn't actually tested.
-  const postState = computeWorkingTreeState();
+  const postState = await computeWorkingTreeState();
   const mutatedDuringRun = detectRunMutation(preState, postState);
   if (mutatedDuringRun && testsGreen(results.tests)) {
     results.tests =
@@ -623,7 +649,7 @@ export function changedPathsFromPorcelainZ(out: string): string[] {
 }
 
 async function actionPr(title: string, body: string): Promise<string> {
-  const branch = currentBranch();
+  const branch = await currentBranch();
   console.log(`[jarvis_dev] action=pr branch=${branch} title="${title}"`);
   if (!JARVIS_BRANCH_RE.test(branch)) {
     console.log(
@@ -637,7 +663,7 @@ async function actionPr(title: string, body: string): Promise<string> {
   // Trust a fresh green action=test cache if branch + HEAD + working tree
   // all match, so action=pr doesn't re-spend the caller's budget on a gate
   // that was just run. Cache-miss path runs tests inline as before.
-  const cached = getFreshPassingCache(branch);
+  const cached = await getFreshPassingCache(branch);
   const testResult: {
     typecheck: string;
     tests: string;
@@ -691,13 +717,15 @@ async function actionPr(title: string, body: string): Promise<string> {
   try {
     // Get changed files, exclude sensitive ones
     // Not run(): its trim() eats the first entry's leading status space.
-    const porcelain = execFileSync("git", PR_STATUS_ARGS, {
+    const porcelainRun = execFileAsync("git", PR_STATUS_ARGS, {
       cwd: MC_DIR,
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
       maxBuffer: EXEC_MAX_BUFFER,
       env: buildChildEnv(),
     });
+    porcelainRun.child.stdin?.end();
+    const { stdout: porcelain } = await porcelainRun;
     const changed = changedPathsFromPorcelainZ(porcelain).filter(
       (f) => !SENSITIVE.some((s) => f.toLowerCase().includes(s)),
     );
@@ -712,12 +740,12 @@ async function actionPr(title: string, body: string): Promise<string> {
     console.log(
       `[jarvis_dev] action=pr staging ${changed.length} file(s): ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ` (+${changed.length - 5} more)` : ""}`,
     );
-    run(prAddArgs(changed));
+    await run(prAddArgs(changed));
     // --no-verify: the test gate for this commit already ran above (fresh
     // actionTest or trusted cache) — the pre-commit hook would run the FULL
     // suite inside GIT_TIMEOUT_MS (60s) and ETIMEDOUT every time (task
     // 7489/7491, 2026-07-13). CI on push/PR runs the full suite and gates.
-    run(["commit", "--no-verify", "-m", title]);
+    await run(["commit", "--no-verify", "-m", title]);
     console.log(`[jarvis_dev] action=pr committed on ${branch}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -728,7 +756,7 @@ async function actionPr(title: string, body: string): Promise<string> {
   }
 
   try {
-    run(["push", "-u", "origin", branch]);
+    await run(["push", "-u", "origin", branch]);
     console.log(`[jarvis_dev] action=pr pushed ${branch} to origin`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -754,19 +782,22 @@ async function actionPr(title: string, body: string): Promise<string> {
     "--body",
     prBody,
   ];
-  const createPr = (args: string[]): string =>
-    execFileSync("gh", args, {
+  const createPr = async (args: string[]): Promise<string> => {
+    const p = execFileAsync("gh", args, {
       cwd: MC_DIR,
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
       // Operator's own gh auth via HOME; no GH_TOKEN (queue 3h).
       env: buildChildEnv(),
-    }).trim();
+    });
+    p.child.stdin?.end();
+    return (await p).stdout.trim();
+  };
 
   let prUrl: string;
   let labelApplied = true;
   try {
-    prUrl = createPr([...baseArgs, "--label", "jarvis-authored"]);
+    prUrl = await createPr([...baseArgs, "--label", "jarvis-authored"]);
     console.log(`[jarvis_dev] action=pr opened with label: ${prUrl}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -783,7 +814,7 @@ async function actionPr(title: string, body: string): Promise<string> {
     }
     console.log(`[jarvis_dev] action=pr label missing, retrying without label`);
     try {
-      prUrl = createPr(baseArgs);
+      prUrl = await createPr(baseArgs);
       labelApplied = false;
       console.log(`[jarvis_dev] action=pr opened without label: ${prUrl}`);
     } catch (err2) {
@@ -813,13 +844,14 @@ async function actionPr(title: string, body: string): Promise<string> {
   });
 }
 
-function actionStatus(): string {
-  const branch = currentBranch();
+/** @internal exported for tests — `git` runs in MC_DIR in production. */
+export async function actionStatus(): Promise<string> {
+  const branch = await currentBranch();
   let status = "";
   let diff = "";
   try {
-    status = run(["status", "--porcelain"]);
-    diff = run(["diff", "--stat"]);
+    status = await run(["status", "--porcelain"]);
+    diff = await run(["diff", "--stat"]);
   } catch {
     // ignore
   }

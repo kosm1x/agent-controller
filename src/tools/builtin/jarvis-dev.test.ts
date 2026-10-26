@@ -2,9 +2,54 @@ import { execFileSync } from "child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { buildChildEnv } from "../../mcp/env-deny.js";
+
+// run() hard-codes cwd = the REAL jarvis worktree. Children aimed there are
+// redirected to the current fixture (`fixtureWt.dir`) so the real run() path
+// (async execFile) is exercised; with no fixture set they throw instead of
+// touching the real worktree. Every child must name an explicit cwd under the
+// OS temp dir (the fixtures) and never pass `-C <path>` — a child with no cwd
+// or a `-C` would reach whatever repo the runner sits in.
+const fixtureWt = vi.hoisted(() => ({ dir: "" }));
+vi.mock("child_process", async (orig) => {
+  const actual = await orig<typeof import("child_process")>();
+  const { promisify } = await import("util");
+  const { tmpdir } = await import("os");
+  const redirect = (file: string, args: string[], opts: unknown) => {
+    const o = opts as { cwd?: string } | undefined;
+    const argv = `${file} ${args.join(" ")}`;
+    if (args.includes("-C"))
+      throw new Error(`test child passed -C (unscoped): ${argv}`);
+    if (o?.cwd === undefined)
+      throw new Error(`test child without cwd (unscoped): ${argv}`);
+    let cwd = o.cwd;
+    if (cwd === "/root/claude/mission-control-jarvis") {
+      if (!fixtureWt.dir)
+        throw new Error("test reached the real jarvis worktree");
+      cwd = fixtureWt.dir;
+    }
+    if (!cwd.startsWith(`${tmpdir()}/`))
+      throw new Error(`test child outside the fixture tmpdir: ${cwd}`);
+    return { ...o, cwd };
+  };
+  const realAsync = promisify(actual.execFile);
+  const execFile = Object.assign(
+    (file: string, args: string[], opts: unknown, cb: never) =>
+      actual.execFile(file, args, redirect(file, args, opts), cb),
+    {
+      [promisify.custom]: (file: string, args: string[], opts: unknown) =>
+        realAsync(file, args, redirect(file, args, opts)),
+    },
+  );
+  const execFileSync = (file: string, args: string[], opts: unknown) =>
+    actual.execFileSync(file, args, redirect(file, args, opts));
+  return { ...actual, execFile, execFileSync };
+});
+
 import {
   actionBranch,
+  actionStatus,
   buildGateScopeArgs,
   changedPathsFromPorcelainZ,
   PR_STATUS_ARGS,
@@ -322,10 +367,13 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
     git(pusher, ["push", "-q", "origin", "main"]);
   });
 
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    fixtureWt.dir = "";
+    rmSync(root, { recursive: true, force: true });
+  });
 
-  it("cuts a new branch from fresh origin/main, not from the stale HEAD", () => {
-    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+  it("cuts a new branch from fresh origin/main, not from the stale HEAD", async () => {
+    const out = JSON.parse(await actionBranch("fix", "new-thing", inWt));
     expect(out).toMatchObject({ success: true, base: "origin/main" });
     expect(inWt(["branch", "--show-current"])).toBe("jarvis/fix/new-thing");
     expect(inWt(["rev-parse", "HEAD"])).toBe(
@@ -336,25 +384,25 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
     expect(() => inWt(["rev-parse", "--abbrev-ref", "@{u}"])).toThrow();
   });
 
-  it("returns an error and creates nothing when the fetch fails", () => {
+  it("returns an error and creates nothing when the fetch fails", async () => {
     inWt(["remote", "set-url", "origin", join(root, "missing.git")]);
-    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+    const out = JSON.parse(await actionBranch("fix", "new-thing", inWt));
     expect(out.error).toMatch(/fetch origin main failed/);
     expect(inWt(["branch", "--list", "jarvis/fix/new-thing"])).toBe("");
     expect(inWt(["branch", "--show-current"])).toBe("jarvis/fix/old");
   });
 
-  it("refuses when leftover changes would ride into the new branch", () => {
+  it("refuses when leftover changes would ride into the new branch", async () => {
     writeFileSync(join(wt, "leftover.txt"), "x");
-    const out = JSON.parse(actionBranch("feat", "next", inWt));
+    const out = JSON.parse(await actionBranch("feat", "next", inWt));
     expect(out.error).toMatch(/Uncommitted changes/);
     expect(out.changed).toEqual(["?? leftover.txt"]);
     expect(inWt(["branch", "--list", "jarvis/feat/next"])).toBe("");
   });
 
-  it("resumes an existing branch as-is and lists the commits its PR would ship", () => {
+  it("resumes an existing branch as-is and lists the commits its PR would ship", async () => {
     inWt(["checkout", "-q", "--detach"]);
-    const out = JSON.parse(actionBranch("fix", "old", inWt));
+    const out = JSON.parse(await actionBranch("fix", "old", inWt));
     expect(out).toMatchObject({
       success: true,
       base: "existing branch (resumed)",
@@ -364,17 +412,69 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
     expect(out.commits_not_on_origin_main[0]).toMatch(/^[0-9a-f]+ STALE$/);
   });
 
-  it("a fresh branch carries no resume listing", () => {
-    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+  it("a fresh branch carries no resume listing", async () => {
+    const out = JSON.parse(await actionBranch("fix", "new-thing", inWt));
     expect(out).not.toHaveProperty("commits_not_on_origin_main");
   });
 
-  it("points next_steps at the worktree, not the primary checkout", () => {
-    const out = JSON.parse(actionBranch("fix", "new-thing", inWt));
+  it("points next_steps at the worktree, not the primary checkout", async () => {
+    const out = JSON.parse(await actionBranch("fix", "new-thing", inWt));
     expect(out.next_steps.join(" ")).toContain(
       "/root/claude/mission-control-jarvis/",
     );
     expect(out.next_steps.join(" ")).not.toMatch(/mission-control\//);
+  });
+
+  // MCEventLoopBlock 2026-10-26: run() held the event loop for every git
+  // child (6.05 s block). Drives the REAL run() (cwd redirected to the
+  // fixture): a setImmediate queued before the action must fire before the
+  // action resolves — impossible while git runs through execFileSync.
+  it("action=status yields the event loop while its git children run", async () => {
+    fixtureWt.dir = wt;
+    writeFileSync(join(wt, "leftover.txt"), "x");
+    let immediateRan = false;
+    setImmediate(() => {
+      immediateRan = true;
+    });
+    const { result, immediateRanFirst } = await actionStatus().then(
+      (result) => ({ result, immediateRanFirst: immediateRan }),
+    );
+    expect(immediateRanFirst).toBe(true);
+    expect(JSON.parse(result)).toEqual({
+      branch: "jarvis/fix/old",
+      is_jarvis_branch: true,
+      uncommitted_changes: 1,
+      diff_summary: "",
+      cwd: "/root/claude/mission-control-jarvis",
+    });
+  });
+
+  it("a failing git child through the real run() returns the same error text execFileSync produced", async () => {
+    fixtureWt.dir = wt;
+    const missing = join(root, "missing.git");
+    inWt(["remote", "set-url", "origin", missing]);
+    // What the pre-async run() surfaced: execFileSync's error message.
+    let syncMessage = "";
+    try {
+      execFileSync("git", ["fetch", "origin", "main"], {
+        cwd: wt,
+        encoding: "utf-8",
+        env: buildChildEnv(),
+        stdio: "pipe",
+      });
+    } catch (err) {
+      syncMessage = (err as Error).message;
+    }
+    expect(syncMessage).toMatch(/^Command failed: git fetch origin main\n/);
+
+    const out = JSON.parse(await actionBranch("fix", "new-thing"));
+    expect(out).toEqual({
+      error: `git fetch origin main failed — not branching from a stale base: ${syncMessage}`,
+    });
+    expect(out.error).toContain(
+      `Command failed: git fetch origin main\nfatal: '${missing}' does not appear to be a git repository\n`,
+    );
+    expect(inWt(["branch", "--list", "jarvis/fix/new-thing"])).toBe("");
   });
 }, 20_000);
 
@@ -425,7 +525,9 @@ describe("jarvis_dev action=pr — staged paths from porcelain -z", () => {
   });
 
   it("stages BOTH sides of a WORKTREE rename (intent-to-add, Y = R): the new file and the deletion", () => {
-    execFileSync("mv", [join(repo, "a.ts"), join(repo, "a2.ts")]);
+    execFileSync("mv", [join(repo, "a.ts"), join(repo, "a2.ts")], {
+      cwd: repo,
+    });
     git(["add", "-N", "a2.ts"]);
     const out = git(PR_STATUS_ARGS);
     expect(out.startsWith(" R ")).toBe(true);

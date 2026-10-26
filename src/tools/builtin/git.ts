@@ -2,11 +2,12 @@
  * Git/GitHub tools — enables Jarvis to commit, push, and create PRs.
  *
  * All operations run in the project root (/root/claude/cuatro-flor by default).
- * Uses execSync with timeouts. Refuses to stage sensitive files.
+ * Uses async exec/execFile with timeouts. Refuses to stage sensitive files.
  */
 
-import { execFileSync, execSync } from "child_process";
+import { exec, execFile, execFileSync } from "child_process";
 import { resolve } from "path";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
@@ -65,6 +66,8 @@ function isJarvisBranch(cwd?: string): boolean {
  * Returns the branch name or "HEAD" if detached.
  */
 export function getCurrentBranch(cwd: string): string {
+  // Stays sync on purpose: an ms-scale local read whose caller
+  // (isJarvisBranch) is a sync guard.
   try {
     return execFileSync("git", ["branch", "--show-current"], {
       cwd,
@@ -131,32 +134,58 @@ function resolveWorkDir(cwd?: string): string {
   return resolved;
 }
 
-/** Safe exec: uses execFileSync with array args to prevent shell injection. */
-function runArgs(
+// Async on purpose (2026-10-26): execFileSync/execSync blocked the event loop
+// for the child's whole run — chat turns on git_commit/git_push held it 3.4-4 s
+// and a slow push or `gh` call crosses the 5 s MCEventLoopBlock alert.
+// Promisified children keep stdin open; it is closed right after spawn so a
+// child that prompts (a hook, gh) fails fast instead of hanging to the timeout.
+const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
+
+/**
+ * Mask a secret in text returned to the model. Async child errors carry the
+ * full command line ("Command failed: git push https://user:TOKEN@…"), so the
+ * jarvis token path redacts both the token URL and the token itself.
+ */
+function redactSecret(text: string, secret: string | undefined): string {
+  return secret ? text.split(secret).join("***") : text;
+}
+
+/** Safe exec: uses execFile with array args to prevent shell injection. */
+async function runArgs(
   cmd: string,
   args: string[],
   timeout = 30_000,
   cwd?: string,
-): string {
-  return execFileSync(cmd, args, {
+): Promise<string> {
+  const p = execFileAsync(cmd, args, {
     cwd: resolveWorkDir(cwd),
     encoding: "utf-8" as const,
     timeout,
-    stdio: ["pipe", "pipe", "pipe"],
     // Base allow-list, never the service env (queue 3h): git reads its
     // config and gh its auth through HOME; a pre-commit hook runs tests.
     env: buildChildEnv(),
-  }).trim();
+  });
+  p.child.stdin?.end();
+  const { stdout } = await p;
+  return stdout.trim();
 }
 
 /** Shell exec for simple commands with no user input (safe). */
-function run(cmd: string, timeout = 30_000, cwd?: string): string {
-  return execSync(cmd, {
+async function run(
+  cmd: string,
+  timeout = 30_000,
+  cwd?: string,
+): Promise<string> {
+  const p = execAsync(cmd, {
     cwd: resolveWorkDir(cwd),
     encoding: "utf-8" as const,
     timeout,
     env: buildChildEnv(),
-  }).trim();
+  });
+  p.child.stdin?.end();
+  const { stdout } = await p;
+  return stdout.trim();
 }
 
 export const gitStatusTool: Tool = {
@@ -193,8 +222,8 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
       const cwd = args.cwd as string | undefined;
-      const status = run("git status --short", 30_000, cwd);
-      const branch = run("git branch --show-current", 30_000, cwd);
+      const status = await run("git status --short", 30_000, cwd);
+      const branch = await run("git branch --show-current", 30_000, cwd);
       if (!status) return `On branch ${branch}. Working tree clean.`;
       return `Branch: ${branch}\n\n${status}`;
     } catch (err) {
@@ -248,7 +277,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
       const diffArgs = ["diff"];
       if (args.staged) diffArgs.push("--cached");
       if (args.file) diffArgs.push("--", args.file as string);
-      const diff = runArgs("git", diffArgs, 15_000, cwd);
+      const diff = await runArgs("git", diffArgs, 15_000, cwd);
       if (!diff) return "No changes.";
       return diff.length > 5000
         ? diff.slice(0, 5000) + "\n... (truncated)"
@@ -329,11 +358,11 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
         }
       }
 
-      // Stage files (execFileSync — no shell injection from file paths)
-      runArgs("git", ["add", ...files], 30_000, cwd);
+      // Stage files (execFile — no shell injection from file paths)
+      await runArgs("git", ["add", ...files], 30_000, cwd);
 
       // Check there's something to commit
-      const staged = run("git diff --cached --stat", 30_000, cwd);
+      const staged = await run("git diff --cached --stat", 30_000, cwd);
       if (!staged)
         return "Nothing staged to commit. Did you specify the right files?";
 
@@ -353,7 +382,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
           commitArgs.push("--author", `${JARVIS_GH_USER} <${JARVIS_GH_EMAIL}>`);
         }
       }
-      const result = runArgs("git", commitArgs, 30_000, cwd);
+      const result = await runArgs("git", commitArgs, 30_000, cwd);
       return result;
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
@@ -402,6 +431,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    let tokenUrl: string | undefined;
     try {
       const cwd = args.cwd as string | undefined;
       // Path guard FIRST so a blocked/invalid cwd surfaces its real reason
@@ -410,7 +440,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       // Verify auth
       try {
-        run("gh auth status 2>&1");
+        await run("gh auth status 2>&1");
       } catch {
         return JSON.stringify({
           error: "GitHub auth not configured. Run `gh auth login` first.",
@@ -425,7 +455,9 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       let remote: string;
       let pendingRemote: string | undefined;
       try {
-        remote = run("git remote get-url origin 2>&1", 30_000, cwd).trim();
+        remote = (
+          await run("git remote get-url origin 2>&1", 30_000, cwd)
+        ).trim();
       } catch {
         const remoteArg = args.remote as string | undefined;
         if (!remoteArg) {
@@ -449,7 +481,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         );
         if (match) {
           try {
-            run(`gh repo view ${match[1]} --json name 2>&1`);
+            await run(`gh repo view ${match[1]} --json name 2>&1`);
           } catch {
             return JSON.stringify({
               error: `Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`,
@@ -459,18 +491,23 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       }
       // Only after the GitHub repo is confirmed to exist — never leave a dangling origin.
       if (pendingRemote) {
-        runArgs("git", ["remote", "add", "origin", pendingRemote], 15_000, cwd);
+        await runArgs(
+          "git",
+          ["remote", "add", "origin", pendingRemote],
+          15_000,
+          cwd,
+        );
       }
 
       // Ensure branch is named 'main' (git init defaults to 'master')
-      let branch = run("git branch --show-current", 30_000, cwd);
+      let branch = await run("git branch --show-current", 30_000, cwd);
       if (!branch) {
         return JSON.stringify({
           error: "detached HEAD state. Checkout a branch before pushing.",
         });
       }
       if (branch === "master") {
-        run("git branch -M main", 30_000, cwd);
+        await run("git branch -M main", 30_000, cwd);
         branch = "main";
       }
 
@@ -492,13 +529,13 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // non-fast-forward rejection — the dead-end Jarvis hit on williams-entry-radar
       // (diverged + dirty tree → silent rebase failure → rejected push → stuck).
       try {
-        runArgs("git", ["fetch", "origin"], 15_000, cwd);
+        await runArgs("git", ["fetch", "origin"], 15_000, cwd);
       } catch {
         // Offline or no remote yet — let the push attempt surface the real error.
       }
       let remoteBranches = "";
       try {
-        remoteBranches = runArgs("git", ["branch", "-r"], 30_000, cwd);
+        remoteBranches = await runArgs("git", ["branch", "-r"], 30_000, cwd);
       } catch {
         // Fresh repo with no refs yet — nothing to rebase onto.
       }
@@ -506,7 +543,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         // A dirty working tree makes `git rebase` abort immediately. Surface that
         // as an actionable error so the caller commits/discards first, rather than
         // silently pushing into a rejection with no recoverable signal.
-        const dirty = runArgs("git", ["status", "--porcelain"], 15_000, cwd);
+        const dirty = await runArgs(
+          "git",
+          ["status", "--porcelain"],
+          15_000,
+          cwd,
+        );
         if (dirty) {
           return JSON.stringify({
             error:
@@ -516,12 +558,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
           });
         }
         try {
-          runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
+          await runArgs("git", ["rebase", `origin/${branch}`], 30_000, cwd);
         } catch (rebaseErr) {
           // Diverged histories changed the same files — abort the half-applied
           // rebase (leave the tree usable) and report it needs a manual reconcile.
           try {
-            runArgs("git", ["rebase", "--abort"], 15_000, cwd);
+            await runArgs("git", ["rebase", "--abort"], 15_000, cwd);
           } catch {
             // Nothing to abort.
           }
@@ -535,24 +577,29 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       }
 
       // Check for uncommitted changes — warn before the LLM claims success
-      const status = runArgs("git", ["status", "--short"], 30_000, cwd);
+      const status = await runArgs("git", ["status", "--short"], 30_000, cwd);
       // On jarvis/* branches, push using Piotr's PAT so GitHub attributes
       // the push to PiotrCoderDroid instead of kosm1x.
       let pushResult: string;
       if (isJarvisBranch(cwd) && JARVIS_GH_TOKEN) {
-        const remoteUrl = run("git remote get-url origin", 10_000, cwd);
+        const remoteUrl = await run("git remote get-url origin", 10_000, cwd);
         const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
         if (match) {
-          const tokenUrl = `https://${JARVIS_GH_USER}:${JARVIS_GH_TOKEN}@github.com/${match[1]}.git`;
-          pushResult = runArgs("git", ["push", tokenUrl, branch], 60_000, cwd);
+          tokenUrl = `https://${JARVIS_GH_USER}:${JARVIS_GH_TOKEN}@github.com/${match[1]}.git`;
+          pushResult = await runArgs(
+            "git",
+            ["push", tokenUrl, branch],
+            60_000,
+            cwd,
+          );
           // A URL push can't take -u (upstream needs a named remote), leaving
           // the branch without tracking — which strands any follow-on
           // `gh pr create` that infers the head from upstream. Fetch the ref
           // we just pushed and set tracking best-effort; the push itself
           // already succeeded.
           try {
-            runArgs("git", ["fetch", "origin", branch], 15_000, cwd);
-            runArgs(
+            await runArgs("git", ["fetch", "origin", branch], 15_000, cwd);
+            await runArgs(
               "git",
               ["branch", `--set-upstream-to=origin/${branch}`, branch],
               10_000,
@@ -562,7 +609,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
             // Tracking is a convenience — never fail the push over it.
           }
         } else {
-          pushResult = runArgs(
+          pushResult = await runArgs(
             "git",
             ["push", "-u", "origin", branch],
             60_000,
@@ -570,7 +617,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
           );
         }
       } else {
-        pushResult = runArgs(
+        pushResult = await runArgs(
           "git",
           ["push", "-u", "origin", branch],
           60_000,
@@ -588,7 +635,8 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       return pushResult || `Pushed ${branch} to origin.`;
     } catch (err) {
-      return JSON.stringify({ error: errMsg(err) });
+      const msg = redactSecret(errMsg(err), tokenUrl);
+      return JSON.stringify({ error: redactSecret(msg, JARVIS_GH_TOKEN) });
     }
   },
 };
@@ -668,11 +716,8 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
         // a cwd that already has `origin` would strand an orphan repo (qa #1).
         let existing = "";
         try {
-          existing = runArgs(
-            "git",
-            ["remote", "get-url", "origin"],
-            5_000,
-            cwd,
+          existing = (
+            await runArgs("git", ["remote", "get-url", "origin"], 5_000, cwd)
           ).trim();
         } catch {
           // No origin — the case this tool exists for.
@@ -684,7 +729,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
         }
         ghArgs.push("--source", sourceDir, "--remote", "origin");
       }
-      const result = runArgs("gh", ghArgs, 30_000);
+      const result = await runArgs("gh", ghArgs, 30_000);
       const created = result || `Created repository ${name}.`;
       return sourceDir
         ? `${created}\nRemote 'origin' configured in ${sourceDir}. Next: git_push with cwd=${sourceDir}.`
@@ -785,19 +830,23 @@ Returns the PR URL on success.`,
       let result: string;
       // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
       if (isJarvisBranch(workDir) && JARVIS_GH_TOKEN) {
-        result = execFileSync("gh", prArgs, {
+        const p = execFileAsync("gh", prArgs, {
           cwd: workDir,
           timeout: 60_000,
           encoding: "utf-8",
           // Base allow-list + GH_TOKEN only, never the service env (queue 3h).
           env: buildChildEnv({ GH_TOKEN: JARVIS_GH_TOKEN }),
-        }).trim();
+        });
+        p.child.stdin?.end();
+        result = (await p).stdout.trim();
       } else {
-        result = runArgs("gh", prArgs, 60_000, workDir);
+        result = await runArgs("gh", prArgs, 60_000, workDir);
       }
       return result;
     } catch (err) {
-      return JSON.stringify({ error: errMsg(err) });
+      return JSON.stringify({
+        error: redactSecret(errMsg(err), JARVIS_GH_TOKEN),
+      });
     }
   },
 };

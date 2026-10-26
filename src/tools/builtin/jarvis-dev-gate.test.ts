@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // jarvis_dev's test gate under ruling 4: related tests only + the shared
 // one-at-a-time lock. Every spawn is mocked — no test runner starts here, no
 // git runs, and the real gate cache file is never written.
-const { execFile, execFileSync, execGroupKill, writeFileSync, changed } =
+const { execFile, execFileSync, execGroupKill, writeFileSync, changed, git } =
   vi.hoisted(() => {
     const changed = {
       ahead: "",
@@ -11,19 +11,39 @@ const { execFile, execFileSync, execGroupKill, writeFileSync, changed } =
       fail: false,
       heads: [] as string[],
     };
+    const git = (args: string[]): string => {
+      if (args[0] === "branch") return "jarvis/fix/x\n";
+      if (args[0] === "rev-parse") return changed.heads.shift() ?? "abc123\n";
+      if (!args.includes("-z") || args[0] === "status") return "";
+      if (changed.fail) throw new Error("unknown revision origin/main");
+      if (args[0] === "ls-files") return "";
+      return args.includes("HEAD") ? changed.worktree : changed.ahead;
+    };
+    // The callback mock is what tests drive; the promisify.custom hook wraps
+    // it like the real one, returning a promise that carries `.child`.
+    const execFileCb = vi.fn();
+    const execFile = Object.assign(execFileCb, {
+      [Symbol.for("nodejs.util.promisify.custom")]: (
+        cmd: string,
+        args: string[],
+        opts: unknown,
+      ) =>
+        Object.assign(
+          new Promise((resolve, reject) =>
+            execFileCb(cmd, args, opts, (err: unknown, out: unknown) =>
+              err ? reject(err) : resolve(out),
+            ),
+          ),
+          { child: { stdin: { end: vi.fn() } } },
+        ),
+    });
     return {
       changed,
+      git,
       execGroupKill: vi.fn(),
-      execFile: vi.fn(),
+      execFile,
       writeFileSync: vi.fn(),
-      execFileSync: vi.fn((_cmd: string, args: string[]) => {
-        if (args[0] === "branch") return "jarvis/fix/x\n";
-        if (args[0] === "rev-parse") return changed.heads.shift() ?? "abc123\n";
-        if (!args.includes("-z") || args[0] === "status") return "";
-        if (changed.fail) throw new Error("unknown revision origin/main");
-        if (args[0] === "ls-files") return "";
-        return args.includes("HEAD") ? changed.worktree : changed.ahead;
-      }),
+      execFileSync: vi.fn((_cmd: string, args: string[]) => git(args)),
     };
   });
 vi.mock("child_process", () => ({ execFile, execFileSync }));
@@ -44,19 +64,40 @@ import { jarvisTestRunTool, SUITE_RUN_BUSY } from "./jarvis-self-repair.js";
 import { vpsDeployTool } from "./vps-management.js";
 
 type Cb = (err: unknown, out?: { stdout: string; stderr: string }) => void;
-/** execFile answers: tsc first, then the related run. */
-const answer = (...outs: Array<string | Error>) => {
-  for (const o of outs)
-    execFile.mockImplementationOnce(
-      (_f: string, _a: string[], _o: unknown, cb: Cb) =>
-        o instanceof Error ? cb(o) : cb(null, { stdout: o, stderr: "" }),
-    );
+// Since the 2026-10-26 event-loop fix, run()'s git children also go through
+// execFile: git answers from the same table as execFileSync; only the
+// systemd-run gate children consume the queued answers.
+type Answer = string | Error | ((cb: Cb) => void);
+let queued: Answer[] = [];
+/** systemd-run answers: tsc first, then the related run. */
+const answer = (...outs: Answer[]) => {
+  queued.push(...outs);
 };
+const routeExecFile = (cmd: string, args: string[], _o: unknown, cb: Cb) => {
+  if (cmd === "git") {
+    let stdout: string;
+    try {
+      stdout = git(args);
+    } catch (err) {
+      return cb(err);
+    }
+    return cb(null, { stdout, stderr: "" });
+  }
+  const o = queued.shift();
+  if (o === undefined) throw new Error(`no queued answer for ${cmd}`);
+  if (typeof o === "function") return o(cb);
+  return o instanceof Error ? cb(o) : cb(null, { stdout: o, stderr: "" });
+};
+/** The gate children only (systemd-run), never run()'s git calls. */
+const gateCalls = () =>
+  execFile.mock.calls.filter((c) => c[0] === "systemd-run");
 const test = async () =>
   JSON.parse(await jarvisDevTool.execute({ action: "test" }));
 
 beforeEach(() => {
   execFile.mockReset();
+  execFile.mockImplementation(routeExecFile);
+  queued = [];
   execGroupKill.mockReset();
   writeFileSync.mockClear();
   Object.assign(changed, {
@@ -74,12 +115,12 @@ describe("jarvis_dev test gate — related tests only (ruling 4)", () => {
   it("runs vitest's related mode on the changed files inside the gate scope, in the worktree", async () => {
     answer("", "Test Files  3 passed (3)\nTests  12 passed (12)");
     const out = await test();
-    expect(execFile).toHaveBeenCalledTimes(2);
-    expect(execFile.mock.calls[1][0]).toBe("systemd-run");
-    expect(execFile.mock.calls[1][1]).toEqual(
+    expect(gateCalls()).toHaveLength(2);
+    expect(gateCalls()[1][0]).toBe("systemd-run");
+    expect(gateCalls()[1][1]).toEqual(
       buildGateScopeArgs(relatedTestArgv(["src/tools/a.ts"])),
     );
-    expect(execFile.mock.calls[1][2]).toMatchObject({
+    expect(gateCalls()[1][2]).toMatchObject({
       cwd: "/root/claude/mission-control-jarvis",
       timeout: 330_000,
       maxBuffer: 32 * 1024 * 1024,
@@ -98,7 +139,7 @@ describe("jarvis_dev test gate — related tests only (ruling 4)", () => {
     changed.ahead = "docs/x.md\0";
     answer("");
     const out = await test();
-    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(gateCalls()).toHaveLength(1);
     expect(out.tests).toBe(
       "SKIPPED (1 changed file(s), none a .ts file vitest can scope — typecheck only; the full suite runs in CI)",
     );
@@ -166,7 +207,7 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
       error: "Tests must pass before opening a PR.",
       tests: `FAIL: ${SUITE_RUN_BUSY}`,
     });
-    expect(execFile).not.toHaveBeenCalled();
+    expect(gateCalls()).toHaveLength(0);
     expect(writeFileSync).not.toHaveBeenCalled();
 
     release({ stdout: "", stderr: "" });
@@ -174,12 +215,12 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
   });
 
   it("jarvis_test_run and vps_deploy are refused while the jarvis_dev gate runs; released after", async () => {
-    let release!: Cb;
-    execFile.mockImplementationOnce(
-      (_f: string, _a: string[], _o: unknown, cb: Cb) => (release = cb),
-    );
+    let release: Cb | undefined;
+    answer((cb) => (release = cb));
     const gate = test();
-    await Promise.resolve();
+    // run()'s git calls now resolve over several ticks before the gate takes
+    // the lock; wait until the tsc child is actually running (lock held).
+    await vi.waitFor(() => expect(release).toBeDefined());
     expect(await jarvisTestRunTool.execute({})).toBe(
       `❌ Tests: ${SUITE_RUN_BUSY}`,
     );
@@ -187,7 +228,7 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
       `❌ Deploy aborted: ${SUITE_RUN_BUSY}`,
     );
     answer("Test Files  1 passed (1)\nTests  2 passed (2)");
-    release(null, { stdout: "", stderr: "" });
+    release!(null, { stdout: "", stderr: "" });
     expect((await gate).ready_for_pr).toBe(true);
 
     execGroupKill.mockImplementation(() =>

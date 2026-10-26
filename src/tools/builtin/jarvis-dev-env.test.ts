@@ -23,16 +23,31 @@ const m = vi.hoisted(() => {
   const execFileSync = vi.fn((cmd: string, args: string[]) =>
     cmd === "gh" ? "https://github.com/o/r/pull/9\n" : git(args),
   );
-  const execFileAsync = vi.fn(async () => ({
-    stdout: "Test Files  1 passed (1)\nTests  1 passed (1)",
-    stderr: "",
-  }));
+  // run() (git), the porcelain read, `gh pr create` and the systemd-run gate
+  // children all go through promisify(execFile) since the 2026-10-26
+  // event-loop fix — routed by command. Like the real promisified execFile,
+  // the promise carries `.child`; each child's stdin.end is recorded.
+  const children: Array<{ argv: string; end: ReturnType<typeof vi.fn> }> = [];
+  const execFileAsync = vi.fn((cmd: string, args: string[]) => {
+    const end = vi.fn();
+    children.push({ argv: `${cmd} ${args.join(" ")}`, end });
+    const result = Promise.resolve({
+      stdout:
+        cmd === "git"
+          ? git(args)
+          : cmd === "gh"
+            ? "https://github.com/o/r/pull/9\n"
+            : "Test Files  1 passed (1)\nTests  1 passed (1)",
+      stderr: "",
+    });
+    return Object.assign(result, { child: { stdin: { end } } });
+  });
   const execFile = Object.assign(vi.fn(), {
     [Symbol.for("nodejs.util.promisify.custom")]: execFileAsync,
   });
   // false → ensureJarvisWorktree runs `git worktree add` (jarvis-dev.ts:49).
   const fsState = { worktreeExists: true };
-  return { execFileSync, execFileAsync, execFile, fsState };
+  return { execFileSync, execFileAsync, execFile, fsState, children };
 });
 
 vi.mock("child_process", async (orig) => ({
@@ -93,6 +108,7 @@ beforeEach(() => {
   m.fsState.worktreeExists = true;
   m.execFileSync.mockClear();
   m.execFileAsync.mockClear();
+  m.children.length = 0;
   for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
 });
 afterEach(() => {
@@ -120,7 +136,7 @@ describe("jarvis_dev — child env is an allow-list, never the service env (queu
       await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" }),
     );
     expect(out.pr_url).toBe("https://github.com/o/r/pull/9");
-    const gh = m.execFileSync.mock.calls.find((c) => c[0] === "gh");
+    const gh = m.execFileAsync.mock.calls.find((c) => c[0] === "gh");
     expect(gh).toBeDefined();
     expectAllowListEnv((gh as unknown[])[2]);
   });
@@ -132,25 +148,74 @@ describe("jarvis_dev — child env is an allow-list, never the service env (queu
     );
     expect(out.pr_url).toBe("https://github.com/o/r/pull/9");
     const sync = m.execFileSync.mock.calls as unknown[][];
-    const argvs = sync.map((c) => `${c[0]} ${(c[1] as string[]).join(" ")}`);
-    // :49 worktree add, :208 run() (branch/rev-parse/status/diff/ls-files/
-    // add/commit/push), :692 porcelain, changed-tests.ts:48 -z listings, gh.
+    const asyncCalls = m.execFileAsync.mock.calls as unknown[][];
+    const argv = (c: unknown[]) => `${c[0]} ${(c[1] as string[]).join(" ")}`;
+    // Sync: ensureJarvisWorktree's worktree add (one-time bootstrap) and
+    // changed-tests.ts's -z listings. Async: run() (branch/rev-parse/status/
+    // diff/ls-files/add/commit/push), the porcelain read, gh, the gate.
+    expect(
+      sync
+        .map(argv)
+        .some((a) =>
+          a.startsWith("git -C /root/claude/mission-control worktree add"),
+        ),
+    ).toBe(true);
     for (const want of [
-      "git -C /root/claude/mission-control worktree add",
       "git branch --show-current",
       "git status --porcelain -z",
       "git commit",
       "git push -u origin",
       "gh pr create",
     ])
-      expect(argvs.some((a) => a.startsWith(want))).toBe(true);
-    const all = [...sync, ...(m.execFileAsync.mock.calls as unknown[][])];
-    expect(m.execFileAsync).toHaveBeenCalledTimes(2);
+      expect(asyncCalls.map(argv).some((a) => a.startsWith(want))).toBe(true);
+    const all = [...sync, ...asyncCalls];
+    expect(asyncCalls.filter((c) => c[0] === "systemd-run")).toHaveLength(2);
     for (const c of all) {
       const env = (c[2] as { env?: Record<string, string> }).env;
       expect(env, `${c[0]} ${(c[1] as string[]).join(" ")}`).toBeDefined();
       expect(env).not.toBe(process.env);
       expect(JSON.stringify(env)).not.toContain("canary-value");
     }
+  });
+});
+
+describe("jarvis_dev action=pr — async children (MCEventLoopBlock 2026-10-26)", () => {
+  const prArgv = () =>
+    (m.execFileAsync.mock.calls as unknown[][]).map(
+      (c) => `${c[0]} ${(c[1] as string[]).join(" ")}`,
+    );
+
+  it("stages, commits, pushes, then opens the PR — in that order", async () => {
+    const out = JSON.parse(
+      await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" }),
+    );
+    expect(out.pr_url).toBe("https://github.com/o/r/pull/9");
+    const argvs = prArgv();
+    const at = (prefix: string) => argvs.findIndex((a) => a.startsWith(prefix));
+    const order = [
+      at("git --literal-pathspecs add -- src/x.ts"),
+      at("git commit "),
+      at("git push -u origin jarvis/feat/x"),
+      at("gh pr create"),
+    ];
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("closes stdin on every git/gh child so a stdin read fails fast, not at the timeout", async () => {
+    await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" });
+    const gitGh = m.children.filter(
+      (c) => c.argv.startsWith("git ") || c.argv.startsWith("gh "),
+    );
+    // run() (branch/rev-parse/status/diff/ls-files/add/commit/push), the
+    // porcelain read and gh all covered.
+    for (const want of [
+      "git branch --show-current",
+      "git status --porcelain -z",
+      "git push -u origin",
+      "gh pr create",
+    ])
+      expect(gitGh.some((c) => c.argv.startsWith(want))).toBe(true);
+    for (const c of gitGh) expect(c.end, c.argv).toHaveBeenCalledTimes(1);
   });
 });
