@@ -1,6 +1,6 @@
 # Beta 1.0 — definition and evidence
 
-> What "Beta 1.0" means for agent-controller, how each of its four tests is judged, what evidence exists today and what is missing. Source of the destination: `docs/V8-VISION.md` §8. Current state of the work: `docs/ROADMAP.md`. Written 2026-10-18 from the repo; production figures are as last recorded in the linked docs, not re-read (cloud session, no production data).
+> What "Beta 1.0" means for agent-controller, how each of its four tests is judged, what evidence exists today and what is missing. Source of the destination: `docs/V8-VISION.md` §8. Current state of the work: `docs/ROADMAP.md`. Written 2026-10-18 from the repo; production figures are as last recorded in the linked docs, not re-read (cloud session, no production data). Refreshed 2026-10-26 at the rebase of PR #63 from the docs on `main` (ROADMAP, queue, label ledger); figures carry that date.
 
 ## 1. What Beta 1.0 is
 
@@ -8,10 +8,10 @@ Beta 1.0 is a **maturity declaration, not a software version** (`docs/V8-VISION.
 
 Decided 2026-10-03: Beta means **both**
 
-- **(a) it works for the first operator (Fede), with evidence**, and
+- **(a) it works for the first operator, with evidence**, and
 - **(b) any other operator could adopt it.**
 
-Fede is the first operator and super beta tester. His setup becomes the **first operator profile**, not a special case: everything that is his today (name, language, timezone, paths, projects, schedules) must end up in a profile or a project record that a second operator fills in differently, with no code change.
+The first operator is also the super beta tester. Their setup becomes the **first operator profile**, not a special case: everything that is theirs today (name, language, timezone, paths, projects, schedules) must end up in a profile or a project record that a second operator fills in differently, with no code change.
 
 Standing constraints that Beta does not change:
 
@@ -38,7 +38,7 @@ Each test is **passed** only when every pass condition below holds and is shown 
 
 - Inventory of everything hardcoded to the first operator or this VPS: 1,700 source sites, classed prompt 657 · profile 453 · leave 331 · KB seed 111 · env 96 · infra 52 (`docs/planning/s6-operator-abstraction-inventory-2026-10-09.md`).
 - Project contract (`docs/planning/s6-project-contract-spec-2026-10-11.md`): a project enters Jarvis only through its record `projects/<slug>/project.md`, projected into its `projects` row; capability through per-project MCP servers; attribution columns; `mc-ctl project <slug>` as the per-project record.
-- Built and deployed: WS1 record parser, projector and guard (`f4f6c73`); WS2 attribution columns, schema v9 (`2a59503`), proven by two chat tasks attributed on 2026-10-11; WS3 MCP servers from records with names-only child env (`9026838`); WS3b record-declared tools and X accounts (built 2026-10-17, deployed in build `741b35c`; **proof open**: its env-fallback trace has not been seen yet). Records: Entry radar exported 2026-10-11; DENUE + `uncharted-lite` applied 2026-10-11; the 3f records applied and read-back verified 2026-10-18, with proof of use due when the 2026-10-19 daily tweet is attributed to its record.
+- Built and deployed: WS1 record parser, projector and guard (`f4f6c73`); WS2 attribution columns, schema v9 (`2a59503`), proven by two chat tasks attributed on 2026-10-11; WS3 MCP servers from records with names-only child env (`9026838`); WS3b record-declared tools and X accounts (built 2026-10-17, DEPLOYED `741b35c` 2026-10-17). 3c operator-context gate LIVE since 2026-10-11 (`d2e1ab2`). 5a psql read-only gate + DB-side CLOSED 2026-10-19. Records: Entry radar exported 2026-10-11; DENUE + `uncharted-lite` applied 2026-10-11; the 3f records (Pulso, mexico-necesario-ac, personal-branding) applied and read-back verified 2026-10-18, with proof of use due when the 2026-10-19 daily tweet is attributed to its record.
 - Rulings in force: profile store = a KB file; language = Spanish default, English on command; ruling 3 MCP trust; 5b no core-tool exceptions; xpoz is a service outside the contract (`docs/planning/next-sessions-queue.md`, S6 sections).
 
 **Missing**
@@ -85,21 +85,21 @@ Each test is **passed** only when every pass condition below holds and is shown 
 **Evidence**
 
 - V8.4 Honest Done gates ENFORCE since 2026-08-27; every completion path goes through `applyCompletionLedger`.
-- Model-swap eval gate with a committed incumbent: baseline re-captured 2026-10-17 under scoring v4 (`f606d04`, composite 78.63, the first measurement of the live scope prompt); last compare PASS 2026-10-18 (78.55 vs 78.63).
-- W1 verify gate (fresh-context grader inside the ledger) in shadow since 2026-10-06. Label ledger `docs/planning/v9-w1-labels.md`: **17/30** `really done` labels as of 2026-10-09, 1 false positive (stale registry copy, since fixed by `5a8583e`), 1 confirmed catch; latency/cost readout n=15 (median 20.4 s, $0.20 per graded task) reported, not yet accepted.
-- W3 step 1 inventory of the evaluation data (`docs/planning/v9-w3-inventory-2026-10-09.md`, 33 sources). Its three rulings were **RULED 2026-10-18** (queue §2026-10-09 (late) W3): (1) tool-call count + wall-clock as the size axis, censoring note on every number; (2) finished = `completed` AND every runnable ledger gate met, W1 label overrides, Q2 reported now with the rating asymmetry printed; (3) archive past 90 d may be read, trace retention stays 30 d, day-log content may be read for Q1/Q3 (counts and labels only).
+- Model-swap eval gate: committed incumbent v4 78.63 (`f606d04`, 2026-10-17, the first measurement of the live scope prompt); last compare PASS 2026-10-22 (candidate 80.38, scope_prompt 64.74 → 66.32, 278 cases).
+- W1 verify gate (fresh-context grader inside the ledger) in shadow since 2026-10-06. Label ledger `docs/planning/v9-w1-labels.md`: count 1 CLOSED 2026-10-19: 56 graded, 34 `really done`, 3 false positives (8.8 %) against a budget of 2 → BUDGET MISSED; grader fixed (queue 4v, `db5bb68`, prompt v2, DEPLOYED 2026-10-19 19:55 UTC); count 2 open on `prompt_v=2` grades: 16 graded, 0 labelled as of 2026-10-26; latency/cost readout n=42 (median 16.0 s, $0.20 per graded task) reported, not accepted.
+- W3 step 1 inventory of the evaluation data (`docs/planning/v9-w3-inventory-2026-10-09.md`, 33 sources). Its three rulings were **RULED 2026-10-18** (queue §2026-10-09 (late) W3): (1) tool-call count + wall-clock as the size axis, censoring note on every number; (2) finished = `completed` AND every runnable ledger gate met, W1 label overrides, Q2 reported now with the rating asymmetry printed; (3) archive past 90 d may be read, trace retention stays 30 d, day-log content may be read for Q1/Q3 (counts and labels only). Step 2 BUILT `c4baf04` 2026-10-20 and PROVEN the same day: `mc-ctl eval [days] [--json]` read-only report (`src/eval/queries.ts`, `report.ts`, `labels.ts`); 10 first-read findings and 3 step-3 rulings (A build pick · B cadence · C delegated rating) open.
 - Incident and decision history kept, not rewritten: `docs/archive/status-history-*`, `docs/PROJECT-STATUS.md`, this roadmap's session log.
 
 **Missing**
 
-- W1: 13 more `really done` labels (≥30 with ≤2 false positives), then the operator accepts the latency/cost readout, then `enforce`. At ~12–16 gradeable tasks a week this is traffic-bound, not build-bound.
-- W3 step 2: the read-only weekly report (`src/eval/queries.ts`, `src/eval/report.ts`, `mc-ctl eval`). Unblocked by the 2026-10-18 rulings; not built.
+- W1 count 2: 30 `really done` labels with ≤ 2 false positives on prompt-v2 grades (0/30 labelled, 16 graded), then the operator accepts the latency/cost readout, then `enforce`.
+- W3: step 3 rulings A/B/C, then the weekly cadence (`./mc-ctl eval 7`, operator).
 - Q1 (amplify vs execute) and Q3 (bilateral learning) have no population in `mc.db`; with ruling 3 they can be read from day-log content, but no reader exists. Q2's cost-of-errors side has no population either (W3 inventory §6).
 - No outside observer has looked at the evidence. The "that works, and I can see why" condition needs one, after Replicability and Credibility have their reports.
 
 ## 4. Order of work toward Beta
 
-1. **Credibility first, because it is the cheapest to close:** keep labelling W1 to 30 and arm `enforce`; build W3 step 2 as ruled.
+1. **Credibility first, because it is the cheapest to close:** keep labelling W1 to 30 and arm `enforce`; W3 step 2 is live; rule step 3 and run it weekly.
 2. **Replicability:** operator profile (KB file) → WS4 allow-list → WS6 replicability suite (first pass) → WS5 → WS6 final pass; WS7 before any untrusted server.
 3. **Scalability** rides on the profile: language, identity and timezone move behind it, each model-facing change through the paid eval gate.
 4. **Teachability** last: the onboarding guide documents the profile and records once they exist, then one transfer attempt.
