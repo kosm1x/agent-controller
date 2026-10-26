@@ -2,9 +2,11 @@
  * Tests for grep, glob, and list_dir tools.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, rmdirSync, symlinkSync, accessSync, existsSync, constants as fsConstants } from "fs";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from "vitest";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, rmdirSync, symlinkSync, accessSync, existsSync, constants as fsConstants } from "fs";
 import { spawnSync } from "child_process";
+import { tmpdir } from "os";
+import { join } from "path";
 
 // Every search process the tool starts, in order: the byte-cap test asserts
 // on it to prove a cap hit never triggers a second search, on either engine.
@@ -13,13 +15,20 @@ const spawned = vi.hoisted(() => [] as string[]);
 const children = vi.hoisted(
   () => [] as Array<{ signalCode: string | null; exitCode: number | null }>,
 );
+// Binaries a test makes "missing": spawned under a name that does not exist,
+// so the child emits a real ENOENT (glob's fd → find fallback).
+const missingBins = vi.hoisted(() => new Set<string>());
+// ...and binaries a test swaps for another real one (fd → `false`).
+const remapBins = vi.hoisted(() => new Map<string, string>());
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
   return {
     ...actual,
     spawn: ((cmd: string, ...rest: unknown[]) => {
       spawned.push(cmd);
-      const child = (actual.spawn as (...a: unknown[]) => unknown)(cmd, ...rest);
+      const bin =
+        remapBins.get(cmd) ?? (missingBins.has(cmd) ? `mc-test-missing-${cmd}` : cmd);
+      const child = (actual.spawn as (...a: unknown[]) => unknown)(bin, ...rest);
       children.push(child as (typeof children)[number]);
       return child;
     }) as typeof actual.spawn,
@@ -35,6 +44,8 @@ import {
   listDirTool,
   rgRecordMapper,
   __setSearchByteCapForTests,
+  __setGlobTimeoutForTests,
+  __setGlobByteCapForTests,
 } from "./code-search.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import { invalidateSecretRefs } from "../../lib/secret-refs.js";
@@ -507,6 +518,139 @@ describe("glob", () => {
 
     expect(result.total).toBe(0);
   });
+
+  // MCEventLoopBlock 2026-10-26: the listing runs through spawn (async), and a
+  // missing fd (ENOENT) falls back to find with the same results.
+  it("spawns fd and, when fd is missing, falls back to find", async () => {
+    missingBins.add("fd");
+    spawned.length = 0;
+    try {
+      const r = JSON.parse(
+        await globTool.execute({ pattern: "*.tsx", path: TEST_DIR }),
+      );
+      expect(spawned).toEqual(["fd", "find"]);
+      expect(r.total).toBe(2);
+      expect(r.files.some((f: string) => f.endsWith("App.tsx"))).toBe(true);
+      expect(r.files.some((f: string) => f.endsWith("Button.tsx"))).toBe(true);
+      expect(r.truncated).toBe(false);
+    } finally {
+      missingBins.delete("fd");
+    }
+  });
+
+  it("names a missing or non-directory base path instead of a spawn ENOENT", async () => {
+    const missing = JSON.parse(
+      await globTool.execute({ pattern: "*.ts", path: `${TEST_DIR}/no-such-dir` }),
+    );
+    expect(missing).toEqual({ error: `path not found: ${TEST_DIR}/no-such-dir` });
+    const file = JSON.parse(
+      await globTool.execute({ pattern: "*.ts", path: `${TEST_DIR}/package.json` }),
+    );
+    expect(file).toEqual({ error: `not a directory: ${TEST_DIR}/package.json` });
+  });
+
+  // qa W1: only ENOENT (fd not installed) falls back; an fd that ran and
+  // failed is an answer, not a reason to re-run the walk with find.
+  it("does not fall back to find when fd exists but exits non-zero", async () => {
+    remapBins.set("fd", "false");
+    spawned.length = 0;
+    try {
+      const r = JSON.parse(
+        await globTool.execute({ pattern: "*.tsx", path: TEST_DIR }),
+      );
+      expect(spawned).toEqual(["fd"]);
+      expect(r).toEqual({ error: "fd failed (exit 1)" });
+    } finally {
+      remapBins.delete("fd");
+    }
+  });
+
+  // qa W2: a byte-cap hit is a cut listing even under max_results, and the
+  // cut lands on a line boundary (no half path reaches the result).
+  it("reports truncated on a byte-cap hit and keeps only complete lines", async () => {
+    missingBins.add("fd");
+    __setGlobByteCapForTests(40);
+    try {
+      const r = JSON.parse(
+        await globTool.execute({ pattern: "*", path: TEST_DIR, max_results: 100 }),
+      );
+      expect(r.truncated).toBe(true);
+      expect(r.files.length).toBeGreaterThanOrEqual(1);
+      expect(r.files.length).toBeLessThan(4);
+      for (const f of r.files) expect(existsSync(`${TEST_DIR}/${f}`), f).toBe(true);
+    } finally {
+      __setGlobByteCapForTests();
+      missingBins.delete("fd");
+    }
+  });
+});
+
+// MCEventLoopBlock 2026-10-26: glob/list_dir ran execFileSync on the event
+// loop (6.05 s block). A tree big enough that the walk outlasts one tick.
+describe("glob / list_dir do not block the event loop", () => {
+  let BIG_DIR: string;
+
+  beforeAll(() => {
+    BIG_DIR = mkdtempSync(join(tmpdir(), "mc-test-code-search-big-"));
+    for (let d = 0; d < 40; d++) {
+      mkdirSync(`${BIG_DIR}/d${d}`, { recursive: true });
+      for (let f = 0; f < 75; f++) writeFileSync(`${BIG_DIR}/d${d}/f${f}.txt`, "");
+    }
+  });
+
+  afterAll(() => {
+    rmSync(BIG_DIR, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    __setGlobTimeoutForTests();
+    missingBins.clear();
+  });
+
+  it("glob yields to setImmediate before it resolves", async () => {
+    missingBins.add("fd"); // the find walk, as on the live host
+    const order: string[] = [];
+    const p = globTool
+      .execute({ pattern: "*.txt", path: BIG_DIR, max_results: 1000 })
+      .then((s) => {
+        order.push("glob");
+        return JSON.parse(s);
+      });
+    await new Promise((r) => setImmediate(r));
+    order.push("immediate");
+    const r = await p;
+    expect(order).toEqual(["immediate", "glob"]);
+    expect(r.total).toBe(3000);
+    expect(r.files).toHaveLength(1000);
+    expect(r.truncated).toBe(true);
+  });
+
+  it("list_dir (recursive and flat) yields to setImmediate before it resolves", async () => {
+    for (const recursive of [true, false]) {
+      const order: string[] = [];
+      const p = listDirTool
+        .execute({ path: BIG_DIR, recursive })
+        .then((s) => {
+          order.push("list");
+          return JSON.parse(s);
+        });
+      await new Promise((r) => setImmediate(r));
+      order.push("immediate");
+      const r = await p;
+      expect(order, `recursive=${recursive}`).toEqual(["immediate", "list"]);
+      // Recursive: sorted, capped at 500; flat: the 40 directories.
+      expect(r.entries, `recursive=${recursive}`).toHaveLength(recursive ? 500 : 40);
+    }
+  });
+
+  it("glob returns the timeout error JSON instead of throwing", async () => {
+    missingBins.add("fd");
+    __setGlobTimeoutForTests(1);
+    const r = JSON.parse(
+      await globTool.execute({ pattern: "*.txt", path: BIG_DIR }),
+    );
+    expect(r).toEqual({ error: "glob timed out after 1 ms" });
+  });
 });
 
 describe("list_dir", () => {
@@ -537,6 +681,37 @@ describe("list_dir", () => {
     expect(result.entries.some((e: string) => e.includes("nested.ts"))).toBe(
       true,
     );
+  });
+
+  // MCEventLoopBlock 2026-10-26: same entries, now listed through spawn.
+  it("lists the exact entries through an async child (flat and recursive)", async () => {
+    spawned.length = 0;
+    const flat = JSON.parse(await listDirTool.execute({ path: TEST_DIR }));
+    expect(spawned).toEqual(["ls"]);
+    expect([...flat.entries].sort()).toEqual(["file1.ts", "file2.ts", "subdir/"]);
+    expect(flat.total).toBe(3);
+    expect(flat.path).toBe(TEST_DIR);
+
+    spawned.length = 0;
+    const deep = JSON.parse(
+      await listDirTool.execute({ path: TEST_DIR, recursive: true }),
+    );
+    expect(spawned).toEqual(["find"]);
+    expect(deep.entries).toEqual([
+      TEST_DIR,
+      `${TEST_DIR}/file1.ts`,
+      `${TEST_DIR}/file2.ts`,
+      `${TEST_DIR}/subdir`,
+      `${TEST_DIR}/subdir/nested.ts`,
+    ]);
+    expect(deep.total).toBe(5);
+  });
+
+  it("returns the execFileSync-shaped error for a missing directory", async () => {
+    const r = JSON.parse(
+      await listDirTool.execute({ path: `${TEST_DIR}/no-such-dir` }),
+    );
+    expect(r.error).toMatch(/^Command failed: ls -1Ap .*no-such-dir\n/);
   });
 
   // audit 2026-09-22: names are output too — same read denylist as grep.

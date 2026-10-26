@@ -6,7 +6,7 @@
  * has worse error handling and inconsistent output formats.
  */
 
-import { execFileSync, spawn } from "child_process";
+import { spawn } from "child_process";
 import { statSync } from "fs";
 import { resolve } from "path";
 import type { Tool } from "../types.js";
@@ -39,6 +39,21 @@ let searchByteCap = DEFAULT_SEARCH_BYTE_CAP;
 /** Test hook: lower the stdout byte cap (no argument restores the default). */
 export function __setSearchByteCapForTests(bytes?: number): void {
   searchByteCap = bytes ?? DEFAULT_SEARCH_BYTE_CAP;
+}
+
+/** glob's fd/find timeout; lowered only by the test hook below. */
+const DEFAULT_GLOB_TIMEOUT_MS = 20_000;
+let globTimeoutMs = DEFAULT_GLOB_TIMEOUT_MS;
+/** Test hook: lower the glob timeout (no argument restores the default). */
+export function __setGlobTimeoutForTests(ms?: number): void {
+  globTimeoutMs = ms ?? DEFAULT_GLOB_TIMEOUT_MS;
+}
+/** glob's stdout byte cap; lowered only by the test hook below. */
+const DEFAULT_GLOB_BYTE_CAP = 2 * 1024 * 1024;
+let globByteCap = DEFAULT_GLOB_BYTE_CAP;
+/** Test hook: lower the glob byte cap (no argument restores the default). */
+export function __setGlobByteCapForTests(bytes?: number): void {
+  globByteCap = bytes ?? DEFAULT_GLOB_BYTE_CAP;
 }
 
 interface CappedRun {
@@ -646,35 +661,42 @@ TIPS:
     if (!safety.safe) {
       return JSON.stringify({ error: `path blocked: ${safety.reason}` });
     }
+    // A missing base dir would surface as the child's spawn ENOENT (the cwd),
+    // which reads as "find not installed" — name it here instead.
+    try {
+      if (!statSync(searchPath).isDirectory()) {
+        return JSON.stringify({ error: `not a directory: ${searchPath}` });
+      }
+    } catch {
+      return JSON.stringify({ error: `path not found: ${searchPath}` });
+    }
     const maxResults = Math.min(
       typeof args.max_results === "number" ? args.max_results : MAX_RESULTS,
       1000,
     );
 
-    // execFileSync: args as array — no shell interpolation, immune to injection
+    // spawn: args as array — no shell interpolation, immune to injection.
+    // Async (runCapped), never execFileSync: on a host without fd the find
+    // fallback held the event loop for 6.05 s (MCEventLoopBlock, 2026-10-26).
     try {
-      let output: string;
-      try {
-        // fd first (fast, respects .gitignore)
-        output = execFileSync(
-          "fd",
-          [
-            "--glob",
-            pattern,
-            "--type",
-            "f",
-            "--max-results",
-            String(maxResults + 1), // +1 so `truncated` can be detected (qa W3)
-          ],
-          {
-            timeout: 20_000,
-            maxBuffer: 2 * 1024 * 1024,
-            encoding: "utf-8",
-            cwd: searchPath,
-            stdio: ["pipe", "pipe", "pipe"],
-          },
-        );
-      } catch {
+      const globCap = globByteCap;
+      // fd first (fast, respects .gitignore)
+      let cmd = "fd";
+      let run = await runCapped(
+        "fd",
+        [
+          "--glob",
+          pattern,
+          "--type",
+          "f",
+          "--max-results",
+          String(maxResults + 1), // +1 so `truncated` can be detected (qa W3)
+        ],
+        globCap,
+        globTimeoutMs,
+        searchPath,
+      );
+      if (run.code === "ENOENT") {
         // fd not found — fall back to find. Keep the glob's directory part
         // (`-path` lets `*` span slashes, so `src/**/*.ts` → `./src/*.ts`),
         // and prune node_modules/.git (logic audit F4: 5,126 of 6,793 hits
@@ -682,7 +704,8 @@ TIPS:
         const findArgs = pattern.includes("/")
           ? ["-path", `./${pattern.replace(/\*\*\//g, "*").replace(/\*\*/g, "*")}`]
           : ["-name", pattern];
-        output = execFileSync(
+        cmd = "find";
+        run = await runCapped(
           "find",
           [
             ".",
@@ -690,15 +713,24 @@ TIPS:
             "(", "-name", "node_modules", "-o", "-name", ".git", ")", "-prune",
             "-o", "-type", "f", ...findArgs, "-print",
           ],
-          {
-            timeout: 20_000,
-            maxBuffer: 2 * 1024 * 1024,
-            encoding: "utf-8",
-            cwd: searchPath,
-            stdio: ["pipe", "pipe", "pipe"],
-          },
+          globCap,
+          globTimeoutMs,
+          searchPath,
         );
       }
+      if (run.timedOut && !run.capped) {
+        return JSON.stringify({
+          error: `glob timed out after ${globTimeoutMs} ms`,
+        });
+      }
+      if (!run.capped && run.status !== 0) {
+        return JSON.stringify({
+          error:
+            run.stderr.trim() ||
+            `${cmd} failed (${run.code ?? `exit ${run.status}`})`,
+        });
+      }
+      const output = run.stdout;
 
       if (!output.trim()) {
         return JSON.stringify({
@@ -717,7 +749,8 @@ TIPS:
         files,
         total: all.length,
         // Decided on the listing: fd stops at maxResults + 1 BEFORE the filter.
-        truncated: listed.length > maxResults,
+        // A byte-cap hit also cut the listing.
+        truncated: listed.length > maxResults || run.capped,
       });
     } catch (err) {
       const error = err as { stderr?: string; message?: string };
@@ -790,42 +823,50 @@ Returns entries sorted alphabetically with "/" suffix for directories.`,
       6,
     );
 
+    // Async (runCapped), never execFileSync: a sync listing holds the event
+    // loop for its whole run (glob's find blocked it 6.05 s, MCEventLoopBlock
+    // 2026-10-26). Throws like execFileSync did, so the catch below is unchanged.
+    const list = async (cmd: string, cmdArgs: string[]): Promise<string> => {
+      const run = await runCapped(cmd, cmdArgs, 1024 * 1024, 10_000);
+      if (run.timedOut && !run.capped) {
+        throw new Error(`list_dir timed out after 10000 ms`);
+      }
+      if (run.capped) {
+        // execFileSync's maxBuffer threw here (ENOBUFS); same outcome.
+        throw new Error(`${cmd} output exceeded ${1024 * 1024} bytes`);
+      }
+      if (run.status !== 0) {
+        throw new Error(
+          run.code
+            ? `spawn ${cmd} ${run.code}`
+            : `Command failed: ${[cmd, ...cmdArgs].join(" ")}\n${run.stderr}`,
+        );
+      }
+      return run.stdout;
+    };
+
     try {
       let output: string;
       if (recursive) {
-        output = execFileSync(
-          "find",
-          [
-            dirPath,
-            "-maxdepth",
-            String(maxDepth),
-            "-not",
-            "-path",
-            "*/node_modules/*",
-            "-not",
-            "-path",
-            "*/.git/*",
-            "-not",
-            "-path",
-            "*/dist/*",
-          ],
-          {
-            timeout: 10_000,
-            maxBuffer: 1024 * 1024,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-          },
-        );
+        output = await list("find", [
+          dirPath,
+          "-maxdepth",
+          String(maxDepth),
+          "-not",
+          "-path",
+          "*/node_modules/*",
+          "-not",
+          "-path",
+          "*/.git/*",
+          "-not",
+          "-path",
+          "*/dist/*",
+        ]);
         // Sort and limit
         const lines = output.trim().split("\n").sort();
         output = lines.slice(0, 500).join("\n");
       } else {
-        output = execFileSync("ls", ["-1Ap", dirPath], {
-          timeout: 10_000,
-          maxBuffer: 1024 * 1024,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+        output = await list("ls", ["-1Ap", dirPath]);
         const lines = output.trim().split("\n");
         output = lines.slice(0, 200).join("\n");
       }
