@@ -86,9 +86,82 @@ vi.mock("../lib/event-bus.js", () => ({
   getEventBus: () => ({ emitEvent: mockEmitEvent, subscribe: mockSubscribe }),
 }));
 
+// Pre-cycle tag, tag prune and stale-artifact prune run their git/docker
+// children through promisified execFile (async since 2026-10-26,
+// MCEventLoopBlock). Every other spawning child_process export is a stub that
+// THROWS when called (modules in the import graph only bind them at load), so
+// no test can spawn a real git/docker child.
+const mockExecFile = vi.hoisted(() => vi.fn());
+const mockStdinEnd = vi.hoisted(() => vi.fn());
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  const refuse =
+    (name: string) =>
+    (..._args: unknown[]): never => {
+      throw new Error(`scheduler.test: real child_process.${name} reached`);
+    };
+  type ChildErr = Error & { stdout?: string; stderr?: string };
+  type ChildCb = (err: ChildErr | null, stdout: string, stderr: string) => void;
+  const fail = (cb: ChildCb, e: unknown) => {
+    const err = e as ChildErr;
+    setImmediate(() => cb(err, err.stdout ?? "", err.stderr ?? ""));
+  };
+  // Real `(…, cb) => cb(err, stdout, stderr)` shape; mockExecFile returns
+  // stdout (or a promise of it, to hold the child open) or throws; delivery
+  // on setImmediate like a real child. util.promisify.custom mirrors the real
+  // `{stdout, stderr}` resolution with `.child` on the promise.
+  const child = (...args: unknown[]) => {
+    const cb = args.pop() as ChildCb;
+    try {
+      Promise.resolve(mockExecFile(...args)).then(
+        (out) => setImmediate(() => cb(null, (out as string) ?? "", "")),
+        (e) => fail(cb, e),
+      );
+    } catch (e) {
+      fail(cb, e);
+    }
+  };
+  Object.defineProperty(child, Symbol.for("nodejs.util.promisify.custom"), {
+    value: (...args: unknown[]) =>
+      Object.assign(
+        new Promise((res, rej) =>
+          child(...args, ((err, stdout, stderr) =>
+            err ? rej(err) : res({ stdout, stderr })) as ChildCb),
+        ),
+        { child: { stdin: { end: mockStdinEnd } } },
+      ),
+  });
+  return {
+    ...actual,
+    exec: refuse("exec"),
+    execSync: refuse("execSync"),
+    execFileSync: refuse("execFileSync"),
+    spawn: refuse("spawn"),
+    spawnSync: refuse("spawnSync"),
+    fork: refuse("fork"),
+    execFile: child,
+  };
+});
+
+// The evolution-log-commit cron's own work is pinned in its module's tests;
+// here the cron callback's await + failure recording is what is under test.
+const mockCommitEvolutionLog = vi.hoisted(() => vi.fn());
+vi.mock("./evolution-log-commit.js", () => ({
+  commitEvolutionLogIfDirty: mockCommitEvolutionLog,
+}));
+
+// autonomous-improvement cron dynamic-imports this; createImprovementTask is
+// async (returns Promise<TaskSubmission | null>).
+const mockCreateImprovementTask = vi.hoisted(() => vi.fn());
+vi.mock("./autonomous-improvement.js", () => ({
+  createImprovementTask: mockCreateImprovementTask,
+}));
+
 import {
   _resetRitualFailureAlertState,
+  createPreCycleTag,
   notifyRitualFailure,
+  pruneOldTags,
   selectStaleContainersForPrune,
   startRitualScheduler,
   stopRitualScheduler,
@@ -100,6 +173,7 @@ import { createSignalIntelligence } from "./signal-intelligence.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { createDayNarrative } from "./day-narrative.js";
 import { createWeeklyReview } from "./weekly-review.js";
+import { nowMexIsoDate } from "../lib/timezone.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1053,5 +1127,344 @@ describe("jme-consolidate cron (JME Phase 4 wiring)", () => {
       logSpy.mock.calls.some((c) => String(c[0]).includes("4 stale pruned, 7 expired facts pruned")),
     ).toBe(true);
     logSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4ao sweep part 2 (2026-10-26): the ritual-time git/docker children run
+// async (MCEventLoopBlock). Each site must yield the loop, keep its sequence,
+// close stdin, and keep its failure handling.
+// ---------------------------------------------------------------------------
+
+/** Args (without the callback) of every recorded child, in call order. */
+const childArgs = () => mockExecFile.mock.calls.map((c) => c[1] as string[]);
+const flush = async (n = 5) => {
+  for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+};
+// Console spies restored individually: vi.restoreAllMocks() would also wipe
+// the shared mockSchedule return value that startRitualScheduler needs.
+let consoleSpies: Array<{ mockRestore: () => void }> = [];
+const silenceConsole = () => {
+  consoleSpies = [
+    vi.spyOn(console, "log").mockImplementation(() => {}),
+    vi.spyOn(console, "error").mockImplementation(() => {}),
+  ];
+};
+const restoreConsole = () => consoleSpies.forEach((s) => s.mockRestore());
+const cronCallback = (id: string) => {
+  const call = mockSchedule.mock.calls.find((c) => c[2]?.name === id);
+  expect(call).toBeDefined();
+  return call![1] as () => Promise<void>;
+};
+
+describe("createPreCycleTag (async git)", () => {
+  const tagName = () => `pre-auto-${nowMexIsoDate()}`;
+
+  beforeEach(() => {
+    mockExecFile.mockReset();
+    mockExecFile.mockReturnValue("");
+    silenceConsole();
+  });
+  afterEach(() => restoreConsole());
+
+  it("skips `tag -a` when the tag already exists", async () => {
+    mockExecFile.mockReturnValueOnce(`${tagName()}\n`);
+    await createPreCycleTag();
+    expect(childArgs()).toEqual([["tag", "-l", tagName()]]);
+    expect(mockExecFile.mock.calls[0][0]).toBe("git");
+  });
+
+  it("creates the annotated tag in MC_DIR when absent, then prunes", async () => {
+    mockExecFile
+      .mockReturnValueOnce("") // tag -l <name> → absent
+      .mockReturnValueOnce("") // tag -a
+      .mockReturnValueOnce(""); // tag -l pre-auto-* (prune list)
+    await createPreCycleTag();
+    expect(childArgs()).toEqual([
+      ["tag", "-l", tagName()],
+      ["tag", "-a", tagName(), "-m", "Pre-autonomous-improvement snapshot"],
+      ["tag", "-l", "pre-auto-*", "--sort=-version:refname"],
+    ]);
+    expect(mockExecFile.mock.calls[1][2]).toMatchObject({
+      cwd: "/root/claude/mission-control",
+      timeout: 10_000,
+      encoding: "utf-8",
+    });
+    // Every child's stdin is closed exactly once.
+    expect(mockStdinEnd).toHaveBeenCalledTimes(3);
+  });
+
+  it("yields the event loop: a setImmediate queued before the call runs first", async () => {
+    const order: string[] = [];
+    setImmediate(() => order.push("tick"));
+    await createPreCycleTag();
+    order.push("done");
+    expect(order).toEqual(["tick", "done"]);
+  });
+
+  it("does not run `tag -a` until the `tag -l` check has returned", async () => {
+    let release!: (out: string) => void;
+    mockExecFile.mockImplementationOnce(
+      () => new Promise<string>((r) => (release = r)),
+    );
+    let settled = false;
+    const p = createPreCycleTag().then(() => (settled = true));
+    await flush();
+    expect(childArgs()).toEqual([["tag", "-l", tagName()]]);
+    expect(settled).toBe(false);
+    release("");
+    await p;
+    expect(childArgs()[1]?.slice(0, 2)).toEqual(["tag", "-a"]);
+  });
+
+  it("does not settle until the tag prune has finished", async () => {
+    let release!: (out: string) => void;
+    mockExecFile
+      .mockReturnValueOnce("") // tag -l <name> → absent
+      .mockReturnValueOnce("") // tag -a
+      .mockImplementationOnce(() => new Promise<string>((r) => (release = r))); // prune list held
+    let settled = false;
+    const p = createPreCycleTag().then(() => (settled = true));
+    await vi.waitFor(() => expect(childArgs()).toHaveLength(3));
+    await flush();
+    expect(settled).toBe(false);
+    release("");
+    await p;
+    expect(settled).toBe(true);
+  });
+
+  it("a git failure stays non-fatal: logged, never rethrown or recorded", async () => {
+    mockExecFile.mockImplementationOnce(() => {
+      throw Object.assign(new Error("fatal: not a git repository"), {
+        code: 128,
+      });
+    });
+    await expect(createPreCycleTag()).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalledWith(
+      "[rituals] Failed to create pre-cycle tag:",
+      expect.objectContaining({ message: "fatal: not a git repository" }),
+    );
+    expect(childArgs()).toHaveLength(1); // no tag -a after the failed check
+    expect(mockEmitEvent).not.toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.anything(),
+    );
+  });
+});
+
+describe("pruneOldTags (async git)", () => {
+  // Sorted newest-first, as `--sort=-version:refname` returns them; all far
+  // older than 30 days.
+  const tags = Array.from(
+    { length: 12 },
+    (_, i) => `pre-auto-2020-01-${String(12 - i).padStart(2, "0")}`,
+  );
+
+  beforeEach(() => {
+    mockExecFile.mockReset();
+    mockExecFile.mockReturnValue("");
+    silenceConsole();
+  });
+  afterEach(() => restoreConsole());
+
+  it("deletes nothing when 10 or fewer tags exist", async () => {
+    mockExecFile.mockReturnValueOnce(tags.slice(0, 10).join("\n") + "\n");
+    await pruneOldTags();
+    expect(childArgs()).toEqual([
+      ["tag", "-l", "pre-auto-*", "--sort=-version:refname"],
+    ]);
+  });
+
+  it("deletes the tags beyond the newest 10, oldest-listed last, in order", async () => {
+    mockExecFile.mockReturnValueOnce(tags.join("\n") + "\n");
+    await pruneOldTags();
+    expect(childArgs().slice(1)).toEqual([
+      ["tag", "-d", "pre-auto-2020-01-02"],
+      ["tag", "-d", "pre-auto-2020-01-01"],
+    ]);
+    expect(mockStdinEnd).toHaveBeenCalledTimes(3);
+  });
+
+  it("deletes sequentially: a held-open first delete blocks the second", async () => {
+    let release!: (out: string) => void;
+    mockExecFile
+      .mockReturnValueOnce(tags.join("\n") + "\n")
+      .mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
+    let settled = false;
+    const p = pruneOldTags().then(() => (settled = true));
+    await flush();
+    expect(childArgs().slice(1)).toEqual([
+      ["tag", "-d", "pre-auto-2020-01-02"],
+    ]);
+    expect(settled).toBe(false);
+    release("");
+    await p;
+    expect(childArgs().slice(1)).toEqual([
+      ["tag", "-d", "pre-auto-2020-01-02"],
+      ["tag", "-d", "pre-auto-2020-01-01"],
+    ]);
+  });
+});
+
+describe("autonomous-improvement cron (async tag + task)", () => {
+  beforeEach(() => {
+    mockExecFile.mockReset();
+    mockExecFile.mockReturnValue("");
+    mockCreateImprovementTask.mockReset();
+    silenceConsole();
+  });
+  afterEach(() => restoreConsole());
+
+  it("finishes the pre-cycle tag before building the improvement task", async () => {
+    let release!: (out: string) => void;
+    mockExecFile.mockImplementationOnce(
+      () => new Promise<string>((r) => (release = r)),
+    );
+    mockCreateImprovementTask.mockResolvedValue(null);
+    startRitualScheduler();
+    const run = cronCallback("autonomous-improvement")();
+    await flush();
+    expect(mockCreateImprovementTask).not.toHaveBeenCalled();
+    release("pre-auto-exists\n"); // tag exists → no tag -a
+    await run;
+    expect(mockCreateImprovementTask).toHaveBeenCalledTimes(1);
+    expect(mockSubmitTask).not.toHaveBeenCalled(); // null → nothing submitted
+  });
+
+  it("awaits createImprovementTask and submits the resolved task non-interactively", async () => {
+    mockExecFile.mockReturnValueOnce("pre-auto-exists\n");
+    mockCreateImprovementTask.mockResolvedValue({
+      title: "fix",
+      description: "d",
+    });
+    startRitualScheduler();
+    await cronCallback("autonomous-improvement")();
+    expect(mockSubmitTask).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "fix", interactive: false }),
+    );
+  });
+});
+
+describe("evolution-log-commit cron (async)", () => {
+  beforeEach(() => {
+    mockCommitEvolutionLog.mockReset();
+    silenceConsole();
+  });
+  afterEach(() => restoreConsole());
+
+  it("awaits the commit result before logging it", async () => {
+    mockCommitEvolutionLog.mockResolvedValue({
+      committed: true,
+      reason: "committed",
+      hash: "abc1234",
+    });
+    startRitualScheduler();
+    await cronCallback("evolution-log-commit")();
+    expect(mockCommitEvolutionLog).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith(
+      "[rituals] evolution-log-commit: committed docs/EVOLUTION-LOG.md (abc1234)",
+    );
+  });
+
+  it("a rejected commit reaches recordRitualFailure", async () => {
+    mockCommitEvolutionLog.mockRejectedValue(new Error("fatal: index.lock"));
+    startRitualScheduler();
+    await cronCallback("evolution-log-commit")();
+    expect(console.error).toHaveBeenCalledWith(
+      "[rituals] evolution-log-commit failed:",
+      expect.objectContaining({ message: "fatal: index.lock" }),
+    );
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        ritual_id: "evolution-log-commit",
+        phase: "execute",
+        error: expect.stringContaining("fatal: index.lock"),
+      }),
+    );
+  });
+});
+
+describe("stale-artifact-prune cron (async docker)", () => {
+  const old = "2020-01-01 00:00:00 +0000 UTC";
+  const listing = [
+    `aaa111\tmc-grafana\t${old}`, // guard: must survive
+    `bbb222\tmc-task-1776123456789\t${old}`,
+    `ccc333\tmc-heavy-1776123456790\t${old}`,
+  ].join("\n");
+
+  beforeEach(() => {
+    mockExecFile.mockReset();
+    mockExecFile.mockReturnValue("");
+    silenceConsole();
+  });
+  afterEach(() => restoreConsole());
+
+  it("does not settle while `docker container ls` is held open", async () => {
+    let release!: (out: string) => void;
+    mockExecFile.mockImplementationOnce(
+      () => new Promise<string>((r) => (release = r)),
+    );
+    startRitualScheduler();
+    let settled = false;
+    const run = cronCallback("stale-artifact-prune")().then(
+      () => (settled = true),
+    );
+    await flush();
+    expect(settled).toBe(false);
+    expect(mockExecFile.mock.calls[0][0]).toBe("docker");
+    expect(childArgs()[0]?.slice(0, 3)).toEqual(["container", "ls", "-a"]);
+    release("");
+    await run;
+    expect(childArgs()).toHaveLength(1); // empty listing → no rm
+  });
+
+  it("removes only guard-approved candidates, one rm at a time", async () => {
+    let releaseRm!: (out: string) => void;
+    mockExecFile
+      .mockReturnValueOnce(listing)
+      .mockImplementationOnce(
+        () => new Promise<string>((r) => (releaseRm = r)),
+      );
+    startRitualScheduler();
+    const run = cronCallback("stale-artifact-prune")();
+    await flush();
+    // First rm held open → second not started.
+    expect(childArgs().slice(1)).toEqual([["container", "rm", "bbb222"]]);
+    releaseRm("");
+    await run;
+    // mc-grafana never reaches rm (selectStaleContainersForPrune guard).
+    expect(childArgs().slice(1)).toEqual([
+      ["container", "rm", "bbb222"],
+      ["container", "rm", "ccc333"],
+    ]);
+    expect(mockStdinEnd).toHaveBeenCalledTimes(3);
+    expect(console.log).toHaveBeenCalledWith(
+      "[rituals] stale-artifact-prune: removed 2 orphaned runner container(s)",
+    );
+  });
+
+  it("a docker-unavailable list error is silent; any other is recorded", async () => {
+    mockExecFile.mockImplementationOnce(() => {
+      throw new Error("spawn docker ENOENT");
+    });
+    startRitualScheduler();
+    await cronCallback("stale-artifact-prune")();
+    expect(mockEmitEvent).not.toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.anything(),
+    );
+
+    mockExecFile.mockImplementationOnce(() => {
+      throw new Error("Command failed: docker container ls\nboom");
+    });
+    await cronCallback("stale-artifact-prune")();
+    expect(mockEmitEvent).toHaveBeenCalledWith(
+      "schedule.run_failed",
+      expect.objectContaining({
+        ritual_id: "stale-artifact-prune",
+        phase: "execute",
+      }),
+    );
   });
 });

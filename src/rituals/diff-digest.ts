@@ -9,11 +9,19 @@
  * Formats HTML → sends via Telegram.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { getDatabase } from "../db/index.js";
 import { getRouter } from "../messaging/index.js";
 
 const MC_DIR = "/root/claude/mission-control";
+
+// Async on purpose (2026-10-26): execFileSync blocked the event loop for the
+// child's whole run, so a slow `git log --all` froze every other task and
+// could cross the 5 s MCEventLoopBlock alert. Promisified children keep stdin
+// open; the site closes it right after spawn so a child that reads stdin
+// fails fast instead of hanging to the timeout.
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Data queries
@@ -67,13 +75,15 @@ function queryKbChanges(): KbChange[] {
   }
 }
 
-function queryJarvisCommits(): string[] {
+async function queryJarvisCommits(): Promise<string[]> {
   try {
-    const raw = execFileSync(
+    const p = execFileAsync(
       "git",
       ["log", "--oneline", "--since=7.days.ago", "--all", "--grep=jarvis/"],
       { cwd: MC_DIR, timeout: 10_000, encoding: "utf-8" },
-    ).trim();
+    );
+    p.child.stdin?.end();
+    const raw = (await p).stdout.trim();
     return raw ? raw.split("\n") : [];
   } catch {
     return [];
@@ -149,7 +159,7 @@ export async function executeDiffDigest(): Promise<{
 }> {
   const tasks = queryAutoImprovementTasks();
   const kbChanges = queryKbChanges();
-  const commits = queryJarvisCommits();
+  const commits = await queryJarvisCommits();
 
   const { html, sections } = formatDigestHtml(tasks, kbChanges, commits);
 

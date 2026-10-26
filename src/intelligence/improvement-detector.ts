@@ -8,9 +8,18 @@
  */
 
 import { getDatabase } from "../db/index.js";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 const MC_DIR = "/root/claude/mission-control";
+
+// Async on purpose (2026-10-26): execFileSync blocked the event loop for the
+// child's whole run, so a slow `journalctl` read during the autonomous
+// improvement ritual froze every other task and could cross the 5 s
+// MCEventLoopBlock alert. Promisified children keep stdin open; the site
+// closes it right after spawn so a child that reads stdin fails fast instead
+// of hanging to the timeout.
+const execFileAsync = promisify(execFile);
 
 export interface ImprovementCandidate {
   type: "scope-miss" | "guard-trigger" | "tool-failure" | "task-failure";
@@ -24,9 +33,9 @@ export interface ImprovementCandidate {
  * Scan recent data for improvement candidates.
  * Returns candidates ranked by frequency × severity.
  */
-export function detectImprovements(
+export async function detectImprovements(
   hoursBack: number = 24,
-): ImprovementCandidate[] {
+): Promise<ImprovementCandidate[]> {
   const candidates: ImprovementCandidate[] = [];
   const db = getDatabase();
 
@@ -61,7 +70,7 @@ export function detectImprovements(
 
   // 2. Hallucination guard triggers
   try {
-    const logs = execFileSync(
+    const p = execFileAsync(
       "journalctl",
       [
         "-u",
@@ -70,8 +79,10 @@ export function detectImprovements(
         `${hoursBack} hours ago`,
         "--no-pager",
       ],
-      { encoding: "utf-8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] },
+      { encoding: "utf-8", timeout: 10_000 },
     );
+    p.child.stdin?.end();
+    const logs = (await p).stdout;
     const guardLines = logs
       .split("\n")
       .filter((l) =>

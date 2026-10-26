@@ -118,7 +118,7 @@ function isNanoclawCircuitOpen(): { open: boolean; reason?: string } {
  * Create the autonomous improvement task submission.
  * Returns null if no improvements detected or safety gates block.
  */
-export function createImprovementTask(): TaskSubmission | null {
+export async function createImprovementTask(): Promise<TaskSubmission | null> {
   // Safety gate: check env var
   if (process.env.AUTONOMOUS_IMPROVEMENT_ENABLED !== "true") {
     console.log(
@@ -143,7 +143,7 @@ export function createImprovementTask(): TaskSubmission | null {
   }
 
   // Detect candidates
-  const candidates = detectImprovements(24);
+  const candidates = await detectImprovements(24);
   if (candidates.length === 0) {
     console.log("[autonomous-improvement] No candidates detected");
     return null;

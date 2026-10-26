@@ -13,8 +13,10 @@ vi.mock("../db/index.js", () => ({
   getDatabase: vi.fn(),
 }));
 
+// detectImprovements is async since 2026-10-26 (journalctl via promisified
+// execFile, MCEventLoopBlock) — the mock resolves a Promise like the real one.
 vi.mock("../intelligence/improvement-detector.js", () => ({
-  detectImprovements: vi.fn(() => [
+  detectImprovements: vi.fn(async () => [
     {
       type: "scope-miss",
       severity: "high",
@@ -27,8 +29,10 @@ vi.mock("../intelligence/improvement-detector.js", () => ({
 
 import { createImprovementTask } from "./autonomous-improvement.js";
 import { getDatabase } from "../db/index.js";
+import { detectImprovements } from "../intelligence/improvement-detector.js";
 
 const mockGetDatabase = vi.mocked(getDatabase);
+const mockDetect = vi.mocked(detectImprovements);
 
 /**
  * Build a routed mock DB whose prepare() returns query-specific stubs.
@@ -84,7 +88,7 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
   const REAL_IMAGE_MISSING_ERROR =
     "Container exited with code 125: Unable to find image 'mission-control:latest' locally\ndocker: Error response from daemon: pull access denied for mission-control, repository does not exist or may require 'docker login'";
 
-  it("opens circuit when last 3 nanoclaw tasks all failed with image-missing (real production wording)", () => {
+  it("opens circuit when last 3 nanoclaw tasks all failed with image-missing (real production wording)", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({
         nanoclawRecent: [
@@ -95,11 +99,11 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
   });
 
-  it("opens circuit on 'exited with code 125' without the 'Unable to find image' phrase (defensive matching)", () => {
+  it("opens circuit on 'exited with code 125' without the 'Unable to find image' phrase (defensive matching)", async () => {
     // Match container.ts:221 template `Container exited with code ${code}`
     // even when the docker daemon error text differs (e.g. future locale).
     mockGetDatabase.mockReturnValue(
@@ -121,11 +125,11 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
   });
 
-  it("opens circuit when last 3 nanoclaw tasks all timed out (substrate class, 2026-05-14 cluster)", () => {
+  it("opens circuit when last 3 nanoclaw tasks all timed out (substrate class, 2026-05-14 cluster)", async () => {
     // Matches the actual container.ts:161 template
     // `Container timed out after ${timeoutMs}ms`. Without this branch,
     // when timeouts re-surfaced post image-missing fix, the
@@ -142,11 +146,11 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
   });
 
-  it("opens circuit on mixed substrate failures (image-missing + timeout)", () => {
+  it("opens circuit on mixed substrate failures (image-missing + timeout)", async () => {
     // The breaker should fire when ANY combination of substrate-class
     // failures fills the last 3 — operator shouldn't have to fix all
     // classes simultaneously to clear it.
@@ -164,11 +168,11 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
   });
 
-  it("does NOT open on near-miss timeout text — substring must be exact (qa-audit W3)", () => {
+  it("does NOT open on near-miss timeout text — substring must be exact (qa-audit W3)", async () => {
     // Boundary case: future code that emits "Container request timed out
     // after X" or "Inference timed out after Y" must NOT trip the breaker,
     // which is scoped to container-level timeouts only. The exact
@@ -184,12 +188,12 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     // None of these match the container-template — ritual proceeds normally.
     expect(result).not.toBeNull();
   });
 
-  it("circuit stays closed when one of the recent 3 tasks succeeded", () => {
+  it("circuit stays closed when one of the recent 3 tasks succeeded", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({
         nanoclawRecent: [
@@ -206,13 +210,13 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).not.toBeNull();
     expect(result?.agentType).toBe("nanoclaw");
     expect(result?.title).toContain("Auto-improvement");
   });
 
-  it("circuit stays closed when fewer than 3 recent nanoclaw tasks exist", () => {
+  it("circuit stays closed when fewer than 3 recent nanoclaw tasks exist", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({
         nanoclawRecent: [
@@ -228,11 +232,11 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).not.toBeNull();
   });
 
-  it("circuit stays closed when failures are NOT image-missing class", () => {
+  it("circuit stays closed when failures are NOT image-missing class", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({
         nanoclawRecent: [
@@ -246,40 +250,79 @@ describe("createImprovementTask — circuit-breaker (nanoclaw image-missing)", (
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).not.toBeNull();
   });
 
-  it("fails open (does not block) on DB error during circuit check", () => {
+  it("fails open (does not block) on DB error during circuit check", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({
         throwOnNanoclawQuery: true,
       }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     // Fail-open: a broken query is not itself a reason to halt the ritual.
     expect(result).not.toBeNull();
   });
 });
 
 describe("createImprovementTask — pre-existing safety gates still honored", () => {
-  it("returns null when AUTONOMOUS_IMPROVEMENT_ENABLED is not 'true'", () => {
+  it("returns null when AUTONOMOUS_IMPROVEMENT_ENABLED is not 'true'", async () => {
     process.env.AUTONOMOUS_IMPROVEMENT_ENABLED = "false";
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({}) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
   });
 
-  it("returns null when daily PR cap reached", () => {
+  it("returns null when daily PR cap reached", async () => {
     mockGetDatabase.mockReturnValue(
       makeRoutedDb({ prCount: 5 }) as unknown as ReturnType<typeof getDatabase>,
     );
 
-    const result = createImprovementTask();
+    const result = await createImprovementTask();
     expect(result).toBeNull();
+  });
+});
+
+describe("createImprovementTask — async detection", () => {
+  it("returns the circuit-open null BEFORE detectImprovements is called", async () => {
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({
+        nanoclawRecent: [
+          { status: "failed", error: "Container timed out after 900000ms" },
+          { status: "failed", error: "Container timed out after 900000ms" },
+          { status: "failed", error: "Container timed out after 900000ms" },
+        ],
+      }) as unknown as ReturnType<typeof getDatabase>,
+    );
+
+    const result = await createImprovementTask();
+    expect(result).toBeNull();
+    expect(mockDetect).not.toHaveBeenCalled();
+  });
+
+  it("returns null when detection resolves no candidates", async () => {
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({}) as unknown as ReturnType<typeof getDatabase>,
+    );
+    mockDetect.mockResolvedValueOnce([]);
+
+    const result = await createImprovementTask();
+    expect(result).toBeNull();
+    expect(mockDetect).toHaveBeenCalledWith(24);
+  });
+
+  it("builds the submission from the resolved top candidate", async () => {
+    mockGetDatabase.mockReturnValue(
+      makeRoutedDb({}) as unknown as ReturnType<typeof getDatabase>,
+    );
+
+    const result = await createImprovementTask();
+    expect(result?.title).toBe("🤖 Auto-improvement: Anchor regex for foo");
+    expect(result?.description).toContain("candidate text");
   });
 });

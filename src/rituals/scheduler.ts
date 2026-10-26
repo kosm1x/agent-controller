@@ -7,7 +7,8 @@
 
 import { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { getDatabase } from "../db/index.js";
 import { scheduleCanary, stopCanary } from "./canary.js";
 import { submitTask, type TaskSubmission } from "../dispatch/dispatcher.js";
@@ -37,6 +38,13 @@ import { errMsg } from "../lib/err-msg.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
 
 const scheduledJobs: ScheduledTask[] = [];
+
+// Async on purpose (2026-10-26): the pre-cycle tag, tag prune and stale
+// container prune ran execFileSync on the main thread, so a slow git or docker
+// call froze every other task at ritual minutes (MCEventLoopBlock > 5 s with no
+// tool in the trace). Promisified children keep stdin open; each site closes it
+// right after spawn so a child that reads stdin fails fast instead of hanging.
+const execFileAsync = promisify(execFile);
 
 /**
  * Dim-4 R5 fix: record a ritual failure as a persistent event.
@@ -532,16 +540,18 @@ export function startRitualScheduler(): void {
 const MC_DIR = "/root/claude/mission-control";
 
 /** Create an annotated git tag before autonomous improvement. Non-fatal. */
-export function createPreCycleTag(): void {
+export async function createPreCycleTag(): Promise<void> {
   const date = nowMexIsoDate();
   const tagName = `pre-auto-${date}`;
 
   try {
-    const existing = execFileSync("git", ["tag", "-l", tagName], {
+    const listP = execFileAsync("git", ["tag", "-l", tagName], {
       cwd: MC_DIR,
       timeout: 5000,
       encoding: "utf-8",
-    }).trim();
+    });
+    listP.child.stdin?.end();
+    const existing = (await listP).stdout.trim();
     if (existing) {
       console.log(
         `[rituals] pre-cycle tag ${tagName} already exists, skipping`,
@@ -549,27 +559,31 @@ export function createPreCycleTag(): void {
       return;
     }
 
-    execFileSync(
+    const tagP = execFileAsync(
       "git",
       ["tag", "-a", tagName, "-m", "Pre-autonomous-improvement snapshot"],
       { cwd: MC_DIR, timeout: 10_000, encoding: "utf-8" },
     );
+    tagP.child.stdin?.end();
+    await tagP;
     console.log(`[rituals] Created pre-cycle tag: ${tagName}`);
 
-    pruneOldTags();
+    await pruneOldTags();
   } catch (err) {
     console.error("[rituals] Failed to create pre-cycle tag:", err);
   }
 }
 
 /** Prune pre-auto-* tags: keep last 10, delete any older than 30 days. */
-export function pruneOldTags(): void {
+export async function pruneOldTags(): Promise<void> {
   try {
-    const raw = execFileSync(
+    const listP = execFileAsync(
       "git",
       ["tag", "-l", "pre-auto-*", "--sort=-version:refname"],
       { cwd: MC_DIR, timeout: 5000, encoding: "utf-8" },
-    ).trim();
+    );
+    listP.child.stdin?.end();
+    const raw = (await listP).stdout.trim();
     const tags = raw ? raw.split("\n").filter(Boolean) : [];
 
     if (tags.length <= 10) return;
@@ -581,11 +595,13 @@ export function pruneOldTags(): void {
       const dateStr = tag.replace("pre-auto-", "");
       const tagDate = new Date(dateStr);
       if (tagDate < thirtyDaysAgo) {
-        execFileSync("git", ["tag", "-d", tag], {
+        const delP = execFileAsync("git", ["tag", "-d", tag], {
           cwd: MC_DIR,
           timeout: 5000,
           encoding: "utf-8",
         });
+        delP.child.stdin?.end();
+        await delP;
         console.log(`[rituals] Pruned old tag: ${tag}`);
       }
     }
@@ -603,11 +619,11 @@ function scheduleAutonomousImprovement(): void {
     async () => {
       try {
         // SG5: Create pre-cycle snapshot tag
-        createPreCycleTag();
+        await createPreCycleTag();
 
         const { createImprovementTask } =
           await import("./autonomous-improvement.js");
-        const task = createImprovementTask();
+        const task = await createImprovementTask();
         if (!task) return; // no candidates or gates blocked
 
         task.interactive = false; // Autonomous — no interactive user
@@ -674,9 +690,9 @@ function scheduleEvolutionLogCommit(): void {
   const job = scheduleCron(
     "evolution-log-commit",
     "0 3 * * 0",
-    () => {
+    async () => {
       try {
-        const result = commitEvolutionLogIfDirty();
+        const result = await commitEvolutionLogIfDirty();
         console.log(
           result.committed
             ? `[rituals] evolution-log-commit: committed docs/EVOLUTION-LOG.md (${result.hash})`
@@ -815,7 +831,7 @@ function scheduleStaleArtifactPrune(): void {
         // The CLI `name=^mc-` filter is a coarse substring pre-filter in
         // practice — we do not trust it for safety. The strict regex in
         // selectStaleContainersForPrune() is the actual guard.
-        listOutput = execFileSync(
+        const listP = execFileAsync(
           "docker",
           [
             "container",
@@ -827,7 +843,9 @@ function scheduleStaleArtifactPrune(): void {
             "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
           ],
           { timeout: 15_000, encoding: "utf-8" },
-        ).trim();
+        );
+        listP.child.stdin?.end();
+        listOutput = (await listP).stdout.trim();
       } catch (err) {
         const message = errMsg(err);
         if (!DOCKER_UNAVAILABLE_RE.test(message)) {
@@ -848,10 +866,12 @@ function scheduleStaleArtifactPrune(): void {
       const failures: Array<{ name: string; error: string }> = [];
       for (const { id, name } of candidates) {
         try {
-          execFileSync("docker", ["container", "rm", id], {
+          const rmP = execFileAsync("docker", ["container", "rm", id], {
             timeout: 15_000,
             encoding: "utf-8",
           });
+          rmP.child.stdin?.end();
+          await rmP;
           removed++;
         } catch (err) {
           const message = errMsg(err);
