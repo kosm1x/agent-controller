@@ -21,6 +21,9 @@ import { mcpAuth } from "./auth.js";
 
 let db: Database.Database;
 
+/** Either the middleware's 401 body or the /probe route body below. */
+type ProbeBody = { error?: string; id?: number; client?: string; scope?: string };
+
 function insertToken(clientName: string, rawToken: string): number {
   const hash = createHash("sha256").update(rawToken).digest("hex");
   const info = db
@@ -76,7 +79,7 @@ describe("mcpAuth middleware", () => {
     const app = makeApp();
     const res = await app.request("/probe");
     expect(res.status).toBe(401);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.error).toBe("missing_or_malformed_bearer");
   });
 
@@ -94,7 +97,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${TOKEN_A}` },
     });
     expect(res.status).toBe(401);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.error).toBe("invalid_or_revoked_token");
   });
 
@@ -106,7 +109,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${TOKEN_A}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body).toMatchObject({
       id,
       client: "claude-code-test",
@@ -149,7 +152,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${shortToken}` },
     });
     expect(res.status).toBe(401);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.error).toBe("missing_or_malformed_bearer");
   });
 
@@ -161,7 +164,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${boundary}` },
     });
     expect(res.status).toBe(401);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.error).toBe("missing_or_malformed_bearer");
   });
 
@@ -177,7 +180,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${TOKEN_D}` },
     });
     expect(res.status).toBe(401);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.error).toBe("invalid_or_revoked_token");
   });
 
@@ -192,7 +195,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${TOKEN_E}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.id).toBe(id);
   });
 
@@ -205,7 +208,7 @@ describe("mcpAuth middleware", () => {
       headers: { Authorization: `Bearer ${TOKEN_F}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as ProbeBody;
     expect(body.id).toBe(id);
   });
 });

@@ -15,6 +15,8 @@ import { ingestPdf } from "../../kb/pdf-structured-ingest.js";
 import {
   isPgvectorEnabled,
   pgBatchUpsert,
+  pgUpsertLineageSource,
+  type LineageSourceOutcome,
   coerceKbType,
   coerceKbQualifier,
   KB_ENTRY_TYPES,
@@ -59,7 +61,9 @@ NOT WHEN:
 
 Pipeline: @opendataloader/pdf → markdown → section-stack sectionizer + pipe-format
 table detector → KbEntry[] with modality ('text' | 'table') + parent_doc_id +
-section_path + chunk_position → embed each → pgBatchUpsert.
+section_path + chunk_position → embed each → upsert the document manifest
+FIRST → pgBatchUpsert the chunks. Re-ingesting the document with changed
+content marks its old chunks stale, so removed sections drop out of search.
 
 Returns a summary: chunks inserted + modality breakdown + sections count.
 
@@ -147,8 +151,20 @@ them later if needed.`,
       }
     }
 
+    // Lineage order (v6.4 G1): manifest first, then the chunks. When the
+    // manifest hash changed, its cascade runs AWAITED before the manifest is
+    // written (a failed cascade leaves the old hash so the next ingest
+    // retries); the chunk upsert then writes the new set with stale=false,
+    // so a document's own cascade never stales its new chunks.
+    const manifest = await pgUpsertLineageSource(result.manifest);
     const batch = await pgBatchUpsert(result.chunks);
-    return formatIngestSummary(result, batch, embedFailures, pdfPath);
+    return formatIngestSummary(
+      result,
+      batch,
+      embedFailures,
+      pdfPath,
+      manifest,
+    );
   },
 };
 
@@ -187,6 +203,12 @@ Each entry must have path + title + content. Optional: modality
 ('text'|'table'|'equation'|'image_caption'), parent_doc_id (UUID string),
 section_path (array of strings), chunk_position (int), tags, type, qualifier.
 
+Lineage is opt-in here: pass source_path (the KB path the entries derive from)
+and every entry gets related_to=[source_path]. They are marked stale only when
+the row at source_path is rewritten by a writer that runs the staleness cascade
+(e.g. the KB file sync); kb_batch_insert itself never cascades. Without it the
+entries carry no lineage (re-inserting them never clears lineage set earlier).
+
 Returns summary of inserted / duplicate-skipped / rejected counts.`,
       parameters: {
         type: "object",
@@ -223,6 +245,11 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
               required: ["path", "title", "content"],
             },
           },
+          source_path: {
+            type: "string",
+            description:
+              "Optional KB path every entry derives from; sets related_to=[source_path] on each entry. They go stale only when a cascading writer (e.g. the KB file sync) rewrites that path; this tool never cascades. Omit for no lineage.",
+          },
         },
         required: ["entries"],
       },
@@ -242,9 +269,14 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
     // but a non-conforming LLM emission would otherwise propagate to the DB
     // CHECK constraint as a 400. Coerce defends against schema drift across
     // the LLM-driven boundary (audit W1).
+    const sourcePath =
+      typeof args.source_path === "string" && args.source_path.trim()
+        ? args.source_path.trim()
+        : undefined;
     for (const entry of entries) {
       entry.type = coerceKbType(entry.type);
       entry.qualifier = coerceKbQualifier(entry.qualifier);
+      if (sourcePath) entry.related_to = [sourcePath];
     }
 
     // Embed each entry (sequential — bounded by Gemini rate limits)
@@ -278,16 +310,25 @@ Returns summary of inserted / duplicate-skipped / rejected counts.`,
 // Formatter
 // ---------------------------------------------------------------------------
 
+const MANIFEST_NOTE: Record<LineageSourceOutcome, string> = {
+  written: "changed: previous chunks marked stale",
+  unchanged: "unchanged",
+  cascade_failed: "cascade FAILED, manifest not advanced: next ingest retries",
+  failed: "upsert FAILED: previous chunks not marked stale",
+};
+
 function formatIngestSummary(
   result: Awaited<ReturnType<typeof ingestPdf>>,
   batch: { success: number; failed: number; rejected: number },
   embedFailures: number,
   pdfPath: string,
+  manifest: LineageSourceOutcome,
 ): string {
   const lines = [
     `kb_ingest_pdf_structured: ${pdfPath}`,
     `  parent_doc_id: ${result.parentDocId}`,
     `  Doc title: ${result.docTitle}`,
+    `  Manifest: ${result.manifest.path} (${MANIFEST_NOTE[manifest]})`,
     `  Chunks: ${result.chunks.length} (text ${result.counts.text}, table ${result.counts.table})`,
     `  Sections: ${result.counts.sections}`,
     `  Inserted: ${batch.success} | Rejected (noise): ${batch.rejected} | Failed: ${batch.failed}`,

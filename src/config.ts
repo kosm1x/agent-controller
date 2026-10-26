@@ -28,6 +28,8 @@ export interface Config {
   inferenceFallbackKey?: string;
   /** Fallback inference model name (optional). */
   inferenceFallbackModel?: string;
+  /** INFERENCE_SDK_LASTLINE_ENABLED: when "true" and the provider is claude-sdk, the fallback provider runs after both SDK legs fail (default false). */
+  inferenceSdkLastlineEnabled: boolean;
 
   /** Tertiary inference provider URL (optional, third-tier fallback). */
   inferenceTertiaryUrl?: string;
@@ -248,6 +250,8 @@ export function loadConfig(): Config {
     inferenceFallbackUrl: optional("INFERENCE_FALLBACK_URL"),
     inferenceFallbackKey: optional("INFERENCE_FALLBACK_KEY"),
     inferenceFallbackModel: optional("INFERENCE_FALLBACK_MODEL"),
+    inferenceSdkLastlineEnabled:
+      process.env.INFERENCE_SDK_LASTLINE_ENABLED === "true",
 
     inferenceTertiaryUrl: optional("INFERENCE_TERTIARY_URL"),
     inferenceTertiaryKey: optional("INFERENCE_TERTIARY_KEY"),

@@ -38,7 +38,7 @@ vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/secret-refs.js")>()),
   scrubSecrets: (t: string) => t.replaceAll(SCRUB_SYN, "[oculto]"),
 }));
-const embedSpy = vi.fn(async () => null);
+const embedSpy = vi.fn(async (..._args: unknown[]) => null);
 vi.mock("./embeddings.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./embeddings.js")>()),
   embed: (...a: unknown[]) => embedSpy(...a),

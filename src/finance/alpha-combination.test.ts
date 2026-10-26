@@ -643,7 +643,7 @@ describe("runAlphaCombination — result metadata", () => {
 // review the diff at commit time.
 // ---------------------------------------------------------------------------
 
-import golden from "./__fixtures__/f7-golden-3x10.json" with { type: "json" };
+import golden from "./__fixtures__/f7-golden-3x10.json";
 
 describe("runAlphaCombination — golden fixture regression test", () => {
   it("reproduces the committed 3-signal golden output", () => {

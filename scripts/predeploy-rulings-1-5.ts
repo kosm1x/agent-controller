@@ -21,7 +21,7 @@
  * unset in this process, and `src/` has no hook to hand it a read-only
  * handle. Consequences, both stated in the output:
  *   - The secret verdict comes from the repo's real classifiers
- *     (`isCredentialFact`, `isProjectSecret`, `isSecretAncestorName`,
+ *     (`isCredentialFact`, `isProjectLeafSecret`, `isSecretAncestorName`,
  *     `projectEntryLeaves`); the REFERENCE NAME is reproduced from the same
  *     rule `buildIndex` in src/lib/secret-refs.ts applies (base name from
  *     category/key or slug/field/path, 6-hex suffix on a collision).
@@ -52,12 +52,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { isCredentialFact, isCredentialName } from "../src/db/user-facts.js";
 import {
   factIdentity,
   projectIdentity,
-  isProjectSecret,
+  isProjectLeafSecret,
   isSecretAncestorName,
   projectEntryLeaves,
   secretPlaceholder,
@@ -67,6 +66,7 @@ import {
 import { tokenizeQuery, locateMatch } from "../src/db/jarvis-fs.js";
 import { SCORING_VERSION } from "../src/tuning/gate.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 // ------------------------------------------------------------------ census
 
@@ -147,12 +147,19 @@ interface Leaf {
 
 /**
  * Every string/number leaf of one project field — the walk of `projectEntries`
- * in src/lib/secret-refs.ts (same skip rules, same ancestor rule), but keeping
- * the non-secret leaves too so the census can list them.
+ * in src/lib/secret-refs.ts (same skip rules, same ancestor rule, same parent),
+ * judged by the same exported leaf predicate (`isProjectLeafSecret`), but
+ * keeping the non-secret leaves too so the census can list them.
  */
-export function walkProjectField(obj: Record<string, unknown>): Leaf[] {
+export function walkProjectField(obj: Record<string, unknown>, field: Field): Leaf[] {
   const out: Leaf[] = [];
-  const walk = (v: unknown, path: string[], key: string, underSecret: boolean): void => {
+  const walk = (
+    v: unknown,
+    path: string[],
+    key: string,
+    underSecret: boolean,
+    parent?: Record<string, unknown>,
+  ): void => {
     if (v === null || v === undefined || v === "") return;
     if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, [...path, String(i)], key, underSecret));
@@ -160,13 +167,13 @@ export function walkProjectField(obj: Record<string, unknown>): Leaf[] {
     }
     if (typeof v === "object") {
       for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-        walk(x, [...path, k], k, underSecret || isSecretAncestorName(k));
+        walk(x, [...path, k], k, underSecret || isSecretAncestorName(k), v as Record<string, unknown>);
       }
       return;
     }
     if (typeof v !== "string" && typeof v !== "number") return;
     const str = String(v);
-    const secret = underSecret || isProjectSecret(key, str);
+    const secret = isProjectLeafSecret(field, path, key, parent, v, underSecret);
     out.push({
       path,
       key,
@@ -229,7 +236,7 @@ export function buildCensus(facts: FactRow[], projects: ProjectRow[]): Census {
           display.set(leaf.path.join("\0"), leaf.secret);
         }
       }
-      for (const leaf of walkProjectField(obj)) {
+      for (const leaf of walkProjectField(obj, field)) {
         // urls / config: only hidden leaves are listed (credentials: all).
         if (field !== "credentials" && !leaf.secret) continue;
         const row: CensusRow = {
@@ -757,7 +764,7 @@ function main(): number {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
   requireOperatorContext("predeploy-rulings-1-5", { tty: false });
   let code = 2;

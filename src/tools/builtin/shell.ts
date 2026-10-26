@@ -22,6 +22,7 @@ import {
 } from "../flailing-guard.js";
 import { redactCredentials, redactSecrets } from "../../api/mcp-server/redact.js";
 import { scrubSecrets, secretEnvForCommand } from "../../lib/secret-refs.js";
+import { currentRunTaskId } from "../rule-of-two.js";
 
 /**
  * Async command runner. Uses child_process.exec (not execSync) so it does NOT
@@ -220,6 +221,12 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
   return scrubbed;
 }
 
+/** `{ MC_TASK_ID }` for the current run's task; `{}` outside a run (queue 4aa). */
+function taskIdEnv(): NodeJS.ProcessEnv {
+  const taskId = currentRunTaskId();
+  return taskId ? { MC_TASK_ID: taskId } : {};
+}
+
 /**
  * Package-manager PATH shim (dependency trust audit 2026-09-16). The directory
  * ships next to this module in src/ and dist/ (build copies it), and in the
@@ -232,13 +239,21 @@ export function buildScrubbedEnv(): NodeJS.ProcessEnv {
 export const PM_SHIM_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), "pm-shim");
 
 /**
- * PATH with the shim directory first (and nowhere else), and `DOCKER_CONFIG` pinned (audit B3,
- * see withDockerConfig) — so every caller (shell_exec and the task_gates check_cmd child in
- * gate-check.ts) gets both from one place.
+ * pip inside venvs only (operator ruling 2026-10-21, queue 4ae): pip refuses to run outside a virtualenv
+ * on every entry point (`pip`, `python -m pip`, `-mpip`, `pip.main()`), and its command line > env >
+ * config precedence means `pip config set` cannot undo it. Only the literal `--isolated` argv token
+ * makes pip ignore it — refused by the string gate (checkEnvReset), with a `PIP_*` name as PIP_ENV_NAME_RE spells it.
+ */
+export const PIP_VENV_ENV = { PIP_REQUIRE_VIRTUALENV: "1" } as const;
+
+/**
+ * PATH with the shim directory first (and nowhere else), `DOCKER_CONFIG` pinned (audit B3,
+ * see withDockerConfig) and PIP_VENV_ENV set — so every caller (shell_exec and the task_gates
+ * check_cmd child in gate-check.ts) gets all three from one place.
  */
 export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
-  return withDockerConfig({ ...env, PATH: [PM_SHIM_DIR, ...rest].join(":") });
+  return withDockerConfig({ ...env, ...PIP_VENV_ENV, PATH: [PM_SHIM_DIR, ...rest].join(":") });
 }
 
 /**
@@ -482,7 +497,8 @@ const DEPLOY_SH = `${globbedWord("deploy")}[\\\\'"]*\\.[\\\\'"]*${quotedWord("sh
 const MC_CTL_RW = [
   "start", "stop", "restart", "cancel", "schedule-delete", "schedule-resume", "hindsight-restart",
   "audit-claim", "jme-dedup", "briefing-gate", "v83-gate", "v83-promote", "rule-of-two",
-  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke",
+  // "eval" is read-only but gated: the operator's eval of Jarvis, which Jarvis must not read through shell_exec.
+  "project-create", "judgments", "close-phase", "resume", "task-resume", "audit-closure", "smoke", "eval",
   "skills backfill-embeddings", "skills retrieve", "skills certify", "skills archive", "skills revert",
   "jme-preferences --confirm", "jme-preferences --reject",
   "events retrieve", "events aggregate", "events seed",
@@ -492,7 +508,7 @@ const MC_CTL_RW = [
 ];
 
 const MC_CTL_DENY_REASON =
-  "operator-only: mc-ctl RW subcommands and mission-control's scripts/deploy.sh run from the operator terminal, never from a task (read-only mc-ctl subcommands stay open)";
+  "operator-only: mc-ctl RW subcommands, the operator's eval report and mission-control's scripts/deploy.sh run from the operator terminal, never from a task (other read-only mc-ctl subcommands stay open)";
 /** Whether the bash glob `glob` (`*`, `?`, `[…]`, `[!…]`) matches `word`: a linear DP, no regex backtracking. */
 function globMatches(glob: string, word: string): boolean {
   const parts = glob.match(/\[!?\]?[^\]]*\]|[\s\S]/g) ?? [];
@@ -1380,6 +1396,8 @@ const PY_PM_MUTATING = new Set([
   "update", "upgrade", "download", "wheel", "self", "publish", "build", "init",
   "export", "create", "clean", "rename", "clone", "pack", "update-shell",
 ]);
+/** pip's install verbs, allowed for `pip`/`pip3`/`python -m pip` only — inside a venv (operator ruling 2026-10-21, queue 4ae). */
+const PIP_VENV_VERBS = new Set(["install", "uninstall", "download", "wheel"]);
 /** `uv pip|tool|python <sub>`: the SUB-verb decides (`uv pip list` is a read, qa R4 W-2). */
 const UV_MUTATING_SUBS: Record<string, Set<string>> = {
   pip: new Set(["install", "uninstall", "sync", "compile", "download"]),
@@ -1439,6 +1457,129 @@ function isPmBinaryPath(token: string): boolean {
   if (!token.includes("/")) return false;
   return PM_WORD_RE.test(pmWord(token.replace(/\/+$/, "")));
 }
+/**
+ * pip inside venvs (operator ruling 2026-10-21, queue 4ae). PIP_VENV_ENV makes pip refuse outside a venv;
+ * these rules keep a command from switching that off or pointing a venv's pip outside it. A pip invocation
+ * on any spelling: `pip`, `pip3`, `pip3.12`, `<dir>/pip`, `-m pip`, `-mpip`, `-Impip`, `pip.__main__`,
+ * `pip.main(…)` (a module path only refuses more — nothing here allows).
+ */
+const PIP_ANCHOR_RE = /^(?:-[A-Za-z]*m)?pip3?(?:\.[\w.]+)?$/;
+/**
+ * Flags that let pip write outside the venv (or into the system Python); optparse also takes any unique prefix.
+ * `--isolated` itself is refused anywhere (below); its prefixes (`--iso`) do not switch the pin off in pip 24.0
+ * (it tests the literal argv token) but are refused here so a pip that parses them stays covered.
+ */
+const PIP_OUTSIDE_FLAGS = ["--isolated", "--break-system-packages", "--user", "--target", "--prefix", "--root"];
+/** pip's global options that take a value (pip 24.0 `pip --help`), skipped to find the verb; any unique prefix too. */
+const PIP_VALUE_FLAGS = [
+  "--python", "--log", "--log-file", "--local-log", "--keyring-provider", "--proxy", "--retries", "--timeout",
+  "--exists-action", "--trusted-host", "--cert", "--client-cert", "--cache-dir", "--use-feature", "--use-deprecated",
+];
+/**
+ * A pip setting by name: `PIP_TARGET=/usr`, `unset PIP_REQUIRE_VIRTUALENV`, `os.environ['PIP_X']` (a `$PIP_X` read normalizes away),
+ * and after an option cluster: `env -uPIP_X`, `env -vuPIP_X`, `env -0uPIP_X` (getopt's attached value; pip fold 1 C1, fold 2).
+ */
+const PIP_ENV_NAME_RE = /(?:(?<![A-Za-z0-9_])|(?<=^-[A-Za-z0-9]*))PIP_\w+/;
+/** `${PIP_X:=v}` sets the variable; matched on the RAW command (normalizeShellText folds it to its word). */
+const PIP_ASSIGN_DEFAULT_RE = /\$\{PIP_\w+:?=/;
+/** The verbs that take the location flags (pip fold 1 W3: `pip list --user` is a read). */
+const PIP_LOCATION_VERBS = new Set(["install", "download", "wheel"]);
+/**
+ * `location`: a location flag counts here — before the verb or after install/download/wheel. `--break-system-packages`
+ * counts anywhere after pip. A short `-t` before the verb counts unless it is the segment's last word
+ * (`git log --grep pip -t`: no verb can follow it; `pip -t /usr install x` stays refused).
+ */
+function isPipOutsideFlag(t: string, location: "global" | "verb" | false, last: boolean): boolean {
+  const long = /^(--[\w-]+)(?:=|$)/.exec(t)?.[1];
+  if (long) {
+    if (long.length <= 2 || long === "--pre") return false;
+    return PIP_OUTSIDE_FLAGS.some((f) => f.startsWith(long) && (location !== false || f === "--break-system-packages"));
+  }
+  // `-t <dir>`, `-t<dir>`, `-Ut <dir>`: a short cluster up to its first value-taking letter (`-rt` reads file `t`).
+  if ((location === "verb" || (location === "global" && !last)) && /^-[A-Za-z]/.test(t)) {
+    for (const c of t.slice(1)) {
+      if (c === "t") return true;
+      if ("rceCifdw".includes(c)) break;
+    }
+  }
+  return false;
+}
+/**
+ * pip fold 1 C2: words that hand pip arguments the string gate never sees. In the anchor's segment before it:
+ * `xargs`, `parallel`, `find -exec/-execdir/-ok/-okdir` (rule 1). Anywhere before the last anchor in the command:
+ * `.`/`source` (a file's lines run here), `read`, `set --`, `declare`, `typeset`, `local`, `export`, and `for`/`select`
+ * (a loop binding the normalizer does not substitute: `for v in PIP; do unset ${v}_X; done`, pip fold 2 C1) (rule 3).
+ * `alias` anywhere in the command (rule 4: dash expands aliases non-interactively). Fixed words, no shell model.
+ */
+const PIP_CARRIER_WORDS = new Set(["xargs", "parallel", "-exec", "-execdir", "-ok", "-okdir"]);
+const PIP_FEED_WORDS = new Set([".", "source", "read", "declare", "typeset", "local", "export", "for", "select"]);
+/** Rule 2: after a pip anchor in the segment, a word with an expansion or glob character (quoted or not). */
+const PIP_EXPANSION_RE = /[$*?[{}]/;
+const pipCarrierRefusal = (what: string): string =>
+  `\`${what}\` feeds pip arguments the shell gate cannot read (pip runs only with literal arguments, operator ruling 2026-10-21) — spell the pip command out; ${OPERATOR}`;
+/** Rule 2 on the segment as written (before normalizeShellText folds `$X` away): the first such word after an anchor. */
+function pipExpansionWord(segment: string): string | undefined {
+  let anchor = false;
+  for (const w of segment.split(/[\s()]+/)) {
+    if (anchor && PIP_EXPANSION_RE.test(w)) return w;
+    if (!anchor && w && PIP_ANCHOR_RE.test(pmWord(normalizeShellText(w)))) anchor = true;
+  }
+  return undefined;
+}
+/** Rules 3 and 4 on the whole normalized command. */
+function pipFeedWord(scan: string): string | undefined {
+  const words = scan.split(/[\s(),[\]{};&|]+/).filter(Boolean);
+  let last = -1;
+  for (let k = 0; k < words.length; k++) if (PIP_ANCHOR_RE.test(pmWord(words[k]!))) last = k;
+  if (last < 0) return undefined;
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!;
+    if (w === "alias") return w;
+    if (k < last && (PIP_FEED_WORDS.has(w) || (w === "set" && words[k + 1] === "--"))) return w === "set" ? "set --" : w;
+  }
+  return undefined;
+}
+/**
+ * pip fold 2 C1, second belt: in a command with a pip anchor, an `unset`/`export` operand or an `env -u`/`--unset=` value
+ * on the RAW command that holds `$`, a quote or a backtick — a variable name built at run time (`unset ${v}_REQUIRE_VIRTUALENV`)
+ * that PIP_ENV_NAME_RE cannot see. Returns the word and its operand.
+ */
+function pipBuiltName(raw: string, scan: string): string | undefined {
+  if (!scan.split(/[\s(),[\]{};&|]+/).some((w) => PIP_ANCHOR_RE.test(pmWord(w)))) return undefined;
+  for (const segment of raw.split(/[\n;&|()]+/)) {
+    const words = segment.split(/\s+/).filter(Boolean);
+    let verb = "";
+    let env = false;
+    for (let k = 0; k < words.length; k++) {
+      const w = words[k]!;
+      let operand: string | undefined;
+      if (verb) operand = w;
+      else if (env && /^-[A-Za-z0-9]*u|^--u/.test(w)) operand = /^-[A-Za-z0-9]*u$|^--u[a-z]*$/.test(w) ? words[k + 1] : w;
+      if (operand && /[$'"`]/.test(operand)) return `${verb || "env"} ${operand}`;
+      const base = w.replace(/^.*\//, "");
+      if (base === "unset" || base === "export") verb = base;
+      if (base === "env") env = true;
+    }
+  }
+  return undefined;
+}
+/**
+ * pip fold 1 W1: a pip config file (`<venv>/pip.conf`, `~/.config/pip/pip.conf`, `/etc/pip.conf`, `pip.ini`) can set
+ * `target`/`prefix`/`break-system-packages` for every pip that reads it. Written by a redirection or named in a
+ * segment with a writer word, it is refused; an interpreter writing one is the script residue (audit doc §13).
+ */
+const PIP_CONF_RE = /(?:^|[/=])pip\.(?:conf|ini)$/;
+/** A redirection operator at the start of a word, stripped before PIP_CONF_RE (`>>pip.conf`, `>|pip.ini`, `&>pip.conf`; pip fold 2 C2). */
+const PIP_CONF_REDIRECT_RE = /^(?:\d*(?:>>?[|&]?|<>)|&>>?)/;
+const PIP_CONF_WRITERS = new Set(["tee", "cp", "mv", "install", "ln", "rsync", "dd", "sed"]);
+function pipConfWrite(segment: string): string | undefined {
+  const words = segment.split(/\s+/).filter(Boolean);
+  const writer = words.some((w) => PIP_CONF_WRITERS.has(w.replace(/^.*\//, "")));
+  const redirect = (w: string | undefined): boolean => PIP_CONF_REDIRECT_RE.test(w ?? "");
+  return words.find((w, k) => PIP_CONF_RE.test(w.replace(PIP_CONF_REDIRECT_RE, "")) && (writer || redirect(w) || redirect(words[k - 1])));
+}
+const pipEnvRefusal = (what: string): string =>
+  `\`${what}\` changes pip's environment — shell_exec pins PIP_REQUIRE_VIRTUALENV=1 so pip installs only into a venv (operator ruling 2026-10-21); ${OPERATOR}`;
 /** The flag tokens directly after `tokens[i]` (before the first positional). */
 function leadingFlags(tokens: string[], i: number): string[] {
   const out: string[] = [];
@@ -1487,11 +1628,48 @@ export function checkEnvReset(segment: string): string | null {
   let lastPath = -1;
   let lastEq = -1;
   let lastPm = -1;
+  let copySeen = false; // a copy word anywhere in the segment, at command position or not (`xvfb-run -a cp …`)
+  // pip inside venvs (operator ruling 2026-10-21, queue 4ae), in the same pass: a `PIP_*` name or `--isolated`
+  // anywhere (the spellings of turning PIP_VENV_ENV off that a string can show), and after a pip invocation a location flag
+  // (PIP_OUTSIDE_FLAGS, `-t`) or the verb `config` (pip's config files outlive the venv and can set a target).
+  let pipSeen = false;
+  let pipVerb = false; // a pip invocation's verb is still to come …
+  let pipValue = false; // … and this token is a global option's value
+  const pipVerbAt = new Set<number>(); // indexes of pip verbs (`pip install x`: not coreutils `install`)
+  let pipLoc: "global" | "verb" | false = false; // where the location flags count (pip fold 1 W3)
+  let carrier = ""; // pip fold 1 C2 rule 1: `xargs`/`parallel`/`-exec…` earlier in the segment
+  const expansion = pipExpansionWord(segment);
+  if (expansion) return pipCarrierRefusal(`pip … ${expansion}`);
   for (let k = 0; k < tokens.length; k++) {
     const a = tokens[k]!;
     if (/^PATH(?:=|$)/.test(a)) lastPath = k;
     if (a.includes("=")) lastEq = k;
     if (isPmBinaryPath(a) || PM_WORD_RE.test(a)) lastPm = k;
+    const pipName = PIP_ENV_NAME_RE.exec(a)?.[0];
+    if (pipName) return pipEnvRefusal(pipName);
+    if (a === "--isolated") {
+      return `\`--isolated\` makes pip ignore PIP_REQUIRE_VIRTUALENV, the pin that keeps pip inside a venv (operator ruling 2026-10-21) — ${OPERATOR}`;
+    }
+    if (pipVerb) {
+      if (pipValue) pipValue = false;
+      else if (a.startsWith("-")) pipValue = /^--[\w-]+$/.test(a) && PIP_VALUE_FLAGS.some((f) => f.startsWith(a));
+      else if (a === "config") return `\`pip config\` writes pip's config files (target, prefix, index-url), which outlive the venv — ${OPERATOR}`;
+      else {
+        pipVerb = false;
+        pipVerbAt.add(k);
+        pipLoc = PIP_LOCATION_VERBS.has(a) ? "verb" : false;
+      }
+    }
+    if (COPY_WORDS.has(a.replace(/^.*\//, "")) && !pipVerbAt.has(k)) copySeen = true;
+    if (pipSeen && isPipOutsideFlag(a, pipLoc, k + 1 === tokens.length)) {
+      return `\`pip … ${a}\` lets pip install Python packages outside the venv (or into the system Python) — use \`<venv>/bin/pip install …\` without a location flag; ${OPERATOR}`;
+    }
+    if (PIP_CARRIER_WORDS.has(a.replace(/^.*\//, ""))) carrier = a.replace(/^.*\//, "");
+    if (PIP_ANCHOR_RE.test(pmWord(a))) {
+      if (carrier) return pipCarrierRefusal(`${carrier} … ${a}`);
+      pipSeen = pipVerb = true;
+      pipLoc = "global";
+    }
   }
   // Command position: the first token, and every token after a wrapper, `xargs`, `busybox`,
   // `-exec`, a leading assignment or a leading flag (`env -i bash`). Behind a wrapper it is
@@ -1521,7 +1699,15 @@ export function checkEnvReset(segment: string): string | null {
     // `shutil.copy('/usr/bin/npm', …)`, `busybox cp /usr/bin/npm zz`) — qa R5 W5-2. Behind a wrapper the
     // read exemption holds only while READ words alone have been seen (a decoy `flock /var/lock/ls` cannot
     // buy it for a later `node`/`cp`/`dd`; an unknown word buys nothing either — qa R11 C11-2).
-    if (isPmBinaryPath(t)) {
+    // A `<dir>/python` or `<dir>/python3` path is an interpreter for THIS rule, not a manager binary, when no copy
+    // word is in the segment (operator ruling 2026-10-21, route 1 after a 3-strike stop). Bare-name parity: python is
+    // not shimmed, and every command this lets through has a twin with the path replaced by `python3` that was already
+    // allowed (qa R4 replay: 388 allowed lines unchanged, only the 3 target refusals newly allowed). The verb rules and
+    // the COPY rule below still see it (`timeout 5 cp <p>/python zz`, `<p>/python -m pip install x`); what the `-m`
+    // verb rule misses by bare name it misses here too (audit doc §12).
+    // A `<dir>/pip[3]` path likewise (operator ruling 2026-10-21, queue 4ae: `timeout 120 <venv>/bin/pip install x`):
+    // PIP_VENV_ENV refuses it outside a venv on any name, and `--isolated` is refused above on any name.
+    if (isPmBinaryPath(t) && (copySeen || !/^(?:python3?|pip3?)$/.test(word))) {
       const entry = PM_ENTRY_RE.test(t) && /^(?:node|nodejs|python3?)$/.test(sticky ? lastKnown : cmdWord); // `node …/npm-cli.js <verb>` stays with the verb rules
       if (!sticky && !cmdPos && !READ_WORDS.has(cmdWord) && !entry) return copies(`${cmdWord} ${t}`);
       if (sticky && !(readSeen && !otherSeen) && !entry) return copies(`${lastKnown || cmdWord} ${t}`);
@@ -1545,7 +1731,7 @@ export function checkEnvReset(segment: string): string | null {
       if (word === "alias" && lastEq > i) return why("alias");
       if (SHELL_REENTRY.has(word) && word !== "eval" && flags.some((a) => LOGIN_SHELL_FLAG_RE.test(a))) return why(`${word} --login`);
       // `cp /usr/bin/npm zz`, and the bare name after `cd /usr/bin` (`cp npm zz`) — anywhere later in the segment.
-      if (COPY_WORDS.has(word) && lastPm > i) return copies(`${word} ${tokens[lastPm]}`);
+      if (COPY_WORDS.has(word) && lastPm > i && !pipVerbAt.has(i)) return copies(`${word} ${tokens[lastPm]}`);
     }
     const wrapper = isWrapper(word);
     if (cmdPos && wrapper) sticky = true;
@@ -1689,6 +1875,17 @@ const DOCKER_SUBS: Record<string, Map<string, DockerClass>> = {
 };
 /** `docker`, and the CLI plugins run as their own binaries (`docker-compose up` = `docker compose up`). */
 const DOCKER_WORD_RE = /^docker(?:-compose|-buildx|-model)?$/;
+/**
+ * Queue 4k (ruling 5): the other container-runtime CLIs reach the same containers around the docker gate —
+ * `ctr -n moby task exec …` and `runc --root /run/docker/runtime-runc/moby exec …` open a process in
+ * supabase-db with no `supabase-db psql` form for ruling 5a to judge. The word itself is refused: at command
+ * position always; elsewhere (an argument, like `grep runc src`) only when a RUNTIME_VERBS word follows it in
+ * the segment, the way prose naming a refused docker verb is refused.
+ */
+const RUNTIME_WORD_RE = /^(?:ctr|containerd-ctr|runc|crictl|podman|podman-compose|nerdctl)$/;
+const RUNTIME_VERBS = new Set(
+  "exec run create start task tasks t container containers c attach cp restore checkpoint debug mount unshare compose up".split(" "),
+);
 // pflag: in a short-flag token the first value-taking letter takes the rest of the token as its value, and the
 // next token only when it is the last character (`-lfatal ps` = log-level fatal, verb ps; `-Dl x ps` = verb ps).
 const DOCKER_VALUE_FLAG_RE = /^(?:--(?:config|context|host|log-level|tlscacert|tlscert|tlskey)|-(?:(?![cHl])[A-Za-z])*[cHl])$/;
@@ -1752,6 +1949,20 @@ const DOCKER_SCAN_CAP = 64;
 const dockerRefusal = (what: string): string =>
   `\`${what}\` is refused — container file access and new containers are operator-only (operator ruling 2026-10-01); \`docker exec supabase-db psql …\` and the read verbs (ps, logs, inspect, images, stats) are available`;
 
+const runtimeRefusal = (what: string): string =>
+  `\`${what}\` is refused — container runtime CLIs (ctr, runc, crictl, podman, nerdctl) reach container exec and file access around the docker gate; operator-only (operator ruling 5, 2026-10-01); \`docker exec supabase-db psql …\` and the docker read verbs (ps, logs, inspect, images, stats) are available`;
+/** The runtime word at `tokens[i]`; `strict` = command position. Off command position the next DOCKER_SCAN_CAP tokens are scanned for a verb; a longer tail refuses. */
+function checkRuntimeAt(tokens: string[], i: number, strict: boolean): string | null {
+  const bin = tokens[i]!.replace(/^.*\//, "");
+  if (strict) return runtimeRefusal(bin);
+  const end = Math.min(tokens.length, i + 1 + DOCKER_SCAN_CAP);
+  for (let k = i + 1; k < end; k++) {
+    const verb = tokens[k]!.replace(/^.*\//, "");
+    if (RUNTIME_VERBS.has(verb)) return runtimeRefusal(`${bin} ${verb}`);
+  }
+  return end < tokens.length ? runtimeRefusal(`${bin} …`) : null;
+}
+
 /** Index of the first positional at or after `k` (flags and redirections skipped, collected into `flags`); -1 past the cap. */
 function dockerPositional(tokens: string[], k: number, valueFlag: RegExp | null, flags: string[]): number {
   for (let n = 0; k < tokens.length; n++) {
@@ -1801,10 +2012,11 @@ const DOCKER_EXEC_ENV_RE = /^PG\w*(?:=|$)/;
  *     confirm more psql forms than the raw text spells bare (a quoted, `$`-built or interpreter-embedded
  *     form is refused).
  *   - Rulings 5/5b (only `-e PG*` env on docker exec, container exactly `supabase-db`) are unchanged.
+ *   - `npm run <script> -- <args>` / `npx <bin> <args>` (argv appended after the checked body) are refused
+ *     when the appended args carry a psql-shaped token (queue 4m, checkAppendedArgv).
  *   - Residual by construction (qa R3 I1/W1): the gate judges only the literal command text. A script file
- *     (`sh x.sh`, `node x.js`, `make`) or `npm run <script> -- <args>` (argv appended after the checked body)
- *     can carry `-U postgres` past it; only a DB-side control (pg_hba for `postgres`, ruling 5a option b)
- *     closes that route. Queue 4m.
+ *     (`sh x.sh`, `node x.js`, `make`) can carry `-U postgres` past it; only a DB-side control (pg_hba for
+ *     `postgres`, ruling 5a option b) closes that route.
  */
 const PSQL_RO_ROLES = new Set(["mcp_readonly", "longevidad_ro"]);
 const PSQL_ROLE_REASON =
@@ -2168,7 +2380,10 @@ export function checkPackageManagerRaw(
   const scan = spaceRedirections(normalizeShellText(`${stripQuotedHeredocs(command)}\n${interpreterHeredocBodies(command)}`));
   const assignDefault = opts.docker !== false ? DOCKER_ASSIGN_DEFAULT_RE.exec(command)?.[0] : undefined;
   if (assignDefault) return dockerRefusal(assignDefault);
+  const pipDefault = PIP_ASSIGN_DEFAULT_RE.exec(command)?.[0];
+  if (pipDefault) return pipEnvRefusal(pipDefault);
   const psqlCtx: PsqlCtx = { raw: command, confirmed: 0 };
+  const psqlMeta = PSQL_META_RE.test(command); // once per walk: a per-word raw rescan is quadratic (4m fold W1)
   // Segment-aware walk (qa R3 N-3/N-4/N-5): parentheses carry a cwd stack, only
   // a segment that STARTS with cd/pushd/popd moves the cwd, and the token
   // rules see the whole segment from each package-manager word onward
@@ -2179,6 +2394,10 @@ export function checkPackageManagerRaw(
     const envReset = checkEnvReset(line);
     if (envReset) return envReset;
   }
+  const pipFeed = pipFeedWord(scan); // after the per-line rules, so a `PIP_*` name or `alias PATH` keeps its own reason
+  if (pipFeed) return pipCarrierRefusal(`${pipFeed} … pip`);
+  const pipBuilt = pipBuiltName(command, scan);
+  if (pipBuilt) return pipEnvRefusal(pipBuilt);
   const stack: string[] = [];
   for (const part of scan.split(/([()])|[\n;]|(?<![<>])\||(?<![<>])&(?!>)/)) {
     if (!part) continue;
@@ -2224,6 +2443,10 @@ export function checkPackageManagerRaw(
         inDocker = true;
       }
       if (inDocker) continue;
+      if (RUNTIME_WORD_RE.test(word)) {
+        const verdict = checkRuntimeAt(dTokens, i, lead || behindWrapper);
+        if (verdict) return verdict;
+      }
       if (lead && REDIRECTION_RE.test(t)) {
         if (!(reentry && /^\d*<<<$/.test(t))) i += redirectionSpan(dTokens, i) - 1;
         continue;
@@ -2236,9 +2459,71 @@ export function checkPackageManagerRaw(
       if (!PM_WORD_RE.test(pmWord(tokens[i]!))) continue;
       const verdict = checkPackageManagerMutation(verbWindow(tokens, i).join(" "), cwd, { flat: i !== 0 });
       if (verdict) return verdict;
+      const argv = checkAppendedArgv(tokens, i, psqlMeta); // after the mutation rules, so their reasons win
+      if (argv) return argv;
     }
   }
   return null;
+}
+
+/**
+ * Queue 4m (ruling 5a, operator option a): `npm run <script> -- <args>` (and `npx <bin> <args>`) appends argv
+ * after the script body this gate checked, so `npm run db -- -U postgres` hands a superuser role to a
+ * `psql` inside the script. The appended args — everything after the script name (or after the bin for
+ * npx, after the verb for the `test`/`start`/`stop`/`restart` shorthands and the pnpm/yarn/bun `<script>`
+ * shorthand) up to the end of the segment — may not carry a psql-shaped token: `-U`, a cluster of psql
+ * boolean short flags ending in `U` or a fused value (`-AtU`, `-Upostgres`; `-DUSE_X` passes), `--username`
+ * or an abbreviation (`--user=`), `PGUSER=`, `psql`, `-c`/`--command` followed by an SQL keyword, or a
+ * `\c`/`\connect` meta-command (tokens are normalized, so the backslash is read from the raw command, once
+ * per walk). Script files stay a documented limit (5a block).
+ * Cost: getopt_long prefix matching makes `--user`/`--u…` resolve to psql's `--username`, so another tool's
+ * `--user=` in appended args is refused too.
+ * Linear (fold W1): the scan covers the DOCKER_SCAN_CAP tokens after the manager word; a longer segment refuses
+ * (a real `npm run x -- <args>` never carries 64+ args), like checkRuntimeAt.
+ */
+const NPM_SCRIPT_VERBS = /^(?:run|run-script|rum|urn|exec|x|dlx)$/;
+const NPM_SHORTHAND_VERBS = /^(?:test|t|tst|start|stop|restart)$/;
+/** psql's boolean short options may precede `-U` in one cluster (`-AtU`); a value-taking letter would eat the U. */
+const PSQL_USER_FLAG_RE = /^(?:-[aAbeEHlnqsStwWxXzZ01V]*U|--u(?:s(?:e(?:r(?:n(?:a(?:m(?:e)?)?)?)?)?)?)?(?:=|$))/;
+const SQL_WORD_RE =
+  /^(?:select|insert|update|delete|alter|drop|create|grant|revoke|set|reset|copy|truncate|do|call|begin|commit|rollback|show|with|explain|vacuum|analyze|comment|reindex|lock|listen|notify|prepare|execute|declare|refresh|table|values)$/i;
+const PSQL_META_RE = /\\c(?:onnect)?(?![A-Za-z])/;
+function checkAppendedArgv(tokens: string[], i: number, meta: boolean): string | null {
+  const base = pmWord(tokens[i]!);
+  if (base !== "npx" && !NODE_PM_RE.test(base)) return null;
+  const end = Math.min(tokens.length, i + 1 + DOCKER_SCAN_CAP);
+  const capped = end < tokens.length;
+  let k = i + 1;
+  const positional = (): string | undefined => {
+    while (k < end && tokens[k]!.startsWith("-") && tokens[k] !== "--") k += PM_VALUE_FLAGS.has(tokens[k]!) ? 2 : 1;
+    return k < end ? tokens[k++] : undefined;
+  };
+  const pastCap = (label: string): string =>
+    psql5a(`\`${label} …\` appends argv after the checked script body past the ${DOCKER_SCAN_CAP}-token scan cap (queue 4m) — put the arguments inside the script`);
+  const verb = positional();
+  if (!verb) return capped ? pastCap(base) : null;
+  // npm: only the script runners append argv; other managers: any verb may be a script shorthand.
+  if (base === "npm" && !NPM_SCRIPT_VERBS.test(verb) && !NPM_SHORTHAND_VERBS.test(verb)) return null;
+  const script = base === "npx" || NPM_SHORTHAND_VERBS.test(verb) || !NPM_SCRIPT_VERBS.test(verb) ? verb : positional();
+  const label = [base, base === "npx" ? "" : verb, script === verb ? "" : script].filter(Boolean).join(" ");
+  if (script === undefined && capped) return pastCap(label);
+  for (let a = k; a < end; a++) {
+    const t = tokens[a]!;
+    const word = t.replace(/^.*\//, "");
+    const command = /^(?:-c|--command)$/.test(t) ? tokens[a + 1] : /^(?:-c(?!-)|--command=)(.+)$/.exec(t)?.[1];
+    if (
+      PSQL_USER_FLAG_RE.test(t) ||
+      t.includes("PGUSER=") ||
+      word === "psql" ||
+      (command !== undefined && SQL_WORD_RE.test(command)) ||
+      (meta && /^(?:c|connect)$/.test(t))
+    ) {
+      return psql5a(
+        `\`${label} … ${t}\` appends argv after the checked script body and carries a psql-shaped argument (queue 4m) — put the role inside the script`,
+      );
+    }
+  }
+  return capped ? pastCap(label) : null;
 }
 
 /** Tokens from `start` until 8 positionals are collected; flags beyond 64 are dropped, not counted. */
@@ -2407,6 +2692,8 @@ export function checkPackageManagerMutation(
     return null;
   }
   if (PY_PM_RE.test(base)) {
+    // pip inside venvs (operator ruling 2026-10-21, queue 4ae): PIP_VENV_ENV refuses these outside a venv.
+    if ((base === "pip" || base === "pip3") && PIP_VENV_VERBS.has(sub)) return null;
     const uvSub = base === "uv" ? UV_MUTATING_SUBS[sub] : undefined;
     if (PY_PM_MUTATING.has(sub) || uvSub?.has(arg)) {
       return `\`${base} ${sub}${uvSub ? ` ${arg}` : ""}\` installs Python packages — ${OPERATOR}`;
@@ -2611,6 +2898,10 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     const envWrite = envWriteTarget(unquoted);
     if (envWrite) {
       return { allowed: false, reason: `'${envWrite}' is a .env file — writing, moving or linking one from the shell is operator-only (the .env read allowlist covers reads only)` };
+    }
+    const pipConf = pipConfWrite(unquoted);
+    if (pipConf) {
+      return { allowed: false, reason: `\`${pipConf}\` is a pip config file (it can set target/prefix for every pip, venv or not) — writing one is an operator decision (operator ruling 2026-10-21, queue 4ae)` };
     }
     // audit R2 W1: a bare `$X` / `${X…}` command word whose variable this command assigns
     // (`X=crontab; $X`) runs whatever was assigned — spell the command out instead.
@@ -2869,7 +3160,9 @@ RESTRICTIONS:
         // PATH starts with the package-manager shim (see PM_SHIM_DIR).
         // Ruling 3c: plus exactly the stored secrets this command names as $SECRET_X.
         // Audit B3: withPmShimPath also pins DOCKER_CONFIG so a HOME override cannot move the docker config.
-        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command) },
+        // Queue 4aa: MC_TASK_ID names the current run's task (absent outside a run) so a
+        // child can bind a receipt to it; the gate harness injects the same name.
+        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command), ...taskIdEnv() },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret

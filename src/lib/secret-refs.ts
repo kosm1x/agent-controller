@@ -337,6 +337,141 @@ function isSecretConfigLiteral(
   );
 }
 
+/**
+ * The ONE leaf verdict of a project field (`credentials` / `urls` / `config`):
+ * used by the index walk (projectEntries), the display walk
+ * (projectEntryLeaves) and the census walker (scripts/predeploy-rulings-1-5.ts),
+ * so all three judge every leaf identically. `underSecret`: an ancestor key is
+ * a credential name (isSecretAncestorName); `parent`: the object holding the
+ * leaf (undefined for a list element).
+ */
+export function isProjectLeafSecret(
+  field: string,
+  path: readonly string[],
+  leafKey: string,
+  parent: Record<string, unknown> | undefined,
+  value: string | number,
+  underSecret: boolean,
+): boolean {
+  const str = String(value);
+  return (
+    !isSecretNameLeaf(field, path, str) &&
+    (underSecret || isProjectSecret(leafKey, str) || isSecretConfigLiteral(field, path, leafKey, parent, value))
+  );
+}
+
+/** A string that can be the NAME of a setting (`PGPASSWORD`, `db_pass`, `X API Key`). */
+const SETTING_NAME_RE = /^[A-Za-z][A-Za-z0-9_.\- ]{0,63}$/;
+/** A credential REFERENCE name (`SECRET_<NAME>`): names a stored value, is never one. */
+const SECRET_REF_NAME_RE = /^SECRET_[A-Z0-9_]+$/;
+/** The key that holds a reference in the `{name, secret}` form (any case). */
+const SECRET_MEMBER_RE = /^secret$/i;
+
+/** The secretNameFragment of a name-shaped string (trimmed), or undefined. */
+function settingNameFragment(s: string): string | undefined {
+  const t = s.trim();
+  return SETTING_NAME_RE.test(t) ? secretNameFragment(t) : undefined;
+}
+
+/** A key that names its value (`name`/`key`/`env`/`var`/`variable`, `label`, or env-shaped). */
+function isNameKey(k: string): boolean {
+  return PAIR_NAME_RE.test(k) || /^label$/i.test(k) || ENV_KEY_RE.test(k);
+}
+
+/**
+ * A scalar long enough to be a credential: a string of 8+ characters (a URL
+ * or a path too: the display exemption URL_OR_PATH_RE does not apply here)
+ * or a number with 8+ digits. A `SECRET_<NAME>` reference is not one.
+ */
+function isGatedScalar(v: unknown): boolean {
+  if (typeof v === "string") return v.length >= 8 && !SECRET_REF_NAME_RE.test(v);
+  if (typeof v === "number") return String(v).replace(/[^0-9]/g, "").length >= 8;
+  return false;
+}
+
+/**
+ * Queue 3l ruling A (structural safety gate at the write): every place a
+ * legacy `config` object holds a credential LITERAL next to its name.
+ * A hit is any object or list (tuple) that holds a name-shaped string
+ * (SETTING_NAME_RE) carrying a secretNameFragment, next to a sibling member
+ * (another value of the same object/list, whatever the keys are) that is a
+ * gated scalar (isGatedScalar). A member string with whitespace inside it
+ * is a name under a name-shaped key (isNameKey: `{name: "X API Key"}`);
+ * under any other key it judges only a value-keyed or credential-keyed
+ * sibling (`{title: "GitHub token", value: …}` is a hit, `{title: "Passport
+ * renewal", date: …}` is not), so in a list (every key an index) it is
+ * never a name. A `SECRET_<NAME>` string is never a gated
+ * value; it is a REFERENCE (not a name either) only by position: under a
+ * `secret` key (any case) or as the second element of a bare
+ * `[NAME, SECRET_X]` tuple — anywhere else it is a name (`SECRET_KEY`). In
+ * an object holding a `secret` reference (the reference form) a member name
+ * judges only a scalar under `value`/`val` (any case) or under a key that
+ * carries a fragment or is a secret-value name (`host` is not judged); the
+ * parent key's label still judges every scalar. Also a hit:
+ *   - an object key carrying a fragment names its child object
+ *     (`{PGPASSWORD: {value: …}}`), and its child list when the key is
+ *     env-shaped or a secret-value name (`{DB_PASS: [...]}`, `api_keys: [...]`;
+ *     `keywords: [...]` is a data list, not a pair);
+ *   - a single `NAME=value` string whose NAME carries a fragment and whose
+ *     value is gated (`"DB_PASS=…"`).
+ * `path` is the gated value's path from the config root (keys only, never a
+ * value), `fragment` the fragment that matched (one hit per gated value). The display rules
+ * (isProjectLeafSecret) stay as they are behind this gate.
+ */
+export function configSecretLiterals(config: unknown): Array<{ path: string[]; fragment: string }> {
+  const out: Array<{ path: string[]; fragment: string }> = [];
+  const visit = (v: unknown, path: string[], label: string | undefined): void => {
+    if (typeof v === "string") {
+      const eq = v.indexOf("=");
+      if (eq > 0) {
+        const fragment = settingNameFragment(v.slice(0, eq).trim());
+        if (fragment && isGatedScalar(v.slice(eq + 1).trim())) out.push({ path, fragment });
+      }
+      return;
+    }
+    if (v === null || typeof v !== "object") return;
+    const isList = Array.isArray(v);
+    const entries: Array<[string, unknown]> = isList
+      ? (v as unknown[]).map((x, i) => [String(i), x])
+      : Object.entries(v as Record<string, unknown>);
+    const isRef = (k: string, x: unknown, at: number) =>
+      typeof x === "string" &&
+      SECRET_REF_NAME_RE.test(x) &&
+      (isList ? entries.length === 2 && at === 1 : SECRET_MEMBER_RE.test(k));
+    const refForm = !isList && entries.some(([k, x], at) => SECRET_MEMBER_RE.test(k) && isRef(k, x, at));
+    // `weak`: a spaced member string under a key that does not name its value.
+    const names: Array<{ at: number; fragment: string; weak: boolean }> = [];
+    entries.forEach(([k, x], at) => {
+      if (typeof x !== "string" || isRef(k, x, at)) return;
+      const weak = /\s/.test(x.trim()) && !isNameKey(k.trim());
+      const fragment = settingNameFragment(x);
+      if (fragment) names.push({ at, fragment, weak });
+    });
+    if (label) names.push({ at: -1, fragment: label, weak: false });
+    for (let at = 0; at < entries.length; at++) {
+      const [k, x] = entries[at]!;
+      if (!isGatedScalar(x)) continue;
+      // Reference form: a member name judges only a value-keyed or
+      // credential-keyed scalar; the parent key's label judges every one.
+      // A weak name judges only such a scalar too.
+      const valueKey = PAIR_VALUE_RE.test(k.trim()) || settingNameFragment(k) !== undefined || isSecretAncestorName(k);
+      const judged = !refForm || valueKey;
+      const name = names.find((n) => n.at !== at && (judged || n.at === -1) && (!n.weak || valueKey));
+      if (name) out.push({ path: [...path, entries[at]![0]], fragment: name.fragment });
+    }
+    for (const [k, x] of entries) {
+      const labels =
+        !isList &&
+        x !== null &&
+        typeof x === "object" &&
+        (!Array.isArray(x) || ENV_KEY_RE.test(k) || isSecretAncestorName(k));
+      visit(x, [...path, k], labels ? settingNameFragment(k) : undefined);
+    }
+  };
+  visit(config, [], undefined);
+  return out;
+}
+
 /** Secret string/number leaves of a project JSON field (isProjectSecret). */
 function projectEntries(
   slug: string,
@@ -373,8 +508,7 @@ function projectEntries(
   if (typeof value !== "string" && typeof value !== "number") return;
   const str = String(value);
   // Same rule as projectEntryLeaves (index and display stay identical).
-  if (isSecretNameLeaf(field, path, str)) return;
-  if (!underSecret && !isProjectSecret(key, str) && !isSecretConfigLiteral(field, path, key, parent, value)) return;
+  if (!isProjectLeafSecret(field, path, key, parent, value, underSecret)) return;
   const prefix = field === "credentials" ? [slug] : [slug, field];
   out.push({
     identity: projectIdentity(slug, field, path),
@@ -668,9 +802,7 @@ export function projectEntryLeaves(
     }
     if (typeof v !== "string" && typeof v !== "number") return;
     const str = String(v);
-    const secret =
-      !isSecretNameLeaf(field, path, str) &&
-      (underSecret || isProjectSecret(leafKey, str) || isSecretConfigLiteral(field, path, leafKey, parent, v));
+    const secret = isProjectLeafSecret(field, path, leafKey, parent, v, underSecret);
     out.push({
       path,
       secret,

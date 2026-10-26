@@ -1,0 +1,12 @@
+# Ruling 5a draft 2026-10-19 (rev 2): pg_ident.conf for the live supabase-db.
+# The live server reads $PGDATA/pg_ident.conf (it has no maps today) unless
+# started with -c ident_file=... (Recipe C mounts this file at
+# /etc/postgresql-5a/pg_ident.conf). Used only by the pg_hba line
+#   local all postgres,supabase_admin peer map=m5a
+# OS user postgres (uid 105 in the image; only `docker exec -u postgres`
+# yields it) may log in as role postgres or supabase_admin over the socket.
+# Root (the default `docker exec` user) and every other OS user are not mapped.
+#
+# MAPNAME       SYSTEM-USERNAME         PG-USERNAME
+m5a             postgres                postgres
+m5a             postgres                supabase_admin

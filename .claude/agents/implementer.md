@@ -21,6 +21,7 @@ You implement one brief in the agent-controller repository (Jarvis / mission-con
 - Every completion path goes through `applyCompletionLedger`; every LLM-derived send passes `sanitizeDeliverable`. Do not add a second path around either.
 - A model id, system prompt or tool description change needs `npm run eval:gate -- --run`, which only runs on the VPS. If your change touches one, say so in your report; do not claim it is shippable.
 - Never run `scripts/deploy.sh`, `systemctl`, or anything against the live service. The repo is public: no secrets, tokens, private chat text or VPS-only credentials in code, tests or comments.
+- Signals (hard rule, incident 2026-10-24): never `kill -- -<pgid>`, `kill -1`, `kill 0`, `pkill -u`, `killall5` or a computed or broad `pkill -f` pattern on the VPS; the same session's harness `kill -INT -- -"$pg"` survived only because `pg` happened to be set, while the auditor's unquoted copy sent SIGINT to every process on the host. Signal one quoted, validated pid (`[[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] && kill -TERM "$pid"`), and run signal/trap tests on the Windows PC or in a throwaway container, never on the VPS. The `kill-guard` hook enforces this.
 - Match the surrounding code's comments and naming. Keep the change to what the brief asks.
 
 ## Done-check (run it, do not describe it)

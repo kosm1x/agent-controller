@@ -20,6 +20,105 @@ const JINA_PREFIX = "https://r.jina.ai/";
 const TIMEOUT_MS = 15_000;
 const MAX_CONTENT = 5_000; // chars — halved from 10K to prevent token budget blow-outs when many tools are scoped
 
+const ENGINES = ["direct", "browser"];
+const FORMATS = ["markdown", "text", "html"];
+const WAITS = ["visible-content", "mutation-idle", "network-idle"];
+const SELECTOR_MAX = 200;
+const SELECTOR_RE = /^[\x20-\x7E]*$/; // printable ASCII: no CR/LF, no bytes a header cannot carry
+const LOCALE_RE = /^[a-z]{2}(-[A-Z]{2})?$/;
+const PROXY_RE = /^(auto|[a-z]{2})$/;
+
+interface ReaderOptions {
+  headers: Record<string, string>;
+  timeoutMs: number;
+  note?: string;
+}
+
+function intInRange(v: unknown, min: number, max: number): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+}
+
+/**
+ * Optional Jina Reader parameters → request headers. Returns an error string
+ * for an invalid value. With no options the result is `{}` + the default
+ * timeout, so a plain `{ url }` read sends exactly what it always did.
+ */
+function readerOptions(
+  args: Record<string, unknown>,
+  hasKey: boolean,
+): ReaderOptions | string {
+  const headers: Record<string, string> = {};
+  let timeoutMs = TIMEOUT_MS;
+  let note: string | undefined;
+
+  const selectors: Array<[string, string]> = [
+    ["selector", "X-Target-Selector"],
+    ["wait_for", "X-Wait-For-Selector"],
+    ["remove_selector", "X-Remove-Selector"],
+  ];
+  for (const [name, header] of selectors) {
+    const v = args[name];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "string") return `${name} must be a string`;
+    if (!SELECTOR_RE.test(v))
+      return `${name} must be printable ASCII (no line breaks or non-ASCII characters)`;
+    const t = v.trim();
+    if (t.length > SELECTOR_MAX)
+      return `${name} must be at most ${SELECTOR_MAX} characters`;
+    if (t) headers[header] = t;
+  }
+
+  if (args.engine !== undefined) {
+    if (!ENGINES.includes(args.engine as string))
+      return `engine must be one of: ${ENGINES.join(", ")}`;
+    headers["X-Engine"] = args.engine as string;
+  }
+  if (args.fresh === true) headers["X-No-Cache"] = "true";
+
+  if (args.format !== undefined) {
+    if (!FORMATS.includes(args.format as string))
+      return `format must be one of: ${FORMATS.join(", ")}`;
+    if (args.format !== "markdown") {
+      headers["X-Respond-With"] = args.format as string;
+    }
+  }
+
+  if (args.links_summary === true) headers["X-With-Links-Summary"] = "true";
+  if (args.images_summary === true) headers["X-With-Images-Summary"] = "true";
+  if (args.strip_images === true) headers["X-Retain-Images"] = "none";
+
+  if (args.timeout_s !== undefined) {
+    if (!intInRange(args.timeout_s, 5, 60))
+      return "timeout_s must be an integer from 5 to 60";
+    headers["X-Timeout"] = String(args.timeout_s);
+    timeoutMs = (args.timeout_s + 5) * 1000;
+  }
+  if (args.max_tokens !== undefined) {
+    if (!intInRange(args.max_tokens, 200, 20_000))
+      return "max_tokens must be an integer from 200 to 20000";
+    headers["X-Max-Tokens"] = String(args.max_tokens);
+  }
+  if (args.locale !== undefined) {
+    if (typeof args.locale !== "string" || !LOCALE_RE.test(args.locale))
+      return "locale must look like 'es' or 'es-MX'";
+    headers["X-Locale"] = args.locale;
+  }
+  if (args.proxy !== undefined) {
+    if (typeof args.proxy !== "string" || !PROXY_RE.test(args.proxy))
+      return "proxy must be 'auto' or a two-letter lowercase country code";
+    // Jina proxies need a key; without one the read goes out unproxied
+    if (hasKey) headers["X-Proxy"] = args.proxy;
+    else note = "proxy ignored: JINA_API_KEY not set";
+  }
+  if (args.wait !== undefined) {
+    if (!WAITS.includes(args.wait as string))
+      return `wait must be one of: ${WAITS.join(", ")}`;
+    headers["X-Respond-Timing"] = args.wait as string;
+  }
+
+  return { headers, timeoutMs, ...(note && { note }) };
+}
+
 async function extractPdfLocally(url: string): Promise<string> {
   try {
     const content = await extractPdfFromUrl(url, {
@@ -43,7 +142,7 @@ async function extractPdfLocally(url: string): Promise<string> {
 }
 
 /** Jina's error reason from a non-ok body (JSON or plain text), ≤300 chars. */
-function jinaReason(body: string): string {
+export function jinaReason(body: string): string {
   let reason = "";
   try {
     const parsed = JSON.parse(body) as {
@@ -135,14 +234,15 @@ DO NOT USE WHEN:
 - You just need search results (use web_search instead)
 - The URL requires authentication (login-protected pages won't work)
 - You need to read the user's own Google Docs (use gdocs_read instead)
-- The page is JS-heavy / a single-page app that needs rendering (use browser__goto + browser__markdown instead)
 - You need to interact with the page: click buttons, fill forms, scroll (use browser__* tools)
 
 Returns clean Markdown with headings, code blocks, and links preserved.
 Works with: GitHub repos, news articles, documentation, blogs, PDFs.
 X/Twitter status links are read directly (text, author, quotes, articles).
 Cloudflare-protected pages are handled automatically via stealth browser fallback.
-For interactive browsing or JS-rendered pages, use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).
+JS-rendered pages are rendered by Jina; use wait_for if the content loads late and selector to keep only the useful part of the page.
+For interactive browsing (click, fill, scroll), use the browser__* tools (goto, markdown, click, fill, evaluate, etc.).
+OPTIONS: all optional, omit them for a plain read; each parameter says what it does (page part, rendering, freshness, output, region).
 
 AFTER READING: Cite the URL when reporting content. Distinguish between what the page says and your own analysis.`,
       parameters: {
@@ -152,6 +252,77 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
             type: "string",
             description:
               "The full URL to read (e.g., 'https://github.com/user/repo')",
+          },
+          selector: {
+            type: "string",
+            description:
+              "Optional CSS selector; return only that part of the page (e.g., 'article', 'main', '#content'). Max 200 chars.",
+          },
+          wait_for: {
+            type: "string",
+            description:
+              "Optional CSS selector to wait for before extracting (pages that load content late). Max 200 chars.",
+          },
+          remove_selector: {
+            type: "string",
+            description:
+              "Optional CSS selector to drop before extracting (e.g., 'nav, footer, .ads'). Max 200 chars.",
+          },
+          engine: {
+            type: "string",
+            enum: ["direct", "browser"],
+            description:
+              "Optional: 'browser' renders the page in a real browser (JS-heavy pages); 'direct' is faster for static pages. Omit for Jina's default.",
+          },
+          fresh: {
+            type: "boolean",
+            description:
+              "Optional: true bypasses Jina's cache (live prices, pages updated minutes ago).",
+          },
+          format: {
+            type: "string",
+            enum: ["markdown", "text", "html"],
+            description: "Optional output format (default: markdown).",
+          },
+          links_summary: {
+            type: "boolean",
+            description:
+              "Optional: true appends a list of the links found on the page.",
+          },
+          images_summary: {
+            type: "boolean",
+            description:
+              "Optional: true appends a list of the images found on the page.",
+          },
+          strip_images: {
+            type: "boolean",
+            description: "Optional: true removes images from the output.",
+          },
+          timeout_s: {
+            type: "integer",
+            description:
+              "Optional: seconds Jina may wait for a slow page, integer 5-60 (default: Jina's own, 15 s local limit).",
+          },
+          max_tokens: {
+            type: "integer",
+            description:
+              "Optional: server-side cap on the returned tokens, integer 200-20000.",
+          },
+          locale: {
+            type: "string",
+            description:
+              "Optional browser locale, 'xx' or 'xx-YY' (e.g., 'es', 'es-MX').",
+          },
+          proxy: {
+            type: "string",
+            description:
+              "Optional: 'auto' or a two-letter lowercase country code (e.g., 'mx', 'us') for geo-dependent pages. Needs JINA_API_KEY; ignored without it.",
+          },
+          wait: {
+            type: "string",
+            enum: ["visible-content", "mutation-idle", "network-idle"],
+            description:
+              "Optional: when the page counts as loaded before extraction (late-loading content).",
           },
         },
         required: ["url"],
@@ -170,6 +341,14 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
     if (urlError) {
       return JSON.stringify({ error: urlError, url });
     }
+
+    // Optional Jina Reader parameters — validated before any fetch
+    const apiKey = process.env.JINA_API_KEY;
+    const opts = readerOptions(args, Boolean(apiKey));
+    if (typeof opts === "string") {
+      return JSON.stringify({ error: opts, url });
+    }
+    const note = opts.note;
 
     // PDF URLs: extract locally via OpenDataLoader (no Jina dependency)
     if (url.toLowerCase().endsWith(".pdf")) {
@@ -212,23 +391,62 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), opts.timeoutMs);
 
     try {
       const headers: Record<string, string> = {
-        Accept: "text/markdown",
+        Accept: opts.headers["X-Respond-With"] ? "text/plain" : "text/markdown",
       };
 
       // Use API key for higher rate limits if available
-      const apiKey = process.env.JINA_API_KEY;
       if (apiKey) {
         headers["Authorization"] = `Bearer ${apiKey}`;
       }
+      Object.assign(headers, opts.headers);
 
-      const response = await fetch(`${JINA_PREFIX}${url}`, {
+      let response = await fetch(`${JINA_PREFIX}${url}`, {
         headers,
         signal: controller.signal,
       });
+
+      // One cheap second try through Jina on 403/503 before giving up:
+      // bypass its cache and force the browser engine (+ proxy with a key).
+      // Never on 429 (a retry without backoff only burns the quota); a
+      // Cloudflare challenge goes to the stealth fallback below instead.
+      // Shares the abort window with the first fetch.
+      let failBody: string | undefined;
+      let retried = false;
+      if (
+        (response.status === 403 || response.status === 503) &&
+        headers["X-Engine"] !== "browser"
+      ) {
+        failBody = await response.text().catch(() => "");
+        if (!isCloudflareChallenge(failBody)) {
+          const retryHeaders: Record<string, string> = {
+            ...headers,
+            "X-No-Cache": "true",
+            "X-Engine": "browser",
+          };
+          if (apiKey && !retryHeaders["X-Proxy"]) {
+            retryHeaders["X-Proxy"] = "auto";
+          }
+          try {
+            const retry = await fetch(`${JINA_PREFIX}${url}`, {
+              headers: retryHeaders,
+              signal: controller.signal,
+            });
+            if (retry.ok) {
+              response = retry;
+              retried = true;
+            } else {
+              // release the connection held by the unread failure body
+              await retry.body?.cancel().catch(() => {});
+            }
+          } catch {
+            // keep the original failure
+          }
+        }
+      }
 
       // If Jina returns a PDF content-type, the URL was a PDF — extract locally
       const contentType = response.headers.get("content-type") ?? "";
@@ -237,9 +455,11 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
       }
 
       if (!response.ok) {
-        const body = [403, 429, 451, 503].includes(response.status)
-          ? await response.text().catch(() => "")
-          : "";
+        const body =
+          failBody ??
+          ([403, 429, 451, 503].includes(response.status)
+            ? await response.text().catch(() => "")
+            : "");
         // Cloudflare fallback: if Jina returns 403/503, try stealth browser
         if (
           (response.status === 403 || response.status === 503) &&
@@ -255,18 +475,22 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
             error: `Failed to read URL: ${response.status} ${response.statusText}${reason ? ` — ${reason}` : ""}`,
             url,
             hint: "Jina Reader refused this URL; the page itself may be fine. Retry with browser__goto on this URL, then browser__markdown, or expand_read if it is available.",
+            ...(note && { note }),
           });
         }
         return JSON.stringify({
           error: `Failed to read URL: ${response.status} ${response.statusText}`,
           url,
+          ...(note && { note }),
         });
       }
 
       const content = await response.text();
 
-      // Jina sometimes returns Cloudflare challenge HTML instead of content
-      if (isCloudflareChallenge(content)) {
+      // Jina sometimes returns Cloudflare challenge HTML instead of content.
+      // Markdown only: an html/text body of a normal page may load
+      // challenges.cloudflare.com (Turnstile) and must not be replaced.
+      if (!headers["X-Respond-With"] && isCloudflareChallenge(content)) {
         return await stealthFallback(url);
       }
 
@@ -289,6 +513,8 @@ AFTER READING: Cite the URL when reporting content. Distinguish between what the
         chars: content.length,
         truncated: content.length > MAX_CONTENT,
         ...(evictedFilePath && { full_content_path: evictedFilePath }),
+        ...(retried && { retried: true }),
+        ...(note && { note }),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

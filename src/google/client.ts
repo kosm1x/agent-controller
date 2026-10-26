@@ -12,6 +12,16 @@ import { getAccessToken } from "./auth.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+/** A non-2xx Google API response; `status` is the HTTP status code. */
+export class GoogleApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export async function googleFetch<T>(
   url: string,
   options?: {
@@ -65,7 +75,10 @@ export async function googleFetch<T>(
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Google API ${response.status}: ${text.slice(0, 300)}`);
+      throw new GoogleApiError(
+        response.status,
+        `Google API ${response.status}: ${text.slice(0, 300)}`,
+      );
     }
 
     if (options?.rawText) {

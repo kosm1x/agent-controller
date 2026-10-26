@@ -91,50 +91,11 @@
 - **Archived: 19 jarvis-usability audits P0–P5 (08-23/24, all SHIPPED)** → grep `usability-phase*-audit.md`. Crumb: score a text filter against the LIVE CORPUS not fixtures.
 - **Archived: 10 audits 08-02 → 08-17 (v83 seam-origin · v85 opensandbox R2 · v84 honest-done · …)** -> grep by name. Crumb: `sent>0` ≠ delivered (error RESOLVES).
 - **Archived: 18 audits 07-05 → 07-27 (planner sizing · graded-down delivery · v83 phases 5/6/7 · …)** -> grep by name. Crumb: decision-table row is DORMANT until emitted.
-## Older audits
+## Recent audits (Oct 2026)
 
-- **Archived: 16 v6.x sprint audits (2026-04)** → [archived-v6-sprint-audits](archived-v6-sprint-audits.md) — grep for any v6.0/v6.2/v6.3/v6.4 sprint audit.
-- **Archived: 20 audits 04-08 → 05-15** (CCP1-5, F7-F9, Google Workspace, security sweep, v7.3/v7.6, northstar, prompt-enhancer, sdk-wrapper, …) → [arch...
-- [loop-unlimited-r1-audit](loop-unlimited-r1-audit.md) — 08-27: FAIL 2 Crit. A command shipped behind an adapter that drops every "/"-prefixed message.
-- [authored_doc_citation_is_a_claim](feedback_authored_doc_citation_is_a_claim.md) — Auditing an authored doc that cites decision IDs or a sibling doc: open the cited file.
-- [certified_skill_flake_budget](feedback_certified_skill_flake_budget.md) — S5 skill: a green certification is n=1 evidence; check latency headroom and LLM-judgment assertions.
-- [skill_error_envelope_strike](feedback_skill_error_envelope_strike.md) — S5 skills: a body-level {"error":...} return is a wrong_output failure that burns a strike.
-- [verification_claims_need_the_live_store](feedback_verification_claims_need_the_live_store.md) — "registered"/"deleted" claims must be checked vs the live store.
-- [git-tests-inherit-hook-env](feedback_git_tests_inherit_hook_env.md) — tests spawning git in tmpdir repos must strip GIT_* env (pre-commit exports GIT_DIR).
-- [skills-versioning-kb-file-r1-audit](skills-versioning-kb-file-r1-audit.md) - 09-24: R1 FAIL (new version inherited `is_certified`) -> R2 PASS.
-- [skills-autocert-monotonic-r1-audit](skills-autocert-monotonic-r1-audit.md) - 09-24: R1 FAIL -> R2 PASS-W-WARN. Every pointer move must reset is_certified.
-- [scope-miss-blocked-path-r1-audit](scope-miss-blocked-path-r1-audit.md) - 09-24: PASS-W-WARN. CLASS: stream finalize() never rejects, so `.catch(sendFresh)` is dead.
-- [scope-miss-blocked-path-r2-audit](scope-miss-blocked-path-r2-audit.md) - 09-24: PASS-W-WARN. CLASS: a no-op branch turned into a send duplicates a non-idempotent 2nd call.
-- [open-items-41-42-r1-audit](open-items-41-42-r1-audit.md) - #41/#42 R1-R3 (09-24): R3 PASS. CLASS: a "since last pass" retry bound must be per-test.
-- [web-read-tweet-r1-audit](web-read-tweet-r1-audit.md) - 09-25: R1 PASS-W-WARN -> R2 PASS-W-NOTES. CLASS: new branch before execute()'s try skips Jina fallback.
-- [rss-direct-feed-parse-r1-audit](rss-direct-feed-parse-r1-audit.md) - 09-25: FAIL. CLASS: lazy `[\s\S]*?` /g regex is O(n^2) on UNCLOSED openers.
-- [rss-direct-feed-parse-r2-audit](rss-direct-feed-parse-r2-audit.md) - 09-25: PASS-W-WARN. CLASS: a charset decoder must let the BOM beat a contradicting header.
-- [wer-journal-w39-wording-r1-audit](wer-journal-w39-wording-r1-audit.md) - 09-26: PASS-W-NOTES. Latent: 2026 has ISO W53; prevWeek=52 hardcode breaks at 2027-W01.
-- [vlcms-project-detect-r1-audit](vlcms-project-detect-r1-audit.md) - 09-26: PASS-W-NOTES. CLASS: a check hoisted above a first-match loop steals from EVERY slug.
-- [entity-extractor-registry-slugs-r1-audit](entity-extractor-registry-slugs-r1-audit.md) - 09-26: R1 PASS-W-WARN -> R2 PASS. CLASS: single-word routing aliases ~all FP.
-- [docs-refresh-2026-09-26-r1-audit](docs-refresh-2026-09-26-r1-audit.md) - 09-26: PASS-W-WARN. CLASS: header figure refreshed, DERIVED figures left stale.
-- [codie-checklist-en-r1-audit](codie-checklist-en-r1-audit.md) - 09-26: PASS-W-WARN. Harness: stub createTransport+fetch; page vs email lever labels drift.
-- [sonnet-tier-benchmark-r1-audit](sonnet-tier-benchmark-r1-audit.md) - 09-29: FIX FIRST. CLASS: a DB snapshot does not isolate upsertFile (FS + pgvector + Drive sinks).
-- [sonnet-env-canary-r1-audit](sonnet-env-canary-r1-audit.md) - 09-29: PASS-W-WARN. CLASS: env on the exported CONSTANT moves explicit-model callers.
-- [jev-long-run-slug-r1-audit](jev-long-run-slug-r1-audit.md) - 09-29: R1 FAIL -> R2 PASS-W-WARN. CLASS: score an egress loosening on the LIVE .env key population.
-- [denue-advisory-noninteractive-r1-audit](denue-advisory-noninteractive-r1-audit.md) - 09-29: PASS-W-WARN. CLASS: `top \d+` fired on 5 rituals daily.
-- [denue-advisory-noninteractive-r2-audit](denue-advisory-noninteractive-r2-audit.md) - 09-29: PASS-W-WARN. CLASS: exact-map risk lookup trusts the recorded name form.
-- [denue-guard-literal-r1-audit](denue-guard-literal-r1-audit.md) - 09-29: PASS-W-WARN. CLASS: msg.text embeds file content; runToolContext Set is per-SESSION.
-- [run-schedule-tool-r1-audit](run-schedule-tool-r1-audit.md) - 09-29: PASS-W-WARN. CLASS: requiresConfirmation enforced only on the openai path.
-- [denue-guard-literal-r2-audit](denue-guard-literal-r2-audit.md) - 09-29: PASS-W-WARN, 7/7 RED. CLASS: cross-module marker literal unpinned by any test.
-- [sdk-confirmation-gate-r2-audit](sdk-confirmation-gate-r2-audit.md) - R2+R3 (09-30): PASS-W-WARN. CLASS: "inline code is literal" is per-formatter (WA strips `<tag>`).
-- [jme-full-audit-2026-09-30](jme-full-audit-2026-09-30.md) - 09-30: FAIL 3 Crit. CLASS: ORDER BY ts without id tiebreak reverses same-ms turn pairs.
-- [jme-hardening-r2-audit-2026-09-30](jme-hardening-r2-audit-2026-09-30.md) - 09-30: FAIL 1 Crit. CLASS: supersede inheriting the INCOMING TTL downgrades a permanent row.
-- [jme-hardening-r3-audit-2026-09-30](jme-hardening-r3-audit-2026-09-30.md) - 09-30: FAIL 1 Crit. CLASS: refresh-on-skip + max(confidence) launders echo wording.
-- [jme-hardening-r4-audit-2026-09-30](jme-hardening-r4-audit-2026-09-30.md) - 09-30: PASS-W-NOTES, 7/8 RED. CLASS: max-conf inheritance launders only where confidence is a CLASS.
-- [jarvis-pull-task-seam-r1-audit](jarvis-pull-task-seam-r1-audit.md) - 09-30: FAIL 1 Crit. CLASS: "no private memory" kept always-read KB + unscoped jarvis_file_*.
-- [jarvis-pull-task-seam-r2-audit](jarvis-pull-task-seam-r2-audit.md) - 09-30: FAIL 1 Crit. CLASS: allow-tree-minus-denies policy leaked divorce/health rows.
-- [jarvis-pull-task-seam-r3-audit](jarvis-pull-task-seam-r3-audit.md) - 09-30: FAIL 1 Crit (data). CLASS: leak moved to a whole-tree SEED.
-- [jarvis-pull-task-seam-r4-audit](jarvis-pull-task-seam-r4-audit.md) - 09-30: PASS-W-WARN, 8/8 RED. CLASS: routerRoot = reply route, not operator watching.
+- **Archived: 39 index lines up to 2026-09** → [archived-index-2026-10-25](archived-index-2026-10-25.md) — grep by entry name; earlier archives: `archived-index-2026-10-03.md`, `archived-jun-jul-audits.md`, `archived-pre-may-audits.md`, `archived-v6-sprint-audits.md`.
 - [evolution-log-metrics-r1-audit](evolution-log-metrics-r1-audit.md) - 10-09: PASS-W-WARN, 3/7 mutants survived. CLASS: mid-day fixtures can't tell a 00:00 from a 06:00 UTC day boundary.
 - [enforce-grade-cap-r1-audit](enforce-grade-cap-r1-audit.md) - 10-09: PASS-W-WARN, 7/8 RED (1 equiv). CLASS: separate-pool mutant killed only by the drain seam, not a cross-mode test.
-- kb-registry-parity-r1-audit - 10-09: PASS-W-WARN, 10/15 mutants RED. CLASS: syncing a disk edit into the registry also syncs its STALE BASE (registry-newer rows) and breaks prior sha8 read-back gates.
-- kb-registry-parity-r2-audit - 10-09: R2 PASS-W-WARN, 0 Crit, 11 files green, tsc clean; first walk refreshes 25 rows. CLASS: a metadata-only updated_at bump fakes 'registry newer'.
 - [write-failure-claim-r1-audit](write-failure-claim-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS-W-NOTES, 7/7 RED. CLASS: recorder inside try misses refusal returns above it; exclude mc.db when rsyncing scratch.
 - [stop-hook-deadline-l5-r1-audit](stop-hook-deadline-l5-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS, 6/6 RED. CLASS: negative derived budget => every gate budgetExhausted => allowed unchecked.
 - [l2-mcp-result-fidelity-r1-audit](l2-mcp-result-fidelity-r1-audit.md) - 10-09: R1 PASS-W-WARN -> R2 PASS-W-NOTES. CLASS: spec structuredContent dup; key-order compare needs its own reorder test.
@@ -144,3 +105,108 @@
 - [s6-ws2-attribution-r1-audit](s6-ws2-attribution-r1-audit.md) - 10-11: FAIL 2 Crit. CLASS: sliding thread fallback re-reads its own writes (window self-renews; live max gap 14 h).
 - [s6-ws2-attribution-r2-audit](s6-ws2-attribution-r2-audit.md) - 10-11: R2 PASS-W-WARN, 0 Crit, 11/13 RED. CLASS: exact-slug fast path skips the status filter the alias path applies (archived wins).
 - [s6-readme-path-4b-r1-audit](s6-readme-path-4b-r1-audit.md) - 10-11: R1 FAIL -> R2 PASS-W-WARN. CLASS: a fixed injected path made a row POINTER inherits the pointer's write gate.
+- [s6-3c-operator-gate-class-r1-audit](s6-3c-operator-gate-class-r1-audit.md) - 10-11: FAIL 2 Crit. CLASS: a unit allow-list is only as safe as the files the unit EXECUTES (cron runs task-writable scripts); sqlite3 -readonly runs .shell.
+- [s6-3c-operator-gate-class-r3-audit](s6-3c-operator-gate-class-r3-audit.md) - 10-11: R3 PASS-W-WARN, closure-ready. CLASS: brief count SQL anchored on the opening quote (19 -> 0 real).
+- [s6-ws3-mcp-records-r1-audit](s6-ws3-mcp-records-r1-audit.md) - 10-12: PASS-W-WARN, 13/13 RED. CLASS: server-annotations-first moved SERVICE tool hints at zero records.
+- [s6-ws3-mcp-records-r2-audit](s6-ws3-mcp-records-r2-audit.md) - 10-12: R2 PASS-W-WARN, 6/7 RED. CLASS: prefix-overlap checked vs service table only; record `foo`/`foo_` overlap (untrusted declassifies).
+- [s6-ws3-mcp-records-r3-audit](s6-ws3-mcp-records-r3-audit.md) - 10-12: R3 PASS-W-WARN, 0 Crit. Zero-record diff = xpoz env only. CLASS: removed schema field left in a spec JSON example.
+- [s6-ws3a-env-entries-r1-audit](s6-ws3a-env-entries-r1-audit.md) - 10-12: FAIL 2 Crit. CLASS: gate wiring mutates state the scorer never reads (CODE_SCOPE_PATTERNS frozen); PGPASSWORD escapes token rule.
+- [s6-ws3a-env-entries-r2-audit](s6-ws3a-env-entries-r2-audit.md) - 10-12: R2 PASS-W-WARN, 0 Crit, 7/7 RED. CLASS: value-lock scanner keyed on `.value` misses an alias local and `${secret}` in warnOnce.
+- [kb-folder-rename-r1-audit](kb-folder-rename-r1-audit.md) - 10-12: PASS-W-WARN, 6/8 RED. CLASS: "refuse if NEW has rows" precheck = no resume after a mid-loop crash; scripts/ not in tsc include.
+- [bundle-b-deliverable-boundary-r1-audit](bundle-b-deliverable-boundary-r1-audit.md) - 10-12: PASS-W-WARN, 6/8 RED. CLASS: full-text fallback keeps the markers; eval gate blind to Prometheus prompts.
+- [bundle-a-devnull-one-verdict-r1-audit](bundle-a-devnull-one-verdict-r1-audit.md) - 10-12: FAIL 1 Crit. CLASS: quote-absorbing /g capture from an anchor inside quotes swallows the real redirect.
+- [bundle-a-devnull-one-verdict-r2-audit](bundle-a-devnull-one-verdict-r2-audit.md) - 10-12: R2 PASS-W-WARN, 3/3 RED. CLASS: `>>` skip-by-2 trusts the lexer; `\\>>LOG` truncates (pre-existing).
+- [iomcp-annotations-r1-audit](iomcp-annotations-r1-audit.md) - 10-12: PASS-W-WARN, 8/8 RED. CLASS: PG-lexed `;` scan is the ONLY single-statement guard on BigQuery (`'\\''` escape).
+- [read-only-flag-enum-cue-r1-audit](read-only-flag-enum-cue-r1-audit.md) - 10-12: R FAIL (service toolTrust read_only passthrough), C PASS-W-WARN. CLASS: new record flag consumed at a source-blind site.
+- [queue-3b-stall-exempt-aliases-r1-audit](queue-3b-stall-exempt-aliases-r1-audit.md) - 10-13: PASS-W-WARN, 0 Crit. CLASS: one consumer's threshold on a multi-consumer field blocks echo of a pre-existing short value.
+- [queue-3h-child-env-r1-audit](queue-3h-child-env-r1-audit.md) - 10-13: FAIL 1 Crit (sweep miss). CLASS: env-scrub missed jarvis_dev systemd-run tsc/vitest/gh sibling (no env option = full inherit).
+- [queue-4g-thread-verified-r2-audit](queue-4g-thread-verified-r2-audit.md) - 10-17: R2 PASS-W-WARN, R1 W1-W4 closed. CLASS: read-time cap left a MUTATING push-time check on the wider stored text.
+- [queue-3b-stall-exempt-aliases-r2-audit](queue-3b-stall-exempt-aliases-r2-audit.md) - 10-13: R2 PASS-W-WARN, 0 Crit. CLASS: positional cap + stored exempt at any index = unbounded (20/call); trim-equality exemption admits BOM.
+- [queue-3l-env-literal-legacy-r1-audit](queue-3l-env-literal-legacy-r1-audit.md) - 10-13: FAIL (rubric, pre-existing). CLASS: sibling-name rule pinned to one path; {name,value} at any update-writable key leaks.
+- [queue-3h-child-env-r2-audit](queue-3h-child-env-r2-audit.md) - 10-13: R2 PASS-W-WARN, 0 Crit. Auth is HOME-only (gh credential helper). CLASS: git-only spawns pass full env to helpers/hooks.
+- [queue-3b-stall-exempt-aliases-r3-audit](queue-3b-stall-exempt-aliases-r3-audit.md) - 10-13: R3 PASS-W-WARN, 0 Crit. CLASS: cap gated on "has a new element" lets stored-dup repetition grow unbounded.
+- [queue-3l-secret-literal-r3-audit](queue-3l-secret-literal-r3-audit.md) - 10-13: FAIL, 0/18672 disagree. CLASS: 3rd round enumerating pair keys; judge sibling VALUE shape.
+- [queue-3t-classifier-attribution-r1-audit](queue-3t-classifier-attribution-r1-audit.md) - 10-14: PASS-W-WARN, 9/10 RED. CLASS: router activeGroups = sticky union + history safety net, not the turn's scope.
+- [queue-3t-request-scope-attribution-r2-audit](queue-3t-request-scope-attribution-r2-audit.md) - 10-14: PASS-W-WARN, 9/10 RED. CLASS: 2nd attribution source skipped the file-marker cut.
+- [queue-3v-step0-r1-audit](queue-3v-step0-r1-audit.md) - 10-14: PASS-W-WARN. CLASS: a qualifier demotion is undone by any writer passing the arg; KB directives name the old qualifier.
+- [stable-profile-cache-split-r1-audit](stable-profile-cache-split-r1-audit.md) - 10-15: R1 PASS-W-WARN -> R2 PASS, 15/16 RED + 1 equiv. CLASS: 'from the profile onward' slice hides a per-message byte ABOVE it.
+- [obsidian-frontmatter-merge-r1-audit](obsidian-frontmatter-merge-r1-audit.md) - 10-16: PASS-W-WARN, 28/33 RED. CLASS: lead lines after the last sync key get absorbed into it on re-parse.
+- [obsidian-frontmatter-merge-r2-audit](obsidian-frontmatter-merge-r2-audit.md) - 10-16: R2 PASS-W-WARN, 44/46 RED. CLASS: first-char exemption lets unclosed quote/flow values through.
+- [obsidian-frontmatter-merge-r3-audit](obsidian-frontmatter-merge-r3-audit.md) - 10-16: R3 PASS-W-NOTES, 14/17 RED. CLASS: rank mutant survivors by fail direction (open vs closed).
+- [mount-tripwire-tracefs-automount-r1-audit](mount-tripwire-tracefs-automount-r1-audit.md) - 10-17: R1 PASS-W-WARN -> R2 PASS. CLASS: stale patch.py shadowed helper; literal-pinning harness not updated.
+- [drive-live-db-guard-4a-r1-audit](drive-live-db-guard-4a-r1-audit.md) - 10-17: PASS-W-WARN, 7/7 RED. CLASS: module writers guarded, script calls googleFetch PATCH directly.
+- [drive-reconcile-3z-p1-r1-audit](drive-reconcile-3z-p1-r1-audit.md) - 10-17: PASS-W-WARN, 5/8 RED. CLASS: parity invariant in untested main(); apply-uses-all mutant GREEN.
+- [queue-3j-scope-prompt-scorer-r1-audit](queue-3j-scope-prompt-scorer-r1-audit.md) - 10-17: PASS-W-WARN, 10/13 RED. CLASS: eps 2 x weight .15 = 13-pt prompt drop passes; script refusals string-pinned only.
+- [drive-live-db-guard-4a-r2-audit](drive-live-db-guard-4a-r2-audit.md) - 10-17: R2 PASS-W-WARN, 16/17 RED. CLASS: lock test mirrored tsconfig `@/` paths; vitest has no alias so the mock is inert.
+- [drive-reconcile-3z-p1-r2-audit](drive-reconcile-3z-p1-r2-audit.md) - 10-17: R2 PASS-W-WARN, 10/12 RED. CLASS: static revived set cannot pin per-item re-check; revive inside trash().
+- [drive-live-db-guard-4a-r3-audit](drive-live-db-guard-4a-r3-audit.md) - 10-17: R3 PASS, 5/5 RED. CLASS: pin the runner config a resolver scanner assumes (no vitest alias).
+- [drive-reconcile-3z-p1-r3-audit](drive-reconcile-3z-p1-r3-audit.md) - 10-17: R3 PASS, 5/5 RED. CLASS: per-item re-check pinned only by a fake that revives SYNC before its first await.
+- [s6-ws3b-5b-capabilities-r1-audit](s6-ws3b-5b-capabilities-r1-audit.md) - 10-17: PASS-W-WARN, 4/4 RED. CLASS: global record-mode flip vs unclaimed live schedule (dead legacy schedule_id).
+- [s6-ws3b-5b-capabilities-r2-audit](s6-ws3b-5b-capabilities-r2-audit.md) - 10-17: R2 PASS-W-WARN (22/25 RED) -> R3 PASS, 3 survivors RED, dangling desc ref fixed.
+- [queue-3j-scope-prompt-scorer-r2-audit](queue-3j-scope-prompt-scorer-r2-audit.md) - 10-17: R2 PASS-W-WARN, 13/14 RED. CLASS: pure-decision fold moves risk to the call-site INPUT mapping.
+- [queue-3j-scope-prompt-scorer-r3-audit](queue-3j-scope-prompt-scorer-r3-audit.md) - 10-17: R3 PASS-W-WARN -> R4 PASS, 15/15 RED. CLASS: pin EVERY decision input (updateBaseline/overall/baseline survived).
+- [queue-3r-turn-ended-r1-audit](queue-3r-turn-ended-r1-audit.md) - 10-17: PASS-W-WARN, 0 Crit. CLASS: "pending ends the turn" must also gate recovery legs reusing the ctx.
+- [queue-4e-scope-prompt-rows-r1-audit](queue-4e-scope-prompt-rows-r1-audit.md) - 10-17: PASS-W-WARN, 10/13 RED. CLASS: errored answered=[] assertion vacuous on a forbidden-only fixture.
+- [queue-3r-turn-end-r2-audit](queue-3r-turn-end-r2-audit.md) - 10-17: R2 PASS-W-WARN, 0 Crit, 9/10 RED. CLASS: abort-as-clean-end delivers the crash path's accumulator, not the final turn.
+- [queue-4f-report-persist-r1-audit](queue-4f-report-persist-r1-audit.md) - 10-17: PASS-W-WARN, 11/12 RED. CLASS: persist after status map fires on failed/blocked partials too.
+- [queue-4f-report-persist-r2-audit](queue-4f-report-persist-r2-audit.md) - 10-17: R2 PASS-W-WARN, 4/4 gate mutants RED. CLASS: side effect before a terminal-guarded UPDATE runs on a cancelled row.
+- [queue-4g-thread-verified-r1-audit](queue-4g-thread-verified-r1-audit.md) - 10-17: PASS-W-WARN, 0 Crit. CLASS: output.toolCalls is fast-only; evidence bypass must gate only the refuted poison class.
+- [queue-4d-kb-path-gates-r1-audit](queue-4d-kb-path-gates-r1-audit.md) - 10-18: FAIL 1 Crit, 16/20 RED. CLASS: rewrite onto a LIVE file inherits every write-denylist gap (curl -o).
+- [queue-4d-kb-path-gates-r2-audit](queue-4d-kb-path-gates-r2-audit.md) - 10-18: R2 FAIL 1 Crit. CLASS: allow-list with per-verb exclusions = deny-list; getopt long-prefix `sed --i`, `uniq in out`.
+- [queue-4d-read-only-r3-audit](queue-4d-read-only-r3-audit.md) - 10-18: R3 FAIL 1 Crit. CLASS: escape-unaware quote blanking (\' and # ') hides ; joiners from the segment judge.
+- [scope-rerun-notice-r1-audit](scope-rerun-notice-r1-audit.md) - 10-18: R1+R2 PASS-W-WARN. R2: email re-runs now get the 120 s interim; stop-clear unpinned.
+- [psql-ruling-5a-r2-audit](psql-ruling-5a-r2-audit.md) - 10-18: FAIL 1 Crit. CLASS: closed grammar over a span; `| xargs` appends argv past it (last -U wins). ctr/runc sibling.
+- [psql-5a-readonly-r3-audit](psql-5a-readonly-r3-audit.md) - 10-18: R3 PASS-W-WARN. CLASS: `npm run q -- -U postgres` appends argv to a CHECKED body (xargs class); sh x.sh already unchecked.
+- [queue-4l-confirmation-card-list-r1-audit](queue-4l-confirmation-card-list-r1-audit.md) - 10-18: FAIL 1 Crit. CLASS: whole-card yes over a NUMBERED list; 'sí pero no el 2' confirms all.
+- [queue-4l-confirmation-card-list-r2-audit](queue-4l-confirmation-card-list-r2-audit.md) - 10-18: R2 FAIL 1 Crit (C1 residual). CLASS: deny-list over prefix-only confirm regex; 'sí, el delete no' runs delete.
+- [queue-4l-confirmation-card-list-r3-audit](queue-4l-confirmation-card-list-r3-audit.md) - 10-18: R3 FAIL 2 Crit. CLASS: shape fold imported verb clitics («bórralo») and its normaliser erased emoji («sí 👍 🚫🗑️»).
+- [queue-4l-confirmation-card-list-r4-audit](queue-4l-confirmation-card-list-r4-audit.md) - 10-18: R4 PASS-W-NOTES, 0 Crit. Exact-literal N>1 gate closed; never run 2 mutant loops on one scratch tree.
+- [queue-4n-cascade-stale-r1-audit](queue-4n-cascade-stale-r1-audit.md) - 10-18: R1 PASS-W-WARN -> R2 PASS, 6/6 RED. CLASS: jsonb filter fix correct but INERT (no writer sends related_to; 4o).
+- [queue-4k-4m-runtime-argv-r1-audit](queue-4k-4m-runtime-argv-r1-audit.md) - 10-18: R1+R2 PASS-W-WARN, 0 bypass on 43-string lock list. CLASS: argv gate misses the ENV channel (PGUSER= prefix).
+- [queue-3l-write-gate-r1-audit](queue-3l-write-gate-r1-audit.md) - 10-18: R1 FAIL (SECRET_KEY) -> R2 FAIL (refForm skipped siblings) -> R3 PASS-W-WARN. Exempt by slot, not by object.
+- [queue-4o-kb-lineage-r1-audit](queue-4o-kb-lineage-r1-audit.md) - 10-18: R1+R2 PASS-W-WARN, 0 Crit; R2 23/25 RED (catch->0 unpinned). CLASS: change-only cascade commits new hash before cascade; a failed cascade = permanent skip.
+- [queue-4p-spaced-name-key-r1-audit](queue-4p-spaced-name-key-r1-audit.md) - 10-19: R1 PASS-W-WARN -> R2 PASS, 7/7 RED. CLASS: gate name-narrowing re-opens shapes display never covered.
+- [kb-rewrite-denue-psql-r1-audit](kb-rewrite-denue-psql-r1-audit.md) - 10-19: FAIL 1 Crit. CLASS: gate check judges a truncated command (span close, not continuation/trailing args).
+- [kb-rewrite-denue-psql-r2-audit](kb-rewrite-denue-psql-r2-audit.md) - 10-19: R2 FAIL 1 Crit (fail-closed). CLASS: widened gate check judges a prose placeholder span; scope to the gate's trigger.
+- [kb-rewrite-denue-psql-r3-audit](kb-rewrite-denue-psql-r3-audit.md) - 10-19: R3 PASS-W-WARN, 22/23 RED. CLASS: span rule assumes every command on a ticked line is inside a span.
+- [kb-import-from-disk-r1-audit](kb-import-from-disk-r1-audit.md) - 10-20: PASS-W-WARN, 14/20 RED. CLASS: operator reader of an agent-writable mirror follows symlinks (secret import probed).
+- [kb-write-drain-4y-r1-audit](kb-write-drain-4y-r1-audit.md) - 10-20: R1 PASS-W-WARN -> R2 PASS, 5/5 RED. CLASS: flush before a dynamic-import mark lands = no regen when no sync awaits IO.
+- [queue-4y-residuals-r1-audit](queue-4y-residuals-r1-audit.md) - 10-20: PASS-W-WARN, 11/14 RED. CLASS: oldest-wins lookup leaves the duplicate PRODUCER (unserialized ensureFolder create) open.
+- [queue-4y-residuals-r2-audit](queue-4y-residuals-r2-audit.md) - 10-20: R2 PASS-W-WARN, 0 Crit, 5/7 RED. CLASS: 2-caller test pins sharing, not the settle->cache hand-off (delayed set survived).
+- [w3-eval-report-r1-audit](w3-eval-report-r1-audit.md) - 10-20: PASS-W-WARN, 11/18 RED. CLASS: "W1 label" = operator label in v9-w1-labels.md, not the grader verdict.
+- [w3-eval-report-r2-audit](w3-eval-report-r2-audit.md) - 10-20: R2 PASS-W-WARN, 0 Crit, R1 folds hold, 2/7 RED. CLASS: same env parse, different INPUT (CLI shell lacks the unit's EnvironmentFile).
+- [mn-tweet-receipt-gate-r1-audit](mn-tweet-receipt-gate-r1-audit.md) - 10-20: PASS-W-WARN, 0 Crit. CLASS: receipt on every exit-0 branch launders an unconfirmed-toast success into a MET.
+- [mn-tweet-receipt-gate-r2-audit](mn-tweet-receipt-gate-r2-audit.md) - 10-20: R2 PASS-W-WARN, 4/5 RED; '..' drop survives. CLASS: English-only 'sent' token vs unverified X UI locale.
+- [mn-tweet-receipt-4aa-r1-audit](mn-tweet-receipt-4aa-r1-audit.md) - 10-20: PASS-W-WARN, 0 Crit. CLASS: id-bound grep gate; trailing quote is what stops an EMPTY id matching; deploy before set-ritual.
+- [mn-tweet-receipt-4aa-r2-audit](mn-tweet-receipt-4aa-r2-audit.md) - 10-20: R2 PASS, both fold mutants RED on the shipped test text. CLASS: id-bound grep gate needs empty-id + override-order tests.
+- [queue-4u-retry-gates-r1-audit](queue-4u-retry-gates-r1-audit.md) - 10-20: PASS-W-WARN, 2/3 RED. CLASS: retry rewires goalTaskMap but not tracker.taskId; parent re-verify reads the old ledger.
+- [queue-4u-retry-gates-r2-audit](queue-4u-retry-gates-r2-audit.md) - 10-20: R2 PASS, 7/8 RED (1 equiv). submitTask has no await, so the retry .then beats the 3 s poll (no double-retry window).
+- [queue-4t-task-mutations-sdk-r1-audit](queue-4t-task-mutations-sdk-r1-audit.md) - 10-20: PASS-W-WARN, 5/7 RED, 1 equiv. CLASS: hoist-to-helper pins the NEW caller; original call site unpinned.
+- [queue-4t-task-mutations-sdk-r2-audit](queue-4t-task-mutations-sdk-r2-audit.md) - 10-20: R2 PASS, 8/8 executor call-site mutants RED; inline mockClear keeps "once" asserts order-free.
+- [venv-python-exemption-r1-audit](venv-python-exemption-r1-audit.md) - 10-21: PASS-W-WARN, 5/5 builder mutants RED, M6 survived. CLASS: a cwd model built for refusals is fail-open under an ALLOW.
+- [venv-python-exemption-r2-audit](venv-python-exemption-r2-audit.md) - 10-21: R2 FAIL 1 Crit. CLASS: a flag deny-list loses to getopt_long abbreviation (env --ch=) and the normalizer (\-C).
+- [venv-python-exemption-r3-audit](venv-python-exemption-r3-audit.md) - 10-21: R3 FAIL 2 Crit. CLASS: literal-path realpath vs shell glob (`[w]`, `*`), and JS \s splits (NBSP/\r/\v) dash does not make.
+- [pip-venv-r1-audit](pip-venv-r1-audit.md) - 10-21: FAIL 2 Crit. CLASS: env pin is not argv-proof (--isolated via xargs/glob/source); `(?<!\w)PIP_` misses `env -uPIP_X`.
+- [pip-venv-r2-audit](pip-venv-r2-audit.md) - 10-21: R2 FAIL 2 Crit, 13/13 RED. CLASS: for-binding builds PIP_ name; `>>pip.conf` bare-name redirect escapes W1.
+- [negfb-r1-audit](negfb-r1-audit.md) - 10-22: FAIL 1 Crit. CLASS: un-intercepting a negation hands it to the implicit block, which overwrites explicit negative with implicit_positive.
+- [negfb-r2-audit](negfb-r2-audit.md) - 10-22: R2 PASS-W-WARN, C1 closed (explicit rating blocks implicit). CLASS: docstring 'must survive' case unpinned (otra|vez mutant).
+- [jina-r1-audit](jina-r1-audit.md) - 10-22: FAIL 1 Crit (registry.test count 195 + web_read desc 2091>1500), 6W, 18/21 RED. CLASS: new tool => run registry.test.ts lock tests.
+- [jina-r2-audit](jina-r2-audit.md) - 10-22: R2 PASS-W-WARN, R1 C1+W1-W6 closed, 37/40 RED. CLASS: narrowing a guard on one path => pin the sibling path it must not reach.
+- [4ahc-r1-audit](4ahc-r1-audit.md) - 10-23: PASS-W-WARN, 0 Crit, QA 5/10 RED. CLASS: flat-value + single-turn fixtures leave nested leak and per-turn index unpinned; caps > 2000 attrs cap.
+- [4ahc-r2-audit](4ahc-r2-audit.md) - 10-23: R2 PASS, 0 Crit, 7/7 + 10/10 RED. CLASS: prove a cap test hits the real writer by shrinking the writer cap (T1 RED).
+- [4ac-r1-audit](4ac-r1-audit.md) - 10-23: PASS-W-WARN, 0 Crit, 6/6 mutants. CLASS: child tsconfig exclude REPLACES base; gate covers src/ only, vitest also runs scripts/**/*.test.ts.
+- [4ac-r2-audit](4ac-r2-audit.md) - 10-23: R2 PASS-W-NOTES, 0 Crit, 5/6 RED. CLASS: a count floor (>500) pins the vacuous exclude, not the loss of the smaller scripts/ root.
+- [4ab-r1-audit](4ab-r1-audit.md) - 10-23: R1 PASS-W-WARN -> R2 PASS, 9/10 RED. CLASS: pin checked confirmed head + else tail; dropping exit(0) falls through unpinned.
+- [4q-r1-audit](4q-r1-audit.md) - 10-23: PASS-W-WARN, mutant RED 3.58, 3/3 load green. CLASS: min-of-N skews UP under load (big input preempted more); use process.cpuUsage.
+- [4i-r1-audit](4i-r1-audit.md) - 10-23: R1+R2 PASS-W-WARN -> R3 PASS. CLASS: a null arm in a logged label blinds a value-shaped absence regex (`via=null`); assert on the prefix.
+- [fw-bench-r1-audit](fw-bench-r1-audit.md) - 10-23: PASS-W-WARN, 11/18 RED. CLASS: skuInfos.amount is typeMoney {units,nanos}; parser+fixture pinned an invented string shape.
+- [fw-bench-r2-audit](fw-bench-r2-audit.md) - 10-23: R2 PASS-W-WARN, 14/15 RED. CLASS: fixing a never-matching parser arms its consumers (first serverlessMode = priority tier price+route).
+- [fw-bench-r3-audit](fw-bench-r3-audit.md) - 10-23: R3 PASS, 8/9 RED (serviceTier casing unpinned). R1 4W -> R2 1W tier drift -> R3 clean.
+- [fw-lastline-r1-audit](fw-lastline-r1-audit.md) - 10-23: FAIL 2 Crit (armed-only), dormancy proven, 17/28 RED. CLASS: ALS pin around a tool loop pins everything a tool spawns.
+- [fw-lastline-r2-audit](fw-lastline-r2-audit.md) - 10-23: R2 PASS, 15/15 RED. CLASS: combo mutant keyed on R1 text no-ops after a fold; assert the edit applied.
+- [fw-bench-4ai-a-r1-audit](fw-bench-4ai-a-r1-audit.md) - 10-23: R1 PASS-W-WARN -> R2 PASS, 9/9 RED. CLASS: note counts no-catalog-price rows but claims all are builtin-priced (6/15 have no builtin).
+- [3r-residual-r1-audit](3r-residual-r1-audit.md) - 10-23: R1 PASS-W-WARN -> R2 PASS. CLASS: guard the late-timer PRODUCER, not each reader; pin the pair with a combo mutant.
+- [4a-drive-r1-audit](4a-drive-r1-audit.md) - 10-23: R1+R2 PASS-W-WARN -> R3 PASS; self-move guard sits AFTER the not-found check. CLASS: overwrite branch fires on self-move (old==new), new side effects inherit it.
+- [stalwart-upgrade-0-16-27-r1-audit](stalwart-upgrade-0-16-27-r1-audit.md) - 10-24: FAIL 2 Crit. CLASS: tee proc-subst dies with the signal, EXIT trap SIGPIPEs at first say; `fn || x` voids set -e in fn.
+- [stalwart-upgrade-0-16-27-r2-audit](stalwart-upgrade-0-16-27-r2-audit.md) - 10-25: R2 PASS-W-WARN, C1+C2 FIXED, static only. CLASS: PHASE marker set after the irreversible mv; recovery line pairs new data with old binary.
+- [stalwart-upgrade-0-16-27-r3-audit](stalwart-upgrade-0-16-27-r3-audit.md) - 10-25: R3 PASS, 10/10 R2 items FIXED, static. CLASS: session grep is a ugrep fn; the script gets GNU grep 3.11 (reads all stdin w/o -q).

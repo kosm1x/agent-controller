@@ -59,7 +59,10 @@ import {
   secretSpans,
   projectCredentialByName,
   isProjectSecret,
+  isProjectLeafSecret,
+  configSecretLiterals,
 } from "./secret-refs.js";
+import { walkProjectField } from "../../scripts/predeploy-rulings-1-5.js";
 import { CREDENTIAL_FACT_PLACEHOLDER } from "../db/user-facts.js";
 import {
   deleteUserFact,
@@ -2096,5 +2099,86 @@ describe("queue 3l audit R2 — env-shaped sibling names, the config root pair, 
         expect(l.secret, `${slug} config.${l.path.join(".")}`).toBe(indexed);
       }
     }
+  });
+});
+
+describe("queue 3l ruling A — configSecretLiterals (the write gate's predicate)", () => {
+  const LIT = "synthetic-" + "lit".repeat(3);
+  const configSecretLiteral = (c: unknown) => configSecretLiterals(c)[0];
+  it("finds a literal next to a fragment-carrying name; returns its path and fragment, never the value", () => {
+    expect(configSecretLiteral({ a: [{ name: "pgpassword", value: LIT }] })).toEqual({ path: ["a", "0", "value"], fragment: "PASS" });
+    expect(configSecretLiteral({ o: { label: "DB_PASS", default: LIT } })).toEqual({ path: ["o", "default"], fragment: "PASS" });
+    expect(configSecretLiteral({ env: [["PGPASSWORD", LIT]] })).toEqual({ path: ["env", "0", "1"], fragment: "PASS" });
+    expect(configSecretLiteral({ PGPASSWORD: { value: LIT } })).toEqual({ path: ["PGPASSWORD", "value"], fragment: "PASS" });
+    expect(configSecretLiteral({ run: "DB_PASS=" + LIT })).toEqual({ path: ["run"], fragment: "PASS" });
+    expect(configSecretLiteral({ h: { n: "x_api_key", d: "ab12".repeat(10) } })).toEqual({ path: ["h", "d"], fragment: "KEY" });
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", value: "/opt/" + "q".repeat(9) }] })?.path).toEqual(["e", "0", "value"]);
+  });
+  it("accepts the reference form, lone names, short values and ordinary pairs", () => {
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", secret: "SECRET_ACME_PG_PASSWORD" }] })).toBeUndefined();
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", secret: "ref-id" }] })).toBeUndefined();
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD" }] })).toBeUndefined();
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", value: "1234567" }, { name: "DB_PASS", value: 1234567 }] })).toBeUndefined();
+    expect(configSecretLiteral({ author: "Persona Ejemplo", description: "Notas largas del proyecto de ejemplo" })).toBeUndefined();
+    expect(configSecretLiteral({ keywords: ["cafeteria centro", "tostador artesanal"] })).toBeUndefined();
+    expect(configSecretLiteral(undefined)).toBeUndefined();
+  });
+  it("queue 4p ruling (c): a spaced member string is a name only under a name/label/env-shaped key", () => {
+    expect(configSecretLiteral({ title: "Passport renewal", date: "2026-10-18" })).toBeUndefined();
+    expect(configSecretLiteral({ note: "Auth meeting notes", when: "2026-10-18T10:00" })).toBeUndefined();
+    expect(configSecretLiteral({ name: "X API Key", value: LIT })).toEqual({ path: ["value"], fragment: "KEY" });
+    expect(configSecretLiteral({ label: "DB Pass word", default: LIT })?.path).toEqual(["default"]);
+    expect(configSecretLiteral({ e: [{ name: "PGPASSWORD", value: LIT }] })?.path).toEqual(["e", "0", "value"]);
+    // In a list the key is the index: a spaced name in a bare tuple is not a name; an unspaced one still is.
+    expect(configSecretLiteral({ env: [["X API Key", LIT]] })).toBeUndefined();
+    expect(configSecretLiteral({ env: [["PGPASSWORD", LIT]] })).toEqual({ path: ["env", "0", "1"], fragment: "PASS" });
+    // R1 W1: under any other key a spaced name still judges a value-keyed or credential-keyed sibling.
+    expect(configSecretLiteral({ description: "Stripe secret key", value: LIT })).toEqual({ path: ["value"], fragment: "SECRET" });
+    expect(configSecretLiteral({ title: "GitHub token", value: LIT })).toEqual({ path: ["value"], fragment: "TOKEN" });
+    expect(configSecretLiteral({ desc: "PG PASSWORD", val: LIT })).toEqual({ path: ["val"], fragment: "PASS" });
+    expect(configSecretLiteral({ desc: "PG PASSWORD", password: LIT })?.path).toEqual(["password"]);
+    // accepted residual (4p ruling a): neutral key beside a spaced name
+    expect(configSecretLiteral({ desc: "PG PASSWORD", v: LIT })).toBeUndefined();
+    // R1 W3: the env-shaped and the trimmed name-key arms.
+    expect(configSecretLiteral({ DB_NAME: "PG PASSWORD", v: LIT })).toEqual({ path: ["v"], fragment: "PASS" });
+    expect(configSecretLiteral({ " name ": "Db Pass", v: LIT })).toEqual({ path: ["v"], fragment: "PASS" });
+  });
+});
+
+describe("queue 3l — the census walker judges every leaf with the exported predicate (lockstep with projectEntryLeaves)", () => {
+  const V = (s: string) => "synthetic-literal-9" + s;
+  const FIELDS: Array<["credentials" | "urls" | "config", Record<string, unknown>]> = [
+    ["config", {
+      db_env: [{ name: "PGPASSWORD", value: V("a") }, { name: "PG_HOST", value: "db.example.invalid" }],
+      pgenv: { PGPASSWORD: V("b"), PORT: 8080 },
+      name: "PG_PASSWORD",
+      value: V("c"),
+      capabilities: { mcp: [{ env: [{ name: "PG_PASSWORD", secret: "SECRET_ACME_PG" }, { name: "PASSAGE_ID", value: "p-12" }] }] },
+      secrets: ["SECRET_ACME_PG"],
+      author: "Persona Ejemplo",
+    }],
+    ["credentials", { usuario: "persona@example.invalid", db: { password: V("d"), host: "db.example.invalid" } }],
+    ["urls", { site: "https://example.invalid" }],
+  ];
+  it("walkProjectField(field) === projectEntryLeaves on every leaf, and the walker sees the 3l pair the old copy missed", () => {
+    for (const [field, obj] of FIELDS) {
+      const display = new Map<string, boolean>();
+      for (const [k, v] of Object.entries(obj)) {
+        for (const l of projectEntryLeaves("acme", field, k, v, obj)) display.set(l.path.join("."), l.secret);
+      }
+      const walked = walkProjectField(obj, field);
+      expect(walked.length, field).toBe(display.size);
+      for (const l of walked) expect(l.secret, `${field}.${l.path.join(".")}`).toBe(display.get(l.path.join(".")));
+    }
+    const cfg = walkProjectField(FIELDS[0]![1], "config");
+    const at = (p: string) => cfg.find((l) => l.path.join(".") === p)!;
+    // The old walker judged by isProjectSecret(key, value) only: these pairs read CLEAR there.
+    expect(isProjectSecret("value", V("a"))).toBe(false);
+    expect(at("db_env.0.value").secret).toBe(true);
+    expect(at("value").secret).toBe(true);
+    expect(at("db_env.1.value").secret).toBe(false);
+    expect(at("capabilities.mcp.0.env.0.secret").secret).toBe(false);
+    expect(at("secrets.0").secret).toBe(false);
+    expect(isProjectLeafSecret("config", ["db_env", "0", "value"], "value", { name: "PGPASSWORD", value: V("a") }, V("a"), false)).toBe(true);
   });
 });

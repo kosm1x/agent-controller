@@ -14,6 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatMessage } from "../inference/adapter.js";
+import type { JmeRecallResult } from "../memory/jme.js";
+import type { RunnerOutput } from "./types.js";
 
 // `registerRunner` auto-fires on `fast-runner.ts` import — make it a no-op
 // so import doesn't pollute the dispatcher singleton in unrelated tests.
@@ -97,8 +99,15 @@ vi.mock("../tools/registry.js", () => ({
 
 // The actual inference layer. All three tests program this mock with
 // predetermined results to drive the runner down specific paths.
-vi.mock("../inference/adapter.js", () => ({
+vi.mock("../inference/adapter.js", async (importOriginal) => ({
   inferWithTools: vi.fn(),
+  // SDK last line: disarmed by default (null); the last-line specs arm it.
+  sdkLastline: vi.fn(() => null),
+  // The REAL predicate: a budget refusal or a scrub fault must never engage.
+  lastlineEligible: (
+    await importOriginal<typeof import("../inference/adapter.js")>()
+  ).lastlineEligible,
+  inferWithToolsLastline: vi.fn(),
 }));
 
 // Telemetry: no-op for tests. R-1's UPSERT is unit-tested in
@@ -117,6 +126,9 @@ vi.mock("../inference/claude-sdk.js", () => ({
 vi.mock("./checkpoint.js", () => ({
   writeCheckpoint: vi.fn(),
 }));
+
+// Trace writer: the SDK last-line specs read the `inference.lastline` event.
+vi.mock("../observability/task-trace.js", () => ({ emitTraceEvent: vi.fn() }));
 
 // PROMPT_DUMP_DIR: the call site is pinned below (audit R1 W2).
 vi.mock("./prompt-dump.js", () => ({ dumpPrompt: vi.fn() }));
@@ -157,7 +169,9 @@ vi.mock("../jev/shadow-kb.js", () => ({ shadowKbRows: vi.fn() }));
 vi.mock("../jev/shadow.js", () => ({ shadowMemoryRecall: vi.fn() }));
 // The JME recall, so the memory shadow's inputs can be read. Empty by
 // default: the block is skipped, as it is today when embed() times out.
-const mockQueryMemory = vi.hoisted(() => vi.fn(async () => []));
+const mockQueryMemory = vi.hoisted(() =>
+  vi.fn<typeof import("../memory/jme.js").queryMemory>(async () => []),
+);
 vi.mock("../memory/jme.js", async () => ({
   queryMemory: mockQueryMemory,
   orderForInjection: <T>(facts: T[]) => facts,
@@ -185,11 +199,16 @@ vi.mock("../messaging/confirmation-verbs.js", () => ({
 }));
 
 import { fastRunner } from "./fast-runner.js";
-import { inferWithTools } from "../inference/adapter.js";
+import {
+  inferWithTools,
+  inferWithToolsLastline,
+  sdkLastline,
+} from "../inference/adapter.js";
 import { writeCheckpoint } from "./checkpoint.js";
 import { dumpPrompt } from "./prompt-dump.js";
 import { queryClaudeSdk } from "../inference/claude-sdk.js";
 import { getConfig } from "../config.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import { recordFastRetryOutcome } from "../observability/prometheus.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
 import { toolRegistry } from "../tools/registry.js";
@@ -197,6 +216,7 @@ import { shadowMemoryRecall } from "../jev/shadow.js";
 import { getEssentialFacts } from "../memory/essentials.js";
 import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
 import { TOOL_NOT_AVAILABLE } from "../tools/external-tool-guard.js";
+import { validateShellCommand } from "../tools/builtin/shell.js";
 import {
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
@@ -210,6 +230,10 @@ import {
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
 const mockRecordRetry = vi.mocked(recordFastRetryOutcome);
+
+/** The structured output's `text`; undefined when the output is a plain string or absent. */
+const outputText = (r: RunnerOutput) =>
+  typeof r.output === "object" ? r.output.text : undefined;
 
 /** Default inferWithTools result shape — tests override fields they care about. */
 function makeInferResult(
@@ -632,11 +656,11 @@ describe("fastRunner.execute() — integration (R-4)", () => {
   });
 
   describe("Jev memory shadow wiring", () => {
-    const facts = [
+    const facts: JmeRecallResult[] = [
       {
         id: 7,
         factText: "el demo vive en vlmp-demo",
-        category: "fact",
+        category: "project",
         sourceTask: "t0",
         score: 0.9,
         ts: 1,
@@ -679,7 +703,7 @@ describe("fastRunner.execute() — integration (R-4)", () => {
   });
 
   describe("JME recall gate + data framing (hardening 2026-09-30)", () => {
-    const fact = {
+    const fact: JmeRecallResult = {
       id: 9,
       factText: "Fede prefers tables for competitive analysis",
       category: "preference",
@@ -940,7 +964,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
     expect(result.tokenUsage?.completionTokens).toBe(700);
     // Completed second leg → no checkpoint, no ¿Sigo?
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text).not.toContain("¿Sigo?");
+    expect(outputText(result)).not.toContain("¿Sigo?");
   });
 
   it("double cap: delivers partial + ¿Sigo? and writes ONE checkpoint with summed rounds", async () => {
@@ -967,7 +991,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
     });
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("¿Sigo?");
+    expect(outputText(result)).toContain("¿Sigo?");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
     const cp = mockWriteCheckpoint.mock.calls[0][0];
     expect(cp.exitReason).toBe("max_rounds");
@@ -991,7 +1015,7 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
       description: "Haz algo largo",
     });
 
-    expect(result.output?.text).toContain("Avance parcial real.");
+    expect(outputText(result)).toContain("Avance parcial real.");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
   });
 });
@@ -1018,7 +1042,7 @@ describe("Phase 4.3 auth-failure retry", () => {
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("still-failing auth escalates in Spanish — never delivers the raw 401", async () => {
@@ -1039,8 +1063,8 @@ describe("Phase 4.3 auth-failure retry", () => {
 
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("rotar el token");
-    expect(result.output?.text).not.toContain("authentication_error");
+    expect(outputText(result)).toContain("rotar el token");
+    expect(outputText(result)).not.toContain("authentication_error");
   });
 });
 
@@ -1076,6 +1100,7 @@ function makeSdkResult(
       cacheCreationTokens: number;
     };
     costUsd: number;
+    errorClass: string;
   }> = {},
 ) {
   return {
@@ -1180,7 +1205,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("¿Sigo?");
+    expect(outputText(result)).toContain("¿Sigo?");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
     expect(mockWriteCheckpoint.mock.calls[0][0].roundsCompleted).toBe(48);
   });
@@ -1217,7 +1242,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("still-failing auth escalates in Spanish, never the raw 401", async () => {
@@ -1235,8 +1260,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("rotar el token");
-    expect(result.output?.text).not.toContain("authentication_error");
+    expect(outputText(result)).toContain("rotar el token");
+    expect(outputText(result)).not.toContain("authentication_error");
   });
 
   // Hermes #106546 class: an auth failure on turn N must not replay the
@@ -1292,8 +1317,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       title: "Tarea",
       description: "Escribe el resumen en un Doc",
     });
-    expect(result.output?.text).toContain("punto clave");
-    expect(result.output?.text).not.toContain("401");
+    expect(outputText(result)).toContain("punto clave");
+    expect(outputText(result)).not.toContain("401");
   });
 
   it("plain retry (no leg-1 tools) never splices leg-1's partial into a thin leg 2", async () => {
@@ -1315,8 +1340,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(mockQuerySdk.mock.calls[1][0].prompt).toBe(
       mockQuerySdk.mock.calls[0][0].prompt,
     );
-    expect(result.output?.text).toContain("Listo.");
-    expect(result.output?.text).not.toContain("frase descartada");
+    expect(outputText(result)).toContain("Listo.");
+    expect(outputText(result)).not.toContain("frase descartada");
   });
 
   it("auth retry with NO leg-1 tools is the plain original prompt (regression pin)", async () => {
@@ -1452,8 +1477,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.status).toBe("DONE_WITH_CONCERNS");
-    expect(result.output?.text).toContain("claude /login");
-    expect(result.output?.text).not.toContain("error_api_response");
+    expect(outputText(result)).toContain("claude /login");
+    expect(outputText(result)).not.toContain("error_api_response");
   });
 
   it("R2 C2: leg-1's streamed work survives when leg-2 returns only a thin closer", async () => {
@@ -1474,7 +1499,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       title: "Analiza",
       description: "Analiza el corpus",
     });
-    expect(result.output?.text).toContain("hallazgo relevante");
+    expect(outputText(result)).toContain("hallazgo relevante");
   });
 
   it("R2 W4: a [timeout leg does NOT auto-resume (router already abandoned the reply)", async () => {
@@ -1505,7 +1530,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       description: "Explica por qué mi API devuelve 401",
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(1);
-    expect(result.output?.text).toContain("Authorization");
+    expect(outputText(result)).toContain("Authorization");
   });
 });
 
@@ -1535,7 +1560,475 @@ describe("R4 audit W1 — a thrown resume still counts as THE recovery leg", () 
     });
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
-    expect(result.output?.text).toContain("Parte 1");
+    expect(outputText(result)).toContain("Parte 1");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// SDK last line (2026-10-23): after the SDK leg(s) fail, an armed fallback
+// runs the request on the openai path (inferWithToolsLastline) through the
+// same post-processing. Never after a side-effecting leg 1 (no replay).
+// ────────────────────────────────────────────────────────────────────
+describe("SDK last line on the fast-runner chat path", () => {
+  const FW_MODEL = "accounts/fireworks/models/x-test";
+  const AUTH_FAIL =
+    "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.";
+  const mockLastline = vi.mocked(inferWithToolsLastline);
+  const mockSdkLastline = vi.mocked(sdkLastline);
+  let warn: ReturnType<typeof vi.spyOn>;
+  const warned = (needle: string): boolean =>
+    warn.mock.calls.some((c: unknown[]) => String(c[0]).includes(needle));
+  const lastlineTraces = () =>
+    vi
+      .mocked(emitTraceEvent)
+      .mock.calls.map((c) => c[0])
+      .filter((ev) => ev.name === "inference.lastline");
+
+  beforeEach(() => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it("(vii) SDK throw + armed → the openai path runs once on the last line", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockRejectedValueOnce(new Error("sdk subprocess died"));
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Respuesta del último recurso.\n\nSTATUS: DONE",
+        model: FW_MODEL,
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-throw",
+      runId: "run-ll-throw",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(mockLastline).toHaveBeenCalledTimes(1);
+    expect(mockInferWithTools).not.toHaveBeenCalled();
+    expect(
+      warned("[fast-runner] sdk last line engaged task=ll-throw reason=throw model=" + FW_MODEL),
+    ).toBe(true);
+    // The cause reaches the journal line.
+    expect(warned(`model=${FW_MODEL} err=sdk subprocess died`)).toBe(true);
+    expect(result.success).toBe(true);
+    expect(outputText(result)).toBe("Respuesta del último recurso.");
+    expect(result.tokenUsage?.actualModel).toBe(FW_MODEL);
+    expect(lastlineTraces()).toEqual([
+      {
+        taskId: "ll-throw",
+        runId: "run-ll-throw",
+        name: "inference.lastline",
+        attrs: { provider: "fallback", model: FW_MODEL, reason: "throw" },
+      },
+    ]);
+  });
+
+  it("(viii) auth retry still failing, no side-effecting tool in leg 1 → last line", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_read"] }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult({ text: AUTH_FAIL }));
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({ content: "Listo.\n\nSTATUS: DONE", model: FW_MODEL }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-auth",
+      runId: "run-ll-auth",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).toHaveBeenCalledTimes(1);
+    expect(
+      warned("[fast-runner] sdk last line engaged task=ll-auth reason=auth model=" + FW_MODEL),
+    ).toBe(true);
+    expect(outputText(result)).toBe("Listo.");
+    expect(outputText(result)).not.toContain("Credenciales");
+    expect(result.tokenUsage?.actualModel).toBe(FW_MODEL);
+    expect(lastlineTraces()).toEqual([
+      {
+        taskId: "ll-auth",
+        runId: "run-ll-auth",
+        name: "inference.lastline",
+        attrs: { provider: "fallback", model: FW_MODEL, reason: "auth" },
+      },
+    ]);
+  });
+
+  it("(ix) auth retry still failing after a side-effecting leg 1 → NO last line, today's apology", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_write"] }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult({ text: AUTH_FAIL }));
+
+    const result = await fastRunner.execute({
+      taskId: "ll-auth-se",
+      runId: "run-ll-auth-se",
+      title: "Tarea",
+      description: "Escribe el archivo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(warned("sdk last line engaged")).toBe(false);
+    expect(lastlineTraces()).toEqual([]);
+    expect(outputText(result)).toContain(
+      "Credenciales del proveedor de inferencia inválidas",
+    );
+  });
+
+  it("(vii-c) the reason=throw line carries the cause on one line, capped at 200 chars", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    const longCause = `subprocess died\n  at spawn (node:internal)\n${"x".repeat(400)}`;
+    mockQuerySdk.mockRejectedValueOnce(new Error(longCause));
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({ content: "Listo.\n\nSTATUS: DONE", model: FW_MODEL }),
+    );
+
+    await fastRunner.execute({
+      taskId: "ll-throw-long",
+      runId: "run-ll-throw-long",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    const line = warn.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .find((l: string) => l.includes("reason=throw"));
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/\n/);
+    const errSeg = line!.slice(line!.indexOf(" err=") + " err=".length);
+    expect(errSeg.startsWith("subprocess died at spawn (node:internal) x")).toBe(
+      true,
+    );
+    expect(errSeg.length).toBeLessThanOrEqual(200);
+  });
+
+  it.each(["BudgetExhaustedError", "SecretScrubUnavailableError"])(
+    "(vii-b) SDK throws %s + armed → NO last line, the error propagates",
+    async (name) => {
+      mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+      mockQuerySdk.mockRejectedValueOnce(
+        Object.assign(new Error(`synthetic ${name}`), { name }),
+      );
+
+      const out = await fastRunner
+        .execute({
+          taskId: "ll-nope",
+          runId: "run-ll-nope",
+          title: "Tarea",
+          description: "Haz algo",
+        })
+        .catch((e: unknown) => e);
+
+      expect(mockLastline).not.toHaveBeenCalled();
+      expect(mockInferWithTools).not.toHaveBeenCalled();
+      expect(warned("sdk last line engaged")).toBe(false);
+      expect(lastlineTraces()).toEqual([]);
+      expect(JSON.stringify(out, Object.getOwnPropertyNames(out ?? {}))).toContain(
+        `synthetic ${name}`,
+      );
+    },
+  );
+
+  it("(ix-b) the auth leg runs a side-effecting tool, then fails auth again → NO last line, apology kept", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_read"] }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, toolCalls: ["file_write"] }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-auth-l2",
+      runId: "run-ll-auth-l2",
+      title: "Tarea",
+      description: "Escribe el archivo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+    expect(outputText(result)).toContain(
+      "Credenciales del proveedor de inferencia inválidas",
+    );
+  });
+
+  it("(ix-c) a confirmation pending after the auth leg → NO last line", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult({ text: AUTH_FAIL }));
+    mockQuerySdk.mockImplementationOnce(async () => {
+      const ctx = currentExecutionContext()!;
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      ctx.recordGatedCall("wp_delete");
+      return makeSdkResult({ text: AUTH_FAIL, toolCalls: ["wp_delete"] });
+    });
+
+    await fastRunner.execute({
+      taskId: "ll-auth-pc",
+      runId: "run-ll-auth-pc",
+      title: "Tarea",
+      description: "Borra el post",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+  });
+
+  it("(x-b) armed, SDK leg 1 succeeds → no last line", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Hecho.\n\nSTATUS: DONE", toolCalls: ["web_search"] }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-ok",
+      runId: "run-ll-ok",
+      title: "Tarea",
+      description: "Busca algo",
+    });
+
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+    expect(outputText(result)).toBe("Hecho.");
+    expect(result.tokenUsage?.actualModel).toBe("claude-sonnet-4-6");
+  });
+
+  const OVERLOADED_EMPTY =
+    "[error_api_response — overloaded, status 529: Overloaded] No content produced.\n\nSTATUS: BLOCKED — SDK reported an API error with zero streamed output.";
+  const OVERLOADED_PARTIAL =
+    "[error_api_response — overloaded, status 529: Overloaded] Partial response below — the turn ended on an API error.\n\nArchivo escrito con el resumen.\n\nSTATUS: DONE_WITH_CONCERNS — SDK reported an API error; content above is partial and the task did not formally complete.";
+
+  it("(xi) overloaded API error, reads only in leg 1 → last line, reason api_error", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: OVERLOADED_EMPTY,
+        toolCalls: ["web_search"],
+        errorClass: "overloaded",
+      }),
+    );
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({ content: "Listo.\n\nSTATUS: DONE", model: FW_MODEL }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api",
+      runId: "run-ll-api",
+      title: "Tarea",
+      description: "Busca algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(mockLastline).toHaveBeenCalledTimes(1);
+    expect(
+      warned(
+        `[fast-runner] sdk last line engaged task=ll-api reason=api_error class=overloaded model=${FW_MODEL}`,
+      ),
+    ).toBe(true);
+    expect(lastlineTraces()).toEqual([
+      {
+        taskId: "ll-api",
+        runId: "run-ll-api",
+        name: "inference.lastline",
+        attrs: {
+          provider: "fallback",
+          model: FW_MODEL,
+          reason: "api_error",
+          errorClass: "overloaded",
+        },
+      },
+    ]);
+    expect(outputText(result)).toBe("Listo.");
+    expect(result.tokenUsage?.actualModel).toBe(FW_MODEL);
+  });
+
+  it("(xii) overloaded API error after a side-effecting leg 1 → NO last line, today's text", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: OVERLOADED_PARTIAL,
+        toolCalls: ["file_write"],
+        errorClass: "overloaded",
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-se",
+      runId: "run-ll-api-se",
+      title: "Tarea",
+      description: "Escribe el resumen",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(outputText(result)).toContain("Archivo escrito con el resumen.");
+  });
+
+  it("(xv) model_not_found class, reads only → NO last line, today's text", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_api_response — model_not_found, status 404: model: claude-x-typo] No content produced.\n\nSTATUS: BLOCKED — SDK reported an API error with zero streamed output.",
+        toolCalls: ["web_search"],
+        errorClass: "model_not_found",
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-nm",
+      runId: "run-ll-api-nm",
+      title: "Tarea",
+      description: "Busca algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(warned("sdk last line engaged")).toBe(false);
+    expect(lastlineTraces()).toEqual([]);
+    expect(result.status).toBe("BLOCKED");
+    expect(outputText(result)).toContain(
+      "[error_api_response — model_not_found, status 404",
+    );
+  });
+
+  it.each([
+    "invalid_request",
+    "max_output_tokens",
+    "authentication_failed",
+    "model_not_found",
+  ])(
+    "(xv-b) %s class (not allow-listed), reads only → NO last line",
+    async (errorClass) => {
+      mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+      // Neutral text: only the class decides here, never the auth regex.
+      mockQuerySdk.mockResolvedValueOnce(
+        makeSdkResult({
+          text: "Error del proveedor.\n\nSTATUS: BLOCKED — SDK reported an API error.",
+          toolCalls: ["web_search"],
+          errorClass,
+        }),
+      );
+
+      await fastRunner.execute({
+        taskId: "ll-api-cls",
+        runId: "run-ll-api-cls",
+        title: "Tarea",
+        description: "Busca algo",
+      });
+
+      expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+      expect(mockLastline).not.toHaveBeenCalled();
+      expect(lastlineTraces()).toEqual([]);
+    },
+  );
+
+  it("(xi-b) overloaded with a confirmation pending → NO last line", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockImplementationOnce(async () => {
+      const ctx = currentExecutionContext()!;
+      ctx.setPendingConfirmation("wp_delete", { id: 7 });
+      ctx.recordGatedCall("wp_delete");
+      return makeSdkResult({
+        text: OVERLOADED_EMPTY,
+        // Only the gated call: no side-effecting tool, so the pending
+        // confirmation alone must hold the last line back.
+        toolCalls: ["wp_delete"],
+        errorClass: "overloaded",
+      });
+    });
+
+    await fastRunner.execute({
+      taskId: "ll-api-pc",
+      runId: "run-ll-api-pc",
+      title: "Tarea",
+      description: "Borra el post",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+  });
+
+  it("(xiii-b) unknown class with auth-shaped text → the auth retry path, not api_error", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_api_response — unknown, status n/a: API Error: 401 authentication_error: OAuth token has expired] No content produced.\n\nSTATUS: BLOCKED — SDK reported an API error with zero streamed output.",
+        errorClass: "unknown",
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Listo, reintentado.\n\nSTATUS: DONE" }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-unk",
+      runId: "run-ll-api-unk",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+    expect(outputText(result)).toBe("Listo, reintentado.");
+  });
+
+  it("(xiii) authentication_failed class → the auth retry path, not api_error", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_api_response — authentication_failed, status 401: OAuth token has expired] No content produced.\n\nSTATUS: BLOCKED — SDK reported an API error with zero streamed output.",
+        errorClass: "authentication_failed",
+      }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: "Listo, reintentado.\n\nSTATUS: DONE" }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-auth",
+      runId: "run-ll-api-auth",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(lastlineTraces()).toEqual([]);
+    expect(outputText(result)).toBe("Listo, reintentado.");
+  });
+
+  it("(x) flag off (sdkLastline null): an SDK throw fails the task as today", async () => {
+    mockQuerySdk.mockRejectedValueOnce(new Error("sdk subprocess died"));
+
+    const result = await fastRunner.execute({
+      taskId: "ll-off",
+      runId: "run-ll-off",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockLastline).not.toHaveBeenCalled();
+    expect(mockInferWithTools).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("sdk subprocess died");
   });
 });
 
@@ -1784,6 +2277,55 @@ describe("DENUE guard fires only on a DENUE mention the user wrote (2026-09-29)"
     );
     expect(guard).toContain("⛔ DENUE ANALYZER QUERY DETECTED.");
     expect(guard).toContain("API PATH");
+  });
+
+  it("(c2) SQL path teaches the read-only role (ruling 5a 2026-10-18)", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    expect(guard).toContain("psql -U mcp_readonly");
+    expect(guard).not.toContain("psql -U postgres");
+    const header = guard!.split("\n").find((l) => l.startsWith("═══ SQL PATH"));
+    expect(header).toContain("-c '");
+    expect(header).not.toContain('-c "');
+  });
+
+  it("(c3) every fenced SQL example passes the ruling-5a shell gate as taught", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    const head = "docker exec supabase-db psql -U mcp_readonly -d postgres -c ";
+    // One statement per call, one line (the gate refuses a newline in the span).
+    const statements = [...guard!.matchAll(/```sql\n([\s\S]*?)```/g)].flatMap((m) =>
+      m[1]!
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("--"))
+        .join(" ")
+        .replace(/<metric>/g, "pob65_mas")
+        .replace(/<SCIAN6>/g, "621211")
+        .replace(/LIMIT N\b/g, "LIMIT 10")
+        .replace(/\s+/g, " ")
+        .split(";")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((x) => `${x};`),
+    );
+    expect(statements.length).toBe(6);
+    for (const sql of statements) {
+      expect(validateShellCommand(`${head}'${sql}'`), sql).toMatchObject({ allowed: true });
+    }
+    expect(validateShellCommand(`${head}"${statements[0]}"`).allowed).toBe(false);
+  });
+
+  it("(c4) no single-quoted literal anywhere in the SQL PATH block, prose included", async () => {
+    const guard = await guardOf(
+      chat("consulta DENUE farmacias en Puebla", ["shell_exec"]),
+    );
+    const start = guard!.indexOf("═══ SQL PATH");
+    const end = guard!.indexOf("═══ HARD RULES");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(guard!.slice(start, end).match(/(=|IN \(|LIKE)\s*'/i)).toBeNull();
   });
 
   it("(d) DENUE mention, interactive, no shell/http → advisory", async () => {
@@ -2112,7 +2654,7 @@ describe("confirmation gate on the claude-sdk path", () => {
 // read-only enforce-only collapse), never operator-private memory (JME
 // recall, essentials), and a hard tool-round cap.
 describe("external request (jarvis-pull)", () => {
-  const fact = {
+  const fact: JmeRecallResult = {
     id: 11,
     factText: "Fede prefers tables for competitive analysis",
     category: "preference",
@@ -2237,7 +2779,7 @@ describe("external request (jarvis-pull)", () => {
     }
     const result = await turn({ maxRounds: 8 });
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+    expect(outputText(result) ?? "").not.toContain("¿Sigo?");
   });
 
   it("SDK path: a double cap writes no checkpoint and asks no ¿Sigo?", async () => {
@@ -2251,7 +2793,7 @@ describe("external request (jarvis-pull)", () => {
     mockQuerySdk.mockResolvedValueOnce(capped("Parte 2…"));
     const result = await turn({ maxRounds: 8 });
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
-    expect(result.output?.text ?? "").not.toContain("¿Sigo?");
+    expect(outputText(result) ?? "").not.toContain("¿Sigo?");
   });
 
   it("control: the same read-only turn without the flag collapses the KB and injects essentials + JME", async () => {

@@ -2942,7 +2942,10 @@ export class MessageRouter {
    * pure-feedback ack. With no open window, an operator's "excelente" rates
    * the task whose reply was the last thing shown in its chat (lastTaskReply)
    * when that is also the latest outcome on its thread — that id is NOT returned
-   * as feedbackTaskId, so the implicit block can never overwrite it.
+   * as feedbackTaskId, so the implicit block can never overwrite it. Same for
+   * a window task that just received an explicit non-neutral signal: a
+   * "No, haz X" that falls through to a task must stay "negative", not be
+   * re-rated implicit_positive by the scope comparison.
    */
   private recordFeedbackWindowSignal(
     msg: IncomingMessage,
@@ -2974,12 +2977,14 @@ export class MessageRouter {
     // Check if this message is feedback for a recently completed task
     const feedbackTaskId = checkFeedbackWindow(msg.channel);
     let praiseAttributed = false;
+    let explicitApplied = false;
     if (feedbackTaskId) {
       const signal = detectFeedbackSignal(msg.text, previousMessages.get(tk));
       // Jev shadow (dormant unless armed): log-only, never awaited.
       shadowFeedback(feedbackTaskId, msg.text, previousMessages.get(tk), signal);
       if (signal !== "neutral") {
         this.applyExplicitFeedback(feedbackTaskId, signal);
+        explicitApplied = true;
         praiseAttributed = signal === "positive";
         // v6.4 H1: When user rephrases, extract what changed and persist
         // as a correction so the enrichment pipeline recalls it on future
@@ -3016,7 +3021,11 @@ export class MessageRouter {
         }
       }
     }
-    return { feedbackTaskId, praiseAttributed, broadcastTaskId: null };
+    return {
+      feedbackTaskId: explicitApplied ? null : feedbackTaskId,
+      praiseAttributed,
+      broadcastTaskId: null,
+    };
   }
 
   /**
@@ -4275,12 +4284,25 @@ export class MessageRouter {
       try {
         const db = getDatabase();
         const task = db
-          .prepare("SELECT title, spawn_type FROM tasks WHERE task_id = ?")
-          .get(taskId) as { title: string; spawn_type: string } | undefined;
-        if (task && !isBackground && taskToolCalls.length >= 2) {
+          .prepare(
+            "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?",
+          )
+          .get(taskId) as
+          | { title: string; spawn_type: string; status: string }
+          | undefined;
+        // A run that ended with concerns must not become a lesson (2026-10-26:
+        // a web-search-only Rumi answer became a pattern and would have been
+        // injected into the next Rumi request by title overlap).
+        if (
+          task &&
+          task.status === "completed" &&
+          !isBackground &&
+          taskToolCalls.length >= 2
+        ) {
           extractPattern({
             taskId,
             title: task.title,
+            status: task.status,
             toolsCalled: taskToolCalls,
             scopeGroups: pending.scopeGroups ?? [],
             userMessage: pending.originalText,
@@ -5155,9 +5177,19 @@ export class MessageRouter {
         // placeholder (reset, never finalize — the re-run streams and
         // finalizes in the same message); elsewhere one plain send. Email is
         // skipped like the «Recibido» ack (inbox noise).
-        if (stream) stream.reset(SCOPE_RERUN_NOTICE);
-        else if (!isEmailChannel(pending.channel))
-          this.sendToChannel(pending.channel, pending.to, SCOPE_RERUN_NOTICE);
+        const via = stream
+          ? "stream.reset"
+          : isEmailChannel(pending.channel)
+            ? null
+            : "sendToChannel";
+        if (via) {
+          console.log(
+            `[router] scope-rerun notice sent channel=${pending.channel} via=${via} task=${result.taskId}`,
+          );
+          if (stream) stream.reset(SCOPE_RERUN_NOTICE);
+          else
+            this.sendToChannel(pending.channel, pending.to, SCOPE_RERUN_NOTICE);
+        }
       })
       .catch((err) => {
         console.error(`[router] scope-miss re-run submit failed:`, err);

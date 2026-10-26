@@ -98,6 +98,7 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   web_read: A,
   http_fetch: A,
   exa_search: A,
+  jina_search: A,
   expand_read: A,
   rss_read: A,
   screenshot_element: A,

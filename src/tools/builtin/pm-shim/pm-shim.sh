@@ -10,6 +10,7 @@
 # binary (next match on PATH); anything that mutates node_modules/lockfile,
 # reconfigures registry/auth, or fetches-and-runs a registry package is refused
 # with the operator hand-off. Unknown verbs are refused (allow-list).
+# pip/pip3 here is the SYSTEM pip: an activated venv's bin/ precedes this dir (ruling 2026-10-21).
 #
 # Only an absolute path (`/usr/bin/npm`, `node …/npm-cli.js`) bypasses PATH;
 # the string gate in shell.ts covers those literals. POSIX sh: the sandbox
@@ -135,6 +136,7 @@ case $name in
       "" | list | show | freeze | check | debug | help | inspect | index) ;;
       config) case $verb2 in list | get | debug) ;; *) refuse "\`pip config $verb2\` changes the index/auth setup" ;; esac ;;
       cache) case $verb2 in dir | info | list) ;; *) refuse "\`pip cache $verb2\` is not a read" ;; esac ;;
+      install | uninstall | download | wheel) refuse "\`$name $verb\` by name is the SYSTEM pip (no venv is active) — use <venv>/bin/pip $verb …, or activate the venv first (operator ruling 2026-10-21)" ;;
       *) refuse "\`$name $verb\` installs Python packages or is not on the read-only allow-list" ;;
     esac
     ;;

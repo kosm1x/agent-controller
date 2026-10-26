@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 
 const state = vi.hoisted(() => ({
@@ -13,7 +13,7 @@ vi.mock("./jarvis-fs.js", () => ({
   },
 }));
 
-import { regenerateIndex } from "./jarvis-index.js";
+import { cancelPendingRegeneration, markIndexDirty, regenerateIndex } from "./jarvis-index.js";
 
 function add(path: string, content = "x"): void {
   state.db
@@ -61,5 +61,19 @@ describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
     expect(state.written[1]).not.toBe(state.written[0]);
     expect(state.written[1]).toContain("[[projects/beta/|beta]]");
     expect(state.written[1]).toContain("[[NorthStar/|NorthStar]]");
+  });
+});
+
+describe("markIndexDirty timer (2026-10-20)", () => {
+  afterEach(() => {
+    cancelPendingRegeneration();
+    vi.restoreAllMocks();
+  });
+
+  it("never holds a process open (a late mark after drainKbWrites + close cannot fire)", () => {
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    markIndexDirty();
+    const handle = spy.mock.results[0]!.value as NodeJS.Timeout;
+    expect(handle.hasRef()).toBe(false);
   });
 });

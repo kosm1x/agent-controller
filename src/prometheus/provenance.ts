@@ -15,7 +15,7 @@ import { errMsg } from "../lib/err-msg.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-const SEARCH_TOOLS = new Set(["web_search", "exa_search"]);
+const SEARCH_TOOLS = new Set(["web_search", "exa_search", "jina_search"]);
 const FETCH_TOOLS = new Set(["web_read", "expand_read"]);
 
 /** Regex to detect URLs in LLM output text. */

@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
+import { escapeDriveQueryValue } from "../../google/drive-query.js";
 import { validatePathSafety } from "./immutable-core.js";
 import { realResolve } from "./write-guard.js";
 
@@ -228,10 +229,14 @@ Supports Drive search queries: name contains 'X', mimeType='application/...', mo
     );
 
     try {
-      // Build query: combine user query with parent filter
+      // Build query: combine user query with parent filter. The user query is
+      // parenthesised so an `or` in a well-formed query cannot escape the
+      // parent/trashed filters (unbalanced parentheses still can; this is not a
+      // security boundary: parent_folder_id is optional).
       const queryParts: string[] = [];
-      if (query) queryParts.push(query);
-      if (parentFolderId) queryParts.push(`'${parentFolderId}' in parents`);
+      if (query) queryParts.push(`(${query})`);
+      if (parentFolderId)
+        queryParts.push(`'${escapeDriveQueryValue(parentFolderId)}' in parents`);
       queryParts.push("trashed = false");
 
       let url = `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)&orderBy=modifiedTime desc`;

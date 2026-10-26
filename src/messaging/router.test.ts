@@ -3,7 +3,7 @@
  * Mocks submitTask and event bus to test inbound/outbound message flow.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { ensureV84Tables } from "../lib/v8-4/schema.js";
@@ -132,6 +132,19 @@ vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => ({
   >()),
   checkFeedbackWindow: vi.fn(() => null),
 }));
+// Execution patterns: real module, extractPattern observable (the status gate
+// test pins the call site); defaults to the real implementation.
+const patternSpy = vi.hoisted(() => vi.fn());
+const patternActual = vi.hoisted(() => ({
+  fn: (async () => {}) as (...a: unknown[]) => Promise<void>,
+}));
+vi.mock("../intelligence/execution-patterns.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../intelligence/execution-patterns.js")>();
+  patternActual.fn = actual.extractPattern as (...a: unknown[]) => Promise<void>;
+  patternSpy.mockImplementation(patternActual.fn);
+  return { ...actual, extractPattern: patternSpy };
+});
 // Jev shadow: log-only side channel; the wiring test pins the call site.
 vi.mock("../jev/shadow.js", () => ({ shadowFeedback: vi.fn() }));
 // "excelente" with no window: thread lookup (no outcome unless a test sets
@@ -183,7 +196,9 @@ vi.mock("../rituals/rituales-command.js", () => ({
 
 // Confirmation gate (2026-09-29): the confirmed action's execution seam.
 const gatedExec = vi.hoisted(() => ({
-  executeGatedCapability: vi.fn(async () => JSON.stringify({ ok: true })),
+  executeGatedCapability: vi.fn<
+    typeof import("../lib/v8-3/trigger.js").executeGatedCapability
+  >(async () => JSON.stringify({ ok: true })),
 }));
 vi.mock("../lib/v8-3/trigger.js", () => gatedExec);
 
@@ -347,6 +362,7 @@ import type {
 function createMockAdapter(name: "whatsapp" | "telegram"): ChannelAdapter & {
   sentMessages: OutgoingMessage[];
   messageHandler: ((msg: IncomingMessage) => void) | null;
+  send: Mock<ChannelAdapter["send"]>;
 } {
   const adapter = {
     name,
@@ -363,6 +379,7 @@ function createMockAdapter(name: "whatsapp" | "telegram"): ChannelAdapter & {
         adapter.messageHandler = handler;
       }),
     stop: vi.fn().mockResolvedValue(undefined),
+    isConnected: vi.fn(() => true),
   };
   return adapter;
 }
@@ -1025,6 +1042,31 @@ describe("MessageRouter", () => {
           expect(feedbackTraces()).toEqual([]);
           expect(scopeOrOutcomeWrites()).toEqual([]);
           expect(sent()).toEqual([ACK_NEG]);
+        });
+
+        it("a short 'No, …' carrying an instruction is not acked: it reaches task creation", async () => {
+          await router.handleInbound(turn("No, hazlo con B"));
+          expect(sent()).not.toContain(ACK_NEG);
+          expect(submitTask).toHaveBeenCalledTimes(1);
+        });
+
+        it("a 'No, …' instruction in an open window keeps its explicit negative: the implicit block never sees the task", async () => {
+          const { checkFeedbackWindow } =
+            await import("../intelligence/outcome-tracker.js");
+          const { classifyScopeGroups } = await import("./scope-classifier.js");
+          // Prior turn on one topic, the negation on another: were the rated
+          // window task handed to the implicit block, it would be re-rated
+          // implicit_positive (last write wins on task_outcomes).
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["google"]));
+          await router.handleInbound(turn("revisa mi correo de gmail por favor"));
+          vi.mocked(checkFeedbackWindow).mockImplementation(() => "task-win");
+          vi.mocked(classifyScopeGroups).mockResolvedValueOnce(new Set(["finance"]));
+          try {
+            await router.handleInbound(turn("No, dame el precio del bitcoin hoy"));
+          } finally {
+            vi.mocked(checkFeedbackWindow).mockImplementation(() => null);
+          }
+          expect(feedbackWrites()).toEqual([["negative", "task-win"]]);
         });
 
         it("bare 'no' with an open window still rates the window task (unchanged)", async () => {
@@ -2699,17 +2741,34 @@ describe("MessageRouter", () => {
         agentType: "fast",
         classification: { score: 1, reason: "test", explicit: false },
       });
-      findHandler("task.completed")!({
-        data: {
-          task_id: "tg-task-1",
-          agent_id: "fast",
-          result:
-            '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
-          duration_ms: 500,
-        },
-      });
-      await Promise.resolve();
-      await Promise.resolve();
+      // 2026-10-23: the stream path's journal line names `via=stream.reset`.
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        findHandler("task.completed")!({
+          data: {
+            task_id: "tg-task-1",
+            agent_id: "fast",
+            result:
+              '`tweet_post` no está en el scope activo. Pídeme con "usa tweet_post".',
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(
+          logSpy.mock.calls.filter(
+            ([l]) =>
+              typeof l === "string" &&
+              l.startsWith("[router] scope-rerun notice sent"),
+          ),
+        ).toEqual([
+          [
+            "[router] scope-rerun notice sent channel=telegram via=stream.reset task=tg-task-rerun",
+          ],
+        ]);
+      } finally {
+        logSpy.mockRestore();
+      }
       // The placeholder was reset — the ask is no longer what the screen shows;
       // the re-run notice now does.
       expect(edits.at(-1)?.text).toBe(SCOPE_RERUN_NOTICE);
@@ -3195,6 +3254,112 @@ describe("MessageRouter", () => {
       expect(sent[0].text).toContain("Beeshake vende");
       expect(sent[0].to).toBe("owner@example.com");
       expect(waAdapter.sentMessages).toHaveLength(0);
+    });
+
+    it("2026-10-23 re-run notice journal line: a sent notice logs ONE `[router] scope-rerun notice sent` line (channel + path + task, never the recipient or the notice text); an email re-run logs none", async () => {
+      const NOTICE_LOG_RE =
+        /^\[router\] scope-rerun notice sent channel=\S+ via=(stream\.reset|sendToChannel)/;
+      const ASK =
+        '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.';
+      const mocked = vi.mocked(submitTask);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        mocked.mockResolvedValueOnce({
+          taskId: "log-notice-1",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "log-notice-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "log-notice-1",
+            agent_id: "fast",
+            result: ASK,
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(waAdapter.sentMessages[1].text).toBe(SCOPE_RERUN_NOTICE);
+        const noticeLogs = logSpy.mock.calls.filter(
+          ([l]) => typeof l === "string" && NOTICE_LOG_RE.test(l),
+        );
+        expect(noticeLogs).toEqual([
+          [
+            "[router] scope-rerun notice sent channel=whatsapp via=sendToChannel task=log-notice-rerun",
+          ],
+        ]);
+        for (const args of logSpy.mock.calls) {
+          const joined = args.map(String).join(" ");
+          expect(joined).not.toContain(SCOPE_RERUN_NOTICE);
+          expect(joined).not.toContain("owner@s.whatsapp.net");
+        }
+
+        // Email: the notice is skipped, so the line must be too.
+        const emailAdapter = {
+          name: "email:owner",
+          mode: "owner-only" as const,
+          start: vi.fn().mockResolvedValue(undefined),
+          send: vi.fn().mockResolvedValue("id"),
+          onMessage: vi.fn(),
+          stop: vi.fn().mockResolvedValue(undefined),
+          isConnected: () => true,
+        };
+        router.registerChannel(emailAdapter as never);
+        logSpy.mockClear();
+        mocked.mockResolvedValueOnce({
+          taskId: "log-email-1",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        await router.handleInbound({
+          channel: "email:owner" as never,
+          from: "owner@example.com",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        mocked.mockResolvedValueOnce({
+          taskId: "log-email-rerun",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        findHandler("task.completed")!({
+          data: {
+            task_id: "log-email-1",
+            agent_id: "fast",
+            result: ASK,
+            duration_ms: 500,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        router.unregisterChannel("email:owner" as never);
+        expect(mocked.mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+        // The submit's .then ran (its own line is there), so 0 is not vacuous.
+        expect(logSpy.mock.calls.map(([l]) => l)).toContain(
+          "[router] scope-miss re-run of log-email-1 → task log-email-rerun",
+        );
+        expect(
+          logSpy.mock.calls.filter(
+            ([l]) =>
+              typeof l === "string" &&
+              l.startsWith("[router] scope-rerun notice sent"),
+          ),
+        ).toHaveLength(0);
+      } finally {
+        logSpy.mockRestore();
+      }
     });
 
     it("2026-10-18 re-run interim: a re-run still running at +2 min sends «Sigo trabajando en eso...» after the notice (the first run's interim was cleared)", async () => {
@@ -4827,7 +4992,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         semantic,
         prior,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "confirmo eliminación",
       );
       expect(result.source).toBe("semantic");
@@ -4839,7 +5004,7 @@ describe("MessageRouter", () => {
       const d = decideActiveGroups(
         new Set<string>(),
         new Set(["meta"]),
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "continúa",
       );
       expect(d.source).toBe("inherited");
@@ -4855,7 +5020,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         semantic,
         prior,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "gracias",
       );
       expect([...result.groups]).toEqual(["google"]);
@@ -4866,7 +5031,7 @@ describe("MessageRouter", () => {
       const result = decideActiveGroups(
         new Set(["google"]),
         undefined,
-        vi.fn(() => new Set()),
+        vi.fn(() => new Set<string>()),
         "abre el sheet",
       );
       expect([...result.groups]).toEqual(["google"]);
@@ -5547,6 +5712,67 @@ describe("MessageRouter", () => {
         expect(entry.text).toBe(
           `User: guarda las notas\nJarvis: ${"x".repeat(12_000)}…\n\n${tail}`,
         );
+      });
+    });
+  });
+
+  // 2026-10-26: a run that ended with concerns must not become a lesson (a
+  // web-search-only Rumi answer became a pattern and would have been
+  // injected into the next Rumi request by title overlap).
+  describe("execution-pattern gate on final task status", () => {
+    // Synthetic fixtures (local: the 4g block's OWNER/FIX_A are not in scope).
+    const OWNER = "owner@s.whatsapp.net";
+    const FIX_A = "Aquí está el poema (síntesis de prueba).";
+
+    afterEach(() => {
+      patternSpy.mockReset().mockImplementation(patternActual.fn);
+    });
+
+    async function completeWithStatus(status: string) {
+      _testSeedThread(threadKey("whatsapp", OWNER), []);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: OWNER,
+        text: "regálame un poema de rumi",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      dbStatusGet.mockReturnValue({
+        output: JSON.stringify({ toolCalls: ["web_search", "web_read"] }),
+      });
+      dbGetBySql.mockImplementation((sql: string) =>
+        sql === "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?"
+          ? { title: "poema de rumi", spawn_type: "chat", status }
+          : undefined,
+      );
+      patternSpy.mockClear().mockImplementation(async () => {});
+      try {
+        findHandler("task.completed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: FIX_A,
+            duration_ms: 1,
+          },
+        });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        dbGetBySql.mockReset().mockImplementation(() => undefined);
+      }
+    }
+
+    it("completed_with_concerns → extractPattern is not called", async () => {
+      await completeWithStatus("completed_with_concerns");
+      expect(patternSpy).not.toHaveBeenCalled();
+    });
+
+    it("completed → extractPattern is called with the status", async () => {
+      await completeWithStatus("completed");
+      expect(patternSpy).toHaveBeenCalledTimes(1);
+      expect(patternSpy.mock.calls[0][0]).toMatchObject({
+        taskId: "test-task-123",
+        status: "completed",
+        toolsCalled: ["web_search", "web_read"],
       });
     });
   });

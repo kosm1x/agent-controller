@@ -27,7 +27,10 @@
 
 import type { Event } from "../lib/events/types.js";
 import { getTask } from "../dispatch/dispatcher.js";
-import { runReflection } from "../reflection/runner.js";
+import {
+  reflectionOutputHasConsumer,
+  runReflection,
+} from "../reflection/runner.js";
 import { createLogger } from "../lib/logger.js";
 import { recordTriggerRun, reflectionBudgetAvailable } from "./throttle.js";
 
@@ -98,6 +101,16 @@ function hasTag(metadata: string | null | undefined, tag: string): boolean {
  * between the budget check and the row write, or this guarantee breaks.
  */
 async function fireNTurnReflection(): Promise<void> {
+  if (!reflectionOutputHasConsumer()) {
+    log.info("n-turn reflection skipped — no consumer for reflection output");
+    recordTriggerRun(
+      "n_turn",
+      "skipped",
+      "no consumer for reflection output (queue 4s a, until Phase 6)",
+    );
+    return;
+  }
+
   if (!reflectionBudgetAvailable()) {
     log.info("n-turn reflection skipped — 24h reflection budget exhausted");
     recordTriggerRun("n_turn", "skipped", "reflection budget exhausted");

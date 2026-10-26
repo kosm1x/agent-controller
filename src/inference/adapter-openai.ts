@@ -700,10 +700,19 @@ export async function inferViaOpenAi(
   request: InferenceRequest,
   options?: InferOptions,
 ): Promise<InferenceResponse> {
-  const { onTextChunk, signal, providerName } = options ?? {};
+  const { onTextChunk, signal, providerName, onlyProvider } = options ?? {};
   const config = getConfig();
 
-  const providers = loadProviders();
+  // Provider pin (SDK last line): only the named provider is considered —
+  // never a failover to the rest of the list, and no breaker side effects.
+  const providers = loadProviders().filter(
+    (p) => !onlyProvider || p.name === onlyProvider,
+  );
+  if (onlyProvider && providers.length === 0) {
+    throw new Error(
+      `No inference provider named "${onlyProvider}" is configured`,
+    );
+  }
 
   // If providerName specified, try that provider first
   if (providerName) {
@@ -1528,6 +1537,7 @@ export async function inferWithToolsViaOpenAi(
           onTextChunk,
           signal,
           providerName: activeProvider,
+          onlyProvider: options?.onlyProvider,
         },
       );
     } catch (err) {
@@ -1576,6 +1586,7 @@ export async function inferWithToolsViaOpenAi(
           {
             onTextChunk,
             signal,
+            onlyProvider: options?.onlyProvider,
           },
         );
         totalPrompt += wrapUp.usage.prompt_tokens;
@@ -2052,7 +2063,7 @@ Provide your final response based ONLY on actual tool results. Do not request an
     );
     const wrapUp = await infer(
       { messages: leanContext, taskId: options?.taskId, effort: "low" },
-      { onTextChunk, signal },
+      { onTextChunk, signal, onlyProvider: options?.onlyProvider },
     );
     totalPrompt += wrapUp.usage.prompt_tokens;
     totalCompletion += wrapUp.usage.completion_tokens;

@@ -10,14 +10,20 @@ import {
 
 // syncKbToRemote reads jarvis_files via these — mock them so the backup logic
 // is exercisable without a live DB. vi.hoisted per project testing convention.
-const { mockListFiles, mockGetFile } = vi.hoisted(() => ({
-  mockListFiles: vi.fn(),
+const { mockListFilePaths, mockGetFile } = vi.hoisted(() => ({
+  mockListFilePaths: vi.fn(),
   mockGetFile: vi.fn(),
 }));
-vi.mock("./jarvis-fs.js", () => ({
-  listFiles: mockListFiles,
-  getFile: mockGetFile,
-}));
+vi.mock("./jarvis-fs.js", async (importOriginal) => {
+  // The real parseTagsSafe, so the tags-normalisation case checks production
+  // code. Importing jarvis-fs opens no database (getDatabase() is lazy).
+  const actual = await importOriginal<typeof import("./jarvis-fs.js")>();
+  return {
+    listFilePaths: mockListFilePaths,
+    getFile: mockGetFile,
+    parseTagsSafe: actual.parseTagsSafe,
+  };
+});
 
 import { stripNulBytes, syncKbToRemote } from "./kb-backup.js";
 
@@ -74,10 +80,11 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
   const OLD_KEY = process.env.COMMIT_DB_KEY;
   let fetchSpy: MockInstance;
 
-  function row(path: string, tags: string[] = []) {
+  function fileRow(path: string, tags = "[]") {
     return {
       path,
       title: `t-${path}`,
+      content: "body",
       tags,
       qualifier: "default",
       priority: 5,
@@ -87,7 +94,7 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
 
   beforeEach(() => {
     process.env.COMMIT_DB_KEY = "test-key";
-    mockListFiles.mockReset();
+    mockListFilePaths.mockReset();
     mockGetFile.mockReset();
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -112,13 +119,13 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
   }
 
   it("backs up a BLOB-content row (Buffer) instead of aborting — the actual regression", async () => {
-    mockListFiles.mockReturnValue([row("blob/x.md")]);
+    mockListFilePaths.mockReturnValue(["blob/x.md"]);
     mockGetFile.mockReturnValue({
       path: "blob/x.md",
       title: "x",
       // BLOB column hydrates as a Buffer (the row that broke the backup).
       content: Buffer.from(`héllo${String.fromCharCode(0)}world`, "utf8"),
-      tags: [],
+      tags: "[]",
       qualifier: "default",
       priority: 5,
       updated_at: "2026-06-11T00:00:00Z",
@@ -135,22 +142,10 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
   });
 
   it("skips a row whose getFile throws, counts it, and still pushes the healthy rows", async () => {
-    mockListFiles.mockReturnValue([
-      row("good/1.md"),
-      row("bad/2.md"),
-      row("good/3.md"),
-    ]);
+    mockListFilePaths.mockReturnValue(["good/1.md", "bad/2.md", "good/3.md"]);
     mockGetFile.mockImplementation((path: string) => {
       if (path === "bad/2.md") throw new Error("simulated corrupt row");
-      return {
-        path,
-        title: "x",
-        content: "body",
-        tags: [],
-        qualifier: "default",
-        priority: 5,
-        updated_at: "2026-06-11T00:00:00Z",
-      };
+      return fileRow(path);
     });
 
     const result = await syncKbToRemote();
@@ -161,25 +156,56 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
   });
 
   it("skips files that vanished between listing and read (getFile null)", async () => {
-    mockListFiles.mockReturnValue([row("gone.md"), row("here.md")]);
+    mockListFilePaths.mockReturnValue(["gone.md", "here.md"]);
     mockGetFile.mockImplementation((path: string) =>
-      path === "gone.md"
-        ? null
-        : {
-            path,
-            title: "x",
-            content: "body",
-            tags: [],
-            qualifier: "default",
-            priority: 5,
-            updated_at: "2026-06-11T00:00:00Z",
-          },
+      path === "gone.md" ? null : fileRow(path),
     );
 
     const result = await syncKbToRemote();
 
     expect(result.pushed).toBe(1);
+    expect(result.errors).toBe(0); // a vanished row is skipped, not an error
     expect(pushedPaths()).toEqual(["here.md"]);
+  });
+
+  it("pushes the getFile row's fields with tags normalised to a JSON array string", async () => {
+    mockListFilePaths.mockReturnValue(["ok.md", "corrupt.md"]);
+    mockGetFile.mockImplementation((path: string) =>
+      path === "ok.md" ? fileRow(path, '["a","b"]') : fileRow(path, "not-json{"),
+    );
+
+    const result = await syncKbToRemote();
+
+    expect(result).toMatchObject({ pushed: 2, errors: 0 });
+    const body = JSON.parse(
+      (fetchSpy.mock.calls[0]![1] as RequestInit).body as string,
+    ) as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      path: "ok.md",
+      title: "t-ok.md",
+      content: "body",
+      tags: '["a","b"]',
+      qualifier: "default",
+      priority: 5,
+      updated_at: "2026-06-11T00:00:00Z",
+    });
+    expect(typeof body[0].synced_at).toBe("string");
+    expect(body[1]).toMatchObject({ path: "corrupt.md", tags: "[]" });
+  });
+
+  it("lists paths once per sync (never the content-reading listFiles) and reads each path once", async () => {
+    // 45 paths = 3 batches of 20/20/5.
+    const paths = Array.from({ length: 45 }, (_, i) => `p/${i}.md`);
+    mockListFilePaths.mockReturnValue(paths);
+    mockGetFile.mockImplementation((path: string) => fileRow(path));
+
+    const result = await syncKbToRemote();
+
+    expect(mockListFilePaths).toHaveBeenCalledTimes(1);
+    expect(mockGetFile).toHaveBeenCalledTimes(45);
+    expect(mockGetFile.mock.calls.map((c) => c[0])).toEqual(paths);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ pushed: 45, errors: 0 });
   });
 
   it("no-ops cleanly when COMMIT_DB_KEY is unset (no fetch)", async () => {

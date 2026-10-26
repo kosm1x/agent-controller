@@ -239,12 +239,29 @@ export function validateKbEntry(entry: KbEntry): string | null {
 // CRUD
 // ---------------------------------------------------------------------------
 
+export interface PgUpsertOptions {
+  /**
+   * Do not run the staleness cascade after the write (default: cascade
+   * fire-and-forget). Used by `pgUpsertLineageSource`, which has already run
+   * it, awaited, before the write.
+   */
+  skipCascade?: boolean;
+}
+
 /**
  * Upsert a KB entry to pgvector. Merges on path (unique).
  * Pre-validates via quality gate — rejects noise before network call.
  * Non-blocking — returns success/failure, never throws.
+ *
+ * `related_to` is sent only when the caller passes it: merge-duplicates
+ * overwrites only the columns present in the body, so a re-sync or
+ * reinforce of a row keeps the lineage written earlier (new rows get the
+ * schema default `[]`).
  */
-export async function pgUpsert(entry: KbEntry): Promise<boolean> {
+export async function pgUpsert(
+  entry: KbEntry,
+  opts: PgUpsertOptions = {},
+): Promise<boolean> {
   const apiKey = getApiKey();
   if (!apiKey) return false;
 
@@ -272,7 +289,7 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
     confidence: entry.confidence ?? 1.0,
     stale: entry.stale ?? false,
     source_task_id: entry.source_task_id ?? null,
-    related_to: entry.related_to ?? [],
+    ...(entry.related_to !== undefined && { related_to: entry.related_to }),
     updated_at: new Date().toISOString(),
     // v7.13 structured PDF ingestion fields; safe to send even if the
     // Supabase column hasn't been migrated yet — PostgREST will 400 with
@@ -308,14 +325,17 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
       return false;
     }
 
-    // v6.4 G1: Cascade staleness — if content changed, mark related entries stale.
-    // Fire-and-forget: staleness propagation shouldn't block the upsert caller.
-    pgCascadeStale(entry.path, apiKey).catch((err) => {
-      console.warn(
-        `[pgvector] Cascade stale failed for ${entry.path}:`,
-        errMsg(err),
-      );
-    });
+    // v6.4 G1: Cascade staleness — mark entries whose related_to holds this
+    // path stale. Fire-and-forget: staleness propagation shouldn't block the
+    // upsert caller.
+    if (!opts.skipCascade) {
+      pgCascadeStale(entry.path, apiKey).catch((err) => {
+        console.warn(
+          `[pgvector] Cascade stale failed for ${entry.path}:`,
+          errMsg(err),
+        );
+      });
+    }
 
     return true;
   } catch (err) {
@@ -327,6 +347,64 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
   }
 }
 
+export type LineageSourceOutcome =
+  | "written"
+  | "unchanged"
+  | "cascade_failed"
+  | "failed";
+
+/**
+ * Upsert a lineage SOURCE row whose dependents the caller writes next (the
+ * PDF ingest manifest, v6.4 G1 / 4o). Order: read the stored content_hash →
+ * when it differs (or the row is new, or the read fails) run the cascade
+ * AWAITED → write the row only when the cascade succeeded.
+ *  - "written": changed, cascade done, row written.
+ *  - "unchanged": same hash, no cascade, row rewritten (metadata only).
+ *  - "cascade_failed": the row is NOT written, so the stored hash stays old
+ *    and the next call retries the cascade (writing it would turn one failed
+ *    cascade into a permanent skip).
+ *  - "failed": no key, quality gate, or the write itself failed.
+ */
+export async function pgUpsertLineageSource(
+  entry: KbEntry,
+): Promise<LineageSourceOutcome> {
+  const apiKey = getApiKey();
+  if (!apiKey) return "failed";
+  const rejection = validateKbEntry(entry);
+  if (rejection) {
+    console.log(`[pgvector] Quality gate rejected ${entry.path}: ${rejection}`);
+    return "failed";
+  }
+  const newHash = entry.content_hash ?? contentHash(entry.content);
+  const unchanged = (await pgStoredHash(entry.path, apiKey)) === newHash;
+  if (!unchanged && (await pgCascadeStale(entry.path, apiKey)) === null) {
+    return "cascade_failed";
+  }
+  if (!(await pgUpsert(entry, { skipCascade: true }))) return "failed";
+  return unchanged ? "unchanged" : "written";
+}
+
+/** Stored content_hash for `path`; null when absent or the read fails. */
+async function pgStoredHash(
+  path: string,
+  apiKey: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/kb_entries?path=eq.${encodeURIComponent(path)}&select=content_hash&limit=1`,
+      {
+        headers: supabaseHeaders(apiKey),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Array<{ content_hash: string | null }>;
+    return rows[0]?.content_hash ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Cascading staleness propagation (v6.4 G1).
  *
@@ -335,19 +413,46 @@ export async function pgUpsert(entry: KbEntry): Promise<boolean> {
  * This ensures derived/dependent knowledge is flagged for re-evaluation
  * when its source changes.
  *
+ * Lineage that exists (4o, 2026-10-18) — the only writers of `related_to`:
+ *  - PDF chunks → their document manifest (`<namespace>/<docSlug>.manifest.md`,
+ *    written by `kb_ingest_pdf_structured` via `pgUpsertLineageSource`
+ *    BEFORE the chunks: cascade awaited and run before the manifest write,
+ *    skipped when the manifest hash is unchanged). A changed PDF stales the
+ *    old chunk set; the new chunks are then written with `stale: false`, so
+ *    removed sections stay stale. Manifests are stored `stale: true` so they
+ *    never surface in search. Older chunks get lineage from the operator-run
+ *    `scripts/backfill-kb-lineage.ts`.
+ *  - `kb_batch_insert` entries, opt-in only via its `source_path` arg.
+ *  - Facts / lessons / corrections carry `source_task_id`, not a path: no
+ *    cascade reaches them.
+ *  - KB files mirrored by pgvector-sync are EXCLUDED on purpose:
+ *    `jarvis_files.related_to` is a neighbour-link graph for retrieval
+ *    chains, not derivation, and cascading over it would drop linked files
+ *    from search whenever a neighbour changed.
+ * `pgUpsert`/`pgBatchUpsert` omit `related_to` when the caller does not pass
+ * it, so re-syncs and reinforcement never wipe lineage.
+ *
  * Uses PostgREST containment operator: related_to @> '["<path>"]'.
  * `related_to` is jsonb, so the filter value must be a JSON array
  * (`cs.["<path>"]`); the Postgres-array form `cs.{<path>}` is rejected
  * with HTTP 400 "invalid input syntax for type json".
+ *
+ * Both filters carry `updated_at=lt.<cascade start>`, so a slow PATCH or an
+ * overlapping ingest never stales rows written after the cascade began.
+ * Returns the number of rows marked stale, 0 without a key, or null when the
+ * search or the PATCH failed (non-ok or thrown).
  */
 export async function pgCascadeStale(
   path: string,
   apiKey?: string,
-): Promise<number> {
+): Promise<number | null> {
   const key = apiKey ?? getApiKey();
   if (!key) return 0;
 
-  const filter = `related_to=cs.${encodeURIComponent(JSON.stringify([path]))}&stale=is.false`;
+  const startedAt = new Date().toISOString();
+  const filter =
+    `related_to=cs.${encodeURIComponent(JSON.stringify([path]))}` +
+    `&stale=is.false&updated_at=lt.${encodeURIComponent(startedAt)}`;
 
   try {
     // Find entries whose related_to contains this path (PostgREST cs. operator)
@@ -363,7 +468,7 @@ export async function pgCascadeStale(
       console.warn(
         `[pgvector] Cascade stale search failed: ${searchRes.status} (source: ${path})`,
       );
-      return 0;
+      return null;
     }
     const related = (await searchRes.json()) as Array<{ path: string }>;
     if (related.length === 0) return 0;
@@ -382,18 +487,18 @@ export async function pgCascadeStale(
       signal: AbortSignal.timeout(10_000),
     });
 
-    if (patchRes.ok) {
-      console.log(
-        `[pgvector] Cascade stale: ${related.length} entries marked stale (source: ${path})`,
-      );
-    } else {
+    if (!patchRes.ok) {
       console.warn(
         `[pgvector] Cascade stale patch failed: ${patchRes.status} (source: ${path})`,
       );
+      return null;
     }
+    console.log(
+      `[pgvector] Cascade stale: ${related.length} entries marked stale (source: ${path})`,
+    );
     return related.length;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -432,33 +537,48 @@ export async function pgBatchUpsert(
     validated.push(e);
   }
 
-  for (let i = 0; i < validated.length; i += batchSize) {
-    const batch = validated.slice(i, i + batchSize);
-    const rows = batch.map((e) => ({
-      path: e.path,
-      title: e.title,
-      content: e.content,
-      content_hash: e.content_hash ?? contentHash(e.content),
-      embedding: e.embedding ? `[${e.embedding.join(",")}]` : null,
-      type: e.type ?? "fact",
-      qualifier: e.qualifier ?? "reference",
-      condition: e.condition ?? null,
-      tags: e.tags ?? [],
-      priority: e.priority ?? 50,
-      salience: e.salience ?? 0.5,
-      confidence: e.confidence ?? 1.0,
-      stale: e.stale ?? false,
-      related_to: e.related_to ?? [],
-      updated_at: new Date().toISOString(),
-      // v7.13 structured-ingestion fields (same guard as pgUpsert)
-      ...(e.modality !== undefined && { modality: e.modality }),
-      ...(e.parent_doc_id !== undefined && { parent_doc_id: e.parent_doc_id }),
-      ...(e.section_path !== undefined && { section_path: e.section_path }),
-      ...(e.chunk_position !== undefined && {
-        chunk_position: e.chunk_position,
-      }),
-    }));
+  // 4o: PostgREST rejects a bulk body whose objects differ in keys, so rows
+  // are grouped by sorted key set (order kept within a group) and each group
+  // is sliced by batchSize.
+  const rows = validated.map((e) => ({
+    path: e.path,
+    title: e.title,
+    content: e.content,
+    content_hash: e.content_hash ?? contentHash(e.content),
+    embedding: e.embedding ? `[${e.embedding.join(",")}]` : null,
+    type: e.type ?? "fact",
+    qualifier: e.qualifier ?? "reference",
+    condition: e.condition ?? null,
+    tags: e.tags ?? [],
+    priority: e.priority ?? 50,
+    salience: e.salience ?? 0.5,
+    confidence: e.confidence ?? 1.0,
+    stale: e.stale ?? false,
+    ...(e.related_to !== undefined && { related_to: e.related_to }),
+    updated_at: new Date().toISOString(),
+    // v7.13 structured-ingestion fields (same guard as pgUpsert)
+    ...(e.modality !== undefined && { modality: e.modality }),
+    ...(e.parent_doc_id !== undefined && { parent_doc_id: e.parent_doc_id }),
+    ...(e.section_path !== undefined && { section_path: e.section_path }),
+    ...(e.chunk_position !== undefined && {
+      chunk_position: e.chunk_position,
+    }),
+  }));
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const sig = Object.keys(row).sort().join(",");
+    const group = groups.get(sig);
+    if (group) group.push(row);
+    else groups.set(sig, [row]);
+  }
+  const batches: Array<typeof rows> = [];
+  for (const group of groups.values()) {
+    for (let i = 0; i < group.length; i += batchSize) {
+      batches.push(group.slice(i, i + batchSize));
+    }
+  }
 
+  for (const batch of batches) {
     try {
       const res = await fetch(`${SUPABASE_URL}/kb_entries?on_conflict=path`, {
         method: "POST",
@@ -466,7 +586,7 @@ export async function pgBatchUpsert(
           ...supabaseHeaders(apiKey),
           Prefer: "resolution=merge-duplicates",
         },
-        body: JSON.stringify(rows),
+        body: JSON.stringify(batch),
         signal: AbortSignal.timeout(30_000),
       });
 

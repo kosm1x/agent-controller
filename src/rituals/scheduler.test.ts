@@ -29,7 +29,7 @@ vi.mock("node-cron", () => ({
 
 // Usability Phase 5.5: `/rituales pausa` — a paused ritual is skipped BEFORE
 // submitTask (no tokens).
-const mockIsRitualPaused = vi.hoisted(() => vi.fn(() => false));
+const mockIsRitualPaused = vi.hoisted(() => vi.fn((_ritualId: string) => false));
 vi.mock("./ritual-controls.js", () => ({
   isRitualPaused: mockIsRitualPaused,
 }));

@@ -17,6 +17,14 @@ import { TaskExecutionContext } from "../inference/execution-context.js";
 const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
 vi.mock("../observability/task-trace.js", () => traceMock);
 
+// Queue 4t: the executor hands every finished call to the shared mutation
+// helper (which owns the isError convention); only that export is mocked.
+const recordMutationMock = vi.hoisted(() => vi.fn());
+vi.mock("../db/task-mutations.js", async (importActual) => ({
+  ...(await importActual<typeof import("../db/task-mutations.js")>()),
+  recordMutationFromResult: recordMutationMock,
+}));
+
 /** The fast runner's context on a router-tracked operator chat root. */
 const askable = (taskId: string) =>
   new TaskExecutionContext(taskId, true, {
@@ -265,6 +273,8 @@ describe("confirmation gate bypass for non-interactive tasks", () => {
 describe("confirmationGate", () => {
   const reg = (tier: "low" | "medium" | "high") => ({
     getEffectiveRiskTier: vi.fn().mockReturnValue(tier),
+    // Every name these cases use is a registered tool.
+    has: vi.fn().mockReturnValue(true),
   });
   const interactive = askable("g");
   const background = new TaskExecutionContext("g", false);
@@ -805,5 +815,41 @@ describe("undeclared high-risk tools in background sub-tasks (ruling 2026-10-03)
       tool: "gmail_send",
       attrs: { decision: "refused_undeclared" },
     });
+  });
+});
+
+describe("mutation recording (queue 4t)", () => {
+  it("hands a successful call's result to recordMutationFromResult", async () => {
+    recordMutationMock.mockClear();
+    const registry = mockRegistry();
+    const ctx = new TaskExecutionContext("task-4t-exec");
+    const exec = createTaskExecutor(registry, ctx);
+
+    const result = await exec("file_write", { path: "/x" });
+    expect(result).toBe('{"ok": true}');
+    expect(recordMutationMock).toHaveBeenCalledTimes(1);
+    expect(recordMutationMock).toHaveBeenCalledWith(
+      "task-4t-exec",
+      "file_write",
+      { path: "/x" },
+      '{"ok": true}',
+    );
+  });
+
+  it("still hands an Error: result over — the helper decides isError", async () => {
+    recordMutationMock.mockClear();
+    const registry = mockRegistry();
+    vi.mocked(registry.execute).mockResolvedValue("Error: boom");
+    const ctx = new TaskExecutionContext("task-4t-exec-err");
+    const exec = createTaskExecutor(registry, ctx);
+
+    await exec("file_write", { path: "/x" });
+    expect(recordMutationMock).toHaveBeenCalledTimes(1);
+    expect(recordMutationMock).toHaveBeenCalledWith(
+      "task-4t-exec-err",
+      "file_write",
+      { path: "/x" },
+      "Error: boom",
+    );
   });
 });

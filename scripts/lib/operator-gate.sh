@@ -22,7 +22,8 @@ _OPERATOR_TASK_RE='^0::/system\.slice/mission-control\.service$'
 GATED_SUBCOMMANDS=(
   start stop restart cancel schedule-delete schedule-resume hindsight-restart
   audit-claim jme-dedup briefing-gate v83-gate v83-promote rule-of-two
-  project-create judgments close-phase resume task-resume audit-closure smoke
+  # eval is read-only but gated: it is the operator's eval of Jarvis, which Jarvis must not read through shell_exec.
+  project-create judgments close-phase resume task-resume audit-closure smoke eval
   "skills backfill-embeddings" "skills retrieve" "skills certify" "skills archive" "skills revert"
   "jme-preferences --confirm" "jme-preferences --reject"
   "events retrieve" "events aggregate" "events seed"

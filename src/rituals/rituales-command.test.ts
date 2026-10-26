@@ -110,11 +110,14 @@ describe("listRitualEntries", () => {
 describe("findEntry", () => {
   it("by number, by accent-insensitive prefix, ambiguity", () => {
     const entries = listRitualEntries(NOW);
-    expect(findEntry(entries, "1")?.id).toBe("signal-intelligence");
-    expect(findEntry(entries, "quimica")?.id).toBe("cbd14c88-quim");
-    expect(findEntry(entries, "QUÍMICA BÁSICA")?.id).toBe("cbd14c88-quim");
+    // The id of a single match; "ambiguous" passes through as itself.
+    const idOf = (e: ReturnType<typeof findEntry>) =>
+      e === "ambiguous" ? e : e?.id;
+    expect(idOf(findEntry(entries, "1"))).toBe("signal-intelligence");
+    expect(idOf(findEntry(entries, "quimica"))).toBe("cbd14c88-quim");
+    expect(idOf(findEntry(entries, "QUÍMICA BÁSICA"))).toBe("cbd14c88-quim");
     expect(findEntry(entries, "market")).toBe("ambiguous");
-    expect(findEntry(entries, "market-eod")?.id).toBe("market-eod-scan");
+    expect(idOf(findEntry(entries, "market-eod"))).toBe("market-eod-scan");
     expect(findEntry(entries, "999")).toBeNull();
     expect(findEntry(entries, "zzz")).toBeNull();
   });

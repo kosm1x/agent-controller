@@ -204,6 +204,21 @@ describe("project_update — record present: the record is the write target", ()
     expect(String(getFile(REL)!.content)).toBe(RECORD);
   });
 
+  it("queue 3l ruling A: a credential literal next to its name in config is refused on the record path too; nothing is written", async () => {
+    seedRecord();
+    const before = rowView("acme-radar").config;
+    const out = JSON.parse(
+      await projectUpdateTool.execute({
+        slug: "acme-radar",
+        config: { db_env: [{ name: "PGPASSWORD", value: "synthetic-" + "lit".repeat(3) }] },
+      }),
+    );
+    expect(out.error).toContain("config.db_env.0.value");
+    expect(out.error).toContain("{name, secret}");
+    expect(rowView("acme-radar").config).toEqual(before);
+    expect(String(getFile(REL)!.content)).toBe(RECORD);
+  });
+
   it("a credential-shaped name or description is refused; nothing is written (R1 W2)", async () => {
     seedRecord();
     const secret = "sk-" + "d".repeat(40);

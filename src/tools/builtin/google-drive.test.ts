@@ -31,7 +31,7 @@ vi.mock("node:fs", () => ({
   realpathSync: mocks.mockRealpathSync,
 }));
 
-import { gdriveDownloadTool } from "./google-drive.js";
+import { gdriveDownloadTool, gdriveListTool } from "./google-drive.js";
 
 describe("gdrive_download — schema", () => {
   it("declares file_id as required and exposes safe enums for export_format", () => {
@@ -370,5 +370,45 @@ describe("gdrive_download — execution", () => {
 
     expect(parsed.error).toContain("Cannot export");
     expect(parsed.error).toContain("export_format");
+  });
+});
+
+describe("gdrive_list — parent folder query", () => {
+  beforeEach(() => mocks.mockGoogleFetch.mockReset());
+
+  it("escapes ' and \\ in parent_folder_id inside the Drive q string", async () => {
+    mocks.mockGoogleFetch.mockResolvedValue({ files: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await gdriveListTool.execute({ parent_folder_id: "a'b\\c" });
+    const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
+    expect(q).toContain("q='a\\'b\\\\c' in parents and trashed = false");
+    vi.restoreAllMocks();
+  });
+
+  it("passes the user query RAW (Drive syntax by design) ahead of the escaped parent filter", async () => {
+    mocks.mockGoogleFetch.mockResolvedValue({ files: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await gdriveListTool.execute({ query: "name contains 'report'", parent_folder_id: "par-1" });
+    const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
+    expect(q).toContain("q=(name contains 'report') and 'par-1' in parents and trashed = false");
+    vi.restoreAllMocks();
+  });
+
+  it("parenthesises a user query holding ` or ` so it cannot escape the parent filter", async () => {
+    mocks.mockGoogleFetch.mockResolvedValue({ files: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await gdriveListTool.execute({ query: "name = 'a' or name = 'b'", parent_folder_id: "par-1" });
+    const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
+    expect(q).toContain("&q=(name = 'a' or name = 'b') and 'par-1' in parents and trashed = false");
+    vi.restoreAllMocks();
+  });
+
+  it("leaves a plain folder id unchanged", async () => {
+    mocks.mockGoogleFetch.mockResolvedValue({ files: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await gdriveListTool.execute({ parent_folder_id: "1AbC_d-9" });
+    const q = decodeURIComponent(String(mocks.mockGoogleFetch.mock.calls[0]![0]));
+    expect(q).toContain("q='1AbC_d-9' in parents and trashed = false");
+    vi.restoreAllMocks();
   });
 });

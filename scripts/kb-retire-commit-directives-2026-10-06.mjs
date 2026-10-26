@@ -20,10 +20,10 @@
 //
 // --dry-run still opens the database READ-WRITE through initDatabase (schema
 // exec + SCHEMA_MIGRATIONS + directive seeding): idempotent with the deployed
-// dist/, but not a read-only open. Only the jarvis_files registry rows and the
-// mirror files are updated: the pgvector and Google Drive copies are
-// fire-and-forget in upsertFile and are not updated from an operator shell
-// (the process exits first); they catch up on the next write of each file.
+// dist/, but not a read-only open. upsertFile's pgvector and Google Drive
+// syncs (and the INDEX.md regeneration) are fire-and-forget: when any row was
+// written, drainKbWrites (dist/db/kb-write-drain.js) settles them before the db
+// is closed.
 //
 // Usage (operator shell, after deploy so dist/ is current). BOTH env vars must
 // be UNSET for the live run (a mixed state refuses before opening anything):
@@ -34,12 +34,16 @@
 // dist/db/jarvis-fs.js); a disabled mirror (null) refuses.
 import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { requireOperatorContext } from "/root/claude/mission-control/dist/lib/operator-gate.js";
+
+// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
+requireOperatorContext("kb-retire-commit-directives", { tty: false });
 
 const LIVE_DB = "/root/claude/mission-control/data/mc.db";
 const DRY_RUN = process.argv.includes("--dry-run");
 
-// Mixed env states refuse BEFORE anything under dist/ is imported or any db is
-// opened (the imports below are dynamic for this reason): the live db with only
+// Mixed env states refuse BEFORE the db/KB modules under dist/ are imported or
+// any db is opened (the imports below are dynamic for this reason): the live db with only
 // the mirror override set would edit the live registry, write the mirror files
 // to the override dir and leave the live mirror stale.
 {
@@ -59,6 +63,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
 
 const { initDatabase, closeDatabase } = await import("/root/claude/mission-control/dist/db/index.js");
 const { upsertFile, getFile, getKbMirrorWriteDir } = await import("/root/claude/mission-control/dist/db/jarvis-fs.js");
+const { drainKbWrites } = await import("/root/claude/mission-control/dist/db/kb-write-drain.js");
 
 const DB_PATH = process.env.MC_DB_PATH ?? LIVE_DB;
 
@@ -205,6 +210,7 @@ try {
   console.error(err instanceof Refusal ? `REFUSED (nothing written): ${err.message}` : `ERROR: ${err.message}`);
   exitCode = err instanceof Refusal ? 2 : 1;
 } finally {
+  if (written.length > 0) await drainKbWrites();
   closeDatabase();
 }
 process.exit(exitCode);

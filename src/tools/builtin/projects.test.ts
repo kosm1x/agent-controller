@@ -6,10 +6,12 @@
  * gone); each is shown by its by-name placeholder and used by that name.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import {
   createProject,
+  findCredential,
+  findProjectBySiteUrl,
   formatProjectsBlock,
   getProject,
   getProjectLog,
@@ -252,7 +254,9 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     seedLegacy();
     const out = await projectUpdateTool.execute({
       slug: "legacy",
-      config: { deploy: { notes: "api_key=" + FAKE_GOOGLE_KEY }, phase: "beta" },
+      // Queue 3l ruling A: a `NAME=value` literal is refused (see below); a
+      // secret-shaped value with no name beside it is still stored hidden.
+      config: { deploy: { notes: FAKE_GOOGLE_KEY }, phase: "beta" },
       urls: { repo: FAKE_URL_WITH_USERINFO },
     });
     expect(JSON.parse(out).saved_secrets).toEqual({
@@ -265,7 +269,7 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
     const after = getProject("legacy")!;
     expect(after.config).toEqual({
       phase: "beta",
-      deploy: { notes: "api_key=" + FAKE_GOOGLE_KEY },
+      deploy: { notes: FAKE_GOOGLE_KEY },
     });
     expect(after.urls.repo).toBe(FAKE_URL_WITH_USERINFO);
     const r = resolveSecretRefs("http_fetch", {
@@ -273,7 +277,7 @@ describe("project_update — credentials are stored hidden (ruling 3c)", () => {
       body: "{{SECRET_LEGACY_CONFIG_DEPLOY_NOTES}}",
     });
     expect(r).toEqual({
-      args: { url: FAKE_URL_WITH_USERINFO, body: "api_key=" + FAKE_GOOGLE_KEY },
+      args: { url: FAKE_URL_WITH_USERINFO, body: FAKE_GOOGLE_KEY },
     });
   });
 
@@ -902,4 +906,150 @@ describe("queue 3b R2 audit folds — cap bounds the result, byte-exact echo, Un
       expect(getProject("w3-bad")).toBeNull();
     });
   }
+});
+
+describe("queue 3l ruling A — project_update refuses a credential literal next to its name in config", () => {
+  // Synthetic literals, assembled at runtime.
+  const LIT = "synthetic-" + "lit".repeat(3);
+  const HEX40 = "ab12".repeat(10);
+  const PATHLIT = "/opt/" + "q".repeat(9);
+  const update = async (args: Record<string, unknown>) =>
+    JSON.parse(await projectUpdateTool.execute(args)) as Record<string, unknown>;
+
+  const REFUSED: Array<[string, Record<string, unknown>, string]> = [
+    ["{name: pgpassword, value}", { db_env: [{ name: "pgpassword", value: LIT }] }, "config.db_env.0.value"],
+    ["{label: DB_PASS, default}", { opts: { label: "DB_PASS", default: LIT } }, "config.opts.default"],
+    ["tuple [PGPASSWORD, v] inside env:[...]", { env: [["PGPASSWORD", LIT]] }, "config.env.0.1"],
+    ["flat tuple env: [PGPASSWORD, v]", { env: ["PGPASSWORD", LIT] }, "config.env.1"],
+    ["{PGPASSWORD: {value}} (the key names its object)", { pg: { PGPASSWORD: { value: LIT } } }, "config.pg.PGPASSWORD.value"],
+    ["{PGPASSWORD: {value}} at the config root", { PGPASSWORD: { value: LIT } }, "config.PGPASSWORD.value"],
+    ["single DB_PASS=value string", { run: "DB_PASS=" + LIT }, "config.run"],
+    ["DB_PASS=value inside a list", { env: ["DB_PASS = " + LIT] }, "config.env.0"],
+    ["40-hex under a neutral key next to x_api_key", { hdr: { h: "x_api_key", data: HEX40 } }, "config.hdr.data"],
+    ["path-shaped literal next to PGPASSWORD (no URL/path exemption)", { db_env: [{ name: "PGPASSWORD", value: PATHLIT }] }, "config.db_env.0.value"],
+    ["URL-shaped literal next to a name", { db_env: [{ name: "PG_PASS", value: "https://example.invalid/x" }] }, "config.db_env.0.value"],
+    ["8-digit number next to a name", { db_env: [{ name: "PIN_KEY", value: 12345678 }] }, "config.db_env.0.value"],
+    ["a stored-reference placeholder as the value (the reference form is {name, secret})", { db_env: [{ name: "PGPASSWORD", value: "{{SECRET_ACME_X}}" }] }, "config.db_env.0.value"],
+    ["{api_keys: [v]} (a secret-value key names its list)", { api_keys: [LIT] }, "config.api_keys.0"],
+    // Audit C1: a SECRET_<NAME> spelling is a NAME unless held as a reference by position.
+    ["{name: SECRET_KEY, value}", { env: [{ name: "SECRET_KEY", value: "synthetic-insecure-" + "q".repeat(10) }] }, "config.env.0.value"],
+    ["tuple [SECRET_KEY_BASE, 64 chars]", { env: [["SECRET_KEY_BASE", "q".repeat(64)]] }, "config.env.0.1"],
+    ["{SECRET_KEY: {value}}", { SECRET_KEY: { value: "q".repeat(14) } }, "config.SECRET_KEY.value"],
+    ["SECRET_KEY=value string", { run: "SECRET_KEY=hunter2" + "hunter2" }, "config.run"],
+    // Audit W1: a padded name is trimmed before the name test.
+    ["leading-space name", { env: [{ name: " PGPASSWORD", value: LIT }] }, "config.env.0.value"],
+    ["trailing-tab name", { env: [["PGPASSWORD\t", LIT]] }, "config.env.0.1"],
+    // Audit W4: an env-shaped key that is not a secret-value name labels its list; the 8-char boundary.
+    ["{PGAUTHX: [v]} (env-shaped key names its list)", { PGAUTHX: [LIT] }, "config.PGAUTHX.0"],
+    ["exactly 8 chars next to a name", { db_env: [{ name: "PGPASSWORD", value: "q".repeat(8) }] }, "config.db_env.0.value"],
+    // Audit R2 C2: the reference form exempts only the non-value members from a member name.
+    ["{name, secret: SECRET_X, value}", { e: [{ name: "PGPASSWORD", secret: "SECRET_ACME_X", value: LIT }] }, "config.e.0.value"],
+    ["{name, Secret: SECRET_X, value}", { e: [{ name: "PGPASSWORD", Secret: "SECRET_ACME_X", value: LIT }] }, "config.e.0.value"],
+    ["{name: SECRET_KEY, secret: SECRET_X, value}", { e: [{ name: "SECRET_KEY", secret: "SECRET_ACME_X", value: LIT }] }, "config.e.0.value"],
+    ["{name, secret: SECRET_X, \" value\"} (padded value key)", { e: [{ name: "PGPASSWORD", secret: "SECRET_ACME_X", " value": LIT }] }, "config.e.0. value"],
+    ["{name, secret: SECRET_X, pw} (secret-value key)", { e: [{ name: "PGPASSWORD", secret: "SECRET_ACME_X", pw: LIT }] }, "config.e.0.pw"],
+    ["{name, secret: SECRET_X, auth_header} (fragment key)", { e: [{ name: "PGPASSWORD", secret: "SECRET_ACME_X", auth_header: LIT }] }, "config.e.0.auth_header"],
+    ["{PGPASSWORD: {secret: SECRET_X, v}} (parent label kept)", { PGPASSWORD: { secret: "SECRET_ACME_X", v: LIT } }, "config.PGPASSWORD.v"],
+    // Audit R2 W1: only a 2-element tuple holds a reference; in a 3-element one SECRET_X is a name,
+    // so PGPASSWORD itself is the first literal judged (env.0.0), before the literal at env.0.2.
+    ["3-element tuple [PGPASSWORD, SECRET_X, v]", { env: [["PGPASSWORD", "SECRET_ACME_X", LIT]] }, "config.env.0.0"],
+  ];
+
+  it("refuses each known shape on UPDATE, names path + {name, secret}, never echoes the literal, row unchanged", async () => {
+    createProject("lit-up", "Lit Up", { config: { phase: "live" } });
+    for (const [what, config, where] of REFUSED) {
+      const out = await update({ slug: "lit-up", config });
+      const err = String(out.error);
+      expect(err, what).toContain(`No guardé: ${where} `);
+      expect(err, what).toContain("{name, secret}");
+      expect(err, what).not.toContain(LIT);
+      expect(err, what).not.toContain(HEX40);
+      expect(err, what).not.toContain(PATHLIT);
+      expect(getProject("lit-up")!.config, what).toEqual({ phase: "live" });
+    }
+  });
+
+  it("refuses on CREATE too: no row is written", async () => {
+    for (const [what, config] of REFUSED) {
+      const out = await update({ slug: "lit-new", name: "Lit New", config });
+      expect(String(out.error), what).toContain("{name, secret}");
+      expect(getProject("lit-new"), what).toBeNull();
+    }
+  });
+
+  it("judges the MERGED config: a name and a literal sent in two calls are refused; an unchanged stored pair does not block other edits", async () => {
+    createProject("lit-split", "Lit Split", { config: { db: { name: "PGPASSWORD" }, root_name: "x" } });
+    const split = await update({ slug: "lit-split", config: { db: { value: LIT } } });
+    expect(String(split.error)).toContain("No guardé: config.db.value ");
+    const rootSplit = await update({ slug: "lit-split", config: { value: LIT, name: "PG_PASS" } });
+    expect(String(rootSplit.error)).toContain("No guardé: config.value ");
+    expect(getProject("lit-split")!.config).toEqual({ db: { name: "PGPASSWORD" }, root_name: "x" });
+    // A legacy row that already holds a pair: an unrelated edit passes, a NEW literal at the same path does not.
+    createProject("lit-legacy", "Lit Legacy", { config: { db: { name: "PGPASSWORD", value: LIT } } });
+    expect((await update({ slug: "lit-legacy", config: { phase: "beta" } })).error).toBeUndefined();
+    expect((await update({ slug: "lit-legacy", config: { db: { note: "x" } } })).error).toBeUndefined();
+    const changed = await update({ slug: "lit-legacy", config: { db: { value: LIT + "2" } } });
+    expect(String(changed.error)).toContain("No guardé: config.db.value ");
+    expect((getProject("lit-legacy")!.config.db as Record<string, unknown>).value).toBe(LIT);
+  });
+
+  it("queue 4p ruling (c): a spaced title next to a date is stored, not refused", async () => {
+    const out = await update({ slug: "lit-4p", name: "Lit 4p", config: { title: "Passport renewal", date: "2026-10-18" } });
+    expect(String(out.error ?? "")).not.toContain("No guardé");
+    expect(getProject("lit-4p")!.config).toEqual({ title: "Passport renewal", date: "2026-10-18" });
+  });
+
+  it("queue 4p ruling (a): a refusal logs path, fragment and slug only, never the value", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await update({ slug: "lit-log", config: { opts: { label: "DB_PASS", default: LIT } } });
+      const lines = warn.mock.calls.map((c) => c.map(String).join(" "));
+      expect(lines).toContain("[projects] 3l write gate refused config.opts.default (fragment PASS) for lit-log");
+      expect(lines.join("\n")).not.toContain(LIT);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("names the matched fragment in the reason", async () => {
+    const out = await update({ slug: "lit-frag", config: { opts: { label: "DB_PASS", default: LIT } } });
+    expect(out.error).toBe(
+      'No guardé: config.opts.default es un valor literal junto a un nombre con "PASS" (forma de credencial); guarda el valor en credentials y usa la referencia {name, secret}, no un valor literal.',
+    );
+  });
+
+  it("accepts the reference form, a name with no gated sibling, short values, and ordinary prose pairs", async () => {
+    const ACCEPTED: Array<[string, Record<string, unknown>]> = [
+      ["{name, secret: ref-id}", { db_env: [{ name: "PGPASSWORD", secret: "ref-id" }] }],
+      ["{name, secret: SECRET_<NAME>}", { db_env: [{ name: "PGPASSWORD", secret: "SECRET_ACME_PG_PASSWORD" }] }],
+      ["names with no gated sibling", { db_env: [{ name: "PGPASSWORD" }], meta: { label: "DB_PASS", n: "short" } }],
+      ["7-char string", { db_env: [{ name: "PGPASSWORD", value: "1234567" }] }],
+      ["7-char string (q×7)", { db_env: [{ name: "PGPASSWORD", value: "q".repeat(7) }] }],
+      // Audit W3: an object holding a `secret` reference is the reference form; its host is not judged.
+      ["{name, secret: SECRET_X, host}", { e: [{ name: "DB_PASSWORD", secret: "SECRET_DB", host: "db.example.invalid" }] }],
+      ["{name, Secret: SECRET_X} (any case)", { e: [{ name: "DB_PASSWORD", Secret: "SECRET_ACME_DB_PASSWORD" }] }],
+      ["bare tuple [NAME, SECRET_X]", { env: [["PGPASSWORD", "SECRET_ACME_PG_PASSWORD"]] }],
+      ["7-digit number", { db_env: [{ name: "PGPASSWORD", value: 1234567 }] }],
+      ["author/description pair", { author: "Persona Ejemplo", description: "Notas largas del proyecto de ejemplo" }],
+      ["a data list under an ordinary key", { keywords: ["cafeteria centro", "tostador artesanal"] }],
+      ["a neutral pair", { db_env: [{ name: "PG_HOST", value: "db.example.invalid" }] }],
+    ];
+    for (const [what, config] of ACCEPTED) {
+      const out = await update({ slug: "lit-ok", name: "Lit Ok", config });
+      expect(out.error, what).toBeUndefined();
+    }
+    expect(getProject("lit-ok")!.config.db_env).toEqual([{ name: "PG_HOST", value: "db.example.invalid" }]);
+  });
+});
+
+describe("queue 4ac — nested urls/credentials values are never read as strings", () => {
+  it("findCredential skips an object credential; findProjectBySiteUrl does not throw on an object urls.site", () => {
+    createProject("nested-vals", "Nested Vals", {
+      urls: { site: { primary: "https://nested.example.com" } },
+      credentials: { ftp: { host: "ftp.example.com", user: "deploy" } },
+    });
+    expect(findCredential("ftp")).toBeNull();
+    expect(() => findProjectBySiteUrl("https://nested.example.com/x")).not.toThrow();
+    expect(findProjectBySiteUrl("https://nested.example.com/x")).toBeNull();
+  });
 });

@@ -48,6 +48,16 @@ const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "qwen3p6-plus": { promptCostPer1k: 0.0008, completionCostPer1k: 0.002 },
   "glm-5p1": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0044 },
   "deepseek-v4-pro": { promptCostPer1k: 0.00174, completionCostPer1k: 0.00348 },
+  // SDK last-line candidates (source: docs.fireworks.ai/serverless/pricing,
+  // 2026-10-23; per-1k = $/1M ÷ 1000).
+  "minimax-m3": { promptCostPer1k: 0.0003, completionCostPer1k: 0.0012 },
+  "minimax-m3p1-flash": { promptCostPer1k: 0.00015, completionCostPer1k: 0.0006 },
+  "glm-5p3-flash": { promptCostPer1k: 0.00015, completionCostPer1k: 0.0005 },
+  "glm-5p3": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0044 },
+  "deepseek-v4p1-flash": { promptCostPer1k: 0.0003, completionCostPer1k: 0.0012 },
+  "kimi-k3": { promptCostPer1k: 0.003, completionCostPer1k: 0.015 },
+  "qwen3p8-max": { promptCostPer1k: 0.002, completionCostPer1k: 0.006 },
+  "gpt-oss-120b": { promptCostPer1k: 0.00015, completionCostPer1k: 0.0006 },
   // DeepSeek series
   "deepseek-v3": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },
   "deepseek-v3.2": { promptCostPer1k: 0.0014, completionCostPer1k: 0.0028 },

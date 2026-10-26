@@ -66,6 +66,7 @@ import {
   projectUpdateTool,
 } from "../builtin/projects.js";
 import { exaSearchTool } from "../builtin/exa-search.js";
+import { jinaSearchTool } from "../builtin/jina-search.js";
 import { expandReadTool } from "../builtin/expand-read.js";
 import { pdfReadTool } from "../builtin/pdf-read.js";
 import { hfGenerateTool, hfSpacesTool } from "../builtin/huggingface.js";
@@ -252,6 +253,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   projectGetTool,
   projectUpdateTool,
   exaSearchTool,
+  jinaSearchTool,
   expandReadTool,
   pdfReadTool,
   hfGenerateTool,

@@ -77,6 +77,7 @@ import {
   noteUndeclaredRefusal,
 } from "../tools/task-executor.js";
 import { currentRunOrigin, currentRunTaskId } from "../tools/rule-of-two.js";
+import { recordMutationFromResult } from "../db/task-mutations.js";
 // Seam metering + enforcement (V8.5 Phase 3.3). budget/service imports only
 // db/config/pricing — no static cycle back into the inference layer.
 import {
@@ -199,6 +200,32 @@ function finalTurnBodyLength(text: string): number {
   return text.slice(0, end).trim().length;
 }
 
+/** Queue 4ah-c: caps for the `tool.called` trace row's `arg_keys`. 32 keys
+ *  of 48 chars + the truncated flag stay under task-trace's ATTRS_MAX_CHARS
+ *  (2,000), so a worst-case row is never stored as a `truncated` wrapper. */
+const TRACE_ARG_KEYS_MAX = 32;
+const TRACE_ARG_KEY_MAX_CHARS = 48;
+
+/**
+ * `tool.called` trace attrs (operator ruling 2026-10-23): the KEY NAMES of a
+ * tool_use `input`, in insertion order — values NEVER leave this function.
+ * Non-object / array / null input → undefined (the row carries no attrs).
+ */
+function toolArgKeysAttrs(
+  input: unknown,
+): Record<string, unknown> | undefined {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return undefined;
+  }
+  const keys = Object.keys(input);
+  const argKeys = keys
+    .slice(0, TRACE_ARG_KEYS_MAX)
+    .map((k) => k.slice(0, TRACE_ARG_KEY_MAX_CHARS));
+  return keys.length > TRACE_ARG_KEYS_MAX
+    ? { arg_keys: argKeys, arg_keys_truncated: true }
+    : { arg_keys: argKeys };
+}
+
 /**
  * Concurrency is decided here, not by editing readOnlyHint (which feeds the
  * Rule-of-Two resolver). MCP-bridged tools stay serial: the browser server
@@ -245,6 +272,32 @@ function registerLiveQuery(
   }
   set.add(controller);
   return () => set.delete(controller);
+}
+
+/**
+ * The run's live queries' "pending set" listeners: called once, when the gate
+ * opens the run's card, so each query marks where its closing turn starts
+ * (queue 3r residual).
+ */
+const pendingSetListeners = new WeakMap<TaskExecutionContext, Set<() => void>>();
+
+/** @internal Live "pending set" listeners of `ctx`'s run (test-only). */
+export function pendingSetListenerCount(ctx: TaskExecutionContext): number {
+  return pendingSetListeners.get(ctx)?.size ?? 0;
+}
+
+/** Call `onPendingSet` when `ctx`'s card is opened; returns the release. */
+function registerPendingSetListener(
+  ctx: TaskExecutionContext,
+  onPendingSet: () => void,
+): () => void {
+  let set = pendingSetListeners.get(ctx);
+  if (!set) {
+    set = new Set();
+    pendingSetListeners.set(ctx, set);
+  }
+  set.add(onPendingSet);
+  return () => set.delete(onPendingSet);
 }
 
 /** Tool result for any call after the run's pending confirmation (queue 3r). */
@@ -379,6 +432,9 @@ function gateSdkToolCall(
     return JSON.stringify({ error: gate.error });
   }
   ctx.setPendingConfirmation(name, args);
+  for (const onPendingSet of pendingSetListeners.get(ctx) ?? []) {
+    onPendingSet();
+  }
   trace("confirmation_required", ctx.taskId);
   return JSON.stringify({
     error: "CONFIRMATION_REQUIRED",
@@ -431,6 +487,10 @@ function wrapTool(t: Tool) {
           t.name,
           args as Record<string, unknown>,
         );
+        // Queue 4t: record from raw, before the external filter (the mutation happened regardless).
+        const runTaskId = currentRunTaskId();
+        if (runTaskId !== undefined)
+          recordMutationFromResult(runTaskId, t.name, args, raw);
         const result = external
           ? filterExternalToolResult(t.name, raw, args)
           : raw;
@@ -818,6 +878,13 @@ export interface ClaudeSdkResult {
    */
   costAuthoritative: boolean;
   durationMs: number;
+  /**
+   * Typed class of an `[error_api_response — …]` terminal (the CLI's
+   * `SDKAssistantMessageError`: `overloaded`, `authentication_failed`, …;
+   * "unknown" when the CLI sent none). Unset on every other result. Read by
+   * the fast-runner's SDK last line (2026-10-23).
+   */
+  errorClass?: string;
 }
 
 /** Vision input: base64 image payload already split from the data URL. */
@@ -939,12 +1006,21 @@ export async function queryClaudeSdk(opts: {
   /**
    * Task-trace correlation (V8.5 Phase 6). When set, every assistant turn
    * emits `turn.completed` (turn tokens + wall-clock latency) and every
-   * tool_use block emits `tool.called` (round + bare tool name) to
+   * tool_use block emits `tool.called` (round + bare tool name +
+   * `attrs.arg_keys` = the input's key names, never values) to
    * task_trace_events. Unset (all non-task callers: chat fast-path,
    * briefing, critics) = zero overhead. Emits are best-effort by contract —
    * a trace failure never fails the query.
    */
   trace?: { taskId: string; runId?: string };
+  /**
+   * false = `trace` emits rows only and the V8.4 Stop hook stays unarmed.
+   * Prometheus goal legs (queryClaudeSdkAsInferWithTools) pass false: the
+   * hook judges the WHOLE task ledger, so a goal leg would be blocked by a
+   * sibling goal's plan gate, and plan gates never block by contract
+   * (orchestrator.ts). Queue 3p readout 2026-10-23.
+   */
+  gatesStopHook?: false;
 }): Promise<ClaudeSdkResult> {
   // Budget enforcement gate (V8.5 Phase 3.3) — dormant unless the operator
   // arms BOTH existing flags (BUDGET_ENABLED + BUDGET_ENFORCE, default off).
@@ -1116,6 +1192,8 @@ export async function queryClaudeSdk(opts: {
   const timeoutTimer = opts.unlimited
     ? undefined
     : setTimeout(() => {
+        // Queue 3r: an abort that already happened is never a timeout.
+        if (abortController.signal.aborted) return;
         console.warn(
           `[claude-sdk] Query timed out after ${SDK_TIMEOUT_MS / 1000}s — aborting`,
         );
@@ -1146,9 +1224,10 @@ export async function queryClaudeSdk(opts: {
   // while a runnable acceptance gate is FAILED. Null when dormant
   // (TASK_GATES_STOP_HOOK unset / mode off / task has no ledger / no task id)
   // so the options object below is byte-for-byte today's shape.
-  const rawGatesStopHook = opts.trace?.taskId
-    ? releaseProbeOnThrow(() => makeGatesStopHook(opts.trace!.taskId))
-    : null;
+  const rawGatesStopHook =
+    opts.trace?.taskId && opts.gatesStopHook !== false
+      ? releaseProbeOnThrow(() => makeGatesStopHook(opts.trace!.taskId))
+      : null;
   // The block reason quotes gate evidence (command output) back to the model.
   const gatesStopHook = rawGatesStopHook
     ? scrubHookOutput(rawGatesStopHook)
@@ -1279,6 +1358,8 @@ export async function queryClaudeSdk(opts: {
   /** Typed error class the CLI stamps on its synthetic error assistant
    *  message (`authentication_failed`, `overloaded`, …). */
   let assistantErrorClass: string | null = null;
+  /** Stamped on the result when the run ended on an API error (is_error). */
+  let errorClass: string | undefined;
   let usage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -1320,6 +1401,14 @@ export async function queryClaudeSdk(opts: {
   const runCtx = currentExecutionContext();
   const releaseLiveQuery = runCtx
     ? registerLiveQuery(runCtx, abortController)
+    : () => {};
+  // Queue 3r residual: where the accumulator stood when the gate opened the
+  // run's card — the turn-ended path delivers only the text after it.
+  let pendingMark: number | null = null;
+  const releasePendingSet = runCtx
+    ? registerPendingSetListener(runCtx, () => {
+        pendingMark = streamingText.length;
+      })
     : () => {};
   const turnEndedByGate = (): boolean =>
     abortController.signal.reason === PENDING_TURN_ENDED_ABORT_REASON;
@@ -1417,13 +1506,18 @@ export async function queryClaudeSdk(opts: {
         // from turnUsage (per-call, not cumulative).
         if (opts.trace) {
           const turnLatencyMs = Date.now() - lastTurnEndedAt;
-          for (const tool of toolCallNames.slice(toolCountBeforeTurn)) {
+          // Queue 4ah-c (ruling 2026-10-23): each row carries the KEY NAMES
+          // of its own tool_use input (toolCallsWithArgs is index-aligned
+          // with toolCallNames), never the values.
+          for (let i = toolCountBeforeTurn; i < toolCallNames.length; i++) {
+            const attrs = toolArgKeysAttrs(toolCallsWithArgs[i]?.input);
             emitTraceEvent({
               taskId: opts.trace.taskId,
               runId: opts.trace.runId,
               name: "tool.called",
               round: assistantTurns,
-              tool,
+              tool: toolCallNames[i],
+              ...(attrs ? { attrs } : {}),
             });
           }
           emitTraceEvent({
@@ -1537,6 +1631,8 @@ export async function queryClaudeSdk(opts: {
             const rawErrText = resolvedResult.trim();
             const errText = rawErrText || "unknown";
             const marker = `[error_api_response — ${assistantErrorClass ?? "unknown"}, status ${success.api_error_status ?? "n/a"}: ${errText}]`;
+            // Both variants below (partial and zero-output BLOCKED) carry it.
+            errorClass = assistantErrorClass ?? "unknown";
             console.warn(`[claude-sdk] result is_error: ${marker}`);
             // The CLI streams the same error text as a synthetic assistant
             // message — that is not content. Strip every copy, and only a
@@ -1672,19 +1768,25 @@ export async function queryClaudeSdk(opts: {
 
   clearTimeout(timeoutTimer);
   releaseLiveQuery();
+  releasePendingSet();
 
   // Queue 3r: the gate ended the turn after a pending confirmation — a
-  // working provider and a clean end. The text is what the model produced so
-  // far (may be empty: the fast runner then shows the confirmation card).
+  // working provider and a clean end. The text is the closing turn only:
+  // what the model streamed after the card opened, never the narration
+  // before the gated call (may be empty: the fast runner then shows the
+  // confirmation card).
   if (turnEndedByGate()) {
     providerOutcome = "success";
-    if (!resultText) resultText = streamingText;
+    if (!resultText) {
+      resultText = streamingText.slice(pendingMark ?? 0).trimStart();
+    }
   }
 
   // Timeout with zero content is always a failure signal regardless of
   // what the for-await loop classified it as — the provider couldn't
-  // answer within 15 minutes.
-  if (timedOut && !streamingText) {
+  // answer within 15 minutes. Not after the gate's turn end: the timer can
+  // still fire between that abort and the unwind (queue 3r residual).
+  if (timedOut && !streamingText && !turnEndedByGate()) {
     providerOutcome = "failure";
   }
 
@@ -1709,6 +1811,10 @@ export async function queryClaudeSdk(opts: {
       (providerOutcome === "success" && resultText.trim().length > 0) ||
       streamingText.trim().length > 0;
     providerOutcome = "success";
+    // A refused turn is not an API outage: never hand the caller a typed
+    // error class (the fast-runner would send the refused request to the
+    // SDK last line).
+    errorClass = undefined;
     if (!hadRealAnswer) {
       const cat = refusalCategory ? ` (category: ${refusalCategory})` : "";
       resultText =
@@ -1753,7 +1859,8 @@ export async function queryClaudeSdk(opts: {
 
   // If the loop ended without a "result" success message but streaming text
   // exists (e.g. abort signaled externally), fall back to streamed text.
-  if (!resultText && streamingText) {
+  // Not after the gate's turn end: an empty closing turn stays empty.
+  if (!resultText && streamingText && !turnEndedByGate()) {
     resultText = streamingText;
   }
 
@@ -1831,6 +1938,7 @@ export async function queryClaudeSdk(opts: {
     costUsd,
     costAuthoritative,
     durationMs,
+    ...(errorClass !== undefined && { errorClass }),
   };
   benchmarkOverride?.tap?.(result);
   return result;
@@ -2197,6 +2305,8 @@ export async function queryClaudeSdkAsInferWithTools(
     model?: string;
     effort?: "low" | "medium" | "high" | "max";
     costLedger?: CostLedgerAttribution | false;
+    /** Rows only — the Stop hook stays unarmed (queue 3p readout 2026-10-23). */
+    trace?: { taskId: string; runId?: string };
   },
 ): Promise<{
   content: string;
@@ -2256,6 +2366,7 @@ export async function queryClaudeSdkAsInferWithTools(
     taskBudgetTokens,
     abortSignal: options?.signal,
     costLedger: options?.costLedger,
+    ...(options?.trace && { trace: options.trace, gatesStopHook: false }),
   });
 
   // Build a synthetic assistant turn with all tool calls collapsed into one

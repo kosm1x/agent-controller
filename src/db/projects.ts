@@ -19,8 +19,8 @@ export interface Project {
   name: string;
   description: string;
   status: string;
-  urls: Record<string, string>;
-  credentials: Record<string, string>;
+  urls: Record<string, unknown>;
+  credentials: Record<string, unknown>;
   config: Record<string, unknown>;
   commit_goal_id: string | null;
   created_at: string;
@@ -341,9 +341,8 @@ export function getProjectLog(
 export function findCredential(key: string): string | null {
   const projects = listProjects("active");
   for (const project of projects) {
-    if (project.credentials[key]) {
-      return project.credentials[key];
-    }
+    const v = project.credentials[key];
+    if (typeof v === "string" && v) return v;
   }
   return null;
 }
@@ -353,7 +352,8 @@ export function findProjectBySiteUrl(url: string): Project | null {
   const projects = listProjects();
   const normalized = url.replace(/\/+$/, "").toLowerCase();
   for (const project of projects) {
-    const siteUrl = (project.urls.site ?? "").replace(/\/+$/, "").toLowerCase();
+    const site = project.urls.site;
+    const siteUrl = (typeof site === "string" ? site : "").replace(/\/+$/, "").toLowerCase();
     if (siteUrl && normalized.includes(siteUrl)) {
       return project;
     }

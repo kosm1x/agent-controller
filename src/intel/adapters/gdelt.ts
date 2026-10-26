@@ -1,34 +1,66 @@
 /**
- * GDELT adapter — fetches recent conflict/crisis articles from GDELT API v2.
- * No auth required. Polling: 15 minutes, last hour newest-first.
- * Timeouts are generous because since 2026-09-23 GDELT's TLS handshake alone
- * takes 10-13 s from this VPS (undici's default 10 s connect timeout failed it)
- * and successful responses take 13-20 s.
+ * GDELT adapter — reads the published 15-minute event files from
+ * data.gdeltproject.org (static host). The API host (api.gdeltproject.org)
+ * rate-limits this VPS's IP with HTTP 429 even for trivial queries, so the
+ * API is no longer used.
+ *
+ * Flow: lastupdate.txt -> latest export.CSV.zip -> tab-separated events.
  */
 
-import { Agent } from "undici";
+import { inflateRawSync } from "node:zlib";
 import type { CollectorAdapter, Signal } from "../types.js";
 import { contentHash } from "../signal-store.js";
 import { httpError } from "./http-error.js";
 
-const API_URL =
-  "https://api.gdeltproject.org/api/v2/doc/doc?query=(conflict%20OR%20crisis%20OR%20sanctions)&mode=ArtList&format=json&maxrecords=50&timespan=1h&sort=DateDesc";
-export const GDELT_TIMEOUT_MS = 45_000;
-export const GDELT_CONNECT_TIMEOUT_MS = 30_000;
-const dispatcher = new Agent({ connectTimeout: GDELT_CONNECT_TIMEOUT_MS });
+export const GDELT_LASTUPDATE_URL =
+  "https://data.gdeltproject.org/gdeltv2/lastupdate.txt";
+export const GDELT_TIMEOUT_MS = 30_000;
+const MAX_ZIP_BYTES = 20 * 1024 * 1024;
+const MAX_EVENTS = 15;
+// GDELT 2.0 export columns (0-indexed, 61 columns)
+const COL = {
+  quadClass: 29,
+  goldstein: 30,
+  mentions: 31,
+  tone: 34,
+  geoName: 52,
+  lat: 56,
+  lon: 57,
+  url: 60,
+} as const;
+const COLUMNS = 61;
 
-interface GDELTArticle {
-  url: string;
-  title: string;
-  seendate: string;
-  domain: string;
-  language: string;
-  sourcecountry: string;
-  socialimage?: string;
+/** Extract the first entry of a zip archive (deflate or stored). */
+export function unzipFirstEntry(buf: Buffer): string {
+  if (buf.length < 30 || buf.readUInt32LE(0) !== 0x04034b50) {
+    throw new Error("not a zip archive");
+  }
+  const flags = buf.readUInt16LE(6);
+  const method = buf.readUInt16LE(8);
+  const compSize = buf.readUInt32LE(18);
+  const start = 30 + buf.readUInt16LE(26) + buf.readUInt16LE(28);
+  // Bit 3: sizes live in a data descriptor; take the rest and let inflate stop.
+  const end = flags & 8 || compSize === 0 ? buf.length : start + compSize;
+  const data = buf.subarray(start, end);
+  if (method === 0) return data.toString("utf8");
+  if (method === 8) return inflateRawSync(data).toString("utf8");
+  throw new Error(`unsupported zip method ${method}`);
 }
 
-interface GDELTResponse {
-  articles?: GDELTArticle[];
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GDELT_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      // Name the file: lastupdate.txt and the export zip 404 for different reasons.
+      const file = new URL(url).pathname.split("/").pop();
+      throw new Error(`${(await httpError(res)).message} (${file})`);
+    }
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const gdeltAdapter: CollectorAdapter = {
@@ -37,61 +69,94 @@ export const gdeltAdapter: CollectorAdapter = {
   defaultInterval: 15 * 60_000,
 
   async collect(): Promise<Signal[]> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GDELT_TIMEOUT_MS);
+    const listing = await (await fetchWithTimeout(GDELT_LASTUPDATE_URL)).text();
+    const exportLine = listing
+      .split("\n")
+      .find((l) => l.includes(".export.CSV.zip"));
+    const exportUrl = exportLine?.trim().split(/\s+/)[2];
+    if (!exportUrl) {
+      throw new Error(
+        `no export file in lastupdate.txt — ${listing.slice(0, 100).replace(/\s+/g, " ")}`,
+      );
+    }
+    const zipRes = await fetchWithTimeout(exportUrl.replace(/^http:/, "https:"));
+    const zip = Buffer.from(await zipRes.arrayBuffer());
+    if (zip.length > MAX_ZIP_BYTES) throw new Error("export zip too large");
 
-    try {
-      const res = await fetch(API_URL, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-        dispatcher,
-        // undici 7's Agent type != Node's bundled undici-types Dispatcher;
-        // runtime contract is identical (same pattern as lib/url-safety.ts).
-      } as unknown as RequestInit);
-      if (!res.ok) throw await httpError(res);
+    const rows = unzipFirstEntry(zip)
+      .split("\n")
+      .map((l) => l.split("\t"))
+      .filter((c) => c.length === COLUMNS);
+    if (rows.length === 0) throw new Error("export has no valid event rows");
 
-      const data = (await res.json()) as GDELTResponse;
-      const articles = data.articles ?? [];
-      const signals: Signal[] = [];
+    const goldstein = rows.map((c) => parseFloat(c[COL.goldstein]));
+    const tone = rows.map((c) => parseFloat(c[COL.tone]));
+    const avg = (xs: number[]): number | undefined => {
+      const v = xs.filter((x) => Number.isFinite(x));
+      return v.length
+        ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 100) / 100
+        : undefined;
+    };
 
-      // Article count metric (for delta engine)
+    const signals: Signal[] = [
+      {
+        source: "gdelt",
+        domain: "geopolitical",
+        signalType: "numeric",
+        key: "events_count",
+        valueNumeric: rows.length,
+      },
+    ];
+    const g = avg(goldstein);
+    if (g !== undefined) {
       signals.push({
         source: "gdelt",
         domain: "geopolitical",
         signalType: "numeric",
-        key: "conflict_articles",
-        valueNumeric: articles.length,
+        key: "goldstein_avg",
+        valueNumeric: g,
       });
-
-      // Individual articles (top 15)
-      for (const a of articles.slice(0, 15)) {
-        signals.push({
-          source: "gdelt",
-          domain: "geopolitical",
-          signalType: "article",
-          key: "gdelt_article",
-          valueText: a.title,
-          contentHash: contentHash(a.url),
-          sourceTimestamp: a.seendate
-            ? new Date(
-                a.seendate.replace(
-                  /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/,
-                  "$1-$2-$3T$4:$5:$6Z",
-                ),
-              ).toISOString()
-            : undefined,
-          metadata: {
-            url: a.url,
-            source_domain: a.domain,
-            country: a.sourcecountry,
-            language: a.language,
-          },
-        });
-      }
-
-      return signals;
-    } finally {
-      clearTimeout(timeout);
     }
+    const t = avg(tone);
+    if (t !== undefined) {
+      signals.push({
+        source: "gdelt",
+        domain: "geopolitical",
+        signalType: "numeric",
+        key: "avg_tone",
+        valueNumeric: t,
+      });
+    }
+
+    // Material-conflict events (QuadClass 4), most-mentioned first, one per URL.
+    const seen = new Set<string>();
+    const conflict = rows
+      .filter((c) => c[COL.quadClass] === "4" && /^https?:\/\//.test(c[COL.url]))
+      .sort((a, b) => Number(b[COL.mentions]) - Number(a[COL.mentions]));
+    for (const c of conflict) {
+      if (signals.length >= 3 + MAX_EVENTS) break;
+      const url = c[COL.url].trim();
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const lat = parseFloat(c[COL.lat]);
+      const lon = parseFloat(c[COL.lon]);
+      signals.push({
+        source: "gdelt",
+        domain: "geopolitical",
+        signalType: "event",
+        key: "gdelt_event",
+        valueText: c[COL.geoName] || url,
+        contentHash: contentHash(url),
+        geoLat: Number.isFinite(lat) ? lat : undefined,
+        geoLon: Number.isFinite(lon) ? lon : undefined,
+        metadata: {
+          url,
+          goldstein: parseFloat(c[COL.goldstein]),
+          tone: parseFloat(c[COL.tone]),
+          mentions: Number(c[COL.mentions]),
+        },
+      });
+    }
+    return signals;
   },
 };

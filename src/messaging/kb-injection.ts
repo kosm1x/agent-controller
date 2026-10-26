@@ -71,9 +71,8 @@ export function conditionMatches(
  * Detect Rumi / creative-poetry requests in message text.
  *
  * Returns true when the message is asking for a Rumi poem by Rumi.
- * When true, `buildKnowledgeBaseSections` force-injects into the variable layer:
- *   - `knowledge/Rumi/INDEX.md`  (which poems have already been delivered)
- *   - `knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md`
+ * When true, `buildKnowledgeBaseSections` force-injects every path in
+ * `RUMI_GUARDRAIL_PATHS` into the variable layer.
  *
  * This is the structural guardrail that prevents the fast runner from skipping
  * the SOP and serving a duplicate poem straight from training memory.
@@ -90,6 +89,18 @@ export function detectRumiRequest(text: string): boolean {
   // Fire on bare "rumi" mention OR poem-request-with-rumi context
   return hasRumi || (hasPoem && hasRumi);
 }
+
+/**
+ * KB files the Rumi guardrail force-injects, in prompt order. The SOP comes
+ * first because it carries the no-repeat rule and the delivery-record step;
+ * the index and the delivery log are what that rule is checked against.
+ */
+export const RUMI_GUARDRAIL_PATHS = [
+  "knowledge/procedures/rumi-poemas.md", // the operative SOP (no-repeat rule, delivery record)
+  "knowledge/Rumi/INDEX.md",
+  "knowledge/rumi-delivery-log.md",
+  "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
+] as const;
 
 /** KB row written by scripts/kb-preview-directive.mjs (operator-run). */
 const PREVIEW_DIRECTIVE_PATH = "directives/preview-publishing.md";
@@ -302,16 +313,16 @@ function collectVariableSections(
       }
     }
 
-    // Rumi SOP guardrail: force-inject Index + SOP on any Rumi/poem request.
-    // Without this, the LLM answers from training memory and bypasses the SOP,
-    // causing duplicate poems to be served (3 documented incidents: 2026-04-06,
-    // 2026-05-19, 2026-05-23).
+    // Rumi SOP guardrail: force-inject the SOP, Index and delivery log on any
+    // Rumi/poem request. Without this, the LLM answers from training memory and
+    // bypasses the SOP, causing duplicate poems to be served (3 documented
+    // incidents: 2026-04-06, 2026-05-19, 2026-05-23). The operative SOP
+    // (rumi-poemas.md, rewritten 2026-09-13) and the delivery log (created
+    // 2026-08-04) post-date the 05-23 guardrail and nothing it injected pointed
+    // at them, so the SOP reached the prompt only as a pgvector fragment and
+    // was skipped (task 12551, 2026-10-26).
     if (detectRumiRequest(messageText)) {
-      const rumiPaths = [
-        "knowledge/Rumi/INDEX.md",
-        "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
-      ];
-      for (const rumiPath of rumiPaths) {
+      for (const rumiPath of RUMI_GUARDRAIL_PATHS) {
         try {
           const rumiFile = getFile(rumiPath);
           if (rumiFile && rowAllowed(rumiFile)) {

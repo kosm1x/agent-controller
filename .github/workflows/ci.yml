@@ -27,6 +27,18 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npx tsc --noEmit
+      - name: tsc (test files)
+        # A test-file pattern in an exclude list would make this pass
+        # vacuously, so the step also asserts the test files are in the program.
+        run: |
+          npx tsc -p tsconfig.test.json
+          files=$(npx tsc -p tsconfig.test.json --listFilesOnly)
+          n=$(printf '%s\n' "$files" | grep -c '\.test\.ts$' || true)
+          s=$(printf '%s\n' "$files" | grep -c '/scripts/.*\.test\.ts$' || true)
+          if ! test "$n" -gt 500 || ! test "$s" -gt 0; then
+            echo "tsconfig.test.json type-checks only $n test files ($s under scripts/; expected > 500 and > 0): an exclude or a dropped include makes this gate pass vacuously" >&2
+            exit 1
+          fi
 
   test:
     runs-on: ubuntu-latest

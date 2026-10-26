@@ -15,9 +15,24 @@ vi.mock("../inference/adapter.js", () => ({
   inferWithTools: vi.fn(),
 }));
 
-// Force openai path — SDK path covered by claude-sdk.test.ts.
+// Force openai path — SDK path covered by claude-sdk.test.ts. The trace
+// describe (queue 3p readout 2026-10-23) flips it to claude-sdk for its tests.
+const provider = vi.hoisted(() => ({ value: "openai" }));
 vi.mock("../config.js", () => ({
-  getConfig: () => ({ inferencePrimaryProvider: "openai" }),
+  getConfig: () => ({ inferencePrimaryProvider: provider.value }),
+}));
+
+// SDK seam for the trace describe: the tier wrapper runs its callback once.
+const sdk = vi.hoisted(() => ({
+  asInferWithTools: vi.fn(),
+  asInfer: vi.fn(),
+}));
+vi.mock("../inference/claude-sdk.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inference/claude-sdk.js")>()),
+  queryClaudeSdkTiered: <T,>(_useOpus: boolean, fn: (m: string) => Promise<T>) =>
+    fn("model-test"),
+  queryClaudeSdkAsInferWithTools: sdk.asInferWithTools,
+  queryClaudeSdkAsInfer: sdk.asInfer,
 }));
 
 // Mock jarvis_files DB so the kb-injection helper has deterministic input
@@ -108,6 +123,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Listo" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
@@ -132,6 +150,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Goal achieved successfully" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
     });
 
@@ -173,6 +194,9 @@ describe("executeGoal", () => {
         { role: "assistant", content: "Done with tools" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 200, completion_tokens: 100 },
     });
 
@@ -192,6 +216,9 @@ describe("executeGoal", () => {
           { role: "assistant", content: "Succeeded on retry" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       });
 
@@ -230,6 +257,9 @@ describe("executeGoal", () => {
           { role: "assistant", content: "Succeeded after breaker recovered" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 20, completion_tokens: 10 },
       });
 
@@ -264,6 +294,9 @@ describe("executeGoal", () => {
         content: "ok",
         messages: [{ role: "assistant", content: "ok" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 10 },
       };
     });
@@ -286,6 +319,9 @@ describe("executeGraph", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     }));
     const graph = new GoalGraph();
@@ -349,6 +385,9 @@ describe("executeGraph", () => {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -381,6 +420,9 @@ describe("executeGraph", () => {
         content: "Done",
         messages: [{ role: "assistant", content: "Done" }],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
       };
     });
@@ -565,6 +607,9 @@ describe("selfAssess", () => {
         { role: "assistant", content: "Goal output" },
       ],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       // no `model` from the main call (mock doesn't surface it)
     });
@@ -597,6 +642,9 @@ describe("executeGoal self-assessment integration", () => {
           { role: "assistant", content: "Partial result without chart" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       })
       // Second inferWithTools: after reflection, produces complete output
@@ -607,6 +655,9 @@ describe("executeGoal self-assessment integration", () => {
           { role: "assistant", content: "Complete result with chart included" },
         ],
         toolRepairs: [],
+        exitReason: "natural",
+        roundsCompleted: 1,
+        contextPressure: 0,
         totalUsage: { prompt_tokens: 150, completion_tokens: 60 },
       });
 
@@ -654,6 +705,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 
@@ -671,6 +725,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Still incomplete",
       messages: [{ role: "assistant", content: "Still incomplete" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
 
@@ -707,6 +764,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
     mockInfer.mockResolvedValueOnce({
@@ -731,6 +791,9 @@ describe("executeGoal self-assessment integration", () => {
       content: "Done",
       messages: [{ role: "assistant", content: "Done" }],
       toolRepairs: [],
+      exitReason: "natural",
+      roundsCompleted: 1,
+      contextPressure: 0,
       totalUsage: { prompt_tokens: 50, completion_tokens: 25 },
     });
     const goal = makeGoal({ completionCriteria: [] });
@@ -897,5 +960,99 @@ describe("selfAssess — tool-call audit + truncation window (2026-05-26)", () =
     await selfAssess(goal, fullOutput, []);
     expect(capturedUserContent).toContain(fullOutput);
     expect(capturedUserContent).not.toContain("elided");
+  });
+});
+
+// Queue 3p readout 2026-10-23: Prometheus goal legs emitted no tool.called
+// rows because the executor never passed `trace` to the SDK.
+describe("executeGoal / executeGraph — SDK trace pass-through", () => {
+  const TRACE = { taskId: "t-1", runId: "r-1" };
+  const sdkResult = (content: string) => ({
+    content,
+    messages: [{ role: "assistant", content }],
+    totalUsage: { prompt_tokens: 1, completion_tokens: 1 },
+    toolRepairs: [],
+    exitReason: "natural",
+    roundsCompleted: 1,
+    contextPressure: 0,
+  });
+  const verdict = (met: boolean) => ({
+    content: JSON.stringify({
+      met,
+      unmetCriteria: met ? [] : ["criterion 1"],
+      reasoning: "r",
+    }),
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+  });
+  const optionsOf = (i: number) =>
+    sdk.asInferWithTools.mock.calls[i][3] as Record<string, unknown>;
+
+  beforeEach(() => {
+    provider.value = "claude-sdk";
+    sdk.asInferWithTools.mockReset();
+    sdk.asInfer.mockReset();
+    sdk.asInferWithTools.mockResolvedValue(sdkResult("Listo"));
+    sdk.asInfer.mockResolvedValue(verdict(true));
+  });
+  afterEach(() => {
+    provider.value = "openai";
+  });
+
+  it("with trace: the goal leg's SDK options carry it", async () => {
+    const r = await executeGoal(
+      makeGoal(),
+      "",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      TRACE,
+    );
+    expect(r.ok).toBe(true);
+    expect(sdk.asInferWithTools).toHaveBeenCalledTimes(1);
+    expect(optionsOf(0).trace).toStrictEqual(TRACE);
+  });
+
+  it("without trace: the options carry no trace key (today's shape)", async () => {
+    await executeGoal(makeGoal(), "");
+    expect(sdk.asInferWithTools).toHaveBeenCalledTimes(1);
+    expect(optionsOf(0)).not.toHaveProperty("trace");
+  });
+
+  it("the self-assessment retry leg carries the trace too", async () => {
+    sdk.asInfer
+      .mockResolvedValueOnce(verdict(false))
+      .mockResolvedValueOnce(verdict(true));
+    await executeGoal(
+      makeGoal(),
+      "",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      TRACE,
+    );
+    expect(sdk.asInferWithTools).toHaveBeenCalledTimes(2);
+    expect(optionsOf(1).trace).toStrictEqual(TRACE);
+  });
+
+  it("executeGraph hands its trace to every goal", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-a", description: "A", completionCriteria: [] });
+    graph.addGoal({ id: "g-b", description: "B", completionCriteria: [] });
+    await executeGraph(
+      graph,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      TRACE,
+    );
+    expect(sdk.asInferWithTools).toHaveBeenCalledTimes(2);
+    expect(optionsOf(0).trace).toStrictEqual(TRACE);
+    expect(optionsOf(1).trace).toStrictEqual(TRACE);
   });
 });

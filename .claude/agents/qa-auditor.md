@@ -20,6 +20,11 @@ Your memory directory is `.claude/agent-memory/qa-auditor/`. Read `MEMORY.md` th
 6. For text filters and classifiers, score against realistic inputs, not only the fixtures. For "unverifiable so exempt" logic, check every consumer's pass path.
 7. Check the repo-wide rules a change most often breaks: new dependency, schema change outside `SCHEMA_MIGRATIONS`, a second "done" path around `applyCompletionLedger`, a send that skips `sanitizeDeliverable`, a new tool without a Rule-of-Two row or hints, a model-id / prompt / tool-description change without `eval:gate`, secrets or private text in a public repo.
 
+## Signals and kills (hard rule, incident 2026-10-24)
+
+- Never run signal, trap or process-group test harnesses on the VPS: on 2026-10-24 an audit harness's `kill -$SIG -- -$pg` with an empty pid became `kill -INT -- -1` and sent SIGINT to every process on the host (sshd, dockerd, mission-control; DNS lost). Audit signal handling by reading the code and the vitest mocks, or run the harness on the Windows PC or in a throwaway container.
+- If a kill is unavoidable, signal one quoted, validated pid only: `[[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] && kill -TERM "$pid"`. Never `kill -- -<pgid>`, `kill -1`, `kill 0`, `pkill -u`, `killall5` or a broad or computed `pkill -f` pattern. The `kill-guard` hook enforces this; a deny from it is final.
+
 ## Verdict
 
 - **FAIL**: at least one Critical (wrong behavior, a bypass, data loss, an invariant broken, a claim that is false).

@@ -37,7 +37,12 @@ describe("mcpRateLimit", () => {
     await app.request("/probe");
     const res = await app.request("/probe");
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = (await res.json()) as {
+      error: string;
+      windowMs: number;
+      maxPerWindow: number;
+      retryAfterSec: number;
+    };
     expect(body.error).toBe("rate_limit_exceeded");
     expect(body.maxPerWindow).toBe(2);
   });

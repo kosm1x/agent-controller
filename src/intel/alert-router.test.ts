@@ -150,6 +150,44 @@ describe("alert-router", () => {
     });
   });
 
+  describe("formatChange (via alert titles)", () => {
+    const title = (d: Partial<Delta>) =>
+      evaluateDeltas([
+        {
+          source: "gdelt",
+          key: "goldstein_avg",
+          previous: 0.3,
+          current: 1.46,
+          changeRatio: 1.16,
+          severity: "moderate",
+          ...d,
+        },
+      ])[0].title;
+
+    it("shows the absolute change for a count metric", () => {
+      expect(title({})).toBe("🟡 gdelt/goldstein_avg: 0.3 ↑ 1.46 (Δ +1.16)");
+      expect(title({ previous: 1.46, current: 0.7 })).toBe(
+        "🟡 gdelt/goldstein_avg: 1.46 ↓ 0.7 (Δ -0.76)",
+      );
+      // 0.1 - 0.3 is -0.19999999999999998 in floating point
+      expect(title({ previous: 0.3, current: 0.1 })).toBe(
+        "🟡 gdelt/goldstein_avg: 0.3 ↓ 0.1 (Δ -0.2)",
+      );
+    });
+
+    it("keeps the percent for a numeric metric", () => {
+      expect(
+        title({ source: "frankfurter", key: "MXN", previous: 17, current: 18 }),
+      ).toBe("🟡 frankfurter/MXN: 17 ↑ 18 (+5.9%)");
+    });
+
+    it("marks a first observation", () => {
+      expect(title({ previous: null })).toBe(
+        "🟡 gdelt/goldstein_avg: 1.46 (first observation)",
+      );
+    });
+  });
+
   describe("shouldSuppress", () => {
     it("returns false when no recent alerts exist", () => {
       mockDb.prepare.mockReturnValue({

@@ -28,9 +28,9 @@
  */
 
 import Database from "better-sqlite3";
-import { realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 export interface KbFileRow {
   path: string;
@@ -145,13 +145,6 @@ function main(): void {
   console.log("No auto-fix: merges/moves are operator decisions.");
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
-};
-if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   main();
 }

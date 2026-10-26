@@ -53,6 +53,9 @@ export type TraceEventName =
   // placeholder refused, and a model request not sent (scrub unavailable)
   | "tool.secret_ref_refused"
   | "inference.scrub_unavailable"
+  // SDK last line (2026-10-23): the fallback provider ran after the SDK
+  // failed ({provider, model, reason: throw | auth | api_error, errorClass?})
+  | "inference.lastline"
   | "turn.completed"
   | "task.completed"
   | "task.failed"

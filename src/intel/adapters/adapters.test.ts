@@ -6,11 +6,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { usgsAdapter } from "./usgs.js";
 import { nwsAdapter } from "./nws.js";
-import {
-  gdeltAdapter,
-  GDELT_CONNECT_TIMEOUT_MS,
-  GDELT_TIMEOUT_MS,
-} from "./gdelt.js";
+import { gdeltAdapter } from "./gdelt.js";
+import { geoRssAdapter, GEO_FEEDS } from "./geo-rss.js";
+import { deflateRawSync } from "node:zlib";
 import { frankfurterAdapter } from "./frankfurter.js";
 import { cisaKevAdapter } from "./cisa-kev.js";
 import { coingeckoAdapter } from "./coingecko.js";
@@ -34,7 +32,7 @@ afterEach(() => {
 
 function testAdapterContract(
   adapter: CollectorAdapter,
-  format: "json" | "xml" = "json",
+  format: "json" | "xml" | "text" = "json",
 ): void {
   describe(`${adapter.source} adapter contract`, () => {
     beforeEach(() => {
@@ -78,13 +76,15 @@ function testAdapterContract(
         text: async () => `<html>\n<h1>Bad\tGateway</h1>\n${"x".repeat(500)}`,
       });
       const err: Error = await adapter.collect().catch((e) => e);
-      expect(err.message).toMatch(
-        /^HTTP 502 — <html> <h1>Bad Gateway<\/h1> x+$/,
-      );
-      expect(err.message.length).toBe("HTTP 502 — ".length + 200);
+      // gdelt appends the file that failed after the bounded body
+      const suffix = adapter.source === "gdelt" ? " (lastupdate.txt)" : "";
+      expect(err.message.endsWith(suffix)).toBe(true);
+      const msg = err.message.slice(0, err.message.length - suffix.length);
+      expect(msg).toMatch(/^HTTP 502 — <html> <h1>Bad Gateway<\/h1> x+$/);
+      expect(msg.length).toBe("HTTP 502 — ".length + 200);
     });
 
-    it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : "JSON"}`, async () => {
+    it(`throws on a 200 whose body is not ${format === "xml" ? "a feed" : format === "text" ? "an export listing" : "JSON"}`, async () => {
       const body = "Queries containing OR'd terms must be…";
       mockFetch.mockResolvedValue({
         ok: true,
@@ -93,7 +93,11 @@ function testAdapterContract(
         arrayBuffer: async () => new TextEncoder().encode(body).buffer,
       });
       await expect(adapter.collect()).rejects.toThrow(
-        format === "xml" ? /not an RSS\/Atom feed/ : /JSON/,
+        format === "xml"
+          ? /not an RSS\/Atom feed/
+          : format === "text"
+            ? /no export file/
+            : /JSON/,
       );
     });
   });
@@ -101,8 +105,9 @@ function testAdapterContract(
 
 // Run contract tests for all adapters
 testAdapterContract(usgsAdapter);
+testAdapterContract(gdeltAdapter, "text");
 testAdapterContract(nwsAdapter);
-testAdapterContract(gdeltAdapter);
+testAdapterContract(geoRssAdapter, "xml");
 testAdapterContract(frankfurterAdapter);
 testAdapterContract(cisaKevAdapter);
 testAdapterContract(coingeckoAdapter);
@@ -247,58 +252,179 @@ describe("frankfurter adapter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GDELT-specific
+// GDELT-specific (static event files)
 // ---------------------------------------------------------------------------
 
-describe("gdelt adapter", () => {
+function gdeltRow(o: {
+  quad: string;
+  gold: string;
+  mentions: string;
+  tone: string;
+  url: string;
+}): string {
+  const c = new Array(61).fill("");
+  c[29] = o.quad;
+  c[30] = o.gold;
+  c[31] = o.mentions;
+  c[34] = o.tone;
+  c[52] = "Kyiv, Ukraine";
+  c[56] = "50.45";
+  c[57] = "30.52";
+  c[60] = o.url;
+  return c.join("\t");
+}
+
+function makeZip(text: string): Buffer {
+  const data = deflateRawSync(Buffer.from(text));
+  const h = Buffer.alloc(30);
+  h.writeUInt32LE(0x04034b50, 0);
+  h.writeUInt16LE(8, 8);
+  h.writeUInt32LE(data.length, 18);
+  h.writeUInt32LE(text.length, 22);
+  return Buffer.concat([h, data]);
+}
+
+describe("gdelt adapter (event files)", () => {
   beforeEach(() => mockFetch.mockReset());
 
-  it("produces article count + individual article signals", async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        articles: [
-          {
-            url: "https://example.com/article1",
-            title: "Conflict in Region X",
-            seendate: "20260403T120000Z",
-            domain: "example.com",
-            language: "English",
-            sourcecountry: "US",
-          },
-        ],
-      }),
-    });
+  it("reads lastupdate.txt then the export zip and emits metrics + events", async () => {
+    const csv = [
+      gdeltRow({ quad: "4", gold: "-10", mentions: "5", tone: "-6", url: "https://a.example/1" }),
+      gdeltRow({ quad: "4", gold: "-6", mentions: "9", tone: "-2", url: "https://a.example/2" }),
+      gdeltRow({ quad: "1", gold: "4", mentions: "1", tone: "2", url: "https://a.example/3" }),
+    ].join("\n");
+    const zip = makeZip(csv);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          "1 x http://data.gdeltproject.org/gdeltv2/2026.export.CSV.zip\n2 y http://data.gdeltproject.org/gdeltv2/2026.gkg.csv.zip",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () =>
+          zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.length),
+      });
 
     const signals = await gdeltAdapter.collect();
-    const count = signals.find((s) => s.key === "conflict_articles");
-    expect(count).toBeDefined();
-    expect(count!.valueNumeric).toBe(1);
-
-    const article = signals.find((s) => s.signalType === "article");
-    expect(article).toBeDefined();
-    expect(article!.valueText).toContain("Conflict");
+    expect(mockFetch.mock.calls[1][0]).toBe(
+      "https://data.gdeltproject.org/gdeltv2/2026.export.CSV.zip",
+    );
+    const num = (k: string) => signals.find((s) => s.key === k)?.valueNumeric;
+    expect(num("events_count")).toBe(3);
+    expect(num("goldstein_avg")).toBe(-4);
+    expect(num("avg_tone")).toBe(-2);
+    const events = signals.filter((s) => s.key === "gdelt_event");
+    expect(events).toHaveLength(2);
+    expect(events[0].metadata?.url).toBe("https://a.example/2"); // most mentions first
+    expect(events[0].geoLat).toBeCloseTo(50.45);
   });
 
-  // GDELT answers an unparenthesized OR query with HTTP 200 and a plain-text
-  // error, which left the source at 0 signals from 2026-08-18 to 2026-09-21.
-  it("parenthesizes the OR'd query terms", async () => {
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
-    await gdeltAdapter.collect();
-    const url = decodeURIComponent(String(mockFetch.mock.calls[0][0]));
-    expect(url).toContain("query=(conflict OR crisis OR sanctions)&");
-    // Without these GDELT searches 3 months by relevance; stale hits dedup away.
-    expect(url).toContain("timespan=1h");
-    expect(url).toContain("sort=DateDesc");
-    // Custom dispatcher carries the raised connect timeout (TLS takes 10-13 s).
-    expect(mockFetch.mock.calls[0][1]?.dispatcher).toBeDefined();
+  it("throws when lastupdate.txt lists no export file", async () => {
+    mockFetch.mockResolvedValue({ ok: true, text: async () => "nothing" });
+    await expect(gdeltAdapter.collect()).rejects.toThrow(/no export file/);
   });
 
-  it("pins the connect and overall timeouts", () => {
-    // TLS handshake to GDELT takes 10-13 s (observed 2026-10-08); undici's 10 s default failed it.
-    expect(GDELT_CONNECT_TIMEOUT_MS).toBe(30_000);
-    // Successful responses take 13-20 s (observed 2026-10-08), plus the slow handshake.
-    expect(GDELT_TIMEOUT_MS).toBe(45_000);
+  it("throws on HTTP error from the files host", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => "down",
+    });
+    await expect(gdeltAdapter.collect()).rejects.toThrow("HTTP 503");
+  });
+
+  it("names the export zip when it 404s", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          "1 x http://data.gdeltproject.org/gdeltv2/20261025161500.export.CSV.zip",
+      })
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "" });
+    await expect(gdeltAdapter.collect()).rejects.toThrow(
+      "HTTP 404 (20261025161500.export.CSV.zip)",
+    );
+  });
+
+  it("never calls the rate-limited API host", async () => {
+    mockFetch.mockResolvedValue({ ok: true, text: async () => "nothing" });
+    await gdeltAdapter.collect().catch(() => {});
+    expect(String(mockFetch.mock.calls[0][0])).not.toContain("api.gdelt");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// geo_rss
+// ---------------------------------------------------------------------------
+
+describe("geo_rss adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+  const rss = (items: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>${items}</channel></rss>`;
+  const item = (t: string, l: string) =>
+    `<item><title>${t}</title><link>${l}</link><description>${t}</description></item>`;
+  const respond = (body: string) => ({
+    ok: true,
+    headers: new Headers({ "content-type": "application/xml" }),
+    arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+    text: async () => body,
+  });
+
+  it("dedups by URL, filters unrelated items and tolerates a failing feed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u.includes("bbci.co.uk")) {
+        return respond(
+          rss(
+            item("War crisis deepens", "https://x.example/a") +
+              item("Missile strike reported", "https://x.example/c") +
+              item("Cooking tips", "https://x.example/b"),
+          ),
+        );
+      }
+      if (u.includes("aljazeera.com")) {
+        return respond(rss(item("War crisis deepens", "https://x.example/a")));
+      }
+      throw new Error("boom");
+    });
+    const signals = await geoRssAdapter.collect();
+    const articles = signals.filter((s) => s.signalType === "article");
+    const urls = articles.map((s) => s.metadata?.url).sort();
+    expect(urls).toEqual(["https://x.example/a", "https://x.example/c"]);
+    expect(signals[0].key).toBe("conflict_articles");
+    expect(signals[0].valueNumeric).toBe(2);
+    const warned = warn.mock.calls.map((c) => String(c[0]));
+    expect(warned).toEqual([
+      "[intel] geo_rss feed failed: news.google.com: boom",
+      "[intel] geo_rss feed failed: rss.dw.com: boom",
+      "[intel] geo_rss feed failed: www.france24.com: boom",
+    ]);
+  });
+
+  it("warns nothing when every feed answers", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockImplementation(async () =>
+      respond(rss(item("War crisis deepens", "https://x.example/a"))),
+    );
+    await geoRssAdapter.collect();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("throws when every feed fails", async () => {
+    mockFetch.mockRejectedValue(new Error("network error"));
+    await expect(geoRssAdapter.collect()).rejects.toThrow("network error");
+  });
+
+  it("queries Google News with qualified terms, not bare crisis/conflict", () => {
+    const google = GEO_FEEDS.find((f) => f.name === "google_news");
+    expect(google?.filter).toBe(false);
+    const url = google!.url;
+    expect(url).toContain("when:1h");
+    expect(url).toContain("%22humanitarian+crisis%22");
+    expect(url).not.toContain("crisis+OR");
+    expect(url).not.toContain("(conflict+OR");
   });
 });
 
@@ -521,9 +647,9 @@ describe("google-news adapter", () => {
 // ---------------------------------------------------------------------------
 
 describe("adapter registry", () => {
-  it("returns all 8 adapters", () => {
+  it("returns all 9 adapters", () => {
     const adapters = getAllAdapters();
-    expect(adapters).toHaveLength(8);
+    expect(adapters).toHaveLength(9);
     const sources = adapters.map((a) => a.source);
     expect(sources).toContain("usgs");
     expect(sources).toContain("nws");
@@ -533,5 +659,6 @@ describe("adapter registry", () => {
     expect(sources).toContain("coingecko");
     expect(sources).toContain("treasury");
     expect(sources).toContain("google_news");
+    expect(sources).toContain("geo_rss");
   });
 });

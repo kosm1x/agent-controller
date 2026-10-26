@@ -39,6 +39,10 @@ import {
   getTaskWithRuns,
   cancelTask,
 } from "../dispatch/dispatcher.js";
+import type { A2ATask, JsonRpcError, JsonRpcResponse } from "./types.js";
+
+/** Response body as the tests read it: success cases read `result`, error cases read `error`. */
+type RpcBody = JsonRpcResponse & { result: A2ATask; error: JsonRpcError };
 
 const mockSubmitTask = vi.mocked(submitTask);
 const mockGetTaskWithRuns = vi.mocked(getTaskWithRuns);
@@ -120,7 +124,7 @@ describe("A2A server", () => {
         }),
       );
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.jsonrpc).toBe("2.0");
       expect(json.result.id).toBe("task-abc");
       expect(json.result.status.state).toBe("submitted");
@@ -151,7 +155,7 @@ describe("A2A server", () => {
 
     it("should reject missing message", async () => {
       const res = await post(makeJsonRpc("sendMessage", {}));
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
 
       expect(json.error).toBeDefined();
       expect(json.error.code).toBe(-32602);
@@ -171,7 +175,7 @@ describe("A2A server", () => {
 
       const res = await post(makeJsonRpc("getTask", { taskId: "task-abc" }));
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.result.id).toBe("task-abc");
       expect(json.result.status.state).toBe("completed");
       expect(json.result.artifacts).toHaveLength(1);
@@ -182,13 +186,13 @@ describe("A2A server", () => {
 
       const res = await post(makeJsonRpc("getTask", { taskId: "nonexistent" }));
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.error.code).toBe(-32001);
     });
 
     it("should return error for missing taskId param", async () => {
       const res = await post(makeJsonRpc("getTask", {}));
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.error.code).toBe(-32602);
     });
   });
@@ -204,7 +208,7 @@ describe("A2A server", () => {
 
       const res = await post(makeJsonRpc("cancelTask", { taskId: "task-abc" }));
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.result.status.state).toBe("canceled");
       expect(mockCancelTask).toHaveBeenCalledWith("task-abc");
     });
@@ -219,7 +223,7 @@ describe("A2A server", () => {
 
       const res = await post(makeJsonRpc("cancelTask", { taskId: "task-abc" }));
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.error.code).toBe(-32002);
     });
 
@@ -229,7 +233,7 @@ describe("A2A server", () => {
 
       const res = await post(makeJsonRpc("cancelTask", { taskId: "gone" }));
 
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
       expect(json.error.code).toBe(-32001);
     });
   });
@@ -237,7 +241,7 @@ describe("A2A server", () => {
   describe("error handling", () => {
     it("should return method-not-found for unknown method", async () => {
       const res = await post(makeJsonRpc("unknownMethod"));
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
 
       expect(json.error.code).toBe(-32601);
       expect(json.error.message).toContain("unknownMethod");
@@ -250,14 +254,14 @@ describe("A2A server", () => {
         body: "not json{{{",
       });
       const res = await a2a.fetch(req);
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
 
       expect(json.error.code).toBe(-32700);
     });
 
     it("should return invalid request for missing jsonrpc field", async () => {
       const res = await post({ method: "sendMessage", id: 1 });
-      const json = await res.json();
+      const json = (await res.json()) as RpcBody;
 
       expect(json.error.code).toBe(-32600);
     });

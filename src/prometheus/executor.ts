@@ -361,6 +361,9 @@ export async function executeGoal(
   goalTimeoutMs?: number,
   signal?: AbortSignal,
   useOpus = true,
+  // Task correlation for the SDK legs' `tool.called` / `turn.completed` rows
+  // (queue 3p readout 2026-10-23). Unset = options carry no `trace` key.
+  trace?: { taskId: string; runId?: string },
 ): Promise<GoalResult> {
   const start = Date.now();
 
@@ -425,6 +428,7 @@ export async function executeGoal(
                 // Executor aggregates SDK cost into the orchestrator's
                 // tokenUsage → dispatcher recordCost — seam opt-out. (3.3)
                 costLedger: false,
+                ...(trace ? { trace } : {}),
               },
             ),
           )
@@ -577,6 +581,7 @@ export async function executeGoal(
                   model,
                   // Retry leg — same orchestrator aggregate. (3.3)
                   costLedger: false,
+                  ...(trace ? { trace } : {}),
                 },
               ),
             )
@@ -789,6 +794,7 @@ export async function executeGraph(
   goalTimeoutMs?: number,
   signal?: AbortSignal,
   useOpus = true,
+  trace?: { taskId: string; runId?: string },
 ): Promise<ExecutionResult> {
   const results: Record<string, GoalResult> = {};
   let totalToolCalls = 0;
@@ -841,6 +847,7 @@ export async function executeGraph(
           goalTimeoutMs,
           signal,
           useOpus,
+          trace,
         ),
       ),
     );

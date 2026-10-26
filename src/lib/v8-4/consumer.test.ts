@@ -41,7 +41,10 @@ import {
 } from "./grade-specs.js";
 
 // V9 W1: the grader call is the one LLM seam here — never a real call.
-vi.mock("./grader.js", () => ({ runGrader: vi.fn() }));
+vi.mock("./grader.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./grader.js")>()),
+  runGrader: vi.fn(),
+}));
 const mockRunGrader = vi.mocked(runGrader);
 // Item 10: pass-through spies, so a test can make the take / the emit fail.
 vi.mock("./numbers.js", async (importOriginal) => {
@@ -672,6 +675,7 @@ describe("applyCompletionLedger — V9 W1 grader shadow (background, trace-only)
       usage: USAGE,
       cost_usd: 0.031,
       status_before: "completed",
+      prompt_v: 2, // GRADER_PROMPT_VERSION (queue 4v)
     });
     expect(_peekShadowGradeSpecs("t1")).toEqual([]); // freed
   });
@@ -873,6 +877,77 @@ describe("applyCompletionLedger — V9 W1 grader shadow (background, trace-only)
     expect(mockRunGrader.mock.calls[0]![0].specs).toEqual(PROSE);
   });
 
+  it("queue 4v: only MET harness-owned non-GR rows reach the grader as verifiedGates (plan shell, failed, pending, abandoned and GR-* rows never do)", async () => {
+    process.env.TASK_GATES_GRADER = "shadow";
+    process.env.TASK_GATES_MODE = "shadow";
+    declareGates(
+      "t1",
+      [
+        // met, but agent-declared: its evidence is agent-authorable.
+        { id: "g-1", criterion: "sheet written", check: "true" },
+        { id: "g-2", criterion: "row count matches", check: "false" },
+        { id: "g-3", criterion: "operator confirmed" },
+        { id: "g-4", criterion: "operator signed" },
+      ],
+      "plan",
+    );
+    // Agent-declared too: met submission and ritual shell gates stay out.
+    declareGates("t1", [{ id: "s-1", criterion: "sub ok", check: "true" }], "submission");
+    declareGates("t1", [{ id: "r-1", criterion: "ritual ok", check: "true" }], "ritual");
+    const insert = getDatabase().prepare(
+      `INSERT INTO task_gates (task_id, gate_id, criterion, check_kind, check_cmd, source, state, evidence)
+       VALUES ('t1', ?, ?, 'manual', ?, 'harness', ?, ?)`,
+    );
+    // Harness read-back already met (the ledger skips met rows): the proof.
+    insert.run("RB-w1", "sheet Ventas\nexists", "readback:{}", "met", "A1:G2, 2 rows");
+    insert.run("RB-w2", "doc written", "readback:{}", "pending", null);
+    // A grader row already graded met (prose origin): never fed back as harness proof.
+    insert.run("GR-g-9.1", "prose", "grade:prose", "met", "graded earlier");
+    registerGradeSpecs("t1", PROSE, "do the thing");
+    graderReturns([{ id: "GR-g-1.1", verdict: "met", evidence: "listed" }]);
+    await applyCompletionLedger(
+      base({ result: okResult("Listo.\nABANDON: g-4 — operator is away") }),
+    );
+    await _drainShadowGradesForTests();
+    const states = Object.fromEntries(
+      listGates("t1").map((r) => [r.gate_id, r.state]),
+    );
+    expect(states).toMatchObject({
+      "g-1": "met",
+      "g-2": "failed",
+      "g-3": "pending",
+      "g-4": "abandoned",
+      "s-1": "met",
+      "r-1": "met",
+      "RB-w1": "met",
+      "GR-g-9.1": "met",
+    });
+    expect(states["RB-w2"]).not.toBe("met");
+    expect(mockRunGrader).toHaveBeenCalledTimes(1);
+    expect(mockRunGrader.mock.calls[0]![0].verifiedGates).toEqual([
+      {
+        id: "RB-w1",
+        kind: "readback",
+        criterion: "sheet Ventas\nexists",
+        evidence: "A1:G2, 2 rows",
+      },
+    ]);
+  });
+
+  it("queue 4v: a met plan shell gate alone ⇒ runGrader gets no verifiedGates key", async () => {
+    process.env.TASK_GATES_GRADER = "shadow";
+    process.env.TASK_GATES_MODE = "shadow";
+    declareGates("t1", [{ id: "g-1", criterion: "c", check: "true" }], "plan");
+    registerGradeSpecs("t1", PROSE, "do the thing");
+    graderReturns([{ id: "GR-g-1.1", verdict: "met", evidence: "listed" }]);
+    await applyCompletionLedger(base());
+    await _drainShadowGradesForTests();
+    expect(listGates("t1")[0]!.state).toBe("met");
+    expect(mockRunGrader.mock.calls[0]![0]).not.toHaveProperty(
+      "verifiedGates",
+    );
+  });
+
   it("a string output keeps its text, and the trace is still recorded", async () => {
     process.env.TASK_GATES_GRADER = "shadow";
     registerGradeSpecs("t1", PROSE, "do the thing");
@@ -998,6 +1073,28 @@ describe("applyCompletionLedger — V9 W1 grader enforce", () => {
       state: "met",
       evidence: "confirmation quoted",
     });
+  });
+
+  it("queue 4v: a harness row already met before the seam reaches the enforce grader as verifiedGates (wiring pin; today the ledger order leaves read-backs pending here)", async () => {
+    registerGradeSpecs("t1", PROSE, "do the thing");
+    getDatabase()
+      .prepare(
+        `INSERT INTO task_gates (task_id, gate_id, criterion, check_kind, check_cmd, source, state, evidence)
+         VALUES ('t1', 'RB-w1', 'sheet written', 'manual', 'readback:{}', 'harness', 'met', 'A1:G2, 2 rows')`,
+      )
+      .run();
+    graderReturns([{ id: "GR-g-1.1", verdict: "met", evidence: "listed" }]);
+    await applyCompletionLedger(base());
+    expect(mockRunGrader).toHaveBeenCalledTimes(1);
+    expect(mockRunGrader.mock.calls[0]![0].verifiedGates).toEqual([
+      {
+        id: "RB-w1",
+        kind: "readback",
+        criterion: "sheet written",
+        evidence: "A1:G2, 2 rows",
+      },
+    ]);
+    expect(JSON.parse(gradedTraces("t1")[0]!.attrs).prompt_v).toBe(2);
   });
 
   it("an interrupted task surrenders its GR rows (abandoned, reason visible), no call", async () => {

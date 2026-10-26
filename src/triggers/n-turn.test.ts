@@ -7,8 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 
 const runReflectionMock = vi.fn();
+// Queue 4s (a): the trigger is gated by reflectionOutputHasConsumer(); the
+// "fires" tests stub it true, the no-consumer tests leave it false/real.
+const hasConsumerMock = vi.fn<() => boolean>();
 vi.mock("../reflection/runner.js", () => ({
   runReflection: (...a: unknown[]) => runReflectionMock(...a),
+  reflectionOutputHasConsumer: () => hasConsumerMock(),
 }));
 
 import type { Event } from "../lib/events/types.js";
@@ -46,6 +50,8 @@ beforeEach(() => {
   initDatabase(":memory:");
   resetNTurnCounter();
   runReflectionMock.mockReset();
+  hasConsumerMock.mockReset();
+  hasConsumerMock.mockReturnValue(true);
   runReflectionMock.mockResolvedValue({
     ran: true,
     scope: {},
@@ -120,5 +126,60 @@ describe("handleTaskCompleted — N-turn counter", () => {
       .prepare(`SELECT COUNT(*) AS c FROM trigger_runs WHERE outcome='skipped'`)
       .get() as { c: number };
     expect(skipped.c).toBe(1);
+  });
+});
+
+describe("handleTaskCompleted — no consumer for reflection output (queue 4s a)", () => {
+  function seedCursor(lastEventId: number): void {
+    getDatabase()
+      .prepare(
+        `INSERT INTO reflection_cursors (cursor_name, last_event_id, updated_at)
+         VALUES ('general_events_discovery', ?, '2026-10-01 00:00:00')`,
+      )
+      .run(lastEventId);
+  }
+
+  function cursorRow(): { last_event_id: number; updated_at: string } {
+    return getDatabase()
+      .prepare(
+        `SELECT last_event_id, updated_at FROM reflection_cursors
+          WHERE cursor_name = 'general_events_discovery'`,
+      )
+      .get() as { last_event_id: number; updated_at: string };
+  }
+
+  it("skips the pass, records a 'skipped' row with the no-consumer reason, and leaves the cursor", () => {
+    hasConsumerMock.mockReturnValue(false);
+    seedCursor(7);
+    completeRootTasks(REFLECTION_FREQ);
+    expect(runReflectionMock).not.toHaveBeenCalled();
+    expect(getNTurnCounter()).toBe(0); // counter logic unchanged
+    const rows = getDatabase()
+      .prepare(
+        `SELECT outcome, detail FROM trigger_runs WHERE trigger_kind='n_turn'`,
+      )
+      .all() as Array<{ outcome: string; detail: string }>;
+    expect(rows).toEqual([
+      {
+        outcome: "skipped",
+        detail: "no consumer for reflection output (queue 4s a, until Phase 6)",
+      },
+    ]);
+    expect(cursorRow()).toEqual({
+      last_event_id: 7,
+      updated_at: "2026-10-01 00:00:00",
+    });
+  });
+
+  it("production is OFF: the real (unmocked) constant never calls runReflection", async () => {
+    const actual = await vi.importActual<
+      typeof import("../reflection/runner.js")
+    >("../reflection/runner.js");
+    hasConsumerMock.mockImplementation(actual.reflectionOutputHasConsumer);
+    seedCursor(7);
+    completeRootTasks(REFLECTION_FREQ);
+    expect(runReflectionMock).not.toHaveBeenCalled();
+    expect(cursorRow().last_event_id).toBe(7);
+    expect(actual.REFLECTION_OUTPUT_HAS_CONSUMER).toBe(false);
   });
 });

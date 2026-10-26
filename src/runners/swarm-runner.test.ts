@@ -61,9 +61,16 @@ vi.mock("../prometheus/reflector.js", () => ({
 
 // V8.4: parent re-verification seam (real module needs the DB + runs checks).
 const v84 = vi.hoisted(() => ({ reverify: vi.fn() }));
-vi.mock("../lib/v8-4/consumer.js", () => ({
-  reverifyChildLedger: v84.reverify,
-}));
+// Queue 4s-1: the real appendToDeliverable places the ungated footer.
+vi.mock("../lib/v8-4/consumer.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../lib/v8-4/consumer.js")
+  >("../lib/v8-4/consumer.js");
+  return {
+    reverifyChildLedger: v84.reverify,
+    appendToDeliverable: actual.appendToDeliverable,
+  };
+});
 
 // V9 W1: real prose-spec derivation, spied registration (no DB, no grader).
 vi.mock("../lib/v8-4/grade-specs.js", async () => {
@@ -95,6 +102,8 @@ import { reflect } from "../prometheus/reflector.js";
 const mockPlan = vi.mocked(plan);
 const mockReflect = vi.mocked(reflect);
 import { GoalGraph } from "../prometheus/goal-graph.js";
+import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
+import { extractDeliverableText } from "../lib/deliverable.js";
 import { GoalStatus } from "../prometheus/types.js";
 import {
   getTask,
@@ -111,6 +120,7 @@ interface Tracker {
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   output?: string;
   error?: string;
+  ungated?: boolean;
 }
 
 function makeGraph(): GoalGraph {
@@ -617,6 +627,51 @@ describe("swarm final answer — '## Shared findings' never reaches the operator
     expect(delivered).not.toContain("SECRET-");
     expect(delivered).not.toContain(SHARED_FINDINGS_HEADING);
   });
+
+  // Queue 3p readout 2026-10-23: the root's [final-answer] line is the
+  // children line, never an adoption count (it always read delimited=0).
+  it("the swarm root logs source=swarm-root for its joined final answer, never a delimited count", async () => {
+    const graph = new GoalGraph();
+    graph.addGoal({ id: "g-1", description: "Research Clip fees" });
+    graph.addGoal({ id: "g-2", description: "Research Kustodia fees" });
+    mockPlan.mockResolvedValue({
+      graph,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(
+      async () => ({ taskId: `root-child-${++n}`, agentType: "fast" }) as never,
+    );
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({
+          task_id: id,
+          status: "completed",
+          output: JSON.stringify({ text: `Reporte ${id}.` }),
+        }) as never,
+    );
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      await swarmRunner.execute({
+        taskId: "root-parent",
+        runId: "run-root",
+        title: "Compare fees",
+        description: "Compare Clip and Kustodia fees",
+      });
+      const lines = info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.startsWith("[final-answer]"));
+      expect(lines).toEqual([
+        "[final-answer] source=swarm-root goals=2 (children, already extracted)",
+      ]);
+    } finally {
+      info.mockRestore();
+    }
+  });
 });
 
 describe("V9 W1 — swarm children get their goal's prose criteria as grade specs", () => {
@@ -838,11 +893,21 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     error?: string | null;
     retryCount?: number;
     toolCalls?: string[];
+    metadata?: Record<string, unknown>;
   }): {
     graph: GoalGraph;
     trackers: Map<string, Tracker>;
     goalTaskMap: Map<string, string>;
-    goalsById: Map<string, { id: string; description: string }>;
+    goalsById: Map<
+      string,
+      {
+        id: string;
+        description: string;
+        completionCriteria: string[];
+        dependsOn: string[];
+        metadata?: Record<string, unknown>;
+      }
+    >;
   } {
     const graph = new GoalGraph();
     graph.addGoal({ id: "g-1", description: "Test goal" });
@@ -876,6 +941,7 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
           description: "Test goal",
           completionCriteria: [],
           dependsOn: [],
+          ...(opts.metadata && { metadata: opts.metadata }),
         },
       ],
     ]);
@@ -970,7 +1036,134 @@ describe("syncSubTaskStatuses — retry-policy integration (queue #231)", () => 
     expect(submission.description).not.toContain("⚠️ IMPORTANT");
     // Tracker reset to pending — NOT marked failed
     expect(trackers.get("g-1")!.status).toBe("pending");
+    // Queue 4u: the retry forwards the plan gates; this goal has none →
+    // no gates key and counted ungated.
+    expect(submission).not.toHaveProperty("gates");
+    expect(submission).not.toHaveProperty("gatesSource");
+    expect(trackers.get("g-1")!.ungated).toBe(true);
     expect(graph.getGoal("g-1")!.status).toBe(GoalStatus.IN_PROGRESS);
+  });
+
+  it("enabled mode + gated goal → the respawn carries the goal's plan gates and is NOT ungated (queue 4u)", async () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+        metadata: {
+          gates: [{ criterion: "typecheck", check: "npx tsc --noEmit" }],
+        },
+      });
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+      const submission = mockSubmitTask.mock.calls[0][0];
+      // Same spec + id prefix the first spawn derives (gateSpecsFromGoal).
+      expect(submission.gates).toEqual([
+        {
+          id: "g-1.1",
+          criterion: "typecheck",
+          check: "npx tsc --noEmit",
+          kind: "shell",
+        },
+      ]);
+      expect(submission.gatesSource).toBe("plan");
+      expect(trackers.get("g-1")!.status).toBe("pending");
+      expect(trackers.get("g-1")!.ungated).toBe(false);
+      // Once the submit resolves, the tracker names the respawn (W1).
+      await vi.waitFor(() => expect(goalTaskMap.get("g-1")).toBe("task-2"));
+      expect(trackers.get("g-1")!.taskId).toBe("task-2");
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
+  });
+
+  it("enabled mode + only a refused (literal-sourced) plan gate → spec forwarded with abandonReason, tracker IS ungated (queue 4u)", () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+        metadata: { gates: [{ criterion: "done", check: "echo ok" }] },
+      });
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      const submission = mockSubmitTask.mock.calls[0][0];
+      expect(submission.gates).toHaveLength(1);
+      expect(submission.gates![0]).toMatchObject({
+        id: "g-1.1",
+        kind: "manual",
+      });
+      expect(submission.gates![0].abandonReason).toBeTruthy();
+      expect(submission.gatesSource).toBe("plan");
+      expect(trackers.get("g-1")!.ungated).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
+  });
+
+  it("enabled mode → the respawn registers the goal's prose grade specs on the NEW task id (queue 4u, V9 W1)", async () => {
+    const saved = process.env.SWARM_SUBTASK_RETRY_ENABLED;
+    try {
+      process.env.SWARM_SUBTASK_RETRY_ENABLED = "true";
+      const { graph, trackers, goalTaskMap, goalsById } = setupFailed({
+        error: "Provider 503",
+        retryCount: 0,
+      });
+      goalsById.get("g-1")!.completionCriteria = ["fee per transaction quoted"];
+      mockSubmitTask.mockResolvedValue({
+        taskId: "task-2",
+        agentType: "fast",
+      } as any);
+
+      syncSubTaskStatuses(
+        goalTaskMap,
+        graph,
+        trackers as Map<string, any>,
+        retryCtx(goalsById) as any,
+      );
+
+      await vi.waitFor(() => expect(goalTaskMap.get("g-1")).toBe("task-2"));
+      expect(mockRegisterGradeSpecs).toHaveBeenCalledTimes(1);
+      const [taskId, specs, description] = mockRegisterGradeSpecs.mock.calls[0];
+      expect(taskId).toBe("task-2");
+      expect(specs).toEqual([
+        {
+          id: "GR-sw.g-1.1",
+          criterion: "fee per transaction quoted",
+          origin: "prose",
+        },
+      ]);
+      expect(description).toBe(mockSubmitTask.mock.calls[0][0].description);
+      expect(trackers.get("g-1")!.taskId).toBe("task-2");
+    } finally {
+      if (saved === undefined) delete process.env.SWARM_SUBTASK_RETRY_ENABLED;
+      else process.env.SWARM_SUBTASK_RETRY_ENABLED = saved;
+    }
   });
 
   it("hallucination recovery prepends the sterner addendum to the retry description", async () => {
@@ -1579,4 +1772,175 @@ describe("swarm parent books its planner + reflector spend (cost_ledger)", () =>
       actualCostUsd: 0.004,
     });
   });
+});
+
+describe("queue 4s-1 (c): ungated swarm children are visible at completion", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    v84.reverify.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  const GATE = { criterion: "typecheck", check: "npx tsc --noEmit" };
+  // Literal-sourced checks: gateSpecsFromGoal refuses both (abandonReason).
+  const REFUSED = [
+    { criterion: "doc ok", check: "echo 'verify via gdocs_read'" },
+    { criterion: "done", check: "true" },
+  ];
+
+  async function runSwarm(
+    parentId: string,
+    gated: Array<boolean | "refused" | "mixed">,
+    childOutput: (id: string) => string | null = (id) =>
+      JSON.stringify({ text: `done ${id}` }),
+    failSubmitFor: string[] = [],
+  ) {
+    const g = new GoalGraph();
+    gated.forEach((withGate, i) =>
+      g.addGoal({
+        id: `g-${i + 1}`,
+        description: `item ${i + 1}`,
+        ...(withGate === true && { metadata: { gates: [GATE] } }),
+        ...(withGate === "refused" && { metadata: { gates: REFUSED } }),
+        ...(withGate === "mixed" && {
+          metadata: { gates: [GATE, REFUSED[0]] },
+        }),
+      }),
+    );
+    mockPlan.mockResolvedValue({
+      graph: g,
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(async (sub) => {
+      if (failSubmitFor.includes(sub.title)) throw new Error("no capacity");
+      return { taskId: `${parentId}-child-${++n}`, agentType: "fast" } as never;
+    });
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({
+          task_id: id,
+          status: "completed",
+          output: childOutput(id),
+        }) as never,
+    );
+    v84.reverify.mockResolvedValue(null);
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    const logSpy = vi.spyOn(console, "log");
+    const result = await swarmRunner.execute({
+      taskId: parentId,
+      runId: `run-${parentId}`,
+      title: "fan-out",
+      description: "process items",
+    });
+    const completeLine = logSpy.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.startsWith(`[swarm] Task ${parentId}: complete`));
+    const output = result.output as {
+      content: string;
+      text?: string;
+      finalAnswer: string | null;
+      score: number;
+      ungatedChildren: string[];
+      selfScoreVerified: boolean;
+    };
+    return { result, output, completeLine };
+  }
+
+  it("children without gate specs: footer on the operator-facing finalAnswer, names the goal ids, selfScoreVerified=false, log carries ungated=N", async () => {
+    const { result, output, completeLine } = await runSwarm("parent-u", [
+      false,
+      true,
+      false,
+    ]);
+    const footer =
+      "[swarm] sin verificar: 2 de 3 hijos sin compuerta (g-1, g-3); autoevaluación no verificada";
+    expect(output.finalAnswer).not.toBeNull();
+    expect(output.finalAnswer!.endsWith(`\n\n${footer}`)).toBe(true);
+    expect(extractDeliverableText(output)).toBe(output.finalAnswer);
+    expect(output.content).toBe("ok"); // not duplicated on the meta-summary
+    expect(isLedgerLine(footer)).toBe(true);
+    expect(output.ungatedChildren).toEqual(["g-1", "g-3"]);
+    expect(output.selfScoreVerified).toBe(false);
+    expect(completeLine).toContain(", ungated=2");
+    // Visibility only: the verdict fields are untouched.
+    expect(result.success).toBe(true);
+    expect(result.status).toBeUndefined();
+    expect(result.concerns).toBeUndefined();
+    expect(output.score).toBe(0.9);
+    // S2: the structured trace carries the per-child flag.
+    const trace = result.trace as Array<{ goalId: string; ungated: boolean }>;
+    expect(trace.map((t) => [t.goalId, t.ungated])).toEqual([
+      ["g-1", true],
+      ["g-2", false],
+      ["g-3", true],
+    ]);
+  }, 30_000);
+
+  it("a child whose planner gates were ALL refused (abandonReason) counts as ungated (W1)", async () => {
+    const { output } = await runSwarm("parent-r", [true, "refused"]);
+    const submitted = mockSubmitTask.mock.calls.find(
+      (c) => c[0].title === "[Swarm] item 2",
+    )![0];
+    // The refused specs are still passed to the child's ledger, unchanged.
+    expect(submitted.gates).toHaveLength(2);
+    expect(submitted.gates!.every((s) => s.abandonReason)).toBe(true);
+    expect(output.finalAnswer).toContain(
+      "[swarm] sin verificar: 1 de 2 hijos sin compuerta (g-2); autoevaluación no verificada",
+    );
+    expect(output.ungatedChildren).toEqual(["g-2"]);
+    expect(output.selfScoreVerified).toBe(false);
+  }, 30_000);
+
+  it("one runnable + one refused spec counts as gated: no footer, selfScoreVerified=true (R2)", async () => {
+    // Two goals: a single-goal plan is chain-demoted to one heavy child and
+    // never reaches fan-out. g-2 is plainly gated, so g-1 decides the footer.
+    const { output } = await runSwarm("parent-m", ["mixed", true]);
+    const submitted = mockSubmitTask.mock.calls.find(
+      (c) => c[0].title === "[Swarm] item 1",
+    )![0];
+    expect(submitted.gates!.map((s) => Boolean(s.abandonReason))).toEqual([
+      false,
+      true,
+    ]);
+    expect(output.ungatedChildren).toEqual([]);
+    expect(output.finalAnswer).not.toContain("[swarm]");
+    expect(output.content).toBe("ok");
+    expect(output.selfScoreVerified).toBe(true);
+  }, 30_000);
+
+  it("n counts submitted children only: a child whose submit threw is excluded (W4)", async () => {
+    const { output } = await runSwarm(
+      "parent-f",
+      [false, true, false],
+      undefined,
+      ["[Swarm] item 3"],
+    );
+    expect(output.finalAnswer).toContain(
+      "[swarm] sin verificar: 1 de 2 hijos sin compuerta (g-1); autoevaluación no verificada",
+    );
+    expect(output.ungatedChildren).toEqual(["g-1"]);
+  }, 30_000);
+
+  it("ungated children that produced nothing: the footer still reaches the deliverable", async () => {
+    const { output } = await runSwarm("parent-w", [false, false], () => null);
+    const footer =
+      "[swarm] sin verificar: 2 de 2 hijos sin compuerta (g-1, g-2); autoevaluación no verificada";
+    expect(output.finalAnswer).toBeNull();
+    expect(output.content).toBe(`ok\n\n${footer}`);
+    expect(extractDeliverableText(output)).toBe(`ok\n\n${footer}`);
+    expect(output.selfScoreVerified).toBe(false);
+  }, 30_000);
+
+  it("every child gated: no footer, ungatedChildren empty, selfScoreVerified=true", async () => {
+    const { output, completeLine } = await runSwarm("parent-v", [true, true]);
+    expect(output.content).toBe("ok");
+    expect(output.finalAnswer).not.toContain("[swarm]");
+    expect(output.ungatedChildren).toEqual([]);
+    expect(output.selfScoreVerified).toBe(true);
+    expect(completeLine).toContain(", ungated=0");
+  }, 30_000);
 });

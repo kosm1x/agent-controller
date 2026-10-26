@@ -55,6 +55,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { redactSecrets } from "../src/api/mcp-server/redact.js";
 import { scrubSecrets } from "../src/lib/secret-refs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -429,7 +430,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   // S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
   requireOperatorContext("validate-shell-gate-diff", { tty: false });
   main().then(

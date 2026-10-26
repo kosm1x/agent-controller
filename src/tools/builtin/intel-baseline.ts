@@ -30,7 +30,7 @@ DO NOT USE WHEN:
 - User wants alert history (use intel_alert_history)
 - Not enough data has accumulated (baselines need 2+ data points)
 
-Available metrics include: usgs/quakes_5plus, nws/active_warnings, gdelt/conflict_articles,
+Available metrics include: usgs/quakes_5plus, nws/active_warnings, geo_rss/conflict_articles, gdelt/goldstein_avg,
 frankfurter/MXN, cisa_kev/new_vulns, coingecko/bitcoin, treasury/10Y.`,
       parameters: {
         type: "object",
@@ -38,7 +38,7 @@ frankfurter/MXN, cisa_kev/new_vulns, coingecko/bitcoin, treasury/10Y.`,
           source: {
             type: "string",
             description:
-              "Signal source: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury",
+              "Signal source: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, geo_rss",
           },
           key: {
             type: "string",

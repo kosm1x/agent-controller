@@ -11,16 +11,18 @@
 // Refresh them with `user_fact_set` (or `sqlite3 data/mc.db "UPDATE user_facts..."`)
 //
 // Exit codes:
-//   0  TWEET_PUBLICADO
+//   0  TWEET_PUBLICADO (toast confirmed the send: 'sent' / 'se envió'; receipt appended to data/x-post-receipts/mexiconecesario.jsonl)
 //   2  no compose box (likely cookie expired)
 //   3  tweet too long (>280 weighted; trim and retry)
 //   4  exception
 //   5  ACCOUNT_MISMATCH (cookies authenticate to a different handle)
 //   6  cookies missing from user_facts
+//   7  PUBLICACION_NO_CONFIRMADA (toast absent or did not confirm, e.g. daily limit; nothing was verified, no receipt)
 
 const path = require('path');
 const Database = require(path.resolve(__dirname, '..', 'node_modules', 'better-sqlite3'));
 const { chromium } = require(path.resolve(__dirname, '..', 'node_modules', 'playwright'));
+const { appendReceipt, classifyToast } = require('./lib/x-post-receipt.cjs');
 
 const EXPECTED_HANDLE = '/MexicoNecesario';
 const DB_PATH = path.resolve(__dirname, '..', 'data', 'mc.db');
@@ -145,14 +147,27 @@ function readStdin() {
       const toasts = document.querySelectorAll('[data-testid="toast"]');
       return Array.from(toasts).map(t => t.textContent).join(' ');
     });
-    if (toastText.toLowerCase().includes('sent') || toastText.toLowerCase().includes('post')) {
-      console.log('TWEET_PUBLICADO account=' + who + ' toast="' + toastText.trim() + '"');
-    } else {
-      console.log('TWEET_PUBLICADO account=' + who + ' url=' + page.url());
+    const { confirmed, toast } = classifyToast(toastText);
+    if (confirmed) {
+      console.log('TWEET_PUBLICADO account=' + who + ' url=' + page.url() + ' toast="' + toast + '"');
+      try {
+        appendReceipt(path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.jsonl'), {
+          ts: new Date().toISOString(),
+          account: who,
+          url: page.url(),
+          toast: toast || null,
+          task_id: process.env.MC_TASK_ID || null,
+        });
+      } catch (err) {
+        console.log('RECEIPT_WRITE_FAILED: ' + (err && err.message ? err.message : String(err)));
+      }
+      await browser.close();
+      process.exit(0);
     }
 
+    console.log('PUBLICACION_NO_CONFIRMADA account=' + who + ' url=' + page.url() + ' toast="' + (toast || 'no toast') + '"');
     await browser.close();
-    process.exit(0);
+    process.exit(7);
   } catch (err) {
     console.log('EXCEPTION: ' + (err && err.message ? err.message : String(err)));
     try { await browser.close(); } catch (_) {}

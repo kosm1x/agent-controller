@@ -18,7 +18,7 @@ describe("terminationFromExit", () => {
     expect(terminationFromExit("natural", "DONE_WITH_CONCERNS", true)).toBe("completed");
     expect(terminationFromExit("natural", "NEEDS_CONTEXT", false)).toBe("needs_context");
     expect(terminationFromExit("natural", "BLOCKED", false)).toBe("blocked");
-    expect(terminationFromExit("natural", "FAILED", false)).toBe("error");
+    expect(terminationFromExit("natural", undefined, false)).toBe("error");
     expect(terminationFromExit(undefined, undefined, true)).toBe("completed");
     // claude-sdk spells its natural stop "stop"
     expect(terminationFromExit("stop", "DONE", true)).toBe("completed");
@@ -27,7 +27,7 @@ describe("terminationFromExit", () => {
 
   it("carries the openai adapter's capacity stops and the startup-reconcile class verbatim", () => {
     for (const r of ["compaction_exhausted", "think_exhaustion", "escalation_wrapup", "escalation_abort", "orphaned_restart"]) {
-      expect(terminationFromExit(r, "FAILED", false)).toBe(r);
+      expect(terminationFromExit(r, undefined, false)).toBe(r);
     }
   });
 

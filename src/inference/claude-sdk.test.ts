@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
 
 type MockMessage = Record<string, unknown>;
 
@@ -2818,6 +2827,8 @@ describe("queryClaudeSdk provider metrics", () => {
       `[error_api_response — authentication_failed, status 401: ${DEAD_LOGIN}]`,
     );
     expect(result.text).toContain("STATUS: BLOCKED");
+    // Typed class on the result (SDK last line reads it, 2026-10-23).
+    expect(result.errorClass).toBe("authentication_failed");
     spy.mockRestore();
     // this describe never resets the breaker; one more recorded failure would
     // open it for the abort spec below
@@ -2856,6 +2867,7 @@ describe("queryClaudeSdk provider metrics", () => {
     expect(result.text).toContain("overloaded, status n/a: API Error: 529]");
     expect(result.text).toContain("Hallazgos parciales.");
     expect(result.text).toContain("STATUS: DONE_WITH_CONCERNS");
+    expect(result.errorClass).toBe("overloaded");
     // the error text appears once (the marker), not again as "content"
     expect(result.text.split("API Error: 529").length - 1).toBe(1);
     spy.mockRestore();
@@ -2906,6 +2918,7 @@ describe("queryClaudeSdk provider metrics", () => {
     ];
     const withText = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
     expect(withText.text).toContain("[error_api_response — unknown, status n/a: API Error: 529]");
+    expect(withText.errorClass).toBe("unknown");
     expect(withText.text).not.toContain("authentication_failed");
     expect(withText.text.split("API Error: 529").length - 1).toBe(1);
 
@@ -2926,7 +2939,9 @@ describe("queryClaudeSdk provider metrics", () => {
       { type: "result", subtype: "error_during_execution", errors: ["boom"] },
     ];
 
-    await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    const result = await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    // Only an is_error terminal carries the typed class.
+    expect(result.errorClass).toBeUndefined();
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][0]).toBe("claude-sdk");
@@ -3010,6 +3025,34 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     expect(r.text).toContain("[refusal]");
     expect(r.text).toContain("category: cyber");
     expect(r.text).toContain("STATUS: BLOCKED");
+  });
+
+  it("a refused turn that ended success+is_error carries no errorClass (never an SDK last line)", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          stop_reason: "refusal",
+          stop_details: { category: "cyber" },
+          content: [],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result:
+          "API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy",
+        num_turns: 1,
+      },
+    ];
+    const r = await queryClaudeSdk({
+      prompt: "p",
+      systemPrompt: "sys",
+      toolNames: [],
+    });
+    expect(r.text).toContain("[refusal]");
+    expect(r.errorClass).toBeUndefined();
   });
 
   it("a refused turn does NOT trip the circuit breaker (working provider, not an outage)", async () => {
@@ -3772,8 +3815,16 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       message: {
         usage: { input_tokens: 100, output_tokens: 20 },
         content: [
-          { type: "tool_use", name: "mcp__jarvis__web_search" },
-          { type: "tool_use", name: "mcp__jarvis__jarvis_file_read" },
+          {
+            type: "tool_use",
+            name: "mcp__jarvis__web_search",
+            input: { query: "q" },
+          },
+          {
+            type: "tool_use",
+            name: "mcp__jarvis__jarvis_file_read",
+            input: { path: "p" },
+          },
         ],
       },
     },
@@ -3824,6 +3875,11 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       round: 1,
     });
     expect(calls[1]).toMatchObject({ tool: "jarvis_file_read", round: 1 });
+    expect(calls[0].attrs).toEqual({ arg_keys: ["query"] });
+    expect(calls[1].attrs).toEqual({ arg_keys: ["path"] });
+    // arg_keys belong to tool.called rows only, never to turn.completed.
+    expect(calls[2].attrs?.arg_keys).toBeUndefined();
+    expect(calls[3].attrs?.arg_keys).toBeUndefined();
     // Turn tokens are per-turn (incl. cache read), not cumulative.
     expect(calls[2]).toMatchObject({ round: 1, tokensIn: 100, tokensOut: 20 });
     expect(calls[3]).toMatchObject({
@@ -3842,6 +3898,226 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       toolNames: [],
     });
     expect(emitTraceMock).not.toHaveBeenCalled();
+  });
+
+  // Queue 3p readout 2026-10-23: Prometheus goal legs reach the SDK through
+  // queryClaudeSdkAsInferWithTools, which dropped `trace`.
+  it("queryClaudeSdkAsInferWithTools forwards trace: tool.called rows carry the task and run", async () => {
+    mockMessages.value = twoTurnFixture();
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "goal" }],
+      [],
+      async () => "unused",
+      { trace: { taskId: "task-p", runId: "run-p" } },
+    );
+    const calls = emitTraceMock.mock.calls.map((c) => c[0]);
+    expect(
+      calls.filter((e) => e.name === "tool.called").map((e) => e.tool),
+    ).toEqual(["web_search", "jarvis_file_read"]);
+    for (const e of calls) {
+      expect(e).toMatchObject({ taskId: "task-p", runId: "run-p" });
+    }
+  });
+
+  // Queue 4ah-c (ruling 2026-10-23): tool.called rows carry the KEY NAMES of
+  // the tool_use input, never the values.
+  const toolUseTurn = (blocks: Record<string, unknown>[]): MockMessage[] => [
+    {
+      type: "assistant",
+      message: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        content: blocks.map((b) => ({ type: "tool_use", ...b })),
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      result: "ok",
+      num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  ];
+  const toolCalledEvents = async (blocks: Record<string, unknown>[]) => {
+    mockMessages.value = toolUseTurn(blocks);
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-ak" },
+    });
+    return emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "tool.called");
+  };
+
+  it("tool.called attrs carry the input's key names in order, never its values", async () => {
+    const [ev] = await toolCalledEvents([
+      {
+        name: "mcp__jarvis__web_read",
+        input: {
+          url: "https://example.com/zz-private-path",
+          selector: "#zz-secret",
+          opts: { token: "zz-nested" },
+        },
+      },
+    ]);
+    expect(ev.tool).toBe("web_read");
+    expect(ev.attrs).toEqual({ arg_keys: ["url", "selector", "opts"] });
+    const json = JSON.stringify(ev.attrs);
+    expect(json).not.toContain("example.com");
+    expect(json).not.toContain("zz-secret");
+    expect(json).not.toContain("zz-private-path");
+    expect(json).not.toContain("zz-nested");
+    expect(json).not.toContain("token");
+  });
+
+  it("tool.called with an empty input object carries arg_keys: []", async () => {
+    const [ev] = await toolCalledEvents([
+      { name: "mcp__jarvis__web_search", input: {} },
+    ]);
+    expect(ev.attrs).toEqual({ arg_keys: [] });
+  });
+
+  it("tool.called with missing / non-object input carries no attrs", async () => {
+    const evs = await toolCalledEvents([
+      { name: "mcp__jarvis__a" },
+      { name: "mcp__jarvis__b", input: null },
+      { name: "mcp__jarvis__c", input: "zz-string-input" },
+      { name: "mcp__jarvis__d", input: 7 },
+      { name: "mcp__jarvis__e", input: ["zz-array-item"] },
+    ]);
+    expect(evs.map((e) => e.tool)).toEqual(["a", "b", "c", "d", "e"]);
+    for (const ev of evs) expect(ev).not.toHaveProperty("attrs");
+  });
+
+  it("tool.called lists only the input's own keys, never inherited ones", async () => {
+    const input = Object.create({ zz_inherited: 1 }) as Record<string, unknown>;
+    input.own = 2;
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs).toEqual({ arg_keys: ["own"] });
+  });
+
+  it("tool.called caps arg_keys at 32 and flags arg_keys_truncated", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [`k${i}`, `zz-v${i}`]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs.arg_keys).toEqual(
+      Array.from({ length: 32 }, (_, i) => `k${i}`),
+    );
+    expect(ev.attrs.arg_keys_truncated).toBe(true);
+    expect(Object.keys(ev.attrs).sort()).toEqual([
+      "arg_keys",
+      "arg_keys_truncated",
+    ]);
+  });
+
+  it("tool.called with exactly 32 keys keeps all and sets no truncated flag", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 32 }, (_, i) => [`k${i}`, i]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    expect(ev.attrs.arg_keys).toHaveLength(32);
+    expect(ev.attrs).not.toHaveProperty("arg_keys_truncated");
+  });
+
+  it("tool.called cuts each key to 48 chars", async () => {
+    const longKey = "q".repeat(100);
+    const [ev] = await toolCalledEvents([
+      { name: "mcp__jarvis__x", input: { [longKey]: 1, short: 2 } },
+    ]);
+    expect(ev.attrs).toEqual({ arg_keys: ["q".repeat(48), "short"] });
+  });
+
+  it("worst case (40 keys of 100 chars) is stored whole by the real emitTraceEvent, no truncated wrapper", async () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [
+        String(i).padStart(2, "0") + "w".repeat(98),
+        i,
+      ]),
+    );
+    const [ev] = await toolCalledEvents([{ name: "mcp__jarvis__x", input }]);
+    const actual = await vi.importActual<
+      typeof import("../observability/task-trace.js")
+    >("../observability/task-trace.js");
+    const { initDatabase, closeDatabase } = await import("../db/index.js");
+    initDatabase(":memory:");
+    try {
+      actual.emitTraceEvent(ev);
+      const [row] = actual.getTrace(ev.taskId);
+      expect(row.attrs!.length).toBeLessThan(actual.ATTRS_MAX_CHARS);
+      const stored = JSON.parse(row.attrs!);
+      expect(stored).not.toHaveProperty("truncated");
+      expect(stored.arg_keys).toHaveLength(32);
+      for (const k of stored.arg_keys) expect(k).toHaveLength(48);
+      expect(stored.arg_keys_truncated).toBe(true);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+  it("a second assistant turn's tool.called row carries the turn-2 keys", async () => {
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          id: "msg-1",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__jarvis__web_read",
+              input: { url: "u" },
+            },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          id: "msg-2",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__jarvis__web_search",
+              input: { query: "q", limit: 3 },
+            },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 2,
+        usage: { input_tokens: 2, output_tokens: 2 },
+      },
+    ];
+    await queryClaudeSdk({
+      prompt: "test",
+      systemPrompt: "sys",
+      toolNames: [],
+      trace: { taskId: "task-ak2" },
+    });
+    const evs = emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "tool.called");
+    expect(evs.map((e) => [e.round, e.tool, e.attrs])).toEqual([
+      [1, "web_read", { arg_keys: ["url"] }],
+      [2, "web_search", { arg_keys: ["query", "limit"] }],
+    ]);
+  });
+
+  it("two tool_use blocks in one turn each keep their own keys", async () => {
+    const evs = await toolCalledEvents([
+      { name: "mcp__jarvis__web_read", input: { url: "u", selector: "s" } },
+      { name: "mcp__jarvis__web_search", input: { query: "q" } },
+    ]);
+    expect(evs.map((e) => [e.tool, e.attrs])).toEqual([
+      ["web_read", { arg_keys: ["url", "selector"] }],
+      ["web_search", { arg_keys: ["query"] }],
+    ]);
   });
 
   // V8.1 gate instrumentation (ruling 2026-10-06): per-turn cache split.
@@ -4000,6 +4276,24 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
     expect(opts).not.toHaveProperty("hooks");
   });
 
+  // Queue 3p readout 2026-10-23: a Prometheus goal leg's trace is rows only.
+  // The hook judges the whole task ledger, so a sibling goal's plan gate
+  // would block this leg; plan gates never block by contract.
+  it("queryClaudeSdkAsInferWithTools with a trace never arms the wall, even when the factory would", async () => {
+    stopHookFactory.impl = () =>
+      vi.fn(async () => ({ decision: "block", reason: "r" }));
+    okResult();
+    await queryClaudeSdkAsInferWithTools(
+      [{ role: "user", content: "goal" }],
+      [],
+      async () => "unused",
+      { trace: { taskId: "task-g", runId: "run-g" } },
+    );
+    expect(stopHookFactory.calls).toEqual([]);
+    const opts = lastQueryArgs.value?.options as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("hooks");
+  });
+
   it("armed: the ledger hook is attached under hooks.Stop with a timeout", async () => {
     const hook = vi.fn(async () => ({ decision: "block", reason: "r" }));
     stopHookFactory.impl = () => hook;
@@ -4026,5 +4320,91 @@ describe("V8.4 ledger wall — hooks.Stop wiring (2026-08-16)", () => {
     expect(hook).toHaveBeenCalledTimes(1);
     expect(out).toEqual({ decision: "block", reason: "r" });
     expect(opts.hooks?.Stop?.[0]?.timeout).toBe(STOP_HOOK_SDK_TIMEOUT_S);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4t: the SDK tool bridge records file mutations in task_mutations
+// (bypassed since 2026-04-11 — only the task executor recorded).
+// ---------------------------------------------------------------------------
+
+describe("task_mutations on the SDK tool path (queue 4t)", () => {
+  type Handler = (
+    args: Record<string, unknown>,
+  ) => Promise<{ content: Array<{ text: string }> }>;
+  type GateRegistry = {
+    getEffectiveRiskTier?: unknown;
+    has?: unknown;
+  };
+
+  beforeAll(async () => {
+    const { initDatabase } = await import("../db/index.js");
+    initDatabase(":memory:");
+  });
+  afterAll(async () => {
+    const { closeDatabase } = await import("../db/index.js");
+    closeDatabase();
+  });
+
+  async function callFileWrite(result: string): Promise<string> {
+    const { toolRegistry } = await import("../tools/registry.js");
+    const reg = toolRegistry as unknown as GateRegistry;
+    reg.getEffectiveRiskTier = () => "low";
+    reg.has = () => false;
+    const exec = vi.spyOn(toolRegistry, "execute").mockResolvedValue(result);
+    try {
+      const w = wrapToolCached(
+        fakeTool({ name: "file_write" }),
+      ) as unknown as { handler: Handler };
+      const out = await w.handler({ path: "/tmp/4t-probe.txt" });
+      expect(exec).toHaveBeenCalledTimes(1);
+      return out.content[0].text;
+    } finally {
+      exec.mockRestore();
+      delete reg.getEffectiveRiskTier;
+      delete reg.has;
+    }
+  }
+
+  it("a successful file_write inside a run leaves one row for the run's task", async () => {
+    const { enterRunToolContext } = await import("../tools/rule-of-two.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    await enterRunToolContext("task-4t-probe", () =>
+      callFileWrite(JSON.stringify({ ok: true })),
+    );
+    const rows = getMutations("task-4t-probe");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tool_name: "file_write",
+      operation: "modify",
+      file_path: "/tmp/4t-probe.txt",
+    });
+  });
+
+  it("a failed file_write inside a run records nothing", async () => {
+    const { enterRunToolContext } = await import("../tools/rule-of-two.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    await enterRunToolContext("task-4t-failed", () =>
+      callFileWrite(JSON.stringify({ error: "EACCES" })),
+    );
+    expect(getMutations("task-4t-failed")).toEqual([]);
+  });
+
+  it("outside a run context nothing is recorded", async () => {
+    const { getDatabase } = await import("../db/index.js");
+    const { getMutations } = await import("../db/task-mutations.js");
+    getMutations("ensure-table"); // creates the table if no test did
+    const before = (
+      getDatabase()
+        .prepare("SELECT COUNT(*) AS n FROM task_mutations")
+        .get() as { n: number }
+    ).n;
+    await callFileWrite(JSON.stringify({ ok: true }));
+    const after = (
+      getDatabase()
+        .prepare("SELECT COUNT(*) AS n FROM task_mutations")
+        .get() as { n: number }
+    ).n;
+    expect(after).toBe(before);
   });
 });

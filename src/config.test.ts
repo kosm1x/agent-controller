@@ -55,3 +55,29 @@ describe("promptDumpDir (PROMPT_DUMP_DIR)", () => {
     expect(load("/tmp/dumps").promptDumpDir).toBe("/tmp/dumps");
   });
 });
+
+describe("inferenceSdkLastlineEnabled (INFERENCE_SDK_LASTLINE_ENABLED)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function load(raw: string | undefined) {
+    vi.stubEnv("MC_API_KEY", "test");
+    vi.stubEnv("INFERENCE_PRIMARY_PROVIDER", "claude-sdk");
+    vi.stubEnv("SANDBOX_BACKEND", "");
+    vi.stubEnv("INFERENCE_SDK_LASTLINE_ENABLED", raw);
+    return loadConfig();
+  }
+
+  it("unset → false (last line off)", () => {
+    expect(load(undefined).inferenceSdkLastlineEnabled).toBe(false);
+  });
+
+  it('"true" → true', () => {
+    expect(load("true").inferenceSdkLastlineEnabled).toBe(true);
+  });
+
+  it('"1" → false (only the literal "true" arms it)', () => {
+    expect(load("1").inferenceSdkLastlineEnabled).toBe(false);
+  });
+});

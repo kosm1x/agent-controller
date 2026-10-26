@@ -23,6 +23,23 @@ import {
 } from "./pgvector.js";
 import { errMsg } from "../lib/err-msg.js";
 
+/** In-flight fire-and-forget pgvector writes; settlePgvectorSyncs() drains them. */
+const inFlight = new Set<Promise<void>>();
+
+function track(p: Promise<void>): void {
+  inFlight.add(p);
+  void p.finally(() => inFlight.delete(p));
+}
+
+/**
+ * Resolves once no pgvector write started by this process is in flight (writes
+ * started while waiting count too). For short-lived operator scripts: call it
+ * before closeDatabase() so the process does not exit mid-sync.
+ */
+export async function settlePgvectorSyncs(): Promise<void> {
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+}
+
 /**
  * Sync a jarvis_files upsert to pgvector (fire-and-forget).
  * Generates embedding from title + content, then upserts to kb_entries.
@@ -40,7 +57,7 @@ export function syncToPgvector(
   if (!isPgvectorEnabled()) return;
 
   // Async, non-blocking — embedding + upsert happens in background
-  (async () => {
+  track((async () => {
     try {
       const hash = contentHash(content);
 
@@ -97,7 +114,7 @@ export function syncToPgvector(
         errMsg(err),
       );
     }
-  })();
+  })());
 }
 
 /**
@@ -106,7 +123,7 @@ export function syncToPgvector(
  */
 export function syncDeleteToPgvector(path: string): void {
   if (!isPgvectorEnabled()) return;
-  pgDelete(path).catch(() => {});
+  track(pgDelete(path).then(() => {}, () => {}));
 }
 
 /**

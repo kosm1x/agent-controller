@@ -11,6 +11,7 @@
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import type { Delta } from "./types.js";
 import { contentHash } from "./signal-store.js";
+import { METRICS } from "./delta-engine.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,6 +89,7 @@ function domainForSource(source: string): string {
     usgs: "weather",
     nws: "weather",
     gdelt: "geopolitical",
+    geo_rss: "geopolitical",
     frankfurter: "financial",
     cisa_kev: "cyber",
     coingecko: "financial",
@@ -180,6 +182,13 @@ export function evaluateDeltas(deltas: Delta[]): AlertCandidate[] {
 
 function formatChange(d: Delta): string {
   if (d.previous === null) return `${d.current} (first observation)`;
+  const metric = METRICS.find((m) => m.source === d.source && m.key === d.key);
+  if (metric?.type === "count") {
+    // Absolute change: a percent of a near-zero mean (goldstein_avg) is noise.
+    const diff = Math.round((d.current - d.previous) * 100) / 100;
+    const arrow = diff > 0 ? "↑" : diff < 0 ? "↓" : "→";
+    return `${d.previous} ${arrow} ${d.current} (Δ ${diff < 0 ? "" : "+"}${diff})`;
+  }
   const pct =
     d.previous !== 0
       ? ((d.current - d.previous) / Math.abs(d.previous)) * 100

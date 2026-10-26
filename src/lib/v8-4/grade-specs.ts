@@ -123,6 +123,8 @@ export interface GradedTraceAttrs {
   cost_usd?: number;
   reason?: GraderReason;
   status_before: string;
+  /** `GRADER_PROMPT_VERSION` in force (grader.ts) — survives every shrink step. */
+  prompt_v?: number;
 }
 
 export const DEFAULT_GRADER_BUDGET_MS = 90_000;
@@ -696,6 +698,7 @@ export function buildGradedAttrs(args: {
   usage?: GraderUsage | null;
   costUsd?: number;
   reason?: GraderReason;
+  promptVersion?: number;
 }): GradedTraceAttrs {
   const counts: Record<GradeVerdictKind, number> = {
     met: 0,
@@ -721,6 +724,7 @@ export function buildGradedAttrs(args: {
       reason: args.reason.slice(0, 300) as GraderReason,
     }),
     status_before: args.statusBefore.slice(0, 60),
+    ...(args.promptVersion !== undefined && { prompt_v: args.promptVersion }),
   });
   const fits = (a: GradedTraceAttrs) =>
     JSON.stringify(a).length <= TRACE_ATTRS_TARGET;

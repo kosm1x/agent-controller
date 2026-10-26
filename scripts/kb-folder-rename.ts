@@ -44,7 +44,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmdirSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { getDatabase } from "../src/db/index.js";
 import {
   getKbMirrorWriteDir,
@@ -55,6 +54,7 @@ import {
 import { pgDelete, isPgvectorEnabled } from "../src/db/pgvector.js";
 import { updateProject } from "../src/db/projects.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 const ARG_RE = /^projects\/[A-Za-z0-9][A-Za-z0-9_-]*\/?$/;
 /** The folder rule KB_README_RE (src/projects/record.ts) accepts. */
@@ -323,16 +323,6 @@ export async function runRename(argv: string[], opts: RunOptions): Promise<numbe
   return moved === plan.moves.length ? 0 : 1;
 }
 
-/** True when this file is the process entry point (not imported by a test). */
-function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 async function main(): Promise<number> {
   const { initDatabase, closeDatabase } = await import("../src/db/index.js");
   initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
@@ -346,7 +336,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (isMainModule()) {
+if (isMainModule(import.meta.url)) {
   // An operator login session with a terminal, before any db/KB side effect.
   requireOperatorContext("kb-folder-rename", { tty: false });
   main().then(

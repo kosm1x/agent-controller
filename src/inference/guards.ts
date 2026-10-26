@@ -23,6 +23,7 @@ const READ_ONLY_TOOLS = new Set([
   "web_search",
   "web_read",
   "exa_search",
+  "jina_search",
   "expand_read",
   "rss_read",
   "pdf_read",

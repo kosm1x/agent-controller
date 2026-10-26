@@ -33,9 +33,6 @@
  */
 
 import { requireOperatorTerminal } from "../src/lib/operator-gate.js";
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Project } from "../src/db/projects.js";
 import { getProject } from "../src/db/projects.js";
 import { getDatabase } from "../src/db/index.js";
@@ -52,6 +49,7 @@ import {
   projectRecordRelPath,
   renderProjectRecord,
 } from "../src/projects/record.js";
+import { isMainModule } from "../src/lib/is-main-module.js";
 
 export const WITHHELD = "[withheld: credential-style value — stays in the projects row]";
 
@@ -515,14 +513,7 @@ async function main(): Promise<number> {
   }
 }
 
-const real = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
-};
-if (process.argv[1] !== undefined && real(fileURLToPath(import.meta.url)) === real(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   // Audit R1 C1 / R2: an operator login session with a terminal, no override.
   requireOperatorTerminal("project-record-export");
   main().then((code) => process.exit(code));

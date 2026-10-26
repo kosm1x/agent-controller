@@ -46,6 +46,7 @@ import {
   listGates,
   ledgerSummaryJson,
   ledgerVerdict,
+  type GateRow,
   type GateSpec,
   type LedgerVerdict,
 } from "./gates.js";
@@ -56,6 +57,7 @@ import { isSimpleTask } from "../../prometheus/model-tier.js";
 import {
   abandonPendingGradeRows,
   buildGradedAttrs,
+  GRADE_ID_PREFIX,
   collectGradeSpecs,
   effectiveGraderMode,
   recordGradeVerdict,
@@ -65,7 +67,11 @@ import {
   type GraderReason,
   type GraderUsage,
 } from "./grade-specs.js";
-import { runGrader } from "./grader.js";
+import {
+  GRADER_PROMPT_VERSION,
+  runGrader,
+  type GraderInput,
+} from "./grader.js";
 import {
   annotateUnverified,
   auditNumbers,
@@ -195,6 +201,31 @@ interface GradeDecision {
   settled?: Promise<void>;
 }
 
+type VerifiedGates = NonNullable<GraderInput["verifiedGates"]>;
+
+/**
+ * Queue 4v: the task's MET harness-owned rows for the grader (read-back,
+ * landing — a `readback:` payload is only accepted from the harness, gates.ts
+ * `declareGates`). Plan/submission/ritual shell gates are excluded: their
+ * command is agent-declared, so their evidence is agent-authorable. Never the
+ * grader's own GR-* rows.
+ */
+function verifiedGatesOf(rows: readonly GateRow[]): VerifiedGates {
+  return rows
+    .filter(
+      (r) =>
+        r.state === "met" &&
+        r.source === "harness" &&
+        !r.gate_id.startsWith(GRADE_ID_PREFIX),
+    )
+    .map((r) => ({
+      id: r.gate_id,
+      kind: isReadbackRow(r) ? "readback" : r.check_kind,
+      criterion: r.criterion,
+      evidence: r.evidence ?? "",
+    }));
+}
+
 /**
  * One grading decision for `specs` — the grader call, or the named reason it
  * was not made — always traced as `gates.graded`. Never touches status,
@@ -206,6 +237,7 @@ async function gradeDecision(
   specs: readonly GradeSpec[],
   deliverable: string,
   evidence: readonly string[],
+  verifiedGates: VerifiedGates,
   overConcurrencyCap = false,
 ): Promise<GradeDecision> {
   const { taskId, runId, taskStatus } = args;
@@ -259,6 +291,7 @@ async function gradeDecision(
       deliverable,
       specs,
       evidence,
+      ...(verifiedGates.length > 0 && { verifiedGates }),
     });
     decision = {
       verdicts: res.verdicts,
@@ -286,6 +319,7 @@ async function gradeDecision(
         usage,
         costUsd,
         reason: decision.reason,
+        promptVersion: GRADER_PROMPT_VERSION,
       }),
     },
   });
@@ -323,12 +357,8 @@ function launchShadowGrade(
   evidence: readonly string[],
 ): void {
   try {
-    const specs = collectGradeSpecs(
-      args.taskId,
-      listGates(args.taskId),
-      deliverable,
-      "shadow",
-    );
+    const rows = listGates(args.taskId);
+    const specs = collectGradeSpecs(args.taskId, rows, deliverable, "shadow");
     if (specs.length === 0) return;
     // Over the cap the decision is a traced `skipped_concurrency` (no call),
     // and it does not occupy a slot. A slot is held until the SDK call
@@ -340,6 +370,7 @@ function launchShadowGrade(
       specs,
       deliverable,
       evidence,
+      verifiedGatesOf(rows),
       overCap,
     )
       .then((d) => d.settled)
@@ -375,12 +406,8 @@ async function enforceGrade(
   evidence: readonly string[],
 ): Promise<void> {
   try {
-    const specs = collectGradeSpecs(
-      args.taskId,
-      listGates(args.taskId),
-      deliverable,
-      "enforce",
-    );
+    const rows = listGates(args.taskId);
+    const specs = collectGradeSpecs(args.taskId, rows, deliverable, "enforce");
     if (specs.length === 0) return;
     // One pool for both modes: they are mutually exclusive at runtime
     // (`effectiveGraderMode()` is one value), so one set bounds the one resource.
@@ -394,6 +421,7 @@ async function enforceGrade(
       specs,
       deliverable,
       evidence,
+      verifiedGatesOf(rows),
       overCap,
     );
     const p: Promise<void> = decision

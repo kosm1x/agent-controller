@@ -74,17 +74,19 @@ export const METRICS: MetricDefinition[] = [
   },
   // Geopolitical
   {
-    source: "gdelt",
+    source: "geo_rss",
     key: "conflict_articles",
     type: "count",
+    // 5 feeds × 10 articles = 50 cap; ruled 2026-10-25 to stay (reliefweb dropped: 406-blocked)
     threshold: 50,
     riskSensitive: true,
   },
   {
     source: "gdelt",
     key: "goldstein_avg",
-    type: "numeric",
-    threshold: 15,
+    // umbral en puntos Goldstein absolutos (escala −10..+10); el promedio ronda 0, un umbral porcentual dispara en cada poll
+    type: "count",
+    threshold: 1.0,
     riskSensitive: true,
     direction: "down_is_bad",
   },

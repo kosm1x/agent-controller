@@ -51,7 +51,7 @@ vi.mock("../observability/prometheus.js", () => ({
 
 import { heavyRunner } from "./heavy-runner.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
-import { getConfig } from "../config.js";
+import { getConfig, type Config } from "../config.js";
 import {
   spawnContainer,
   imageExistsLocally,
@@ -72,7 +72,8 @@ const mockMissingHostDistAssets = vi.mocked(missingHostDistAssets);
 const mockRecordNanoclawImageMissing = vi.mocked(recordNanoclawImageMissing);
 const mockRecordNanoclawImageDrift = vi.mocked(recordNanoclawImageDrift);
 
-function makeConfig(containerized = false) {
+/** The Config fields the heavy runner reads; the rest stay unset. */
+function makeConfig(containerized = false): Config {
   return {
     apiKey: "test-key",
     port: 8080,
@@ -96,7 +97,7 @@ function makeConfig(containerized = false) {
     heavyRunnerContainerized: containerized,
     heavyRunnerImage: "mission-control:latest",
     heavyRunnerTimeoutMs: 900_000,
-  };
+  } as Config;
 }
 
 function makeOrchestratorResult(
@@ -492,7 +493,13 @@ describe("heavyRunner", () => {
     expect(mockOrchestrate).toHaveBeenCalledWith(
       "task-4",
       "With tools\n\nNeeds shell",
-      { goalTimeoutMs: 120_000, timeoutMs: 600_000, maxIterations: 90 },
+      {
+        goalTimeoutMs: 120_000,
+        timeoutMs: 600_000,
+        maxIterations: 90,
+        // Queue 3p readout 2026-10-23: the run reaches the goal legs' trace.
+        runId: "run-4",
+      },
       ["shell", "file"],
       undefined,
     );
@@ -520,6 +527,7 @@ describe("heavyRunner", () => {
       // ORCHESTRATOR_MAX_ITERATIONS was parsed by config.ts but consumed by
       // nothing (reliability audit R7) — it now reaches the IterationBudget.
       maxIterations: 120,
+      runId: "run-knobs",
     });
   });
 

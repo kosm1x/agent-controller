@@ -12,6 +12,7 @@ import {
   looksLikeTableStart,
   slugify,
   ingestPdf,
+  manifestPath,
 } from "./pdf-structured-ingest.js";
 
 // ---------------------------------------------------------------------------
@@ -280,6 +281,41 @@ describe("structureMarkdown", () => {
     expect(out.chunks).toHaveLength(0);
     expect(out.counts.text).toBe(0);
     expect(out.counts.table).toBe(0);
+  });
+
+  // 4o lineage: one manifest per document; every chunk points at it.
+  it("emits a manifest at <namespace>/<docSlug>.manifest.md and links every chunk to it", () => {
+    const out = structureMarkdown(sampleMd, "/tmp/report.pdf", {
+      namespace: "finance",
+      tags: ["10k"],
+    });
+    expect(out.manifest.path).toBe("finance/report.manifest.md");
+    expect(manifestPath("finance", "report")).toBe(out.manifest.path);
+    expect(out.manifest.type).toBe("ingested");
+    expect(out.manifest.qualifier).toBe("pdf");
+    expect(out.manifest.tags).toEqual(["10k", "pdf", "manifest"]);
+    expect(out.manifest.content).toContain("docSlug: report");
+    expect(out.manifest.content).toContain(`chunks: ${out.chunks.length}`);
+    expect(out.manifest.content).toMatch(/sha256: [0-9a-f]{64}/);
+    expect(out.manifest.related_to).toBeUndefined();
+    expect(out.manifest.stale).toBe(true); // never surfaces in search
+    expect(out.chunks.length).toBeGreaterThan(0);
+    for (const c of out.chunks) {
+      expect(c.related_to).toEqual(["finance/report.manifest.md"]);
+    }
+  });
+
+  it("manifest content is stable for an unchanged PDF and changes with any chunk", () => {
+    const a = structureMarkdown(sampleMd, "/tmp/report.pdf");
+    const b = structureMarkdown(sampleMd, "/tmp/report.pdf");
+    expect(a.parentDocId).not.toBe(b.parentDocId); // random per run
+    expect(a.manifest.content).toBe(b.manifest.content);
+    const changed = structureMarkdown(
+      sampleMd.replace("Revenue grew 12%.", "Revenue grew 13%."),
+      "/tmp/report.pdf",
+    );
+    expect(changed.manifest.path).toBe(a.manifest.path);
+    expect(changed.manifest.content).not.toBe(a.manifest.content);
   });
 });
 

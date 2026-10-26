@@ -15,6 +15,7 @@ import { setMaxContainers } from "./dispatch/dispatcher.js";
 import { isTriageMonitorEnabled } from "./lib/self-healing/flags.js";
 import { isXProbeEnabled } from "./lib/x-poster/config.js";
 import { getConfig } from "./config.js";
+import { sdkLastline } from "./inference/adapter.js";
 import {
   initDatabase,
   getDatabase,
@@ -407,6 +408,22 @@ async function main(): Promise<void> {
           appliesTo: config.inferencePrimaryProvider === "openai" ? "primary" : "openai-adapter-only",
         },
         "inference config",
+      );
+      // SDK last line: the same predicate the adapter and fast-runner use.
+      // An empty key is legal (keyless endpoint) but worth a look.
+      const lastline = sdkLastline();
+      console.log(
+        `[inference] sdk last line: ${
+          lastline
+            ? `ARMED fallback/${lastline.model}${config.inferenceFallbackKey ? "" : " key=unset"}`
+            : `DISARMED (${
+                !config.inferenceSdkLastlineEnabled
+                  ? "flag off"
+                  : config.inferencePrimaryProvider !== "claude-sdk"
+                    ? "provider not claude-sdk"
+                    : "fallback url/model unset"
+              })`
+        }`,
       );
     },
   );

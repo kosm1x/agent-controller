@@ -101,6 +101,11 @@ export function markIndexDirty(): void {
     dirtyTimer = null;
     regenerateIndex();
   }, DEBOUNCE_MS);
+  // Never the reason a process stays up. upsertFile marks through a dynamic
+  // import, so a short-lived script can see the mark land after its
+  // drainKbWrites() (src/db/kb-write-drain.ts) + closeDatabase(); a ref'd timer
+  // would then regenerate against a closed db 5 s later.
+  dirtyTimer.unref();
 }
 
 /** Cancel pending regeneration (for shutdown). */

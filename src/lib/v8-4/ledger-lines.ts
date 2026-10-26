@@ -21,6 +21,14 @@ export const GRADE_ID_PREFIX = "GR-";
  */
 export const REPORT_PERSIST_PREFIX = "📄 Reporte guardado:";
 
+/**
+ * Queue 4s-1 (c): the swarm's completion footer naming children that ran
+ * without a runnable gate ("[swarm] sin verificar: 3 de 5 hijos sin
+ * compuerta (…); autoevaluación no verificada") — a harness count, never a
+ * model claim.
+ */
+export const SWARM_FOOTER_PREFIX = "[swarm] sin verificar: ";
+
 /** Prefixes of every line the completion ledger can append to a deliverable. */
 export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "✔ Verificado:",
@@ -32,6 +40,7 @@ export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "⚠️ Cifras sin respaldo",
   "⚠️ Quité ", // "⚠️ Quité N referencias que no existen…"
   REPORT_PERSIST_PREFIX,
+  SWARM_FOOTER_PREFIX,
 ];
 
 export function isLedgerLine(line: string): boolean {

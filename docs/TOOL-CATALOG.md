@@ -1,6 +1,6 @@
 # Jarvis Tool & Service Catalog
 
-> **Last updated**: 2026-10-15 (tool surface re-verified against code: static enumeration of the exported tool objects = **195** — builtin 151 + WordPress 10 + CRM 1 + `google_workspace_cli` 1 + Google 22 + memory 5 + skills 5; live registry **234** at the 2026-09-26 03:21 UTC boot, not re-measured since. Earlier: `expand_read` added 2026-10-15, CORE; `memory_forget` added 2026-09-12, CORE + confirm-gated; every tool description passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list)
+> **Last updated**: 2026-10-26 (live registry 251 at the 05:23 UTC boot of build `1d1095e1`: `jina_search` added 2026-10-22 (4ah, `59c34a64`), builtin 163 → 164; the 2026-10-15 static enumeration below is otherwise unchanged. 2026-10-15: tool surface re-verified against code: static enumeration of the exported tool objects = **195** — builtin 151 + WordPress 10 + CRM 1 + `google_workspace_cli` 1 + Google 22 + memory 5 + skills 5; live registry **234** at the 2026-09-26 03:21 UTC boot, not re-measured since. Earlier: `expand_read` added 2026-10-15, CORE; `memory_forget` added 2026-09-12, CORE + confirm-gated; every tool description passes the not-for ratchet in `src/tools/description-lint.test.ts` or is pinned in its legacy list)
 > **Source of truth for tool registration**: `src/tools/sources/builtin.ts` (+ `google.ts`, `memory.ts`, `skills.ts`, `mcp.ts`; wired in `src/index.ts`). **Source of truth for scope groups**: the `*_TOOLS` arrays in `src/messaging/scope.ts`
 > **Version history**: `docs/V7-ROADMAP.md`
 > **This doc**: structured reference — tools by version (evolution) AND by category (lookup). Read this to understand what Jarvis can call today and how it got here.
@@ -12,7 +12,7 @@
 | Dimension                       | Value                                                                                                                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runners                         | 5 types: fast, nanoclaw, heavy (Prometheus), swarm, a2a                                                                                                                                           |
-| Total tools available to Jarvis | **250** — live registry per service log (2026-10-15 01:22 UTC boot, build `d0c5c5f`), 5 ToolSources: builtin 163 + mcp 58 + google 22 + memory 2 (KG/pgvector only; Hindsight backend off) + skills 5 (was 234 at the 2026-09-26 boot)              |
+| Total tools available to Jarvis | **251** — live registry per service log (2026-10-26 05:23 UTC boot, build `1d1095e1`; was 250 at the 2026-10-15 boot), 5 ToolSources: builtin 164 + mcp 58 + google 22 + memory 2 (KG/pgvector only; Hindsight backend off) + skills 5 (was 234 at the 2026-09-26 boot)              |
 | Tools gated by deferral         | 143 of the 195 static tools declare `deferred: true` (2026-10-15); MCP tools not counted                                                                                                          |
 | Scope groups                    | 35 regex groups (`DEFAULT_SCOPE_PATTERNS` in `src/messaging/scope.ts`); 26 classifier groups (`VALID_GROUPS` in `src/messaging/scope-classifier.ts`)                                              |
 | Core deps                       | 18 + 2 messaging (20 in `package.json`, 2026-09-26)                                                                                                                                               |
@@ -129,6 +129,7 @@ Each tool has `deferred: true|false` controlling whether it loads at prompt-cons
 
 - `web_search` — Brave Search API
 - `web_read` — extract article text from a URL (Jina Reader + stealth-browser fallback)
+- `jina_search` — web search via Jina Reader `s.jina.ai` (added 2026-10-22, 4ah; eval gate PASS, proven on task 12426)
 - `exa_search` — semantic search over Exa's corpus
 - `expand_read` — fetch a public URL through Expand (real browser capture); optional `query` returns ranked passages with citation links to the capture; dormant without `EXPAND_API_KEY`
 - `user_fact_set` / `user_fact_list` / `user_fact_delete` — user profile
@@ -183,7 +184,7 @@ Signals ingested from 8 sources, queryable.
 - `intel_status` — adapter health
 - `intel_alert_history` — recent alerts
 - `intel_baseline` — compute baseline for a signal
-- Sources behind intel_query (`src/intel/adapters/`): `usgs`, `nws`, `gdelt`, `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`
+- Sources behind intel_query (`src/intel/adapters/`): `usgs`, `nws`, `gdelt` (15-min export files from `data.gdeltproject.org` since `a8d328c4`, 2026-10-25), `frankfurter`, `cisa_kev`, `coingecko`, `treasury`, `google_news`, `geo_rss` (5 geopolitical feeds; reliefweb dropped 2026-10-25, HTTP 406)
 
 ### Markets (scope groups: `finance`, `alpha`, `backtest`, `paper`, `pm_alpha`, `pm_paper`, `market_ritual`, `chart`)
 
@@ -219,7 +220,7 @@ Signals ingested from 8 sources, queryable.
 
 ### Research (scope group: `research`)
 
-- `web_search` / `web_read` / `exa_search` (also core)
+- `web_search` / `web_read` / `exa_search` / `jina_search` (also core)
 - `gemini_upload` / `gemini_research` / `gemini_audio_overview` — Gemini document upload, research with URL + local file support, podcast-style audio overview
 - `knowledge_map` / `knowledge_map_expand` — structured domain knowledge maps
 - The research group also adds `pdf_read` and `http_fetch`
@@ -298,6 +299,7 @@ MCP bridges to two browser stacks.
 
 - `memory_kg_query` — knowledge-graph query (memory ToolSource; registered without Hindsight since `01f8d7a`)
 - `kb_ingest_pdf_structured` / `kb_batch_insert` — structured PDF ingestion + batch insert into the pgvector KB (scope group: `kb_ingest`)
+  - Lineage (4o): each PDF gets a manifest row `<namespace>/<docSlug>.manifest.md` written before its chunks (cascade awaited, skipped when the hash is unchanged); every chunk's `related_to` names it, so re-ingesting a changed PDF marks the old chunk set stale. `kb_batch_insert` lineage is opt-in via `source_path`. Pre-4o chunks: operator runs `scripts/backfill-kb-lineage.ts` (`--dry-run` default, `--apply` writes).
 - `graphify-code__*` — code knowledge graph (7 tools via external Python MCP; scope group: `graph`)
 - `xpoz__*` — xpoz-pipeline MCP (5 tools: trigger_run, get_topics, get_digest, get_history, get_job_status; scope group: `xpoz`)
 

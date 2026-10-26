@@ -212,6 +212,11 @@ export interface OrchestratorConfig {
     /** Max tool calls / graph size ratio before triggering convergence replan. */
     toolCallsPerGoal: number;
   };
+  /**
+   * Dispatcher run id for the goal legs' SDK `trace` (`tool.called` rows),
+   * queue 3p readout 2026-10-23. Optional: callers without one omit it.
+   */
+  runId?: string;
 }
 
 export interface TraceEvent {

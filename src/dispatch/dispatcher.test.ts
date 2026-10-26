@@ -511,6 +511,7 @@ describe("dispatchTask required-tools failure names the runner's reason", () => 
           status: "DONE_WITH_CONCERNS",
           concerns: ["fallo de autenticación, tarea no ejecutada."],
           output: "x",
+          durationMs: 0,
           toolCalls: [],
         }) as RunnerOutput,
     });
@@ -555,6 +556,7 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
       status: "DONE_WITH_CONCERNS",
       concerns: [` no pude confirmar con ${key} ${"z".repeat(600)}`, "second"],
       output: "x",
+      durationMs: 0,
     });
     const detail = takeConcernDetail(taskId)!;
     expect(detail.startsWith("no pude confirmar con [REDACTED")).toBe(true);
@@ -567,6 +569,7 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
       success: true,
       status: "DONE",
       output: "x",
+      durationMs: 0,
     });
     expect(takeConcernDetail(taskId)).toBeNull();
   });
@@ -586,6 +589,7 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
         status: "DONE_WITH_CONCERNS",
         concerns: ["sin datos del día"],
         output: "x",
+        durationMs: 0,
       });
     } finally {
       emitEventMock.mockReset();
@@ -600,6 +604,7 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
       status: "DONE_WITH_CONCERNS",
       concerns: [{ not: "a string" } as unknown as string],
       output: "x",
+      durationMs: 0,
     });
     const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
     expect(terminal.name).toBe("task.completed");
@@ -1131,7 +1136,7 @@ describe("dispatchTask trace emits", () => {
   });
 
   it("failed-result path: one task.failed carrying the mapped status + error", async () => {
-    stubRunner({ success: false, error: "no scope", status: "FAIL" });
+    stubRunner({ success: false, error: "no scope" });
     const names = await traceNamesAfterDispatch();
     expect(
       names.filter((n) => n !== "task.started" && n !== "attribution.resolved"),
@@ -1412,6 +1417,7 @@ describe("dispatchTask redacts credentials in runs.output / runs.error / tasks.e
           status: "DONE_WITH_CONCERNS",
           concerns: ["y".repeat(189) + " " + AIZA],
           output: "x",
+          durationMs: 0,
           toolCalls: [],
         }) as RunnerOutput,
     });

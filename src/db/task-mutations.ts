@@ -4,8 +4,9 @@
  * Records every file created/modified/deleted during a task.
  * Enables: rollback awareness, audit trails, mutation-based learning.
  *
- * Recording is centralized in the task executor wrapper — individual
- * tool handlers don't need modification.
+ * Recording is centralized in `recordMutationFromResult`, called by the task
+ * executor wrapper and the Claude SDK tool bridge — individual tool handlers
+ * don't need modification.
  */
 
 import { getDatabase } from "./index.js";
@@ -123,6 +124,45 @@ export function recordMutation(
       .run(taskId, toolName, operation, filePath);
   } catch {
     // Non-fatal — mutation log is best-effort
+  }
+}
+
+/**
+ * Record the mutation a finished tool call made, if any — the ONE place the
+ * "did this call fail?" convention lives, shared by the task executor and the
+ * Claude SDK tool bridge so the two paths cannot drift (queue 4t). A result
+ * starting `Error:` (MCP passthrough) or parsing to JSON with `error` or
+ * `success === false` (builtin envelopes) is a failure and records nothing.
+ * Never throws.
+ */
+export function recordMutationFromResult(
+  taskId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  result: string,
+): void {
+  try {
+    let isError = result.startsWith("Error:");
+    if (!isError) {
+      try {
+        const parsed = JSON.parse(result);
+        // {error: ...} is THE builtin failure convention. The
+        // `success === false` leg survives only for the remaining dynamic
+        // envelope producers: jarvis_files_batch_* (`success: errors === 0`,
+        // documented partial-error contract) and gemini_upload
+        // (`success: state === "ACTIVE"`).
+        if (parsed?.error || parsed?.success === false) isError = true;
+      } catch {
+        // Non-JSON result — not an error
+      }
+    }
+    if (isError) return;
+    const mutation = classifyMutation(toolName, args);
+    if (mutation) {
+      recordMutation(taskId, toolName, mutation.operation, mutation.filePath);
+    }
+  } catch (err) {
+    console.warn("[task-mutations] recordMutationFromResult failed:", err);
   }
 }
 

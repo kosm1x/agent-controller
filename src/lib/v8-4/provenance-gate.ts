@@ -142,7 +142,7 @@ function taskDescription(taskId: string): string {
  * wc -l\`" or "salida de data_summarize x.csv" name a tool too (R4 audit C4-1).
  */
 const TOOL_NAME_RE =
-  /\b(shell_exec|gsheets_read|gdocs_read(?:_full)?|gdrive_\w+|web_read|expand_read|web_search|exa_search|file_read|data_summarize|pdf_read|http_fetch|market_\w+|prediction_markets|crm_query|intel_\w+|jarvis_file_read|task_history|code_search|[\w-]+__\w+)\b/i;
+  /\b(shell_exec|gsheets_read|gdocs_read(?:_full)?|gdrive_\w+|web_read|expand_read|web_search|exa_search|jina_search|file_read|data_summarize|pdf_read|http_fetch|market_\w+|prediction_markets|crm_query|intel_\w+|jarvis_file_read|task_history|code_search|[\w-]+__\w+)\b/i;
 
 export function fuenteIsCheckable(rawFuente: string): boolean {
   if (!CHECKABLE_SOURCE_RE.test(rawFuente)) return false;

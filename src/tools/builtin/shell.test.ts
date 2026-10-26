@@ -3,8 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -31,8 +32,10 @@ import {
   withDockerConfig,
   withPmShimPath,
   DOCKER_CONFIG_DIR,
+  PIP_VENV_ENV,
 } from "./shell.js";
 import { _resetFlailingGuard } from "../flailing-guard.js";
+import { enterRunToolContext } from "../rule-of-two.js";
 
 // Ruling 3c: a stored secret reaches ONLY the child whose command names it.
 // The store is replaced by one synthetic reference, SECRET_T.
@@ -1141,30 +1144,36 @@ B`;
         "ANSI-C/locale quoting is not judged under bash re-entry: $'/opt/example/out.txt'",
       );
       // Scaling, not wall clock: the same input at 8 192 and 16 383 lines (57 344 → 114 681 chars for
-      // `sh <<a`, 65 536 → 131 064 for `cat <<a`), median of 3 each. Measured under vitest on the VPS
-      // 2026-10-16: ~0.5 s → ~0.9 s (`sh`), ~0.19 s → ~0.4 s (`cat`); ratio 1.86-2.28 over 3 runs of
-      // this file. A charCodeAt rescan of the remainder per heredoc body line (quadratic) measured
-      // 3.8 s → 15.2 s, ratio 4.01. No absolute bound is both CI-safe and tight: 1500 ms flaked at
-      // 2174 ms on a shared GitHub runner, while that quadratic passed a 15 000 ms bound here and
-      // would run ~8 s on a 2x faster box. A runner slow by a constant factor keeps the ratio.
-      // The 20 s per call is a sanity bound (testTimeout is 30 s per test, raised for this one).
+      // `sh <<a`, 65 536 → 131 064 for `cat <<a`), process CPU time, minimum of 5 each.
+      // validateShellCommand is synchronous and CPU-bound, so CPU time excludes scheduler waits and
+      // the ratio no longer depends on load. Wall clock did: a median of 3 flaked at 3.01 under load
+      // 7-10 on 2026-10-18, and a wall-clock minimum of 5 still drifted to 2.66 (`cat`) under load
+      // in the 2026-10-23 audit (queue 4q). Measured under vitest on the VPS 2026-10-16 (wall):
+      // ~0.5 s → ~0.9 s (`sh`), ~0.19 s → ~0.4 s (`cat`); ratio 1.86-2.28 over 3 runs of this file.
+      // CPU time on 2026-10-23: 2.09 (`sh`), 1.94 (`cat`) quiet; 1.91-2.02 (`sh`), 1.87-1.90 (`cat`)
+      // over 3 runs with 4 CPU burners on 4 cores. A charCodeAt rescan of the remainder per heredoc
+      // body line (quadratic) measured 3.8 s → 15.2 s, ratio 4.01 (wall, median of 3); 3.3 s →
+      // 12.7 s, ratio 3.82 (CPU, minimum of 5). No absolute bound is both CI-safe and tight: 1500 ms
+      // flaked at 2174 ms on a shared GitHub runner, while that quadratic passed a 15 000 ms bound
+      // here and would run ~8 s on a 2x faster box. A runner slow by a constant factor keeps the ratio.
+      // The 20 s of CPU per call is a sanity bound (testTimeout is 30 s per test, raised for this one).
       const time = (input: string): number => {
-        const t = performance.now();
+        const c0 = process.cpuUsage();
         validateShellCommand(input);
-        const ms = performance.now() - t;
+        const d = process.cpuUsage(c0);
+        const ms = (d.user + d.system) / 1000;
         expect(ms, `${JSON.stringify(input.slice(0, 8))}… ${input.length} chars`).toBeLessThan(20_000);
         return ms;
       };
-      const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[1]!;
       for (const line of ["sh <<a\n", "cat <<a\n"]) {
         const half: number[] = [];
         const full: number[] = [];
-        for (let r = 0; r < 3; r++) {
+        for (let r = 0; r < 5; r++) {
           half.push(time(line.repeat(8192)));
           full.push(time(line.repeat(16383)));
         }
-        const ratio = median(full) / median(half);
-        expect(ratio, `${line.trim()}: 16383 lines ${median(full).toFixed(0)} ms / 8192 lines ${median(half).toFixed(0)} ms`).toBeLessThan(3);
+        const ratio = Math.min(...full) / Math.min(...half);
+        expect(ratio, `${line.trim()}: 16383 lines ${Math.min(...full).toFixed(0)} ms / 8192 lines ${Math.min(...half).toFixed(0)} ms`).toBeLessThan(3);
       }
       time(`sh -c ${"\"'".repeat(30_000)}`); // ~20 ms: too fast for a stable ratio, the sanity bound only
       expect(validateShellCommand("cat <<a\n".repeat(16383)).reason).toMatch(/nested 5 deep \(a heredoc body or a quoted string\) is not judged/);
@@ -2113,14 +2122,14 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     // quoted heredoc whose receiver is an interpreter
     blocked("bash <<'EOF'\nnpm install lodash\nEOF");
     blocked('python3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["npm","install","lodash"])\nPY');
-    blocked("python3 - << 'EOF'\nimport subprocess\nsubprocess.check_call(['pip', 'install', 'requests'])\nEOF");
+    blocked("python3 - << 'EOF'\nimport subprocess\nsubprocess.check_call(['pipx', 'install', 'ruff'])\nEOF"); // pip: queue 4ae describe
     blocked('node <<\'JS\'\nrequire("child_process").execSync("npm i lodash")\nJS');
     // quoted / escaped command word
     blocked('"npm" install lodash');
     blocked("n\\pm install lodash");
     blocked("'npm' 'install' lodash");
     // python -m
-    blocked("python3 -m pip install requests");
+    blocked("python3 -m pipx install ruff"); // `-m pip install` is allowed inside a venv (queue 4ae describe)
     blocked("python -m pip install --user requests");
     // qa R2 C-1: heredoc bodies get the SAME rules as bare segments (npx, `npm set`)
     blocked("bash <<'EOF'\nnpx cowsay hi\nEOF", /not installed under/);
@@ -2133,7 +2142,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     blocked("echo lodash | xargs /usr/bin/npm install");
     blocked("echo lodash | xargs -I{} /usr/bin/npm install {}");
     blocked(`node --eval "require('child_process').execSync('/usr/bin/npm i lodash')"`);
-    blocked("bash <<'EOF'\n/usr/bin/pip install requests\nEOF");
+    blocked("bash <<'EOF'\n/usr/bin/pipx install ruff\nEOF");
     // qa R2 C-3: ANSI-C quoting and variable indirection
     blocked("$'npm' install lodash");
     blocked("eval $'npm install lodash'");
@@ -2163,7 +2172,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     blocked("npm${X} install lodash");
     blocked("npm$X install lodash");
     blocked("${P:-npx} cowsay hi");
-    blocked("${P:-pip} install requests", /Python package/);
+    blocked("${P:-pipx} install ruff", /Python package/);
     blocked("${P:-npm} config set registry http://evil.test");
     blocked("bash <<'EOF'\n${P:-npm} install lodash\nEOF");
     // qa R3 N-3: flag padding does not push the verb out of the window
@@ -2286,7 +2295,7 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     }
     // a redirection between a manager and its verb is not the verb (string layer; the shim refuses it too)
     const inst = ["inst", "all"].join("");
-    for (const cmd of [`npm>/tmp/test/o ${inst} left-pad`, `npm 2>/dev/null ${inst} left-pad`, `npm 2> /dev/null ${inst} left-pad`, `pip>/tmp/test/o ${inst} requests`]) {
+    for (const cmd of [`npm>/tmp/test/o ${inst} left-pad`, `npm 2>/dev/null ${inst} left-pad`, `npm 2> /dev/null ${inst} left-pad`, `pipx>/tmp/test/o ${inst} requests`]) {
       expect(validateShellCommand(cmd).allowed, cmd).toBe(false);
     }
     // qa R15 C15-1: an fd starts a word after a delimiter too — the cross-product operator × fd × leading separator
@@ -2578,14 +2587,14 @@ describe("package-manager gate — shell_exec has no install authority (dependen
   });
 
   it("blocks Python package installs and allows Python reads", () => {
-    blocked("pip install requests", /Python package/);
+    allowed("pip install requests"); // queue 4ae: the shim (system pip by name) and PIP_REQUIRE_VIRTUALENV decide
     blocked("pip3 install --user requests", /Python package/);
     blocked("uv pip install requests", /Python package/);
     blocked("uv add requests", /Python package/);
     blocked("uv run script.py", /Python package/);
     blocked("pipx install ruff", /Python package/);
-    blocked("pip download requests"); // qa R1 W5
-    blocked("pip wheel requests");
+    allowed("pip download requests"); // qa R1 W5; allowed inside a venv since queue 4ae
+    allowed("pip wheel requests");
     allowed("pip list");
     allowed("pip show requests");
     allowed("pip --version");
@@ -3323,5 +3332,527 @@ describe("ruling 3c — $SECRET_X is exported only into the child that names it"
       expect(out.slice(9995)).toBe("[oculto]".slice(0, 5));
       expect(out).not.toContain(SCRUB_SYN.slice(0, 5));
     }
+  });
+});
+
+describe("queue 4aa — the child env names the current run's task as MC_TASK_ID", () => {
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("inside a run: MC_TASK_ID is the run's task id", async () => {
+    const r = JSON.parse(
+      await enterRunToolContext("task-4aa-probe", () =>
+        shellTool.execute({ command: 'echo "$MC_TASK_ID"' }),
+      ),
+    );
+    expect(r.exit_code).toBe(0);
+    expect(r.stdout).toBe("task-4aa-probe\n");
+  });
+
+  it("inside a run: the run's id overrides an MC_TASK_ID inherited from the parent env", async () => {
+    const saved = process.env.MC_TASK_ID;
+    process.env.MC_TASK_ID = "stale";
+    try {
+      const r = JSON.parse(
+        await enterRunToolContext("task-4aa-override", () =>
+          shellTool.execute({ command: 'echo "$MC_TASK_ID"' }),
+        ),
+      );
+      expect(r.stdout).toBe("task-4aa-override\n");
+    } finally {
+      if (saved === undefined) delete process.env.MC_TASK_ID;
+      else process.env.MC_TASK_ID = saved;
+    }
+  });
+
+  it("outside a run: the key is absent from the child env", async () => {
+    const saved = process.env.MC_TASK_ID;
+    delete process.env.MC_TASK_ID;
+    try {
+      const r = JSON.parse(
+        await shellTool.execute({ command: "printenv MC_TASK_ID || echo absent" }),
+      );
+      expect(r.stdout.trim()).toBe("absent");
+    } finally {
+      if (saved !== undefined) process.env.MC_TASK_ID = saved;
+    }
+  });
+});
+
+describe("container-runtime CLIs are refused like docker exec (queue 4k, ruling 5)", () => {
+  const refused = (cmd: string, why: RegExp = /container runtime CLIs.*operator ruling 5, 2026-10-01/) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(why);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+  const FORMS: Record<string, string> = {
+    ctr: "ctr -n moby task exec --exec-id q abc psql -U postgres -c 'select 1'",
+    "containerd-ctr": "containerd-ctr -n moby task exec --exec-id q abc psql -U postgres",
+    runc: "runc --root /run/docker/runtime-runc/moby exec abc psql -U postgres",
+    crictl: "crictl exec -it abc psql -U postgres",
+    podman: "podman exec supabase-db psql -U postgres",
+    nerdctl: "nerdctl -n moby exec supabase-db psql -U postgres",
+    "podman-compose": "podman-compose exec db psql -U postgres",
+  };
+
+  it("refuses each runtime word at segment head", () => {
+    for (const cmd of Object.values(FORMS)) refused(cmd);
+    for (const cmd of ["ctr version", "runc list", "podman ps", "nerdctl compose up", "/usr/bin/runc --help"]) refused(cmd);
+  });
+
+  it("refuses each runtime word behind sudo and the standard wrappers", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`sudo ${cmd}`, /refused|operator/); // sudo is already an env-reset refusal; the runtime word may never pass behind it
+      refused(`env A=1 ${cmd}`);
+      refused(`timeout 5 ${cmd}`);
+      refused(`nice -n 5 ${cmd}`);
+      refused(`echo abc | xargs ${cmd}`);
+    }
+  });
+
+  it("refuses each runtime word inside bash -c / eval strings", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`bash -c "${cmd}"`);
+      refused(`sh -c "${cmd}"`);
+      refused(`eval "${cmd}"`);
+    }
+  });
+
+  it("refuses each runtime word in a heredoc fed to a shell", () => {
+    for (const cmd of Object.values(FORMS)) {
+      refused(`bash <<'EOF'\n${cmd}\nEOF`);
+      refused(`bash <<EOF\n${cmd}\nEOF`);
+    }
+  });
+
+  it("off command position: refused when a runtime verb follows, an argument otherwise", () => {
+    refused("find /run -maxdepth 0 -exec runc exec abc psql -U postgres ;");
+    refused("echo ctr task exec abc");
+    allowed("grep -rn runc src");
+    allowed("ls -l /usr/bin/ctr");
+  });
+
+  it("accepts unrelated words that contain the substrings", () => {
+    for (const cmd of [
+      "echo contractor",
+      "ls /opt/runcmd/bin",
+      "cat src/runcmd/notes.txt",
+      "echo ctrl",
+      "grep -rn ctrl src",
+      "ls podmanx nerdctl2 runc.d",
+    ]) allowed(cmd);
+  });
+});
+
+describe("npm run / npx appended argv carries no psql-shaped token (queue 4m, ruling 5a)", () => {
+  const refused = (cmd: string) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(/appends argv after the checked script body.*queue 4m.*ruling 5a/);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("refuses a role or psql passed as appended argv", () => {
+    for (const cmd of [
+      "npm run db -- -U postgres",
+      "npm run db -U postgres",
+      "npm run db -- -Upostgres",
+      "npm run db -- -U'postgres'",
+      "npm run db -- -AtU postgres",
+      "npm run db -- --username postgres",
+      "npm run db -- --username=postgres",
+      "npm run db -- --user=postgres",
+      "npm run db -- PGUSER=postgres",
+      "npm run db -- psql",
+      "npm run db -- -c 'select 1'",
+      "npm run db -- -c \"DROP TABLE x\"",
+      "npm run db -- --command='select 1'",
+      "npm run db -- -c '\\c - postgres'",
+      "npm run-script db -- -U postgres",
+      "npm test -- -U postgres",
+      "npm start -- --username=postgres",
+      "pnpm db -U postgres",
+      "yarn run db -U postgres",
+      "npx tsx scripts/q.ts -U postgres",
+      "npx tsx scripts/q.ts --username=postgres",
+      "timeout 30 npm run db -- -U postgres",
+      "bash -c 'npm run db -- -U postgres'",
+      "npm run build; npm run db -- -U postgres",
+    ]) refused(cmd);
+  });
+
+  it("stays linear on 120 KB package-manager-dense input (fold W1)", () => {
+    const cmd = "echo " + "yarn ".repeat(24_000);
+    expect(Buffer.byteLength(cmd)).toBeGreaterThan(119_000);
+    const t = performance.now();
+    const r = validateShellCommand(cmd);
+    const ms = performance.now() - t;
+    expect(r.reason ?? "").not.toMatch(/command too long/);
+    console.log(`[4m-W1] 120 KB echo yarn… validated in ${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(2000);
+  });
+
+  it("refuses appended argv past the 64-token scan cap (fold W1)", () => {
+    refused(`npm run db -- ${"a ".repeat(70)}-U postgres`);
+    refused(`npm run db -- ${"a ".repeat(70)}`); // past the cap refuses whatever follows
+    allowed(`npm run build -- ${"a ".repeat(50)}`);
+  });
+
+  it("keeps the existing npm run allow-list", () => {
+    for (const cmd of [
+      "npm run build",
+      "npm run typecheck",
+      "npm run lint -- --fix",
+      "npm run build -- --verbose",
+      "npm run lint -- -c .eslintrc.json",
+      "npx tsx scripts/q.ts --dry-run",
+      "npx vitest run src/tools/builtin/shell.test.ts",
+      "npm run build -- -DUSE_X", // fold W2: a cluster with a non-psql letter is not -U
+      "npm run build -- -Wall -DUNICODE",
+    ]) allowed(cmd);
+  });
+});
+
+describe("python path is an interpreter for the argument rule (operator ruling 2026-10-21)", () => {
+  // Route 1 after a 3-strike stop: string-only, no fs, no cwd. A `<dir>/python[3]` token is not a
+  // manager binary for checkEnvReset's ARGUMENT rule unless a copy word is in the segment; the verb
+  // rules and the COPY rule still see it.
+  const refused = (cmd: string) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(/operator decision/);
+  };
+  const allowed = (cmd: string) =>
+    expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("allows a python path behind a wrapper or as an unknown program's operand", () => {
+    for (const cmd of [
+      "xvfb-run -a /tmp/pr_test/bin/python /tmp/pr_test/test_pr.py 2>&1 | tail -30", // live refusal 2026-10-21 02:51 UTC
+      "cd /tmp/pr_test && timeout 55 xvfb-run -a ./bin/python test_pr.py 2>&1 | tail -30", // live refusal 02:55 UTC
+      "timeout 60 /tmp/v/bin/python3 s.py",
+      "xvfb-run -a /usr/bin/python3.12 s.py",
+      'xvfb-run -a /tmp/v/bin/python -c "print(1)"',
+      "nohup /tmp/v/bin/python s.py &",
+      "xvfb-run -a /usr/bin/python3 s.py", // bare-name parity: `python3 s.py` was always allowed
+    ]) allowed(cmd);
+  });
+
+  it("keeps the verb, copy, PATH/env and manager-path rules", () => {
+    // The pip verbs (`<p>/pip install x`, `<p>/python -m pip install x`) are allowed since queue 4ae: see that describe.
+    for (const cmd of [
+      "cp /usr/bin/python3 /tmp/p",
+      "cd /usr/bin && cp python3 /tmp/p", // bare name: the COPY rule alone decides it
+      "timeout 5 cp /tmp/v/bin/python zz",
+      "xvfb-run -a cp /tmp/v/bin/python /tmp/p", // cp not at command position: the copy word keeps the argument rule
+      "xvfb-run -a ln -s /tmp/v/bin/python /tmp/p",
+      "xvfb-run -a /bin/cp /tmp/v/bin/python /tmp/p", // copy word by PATH: copySeen strips the dir (qa R4 W3)
+      "xvfb-run -a /usr/bin/ln -s /tmp/v/bin/python /tmp/p",
+      "PATH=/x /tmp/v/bin/python s.py",
+      "env -i /tmp/v/bin/python s.py",
+      "cp /usr/bin/pip3 /tmp/p && /tmp/p install x",
+      "xvfb-run -a /usr/bin/npm install x",
+      "xvfb-run -a /usr/bin/npm ls", // read verb: only the argument rule refuses a non-python manager path
+      "xvfb-run -a /opt/python3/bin/npm ls", // the shape is the BASENAME, not a `python` dir in the path
+      "xvfb-run -a /usr/lib/node_modules/npm/bin/npm-cli.js install",
+      `node -e "require('fs').symlinkSync('/usr/bin/npm','/tmp/zz')"`,
+    ]) refused(cmd);
+  });
+
+  it("records the verdicts this ruling does not change", () => {
+    // Not python-shaped manager words, allowed at HEAD too.
+    allowed("xvfb-run -a /tmp/v/bin/pythonx s.py");
+    // Never blocked (audit doc §12): the interpreter itself can create a venv or run pip from a script.
+    allowed("python3 -m venv /tmp/x");
+    allowed("python3 -m ensurepip");
+    // Tightened by pip fold 1 C2 rule 2 (the `[` after the `pip.main` anchor); the honesty clause stands (audit doc §13).
+    refused(`python3 -c "import pip; pip.main(['install','x'])"`);
+    allowed("/tmp/v/bin/python -m venv /tmp/y");
+    // Disclosed residue: an interpreter copy of a python path is allowed (since queue 4ae, so is `-m pip` on it: PIP_REQUIRE_VIRTUALENV decides).
+    allowed(`node -e "require('fs').copyFileSync('/tmp/v/bin/python','/tmp/zz')"`);
+  });
+});
+
+describe("pip inside venvs (operator ruling 2026-10-21, queue 4ae)", () => {
+  // Layer 1 is structural: PIP_REQUIRE_VIRTUALENV=1 in the child env makes pip refuse outside a venv on every
+  // spelling. The string gate only keeps a command from switching that off (`--isolated`, any `PIP_*` name) or
+  // pointing a venv's pip outside the venv (location flags, `pip config`). It never decides "is this a venv".
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+  const refused = (cmd: string, why: RegExp) => {
+    const r = validateShellCommand(cmd);
+    expect(r.allowed, cmd).toBe(false);
+    expect(r.reason, cmd).toMatch(why);
+  };
+  const allowed = (cmd: string) => expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+
+  it("the child env pins PIP_REQUIRE_VIRTUALENV=1, over a parent value", async () => {
+    expect(PIP_VENV_ENV).toEqual({ PIP_REQUIRE_VIRTUALENV: "1" });
+    expect(withPmShimPath({ PATH: "/bin" }).PIP_REQUIRE_VIRTUALENV).toBe("1");
+    expect(withPmShimPath({ PATH: "/bin", PIP_REQUIRE_VIRTUALENV: "0" }).PIP_REQUIRE_VIRTUALENV).toBe("1");
+    const saved = process.env.PIP_REQUIRE_VIRTUALENV;
+    process.env.PIP_REQUIRE_VIRTUALENV = "0";
+    try {
+      const r = JSON.parse(await shellTool.execute({ command: 'echo "v=$PIP_REQUIRE_VIRTUALENV"' }));
+      expect(r.stdout).toBe("v=1\n");
+    } finally {
+      if (saved === undefined) delete process.env.PIP_REQUIRE_VIRTUALENV;
+      else process.env.PIP_REQUIRE_VIRTUALENV = saved;
+    }
+  });
+
+  // No network (--no-index), no install (--dry-run), no venv: the check fires before resolution.
+  it.skipIf(!existsSync("/usr/bin/pip3"))("layer 1: the system pip refuses under the shell_exec env", () => {
+    const r = spawnSync("/usr/bin/pip3", ["install", "--no-index", "--dry-run", "zzz-not-a-package"], {
+      env: withPmShimPath({ PATH: "/usr/bin:/bin", HOME: tmpdir() }),
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/Could not find an activated virtualenv \(required\)/);
+  });
+
+  it("allows pip inside a venv on every spelling (layer 1 refuses the system pip)", () => {
+    for (const cmd of [
+      "/tmp/v/bin/pip install -q patchright nodriver",
+      "/tmp/v/bin/pip3 install x",
+      "/tmp/v/bin/pip3.12 install x",
+      "/tmp/v/bin/python -m pip install x",
+      "/tmp/v/bin/python3 -m pip uninstall -y x",
+      "cd /tmp/v && ./bin/pip install x",
+      "pip install x", // by name: the shim (system pip) or an activated venv's pip
+      "python3 -m pip install x",
+      "python3 -mpip install x",
+      "/tmp/v/bin/pip install -r requirements.txt",
+      "/tmp/v/bin/pip install --upgrade pip",
+      "/tmp/v/bin/pip install --pre x", // an exact option, not a `--prefix` abbreviation
+      "/tmp/v/bin/pip install --root-user-action=ignore x",
+      "/tmp/v/bin/pip install -rt", // `-r` takes the value: requirements file `t`
+      "/tmp/v/bin/pip download x -d /tmp/w",
+      "/tmp/v/bin/pip wheel x",
+      "/tmp/v/bin/pip list",
+      "timeout 120 /tmp/v/bin/pip install x",
+      "timeout 120 /tmp/v/bin/pip install --upgrade pip", // pip's `install` is not coreutils `install` (COPY rule)
+      "xvfb-run -a /tmp/v/bin/python -m pip install x",
+      "xvfb-run -a /tmp/v/bin/pip3 list",
+      "python3 -m venv /tmp/v && /tmp/v/bin/pip install x",
+      `python3 - <<'EOF'\nimport subprocess\nsubprocess.check_call(['pip', 'install', 'requests'])\nEOF`,
+      "echo $PIP_REQUIRE_VIRTUALENV", // a read expands away
+    ]) allowed(cmd);
+  });
+
+  it("refuses the flags that switch the pin off or write outside the venv, on any pip spelling", () => {
+    const outside = /outside the venv/;
+    refused("/tmp/v/bin/pip install --isolated x", /--isolated.*ignore PIP_REQUIRE_VIRTUALENV/);
+    refused("pip install x --isolated", /--isolated/);
+    refused("/usr/bin/pip3 install --isolated --break-system-packages x", /--isolated/); // the one full bypass of both layers
+    refused("/tmp/zz --isolated install x", /--isolated/); // anywhere: an alias of pip is not a pip spelling
+    refused("/tmp/v/bin/pip install --iso x", outside); // optparse prefix
+    for (const cmd of [
+      "/tmp/v/bin/pip install --break-system-packages x",
+      "/tmp/v/bin/pip install --user x",
+      "/tmp/v/bin/pip install --target /usr/lib/python3/dist-packages x",
+      "/tmp/v/bin/pip install -t /usr/lib/python3/dist-packages x",
+      "/tmp/v/bin/pip install -Ut/usr x",
+      "/tmp/v/bin/pip install --target=/usr x",
+      "/tmp/v/bin/pip install --tar /usr x",
+      "/tmp/v/bin/pip install --prefix /usr x",
+      "/tmp/v/bin/pip install --root / x",
+      "/tmp/v/bin/python -m pip install --user x",
+      "/tmp/v/bin/python -mpip install --target /usr x",
+      "/tmp/v/bin/python -m pip.__main__ install --user x",
+      "/tmp/v/bin/pip3.12 install --user x",
+      "/tmp/v/bin/pip --user install x", // a location flag before the verb (fold 1 W3)
+      "/tmp/v/bin/pip -t /usr install x",
+      "pip list --break-system-packages", // anywhere after pip, any verb
+    ]) refused(cmd, outside);
+    // Fold 1 C2 fires first on these two: the list literal (`[`, rule 2) and the `xargs` carrier (rule 1).
+    refused(`python3 -c "import pip; pip.main(['install','--target','/usr','x'])"`, /outside the venv|feeds pip arguments/);
+    refused("echo x | xargs pip install --user", /feeds pip arguments/);
+  });
+
+  it("refuses `pip config` on any spelling and past global option values", () => {
+    for (const cmd of [
+      "/tmp/v/bin/pip config set global.target /usr",
+      "pip config list",
+      "python3 -mpip config set global.target /usr",
+      "/tmp/v/bin/pip --log /tmp/l config set global.target /usr",
+      "/tmp/v/bin/pip --tim 5 config set global.target /usr", // `--tim` = `--timeout`, takes a value
+    ]) refused(cmd, /pip config.*outlive the venv/);
+  });
+
+  it("refuses any PIP_* name: assignment, env, export, unset, declare, an interpreter's os.environ", () => {
+    for (const cmd of [
+      "PIP_REQUIRE_VIRTUALENV=0 /tmp/v/bin/pip install x",
+      "PIP_TARGET=/usr pip install x",
+      "env PIP_REQUIRE_VIRTUALENV= pip install x",
+      "env -u PIP_REQUIRE_VIRTUALENV pip install x",
+      "export PIP_REQUIRE_VIRTUALENV=0; pip install x",
+      "unset PIP_REQUIRE_VIRTUALENV; pip install x",
+      "declare +x PIP_REQUIRE_VIRTUALENV; pip install x",
+      "export -n PIP_REQUIRE_VIRTUALENV; pip install x",
+      "set -a; : ${PIP_TARGET:=/usr}; /tmp/v/bin/pip install x",
+      "bash -c 'PIP_TARGET=/usr pip install x'",
+      "bash <<'EOF'\nunset PIP_REQUIRE_VIRTUALENV\nEOF",
+      `python3 -c "import os; os.environ.pop('PIP_REQUIRE_VIRTUALENV')"`,
+    ]) refused(cmd, /changes pip's environment.*PIP_REQUIRE_VIRTUALENV=1/);
+    refused("env -i pip install x", /`env -i` replaces the child PATH\/environment/);
+    refused("env -u PATH pip install x", /`env -u` replaces the child PATH\/environment/);
+  });
+
+  it("keeps every other manager, the COPY rule and the shim's absolute-path rules", () => {
+    for (const cmd of ["uv pip install x", "/tmp/v/bin/uv pip install x", "pipx install x", "python3 -m pipx install x"]) {
+      refused(cmd, /installs Python packages/);
+    }
+    refused("npm install x", /mutates node_modules/);
+    for (const cmd of [
+      "timeout 5 cp /tmp/v/bin/pip zz",
+      "xvfb-run -a cp /tmp/v/bin/pip /tmp/p",
+      "xvfb-run -a install /tmp/v/bin/pip /tmp/zz", // coreutils `install` before any pip word is a copy word
+      "timeout 5 install /usr/bin/pip3 /tmp/zz",
+      "cp /usr/bin/pip3 /tmp/p && /tmp/p install x",
+      "ln -s /usr/bin/pip3 zz",
+    ]) refused(cmd, /copies or references a package-manager binary/);
+  });
+
+  it("records the verdicts this ruling does not change, and its disclosed costs", () => {
+    allowed("python3 -m venv /tmp/x");
+    allowed("python3 -m ensurepip");
+    // Cost: a pip-shaped token followed by a `-t…` cluster reads as `pip -t` (`find -name pip -type f`), and a
+    // literal PIP_* name is refused even as a read (`printenv PIP_REQUIRE_VIRTUALENV`; `echo $PIP_…` passes).
+    refused("find / -name pip -type f", /outside the venv/);
+    refused("printenv PIP_REQUIRE_VIRTUALENV", /changes pip's environment/);
+    // Residue: an interpreter alias of pip (no copy word) passes the string gate. Layer 1 holds on an alias of the
+    // SYSTEM pip only; an alias of a VENV pip then takes location flags unseen (`/tmp/p install --target /usr x`).
+    allowed(`node -e "require('fs').symlinkSync('/usr/bin/pip3','/tmp/zz')"`);
+    allowed(`node -e "require('fs').symlinkSync('/tmp/v/bin/pip','/tmp/p')"`);
+    // Residue (pre-existing, audit doc §13): a script file's body is never seen by the string gate.
+    allowed(`printf '/usr/bin/pip3 install x' > /tmp/s.sh && sh /tmp/s.sh`);
+  });
+
+  it("refuses a PIP_* name after an option cluster (fold 1 C1)", () => {
+    for (const cmd of [
+      "env -uPIP_REQUIRE_VIRTUALENV /usr/bin/pip3 install x",
+      "env -vuPIP_REQUIRE_VIRTUALENV /usr/bin/pip3 install x",
+      "XDG_CONFIG_HOME=/tmp/x env -uPIP_REQUIRE_VIRTUALENV python3 -m pip install x",
+      "echo --break-system-packages x | env -uPIP_REQUIRE_VIRTUALENV xargs /usr/bin/pip3 install",
+    ]) refused(cmd, /`PIP_REQUIRE_VIRTUALENV` changes pip's environment/);
+  });
+
+  it("refuses the argument carriers on a pip invocation (fold 1 C2, fixed-shape words)", () => {
+    const carrier = /feeds pip arguments the shell gate cannot read/;
+    // Rule 1: `xargs`, `parallel`, `find -exec/-execdir/-ok/-okdir` before the pip anchor in its segment.
+    for (const cmd of [
+      "printf '\\055-isolated\\n\\055-break-system-packages\\nx\\n' | xargs /usr/bin/pip3 install",
+      "echo --target=/usr/lib/python3/dist-packages x | xargs /tmp/v/bin/pip install",
+      "xargs -a /tmp/args /tmp/v/bin/pip install",
+      "parallel /tmp/v/bin/pip install ::: x",
+      "find / -name x -exec /tmp/v/bin/pip install {} \\;",
+      "find / -name x -okdir /tmp/v/bin/pip install x \\;",
+    ]) refused(cmd, carrier);
+    // Rule 2: after the anchor in its segment, a word with `$ * ? [ { }` — quoted or not.
+    for (const cmd of [
+      "cd /tmp/d && /usr/bin/pip3 install * x",
+      "/tmp/v/bin/pip install $T x",
+      `pip install "$X"`,
+      "pip install '*'",
+      "/tmp/v/bin/pip install x?",
+      "/tmp/v/bin/pip install 'x[socks]'", // cost: extras need a requirements file
+    ]) refused(cmd, carrier);
+    // Rule 3: `.`/`source`/`read`/`set --`/`declare`/`typeset`/`local`/`export` before the last anchor, any segment.
+    for (const cmd of [
+      ". /tmp/e && /usr/bin/pip3 install x",
+      ". /tmp/e; /tmp/v/bin/pip install $T x",
+      "source /tmp/e && /usr/bin/pip3 install x",
+      "read A B; /tmp/v/bin/pip install $A $B",
+      "set -- a; /tmp/v/bin/pip install x",
+      "declare A; /tmp/v/bin/pip install x",
+      "typeset A; /tmp/v/bin/pip install x",
+      "local A; /tmp/v/bin/pip install x",
+      "export A; /tmp/v/bin/pip install x",
+    ]) refused(cmd, carrier);
+    // Rule 4: `alias` anywhere in a command with a pip anchor.
+    refused("alias p='pip install'; p --target /usr x", /feeds pip arguments|`alias` replaces/); // the alias rule fires first
+    refused("/tmp/v/bin/pip list && alias", carrier);
+    for (const cmd of [
+      "/tmp/v/bin/pip install -r /tmp/v/requirements.txt", // req files take no location/isolation flag (audit doc §13)
+      "/tmp/v/bin/pip install -q patchright nodriver",
+      "timeout 120 /tmp/v/bin/pip install x",
+      "/tmp/v/bin/pip install x 2>&1 | tail -5",
+      "cat reqs.txt | xargs echo", // no pip anchor
+      "pip list | grep x",
+      "xargs -n1 echo < f",
+      "/tmp/v/bin/pip list 2>/dev/null | grep -iE 'patchright|nodriver'",
+    ]) allowed(cmd);
+  });
+
+  it("refuses a write to a pip config file (fold 1 W1)", () => {
+    for (const cmd of [
+      "printf '[install]\\ntarget = /usr' > /tmp/v/pip.conf",
+      "printf x > ~/.config/pip/pip.conf",
+      "echo x >> /tmp/v/pip.ini",
+      "echo x | tee /tmp/v/pip.conf",
+      "cp x /tmp/v/pip.conf",
+      "mv x /etc/pip.conf",
+    ]) refused(cmd, /is a pip config file/);
+    allowed("cat ~/.config/pip/pip.conf");
+  });
+
+  it("scopes the location flags to install/download/wheel and the global position (fold 1 W3)", () => {
+    for (const cmd of [
+      "pip list --user",
+      "pip3 freeze --user",
+      "/tmp/v/bin/python -m pip list --user",
+      "/tmp/v/bin/pip list -t", // not a pip option: pip errors
+      "git log --grep pip -t", // a last-word `-t`: no verb follows it
+    ]) allowed(cmd);
+    refused("/tmp/v/bin/pip download x --target /usr", /outside the venv/);
+    refused("/tmp/v/bin/pip wheel x --prefix /usr", /outside the venv/);
+    refused("/tmp/v/bin/pip list --isolated", /--isolated/); // anywhere
+  });
+
+  it("refuses a PIP_* name built at run time: a `for`/`select` binding, an expanded unset operand (fold 2 C1)", () => {
+    const carrier = /feeds pip arguments the shell gate cannot read/;
+    const env = /changes pip's environment/;
+    // Belt 1: `for`/`select` are feed words (the normalizer substitutes `V=PIP; …${V}`, not a loop binding).
+    for (const cmd of [
+      "for v in PIP; do unset ${v}_REQUIRE_VIRTUALENV; done; /usr/bin/pip3 install x",
+      "for v in _REQUIRE_VIRTUALENV; do unset PIP$v; done; /usr/bin/pip3 install x",
+      "for v in PIP; do export ${v}_TARGET=/usr; done; /tmp/v/bin/pip install x",
+      "select v in PIP; do unset ${v}_REQUIRE_VIRTUALENV; break; done; /usr/bin/pip3 install x",
+      "for f in *.txt; do cat $f; done; pip list", // belt 1 alone; cost (audit doc §13)
+    ]) refused(cmd, carrier);
+    // Belt 2 alone: an `unset`/`export` operand with `$`, a quote or a backtick, in a command with a pip anchor.
+    refused("unset ${PFX}_REQUIRE_VIRTUALENV; /usr/bin/pip3 install x", env);
+    refused(`unset "\${PFX}_REQUIRE_VIRTUALENV"; /tmp/v/bin/pip install x`, env);
+    // The option-cluster lookbehind takes digits too (`env -0uPIP_X`).
+    refused("env -0uPIP_REQUIRE_VIRTUALENV /usr/bin/pip3 install x", /`PIP_REQUIRE_VIRTUALENV` changes pip's environment/);
+    allowed("for f in a b; do echo $f; done"); // no pip anchor
+    allowed(`unset "$A"`); // no pip anchor
+    allowed("unset FOO; /tmp/v/bin/pip install x"); // a literal operand
+  });
+
+  it("refuses an attached redirect to a bare pip.conf/pip.ini (fold 2 C2)", () => {
+    for (const cmd of [
+      "cd /tmp/v && printf '[install]\\ntarget=/usr/lib/python3/dist-packages\\n' >>pip.conf && /tmp/v/bin/pip install x",
+      "cd /tmp/v && printf x >pip.conf && /tmp/v/bin/pip install x",
+      "cd /tmp/v && printf x >|pip.ini && /tmp/v/bin/pip install x",
+      "printf x &>pip.conf",
+      "printf x 2>pip.conf",
+      "printf x 1<>pip.conf",
+      "cd /tmp/v && printf x > pip.conf",
+      "printf x >>/tmp/v/pip.conf",
+    ]) refused(cmd, /is a pip config file/);
+  });
+
+  it("refuses a glob-named pip and records the ensurepip residue (fold 2 W1/W2)", () => {
+    for (const cmd of ["/tmp/v/bin/p?p install x", "/tmp/v/bin/pi[p] install x", "/tmp/v/bin/pi* install x"]) {
+      refused(cmd, /command name from a glob is not judged/);
+    }
+    // Residue: ensurepip installs only the bundled pip, wherever it points.
+    allowed("python3 -m ensurepip --user");
+    allowed("python3 -m ensurepip --root /");
   });
 });

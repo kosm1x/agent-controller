@@ -17,20 +17,37 @@
 
 import { initDatabase, closeDatabase, getDatabase } from "../src/db/index.js";
 import { reindexJarvisKb, walkKbDir } from "../src/db/jarvis-reindex.js";
+import type { ReindexResult } from "../src/db/jarvis-reindex.js";
 import { relative } from "node:path";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
+import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
+import { drainKbWrites } from "../src/db/kb-write-drain.js";
 
-// S6 item 3c: operator context only (login session or operator unit), before any db/KB side effect.
-requireOperatorContext("reindex-jarvis-kb", { tty: false });
+export type ReindexDeps = {
+  initDatabase: (path: string) => unknown;
+  closeDatabase: () => void;
+  getDatabase: () => { prepare: (sql: string) => { all: () => unknown[] } };
+  reindexJarvisKb: (opts: { kbRoot: string }) => ReindexResult;
+  walkKbDir: (dir: string) => string[];
+  drainKbWrites: () => Promise<void>;
+  log: (line: string) => void;
+};
 
-const KB_ROOT = process.env.JARVIS_KB_MIRROR_DIR ?? "/root/claude/jarvis-kb";
-const DB_PATH = process.env.MC_DB_PATH ?? "./data/mc.db";
+const realDeps: ReindexDeps = {
+  initDatabase,
+  closeDatabase,
+  getDatabase,
+  reindexJarvisKb,
+  walkKbDir,
+  drainKbWrites,
+  log: (line) => console.log(line),
+};
 
-function dryRun() {
-  initDatabase(DB_PATH);
-  const fsFiles = walkKbDir(KB_ROOT);
-  const fsRel = new Set(fsFiles.map((f) => relative(KB_ROOT, f)));
-  const db = getDatabase();
+function dryRun(deps: ReindexDeps, kbRoot: string, dbPath: string): void {
+  deps.initDatabase(dbPath);
+  const fsFiles = deps.walkKbDir(kbRoot);
+  const fsRel = new Set(fsFiles.map((f) => relative(kbRoot, f)));
+  const db = deps.getDatabase();
   const dbPaths = new Set(
     (
       db.prepare("SELECT path FROM jarvis_files").all() as Array<{
@@ -39,7 +56,7 @@ function dryRun() {
     ).map((r) => r.path),
   );
   const fsOnly = [...fsRel].filter((p) => !dbPaths.has(p));
-  console.log(
+  deps.log(
     `[reindex] FS=${fsRel.size} DB=${dbPaths.size} fs-only=${fsOnly.length} mode=DRY-RUN`,
   );
   if (fsOnly.length > 0) {
@@ -49,24 +66,49 @@ function dryRun() {
       byDir.set(top, (byDir.get(top) ?? 0) + 1);
     }
     for (const [dir, n] of [...byDir.entries()].sort(([, a], [, b]) => b - a)) {
-      console.log(`  ${dir.padEnd(15)} ${n}`);
+      deps.log(`  ${dir.padEnd(15)} ${n}`);
     }
-    console.log("\n[reindex] dry run — pass --apply to upsert");
+    deps.log("\n[reindex] dry run — pass --apply to upsert");
   } else {
-    console.log("[reindex] no drift — DB and FS in sync");
+    deps.log("[reindex] no drift — DB and FS in sync");
   }
-  closeDatabase();
+  deps.closeDatabase();
 }
 
-function apply() {
-  initDatabase(DB_PATH);
-  const result = reindexJarvisKb({ kbRoot: KB_ROOT });
-  console.log(
+async function apply(deps: ReindexDeps, kbRoot: string, dbPath: string): Promise<void> {
+  deps.initDatabase(dbPath);
+  const result = deps.reindexJarvisKb({ kbRoot });
+  deps.log(
     `[reindex] FS=${result.fsCount} DB=${result.dbCount} drift=${result.drift} upserted=${result.upserted} errored=${result.errored} (${result.durationMs}ms) mode=APPLY`,
   );
-  closeDatabase();
+  // upsertFile's syncs + INDEX.md outlive the call (new projects/<x>/ rows change INDEX): drain while the db is open.
+  if (result.upserted + result.refreshed > 0) await deps.drainKbWrites();
+  deps.closeDatabase();
 }
 
-const shouldApply = process.argv.includes("--apply");
-if (shouldApply) apply();
-else dryRun();
+/** Dry run or --apply body; the operator gate is the caller's (main). Env is read per call. */
+export async function runReindex(opts: { apply: boolean; deps?: ReindexDeps }): Promise<void> {
+  const deps = opts.deps ?? realDeps;
+  const kbRoot = process.env.JARVIS_KB_MIRROR_DIR ?? "/root/claude/jarvis-kb";
+  const dbPath = process.env.MC_DB_PATH ?? "./data/mc.db";
+  if (opts.apply) await apply(deps, kbRoot, dbPath);
+  else dryRun(deps, kbRoot, dbPath);
+}
+
+/** Operator entry: the S6 item 3c gate runs before any db/KB side effect. */
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  deps: { requireOperatorContext: (tag: string, opts: { tty: boolean }) => void; reindex?: ReindexDeps } = {
+    requireOperatorContext,
+  },
+): Promise<void> {
+  deps.requireOperatorContext("reindex-jarvis-kb", { tty: false });
+  await runReindex({ apply: argv.includes("--apply"), deps: deps.reindex });
+}
+
+/** True only when this file is the process entry point (never when a test imports it). */
+export function isMainModule(): boolean {
+  return isEntryModule(import.meta.url);
+}
+
+if (isMainModule()) await main();

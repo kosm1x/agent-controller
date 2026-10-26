@@ -1,8 +1,8 @@
 [
   {
     "id": "G1",
-    "criterion": "tweet_post was actually invoked in THIS run (a task_trace_events row for this task) — on a day with no scheduled tweet, ABANDON this gate with the reason instead of skipping silently",
-    "check": "./mc-ctl db \"SELECT COUNT(*) AS n FROM task_trace_events WHERE task_id='$MC_TASK_ID' AND tool='tweet_post'\"",
+    "criterion": "El script post-mexiconecesario.cjs dejó un recibo de envío confirmado por X para esta tarea en data/x-post-receipts/mexiconecesario.jsonl",
+    "check": "grep -cF \"\\\"task_id\\\":\\\"$MC_TASK_ID\\\"\" /root/claude/mission-control/data/x-post-receipts/mexiconecesario.jsonl",
     "expect": "gt 0"
   }
 ]

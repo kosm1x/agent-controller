@@ -99,7 +99,7 @@ export function recordRunWrite(taskId: string, key: string): void {
  * carry no hints; their reads count. Market WRITE tools are listed out.
  */
 export const EVIDENCE_TOOL_RE =
-  /^(shell_exec|http_fetch|file_read|list_dir|grep|glob|code_search|git_(?:status|diff|log)|vps_(?:status|logs)|jarvis_file_(?:read|list|search)|gsheets_read|gdocs_read(?:_full)?|gdrive_(?:list|download)|gslides_read|gmail_(?:search|read)|calendar_list|web_read|expand_read|web_search|exa_search|pdf_read|data_summarize|gemini_research|market_(?:quote|history|indicators|scan|signals|watchlist_list|budget_stats|calendar)|prediction_markets|paper_(?:portfolio|history)|pm_(?:paper_portfolio|paper_history|alpha_latest)|whale_trades|macro_regime|sentiment_snapshot|alpha_(?:latest|explain)|backtest_latest|seo_(?:page_audit|robots_audit|telemetry)|tweet_(?:mentions|probe)|project_(?:get|list)|list_schedules|evolution_get_data|knowledge_map|learner_model_status|user_fact_list|dashboard_list|crm_query|intel_\w+|task_history|rss_\w+|weather\w*|currency\w*|geocod\w*|[\w-]+__\w+)$/;
+  /^(shell_exec|http_fetch|file_read|list_dir|grep|glob|code_search|git_(?:status|diff|log)|vps_(?:status|logs)|jarvis_file_(?:read|list|search)|gsheets_read|gdocs_read(?:_full)?|gdrive_(?:list|download)|gslides_read|gmail_(?:search|read)|calendar_list|web_read|expand_read|web_search|exa_search|jina_search|pdf_read|data_summarize|gemini_research|market_(?:quote|history|indicators|scan|signals|watchlist_list|budget_stats|calendar)|prediction_markets|paper_(?:portfolio|history)|pm_(?:paper_portfolio|paper_history|alpha_latest)|whale_trades|macro_regime|sentiment_snapshot|alpha_(?:latest|explain)|backtest_latest|seo_(?:page_audit|robots_audit|telemetry)|tweet_(?:mentions|probe)|project_(?:get|list)|list_schedules|evolution_get_data|knowledge_map|learner_model_status|user_fact_list|dashboard_list|crm_query|intel_\w+|task_history|rss_\w+|weather\w*|currency\w*|geocod\w*|[\w-]+__\w+)$/;
 
 /** Reads whose TARGET can be defaulted away (grep with no `path` = cwd): with a write on record they are not evidence (R4 W4-2). */
 export const UNRESOLVED_TARGET_TOOL_RE = /^(grep|glob|code_search|list_dir)$/;
@@ -479,7 +479,7 @@ export function extractFigures(text: string, includeCode = false): Figure[] {
  * "memoria", "análisis propio" or "yo" are not provenance (R1 audit C5).
  */
 export const CHECKABLE_SOURCE_RE =
-  /https?:\/\/[\w.-]+\.[a-z]{2,}(?:[/?#]\S*)?|(?:^|[\s(`*])(?:\/|~\/|\.\/)[\w./-]+|\b[\w-]+\.(?:csv|xlsx?|json|jsonl|md|pdf|txt|tsv|sql|docx?)\b|\b(?:shell_exec|gsheets_read|gdocs_read(?:_full)?|gdrive_\w+|web_read|expand_read|web_search|exa_search|file_read|data_summarize|pdf_read|http_fetch|market_\w+|prediction_markets|crm_query|intel_\w+|jarvis_file_read|task_history|code_search|[\w-]+__\w+)\b/i;
+  /https?:\/\/[\w.-]+\.[a-z]{2,}(?:[/?#]\S*)?|(?:^|[\s(`*])(?:\/|~\/|\.\/)[\w./-]+|\b[\w-]+\.(?:csv|xlsx?|json|jsonl|md|pdf|txt|tsv|sql|docx?)\b|\b(?:shell_exec|gsheets_read|gdocs_read(?:_full)?|gdrive_\w+|web_read|expand_read|web_search|exa_search|jina_search|file_read|data_summarize|pdf_read|http_fetch|market_\w+|prediction_markets|crm_query|intel_\w+|jarvis_file_read|task_history|code_search|[\w-]+__\w+)\b/i;
 
 const SOURCE_LINE_RE = /\b(fuentes?|sources?)\s*:\s*([^\n|]+)/gi;
 const CALC_LINE_RE = /\b(calc|c[aá]lculo)\s*:\s*([^\n|]+)/gi;

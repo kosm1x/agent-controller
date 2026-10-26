@@ -27,7 +27,7 @@ vi.mock("../dispatch/dispatcher.js", () => ({
   }),
 }));
 
-import { queryOutcomes } from "../db/task-outcomes.js";
+import { queryOutcomes, type OutcomeRow } from "../db/task-outcomes.js";
 import { listSkills } from "../db/skills.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import {
@@ -56,6 +56,9 @@ describe("skill-discovery", () => {
         success: 1,
         feedback_signal: "none",
         tags: "[]",
+        model_tier: null,
+        concern_reason: null,
+        concern_detail: null,
         created_at: "2026-03-16",
       },
     ]);
@@ -65,7 +68,7 @@ describe("skill-discovery", () => {
   });
 
   it("should detect recurring pattern with 3+ occurrences", async () => {
-    const outcome = {
+    const outcome: OutcomeRow = {
       id: 1,
       task_id: "t1",
       classified_as: "fast",
@@ -75,6 +78,9 @@ describe("skill-discovery", () => {
       success: 1,
       feedback_signal: "none",
       tags: '["messaging"]',
+      model_tier: null,
+      concern_reason: null,
+      concern_detail: null,
       created_at: "2026-03-16",
     };
 
@@ -111,7 +117,7 @@ describe("skill-discovery", () => {
   });
 
   it("should not propose if skill already exists with same tools", async () => {
-    const outcome = {
+    const outcome: OutcomeRow = {
       id: 1,
       task_id: "t1",
       classified_as: "fast",
@@ -121,6 +127,9 @@ describe("skill-discovery", () => {
       success: 1,
       feedback_signal: "none",
       tags: "[]",
+      model_tier: null,
+      concern_reason: null,
+      concern_detail: null,
       created_at: "2026-03-16",
     };
 
@@ -160,7 +169,7 @@ describe("skill-discovery", () => {
   });
 
   it("should respect 24h rate limit", async () => {
-    const outcome = {
+    const outcome: OutcomeRow = {
       id: 1,
       task_id: "t1",
       classified_as: "fast",
@@ -170,6 +179,9 @@ describe("skill-discovery", () => {
       success: 1,
       feedback_signal: "none",
       tags: "[]",
+      model_tier: null,
+      concern_reason: null,
+      concern_detail: null,
       created_at: "2026-03-16",
     };
 

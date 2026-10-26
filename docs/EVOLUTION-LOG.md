@@ -3084,3 +3084,170 @@ Fede prefers one decision per turn with lettered options, and "Procede" as the e
 
 ### Research notes
 Still a high-intensity, single-project co-working phase. Bet Book dominated (agent-controller appeared at day's end), and Fede's structured approval pattern is now stable. Milestone: the 72-day streak, with the Bet Book moving from Intro/Chs. 1-3 drafted to Intro and Chs. 1-6 all with drafts.
+
+## 2026-10-18
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 168 |
+| Total tasks | 4335 |
+| Conversations today | 153 (telegram: 153) |
+| Streak days | 73 |
+
+### Interactions summary
+The day centered on the Bet Book project: closing pending items for Chapters 4-7, drafting Chapters 8 and 9, planning Chapter 10, and adding a new Chapter 13 on free statistical analysis of Liga MX. The afternoon moved to distribution strategy (JR García brand, email list, WhatsApp as an announcements-only channel) and to the calculadora-ligamx repo and live site. The evening covered betting-profitability analysis (favorite/draw/underdog, model vs market, simulation) and an ESPN data download. Work was mostly KB/Google Docs/Drive syncing, Python checks and sheet edits, and it ended with an agent-controller KB update.
+
+### What Jarvis learned
+Fede works in long, rapid decision sequences. He answers batched questions with short approvals ("Procede", "Sí a todo"), and he verifies Jarvis's output against external sources such as Caliente tickets and the Shin/Štrumbelj papers. He removed the 1,800-word chapter cap and chose a "no tables, give a calculator" approach for Liga MX data. No memory_search or memory_reflect tools were available in this run's scope, so no recall-based patterns were gathered. This entry rests on the narrative alone.
+
+### Friction points
+- Jarvis put two headers in the wrong cell in the registry sheet (12:20). It was caught and corrected.
+- The DGJS links failed with DNS errors, and one suggested link was wrong. The item was closed using wording with no URL.
+- Fede's Shin code had a formula error (missing division by the booksum), which Jarvis found.
+- Calculator links were missing from Chapters 8 and 9 until Fede noticed.
+- Jarvis cannot open turns or notify from the tmux watcher because MC_API_KEY is missing.
+- The ESPN download of 2,132 matches had no confirmed completion at close of day.
+
+### Research notes
+This was a high-volume day with deep delegation of multi-step work to Jarvis, and the operator caught errors in both directions. That points to a mature collaborative phase rather than cold start. Milestones: the Bet Book cover and subtitle were approved, and the calculadora-ligamx site went live.
+
+## 2026-10-19
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 93 |
+| Total tasks | 4388 |
+| Conversations today | 80 (telegram: 80) |
+| Streak days | 74 |
+
+### Interactions summary
+The day centred on the Bet Book (Chapters 10, 11 and 12, plus MOC/README/Docs sync) and on betting-data analysis: ESPN/Liga MX in the morning (CSV build, 81 simple-bet tests, none provably profitable) and nflverse/NFL at night. Fede also touched Azteca 2030, PE 2027, an SEO coverage map, DENUE restaurant density, agent-controller KB updates, and several Caddy publications (ligamx-datos, nfl-datos, calculadora-nfl). Shell, KB read/write and Google Docs/Sheets work were the most-used tools.
+
+### What Jarvis learned
+Fede decides chapter plans one decision at a time and pushes back when scope is framed too narrowly (Ch. 10 is broader than football). He expects closed items (DGJS) to stay closed and expects KB READMEs to be kept in sync with the work. Jarvis should confirm which dataset (NFL vs Liga MX) is meant before building a visualization.
+
+### Friction points
+- 06:36-06:38: three failed commands triggered the failure-block rule; resolved once the `events.json` structure was understood.
+- 11:29: Jarvis reopened the already-closed DGJS item; Fede corrected it and the notes were repaired.
+- 15:46-15:49: no DENUE access for mid-size restaurants with phone numbers; partly resolved at 19:11 with another query.
+- 21:08-21:11: Liga MX visualization built instead of the requested NFL one.
+- 20:57: Bet Book README was stale relative to the afternoon's work.
+
+### Research notes
+Memory recall tools (memory_search / memory_reflect) were not available in this run, so this entry rests on the day narrative and project list alone. The pattern is high-volume, multi-project operator-led work with Jarvis acting as drafting and data-execution partner; the system is well past cold start. Bet Book is the dominant active project today.
+
+## 2026-10-20
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 84 |
+| Total tasks | 4437 |
+| Conversations today | 72 (telegram: 72) |
+| Streak days | 75 |
+
+### Interactions summary
+The day centered on the Bet Book: Chapter 12 draft 1, Introduction draft 8 final, Chapter 11 draft 2 and Chapter 13 draft 1. Along with those came NFL and Liga MX betting tests, repeated word tallies, and index syncs (MOC, README, master plan). Fede also did Barter work (Tramontina catalog, nine target clients, SC Johnson plan draft 1). In the evening he tested web search and anti-detection browsers (Patchright, nodriver). Most-used tools were KB reads and writes, plus shell_exec and browser tools.
+
+### What Jarvis learned
+Fede works through the book in long, iterative stretches and wants indices kept current and de-duplicated. He chose option B on decision 8k and asked Jarvis to stop the one-by-one decision questions. No other new patterns were surfaced: the memory_search and memory_reflect tools were not exposed in this run, so this section rests on the day narrative alone.
+
+### Friction points
+Index notes piled up and needed repeated de-duplication. The Pulso Aura CRM returned 401 (expired token). Playwright had a schema error at first and later worked. shell_exec blocked pip and the venv python under the dependency policy, so Fede had to install packages by hand, and the instructions saved for Claude Code were not visible in chat. Mercado Libre, Amazon and Walmart still block price extraction. Many index edits went to the on-disk mirror, so the KB record may not reflect them.
+
+### Research notes
+This is a high-volume, single-channel day with the operator driving a long-form project (Bet Book now at about 28,101 words, introduction plus chapters 1–13 drafted). The phase is mature co-working. The tool-policy friction (shell_exec vs. venv) is a recurring autonomy-boundary signal worth tracking.
+
+## 2026-10-21
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 128 |
+| Total tasks | 4542 |
+| Conversations today | 113 (telegram: 113) |
+| Streak days | 76 |
+
+### Interactions summary
+The day centered on the Bet Book: closing pending items one by one (Caps. 4, 7, 8, 9, 12, 13), Tally and index updates, Google Docs/Drive sync, and NFL analysis (wind, underdog ROI, spread). Fede also worked on agent-controller KB state, the new Atenea Insights subproject, CDMX rent-law risk maps, the TMN/Soriana meeting (5-Nov, 5 slides), and MxDiabetes co-sponsorship plus a pricing email. Tools used most were KB reads/writes, shell_exec scripts, and Drive/Docs sync.
+
+### What Jarvis learned
+Fede wants Drive copies verified by content and hash, never by date. He also wants no unrequested clarifying lines in computed outputs, and treats pip inside venvs as allowed by design. Closed items (e.g., DGJS) must stay closed in notes.
+
+### Friction points
+Jarvis re-listed the already-closed DGJS item (15:14); synced Drive by date instead of content/hash (20:37); misread "título" as the book's title (17:44); added an unwanted clarifying line (20:07). Minor: the KB rejected unsourced pricing figures, the Drive format unification failed with a 401, and "caddy de riesgos" and "tres slides" were ambiguous. Memory tools (memory_search/memory_reflect) were not available in this run's toolset, so recall was not consulted; this entry rests on the narrative and project_list. No new patterns surfaced via memory_reflect today.
+
+### Research notes
+Corrections were about verification rigor (state tracking and content-level checks), which suggests the user-agent relationship is in a calibration phase where the operator is encoding process policies. Active projects touched: bet-book, atenea-insights, agent-controller, azteca-tvpromo-compete.
+
+## 2026-10-22
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 57 |
+| Total tasks | 4576 |
+| Conversations today | 44 (telegram: 44) |
+| Streak days | 77 |
+
+### Interactions summary
+The day centered on meeting prep and follow-up: Soriana (Excel analysis, 360 view, sub-brands file, web research, consolidated Google Doc for Martín Bringas), Barter/Kimberly Clark, and Moneo (WPP, Media for Equity, questions for Sam Carter). Other topics were KB syncs against repos (Agent-Controller, Pulso Aura, new Canelo Ventas card), a Jina/web_read review with a patch awaiting application, DENUE lookups (Radio Centro, TV Azteca), news searches and a Rumi-style sonnet. Python for reading Excel, KB reads/writes and calendar events were the most-used tools.
+
+### What Jarvis learned
+Fede dictates pending items and updates that Jarvis should record as unvalidated, and he approves calendar creation explicitly ("Si. Creala"). Jarvis repeatedly self-corrected (Node version, rows read, two 360-view figures), which suggests the operator values verification of what was actually read versus what was written.
+
+### Friction points
+Excel files arrived as unreadable binary several times and had to be reopened with Python. Soriana figures did not reconcile between the 21-Oct analysis (-3.4%) and the 360 view/sub-brands file (-4.7%). Editing Jarvis's own source was blocked, so the Jina patch (/tmp/web-read-jina.patch) was left for Fede to apply, with JINA_API_KEY unverified. NewsMap page was truncated, so Moderna news was not confirmed there.
+
+### Research notes
+Memory tools (memory_search / memory_reflect) were not available in this run's tool scope, so this entry rests on the day narrative only; no new patterns surfaced from recall. Still a calibration phase: the operator delegates heavy business-prep work and enforces verification rigor, with active projects including Soriana/Barter/Moneo materials, agent-controller, pulso-aura-upfront and denue-data-analysis.
+
+## 2026-10-23
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 48 |
+| Total tasks | 4608 |
+| Conversations today | 32 (telegram: 32) |
+| Streak days | 78 |
+
+### Interactions summary
+The day centered on a new self-sustainment project (autosustento-jarvis): A2A and agentic-payments research, scoping questions, and project creation. Fede also had Jarvis analyze a Polymathinvestor research guide, update the agent-controller KB (README vs history.md), publish the Journal radar W43 and W42 editions, and search for papers critical of the Pangram AI detector. Mostly KB writes, research and publishing tools.
+
+### What Jarvis learned
+Fede set a rule that volatile agent-controller data (deploys, hashes, rulings) goes in history.md, not the README. He defined the self-sustainment constraints: goal of $200/month within 3 months (by 2027-01-23), $20/month test spend, a USDC wallet in his name, and nothing illegal or close to TV Azteca (the DENUE analyzer is allowed). He confirmed the security-policy block on `ctr` (ruling 5) as the expected result. Memory tools (memory_search, memory_reflect) were not available in this run, so no recall-based patterns were added; this entry rests on the narrative and project_list.
+
+### Friction points
+Jarvis could not re-read KB files after writing them, so some writes were unverified. Image contents of the X thread were not readable on the first pass, so Fede resent them one by one. W42 and W43 were published with the script's fact-check skipped.
+
+### Research notes
+The agent is moving from assistant to economically self-directed actor, since Jarvis now has a mandate to cover its own cost. That is a notable milestone for the co-evolution paper. Fede's delegation is bounded by explicit limits on budget, deadline and risk.
+
+## 2026-10-24
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 35 |
+| Total tasks | 4603 |
+| Conversations today | 27 (telegram: 27) |
+| Streak days | 79 |
+
+### Interactions summary
+The day centered on the GDELT HTTP 429 problem: diagnosis, choosing a replacement (GDELT file archives plus geopolitical RSS), implementation, PR #64 on agent-controller, and follow-up review fixes (C1 and W2 in delta-engine). Later topics were a KB note on VPS backup verification, a question on 40 Hz sound studies, and registering the local-inference-studio repo under the project now renamed Local Brain (3 docs updated). The most used tools were jarvis_dev (branch/test/pr), file reads and writes, and project/KB updates.
+
+### What Jarvis learned
+The operator separates "remove the API" from "remove the source", so Jarvis should check which one he means before answering. He also supplies exact procedures himself (e.g. the backup script command), so Jarvis should ask for the method instead of improvising a note. Confirmation cards reject partial replies; "sí a todo" is the format that works.
+
+### Friction points
+- The jarvis_dev branch approval expired and the operator had to repeat the order.
+- Partial confirmations ("Confirmo, ambas", "Procede", "sí") were rejected, and Jarvis had to clarify that nothing had run.
+- jarvis_dev pr failed twice (tests, then gh pr create). The code was pushed, but the PR update outcome is unconfirmed.
+- The backup note was first saved with an invented method and later corrected.
+- README and roadmap reads were partial, as Jarvis itself said.
+
+### Research notes
+The agent-user loop is in a mature, collaborative phase: the operator approves plans and Jarvis executes through gated confirmations. The main friction is in the confirmation protocol, not in understanding. The memory_search and memory_reflect tools were not available in this run's scope, so this entry rests on the day narrative and project_list. Local Brain is the one project that clearly moved today (renamed, repo registered, docs updated).

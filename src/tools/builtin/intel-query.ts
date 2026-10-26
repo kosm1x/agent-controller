@@ -32,7 +32,7 @@ DO NOT USE WHEN:
 
 Returns pre-formatted text summary of recent signals with severity levels.
 Available domains: financial, weather, geopolitical, cyber, news.
-Available sources: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news.
+Available sources: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news, geo_rss.
 
 AFTER QUERYING: Report which sources returned data and the time window covered. Don't extrapolate beyond what the signals show.`,
       parameters: {
@@ -47,7 +47,7 @@ AFTER QUERYING: Report which sources returned data and the time window covered. 
           source: {
             type: "string",
             description:
-              "Filter by source: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news. Omit for all sources.",
+              "Filter by source: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news, geo_rss. Omit for all sources.",
             enum: [
               "usgs",
               "nws",
@@ -57,6 +57,7 @@ AFTER QUERYING: Report which sources returned data and the time window covered. 
               "coingecko",
               "treasury",
               "google_news",
+              "geo_rss",
             ],
           },
           hours: {
