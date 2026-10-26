@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-10-26 07:04 UTC (**4an `b918425e`, 13,822 tests: Rumi guardrail injects the operative SOP + delivery log (`RUMI_GUARDRAIL_PATHS`, order pinned); only `completed` tasks extract execution patterns; qa R1 PASS WITH WARNINGS; NOT deployed yet.**)
+> Last updated: 2026-10-26 07:04 UTC (**4an `b918425e`, 13,822 tests: Rumi guardrail injects the operative SOP + delivery log (`RUMI_GUARDRAIL_PATHS`, order pinned); only `completed` tasks extract execution patterns; qa R1 PASS WITH WARNINGS; DEPLOYED 2026-10-26 07:05:49 UTC build `998ece98` PID 521790, health 200, 0 startup errors; PROOF = next Rumi turn.**)
 
 > Last updated: 2026-10-26 05:20 UTC (**4am `d5a44eb3`, 13,815 tests: nightly `kb-backup` no longer blocks the event loop 8-12 s (`listFilePaths()` covering-index listing + per-batch `getFile`; root cause of the 04:30 UTC `prometheus-alert-notifier` timeout), `MCEventLoopBlock` > 5 s alert; qa R1 PASS WITH WARNINGS folded; DEPLOYED 2026-10-26 05:23:14 UTC build `1d1095e1` PID 338307 (0 startup errors, health 200, 251 tools, dist carries `listFilePaths`); `MCEventLoopBlock` LIVE 05:24:43 UTC (mc-prometheus restarted, 24 rules, health ok, 4/4 targets up).**)
 
