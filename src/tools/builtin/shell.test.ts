@@ -54,6 +54,55 @@ vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
 // elsewhere).
 const MC = fileURLToPath(new URL("../../..", import.meta.url)).replace(/\/$/, "");
 
+// Linear-time pins take the minimum of 5 runs of process CPU time (queue 4ap; method of queue 4q
+// `d638bb05`): wall clock flaked at 1517-1574 ms on a 1500 ms bound on CI on 2026-10-26 with no code
+// change. The minimum does most of the de-flaking (wall vs CPU differ by only 5-25 % on the VPS);
+// CPU time only drops scheduler waits, and `process.cpuUsage` still counts V8 GC/helper threads.
+function minCpuMs<T>(fn: () => T): { ms: number; result: T } {
+  let ms = Infinity;
+  let result!: T;
+  for (let r = 0; r < 5; r++) {
+    const c0 = process.cpuUsage();
+    result = fn();
+    const d = process.cpuUsage(c0);
+    ms = Math.min(ms, (d.user + d.system) / 1000);
+  }
+  return { ms, result };
+}
+
+describe("minCpuMs — the timing helper the linear-time pins use (queue 4ap)", () => {
+  it("calls fn exactly 5 times", () => {
+    let calls = 0;
+    minCpuMs(() => ++calls);
+    expect(calls).toBe(5);
+  });
+
+  it("reports the cheapest run, not the first or the most expensive", () => {
+    // Call i burns (6 - i) units of CPU: the first run is 5x the last.
+    const inner: number[] = [];
+    let call = 0;
+    let sink = 0;
+    const { ms } = minCpuMs(() => {
+      call++;
+      const c0 = process.cpuUsage();
+      let x = call;
+      for (let k = 0, n = 20_000_000 * (6 - call); k < n; k++) x = (x * 31 + k) | 0;
+      sink ^= x;
+      const d = process.cpuUsage(c0);
+      inner.push((d.user + d.system) / 1000);
+    });
+    const cheapest = Math.min(...inner);
+    expect(ms, `inner ${inner.map((v) => v.toFixed(1)).join(", ")} ms`).toBeLessThanOrEqual(cheapest * 1.2 + 5);
+    expect(ms).toBeLessThan(inner[0]! / 2);
+  });
+
+  it("returns the result of the last call", () => {
+    let call = 0;
+    const { result } = minCpuMs(() => ({ index: ++call }));
+    expect(result.index).toBe(5);
+  });
+});
+
 describe("resolveShellTimeout — DB ops get a larger budget; cap is a real hard cap", () => {
   const DB = "docker exec supabase-db psql -U postgres -c 'TRUNCATE x CASCADE'";
   const GEN = "ls -la /root";
@@ -1183,21 +1232,20 @@ B`;
       // A benign 20 000-char line of 2 000 `cp` words (audit R1 W2: a rescan budget refused it).
       const line = "cp /tmp/a ".repeat(2000);
       expect(line.length).toBe(20_000);
-      let t = performance.now();
-      expect(validateShellCommand(line)).toEqual({ allowed: true });
-      expect(performance.now() - t).toBeLessThan(1500);
+      // 1500 ms of CPU, minimum of 5 (minCpuMs; wall clock flaked on CI 2026-10-26, queue 4ap).
+      let m = minCpuMs(() => validateShellCommand(line));
+      expect(m.result).toEqual({ allowed: true });
+      expect(m.ms).toBeLessThan(1500);
       // A brace scan over 120 000 commas (audit R2 W1: the regex form took 11 s). The unclosed form
       // (`cp a /tmp/{,,,…`) still takes ~18 s in the deny-verb BRACE_RE, outside this scan (queued).
-      t = performance.now();
-      validateShellCommand("cp a /tmp/x{" + ",".repeat(120_000) + "}");
-      expect(performance.now() - t).toBeLessThan(1500);
+      m = minCpuMs(() => validateShellCommand("cp a /tmp/x{" + ",".repeat(120_000) + "}"));
+      expect(m.ms).toBeLessThan(1500);
       for (const unit of ["cp ", "tee a ", "mv -t ", "cp '", "2>&1 cp ", ">'", '>"', "&> ", ">& ", "cat <<a\n"]) {
         const cmd = unit.repeat(Math.floor(130_000 / unit.length));
-        t = performance.now();
-        validateShellCommand(cmd);
-        expect(performance.now() - t, unit).toBeLessThan(1500); // the same bound as the package-manager gate's linear test
+        m = minCpuMs(() => validateShellCommand(cmd));
+        expect(m.ms, unit).toBeLessThan(1500); // the same bound as the package-manager gate's linear test
       }
-    });
+    }, 120_000); // 5 runs per input: ~21 s on the VPS, above the 30 s default on a slower runner
   });
 
   describe("williams-entry-radar write access", () => {
@@ -2517,15 +2565,15 @@ describe("package-manager gate — shell_exec has no install authority (dependen
       "ls " + ">|x ".repeat(20000),
       "cp>/tmp/o ".repeat(10000) + "a b",
     ]) {
-      const t = performance.now();
-      const r = validateShellCommand(cmd);
-      const ms = performance.now() - t;
+      const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
       // Every input stays under MAX_COMMAND_BYTES: one refused by the cap scans nothing.
       expect(r.reason ?? "", `len=${cmd.length}`).not.toMatch(/command too long/);
       // Linear worst case ~440 ms on the VPS, ~520 ms on CI; 1500 ms leaves headroom for a loaded pre-commit run and still separates linear from the quadratic shapes measured at this size (5-27 s).
+      // CPU time, minimum of 5 (minCpuMs): the wall-clock form failed at 1517 and 1574 ms on the
+      // `len=120000` input on the GitHub runner on 2026-10-26 with no code change (queue 4ap).
       expect(ms, `len=${cmd.length}`).toBeLessThan(1500);
     }
-  });
+  }, 120_000); // 5 runs per input: ~23 s on the VPS, above the 30 s default on a slower runner
 
   it("allows local bins, repo scripts and read-only npm queries", () => {
     allowed("npx tsc --noEmit");
@@ -2935,9 +2983,11 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
     ]) allowed(cmd);
     // The raw command is judged once per command, so a long chain of valid invocations stays linear.
     const chain = `${D} -U mcp_readonly -c 'select 1' ; `.repeat(2000);
-    const t0 = Date.now();
-    expect(validateShellCommand(chain).allowed).toBe(true);
-    expect(Date.now() - t0).toBeLessThan(1500);
+    // CPU time, minimum of 5 (minCpuMs), not wall clock: a shared runner's scheduler waits are not
+    // the algorithm's cost (queue 4ap).
+    const m = minCpuMs(() => validateShellCommand(chain));
+    expect(m.result.allowed).toBe(true);
+    expect(m.ms).toBeLessThan(1500);
   });
 
   it("finds the docker word behind wrappers, paths, global flags, separators and shell re-entry", () => {
@@ -3279,14 +3329,13 @@ describe("docker gate — reads plus psql (operator ruling 5, 2026-10-01)", () =
       ("docker compose " + "-papp ".repeat(21_000)).slice(0, 131_072),
     ]) {
       expect(Buffer.byteLength(cmd)).toBeLessThanOrEqual(131_072);
-      const t = performance.now();
-      const r = validateShellCommand(cmd);
-      const ms = performance.now() - t;
+      const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
       expect(r.reason ?? "", `len=${cmd.length}`).not.toMatch(/command too long/);
-      // Same bound as the hostile-input pin above (linear worst case ~440 ms on the VPS).
+      // Same bound as the hostile-input pin above (linear worst case ~440 ms on the VPS), measured
+      // the same way: CPU time, minimum of 5 (minCpuMs; wall clock flaked on CI 2026-10-26, 4ap).
       expect(ms, `len=${cmd.length}`).toBeLessThan(1500);
     }
-  });
+  }, 120_000); // 5 runs per input: ~8 s on the VPS
 });
 
 describe("ruling 3c — $SECRET_X is exported only into the child that names it", () => {
@@ -3486,13 +3535,12 @@ describe("npm run / npx appended argv carries no psql-shaped token (queue 4m, ru
   it("stays linear on 120 KB package-manager-dense input (fold W1)", () => {
     const cmd = "echo " + "yarn ".repeat(24_000);
     expect(Buffer.byteLength(cmd)).toBeGreaterThan(119_000);
-    const t = performance.now();
-    const r = validateShellCommand(cmd);
-    const ms = performance.now() - t;
+    // CPU time, minimum of 5 (minCpuMs), not wall clock: the same 120 KB shape flaked at 1500 ms
+    // of wall clock on the GitHub runner on 2026-10-26 (queue 4ap).
+    const { ms, result: r } = minCpuMs(() => validateShellCommand(cmd));
     expect(r.reason ?? "").not.toMatch(/command too long/);
-    console.log(`[4m-W1] 120 KB echo yarn… validated in ${ms.toFixed(0)} ms`);
     expect(ms).toBeLessThan(2000);
-  });
+  }, 120_000); // 5 runs
 
   it("refuses appended argv past the 64-token scan cap (fold W1)", () => {
     refused(`npm run db -- ${"a ".repeat(70)}-U postgres`);
