@@ -180,6 +180,44 @@ describe("extractPattern", () => {
   });
 });
 
+describe("extractPattern status gate (2026-10-26)", () => {
+  // A run that ended with concerns must not become a lesson: a web-search-only
+  // Rumi answer became a pattern and would have been injected into the next
+  // Rumi request by title overlap.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listFiles.mockReturnValue([]);
+    vi.mocked(infer).mockResolvedValue({
+      content: "creative: consult the SOP before answering",
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+  });
+
+  const base = {
+    taskId: "t-status",
+    title: "poema de rumi",
+    toolsCalled: ["web_search", "web_read"],
+    scopeGroups: ["research"],
+    userMessage: "regálame un poema de rumi",
+    result: "a".repeat(200),
+  };
+
+  it("completed_with_concerns writes nothing and calls no model", async () => {
+    await extractPattern({ ...base, status: "completed_with_concerns" });
+    expect(infer).not.toHaveBeenCalled();
+    expect(mocks.listFiles).not.toHaveBeenCalled();
+    expect(mocks.upsertFile).not.toHaveBeenCalled();
+  });
+
+  it("completed proceeds to store the lesson", async () => {
+    await extractPattern({ ...base, status: "completed" });
+    expect(infer).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertFile).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("audit R4 S1: extractPattern never sends or stores a stored value", () => {
   beforeEach(() => vi.clearAllMocks());
 

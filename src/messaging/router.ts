@@ -4284,12 +4284,25 @@ export class MessageRouter {
       try {
         const db = getDatabase();
         const task = db
-          .prepare("SELECT title, spawn_type FROM tasks WHERE task_id = ?")
-          .get(taskId) as { title: string; spawn_type: string } | undefined;
-        if (task && !isBackground && taskToolCalls.length >= 2) {
+          .prepare(
+            "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?",
+          )
+          .get(taskId) as
+          | { title: string; spawn_type: string; status: string }
+          | undefined;
+        // A run that ended with concerns must not become a lesson (2026-10-26:
+        // a web-search-only Rumi answer became a pattern and would have been
+        // injected into the next Rumi request by title overlap).
+        if (
+          task &&
+          task.status === "completed" &&
+          !isBackground &&
+          taskToolCalls.length >= 2
+        ) {
           extractPattern({
             taskId,
             title: task.title,
+            status: task.status,
             toolsCalled: taskToolCalls,
             scopeGroups: pending.scopeGroups ?? [],
             userMessage: pending.originalText,

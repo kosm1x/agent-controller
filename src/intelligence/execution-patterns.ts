@@ -30,7 +30,13 @@ export async function extractPattern(opts: {
   scopeGroups: string[];
   userMessage: string;
   result: string;
+  /** Final task status; when given, anything other than "completed" is skipped. */
+  status?: string;
 }): Promise<void> {
+  // A run that ended with concerns must not become a lesson (2026-10-26: a
+  // web-search-only Rumi answer became a pattern and would have been injected
+  // into the next Rumi request by title overlap).
+  if (opts.status !== undefined && opts.status !== "completed") return;
   // Ruling 3c (audit round 4 S1): a lesson file never stores a value — the
   // request, result and title are scrubbed before anything is built from
   // them. No secret index (and no last-good) → no lesson (fail closed).

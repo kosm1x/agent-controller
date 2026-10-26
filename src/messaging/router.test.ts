@@ -132,6 +132,19 @@ vi.mock("../intelligence/outcome-tracker.js", async (importOriginal) => ({
   >()),
   checkFeedbackWindow: vi.fn(() => null),
 }));
+// Execution patterns: real module, extractPattern observable (the status gate
+// test pins the call site); defaults to the real implementation.
+const patternSpy = vi.hoisted(() => vi.fn());
+const patternActual = vi.hoisted(() => ({
+  fn: (async () => {}) as (...a: unknown[]) => Promise<void>,
+}));
+vi.mock("../intelligence/execution-patterns.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../intelligence/execution-patterns.js")>();
+  patternActual.fn = actual.extractPattern as (...a: unknown[]) => Promise<void>;
+  patternSpy.mockImplementation(patternActual.fn);
+  return { ...actual, extractPattern: patternSpy };
+});
 // Jev shadow: log-only side channel; the wiring test pins the call site.
 vi.mock("../jev/shadow.js", () => ({ shadowFeedback: vi.fn() }));
 // "excelente" with no window: thread lookup (no outcome unless a test sets
@@ -5699,6 +5712,67 @@ describe("MessageRouter", () => {
         expect(entry.text).toBe(
           `User: guarda las notas\nJarvis: ${"x".repeat(12_000)}…\n\n${tail}`,
         );
+      });
+    });
+  });
+
+  // 2026-10-26: a run that ended with concerns must not become a lesson (a
+  // web-search-only Rumi answer became a pattern and would have been
+  // injected into the next Rumi request by title overlap).
+  describe("execution-pattern gate on final task status", () => {
+    // Synthetic fixtures (local: the 4g block's OWNER/FIX_A are not in scope).
+    const OWNER = "owner@s.whatsapp.net";
+    const FIX_A = "Aquí está el poema (síntesis de prueba).";
+
+    afterEach(() => {
+      patternSpy.mockReset().mockImplementation(patternActual.fn);
+    });
+
+    async function completeWithStatus(status: string) {
+      _testSeedThread(threadKey("whatsapp", OWNER), []);
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: OWNER,
+        text: "regálame un poema de rumi",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      dbStatusGet.mockReturnValue({
+        output: JSON.stringify({ toolCalls: ["web_search", "web_read"] }),
+      });
+      dbGetBySql.mockImplementation((sql: string) =>
+        sql === "SELECT title, spawn_type, status FROM tasks WHERE task_id = ?"
+          ? { title: "poema de rumi", spawn_type: "chat", status }
+          : undefined,
+      );
+      patternSpy.mockClear().mockImplementation(async () => {});
+      try {
+        findHandler("task.completed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            result: FIX_A,
+            duration_ms: 1,
+          },
+        });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+        dbGetBySql.mockReset().mockImplementation(() => undefined);
+      }
+    }
+
+    it("completed_with_concerns → extractPattern is not called", async () => {
+      await completeWithStatus("completed_with_concerns");
+      expect(patternSpy).not.toHaveBeenCalled();
+    });
+
+    it("completed → extractPattern is called with the status", async () => {
+      await completeWithStatus("completed");
+      expect(patternSpy).toHaveBeenCalledTimes(1);
+      expect(patternSpy.mock.calls[0][0]).toMatchObject({
+        taskId: "test-task-123",
+        status: "completed",
+        toolsCalled: ["web_search", "web_read"],
       });
     });
   });

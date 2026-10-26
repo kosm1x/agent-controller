@@ -4,6 +4,7 @@ import {
   conditionMatches,
   detectProjectInMessage,
   detectRumiRequest,
+  RUMI_GUARDRAIL_PATHS,
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
   packConditionalRows,
@@ -797,6 +798,66 @@ describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
     const calls = vi.mocked(getFile).mock.calls.map((c) => c[0]);
     expect(calls).not.toContain("knowledge/Rumi/INDEX.md");
     expect(variable).toBeNull();
+  });
+});
+
+describe("Rumi guardrail paths", () => {
+  // 2026-10-26 (task 12551): the operative SOP and the delivery log were never
+  // force-injected, so the SOP reached the prompt only as a pgvector fragment.
+  it("pins the SOP, index, delivery log and source-verification SOP, in order", () => {
+    expect([...RUMI_GUARDRAIL_PATHS]).toEqual([
+      "knowledge/procedures/rumi-poemas.md",
+      "knowledge/Rumi/INDEX.md",
+      "knowledge/rumi-delivery-log.md",
+      "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
+    ]);
+  });
+
+  describe("buildKnowledgeBaseSections injects every guardrail path", () => {
+    const rowFor = (path: string, i: number) => ({
+      id: `rg${i}`,
+      path,
+      title: `GUARDRAIL-TITLE-${i}`,
+      content: `guardrail body ${i}`,
+      tags: "[]",
+      qualifier: "reference",
+      condition: null,
+      priority: 50,
+      related_to: "[]",
+      created_at: "",
+      updated_at: "",
+      user_edit_time: null,
+    });
+
+    beforeEach(() => {
+      vi.mocked(getFilesByQualifier).mockReset().mockReturnValue([]);
+      vi.mocked(getFile)
+        .mockReset()
+        .mockImplementation((path: string) => {
+          const i = (RUMI_GUARDRAIL_PATHS as readonly string[]).indexOf(path);
+          return i === -1 ? null : rowFor(path, i);
+        });
+    });
+
+    it("a Rumi message gets one section per path, titled from the row, in list order", () => {
+      const { variable } = buildKnowledgeBaseSections([], "regálame un poema de Rumi");
+      const text = variable ?? "";
+      const positions = RUMI_GUARDRAIL_PATHS.map((_, i) =>
+        text.indexOf(`### GUARDRAIL-TITLE-${i}\nguardrail body ${i}`),
+      );
+      expect(positions.every((p) => p >= 0)).toBe(true);
+      expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+      for (let i = 0; i < RUMI_GUARDRAIL_PATHS.length; i++) {
+        expect(text.split(`### GUARDRAIL-TITLE-${i}\n`).length - 1).toBe(1);
+      }
+    });
+
+    it("a non-Rumi message injects none of them", () => {
+      const { variable } = buildKnowledgeBaseSections([], "qué proyectos tengo activos");
+      expect(variable ?? "").not.toContain("GUARDRAIL-TITLE-");
+      const calls = vi.mocked(getFile).mock.calls.map((c) => c[0]);
+      for (const p of RUMI_GUARDRAIL_PATHS) expect(calls).not.toContain(p);
+    });
   });
 });
 
