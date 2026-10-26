@@ -5,7 +5,8 @@
  * via the jarvis_dev branch+PR workflow.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
@@ -18,6 +19,13 @@ import {
 } from "./changed-tests.js";
 
 const MC_DIR = "/root/claude/mission-control";
+
+// Async on purpose (2026-10-26): execFileSync blocked the event loop for the
+// child's whole run — a slow journalctl read over 24 h of logs crosses the 5 s
+// MCEventLoopBlock alert and freezes every other task. Promisified children
+// keep stdin open; it is closed right after spawn so a child that waits on
+// input fails fast instead of hanging to the timeout.
+const execFileAsync = promisify(execFile);
 
 /**
  * One full-suite run at a time. These tools ran the suite with execFileSync,
@@ -51,13 +59,15 @@ const ALLOWED_PATHS = [
   "src/video/",
 ];
 
-function currentBranch(): string {
+async function currentBranch(): Promise<string> {
   try {
-    return execFileSync("git", ["branch", "--show-current"], {
+    const p = execFileAsync("git", ["branch", "--show-current"], {
       cwd: MC_DIR,
       timeout: 5000,
       encoding: "utf-8",
-    }).trim();
+    });
+    p.child.stdin?.end();
+    return (await p).stdout.trim();
   } catch {
     return "HEAD";
   }
@@ -121,7 +131,7 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
 
     // 1. Recent error logs from journalctl
     try {
-      const rawLogs = execFileSync(
+      const p = execFileAsync(
         "journalctl",
         [
           "-u",
@@ -130,8 +140,12 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
           `${hours} hours ago`,
           "--no-pager",
         ],
-        { encoding: "utf-8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] },
+        // execFile always pipes stdin/stdout/stderr (no `stdio` option),
+        // so journalctl stderr is captured as before, never echoed.
+        { encoding: "utf-8", timeout: 10_000 },
       );
+      p.child.stdin?.end();
+      const { stdout: rawLogs } = await p;
       const errorRe = /error|FAIL|halluc|BLOCKED/i;
       const logs = rawLogs
         .split("\n")
@@ -192,7 +206,7 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
 
     // 3. Recent hallucination guard triggers
     try {
-      const rawGuardLogs = execFileSync(
+      const p = execFileAsync(
         "journalctl",
         [
           "-u",
@@ -201,8 +215,12 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
           `${hours} hours ago`,
           "--no-pager",
         ],
-        { encoding: "utf-8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] },
+        // execFile always pipes stdin/stdout/stderr (no `stdio` option),
+        // so journalctl stderr is captured as before, never echoed.
+        { encoding: "utf-8", timeout: 10_000 },
       );
+      p.child.stdin?.end();
+      const { stdout: rawGuardLogs } = await p;
       const guardRe = /hallucin|Guard input|Failed tool/i;
       const logs = rawGuardLogs
         .split("\n")
@@ -227,7 +245,7 @@ Core infrastructure (adapter.ts, runners/, db/) stays human-only.`,
     // 4. Scope limit reminder
     lines.push(
       `\n**Modifiable files:** ${ALLOWED_PATHS.join(", ")}`,
-      `**Current branch:** ${currentBranch()}`,
+      `**Current branch:** ${await currentBranch()}`,
       `**Next step:** Use code_search to find the relevant code, then jarvis_dev to create a fix branch.`,
     );
 
@@ -280,7 +298,7 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
   async execute(args: Record<string, unknown>): Promise<string> {
     const run = await withSuiteRunLock(async () => {
       const typecheckOnly = (args.typecheck_only as boolean) ?? false;
-      const branch = currentBranch();
+      const branch = await currentBranch();
       const lines: string[] = [`🧪 **Test Run** (branch: ${branch})`];
 
       // Typecheck

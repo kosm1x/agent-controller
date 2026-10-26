@@ -5,9 +5,10 @@
  * vps_deploy requires tests to pass before restarting.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { execGroupKill } from "./shell.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
@@ -24,6 +25,13 @@ const DEPLOY_SCOPE_NOTE = `Note: the running build's commit is not recorded, so 
 const DB_PATH = join(MC_DIR, "data", "mc.db");
 const BACKUP_DIR = join(MC_DIR, "backups");
 const BACKUP_RETENTION_DAYS = 7;
+
+// Async on purpose (2026-10-26): execFileSync blocked the event loop for the
+// child's whole run, so a slow `docker ps`, curl or journalctl froze every
+// other task and could cross the 5 s MCEventLoopBlock alert. Promisified
+// children keep stdin open; each site closes it right after spawn so a child
+// that reads stdin fails fast instead of hanging to the timeout.
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // vps_status
@@ -64,10 +72,12 @@ AFTER CHECKING: Report the key metrics concisely.`,
 
     // CPU + Memory
     try {
-      const uptime = execFileSync("uptime", {
+      const p = execFileAsync("uptime", {
         encoding: "utf-8",
         timeout: 5000,
-      }).trim();
+      });
+      p.child.stdin?.end();
+      const uptime = (await p).stdout.trim();
       const loadMatch = uptime.match(/load average:\s*([\d.]+)/);
       lines.push(`Load: ${loadMatch?.[1] ?? "?"}`);
     } catch {
@@ -75,10 +85,12 @@ AFTER CHECKING: Report the key metrics concisely.`,
     }
 
     try {
-      const mem = execFileSync("free", ["-h", "--si"], {
+      const p = execFileAsync("free", ["-h", "--si"], {
         encoding: "utf-8",
         timeout: 5000,
       });
+      p.child.stdin?.end();
+      const mem = (await p).stdout;
       const memLine = mem.split("\n").find((l) => l.startsWith("Mem:"));
       if (memLine) {
         const parts = memLine.split(/\s+/);
@@ -90,10 +102,12 @@ AFTER CHECKING: Report the key metrics concisely.`,
 
     // Disk
     try {
-      const df = execFileSync("df", ["-h", "/"], {
+      const p = execFileAsync("df", ["-h", "/"], {
         encoding: "utf-8",
         timeout: 5000,
       });
+      p.child.stdin?.end();
+      const df = (await p).stdout;
       const dfLine = df.split("\n")[1];
       if (dfLine) {
         const parts = dfLine.split(/\s+/);
@@ -107,10 +121,12 @@ AFTER CHECKING: Report the key metrics concisely.`,
     const services = ["mission-control"];
     for (const svc of services) {
       try {
-        const status = execFileSync("systemctl", ["is-active", svc], {
+        const p = execFileAsync("systemctl", ["is-active", svc], {
           encoding: "utf-8",
           timeout: 5000,
-        }).trim();
+        });
+        p.child.stdin?.end();
+        const status = (await p).stdout.trim();
         lines.push(`${status === "active" ? "✅" : "❌"} ${svc}: ${status}`);
       } catch {
         lines.push(`❌ ${svc}: inactive`);
@@ -119,11 +135,13 @@ AFTER CHECKING: Report the key metrics concisely.`,
 
     // Docker containers
     try {
-      const containers = execFileSync(
+      const p = execFileAsync(
         "docker",
         ["ps", "--format", "{{.Names}}\t{{.Status}}", "--no-trunc"],
         { encoding: "utf-8", timeout: 5000 },
-      ).trim();
+      );
+      p.child.stdin?.end();
+      const containers = (await p).stdout.trim();
       if (containers) {
         lines.push("\n**Docker:**");
         for (const c of containers.split("\n").slice(0, 10)) {
@@ -137,7 +155,7 @@ AFTER CHECKING: Report the key metrics concisely.`,
 
     // Health endpoint
     try {
-      const health = execFileSync(
+      const p = execFileAsync(
         "curl",
         [
           "-s",
@@ -148,7 +166,9 @@ AFTER CHECKING: Report the key metrics concisely.`,
           "http://localhost:8080/health",
         ],
         { encoding: "utf-8", timeout: 5000 },
-      ).trim();
+      );
+      p.child.stdin?.end();
+      const health = (await p).stdout.trim();
       lines.push(
         `\nHealth endpoint: ${health === "200" ? "✅ 200 OK" : `❌ ${health}`}`,
       );
@@ -261,14 +281,14 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
       );
 
       try {
-        execFileSync(
+        const p = execFileAsync(
           "systemctl",
           ["restart", "--no-block", "mission-control"],
-          {
-            timeout: 5_000,
-            stdio: "pipe",
-          },
+          // execFile always pipes stdio (the sync `stdio: "pipe"` is implied).
+          { timeout: 5_000 },
         );
+        p.child.stdin?.end();
+        await p;
       } catch {
         lines.push("❌ systemctl restart failed");
       }
@@ -406,11 +426,14 @@ Returns filtered log entries. Default: last 30 lines of mission-control.`,
     }
 
     try {
-      const rawLogs = execFileSync(
+      const p = execFileAsync(
         "journalctl",
         ["-u", service, "--no-pager", "-n", String(lineCount * 3)],
-        { encoding: "utf-8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] },
+        // execFile always pipes stdio (the sync `stdio: [pipe x3]` is implied).
+        { encoding: "utf-8", timeout: 10_000 },
       );
+      p.child.stdin?.end();
+      const rawLogs = (await p).stdout;
 
       let lines = rawLogs.split("\n").filter(Boolean);
 
