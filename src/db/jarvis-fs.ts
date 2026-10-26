@@ -514,13 +514,26 @@ export function moveFile(oldPath: string, newPath: string): boolean {
  * `JSON.parse` threw and aborted EVERY listFiles caller (kb-backup included) on
  * a single bad row, so treat unparseable tags as empty rather than fatal.
  */
-function parseTagsSafe(raw: string | null | undefined): string[] {
+export function parseTagsSafe(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(raw ?? "[]");
     return Array.isArray(parsed) ? (parsed as string[]) : [];
   } catch {
     return [];
   }
+}
+
+/**
+ * All KB paths, ascending. Served by the `path` UNIQUE autoindex as a covering
+ * scan, so it never touches table or content pages (unlike `listFiles`, whose
+ * `length(content)` reads every row's content).
+ */
+export function listFilePaths(): string[] {
+  const db = getDatabase();
+  const rows = db
+    .prepare("SELECT path FROM jarvis_files ORDER BY path")
+    .all() as Array<{ path: string }>;
+  return rows.map((r) => r.path);
 }
 
 export function listFiles(filters?: {

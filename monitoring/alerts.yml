@@ -121,6 +121,20 @@ groups:
           summary: "MC event loop p99 lag above 500ms"
           description: 'p99 lag: {{ $value | printf "%.3f" }}s'
 
+      # MC event loop blocked for more than 5 s at any point in the last 10 min
+      # (a single blocked scrape; the p99 rule above needs 5 min of sustained lag)
+      # > 5 s: 14-day replay showed ~6 episodes/day above 2 s, ~2/day above 5 s;
+      # prom-client resets the max on EVERY /metrics collect, so an ad-hoc curl
+      # of :8080/metrics consumes that interval's max
+      - alert: MCEventLoopBlock
+        expr: max_over_time(mc_nodejs_eventloop_lag_max_seconds[10m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'MC event loop blocked {{ $value | printf "%.1f" }} s (max in the last 10 min)'
+          description: 'max lag in the last 10 min: {{ $value | printf "%.1f" }}s'
+
       # MC tasks stuck running for more than 30 minutes
       - alert: MCStuckTasks
         expr: mc_tasks_active > 0

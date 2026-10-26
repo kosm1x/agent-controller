@@ -32,6 +32,7 @@ import {
   deleteFile,
   syncDeleteFromKbMirror,
   listFiles,
+  listFilePaths,
   getJarvisKbRoot,
   mirrorToDisk,
 } from "./jarvis-fs.js";
@@ -259,6 +260,41 @@ describe("listFiles — corrupt tags resilience", () => {
     upsertFile("notes/regex.md", "R", "the pattern \\d+ matches digits");
     expect(searchFiles("\\d+").map((r) => r.path)).toContain("notes/regex.md");
     expect(filtered.map((f) => f.path)).toContain("knowledge/match.md");
+  });
+});
+
+// 2026-10-26: kb-backup's listFiles({}) ran length(content) over every row; on a
+// cold page cache that one synchronous read blocked the event loop 8-12 s.
+// listFilePaths must stay a covering scan of the path index (no content pages).
+describe("listFilePaths — index-only path listing", () => {
+  it("returns every path ascending via a covering index scan", () => {
+    upsertFile("zeta/z.md", "Z", "body z", [], "reference", 1);
+    upsertFile("alpha/a.md", "A", "body a", [], "reference", 90);
+    upsertFile("mid/m.md", "M", "body m");
+
+    // Capture the SQL listFilePaths actually runs, then plan THAT statement, so
+    // adding length(content) (or any table column) to it fails here.
+    const db = getDatabase();
+    const prepareSpy = vi.spyOn(db, "prepare");
+    const paths = listFilePaths();
+    const sql = prepareSpy.mock.calls.at(-1)![0] as string;
+    prepareSpy.mockRestore();
+
+    // initDatabase seeds directive rows: assert the whole list is complete and
+    // sorted, and that ours (priorities inverted vs path order, so ORDER BY
+    // priority fails here) come back in path order.
+    const ours = ["alpha/a.md", "mid/m.md", "zeta/z.md"];
+    const { n } = db.prepare("SELECT COUNT(*) AS n FROM jarvis_files").get() as {
+      n: number;
+    };
+    expect(paths).toHaveLength(n);
+    expect(paths).toEqual([...paths].sort());
+    expect(paths.filter((p) => ours.includes(p))).toEqual(ours);
+
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{
+      detail: string;
+    }>;
+    expect(plan.some((r) => r.detail.includes("COVERING INDEX"))).toBe(true);
   });
 });
 
