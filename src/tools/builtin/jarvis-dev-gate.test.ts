@@ -239,3 +239,77 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
     );
   });
 });
+
+// Queue 4ao (g): the branch was read BEFORE the suite lock while the cache
+// keyed on preState.branch (read inside it). The branch read now happens with
+// the lock held, so the report and the cache key describe the same tree.
+describe("jarvis_dev action=test — branch read under the suite lock (4ao g)", () => {
+  it("the first branch read happens while the suite lock is held", async () => {
+    const { withSuiteRunLock } = await import("./jarvis-self-repair.js");
+    let probe: Promise<string | null> | undefined;
+    execFile.mockImplementation(
+      (cmd: string, args: string[], o: unknown, cb: Cb) => {
+        // A lock probe at the first branch read: null = lock already held.
+        if (!probe && cmd === "git" && args[0] === "branch")
+          probe = withSuiteRunLock(async () => "free");
+        return routeExecFile(cmd, args, o, cb);
+      },
+    );
+    answer("", "Test Files  1 passed (1)\nTests  2 passed (2)");
+    const out = await test();
+    expect(await probe).toBeNull();
+    expect(out.branch).toBe("jarvis/fix/x");
+    expect(out.ready_for_pr).toBe(true);
+    expect(JSON.parse(writeFileSync.mock.calls[0][1] as string).branch).toBe(
+      out.branch,
+    );
+  });
+
+  it("a non-jarvis branch read under the lock still refuses before any gate child", async () => {
+    execFile.mockImplementation(
+      (cmd: string, args: string[], o: unknown, cb: Cb) =>
+        cmd === "git" && args[0] === "branch"
+          ? cb(null, { stdout: "main\n", stderr: "" })
+          : routeExecFile(cmd, args, o, cb),
+    );
+    const out = await test();
+    expect(out.error).toContain('Not on a jarvis/* branch (current: "main")');
+    expect(gateCalls()).toHaveLength(0);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+});
+
+// qa R1 W3: the gate runs outside the worktree's cwd lock, so action=pr
+// re-checks under it that HEAD + the dirty hash still match the tested tree.
+describe("jarvis_dev action=pr — tree re-checked under the cwd lock (qa R1 W3)", () => {
+  const pr = async () =>
+    JSON.parse(
+      await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" }),
+    );
+  const staged = () =>
+    execFile.mock.calls.some(
+      (c) => c[0] === "git" && (c[1] as string[]).includes("add"),
+    );
+
+  it("refuses, committing nothing, when HEAD moved after the gate ran", async () => {
+    // rev-parse: cache probe, gate pre, gate post, then the in-lock re-check.
+    changed.heads = ["abc123\n", "abc123\n", "abc123\n", "def456\n"];
+    answer("", "Test Files  1 passed (1)\nTests  2 passed (2)");
+    const out = await pr();
+    expect(out.error).toMatch(/^Working tree changed since the tests ran/);
+    expect(staged()).toBe(false);
+    expect(
+      execFile.mock.calls.some(
+        (c) => c[0] === "git" && (c[1] as string[])[0] === "commit",
+      ),
+    ).toBe(false);
+  });
+
+  it("control: an unchanged tree passes the re-check and reaches staging", async () => {
+    changed.heads = [];
+    answer("", "Test Files  1 passed (1)\nTests  2 passed (2)");
+    const out = await pr();
+    // The gate mock reports a clean porcelain, so staging finds nothing.
+    expect(out.error).toBe("Nothing to commit (or only sensitive files changed).");
+  });
+});

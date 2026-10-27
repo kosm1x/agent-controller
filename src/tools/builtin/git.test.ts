@@ -59,6 +59,43 @@ vi.mock("child_process", () => ({
   execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 }));
 
+// Only for the cross-module lock test (jarvis_dev action=status): its
+// worktree bootstrap must neither spawn nor symlink; jarvis-self-repair's db
+// and shell imports are inert here. Every other fs call is the real one.
+vi.mock("fs", async (orig) => {
+  const actual = await orig<typeof import("fs")>();
+  const wt = "/root/claude/mission-control-jarvis";
+  return {
+    ...actual,
+    existsSync: (p: string) =>
+      p === wt || p === `${wt}/node_modules` ? true : actual.existsSync(p),
+    symlinkSync: () => {
+      throw new Error("test: symlinkSync is not allowed");
+    },
+  };
+});
+vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
+vi.mock("./shell.js", () => ({ execGroupKill: vi.fn() }));
+// Passthrough spy on the per-cwd lock (qa R2 W1): a call means the caller has
+// resolved its key and is queued — a deterministic signal, no timers. One
+// spy across module registries (tests that resetModules re-run the factory,
+// which points it at the newest real lock). The delegate is the spy's
+// creation-time implementation, so afterEach's restoreAllMocks keeps it.
+const lock = vi.hoisted(() => {
+  const real: { fn?: (cwd: string, fn: () => Promise<unknown>) => unknown } =
+    {};
+  return {
+    real,
+    spy: vi.fn((cwd: string, fn: () => Promise<unknown>) => real.fn!(cwd, fn)),
+  };
+});
+const lockSpy = lock.spy;
+vi.mock("./cwd-lock.js", async (orig) => {
+  const actual = await orig<typeof import("./cwd-lock.js")>();
+  lock.real.fn = actual.withCwdLock;
+  return { ...actual, withCwdLock: lock.spy };
+});
+
 import {
   gitStatusTool,
   gitDiffTool,
@@ -985,41 +1022,138 @@ describe("git tools", () => {
       expect(JSON.parse(result)).toEqual({ error: msg });
     });
 
-    it("a timed-out jarvis token push never returns the token or the user:token URL (W1)", async () => {
-      vi.stubEnv("JARVIS_GH_TOKEN", "ghp_canaryToken123");
-      vi.stubEnv("JARVIS_GH_USER", "PiotrCoderDroid");
-      vi.resetModules();
-      const { gitPushTool: freshPushTool } = await import("./git.js");
-      const tokenUrl =
-        "https://PiotrCoderDroid:ghp_canaryToken123@github.com/EurekaMD-net/cuatro-flor.git";
-      mockExec
-        .mockReturnValueOnce("✓ Logged in") // gh auth status
-        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
-        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
-        .mockReturnValueOnce("jarvis/feat/x") // git branch --show-current
-        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git"); // remote get-url (token path)
-      mockExecFile
-        .mockReturnValueOnce("") // git fetch origin
-        .mockReturnValueOnce("") // git branch -r
-        .mockReturnValueOnce("") // git status --short
-        .mockImplementationOnce(() => {
-          throw Object.assign(
-            new Error(`Command failed: git push ${tokenUrl} jarvis/feat/x\n`),
-            {
-              killed: true,
-              code: null,
-              signal: "SIGTERM",
-              stdout: "",
-              stderr: "",
-            },
+    // Queue 4ao (e): the PAT used to ride in the push URL
+    // (https://user:TOKEN@github.com/…), visible in `ps` and in the async
+    // error's command line. It now reaches git only through the child env +
+    // a credential helper; redaction stays as defence in depth.
+    describe("jarvis token push: the PAT never enters a command line (4ao e)", () => {
+      const TOKEN = "ghp_canaryToken123";
+      const jarvisPushSetup = async () => {
+        vi.stubEnv("JARVIS_GH_TOKEN", TOKEN);
+        vi.stubEnv("JARVIS_GH_USER", "PiotrCoderDroid");
+        vi.resetModules();
+        const mod = await import("./git.js");
+        mockExec
+          .mockReturnValueOnce("✓ Logged in") // gh auth status
+          .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+          .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+          .mockReturnValueOnce("jarvis/feat/x") // git branch --show-current
+          .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git"); // remote get-url (token path)
+        mockExecFileSync.mockReturnValueOnce("jarvis/feat/x"); // isJarvisBranch → getCurrentBranch
+        mockExecFile.mockClear();
+        return mod;
+      };
+      const pushCall = () =>
+        mockExecFile.mock.calls.find(
+          (c) => c[0] === "git" && (c[1] as string[]).includes("push"),
+        )!;
+
+      it("pushes to the plain URL with the credential helper; the token is only in the child env", async () => {
+        const { gitPushTool: freshPushTool, JARVIS_PUSH_CREDENTIAL_ARGS } =
+          await jarvisPushSetup();
+        mockStdinEnd.mockClear();
+        mockExecFile
+          .mockReturnValueOnce("") // git fetch origin
+          .mockReturnValueOnce("") // git branch -r
+          .mockReturnValueOnce("") // git status --short
+          .mockReturnValueOnce("abc..def jarvis/feat/x -> jarvis/feat/x") // git push
+          .mockReturnValueOnce("") // git fetch origin jarvis/feat/x
+          .mockReturnValueOnce(""); // git branch --set-upstream-to
+        const result = await freshPushTool.execute({});
+        expect(result).toContain("-> jarvis/feat/x");
+        const [cmd, argv, opts] = pushCall() as [
+          string,
+          string[],
+          { env: Record<string, string> },
+        ];
+        expect(cmd).toBe("git");
+        expect(argv).toEqual([
+          ...JARVIS_PUSH_CREDENTIAL_ARGS,
+          "push",
+          "https://github.com/EurekaMD-net/cuatro-flor.git",
+          "jarvis/feat/x",
+        ]);
+        // No argv word carries the token or a user:secret@ URL.
+        expect(JSON.stringify(argv)).not.toContain(TOKEN);
+        expect(argv.some((a) => /:\/\/[^/]*@/.test(a))).toBe(false);
+        // The helper names the env vars; the values live only in the env.
+        expect(argv[3]).toContain('"$GH_TOKEN"');
+        expect(opts.env.GH_TOKEN).toBe(TOKEN);
+        expect(opts.env.JARVIS_GH_USER).toBe("PiotrCoderDroid");
+        expect(opts.env).not.toHaveProperty("JARVIS_GH_TOKEN");
+        expect(opts.env).not.toBe(process.env);
+        // Every child, the token push included, had stdin closed.
+        expect(mockStdinEnd).toHaveBeenCalledTimes(
+          mockExec.mock.calls.length + mockExecFile.mock.calls.length,
+        );
+      });
+
+      it("a timed-out token push returns the token-free command line; a token echoed in stderr is still masked", async () => {
+        const { gitPushTool: freshPushTool } = await jarvisPushSetup();
+        mockExecFile
+          .mockReturnValueOnce("") // git fetch origin
+          .mockReturnValueOnce("") // git branch -r
+          .mockReturnValueOnce("") // git status --short
+          .mockImplementationOnce((file: unknown, args: unknown) => {
+            // Node's async error: "Command failed: <file> <args…>".
+            throw Object.assign(
+              new Error(
+                `Command failed: ${file} ${(args as string[]).join(" ")}\nremote: bad credentials ${TOKEN}`,
+              ),
+              { killed: true, code: null, signal: "SIGTERM", stdout: "", stderr: "" },
+            );
+          }); // git push → timed out
+        const result = await freshPushTool.execute({});
+        expect(result).not.toContain(TOKEN);
+        expect(result).not.toContain("PiotrCoderDroid:");
+        const { error } = JSON.parse(result) as { error: string };
+        expect(error).toContain(
+          "push https://github.com/EurekaMD-net/cuatro-flor.git jarvis/feat/x",
+        );
+        expect(error).toContain("remote: bad credentials ***");
+      });
+
+      it("real git: the helper answers from the env and overrides a configured helper (synthetic HOME, no network)", async () => {
+        const { JARVIS_PUSH_CREDENTIAL_ARGS } = await import("./git.js");
+        const real =
+          await vi.importActual<typeof import("child_process")>(
+            "child_process",
           );
-        }); // git push <tokenUrl> → timed out
-      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x"); // isJarvisBranch → getCurrentBranch
-      const result = await freshPushTool.execute({});
-      expect(result).not.toContain("ghp_canaryToken123");
-      expect(result).not.toContain("PiotrCoderDroid:");
-      expect(JSON.parse(result)).toEqual({
-        error: "Command failed: git push *** jarvis/feat/x\n",
+        const { mkdtempSync, writeFileSync, rmSync } = await import("fs");
+        const { tmpdir } = await import("os");
+        const home = mkdtempSync(`${tmpdir()}/git-cred-`);
+        try {
+          // A competing helper, like the operator's gh one, for github.com.
+          writeFileSync(
+            `${home}/.gitconfig`,
+            '[credential "https://github.com"]\n\thelper = "!f() { echo username=operator; echo password=WRONG; }; f"\n',
+          );
+          const fill = (args: readonly string[]) =>
+            real.execFileSync("git", [...args, "credential", "fill"], {
+              cwd: home,
+              encoding: "utf-8",
+              timeout: 10_000,
+              input: "protocol=https\nhost=github.com\npath=o/r.git\n\n",
+              env: {
+                PATH: process.env.PATH ?? "",
+                HOME: home,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_TERMINAL_PROMPT: "0",
+                GH_TOKEN: "synthetic-token",
+                JARVIS_GH_USER: "PiotrCoderDroid",
+              },
+            });
+          const out = fill(JARVIS_PUSH_CREDENTIAL_ARGS);
+          expect(out).toContain("username=PiotrCoderDroid\n");
+          expect(out).toContain("password=synthetic-token\n");
+          expect(out).not.toContain("WRONG");
+          // Control: without the reset, the configured helper wins.
+          expect(fill(JARVIS_PUSH_CREDENTIAL_ARGS.slice(2))).toContain(
+            "password=WRONG",
+          );
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+        }
       });
     });
 
@@ -1108,6 +1242,8 @@ describe("git tools", () => {
           settled = true;
           return r;
         });
+        // The lock key walk is real async fs: wait for the fetch to spawn.
+        await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1));
         await flush();
         expect(settled).toBe(false);
         expect(mockExecFile).toHaveBeenCalledTimes(1); // nothing past the fetch
@@ -1132,12 +1268,193 @@ describe("git tools", () => {
           settled = true;
           return r;
         });
+        await vi.waitFor(() =>
+          expect(mockExecFile.mock.calls.at(-1)?.[1]).toEqual([
+            "rebase",
+            "--abort",
+          ]),
+        );
         await flush();
         expect(settled).toBe(false);
         expect(mockExecFile.mock.calls.at(-1)![1]).toEqual(["rebase", "--abort"]);
         abort.release("");
         expect(await p).toContain("manual reconcile");
       });
+    });
+  });
+
+  // Queue 4ao (f)(ii): async children made multi-step sequences interleavable
+  // on one worktree. Each git tool's execute now runs under a per-cwd lock.
+  describe("per-cwd lock around each git tool's execute (4ao f)", () => {
+    const flush = async (n = 20) => {
+      for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+    };
+    // The key walk is real async fs: positive checks wait for the spawn, and
+    // a negative check first waits until the second caller is IN the lock
+    // (its lockSpy call), then flushes, then asserts (qa R2 W1).
+    const queued = async (n: number) =>
+      vi.waitFor(() => expect(lockSpy).toHaveBeenCalledTimes(n));
+    beforeEach(() => {
+      lockSpy.mockClear();
+    });
+    const held = () => {
+      let release!: (out: string) => void;
+      const promise = new Promise<string>((r) => (release = r));
+      return { promise, release };
+    };
+
+    it("a second tool call on the SAME cwd spawns nothing until the first settles", async () => {
+      mockExec.mockClear();
+      mockExecFile.mockClear();
+      const fetch = held();
+      mockExec
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFile
+        .mockImplementationOnce(() => fetch.promise) // push: git fetch origin — held
+        .mockReturnValueOnce("") // push: git branch -r
+        .mockReturnValueOnce("") // push: git status --short
+        .mockReturnValueOnce("5b0cc1a..ba2005e main -> main") // push: git push
+        .mockReturnValueOnce("") // commit: git add
+        .mockReturnValueOnce("[main abc1234] c"); // commit: git commit
+      mockExecFileSync
+        .mockReturnValueOnce("main") // push: isJarvisBranch
+        .mockReturnValueOnce("main"); // commit: getCurrentBranch
+      const push = gitPushTool.execute({ cwd: "/root/claude/cuatro-flor" });
+      await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1)); // the held fetch
+      const commit = gitCommitTool.execute({
+        files: ["a.ts"],
+        message: "c",
+        cwd: "/root/claude/cuatro-flor/", // same cwd, trailing slash
+      });
+      await queued(2);
+      expect(lockSpy.mock.calls[1][0]).toBe(lockSpy.mock.calls[0][0]);
+      await flush();
+      // The commit has not staged anything while the push sequence is open.
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      const execBefore = mockExec.mock.calls.length;
+      mockExec.mockReturnValueOnce("1 file changed"); // commit: git diff --cached --stat
+      fetch.release("");
+      expect(await push).toContain("ba2005e");
+      expect(await commit).toContain("abc1234");
+      const argv = mockExecFile.mock.calls.map((c) => (c[1] as string[])[0]);
+      expect(argv).toEqual(["fetch", "branch", "status", "push", "add", "commit"]);
+      expect(mockExec.mock.calls.length).toBe(execBefore + 1);
+    });
+
+    it("a call on a DIFFERENT cwd runs while the first is held", async () => {
+      mockExecFile.mockClear();
+      const diff = held();
+      mockExecFile
+        .mockImplementationOnce(() => diff.promise) // git diff in repo A — held
+        .mockReturnValueOnce("diff --git a/b b/b\n+b"); // git diff in repo B
+      const a = gitDiffTool.execute({ cwd: "/root/claude/cuatro-flor" });
+      await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1));
+      const b = await gitDiffTool.execute({ cwd: "/root/claude/trustr" });
+      expect(b).toContain("+b");
+      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      diff.release("diff --git a/a b/a\n+a");
+      expect(await a).toContain("+a");
+    });
+
+    it("a subdirectory cwd and its repository root share one lock (qa R1 W2)", async () => {
+      const { mkdtempSync, mkdirSync, realpathSync, rmSync } = await import(
+        "fs"
+      );
+      const { tmpdir } = await import("os");
+      const repo = mkdtempSync(`${tmpdir()}/lock-repo-`);
+      mkdirSync(`${repo}/.git`);
+      mkdirSync(`${repo}/src/deep`, { recursive: true });
+      try {
+        for (const m of [mockExec, mockExecFile, mockExecFileSync])
+          m.mockReset().mockReturnValue("");
+        const diff = held();
+        mockExecFile
+          .mockImplementationOnce(() => diff.promise) // git diff at the root — held
+          .mockReturnValueOnce("") // git add (from src/deep)
+          .mockReturnValueOnce("[main abc1234] c"); // git commit
+        mockExecFileSync.mockReturnValueOnce("main"); // commit: getCurrentBranch
+        const a = gitDiffTool.execute({ cwd: repo });
+        await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1));
+        const b = gitCommitTool.execute({
+          files: ["a.ts"],
+          message: "c",
+          cwd: `${repo}/src/deep`,
+        });
+        await queued(2);
+        // Both callers keyed on the repository root — no timing involved.
+        expect(lockSpy.mock.calls[0][0]).toBe(realpathSync(repo));
+        expect(lockSpy.mock.calls[1][0]).toBe(realpathSync(repo));
+        await flush();
+        expect(mockExecFile).toHaveBeenCalledTimes(1); // no `git add` yet
+        mockExec.mockReturnValueOnce("1 file changed"); // git diff --cached --stat
+        diff.release("diff --git a/a b/a\n+a");
+        expect(await a).toContain("+a");
+        expect(await b).toContain("abc1234");
+        expect(
+          mockExecFile.mock.calls.map((c) => (c[1] as string[])[0]),
+        ).toEqual(["diff", "add", "commit"]);
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    });
+
+    it("git_commit on the jarvis worktree waits behind jarvis_dev action=status (shared key, qa R1 R2)", async () => {
+      // Both from the CURRENT module registry (earlier tests resetModules), so
+      // they share one cwd-lock instance, as in production.
+      const { jarvisDevTool } = await import("./jarvis-dev.js");
+      const { gitCommitTool: commitTool } = await import("./git.js");
+      // Reset, not clear: drop once-values an earlier test left queued.
+      for (const m of [mockExec, mockExecFile, mockExecFileSync])
+        m.mockReset().mockReturnValue("");
+      // resolveWorkDir's branch guard on the worktree + git_commit's own read.
+      mockExecFileSync.mockReturnValue("jarvis/feat/x");
+      const branchRead = held();
+      mockExecFile
+        .mockImplementationOnce(() => branchRead.promise) // status: git branch --show-current — held
+        .mockReturnValueOnce("") // status: git status --porcelain
+        .mockReturnValueOnce("") // status: git diff --stat
+        .mockReturnValueOnce("") // commit: git add
+        .mockReturnValueOnce("[jarvis/feat/x abc1234] c"); // commit: git commit
+      const status = jarvisDevTool.execute({ action: "status" });
+      await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1));
+      const commit = commitTool.execute({
+        files: ["a.ts"],
+        message: "c",
+        cwd: "/root/claude/mission-control-jarvis",
+      });
+      await queued(2);
+      // jarvis_dev (MC_DIR) and git_commit (repo root) share one key.
+      expect(lockSpy.mock.calls.map((c) => c[0])).toEqual([
+        "/root/claude/mission-control-jarvis",
+        "/root/claude/mission-control-jarvis",
+      ]);
+      await flush();
+      expect(mockExecFile).toHaveBeenCalledTimes(1); // commit staged nothing
+      expect(mockExec).not.toHaveBeenCalled();
+      mockExec.mockReturnValueOnce("1 file changed"); // git diff --cached --stat
+      branchRead.release("jarvis/feat/x");
+      expect(JSON.parse(await status).branch).toBe("jarvis/feat/x");
+      expect(await commit).toContain("abc1234");
+      expect(
+        mockExecFile.mock.calls.map((c) => (c[1] as string[])[0]),
+      ).toEqual(["branch", "status", "diff", "add", "commit"]);
+    });
+
+    it("a failed call releases the cwd for the next one", async () => {
+      mockExec.mockImplementationOnce(() => {
+        throw new Error("Command failed: git status --short\n");
+      });
+      const first = await gitStatusTool.execute({
+        cwd: "/root/claude/cuatro-flor",
+      });
+      expect(JSON.parse(first).error).toContain("git status");
+      mockExec.mockReturnValueOnce("").mockReturnValueOnce("main");
+      expect(
+        await gitStatusTool.execute({ cwd: "/root/claude/cuatro-flor" }),
+      ).toContain("clean");
     });
   });
 });

@@ -77,6 +77,7 @@ vi.mock("fs", async (orig) => {
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
 
 import { jarvisDevTool } from "./jarvis-dev.js";
+import { withCwdLock } from "./cwd-lock.js";
 
 const CANARIES: Record<string, string> = {
   CANARY_API_KEY: "canary-value-1",
@@ -217,5 +218,47 @@ describe("jarvis_dev action=pr — async children (MCEventLoopBlock 2026-10-26)"
     ])
       expect(gitGh.some((c) => c.argv.startsWith(want))).toBe(true);
     for (const c of gitGh) expect(c.end, c.argv).toHaveBeenCalledTimes(1);
+  });
+
+  // Queue 4ao (h): the systemd-run gate children kept stdin open.
+  it("closes stdin on both systemd-run gate children (tsc + vitest related)", async () => {
+    await jarvisDevTool.execute({ action: "test" });
+    const gate = m.children.filter((c) => c.argv.startsWith("systemd-run "));
+    expect(gate).toHaveLength(2);
+    for (const c of gate) expect(c.end, c.argv).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Queue 4ao (f)(ii): add→commit→push→PR runs under the worktree's cwd lock,
+// the same lock git_* tools take for that cwd.
+describe("jarvis_dev action=pr — per-cwd lock on the worktree (4ao f)", () => {
+  it("does not stage anything while another call holds the worktree's lock; proceeds after", async () => {
+    let release!: () => void;
+    const holder = withCwdLock(
+      "/root/claude/mission-control-jarvis/",
+      () => new Promise<void>((r) => (release = r)),
+    );
+    const argvs = () =>
+      (m.execFileAsync.mock.calls as unknown[][]).map(
+        (c) => `${c[0]} ${(c[1] as string[]).join(" ")}`,
+      );
+    const pr = jarvisDevTool.execute({ action: "pr", title: "t", body: "b" });
+    // The gate (outside the lock) runs to completion; staging must wait.
+    await vi.waitFor(() =>
+      expect(argvs().filter((a) => a.startsWith("systemd-run "))).toHaveLength(
+        2,
+      ),
+    );
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(argvs().some((a) => a.startsWith("git status --porcelain -z"))).toBe(
+      false,
+    );
+    expect(argvs().some((a) => a.startsWith("git --literal-pathspecs add"))).toBe(
+      false,
+    );
+    release();
+    await holder;
+    expect(JSON.parse(await pr).pr_url).toBe("https://github.com/o/r/pull/9");
+    expect(argvs().some((a) => a.startsWith("git push -u origin"))).toBe(true);
   });
 });

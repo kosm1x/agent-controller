@@ -12,6 +12,7 @@ import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
+import { repoRootOf, withCwdLock } from "./cwd-lock.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
@@ -144,12 +145,52 @@ const execAsync = promisify(exec);
 
 /**
  * Mask a secret in text returned to the model. Async child errors carry the
- * full command line ("Command failed: git push https://user:TOKEN@…"), so the
- * jarvis token path redacts both the token URL and the token itself.
+ * full command line; the jarvis token never enters one since queue 4ao (e),
+ * so masking the token itself is defence in depth.
  */
 function redactSecret(text: string, secret: string | undefined): string {
   return secret ? text.split(secret).join("***") : text;
 }
+
+/**
+ * Per-cwd lock around a git tool's execute (queue 4ao (f)(ii)): a multi-step
+ * sequence (fetch→rebase→push, add→commit) on one repository runs one at a
+ * time; different repositories run in parallel. Keyed on the repository root
+ * of the realpath (a subdirectory cwd shares its repo's lock, qa R1 W2),
+ * without the branch guard — resolveWorkDir inside execute still refuses a
+ * bad cwd.
+ */
+function lockedByCwd(
+  execute: (args: Record<string, unknown>) => Promise<string>,
+): (args: Record<string, unknown>) => Promise<string> {
+  return async (args) => {
+    const cwd = args.cwd as string | undefined;
+    let key: string;
+    try {
+      key = await repoRootOf(cwd ? realResolve(cwd) : DEFAULT_CWD);
+    } catch {
+      key = String(cwd);
+    }
+    return withCwdLock(key, () => execute(args));
+  };
+}
+
+/**
+ * Credential helper for the jarvis token push (queue 4ao (e)): git asks it for
+ * the password and it answers from the child's env (GH_TOKEN, JARVIS_GH_USER),
+ * so the token never appears in an argv, a URL or a journal line — only the
+ * env NAMES do. The empty helper first resets every configured helper (the
+ * operator's gh one included), so the push authenticates as Jarvis.
+ * GH_TOKEN is in the env of git AND of every child git spawns — a repo's
+ * pre-push hook (or any hook the push runs) can read it. Today the repos
+ * Jarvis pushes carry only a pre-commit hook, which a push does not run.
+ */
+export const JARVIS_PUSH_CREDENTIAL_ARGS = [
+  "-c",
+  "credential.helper=",
+  "-c",
+  `credential.helper=!f() { test "$1" = get && printf 'username=%s\\npassword=%s\\n' "\${JARVIS_GH_USER:-x-access-token}" "$GH_TOKEN"; }; f`,
+] as const;
 
 /** Safe exec: uses execFile with array args to prevent shell injection. */
 async function runArgs(
@@ -219,7 +260,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  execute: lockedByCwd(async (args) => {
     try {
       const cwd = args.cwd as string | undefined;
       const status = await run("git status --short", 30_000, cwd);
@@ -229,7 +270,7 @@ Returns short-format status (M=modified, A=added, D=deleted, ??=untracked).`,
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
     }
-  },
+  }),
 };
 
 export const gitDiffTool: Tool = {
@@ -271,7 +312,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  execute: lockedByCwd(async (args) => {
     try {
       const cwd = args.cwd as string | undefined;
       const diffArgs = ["diff"];
@@ -285,7 +326,7 @@ Returns unified diff. Use staged=true to see staged changes.`,
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
     }
-  },
+  }),
 };
 
 export const gitCommitTool: Tool = {
@@ -337,7 +378,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  execute: lockedByCwd(async (args) => {
     try {
       const files = args.files as string[];
       const message = args.message as string;
@@ -387,7 +428,7 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
     }
-  },
+  }),
 };
 
 export const gitPushTool: Tool = {
@@ -430,8 +471,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
-    let tokenUrl: string | undefined;
+  execute: lockedByCwd(async (args) => {
     try {
       const cwd = args.cwd as string | undefined;
       // Path guard FIRST so a blocked/invalid cwd surfaces its real reason
@@ -579,19 +619,35 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // Check for uncommitted changes — warn before the LLM claims success
       const status = await runArgs("git", ["status", "--short"], 30_000, cwd);
       // On jarvis/* branches, push using Piotr's PAT so GitHub attributes
-      // the push to PiotrCoderDroid instead of kosm1x.
+      // the push to PiotrCoderDroid instead of kosm1x. The PAT reaches git
+      // only through the child env + credential helper (queue 4ao (e)) —
+      // never in the push URL, so `ps` and error text cannot carry it.
       let pushResult: string;
       if (isJarvisBranch(cwd) && JARVIS_GH_TOKEN) {
         const remoteUrl = await run("git remote get-url origin", 10_000, cwd);
         const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
         if (match) {
-          tokenUrl = `https://${JARVIS_GH_USER}:${JARVIS_GH_TOKEN}@github.com/${match[1]}.git`;
-          pushResult = await runArgs(
+          const p = execFileAsync(
             "git",
-            ["push", tokenUrl, branch],
-            60_000,
-            cwd,
+            [
+              ...JARVIS_PUSH_CREDENTIAL_ARGS,
+              "push",
+              `https://github.com/${match[1]}.git`,
+              branch,
+            ],
+            {
+              cwd: resolveWorkDir(cwd),
+              encoding: "utf-8",
+              timeout: 60_000,
+              // Base allow-list + the two names the helper reads (queue 3h).
+              env: buildChildEnv({
+                GH_TOKEN: JARVIS_GH_TOKEN,
+                JARVIS_GH_USER,
+              }),
+            },
           );
+          p.child.stdin?.end();
+          pushResult = (await p).stdout.trim();
           // A URL push can't take -u (upstream needs a named remote), leaving
           // the branch without tracking — which strands any follow-on
           // `gh pr create` that infers the head from upstream. Fetch the ref
@@ -635,10 +691,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       return pushResult || `Pushed ${branch} to origin.`;
     } catch (err) {
-      const msg = redactSecret(errMsg(err), tokenUrl);
-      return JSON.stringify({ error: redactSecret(msg, JARVIS_GH_TOKEN) });
+      // Defence in depth: the token is no longer in any command line.
+      return JSON.stringify({
+        error: redactSecret(errMsg(err), JARVIS_GH_TOKEN),
+      });
     }
-  },
+  }),
 };
 
 export const ghRepoCreateTool: Tool = {
@@ -693,7 +751,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  execute: lockedByCwd(async (args) => {
     try {
       const rawName = args.name as string;
       if (!rawName) return JSON.stringify({ error: "name is required." });
@@ -737,7 +795,7 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
     } catch (err) {
       return JSON.stringify({ error: errMsg(err) });
     }
-  },
+  }),
 };
 
 export const ghCreatePrTool: Tool = {
@@ -789,7 +847,7 @@ Returns the PR URL on success.`,
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  execute: lockedByCwd(async (args) => {
     try {
       const title = args.title as string;
       const body = args.body as string;
@@ -848,5 +906,5 @@ Returns the PR URL on success.`,
         error: redactSecret(errMsg(err), JARVIS_GH_TOKEN),
       });
     }
-  },
+  }),
 };

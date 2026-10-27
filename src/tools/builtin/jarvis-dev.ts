@@ -19,6 +19,7 @@ import {
 } from "./changed-tests.js";
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+import { withCwdLock } from "./cwd-lock.js";
 
 // The test gate MUST run async: a synchronous exec blocks mission-control's
 // event loop for the whole run (the full suite took ~2 min before ruling 4
@@ -487,19 +488,23 @@ function testsGreen(tests: string): boolean {
 }
 
 async function actionTest(): Promise<string> {
-  const branch = await currentBranch();
-  if (!JARVIS_BRANCH_RE.test(branch)) {
-    return JSON.stringify({
-      error: `Not on a jarvis/* branch (current: "${branch}"). Create one first with action="branch".`,
-    });
-  }
   // Same one-at-a-time lock as jarvis_test_run and vps_deploy (ruling 4).
   // actionPr reaches the gate only through here and holds no lock itself.
-  const run = await withSuiteRunLock(() => runTestGate(branch));
+  // The branch is read AFTER the lock is taken (queue 4ao (g)), so the
+  // reported branch and the cache key (preState.branch) describe one tree.
+  const run = await withSuiteRunLock(async () => {
+    const branch = await currentBranch();
+    if (!JARVIS_BRANCH_RE.test(branch)) {
+      return JSON.stringify({
+        error: `Not on a jarvis/* branch (current: "${branch}"). Create one first with action="branch".`,
+      });
+    }
+    return runTestGate(branch);
+  });
   return (
     run ??
     JSON.stringify({
-      branch,
+      branch: await currentBranch(),
       typecheck: "NOT RUN",
       tests: `FAIL: ${SUITE_RUN_BUSY}`,
       ready_for_pr: false,
@@ -521,7 +526,7 @@ async function runTestGate(branch: string): Promise<string> {
 
   // Typecheck
   try {
-    await execFileAsync(
+    const tsc = execFileAsync(
       "systemd-run",
       buildGateScopeArgs(["npx", "tsc", "--noEmit"]),
       {
@@ -534,6 +539,10 @@ async function runTestGate(branch: string): Promise<string> {
         env: buildChildEnv(),
       },
     );
+    // Closed like every other child here (queue 4ao (h)): a gate child that
+    // reads stdin fails fast instead of waiting to RuntimeMaxSec.
+    tsc.child.stdin?.end();
+    await tsc;
     results.typecheck = "PASS";
   } catch (err) {
     // tsc writes ALL diagnostics to stdout (audit C2 2026-08-02 — the old
@@ -552,7 +561,7 @@ async function runTestGate(branch: string): Promise<string> {
     results.tests = `FAIL: ${scope.reason}`;
   } else {
     try {
-      const { stdout } = await execFileAsync(
+      const related = execFileAsync(
         "systemd-run",
         buildGateScopeArgs(relatedTestArgv(scope.files)),
         {
@@ -563,6 +572,8 @@ async function runTestGate(branch: string): Promise<string> {
           env: buildChildEnv(),
         },
       );
+      related.child.stdin?.end();
+      const { stdout } = await related;
       const summaryMatch = stdout.match(/Tests\s+(\d+)\s+passed/);
       results.tests = `PASS (${summaryMatch ? `${summaryMatch[1]} tests; ` : ""}${relatedScopeSummary(scope, stdout)})`;
     } catch (err) {
@@ -606,7 +617,17 @@ async function runTestGate(branch: string): Promise<string> {
     });
   }
 
-  return JSON.stringify({ branch, ...results, ready_for_pr });
+  // head_sha + dirty_hash of the tested tree let action=pr re-check under
+  // the worktree lock that nothing moved since (qa R1 W3).
+  return JSON.stringify({
+    branch,
+    ...results,
+    ready_for_pr,
+    ...(preState && {
+      head_sha: preState.head_sha,
+      dirty_hash: preState.dirty_hash,
+    }),
+  });
 }
 
 /** Every untracked FILE is listed (not a collapsed "dir/"), so the
@@ -664,15 +685,17 @@ async function actionPr(title: string, body: string): Promise<string> {
   // all match, so action=pr doesn't re-spend the caller's budget on a gate
   // that was just run. Cache-miss path runs tests inline as before.
   const cached = await getFreshPassingCache(branch);
-  const testResult: {
+  const testResult: TestedResult & {
     typecheck: string;
-    tests: string;
     ready_for_pr: boolean;
   } = cached
     ? {
         typecheck: cached.typecheck,
         tests: `${cached.tests} (cached ${Math.round((Date.now() - cached.tested_at_ms) / 1000)}s ago)`,
         ready_for_pr: true,
+        branch: cached.branch,
+        head_sha: cached.head_sha,
+        dirty_hash: cached.dirty_hash,
       }
     : JSON.parse(await actionTest());
   console.log(
@@ -686,6 +709,50 @@ async function actionPr(title: string, body: string): Promise<string> {
       error: "Tests must pass before opening a PR.",
       typecheck: testResult.typecheck,
       tests: testResult.tests,
+    });
+  }
+
+  // Stage → commit → push → PR under the worktree's cwd lock (queue 4ao
+  // (f)), shared with git_* on the same cwd. The gate above stays outside it:
+  // it can run 330 s and only reads the tree (mutation is detected).
+  return withCwdLock(MC_DIR, () =>
+    commitPushOpenPr(branch, title, body, testResult),
+  );
+}
+
+/** The gate result plus the tree it tested (absent when the gate never ran). */
+interface TestedResult {
+  tests: string;
+  branch?: string;
+  head_sha?: string;
+  dirty_hash?: string;
+}
+
+async function commitPushOpenPr(
+  branch: string,
+  title: string,
+  body: string,
+  testResult: TestedResult,
+): Promise<string> {
+  // The gate ran outside this lock, so re-check under it that the tree is
+  // still the one that was tested (qa R1 W3): a commit or edit that landed
+  // in between would otherwise ship untested.
+  const { head_sha, dirty_hash } = testResult;
+  const nowState = await computeWorkingTreeState();
+  if (
+    !head_sha ||
+    !dirty_hash ||
+    detectRunMutation(
+      { branch: testResult.branch ?? branch, head_sha, dirty_hash },
+      nowState,
+    )
+  ) {
+    console.log(
+      `[jarvis_dev] action=pr ABORTED — working tree changed since the tests ran on ${branch}`,
+    );
+    return JSON.stringify({
+      error:
+        'Working tree changed since the tests ran (HEAD or uncommitted changes differ) — nothing was committed. Re-run jarvis_dev action="test", then action="pr".',
     });
   }
 
@@ -957,9 +1024,11 @@ AFTER USING: Report the branch name, action taken, and next step.`,
 
     switch (action) {
       case "branch":
-        return actionBranch(
-          (args.type as string) ?? "",
-          (args.slug as string) ?? "",
+        return withCwdLock(MC_DIR, () =>
+          actionBranch(
+            (args.type as string) ?? "",
+            (args.slug as string) ?? "",
+          ),
         );
       case "test":
         return actionTest();
@@ -969,7 +1038,7 @@ AFTER USING: Report the branch name, action taken, and next step.`,
           (args.body as string) ?? "",
         );
       case "status":
-        return actionStatus();
+        return withCwdLock(MC_DIR, () => actionStatus());
       default:
         return JSON.stringify({
           error: `Unknown action "${action}". Use: branch, test, pr, status`,
