@@ -4043,8 +4043,10 @@ export class MessageRouter {
         // Heavy promoted completions (all goals done, reflection below the
         // success gate → DONE_WITH_CONCERNS) carry unverified content — the
         // operator must see the caveat, not a clean answer (qa-audit W1).
-        // Heavy-only: fast tasks land completed_with_concerns routinely
-        // (missing STATUS line defaults there) and a caveat would be noise.
+        // Heavy-only by design. The old reason (a missing STATUS line lands
+        // fast tasks in completed_with_concerns) is false since 07b941c3:
+        // parseRunnerStatus defaults to DONE; whether fast tasks should show
+        // the caveat is a separate ruling.
         gradedDown =
           task?.status === "completed_with_concerns" &&
           task?.agent_type === "heavy";

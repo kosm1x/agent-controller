@@ -93,14 +93,26 @@ export function detectRumiRequest(text: string): boolean {
 /**
  * KB files the Rumi guardrail force-injects, in prompt order. The SOP comes
  * first because it carries the no-repeat rule and the delivery-record step;
- * the index and the delivery log are what that rule is checked against.
+ * the index is what that rule is checked against. The delivery log was
+ * retired from the list (queue 4an ruling c, 2026-10-27): no entry since
+ * 08-21, and the proven 10-26 run recorded its delivery in the index only.
  */
 export const RUMI_GUARDRAIL_PATHS = [
   "knowledge/procedures/rumi-poemas.md", // the operative SOP (no-repeat rule, delivery record)
   "knowledge/Rumi/INDEX.md",
-  "knowledge/rumi-delivery-log.md",
   "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
 ] as const;
+
+/**
+ * Per-file ceiling for the Rumi guardrail rows, which bypass KB_CHAR_BUDGET
+ * (queue 4an ruling b, 2026-10-27): the index grows with every delivery. A row
+ * over the cap is injected the capStableContent way, head + newest tail with
+ * a jarvis_file_read pointer. On 2026-10-26 the SOP was 1,932 chars (whole,
+ * under the cap), the verification SOP 3,899 (whole) and the index 5,660
+ * (whole today; once past the cap its head and newest entries stay).
+ */
+export const RUMI_GUARDRAIL_FILE_CHAR_CAP = 6_000;
+export const RUMI_GUARDRAIL_HEAD_CHARS = 2_000;
 
 /** KB row written by scripts/kb-preview-directive.mjs (operator-run). */
 const PREVIEW_DIRECTIVE_PATH = "directives/preview-publishing.md";
@@ -313,8 +325,8 @@ function collectVariableSections(
       }
     }
 
-    // Rumi SOP guardrail: force-inject the SOP, Index and delivery log on any
-    // Rumi/poem request. Without this, the LLM answers from training memory and
+    // Rumi SOP guardrail: force-inject the SOP, Index and verification SOP on
+    // any Rumi/poem request. Without this, the LLM answers from training memory and
     // bypasses the SOP, causing duplicate poems to be served (3 documented
     // incidents: 2026-04-06, 2026-05-19, 2026-05-23). The operative SOP
     // (rumi-poemas.md, rewritten 2026-09-13) and the delivery log (created
@@ -326,11 +338,19 @@ function collectVariableSections(
         try {
           const rumiFile = getFile(rumiPath);
           if (rumiFile && rowAllowed(rumiFile)) {
-            const section = `### ${rumiFile.title}\n${rumiFile.content}`;
+            const body = capStableContent(
+              rumiPath,
+              rumiFile.content,
+              logTag,
+              RUMI_GUARDRAIL_FILE_CHAR_CAP,
+              RUMI_GUARDRAIL_HEAD_CHARS,
+            );
+            const section = `### ${rumiFile.title}\n${body}`;
             // Bypasses budget — these are mandatory context for correctness
+            // (each row capped per file, see RUMI_GUARDRAIL_FILE_CHAR_CAP)
             variableSections.push(section);
             console.log(
-              `[${logTag}] Rumi SOP guardrail: injected ${rumiPath} (${rumiFile.content.length} chars)`,
+              `[${logTag}] Rumi SOP guardrail: injected ${rumiPath} (${rumiFile.content.length} → ${body.length} chars)`,
             );
           }
         } catch {
@@ -443,14 +463,20 @@ function balanceTailFences(content: string, tailStart: number, tail: string): st
   return closeOpenFence(t);
 }
 
-export function capStableContent(path: string, rawContent: string, logTag: string): string {
+export function capStableContent(
+  path: string,
+  rawContent: string,
+  logTag: string,
+  cap: number = STABLE_FILE_CHAR_CAP,
+  headChars: number = STABLE_HEAD_CHARS,
+): string {
   // Ruling 3c, audit round 5: scrub BEFORE the head/tail cut, so a cut can
   // never split a stored value into fragments the later block scrub misses.
   const content = scrubSecrets(rawContent);
-  if (content.length <= STABLE_FILE_CHAR_CAP) return content;
-  const headCut = content.lastIndexOf("\n", STABLE_HEAD_CHARS);
-  const head = content.slice(0, headCut > STABLE_HEAD_CHARS / 2 ? headCut : STABLE_HEAD_CHARS);
-  const tailLen = STABLE_FILE_CHAR_CAP - head.length;
+  if (content.length <= cap) return content;
+  const headCut = content.lastIndexOf("\n", headChars);
+  const head = content.slice(0, headCut > headChars / 2 ? headCut : headChars);
+  const tailLen = cap - head.length;
   const tailStartRaw = content.length - tailLen;
   const tailCut = content.indexOf("\n", tailStartRaw);
   const tailStart = tailCut > 0 && tailCut < tailStartRaw + tailLen / 2 ? tailCut + 1 : tailStartRaw;

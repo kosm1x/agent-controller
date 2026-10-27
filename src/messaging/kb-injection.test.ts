@@ -5,6 +5,7 @@ import {
   detectProjectInMessage,
   detectRumiRequest,
   RUMI_GUARDRAIL_PATHS,
+  RUMI_GUARDRAIL_FILE_CHAR_CAP,
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
   packConditionalRows,
@@ -804,13 +805,49 @@ describe("buildKnowledgeBaseSections — Rumi SOP guardrail", () => {
 describe("Rumi guardrail paths", () => {
   // 2026-10-26 (task 12551): the operative SOP and the delivery log were never
   // force-injected, so the SOP reached the prompt only as a pgvector fragment.
-  it("pins the SOP, index, delivery log and source-verification SOP, in order", () => {
+  // Queue 4an ruling (c), 2026-10-27: the delivery log is retired from the
+  // list — the index is the record in practice.
+  it("pins the SOP, index and source-verification SOP, in order (no delivery log)", () => {
     expect([...RUMI_GUARDRAIL_PATHS]).toEqual([
       "knowledge/procedures/rumi-poemas.md",
       "knowledge/Rumi/INDEX.md",
-      "knowledge/rumi-delivery-log.md",
       "knowledge/procedures/sop-verificacion-fuentes-contenido-creativo.md",
     ]);
+  });
+
+  // Queue 4an ruling (b), 2026-10-27: the guardrail rows bypass KB_CHAR_BUDGET
+  // and the index grows per delivery, so each row is capped head + newest tail.
+  it("caps a grown index to head + newest tail with a pointer; today's SOP stays whole", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The SOP at its 2026-10-26 size (1,932 chars) must fit under the cap.
+    expect(1932).toBeLessThanOrEqual(RUMI_GUARDRAIL_FILE_CHAR_CAP);
+    const sopBody = "SOP-LINE " + "s".repeat(1900) + " SOP-END";
+    const indexLines = ["# Índice de Poemas — Rumi", "| # | Poema | Fecha |"];
+    for (let i = 1; i <= 400; i++) indexLines.push(`| ${i} | Poema número ${i} entregado | 2026 |`);
+    const indexBody = indexLines.join("\n");
+    expect(indexBody.length).toBeGreaterThan(RUMI_GUARDRAIL_FILE_CHAR_CAP);
+    const row = (path: string, title: string, content: string) => ({
+      id: path, path, title, content, tags: "[]", qualifier: "reference",
+      condition: null, priority: 50, related_to: "[]", created_at: "",
+      updated_at: "", user_edit_time: null,
+    });
+    vi.mocked(getFilesByQualifier).mockReset().mockReturnValue([]);
+    vi.mocked(getFile)
+      .mockReset()
+      .mockImplementation((path: string) => {
+        if (path === "knowledge/procedures/rumi-poemas.md") return row(path, "SOP Rumi", sopBody);
+        if (path === "knowledge/Rumi/INDEX.md") return row(path, "Índice Rumi", indexBody);
+        return null;
+      });
+    const text = buildKnowledgeBaseSections([], "regálame un poema de Rumi").variable ?? "";
+    expect(text).toContain(`### SOP Rumi\n${sopBody}`);
+    const indexSection = text.slice(text.indexOf("### Índice Rumi\n"));
+    expect(indexSection.length).toBeLessThan(RUMI_GUARDRAIL_FILE_CHAR_CAP + 300);
+    expect(indexSection).toContain("# Índice de Poemas — Rumi");
+    expect(indexSection).toContain("| 400 | Poema número 400 entregado | 2026 |");
+    expect(indexSection).not.toContain("| 200 | Poema número 200 entregado");
+    expect(indexSection).toContain('jarvis_file_read("knowledge/Rumi/INDEX.md")');
+    warn.mockRestore();
   });
 
   describe("buildKnowledgeBaseSections injects every guardrail path", () => {
