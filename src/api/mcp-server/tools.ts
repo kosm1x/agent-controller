@@ -28,6 +28,10 @@ import { errMsg } from "../../lib/err-msg.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Last-24h task count; exported so its query plan is pinned (queue 4aq). */
+export const LAST_24H_TASKS_SQL =
+  "SELECT COUNT(*) as n FROM tasks WHERE created_at >= datetime('now','-24 hours')";
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
 };
@@ -128,11 +132,7 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
         }
 
         const last24hTasks = (
-          deps.db
-            .prepare(
-              "SELECT COUNT(*) as n FROM tasks WHERE created_at >= datetime('now','-24 hours')",
-            )
-            .get() as { n: number }
+          deps.db.prepare(LAST_24H_TASKS_SQL).get() as { n: number }
         ).n;
 
         const memoryHealthy = await deps.memory.isHealthy().catch(() => false);

@@ -42,10 +42,10 @@ const indexCols = (db: Database.Database, name: string): string[] =>
   );
 
 describe("migration v9 — tasks.project_slug/project_source + scheduled_tasks.project_slug", () => {
-  it("fresh DB: head is v9 with both task columns, the index, and scheduled_tasks.project_slug", () => {
+  it("fresh DB: head is v10 (v9 included) with both task columns, the index, and scheduled_tasks.project_slug", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(cols(db, "tasks")).toEqual(
       expect.arrayContaining(["project_slug", "project_source"]),
     );
@@ -85,7 +85,7 @@ describe("migration v9 — tasks.project_slug/project_source + scheduled_tasks.p
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(cols(db, "tasks")).toEqual(
       expect.arrayContaining(["project_slug", "project_source"]),
     );
@@ -111,7 +111,7 @@ describe("migration v9 — tasks.project_slug/project_source + scheduled_tasks.p
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     expect(cols(db, "tasks").filter((c) => c === "project_slug")).toHaveLength(1);
   });
 
@@ -131,7 +131,7 @@ describe("migration v9 — tasks.project_slug/project_source + scheduled_tasks.p
 
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(9);
+    expect(db.pragma("user_version", { simple: true })).toBe(10);
     ensureScheduledTasksTable();
     expect(cols(db, "scheduled_tasks")).toContain("project_slug");
   });

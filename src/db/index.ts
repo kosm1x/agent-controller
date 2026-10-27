@@ -1386,6 +1386,19 @@ export function initDatabase(dbPath: string): Database.Database {
         }
       },
     },
+    {
+      version: 10,
+      description:
+        "idx_tasks_spawn_updated + idx_tasks_created_at — idle-detect isIdle() (spawn_type, updated_at) and the canary/MCP created_at predicates were SCAN tasks; cold after the 04:00 UTC dump the scan blocked the event loop 8-12 s (queue 4aq)",
+      up: (db) => {
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_spawn_updated ON tasks(spawn_type, updated_at)",
+        );
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)",
+        );
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

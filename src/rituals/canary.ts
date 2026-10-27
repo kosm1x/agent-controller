@@ -33,6 +33,13 @@ export const RITUAL_EMAIL_TITLE_PREFIXES = [
   "Market morning scan",
 ] as const;
 
+/** Last-24h task-stats statement; exported so its query plan is pinned (queue 4aq). */
+export const CANARY_TASK_STATS_SQL = `SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN status IN ('completed', 'completed_with_concerns') THEN 1 ELSE 0 END) as succeeded,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+      FROM tasks WHERE created_at > ?`;
+
 interface CanaryResult {
   taskSuccessRate: number;
   totalTasks: number;
@@ -56,15 +63,11 @@ export function runCanaryCheck(): CanaryResult {
     .toISOString()
     .slice(0, 19)
     .replace("T", " ");
-  const taskStats = db
-    .prepare(
-      `SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status IN ('completed', 'completed_with_concerns') THEN 1 ELSE 0 END) as succeeded,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-      FROM tasks WHERE created_at > ?`,
-    )
-    .get(cutoff) as { total: number; succeeded: number; failed: number };
+  const taskStats = db.prepare(CANARY_TASK_STATS_SQL).get(cutoff) as {
+    total: number;
+    succeeded: number;
+    failed: number;
+  };
 
   const successRate =
     taskStats.total > 0 ? taskStats.succeeded / taskStats.total : 1;

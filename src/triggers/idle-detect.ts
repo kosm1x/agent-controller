@@ -40,6 +40,11 @@ const log = createLogger("triggers:idle-detect");
 const IDLE_SQL_WINDOW = "-4 hours";
 /** At most one idle-detect fire per this window (spec §6). */
 const IDLE_THROTTLE_WINDOW = "-12 hours";
+/** isIdle()'s statement; exported so its query plan is pinned (queue 4aq). */
+export const IDLE_SQL = `SELECT 1 FROM tasks
+        WHERE spawn_type = 'root'
+          AND updated_at > datetime('now', ?)
+        LIMIT 1`;
 
 export interface IdleDetectResult {
   fired: boolean;
@@ -62,14 +67,7 @@ export interface IdleDetectResult {
  * is SQLite-native UTC math, so there is no timezone trap.
  */
 function isIdle(): boolean {
-  const row = getDatabase()
-    .prepare(
-      `SELECT 1 FROM tasks
-        WHERE spawn_type = 'root'
-          AND updated_at > datetime('now', ?)
-        LIMIT 1`,
-    )
-    .get(IDLE_SQL_WINDOW);
+  const row = getDatabase().prepare(IDLE_SQL).get(IDLE_SQL_WINDOW);
   return row === undefined;
 }
 
