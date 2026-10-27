@@ -2906,7 +2906,7 @@ describe("injected grounding joins the numbers-evidence corpus (W3 ruling A (ii)
       {
         id: 1,
         factText: "La campaña cerró con 4,444 leads",
-        category: "fact",
+        category: "event",
         sourceTask: "t0",
         score: 0.9,
         ts: 1,
