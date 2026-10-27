@@ -320,6 +320,7 @@ import {
   buildJarvisSystemPrompt,
   CACHE_BREAK_MARKER,
   dayLogEntryText,
+  recordUserEvidence,
 } from "./router.js";
 import {
   formatRelevantUserFactsBlock,
@@ -2526,6 +2527,59 @@ describe("MessageRouter", () => {
       expect(corpus[0]).toBe(
         "Estoy viendo 975 M de impresiones en el sheet y no 776 M",
       );
+    });
+
+    it("W3 ruling A (ii): a figure from a PRIOR ASSISTANT turn never joins the evidence corpus (no self-laundering)", async () => {
+      const numbers = await import("../lib/v8-4/numbers.js");
+      numbers._resetToolEvidence();
+      _testSeedThread("whatsapp", [
+        { text: "User: ¿cuántos clientes activos hay?\nJarvis: Son 4,321 clientes activos." },
+      ]);
+      vi.mocked(submitTask).mockResolvedValueOnce({
+        taskId: "task-evidence-2",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "¿y cuántos de ellos están en CDMX?",
+        timestamp: new Date(),
+      });
+      // Non-vacuous: the assistant turn DID reach the runner's history.
+      const history = vi.mocked(submitTask).mock.calls.at(-1)![0]
+        .conversationHistory as Array<{ role: string; content: string }>;
+      expect(
+        history.some((t) => t.role === "assistant" && t.content.includes("4,321")),
+      ).toBe(true);
+      const corpus = numbers.takeToolEvidence("task-evidence-2");
+      expect(corpus).toContain("¿cuántos clientes activos hay?");
+      expect(corpus.join("\n")).not.toContain("4,321");
+      expect(
+        numbers.auditNumbers("Recuerda que son 4,321 clientes activos.", corpus)
+          .unverified,
+      ).toEqual(["4,321"]);
+    });
+
+    it("recordUserEvidence: the message + the last 3 USER turns, never an assistant turn", async () => {
+      const numbers = await import("../lib/v8-4/numbers.js");
+      numbers._resetToolEvidence();
+      recordUserEvidence("task-evidence-3", "msg 975", [
+        { role: "user", content: "u1 111" },
+        { role: "assistant", content: "a1 4,321" },
+        { role: "user", content: "u2 222" },
+        { role: "assistant", content: "a2 8,765" },
+        { role: "user", content: "u3 333" },
+        { role: "user", content: "u4 444" },
+      ]);
+      expect(numbers.takeToolEvidence("task-evidence-3")).toEqual([
+        "msg 975",
+        "u2 222",
+        "u3 333",
+        "u4 444",
+      ]);
+      recordUserEvidence("task-evidence-4", "solo", undefined);
+      expect(numbers.takeToolEvidence("task-evidence-4")).toEqual(["solo"]);
     });
 
     it("audit R3 S3: the scope re-run's rebuilt description is scrubbed too", async () => {

@@ -17,6 +17,7 @@ import {
   formatUnverifiedFooter,
   numbersAnnotateEnabled,
   peekToolEvidence,
+  recordInjectedEvidence,
   recordToolEvidence,
   recordWriteOutcome,
   takeToolEvidence,
@@ -357,6 +358,104 @@ describe("tool-evidence collector", () => {
     recordToolEvidence("", "ignored");
     recordToolEvidence("t4", "");
     expect(takeToolEvidence("t4")).toEqual([]);
+  });
+});
+
+describe("injected-grounding evidence (W3 ruling A (ii), 2026-10-27)", () => {
+  /** Lossless: the pieces, in order, cover every char of `input` (overlaps allowed). */
+  const expectCovers = (chunks: string[], input: string) => {
+    let covered = 0;
+    for (const c of chunks) {
+      const at = input.indexOf(c, Math.max(0, covered - 64));
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(at).toBeLessThanOrEqual(covered);
+      covered = at + c.length;
+    }
+    expect(covered).toBe(input.length);
+  };
+
+  it("a figure re-quoted from an injected KB/memory note counts as verified", () => {
+    recordInjectedEvidence(
+      "t1",
+      "### Cuentas clave\nCierre Q3: 1,742 clientes activos, ticket $9,400.",
+    );
+    const audit = auditNumbers(
+      "Tienes 1,742 clientes activos con ticket de $9,400.",
+      takeToolEvidence("t1"),
+    );
+    expect(audit.found).toEqual(["1,742", "$9,400"]);
+    expect(audit.unverified).toEqual([]);
+  });
+
+  it("a long injected block is kept whole (cut at whitespace), not head+tail digested, and capped", () => {
+    const pad = Array.from({ length: 300 }, (_, i) => `linea ${i} sin cifras relevantes`).join("\n");
+    // The figure sits in the MIDDLE of a ~20 kB block: recordToolEvidence
+    // alone would keep only the first and last 4 kB.
+    const block = `${pad}\nMeta anual: 4,321 unidades\n${pad}`;
+    recordInjectedEvidence("t1", block);
+    const chunks = peekToolEvidence("t1");
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((c) => c.length <= 8 * 1024)).toBe(true);
+    expectCovers(chunks, block);
+    expect(chunks.join("")).toContain("Meta anual: 4,321 unidades");
+    expect(
+      auditNumbers("La meta es 4,321 unidades.", takeToolEvidence("t1")).unverified,
+    ).toEqual([]);
+    // Cap: 64 kB of injected INPUT at most (the overlaps add ≤ 64 chars a
+    // piece on top), so tool results still fit.
+    recordInjectedEvidence("t2", "z\n".repeat(100_000));
+    const t2 = takeToolEvidence("t2");
+    const size = t2.reduce((n, c) => n + c.length, 0);
+    expect(size).toBeGreaterThanOrEqual(64 * 1024);
+    expect(size).toBeLessThanOrEqual(64 * 1024 + 64 * t2.length);
+    recordInjectedEvidence("t3", "");
+    expect(takeToolEvidence("t3")).toEqual([]);
+  });
+
+  it("an 8 kB line with no newline is cut at whitespace, never inside a figure (qa R1 W4)", () => {
+    // "7,913" straddles the 8 kB mark (indices 8190-8194): a hard cut at
+    // 8192 would leave "7," and "913" in separate chunks.
+    recordInjectedEvidence("t1", `${"x".repeat(8189)} 7,913 piezas en bodega`);
+    const chunks = peekToolEvidence("t1");
+    expect(chunks).toHaveLength(2);
+    // The cut is the whitespace at 8189, not a hard cut at 8192 (the overlap
+    // would mask a hard cut in the audit below, so pin the piece itself).
+    expect(chunks[0]).toBe("x".repeat(8189));
+    expect(
+      auditNumbers("Hay 7,913 piezas.", takeToolEvidence("t1")).unverified,
+    ).toEqual([]);
+    // No whitespace at all: the hard cut stays (nothing better exists).
+    recordInjectedEvidence("t2", "y".repeat(9000));
+    expect(takeToolEvidence("t2").map((c) => c.length)).toEqual([8192, 808]);
+  });
+
+  it("a figure and its unit straddling the cut stay together through the overlap (qa R2 W1)", () => {
+    // Whitespace at 8186 and 8192: the cut lands at 8192, right after
+    // "4,321", so without the overlap " millones de pesos" starts the next
+    // piece alone and corpusValues never sees 4,321 millones.
+    const input = `${"x".repeat(8186)} 4,321 millones de pesos`;
+    recordInjectedEvidence("t1", input);
+    const chunks = peekToolEvidence("t1");
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]!.endsWith("4,321")).toBe(true);
+    expect(chunks[1]).toBe(" 4,321 millones de pesos");
+    expectCovers(chunks, input);
+    expect(
+      auditNumbers("Son 4,321 millones de pesos.", takeToolEvidence("t1"))
+        .unverified,
+    ).toEqual([]);
+  });
+
+  it("whitespace exactly at index 8192 is a valid cut (the +1 in the search window, qa R2 R4)", () => {
+    const input = `a ${"x".repeat(8190)} tail`; // whitespace at 1 and 8192
+    recordInjectedEvidence("t1", input);
+    expect(takeToolEvidence("t1")).toEqual([`a ${"x".repeat(8190)}`, " tail"]);
+  });
+
+  it("without the injected note the same figure stays unverified", () => {
+    expect(
+      auditNumbers("Tienes 1,742 clientes activos.", takeToolEvidence("t1")).unverified,
+    ).toEqual(["1,742"]);
   });
 });
 

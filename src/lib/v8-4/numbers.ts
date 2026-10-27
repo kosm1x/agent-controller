@@ -30,7 +30,8 @@
  *
  * Corpus: `recordToolEvidence()` is called from `ToolRegistry.execute` for
  * READ-class tool results (never errors) and from the router with the
- * user's message; `takeToolEvidence()` hands it to the dispatcher at
+ * user's message, and from the fast runner with the injected grounding
+ * (`recordInjectedEvidence`); `takeToolEvidence()` hands it to the dispatcher at
  * completion and frees it; `peekToolEvidence()` lets a write handler read
  * it mid-run without freeing.
  */
@@ -70,6 +71,50 @@ export function takeToolEvidence(taskId: string): string[] {
 /** Returns the corpus recorded so far WITHOUT freeing it (mid-run readers). */
 export function peekToolEvidence(taskId: string): string[] {
   return evidenceByTask.get(taskId)?.chunks ?? [];
+}
+
+/**
+ * Injected grounding is recorded BEFORE any tool runs: capped so it never
+ * starves the tool results (MAX_TASK_CHARS keeps the earliest). Worst case
+ * (qa R2 W2): a tool digest is up to 8,195 chars, so with the full 64 KB
+ * injected 23 max-size tool results still fit under the 256 KB task cap
+ * (31 without injection; 28-30 at the typical 14-28 K injected).
+ */
+const MAX_INJECTED_CHARS = 64 * 1024;
+/** Each chunk after the first re-starts up to this many chars before the previous cut. */
+const INJECTED_OVERLAP_CHARS = 64;
+
+/**
+ * W3 ruling A (ii), 2026-10-27 "precision first": the grounding the runner
+ * INJECTS for the turn (KB sections, JME facts) is evidence, so
+ * a figure the model re-quotes from an injected note is not `(sin
+ * verificar)`. Recorded in whole pieces cut at whitespace (a single
+ * recordToolEvidence call keeps only the head + tail of a long block); the
+ * next piece re-starts at the last whitespace within INJECTED_OVERLAP_CHARS
+ * before the cut, so a figure and its unit ("4,321" | " millones") land in
+ * one piece (qa R2 W1). The 64 KB cap applies to the INPUT; the overlaps may
+ * add a few hundred chars on top. Every input char lands in some piece.
+ * Never pass prior assistant turns or text derived from them (the precedent
+ * block, essentials — built from stored exchanges): a figure the model
+ * invented earlier must not launder itself.
+ */
+export function recordInjectedEvidence(taskId: string, text: string): void {
+  const input = text.slice(0, MAX_INJECTED_CHARS);
+  let start = 0;
+  while (start < input.length) {
+    const rest = input.slice(start);
+    let cut =
+      rest.length <= MAX_ITEM_CHARS
+        ? rest.length
+        : rest.slice(0, MAX_ITEM_CHARS + 1).search(/\s\S*$/); // last whitespace: never split a figure (qa R1 W4)
+    if (cut <= 0) cut = MAX_ITEM_CHARS;
+    recordToolEvidence(taskId, rest.slice(0, cut));
+    const end = start + cut;
+    if (end >= input.length) break;
+    const from = Math.max(start + 1, end - INJECTED_OVERLAP_CHARS);
+    const back = input.slice(from, end).search(/\s\S*$/);
+    start = back >= 0 ? from + back : end;
+  }
 }
 
 /**

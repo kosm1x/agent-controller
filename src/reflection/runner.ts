@@ -32,6 +32,7 @@ import {
   type ReflectionTrigger,
 } from "./scope.js";
 import { errMsg } from "../lib/err-msg.js";
+import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 
 /**
  * Kill switch for the n-turn and idle-detect reflection triggers. Queue ruling
@@ -189,6 +190,10 @@ export async function runReflection(
         durationMs: 0,
       },
     };
+  } finally {
+    // No dispatcher owns this task, so nothing else frees its numbers
+    // evidence (injected grounding + tool results) — qa R1 W3.
+    takeToolEvidence(input.taskId);
   }
 
   // §13 instrumentation: tag this pass's inference cost as

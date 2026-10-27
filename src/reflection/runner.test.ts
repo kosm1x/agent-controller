@@ -15,6 +15,11 @@ vi.mock("../runners/fast-runner.js", () => ({
 import { readCursor } from "./cursors.js";
 import { buildReflectionScope } from "./scope.js";
 import {
+  _resetToolEvidence,
+  peekToolEvidence,
+  recordInjectedEvidence,
+} from "../lib/v8-4/numbers.js";
+import {
   runReflection,
   buildReflectionMessage,
   ROLE_REFRAME,
@@ -23,6 +28,17 @@ import {
 
 const ok: RunnerOutput = { success: true, output: "summary", durationMs: 1 };
 const fail: RunnerOutput = { success: false, error: "boom", durationMs: 1 };
+
+/** A fake fastRunner.execute that records evidence the way the real one does. */
+let seen: string[] = [];
+function record(out: RunnerOutput | Error) {
+  return async (input: { taskId: string }) => {
+    recordInjectedEvidence(input.taskId, "KB: 1,234 filas");
+    seen = [...peekToolEvidence(input.taskId)];
+    if (out instanceof Error) throw out;
+    return out;
+  };
+}
 
 beforeEach(() => {
   initDatabase(":memory:");
@@ -187,6 +203,20 @@ describe("runReflection", () => {
     expect(res.reason).toBe("runner-failed");
     expect(res.output?.success).toBe(false);
     expect(readCursor("morning_brief").lastEventId).toBe(0);
+  });
+
+  it.each([
+    ["success", () => executeMock.mockImplementation(record(ok))],
+    ["thrown error", () => executeMock.mockImplementation(record(new Error("boom")))],
+  ])("frees the pass's numbers evidence after the run (no dispatcher owns it — qa R1 W3): %s", async (_label, arm) => {
+    _resetToolEvidence();
+    insertTasks(4);
+    arm();
+    await runReflection({ cursorName: "morning_brief", trigger: "n-turn" });
+    const { taskId } = executeMock.mock.calls[0]![0] as { taskId: string };
+    expect(taskId.startsWith("reflect-")).toBe(true);
+    expect(seen).toEqual(["KB: 1,234 filas"]); // recorded during the run…
+    expect(peekToolEvidence(taskId)).toEqual([]); // …and freed after it
   });
 
   it("allowlist is read-only — no write/proposed tools (Phase 6 adds those)", () => {

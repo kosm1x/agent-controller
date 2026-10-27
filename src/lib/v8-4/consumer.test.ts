@@ -19,6 +19,7 @@ import {
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
   _resetToolEvidence,
+  recordInjectedEvidence,
   recordToolEvidence,
   recordWriteOutcome,
   takeWriteOutcome,
@@ -383,6 +384,23 @@ describe("applyCompletionLedger — numbers audit", () => {
     expect(stripForwardedSiblingFindings(forwarded)).toBe(
       "Compare Clip vs Kustodia fees for 12 merchants\n\n## Completion Criteria\n- one row per provider",
     );
+  });
+
+  it("a figure re-quoted from the runner's injected KB/memory grounding is NOT marked (W3 ruling A (ii)); evidence_chunks counts it", async () => {
+    recordInjectedEvidence("t1", "[JME MEMORY]\n1. [fact] La cuenta cerró con 1,742 clientes");
+    recordToolEvidence("t1", '{"count": 12}');
+    const out = await applyCompletionLedger(
+      base({
+        result: okResult({ text: "Cerraste con 1,742 clientes y 977 registros." }),
+      }),
+    );
+    expect(out.numbers?.unverified).toEqual(["977"]);
+    expect((out.output as { text: string }).text).toBe(
+      "Cerraste con 1,742 clientes y 977 registros (sin verificar).",
+    );
+    expect(
+      traceNames("t1").find((t) => t.name === "numbers.audited")?.attrs,
+    ).toMatchObject({ found: 2, unverified: 1, evidence_chunks: 2 });
   });
 
   it("TASK_GATES_NUMBERS_ANNOTATE=false disarms the annotation (audit still recorded)", async () => {

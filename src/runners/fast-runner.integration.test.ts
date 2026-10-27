@@ -214,6 +214,12 @@ import { shadowKbRows } from "../jev/shadow-kb.js";
 import { toolRegistry } from "../tools/registry.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
 import { getEssentialFacts } from "../memory/essentials.js";
+import { buildPrecedentBlock } from "../messaging/precedent.js";
+import {
+  _resetToolEvidence,
+  auditNumbers,
+  takeToolEvidence,
+} from "../lib/v8-4/numbers.js";
 import { isExternalKbInjectable } from "../lib/external-kb-policy.js";
 import { TOOL_NOT_AVAILABLE } from "../tools/external-tool-guard.js";
 import { validateShellCommand } from "../tools/builtin/shell.js";
@@ -2876,5 +2882,81 @@ describe("prompt dump call site (PROMPT_DUMP_DIR)", () => {
     expect(mockDump.mock.invocationCallOrder[0]).toBeLessThan(
       mockInferWithTools.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// W3 ruling A (ii), 2026-10-27 — injected grounding is numbers evidence
+// ────────────────────────────────────────────────────────────────────
+describe("injected grounding joins the numbers-evidence corpus (W3 ruling A (ii))", () => {
+  afterEach(() => _resetToolEvidence());
+
+  it("records KB stable/variable + JME facts; never essentials, the precedent block or a prior assistant turn", async () => {
+    // A realistic essentials row: built from a stored `User: …\nJarvis: …`
+    // exchange, so it carries a figure JARVIS stated (qa R1 C1).
+    const essentialsRow =
+      "• User: ¿cuántos clientes?\nJarvis: Tienes 4,321 clientes activos";
+    vi.mocked(getEssentialFacts).mockReturnValue(essentialsRow as never);
+    vi.mocked(buildKnowledgeBaseSections).mockReturnValue({
+      stable: "KB-S: 2,222 tiendas",
+      variable: "KB-V: 3,333 pedidos",
+    });
+    vi.mocked(buildPrecedentBlock).mockReturnValue("PREC: 5,555 entidades");
+    mockQueryMemory.mockResolvedValueOnce([
+      {
+        id: 1,
+        factText: "La campaña cerró con 4,444 leads",
+        category: "fact",
+        sourceTask: "t0",
+        score: 0.9,
+        ts: 1,
+      },
+    ]);
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute({
+      taskId: "task-inj",
+      runId: "run-inj",
+      title: "t",
+      description: "stable###CACHE_BREAK###variable",
+      tools: ["file_write"],
+      conversationHistory: [
+        { role: "user", content: "¿cuántos leads cerró la campaña?" },
+        { role: "assistant", content: "Cerró con 6,666 leads." },
+        { role: "user", content: "¿y cuántas tiendas tenemos ahora mismo?" },
+      ],
+    });
+    // Non-vacuous: the precedent block and essentials really were injected.
+    const msgs = mockInferWithTools.mock.calls[0]![0] as ChatMessage[];
+    expect(msgs.some((m) => m.content === "PREC: 5,555 entidades")).toBe(true);
+    expect(msgs.some((m) => m.content === essentialsRow)).toBe(true);
+    const corpus = takeToolEvidence("task-inj");
+    const all = corpus.join("\n");
+    for (const f of ["2,222", "3,333", "4,444"]) expect(all).toContain(f);
+    expect(all).not.toContain("4,321");
+    expect(all).not.toContain("5,555");
+    expect(all).not.toContain("6,666");
+    const audit = auditNumbers(
+      "Hay 2,222 tiendas, 3,333 pedidos y 4,444 leads; antes dije 6,666 y tienes 4,321 clientes activos.",
+      corpus,
+    );
+    expect(audit.unverified).toEqual(["6,666", "4,321"]);
+  });
+
+  it("read-only task: the single enforce-only KB section is recorded", async () => {
+    vi.mocked(buildKnowledgeBaseSection).mockReturnValue("KB-1: 7,777 filas");
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute({
+      taskId: "task-inj-ro",
+      runId: "run-inj-ro",
+      title: "t",
+      description: "stable###CACHE_BREAK###variable",
+      tools: ["file_read"],
+      conversationHistory: [{ role: "user", content: "¿cuántas filas hay?" }],
+    });
+    expect(takeToolEvidence("task-inj-ro").join("\n")).toContain("7,777");
   });
 });
