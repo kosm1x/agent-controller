@@ -45,17 +45,16 @@ V8.1 active (§13 gate v2 on the Morning Sync since 10-06, unproven); V8.2 judgm
 
 - W1: label count 2 → accept the latency/cost readout → `enforce` ruling. W3: step-3 rulings A/B/C. L3: name the date of the first A2A consumer.
 - Rulings (queue): 4an (a)–(d) and the 4am siblings; 4y(i) gate ruling; 4w/4al residuals. VPS: diff the live mc-guard hook against `.claude/hooks/mc-guard.sh` (open since 10-03).
-- Open proofs (queue): 4am nightly proof 04:30 UTC 10-27 (lag < 0.5 s, `Sync complete: 1296 pushed`) · 3r `182b02a5`, 4a Drive `6b7dc893`, 4ai `8b4fb68f` UNPROVEN · 3h UNPROVEN.
+- Open proofs (queue): 4am proof FAILED 10-27 (lag 10.49 s; real cause = 4aq idle-detect `SCAN tasks`, fix awaiting approval) · 3r `182b02a5`, 4a Drive `6b7dc893`, 4ai `8b4fb68f` UNPROVEN · 3h UNPROVEN.
 - Eval gate: nothing owed; committed incumbent v4 78.63 (`src/tuning/eval-baseline.json`, `f606d04` 10-17), last compare PASS 2026-10-25 (78.13 vs 78.63, PR #64 `a8d328c4`; best candidate 80.38 on 10-22, 4ah); the next prompt, tool-description or classifier change runs `npm run eval:gate -- --run`.
 
 ## Session log (older rows: `docs/archive/roadmap-session-log-2026-10.md`)
 
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
-| 2026-10-25 | PR #64: GDELT export files + `geo_rss` adapter replace the rate-limited GDELT DOC API | `a8d328c4` (PR #64) | Merged, deployed + proven 02:45 UTC; follow-up folds and W7 query deployed + proven 21:20 UTC (archive) | Behavioural proof of the repo-authorization import (archive) |
-| 2026-10-25 | Queue 4y f/g/h: silent extension-less script entry, `.mjs` operator gate, `gdrive_list` query parentheses | `2c5e41ba` | Deployed 22:12 UTC build `d620aacb` | 4y(i) `pgvector-backfill.ts` gate ruling |
 | 2026-10-25 | INCIDENT 10-24 23:15 UTC: a test harness broadcast SIGINT to every process; recovered 00:04 UTC | — | kill-guard PreToolUse hook LIVE on VPS and PC (archive) | 4al (a)-(e) |
-| 2026-10-26 | 4am nightly `kb-backup` blocked the event loop 8-12 s | `d5a44eb3` | Deployed 05:23 UTC build `1d1095e1`; `MCEventLoopBlock` LIVE 05:24 UTC | Proof 04:30 UTC 10-27; siblings (queue 4am) |
+| 2026-10-26 | 4am nightly `kb-backup` blocked the event loop 8-12 s | `d5a44eb3` | Deployed 05:23 UTC build `1d1095e1`; `MCEventLoopBlock` LIVE 05:24 UTC | Proof 04:30 UTC 10-27 FAILED (10.49 s): `kb-backup` was never the reader — see 4aq |
 | 2026-10-26 | 4an Rumi SOP guardrail injected a frozen path list | `b918425e` | Deployed 07:05 UTC + PROVEN 07:08 UTC (task 12557) | Rulings 4an (a)–(d) |
 | 2026-10-26 | 4ao `MCEventLoopBlock` on tool calls: `glob`/`list_dir` async (`6e40e6cc`, deployed 20:24 UTC, unproven) + sweep part 1 git/gh/jarvis_dev async (`4a297dbe`, deployed 21:11 UTC build `e29d4c6b`) + part 2 item 1 vps/self-repair async (`61ee3be6`, deployed 21:40 UTC build `d1105b03`) + item 2 rituals async (`46620ac6`, deployed 22:28 UTC build `eceed6b4`) | `6e40e6cc` `4a297dbe` `61ee3be6` `46620ac6` | CI green; proof = next wide glob / git push turn < 1 s | Sweep part 2 + rulings 4ao (e)-(h) |
 | 2026-10-26 | PR #63 checked + merged with 10-26 main (cloud draft of 10-18) | [#63](https://github.com/kosm1x/agent-controller/pull/63) | MERGED `5eabc45b` 08:22 UTC: `docs/BETA.md` live, figures refreshed to 10-26; this page 136 → 60 lines, every line archived verbatim; LANDSCAPE confirmed against the lockfile; qa R1 FAIL (stale eval-compare date) folded `3a240d2b`; branch CI green | W3 step-3 rulings; operator profile |
+| 2026-10-27 | Same Telegram on the proof night; re-diagnosed read-only from the lag gauge, MC CPU, sda reads (209 MB / 17,456 reads inside the block) and the :01/:31 lag cluster | — (docs) | Root cause = `idle-detect` `SELECT 1 FROM tasks … updated_at` = `SCAN tasks` (151 MB) on a cold cache, every `*/30` tick; queue 4aq | Fix = index migration + plan-pinning test + canary sibling, awaiting approval (4aq rulings a–c) |
