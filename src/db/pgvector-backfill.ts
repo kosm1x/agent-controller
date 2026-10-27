@@ -4,7 +4,7 @@
  * Reads all 315+ entries from SQLite jarvis_files, generates embeddings
  * in batches, and upserts to pgvector. Idempotent (upsert on path).
  *
- * Run via: npx tsx src/db/pgvector-backfill.ts
+ * Run via: npx tsx src/db/pgvector-backfill.ts (operator context only, queue 3c/4y(i))
  */
 
 import { getDatabase } from "./index.js";
@@ -13,6 +13,8 @@ import { pgBatchUpsert, contentHash, coerceKbQualifier } from "./pgvector.js";
 import type { KbEntry } from "./pgvector.js";
 import { qualifierToSalience } from "./pgvector-sync.js";
 import { errMsg } from "../lib/err-msg.js";
+import { requireOperatorContext } from "../lib/operator-gate.js";
+import { isMainModule } from "../lib/is-main-module.js";
 
 interface JarvisFileRow {
   path: string;
@@ -135,22 +137,22 @@ export async function backfillToPgvector(): Promise<{
 
 // qualifierToSalience imported from pgvector-sync.ts (W2 audit fix: deduplicated)
 
-// CLI entry point
-if (
-  process.argv[1]?.endsWith("pgvector-backfill.ts") ||
-  process.argv[1]?.endsWith("pgvector-backfill.js")
-) {
+/** Operator entry: the S6 item 3c gate runs before initDatabase and any pgvector write. */
+export async function main(): Promise<void> {
+  requireOperatorContext("pgvector-backfill", { tty: false });
   // Initialize SQLite database when running as standalone script
   const { initDatabase } = await import("./index.js");
   initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
 
-  backfillToPgvector()
-    .then((result) => {
-      console.log(JSON.stringify(result, null, 2));
-      process.exit(result.failed > 0 ? 1 : 0);
-    })
-    .catch((err) => {
-      console.error("Backfill failed:", err);
-      process.exit(1);
-    });
+  const result = await backfillToPgvector();
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.failed > 0 ? 1 : 0);
+}
+
+// CLI entry point
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    console.error("Backfill failed:", err);
+    process.exit(1);
+  });
 }

@@ -3,11 +3,12 @@
  * test imports it). Pass `import.meta.url`. `npx tsx scripts/<name>` without
  * the extension (or as `<name>.js` for a `.ts` file) runs the file with an
  * argv[1] that is not its path: that spelling is refused LOUDLY (one stderr
- * line, exit code 2) instead of a silent exit 0.
+ * line naming the module path relative to the cwd, exit code 2) instead of a
+ * silent exit 0.
  */
 
 import { realpathSync } from "node:fs";
-import { basename, extname } from "node:path";
+import { basename, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 function real(path: string): string | null {
@@ -28,7 +29,7 @@ export function isMainModule(importMetaUrl: string): boolean {
   if (arg.endsWith(".js")) spellings.push(`${arg.slice(0, -3)}.ts`);
   if (spellings.some((p) => real(p) === self)) {
     const file = basename(self);
-    console.error(`[${basename(file, extname(file))}] entry skipped: run it as scripts/${file} (argv[1] was ${basename(arg)})`);
+    console.error(`[${basename(file, extname(file))}] entry skipped: run it as ${relative(process.cwd(), self)} (argv[1] was ${basename(arg)})`);
     process.exitCode = 2;
   }
   return false;

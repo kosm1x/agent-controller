@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +15,9 @@ describe("isMainModule", () => {
     mkdirSync(join(dir, "scripts"));
     for (const f of ["kb-tool.ts", "one-shot.mjs", "other.ts", "kb.v2.ts"]) writeFileSync(join(dir, "scripts", f), "");
     symlinkSync(join(dir, "scripts", "kb-tool.ts"), join(dir, "scripts", "alias.ts"));
+    mkdirSync(join(dir, "src", "db"), { recursive: true });
+    writeFileSync(join(dir, "src", "db", "backfill.ts"), "");
+    vi.spyOn(process, "cwd").mockReturnValue(realpathSync(dir)); // the operator runs from the repo root
     argv1 = process.argv[1];
     exitCode = process.exitCode;
   });
@@ -52,6 +55,16 @@ describe("isMainModule", () => {
     expect(isMainModule(url("one-shot.mjs"))).toBe(false);
     expect(err.mock.calls).toEqual([
       ["[one-shot] entry skipped: run it as scripts/one-shot.mjs (argv[1] was one-shot)"],
+    ]);
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("a module outside scripts/ names its own path (src/db/…), not scripts/", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.argv[1] = join(dir, "src", "db", "backfill");
+    expect(isMainModule(pathToFileURL(join(dir, "src", "db", "backfill.ts")).href)).toBe(false);
+    expect(err.mock.calls).toEqual([
+      ["[backfill] entry skipped: run it as src/db/backfill.ts (argv[1] was backfill)"],
     ]);
     expect(process.exitCode).toBe(2);
   });
