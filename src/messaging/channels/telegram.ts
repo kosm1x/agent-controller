@@ -21,11 +21,35 @@ import {
 } from "../../inference/transcription.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { EXTRACTED_FILE_MARKER } from "../extracted-file.js";
+import { recordTelegramInboundLag } from "../../observability/prometheus.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
 const MAX_FILE_CONTENT = 15_000; // chars
 const DOWNLOADS_DIR = "/tmp/jarvis-downloads"; // same root gdrive_download uses
+/**
+ * grammY API-client timeout, applied per request to every Bot API call.
+ * `bot.start()` long-polls getUpdates with `timeout: 30`, so 45 = 30 + margin.
+ * grammY's default, 500 s, hid an 8-min dead long poll on 2026-10-27 (queue 4ar).
+ */
+const TELEGRAM_API_TIMEOUT_SECONDS = 45;
+/** Inbound lag (receipt − message.date) above which the receipt line warns. */
+const INBOUND_LAG_WARN_SECONDS = 30;
+
+/**
+ * One journal line + gauge per inbound: lag = now − message.date, so a stalled
+ * getUpdates is a persisted signal (queue 4ar). Never logs message text.
+ */
+function logInboundLag(date: number, messageId: number): void {
+  const lagS = Math.max(0, Date.now() / 1000 - date);
+  recordTelegramInboundLag(lagS);
+  const line = `[telegram] inbound lag_s=${lagS.toFixed(1)} msgId=${messageId}`;
+  if (lagS > INBOUND_LAG_WARN_SECONDS) {
+    console.warn(`${line} — getUpdates stalled? (queue 4ar)`);
+  } else {
+    console.log(line);
+  }
+}
 
 /**
  * Remove the bot token from text that leaves this adapter (message text, log
@@ -488,7 +512,9 @@ export class TelegramAdapter implements ChannelAdapter {
       );
     }
 
-    this.bot = new Bot(BOT_TOKEN);
+    this.bot = new Bot(BOT_TOKEN, {
+      client: { timeoutSeconds: TELEGRAM_API_TIMEOUT_SECONDS },
+    });
     this.setupHandlers();
 
     // Initialize bot info (getMe) without starting polling
@@ -560,6 +586,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
       const chatId = String(ctx.chat.id);
       if (chatId !== OWNER_CHAT_ID) return;
+      logInboundLag(ctx.message.date, ctx.message.message_id);
 
       this.messageHandler({
         channel: "telegram",
@@ -575,6 +602,7 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.messageHandler) return;
       const chatId = String(ctx.chat.id);
       if (chatId !== OWNER_CHAT_ID) return;
+      logInboundLag(ctx.message.date, ctx.message.message_id);
 
       try {
         const doc = ctx.message.document;
@@ -700,6 +728,7 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.messageHandler) return;
       const chatId = String(ctx.chat.id);
       if (chatId !== OWNER_CHAT_ID) return;
+      logInboundLag(ctx.message.date, ctx.message.message_id);
 
       if (!isTranscriptionConfigured()) {
         console.warn(

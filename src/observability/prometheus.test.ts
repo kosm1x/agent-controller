@@ -18,6 +18,7 @@ import {
   recordRitualSuccess,
   recordSkillRun,
   recordSwarmSubtaskRetry,
+  recordTelegramInboundLag,
 } from "./prometheus.js";
 
 // W3-R2 audit fix (round-2 2026-05-07): protect the prom-client registry
@@ -435,5 +436,15 @@ describe("recordMemoryInjection / recordPromptSectionDropped", () => {
     expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "p4" })).toBe(2);
     expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "unknown" })).toBe(1);
     expect(getCounterValue("mc_prompt_section_dropped_total", { tier: "p9" })).toBe(0);
+  });
+});
+
+// Queue 4ar (2026-10-27): the inbound-lag gauge must reach the scrape output.
+describe("recordTelegramInboundLag", () => {
+  it("sets mc_telegram_inbound_lag_seconds to the last inbound lag", async () => {
+    recordTelegramInboundLag(12.5);
+    expect(await client.register.metrics()).toContain(
+      "mc_telegram_inbound_lag_seconds 12.5",
+    );
   });
 });

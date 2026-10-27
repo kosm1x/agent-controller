@@ -951,6 +951,18 @@ export function recordWhatsappDisconnect(
   whatsappDisconnectsTotal.inc({ reason });
 }
 
+// --- Telegram inbound lag (2026-10-27, queue 4ar) ---
+// A dead getUpdates long poll holds every inbound until the grammY client
+// timeout frees it; receipt − message.date makes that stall visible.
+const telegramInboundLagSeconds = new client.Gauge({
+  name: "mc_telegram_inbound_lag_seconds",
+  help: "Seconds between the Telegram message date and its receipt by the adapter (last inbound)",
+});
+
+export function recordTelegramInboundLag(seconds: number): void {
+  telegramInboundLagSeconds.set(seconds);
+}
+
 // --- X (Twitter) posting backend health (per account) ---
 const xBackendHealthy = new client.Gauge({
   name: "mc_x_backend_healthy",

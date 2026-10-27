@@ -29,6 +29,26 @@ vi.mock("fs/promises", async (importOriginal) => ({
   writeFile: vi.fn(async () => undefined),
 }));
 
+// The adapter's `new Bot(...)` is asserted on (queue 4ar); `init` rejects so
+// start() stops right after construction (no network, no polling).
+vi.mock("grammy", () => ({
+  Bot: vi.fn(function () {
+    return {
+      command: vi.fn(),
+      on: vi.fn(),
+      catch: vi.fn(),
+      init: vi.fn(async () => {
+        throw new Error("stop after construct");
+      }),
+    };
+  }),
+}));
+vi.mock("../../observability/prometheus.js", () => ({
+  recordTelegramInboundLag: vi.fn(),
+}));
+
+import { Bot } from "grammy";
+import { recordTelegramInboundLag } from "../../observability/prometheus.js";
 import { TelegramAdapter } from "./telegram.js";
 import {
   decodeHtmlBytes,
@@ -509,5 +529,194 @@ describe("token redaction: before the clip, and on every log line", () => {
     );
     expect(logs).toContain("Voice handler error");
     expect(logs).not.toContain(FAKE_TOKEN);
+  });
+});
+
+// 2026-10-27 (queue 4ar): a dead getUpdates long poll sat for grammY's default
+// 500 s client timeout; inbound lag was invisible after the fact.
+describe("getUpdates stall: 45 s client timeout + inbound lag signal (queue 4ar)", () => {
+  it("builds the Bot with client.timeoutSeconds 45 (not grammY's 500 s default)", async () => {
+    vi.mocked(Bot).mockClear();
+    await expect(new TelegramAdapter().start()).rejects.toThrow(
+      "stop after construct",
+    );
+    expect(Bot).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Bot).mock.calls[0]).toEqual([
+      FAKE_TOKEN,
+      { client: { timeoutSeconds: 45 } },
+    ]);
+  });
+
+  function handlerFor(event: string) {
+    const handlers = new Map<string, (ctx: unknown) => unknown>();
+    const adapter = new TelegramAdapter();
+    (adapter as unknown as { bot: unknown }).bot = {
+      command: vi.fn(),
+      catch: vi.fn(),
+      on: vi.fn((ev: string | string[], fn: (ctx: unknown) => unknown) => {
+        for (const e of [ev].flat()) handlers.set(e, fn);
+      }),
+    };
+    (adapter as unknown as { setupHandlers(): void }).setupHandlers();
+    adapter.onMessage(() => {});
+    return handlers.get(event)!;
+  }
+
+  const SECRET = "texto privado del operador";
+
+  it("a message 40 s old warns with lag_s and records the gauge; never the text", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(recordTelegramInboundLag).mockClear();
+    try {
+      const date = Math.floor(Date.now() / 1000) - 40;
+      handlerFor("message:text")({
+        chat: { id: OWNER },
+        message: { text: SECRET, date, message_id: 901 },
+      });
+      const warned = warn.mock.calls.map((c) => c.join(" "));
+      expect(warned).toHaveLength(1);
+      expect(warned[0]).toMatch(
+        /^\[telegram\] inbound lag_s=\d+\.\d msgId=901 /,
+      );
+      expect(warned[0]).toContain("getUpdates stalled?");
+      expect(warned[0]).not.toContain(SECRET);
+      expect(log.mock.calls.flat().join(" ")).not.toContain("inbound lag_s=");
+      expect(recordTelegramInboundLag).toHaveBeenCalledTimes(1);
+      const lag = vi.mocked(recordTelegramInboundLag).mock.calls[0]![0];
+      expect(lag).toBeGreaterThanOrEqual(40);
+      expect(lag).toBeLessThan(45);
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("a fresh message logs the plain lag line and does not warn", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(recordTelegramInboundLag).mockClear();
+    try {
+      handlerFor("message:text")({
+        chat: { id: OWNER },
+        message: {
+          text: SECRET,
+          date: Math.floor(Date.now() / 1000),
+          message_id: 902,
+        },
+      });
+      expect(warn).not.toHaveBeenCalled();
+      const logged = log.mock.calls.map((c) => c.join(" "));
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatch(
+        /^\[telegram\] inbound lag_s=\d+\.\d msgId=902$/,
+      );
+      expect(logged[0]).not.toContain(SECRET);
+      expect(recordTelegramInboundLag).toHaveBeenCalledTimes(1);
+      expect(
+        vi.mocked(recordTelegramInboundLag).mock.calls[0]![0],
+      ).toBeLessThan(5);
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  /** Every console line (log + warn) that carries the lag marker. */
+  function lagLines(
+    log: ReturnType<typeof vi.spyOn>,
+    warn: ReturnType<typeof vi.spyOn>,
+  ): string[] {
+    return [...log.mock.calls, ...warn.mock.calls]
+      .map((c) => c.join(" "))
+      .filter((l) => l.includes("inbound lag_s="));
+  }
+
+  // getFile rejects: the handler's own try/catch absorbs it after the lag line,
+  // so no download or transcription runs.
+  const failingApi = {
+    getFile: vi.fn(async () => {
+      throw new Error("no network in tests");
+    }),
+  };
+
+  it.each([
+    [
+      "message:document",
+      { document: { file_id: "f", file_name: "a.pdf", mime_type: "x" } },
+    ],
+    ["message:photo", { photo: [{ file_id: "p" }] }],
+    ["message:voice", { voice: { file_id: "v", duration: 3 } }],
+    ["message:audio", { audio: { file_id: "a", duration: 3 } }],
+  ])(
+    "%s logs the lag line and records the gauge",
+    async (event, body) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(recordTelegramInboundLag).mockClear();
+      try {
+        await handlerFor(event)({
+          chat: { id: OWNER },
+          message: {
+            ...body,
+            date: Math.floor(Date.now() / 1000),
+            message_id: 903,
+          },
+          api: failingApi,
+        });
+        const lines = lagLines(log, warn);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatch(
+          /^\[telegram\] inbound lag_s=\d+\.\d msgId=903$/,
+        );
+        expect(recordTelegramInboundLag).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+        log.mockRestore();
+        err.mockRestore();
+      }
+    },
+  );
+
+  it("a non-owner chat gets no lag line and no gauge write", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(recordTelegramInboundLag).mockClear();
+    try {
+      handlerFor("message:text")({
+        chat: { id: `${OWNER}0` },
+        message: { text: SECRET, date: 0, message_id: 904 },
+      });
+      expect(lagLines(log, warn)).toEqual([]);
+      expect(recordTelegramInboundLag).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("a future-dated message (clock skew) clamps to lag_s=0.0 and does not warn", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(recordTelegramInboundLag).mockClear();
+    try {
+      handlerFor("message:text")({
+        chat: { id: OWNER },
+        message: {
+          text: SECRET,
+          date: Math.floor(Date.now() / 1000) + 60,
+          message_id: 905,
+        },
+      });
+      expect(warn).not.toHaveBeenCalled();
+      expect(lagLines(log, warn)).toEqual([
+        "[telegram] inbound lag_s=0.0 msgId=905",
+      ]);
+      expect(recordTelegramInboundLag).toHaveBeenCalledWith(0);
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 });
