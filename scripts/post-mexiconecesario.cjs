@@ -18,11 +18,12 @@
 //   5  ACCOUNT_MISMATCH (cookies authenticate to a different handle)
 //   6  cookies missing from user_facts
 //   7  PUBLICACION_NO_CONFIRMADA (toast absent or did not confirm, e.g. daily limit; nothing was verified, no receipt)
+//   8  DUPLICADO_BLOQUEADO (same text already attempted in the last 14 days; nothing posted. X_POST_FORCE=1 overrides)
 
 const path = require('path');
 const Database = require(path.resolve(__dirname, '..', 'node_modules', 'better-sqlite3'));
 const { chromium } = require(path.resolve(__dirname, '..', 'node_modules', 'playwright'));
-const { appendReceipt, classifyToast } = require('./lib/x-post-receipt.cjs');
+const { appendReceipt, classifyToast, textHash, findRecentAttempt } = require('./lib/x-post-receipt.cjs');
 
 const EXPECTED_HANDLE = '/MexicoNecesario';
 const DB_PATH = path.resolve(__dirname, '..', 'data', 'mc.db');
@@ -137,6 +138,19 @@ function readStdin() {
       await browser.close();
       process.exit(3);
     }
+
+    // Duplicate guard: same text already attempted in the last 14 days -> do not post.
+    // Override only deliberately with X_POST_FORCE=1.
+    const attemptsFile = path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.attempts.jsonl');
+    const hash = textHash(tweet);
+    const prior = process.env.X_POST_FORCE === '1' ? null : findRecentAttempt(attemptsFile, hash, 14 * 24 * 3600 * 1000);
+    if (prior) {
+      console.log('DUPLICADO_BLOQUEADO hash=' + hash + ' previous_attempt=' + prior.ts + ' (same text; not posted)');
+      await browser.close();
+      process.exit(8);
+    }
+    // Written BEFORE the click so a killed/unconfirmed run still blocks a retry.
+    appendReceipt(attemptsFile, { ts: new Date().toISOString(), hash, task_id: process.env.MC_TASK_ID || null });
 
     // DOM click via evaluate() on Post button — bypasses #layers overlay
     await page.evaluate(el => el.click(), btn);
