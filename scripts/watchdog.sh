@@ -143,19 +143,25 @@ fi
 # agentic-crm-agent/nanoclaw-agent every 5 min. Intentionally gone.
 
 # --- Check 7: MC DB size (alert-only, VACUUM reminder) ---
-# Retention is AUTOMATED as of 2026-07-05 (src/db/retention.ts node cron
-# auto-archives + deletes tasks/runs at 90d) — the old "manual policy required /
-# no auto-deletion" alert from 2026-04-24 is obsolete. mc.db no longer grows
-# unbounded, but 90d deletes leave dead pages on the SQLite freelist (~77 MB as of
-# this writing) that only VACUUM reclaims. When the file crosses 500 MB, remind the
-# operator to reclaim via `VACUUM INTO` — the safe hot lever. NEVER auto-VACUUM
-# here: it rewrites the whole irreplaceable DB and needs ~2x disk.
+# Retention is AUTOMATED since 2026-07-05 (src/db/retention.ts, 90d tasks/runs).
+# Measured 2026-10-29: 525 MB file, freelist 1.7 % — it is live data
+# (tasks.description 130 MB, conversation_embeddings 97 MB), not dead pages.
+# Two alerts: A = freelist >= 20 % (VACUUM INTO would help), B = size >= 1 GB
+# (live growth; VACUUM would not). NEVER auto-VACUUM here: it rewrites the
+# irreplaceable DB and needs ~2x disk.
 MC_DB=/root/claude/mission-control/data/mc.db
 if [ -f "$MC_DB" ]; then
   MC_DB_MB=$(du -m "$MC_DB" | cut -f1)
-  if [ "$MC_DB_MB" -ge 500 ]; then
+  PCT=$(sqlite3 -readonly "$MC_DB" "SELECT freelist_count*100/page_count FROM pragma_freelist_count, pragma_page_count;" 2>/dev/null || true)
+  [[ "$PCT" =~ ^[0-9]+$ ]] || { PCT=""; echo "$LOG_PREFIX WARNING: mc.db freelist probe failed"; }
+  if [ -n "$PCT" ] && [ "$PCT" -ge 20 ] && [ "$MC_DB_MB" -ge 200 ]; then
+    VAC_COPY="/root/claude-backups/mc-vacuumed-$(date +%F).db"
+    maybe_alert /var/lib/mc-watchdog-db-freelist-alert \
+      "mc.db at ${MC_DB_MB} MB with ${PCT}% of pages on the freelist — reclaim with: sqlite3 ${MC_DB} \"VACUUM INTO '${VAC_COPY}'\" then sqlite3 ${VAC_COPY} \"INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild'); PRAGMA integrity_check;\" (VACUUM can renumber jarvis_files rowids), swap it in with mission-control stopped and no mc.db-wal/-shm left beside it. Never auto-VACUUM."
+  fi
+  if [ "$MC_DB_MB" -ge 1000 ]; then
     maybe_alert /var/lib/mc-watchdog-db-alert \
-      "mc.db at ${MC_DB_MB} MB. Retention auto-prunes tasks/runs at 90d, but freelist dead pages accumulate — reclaim with: sqlite3 ${MC_DB} \"VACUUM INTO '/tmp/mc-vacuumed.db'\" then sqlite3 /tmp/mc-vacuumed.db \"INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')\" (VACUUM can renumber jarvis_files rowids) and swap it in during a restart window. No auto-VACUUM (rewrites the whole DB, needs 2x disk)."
+      "mc.db at ${MC_DB_MB} MB of live data (freelist ${PCT:-?}%). Retention is working; the growth is per-turn prompt size (tasks.description) and conversation_embeddings (tier-2 vectors never pruned) — review those, VACUUM will not help."
   fi
 fi
 
