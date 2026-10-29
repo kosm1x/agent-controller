@@ -153,3 +153,11 @@ Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-26, when PR #63 was rebase
 | --- | --- | --- | --- | --- |
 | 2026-10-25 | PR #64: GDELT export files + `geo_rss` adapter replace the rate-limited GDELT DOC API | `a8d328c4` (PR #64) | Merged, deployed + proven 02:45 UTC; follow-up folds and W7 query deployed + proven 21:20 UTC (archive) | Behavioural proof of the repo-authorization import (archive) |
 | 2026-10-25 | Queue 4y f/g/h: silent extension-less script entry, `.mjs` operator gate, `gdrive_list` query parentheses | `2c5e41ba` | Deployed 22:12 UTC build `d620aacb` | 4y(i) `pgvector-backfill.ts` gate ruling |
+
+## Moved 2026-10-29 (page back to 60 lines after the 4as row)
+
+Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-29.
+
+| Date | Brief | PR | Outcome | Follow-ups |
+| --- | --- | --- | --- | --- |
+| 2026-10-25 | INCIDENT 10-24 23:15 UTC: a test harness broadcast SIGINT to every process; recovered 00:04 UTC | — | kill-guard PreToolUse hook LIVE on VPS and PC (archive) | 4al (a)-(e) |
