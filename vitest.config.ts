@@ -7,6 +7,8 @@ export default defineConfig({
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     // One shared throwaway KB mirror per run, removed at teardown (see file).
     globalSetup: ["./vitest.global-setup.ts"],
+    // Per-worker: drop inherited GIT_* env (see file).
+    setupFiles: ["./vitest.setup-env.ts"],
     testTimeout: 30_000,
     hookTimeout: 10_000,
     // Cap worker fan-out (2026-07-05 hardening sweep). A bare `vitest run` across

@@ -18,11 +18,15 @@
 //   5  ACCOUNT_MISMATCH (cookies authenticate to a different handle)
 //   6  cookies missing from user_facts
 //   7  PUBLICACION_NO_CONFIRMADA (toast absent or did not confirm, e.g. daily limit; nothing was verified, no receipt)
+//   8  DUPLICADO_BLOQUEADO (same text already attempted in the last 14 days; nothing posted)
 
+const fs = require('fs');
 const path = require('path');
 const Database = require(path.resolve(__dirname, '..', 'node_modules', 'better-sqlite3'));
 const { chromium } = require(path.resolve(__dirname, '..', 'node_modules', 'playwright'));
-const { appendReceipt, classifyToast } = require('./lib/x-post-receipt.cjs');
+const {
+  appendReceipt, classifyToast, textHash, findRecentAttempt, overrideRequested, overrideAllowed,
+} = require('./lib/x-post-receipt.cjs');
 
 const EXPECTED_HANDLE = '/MexicoNecesario';
 const DB_PATH = path.resolve(__dirname, '..', 'data', 'mc.db');
@@ -44,6 +48,11 @@ function loadCookies() {
     db.close();
   }
 }
+
+// Inputs to overrideAllowed (x-post-receipt.cjs): the duplicate-guard override is
+// operator-shell-only, decided by the repo's operator gate on this process's cgroup.
+const loadOperatorGate = () => require(path.resolve(__dirname, '..', 'dist', 'lib', 'operator-gate.js'));
+const readSelfCgroup = () => fs.readFileSync('/proc/self/cgroup', 'utf8');
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -137,6 +146,24 @@ function readStdin() {
       await browser.close();
       process.exit(3);
     }
+
+    // Duplicate guard: same text already attempted in the last 14 days -> do not post.
+    // Override: X_POST_FORCE=1, honoured only from an operator shell (see overrideAllowed).
+    const attemptsFile = path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.attempts.jsonl');
+    const hash = textHash(tweet);
+    let force = false;
+    if (overrideRequested(process.env)) {
+      force = overrideAllowed(process.env, loadOperatorGate, readSelfCgroup);
+      if (!force) console.log('OVERRIDE_IGNORADO (X_POST_FORCE only works from an operator shell, not from a task)');
+    }
+    const prior = force ? null : findRecentAttempt(attemptsFile, hash, 14 * 24 * 3600 * 1000);
+    if (prior) {
+      console.log('DUPLICADO_BLOQUEADO hash=' + hash + ' previous_attempt=' + prior.ts + ' (same text; not posted)');
+      await browser.close();
+      process.exit(8);
+    }
+    // Written BEFORE the click so a killed/unconfirmed run still blocks a retry.
+    appendReceipt(attemptsFile, { ts: new Date().toISOString(), hash, task_id: process.env.MC_TASK_ID || null });
 
     // DOM click via evaluate() on Post button — bypasses #layers overlay
     await page.evaluate(el => el.click(), btn);
