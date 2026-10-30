@@ -18,7 +18,7 @@
 //   5  ACCOUNT_MISMATCH (cookies authenticate to a different handle)
 //   6  cookies missing from user_facts
 //   7  PUBLICACION_NO_CONFIRMADA (toast absent or did not confirm, e.g. daily limit; nothing was verified, no receipt)
-//   8  DUPLICADO_BLOQUEADO (same text already attempted in the last 14 days; nothing posted. X_POST_FORCE=1 overrides)
+//   8  DUPLICADO_BLOQUEADO (same text already attempted in the last 14 days; nothing posted)
 
 const path = require('path');
 const Database = require(path.resolve(__dirname, '..', 'node_modules', 'better-sqlite3'));
@@ -44,6 +44,25 @@ function loadCookies() {
   } finally {
     db.close();
   }
+}
+
+// The duplicate-guard override (X_POST_FORCE=1) is operator-shell-only: inside
+// mission-control.service (a task) operatorContextReason returns a reason and the
+// override is ignored. No dist/ (fresh clone, worktree) also means no override.
+function operatorOverrideAllowed() {
+  let gate;
+  try {
+    gate = require(path.resolve(__dirname, '..', 'dist', 'lib', 'operator-gate.js'));
+  } catch {
+    return false;
+  }
+  let cgroup = '';
+  try {
+    cgroup = require('fs').readFileSync('/proc/self/cgroup', 'utf-8');
+  } catch {
+    // unreadable -> no session line -> refused by the gate
+  }
+  return gate.operatorContextReason(cgroup, false, { tty: false }) === null;
 }
 
 function readStdin() {
@@ -140,10 +159,15 @@ function readStdin() {
     }
 
     // Duplicate guard: same text already attempted in the last 14 days -> do not post.
-    // Override only deliberately with X_POST_FORCE=1.
+    // Override: X_POST_FORCE=1, honoured only from an operator shell (see operatorOverrideAllowed).
     const attemptsFile = path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.attempts.jsonl');
     const hash = textHash(tweet);
-    const prior = process.env.X_POST_FORCE === '1' ? null : findRecentAttempt(attemptsFile, hash, 14 * 24 * 3600 * 1000);
+    let force = false;
+    if (process.env.X_POST_FORCE === '1') {
+      force = operatorOverrideAllowed();
+      if (!force) console.log('OVERRIDE_IGNORADO (X_POST_FORCE only works from an operator shell, not from a task)');
+    }
+    const prior = force ? null : findRecentAttempt(attemptsFile, hash, 14 * 24 * 3600 * 1000);
     if (prior) {
       console.log('DUPLICADO_BLOQUEADO hash=' + hash + ' previous_attempt=' + prior.ts + ' (same text; not posted)');
       await browser.close();

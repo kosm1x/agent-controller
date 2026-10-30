@@ -64,8 +64,10 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "build-info-"));
   repo = join(root, "repo");
   mkdirSync(repo);
+  // The pre-commit hook exports GIT_DIR/GIT_INDEX_FILE for the commit being
+  // made; inherited, every fixture git call would hit the REAL repo.
   env = {
-    ...process.env,
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_"))),
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CEILING_DIRECTORIES: root,

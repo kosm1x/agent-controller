@@ -89,6 +89,25 @@ describe("post-mexiconecesario.cjs source pin", () => {
     expect(record).toBeLessThan(click);
     expect(src).toContain("process.exit(8)");
   });
+
+  it("honours X_POST_FORCE only when operatorContextReason clears the process", () => {
+    expect(src).toMatch(
+      /return gate\.operatorContextReason\(cgroup, false, \{ tty: false \}\) === null;/,
+    );
+    expect(src).toMatch(/require\(path\.resolve\(__dirname, '\.\.', 'dist', 'lib', 'operator-gate\.js'\)\)/);
+    expect(src).toMatch(
+      /if \(process\.env\.X_POST_FORCE === '1'\) \{\s*force = operatorOverrideAllowed\(\);\s*if \(!force\) console\.log\('OVERRIDE_IGNORADO/,
+    );
+    expect(src).toContain("const prior = force ? null : findRecentAttempt(attemptsFile");
+    // The env var is read in exactly one place: the gated branch above.
+    expect(src.match(/process\.env\.X_POST_FORCE/g)).toHaveLength(1);
+  });
+
+  it("keeps the override out of the header exit table", () => {
+    const row = src.split("\n").find((l) => l.startsWith("//   8  DUPLICADO_BLOQUEADO"));
+    expect(row).toBeDefined();
+    expect(row).not.toContain("X_POST_FORCE");
+  });
 });
 
 describe("duplicate guard", () => {

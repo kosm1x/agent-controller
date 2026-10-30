@@ -414,6 +414,10 @@ describe("baselineEvidence (section F, informational)", () => {
 
 describe("readBaselineEvidence: the baseline file's own commit is not a src/ commit", () => {
   let repo: string;
+  // The pre-commit hook exports GIT_DIR/GIT_INDEX_FILE for the commit being
+  // made; inherited, `git init` reinitialized the REAL repo as bare (2026-10-30)
+  // and readBaselineEvidence read the real repo. Scrub them for this describe.
+  const savedGitEnv: Record<string, string | undefined> = {};
   const gitIn = (args: string[], date?: string) =>
     execFileSync("git", ["-C", repo, ...args], {
       encoding: "utf8",
@@ -435,6 +439,10 @@ describe("readBaselineEvidence: the baseline file's own commit is not a src/ com
     );
 
   beforeAll(() => {
+    for (const k of Object.keys(process.env).filter((k) => k.startsWith("GIT_"))) {
+      savedGitEnv[k] = process.env[k];
+      delete process.env[k];
+    }
     repo = mkdtempSync(join(tmpdir(), "predeploy-evidence-"));
     gitIn(["init", "-q"]);
     mkdirSync(join(repo, "src/tuning"), { recursive: true });
@@ -446,7 +454,10 @@ describe("readBaselineEvidence: the baseline file's own commit is not a src/ com
     gitIn(["add", "-A"]);
     gitIn(["commit", "-q", "-m", "baseline"], "2026-10-03T00:00:00Z");
   });
-  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true });
+    Object.assign(process.env, savedGitEnv);
+  });
 
   it("capture after the last code commit, recorded by a later baseline-only commit → AFTER, clean", () => {
     const ev = readBaselineEvidence(repo);
