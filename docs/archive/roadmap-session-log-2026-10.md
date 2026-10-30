@@ -161,3 +161,9 @@ Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-29.
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
 | 2026-10-25 | INCIDENT 10-24 23:15 UTC: a test harness broadcast SIGINT to every process; recovered 00:04 UTC | — | kill-guard PreToolUse hook LIVE on VPS and PC (archive) | 4al (a)-(e) |
+
+## Moved 2026-10-30 (page back to 60 lines after the PR 65 row)
+
+| Date | Brief | PR | Outcome | Follow-ups |
+| --- | --- | --- | --- | --- |
+| 2026-10-26 | 4am nightly `kb-backup` blocked the event loop 8-12 s | `d5a44eb3` | Deployed 05:23 UTC build `1d1095e1`; `MCEventLoopBlock` LIVE 05:24 UTC | Proof 04:30 UTC 10-27 FAILED (10.49 s): `kb-backup` was never the reader — see 4aq |
