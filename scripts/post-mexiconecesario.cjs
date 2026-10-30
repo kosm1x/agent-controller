@@ -20,10 +20,13 @@
 //   7  PUBLICACION_NO_CONFIRMADA (toast absent or did not confirm, e.g. daily limit; nothing was verified, no receipt)
 //   8  DUPLICADO_BLOQUEADO (same text already attempted in the last 14 days; nothing posted)
 
+const fs = require('fs');
 const path = require('path');
 const Database = require(path.resolve(__dirname, '..', 'node_modules', 'better-sqlite3'));
 const { chromium } = require(path.resolve(__dirname, '..', 'node_modules', 'playwright'));
-const { appendReceipt, classifyToast, textHash, findRecentAttempt } = require('./lib/x-post-receipt.cjs');
+const {
+  appendReceipt, classifyToast, textHash, findRecentAttempt, overrideRequested, overrideAllowed,
+} = require('./lib/x-post-receipt.cjs');
 
 const EXPECTED_HANDLE = '/MexicoNecesario';
 const DB_PATH = path.resolve(__dirname, '..', 'data', 'mc.db');
@@ -46,24 +49,10 @@ function loadCookies() {
   }
 }
 
-// The duplicate-guard override (X_POST_FORCE=1) is operator-shell-only: inside
-// mission-control.service (a task) operatorContextReason returns a reason and the
-// override is ignored. No dist/ (fresh clone, worktree) also means no override.
-function operatorOverrideAllowed() {
-  let gate;
-  try {
-    gate = require(path.resolve(__dirname, '..', 'dist', 'lib', 'operator-gate.js'));
-  } catch {
-    return false;
-  }
-  let cgroup = '';
-  try {
-    cgroup = require('fs').readFileSync('/proc/self/cgroup', 'utf-8');
-  } catch {
-    // unreadable -> no session line -> refused by the gate
-  }
-  return gate.operatorContextReason(cgroup, false, { tty: false }) === null;
-}
+// Inputs to overrideAllowed (x-post-receipt.cjs): the duplicate-guard override is
+// operator-shell-only, decided by the repo's operator gate on this process's cgroup.
+const loadOperatorGate = () => require(path.resolve(__dirname, '..', 'dist', 'lib', 'operator-gate.js'));
+const readSelfCgroup = () => fs.readFileSync('/proc/self/cgroup', 'utf8');
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -159,12 +148,12 @@ function readStdin() {
     }
 
     // Duplicate guard: same text already attempted in the last 14 days -> do not post.
-    // Override: X_POST_FORCE=1, honoured only from an operator shell (see operatorOverrideAllowed).
+    // Override: X_POST_FORCE=1, honoured only from an operator shell (see overrideAllowed).
     const attemptsFile = path.resolve(__dirname, '..', 'data', 'x-post-receipts', 'mexiconecesario.attempts.jsonl');
     const hash = textHash(tweet);
     let force = false;
-    if (process.env.X_POST_FORCE === '1') {
-      force = operatorOverrideAllowed();
+    if (overrideRequested(process.env)) {
+      force = overrideAllowed(process.env, loadOperatorGate, readSelfCgroup);
       if (!force) console.log('OVERRIDE_IGNORADO (X_POST_FORCE only works from an operator shell, not from a task)');
     }
     const prior = force ? null : findRecentAttempt(attemptsFile, hash, 14 * 24 * 3600 * 1000);

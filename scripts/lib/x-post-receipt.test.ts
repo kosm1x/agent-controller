@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { operatorContextReason } from "../../src/lib/operator-gate.js";
 
 const { appendReceipt, classifyToast } = createRequire(import.meta.url)("./x-post-receipt.cjs") as {
   appendReceipt: (file: string, receipt: unknown) => void;
@@ -90,17 +91,23 @@ describe("post-mexiconecesario.cjs source pin", () => {
     expect(src).toContain("process.exit(8)");
   });
 
-  it("honours X_POST_FORCE only when operatorContextReason clears the process", () => {
-    expect(src).toMatch(
-      /return gate\.operatorContextReason\(cgroup, false, \{ tty: false \}\) === null;/,
+  it("decides the override only through overrideAllowed(process.env, gate, cgroup)", () => {
+    expect(src).toContain(
+      "const loadOperatorGate = () => require(path.resolve(__dirname, '..', 'dist', 'lib', 'operator-gate.js'));",
     );
-    expect(src).toMatch(/require\(path\.resolve\(__dirname, '\.\.', 'dist', 'lib', 'operator-gate\.js'\)\)/);
+    expect(src).toContain("const readSelfCgroup = () => fs.readFileSync('/proc/self/cgroup', 'utf8');");
     expect(src).toMatch(
-      /if \(process\.env\.X_POST_FORCE === '1'\) \{\s*force = operatorOverrideAllowed\(\);\s*if \(!force\) console\.log\('OVERRIDE_IGNORADO/,
+      /let force = false;\s*if \(overrideRequested\(process\.env\)\) \{\s*force = overrideAllowed\(process\.env, loadOperatorGate, readSelfCgroup\);\s*if \(!force\) console\.log\('OVERRIDE_IGNORADO[^\n]*\n\s*\}\s*const prior = force \? null : findRecentAttempt\(attemptsFile/,
     );
-    expect(src).toContain("const prior = force ? null : findRecentAttempt(attemptsFile");
-    // The env var is read in exactly one place: the gated branch above.
-    expect(src.match(/process\.env\.X_POST_FORCE/g)).toHaveLength(1);
+    expect(src.match(/force = /g)).toHaveLength(2); // the false default + the gated assignment
+    // The script never reads the variable itself, in any spelling.
+    expect(src).not.toMatch(/process\.env\s*(\.\s*X_POST_FORCE|\[)/);
+  });
+
+  it("closes the browser before exit 8", () => {
+    expect(src).toMatch(
+      /console\.log\('DUPLICADO_BLOQUEADO[^\n]*\n\s*await browser\.close\(\);\s*process\.exit\(8\);/,
+    );
   });
 
   it("keeps the override out of the header exit table", () => {
@@ -131,5 +138,47 @@ describe("duplicate guard", () => {
     expect(findRecentAttempt(file, "h1", 2 * day, now)).not.toBeNull();
     expect(findRecentAttempt(file, "h1", day / 2, now)).toBeNull();
     expect(findRecentAttempt(file, "h2", 2 * day, now)).toBeNull();
+  });
+});
+
+describe("overrideAllowed", () => {
+  const { overrideAllowed } = createRequire(import.meta.url)("./x-post-receipt.cjs") as {
+    overrideAllowed: (
+      env: Record<string, string | undefined>,
+      loadGate: () => unknown,
+      readCgroup: () => string,
+    ) => boolean;
+  };
+  const FORCE = { X_POST_FORCE: "1" };
+  const realGate = () => ({ operatorContextReason });
+  const TASK = "0::/system.slice/mission-control.service\n";
+  const OPERATOR = "0::/user.slice/user-0.slice/session-1.scope\n";
+  const boom = () => {
+    throw new Error("boom");
+  };
+
+  it("is false when the override is not requested", () => {
+    expect(overrideAllowed({}, realGate, () => OPERATOR)).toBe(false);
+    expect(overrideAllowed({ X_POST_FORCE: "true" }, realGate, () => OPERATOR)).toBe(false);
+  });
+
+  it("is false when the gate is missing, throws, or lacks the function", () => {
+    expect(overrideAllowed(FORCE, boom, () => OPERATOR)).toBe(false);
+    expect(overrideAllowed(FORCE, () => undefined, () => OPERATOR)).toBe(false);
+    expect(overrideAllowed(FORCE, () => ({}), () => OPERATOR)).toBe(false);
+    expect(overrideAllowed(FORCE, () => ({ operatorContextReason: null }), () => OPERATOR)).toBe(false);
+    expect(overrideAllowed(FORCE, () => ({ operatorContextReason: boom }), () => OPERATOR)).toBe(false);
+  });
+
+  it("is false when the cgroup is unreadable", () => {
+    expect(overrideAllowed(FORCE, realGate, boom)).toBe(false);
+  });
+
+  it("is false inside mission-control.service (a task)", () => {
+    expect(overrideAllowed(FORCE, realGate, () => TASK)).toBe(false);
+  });
+
+  it("is true only from an operator login session", () => {
+    expect(overrideAllowed(FORCE, realGate, () => OPERATOR)).toBe(true);
   });
 });

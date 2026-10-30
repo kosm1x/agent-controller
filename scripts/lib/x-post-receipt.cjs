@@ -45,4 +45,22 @@ function findRecentAttempt(file, hash, windowMs, now = Date.now()) {
   return null;
 }
 
-module.exports = { appendReceipt, classifyToast, textHash, findRecentAttempt };
+// The duplicate-guard override (X_POST_FORCE=1) is operator-shell-only. Inside
+// mission-control.service (a task) operatorContextReason returns a reason; a missing or
+// malformed gate (no dist/), an unreadable cgroup or any throw also means no override.
+function overrideRequested(env) {
+  return env.X_POST_FORCE === '1';
+}
+
+function overrideAllowed(env, loadGate, readCgroup) {
+  if (!overrideRequested(env)) return false;
+  try {
+    const gate = loadGate();
+    if (!gate || typeof gate.operatorContextReason !== 'function') return false;
+    return gate.operatorContextReason(readCgroup(), false, { tty: false }) === null;
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { appendReceipt, classifyToast, textHash, findRecentAttempt, overrideRequested, overrideAllowed };
