@@ -168,6 +168,11 @@ vi.mock("./scope-classifier.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./scope-classifier.js")>();
   return { ...actual, classifyScopeGroups: vi.fn(actual.classifyScopeGroups) };
 });
+// The real scope-group lookup, wrapped so a test can reach the no_group outcome.
+vi.mock("./scope-miss.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./scope-miss.js")>();
+  return { ...actual, groupsForTool: vi.fn(actual.groupsForTool) };
+});
 // The real enrichment, wrapped so a test can make it hang (stage deadline).
 vi.mock("../intelligence/enrichment.js", async (importOriginal) => {
   const actual =
@@ -321,6 +326,7 @@ import {
   CACHE_BREAK_MARKER,
   dayLogEntryText,
   recordUserEvidence,
+  SCOPE_RERUN_SUPERSEDED_SQL,
 } from "./router.js";
 import {
   formatRelevantUserFactsBlock,
@@ -345,7 +351,11 @@ import {
   renderConfirmationSummary,
 } from "./confirmations.js";
 import { toolRegistry } from "../tools/registry.js";
-import { scopeMissFallbackLine, SCOPE_RERUN_NOTICE } from "./scope-miss.js";
+import {
+  scopeMissFallbackLine,
+  SCOPE_RERUN_NOTICE,
+  groupsForTool,
+} from "./scope-miss.js";
 import { registerProjectScopeGroups, _resetProjectScopeGroups } from "./scope.js";
 import { currentExecutionContext } from "../inference/execution-context.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
@@ -3962,6 +3972,248 @@ describe("MessageRouter", () => {
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }
+    });
+
+    describe("scope-miss re-run closes the first leg (blocked scope requests, 2026-10-31)", () => {
+      const ASK = "Necesito `shell_exec` para esto.";
+      const supersedeRuns = () =>
+        dbRun.mock.calls.filter(([sql]) => sql === SCOPE_RERUN_SUPERSEDED_SQL);
+      function tasksDb(taskId: string, status: string): Database.Database {
+        const db = new Database(":memory:");
+        db.exec(readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8"));
+        db.prepare(
+          "INSERT INTO tasks (task_id, title, description, status) VALUES (?, 'Chat: x', 'd', ?)",
+        ).run(taskId, status);
+        return db;
+      }
+      type LegRow = { status: string; error: string | null; completed_at: string | null };
+      const leg = (db: Database.Database, taskId: string) =>
+        db
+          .prepare("SELECT status, error, completed_at FROM tasks WHERE task_id = ?")
+          .get(taskId) as LegRow;
+      /** Ask on the task.failed path; `db` is live from the handler on (the real row's status is read there). */
+      async function askOnFailedPath(
+        status: "blocked" | "needs_context",
+        rerunId: string,
+        db: unknown,
+      ) {
+        const mocked = vi.mocked(submitTask);
+        dbStatusGet.mockReturnValue({ spawn_type: "root", title: "Chat: x", status });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: rerunId,
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        realDb.db = db;
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: status,
+            result: { text: ASK, toolCalls: [] },
+          },
+        });
+      }
+      afterEach(() => {
+        realDb.db = null;
+        dbStatusGet.mockReturnValue(undefined);
+      });
+
+      it("pins the statement: cancelled + completed_at, only a blocked / needs_context leg, run by the router", () => {
+        expect(SCOPE_RERUN_SUPERSEDED_SQL).toBe(
+          "UPDATE tasks SET status = 'cancelled', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status IN ('blocked','needs_context')",
+        );
+        const src = readFileSync(new URL("./router.ts", import.meta.url), "utf8");
+        expect(src).toContain(".prepare(SCOPE_RERUN_SUPERSEDED_SQL)");
+      });
+
+      it.each(["blocked", "needs_context"] as const)(
+        "a %s first leg becomes cancelled, superseded by the re-run, once the re-run is submitted",
+        async (status) => {
+          const db = tasksDb("test-task-123", status);
+          const log = vi.spyOn(console, "log");
+          await askOnFailedPath(status, "rerun-leg-2", db);
+          await Promise.resolve();
+          await Promise.resolve();
+          const rerun = vi.mocked(submitTask).mock.calls.at(-1)![0];
+          expect(rerun.tags).toContain("scope-rerun");
+          const row = leg(db, "test-task-123");
+          expect(row.status).toBe("cancelled");
+          expect(row.error).toBe("superseded by scope-widened re-run rerun-leg-2");
+          expect(row.completed_at).not.toBeNull();
+          expect(
+            log.mock.calls.filter((c) => String(c[0]).includes("first leg")),
+          ).toEqual([
+            ["[router] scope-miss first leg test-task-123 cancelled (superseded by rerun-leg-2)"],
+          ]);
+          db.close();
+        },
+      );
+
+      it("a completed_with_concerns leg (the task.completed path) is not touched by the re-run", async () => {
+        const mocked = vi.mocked(submitTask);
+        const db = tasksDb("test-task-123", "completed_with_concerns");
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockResolvedValueOnce({
+          taskId: "rerun-cwc",
+          agentType: "fast",
+          classification: { score: 1, reason: "test", explicit: false },
+        });
+        const log = vi.spyOn(console, "log");
+        realDb.db = db;
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: ASK, duration_ms: 1 },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(mocked.mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+        expect(leg(db, "test-task-123")).toEqual({
+          status: "completed_with_concerns",
+          error: null,
+          completed_at: null,
+        });
+        expect(log.mock.calls.some((c) => String(c[0]).includes("first leg"))).toBe(false);
+        db.close();
+      });
+
+      it("no_group: no re-run, the fallback line is delivered and the leg is not touched", async () => {
+        const mocked = vi.mocked(submitTask);
+        dbStatusGet.mockReturnValue({ spawn_type: "root", title: "Chat: x", status: "blocked" });
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        const calls = mocked.mock.calls.length;
+        vi.mocked(groupsForTool).mockReturnValueOnce([]);
+        dbRun.mockClear();
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: ASK, toolCalls: [] },
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(mocked.mock.calls.length).toBe(calls);
+        expect(waAdapter.sentMessages.at(-1)!.text).toBe(scopeMissFallbackLine("no_rerun"));
+        expect(supersedeRuns()).toEqual([]);
+      });
+
+      it("deliver_as_is: a weak scope mention is delivered and the leg is not touched", async () => {
+        const mocked = vi.mocked(submitTask);
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "lee el pdf",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        const calls = mocked.mock.calls.length;
+        const reply =
+          "El PDF es imagen-only y no tengo OCR ni visión directa en este scope.\n\nLo que sí puedo hacer: leer el Slides original con `jarvis_file_read`. ¿Prefieres eso?";
+        dbRun.mockClear();
+        const log = vi.spyOn(console, "log");
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: reply, duration_ms: 1 },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(
+          log.mock.calls.some((c) => String(c[0]).includes("delivering as-is")),
+        ).toBe(true);
+        expect(mocked.mock.calls.length).toBe(calls);
+        expect(waAdapter.sentMessages.at(-1)!.text).toContain("Lo que sí puedo hacer");
+        expect(supersedeRuns()).toEqual([]);
+      });
+
+      it("a DB failure on the close is warned and the re-run still happens", async () => {
+        // Only the close fails: every other read sees the blocked leg.
+        const db = {
+          prepare: (sql: string) => {
+            if (sql === SCOPE_RERUN_SUPERSEDED_SQL) {
+              throw new Error("The database connection is not open");
+            }
+            return {
+              get: () => ({ spawn_type: "root", title: "Chat: x", status: "blocked" }),
+              run: () => ({ changes: 0 }),
+              all: () => [],
+            };
+          },
+          exec: () => undefined,
+        };
+        const warn = vi.spyOn(console, "warn");
+        await askOnFailedPath("blocked", "rerun-dbfail", db);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(vi.mocked(submitTask).mock.calls.at(-1)![0].tags).toContain("scope-rerun");
+        expect(warn).toHaveBeenCalledWith(
+          "[router] scope-miss first leg test-task-123 not closed:",
+          expect.stringContaining("not open"),
+        );
+        realDb.db = null;
+        expect(waAdapter.sentMessages.at(-1)!.text).toBe(SCOPE_RERUN_NOTICE);
+      });
+
+      it("a FAILED re-run submit never closes the leg: it stays blocked and the error fallback line is sent", async () => {
+        const mocked = vi.mocked(submitTask);
+        const db = tasksDb("test-task-123", "blocked");
+        const prepare = vi.spyOn(db, "prepare");
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "háblame de beeshake.com y su modelo de negocio",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        mocked.mockRejectedValueOnce(new Error("dispatcher down"));
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log");
+        realDb.db = db;
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "blocked",
+            result: { text: ASK, toolCalls: [] },
+          },
+        });
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(errSpy).toHaveBeenCalledWith(
+          "[router] scope-miss re-run submit failed:",
+          expect.any(Error),
+        );
+        expect(
+          prepare.mock.calls.some(([sql]) => sql === SCOPE_RERUN_SUPERSEDED_SQL),
+        ).toBe(false);
+        expect(leg(db, "test-task-123")).toEqual({
+          status: "blocked",
+          error: null,
+          completed_at: null,
+        });
+        expect(log.mock.calls.some((c) => String(c[0]).includes("first leg"))).toBe(false);
+        expect(waAdapter.sentMessages.at(-1)!.text).toBe(scopeMissFallbackLine("error"));
+        realDb.db = null;
+        db.close();
+      });
     });
 
     function telegramWithStream(messageId: number) {
@@ -7587,7 +7839,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     // One store: one INSERT carrying both rows, after ONE supersede.
     const inserts = dbAll.mock.calls.filter(([sql]) => sql.includes("INSERT INTO tool_approvals"));
     expect(inserts).toHaveLength(1);
-    expect(inserts[0][0]).toContain("(?, ?, ?, ?, ?), (?, ?, ?, ?, ?)");
+    expect(inserts[0][0]).toContain("(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)");
     expect(approvalUpdates("superseded")).toHaveLength(1);
   });
 

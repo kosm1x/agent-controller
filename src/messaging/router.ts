@@ -1949,6 +1949,16 @@ const LOOP_USAGE =
 const LOOP_INLINE_NOTICE =
   "Modo /loop activado — sin límite de turnos ni de tiempo. «Para» lo detiene.";
 
+/**
+ * A scope-miss re-run is the SAME turn as a new task, so the first leg (the
+ * ask, already written `blocked`/`needs_context` by the dispatcher before it
+ * emitted task.failed) is closed as superseded once the re-run is submitted.
+ * Only those two statuses flip: a completed / completed_with_concerns /
+ * failed leg (the completed and heavy paths) keeps its outcome.
+ */
+export const SCOPE_RERUN_SUPERSEDED_SQL =
+  "UPDATE tasks SET status = 'cancelled', error = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status IN ('blocked','needs_context')";
+
 export class MessageRouter {
   private channels = new Map<ChannelName, ChannelAdapter>();
   private pendingReplies = new Map<string, PendingReply>();
@@ -2701,8 +2711,9 @@ export class MessageRouter {
             // decision ledger (dormant/passthrough unless V83_ENABLED + canary).
             // S6 ruling 5b: the confirmed call resolves project capabilities (X
             // accounts) as the task that showed the card; a card re-armed at
-            // boot carries no task id (tool_approvals has none) and resolves
-            // as attributed to no task (nothing record-gated in record mode).
+            // boot carries it from tool_approvals.task_id (v11), and only a
+            // card stored without one (or a pre-v11 row) resolves as
+            // attributed to no task (nothing record-gated in record mode).
             const result = await withAttributedTask(approved.taskId ?? null, () =>
               executeGatedCapability(
                 item.toolName,
@@ -5175,6 +5186,26 @@ export class MessageRouter {
         console.log(
           `[router] scope-miss re-run of ${taskId} → task ${result.taskId}`,
         );
+        try {
+          const { changes } = getDatabase()
+            .prepare(SCOPE_RERUN_SUPERSEDED_SQL)
+            .run(
+              result.taskId
+                ? `superseded by scope-widened re-run ${result.taskId}`
+                : "superseded by scope-widened re-run",
+              taskId,
+            );
+          if (changes === 1) {
+            console.log(
+              `[router] scope-miss first leg ${taskId} cancelled (superseded by ${result.taskId})`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            `[router] scope-miss first leg ${taskId} not closed:`,
+            errMsg(err),
+          );
+        }
         // Harness notice, not the task's reply: on Telegram it replaces the ⏳
         // placeholder (reset, never finalize — the re-run streams and
         // finalizes in the same message); elsewhere one plain send. Email is

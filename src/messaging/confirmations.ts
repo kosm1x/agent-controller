@@ -55,7 +55,7 @@ export interface PendingConfirmation extends PendingConfirmationItem {
   /** Queue 4l: every action on the card, in order; `items[0]` is the first. */
   items: PendingConfirmationItem[];
   timestamp: number;
-  /** Task whose run showed the card (in memory only; the trace key at expiry). */
+  /** Task whose run showed the card (its `tool_approvals.task_id`; the trace key at expiry). */
   taskId?: string;
 }
 
@@ -458,8 +458,8 @@ function deliverExpiryNotice(
 
 /** The timeline an expiry is traced on. */
 function expiryTraceKey(threadKey: string, pending: PendingConfirmation): string {
-  // A card rehydrated after a restart has no task id in memory: the
-  // approval row (or the thread) keys its timeline instead.
+  // A card with no task id (stored without one, or a pre-v11 row) is keyed
+  // by its approval row (or the thread) instead.
   return (
     pending.taskId ??
     (pending.approvalId !== undefined
@@ -551,8 +551,8 @@ export function storePendingConfirmationList(
   const ids = dbWrite(() => {
     const rows = getDatabase()
       .prepare(
-        `INSERT INTO tool_approvals (thread_key, tool, args_sha256, args_json, summary)
-         VALUES ${list.map(() => "(?, ?, ?, ?, ?)").join(", ")} RETURNING id`,
+        `INSERT INTO tool_approvals (thread_key, tool, args_sha256, args_json, summary, task_id)
+         VALUES ${list.map(() => "(?, ?, ?, ?, ?, ?)").join(", ")} RETURNING id`,
       )
       .all(
         ...list.flatMap((i, n) => [
@@ -561,6 +561,7 @@ export function storePendingConfirmationList(
           shas[n],
           JSON.stringify(i.args),
           i.summary.slice(0, 2000),
+          taskId ?? null,
         ]),
       ) as Array<{ id: number }>;
     return rows.map((r) => r.id).sort((a, b) => a - b);
@@ -609,6 +610,7 @@ interface ApprovalRow {
   args_json: string;
   summary: string | null;
   requested_at: string;
+  task_id: string | null;
 }
 
 /**
@@ -619,7 +621,7 @@ interface ApprovalRow {
 function loadCardRows(threadKey: string): ApprovalRow[] {
   return getDatabase()
     .prepare(
-      `SELECT id, tool, args_sha256, args_json, summary, requested_at
+      `SELECT id, tool, args_sha256, args_json, summary, requested_at, task_id
        FROM tool_approvals WHERE thread_key = ? AND decision = 'pending'
          AND requested_at = (
            SELECT requested_at FROM tool_approvals
@@ -669,7 +671,7 @@ function rehydrateFromDb(threadKey: string): PendingConfirmation | null {
     markThreadRows(threadKey, "superseded");
     return null;
   }
-  const pending = cardOf(items, requestedAt);
+  const pending = cardOf(items, requestedAt, rows[0].task_id ?? undefined);
   pendingConfirmations.set(threadKey, pending);
   // Re-arm expiry for the remaining TTL so a silent thread still closes the
   // row — through the one lapse path (trace, and the notice when the boot
@@ -754,7 +756,7 @@ export function rearmPendingConfirmationsAtBoot(
   try {
     const rows = getDatabase()
       .prepare(
-        `SELECT id, thread_key, tool, args_sha256, args_json, summary, requested_at
+        `SELECT id, thread_key, tool, args_sha256, args_json, summary, requested_at, task_id
          FROM tool_approvals WHERE decision = 'pending'
          ORDER BY id DESC LIMIT ?`,
       )
@@ -775,6 +777,7 @@ export function rearmPendingConfirmationsAtBoot(
       const pending = cardOf(
         items,
         Number.isFinite(requestedAt) ? requestedAt : 0,
+        cardRows[0].task_id ?? undefined,
       );
       pendingConfirmations.set(row.thread_key, pending);
       const notify = resolveBootNotifier(row.thread_key, cardRows[0].id);

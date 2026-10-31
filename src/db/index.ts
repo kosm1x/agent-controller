@@ -23,6 +23,10 @@ import { errMsg } from "../lib/err-msg.js";
 
 let _db: Database.Database | null = null;
 
+/** Schema v11 one-time backfill: `blocked` rows untouched for 7+ days are stale (mostly scope requests). */
+export const SCHEMA_V11_STALE_BLOCKED_SQL =
+  "UPDATE tasks SET status = 'cancelled', error = 'stale blocked row, closed by schema v11', updated_at = datetime('now'), completed_at = datetime('now') WHERE status = 'blocked' AND (julianday('now') - julianday(updated_at)) > 7";
+
 /**
  * Initialize the database at the given path.
  * Creates the directory if needed, enables WAL, applies schema.
@@ -444,7 +448,8 @@ export function initDatabase(dbPath: string): Database.Database {
     requested_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     decided_at   TEXT,
     decision     TEXT NOT NULL DEFAULT 'pending',
-    approver     TEXT
+    approver     TEXT,
+    task_id      TEXT
   )`);
   _db.exec(
     "CREATE INDEX IF NOT EXISTS idx_tool_approvals_thread ON tool_approvals(thread_key, id)",
@@ -1397,6 +1402,24 @@ export function initDatabase(dbPath: string): Database.Database {
         db.exec(
           "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)",
         );
+      },
+    },
+    {
+      version: 11,
+      description:
+        "tool_approvals.task_id — the task that showed the card survives a restart, so a re-armed card attributes as that task (S6 NEXT); one-time close of blocked scope-request first legs older than 7 days",
+      up: (db) => {
+        const cols = db
+          .prepare("PRAGMA table_info(tool_approvals)")
+          .all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "task_id")) {
+          db.exec("ALTER TABLE tool_approvals ADD COLUMN task_id TEXT");
+        }
+        // Backfill: the scope-miss re-run never closed its first leg (fixed
+        // in router.ts SCOPE_RERUN_SUPERSEDED_SQL), so those rows sat
+        // `blocked` forever. `tasks` comes from schema.sql, applied at the
+        // top of initDatabase, so it exists here on a fresh DB too.
+        db.prepare(SCHEMA_V11_STALE_BLOCKED_SQL).run();
       },
     },
   ];

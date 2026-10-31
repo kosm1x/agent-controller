@@ -1612,3 +1612,63 @@ describe("queue 4l: a confirmation card holds a list of actions", () => {
     expect(renderExpiryNotice(["mail"])).toBe(renderExpiryNotice("mail"));
   });
 });
+
+describe("tool_approvals.task_id (v11): the card's task survives a restart", () => {
+  const tk = "telegram:7777";
+  const args = { to: "a@b.mx", subject: "Hola" };
+  const approvalTaskIds = (): Array<string | null> =>
+    (
+      getDatabase()
+        .prepare("SELECT task_id FROM tool_approvals WHERE thread_key = ? ORDER BY id")
+        .all(tk) as Array<{ task_id: string | null }>
+    ).map((r) => r.task_id);
+
+  beforeEach(() => {
+    initDatabase(":memory:");
+    _resetPendingConfirmationsForTests();
+  });
+  afterEach(() => {
+    _resetPendingConfirmationsForTests();
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  it("the task id is written on every row of the card (and NULL without one)", () => {
+    storePendingConfirmationList(
+      tk,
+      [
+        { toolName: "gmail_send", args, summary: "a" },
+        { toolName: "wp_delete", args: { id: 1 }, summary: "b" },
+      ],
+      undefined,
+      "task-leg",
+    );
+    expect(approvalTaskIds()).toEqual(["task-leg", "task-leg"]);
+    storePendingConfirmation(tk, "gmail_send", args, "c");
+    expect(approvalTaskIds()).toEqual(["task-leg", "task-leg", null]);
+  });
+
+  it("restart (DB fallback): the rehydrated card carries the task id through the confirm", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s", undefined, "task-leg");
+    _resetPendingConfirmationsForTests(); // process restart: the map is gone
+    expect(getPendingConfirmation(tk)?.taskId).toBe("task-leg");
+    expect(resolvePendingConfirmation(tk, "confirmed", "op")?.taskId).toBe("task-leg");
+  });
+
+  it("restart (boot re-arm): the swept card carries the task id through the confirm", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s", undefined, "task-leg");
+    _resetPendingConfirmationsForTests();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(rearmPendingConfirmationsAtBoot(() => null)).toEqual({ armed: 1, lapsed: 0 });
+    expect(getPendingConfirmation(tk)?.taskId).toBe("task-leg");
+    expect(resolvePendingConfirmation(tk, "confirmed", "op")?.taskId).toBe("task-leg");
+  });
+
+  it("restart with a card stored without a task id: the rehydrated card has none", () => {
+    storePendingConfirmation(tk, "gmail_send", args, "s");
+    _resetPendingConfirmationsForTests();
+    const p = getPendingConfirmation(tk);
+    expect(p?.toolName).toBe("gmail_send");
+    expect(p?.taskId).toBeUndefined();
+  });
+});
