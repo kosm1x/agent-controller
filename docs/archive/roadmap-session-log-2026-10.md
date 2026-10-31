@@ -167,3 +167,9 @@ Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-29.
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
 | 2026-10-26 | 4am nightly `kb-backup` blocked the event loop 8-12 s | `d5a44eb3` | Deployed 05:23 UTC build `1d1095e1`; `MCEventLoopBlock` LIVE 05:24 UTC | Proof 04:30 UTC 10-27 FAILED (10.49 s): `kb-backup` was never the reader — see 4aq |
+
+## Moved 2026-10-31 (page back to 60 lines after the blocked-leg row)
+
+| Date | Brief | PR | Outcome | Follow-ups |
+| --- | --- | --- | --- | --- |
+| 2026-10-26 | 4an Rumi SOP guardrail injected a frozen path list | `b918425e` | Deployed 07:05 UTC + PROVEN 07:08 UTC (task 12557) | Rulings 4an (a)–(d) |
