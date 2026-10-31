@@ -26,7 +26,11 @@ vi.mock("./index.js", () => ({
   writeWithRetry: <T>(fn: () => T): T => fn(),
 }));
 
-import { runTasksRetention, pruneTelemetry } from "./retention.js";
+import {
+  runTasksRetention,
+  pruneTelemetry,
+  STALE_BLOCKED_CLOSE_SQL,
+} from "./retention.js";
 
 const NOW = new Date("2026-07-05T12:00:00Z");
 const OLD = "2026-01-01 00:00:00"; // far past the 90d cutoff
@@ -60,6 +64,7 @@ beforeEach(() => {
       parent_task_id TEXT REFERENCES tasks(task_id),
       status TEXT,
       title TEXT DEFAULT 't',
+      error TEXT,
       created_at TEXT,
       updated_at TEXT,
       completed_at TEXT
@@ -229,6 +234,142 @@ describe("runTasksRetention", () => {
     insertTask("old-done-2", "completed", OLD);
     runTasksRetention(dataDir, NOW);
     expect(existsSync(staleFile)).toBe(false);
+  });
+});
+
+describe("stale blocked close (queue 4au)", () => {
+  const D8 = "2026-06-27 12:00:00"; // 8 d before NOW
+  const D6 = "2026-06-29 12:00:00"; // 6 d before NOW
+  const NOW_SQL = "2026-07-05 12:00:00";
+  const row = (id: string) =>
+    db
+      .prepare(
+        "SELECT status, error, updated_at, completed_at FROM tasks WHERE task_id = ?",
+      )
+      .get(id) as {
+      status: string;
+      error: string | null;
+      updated_at: string;
+      completed_at: string | null;
+    };
+
+  it("closes a blocked row idle 8 d as cancelled with the note, completed_at set, never pruned in the same run", () => {
+    db.prepare(
+      "INSERT INTO tasks (task_id, status, created_at, updated_at) VALUES ('b8', 'blocked', ?, ?)",
+    ).run(D8, D8);
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.staleBlockedClosed).toBe(1);
+    expect(r.tasksDeleted).toBe(0);
+    expect(row("b8")).toEqual({
+      status: "cancelled",
+      error: "stale blocked row, closed by retention",
+      updated_at: NOW_SQL,
+      completed_at: NOW_SQL,
+    });
+  });
+
+  it("leaves a blocked row idle 6 d untouched", () => {
+    insertTask("b6", "blocked", D6);
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.staleBlockedClosed).toBe(0);
+    expect(row("b6")).toEqual({
+      status: "blocked",
+      error: null,
+      updated_at: D6,
+      completed_at: D6,
+    });
+  });
+
+  it("never touches needs_context, running, queued, pending or a terminal row idle 8 d", () => {
+    const statuses = [
+      "needs_context",
+      "running",
+      "queued",
+      "pending",
+      "completed",
+      "completed_with_concerns",
+      "failed",
+      "cancelled",
+    ];
+    for (const st of statuses) insertTask(`x-${st}`, st, D8);
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.staleBlockedClosed).toBe(0);
+    for (const st of statuses) {
+      expect(row(`x-${st}`)).toEqual({
+        status: st,
+        error: null,
+        updated_at: D8,
+        completed_at: D8,
+      });
+    }
+  });
+
+  it("boundary: updated_at exactly at the 7 d cutoff is untouched, one second older is closed", () => {
+    insertTask("at-cutoff", "blocked", "2026-06-28 12:00:00"); // NOW - 7 d exactly
+    insertTask("past-cutoff", "blocked", "2026-06-28 11:59:59"); // 1 s older
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.staleBlockedClosed).toBe(1);
+    expect(row("at-cutoff").status).toBe("blocked");
+    expect(row("past-cutoff").status).toBe("cancelled");
+  });
+
+  it("a failing close warns, reports 0 and still runs the prune pass", () => {
+    insertTask("b8", "blocked", D8);
+    insertTask("old-done", "completed", OLD);
+    const realPrepare = db.prepare.bind(db);
+    const prep = vi
+      .spyOn(db, "prepare")
+      .mockImplementation(((sql: string) => {
+        if (sql === STALE_BLOCKED_CLOSE_SQL) throw new Error("SQLITE_BUSY: database is locked");
+        return realPrepare(sql);
+      }) as typeof db.prepare);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = runTasksRetention(dataDir, NOW);
+      expect(r.staleBlockedClosed).toBe(0);
+      expect(r.tasksDeleted).toBe(1);
+      expect(row("b8").status).toBe("blocked");
+      expect(warn).toHaveBeenCalledWith(
+        "[retention] stale blocked close failed:",
+        "SQLITE_BUSY: database is locked",
+      );
+    } finally {
+      prep.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("is idempotent: a second run closes 0", () => {
+    insertTask("b8", "blocked", D8);
+    expect(runTasksRetention(dataDir, NOW).staleBlockedClosed).toBe(1);
+    expect(runTasksRetention(dataDir, NOW).staleBlockedClosed).toBe(0);
+    expect(row("b8").status).toBe("cancelled");
+  });
+
+  it("a row closed by this rule is pruned by the terminal pass once past the 90 d window", () => {
+    insertTask("b8", "blocked", D8);
+    expect(runTasksRetention(dataDir, NOW).staleBlockedClosed).toBe(1);
+    const at89 = new Date(NOW.getTime() + 89 * 86_400_000);
+    expect(runTasksRetention(dataDir, at89).tasksDeleted).toBe(0);
+    const at91 = new Date(NOW.getTime() + 91 * 86_400_000);
+    const r = runTasksRetention(dataDir, at91);
+    expect(r.staleBlockedClosed).toBe(0);
+    expect(r.tasksDeleted).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
+  });
+
+  it("pins the statement and its call site: prepared inside runTasksRetention, before the prune pass", () => {
+    expect(STALE_BLOCKED_CLOSE_SQL).toBe(
+      "UPDATE tasks SET status = 'cancelled', error = 'stale blocked row, closed by retention', updated_at = ?, completed_at = ? WHERE status = 'blocked' AND updated_at < ?",
+    );
+    const src = readFileSync(new URL("./retention.ts", import.meta.url), "utf8");
+    const fn = src.indexOf("export function runTasksRetention(");
+    const call = src.indexOf(".prepare(STALE_BLOCKED_CLOSE_SQL)");
+    const prune = src.indexOf("SELECT task_id, parent_task_id FROM tasks");
+    expect(fn).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(fn);
+    expect(prune).toBeGreaterThan(call);
+    expect(src).toContain("const STALE_BLOCKED_DAYS = 7;");
   });
 });
 

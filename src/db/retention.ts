@@ -10,6 +10,9 @@
  *  - Only TERMINAL statuses are ever touched (completed, completed_with_concerns,
  *    failed, cancelled). In-flight work (running/pending/queued/needs_context)
  *    is excluded by the status filter, not by timing.
+ *  - One exception, an UPDATE not a delete (queue 4au): a `blocked` row idle
+ *    for more than STALE_BLOCKED_DAYS is closed as `cancelled` first, then
+ *    ages out under the normal window like any other terminal row.
  *  - A parent task is only deleted when its ENTIRE subtree is also being
  *    deleted (fixpoint exclusion) — no orphaned children, and an old parent
  *    with a live retry-child survives.
@@ -37,6 +40,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { getDatabase, writeWithRetry } from "./index.js";
+import { errMsg } from "../lib/err-msg.js";
 
 /** Keep sweep archives for a year, then drop them (best-effort). */
 const ARCHIVE_RETENTION_MS = 365 * 86_400_000;
@@ -74,6 +78,20 @@ const TERMINAL_STATUSES = [
   "cancelled",
 ] as const;
 
+/**
+ * Operator ruling 2026-10-31 (queue 4au): a `blocked` task idle for more than
+ * 7 days is terminal. Nothing else ever closes one (scope asks the router
+ * could not re-run, BLOCKED replies that are not scope asks, scope asks inside
+ * scheduled tasks). 7 matches STALLED_DAYS in src/detection/stalled-tasks.ts:
+ * a row the stall detector starts flagging is the row this closes, so it is
+ * flagged for at most one sweep instead of forever.
+ */
+const STALE_BLOCKED_DAYS = 7;
+
+/** Params: closed-at (updated_at), closed-at (completed_at), idle cutoff. */
+export const STALE_BLOCKED_CLOSE_SQL =
+  "UPDATE tasks SET status = 'cancelled', error = 'stale blocked row, closed by retention', updated_at = ?, completed_at = ? WHERE status = 'blocked' AND updated_at < ?";
+
 /** Per-transaction delete batch — bounds write-lock hold time. */
 const BATCH_SIZE = 500;
 
@@ -85,6 +103,8 @@ export interface RetentionReport {
   runsDeleted: number;
   outcomesDeleted: number;
   archivePath: string | null;
+  /** `blocked` rows idle > STALE_BLOCKED_DAYS closed as `cancelled` this run. */
+  staleBlockedClosed: number;
 }
 
 /**
@@ -140,6 +160,23 @@ export function runTasksRetention(
     .replace("T", " ")
     .slice(0, 19);
 
+  // Queue 4au: close stale `blocked` rows BEFORE the prune pass. They get
+  // completed_at = now, so the pass below never deletes them in the same run;
+  // they age out under the normal window later. A failure here (busy db)
+  // must never skip the day's prune pass: warn and continue with 0.
+  const closedAt = cutoffFor(now, 0);
+  let staleBlockedClosed = 0;
+  try {
+    staleBlockedClosed = writeWithRetry(
+      () =>
+        db
+          .prepare(STALE_BLOCKED_CLOSE_SQL)
+          .run(closedAt, closedAt, cutoffFor(now, STALE_BLOCKED_DAYS)).changes,
+    );
+  } catch (err) {
+    console.warn("[retention] stale blocked close failed:", errMsg(err));
+  }
+
   const statusList = TERMINAL_STATUSES.map(() => "?").join(",");
   // Age by the latest lifecycle timestamp we have — a task completed recently
   // but created long ago must NOT be deleted.
@@ -162,6 +199,7 @@ export function runTasksRetention(
     runsDeleted: 0,
     outcomesDeleted: 0,
     archivePath: null,
+    staleBlockedClosed,
   };
   if (candidates.length === 0) return report;
 

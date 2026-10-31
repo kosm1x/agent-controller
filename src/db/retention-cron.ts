@@ -56,13 +56,14 @@ export function stopRetentionCron(): void {
 export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
   try {
     const r = runTasksRetention();
-    if (r.tasksDeleted > 0 || r.skippedParents > 0) {
+    if (r.tasksDeleted > 0 || r.skippedParents > 0 || r.staleBlockedClosed > 0) {
       log.info("retention sweep complete", {
         cutoff: r.cutoff,
         tasksDeleted: r.tasksDeleted,
         runsDeleted: r.runsDeleted,
         outcomesDeleted: r.outcomesDeleted,
         skippedParents: r.skippedParents,
+        staleBlockedClosed: r.staleBlockedClosed,
         archive: r.archivePath,
       });
     }
