@@ -173,3 +173,9 @@ Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-29.
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
 | 2026-10-26 | 4an Rumi SOP guardrail injected a frozen path list | `b918425e` | Deployed 07:05 UTC + PROVEN 07:08 UTC (task 12557) | Rulings 4an (a)–(d) |
+
+## Moved 2026-11-03 (page back to 60 lines after the NorthStar row)
+
+| Date | Brief | PR | Outcome | Follow-ups |
+| --- | --- | --- | --- | --- |
+| 2026-10-26 | 4ao `MCEventLoopBlock` on tool calls: `glob`/`list_dir` async (`6e40e6cc`, deployed 20:24 UTC, unproven) + sweep part 1 git/gh/jarvis_dev async (`4a297dbe`, deployed 21:11 UTC build `e29d4c6b`) + part 2 item 1 vps/self-repair async (`61ee3be6`, deployed 21:40 UTC build `d1105b03`) + item 2 rituals async (`46620ac6`, deployed 22:28 UTC build `eceed6b4`) | `6e40e6cc` `4a297dbe` `61ee3be6` `46620ac6` | CI green; proof = next wide glob / git push turn < 1 s | Sweep part 2 + rulings 4ao (e)-(h) |
