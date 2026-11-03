@@ -56,11 +56,22 @@ describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
   it("changes when a new top-level directory or project appears", () => {
     regenerateIndex();
     add("projects/beta/README.md");
-    add("NorthStar/goal.md");
+    add("inbox/new.md");
     regenerateIndex();
     expect(state.written[1]).not.toBe(state.written[0]);
     expect(state.written[1]).toContain("[[projects/beta/|beta]]");
-    expect(state.written[1]).toContain("[[NorthStar/|NorthStar]]");
+    expect(state.written[1]).toContain("[[inbox/|inbox]]");
+  });
+
+  it("NorthStar retired (2026-11-03): no NorthStar dir or line even while rows exist", () => {
+    add("NorthStar/goals/y.md");
+    add("NorthStar/x.md");
+    add("northstar/lower.md");
+    regenerateIndex();
+    const index = state.written[0]!;
+    expect(index).not.toMatch(/northstar/i);
+    expect(index).toContain("[[knowledge/|knowledge]]");
+    expect(index).toContain("project_list + el day-log");
   });
 });
 

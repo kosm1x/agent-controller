@@ -780,3 +780,65 @@ describe("list_dir", () => {
     expect(result.entries?.length === 0 || result.error).toBeTruthy();
   });
 });
+
+// NorthStar retired (operator ruling 2026-11-03, audit R1-C1): the KB mirror's
+// NorthStar/ tree is invisible to grep / glob / list_dir in any casing. A fake
+// `jarvis-kb` tree under the temp dir — never the live KB.
+describe("NorthStar retired — grep / glob / list_dir refuse jarvis-kb/NorthStar", () => {
+  let BASE: string;
+  let KB: string;
+
+  beforeAll(() => {
+    BASE = mkdtempSync(join(tmpdir(), "mc-test-retired-"));
+    KB = `${BASE}/jarvis-kb`;
+    mkdirSync(`${KB}/NorthStar/goals`, { recursive: true });
+    mkdirSync(`${KB}/projects/alpha`, { recursive: true });
+    writeFileSync(`${KB}/NorthStar/goals/g1.md`, "needle-ns\n");
+    writeFileSync(`${KB}/projects/alpha/README.md`, "needle-ns\n");
+  });
+
+  afterAll(() => {
+    rmSync(BASE, { recursive: true, force: true });
+  });
+
+  it("grep and glob refuse a NorthStar path in any casing, slash or `..` spelling", async () => {
+    for (const p of [
+      `${KB}/NorthStar`,
+      `${KB}/NorthStar/`,
+      `${KB}/northstar/goals`,
+      `${KB}/NORTHSTAR/goals/g1.md`,
+      `${KB}/projects/../NorthStar/goals/g1.md`,
+    ]) {
+      const g = JSON.parse(await grepTool.execute({ pattern: "needle-ns", path: p }));
+      expect(String(g.error), `grep ${p}`).toMatch(/NORTHSTAR_RETIRED/);
+      const f = JSON.parse(await globTool.execute({ pattern: "*", path: p }));
+      expect(String(f.error), `glob ${p}`).toMatch(/NORTHSTAR_RETIRED/);
+      const l = JSON.parse(await listDirTool.execute({ path: p }));
+      expect(String(l.error), `list_dir ${p}`).toMatch(/NORTHSTAR_RETIRED/);
+    }
+  });
+
+  it("a search of the KB root drops every NorthStar hit and keeps the rest", async () => {
+    const g = JSON.parse(await grepTool.execute({ pattern: "needle-ns", path: KB }));
+    const gText = JSON.stringify(g);
+    expect(gText).toContain("projects/alpha/README.md");
+    expect(gText).not.toMatch(/NorthStar/i);
+
+    const f = JSON.parse(await globTool.execute({ pattern: "*.md", path: KB }));
+    expect(f.files.join("\n")).toContain("README.md");
+    expect(f.files.join("\n")).not.toMatch(/NorthStar/i);
+
+    for (const recursive of [true, false]) {
+      const l = JSON.parse(await listDirTool.execute({ path: KB, recursive }));
+      expect(l.entries.join("\n"), `recursive=${recursive}`).toContain("projects");
+      expect(l.entries.join("\n"), `recursive=${recursive}`).not.toMatch(/NorthStar/i);
+    }
+  });
+
+  it("a symlink into the NorthStar tree is refused by its resolved path", async () => {
+    const link = `${BASE}/ns-link`;
+    symlinkSync(`${KB}/NorthStar`, link);
+    const g = JSON.parse(await grepTool.execute({ pattern: "needle-ns", path: link }));
+    expect(String(g.error)).toMatch(/NORTHSTAR_RETIRED/);
+  });
+});

@@ -397,6 +397,7 @@ export function validatePathSafety(
  * (audit 2026-09-22 R1 W4).
  */
 export function readDenylistReason(probe: string): string | null {
+  if (NORTHSTAR_DISK_RE.test(probe)) return NORTHSTAR_DISK_REASON;
   if (PROC_SECRET_RE.test(probe)) {
     return `'${probe}' is a read-blocked process-state file`;
   }
@@ -581,6 +582,79 @@ export function standingOrdersGuard(
       "through jarvis_propose_directive (change_type add | modify | remove) → " +
       "operator approval via jarvis_apply_proposal. Direct write/update/delete/move " +
       "is refused here — do not retry with confirmed:true; propose the change instead.",
+    paths: hits,
+  };
+}
+
+// NorthStar retired (operator ruling 2026-11-03): tasks, goals and objectives
+// come from the projects list + the day-log. The `NorthStar/` namespace stays in
+// the registry (and in MANAGED_NAMESPACES, so the hourly walk never resurrects
+// rows) until the operator removes it, but no model-facing file tool reads,
+// lists, searches, writes, moves or deletes it: a structural refusal, not
+// prompt wording. Matched case-insensitively on the canonical path, so
+// `northstar/x.md`, `/NorthStar/x.md` and `knowledge/../NorthStar/x.md` all hit.
+const NORTHSTAR_RETIRED_PREFIX = "northstar/";
+
+export interface NorthStarRetiredRefusal {
+  error: "NORTHSTAR_RETIRED";
+  message: string;
+  paths: string[];
+}
+
+const isNorthStarRel = (rel: string): boolean =>
+  rel === NORTHSTAR_RETIRED_PREFIX.slice(0, -1) ||
+  rel.startsWith(NORTHSTAR_RETIRED_PREFIX);
+
+/**
+ * True when a KB path is the retired NorthStar tree or its directory — on the
+ * canonical path OR the raw spelling (lower-cased, leading `./` and `/`
+ * dropped), so `NorthStar/../x.md` is refused rather than stored as a row
+ * whose raw path still starts with `NorthStar/` (audit R1).
+ */
+export function isNorthStarPath(p: string, kbRoot: string): boolean {
+  const raw = p
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^(?:\.?\/)+/, "")
+    .toLowerCase();
+  return isNorthStarRel(raw) || isNorthStarRel(canonicalKbPath(p, kbRoot));
+}
+
+/**
+ * Disk-side twin for the absolute-path tools: the KB mirror's `NorthStar/`
+ * (`<kbRoot>/NorthStar`) is refused to file_read/write/delete, grep, glob,
+ * list_dir (via `readDenylistReason`, basename-bound on `/jarvis-kb/`) and to
+ * the shell (shell.ts), with this one stable reason (audit R1-C1).
+ */
+export const NORTHSTAR_DISK_REASON =
+  "NORTHSTAR_RETIRED: jarvis-kb/NorthStar/ is retired — tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/)";
+const NORTHSTAR_DISK_RE = /\/jarvis-kb\/northstar(?:\/|$)/i;
+
+/** True when an absolute path is `<kbRoot>/NorthStar` or under it (any casing). */
+export function isNorthStarDiskPath(
+  absolutePath: string,
+  kbRoot: string,
+): boolean {
+  const rel = relative(resolve(kbRoot), resolve(absolutePath)).toLowerCase();
+  return isNorthStarRel(rel);
+}
+
+/**
+ * Refusal when any path targets `NorthStar/` in any spelling, else null.
+ * Non-string entries are ignored, as in `standingOrdersGuard`.
+ */
+export function northStarRetiredGuard(
+  paths: ReadonlyArray<unknown>,
+  kbRoot: string,
+): NorthStarRetiredRefusal | null {
+  const hits = paths.filter(
+    (p): p is string => typeof p === "string" && isNorthStarPath(p, kbRoot),
+  );
+  if (hits.length === 0) return null;
+  return {
+    error: "NORTHSTAR_RETIRED",
+    message:
+      "NorthStar/ is retired: tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/) — do not retry NorthStar/.",
     paths: hits,
   };
 }

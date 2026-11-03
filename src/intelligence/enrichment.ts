@@ -15,6 +15,8 @@ import { queryOutcomes } from "../db/task-outcomes.js";
 import { getSkill, type SkillRow } from "../db/skills.js";
 import { retrieveSkills } from "../skills/retrieval.js";
 import { closeOpenFence } from "../messaging/kb-injection.js";
+import { isNorthStarPath } from "../tools/builtin/immutable-core.js";
+import { getJarvisKbRoot } from "../db/jarvis-fs.js";
 
 export interface EnrichmentResult {
   contextBlock: string;
@@ -149,6 +151,8 @@ export async function enrichContext(
           const allResults: typeof results = [];
           for (const r of results) {
             if (seenPaths.has(r.path)) continue;
+            // NorthStar is retired (2026-11-03): its rows never reach the prompt.
+            if (isNorthStarPath(r.path, getJarvisKbRoot())) continue;
             // Session diversity: cap per source_task_id
             const sourceKey =
               (r as { source_task_id?: string }).source_task_id ?? "unknown";

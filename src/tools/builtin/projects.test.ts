@@ -114,11 +114,23 @@ describe("project_get — credential masking", () => {
         "URL: https://plain.example.com",
         "Repo: https://github.com/acme/plain",
         "Repo (ui): https://github.com/acme/plain-ui",
-        "NorthStar goal: goal-1",
+        "Legacy commit_goal_id: goal-1",
       ].join("\n"),
     );
     expect(out).not.toContain(CREDENTIAL_FACT_PLACEHOLDER);
     expect(out).not.toContain("[oculto");
+  });
+
+  it("NorthStar retired (2026-11-03): no project output or description points at NorthStar", async () => {
+    createProject("linked", "Linked", { commit_goal_id: "goal-9" });
+    const block = formatProjectsBlock();
+    expect(block).toContain("(linked)");
+    expect(block).not.toContain("goal-9");
+    expect(block).not.toMatch(/northstar/i);
+    expect(await projectGetTool.execute({ slug: "linked" })).not.toMatch(/northstar/i);
+    for (const t of [projectListTool, projectGetTool, projectUpdateTool]) {
+      expect(JSON.stringify(t.definition)).not.toMatch(/northstar/i);
+    }
   });
 
   it("masks a URL that carries user:pass@ (site, repo and repo_* keys)", async () => {

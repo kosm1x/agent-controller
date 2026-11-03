@@ -16,7 +16,7 @@ export interface PromptToolFlags {
   hasWordpress: boolean;
   hasCoding: boolean;
   hasGoogle: boolean;
-  hasNorthStar: boolean;
+  hasJarvisFiles: boolean;
   hasResearch: boolean;
   hasUserFacts: boolean;
   hasWebResearch: boolean;
@@ -36,7 +36,7 @@ export function detectToolFlags(tools: string[]): PromptToolFlags {
     hasGoogle: tools.some((t) =>
       ["gmail_send", "calendar_list", "gdrive_list"].includes(t),
     ),
-    hasNorthStar: tools.includes("jarvis_file_read"), // NorthStar visions live in jarvis files
+    hasJarvisFiles: tools.includes("jarvis_file_read"), // jarvis KB file tools in scope
     hasResearch: tools.some((t) =>
       ["gemini_upload", "gemini_research", "gemini_audio_overview"].includes(t),
     ),
@@ -174,7 +174,7 @@ La fecha y hora actuales llegan al inicio del mensaje del usuario (formato "[Hoy
 ${actOnRequestLine}Prioriza ESCRITURA (gsheets_write, wp_publish, gmail_send) sobre lectura. Las rondas son LIMITADAS — si ya tienes datos de la conversación, ESCRIBE directo sin releer.
 
 ## REGLA CRÍTICA: Reporta lo que hiciste
-Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, NorthStar, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
+Después de llamar herramientas que crean, modifican, o eliminan elementos (WordPress, Google, proyectos, archivos, etc.), tu respuesta DEBE empezar reportando exactamente qué se creó/modificó/eliminó, incluyendo nombres, IDs, y la jerarquía donde se ubicó. Solo después de reportar tus acciones puedes mencionar limitaciones o pasos adicionales.`;
 }
 
 /**
@@ -197,7 +197,6 @@ INDEX.md (always-read) mapea toda la estructura. Léelo primero para orientarte.
 
 Estructura:
 - directives/ — Reglas obligatorias (enforce). NO las modifiques.
-- NorthStar/ — Visiones, metas, objetivos, tareas. Muestra tal cual, no interpretes.
 - projects/ — Una carpeta por proyecto. Lee README.md primero.
 - knowledge/ — Personas (people/), procedimientos (procedures/), preferencias (preferences/), dominio (domain/).
 - logs/ — Day logs (day-logs/), sesiones pasadas (sessions/), decisiones (decisions/).
@@ -226,9 +225,9 @@ export function capabilitiesSection(flags: PromptToolFlags): string {
   // promise a capability the runner cannot deliver. Without these gates the
   // model hallucinates `jarvis_file_*` / `user_fact_set` / `browser__*` calls
   // and the executor surfaces "unknown tool" errors back to the user.
-  if (flags.hasNorthStar)
+  if (flags.hasJarvisFiles)
     caps.push(
-      `- **NorthStar**: Visiones, metas, objetivos y tareas de Fede viven en NorthStar/ (jarvis_file_read/write)`,
+      `- **Tareas, metas y objetivos**: salen de la lista de proyectos (project_list, projects/{slug}/README.md) más el day-log (logs/day-logs/). Cada tarea pertenece a un proyecto: crearla, actualizarla o completarla = jarvis_file_update con append de una línea de tarea fechada al FINAL de projects/{slug}/README.md (queda bajo "## Tareas" solo si ese encabezado es la última sección; el append nunca inserta dentro de una sección; jarvis_file_write solo si ese README aún no existe)`,
     );
   if (flags.hasGoogle)
     caps.push(
@@ -334,8 +333,9 @@ Si browser__goto no está disponible, usa web_read como alternativa.`;
 export function toolFirstSection(flags: PromptToolFlags): string {
   const lines = [
     `- "Qué reportes/schedules tienes?" → list_schedules PRIMERO, luego responde`,
-    `- "Qué tareas hay?" → jarvis_file_read (NorthStar/) PRIMERO, luego responde`,
-    `- "Qué metas/objetivos tengo?" → jarvis_file_read (NorthStar/) PRIMERO`,
+    `- "Qué tareas hay?" → project_list PRIMERO + el day-log (logs/day-logs/), luego responde`,
+    `- "Qué metas/objetivos tengo?" → project_list PRIMERO + el day-log (logs/day-logs/)`,
+    `- "Crea/actualiza/completa una tarea" → jarvis_file_read de projects/{slug}/README.md, luego jarvis_file_update con append de una línea de tarea fechada al FINAL del README (no dentro de una sección; jarvis_file_write solo si ese README aún no existe). Si ningún proyecto corresponde, pregunta a Fede en cuál antes de escribir; NUNCA inventes una carpeta nueva de primer nivel`,
     `- "Qué skills tienes?" → skill_list PRIMERO`,
     `- "Cuánto llevo de cuota?" → consultar la herramienta correspondiente PRIMERO`,
   ];

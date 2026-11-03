@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -3935,5 +3936,81 @@ describe("pip inside venvs (operator ruling 2026-10-21, queue 4ae)", () => {
     // Residue: ensurepip installs only the bundled pip, wherever it points.
     allowed("python3 -m ensurepip --user");
     allowed("python3 -m ensurepip --root /");
+  });
+});
+
+// NorthStar retired (operator ruling 2026-11-03, audit R1-C1): shell_exec
+// refuses any command that names the KB mirror's NorthStar tree, whatever the
+// verb, and a write that resolves into it through a symlink. Text-only
+// validation — nothing here executes or reads the live KB.
+describe("NorthStar retired — shell_exec refuses jarvis-kb/NorthStar", () => {
+  const REASON =
+    "NORTHSTAR_RETIRED: jarvis-kb/NorthStar/ is retired — tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/)";
+
+  it("refuses reads, searches, listings and writes in any casing or spelling", () => {
+    for (const cmd of [
+      "cat /root/claude/jarvis-kb/NorthStar/goals/g1.md",
+      "ls /root/claude/jarvis-kb/NorthStar",
+      "ls /root/claude/jarvis-kb/NorthStar/",
+      "grep -rn meta /root/claude/jarvis-kb/northstar",
+      "find /root/claude/jarvis-kb/NORTHSTAR -name '*.md'",
+      `python3 -c "print(open('/root/claude/jarvis-kb/NorthStar/x.md').read())"`,
+      `cat "/root/claude/jarvis-kb/"NorthStar/x.md`,
+      "cat /root/claude/jarvis-kb//NorthStar/x.md",
+      "cat /root/claude/jarvis-kb/projects/../NorthStar/x.md",
+      "echo x > /root/claude/jarvis-kb/NorthStar/new.md",
+      "mv /root/claude/jarvis-kb/NorthStar/x.md /tmp/x.md",
+    ]) {
+      const r = validateShellCommand(cmd);
+      expect(r.allowed, cmd).toBe(false);
+      expect(String(r.reason), cmd).toContain(REASON);
+    }
+  });
+
+  it("refuses the legacy mission-control/data/jarvis/NorthStar mirror (audit R2 W-R2-1)", () => {
+    for (const cmd of [
+      "cat /root/claude/mission-control/data/jarvis/NorthStar/goals/a.md",
+      "cat data/jarvis/northstar/x",
+      "ls ./data/jarvis/NorthStar/",
+      "grep -rn meta /root/claude/mission-control/data/jarvis/projects/../NORTHSTAR",
+      "echo x > /root/claude/mission-control/data/jarvis/NorthStar/new.md",
+    ]) {
+      const r = validateShellCommand(cmd);
+      expect(r.allowed, cmd).toBe(false);
+      expect(String(r.reason), cmd).toContain(REASON);
+    }
+  });
+
+  it("leaves neighbours alone", () => {
+    for (const cmd of [
+      "ls /root/claude/mission-control/data/jarvis-foo/NorthStar",
+      "cat mydata/jarvis/NorthStar/x", // pins the lookbehind: `mydata/` is not data/
+      "cat /root/claude/mission-control/mydata/jarvis/NorthStar/x",
+      "cat /root/claude/mission-control/data/jarvis/projects/northstar-watch/x",
+      "cat data/jarvis/projects/northstar-watch/x",
+      "ls /root/claude/jarvis-kb/projects",
+      "cat /root/claude/jarvis-kb/northstar-notes/x.md",
+      "grep -rn NorthStar src/messaging",
+    ]) {
+      expect(String(validateShellCommand(cmd).reason ?? ""), cmd).not.toMatch(/NORTHSTAR_RETIRED/);
+    }
+  });
+
+  it("refuses a write whose symlink-resolved target is in the tree", () => {
+    const base = mkdtempSync(join(tmpdir(), "mc-shell-retired-"));
+    try {
+      mkdirSync(`${base}/jarvis-kb/NorthStar`, { recursive: true });
+      symlinkSync(`${base}/jarvis-kb/NorthStar`, `${base}/link`);
+      const r = validateShellCommand(`echo x > ${base}/link/new.md`);
+      expect(r.allowed).toBe(false);
+      expect(String(r.reason)).toContain(REASON);
+      mkdirSync(`${base}/data/jarvis/NorthStar`, { recursive: true });
+      symlinkSync(`${base}/data/jarvis/NorthStar`, `${base}/link2`);
+      const r2 = validateShellCommand(`echo x > ${base}/link2/new.md`);
+      expect(r2.allowed).toBe(false);
+      expect(String(r2.reason)).toContain(REASON);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

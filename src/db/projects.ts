@@ -379,8 +379,6 @@ export function formatProjectsBlock(): string {
       parts.push(
         `  URL: ${projectSecretDisplay(p.slug, "urls", "site", p.urls.site)}`,
       );
-    if (p.commit_goal_id)
-      parts.push(`  Linked NorthStar goal: ${p.commit_goal_id}`);
     if (p.description) parts.push(`  ${p.description.slice(0, 100)}`);
     // Show credential keys (not values) so LLM knows what's available
     const credKeys = Object.keys(p.credentials);

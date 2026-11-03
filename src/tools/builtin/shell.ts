@@ -9,7 +9,7 @@ import { exec, execFileSync, spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath, isBlockedEnvFile } from "./immutable-core.js";
+import { isImmutableCorePath, isBlockedEnvFile, NORTHSTAR_DISK_REASON } from "./immutable-core.js";
 import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
@@ -681,6 +681,10 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
   { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
   { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },
+  // NorthStar retired (2026-11-03): any verb naming the KB mirror's NorthStar tree or the legacy
+  // mission-control/data/jarvis/ mirror's (absolute, or relative from the default cwd), any casing, also after a
+  // `..` hop inside either; same text-shaped residuals as above (a recursive read of the parent that never names it).
+  { pattern: /(?:\/jarvis-kb|(?<![\w.-])data\/jarvis)\/(?:\S*\/\.\.\/)?northstar(?![\w.-])/i, reason: NORTHSTAR_DISK_REASON },
 ];
 
 /** `.env`-shaped filenames: absolute, `~`/`$HOME`-headed, or a standalone
@@ -848,6 +852,13 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
     pattern: /\/jarvis-kb\/directives(?:\/|$)/i,
     reason:
       "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive",
+  },
+  {
+    // NorthStar retired (2026-11-03): sibling of directives/ for resolved
+    // write targets (a symlink into the tree), KB mirror and the legacy
+    // data/jarvis/ mirror. Reads are refused by name in SECRET_PATH_PATTERNS below.
+    pattern: /\/(?:jarvis-kb|data\/jarvis)\/northstar(?:\/|$)/i,
+    reason: NORTHSTAR_DISK_REASON,
   },
   {
     // S6 WS1 (R1-C1): a project record (`projects/<slug>/project.md`) is the

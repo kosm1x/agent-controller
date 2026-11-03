@@ -41,6 +41,7 @@ import {
   jarvisFilesBatchWriteTool,
   jarvisFilesBatchDeleteTool,
   jarvisFileMoveTool,
+  jarvisFileSearchTool,
 } from "./jarvis-files.js";
 import { getFilesByQualifier } from "../../db/jarvis-fs.js";
 import {
@@ -578,12 +579,12 @@ describe("jarvis_files_batch_delete", () => {
 
   it("returns CONFIRMATION_REQUIRED when any path is precious (no deletes happen)", async () => {
     const result = await jarvisFilesBatchDeleteTool.execute({
-      paths: ["tmp/a.md", "NorthStar/visions/x.md", "tmp/b.md"],
+      paths: ["tmp/a.md", "knowledge/people/x.md", "tmp/b.md"],
     });
     const parsed = JSON.parse(result);
     expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
     expect(parsed.precious_paths).toHaveLength(1);
-    expect(parsed.precious_paths[0].path).toBe("NorthStar/visions/x.md");
+    expect(parsed.precious_paths[0].path).toBe("knowledge/people/x.md");
     // CRITICAL: no DELETE runs before confirmation — even non-precious
     // siblings are NOT deleted on the first call.
     expect(mockRun).not.toHaveBeenCalled();
@@ -592,7 +593,7 @@ describe("jarvis_files_batch_delete", () => {
   it("with confirmed:true, precious paths are deleted alongside non-precious", async () => {
     mockRun.mockReturnValue({ changes: 1 });
     const result = await jarvisFilesBatchDeleteTool.execute({
-      paths: ["tmp/a.md", "NorthStar/visions/x.md"],
+      paths: ["tmp/a.md", "knowledge/people/x.md"],
       confirmed: true,
     });
     const parsed = JSON.parse(result);
@@ -656,7 +657,7 @@ describe("jarvis_files_batch_delete", () => {
 
   it("precious-path scan sees the deduped set (one precious dup → one precious entry)", async () => {
     const result = await jarvisFilesBatchDeleteTool.execute({
-      paths: ["NorthStar/x.md", "NorthStar/x.md"],
+      paths: ["knowledge/x.md", "knowledge/x.md"],
     });
     const parsed = JSON.parse(result);
     expect(parsed.error).toBe("CONFIRMATION_REQUIRED");
@@ -1256,5 +1257,177 @@ describe("project record (projects/<slug>/project.md) — refused by the KB file
       ),
     ).toBeNull();
     expect(projectRecordGuard([REC, 7], "/srv/kb")?.paths).toEqual([REC]);
+  });
+});
+
+describe("NorthStar retired (operator ruling 2026-11-03) — refused by every KB file tool", () => {
+  const NS_PATHS = ["NorthStar/x.md", "northstar/x.md", "NorthStar/goals/y.md"];
+  const refused = (raw: string) => {
+    const r = JSON.parse(raw);
+    expect(r.error).toBe("NORTHSTAR_RETIRED");
+    expect(r.message).toBe(
+      "NorthStar/ is retired: tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/) — do not retry NorthStar/.",
+    );
+    return r as { paths: string[] };
+  };
+  const row = (path: string) => ({
+    path,
+    title: path,
+    tags: "[]",
+    qualifier: "reference",
+    priority: 50,
+    size: 10,
+    updated_at: "2026-11-01",
+  });
+
+  it.each(NS_PATHS)("jarvis_file_read refuses %s before reading the row", async (path) => {
+    expect(refused(await jarvisFileReadTool.execute({ path })).paths).toEqual([path]);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it.each(NS_PATHS)("jarvis_file_write refuses %s and runs no statement", async (path) => {
+    refused(await jarvisFileWriteTool.execute({ path, title: "x", content: "x" }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it.each(NS_PATHS)("jarvis_file_update refuses %s", async (path) => {
+    refused(await jarvisFileUpdateTool.execute({ path, append: "x" }));
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it.each(NS_PATHS)("jarvis_file_delete refuses %s even with confirmed:true", async (path) => {
+    refused(await jarvisFileDeleteTool.execute({ path, confirmed: true }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("jarvis_file_move refuses NorthStar/ on either side", async () => {
+    refused(await jarvisFileMoveTool.execute({ old_path: "NorthStar/goals/y.md", new_path: "knowledge/y.md" }));
+    refused(await jarvisFileMoveTool.execute({ old_path: "knowledge/y.md", new_path: "northstar/x.md" }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("the batch tools refuse a mixed batch whole, before any write", async () => {
+    const w = refused(
+      await jarvisFilesBatchWriteTool.execute({
+        files: [
+          { path: "knowledge/ok.md", title: "ok", content: "ok" },
+          ...NS_PATHS.map((path) => ({ path, title: "x", content: "x" })),
+        ],
+      }),
+    );
+    expect(w.paths).toEqual(NS_PATHS);
+    const d = refused(
+      await jarvisFilesBatchDeleteTool.execute({
+        paths: ["knowledge/ok.md", ...NS_PATHS],
+        confirmed: true,
+      }),
+    );
+    expect(d.paths).toEqual(NS_PATHS);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("other spellings resolve to NorthStar/ and are refused too", async () => {
+    for (const path of ["/NorthStar/x.md", "knowledge/../NorthStar/x.md", "NORTHSTAR/tasks/t.md", "NorthStar"]) {
+      refused(await jarvisFileReadTool.execute({ path }));
+    }
+    // A sibling name is NOT the retired tree.
+    mockGet.mockReturnValueOnce(undefined);
+    const r = JSON.parse(await jarvisFileReadTool.execute({ path: "northstar-notes/x.md" }));
+    expect(r.error).toBe("File not found: northstar-notes/x.md");
+  });
+
+  it.each(["NorthStar/../x.md", "./NorthStar/../knowledge/x.md"])(
+    "a raw NorthStar/ spelling is refused even when it canonicalises elsewhere (%s, audit R1)",
+    async (path) => {
+      refused(await jarvisFileWriteTool.execute({ path, title: "x", content: "x" }));
+      refused(await jarvisFileReadTool.execute({ path }));
+      expect(mockRun).not.toHaveBeenCalled();
+      expect(mockGet).not.toHaveBeenCalled();
+    },
+  );
+
+  it("jarvis_file_read drops a NorthStar path from a normal file's related list (audit R1-W5)", async () => {
+    mockGet
+      .mockReturnValueOnce({
+        ...row("knowledge/k.md"),
+        content: "body",
+        condition: null,
+        related_to: '["NorthStar/goals/q4.md","projects/alpha/README.md"]',
+      })
+      .mockReturnValueOnce({ ...row("NorthStar/goals/q4.md"), content: "x", related_to: "[]" })
+      .mockReturnValueOnce({ ...row("projects/alpha/README.md"), content: "x", related_to: "[]" });
+    const r = JSON.parse(await jarvisFileReadTool.execute({ path: "knowledge/k.md" }));
+    expect(r.related.map((f: { path: string }) => f.path)).toEqual(["projects/alpha/README.md"]);
+    expect(JSON.stringify(r)).not.toMatch(/northstar/i);
+  });
+
+  it.each(["NorthStar/", "northstar/goals/", "NorthStar"])(
+    "jarvis_file_list refuses prefix %s before querying",
+    async (prefix) => {
+      refused(await jarvisFileListTool.execute({ prefix }));
+      expect(mockAll).not.toHaveBeenCalled();
+    },
+  );
+
+  it("jarvis_file_list never shows NorthStar rows in any other listing", async () => {
+    mockAll.mockReturnValueOnce([
+      row("NorthStar/goals/y.md"),
+      row("northstar/x.md"),
+      row("projects/alpha/README.md"),
+    ]);
+    const out = await jarvisFileListTool.execute({ prefix: "N" });
+    expect(out).toContain("1 files");
+    expect(out).toContain("projects/alpha/README.md");
+    expect(out).not.toMatch(/northstar/i);
+  });
+
+  it("jarvis_file_read by tags drops NorthStar rows", async () => {
+    mockAll.mockReturnValueOnce([
+      { ...row("NorthStar/tasks/t.md"), tags: '["meta"]' },
+      { ...row("knowledge/k.md"), tags: '["meta"]' },
+    ]);
+    const r = JSON.parse(await jarvisFileReadTool.execute({ tags: ["meta"] }));
+    expect(r.total).toBe(1);
+    expect(r.results.map((f: { path: string }) => f.path)).toEqual(["knowledge/k.md"]);
+  });
+
+  it("jarvis_file_search drops NorthStar hits and keeps the visible limit", async () => {
+    const hit = (path: string) => ({
+      path,
+      title: path,
+      content: "meta trimestral",
+      size: 15,
+      snip: "«meta» trimestral",
+    });
+    mockAll.mockReturnValueOnce([
+      hit("NorthStar/goals/q4.md"),
+      hit("northstar/tasks/t.md"),
+      hit("projects/a/README.md"),
+      hit("projects/b/README.md"),
+    ]);
+    const out = await jarvisFileSearchTool.execute({ query: "meta", limit: 2 });
+    expect(out).toContain("[projects/a/README.md]");
+    expect(out).toContain("[projects/b/README.md]");
+    expect(out).not.toMatch(/northstar/i);
+  });
+
+  it("no jarvis file tool description sends the model to NorthStar/ as a source", () => {
+    for (const t of [
+      jarvisFileReadTool,
+      jarvisFileWriteTool,
+      jarvisFileUpdateTool,
+      jarvisFileListTool,
+      jarvisFileDeleteTool,
+      jarvisFileMoveTool,
+      jarvisFileSearchTool,
+      jarvisFilesBatchWriteTool,
+      jarvisFilesBatchDeleteTool,
+    ]) {
+      const d = t.definition.function.description;
+      for (const line of d.split("\n").filter((l) => /northstar/i.test(l))) {
+        expect(line, t.name).toMatch(/retired/i);
+      }
+    }
   });
 });

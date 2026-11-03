@@ -51,11 +51,6 @@ export const KB_SHADOW_ROWS: Readonly<Record<string, KbShadowRow>> = {
       "gdrive_create",
     ],
   },
-  "directives/northstar_recurring_tasks.md": {
-    describes:
-      "The difference between recurring tasks in the user's goal tracker and the system's scheduled jobs, and which one a request about recurring work means.",
-    evidence: ["schedule_task", "list_schedules"],
-  },
   "knowledge/domain/intelligence-depot-live-sources.md": {
     describes:
       "Catalogue of live world data sources (geospatial, environmental, conflict, infrastructure) to use when a request needs real-time global data.",

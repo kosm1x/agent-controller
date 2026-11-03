@@ -34,7 +34,7 @@ function seedActivity(projectId: string, n: number): void {
   for (let i = 0; i < n; i++) stmt.run(projectId);
 }
 
-/** Insert a NorthStar objective into jarvis_files. */
+/** Insert a (retired) NorthStar row into jarvis_files — must never be scored. */
 function seedObjective(
   path: string,
   title: string,
@@ -50,19 +50,52 @@ function seedObjective(
 }
 
 describe("rollUpCohort — scoring", () => {
-  it("derives a cohort from projects and objectives", () => {
+  it("derives a cohort from projects only — NorthStar rows are never scored (retired 2026-11-03)", () => {
     seedProject("p-1", "Alpha project");
     seedActivity("p-1", 3);
     seedObjective("NorthStar/objectives/obj-a.md", "Objective A", 80);
+    seedObjective("NorthStar/goals/goal-a.md", "Goal A", 90);
+    seedObjective("NorthStar/visions/vision-a.md", "Vision A", 100);
 
     const result = rollUpCohort();
-    expect(result.candidates).toBe(2);
-    expect(result.cohort_size).toBe(2);
-    expect(result.by_kind).toEqual({ project: 1, objective: 1 });
+    expect(result.candidates).toBe(1);
+    expect(result.cohort_size).toBe(1);
+    expect(result.by_kind).toEqual({ project: 1 });
 
     const cohort = getCohort();
-    expect(cohort).toHaveLength(2);
-    expect(cohort.every((m) => m.active)).toBe(true);
+    expect(cohort.map((m) => m.member_id)).toEqual(["project:p-1"]);
+    expect(getCohort({ kind: "objective", includeInactive: true })).toHaveLength(0);
+  });
+
+  it("an active NorthStar objective member goes inactive at the next roll-up", () => {
+    const db = getDatabase();
+    seedProject("p-1", "Alpha");
+    seedObjective("NorthStar/objectives/live.md", "Live objective", 80);
+    // A row the pre-retirement roll-up wrote (live table: 15 such rows).
+    db.prepare(
+      `INSERT INTO self_defining_cohort
+         (member_id, member_kind, label, source_ref, salience, signal_json, active)
+       VALUES ('objective:NorthStar/objectives/live.md', 'objective', 'Live objective',
+               'NorthStar/objectives/live.md', 0.9, '{}', 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO operator_profile
+         (cohort_member_id, attribute_key, attribute_value, written_by)
+       VALUES ('objective:NorthStar/objectives/live.md', 'member_kind', 'objective', 'cohort-rollup')`,
+    ).run();
+    // Audit R1-W1: still active in the table, but getCohort never returns it,
+    // so it stops reaching prompts before the next 05:00 roll-up.
+    expect(getCohortMember("objective:NorthStar/objectives/live.md")!.active).toBe(true);
+    expect(getCohort({ kind: "objective" })).toHaveLength(0);
+    expect(getCohort({ kind: "objective", includeInactive: true })).toHaveLength(0);
+    expect(getCohort()).toHaveLength(0);
+
+    rollUpCohort();
+    const member = getCohortMember("objective:NorthStar/objectives/live.md")!;
+    expect(member.active).toBe(false);
+    expect(getCohort({ kind: "objective" })).toHaveLength(0);
+    expect(getCohort().map((m) => m.member_id)).toEqual(["project:p-1"]);
+    expect(getOperatorProfile("objective:NorthStar/objectives/live.md")).toHaveLength(0);
   });
 
   it("ranks a busy project above an idle one", () => {
@@ -77,28 +110,6 @@ describe("rollUpCohort — scoring", () => {
     expect(cohort[0].signals.log_count_30d).toBe(8);
   });
 
-  it("scores objectives by priority and recency", () => {
-    seedObjective(
-      "NorthStar/objectives/fresh-hi.md",
-      "Fresh high-priority",
-      100,
-      0,
-    );
-    seedObjective(
-      "NorthStar/objectives/stale-lo.md",
-      "Stale low-priority",
-      10,
-      120,
-    );
-
-    rollUpCohort();
-    const cohort = getCohort({ kind: "objective" });
-    expect(cohort[0].member_id).toBe(
-      "objective:NorthStar/objectives/fresh-hi.md",
-    );
-    expect(cohort[0].salience).toBeGreaterThan(cohort[1].salience);
-  });
-
   it("excludes archived and completed projects from candidates", () => {
     seedProject("p-live", "Live", "active");
     seedProject("p-arch", "Archived", "archived");
@@ -111,11 +122,8 @@ describe("rollUpCohort — scoring", () => {
 
   it("caps the active cohort at COHORT_MAX", () => {
     for (let i = 0; i < COHORT_MAX + 7; i++) {
-      seedObjective(
-        `NorthStar/objectives/obj-${i}.md`,
-        `Objective ${i}`,
-        50 + (i % 40),
-      );
+      seedProject(`p-${i}`, `Project ${i}`);
+      seedActivity(`p-${i}`, i % 5);
     }
     const result = rollUpCohort();
     expect(result.candidates).toBe(COHORT_MAX + 7);
@@ -244,28 +252,6 @@ describe("rollUpCohort — edge cases (R1-R3)", () => {
     expect(getOperatorProfile("project:p-1")).toHaveLength(0);
   });
 
-  it("clamps recency for an objective with a future updated_at", () => {
-    seedObjective("NorthStar/objectives/future.md", "Future-dated", 60, -10);
-    rollUpCohort();
-    const member = getCohortMember("objective:NorthStar/objectives/future.md")!;
-    expect(member.salience).toBeGreaterThanOrEqual(0);
-    expect(member.salience).toBeLessThanOrEqual(1);
-  });
-
-  it("treats a malformed updated_at as zero recency (priority-only score)", () => {
-    getDatabase()
-      .prepare(
-        `INSERT INTO jarvis_files (id, path, title, content, priority, updated_at)
-         VALUES ('f-bad', 'NorthStar/objectives/bad-date.md', 'Bad date', '', 80, 'not-a-date')`,
-      )
-      .run();
-    rollUpCohort();
-    const member = getCohortMember(
-      "objective:NorthStar/objectives/bad-date.md",
-    )!;
-    // recency 0 → salience = 0.5 * (80/100) = 0.40
-    expect(member.salience).toBeCloseTo(0.4, 5);
-  });
 });
 
 describe("getCohort / getCohortMember", () => {
@@ -275,7 +261,7 @@ describe("getCohort / getCohortMember", () => {
     rollUpCohort();
 
     expect(getCohort({ kind: "project" })).toHaveLength(1);
-    expect(getCohort({ kind: "objective" })).toHaveLength(1);
+    expect(getCohort({ kind: "objective" })).toHaveLength(0);
     expect(getCohort({ kind: "thread" })).toHaveLength(0);
     expect(getCohortMember("project:p-1")!.member_kind).toBe("project");
     expect(getCohortMember("missing")).toBeNull();

@@ -64,7 +64,7 @@ ENDPOINTS:
 
 DO NOT USE WHEN:
 - You need to CREATE or MODIFY CRM data (this is read-only)
-- The question is about NorthStar tasks, goals, or personal productivity`,
+- The question is about the user's own tasks, goals, or personal productivity (use project_list plus the day-log)`,
       parameters: {
         type: "object",
         properties: {

@@ -55,7 +55,13 @@ export function regenerateIndex(): void {
     // Build compact INDEX
     const dirLines = rows
       // "" = a path with a leading "/" (rendered as `[[/|]]`).
-      .filter((r) => r.dir !== "(root)" && r.dir !== "")
+      // NorthStar/ is retired (2026-11-03): never listed, even while rows remain.
+      .filter(
+        (r) =>
+          r.dir !== "(root)" &&
+          r.dir !== "" &&
+          r.dir.toLowerCase() !== "northstar",
+      )
       .map((r) => `- [[${r.dir}/|${r.dir}]]`)
       .join("\n");
 
@@ -73,7 +79,7 @@ ${dirLines}
 ${projectLines}
 
 ## Cómo navegar
-- jarvis_file_list con prefix="NorthStar/" para metas
+- Tareas, metas y objetivos: project_list + el day-log (jarvis_file_list con prefix="logs/day-logs/")
 - jarvis_file_list con prefix="projects/{nombre}/" para un proyecto
 - jarvis_file_list con prefix="knowledge/" para conocimiento
 - jarvis_file_read para leer cualquier archivo`;

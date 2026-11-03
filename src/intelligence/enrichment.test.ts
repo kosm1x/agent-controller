@@ -166,6 +166,22 @@ describe("enrichment", () => {
     }
   });
 
+  it("never injects a NorthStar row from pgvector (retired 2026-11-03)", async () => {
+    pg.enabled.mockReturnValue(true);
+    pg.search.mockResolvedValueOnce([
+      { combined_score: 0.95, title: "Meta Q4", content: "meta retirada", path: "NorthStar/goals/q4.md", stale: false },
+      { combined_score: 0.9, title: "Tarea", content: "tarea retirada", path: "northstar/tasks/t.md", stale: false },
+      { combined_score: 0.8, title: "Nota", content: "contenido vivo", path: "projects/x/README.md", stale: false },
+    ]);
+    try {
+      const result = await enrichContext("qué metas tengo", "telegram");
+      expect(result.contextBlock).toContain("contenido vivo");
+      expect(result.contextBlock).not.toContain("retirada");
+    } finally {
+      pg.enabled.mockReturnValue(false);
+    }
+  });
+
   it("clears the 1500 ms pgvector timer once the leg finishes", async () => {
     pg.enabled.mockReturnValue(true);
     const setSpy = vi.spyOn(globalThis, "setTimeout");

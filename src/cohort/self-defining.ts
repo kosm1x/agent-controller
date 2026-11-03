@@ -6,10 +6,14 @@
  * the system's self-image and long-term goals. V8.1 briefings and V8.2
  * proposals read as generic LLM output without it.
  *
- * This module derives the cohort — the ranked subset of projects and
- * NorthStar objectives that constitute the operator's identity cohort — via a
- * DETERMINISTIC roll-up. No LLM, no inference: salience is a weighted score
- * over activity counts and recency. The roll-up is also the SOLE writer of
+ * This module derives the cohort — the ranked subset of projects that
+ * constitute the operator's identity cohort — via a DETERMINISTIC roll-up.
+ * NorthStar objectives were scored here until 2026-11-03 (operator ruling:
+ * NorthStar retired; projects list + day-log are the source). The
+ * `objective` kind stays in the type for schema compat; the roll-up no longer
+ * produces it, so existing objective rows go inactive on the next run.
+ * No LLM, no inference: salience is a weighted score over activity counts.
+ * The roll-up is also the SOLE writer of
  * the `operator_profile` skeleton (the Q3 carve-out — schema only; V8.2 owns
  * the semantic layer).
  *
@@ -18,14 +22,15 @@
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
 
-/** Cohort member kinds. `thread` is schema headroom — not populated in v7.7. */
+/**
+ * Cohort member kinds. `thread` is schema headroom — not populated in v7.7.
+ * `objective` is legacy (NorthStar, retired 2026-11-03) — no longer produced.
+ */
 export type CohortMemberKind = "project" | "objective" | "thread";
 
 /** Conway's ≤30-entry ceiling — the active cohort is capped here. */
 export const COHORT_MAX = 30;
 
-/** Recency horizon (days) past which an objective's recency score hits 0. */
-const RECENCY_HORIZON_DAYS = 90;
 /** Activity window (days) for counting project_log entries. */
 const ACTIVITY_WINDOW_DAYS = 30;
 
@@ -145,60 +150,9 @@ function scoreProjects(db: ReturnType<typeof getDatabase>): Candidate[] {
 }
 
 /**
- * Score NorthStar objectives. Scoped to the genuine identity layer —
- * `NorthStar/objectives/`, `NorthStar/goals/`, `NorthStar/visions/`.
- * Deliberately NOT the whole `NorthStar/` prefix: `tasks/` are tactical
- * (episodic, not identity-defining) and loose files (CHANGELOG, priority-
- * snapshot) are namespace metadata — including either pollutes the Conway
- * Pattern 2 self-defining cohort. The `member_kind='objective'` bucket thus
- * means "a NorthStar identity item" (objective | goal | vision).
- *
- * Salience = 0.5 × normalized `priority` + 0.5 × recency, where recency
- * decays linearly from 1 (updated today) to 0 (updated RECENCY_HORIZON_DAYS+
- * ago).
- */
-function scoreObjectives(db: ReturnType<typeof getDatabase>): Candidate[] {
-  const rows = db
-    .prepare(
-      `SELECT path, title, priority,
-              CAST(julianday('now') - julianday(updated_at) AS REAL) AS age_days
-         FROM jarvis_files
-        WHERE path LIKE 'NorthStar/objectives/%'
-           OR path LIKE 'NorthStar/goals/%'
-           OR path LIKE 'NorthStar/visions/%'`,
-    )
-    .all() as Array<{
-    path: string;
-    title: string;
-    priority: number | null;
-    age_days: number | null;
-  }>;
-
-  return rows.map((r) => {
-    const priority = Math.min(100, Math.max(0, r.priority ?? 50));
-    const ageDays = r.age_days ?? RECENCY_HORIZON_DAYS;
-    const recency = Math.min(
-      1,
-      Math.max(0, 1 - ageDays / RECENCY_HORIZON_DAYS),
-    );
-    return {
-      member_id: `objective:${r.path}`,
-      member_kind: "objective" as const,
-      label: r.title,
-      source_ref: r.path,
-      salience: 0.5 * (priority / 100) + 0.5 * recency,
-      signals: {
-        priority,
-        age_days: Math.round(ageDays),
-      },
-    };
-  });
-}
-
-/**
  * Re-derive the self-defining cohort from current data, in one transaction:
  *
- *  1. Score all project + objective candidates (deterministic — no LLM).
+ *  1. Score all project candidates (deterministic — no LLM).
  *  2. Rank by salience; the top `COHORT_MAX` become the active cohort.
  *  3. Upsert every candidate into `self_defining_cohort` (`first_seen_at`
  *     preserved across runs); mark any pre-existing row absent from the
@@ -211,7 +165,7 @@ function scoreObjectives(db: ReturnType<typeof getDatabase>): Candidate[] {
  */
 export function rollUpCohort(): RollUpResult {
   const db = getDatabase();
-  const candidates = [...scoreProjects(db), ...scoreObjectives(db)];
+  const candidates = scoreProjects(db);
   // Sort by salience desc, with member_id as a stable tiebreaker so the
   // COHORT_MAX boundary cut is deterministic when two candidates tie
   // (R1-W3 fold — otherwise a tied member's in/out status depends on DB
@@ -313,9 +267,13 @@ export interface GetCohortOptions {
   includeInactive?: boolean;
 }
 
-/** List cohort members, most salient first. */
+/**
+ * List cohort members, most salient first. Legacy `objective` rows (NorthStar,
+ * retired 2026-11-03) are never returned, so they stop reaching prompts and
+ * briefings before the next roll-up deactivates them.
+ */
 export function getCohort(options: GetCohortOptions = {}): CohortMember[] {
-  const clauses: string[] = [];
+  const clauses: string[] = ["member_kind != 'objective'"];
   const params: unknown[] = [];
   if (!options.includeInactive) clauses.push("active = 1");
   if (options.kind) {

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyDeferredHeadRule, deriveProjectScopeGroups } from "./scope-groups.js";
 
 /** sha256 of HEAD 6d3104c's CLASSIFIER_SYSTEM_PROMPT (11,759 chars) — the paid-eval baseline text. */
-const HEAD_PROMPT_SHA256 = "328362a26a46747df0a2227a27ee135bfda41f2a8cb2176b8124531d40945281";
+const HEAD_PROMPT_SHA256 = "155c8882a94e7295b60da8985f8aece2e9f9d13aad8028bf19718d721d92c60b";
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 const ACME = {

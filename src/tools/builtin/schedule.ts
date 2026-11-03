@@ -93,7 +93,7 @@ AFTER CREATING: Report the schedule name, cron in human-readable form, and deliv
             type: "array",
             items: { type: "string" },
             description:
-              'Tool names the task needs. Common: ["web_search", "web_read"] for reports, ["jarvis_file_read"] for NorthStar tasks, ["gmail_send"] for email delivery.',
+              'Tool names the task needs. Common: ["web_search", "web_read"] for reports, ["project_list", "jarvis_file_read"] for task/goal reviews (projects list + day-log), ["gmail_send"] for email delivery.',
           },
           delivery: {
             type: "string",

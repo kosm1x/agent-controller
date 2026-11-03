@@ -23,7 +23,7 @@ vi.mock("../inference/adapter.js", async (importOriginal) => ({
   infer: adapterInfer,
 }));
 /** Same pin as src/projects/scope-groups.test.ts (HEAD's classifier prompt). */
-const HEAD_PROMPT_SHA256 = "328362a26a46747df0a2227a27ee135bfda41f2a8cb2176b8124531d40945281";
+const HEAD_PROMPT_SHA256 = "155c8882a94e7295b60da8985f8aece2e9f9d13aad8028bf19718d721d92c60b";
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mc-gate-scope-"));

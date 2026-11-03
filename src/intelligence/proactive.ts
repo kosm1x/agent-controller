@@ -41,9 +41,11 @@ export function startProactiveScheduler(router: MessageRouter): void {
   // system now depends on. (It is independent of the nudge scan below.)
   startSessionEndWriter(router);
 
-  // The proactive nudge scan reads NorthStar to flag "overdue/stale/estancado"
-  // work — exactly the source the operator ruled is NOT work-truth (2026-06-23).
-  // OFF by default. Re-enable only behind a day-log-grounded rewrite:
+  // The proactive nudge scan used to read NorthStar to flag "overdue/stale/
+  // estancado" work — the source the operator ruled is NOT work-truth
+  // (2026-06-23). Its prompt now reads the projects list + the day-log
+  // (2026-11-03; the jarvis file tools refuse NorthStar/ anyway). Still OFF
+  // by default:
   //   PROACTIVE_NUDGE_ENABLED=true
   if (process.env.PROACTIVE_NUDGE_ENABLED !== "true") {
     log.info(
@@ -115,26 +117,25 @@ async function runProactiveScan(): Promise<void> {
   const currentHour = parseInt(mxHour, 10);
   const isEvening = currentHour >= 18; // 6PM+
 
-  // Submit a proactive scan task — the LLM will use NorthStar files
-  // to check deadlines, overdue tasks, stale goals, and project-goal sync
+  // Submit a proactive scan task — the LLM reads the projects list + the
+  // day-log (NorthStar retired 2026-11-03; the jarvis file tools refuse it)
+  // to check deadlines, overdue tasks and stalled projects
   try {
     const result = await submitTask({
       title: `Proactive scan — ${today}`,
       interactive: false, // background (W-E): no operator to confirm
       description: `Eres Jarvis. Realiza un escaneo proactivo de la situación del usuario:
 
-1. Usa jarvis_file_read para leer los archivos en NorthStar/ y ver tareas pendientes, vencidas, y próximos deadlines.
-2. Usa jarvis_file_read para revisar objetivos en NorthStar/ con status "in_progress" y detectar objetivos estancados.
-3. Usa jarvis_file_read para revisar metas en NorthStar/ con status "in_progress" y detectar metas sin actividad en 14+ días.
-4. Usa project_list para ver proyectos activos y verificar que tengan progreso reciente.
+1. Usa project_list para ver proyectos activos (las tareas, metas y objetivos del usuario viven ahí) y verificar que tengan progreso reciente.
+2. Usa jarvis_file_read para leer el day-log de hoy y de los últimos días (logs/day-logs/YYYY-MM-DD.md) y ver tareas pendientes, vencidas, y próximos deadlines.
+3. Cruza ambos: un proyecto activo sin menciones en el day-log en 14+ días está estancado.
 
 ## Qué buscar
 
 - **Tareas vencidas** (overdue) → alerta inmediata
 - **Deadlines en los próximos 2 días** → recordatorio
 - **Metas estancadas** (14+ días sin movimiento en objetivos/tareas) → "Tu meta X lleva 2+ semanas sin movimiento. ¿La replanteamos?"
-- **Objetivos completables** → si todas las tareas de un objetivo están completadas, sugiere marcar el objetivo como completado
-- **Proyecto-meta desincronizado** → si un proyecto tiene actividad reciente pero su meta vinculada en NorthStar no se mueve (o viceversa)
+- **Tareas completables** → si el day-log muestra una tarea terminada que sigue abierta, sugiere registrarla con una línea de tarea fechada al final de projects/{slug}/README.md (jarvis_file_update con append)
 ${isEvening ? `- **Protección de racha**: Son las ${currentHour}h. Si no hay completaciones hoy, sugiere la tarea pendiente más fácil para mantener la racha.` : ""}
 
 Genera un mensaje BREVE (máximo 4-5 líneas) SOLO si encuentras algo importante.

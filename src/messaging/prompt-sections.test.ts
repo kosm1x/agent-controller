@@ -62,9 +62,9 @@ describe("detectToolFlags", () => {
     expect(flags.hasGoogle).toBe(true);
   });
 
-  it("detects NorthStar via jarvis_file_read", () => {
+  it("detects jarvis file tools via jarvis_file_read", () => {
     const flags = detectToolFlags(["jarvis_file_read"]);
-    expect(flags.hasNorthStar).toBe(true);
+    expect(flags.hasJarvisFiles).toBe(true);
   });
 
   it("detects research tools by name match", () => {
@@ -85,7 +85,7 @@ describe("detectToolFlags", () => {
     expect(flags.hasWordpress).toBe(false);
     expect(flags.hasCoding).toBe(false);
     expect(flags.hasGoogle).toBe(false);
-    expect(flags.hasNorthStar).toBe(false);
+    expect(flags.hasJarvisFiles).toBe(false);
     expect(flags.hasResearch).toBe(false);
     expect(flags.hasWebResearch).toBe(false);
   });
@@ -133,10 +133,43 @@ describe("conditional prompt sections", () => {
     expect(line.split("\n").length).toBe(1); // exactly one line
   });
 
-  it("fileSystemSection mentions NorthStar and jarvis files", () => {
+  it("fileSystemSection mentions jarvis files and never NorthStar (retired 2026-11-03)", () => {
     const s = fileSystemSection();
-    expect(s).toContain("NorthStar");
     expect(s).toContain("jarvis_file_read");
+    expect(s).toContain("projects/");
+    expect(s).toContain("logs/");
+    expect(s).not.toMatch(/northstar/i);
+  });
+
+  it("no chat prompt section points the model at NorthStar (retired 2026-11-03)", () => {
+    const flags = detectToolFlags([
+      "jarvis_file_read",
+      "jarvis_file_write",
+      "gmail_send",
+      "wp_publish",
+      "file_edit",
+    ]);
+    const sections = [
+      identitySection(),
+      fileSystemSection(),
+      capabilitiesSection(flags),
+      confirmationSection(flags),
+      toolFirstSection(flags),
+    ];
+    for (const s of sections) expect(s).not.toMatch(/northstar/i);
+  });
+
+  it("tasks/goals questions route to project_list + the day-log", () => {
+    const flags = detectToolFlags(["jarvis_file_read"]);
+    const tf = toolFirstSection(flags);
+    expect(tf).toMatch(/"Qué tareas hay\?" → project_list PRIMERO \+ el day-log/);
+    expect(tf).toMatch(/"Qué metas\/objetivos tengo\?" → project_list PRIMERO \+ el day-log/);
+    const caps = capabilitiesSection(flags);
+    expect(caps).toContain("project_list");
+    expect(caps).toContain("logs/day-logs/");
+    expect(capabilitiesSection(detectToolFlags([]))).not.toContain(
+      "Tareas, metas y objetivos",
+    );
   });
 
   it("capabilitiesSection includes Google when flag set", () => {
@@ -533,11 +566,11 @@ describe("identitySection — external caller (jarvis-pull)", () => {
   it("default output is byte-identical (sha256 pin, WhatsApp off and on)", () => {
     delete process.env.WHATSAPP_ENABLED;
     expect(createHash("sha256").update(identitySection()).digest("hex")).toBe(
-      "ddfaab7214f5a33dbcbef7c73c5240491769d46071796807ac13db2674c96e92",
+      "69e6d895b8ab81faa1a93b12c9dfce5da35e334875b38073d0aa921e29b966b7",
     );
     process.env.WHATSAPP_ENABLED = "true";
     expect(createHash("sha256").update(identitySection()).digest("hex")).toBe(
-      "fcfd834cac658c3e2d899b9cc889bca115719479f302c46d7eb533c0151d25c9",
+      "209fbf97ee5614e177419ca1ab7e7b631d691151600a0369ec293cad6cd270e0",
     );
   });
 

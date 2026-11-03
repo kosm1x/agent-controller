@@ -223,6 +223,66 @@ describe("standing orders on disk (jarvis-kb/directives/) — file_write / file_
   });
 });
 
+// NorthStar retired (operator ruling 2026-11-03, audit R1-C1): the disk
+// mirror is refused to file_read / file_write / file_delete with one stable
+// reason. Paths are fake (fs is mocked) — never the live KB.
+describe("NorthStar retired on disk (jarvis-kb/NorthStar/) — file_read / file_write / file_delete refuse", () => {
+  const REASON =
+    "NORTHSTAR_RETIRED: jarvis-kb/NorthStar/ is retired — tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/)";
+  const FAKE = "/tmp/mc-fake-kb/jarvis-kb";
+  const spellings = (root: string) => [
+    root + "/NorthStar",
+    root + "/NorthStar/",
+    root + "/NorthStar/goals/g1.md",
+    root + "/northstar/x.md",
+    root + "/NORTHSTAR/x.md",
+    root + "/projects/../NorthStar/x.md",
+  ];
+
+  beforeEach(() => {
+    mocks.mockReadFileSync.mockReset();
+    mocks.mockWriteFileSync.mockReset();
+  });
+
+  it("file_read refuses every spelling under a jarvis-kb NorthStar tree and never reads", async () => {
+    const { fileReadTool: read } = await import("./file.js");
+    for (const p of spellings(FAKE)) {
+      const r = JSON.parse(await read.execute({ path: p }));
+      expect(String(r.error), p).toBe(`Read blocked: ${REASON}`);
+    }
+    expect(mocks.mockReadFileSync).not.toHaveBeenCalled();
+  });
+
+  it("file_write refuses the KB root's NorthStar tree and a jarvis-kb one, and never writes", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    for (const p of [...spellings(getJarvisKbRoot()), ...spellings(FAKE)]) {
+      const r = JSON.parse(await fileWriteTool.execute({ path: p, content: "x" }));
+      expect(String(r.error), p).toMatch(/NORTHSTAR_RETIRED/);
+    }
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("file_delete refuses the directory itself and any spelling under it", async () => {
+    const { fileDeleteTool } = await import("./file.js");
+    const { getJarvisKbRoot } = await import("../../db/jarvis-fs.js");
+    for (const p of [...spellings(getJarvisKbRoot()), ...spellings(FAKE)]) {
+      const r = JSON.parse(await fileDeleteTool.execute({ path: p }));
+      expect(String(r.error), p).toBe(`Deletion blocked: ${REASON}`);
+    }
+  });
+
+  it("neighbours (northstar-notes/, projects/) are left to the other guards", async () => {
+    const { fileReadTool: read } = await import("./file.js");
+    mocks.mockReadFileSync.mockReturnValue("ok");
+    mocks.mockStatSync.mockReturnValue({ size: 2, isFile: () => true, isDirectory: () => false });
+    for (const p of [FAKE + "/northstar-notes/x.md", FAKE + "/projects/alpha/README.md"]) {
+      const r = await read.execute({ path: p });
+      expect(r, p).not.toMatch(/NORTHSTAR_RETIRED/);
+    }
+  });
+});
+
 // S6 WS1: the disk twin of projectRecordGuard, pinned at its CALL SITES —
 // the hourly kb-reindex refreshes a record from disk, so file_write and
 // file_delete are doors into it. file_read stays allowed.

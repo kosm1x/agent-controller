@@ -910,3 +910,46 @@ describe("projectRecordGuard / isProjectRecordDiskPath", () => {
     expect(isProjectRecordDiskPath("/srv/kb/projects/a1/project.md", "/srv/kb/")).toBe(true);
   });
 });
+
+// NorthStar retired (operator ruling 2026-11-03): registry-path and disk-path
+// predicates, and the read denylist entry every absolute-path tool consults.
+describe("NorthStar retired predicates", () => {
+  const ROOT = "/tmp/mc-fake-kb/jarvis-kb";
+
+  it("isNorthStarPath refuses on the raw spelling OR the canonical path (audit R1)", async () => {
+    const { isNorthStarPath } = await import("./immutable-core.js");
+    for (const p of [
+      "NorthStar/x.md",
+      "NorthStar/../x.md", // raw spelling still under NorthStar/
+      "./NorthStar/../knowledge/x.md",
+      "/northstar/x.md",
+      "knowledge/../NorthStar/x.md", // canonical path under NorthStar/
+      "NORTHSTAR",
+      "NorthStar\\x.md",
+    ]) {
+      expect(isNorthStarPath(p, ROOT), p).toBe(true);
+    }
+    for (const p of ["northstar-notes/x.md", "knowledge/northstar.md", "projects/alpha/README.md"]) {
+      expect(isNorthStarPath(p, ROOT), p).toBe(false);
+    }
+  });
+
+  it("isNorthStarDiskPath matches <kbRoot>/NorthStar in any casing, not neighbours", async () => {
+    const { isNorthStarDiskPath } = await import("./immutable-core.js");
+    expect(isNorthStarDiskPath(`${ROOT}/NorthStar`, ROOT)).toBe(true);
+    expect(isNorthStarDiskPath(`${ROOT}/northstar/a/b.md`, ROOT)).toBe(true);
+    expect(isNorthStarDiskPath(`${ROOT}/projects/../NORTHSTAR/x.md`, ROOT)).toBe(true);
+    expect(isNorthStarDiskPath(`${ROOT}/northstar-notes/x.md`, ROOT)).toBe(false);
+    expect(isNorthStarDiskPath(`/elsewhere/NorthStar/x.md`, ROOT)).toBe(false);
+  });
+
+  it("readDenylistReason refuses any /jarvis-kb/NorthStar path with the stable reason", async () => {
+    const { readDenylistReason, NORTHSTAR_DISK_REASON } = await import("./immutable-core.js");
+    expect(NORTHSTAR_DISK_REASON).toMatch(/^NORTHSTAR_RETIRED: .*project_list.*logs\/day-logs\//);
+    for (const p of [`${ROOT}/NorthStar`, `${ROOT}/NorthStar/`, `${ROOT}/northstar/x.md`]) {
+      expect(readDenylistReason(p), p).toBe(NORTHSTAR_DISK_REASON);
+    }
+    expect(readDenylistReason(`${ROOT}/northstar-notes/x.md`)).toBeNull();
+    expect(validatePathSafety(`${ROOT}/projects/../NorthStar/x.md`, "read").reason).toBe(NORTHSTAR_DISK_REASON);
+  });
+});

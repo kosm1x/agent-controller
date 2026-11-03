@@ -74,7 +74,7 @@ export async function extractPattern(opts: {
         {
           role: "system",
           content:
-            "Extract 1-2 reusable lessons from this task execution. Format: one line per lesson, starting with the scope (e.g., 'livingjoyfully:', 'coding:', 'northstar:'). Max 100 chars per lesson. If nothing is reusable, respond with just 'NONE'.",
+            "Extract 1-2 reusable lessons from this task execution. Format: one line per lesson, starting with the scope (e.g., 'livingjoyfully:', 'coding:', 'projects:'). Max 100 chars per lesson. If nothing is reusable, respond with just 'NONE'.",
         },
         {
           role: "user",

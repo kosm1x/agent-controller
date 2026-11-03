@@ -8,6 +8,8 @@ import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 import {
   isImmutableCorePath,
+  isNorthStarDiskPath,
+  NORTHSTAR_DISK_REASON,
   isProjectRecordDiskPath,
   isSkillFileDiskPath,
   isStandingOrdersDiskPath,
@@ -128,6 +130,10 @@ function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
       allowed: false,
       reason: `Write blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
     };
+  }
+  // NorthStar retired (2026-11-03): the disk mirror is refused like the KB tools refuse it.
+  if (isNorthStarDiskPath(resolved, getJarvisKbRoot())) {
+    return { allowed: false, reason: `Write blocked: ${NORTHSTAR_DISK_REASON}` };
   }
   // S6 WS1: a project record is changed only through project_update.
   if (isProjectRecordDiskPath(resolved, getJarvisKbRoot())) {
@@ -519,6 +525,10 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
       return JSON.stringify({
         error: `Deletion blocked: ${resolve(rawPath)} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
       });
+    }
+    // NorthStar retired (2026-11-03): the tree or the directory itself.
+    if (isNorthStarDiskPath(realResolve(rawPath), getJarvisKbRoot())) {
+      return JSON.stringify({ error: `Deletion blocked: ${NORTHSTAR_DISK_REASON}` });
     }
     // S6 WS1: the record, its folder or projects/ itself (rmSync is recursive).
     if (isProjectRecordDiskPath(realResolve(rawPath), getJarvisKbRoot())) {

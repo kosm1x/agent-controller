@@ -395,11 +395,11 @@ export function buildJarvisSystemPrompt(
   p1.push(mechanicalVerificationSection());
 
   // P2: Core knowledge (STABLE — same content per user across tasks)
-  // Note: fileSystemSection is gated on hasNorthStar but the gate decision is
+  // Note: fileSystemSection is gated on hasJarvisFiles but the gate decision is
   // stable per scope-tool composition; it stays in the stable layer. Coding
-  // tasks without NorthStar tools won't see this either way.
+  // tasks without jarvis file tools won't see this either way.
   // External caller (jarvis-pull): no host paths for the CRM model.
-  if (flags.hasNorthStar && !external) p2.push(fileSystemSection());
+  if (flags.hasJarvisFiles && !external) p2.push(fileSystemSection());
   p2.push(capabilitiesSection(flags));
   // V8.1 Phase A — Conway Pattern 2 grounding. Surface the self-defining
   // cohort (what Fede actually has live) in the stable layer so the model

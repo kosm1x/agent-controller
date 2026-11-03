@@ -139,7 +139,13 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
     // that as a runtime TypeError on .trim() (qa W3).
     const linesSpec = args.lines == null ? undefined : String(args.lines);
 
+    // NorthStar is retired (2026-11-03) — refused / filtered, see immutable-core.ts.
+    const { northStarRetiredGuard, isNorthStarPath } = await import("./immutable-core.js");
+    const kbRoot = getJarvisKbRoot();
+
     if (path) {
+      const nsRefused = northStarRetiredGuard([path], kbRoot);
+      if (nsRefused) return JSON.stringify(nsRefused);
       const file = getFile(path);
       if (!file) {
         return JSON.stringify({ error: `File not found: ${path}` });
@@ -153,6 +159,7 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
           related = relatedIds
             .map((rid) => getFile(rid))
             .filter((f): f is JarvisFile => f !== null)
+            .filter((f) => !isNorthStarPath(f.path, kbRoot))
             .map((f) => ({ path: f.path, title: f.title }));
         }
       } catch {
@@ -248,7 +255,9 @@ AFTER READING: When reporting data from this file, cite the path. If the data is
     }
 
     if (tags && tags.length > 0) {
-      const matches = listFiles({ tags });
+      const matches = listFiles({ tags }).filter(
+        (f) => !isNorthStarPath(f.path, kbRoot),
+      );
       return JSON.stringify({
         results: matches.map((f) => ({
           ...f,
@@ -286,7 +295,7 @@ USE WHEN:
 
 PATHS — follow the hierarchy:
 - "directives/*.md" — standing orders. REFUSED by this tool (STANDING_ORDERS_PROTECTED): create, modify or remove them ONLY via jarvis_propose_directive → operator approval.
-- "NorthStar/**/*.md" — visions, goals, objectives, tasks.
+- "NorthStar/" — RETIRED, refused by every jarvis_file_* tool (NORTHSTAR_RETIRED). Tasks, goals and objectives come from the projects list (project_list, projects/{slug}/README.md) plus the day-log (logs/day-logs/).
 - "projects/{slug}/*.md" — project-specific files. README.md in each project.
 - "knowledge/people/*.md" — contacts, relationships
 - "knowledge/procedures/*.md" — SOPs, protocols
@@ -373,7 +382,9 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     const relatedTo = (args.related_to as string[]) ?? [];
 
     // Standing orders are never written here — see immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard([path], getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
@@ -516,7 +527,9 @@ PROVENANCE: same rule as jarvis_file_write — figures in the appended text must
     const priority = args.priority as number | undefined;
 
     // Standing orders are never updated here — see immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard([path], getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
@@ -625,7 +638,7 @@ USE WHEN:
 
 NAVIGATION GUIDE — use these prefixes:
 - "projects/" — all active project folders (README.md in each)
-- "NorthStar/visions/" / "NorthStar/goals/" / "NorthStar/objectives/" / "NorthStar/tasks/" — goal hierarchy
+- "logs/day-logs/" — the day-log, the only record of work done (tasks, goals and objectives = project_list + the day-log; NorthStar/ is retired and refused)
 - "knowledge/people/" — contacts and relationships
 - "knowledge/procedures/" — SOPs
 - "directives/" — standing orders (read-only for the file tools; changes go through jarvis_propose_directive)
@@ -666,11 +679,16 @@ TIP: If you know WHAT you're looking for but not WHERE, use jarvis_file_search i
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    // NorthStar is retired (2026-11-03): a NorthStar/ prefix is refused and
+    // its rows never appear in any other listing — see immutable-core.ts.
+    const { northStarRetiredGuard, isNorthStarPath } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard([args.prefix], getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const results = listFiles({
       prefix: args.prefix as string | undefined,
       qualifier: args.qualifier as string | undefined,
       tags: args.tags as string[] | undefined,
-    });
+    }).filter((f) => !isNorthStarPath(f.path, getJarvisKbRoot()));
     // Pre-formatted: file listing with path, size, qualifier
     if (results.length === 0) return "📂 No files found.";
     // Every sibling clamps its output; this one dumped the whole index
@@ -727,7 +745,7 @@ USE WHEN:
 - A file is outdated and no longer relevant
 - You're cleaning up workspace files after completing a task
 
-CAUTION: Files in knowledge/, projects/, NorthStar/ require user confirmation. directives/ (standing orders) cannot be deleted here — use jarvis_propose_directive with change_type "remove".
+CAUTION: Files in knowledge/, projects/ require user confirmation. directives/ (standing orders) cannot be deleted here — use jarvis_propose_directive with change_type "remove".
 First call returns CONFIRMATION_REQUIRED — present the file to the user, ask to confirm.
 After user confirms, call again with confirmed:true to proceed.`,
       parameters: {
@@ -753,7 +771,9 @@ After user confirms, call again with confirmed:true to proceed.`,
     const confirmed = args.confirmed === true;
 
     // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard([path], getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard([path], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard([path], getJarvisKbRoot());
@@ -827,7 +847,9 @@ For batch moves, call this tool multiple times (one per file).`,
       return JSON.stringify({ error: "old_path and new_path are required" });
 
     // Standing orders are never moved in or out — see immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard([oldPath, newPath], getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard([oldPath, newPath], getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard([oldPath, newPath], getJarvisKbRoot());
@@ -886,8 +908,16 @@ WORKFLOW: search → pick best match → jarvis_file_read(path, lines=<the range
     const query = args.query as string;
     if (!query) return JSON.stringify({ error: "query is required" });
 
+    // NorthStar is retired (2026-11-03): its rows never surface here. Fetch
+    // the full ranked set (searchFiles already scans to its hard cap and only
+    // slices at the end), drop NorthStar/, then cut to `limit` so a retired
+    // row never costs a visible slot.
+    const { isNorthStarPath } = await import("./immutable-core.js");
+    const kbRoot = getJarvisKbRoot();
     const limit = Math.min(Math.max(Number(args.limit) || 15, 1), 30);
-    const results = searchFiles(query, limit);
+    const results = searchFiles(query, Number.MAX_SAFE_INTEGER)
+      .filter((r) => !isNorthStarPath(r.path, kbRoot))
+      .slice(0, limit);
 
     if (results.length === 0) {
       return `No files found matching "${query}" in the Knowledge Base.`;
@@ -958,7 +988,7 @@ DO NOT USE FOR:
 - Mixed write+delete operations (use the two batch tools sequentially, or single-item tools)
 - More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
 
-PATH HIERARCHY AND QUALIFIERS: see jarvis_file_write description — the same rules apply per item (paths must end .md, logs/day-logs/ is blocked, qualifier "enforce" is silently downgraded to "reference", projects/ + knowledge/ + NorthStar/ + directives/ are the canonical homes).
+PATH HIERARCHY AND QUALIFIERS: see jarvis_file_write description — the same rules apply per item (paths must end .md, logs/day-logs/ is blocked, qualifier "enforce" is silently downgraded to "reference", projects/ + knowledge/ + directives/ are the canonical homes; NorthStar/ is retired and refused with NORTHSTAR_RETIRED).
 
 PER-FILE PARAMETERS — same as jarvis_file_write: path (.md required), title, content, optional tags, qualifier, condition, priority, related_to. Each file is validated and written independently.
 
@@ -1038,7 +1068,9 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
 
     // Standing orders are never written here — the whole batch is refused
     // before any write so a mixed batch cannot half-apply. See immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard(files.map((f) => f.path), getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard(files.map((f) => f.path), getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard(files.map((f) => f.path), getJarvisKbRoot());
@@ -1193,7 +1225,7 @@ DO NOT USE FOR:
 - Single files (call jarvis_file_delete directly)
 - More than ${BATCH_CAP} files (cap enforced; split into multiple calls)
 
-CONFIRMATION FLOW: Files in knowledge/, projects/, NorthStar/, logs/day-logs/ are precious and require user confirmation. directives/ (standing orders) are refused outright (STANDING_ORDERS_PROTECTED) — use jarvis_propose_directive. In INTERACTIVE tasks, the runner intercepts the first call and asks the operator regardless of precious-path membership (the standard pendingConfirmation flow); the tool's own CONFIRMATION_REQUIRED response with the precious_paths list only surfaces on retries / non-interactive paths. The router auto-injects confirmed:true on the operator-accepted retry, so the LLM does NOT need to set it manually — only set confirmed:true explicitly when responding to a tool-level CONFIRMATION_REQUIRED message that you've already shown to the user.
+CONFIRMATION FLOW: Files in knowledge/, projects/, logs/day-logs/ are precious and require user confirmation. directives/ (standing orders) are refused outright (STANDING_ORDERS_PROTECTED) — use jarvis_propose_directive. In INTERACTIVE tasks, the runner intercepts the first call and asks the operator regardless of precious-path membership (the standard pendingConfirmation flow); the tool's own CONFIRMATION_REQUIRED response with the precious_paths list only surfaces on retries / non-interactive paths. The router auto-injects confirmed:true on the operator-accepted retry, so the LLM does NOT need to set it manually — only set confirmed:true explicitly when responding to a tool-level CONFIRMATION_REQUIRED message that you've already shown to the user.
 
 ERROR POLICY: partial. One item's failure (not_found, error) does NOT abort the batch. Response includes per-item status. After a partial-failure response, re-issue ONLY the failed items. Duplicate paths within the same call are de-duplicated up front (only the first occurrence is attempted).
 
@@ -1250,7 +1282,9 @@ RESPONSE SHAPE: {success, total, ok, not_found, errors, results: [{path, status,
     }
 
     // Standing orders are never deleted here (confirmed:true included) — see immutable-core.ts.
-    const { standingOrdersGuard, projectRecordGuard } = await import("./immutable-core.js");
+    const { standingOrdersGuard, projectRecordGuard, northStarRetiredGuard } = await import("./immutable-core.js");
+    const nsRefused = northStarRetiredGuard(paths, getJarvisKbRoot());
+    if (nsRefused) return JSON.stringify(nsRefused);
     const soRefused = standingOrdersGuard(paths, getJarvisKbRoot());
     if (soRefused) return JSON.stringify(soRefused);
     const recordRefused = projectRecordGuard(paths, getJarvisKbRoot());

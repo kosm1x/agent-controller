@@ -1,8 +1,9 @@
 /**
  * Project management tools — CRUD for the projects entity.
  *
- * Projects are the bridge between Jarvis's work and NorthStar's hierarchy.
- * Each project can link to a NorthStar goal via commit_goal_id.
+ * Projects (plus the day-log) are where tasks, goals and objectives live;
+ * NorthStar was retired 2026-11-03. `commit_goal_id` is a legacy column kept
+ * for schema compat — it no longer points the model anywhere.
  */
 
 import type { Tool } from "../types.js";
@@ -373,12 +374,13 @@ export const projectListTool: Tool = {
     type: "function",
     function: {
       name: "project_list",
-      description: `List all projects with their status, URLs, and linked NorthStar goals.
+      description: `List all projects with their status and URLs. Together with the day-log (logs/day-logs/) this is the source for the user's tasks, goals and objectives.
 
 USE WHEN:
 - User asks about their projects or what's active
 - You need to find a project's slug before calling project_get
 - Morning/nightly briefing needs project context
+- User asks "qué tareas / metas / objetivos tengo?" — answer from this list plus the day-log
 - User mentions a project name and you need to verify it exists
 
 NOTE: This returns DB project metadata (status, URLs, credentials). For project FILES and docs, also check jarvis_file_list with prefix "projects/{slug}/".`,
@@ -441,7 +443,6 @@ USE WHEN:
 - You need a project's credentials (WP password, API key, FTP host)
 - You need to check project configuration or URLs
 - User asks about a specific project's status or details
-- You need the commit_goal_id to link project progress to NorthStar
 
 ALWAYS call this when the user mentions a project by name — it loads the full context
 (credentials, URLs, config) so you don't need to ask the user for information they've
@@ -495,7 +496,7 @@ For project documentation and notes, also read jarvis_file_read("projects/{slug}
       );
     }
     if (project.commit_goal_id)
-      lines.push(`NorthStar goal: ${project.commit_goal_id}`);
+      lines.push(`Legacy commit_goal_id: ${project.commit_goal_id}`);
     const credKeys = Object.keys(project.credentials ?? {});
     if (credKeys.length > 0) {
       lines.push(`\n**Credentials:** ${credKeys.join(", ")}`);
@@ -569,13 +570,11 @@ export const projectUpdateTool: Tool = {
 USE WHEN:
 - User provides project credentials (WP password, API key, FTP host) — store them here
 - User creates a new project or changes project status
-- You need to link a project to a NorthStar goal
 - Auto-detected credentials should be stored here
 
 WORKFLOW for new projects:
 1. Call project_update with slug + name to create
 2. Add credentials, URLs, config as they become available
-3. Link to NorthStar goal with commit_goal_id when appropriate
 
 CREDENTIAL STORAGE:
 - WordPress: credentials.wp_user, credentials.wp_app_password
@@ -620,7 +619,7 @@ CREDENTIAL STORAGE:
           commit_goal_id: {
             type: "string",
             description:
-              "Goal UUID to link this project to. Get from NorthStar/ files via jarvis_file_read.",
+              "Legacy goal UUID column, kept for schema compat. Leave unset; do not look it up anywhere.",
           },
         },
         required: ["slug"],
