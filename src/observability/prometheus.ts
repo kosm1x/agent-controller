@@ -25,13 +25,13 @@ client.collectDefaultMetrics({ prefix: "mc_" });
 // --- Inference providers ---
 const providerLatencyAvg = new client.Gauge({
   name: "mc_provider_latency_avg_ms",
-  help: "Average inference latency per provider (ms)",
+  help: "Mean of per-run average model-call latency per provider, last 10 min (ms)",
   labelNames: ["provider"] as const,
 });
 
 const providerLatencyP95 = new client.Gauge({
   name: "mc_provider_latency_p95_ms",
-  help: "P95 inference latency per provider (ms)",
+  help: "P95 of per-run average model-call latency per provider, last 10 min (ms)",
   labelNames: ["provider"] as const,
 });
 
@@ -416,8 +416,15 @@ export function collectMetrics(): void {
   // Provider metrics
   const providerStats = providerMetrics.getAllStats();
   for (const [name, stats] of Object.entries(providerStats)) {
-    providerLatencyAvg.set({ provider: name }, stats.avgLatencyMs);
-    providerLatencyP95.set({ provider: name }, stats.p95LatencyMs);
+    // No sample in the 10-min window: export no latency rather than an
+    // hours-old figure (the watchdog reads max(p95) as current).
+    if (stats.stale) {
+      providerLatencyAvg.remove({ provider: name });
+      providerLatencyP95.remove({ provider: name });
+    } else {
+      providerLatencyAvg.set({ provider: name }, stats.avgLatencyMs);
+      providerLatencyP95.set({ provider: name }, stats.p95LatencyMs);
+    }
     providerSuccessRate.set({ provider: name }, stats.successRate);
     providerRequestCount.set({ provider: name }, stats.count);
   }

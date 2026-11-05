@@ -22,6 +22,10 @@ const lastQueryArgs: { value: { prompt: unknown; options: unknown } | null } = {
 const mockThrowAfterYield: { value: Error | null } = { value: null };
 // Opt-in: query() itself throws synchronously (e.g. native CLI binary missing).
 const mockQueryThrows: { value: Error | null } = { value: null };
+// Opt-in: called with index i before fixture i is yielded, and with
+// messages.length after the last one (before any throw). Lets a spec move a
+// controlled clock between SDK messages.
+const mockOnYield: { value: ((i: number) => void) | null } = { value: null };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: (
@@ -43,8 +47,13 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     lastQueryArgs.value = args;
     const messages = mockMessages.value;
     const throwAfter = mockThrowAfterYield.value;
+    const onYield = mockOnYield.value;
     return (async function* () {
-      for (const m of messages) yield m;
+      for (const [i, m] of messages.entries()) {
+        onYield?.(i);
+        yield m;
+      }
+      onYield?.(messages.length);
       if (throwAfter) throw throwAfter;
     })();
   },
@@ -128,6 +137,7 @@ beforeEach(() => {
   lastQueryArgs.value = null;
   mockThrowAfterYield.value = null;
   mockQueryThrows.value = null;
+  mockOnYield.value = null;
   recordCostMock.mockReset();
   emitTraceMock.mockReset();
   remainingBudgetMock.mockReset().mockReturnValue(10);
@@ -2989,6 +2999,361 @@ describe("queryClaudeSdk provider metrics", () => {
     // durationMs never set (no terminal result) → wall-clock fallback, a real
     // non-negative sample rather than a phantom that would skew avg latency.
     expect(entry.latencyMs).toBeGreaterThanOrEqual(0);
+    spy.mockRestore();
+  });
+
+  // 2026-11-04: the sample is model time PER CALL (duration_api_ms / turns),
+  // not the whole-run wall time — a 10-turn 130 s run with 60 s of API time
+  // is a 6 s provider sample, not a 130 s one (false p95 watchdog alarm).
+  it("records per-call API latency on success while durationMs stays whole-run", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "done\n\nSTATUS: DONE",
+        num_turns: 10,
+        usage: { input_tokens: 100, output_tokens: 20 },
+        total_cost_usd: 0.001,
+        duration_ms: 130_000,
+        duration_api_ms: 60_000,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(6_000);
+    expect(result.durationMs).toBe(130_000);
+    spy.mockRestore();
+  });
+
+  it("records per-call API latency on the error-result branch", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Partial work." }] },
+      },
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        errors: ["Reached maximum number of turns (4)"],
+        num_turns: 4,
+        usage: { input_tokens: 100, output_tokens: 20 },
+        total_cost_usd: 0.001,
+        duration_ms: 90_000,
+        duration_api_ms: 20_000,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(5_000);
+    expect(result.durationMs).toBe(90_000);
+    spy.mockRestore();
+  });
+
+  it("records the full elapsed wall time when an abort leaves no result and zero turns", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Every Date.now() read advances 1 s, so the run's elapsed wall time is
+    // strictly positive without real waiting.
+    let clock = 1_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      clock += 1_000;
+      return clock;
+    });
+    mockMessages.value = [];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1].latencyMs).toBeGreaterThan(0);
+    spy.mockRestore();
+    circuitRegistry.reset();
+  });
+
+  it("a zero-event abort records exactly the time since query start", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Start 100 s; nothing handed back; abort at 130 s.
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = () => {
+      clock = 130_000;
+    };
+    mockMessages.value = [];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(30_000);
+    spy.mockRestore();
+    circuitRegistry.reset();
+  });
+
+  it("an api_retry system message mid-wait does not shorten the abort sample", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Start 100 s; assistant at 101 s; api_retry at 140 s; abort at 150 s.
+    // since assistant = 49 s · since retry = 10 s
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = (i) => {
+      clock = [101_000, 140_000, 150_000][i];
+    };
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "thinking" }] },
+      },
+      {
+        type: "system",
+        subtype: "api_retry",
+        attempt: 1,
+        max_retries: 10,
+        retry_delay_ms: 2_000,
+        error_status: 529,
+        error: "overloaded",
+      },
+    ];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(49_000);
+    spy.mockRestore();
+    circuitRegistry.reset();
+  });
+
+  it("records the wait since the LAST assistant message, undivided, when an abort leaves no result", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Start 100 s; event 0 at 101 s; event 1 at 105 s; hang until 145 s.
+    // gap since last = 40 s · whole elapsed = 45 s · elapsed / 2 turns = 22.5 s
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = (i) => {
+      clock = [101_000, 105_000, 145_000][i];
+    };
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "step 1" }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "step 2" }] },
+      },
+    ];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1].latencyMs).toBe(40_000);
+    spy.mockRestore();
+    circuitRegistry.reset();
+  });
+
+  it("measures the abort wait from the last tool_result, so a finished tool is not provider wait", async () => {
+    const { circuitRegistry } = await import("../lib/circuit-breaker.js");
+    circuitRegistry.reset();
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Start 100 s; assistant (tool_use) at 101 s; 90 s tool → tool_result at
+    // 191 s; next model call hangs until the abort at 196 s.
+    // since tool_result = 5 s · since assistant = 95 s · whole = 96 s
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = (i) => {
+      clock = [101_000, 191_000, 196_000][i];
+    };
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "running the script" },
+            { type: "tool_use", id: "tu1", name: "mcp__jarvis__shell_exec" },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }],
+        },
+        parent_tool_use_id: null,
+      },
+    ];
+    mockThrowAfterYield.value = Object.assign(new Error("query aborted"), {
+      name: "AbortError",
+    });
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1].latencyMs).toBe(5_000);
+    spy.mockRestore();
+    circuitRegistry.reset();
+  });
+
+  it("a tool_result between two turns leaves the Phase 6 turn.completed latencies unchanged", async () => {
+    // Start 100 s; turn 1 at 101 s; tool_result at 150 s; turn 2 at 160 s.
+    // turn.completed latency is assistant-to-assistant: 1 s, then 59 s.
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = (i) => {
+      clock = [101_000, 150_000, 160_000, 160_000, 160_000][i];
+    };
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu1", name: "mcp__jarvis__web_search" },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu1", content: "r" }],
+        },
+        parent_tool_use_id: null,
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "done" }] },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "done",
+        num_turns: 2,
+        duration_ms: 60_000,
+        duration_api_ms: 11_000,
+      },
+    ];
+
+    try {
+      await queryClaudeSdk({
+        prompt: "t",
+        systemPrompt: "s",
+        toolNames: [],
+        trace: { taskId: "task-lat", runId: "run-lat" },
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const turns = emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "turn.completed");
+    expect(turns.map((e) => e.latencyMs)).toEqual([1_000, 59_000]);
+  });
+
+  it("divides duration_ms by the turn count when a result arrives without duration_api_ms", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "done\n\nSTATUS: DONE",
+        num_turns: 3,
+        usage: { input_tokens: 100, output_tokens: 20 },
+        total_cost_usd: 0.001,
+        duration_ms: 30_000,
+      },
+    ];
+
+    const result = await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+    });
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(10_000);
+    expect(result.durationMs).toBe(30_000);
+    spy.mockRestore();
+  });
+
+  it("treats a zeroed result (no durations) as a result, not an abort: wall time / turns", async () => {
+    const spy = vi.spyOn(providerMetrics, "record");
+    // Start 100 s; events at 101 s and 105 s; zeroed result at 145 s.
+    // result path = 45 s / 2 turns = 22.5 s · abort path would give 40 s
+    let clock = 100_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    mockOnYield.value = (i) => {
+      clock = [101_000, 105_000, 145_000, 145_000][i];
+    };
+    mockMessages.value = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "step 1" }] },
+      },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "step 2" }] },
+      },
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        errors: ["startup"],
+        num_turns: 2,
+      },
+    ];
+
+    try {
+      await queryClaudeSdk({ prompt: "t", systemPrompt: "s", toolNames: [] });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(spy.mock.calls[0][1].latencyMs).toBe(22_500);
     spy.mockRestore();
   });
 });

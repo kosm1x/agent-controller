@@ -341,6 +341,31 @@ describe("ProviderMetrics", () => {
     expect(all[name1]).toBeDefined();
     expect(all[name2]).toBeDefined();
   });
+
+  it("flags stats stale only when every sample is older than the 10-min window", () => {
+    const fresh = "test_stale_fresh";
+    providerMetrics.record(fresh, {
+      timestamp: Date.now(),
+      latencyMs: 4000,
+      success: true,
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    expect(providerMetrics.getStats(fresh)!.stale).toBe(false);
+
+    const old = "test_stale_old";
+    providerMetrics.record(old, {
+      timestamp: Date.now() - 11 * 60_000,
+      latencyMs: 120_000,
+      success: true,
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    const stats = providerMetrics.getStats(old)!;
+    // Still reported (fallback to the full list), but marked stale.
+    expect(stats.stale).toBe(true);
+    expect(stats.p95LatencyMs).toBe(120_000);
+  });
 });
 
 describe("tryRepairJson", () => {

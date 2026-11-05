@@ -105,6 +105,9 @@ export interface ProviderStats {
   costUsd: number;
   /** Total tokens in this window. */
   totalTokens: number;
+  /** True when no sample fell inside the health window and the figures
+   *  come from the older full list (stale, not current). */
+  stale: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +194,8 @@ class ProviderMetrics {
     const cutoff = Date.now() - HEALTH_WINDOW_MS;
     const recent = list.filter((e) => e.timestamp >= cutoff);
     // Fall back to full list if no recent entries (show stale stats vs nothing)
-    const data = recent.length > 0 ? recent : list;
+    const stale = recent.length === 0;
+    const data = stale ? list : recent;
 
     const latencies = data.map((e) => e.latencyMs).sort((a, b) => a - b);
     const successes = data.filter((e) => e.success).length;
@@ -216,6 +220,7 @@ class ProviderMetrics {
       health: classifyHealth(avgLatencyMs, errorRate, data.length),
       costUsd: calculateCost(model, totalPrompt, totalCompletion),
       totalTokens: totalPrompt + totalCompletion,
+      stale,
     };
   }
 

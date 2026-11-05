@@ -19,6 +19,7 @@ vi.mock("../budget/service.js", () => ({
 }));
 
 import { collectMetrics } from "./prometheus.js";
+import { providerMetrics } from "../inference/adapter.js";
 
 beforeEach(() => {
   initDatabase(":memory:");
@@ -74,5 +75,61 @@ describe("mc_inference_cache_read_* gauges", () => {
     ledgerRow("odd-model", 0, 5);
     collectMetrics();
     expect(gauge("mc_inference_cache_read_ratio_24h", "odd-model")).toBe(0);
+  });
+});
+
+// 2026-11-04: a provider with no sample in the 10-min window must not keep
+// exporting an hours-old p95 (watchdog 9c read it as current → daily false
+// "inference degraded" alarm).
+describe("mc_provider_latency_* gauges drop stale providers", () => {
+  function providerGauge(name: string, provider: string): number | undefined {
+    const metric = client.register.getSingleMetric(name);
+    if (!metric) return undefined;
+    const data = (
+      metric as unknown as {
+        hashMap: Record<string, { value: number; labels: Record<string, string> }>;
+      }
+    ).hashMap;
+    return Object.values(data).find((e) => e.labels.provider === provider)?.value;
+  }
+
+  function sample(provider: string, timestamp: number, latencyMs: number): void {
+    providerMetrics.record(provider, {
+      timestamp,
+      latencyMs,
+      success: true,
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("exports latency for a fresh provider and none for a stale one", () => {
+    sample("prom-fresh", Date.now(), 4_000);
+    sample("prom-stale", Date.now() - 11 * 60_000, 120_000);
+    collectMetrics();
+
+    expect(providerGauge("mc_provider_latency_p95_ms", "prom-fresh")).toBe(4_000);
+    expect(providerGauge("mc_provider_latency_avg_ms", "prom-fresh")).toBe(4_000);
+    expect(providerGauge("mc_provider_latency_p95_ms", "prom-stale")).toBeUndefined();
+    expect(providerGauge("mc_provider_latency_avg_ms", "prom-stale")).toBeUndefined();
+    // Success-rate and request-count gauges are unchanged for a stale provider.
+    expect(providerGauge("mc_provider_success_rate", "prom-stale")).toBe(1);
+  });
+
+  it("removes a provider's latency series once it goes fresh → stale", () => {
+    const t0 = Date.now();
+    sample("prom-aging", t0, 7_000);
+    collectMetrics();
+    expect(providerGauge("mc_provider_latency_p95_ms", "prom-aging")).toBe(7_000);
+    expect(providerGauge("mc_provider_latency_avg_ms", "prom-aging")).toBe(7_000);
+
+    vi.spyOn(Date, "now").mockReturnValue(t0 + 11 * 60_000);
+    collectMetrics();
+    expect(providerGauge("mc_provider_latency_p95_ms", "prom-aging")).toBeUndefined();
+    expect(providerGauge("mc_provider_latency_avg_ms", "prom-aging")).toBeUndefined();
   });
 });

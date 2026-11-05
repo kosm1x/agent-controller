@@ -1372,6 +1372,10 @@ export async function queryClaudeSdk(opts: {
   // adapter knows costUsd=0 there is a "no-data" sentinel, not Max-plan $0.
   let costAuthoritative = false;
   let durationMs = 0;
+  // SDK `duration_api_ms`: time spent in model API calls only (no tool
+  // execution). Feeds the providerMetrics latency sample when a terminal
+  // result fired.
+  let apiDurationMs = 0;
   let actualModel: string = effectiveModel;
   // The dominant model's ModelUsage from the terminal result (SDK ≥0.3.285
   // carries costBasis/thinkingTokens there). Surfaced on the Completed log
@@ -1397,6 +1401,11 @@ export async function queryClaudeSdk(opts: {
   // no SDK-side duration; the delta between consecutive assistant messages
   // (first one: since queryStart) is the turn's observable latency.
   let lastTurnEndedAt = queryStart;
+  // Abort-path latency sample only: when the stream last handed back a model
+  // turn (`assistant`) or tool results (`user`), i.e. since when the run has
+  // been waiting on the model. Separate from lastTurnEndedAt, which must not
+  // move on tool results (Phase 6 per-turn latency).
+  let lastTurnOrToolResultAt = queryStart;
   const q = releaseProbeOnThrow(() => query({ prompt: sdkPrompt, options }));
   const runCtx = currentExecutionContext();
   const releaseLiveQuery = runCtx
@@ -1415,6 +1424,9 @@ export async function queryClaudeSdk(opts: {
 
   try {
     for await (const message of q) {
+      if (message.type === "assistant" || message.type === "user") {
+        lastTurnOrToolResultAt = Date.now();
+      }
       if (message.type === "assistant") {
         assistantTurns++;
         // SDK 0.3.162: safety refusals surface structurally as
@@ -1609,6 +1621,7 @@ export async function queryClaudeSdk(opts: {
           costUsd = success.total_cost_usd ?? 0;
           costAuthoritative = true;
           durationMs = success.duration_ms ?? 0;
+          apiDurationMs = success.duration_api_ms ?? 0;
           // modelUsage keys are the exact model IDs the SDK invoked. Under
           // SDK 0.2.x (in-process) the only key was the requested model, so
           // keys[0] was safe. The 0.3.x native binary adds its own internal
@@ -1703,6 +1716,9 @@ export async function queryClaudeSdk(opts: {
           costAuthoritative = true;
           durationMs =
             (error as unknown as { duration_ms?: number }).duration_ms ?? 0;
+          apiDurationMs =
+            (error as unknown as { duration_api_ms?: number })
+              .duration_api_ms ?? 0;
           // Attribution parity with the success branch (audit I1, 2026-07-13):
           // SDKResultError also carries modelUsage — without this an
           // error_max_turns on an Opus heavy run stayed labeled Sonnet
@@ -1845,11 +1861,33 @@ export async function queryClaudeSdk(opts: {
   // degradation, error storms, Sonnet→Haiku fallback rate). `success` mirrors
   // the breaker's outcome classification exactly. Mirrors the LatencyEntry
   // shape recorded on the OpenAI-compat path (adapter-openai.ts:433/565).
+  // `latencyMs` approximates one model call, the unit the OpenAI-compat path
+  // records; whole-run `durationMs` (all turns + tool execution) made a
+  // 21-turn 129 s run a 129 s "provider latency" sample. Three cases:
+  // - a result message arrived with an API duration: `duration_api_ms`
+  //   divided by the turn count (the run's average model-call time);
+  // - a result message arrived without one: `duration_ms` (wall time if
+  //   that is 0 too) divided by the turn count;
+  // - no result message (abort/timeout): the time since the stream last
+  //   handed back a model turn or tool results (since the start when it
+  //   handed back neither), not divided, so a hang late in a long run is not
+  //   averaged away and a tool that already finished is not counted.
+  // Trade-off: a per-run average hides one slow call among fast ones.
+  // "A result arrived" is `costAuthoritative`, set only by the two terminal
+  // result branches. `durationMs` itself stays whole-run for every other
+  // consumer.
+  const modelCalls = Math.max(numTurns || assistantTurns, 1);
   providerMetrics.record(
     breakerKey,
     {
       timestamp: Date.now(),
-      latencyMs: durationMs || Date.now() - queryStart,
+      latencyMs: costAuthoritative
+        ? Math.round(
+            (apiDurationMs > 0
+              ? apiDurationMs
+              : durationMs || Date.now() - queryStart) / modelCalls,
+          )
+        : Date.now() - lastTurnOrToolResultAt,
       success: providerOutcome === "success",
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
