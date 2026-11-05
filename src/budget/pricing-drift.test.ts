@@ -26,6 +26,9 @@ const FIREWORKS_ALIASES = [
   "qwen3p6-plus",
   "glm-5p1",
   "deepseek-v4-pro",
+  // CRM live primary / fallback as of 2026-11-05 (ledger-verified).
+  "qwen3p8-max",
+  "minimax-m3",
 ] as const;
 
 interface CrmRate {
