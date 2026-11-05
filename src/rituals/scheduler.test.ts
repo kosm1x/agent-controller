@@ -159,6 +159,8 @@ vi.mock("./autonomous-improvement.js", () => ({
 
 import {
   _resetRitualFailureAlertState,
+  ALREADY_RAN_TODAY_SQL,
+  ATTEMPTS_ON_SQL,
   createPreCycleTag,
   notifyRitualFailure,
   pruneOldTags,
@@ -319,6 +321,7 @@ describe("idempotency", () => {
     await callback();
 
     expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(mockPrepare).toHaveBeenCalledWith(ALREADY_RAN_TODAY_SQL);
   });
 
   it("should submit if ritual has not run today", async () => {
@@ -390,6 +393,7 @@ describe("delayed same-day retry of a failed ritual", () => {
     expect(mockSubmitTask).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+    expect(mockPrepare).toHaveBeenCalledWith(ATTEMPTS_ON_SQL);
     expect(mockSubmitTask.mock.calls[1][0].title).toBe(
       mockSubmitTask.mock.calls[0][0].title,
     );

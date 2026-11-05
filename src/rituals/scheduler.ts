@@ -257,6 +257,10 @@ function getTaskTemplate(ritual: RitualDefinition): TaskSubmission {
   }
 }
 
+/** alreadyRanToday()'s statement; exported so its query plan is pinned (schema v12). */
+export const ALREADY_RAN_TODAY_SQL =
+  "SELECT 1 FROM tasks WHERE title = ? AND status != 'cancelled' LIMIT 1";
+
 /**
  * Check if a ritual already ran today by looking for a task with a matching
  * title prefix and today's date in the title.
@@ -266,11 +270,7 @@ function alreadyRanToday(ritual: RitualDefinition): boolean {
   const date = todayLabel(ritual.timezone);
   const titlePattern = `${ritual.title} — ${date}`;
 
-  const row = db
-    .prepare(
-      "SELECT 1 FROM tasks WHERE title = ? AND status != 'cancelled' LIMIT 1",
-    )
-    .get(titlePattern);
+  const row = db.prepare(ALREADY_RAN_TODAY_SQL).get(titlePattern);
 
   return row !== undefined;
 }
@@ -293,11 +293,13 @@ const retryTimers = new Set<NodeJS.Timeout>();
 
 type Attempt = { status: string; metadata?: string | null };
 
+/** attemptsOn()'s statement; exported so its query plan is pinned (schema v12). */
+export const ATTEMPTS_ON_SQL =
+  "SELECT status, metadata FROM tasks WHERE title = ? AND status != 'cancelled'";
+
 function attemptsOn(ritual: RitualDefinition, date: string): Attempt[] {
   return getDatabase()
-    .prepare(
-      "SELECT status, metadata FROM tasks WHERE title = ? AND status != 'cancelled'",
-    )
+    .prepare(ATTEMPTS_ON_SQL)
     .all(`${ritual.title} — ${date}`) as Attempt[];
 }
 

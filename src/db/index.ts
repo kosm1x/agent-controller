@@ -1422,6 +1422,16 @@ export function initDatabase(dbPath: string): Database.Database {
         db.prepare(SCHEMA_V11_STALE_BLOCKED_SQL).run();
       },
     },
+    {
+      version: 12,
+      description:
+        "idx_tasks_title_status — the ritual scheduler's alreadyRanToday()/attemptsOn() (title = ? AND status != 'cancelled') were SCAN tasks; cold at 05:00 UTC the scan blocked the event loop 4.7-10.3 s",
+      up: (db) => {
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_title_status ON tasks(title, status)",
+        );
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {
