@@ -31,7 +31,15 @@ vi.mock("node:fs", () => ({
   realpathSync: mocks.mockRealpathSync,
 }));
 
-import { gdriveDownloadTool, gdriveListTool } from "./google-drive.js";
+import { gdriveDownloadTool, gdriveListTool, gdriveUploadTool } from "./google-drive.js";
+
+describe("gdrive_upload — description", () => {
+  it("routes KB files to the KB tools (auto-synced), never a raw upload", () => {
+    const d = gdriveUploadTool.definition.function.description;
+    expect(d).toContain("DO NOT USE for knowledge base files");
+    expect(d).not.toMatch(/knowledge base files to Drive|Obsidian sync/);
+  });
+});
 
 describe("gdrive_download — schema", () => {
   it("declares file_id as required and exposes safe enums for export_format", () => {

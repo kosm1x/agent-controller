@@ -65,7 +65,7 @@ const LEGACY_WITHOUT_NOT_FOR = new Set([
   "backtest_explain", "backtest_latest", "dashboard_generate", "dashboard_list",
   "delete_schedule", "evolution_deactivate_skill", "file_delete", "file_read",
   "gdocs_replace", "gdocs_write", "gdrive_create", "gdrive_delete", "gdrive_move",
-  "gdrive_share", "gdrive_upload", "gemini_audio_overview", "gemini_research",
+  "gdrive_share", "gemini_audio_overview", "gemini_research",
   "gh_create_pr", "gh_repo_create", "git_diff", "git_push", "git_status",
   "gmail_search", "gsheets_write", "gslides_create", "gtasks_create", "hf_spaces",
   "jarvis_apply_proposal", "jarvis_file_delete", "jarvis_file_move",

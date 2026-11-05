@@ -85,9 +85,8 @@ ${renderVerbatimBlock("NARRATIVE", narrativePath, narrative)}`
 
 ## Source of truth (READ THIS FIRST)
 
-The Telegram **day-log is the ONLY record of work done.** NorthStar is a stale
-compass of visions/goals — do NOT read it or use it to judge advancement,
-deadlines, or what is "stalled." Ground this brief in exactly two sources:
+The Telegram **day-log is the ONLY record of work done.** Ground this brief in
+exactly two sources:
 1. **yesterday's day-log narrative** (what actually happened), and
 2. **the active-project list** (what is in flight).
 

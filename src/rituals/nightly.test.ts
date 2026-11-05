@@ -90,7 +90,11 @@ describe("createNightlyClose — harness-embedded day-log", () => {
     expect(d).toContain("**❔ Sin confirmar en el log**");
     expect(d).not.toMatch(/the outcome is often at the end/);
     // Existing rules kept.
-    expect(d).toMatch(/Do NOT read NorthStar/);
+    expect(d).toContain("day-log is the ONLY record of work done.");
+    expect(d).toMatch(/Ground this close in\s+exactly two sources:/);
+    // NorthStar retired 2026-11-03: the prompt no longer names it.
+    expect(d).not.toMatch(/\bNorthStar\b/);
+    expect(createNightlyClose(DATE, null).description).not.toMatch(/\bNorthStar\b/);
     expect(d).toMatch(/Do NOT write to the journal/);
     expect(d).toMatch(/NEVER state a task count/);
     expect(d).toContain(`Cierre del día — ${DATE}`);

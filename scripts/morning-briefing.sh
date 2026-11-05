@@ -25,7 +25,7 @@ if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_OWNER_CHAT_ID}" ]; then
 fi
 
 MC_DB="/root/claude/mission-control/data/mc.db"
-CRM_DB="/root/claude/crm-azteca/data/store/crm.db"
+CRM_DB="/root/claude/Pulso-Aura-Upfront/data/store/crm.db"
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
 

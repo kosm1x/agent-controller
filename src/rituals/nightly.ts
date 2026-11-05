@@ -67,8 +67,7 @@ ${renderVerbatimBlock("DAY-LOG", logPath, dayLog)}`
 
 ## Source of truth (READ THIS FIRST)
 
-The Telegram **day-log is the ONLY record of work done.** Do NOT read NorthStar —
-it is a stale compass, not the record of today's work. Ground this close in
+The Telegram **day-log is the ONLY record of work done.** Ground this close in
 exactly two sources:
 ${source}
 2. the **active-project list**.

@@ -123,8 +123,8 @@ export function createEvolutionLogEntry(
   const begin = fenceBegin("NARRATIVE");
   const end = fenceEnd("NARRATIVE");
   const narrativeStep = narrative
-    ? `1. Today's session narrative — the record of what actually happened today (the day-log is the only source of work-truth; do NOT read NorthStar for advancement) — is embedded IN FULL at the end of this task, between the line starting "${begin}" and the line "${end}" (loaded by the harness from \`${narrativePath}\` — do NOT call any tool to read it). Read all of it.`
-    : `1. Today's session narrative (\`${narrativePath}\`) does not exist — skip it (do NOT read NorthStar for advancement).`;
+    ? `1. Today's session narrative — the record of what actually happened today (the day-log is the only source of work-truth) — is embedded IN FULL at the end of this task, between the line starting "${begin}" and the line "${end}" (loaded by the harness from \`${narrativePath}\` — do NOT call any tool to read it). Read all of it.`
+    : `1. Today's session narrative (\`${narrativePath}\`) does not exist — skip it.`;
   const narrativeBlock = narrative
     ? `
 

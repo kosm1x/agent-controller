@@ -7,6 +7,16 @@ describe("createMorningBriefing", () => {
     expect(submission.tools).toContain("learner_model_status");
   });
 
+  it("grounds in the day-log + active projects and no longer names NorthStar (retired 2026-11-03)", () => {
+    for (const narrative of ["# Bitácora — synthetic\n", null]) {
+      const d = createMorningBriefing("2026-04-21", "", narrative).description;
+      expect(d).toContain("day-log is the ONLY record of work done.");
+      expect(d).toMatch(/Ground this brief in\s+exactly two sources:/);
+      expect(d).toContain("**the active-project list**");
+      expect(d).not.toMatch(/\bNorthStar\b/);
+    }
+  });
+
   it("instructs the LLM to call learner_model_status in its description", () => {
     const submission = createMorningBriefing("2026-04-21");
     expect(submission.description).toMatch(/learner_model_status/);

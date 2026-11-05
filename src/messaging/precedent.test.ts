@@ -40,6 +40,23 @@ describe("buildPrecedentBlock", () => {
     expect(block).toContain("vlmp");
   });
 
+  it("extracts the live CRM names whole and keeps the old crm-azteca name", () => {
+    const block = buildPrecedentBlock([
+      { role: "user", content: "Revisa Pulso-Aura-Upfront y el servicio agentic-crm" },
+      { role: "assistant", content: "En conversaciones viejas se llamaba crm-azteca" },
+    ]);
+    expect(block).toContain(
+      "Projects: Pulso-Aura-Upfront, agentic-crm, crm-azteca",
+    );
+  });
+
+  it("bare 'pulso' in Spanish prose is not a project", () => {
+    const block = buildPrecedentBlock([
+      { role: "user", content: "Tómale el pulso al mercado; lo hizo a pulso" },
+    ]);
+    expect(block).toBe("");
+  });
+
   it("extracts the spaced name 'very light cms'", () => {
     const block = buildPrecedentBlock([
       { role: "user", content: "el very light cms de Williams" },

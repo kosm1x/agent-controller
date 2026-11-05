@@ -633,16 +633,17 @@ export const gdriveUploadTool: Tool = {
       description: `Upload or update a plain text file (.md, .txt, .json, etc.) in Google Drive.
 
 USE WHEN:
-- Syncing Jarvis knowledge base files to Drive (Obsidian mirror)
 - Uploading any plain text content as a real file (not a Google Doc)
 - Updating an existing file's content (pass file_id to overwrite)
+
+DO NOT USE for knowledge base files: they are synced to Drive automatically. Write them with jarvis_file_write or jarvis_file_update instead; a raw upload creates an untracked duplicate. This tool is for non-KB files only.
 
 BEHAVIOR:
 - Creates a new file if no file_id provided
 - UPDATES existing file content if file_id is provided (full replace, not append)
 - Files are plain text, readable by Obsidian and any text editor
 
-WORKFLOW for Obsidian sync:
+WORKFLOW:
 1. Call gdrive_list with parent_folder_id to check if file exists
 2. If exists → call gdrive_upload with file_id to update content
 3. If not → call gdrive_upload without file_id to create new file
@@ -654,7 +655,7 @@ IMPORTANT: Always use parent_folder_id when creating new files to place them in 
           name: {
             type: "string",
             description:
-              'File name with extension (e.g. "DIRECTIVES.md", "projects.md")',
+              'File name with extension (e.g. "report.md", "data.json")',
           },
           content: {
             type: "string",

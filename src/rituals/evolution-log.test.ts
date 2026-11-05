@@ -89,6 +89,15 @@ describe("createEvolutionLogEntry — harness-embedded narrative (2026-10-03)", 
     expect(d).toContain("(`logs/day-narratives/2026-10-01.md`) does not exist");
     expect(d).not.toContain("⟦BEGIN NARRATIVE");
   });
+
+  it("names the day-log as work-truth and never NorthStar (retired 2026-11-03), both branches", () => {
+    const withNarrative = createEvolutionLogEntry("2026-10-01", "# synthetic\n").description;
+    expect(withNarrative).toContain("(the day-log is the only source of work-truth)");
+    expect(withNarrative).not.toMatch(/\bNorthStar\b/);
+    const without = createEvolutionLogEntry("2026-10-01", null).description;
+    expect(without).toContain("does not exist — skip it.");
+    expect(without).not.toMatch(/\bNorthStar\b/);
+  });
 });
 
 describe("createEvolutionLogEntry — harness-computed metrics (2026-10-09)", () => {
