@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { EmailVerifier, deriveMailDomain, discoverFqdn, envelopeConfigError } from "./verify.js";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_GOVERNANCE } from "./governance.js";
@@ -426,7 +426,7 @@ describe("envelope configuration guard (audit R4 C-1)", () => {
     expect(discoverFqdn("/nonexistent/hosts")).toBe(short);
   });
 
-  it("discoverFqdn matches `hostname -f` on this box", () => {
+  it("discoverFqdn matches `hostname -f` on this box when /etc/hosts carries it", () => {
     let fqdn = "";
     try {
       fqdn = execFileSync("hostname", ["-f"], { encoding: "utf8" }).trim();
@@ -434,6 +434,22 @@ describe("envelope configuration guard (audit R4 C-1)", () => {
       return; // no hostname binary here
     }
     if (!fqdn.includes(".")) return; // box without a FQDN: nothing to prove
+    let hosts = "";
+    try {
+      hosts = readFileSync("/etc/hosts", "utf8");
+    } catch {
+      return; // no readable /etc/hosts here
+    }
+    // `hostname -f` may answer from DNS (e.g. an EC2 runner's
+    // `*.compute.internal`); discoverFqdn reads only /etc/hosts by design, so
+    // a DNS-derived FQDN is outside its contract. Assert only when one hosts
+    // line names both the short hostname and the FQDN.
+    const short = hostname();
+    const carries = hosts.split("\n").some((l) => {
+      const names = l.split("#")[0].split(/\s+/);
+      return names.includes(short) && names.includes(fqdn);
+    });
+    if (!carries) return;
     expect(discoverFqdn()).toBe(fqdn);
   });
 
