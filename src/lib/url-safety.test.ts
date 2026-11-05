@@ -16,11 +16,13 @@ import {
   MAX_SAFE_REDIRECTS,
   type LookupAllFn,
 } from "./url-safety.js";
-import { lookup as dnsLookupP } from "node:dns/promises";
 
 // Ubuntu ships `ip6-localhost` → ::1 in /etc/hosts; the connect-time e2e case
 // needs a loopback NAME that is not in BLOCKED_HOSTS. Skip cleanly elsewhere.
-const HAS_IP6_LOCALHOST = await dnsLookupP("ip6-localhost", { all: true })
+// Real resolver: the module is mocked below, so the mocked one always says no.
+const realDns = await vi.importActual<typeof import("node:dns/promises")>("node:dns/promises");
+const HAS_IP6_LOCALHOST = await realDns
+  .lookup("ip6-localhost", { all: true })
   .then((a) => a.some((x) => x.address === "::1"))
   .catch(() => false);
 
