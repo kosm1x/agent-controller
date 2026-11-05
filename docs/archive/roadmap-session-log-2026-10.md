@@ -179,3 +179,9 @@ Rows moved verbatim from `docs/ROADMAP.md` on 2026-10-29.
 | Date | Brief | PR | Outcome | Follow-ups |
 | --- | --- | --- | --- | --- |
 | 2026-10-26 | 4ao `MCEventLoopBlock` on tool calls: `glob`/`list_dir` async (`6e40e6cc`, deployed 20:24 UTC, unproven) + sweep part 1 git/gh/jarvis_dev async (`4a297dbe`, deployed 21:11 UTC build `e29d4c6b`) + part 2 item 1 vps/self-repair async (`61ee3be6`, deployed 21:40 UTC build `d1105b03`) + item 2 rituals async (`46620ac6`, deployed 22:28 UTC build `eceed6b4`) | `6e40e6cc` `4a297dbe` `61ee3be6` `46620ac6` | CI green; proof = next wide glob / git push turn < 1 s | Sweep part 2 + rulings 4ao (e)-(h) |
+
+## Moved 2026-11-05 (page back to 60 lines after the provider-latency row)
+
+| Date | Brief | PR | Outcome | Follow-ups |
+| --- | --- | --- | --- | --- |
+| 2026-10-26 | PR #63 checked + merged with 10-26 main (cloud draft of 10-18) | [#63](https://github.com/kosm1x/agent-controller/pull/63) | MERGED `5eabc45b` 08:22 UTC: `docs/BETA.md` live, figures refreshed to 10-26; this page 136 → 60 lines, every line archived verbatim; LANDSCAPE confirmed against the lockfile; qa R1 FAIL (stale eval-compare date) folded `3a240d2b`; branch CI green | W3 step-3 rulings; operator profile |
