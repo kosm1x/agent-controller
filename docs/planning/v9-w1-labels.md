@@ -105,11 +105,28 @@ Opened after count 1 missed the FP budget (3 > 2) and the grader was fixed (queu
 
 | task_id | graded (UTC) | grader | final status | signal | label | catch | note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `7acf11ab-7949-41db-98a0-841a66dd4ff7` | 2026-10-21 07:58 | met | completed | none |  |  | chat root. Asked 11-05: operator does not remember; left unlabelled. |
+| `bcb00a73-c678-4b8b-a08f-f6ed1c35487a` | 2026-10-21 20:08 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `7980f0de-736f-46ee-bdd9-35ac9087ebb4` | 2026-10-22 00:24 | met | completed | none | really done | no | chat root (file sent). Operator label 11-05; grader met = correct. |
+| `6a7218f6-76af-431e-a76d-62d7e3ecdb0c` | 2026-10-22 15:15 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `88530952-20ad-4a7e-b20c-d35ddbf0157b` | 2026-10-22 20:45 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `bca0903f-3020-4cef-82c5-c209eed9925a` | 2026-10-23 07:05 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `84654d59-e49b-483d-8a84-50effb2b64aa` | 2026-10-23 07:51 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `064d9a92-fb9f-4435-a090-a9a3e0451585` | 2026-10-24 04:53 | met | completed | - | really done | no | swarm child (file sent, handed to heavy). Operator label 11-05; grader met = correct. |
+| `8aed998e-3d56-47bf-9e38-8c8beafd3743` | 2026-10-25 05:01 | met | completed_with_concerns | none | really done | no | chat root. Operator label 11-05; grader met = correct (the task flagged its own concern). |
+| `73c262e1-4f23-4217-9995-ca65da3ec925` | 2026-10-26 17:08 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `dbb5ef58-53b4-48c3-b079-18b47eec4f12` | 2026-10-29 21:18 | met | completed | - | really done | no | swarm child 1 of 4 (research part). Operator label 11-05, judged from the final answer; grader met = correct. |
+| `9e1f88d4-ab9c-423c-a51c-55f3ff11acb8` | 2026-10-29 21:18 | met | completed | - | really done | no | swarm child 2 of 4 (research part). Operator label 11-05, judged from the final answer; grader met = correct. |
+| `a2c2e4ce-fa2c-4b8e-84f9-0bef76d6d134` | 2026-10-29 21:20 | met | completed | - | really done | no | swarm child 3 of 4 (research part). Operator label 11-05, judged from the final answer; grader met = correct. |
+| `606c7599-3c6e-44ad-8ce7-975b566fc0c8` | 2026-10-29 21:23 | failed | completed | - | really done | no | **FALSE POSITIVE #1 of count 2.** swarm child 4 of 4 (consolidation). Operator label 11-05: the consolidated answer was right; grader failed 2 of 6 criteria. Cause not examined (criterion text and evidence: `./mc-ctl gates graded 30`). |
+| `2e813eb6-e78a-456d-a866-a8b920fd270f` | 2026-10-29 23:48 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
+| `4843686c-a507-4d7a-8087-597b79551484` | 2026-11-04 18:14 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
 
 ## Tally (recompute from the rows, newest run first)
 
 | as of (UTC) | graded | labelled really done | false positives | FP rate | labelled not done | catches | unlabelled |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-05 20:22 (count 2, `prompt_v=2`; labels given by the operator one by one in a session, blind to the grader's verdict) | 33 | 15 | 1 | 6.7 % (n=15; the FP = swarm consolidation child `606c7599`, cause not examined) — within budget so far (≤ 2 at n=30) | 0 | 0 | 18 (17 nightly `Skill evolution` scheduled roots the operator never sees + 1 chat root not remembered) |
 | 2026-10-19 19:55 (count 2 opened, `prompt_v=2` only) | 0 | 0 | 0 | – | 0 | 0 | 0 |
 | 2026-10-19 18:0x (count 1 CLOSED) | 56 | 34 | 3 | 8.8 % (n=34; causes: stale ground truth ×1 (item 11), unmeetable criterion ×1, evidence ordering ×1 (queue 4v)) — **BUDGET MISSED (≤2)** | 3 | 2 | 19 (swarm children of the 10-17/10-18 batches, no failed verdicts) |
 | 2026-10-09 07:0x | 18 | 17 | 1 | 5.9 % (n=17; the FP's cause = stale ground truth, item 11) | 1 | 1 | 0 |

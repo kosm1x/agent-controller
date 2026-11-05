@@ -13,7 +13,7 @@
 | Replicability | Inventory (1,700 sites) + project contract; S6 WS1–WS3b + 3c operator-context gate LIVE; 3f records applied 10-18 | Operator profile (KB file, RULED 10-11), WS4 allow-list, WS6 replicability suite |
 | Teachability | Vision, plan docs and first-operator guides only | Onboarding guide (after the profile); one transfer attempt |
 | Scalability | Single process; channels clean; projects via records | Language (949 lines), identity, timezone, paths behind the profile |
-| Credibility | Honest-done ENFORCE; eval gate v4 (78.63; last compare PASS 11-05, 77.90); W1 count 1 MISSED (34 really done, 3 FP > 2) → count 2 on `prompt_v=2` since 10-19 19:55 UTC: 33 graded, 0 labelled 11-05; W3 step 2 BUILT `c4baf04` + PROVEN 10-20 (`mc-ctl eval`) | W1 count-2 labels to 30 with ≤ 2 FP; W3 ruling A (next build: (ii) vs (iii)) |
+| Credibility | Honest-done ENFORCE; eval gate v4 (78.63; last compare PASS 11-05, 77.90); W1 count 1 MISSED (34 really done, 3 FP > 2) → count 2 on `prompt_v=2` since 10-19 19:55 UTC: 33 graded, 15 labelled really done, 1 FP (11-05); W3 step 2 BUILT `c4baf04` + PROVEN 10-20 (`mc-ctl eval`) | W1 count-2 labels to 30 with ≤ 2 FP; W3 ruling A (next build: (ii) vs (iii)) |
 
 ## Current stage
 
@@ -23,7 +23,7 @@ V8.1 active (§13 gate v2 on the Morning Sync since 10-06, unproven); V8.2 judgm
 
 | Bet | Gate | Next step | Owner |
 | --- | --- | --- | --- |
-| W1 verify gate | FP ≤10 % on ≥30 `really done` labels | Count 2 labels in `docs/planning/v9-w1-labels.md` (0/30 labelled of 33 graded, 11-05), accept latency/cost (n=42: median 16.0 s, $0.20/task), arm `enforce` | Operator |
+| W1 verify gate | FP ≤10 % on ≥30 `really done` labels | Count 2 labels in `docs/planning/v9-w1-labels.md` (15/30 labelled of 33 graded, 1 FP, 11-05; the other 17 are nightly routine runs), accept latency/cost (n=42: median 16.0 s, $0.20/task), arm `enforce` | Operator |
 | W3 internal eval | Read-only report; gate-definition changes logged | Step 2 live as `mc-ctl eval [days] [--json]`; B cadence RULED 10-20 (weekly by hand) · C delegated rating RULED 10-20 (stays queued); next: ruling A build pick, (ii) unverified numbers vs (iii) plan-gate failure rate (queue §2026-10-09 (late) W3 rulings, item 4) | Operator (weekly `./mc-ctl eval 7`) |
 | S6 operator abstraction + project contract | `docs/BETA.md` merged ✔ (this PR); replicability suite green | WS1–WS3b, 3c gate, 3f records LIVE; 5a CLOSED 10-19; next: operator profile, WS4, WS6, `tool_approvals.task_id` | S6 |
 | Rulings 1–5 in production | Each seen working on a real task | Deployed 10-04, unproven by real use (queue §2026-10-04); ruling 6 parked | VPS |
