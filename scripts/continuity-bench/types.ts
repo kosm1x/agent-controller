@@ -236,6 +236,8 @@ export interface SurfaceScore {
   attributionConflict?: boolean | null;
   /** v2, probes with expectAuthor: SOME occurrence is attributed to that role (the v1 lenient rule). */
   authorMarkedAny?: boolean | null;
+  /** v2, only when the marker spec sets `defaultRole`: the strict rule with unattributed occurrences counted as that role. */
+  authorMarkedWithDefault?: boolean;
   /** v2: the probe declares this surface but the adapter could not measure it ("not scored"). */
   notMeasurable?: boolean;
   /** v2: components whose text carries at least one expect needle. */

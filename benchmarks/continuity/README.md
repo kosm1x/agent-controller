@@ -267,10 +267,15 @@ put duplicates at ~12 %; that figure counts a looser match and was not re-measur
 
   - `lineLabels` open a line, after optional indentation and a list prefix
     (`-` `•` `*` `1.`), as `Label:` or `[label]`. Matching is case-insensitive.
-  - `itemPatterns` are regex sources tested at the start of an item. A match
+  - `itemPatterns` are regex sources tested against the whole item (anchor
+    them with `^` or `$`; the example above anchors at the start). A match
     makes the whole item single-author.
   - `headings` are regex sources tested against the lines of a component's
     text. The last matching heading above an item applies to that item.
+  - `defaultRole` (optional) is the role a system's unmarked text belongs to by
+    its own convention. It never enters `authorMarked`; it feeds a separate
+    figure, `authorMarkedWithDefault`: the strict rule with every unattributed
+    occurrence counted as `defaultRole`. Jarvis sets none.
 
   To attribute one occurrence of the needle, take the first of these that
   applies:

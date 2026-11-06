@@ -1,0 +1,11 @@
+{
+  "lineLabels": { "person": [], "assistant": [] },
+  "itemPatterns": {
+    "person": [
+      "; in the person's words$",
+      "^- The person wrote this into my memory: ",
+      "^- The person corrected a memory of mine; it now says: "
+    ]
+  },
+  "defaultRole": "assistant"
+}

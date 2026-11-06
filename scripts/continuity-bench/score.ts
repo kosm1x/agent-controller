@@ -44,10 +44,15 @@ export type Role = "person" | "assistant";
 export interface AuthorMarkerSpec {
   /** Labels that open a line, after optional indentation and a list prefix (`-` `•` `*` `1.`), as `Label:` or `[label]`; case-insensitive. */
   lineLabels: Record<Role, string[]>;
-  /** Regex sources (case-insensitive) tested at the start of an item; a match attributes the whole item (a single-author item). */
+  /** Regex sources (case-insensitive) tested against the whole item (anchor with `^` / `$`); a match attributes the whole item (a single-author item). */
   itemPatterns?: Partial<Record<Role, string[]>>;
   /** Regex sources (case-insensitive) tested against each line of a component's text; the last match above an item attributes it when it carries no marker. */
   headings?: Array<{ pattern: string; role: Role }>;
+  /**
+   * Optional, reported apart: an occurrence no marker attributes counts as this role in
+   * `authorMarkedWithDefault` only. The strict `authorMarked` never uses it.
+   */
+  defaultRole?: Role;
 }
 
 /** v1 marker set; the default when an adapter declares none. */
@@ -162,6 +167,8 @@ export interface Attribution {
   anyMarked: boolean;
   /** Some occurrence's line role differs from its block heading's role. */
   conflict: boolean;
+  /** The strict rule with unattributed occurrences counted as `spec.defaultRole`; null when the spec sets none. */
+  markedWithDefault: boolean | null;
 }
 
 /** Strict attribution of `needles` to `role` across a surface's components. */
@@ -177,6 +184,8 @@ export function attribute(
   let clean = true;
   let anyMatch = false;
   let conflict = false;
+  let cleanD = true;
+  let anyMatchD = false;
   for (const comp of components) {
     let cursor = 0;
     for (const item of comp.items) {
@@ -195,11 +204,20 @@ export function attribute(
           if (who === null || !statedBy.includes(who)) clean = false;
           if (who === role) anyMatch = true;
           if (line && heading && line !== heading) conflict = true;
+          const whoD = who ?? spec.defaultRole ?? null;
+          if (whoD === null || !statedBy.includes(whoD)) cleanD = false;
+          if (whoD === role) anyMatchD = true;
         }
       }
     }
   }
-  return { occurrences, marked: anyMatch && clean, anyMarked: anyMatch, conflict };
+  return {
+    occurrences,
+    marked: anyMatch && clean,
+    anyMarked: anyMatch,
+    conflict,
+    markedWithDefault: spec.defaultRole ? anyMatchD && cleanD : null,
+  };
 }
 
 export function componentKind(c: SurfaceComponent): ComponentKind {
@@ -233,6 +251,7 @@ export function scoreSurface(
     authorMarked: attribution ? attribution.marked : null,
     attributionConflict: attribution ? attribution.conflict : null,
     authorMarkedAny: attribution ? attribution.anyMarked : null,
+    ...(attribution && attribution.markedWithDefault !== null ? { authorMarkedWithDefault: attribution.markedWithDefault } : {}),
     notMeasurable: declared && !s.measurable,
     carriedBy: carriers.map((c) => c.name),
     carriedKinds: [...new Set(carriers.map(componentKind))],
@@ -452,6 +471,8 @@ export interface AuthorAggregate {
   /** Lenient (v1) rule: some occurrence is attributed to the expected role. */
   authorMarkedAnyPct: number | null;
   attributionConflictPct: number | null;
+  /** Only when the spec sets `defaultRole`: the strict rule with unattributed occurrences counted as that role. */
+  authorMarkedWithDefaultPct?: number | null;
 }
 
 /** C5 by author case × size × surface. */
@@ -466,6 +487,7 @@ export function aggregateAuthor(scores: readonly ProbeScore[]): AuthorAggregate[
         const g = group(c5, surface, (s) => (s.authorCase ?? "unspecified") === ac && s.fillerSize === size);
         if (g.rows.length === 0 && g.notScored === 0) continue;
         const sum = summarize(g.rows, g.wordings);
+        const withDefault = g.rows.some((r) => r.authorMarkedWithDefault !== undefined);
         out.push({
           authorCase: ac,
           fillerSize: size,
@@ -476,6 +498,7 @@ export function aggregateAuthor(scores: readonly ProbeScore[]): AuthorAggregate[
           authorMarkedPct: sum.authorMarkedPct,
           authorMarkedAnyPct: pctOf(g.rows.map((r) => r.authorMarkedAny)),
           attributionConflictPct: sum.attributionConflictPct ?? null,
+          ...(withDefault ? { authorMarkedWithDefaultPct: pctOf(g.rows.map((r) => r.authorMarkedWithDefault)) } : {}),
         });
       }
     }

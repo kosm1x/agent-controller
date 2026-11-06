@@ -290,5 +290,44 @@ describe("v2: carriers, gap and author aggregates", () => {
     const r = { ...run({ expect: ["9"], expectAuthor: "person", authorCase: "person" }, [comp("t", ["User: 9"])]), class: "C5" as const };
     const rows = aggregateAuthor([scoreProbe(r)]);
     expect(rows[0]).toMatchObject({ authorCase: "person", n: 1, hitPct: 100, authorMarkedPct: 100, authorMarkedAnyPct: 100, attributionConflictPct: 0 });
+    expect(rows[0]).not.toHaveProperty("authorMarkedWithDefaultPct");
+  });
+});
+
+describe("v2: defaultRole (a separate, labelled figure)", () => {
+  // A system that marks only the person's words and leaves its own unmarked.
+  const SPEC: AuthorMarkerSpec = {
+    lineLabels: { person: [], assistant: [] },
+    itemPatterns: { person: ["; in the person's words$"] },
+    defaultRole: "assistant",
+  };
+  const STRICT: AuthorMarkerSpec = { lineLabels: SPEC.lineLabels, itemPatterns: SPEC.itemPatterns };
+  const personRow = "- loan rate 11.75%\n  id=e1 kept 2026-01-05; in the person's words";
+  const agentRow = "- loan rate 11.75%\n  id=e2 kept 2026-01-05";
+
+  it("strict ignores defaultRole; markedWithDefault counts an unattributed occurrence as that role", () => {
+    const unmarked = [comp("recall", [agentRow])];
+    expect(attribute(unmarked, ["11.75%"], "assistant", SPEC)).toMatchObject({ marked: false, anyMarked: false, markedWithDefault: true });
+    expect(attribute(unmarked, ["11.75%"], "person", SPEC)).toMatchObject({ marked: false, markedWithDefault: false });
+    // an explicit mark wins over the default
+    const marked = [comp("recall", [personRow])];
+    expect(attribute(marked, ["11.75%"], "person", SPEC)).toMatchObject({ marked: true, markedWithDefault: true });
+    expect(attribute(marked, ["11.75%"], "assistant", SPEC)).toMatchObject({ marked: false, markedWithDefault: false });
+    // the default still has to be a role that stated it
+    const both = [comp("recall", [personRow, agentRow])];
+    expect(attribute(both, ["11.75%"], "person", SPEC, ["person"])).toMatchObject({ marked: false, markedWithDefault: false });
+    expect(attribute(both, ["11.75%"], "person", SPEC, ["person", "assistant"])).toMatchObject({ marked: false, markedWithDefault: true });
+    // no defaultRole: null, and strict is unchanged
+    expect(attribute(unmarked, ["11.75%"], "assistant", STRICT)).toMatchObject({ marked: false, markedWithDefault: null });
+  });
+
+  it("scoreSurface and aggregateAuthor report it only when the spec sets defaultRole", () => {
+    const r = { ...run({ expect: ["11.75%"], expectAuthor: "assistant", authorCase: "assistant" }, [comp("recall", [agentRow])]), class: "C5" as const };
+    const withDefault = scoreProbeWith(r, SPEC);
+    expect(withDefault.proactive).toMatchObject({ authorMarked: false, authorMarkedWithDefault: true });
+    expect(aggregateAuthor([withDefault])[0]).toMatchObject({ authorMarkedPct: 0, authorMarkedWithDefaultPct: 100 });
+    const strict = scoreProbeWith(r, STRICT);
+    expect(strict.proactive).not.toHaveProperty("authorMarkedWithDefault");
+    expect(aggregateAuthor([strict])[0]).not.toHaveProperty("authorMarkedWithDefaultPct");
   });
 });
