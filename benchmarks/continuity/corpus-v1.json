@@ -1,0 +1,6822 @@
+{
+ "version": "continuity-v1",
+ "seed": 20261106,
+ "fillerSizes": [
+  50,
+  500,
+  5000
+ ],
+ "fillerSpec": {
+  "algorithm": "xorshift32-template-v1",
+  "templates": {
+   "es": {
+    "user": [
+     "¿Me ayudas a revisar el {doc} del {proj} antes de la {thing}?",
+     "Oye, ¿qué opinas de cambiar el horario de la {thing}?",
+     "Necesito un resumen corto del {doc} sobre {topic}.",
+     "¿Cuánto llevamos gastado del presupuesto para {topic} este mes?",
+     "Mi {relative} quiere que le recomiende algo para {topic}.",
+     "¿Te acuerdas de lo que hablamos sobre {topic}? Quiero retomarlo.",
+     "Ayúdame a redactar un correo para {person} sobre el {doc}.",
+     "¿Cómo se llama la app que usamos para {topic}?",
+     "Hoy tengo {thing} con {person}, ¿qué debería preparar?",
+     "¿Dónde dejé las notas del {proj}?"
+    ],
+    "assistant": [
+     "Claro. Revisé el {doc} y hay {n} puntos por ajustar sobre {topic}.",
+     "Sugiero mover la {thing} una hora más tarde; así queda libre la mañana.",
+     "Listo, te dejo un resumen de {n} líneas sobre {topic}.",
+     "Van {n} gastos registrados en {topic}; nada fuera de lo normal.",
+     "Para tu {relative} buscaría opciones sencillas para {topic}, unas {n} para comparar.",
+     "Sí, quedamos en revisar {topic} con calma y decidir después.",
+     "Aquí va un borrador para {person}: breve, cordial y con el {doc} adjunto.",
+     "Tengo anotadas {n} ideas para el {proj}; las vemos cuando quieras."
+    ]
+   },
+   "en": {
+    "user": [
+     "Can you check the {doc} for the {proj} before the {thing}?",
+     "What do you think about moving the {thing} to next week?",
+     "Remind me what we said about {topic} last time.",
+     "My {relative} asked for a recommendation about {topic}.",
+     "How much of the budget for {topic} is left this month?",
+     "Write a quick note to {person} about the {doc}.",
+     "Where did I put the notes for the {proj}?",
+     "I have a {thing} with {person} today, what should I bring?",
+     "What is the name of the app we use for {topic}?",
+     "Give me {n} ideas to organize {topic} better."
+    ],
+    "assistant": [
+     "Sure, the {doc} looks fine; {n} items still need a review on {topic}.",
+     "Got it. I'd keep the {thing} where it is and revisit it later.",
+     "Here is a short summary of {topic} in {n} lines.",
+     "There are {n} expenses logged under {topic}; nothing unusual.",
+     "For your {relative} I'd look at {n} simple options for {topic}.",
+     "Draft for {person}: short, friendly, with the {doc} attached.",
+     "I have {n} notes saved for the {proj}; we can go over them anytime.",
+     "We agreed to look at {topic} again before deciding."
+    ]
+   }
+  },
+  "vocab": {
+   "es": {
+    "doc": [
+     "informe",
+     "reporte",
+     "contrato",
+     "borrador",
+     "calendario",
+     "presupuesto",
+     "inventario"
+    ],
+    "proj": [
+     "proyecto de la mudanza",
+     "proyecto web",
+     "proyecto escolar",
+     "lanzamiento",
+     "proyecto del jardín"
+    ],
+    "thing": [
+     "reunión",
+     "llamada",
+     "cita",
+     "clase",
+     "entrega",
+     "junta"
+    ],
+    "topic": [
+     "el viaje",
+     "la salud",
+     "las finanzas",
+     "la escuela",
+     "el trabajo",
+     "la casa",
+     "el coche",
+     "la mascota",
+     "la renta",
+     "el gimnasio",
+     "los análisis de sangre",
+     "el local",
+     "la comida"
+    ],
+    "relative": [
+     "hermana",
+     "hermano",
+     "mamá",
+     "primo",
+     "hija",
+     "sobrina",
+     "tía"
+    ],
+    "person": [
+     "el contador",
+     "la maestra",
+     "el proveedor",
+     "el doctor",
+     "la arquitecta",
+     "el vecino"
+    ]
+   },
+   "en": {
+    "doc": [
+     "report",
+     "contract",
+     "draft",
+     "budget sheet",
+     "calendar",
+     "checklist"
+    ],
+    "proj": [
+     "moving project",
+     "website project",
+     "school project",
+     "launch",
+     "garden project"
+    ],
+    "thing": [
+     "meeting",
+     "call",
+     "appointment",
+     "class",
+     "delivery",
+     "review"
+    ],
+    "topic": [
+     "travel",
+     "health",
+     "finances",
+     "school",
+     "work",
+     "the house",
+     "the car",
+     "the pet",
+     "rent",
+     "the gym",
+     "the blood test",
+     "the office",
+     "dinner plans"
+    ],
+    "relative": [
+     "sister",
+     "brother",
+     "mom",
+     "cousin",
+     "daughter",
+     "aunt"
+    ],
+    "person": [
+     "the accountant",
+     "the teacher",
+     "the supplier",
+     "the doctor",
+     "the architect",
+     "the neighbor"
+    ]
+   }
+  }
+ },
+ "scenarios": [
+  {
+   "id": "C1-01-s50",
+   "class": "C1",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 451517224,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El perro de la persona se llama Corvalino.",
+     "durable": true,
+     "asUser": "Por cierto, a mi perro le puse Corvalino.",
+     "asAssistant": "¡Qué buen nombre! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿Cómo se llama mi mascota?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Oye, ¿recuerdas el nombre que le puse al perrito?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Mi sobrina me preguntó el nombre de mi mascota, ¿me lo recuerdas?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Cuál era el nombre de mi can?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-02-s50",
+   "class": "C1",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 2497037717,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's sister lives in Quillmarsh.",
+     "durable": true,
+     "asUser": "My sister just moved to Quillmarsh for her new job.",
+     "asAssistant": "That's a big move, good luck to her."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "Where does my sister live these days?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Which town did my sibling relocate to?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me where my sister is based now.",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "I'm mailing my sister a parcel, what city do I write?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-03-s50",
+   "class": "C1",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 247533058,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿De cuánto es el presupuesto de la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Qué monto nos autorizaron para remodelar?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Recuérdame la cifra aprobada para la obra de la casa.",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Con cuánto dinero contamos para la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-04-s50",
+   "class": "C1",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 2293070063,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What medication should doctors avoid giving me?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Do I have any drug allergies?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "My doctor asked about allergies, what am I allergic to?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Which antibiotic gives me a reaction?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-05-s50",
+   "class": "C1",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 43558228,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿En qué colegio va a estudiar mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Cómo se llamaba la escuela de la niña?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Tengo que llenar un formulario, ¿a qué escuela entra mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Recuérdame el nombre del colegio nuevo de mi hija.",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-06-s50",
+   "class": "C1",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3162828737,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What's the code to open the office gate?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "I'm at the office entrance, what are the digits again?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me how to get through the building gate.",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "What number do I punch in at the office door?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-s50",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 2.960.400 pesos.",
+     "asUser": "Ojo, el comité recortó el monto: ahora es de 2.960.400 pesos.",
+     "asAssistant": "Entendido, ajusto la referencia a 2.960.400."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "2.960.400"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-02-s50",
+   "class": "C2",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 915164998,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person is allergic to sulfonamides.",
+     "asUser": "Correction from my doctor: the allergy is actually to sulfonamides.",
+     "asAssistant": "Got it, sulfonamides."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What am I allergic to?",
+     "expect": [
+      "sulfonamides"
+     ],
+     "forbid": [
+      "penicillin"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-03-s50",
+   "class": "C2",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 2895676625,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La hija de la persona va al colegio Tamarindos.",
+     "asUser": "Cambio de planes: mi hija va a ir al colegio Tamarindos.",
+     "asAssistant": "Anotado: Tamarindos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿A qué escuela va mi hija?",
+     "expect": [
+      "Tamarindos"
+     ],
+     "forbid": [
+      "Arrayanes"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-04-s50",
+   "class": "C2",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 720695868,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The office gate code is 7394.",
+     "asUser": "They reset it, the office gate code is 7394 now.",
+     "asAssistant": "Updated to 7394."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's the current office gate code?",
+     "expect": [
+      "7394"
+     ],
+     "forbid": [
+      "5821"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-05-s50",
+   "class": "C2",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 2697015175,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La cena de aniversario de la persona es en el restaurante Lumbrella.",
+     "durable": true,
+     "asUser": "Reservé la cena de aniversario en el restaurante Lumbrella.",
+     "asAssistant": "¡Excelente elección! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La cena de aniversario de la persona es en Casa Nopalera.",
+     "asUser": "Cambié la reservación: ahora la cena es en Casa Nopalera.",
+     "asAssistant": "Listo, Casa Nopalera."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Dónde quedó la cena de aniversario?",
+     "expect": [
+      "Casa Nopalera"
+     ],
+     "forbid": [
+      "Lumbrella"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-06-s50",
+   "class": "C2",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 517825810,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's car plate number is KVX-482.",
+     "durable": true,
+     "asUser": "My new car's plate number is KVX-482.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person's car plate number is JRT-915.",
+     "asUser": "The DMV reissued it, my plate is now JRT-915.",
+     "asAssistant": "Updated: JRT-915."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's my car's plate number now?",
+     "expect": [
+      "JRT-915"
+     ],
+     "forbid": [
+      "KVX-482"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C3-01-s50",
+   "class": "C3",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1584959370,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Hola, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-02-s50",
+   "class": "C3",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3494170935,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "hey, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-03-s50",
+   "class": "C3",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1246763680,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Buenos días, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-04-s50",
+   "class": "C3",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3426511949,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "I'm back. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-05-s50",
+   "class": "C3",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1175040502,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "¿Continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-06-s50",
+   "class": "C3",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 4162190179,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Morning! Let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-01-s50",
+   "class": "C4",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 4228056157,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya volví, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-02-s50",
+   "class": "C4",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1916754656,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "I'm back, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-03-s50",
+   "class": "C4",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3895169399,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Aquí estoy de nuevo, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-04-s50",
+   "class": "C4",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1850206106,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back again. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-05-s50",
+   "class": "C4",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3832691233,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya regresé, ¿continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-06-s50",
+   "class": "C4",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1517187252,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back now, let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C5-01-s50",
+   "class": "C5",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 2479588076,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto crees que cueste la renta del local en Plaza Ombú?",
+     "assistant": "Por la zona, calculo que la renta ronda los 18.450 pesos al mes."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto quedamos que era la renta del local?",
+     "expect": [
+      "18.450"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-02-s50",
+   "class": "C5",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 502783057,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How long is the drive to the Fenwick cabin?",
+     "assistant": "I'd estimate about 3 hours 40 minutes without traffic."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "How long did we say the trip to the cabin takes?",
+     "expect": [
+      "3 hours 40"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-03-s50",
+   "class": "C5",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 2279806918,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos invitados caben en el salón Jacarandas?",
+     "assistant": "Por lo que suele haber en esos salones, caben unas 135 personas."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánta gente dijimos que entra en el salón?",
+     "expect": [
+      "135 personas"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-04-s50",
+   "class": "C5",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 26173739,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "What's the interest rate on the Halvorsen loan offer?",
+     "assistant": "It's probably around 11.75% a year."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "What rate did we settle on for the loan?",
+     "expect": [
+      "11.75%"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-05-s50",
+   "class": "C5",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 2344270992,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto pesa la caja que mandamos a Mérida?",
+     "assistant": "Calculo que unos 23,6 kilos con todo y empaque."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto pesaba el paquete del envío?",
+     "expect": [
+      "23,6 kilos"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-06-s50",
+   "class": "C5",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 900134405,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "When does the Corbett warranty run out?",
+     "assistant": "Most likely in September 2027."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "When did we say the warranty expires?",
+     "expect": [
+      "September 2027"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C6-01-s50",
+   "class": "C6",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 831666367,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Responder siempre en viñetas cortas, sin párrafos largos.",
+     "asUser": "A partir de ahora respóndeme siempre en viñetas cortas, nada de párrafos largos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Explícame cómo funciona el interés compuesto.",
+     "expect": [
+      "viñetas"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-02-s50",
+   "class": "C6",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3215877634,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Always give temperatures in Celsius.",
+     "asUser": "From now on, always give me temperatures in Celsius.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "What will the weather be like for my trip this weekend?",
+     "expect": [
+      "celsius"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-03-s50",
+   "class": "C6",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 632991125,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "No agendar nada antes de las diez de la mañana.",
+     "asUser": "Nunca me agendes nada antes de las diez de la mañana, por favor.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Agéndame una llamada con el contador para mañana.",
+     "expect": [
+      "diez de la mañana"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-04-s50",
+   "class": "C6",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 2748767096,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Address the person as Captain Rook.",
+     "asUser": "Please always address me as Captain Rook.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Draft a short note to my team about the Friday plan.",
+     "expect": [
+      "Captain Rook"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-05-s50",
+   "class": "C6",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 702744259,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Temas de salud: hablar directo y sin rodeos.",
+     "asUser": "Cuando hablemos de mi salud, dímelo directo y sin rodeos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Me salieron altos los triglicéridos, ¿qué significa?",
+     "expect": [
+      "sin rodeos"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-06-s50",
+   "class": "C6",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 2550090838,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Keep summaries under five sentences.",
+     "asUser": "Keep every summary you write me under five sentences.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Summarize the main points of the article I sent you.",
+     "expect": [
+      "five sentences"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C7-01-s50",
+   "class": "C7",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3613045070,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Me recomiendas una serie para el fin?",
+     "assistant": "Te sugiero una de misterio corta, de seis capítulos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te conté sobre el viaje de mi sobrino al torneo de ajedrez?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-02-s50",
+   "class": "C7",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1499918323,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Any idea for a quick lunch?",
+     "assistant": "A grain bowl with whatever vegetables you have."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What did I tell you about my cousin's beekeeping hobby?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-03-s50",
+   "class": "C7",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3279037540,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Qué hora es en Madrid ahora?",
+     "assistant": "Son siete horas más que aquí."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Recuerdas lo que te dije del contrato del velero?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-04-s50",
+   "class": "C7",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1159615113,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Give me a word that rhymes with orange.",
+     "assistant": "Nothing rhymes perfectly; door hinge is the classic joke."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What was the name of the violin teacher I mentioned?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-05-s50",
+   "class": "C7",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3475738418,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos litros tiene un galón?",
+     "assistant": "Un galón estadounidense tiene unos 3,79 litros."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te comenté de la clase de cerámica de mi mamá?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-06-s50",
+   "class": "C7",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 1899480487,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How do I boil an egg soft?",
+     "assistant": "Six minutes in boiling water, then cold water."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "Remind me what I said about the rooftop garden at work.",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-s50",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es AB negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es AB negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona trabaja desde Cuernavaca (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana nada más estoy trabajando desde Cuernavaca.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y desde dónde estoy trabajando?",
+     "expect": [
+      "AB negativo"
+     ],
+     "forbid": [
+      "Cuernavaca"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-s50",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's middle name is Thornbury.",
+     "durable": true,
+     "asUser": "My middle name is Thornbury, by the way.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person uses the spare phone ending in 7781.",
+     "durable": false,
+     "asUser": "Only this week I'm using the spare phone, the one ending in 7781.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: what's my middle name, and which phone am I using?",
+     "expect": [
+      "Thornbury"
+     ],
+     "forbid": [
+      "7781"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-s50",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La persona es vegetariana desde hace diez años.",
+     "durable": true,
+     "asUser": "Soy vegetariano desde hace diez años.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Solo esta semana la persona sigue una dieta líquida.",
+     "durable": false,
+     "asUser": "Solo por esta semana estoy en dieta líquida por lo del dentista.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Voy a pedir comida: ¿qué restricciones de alimentación tengo?",
+     "expect": [
+      "vegetarian"
+     ],
+     "forbid": [
+      "dieta líquida"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-s50",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's company is Orrinvale Labs.",
+     "durable": true,
+     "asUser": "My company is called Orrinvale Labs.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person covers for their manager at the Duxbury branch.",
+     "durable": false,
+     "asUser": "This week only, I'm covering for my manager at the Duxbury branch.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: where do I work and which branch am I at?",
+     "expect": [
+      "Orrinvale"
+     ],
+     "forbid": [
+      "Duxbury"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-05-s50",
+   "class": "C8",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1830031725,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de cliente bancario de la persona es 44-9182.",
+     "durable": true,
+     "asUser": "Mi número de cliente del banco es 44-9182.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana el coche de la persona está en el taller Rinconada.",
+     "durable": false,
+     "asUser": "Esta semana nada más, el coche está en el taller Rinconada.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de cliente del banco y dónde está el coche?",
+     "expect": [
+      "44-9182"
+     ],
+     "forbid": [
+      "Rinconada"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-06-s50",
+   "class": "C8",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3540540408,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's daughter's birthday is March 14.",
+     "durable": true,
+     "asUser": "My daughter's birthday is March 14.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, school pickup is at 2:40.",
+     "durable": false,
+     "asUser": "Just for this week, school pickup is at 2:40 instead of the usual time.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my daughter's birthday, and what time is school pickup?",
+     "expect": [
+      "March 14"
+     ],
+     "forbid": [
+      "2:40"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-01-s500",
+   "class": "C1",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 451517224,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El perro de la persona se llama Corvalino.",
+     "durable": true,
+     "asUser": "Por cierto, a mi perro le puse Corvalino.",
+     "asAssistant": "¡Qué buen nombre! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿Cómo se llama mi mascota?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Oye, ¿recuerdas el nombre que le puse al perrito?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Mi sobrina me preguntó el nombre de mi mascota, ¿me lo recuerdas?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Cuál era el nombre de mi can?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-02-s500",
+   "class": "C1",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 2497037717,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's sister lives in Quillmarsh.",
+     "durable": true,
+     "asUser": "My sister just moved to Quillmarsh for her new job.",
+     "asAssistant": "That's a big move, good luck to her."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "Where does my sister live these days?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Which town did my sibling relocate to?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me where my sister is based now.",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "I'm mailing my sister a parcel, what city do I write?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-03-s500",
+   "class": "C1",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 247533058,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿De cuánto es el presupuesto de la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Qué monto nos autorizaron para remodelar?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Recuérdame la cifra aprobada para la obra de la casa.",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Con cuánto dinero contamos para la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-04-s500",
+   "class": "C1",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 2293070063,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What medication should doctors avoid giving me?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Do I have any drug allergies?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "My doctor asked about allergies, what am I allergic to?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Which antibiotic gives me a reaction?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-05-s500",
+   "class": "C1",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 43558228,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿En qué colegio va a estudiar mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Cómo se llamaba la escuela de la niña?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Tengo que llenar un formulario, ¿a qué escuela entra mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Recuérdame el nombre del colegio nuevo de mi hija.",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-06-s500",
+   "class": "C1",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3162828737,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What's the code to open the office gate?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "I'm at the office entrance, what are the digits again?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me how to get through the building gate.",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "What number do I punch in at the office door?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-s500",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 2.960.400 pesos.",
+     "asUser": "Ojo, el comité recortó el monto: ahora es de 2.960.400 pesos.",
+     "asAssistant": "Entendido, ajusto la referencia a 2.960.400."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "2.960.400"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-02-s500",
+   "class": "C2",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 915164998,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person is allergic to sulfonamides.",
+     "asUser": "Correction from my doctor: the allergy is actually to sulfonamides.",
+     "asAssistant": "Got it, sulfonamides."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What am I allergic to?",
+     "expect": [
+      "sulfonamides"
+     ],
+     "forbid": [
+      "penicillin"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-03-s500",
+   "class": "C2",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 2895676625,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La hija de la persona va al colegio Tamarindos.",
+     "asUser": "Cambio de planes: mi hija va a ir al colegio Tamarindos.",
+     "asAssistant": "Anotado: Tamarindos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿A qué escuela va mi hija?",
+     "expect": [
+      "Tamarindos"
+     ],
+     "forbid": [
+      "Arrayanes"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-04-s500",
+   "class": "C2",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 720695868,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The office gate code is 7394.",
+     "asUser": "They reset it, the office gate code is 7394 now.",
+     "asAssistant": "Updated to 7394."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's the current office gate code?",
+     "expect": [
+      "7394"
+     ],
+     "forbid": [
+      "5821"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-05-s500",
+   "class": "C2",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 2697015175,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La cena de aniversario de la persona es en el restaurante Lumbrella.",
+     "durable": true,
+     "asUser": "Reservé la cena de aniversario en el restaurante Lumbrella.",
+     "asAssistant": "¡Excelente elección! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La cena de aniversario de la persona es en Casa Nopalera.",
+     "asUser": "Cambié la reservación: ahora la cena es en Casa Nopalera.",
+     "asAssistant": "Listo, Casa Nopalera."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Dónde quedó la cena de aniversario?",
+     "expect": [
+      "Casa Nopalera"
+     ],
+     "forbid": [
+      "Lumbrella"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-06-s500",
+   "class": "C2",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 517825810,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's car plate number is KVX-482.",
+     "durable": true,
+     "asUser": "My new car's plate number is KVX-482.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person's car plate number is JRT-915.",
+     "asUser": "The DMV reissued it, my plate is now JRT-915.",
+     "asAssistant": "Updated: JRT-915."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's my car's plate number now?",
+     "expect": [
+      "JRT-915"
+     ],
+     "forbid": [
+      "KVX-482"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C3-01-s500",
+   "class": "C3",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1584959370,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Hola, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-02-s500",
+   "class": "C3",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3494170935,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "hey, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-03-s500",
+   "class": "C3",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1246763680,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Buenos días, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-04-s500",
+   "class": "C3",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3426511949,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "I'm back. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-05-s500",
+   "class": "C3",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1175040502,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "¿Continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-06-s500",
+   "class": "C3",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 4162190179,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Morning! Let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-01-s500",
+   "class": "C4",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 4228056157,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya volví, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-02-s500",
+   "class": "C4",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1916754656,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "I'm back, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-03-s500",
+   "class": "C4",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3895169399,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Aquí estoy de nuevo, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-04-s500",
+   "class": "C4",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1850206106,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back again. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-05-s500",
+   "class": "C4",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3832691233,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya regresé, ¿continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-06-s500",
+   "class": "C4",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1517187252,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back now, let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C5-01-s500",
+   "class": "C5",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 2479588076,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto crees que cueste la renta del local en Plaza Ombú?",
+     "assistant": "Por la zona, calculo que la renta ronda los 18.450 pesos al mes."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto quedamos que era la renta del local?",
+     "expect": [
+      "18.450"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-02-s500",
+   "class": "C5",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 502783057,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How long is the drive to the Fenwick cabin?",
+     "assistant": "I'd estimate about 3 hours 40 minutes without traffic."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "How long did we say the trip to the cabin takes?",
+     "expect": [
+      "3 hours 40"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-03-s500",
+   "class": "C5",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 2279806918,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos invitados caben en el salón Jacarandas?",
+     "assistant": "Por lo que suele haber en esos salones, caben unas 135 personas."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánta gente dijimos que entra en el salón?",
+     "expect": [
+      "135 personas"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-04-s500",
+   "class": "C5",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 26173739,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "What's the interest rate on the Halvorsen loan offer?",
+     "assistant": "It's probably around 11.75% a year."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "What rate did we settle on for the loan?",
+     "expect": [
+      "11.75%"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-05-s500",
+   "class": "C5",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 2344270992,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto pesa la caja que mandamos a Mérida?",
+     "assistant": "Calculo que unos 23,6 kilos con todo y empaque."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto pesaba el paquete del envío?",
+     "expect": [
+      "23,6 kilos"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-06-s500",
+   "class": "C5",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 900134405,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "When does the Corbett warranty run out?",
+     "assistant": "Most likely in September 2027."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "When did we say the warranty expires?",
+     "expect": [
+      "September 2027"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C6-01-s500",
+   "class": "C6",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 831666367,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Responder siempre en viñetas cortas, sin párrafos largos.",
+     "asUser": "A partir de ahora respóndeme siempre en viñetas cortas, nada de párrafos largos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Explícame cómo funciona el interés compuesto.",
+     "expect": [
+      "viñetas"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-02-s500",
+   "class": "C6",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3215877634,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Always give temperatures in Celsius.",
+     "asUser": "From now on, always give me temperatures in Celsius.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "What will the weather be like for my trip this weekend?",
+     "expect": [
+      "celsius"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-03-s500",
+   "class": "C6",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 632991125,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "No agendar nada antes de las diez de la mañana.",
+     "asUser": "Nunca me agendes nada antes de las diez de la mañana, por favor.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Agéndame una llamada con el contador para mañana.",
+     "expect": [
+      "diez de la mañana"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-04-s500",
+   "class": "C6",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 2748767096,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Address the person as Captain Rook.",
+     "asUser": "Please always address me as Captain Rook.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Draft a short note to my team about the Friday plan.",
+     "expect": [
+      "Captain Rook"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-05-s500",
+   "class": "C6",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 702744259,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Temas de salud: hablar directo y sin rodeos.",
+     "asUser": "Cuando hablemos de mi salud, dímelo directo y sin rodeos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Me salieron altos los triglicéridos, ¿qué significa?",
+     "expect": [
+      "sin rodeos"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-06-s500",
+   "class": "C6",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 2550090838,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Keep summaries under five sentences.",
+     "asUser": "Keep every summary you write me under five sentences.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Summarize the main points of the article I sent you.",
+     "expect": [
+      "five sentences"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C7-01-s500",
+   "class": "C7",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3613045070,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Me recomiendas una serie para el fin?",
+     "assistant": "Te sugiero una de misterio corta, de seis capítulos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te conté sobre el viaje de mi sobrino al torneo de ajedrez?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-02-s500",
+   "class": "C7",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1499918323,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Any idea for a quick lunch?",
+     "assistant": "A grain bowl with whatever vegetables you have."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What did I tell you about my cousin's beekeeping hobby?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-03-s500",
+   "class": "C7",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3279037540,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Qué hora es en Madrid ahora?",
+     "assistant": "Son siete horas más que aquí."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Recuerdas lo que te dije del contrato del velero?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-04-s500",
+   "class": "C7",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1159615113,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Give me a word that rhymes with orange.",
+     "assistant": "Nothing rhymes perfectly; door hinge is the classic joke."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What was the name of the violin teacher I mentioned?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-05-s500",
+   "class": "C7",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3475738418,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos litros tiene un galón?",
+     "assistant": "Un galón estadounidense tiene unos 3,79 litros."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te comenté de la clase de cerámica de mi mamá?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-06-s500",
+   "class": "C7",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 1899480487,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How do I boil an egg soft?",
+     "assistant": "Six minutes in boiling water, then cold water."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "Remind me what I said about the rooftop garden at work.",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-s500",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es AB negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es AB negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona trabaja desde Cuernavaca (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana nada más estoy trabajando desde Cuernavaca.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y desde dónde estoy trabajando?",
+     "expect": [
+      "AB negativo"
+     ],
+     "forbid": [
+      "Cuernavaca"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-s500",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's middle name is Thornbury.",
+     "durable": true,
+     "asUser": "My middle name is Thornbury, by the way.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person uses the spare phone ending in 7781.",
+     "durable": false,
+     "asUser": "Only this week I'm using the spare phone, the one ending in 7781.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: what's my middle name, and which phone am I using?",
+     "expect": [
+      "Thornbury"
+     ],
+     "forbid": [
+      "7781"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-s500",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La persona es vegetariana desde hace diez años.",
+     "durable": true,
+     "asUser": "Soy vegetariano desde hace diez años.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Solo esta semana la persona sigue una dieta líquida.",
+     "durable": false,
+     "asUser": "Solo por esta semana estoy en dieta líquida por lo del dentista.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Voy a pedir comida: ¿qué restricciones de alimentación tengo?",
+     "expect": [
+      "vegetarian"
+     ],
+     "forbid": [
+      "dieta líquida"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-s500",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's company is Orrinvale Labs.",
+     "durable": true,
+     "asUser": "My company is called Orrinvale Labs.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person covers for their manager at the Duxbury branch.",
+     "durable": false,
+     "asUser": "This week only, I'm covering for my manager at the Duxbury branch.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: where do I work and which branch am I at?",
+     "expect": [
+      "Orrinvale"
+     ],
+     "forbid": [
+      "Duxbury"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-05-s500",
+   "class": "C8",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1830031725,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de cliente bancario de la persona es 44-9182.",
+     "durable": true,
+     "asUser": "Mi número de cliente del banco es 44-9182.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana el coche de la persona está en el taller Rinconada.",
+     "durable": false,
+     "asUser": "Esta semana nada más, el coche está en el taller Rinconada.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de cliente del banco y dónde está el coche?",
+     "expect": [
+      "44-9182"
+     ],
+     "forbid": [
+      "Rinconada"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-06-s500",
+   "class": "C8",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3540540408,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's daughter's birthday is March 14.",
+     "durable": true,
+     "asUser": "My daughter's birthday is March 14.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, school pickup is at 2:40.",
+     "durable": false,
+     "asUser": "Just for this week, school pickup is at 2:40 instead of the usual time.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my daughter's birthday, and what time is school pickup?",
+     "expect": [
+      "March 14"
+     ],
+     "forbid": [
+      "2:40"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-01-s5000",
+   "class": "C1",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 451517224,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El perro de la persona se llama Corvalino.",
+     "durable": true,
+     "asUser": "Por cierto, a mi perro le puse Corvalino.",
+     "asAssistant": "¡Qué buen nombre! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿Cómo se llama mi mascota?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Oye, ¿recuerdas el nombre que le puse al perrito?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Mi sobrina me preguntó el nombre de mi mascota, ¿me lo recuerdas?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Cuál era el nombre de mi can?",
+     "expect": [
+      "Corvalino"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-02-s5000",
+   "class": "C1",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 2497037717,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's sister lives in Quillmarsh.",
+     "durable": true,
+     "asUser": "My sister just moved to Quillmarsh for her new job.",
+     "asAssistant": "That's a big move, good luck to her."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "Where does my sister live these days?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Which town did my sibling relocate to?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me where my sister is based now.",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "I'm mailing my sister a parcel, what city do I write?",
+     "expect": [
+      "Quillmarsh"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-03-s5000",
+   "class": "C1",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 247533058,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿De cuánto es el presupuesto de la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Qué monto nos autorizaron para remodelar?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Recuérdame la cifra aprobada para la obra de la casa.",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "¿Con cuánto dinero contamos para la remodelación?",
+     "expect": [
+      "3.847.215"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-04-s5000",
+   "class": "C1",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 2293070063,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What medication should doctors avoid giving me?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "Do I have any drug allergies?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "My doctor asked about allergies, what am I allergic to?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Which antibiotic gives me a reaction?",
+     "expect": [
+      "penicillin"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-05-s5000",
+   "class": "C1",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 43558228,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "¿En qué colegio va a estudiar mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "¿Cómo se llamaba la escuela de la niña?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Tengo que llenar un formulario, ¿a qué escuela entra mi hija?",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "Recuérdame el nombre del colegio nuevo de mi hija.",
+     "expect": [
+      "Arrayanes"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C1-06-s5000",
+   "class": "C1",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3162828737,
+   "fillerFromT": -2592000,
+   "fillerToT": 7840980,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    }
+   ],
+   "probes": [
+    {
+     "day": 1,
+     "t": 151200,
+     "session": "d1",
+     "text": "What's the code to open the office gate?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 7,
+     "t": 669660,
+     "session": "d7",
+     "text": "I'm at the office entrance, what are the digits again?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 30,
+     "t": 2656920,
+     "session": "d30",
+     "text": "Remind me how to get through the building gate.",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    },
+    {
+     "day": 90,
+     "t": 7840980,
+     "session": "d90",
+     "text": "What number do I punch in at the office door?",
+     "expect": [
+      "5821"
+     ],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-s5000",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 2.960.400 pesos.",
+     "asUser": "Ojo, el comité recortó el monto: ahora es de 2.960.400 pesos.",
+     "asAssistant": "Entendido, ajusto la referencia a 2.960.400."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "2.960.400"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-02-s5000",
+   "class": "C2",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 915164998,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person is allergic to penicillin.",
+     "durable": true,
+     "asUser": "Just so you know, I'm allergic to penicillin.",
+     "asAssistant": "Thanks for telling me, I'll keep that in mind."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person is allergic to sulfonamides.",
+     "asUser": "Correction from my doctor: the allergy is actually to sulfonamides.",
+     "asAssistant": "Got it, sulfonamides."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What am I allergic to?",
+     "expect": [
+      "sulfonamides"
+     ],
+     "forbid": [
+      "penicillin"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-03-s5000",
+   "class": "C2",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 2895676625,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La hija de la persona entra a la escuela Arrayanes.",
+     "durable": true,
+     "asUser": "Mi hija va a entrar a la escuela Arrayanes en agosto.",
+     "asAssistant": "¡Qué emoción! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La hija de la persona va al colegio Tamarindos.",
+     "asUser": "Cambio de planes: mi hija va a ir al colegio Tamarindos.",
+     "asAssistant": "Anotado: Tamarindos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿A qué escuela va mi hija?",
+     "expect": [
+      "Tamarindos"
+     ],
+     "forbid": [
+      "Arrayanes"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-04-s5000",
+   "class": "C2",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 720695868,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The office gate code is 5821.",
+     "durable": true,
+     "asUser": "The gate code for the new office is 5821.",
+     "asAssistant": "Got it, saved."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The office gate code is 7394.",
+     "asUser": "They reset it, the office gate code is 7394 now.",
+     "asAssistant": "Updated to 7394."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's the current office gate code?",
+     "expect": [
+      "7394"
+     ],
+     "forbid": [
+      "5821"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-05-s5000",
+   "class": "C2",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 2697015175,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La cena de aniversario de la persona es en el restaurante Lumbrella.",
+     "durable": true,
+     "asUser": "Reservé la cena de aniversario en el restaurante Lumbrella.",
+     "asAssistant": "¡Excelente elección! Lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "La cena de aniversario de la persona es en Casa Nopalera.",
+     "asUser": "Cambié la reservación: ahora la cena es en Casa Nopalera.",
+     "asAssistant": "Listo, Casa Nopalera."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Dónde quedó la cena de aniversario?",
+     "expect": [
+      "Casa Nopalera"
+     ],
+     "forbid": [
+      "Lumbrella"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C2-06-s5000",
+   "class": "C2",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 517825810,
+   "fillerFromT": -2592000,
+   "fillerToT": 928800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's car plate number is KVX-482.",
+     "durable": true,
+     "asUser": "My new car's plate number is KVX-482.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "The person's car plate number is JRT-915.",
+     "asUser": "The DMV reissued it, my plate is now JRT-915.",
+     "asAssistant": "Updated: JRT-915."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "What's my car's plate number now?",
+     "expect": [
+      "JRT-915"
+     ],
+     "forbid": [
+      "KVX-482"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C3-01-s5000",
+   "class": "C3",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1584959370,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Hola, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-02-s5000",
+   "class": "C3",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3494170935,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "hey, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-03-s5000",
+   "class": "C3",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1246763680,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Buenos días, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-04-s5000",
+   "class": "C3",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3426511949,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "I'm back. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-05-s5000",
+   "class": "C3",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1175040502,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "¿Continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C3-06-s5000",
+   "class": "C3",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 4162190179,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    }
+   ],
+   "probes": [
+    {
+     "day": 3,
+     "t": 324000,
+     "session": "d3",
+     "text": "Morning! Let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-01-s5000",
+   "class": "C4",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 4228056157,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Vamos a avanzar con el informe trimestral de Valdoria.",
+     "assistant": "Va. Ya tengo la estructura con ventas y gastos."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Bien, agrega la parte de inventario.",
+     "assistant": "Listo, agregué inventario con el cierre del mes."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión",
+     "asUser": "Ok, lo dejamos aquí por hoy.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta el anexo de proveedores del informe de Valdoria y mandarlo a revisión."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya volví, ¿seguimos?",
+     "expect": [
+      "anexo de proveedores"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-02-s5000",
+   "class": "C4",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1916754656,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's keep building the slide deck for the Merriton pitch.",
+     "assistant": "Sure. The intro and the problem slides are done."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Good, now the market slide.",
+     "assistant": "Done, the market slide has the three segments."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the pricing slide for Merriton still needs the competitor table",
+     "asUser": "Let's stop here for today.",
+     "asAssistant": "Sure. Still open: the pricing slide for Merriton still needs the competitor table."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "I'm back, where were we?",
+     "expect": [
+      "competitor table"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-03-s5000",
+   "class": "C4",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3895169399,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Organicemos el viaje a Zacatlán del puente.",
+     "assistant": "Va. Ya reservé el hotel dos noches."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Y el transporte de ida?",
+     "assistant": "Listo, la ida queda en autobús el viernes temprano."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "falta comprar los boletos de regreso desde Zacatlán",
+     "asUser": "Va, seguimos luego.",
+     "asAssistant": "De acuerdo. Queda pendiente: falta comprar los boletos de regreso desde Zacatlán."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Aquí estoy de nuevo, ¿en qué íbamos?",
+     "expect": [
+      "boletos de regreso"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-04-s5000",
+   "class": "C4",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1850206106,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Help me write the cover letter for the Pellham Foundation grant.",
+     "assistant": "Sure, I drafted the opening and the mission paragraph."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add a paragraph about last year's results.",
+     "assistant": "Added, with the two outcomes you mentioned."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the closing paragraph of the Pellham cover letter is still unwritten",
+     "asUser": "That's enough for today.",
+     "asAssistant": "Sure. Still open: the closing paragraph of the Pellham cover letter is still unwritten."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back again. What's next?",
+     "expect": [
+      "closing paragraph"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-05-s5000",
+   "class": "C4",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3832691233,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Sigamos con la migración de contactos al sistema Tilapo.",
+     "assistant": "Va. Ya importé los del primer semestre."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Quedaron bien los teléfonos?",
+     "assistant": "Sí, revisé los teléfonos y quedaron con lada."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "faltan los contactos del segundo semestre por importar a Tilapo",
+     "asUser": "Lo dejamos aquí.",
+     "asAssistant": "De acuerdo. Queda pendiente: faltan los contactos del segundo semestre por importar a Tilapo."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Ya regresé, ¿continuamos?",
+     "expect": [
+      "segundo semestre"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C4-06-s5000",
+   "class": "C4",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1517187252,
+   "fillerFromT": -2592000,
+   "fillerToT": 0,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Let's get my tax filing in order.",
+     "assistant": "Sure, I listed the income documents you already have."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Add the deductible expenses.",
+     "assistant": "Added the deductible expenses we have receipts for."
+    },
+    {
+     "day": 0,
+     "t": 32640,
+     "session": "d0",
+     "kind": "session_end",
+     "openWork": "the receipts from the dental clinic still need to be scanned",
+     "asUser": "Ok, pausing here.",
+     "asAssistant": "Sure. Still open: the receipts from the dental clinic still need to be scanned."
+    },
+    {
+     "day": 0,
+     "t": 32760,
+     "session": "d0",
+     "kind": "restart",
+     "asUser": "",
+     "asAssistant": ""
+    }
+   ],
+   "probes": [
+    {
+     "day": 0,
+     "t": 64800,
+     "session": "d0",
+     "text": "Back now, let's pick up again.",
+     "expect": [
+      "dental clinic"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C5-01-s5000",
+   "class": "C5",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 2479588076,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto crees que cueste la renta del local en Plaza Ombú?",
+     "assistant": "Por la zona, calculo que la renta ronda los 18.450 pesos al mes."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto quedamos que era la renta del local?",
+     "expect": [
+      "18.450"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-02-s5000",
+   "class": "C5",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 502783057,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How long is the drive to the Fenwick cabin?",
+     "assistant": "I'd estimate about 3 hours 40 minutes without traffic."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "How long did we say the trip to the cabin takes?",
+     "expect": [
+      "3 hours 40"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-03-s5000",
+   "class": "C5",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 2279806918,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos invitados caben en el salón Jacarandas?",
+     "assistant": "Por lo que suele haber en esos salones, caben unas 135 personas."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánta gente dijimos que entra en el salón?",
+     "expect": [
+      "135 personas"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-04-s5000",
+   "class": "C5",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 26173739,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "What's the interest rate on the Halvorsen loan offer?",
+     "assistant": "It's probably around 11.75% a year."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "What rate did we settle on for the loan?",
+     "expect": [
+      "11.75%"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-05-s5000",
+   "class": "C5",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 2344270992,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuánto pesa la caja que mandamos a Mérida?",
+     "assistant": "Calculo que unos 23,6 kilos con todo y empaque."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "¿Cuánto pesaba el paquete del envío?",
+     "expect": [
+      "23,6 kilos"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C5-06-s5000",
+   "class": "C5",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 900134405,
+   "fillerFromT": -2592000,
+   "fillerToT": 237600,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "When does the Corbett warranty run out?",
+     "assistant": "Most likely in September 2027."
+    }
+   ],
+   "probes": [
+    {
+     "day": 2,
+     "t": 237600,
+     "session": "d2",
+     "text": "When did we say the warranty expires?",
+     "expect": [
+      "September 2027"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "expectAuthor": "assistant"
+    }
+   ]
+  },
+  {
+   "id": "C6-01-s5000",
+   "class": "C6",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 831666367,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Responder siempre en viñetas cortas, sin párrafos largos.",
+     "asUser": "A partir de ahora respóndeme siempre en viñetas cortas, nada de párrafos largos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Explícame cómo funciona el interés compuesto.",
+     "expect": [
+      "viñetas"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-02-s5000",
+   "class": "C6",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3215877634,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Always give temperatures in Celsius.",
+     "asUser": "From now on, always give me temperatures in Celsius.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "What will the weather be like for my trip this weekend?",
+     "expect": [
+      "celsius"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-03-s5000",
+   "class": "C6",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 632991125,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "No agendar nada antes de las diez de la mañana.",
+     "asUser": "Nunca me agendes nada antes de las diez de la mañana, por favor.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Agéndame una llamada con el contador para mañana.",
+     "expect": [
+      "diez de la mañana"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-04-s5000",
+   "class": "C6",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 2748767096,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Address the person as Captain Rook.",
+     "asUser": "Please always address me as Captain Rook.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Draft a short note to my team about the Friday plan.",
+     "expect": [
+      "Captain Rook"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-05-s5000",
+   "class": "C6",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 702744259,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Temas de salud: hablar directo y sin rodeos.",
+     "asUser": "Cuando hablemos de mi salud, dímelo directo y sin rodeos.",
+     "asAssistant": "Entendido, lo tendré presente de aquí en adelante."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Me salieron altos los triglicéridos, ¿qué significa?",
+     "expect": [
+      "sin rodeos"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C6-06-s5000",
+   "class": "C6",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 2550090838,
+   "fillerFromT": 36000,
+   "fillerToT": 2656800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "standing",
+     "text": "Keep summaries under five sentences.",
+     "asUser": "Keep every summary you write me under five sentences.",
+     "asAssistant": "Understood, I'll keep that in mind from now on."
+    }
+   ],
+   "probes": [
+    {
+     "day": 30,
+     "t": 2656800,
+     "session": "d30",
+     "text": "Summarize the main points of the article I sent you.",
+     "expect": [
+      "five sentences"
+     ],
+     "forbid": [],
+     "surface": "proactive"
+    }
+   ]
+  },
+  {
+   "id": "C7-01-s5000",
+   "class": "C7",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3613045070,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Me recomiendas una serie para el fin?",
+     "assistant": "Te sugiero una de misterio corta, de seis capítulos."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te conté sobre el viaje de mi sobrino al torneo de ajedrez?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-02-s5000",
+   "class": "C7",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1499918323,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Any idea for a quick lunch?",
+     "assistant": "A grain bowl with whatever vegetables you have."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What did I tell you about my cousin's beekeeping hobby?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-03-s5000",
+   "class": "C7",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3279037540,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Qué hora es en Madrid ahora?",
+     "assistant": "Son siete horas más que aquí."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Recuerdas lo que te dije del contrato del velero?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-04-s5000",
+   "class": "C7",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1159615113,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "Give me a word that rhymes with orange.",
+     "assistant": "Nothing rhymes perfectly; door hinge is the classic joke."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "What was the name of the violin teacher I mentioned?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-05-s5000",
+   "class": "C7",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3475738418,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "¿Cuántos litros tiene un galón?",
+     "assistant": "Un galón estadounidense tiene unos 3,79 litros."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "¿Qué te comenté de la clase de cerámica de mi mamá?",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C7-06-s5000",
+   "class": "C7",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 1899480487,
+   "fillerFromT": -2592000,
+   "fillerToT": 1274400,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "exchange",
+     "user": "How do I boil an egg soft?",
+     "assistant": "Six minutes in boiling water, then cold water."
+    }
+   ],
+   "probes": [
+    {
+     "day": 14,
+     "t": 1274400,
+     "session": "d14",
+     "text": "Remind me what I said about the rooftop garden at work.",
+     "expect": [],
+     "forbid": [],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-s5000",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es AB negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es AB negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona trabaja desde Cuernavaca (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana nada más estoy trabajando desde Cuernavaca.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y desde dónde estoy trabajando?",
+     "expect": [
+      "AB negativo"
+     ],
+     "forbid": [
+      "Cuernavaca"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-s5000",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's middle name is Thornbury.",
+     "durable": true,
+     "asUser": "My middle name is Thornbury, by the way.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person uses the spare phone ending in 7781.",
+     "durable": false,
+     "asUser": "Only this week I'm using the spare phone, the one ending in 7781.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: what's my middle name, and which phone am I using?",
+     "expect": [
+      "Thornbury"
+     ],
+     "forbid": [
+      "7781"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-s5000",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "La persona es vegetariana desde hace diez años.",
+     "durable": true,
+     "asUser": "Soy vegetariano desde hace diez años.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Solo esta semana la persona sigue una dieta líquida.",
+     "durable": false,
+     "asUser": "Solo por esta semana estoy en dieta líquida por lo del dentista.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Voy a pedir comida: ¿qué restricciones de alimentación tengo?",
+     "expect": [
+      "vegetarian"
+     ],
+     "forbid": [
+      "dieta líquida"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-s5000",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's company is Orrinvale Labs.",
+     "durable": true,
+     "asUser": "My company is called Orrinvale Labs.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, the person covers for their manager at the Duxbury branch.",
+     "durable": false,
+     "asUser": "This week only, I'm covering for my manager at the Duxbury branch.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Quick check: where do I work and which branch am I at?",
+     "expect": [
+      "Orrinvale"
+     ],
+     "forbid": [
+      "Duxbury"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-05-s5000",
+   "class": "C8",
+   "base": 5,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1830031725,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de cliente bancario de la persona es 44-9182.",
+     "durable": true,
+     "asUser": "Mi número de cliente del banco es 44-9182.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana el coche de la persona está en el taller Rinconada.",
+     "durable": false,
+     "asUser": "Esta semana nada más, el coche está en el taller Rinconada.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de cliente del banco y dónde está el coche?",
+     "expect": [
+      "44-9182"
+     ],
+     "forbid": [
+      "Rinconada"
+     ],
+     "surface": "both"
+    }
+   ]
+  },
+  {
+   "id": "C8-06-s5000",
+   "class": "C8",
+   "base": 6,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3540540408,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432800,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's daughter's birthday is March 14.",
+     "durable": true,
+     "asUser": "My daughter's birthday is March 14.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "This week only, school pickup is at 2:40.",
+     "durable": false,
+     "asUser": "Just for this week, school pickup is at 2:40 instead of the usual time.",
+     "asAssistant": "Ok, noted for this week."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my daughter's birthday, and what time is school pickup?",
+     "expect": [
+      "March 14"
+     ],
+     "forbid": [
+      "2:40"
+     ],
+     "surface": "both"
+    }
+   ]
+  }
+ ]
+}

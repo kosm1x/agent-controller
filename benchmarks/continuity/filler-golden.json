@@ -1,0 +1,201 @@
+{
+ "version": "continuity-v1",
+ "note": "sha256 is over canonicalFiller(items): one `t<TAB>user<TAB>assistant` line per item joined by LF, UTF-8. `items` lists every item when size <= 12, else the first 3 and the last.",
+ "cases": [
+  {
+   "scenarioId": null,
+   "seed": 1,
+   "size": 12,
+   "fromT": 0,
+   "toT": 86400,
+   "sha256": "33fa6d5402c0ce8fbbd3c24965d8ba4e13471d6e625d39ceb4be9e4c4001550f",
+   "items": [
+    {
+     "t": 1,
+     "user": "Give me 17 ideas to organize travel better.",
+     "assistant": "Got it. I'd keep the delivery where it is and revisit it later."
+    },
+    {
+     "t": 7201,
+     "user": "¿Me ayudas a revisar el borrador del proyecto escolar antes de la clase?",
+     "assistant": "Tengo anotadas 18 ideas para el lanzamiento; las vemos cuando quieras."
+    },
+    {
+     "t": 14401,
+     "user": "My daughter asked for a recommendation about the office.",
+     "assistant": "Got it. I'd keep the call where it is and revisit it later."
+    },
+    {
+     "t": 21601,
+     "user": "Write a quick note to the teacher about the checklist.",
+     "assistant": "Here is a short summary of dinner plans in 3 lines."
+    },
+    {
+     "t": 28801,
+     "user": "Oye, ¿qué opinas de cambiar el horario de la reunión?",
+     "assistant": "Tengo anotadas 6 ideas para el lanzamiento; las vemos cuando quieras."
+    },
+    {
+     "t": 36001,
+     "user": "¿Me ayudas a revisar el borrador del proyecto del jardín antes de la reunión?",
+     "assistant": "Aquí va un borrador para la maestra: breve, cordial y con el contrato adjunto."
+    },
+    {
+     "t": 43201,
+     "user": "¿Dónde dejé las notas del proyecto del jardín?",
+     "assistant": "Tengo anotadas 9 ideas para el lanzamiento; las vemos cuando quieras."
+    },
+    {
+     "t": 50401,
+     "user": "¿Te acuerdas de lo que hablamos sobre el gimnasio? Quiero retomarlo.",
+     "assistant": "Van 3 gastos registrados en los análisis de sangre; nada fuera de lo normal."
+    },
+    {
+     "t": 57601,
+     "user": "How much of the budget for the blood test is left this month?",
+     "assistant": "For your mom I'd look at 9 simple options for dinner plans."
+    },
+    {
+     "t": 64801,
+     "user": "Where did I put the notes for the launch?",
+     "assistant": "We agreed to look at the office again before deciding."
+    },
+    {
+     "t": 72001,
+     "user": "Ayúdame a redactar un correo para el proveedor sobre el inventario.",
+     "assistant": "Para tu sobrina buscaría opciones sencillas para los análisis de sangre, unas 6 para comparar."
+    },
+    {
+     "t": 79201,
+     "user": "Ayúdame a redactar un correo para el doctor sobre el borrador.",
+     "assistant": "Sí, quedamos en revisar la escuela con calma y decidir después."
+    }
+   ]
+  },
+  {
+   "scenarioId": null,
+   "seed": 0,
+   "size": 5,
+   "fromT": -172800,
+   "toT": -86400,
+   "sha256": "f3d6b38a54ae2d621e6a56e00b9c8913690b10ddfab0338eaad59134ef9a2d24",
+   "items": [
+    {
+     "t": -172799,
+     "user": "Remind me what we said about rent last time.",
+     "assistant": "Draft for the teacher: short, friendly, with the budget sheet attached."
+    },
+    {
+     "t": -155519,
+     "user": "Oye, ¿qué opinas de cambiar el horario de la clase?",
+     "assistant": "Claro. Revisé el reporte y hay 2 puntos por ajustar sobre la escuela."
+    },
+    {
+     "t": -138239,
+     "user": "Necesito un resumen corto del borrador sobre la casa.",
+     "assistant": "Aquí va un borrador para el vecino: breve, cordial y con el presupuesto adjunto."
+    },
+    {
+     "t": -120959,
+     "user": "How much of the budget for the blood test is left this month?",
+     "assistant": "Here is a short summary of the car in 13 lines."
+    },
+    {
+     "t": -103679,
+     "user": "¿Me ayudas a revisar el informe del proyecto escolar antes de la cita?",
+     "assistant": "Listo, te dejo un resumen de 11 líneas sobre la escuela."
+    }
+   ]
+  },
+  {
+   "scenarioId": "C1-01-s50",
+   "seed": 451517224,
+   "size": 50,
+   "fromT": -2592000,
+   "toT": 7840980,
+   "sha256": "5e889cead324c51e6f37e8e9dea66d29df8d8f2de4eff3b156f521be785f3929",
+   "items": [
+    {
+     "t": -2591999,
+     "user": "Ayúdame a redactar un correo para la arquitecta sobre el informe.",
+     "assistant": "Para tu hermana buscaría opciones sencillas para la comida, unas 18 para comparar."
+    },
+    {
+     "t": -2383341,
+     "user": "Can you check the budget sheet for the launch before the meeting?",
+     "assistant": "I have 4 notes saved for the school project; we can go over them anytime."
+    },
+    {
+     "t": -2174681,
+     "user": "Mi tía quiere que le recomiende algo para la renta.",
+     "assistant": "Sí, quedamos en revisar el local con calma y decidir después."
+    },
+    {
+     "t": 7632321,
+     "user": "Can you check the contract for the garden project before the review?",
+     "assistant": "For your cousin I'd look at 7 simple options for the gym."
+    }
+   ]
+  },
+  {
+   "scenarioId": "C6-03-s500",
+   "seed": 632991125,
+   "size": 500,
+   "fromT": 36000,
+   "toT": 2656800,
+   "sha256": "d97685d3f5e0b428c74e0baf046c7d340a362615b4590ade3576c5dacf9e77fb",
+   "items": [
+    {
+     "t": 36001,
+     "user": "Write a quick note to the supplier about the checklist.",
+     "assistant": "Here is a short summary of the gym in 3 lines."
+    },
+    {
+     "t": 41241,
+     "user": "¿Me ayudas a revisar el inventario del proyecto de la mudanza antes de la reunión?",
+     "assistant": "Van 9 gastos registrados en la comida; nada fuera de lo normal."
+    },
+    {
+     "t": 46483,
+     "user": "What is the name of the app we use for the house?",
+     "assistant": "I have 8 notes saved for the school project; we can go over them anytime."
+    },
+    {
+     "t": 2651559,
+     "user": "¿Cuánto llevamos gastado del presupuesto para los análisis de sangre este mes?",
+     "assistant": "Listo, te dejo un resumen de 12 líneas sobre el coche."
+    }
+   ]
+  },
+  {
+   "scenarioId": "C8-06-s5000",
+   "seed": 3540540408,
+   "size": 5000,
+   "fromT": -2592000,
+   "toT": 10432800,
+   "sha256": "7b5bb9f431955f880c3412b4575d44de75b3e2b594f75440f048930cb6dc68bc",
+   "items": [
+    {
+     "t": -2591999,
+     "user": "I have a class with the neighbor today, what should I bring?",
+     "assistant": "For your mom I'd look at 3 simple options for finances."
+    },
+    {
+     "t": -2589395,
+     "user": "¿Cuánto llevamos gastado del presupuesto para el local este mes?",
+     "assistant": "Sí, quedamos en revisar el local con calma y decidir después."
+    },
+    {
+     "t": -2586791,
+     "user": "Write a quick note to the teacher about the checklist.",
+     "assistant": "Draft for the accountant: short, friendly, with the calendar attached."
+    },
+    {
+     "t": 10430195,
+     "user": "¿Cómo se llama la app que usamos para el trabajo?",
+     "assistant": "Sí, quedamos en revisar el gimnasio con calma y decidir después."
+    }
+   ]
+  }
+ ]
+}
