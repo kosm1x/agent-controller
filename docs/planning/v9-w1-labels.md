@@ -106,7 +106,6 @@ Opened after count 1 missed the FP budget (3 > 2) and the grader was fixed (queu
 
 | task_id | graded (UTC) | grader | final status | signal | label | catch | note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `7acf11ab-7949-41db-98a0-841a66dd4ff7` | 2026-10-21 07:58 | met | completed | none |  |  | chat root. Asked 11-05: operator does not remember; left unlabelled. |
 | `bcb00a73-c678-4b8b-a08f-f6ed1c35487a` | 2026-10-21 20:08 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
 | `7980f0de-736f-46ee-bdd9-35ac9087ebb4` | 2026-10-22 00:24 | met | completed | none | really done | no | chat root (file sent). Operator label 11-05; grader met = correct. |
 | `6a7218f6-76af-431e-a76d-62d7e3ecdb0c` | 2026-10-22 15:15 | met | completed | none | really done | no | chat root. Operator label 11-05; grader met = correct. |
@@ -139,6 +138,8 @@ Opened after count 1 missed the FP budget (3 > 2) and the grader was fixed (queu
 | `b40a8c15-68a7-4ecb-bc96-f4d1724d00dc` | 2026-11-03 05:02 | met | completed | - | really done | no | scheduled heavy root (nightly `Skill evolution`, night 2026-11-02). EVIDENCE label 11-05 (operator ruling, rule above): status completed, the data tool was used, the answer carries the report in the required shape, exactly 1 report row saved to memory in the run window; grader met = correct. |
 | `c4552a93-4a32-4c18-a361-440fb60e3b37` | 2026-11-04 05:01 | met | completed | - | really done | no | scheduled heavy root (nightly `Skill evolution`, night 2026-11-03). EVIDENCE label 11-05 (operator ruling, rule above): status completed, the data tool was used, the answer carries the report in the required shape, exactly 1 report row saved to memory in the run window; grader met = correct. |
 | `9a02415e-3984-4b6b-aebd-4fe630ccf065` | 2026-11-05 05:01 | met | completed | - | really done | no | scheduled heavy root (nightly `Skill evolution`, night 2026-11-04). EVIDENCE label 11-05 (operator ruling, rule above): status completed, the data tool was used, the answer carries the report in the required shape, exactly 1 report row saved to memory in the run window; grader met = correct. |
+
+Asked, no label (kept out of the table: every table row carries a label, and the reader counts any other row as skipped): `7acf11ab-7949-41db-98a0-841a66dd4ff7` · graded 2026-10-21 07:58 · grader met · completed · signal none · chat root. Asked 11-05: the operator does not remember; it stays unlabelled.
 
 ## Tally (recompute from the rows, newest run first)
 
