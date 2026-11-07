@@ -74,6 +74,17 @@ describe("enrichment", () => {
     expect(result.contextBlock).toContain("CRM Azteca");
   });
 
+  it("an empty recall on both banks (MEMORY_RECALL_FLOOR=on, nothing rare) renders no memory block", async () => {
+    const { getMemoryService } = await import("../memory/index.js");
+    const recall = vi.mocked(getMemoryService().recall);
+    recall.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const result = await enrichContext("como va el proyecto esta semana", "telegram");
+
+    expect(recall).toHaveBeenCalledTimes(2);
+    expect(result.contextBlock).not.toContain("Contexto relevante del usuario");
+    expect(result.contextBlock).not.toContain("Aprendizajes previos");
+  });
+
   it("should return context block starting with newlines", async () => {
     const result = await enrichContext("test", "telegram");
 

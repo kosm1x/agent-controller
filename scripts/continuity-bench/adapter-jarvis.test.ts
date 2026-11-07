@@ -304,12 +304,49 @@ describe.each(["raw", "ideal"] as const)("JarvisAdapter v2 thread paths leg=%s",
 
 describe("production switches", () => {
   it("resolveSwitches: every known switch defaults off, a given value wins, unknown names and values throw", () => {
-    expect(SWITCHES).toEqual({ MEMORY_OPEN_WORK: ["off", "shadow", "on"] });
-    expect(DEFAULT_SWITCHES).toEqual({ MEMORY_OPEN_WORK: "off" });
-    expect(resolveSwitches()).toEqual({ MEMORY_OPEN_WORK: "off" });
-    expect(resolveSwitches({ MEMORY_OPEN_WORK: "on" })).toEqual({ MEMORY_OPEN_WORK: "on" });
+    expect(SWITCHES).toEqual({ MEMORY_OPEN_WORK: ["off", "shadow", "on"], MEMORY_RECALL_FLOOR: ["off", "shadow", "on"] });
+    expect(DEFAULT_SWITCHES).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
+    expect(resolveSwitches()).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
+    expect(resolveSwitches({ MEMORY_OPEN_WORK: "on" })).toEqual({ MEMORY_OPEN_WORK: "on", MEMORY_RECALL_FLOOR: "off" });
+    expect(resolveSwitches({ MEMORY_RECALL_FLOOR: "shadow" })).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "shadow" });
+    expect(() => resolveSwitches({ MEMORY_RECALL_FLOOR: "true" })).toThrow(/off\|shadow\|on/);
     expect(() => resolveSwitches({ MEMORY_OPEN_WORKS: "on" })).toThrow(/unknown switch/);
     expect(() => resolveSwitches({ MEMORY_OPEN_WORK: "yes" })).toThrow(/off\|shadow\|on/);
+  });
+});
+
+describe("JarvisAdapter MEMORY_RECALL_FLOOR=on", () => {
+  let dir: string;
+  let adapter: JarvisAdapter;
+  const runs: Record<string, ProbeRun> = {};
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-adapter-rf-"));
+    adapter = new JarvisAdapter(scratchDbPath(dir), "raw", { switches: { MEMORY_RECALL_FLOOR: "on" } });
+    adapter.open();
+    for (const s of [C1, C7]) runs[s.id] = (await adapter.runScenario(s, FILLER_SPEC_V1))[0];
+  });
+  afterAll(() => {
+    adapter.close();
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_OPEN_WORK;
+    delete process.env.MEMORY_RECALL_FLOOR;
+  });
+
+  it("open() sets the switch in this process and the adapter records it", () => {
+    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on" });
+    expect(process.env.MEMORY_RECALL_FLOOR).toBe("on");
+  });
+
+  it("C7: a never-mentioned topic returns no memory item on either surface", () => {
+    const s = scoreProbe(runs["C7-t"]);
+    expect(s.asked.irrelevantCount).toBe(0);
+    expect(s.proactive.irrelevantCount).toBe(0);
+  });
+
+  it("C1: a fact named by a rare word still reaches the explicit search", () => {
+    expect(comp(runs["C1-t"], "asked", "memory_search")!.text).toContain("Corvalino");
+    expect(scoreProbe(runs["C1-t"]).asked.hit).toBe(true);
   });
 });
 
@@ -329,14 +366,16 @@ describe.each(["off", "shadow", "on"] as const)("JarvisAdapter open_work compone
     adapter.close();
     rmSync(dir, { recursive: true, force: true });
     delete process.env.MEMORY_OPEN_WORK;
+    delete process.env.MEMORY_RECALL_FLOOR;
   });
 
   const ow = (id: string) => comp(runs[id][0], "proactive", "open_work");
   const needle = (id: string) => v2(id).probes[0].expect[0];
 
   it("open() sets the switch in this process and the adapter records it", () => {
-    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: mode });
+    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: mode, MEMORY_RECALL_FLOOR: "off" });
     expect(process.env.MEMORY_OPEN_WORK).toBe(mode);
+    expect(process.env.MEMORY_RECALL_FLOOR).toBe("off");
   });
 
   it("the component appears only when the switch is on; shadow computes but injects nothing", () => {

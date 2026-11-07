@@ -14,6 +14,7 @@ import {
   refuseReason,
   renderBaseline,
   renderCompare,
+  renderRecallFloorCompare,
   switchSuffix,
   type EmbedPlan,
   type RunResult,
@@ -183,8 +184,8 @@ describe("switches and --compare (Port 1)", () => {
   });
 
   it("a run records every switch state; the open_work note lifts handoff and leaves crowded / C4 alone", () => {
-    expect(off.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off" });
-    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "on" });
+    expect(off.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "on", MEMORY_RECALL_FLOOR: "off" });
     const hit = (r: RunResult, id: string) => r.probes.filter((p) => p.scenarioId === id).map((p) => p.proactive.hit);
     expect(hit(off, "C3-01-ho15-s50")).toEqual([false, true]); // disjoint greeting lost, shared topical probe through recall
     expect(hit(on, "C3-01-ho15-s50")).toEqual([true, true]);
@@ -210,6 +211,7 @@ describe("switches and --compare (Port 1)", () => {
     expect(switchSuffix(DEFAULT_SWITCHES, DEFAULT_SWITCHES)).toBe("");
     expect(switchSuffix({ MEMORY_OPEN_WORK: "on" }, DEFAULT_SWITCHES)).toBe("-memory-open-work-on");
     expect(switchSuffix({ MEMORY_OPEN_WORK: "shadow" }, DEFAULT_SWITCHES)).toBe("-memory-open-work-shadow");
+    expect(switchSuffix({ ...DEFAULT_SWITCHES, MEMORY_RECALL_FLOOR: "on" }, DEFAULT_SWITCHES)).toBe("-memory-recall-floor-on");
     expect(switchSuffix({ A_B: "x", C: "y" }, { A_B: "x", C: "z" })).toBe("-c-y");
   });
 
@@ -235,5 +237,86 @@ describe("switches and --compare (Port 1)", () => {
     const size = clone(on);
     size.probes.find((x) => x.class === "C2")!.proactive.chars += 7;
     expect(renderCompare([[off, size]])).toMatch(/1 changed without it or shrank \(FAIL\)/);
+  });
+});
+
+describe("--compare (Port 2, MEMORY_RECALL_FLOOR)", () => {
+  const V2 = buildCorpusV2();
+  const pick = ["C1-01-s50", "C7-01-s50", "C2-01-s50"].map((id) => V2.scenarios.find((x) => x.id === id)!);
+  let dir: string;
+  let off: RunResult;
+  let on: RunResult;
+
+  const run = async (switches: string[], out: string): Promise<RunResult> => {
+    const path = join(dir, "corpus.json");
+    writeFileSync(path, JSON.stringify({ ...V2, scenarios: pick } as Corpus));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await main(["node", "run.ts", "--leg", "raw", "--sizes", "50", "--corpus", path, "--out", join(dir, out), ...switches], {});
+    log.mockRestore();
+    expect(code).toBe(0);
+    return JSON.parse(readFileSync(join(dir, out), "utf8")) as RunResult;
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-compare-rf-"));
+    off = await run([], "off.json");
+    on = await run(["--switch", "MEMORY_RECALL_FLOOR=on"], "on.json");
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_OPEN_WORK;
+    delete process.env.MEMORY_RECALL_FLOOR;
+  });
+
+  const c7 = (r: RunResult, surface: string) => r.aggregates.find((a) => a.class === "C7" && a.surface === surface)!;
+
+  it("the floor run records its switch and cuts the C7 irrelevant items on both surfaces", () => {
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on" });
+    for (const s of ["proactive", "asked"]) {
+      expect(c7(off, s).meanIrrelevant!, s).toBeGreaterThan(0);
+      expect(c7(on, s).meanIrrelevant!, s).toBeLessThan(c7(off, s).meanIrrelevant!);
+    }
+  });
+
+  it("renders C7 / C1 per size, lost / gained hits, the reproduction test, the other classes and the payload", () => {
+    const md = renderRecallFloorCompare([[off, on]], [off]);
+    expect(md).toContain("# Port 2 — an honest empty recall: before / after");
+    expect(md).toContain("switches MEMORY_OPEN_WORK=off, MEMORY_RECALL_FLOOR=on");
+    const row = (s: string) => `| 50 | ${s} | ${c7(on, s).n} | ${c7(off, s).meanIrrelevant} → ${c7(on, s).meanIrrelevant} | ${c7(off, s).hitPct} → ${c7(on, s).hitPct} |`;
+    expect(md).toContain(row("proactive"));
+    expect(md).toContain(row("asked"));
+    expect(md).toContain("| size | surface | lost shared | lost disjoint | gained shared | gained disjoint | first lost |");
+    expect(md).toMatch(/^1\. \*\*PASS\*\* — before reproduces reference commit .* 0 differ, 0 missing/m);
+    expect(md).toMatch(/^2\. \*\*(unchanged|changed)\*\* — C2, C3, C4, C5, C6, C8: \d+ cells/m);
+    expect(md).toMatch(/^\| C7 \| \d+ \| \d+ → \d+ \|/m);
+  });
+
+  it("names a changed cell, a flip and a reference drift", () => {
+    const clone = (r: RunResult) => JSON.parse(JSON.stringify(r)) as RunResult;
+    const c2 = clone(on);
+    const p = c2.probes.find((x) => x.class === "C2")!;
+    p.proactive.hit = !p.proactive.hit;
+    c2.aggregates.find((a) => a.class === "C2" && a.surface === "proactive")!.hitPct = -1;
+    const md = renderRecallFloorCompare([[off, c2]]);
+    expect(md).toMatch(/^2\. \*\*changed\*\* — .* 1 changed; 1 probes with a hit or stale-hit flip on a scored surface, 0 on an unscored surface only/m);
+    expect(md).toMatch(/^\| C2 size 50 proactive \| .* \| \[\d+,-1,/m);
+    expect(md).toMatch(/^\| C2 \| proactive \| \+[01] \/ −[01] \|/m);
+    // A flip on a surface the class does not score is counted apart and labelled.
+    const [u0, u1] = [clone(off), clone(off)];
+    for (const r of [u0, u1]) for (const x of r.probes.filter((y) => y.class === "C2")) x.asked.scored = false;
+    const q = u1.probes.find((x) => x.class === "C2")!;
+    q.asked.hit = !q.asked.hit;
+    const umd = renderRecallFloorCompare([[u0, u1]]);
+    expect(umd).toMatch(/^2\. \*\*unchanged\*\* — .* 0 changed; 0 probes with a hit or stale-hit flip on a scored surface, 1 on an unscored surface only/m);
+    expect(umd).toMatch(/^\| C2 \| asked \(unscored\) \| \+[01] \/ −[01] \|/m);
+    const ref = clone(off);
+    ref.probes[0].asked.chars += 1;
+    expect(renderRecallFloorCompare([[off, on]], [ref])).toMatch(/^1\. \*\*FAIL\*\* .* 1 differ/m);
+  });
+
+  it("main --compare picks the Port 2 renderer when the floor switch differs", async () => {
+    const md = join(dir, "cmp.md");
+    expect(await main(["node", "run.ts", "--compare", `${join(dir, "off.json")},${join(dir, "on.json")}`, "--md", md], {})).toBe(0);
+    expect(readFileSync(md, "utf8")).toContain("# Port 2 — an honest empty recall");
   });
 });

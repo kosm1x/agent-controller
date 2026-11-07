@@ -90,7 +90,11 @@ export type TraceEventName =
   | "capability.handle_shared"
   // Session tail notes on the first turn after a gap (MEMORY_OPEN_WORK
   // shadow|on): {mode, reason, notes, chars} — counts only, never note text
-  | "memory.open_work";
+  | "memory.open_work"
+  // Recall floor (MEMORY_RECALL_FLOOR shadow|on), sqlite-backend.ts:
+  // {mode, bank, returned, wouldDrop, rareTerms}, or {mode, bank, error: true}
+  // when the rare-term lookup failed and the floor was skipped — counts only, never text
+  | "memory.recall_floor";
 
 export interface TraceEvent {
   taskId: string;

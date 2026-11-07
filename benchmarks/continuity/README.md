@@ -580,6 +580,195 @@ Limits of this port:
 - **Whether the model uses the note is not measured.** As everywhere in the
   scorecard, a hit means the text reached the model.
 
+## Recall floor (Port 2, `MEMORY_RECALL_FLOOR`)
+
+C7 asks about a topic that never came up. With the switch off, both
+surfaces return 3.7 to 4.3 unrelated rows per probe: the enrichment block
+"Contexto relevante del usuario" and `memory_search`.
+
+**Step 0: which layer the C7 rows come from.** Every recalled item was
+labelled by the layer that produced it, from a scratch run with the switch
+off (raw leg, embeddings off):
+
+| class, size | probes | items | FTS5 | LIKE | newest-rows fallback |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| C7, 50 | 12 | 44 | 44 | 0 | 0 |
+| C7, 500 | 12 | 52 | 52 | 0 | 0 |
+| C7, 5000 | 12 | 52 | 52 | 0 | 0 |
+| C1, 50 | 96 | 312 | 212 | 0 | 100 |
+| C1, 500 | 96 | 442 | 382 | 0 | 60 |
+| C1, 5000 | 96 | 448 | 388 | 0 | 60 |
+
+The counts are the same on both surfaces.
+
+- **The fallback gives C7 nothing at any size.** Every C7 row is an FTS5
+  match. The cause is how `recallHybrid` scores matches: each layer is
+  normalised by its own best score, so the top FTS row of any query gets 0.5
+  and clears the 0.12 relevance threshold. That holds however common the
+  shared word is, such as "sobre", "what" or "about".
+- **The fallback does carry rows in other classes.** In C1 it supplies 100 of
+  312 items at size 50 and 60 at 500 and 5000. It also supplies about 255 of
+  870 items per size in C3 and 105 of 357 in C4.
+- **Twelve C1 hits at size 50 are chance hits from the fallback.** They are
+  disjoint asked hits, carried only by `memory_search`.
+
+**The rule (`src/memory/sqlite-backend.ts`).** It applies when the switch is
+`on`:
+
+- **Rare keywords.** A query keyword is rare when the FTS index finds it in at
+  least one and at most `max(1, ceil(0.02 × bank rows))` rows of the bank.
+  The keyword is counted the way the index tokenises: case and accents
+  folded.
+- **Which keywords count.** Two kinds of query term are candidates:
+  - Words of 4 or more characters that are not stop-words, by the token rule
+    of `extractContentTokens` in `recall-utility.ts`.
+  - Codes, figures and acronyms: a whitespace-separated chunk that holds a
+    digit or is written in capitals, with 3 or more letters and digits, such
+    as "KVX-482", "3.847.215" or "IVA". The chunk is kept whole and counted
+    as an FTS phrase of its tokens ("kvx 482", "3 847 215"), so a figure is
+    judged as itself, not by its 3-digit parts, and a row survives only when
+    it holds the whole run. A one-token chunk that is a stop-word ("THE")
+    does not count; at most six such chunks count per query.
+- **Which rows survive.** An FTS5 or LIKE row survives only when it contains
+  a rare query keyword.
+- **Embedding rows.** A row the embedding layer found is kept.
+- **The fallback.** The newest-rows fallback is not run: when nothing
+  matches, the recall is empty.
+- **Unchanged.** Ranking, the relevance threshold, `was_used` and outcome
+  bias are untouched, and there is no new column.
+- **Reusable helpers.** `rareTermCandidates(query)` returns the candidate
+  terms by the rule above, and `keywordDocFrequency(query, bank, cap?)`
+  returns each one's document count. Port 3 can reuse both.
+
+**The switch.** `MEMORY_RECALL_FLOOR=off|shadow|on`, default `off`; any other
+value counts as `off`.
+
+- **`off`.** The recall path is the one before this port: no extra query and
+  no trace.
+- **`shadow`.** Returns today's results and adds a trace event,
+  `memory.recall_floor`, with counts only: `{mode, bank, returned,
+  wouldDrop, rareTerms}`.
+  - `wouldDrop` counts the rows the floor would remove, fallback rows
+    included.
+  - The trace goes under the task key `memory-recall`, since a recall
+    carries no task id.
+  - Shadow exists to measure, on live traffic, how often the floor would
+    empty a recall before anyone switches it on.
+  - If the rare-term lookup fails, the floor is skipped for that recall and
+    the trace carries `{mode, bank, error: true}`. Shadow then returns what
+    `off` returns, and `on` behaves as `off` for that recall.
+- **`on`.** Applies the floor and emits the same trace.
+- **Cost.** With `shadow` or `on`, each recall adds one `COUNT` over the
+  bank and one capped FTS count per candidate term: at most six words and
+  six codes. The count is written as `conversations_fts CROSS JOIN
+  conversations`, so the FTS match is always the outer loop. With a plain
+  join, an older SQLite (3.45.1) walked the bank index and probed FTS once
+  per row, about 150 ms per term on a 12,604-row bank.
+- **In the harness.** The harness sets the switch with
+  `--switch MEMORY_RECALL_FLOOR=on`.
+
+Every caller of `recall()` already handles an empty array:
+
+- `memory_search` answers "No relevant memories found.".
+- Enrichment adds no block for either bank.
+- The prometheus planner and executor add no learnings.
+- The MCP `jarvis_memory_query` returns `count: 0`.
+- `recall-compare` reports zero results.
+- The Hindsight SQLite fallback goes through the same backend.
+
+**Results.** `results/port2-recall-floor.md` is generated by `run.ts
+--compare` from one run with the switch off and one with it on, per leg, at
+sizes 50, 500 and 5000, embeddings off. The committed `4fc2fcf3` runs are the
+reference.
+
+With the switch off, both legs reproduce that reference probe for probe:
+1392 probes, 0 differ.
+
+No probe in the corpus asks with a figure, a code or a capitalised acronym
+(the figures are in the stored rows the probes look for), so the code and
+figure rule changes no cell here. The unit tests in
+`src/memory/sqlite-backend.test.ts` carry that case.
+
+Raw leg, the same on both surfaces:
+
+| size | C7 mean irrelevant | C7 hit % | C1 hit %, asked (shared / disjoint) | C1 hit %, proactive (shared / disjoint) |
+| ---: | --- | --- | --- | --- |
+| 50 | 3.7 → 0.7 | 0 → 33.3 | 97.9 / 25 → 81.3 / 0 | 97.9 / 75 → 95.8 / 75 |
+| 500 | 4.3 → 2.0 | 0 → 33.3 | 77.1 / 0 → 83.3 / 0 | 81.3 / 25 → 87.5 / 25 |
+| 5000 | 4.3 → 1.3 | 0 → 41.7 | 79.2 / 0 → 79.2 / 0 | 79.2 / 0 → 79.2 / 0 |
+
+The prediction was about 0.5 irrelevant items and about 50 % hit. C7 lands
+above it on irrelevant items and below it on hit, for two reasons:
+
+- **Shared C7 probes keep their own event row.** Each shared probe shares a
+  word with the scenario's own event ("serie", "Madrid", "litros", …). That
+  event is a single row, so the word is rare and the row stays. Shared C7
+  stays at 0 % hit by construction; the residual 1.0 item per probe at size
+  50 is this row.
+- **Some C7 probes keep filler rows.** A probe word from the filler
+  vocabulary ("cousin" in C7-02; "clase" and "mamá" in C7-05; "garden" and
+  "work" in C7-06) can sit under the 2 % line.
+  - At size 50 the disjoint C7-05 and C7-06 probes return 1 filler row each.
+  - At size 500 both probes of C7-02 and C7-05 return 5.
+  - At 5000 both probes of C7-05 still return 5.
+  - The disjoint C7 hit rises from 0 to 66.7 % at sizes 50 and 500, and to
+    83.3 % at 5000.
+
+What the floor costs, reported as measured and not tuned:
+
+- **C1, raw leg, asked, size 50.**
+  - The 12 disjoint chance hits from the fallback are gone.
+  - 8 shared hits are lost too. Their only shared word is also a filler word
+    ("presupuesto", "sister"), so at size 50, where the threshold is one row,
+    the target's word is not rare.
+  - At size 500 the shared hits gain more than they lose (+5 / −2 asked,
+    +4 / −1 proactive): the common-word rows no longer crowd the target out
+    of the top 5.
+- **C1, ideal leg.** The shared cells do not move; the JME facts carry them.
+  Only the 12 disjoint fallback hits drop.
+- **C3 and C4 asked.** These surfaces are not scored, so no cell moves; the
+  compare lists 9 unscored hits lost on each, all from the newest-rows
+  fallback. The proactive cells do not move.
+- **C5.**
+  - Raw leg: proactive loses 8 hits (4 shared, 4 disjoint) and asked loses 12
+    (5 shared, 7 disjoint).
+  - The rows carrying those hits matched on common words only. One asked
+    disjoint hit came from the fallback.
+- **C6.** Loses 2 shared proactive hits on the raw leg, for the same reason.
+  C6 asked is not scored; the compare lists 2 unscored hits lost on it on
+  both legs.
+- **C8 stale-hit.** Moves both ways: +3 / −4 per surface. The hit cells do
+  not move.
+
+**Payload.** The asked payload falls by 66 to 85 % per class; for example,
+C1 raw goes from 178,047 to 41,193 characters over 288 probes. The proactive
+payload falls by 9 to 15 % per class. Between 28 % (C8) and 64 % (C6) of the
+asked probes return no recall item at all.
+
+Limits of this port:
+
+- **Embeddings are untouched.** With a key in production, recall is hybrid.
+  The embedding layer keeps its nearest neighbours above cosine 0.3 and the
+  floor keeps them, so unrelated rows keep flowing on that path. Closing it
+  needs a cosine calibration against labelled pairs, which means paid
+  embedding calls. The scorecard runs with embeddings off and does not show
+  this.
+- **Rare is relative to the bank.** A relevant row whose only matching word
+  is common in the bank is dropped. This is the size-50 C1 and the C5 / C6
+  loss. A word that is rare by accident keeps an unrelated row: the shared
+  C7 rows and the filler words above.
+- **Codes match as written.** A code is a phrase of its FTS tokens, so
+  "3.847.215" and "3847215" are different terms, and a row that wrote the
+  figure the other way is not kept by it. A short acronym typed in lower
+  case ("iva") is not a code and, under 4 characters, not a word either.
+- **Small banks.** The threshold never goes below one row. In a bank of 50
+  or fewer rows, a word found in two rows is already common.
+- **LIKE rows.** LIKE runs only when FTS finds nothing. A rare keyword then
+  needs an FTS match of its own, so a LIKE row survives only when a tag
+  filter hid that FTS match.
+- **Nothing is learned from use.** `was_used`, the outcome bias and the
+  ranking are unchanged.
+
 ## Limits
 
 - **Words-only is the harness configuration, not production's.** With embeddings off every recall is

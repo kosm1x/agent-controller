@@ -239,10 +239,13 @@ export class EmbedCache {
  * allowed values). Every run sets each one explicitly, defaults below, and
  * records the states in its result.
  */
-export const SWITCHES = { MEMORY_OPEN_WORK: ["off", "shadow", "on"] } as const;
+export const SWITCHES = {
+  MEMORY_OPEN_WORK: ["off", "shadow", "on"],
+  MEMORY_RECALL_FLOOR: ["off", "shadow", "on"],
+} as const;
 export type SwitchName = keyof typeof SWITCHES;
 export type Switches = Record<SwitchName, string>;
-export const DEFAULT_SWITCHES: Switches = { MEMORY_OPEN_WORK: "off" };
+export const DEFAULT_SWITCHES: Switches = { MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" };
 
 /** Throws on an unknown name or a value the switch does not take. */
 export function resolveSwitches(given: Readonly<Record<string, string>> = {}): Switches {

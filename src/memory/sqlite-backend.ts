@@ -17,7 +17,7 @@ import {
 } from "./embeddings.js";
 import { rerankByCoherence } from "./graph-rerank.js";
 import { recordRetainOutcome } from "../observability/prometheus.js";
-import { logRecall } from "./recall-utility.js";
+import { extractContentTokens, logRecall } from "./recall-utility.js";
 import { applyOutcomeBias } from "./outcome-bias.js";
 import { resolveRecallMode } from "./recall-mode.js";
 import type {
@@ -30,6 +30,7 @@ import type {
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 
 /** Extract meaningful keywords from a query string for SQLite LIKE matching. */
 function extractKeywords(query: string): string[] {
@@ -102,6 +103,152 @@ function extractKeywords(query: string): string[] {
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !stopWords.has(w) && !fts5Operators.has(w))
     .slice(0, 6); // Cap at 6 keywords to keep queries fast
+}
+
+// ---------------------------------------------------------------------------
+// Recall floor (MEMORY_RECALL_FLOOR) — an honest empty recall
+// ---------------------------------------------------------------------------
+//
+// Each layer is normalised by its own best score, so the top FTS row of any
+// query clears MIN_RELEVANCE_SCORE, however common its words: a topic never
+// mentioned still returns the rows that share "proyecto" or "semana" with it
+// (Continuity Scorecard C7). The floor keeps an FTS or LIKE row only when it
+// contains a query keyword that is RARE in the bank, and drops the
+// newest-rows fallback. The embedding layer is unchanged.
+
+export type RecallFloorMode = "off" | "shadow" | "on";
+
+/** `MEMORY_RECALL_FLOOR`: `off` (default) | `shadow` | `on`. Any other value folds to `off`. */
+export function recallFloorMode(env: NodeJS.ProcessEnv = process.env): RecallFloorMode {
+  const v = env.MEMORY_RECALL_FLOOR;
+  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+}
+
+/** A keyword is rare when at most this share of the bank's rows contain it. */
+export const RARE_DOC_SHARE = 0.02;
+
+/** The rare-keyword document count for a bank of `bankRows` rows (never below 1). */
+export function rareDocThreshold(bankRows: number): number {
+  return Math.max(1, Math.ceil(RARE_DOC_SHARE * bankRows));
+}
+
+/** Tokens as the FTS5 unicode61 tokeniser cuts them: case and diacritics folded, split on anything not a letter or digit. */
+function ftsTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+/** At most this many code / figure candidates per query (each is one capped count). */
+const MAX_CODE_TERMS = 6;
+
+/**
+ * The query's candidate rare terms, each a space-joined run of FTS tokens:
+ *   - the content tokens of the query keywords (4+ chars, stop-words out);
+ *   - every whitespace-separated chunk that holds a digit or is an upper-case
+ *     code ("KVX-482", "3.847.215", "IVA"), of 3+ letters and digits, kept
+ *     whole as one phrase of its FTS tokens ("kvx 482", "3 847 215", "iva"),
+ *     so a code or figure is judged as itself and not by its 3-digit parts.
+ * A one-token chunk that is a stop-word does not count.
+ */
+export function rareTermCandidates(query: string): string[] {
+  const out = new Set<string>(extractContentTokens(extractKeywords(query).join(" ")));
+  const codes: string[] = [];
+  for (const chunk of query.split(/\s+/)) {
+    const toks = ftsTokens(chunk);
+    if (toks.join("").length < 3) continue;
+    const bare = chunk.replace(/[^\p{L}\p{N}]/gu, "");
+    if (!/\p{N}/u.test(bare) && !/^\p{Lu}[\p{Lu}\p{N}]+$/u.test(bare)) continue;
+    const one = toks.length === 1 ? toks[0] : null;
+    if (one && (extractKeywords(one).length === 0 || (one.length >= 4 && extractContentTokens(one).size === 0))) continue;
+    codes.push(toks.join(" "));
+  }
+  for (const c of codes.slice(0, MAX_CODE_TERMS)) out.add(c);
+  return [...out];
+}
+
+/**
+ * Document frequency of each candidate rare term of `query` (rareTermCandidates)
+ * in `bank`: the number of bank rows whose FTS index holds the term as a phrase,
+ * counted up to `cap` when given. The CROSS JOIN keeps the FTS match as the
+ * outer loop; with a plain JOIN the planner can walk the bank index and probe
+ * FTS once per row (~150 ms per term on a 12k-row bank).
+ */
+export function keywordDocFrequency(query: string, bank: string, cap?: number): Map<string, number> {
+  const db = getDatabase();
+  const inner = `SELECT 1 FROM conversations_fts f CROSS JOIN conversations c ON c.id = f.rowid
+                 WHERE conversations_fts MATCH ? AND c.bank = ?`;
+  const stmt =
+    cap === undefined
+      ? db.prepare(`SELECT COUNT(*) AS n FROM (${inner})`)
+      : db.prepare(`SELECT COUNT(*) AS n FROM (${inner} LIMIT ?)`);
+  const out = new Map<string, number>();
+  for (const term of rareTermCandidates(query)) {
+    const args = cap === undefined ? [`"${term}"`, bank] : [`"${term}"`, bank, cap];
+    out.set(term, (stmt.get(...args) as { n: number }).n);
+  }
+  return out;
+}
+
+/**
+ * The query's rare terms in `bank`: candidate terms that occur in at least one
+ * and at most rareDocThreshold(bank rows) rows, as token runs. A term absent
+ * from the bank cannot keep a row, so it is not counted.
+ */
+function rareQueryTerms(query: string, bank: string): string[][] {
+  const db = getDatabase();
+  const bankRows = (db.prepare("SELECT COUNT(*) AS n FROM conversations WHERE bank = ?").get(bank) as { n: number }).n;
+  const threshold = rareDocThreshold(bankRows);
+  const rare: string[][] = [];
+  for (const [term, df] of keywordDocFrequency(query, bank, threshold + 1)) {
+    if (df >= 1 && df <= threshold) rare.push(term.split(" "));
+  }
+  return rare;
+}
+
+/** True when `content`'s FTS tokens hold one of the rare token runs, contiguous. */
+function hasRareTerm(content: string, rare: readonly string[][]): boolean {
+  if (rare.length === 0) return false;
+  const toks = ftsTokens(content);
+  return rare.some((run) => {
+    for (let i = 0; i + run.length <= toks.length; i++) {
+      if (run.every((t, j) => toks[i + j] === t)) return true;
+    }
+    return false;
+  });
+}
+
+/** task_trace_events key: a recall carries no task id (RecallOptions has none). */
+const RECALL_FLOOR_TRACE_KEY = "memory-recall";
+
+/**
+ * Counts only, never text. `wouldDrop` = candidate rows the floor removes (in
+ * `shadow` they are still returned); `returned` = what this recall returns.
+ */
+function traceRecallFloor(
+  mode: RecallFloorMode,
+  options: RecallOptions,
+  returned: number,
+  wouldDrop: number,
+  rareTerms: number,
+): void {
+  emitTraceEvent({
+    taskId: RECALL_FLOOR_TRACE_KEY,
+    name: "memory.recall_floor",
+    attrs: { mode, bank: options.bank, returned, wouldDrop, rareTerms },
+  });
+}
+
+/** The rare-term lookup failed: the floor is skipped for this recall (counts only). */
+function traceRecallFloorError(mode: RecallFloorMode, options: RecallOptions): void {
+  emitTraceEvent({
+    taskId: RECALL_FLOOR_TRACE_KEY,
+    name: "memory.recall_floor",
+    attrs: { mode, bank: options.bank, error: true },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +448,17 @@ export class SqliteMemoryBackend implements MemoryService {
       const limit = options.maxResults ?? 10;
       const now = Date.now();
       const fetchLimit = limit * 3;
+      const floorMode = recallFloorMode();
+      // A failed lookup skips the floor (rare = null): shadow then returns what
+      // off returns, and on behaves as off for this recall.
+      let rare: string[][] | null = null;
+      if (floorMode !== "off") {
+        try {
+          rare = rareQueryTerms(query, options.bank);
+        } catch {
+          traceRecallFloorError(floorMode, options);
+        }
+      }
 
       // Build tag filter clause
       let tagClause = "";
@@ -462,10 +620,28 @@ export class SqliteMemoryBackend implements MemoryService {
             .prepare(matchSql)
             .all(...matchParams) as ScoredRow[];
           if (matched.length > 0) {
+            if (rare) {
+              const kept = matched.filter((r) => hasRareTerm(r.content, rare));
+              const wouldDrop = matched.length - kept.length;
+              if (floorMode === "on") {
+                const scored = kept.map((r) => applyDecay(r, r.score));
+                scored.sort((a, b) => b._score - a._score);
+                const out = scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+                traceRecallFloor(floorMode, options, out.length, wouldDrop, rare.length);
+                return out;
+              }
+              traceRecallFloor(floorMode, options, Math.min(limit, matched.length), wouldDrop, rare.length);
+            }
             const scored = matched.map((r) => applyDecay(r, r.score));
             scored.sort((a, b) => b._score - a._score);
             return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
           }
+        }
+
+        // The floor drops the newest-rows fallback: nothing matched, so nothing is relevant.
+        if (floorMode === "on" && rare) {
+          traceRecallFloor(floorMode, options, 0, 0, rare.length);
+          return [];
         }
 
         // No matches at all — return recent
@@ -483,6 +659,7 @@ export class SqliteMemoryBackend implements MemoryService {
           trust_tier: number;
           tags: string | null;
         }>;
+        if (rare) traceRecallFloor(floorMode, options, rows.length, rows.length, rare.length);
         return rows.map((r) => ({
           content: r.content,
           createdAt: r.created_at,
@@ -541,15 +718,28 @@ export class SqliteMemoryBackend implements MemoryService {
       // sort. The floor used to be applied after decay, and the decay weight
       // alone (≥0.16 for every row in the DB) exceeded it — the filter was
       // dead and zero-relevance rows were injected (logic audit F17).
-      const scored = [...allResults.values()]
+      let scored = [...allResults.values()]
         .filter((r) => r.mergedScore >= MIN_RELEVANCE_SCORE)
         .map((r) => applyDecay(r, r.mergedScore));
       scored.sort((a, b) => b._score - a._score);
 
+      // Recall floor: an FTS-only row needs a rare query keyword; a row the
+      // embedding layer found is kept (that layer is unchanged).
+      let floorDrop = 0;
+      if (rare) {
+        const keep = (r: { content: string }) => embedScores.has(r.content) || hasRareTerm(r.content, rare);
+        floorDrop = scored.filter((r) => !keep(r)).length;
+        if (floorMode === "on") scored = scored.filter(keep);
+      }
+
       if (scored.length === 0 && allResults.size > 0) {
-        console.warn(
-          `[memory] Relevance filter discarded all ${allResults.size} results (threshold=${MIN_RELEVANCE_SCORE})`,
-        );
+        if (floorMode === "on" && floorDrop > 0) {
+          console.warn(`[memory] Recall floor dropped all ${floorDrop} results (no rare query keyword)`);
+        } else {
+          console.warn(
+            `[memory] Relevance filter discarded all ${allResults.size} results (threshold=${MIN_RELEVANCE_SCORE})`,
+          );
+        }
       }
 
       // Graph-aware coherence reranker: boost entity-linked clusters as a
@@ -566,10 +756,12 @@ export class SqliteMemoryBackend implements MemoryService {
       // returned item so the recall-side outcome bias (outcome-bias.ts) has
       // a comparable score to add ±0.05–0.10 onto. Without this the bias
       // function falls back to insertion-order sort and the boost is a no-op.
-      return reranked.slice(0, limit).map(({ _score, ...item }) => ({
+      const out = reranked.slice(0, limit).map(({ _score, ...item }) => ({
         ...item,
         relevance: _score,
       }));
+      if (rare) traceRecallFloor(floorMode, options, out.length, floorDrop, rare.length);
+      return out;
     } catch {
       return [];
     }
