@@ -1255,6 +1255,9 @@ export async function queryClaudeSdk(opts: {
     // defaults); do not trust any "lean default" to isolate. Do NOT remove:
     // Jarvis's context comes from its own systemPrompt/KB, never from
     // operator dotfiles. Pinned by spec in claude-sdk.test.ts.
+    // CORRECTION (2026-11-07): [] does NOT isolate the auto-memory MEMORY.md
+    // listed above — it stays on until a settings layer turns it off; that
+    // is autoMemoryEnabled: false in `settings` below.
     settingSources: [],
     // EXPLICIT MCP isolation (2026-07-15). settingSources: [] does NOT cover
     // MCP config — without this flag the CLI merges the OPERATOR'S servers
@@ -1274,7 +1277,22 @@ export async function queryClaudeSdk(opts: {
     // launch. settingSources: [] does not gate it (the opt-out is read from
     // user settings or --settings only), so pass it in the flag-settings
     // layer. Only `false` is honored. Pinned by spec in claude-sdk.test.ts.
-    settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
+    // EXPLICIT auto-memory opt-out (2026-11-07, SDK 0.3.285). The CLI reads
+    // (and may write) ~/.claude/projects/<sanitized-cwd>/memory/MEMORY.md for
+    // cwd: process.cwd() — the OPERATOR'S Claude Code memory for this repo —
+    // and settingSources: [] does not gate it: auto-memory is on unless a
+    // settings layer sets autoMemoryEnabled: false (sdk.d.ts: "When false,
+    // Claude will not read from or write to the auto-memory directory").
+    // Proven by the continuity bench's extracted leg (Port 4): the nightly
+    // JME consolidator (Haiku) emitted a "Pipesong … Phases 0-3 … 4a latency"
+    // fact in 16 of 26 scenarios; "pipesong" occurs nowhere in the corpus,
+    // the bench or jme.ts, only in that MEMORY.md. Every Jarvis SDK call ran
+    // with the same cwd and user. Pinned by spec in claude-sdk.test.ts.
+    settings: {
+      syncClaudeAiSkills: false,
+      syncClaudeAiPlugins: false,
+      autoMemoryEnabled: false,
+    },
     maxTurns: opts.maxTurns ?? 20,
     // Effort knob (V8.5 Phase 2.3): request-level param, does not touch the
     // cached prompt prefix. Omitted when unset so the SDK default ("high")
@@ -1321,6 +1339,8 @@ export async function queryClaudeSdk(opts: {
       // Range: SDK enforces 100k-1M bounds; auto-clamped to model default.
       CLAUDE_CODE_AUTO_COMPACT_WINDOW:
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "165000",
+      // Auto-memory backstop (2026-11-07): settings.autoMemoryEnabled is the documented switch; this env var is checked first by the CLI (DS() in 0.3.285) and wins over any inherited value.
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     },
   };
 

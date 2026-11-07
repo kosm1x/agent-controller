@@ -3566,9 +3566,46 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
         syncClaudeAiPlugins?: boolean;
       };
     };
+    expect(opts.settings).toMatchObject({
+      syncClaudeAiSkills: false,
+      syncClaudeAiPlugins: false,
+    });
+  });
+
+  it("pins autoMemoryEnabled: false — Jarvis must never read or write the operator's auto-memory MEMORY.md (2026-11-07 leak)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    // "0" is the dangerous inherit: the CLI reads any set non-truthy value as
+    // "force auto-memory ON". The key must be set AFTER the process.env spread.
+    const prior = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+    process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
+    try {
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+      else process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = prior;
+    }
+    const opts = lastQueryArgs.value?.options as {
+      settingSources?: unknown[];
+      settings?: Record<string, unknown>;
+      env?: Record<string, string | undefined>;
+    };
+    // settingSources: [] does not cover auto-memory; only this key does.
+    expect(opts.settingSources).toEqual([]);
+    // Backstop the CLI checks first; set after the process.env spread so it wins.
+    expect(opts.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(opts.settings?.autoMemoryEnabled).toBe(false);
     expect(opts.settings).toEqual({
       syncClaudeAiSkills: false,
       syncClaudeAiPlugins: false,
+      autoMemoryEnabled: false,
     });
   });
 

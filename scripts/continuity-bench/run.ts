@@ -122,7 +122,7 @@ const NOTES = [
 
 /** Appended to the notes of an `extracted` run. */
 export const EXTRACTED_NOTE =
-  "extracted leg = raw + the jme_facts rows the production nightly consolidator wrote: the stated-fact exchanges (standing, person_fact, correction) through writeEpisodic (window `day`: among seeded ordinary exchanges of the same night; `clean`: alone, an upper bound; meta.extraction.window), then jme.ts consolidateAll once per consolidation night (one real model call each), and pruneExpiredFacts per probe. The consolidator writes facts in English; a Spanish needle is caught only when the fact keeps the word or figure.";
+  "extracted leg = raw + the jme_facts rows the production nightly consolidator wrote: the stated-fact exchanges (standing, person_fact, correction) through writeEpisodic (window `day`: among seeded ordinary exchanges of the same night; `clean`: alone, an upper bound; meta.extraction.window), then jme.ts consolidateAll once per consolidation night (one real model call each, the prompt's date set to that night's), and pruneExpiredFacts per probe. `caught` is lexical, live at probe: every probe has an extracted fact live at its time that holds all its expect needles. The consolidator writes facts in English; a Spanish needle is caught only when the fact keeps the word or figure.";
 
 /** Haiku 4.5 list price, USD per million tokens, for the cost line only. */
 export const EXTRACTION_PRICE_PER_MTOK = { input: 1, output: 5 };
@@ -156,7 +156,7 @@ export function extractionCostLine(w: ExtractionWindow, calls: number): string {
 /** Printed under every extraction heading. */
 export const EXTRACTION_LIMITS = [
   "Limits:",
-  "1. The consolidator writes facts in English while the corpus needles are Spanish or English: `caught` and hit % understate what was extracted; the per-scenario `facts` in the JSON are there for a human read.",
+  "1. The consolidator writes facts in English while the corpus needles are Spanish or English: `caught` (lexical, live at probe) and hit % understate what was extracted; the per-scenario `facts` in the JSON are there for a human read.",
   "2. Embeddings off: no cosine supersede, so in C2 the old and the new value both stay live; part of the ideal → extracted stale-hit gap is the harness, not the extractor.",
   "3. Window: `clean` = the stated turns alone (an upper bound); `day` = the stated turns among seeded ordinary exchanges, not the operator's real day.",
 ].join("\n");
@@ -555,16 +555,23 @@ function extractionTable(r: RunResult, limits = true): string {
     "",
     ...(limits ? [EXTRACTION_LIMITS, ""] : []),
     x
-      ? `Mode ${x.mode}, model ${x.model}, window ${windowLabel(x.window)}: ${x.calls} model calls${x.mode === "dry-run" ? " counted, none made" : ` made, cap ${x.maxModelCalls}`}. Cost estimate: ${extractionCostLine(x.window, x.calls)}. Caught = every probe of the scenario has a live extracted fact holding all its expect needles (folded substring, as the scorer).`
+      ? `Mode ${x.mode}, model ${x.model}, window ${windowLabel(x.window)}: ${x.calls} model calls${x.mode === "dry-run" ? " counted, none made" : ` made, cap ${x.maxModelCalls}`}. Cost estimate: ${extractionCostLine(x.window, x.calls)}. Caught (lexical, live at probe) = every probe of the scenario has an extracted fact live at the probe's time holding all its expect needles (folded substring, as the scorer).`
       : "",
     "",
-    "| class | size | scenarios | model calls | turns | inserted | caught / total | failed calls |",
+    "| class | size | scenarios | model calls | turns | inserted | caught (lexical, live at probe) / total | failed calls |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...[...rows.entries()].map(([k, es]) => {
       const [cls, size] = k.split("|");
       return `| ${cls} | ${size} | ${es.length} | ${sum(es, (e) => e.calls)} | ${sum(es, (e) => e.turns)} | ${sum(es, (e) => e.inserted)} | ${es.filter((e) => e.caught).length} / ${es.length} | ${sum(es, (e) => e.failedCalls)} |`;
     }),
   ].join("\n");
+}
+
+/** Probes of an aggregate row whose JME recall layers (`jme`, `jme_query`) returned at least one item on that surface, over the probes scored there. */
+function surfacedText(r: RunResult, a: Aggregate): string {
+  const scored = r.probes.filter((p) => p.class === a.class && p.fillerSize === a.fillerSize && p[a.surface].scored);
+  const jme = (c: string) => /^jme(_query)?:\d+$/.test(c) && Number(c.slice(c.lastIndexOf(":") + 1)) > 0;
+  return `${scored.filter((p) => p.components[a.surface].some(jme)).length}/${scored.length}`;
 }
 
 /**
@@ -590,13 +597,13 @@ export function renderExtractionCompare(pairs: ReadonlyArray<readonly [RunResult
       `- ideal: commit ${ideal.meta.commit}, run ${ideal.meta.startedAt}`,
       `- extracted: commit ${extracted.meta.commit}, run ${extracted.meta.startedAt}, ${extracted.meta.extraction ? `${extracted.meta.extraction.mode}, window ${windowLabel(extracted.meta.extraction.window)}, ${extracted.meta.extraction.calls} model calls (${extracted.meta.extraction.model})` : "no extraction meta"}`,
       "",
-      "| class | size | surface | n | hit % ideal → extracted | gap (pp) | stale-hit % ideal → extracted |",
-      "| --- | ---: | --- | ---: | ---: | ---: | ---: |",
+      "| class | size | surface | n | hit % ideal → extracted | gap (pp) | stale-hit % ideal → extracted | surfaced n/N (extracted: jme or jme_query > 0) |",
+      "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
     );
     for (const a of extracted.aggregates) {
       const b = ideal.aggregates.find((x) => x.class === a.class && x.fillerSize === a.fillerSize && x.surface === a.surface);
       const gap = b && a.hitPct !== null && b.hitPct !== null ? Math.round(10 * (a.hitPct - b.hitPct)) / 10 : null;
-      parts.push(`| ${a.class} | ${a.fillerSize} | ${a.surface} | ${a.n} | ${c(b?.hitPct)} → ${c(a.hitPct)} | ${c(gap)} | ${c(b?.staleHitPct)} → ${c(a.staleHitPct)} |`);
+      parts.push(`| ${a.class} | ${a.fillerSize} | ${a.surface} | ${a.n} | ${c(b?.hitPct)} → ${c(a.hitPct)} | ${c(gap)} | ${c(b?.staleHitPct)} → ${c(a.staleHitPct)} | ${surfacedText(extracted, a)} |`);
     }
     parts.push("", extractionTable(extracted, false));
   }

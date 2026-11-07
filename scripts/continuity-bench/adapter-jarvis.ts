@@ -375,12 +375,26 @@ export interface ExtractionStat {
   turns: number;
   /** Facts consolidateAll inserted (factsInserted, summed over the calls); 0 with dryRun. */
   inserted: number;
-  /** Every probe has a live extracted row holding all its expect needles (score.ts contains: folded substring). */
+  /** consolidateAll's other counts, summed over the calls (ConsolidateResult): facts the model returned, absorbed by a near-identical live fact, superseding one, refused by redaction. */
+  consolidator: { extracted: number; skipped: number; superseded: number; dropped: number };
+  /** Lexical, live at probe: every probe has an extracted row live at its time that holds all its expect needles (score.ts contains: folded substring). */
   caught: boolean;
   /** Calls after which jme_turns still held turns: consolidateAll keeps a window it could not consume (empty / unparseable reply, failed upsert, a throw). */
   failedCalls: number;
-  /** fact_text of every row the consolidator left in jme_facts, in insert order. */
-  facts: string[];
+  /** Every row the consolidator left in jme_facts, in insert order. */
+  facts: ExtractedFact[];
+}
+
+/** One kept consolidator row: its text, category and lifetime on the corpus timeline. */
+export interface ExtractedFact {
+  text: string;
+  category: string;
+  /** The consolidation night (corpus seconds) that wrote it. */
+  night: number;
+  /** expires_at − ts as written (null = permanent). */
+  ttlMs: number | null;
+  /** night + ttlMs on the corpus timeline, seconds (null = permanent). */
+  expiresAtT: number | null;
 }
 
 /** A jme_facts row the consolidator wrote, kept to be dated onto each probe's timeline. */
@@ -570,7 +584,18 @@ export class JarvisAdapter {
       const night = nextConsolidationT(e.t);
       nights.set(night, [...(nights.get(night) ?? []), e]);
     }
-    const stat: ExtractionStat = { scenarioId: s.id, class: s.class, fillerSize: s.fillerSize, calls: 0, turns: 0, inserted: 0, caught: false, failedCalls: 0, facts: [] };
+    const stat: ExtractionStat = {
+      scenarioId: s.id,
+      class: s.class,
+      fillerSize: s.fillerSize,
+      calls: 0,
+      turns: 0,
+      inserted: 0,
+      consolidator: { extracted: 0, skipped: 0, superseded: 0, dropped: 0 },
+      caught: false,
+      failedCalls: 0,
+      facts: [],
+    };
     const rows: Array<ExtractedRow & { id: number }> = [];
     const turnCount = () => (db.prepare("SELECT COUNT(*) AS n FROM jme_turns").get() as { n: number }).n;
     for (const [night, events] of [...nights].sort((a, b) => a[0] - b[0])) {
@@ -594,8 +619,13 @@ export class JarvisAdapter {
         continue;
       }
       const lastId = (db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM jme_facts").get() as { id: number }).id;
-      const result = await consolidateAll();
+      // The prompt's "today" is the night's date as the last probe sees it (each probe re-dates the rows to its own clock).
+      const result = await consolidateAll({ today: new Date(Date.now() - (lastProbe - night) * 1000).toISOString().slice(0, 10) });
       stat.inserted += result.factsInserted;
+      stat.consolidator.extracted += result.factsExtracted;
+      stat.consolidator.skipped += result.factsSkipped;
+      stat.consolidator.superseded += result.factsSuperseded;
+      stat.consolidator.dropped += result.factsDropped;
       if (turnCount() > 0) stat.failedCalls++;
       const written = db
         .prepare("SELECT id, source_task, ts, fact_text, category, embedding, expires_at, confidence FROM jme_facts WHERE id > ? ORDER BY id")
@@ -605,7 +635,7 @@ export class JarvisAdapter {
     }
     const left = new Set((db.prepare("SELECT id FROM jme_facts").all() as Array<{ id: number }>).map((r) => r.id));
     const kept = rows.filter((r) => left.has(r.id));
-    stat.facts = kept.map((r) => r.factText);
+    stat.facts = kept.map((r) => ({ text: r.factText, category: r.category, night: r.night, ttlMs: r.ttlMs, expiresAtT: r.ttlMs === null ? null : r.night + r.ttlMs / 1000 }));
     const liveAt = (r: ExtractedRow, t: number) => r.night < t && (r.ttlMs === null || r.night + r.ttlMs / 1000 > t);
     stat.caught = !dryRun && s.probes.every((p) => p.expect.length > 0 && kept.some((r) => liveAt(r, p.t) && p.expect.every((n) => contains(r.factText, n))));
     this.extractions.push(stat);

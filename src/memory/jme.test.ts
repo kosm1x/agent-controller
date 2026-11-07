@@ -1774,6 +1774,20 @@ describe("JME hardening — consolidator robustness + extraction rules (C1/C2)",
     expect(system).toMatch(/in English, as ONE sentence of at most 300 characters/);
   });
 
+  it("C2: opts.today replaces the prompt date (continuity bench seam); production passes nothing", async () => {
+    const { consolidateAll } = await getJme();
+    settledTurn("t-today", "user", "mañana reviso Pulso");
+    inferMock.mockResolvedValueOnce({ content: "[]" });
+
+    await consolidateAll({ today: "2025-03-14" });
+
+    const system = (
+      inferMock.mock.calls[0][0] as { messages: Array<{ content: string }> }
+    ).messages[0].content;
+    expect(system).toContain("Today's date is 2025-03-14.");
+    expect(system).not.toContain(`Today's date is ${new Date().toISOString().slice(0, 10)}.`);
+  });
+
   it.each([
     ["project with a count marker", "project", "Jarvis has 9,607 tests passing", 0.9, 30],
     ["project with a week marker", "project", "Williams Radar W39 was published", 0.9, 30],

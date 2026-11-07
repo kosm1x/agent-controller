@@ -979,10 +979,21 @@ and copied onto each probe's timeline with their TTL kept.
   `CONSOLIDATOR_MAX_TURNS` (400) keeps the stated turns and the newest
   ordinary ones. `--window clean` writes the stated turns alone and is an
   upper bound. The window is recorded in `meta.extraction.window`; each
-  scenario's `extraction` entry records `calls`, `turns`, `inserted`,
-  `caught`, `failedCalls` and the `facts` the consolidator left.
-- **`caught`** = every probe of the scenario has a live extracted fact that
-  holds all its expect needles (folded substring, as the scorer).
+  scenario's `extraction` entry records `calls`, `turns`, `inserted`, the
+  consolidator's own counts (`consolidator`: extracted, skipped, superseded,
+  dropped), `caught`, `failedCalls` and the `facts` the consolidator left,
+  each with its `category`, `night`, `ttlMs` and `expiresAtT` (corpus
+  seconds; null = permanent).
+- **Prompt date.** The consolidator's prompt carries "today"; the leg passes
+  each consolidation night's date (as the last probe sees it) through
+  `consolidateAll({ today })`, so relative dates resolve on the timeline.
+  Production passes nothing and keeps the real date.
+- **`caught` (lexical, live at probe)** = every probe of the scenario has an
+  extracted fact live at the probe's time that holds all its expect needles
+  (folded substring, as the scorer). It says nothing about whether recall
+  surfaces that fact.
+- **`surfaced n/N`** (compare page) = probes of a row whose JME recall layers
+  (`jme`, `jme_query`) returned at least one item on that surface.
 
 ### Limits
 

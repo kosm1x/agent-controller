@@ -1304,8 +1304,15 @@ export interface ConsolidateResult {
  *
  * Safe to call fire-and-forget — never throws; failures log + emit
  * `schedule.run_failed` via recordRitualFailure (observability invariant).
+ *
+ * `opts.today` (YYYY-MM-DD) replaces today's date in the extraction prompt;
+ * production passes nothing. The continuity bench (2026-11-07) passes the
+ * synthetic consolidation night's date, so relative dates resolve against
+ * the timeline, not the day the bench ran.
  */
-export async function consolidateAll(): Promise<ConsolidateResult> {
+export async function consolidateAll(
+  opts: { today?: string } = {},
+): Promise<ConsolidateResult> {
   const result: ConsolidateResult = {
     turnsProcessed: 0,
     factsExtracted: 0,
@@ -1374,7 +1381,9 @@ export async function consolidateAll(): Promise<ConsolidateResult> {
       messages: [
         {
           role: "system",
-          content: buildExtractPrompt(new Date().toISOString().slice(0, 10)),
+          content: buildExtractPrompt(
+            opts.today ?? new Date().toISOString().slice(0, 10),
+          ),
         },
         {
           role: "user",

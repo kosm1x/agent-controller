@@ -515,10 +515,24 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     expect(r.meta.classes).toEqual(["C6"]);
     expect(r.meta.extraction).toEqual({ mode: "run", calls: 2, maxModelCalls: 6, model: "claude-haiku-4-5-20251001", window: "clean" });
     expect(r.meta.notes).toContain(EXTRACTED_NOTE);
+    const counts = { extracted: 1, skipped: 0, superseded: 0, dropped: 0 };
+    const factOf = (s: Scenario, text: string) => {
+      const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+      return { text, category: "preference", night, ttlMs: null, expiresAtT: null };
+    };
     expect(r.extraction).toEqual([
-      { scenarioId: "C6-01-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, caught: true, failedCalls: 0, facts: [VINETAS.factText] },
-      { scenarioId: "C6-02-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, caught: false, failedCalls: 0, facts: [BULLETS.factText] },
+      { scenarioId: "C6-01-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, consolidator: counts, caught: true, failedCalls: 0, facts: [factOf(pick[0], VINETAS.factText)] },
+      { scenarioId: "C6-02-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, consolidator: counts, caught: false, failedCalls: 0, facts: [factOf(pick[1], BULLETS.factText)] },
     ]);
+    // The prompt's "today" is the consolidation night's date as the last probe sees it, not the run's date.
+    for (const [i, s] of pick.entries()) {
+      const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+      const last = Math.max(...s.probes.map((p) => p.t));
+      const [call] = inferMock.mock.calls[i] as [{ messages: Array<{ role: string; content: string }> }];
+      const today = new Date(Date.now() - (last - night) * 1000).toISOString().slice(0, 10);
+      expect(today).not.toBe(new Date().toISOString().slice(0, 10));
+      expect(call.messages[0].content).toContain(`Today's date is ${today}.`);
+    }
     expect(r.probes.map((p) => p.scenarioId)).toEqual(["C6-01-s50", "C6-01-s50", "C6-02-s50", "C6-02-s50"]);
     expect(ritualFailureMock).not.toHaveBeenCalled();
   });
@@ -605,9 +619,9 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     expect(inferMock).not.toHaveBeenCalled();
     const r = load("dry.json");
     expect(r.meta.extraction).toEqual({ mode: "dry-run", calls: 2, maxModelCalls: 1, model: "claude-haiku-4-5-20251001", window: "clean" });
-    expect(r.extraction!.map((e) => [e.scenarioId, e.calls, e.turns, e.inserted, e.caught, e.failedCalls, e.facts])).toEqual([
-      ["C6-01-s50", 1, 2, 0, false, 0, []],
-      ["C6-02-s50", 1, 2, 0, false, 0, []],
+    expect(r.extraction!.map((e) => [e.scenarioId, e.calls, e.turns, e.inserted, e.caught, e.failedCalls, e.facts, e.consolidator])).toEqual([
+      ["C6-01-s50", 1, 2, 0, false, 0, [], { extracted: 0, skipped: 0, superseded: 0, dropped: 0 }],
+      ["C6-02-s50", 1, 2, 0, false, 0, [], { extracted: 0, skipped: 0, superseded: 0, dropped: 0 }],
     ]);
     const day = load("dry-day.json");
     expect(day.meta.extraction).toMatchObject({ mode: "dry-run", calls: 2, window: "day" });
@@ -624,7 +638,9 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
   });
 
   it("renders the extraction table (PROVISIONAL) and the ideal / extracted gap; main --compare picks it", async () => {
-    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
+    // C6-02's fact repeats its second probe's words, so the words-only JME recall returns it.
+    const askedText = pick[1].probes[1].text;
+    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([{ ...BULLETS, factText: `Fede asked: ${askedText}` }]));
     expect(await run(["--run", "--window", "clean"], "run2.json")).toBe(0);
     const extracted = load("run2.json");
     const md = renderBaseline([extracted]);
@@ -646,6 +662,17 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     const a = extracted.aggregates[0];
     expect(cmp).toContain(`# Port 4 — real extraction of stated facts: ideal / extracted (${PROVISIONAL})`);
     expect(cmp.split(EXTRACTION_LIMITS).length).toBe(2);
+    expect(md).toContain("| caught (lexical, live at probe) / total |");
+    expect(cmp).toContain("| surfaced n/N (extracted: jme or jme_query > 0) |");
+    // surfaced, recomputed from the probe components: proactive reads the `jme` layer, asked the `jme_query` one.
+    for (const agg of extracted.aggregates) {
+      const ps = extracted.probes.filter((p) => p.class === agg.class && p.fillerSize === agg.fillerSize && p[agg.surface].scored);
+      const n = ps.filter((p) => p.components[agg.surface].some((k) => (k.startsWith("jme:") || k.startsWith("jme_query:")) && !k.endsWith(":0"))).length;
+      const line = cmp.split("\n").find((l) => l.startsWith(`| ${agg.class} | ${agg.fillerSize} | ${agg.surface} | ${agg.n} | `));
+      expect(line?.endsWith(` | ${n}/${ps.length} |`), `${agg.surface}: ${line}`).toBe(true);
+    }
+    const jmeCells = extracted.probes.flatMap((p) => [...p.components.proactive, ...p.components.asked]).filter((k) => /^jme(_query)?:/.test(k));
+    expect(jmeCells.some((k) => !k.endsWith(":0")), JSON.stringify(jmeCells)).toBe(true);
     expect(cmp.indexOf(EXTRACTION_LIMITS)).toBeLessThan(cmp.indexOf("| class | size | surface"));
     expect(cmp).toContain("window clean about $0.0015 typical / $0.0063 ceiling, window day $0.0030 / $0.0076; one call can make up to 2x billed requests");
     expect(cmp).toContain("run, window clean (upper bound: the stated turns alone), 2 model calls");
