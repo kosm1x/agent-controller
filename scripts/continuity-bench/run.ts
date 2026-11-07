@@ -4,7 +4,13 @@
  *   npx tsx scripts/continuity-bench/run.ts --leg raw --sizes 50,500 \
  *     [--corpus benchmarks/continuity/corpus-v2.json] [--out <json>]
  *     [--allow-embeddings [--max-embed-calls 3000] [--embed-cache <file under TMPDIR>]]
+ *     [--switch MEMORY_OPEN_WORK=on ...]
  *   npx tsx scripts/continuity-bench/run.ts --report <a.json,b.json,...> --md <out.md>
+ *   npx tsx scripts/continuity-bench/run.ts --compare <before.json,after.json[,before2,after2...]> \
+ *     [--reference <ref.json[,ref2.json]>] --md <out.md>
+ *
+ * Switches are production env switches set in this process only (each run
+ * sets every known switch, defaults off, and records the states in meta).
  *
  * Refuses to start when an embedding/remote-memory key is in the environment
  * (GEMINI_API_KEY, EMBEDDING_KEY, COMMIT_DB_KEY, HINDSIGHT_ENABLED=true)
@@ -59,6 +65,8 @@ export interface RunResult {
     markers?: AuthorMarkerSpec;
     /** v2: embedding calls (rows: through the cache; fetches: every outbound call, cached or not) when embeddings are on. */
     embed?: { uniqueRowTexts: number; rowCalls: number; rowCacheHits: number; rowFailures?: number; fetches?: number; plan?: EmbedPlan };
+    /** Production switch states this run set in its process (absent on results from before switches existed = all off). */
+    switches?: Record<string, string>;
   };
   ingest: IngestStat[];
   aggregates: Aggregate[];
@@ -97,6 +105,7 @@ export function refuseReason(env: NodeJS.ProcessEnv, allowEmbeddings: boolean): 
 
 export type CliArgs =
   | { mode: "report"; report: string[]; md: string }
+  | { mode: "compare"; compare: string[]; reference: string[]; md: string }
   | {
       mode: "run";
       leg: "raw" | "ideal";
@@ -106,6 +115,8 @@ export type CliArgs =
       allowEmbeddings: boolean;
       maxEmbedCalls: number;
       embedCache: string | null;
+      /** `--switch NAME=VALUE`, repeatable (validated against the adapter's SWITCHES at run time). */
+      switches: Record<string, string>;
     };
 
 export function parseArgs(argv: readonly string[]): CliArgs {
@@ -118,6 +129,22 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     const md = arg("--md");
     if (!md) throw new Error("--report needs --md <path>");
     return { mode: "report", report: report.split(","), md };
+  }
+  const compare = arg("--compare");
+  if (compare) {
+    const md = arg("--md");
+    if (!md) throw new Error("--compare needs --md <path>");
+    const files = compare.split(",");
+    if (files.length === 0 || files.length % 2 !== 0) throw new Error("--compare needs before,after pairs");
+    const reference = arg("--reference");
+    return { mode: "compare", compare: files, reference: reference ? reference.split(",") : [], md };
+  }
+  const switches: Record<string, string> = {};
+  for (const [i, a] of argv.entries()) {
+    if (a !== "--switch") continue;
+    const m = /^([A-Z][A-Z0-9_]*)=([a-z]+)$/.exec(argv[i + 1] ?? "");
+    if (!m) throw new Error("--switch takes NAME=value (e.g. MEMORY_OPEN_WORK=on)");
+    switches[m[1]] = m[2];
   }
   const allowEmbeddings = argv.includes("--allow-embeddings");
   const leg = (arg("--leg") ?? "raw") as "raw" | "ideal";
@@ -135,6 +162,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     allowEmbeddings,
     maxEmbedCalls,
     embedCache: arg("--embed-cache") ? resolve(arg("--embed-cache")!) : null,
+    switches,
   };
 }
 
@@ -353,7 +381,7 @@ export function renderBaseline(results: RunResult[]): string {
   for (const r of results) {
     parts.push(
       "",
-      `## leg \`${r.meta.leg}\` · embeddings ${r.meta.embeddings} · commit ${r.meta.commit} · corpus ${r.meta.corpusVersion}`,
+      `## leg \`${r.meta.leg}\` · embeddings ${r.meta.embeddings} · commit ${r.meta.commit} · corpus ${r.meta.corpusVersion}${r.meta.switches ? ` · switches ${switchText(r)}` : ""}`,
       "",
       `Run ${r.meta.startedAt}, ${(r.meta.durationMs / 1000).toFixed(1)} s.`,
       "",
@@ -398,12 +426,185 @@ export function renderBaseline(results: RunResult[]): string {
   return parts.join("\n") + "\n";
 }
 
+type ProbeRow = RunResult["probes"][number];
+const probeKey = (p: ProbeRow) => `${p.scenarioId}#${p.probeIndex}`;
+const switchText = (r: RunResult) =>
+  Object.entries(r.meta.switches ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ") || "none recorded (all off)";
+const gapKey = (g: { class: string; variant: string; gapRows: number | null; otherChannelRows: number | null }) =>
+  `${g.class}|${g.variant}|${g.gapRows ?? ""}|${g.otherChannelRows ?? ""}`;
+const probeGapKey = (p: ProbeRow) => gapKey({ class: p.class, variant: p.variant ?? "none", gapRows: p.gapRows ?? null, otherChannelRows: p.otherChannelRows ?? null });
+
+/** A probe's scores without timings: what a reproduction must match exactly. */
+function scoreFingerprint(p: ProbeRow): string {
+  const { ms: _a, ...proactive } = p.proactive;
+  const { ms: _b, ...asked } = p.asked;
+  return JSON.stringify({ ...p, proactive, asked });
+}
+
+function medianMax(xs: readonly number[]): string {
+  if (xs.length === 0) return "–";
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const med = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return `median ${med}, max ${sorted[sorted.length - 1]}`;
+}
+
+/**
+ * Two Jarvis runs that differ only in their switches, side by side, with the
+ * three null tests computed from the files (no hand-written figure):
+ *   1. `before` reproduces each reference run (same leg) probe for probe on
+ *      the reference's scenarios, timings aside;
+ *   2. C4 (no idle gap between the session end and the gap rows) is unchanged;
+ *   3. every class other than C3/C4 keeps its hit, stale-hit, wording,
+ *      author and C7 cells, and payload chars change only on probes that
+ *      carry the `open_work` component.
+ */
+export function renderCompare(pairs: ReadonlyArray<readonly [RunResult, RunResult]>, references: readonly RunResult[] = []): string {
+  const verdict = (ok: boolean) => (ok ? "PASS" : "FAIL");
+  const parts: string[] = [
+    "# Port 1 — session tail notes: before / after",
+    "",
+    "Generated by `scripts/continuity-bench/run.ts --compare`; every figure below is computed from the result files named here. Method and limits: `benchmarks/continuity/README.md` §Session tail notes.",
+  ];
+  for (const [before, after] of pairs) {
+    parts.push(
+      "",
+      `## leg \`${before.meta.leg}\` · embeddings ${before.meta.embeddings} · corpus ${before.meta.corpusVersion}`,
+      "",
+      `- before: commit ${before.meta.commit}, switches ${switchText(before)}, run ${before.meta.startedAt}`,
+      `- after: commit ${after.meta.commit}, switches ${switchText(after)}, run ${after.meta.startedAt}`,
+    );
+    const afterByKey = new Map(after.probes.map((p) => [probeKey(p), p]));
+
+    // C3 / C4 side by side.
+    const keys = [...new Map([...(before.gapAggregates ?? []), ...(after.gapAggregates ?? [])].filter((g) => g.surface === "proactive").map((g) => [gapKey(g), g])).values()];
+    keys.sort((a, b) => a.class.localeCompare(b.class) || a.variant.localeCompare(b.variant) || (a.gapRows ?? 0) - (b.gapRows ?? 0) || (a.otherChannelRows ?? 0) - (b.otherChannelRows ?? 0));
+    const cell = (g: GapAggregate | undefined) => (g ? `${c(g.hitPct)} (${c(g.hitPctShared)} / ${c(g.hitPctDisjoint)})` : "–");
+    parts.push(
+      "",
+      "### C3 / C4 by variant and K (proactive, pooled over filler sizes)",
+      "",
+      "| class | variant | K | other-channel rows | n | before hit % (shared / disjoint) | after hit % (shared / disjoint) | after: hits carried by open_work % |",
+      "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+      ...keys.map((k) => {
+        const find = (r: RunResult) => r.gapAggregates?.find((g) => g.surface === "proactive" && gapKey(g) === gapKey(k));
+        const hits = after.probes.filter((p) => probeGapKey(p) === gapKey(k) && p.proactive.hit);
+        const viaNotes = hits.filter((p) => p.proactive.carriedBy?.includes("open_work")).length;
+        return `| ${k.class} | ${k.variant} | ${c(k.gapRows)} | ${c(k.otherChannelRows ?? 0)} | ${find(after)?.n ?? find(before)?.n ?? 0} | ${cell(find(before))} | ${cell(find(after))} | ${hits.length ? c(Math.round((1000 * viaNotes) / hits.length) / 10) : "–"} |`;
+      }),
+    );
+
+    // C3 per filler size: the pooled cells above can hide a size where the notes do nothing.
+    const sizes = [...new Set(after.probes.map((p) => p.fillerSize))].sort((a, b) => a - b);
+    const sizeCell = (r: RunResult, k: GapAggregate, size: number) => {
+      const ps = r.probes.filter((p) => p.fillerSize === size && probeGapKey(p) === gapKey(k));
+      return ps.length ? c(Math.round((1000 * ps.filter((p) => p.proactive.hit).length) / ps.length) / 10) : "–";
+    };
+    parts.push(
+      "",
+      "### C3 by variant, K and filler size (proactive hit %, before → after)",
+      "",
+      `| variant | K | other-channel rows | ${sizes.map((z) => `size ${z}`).join(" | ")} |`,
+      `| --- | ---: | ---: | ${sizes.map(() => "---:").join(" | ")} |`,
+      ...keys
+        .filter((k) => k.class === "C3")
+        .map((k) => `| ${k.variant} | ${c(k.gapRows)} | ${c(k.otherChannelRows ?? 0)} | ${sizes.map((z) => `${sizeCell(before, k, z)} → ${sizeCell(after, k, z)}`).join(" | ")} |`),
+    );
+
+    // Null test 1.
+    parts.push("", "### Null tests", "");
+    const refs = references.filter((r) => r.meta.leg === before.meta.leg && r.meta.embeddings === before.meta.embeddings);
+    if (refs.length === 0) parts.push("1. Reproduction: no reference run for this leg — not checked.");
+    for (const ref of refs) {
+      const beforeByKey = new Map(before.probes.map((p) => [probeKey(p), p]));
+      const missing = ref.probes.filter((p) => !beforeByKey.has(probeKey(p))).length;
+      const differ = ref.probes.filter((p) => beforeByKey.has(probeKey(p)) && scoreFingerprint(p) !== scoreFingerprint(beforeByKey.get(probeKey(p))!));
+      parts.push(
+        `1. **${verdict(missing === 0 && differ.length === 0)}** — before reproduces reference commit ${ref.meta.commit} (switches ${switchText(ref)}) on its ${ref.probes.length} probes: ${differ.length} differ, ${missing} missing (timings excluded)${differ.length ? `; first: ${differ.slice(0, 5).map(probeKey).join(", ")}` : ""}.`,
+      );
+    }
+
+    // Null test 2.
+    const c4 = keys.filter((k) => k.class === "C4");
+    const c4Changed = c4.filter((k) => {
+      const find = (r: RunResult) => r.gapAggregates?.find((g) => g.surface === "proactive" && gapKey(g) === gapKey(k));
+      return cell(find(before)) !== cell(find(after));
+    });
+    parts.push(
+      `2. **${verdict(c4Changed.length === 0)}** — C4 (no idle gap between the session end and the gap rows) unchanged at every K: ${c4.length - c4Changed.length} of ${c4.length} rows identical${c4Changed.length ? `; changed K: ${c4Changed.map((k) => k.gapRows).join(", ")}` : ""}.`,
+    );
+
+    // Null test 3.
+    const other = (a: Aggregate) => !["C3", "C4"].includes(a.class);
+    const aggCells = (r: RunResult) =>
+      new Map(
+        r.aggregates.filter(other).map((a) => [
+          `${a.class} size ${a.fillerSize} ${a.surface}`,
+          JSON.stringify([a.n, a.hitPct, a.staleHitPct, a.hitPctShared, a.hitPctDisjoint, a.meanIrrelevant, a.authorMarkedPct]),
+        ]),
+      );
+    const authCells = (r: RunResult) =>
+      new Map((r.authorAggregates ?? []).map((a) => [`C5 ${a.authorCase} size ${a.fillerSize} ${a.surface}`, JSON.stringify([a.n, a.hitPct, a.authorMarkedPct, a.authorMarkedAnyPct, a.attributionConflictPct])]));
+    const changedCells: string[] = [];
+    for (const get of [aggCells, authCells]) {
+      const b = get(before);
+      const a = get(after);
+      for (const k of new Set([...b.keys(), ...a.keys()])) if (b.get(k) !== a.get(k)) changedCells.push(k);
+    }
+    const flips = before.probes.filter((p) => {
+      const q = afterByKey.get(probeKey(p));
+      return !["C3", "C4"].includes(p.class) && q && (["proactive", "asked"] as const).some((s) => p[s].hit !== q[s].hit || p[s].staleHit !== q[s].staleHit);
+    });
+    const count = (s: "proactive" | "asked", f: "hit" | "staleHit", from: boolean) =>
+      flips.filter((p) => p[s][f] === from && afterByKey.get(probeKey(p))![s][f] !== from).length;
+    const direction = (["proactive", "asked"] as const)
+      .map((s) => `${s}: hit +${count(s, "hit", false)} / −${count(s, "hit", true)}, stale-hit +${count(s, "staleHit", false)} / −${count(s, "staleHit", true)}`)
+      .join("; ");
+    parts.push(
+      `3. **${verdict(changedCells.length === 0 && flips.length === 0)}** — C1, C2, C5, C6, C7, C8: ${changedCells.length} changed cells (hit, stale-hit, shared / disjoint, C7 irrelevant, C5 author), ${flips.length} probes with a hit or stale-hit flip (${direction})${changedCells.length ? `; changed: ${changedCells.join("; ")}` : ""}${flips.length ? `; flipped: ${flips.slice(0, 8).map(probeKey).join(", ")}${flips.length > 8 ? ", …" : ""}` : ""}.`,
+    );
+
+    // Payload size.
+    const deltas = before.probes.flatMap((p) => {
+      const q = afterByKey.get(probeKey(p));
+      if (!q || q.proactive.chars === p.proactive.chars) return [];
+      return [{ p, q, d: q.proactive.chars - p.proactive.chars, notes: q.components.proactive.some((x) => x.startsWith("open_work:")) }];
+    });
+    const unexplained = deltas.filter((x) => !x.notes || x.d < 0);
+    const withNotes = after.probes.filter((p) => p.components.proactive.some((x) => x.startsWith("open_work:"))).length;
+    parts.push(
+      "",
+      "### Proactive payload chars",
+      "",
+      `${deltas.length} of ${before.probes.length} probes changed size; ${withNotes} probes carry the open_work block; ${unexplained.length} changed without it or shrank (${verdict(unexplained.length === 0)}). Rise per changed probe: ${medianMax(deltas.map((x) => x.d))} chars.`,
+      "",
+      "| class | probes changed | rise (chars) |",
+      "| --- | ---: | --- |",
+      ...[...new Set(deltas.map((x) => x.p.class))].sort().map((cls) => {
+        const ds = deltas.filter((x) => x.p.class === cls).map((x) => x.d);
+        return `| ${cls} | ${ds.length} | ${medianMax(ds)} |`;
+      }),
+    );
+  }
+  return parts.join("\n") + "\n";
+}
+
 /** Component name → item cap, from what the runs returned (null = a component with no count cap). */
 export function capsOf(runs: readonly ProbeRun[]): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const r of runs)
     for (const s of [r.proactive, r.asked]) for (const comp of s.components) if (comp.queryDriven) out[comp.name] = comp.cap ?? null;
   return out;
+}
+
+/** Result-file name part for the switches that differ from their defaults ("" when none do). */
+export function switchSuffix(switches: Readonly<Record<string, string>>, defaults: Readonly<Record<string, string>>): string {
+  return Object.entries(switches)
+    .filter(([name, value]) => defaults[name] !== value)
+    .map(([name, value]) => `-${name.toLowerCase().replace(/_/g, "-")}-${value}`)
+    .join("");
 }
 
 /** Returns the exit code: 0 done, 2 refused, 3 stopped at the embedding cap. */
@@ -414,6 +615,15 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   if (args.mode === "report") {
     const results = args.report.map((p) => JSON.parse(readFileSync(resolve(p), "utf8")) as RunResult);
     writeFileSync(resolve(args.md), renderBaseline(results));
+    console.log(`wrote ${args.md}`);
+    return 0;
+  }
+  if (args.mode === "compare") {
+    const load = (p: string) => JSON.parse(readFileSync(resolve(p), "utf8")) as RunResult;
+    const runs = args.compare.map(load);
+    const pairs: Array<[RunResult, RunResult]> = [];
+    for (let i = 0; i < runs.length; i += 2) pairs.push([runs[i], runs[i + 1]]);
+    writeFileSync(resolve(args.md), renderCompare(pairs, args.reference.map(load)));
     console.log(`wrote ${args.md}`);
     return 0;
   }
@@ -428,7 +638,11 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   const corpus = JSON.parse(readFileSync(args.corpus, "utf8")) as Corpus;
   const commit = shortSha();
   const suffix = corpus.version === "continuity-v1" ? "" : `-${corpus.version.replace("continuity-", "")}`;
-  const out = args.out ?? join(ROOT, `benchmarks/continuity/results/jarvis-${commit}-${leg}-emb-${embeddings}${suffix}.json`);
+  const { DEFAULT_SWITCHES, resolveSwitches } = await import("./adapter-jarvis.js");
+  const switches = resolveSwitches(args.switches);
+  const out =
+    args.out ??
+    join(ROOT, `benchmarks/continuity/results/jarvis-${commit}-${leg}-emb-${embeddings}${suffix}${switchSuffix(switches, DEFAULT_SWITCHES)}.json`);
 
   // Scratch only: a fresh directory under TMPDIR, removed at exit.
   const scratch = mkdtempSync(join(tmpdir(), "continuity-bench-"));
@@ -459,7 +673,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   console.warn = quiet;
   console.info = quiet;
 
-  const adapter = new JarvisAdapter(scratchDbPath(scratch), leg, { embeddings: embeddings === "on", embedCache: cache });
+  const adapter = new JarvisAdapter(scratchDbPath(scratch), leg, { embeddings: embeddings === "on", embedCache: cache, switches });
   adapter.open();
   const started = performance.now();
   const startedAt = new Date().toISOString();
@@ -500,6 +714,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
       durationMs: Math.round(performance.now() - started),
       notes: NOTES,
       markers: JARVIS_MARKERS,
+      switches: { ...adapter.switches },
       ...(embeddings === "on"
         ? {
             embed: {

@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
+import { extractContentTokens } from "../../src/memory/recall-utility.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GAP_ROWS, buildCorpusV2 } from "./corpus-v2.js";
+import { CLOSER_GAP_ROWS, GAP_ROWS, HANDOFF_GAP_ROWS, buildCorpusV2 } from "./corpus-v2.js";
 import { FILLER_SPEC_V1 } from "./filler.js";
-import { buildCorpus, outputsFor, serialize, validateCorpus } from "./generate.js";
+import { OPEN_WORK, buildCorpus, outputsFor, serialize, validateCorpus } from "./generate.js";
 import type { Corpus, Scenario } from "./types.js";
 import { contentTokens, wordingOf } from "./wording.js";
 
@@ -58,7 +60,7 @@ describe("corpus-v2.json", () => {
     expect(c3.some((s) => s.variant === "live")).toBe(true);
     expect(c4.every((s) => s.variant === "restart")).toBe(true);
     for (const s of [...c3, ...c4]) {
-      const end = s.events.findIndex((e) => e.kind === "session_end");
+      const end = s.events.map((e) => e.kind).lastIndexOf("session_end");
       const primaryAfter = s.events.slice(end + 1).filter((e) => e.kind === "exchange" && (e.channel ?? "primary") === "primary");
       expect(primaryAfter.length, s.id).toBe(s.gapRows);
       expect(s.events.slice(end + 1).every((e) => e.t < s.probes[0].t), s.id).toBe(true);
@@ -76,6 +78,93 @@ describe("corpus-v2.json", () => {
         expect(e.t, s.id).toBeGreaterThan(s.events[end].t);
         expect(e.t, s.id).toBeLessThan(s.probes[0].t);
       }
+    }
+  });
+
+  it("Port 1 is additive: the 444 original scenarios are byte-identical (hash of the pre-Port-1 list) and come first", () => {
+    const PORT1 = new Set(["handoff", "crowded", "closer", "single", "longcloser"]);
+    const original = corpus.scenarios.filter((s) => !PORT1.has(s.variant ?? ""));
+    expect(original).toHaveLength(444);
+    expect(original.flatMap((s) => s.probes)).toHaveLength(1140);
+    expect(createHash("sha256").update(JSON.stringify(original)).digest("hex")).toBe(
+      "ea3402f379e6b96b24b5001f43dd7b17339657277fa225516c10b92a1eab04b1",
+    );
+    // per size, the additions follow every original scenario
+    for (const size of corpus.fillerSizes) {
+      const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
+      const firstNew = ids.findIndex((s) => PORT1.has(s.variant ?? ""));
+      expect(ids.slice(firstNew).every((s) => PORT1.has(s.variant ?? "")), String(size)).toBe(true);
+    }
+    expect(corpus.scenarios).toHaveLength(570);
+    expect(corpus.scenarios.flatMap((s) => s.probes)).toHaveLength(1392);
+  });
+
+  it("the Port 1 fold is additive too: the 534 scenarios before single / longcloser are byte-identical (second hash) and come first", () => {
+    const FOLD = new Set(["single", "longcloser"]);
+    const before = corpus.scenarios.filter((s) => !FOLD.has(s.variant ?? ""));
+    expect(before).toHaveLength(534);
+    expect(before.flatMap((s) => s.probes)).toHaveLength(1320);
+    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+      "e1ee251dc1057a33e47eaf1b3ebf60e5accae85574c7fbbdef0fbf454f6c15f5",
+    );
+    for (const size of corpus.fillerSizes) {
+      const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
+      const firstNew = ids.findIndex((s) => FOLD.has(s.variant ?? ""));
+      expect(ids.slice(firstNew).every((s) => FOLD.has(s.variant ?? "")), String(size)).toBe(true);
+      expect(ids.length - firstNew, String(size)).toBe(12);
+    }
+  });
+
+  it("known-limit rows: single = the open work alone in a one-exchange session; longcloser = a closer of 8+ content tokens in the same session", () => {
+    const of = (v: string) => at50.filter((s) => s.variant === v);
+    for (const s of of("single")) {
+      expect(s.gapRows, s.id).toBe(CLOSER_GAP_ROWS);
+      expect(s.events[0].kind, s.id).toBe("session_end");
+      expect(s.events[0].day, s.id).toBe(0);
+      expect(s.events.slice(1).every((e) => e.kind === "exchange" && e.day === 1), s.id).toBe(true);
+    }
+    for (const s of of("longcloser")) {
+      expect(s.gapRows, s.id).toBe(CLOSER_GAP_ROWS);
+      const end = s.events.findIndex((e) => e.kind === "session_end");
+      const closer = s.events[end + 1];
+      expect(closer.kind === "exchange" && closer.day === 0, s.id).toBe(true);
+      expect(closer.t - s.events[end].t, s.id).toBeLessThan(20 * 60);
+      if (closer.kind !== "exchange") continue;
+      expect(extractContentTokens(`${closer.user}\n${closer.assistant}`).size, s.id).toBeGreaterThanOrEqual(8);
+      expect(JSON.stringify(closer).toLowerCase().includes(s.probes[0].expect[0].toLowerCase()), s.id).toBe(false);
+    }
+    expect(of("single")).toHaveLength(6);
+    expect(of("longcloser")).toHaveLength(6);
+  });
+
+  it("Port 1 variants: handoff / crowded put 1 / 3 complete sessions between the open work and K gap rows; closer adds one short exchange after the open-work row", () => {
+    const of = (v: string) => at50.filter((s) => s.variant === v);
+    for (const v of ["handoff", "crowded"]) {
+      expect(of(v), v).toHaveLength(12);
+      expect(new Set(of(v).map((s) => s.gapRows)), v).toEqual(new Set(HANDOFF_GAP_ROWS));
+    }
+    expect(of("closer").map((s) => s.gapRows)).toEqual(Array(6).fill(CLOSER_GAP_ROWS));
+    const day = 86_400;
+    for (const v of ["handoff", "crowded"]) {
+      for (const s of of(v)) {
+        const ends = s.events.flatMap((e, i) => (e.kind === "session_end" ? [i] : []));
+        expect(ends.length, s.id).toBe(v === "handoff" ? 2 : 4);
+        const a = s.events[ends[0]];
+        expect(a.kind === "session_end" && a.openWork, s.id).toBe(OPEN_WORK[s.base - 1].openWork);
+        // the open work is over 72 h old at the probe; later sessions are complete (no needle)
+        expect(s.probes[0].t - a.t, s.id).toBeGreaterThan(3 * day);
+        const later = s.events.slice(ends[0] + 1, ends[ends.length - 1] + 1);
+        expect(later.some((e) => JSON.stringify(e).toLowerCase().includes(s.probes[0].expect[0].toLowerCase())), s.id).toBe(false);
+        expect(s.probes.every((p) => p.day === 5), s.id).toBe(true);
+      }
+    }
+    for (const s of of("closer")) {
+      const end = s.events.findIndex((e) => e.kind === "session_end");
+      const closer = s.events[end + 1];
+      expect(closer.kind, s.id).toBe("exchange");
+      expect(closer.day, s.id).toBe(0);
+      expect(closer.t - s.events[end].t, s.id).toBeLessThan(20 * 60); // same session
+      expect(s.events[end + 2].day, s.id).toBe(1);
     }
   });
 

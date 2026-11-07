@@ -94,6 +94,15 @@ import {
 } from "../inference/execution-context.js";
 import { sanitizeToolResult } from "../inference/guards.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import {
+  formatOpenWorkBlock,
+  formatOpenWorkNote,
+  openWorkMode,
+  selectOpenWork,
+  type OpenWorkMode,
+  type OpenWorkReason,
+} from "./open-work.js";
+import { SESSION_IDLE_THRESHOLD_MS } from "./session-summary.js";
 import { TelegramStreamController } from "./channels/telegram-stream.js";
 import {
   isProactiveTask,
@@ -1460,6 +1469,54 @@ export function _testThreadTurns(channel: string): ConversationTurn[] {
   return getThreadTurns(channel);
 }
 
+/**
+ * Test-only: the session tail notes this thread would get now (handleInbound's
+ * computation, without the operator gate). No last-activity time is passed —
+ * the cold path of a channel this process has not seen, so the gap is read
+ * from the store.
+ */
+export function _testOpenWorkBlock(tk: string): OpenWorkTurn {
+  return openWorkTurn(tk, Date.now(), undefined);
+}
+
+interface OpenWorkTurn {
+  mode: OpenWorkMode;
+  /** "off" when the switch is off (nothing computed). */
+  reason: OpenWorkReason | "off";
+  /** The block as built (shadow too). */
+  block: string;
+  /** One formatted entry per note, as in the block. */
+  items: string[];
+  /** What joins the prompt: `block` under `on`, "" otherwise. */
+  injected: string;
+}
+
+/**
+ * Session tail notes for a thread (open-work.ts), read against its hydrated
+ * buffer. `lastActivityMs` = the router's previous activity time on this
+ * thread's channel: within the idle threshold the turn is `active` and the
+ * store is not touched; undefined (a channel not seen since the process
+ * started) reads the gap from the store, in the one bounded query.
+ */
+function openWorkTurn(tk: string, nowMs: number, lastActivityMs: number | undefined): OpenWorkTurn {
+  const mode = openWorkMode();
+  if (mode === "off") return { mode, reason: "off", block: "", items: [], injected: "" };
+  if (lastActivityMs !== undefined && nowMs - lastActivityMs < SESSION_IDLE_THRESHOLD_MS)
+    return { mode, reason: "active", block: "", items: [], injected: "" };
+  hydrateThreadIfNeeded(tk);
+  const baseChannel = isEmailChannel(tk) ? tk : tk.split(":")[0];
+  const buffer = (conversationThreads.get(tk) ?? []).map((e) => e.text);
+  const { reason, notes } = selectOpenWork(baseChannel, buffer, nowMs);
+  const block = formatOpenWorkBlock(notes, nowMs);
+  return {
+    mode,
+    reason,
+    block,
+    items: notes.map((n) => formatOpenWorkNote(n, nowMs)),
+    injected: mode === "on" ? block : "",
+  };
+}
+
 function getThreadTurns(channel: string): ConversationTurn[] {
   hydrateThreadIfNeeded(channel);
 
@@ -1992,6 +2049,14 @@ export class MessageRouter {
   private subscriptions: Array<{ unsubscribe: () => void }> = [];
   private ritualWatches = new Map<string, string>(); // taskId → ritualId
   private lastMessageTime = 0;
+  /**
+   * Per channel (the conversation tag: `msg.channel`), the last time an
+   * inbound message reached the full pipeline (intercepted turns such as a
+   * fast-path greeting do not count) or an exchange was stored — the session tail
+   * notes' "first turn after a gap" test, decided before any db read.
+   * One entry per channel name.
+   */
+  private channelActivityMs = new Map<string, number>();
 
   get channelCount(): number {
     return this.channels.size;
@@ -3165,6 +3230,7 @@ export class MessageRouter {
     msg: IncomingMessage,
     tk: string,
     feedbackTaskId: string | null,
+    lastChannelActivityMs?: number,
   ): Promise<void> {
     // Phase 4.1/Phase 3 hoists: the channel adapter and the env-flag reads
     // were each fetched/built multiple times across this tail — resolve once.
@@ -3448,13 +3514,31 @@ export class MessageRouter {
       ? pinnedThreadSection(tk)
       : "";
 
+    // Session tail notes (open-work.ts, `MEMORY_OPEN_WORK`): first turn
+    // after an idle gap, operator threads only (same predicate as the
+    // checkpoint block). Off = nothing computed, nothing traced; a turn
+    // inside the idle threshold reads nothing and traces nothing.
+    let openWork: OpenWorkTurn | null = null;
+    if (
+      openWorkMode() !== "off" &&
+      this.operatorThreadKey(msg, tk) !== undefined
+    ) {
+      try {
+        openWork = openWorkTurn(tk, Date.now(), lastChannelActivityMs);
+      } catch {
+        // Non-fatal — best-effort, like the checkpoint lookup
+      }
+    }
+
     // v8 S1: assemble description with cache-break marker between stable
     // and variable halves. Per-call additions (pinsBlock, patternBlock,
-    // checkpointBlock) join the variable half — they'd bust the cache anyway.
+    // checkpointBlock, open-work notes) join the variable half — they'd
+    // bust the cache anyway.
     const variableTail =
       (pinsBlock ? "\n\n" + pinsBlock : "") +
       (patternBlock ? "\n\n" + patternBlock : "") +
-      checkpointBlock;
+      checkpointBlock +
+      (openWork?.injected ? "\n\n" + openWork.injected : "");
     const taskDescription = scrubSecrets(
       stableSP + CACHE_BREAK_MARKER + variableSP + variableTail,
     );
@@ -3507,6 +3591,20 @@ export class MessageRouter {
         : undefined,
       abortController: taskAbort,
     });
+
+    if (openWork && openWork.reason !== "active") {
+      // Counts only — never the note text.
+      emitTraceEvent({
+        taskId: result.taskId,
+        name: "memory.open_work",
+        attrs: {
+          mode: openWork.mode,
+          reason: openWork.reason,
+          notes: openWork.items.length,
+          chars: openWork.block.length,
+        },
+      });
+    }
 
     // Link scope telemetry to this task
     if (scopeRowId > 0) {
@@ -3664,7 +3762,11 @@ export class MessageRouter {
     if (this.interceptPureFeedback(msg, tk, praiseAttributed, broadcastTaskId))
       return;
     if (await this.interceptConversationalFastPath(msg, tk)) return;
-    await this.submitInboundTask(msg, tk, feedbackTaskId);
+    // Only a turn that reaches the full pipeline counts as channel activity:
+    // an intercepted one (a greeting on the fast path) must not use up the gap.
+    const lastChannelActivityMs = this.channelActivityMs.get(msg.channel);
+    this.channelActivityMs.set(msg.channel, Date.now());
+    await this.submitInboundTask(msg, tk, feedbackTaskId, lastChannelActivityMs);
   }
 
   /**
@@ -4202,6 +4304,7 @@ export class MessageRouter {
       );
 
       // Retain the exchange in conversation memory (works with any backend)
+      this.channelActivityMs.set(pending.channel, Date.now());
       try {
         const exchange = `User: ${pending.originalText}\nJarvis: ${resultText}`;
         getMemoryService()

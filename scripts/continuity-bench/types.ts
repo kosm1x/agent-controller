@@ -125,7 +125,7 @@ export interface Scenario {
   fillerToT: TimelineSeconds;
   events: CorpusEvent[];
   probes: Probe[];
-  /** v2, C3/C4: primary-channel exchanges between the session end and the probe (C4: before the restart). */
+  /** v2, C3/C4: primary-channel exchanges between the LAST session end and the probe (C4: before the restart). */
   gapRows?: number;
   /**
    * v2, C3/C4: "hydrate" = the probe arrives in a process that has not seen the
@@ -133,12 +133,28 @@ export interface Scenario {
    * exchange as it happened (no reload); "interleave" = like hydrate, with
    * `otherChannelRows` secondary-channel exchanges mixed into the gap;
    * "restart" = C4, a real process restart after the gap.
+   * Port 1 (session tail notes): "handoff" = like hydrate, with one complete
+   * later session on another topic between the open work and the gap;
+   * "crowded" = three such sessions; "closer" = like hydrate, with one short
+   * closing exchange right after the open-work row in the same session (it
+   * counts as the first of the K rows); "longcloser" = the same with small
+   * talk of 8+ content tokens as the closer; "single" = like hydrate, with the
+   * open work stated in a one-exchange session.
    */
   variant?: ScenarioVariant;
   otherChannelRows?: number;
 }
 
-export type ScenarioVariant = "hydrate" | "live" | "interleave" | "restart";
+export type ScenarioVariant =
+  | "hydrate"
+  | "live"
+  | "interleave"
+  | "restart"
+  | "handoff"
+  | "crowded"
+  | "closer"
+  | "longcloser"
+  | "single";
 
 export interface FillerSpec {
   algorithm: "xorshift32-template-v1";

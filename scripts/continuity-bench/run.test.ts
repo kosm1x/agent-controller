@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { FILLER_SPEC_V1 } from "./filler.js";
 import {
   BASELINE_CAVEATS,
@@ -13,10 +13,13 @@ import {
   parseArgs,
   refuseReason,
   renderBaseline,
+  renderCompare,
+  switchSuffix,
   type EmbedPlan,
   type RunResult,
 } from "./run.js";
-import { exchangeContent } from "./adapter-jarvis.js";
+import { DEFAULT_SWITCHES, exchangeContent } from "./adapter-jarvis.js";
+import { buildCorpusV2 } from "./corpus-v2.js";
 import type { Corpus, ProbeRun, Scenario } from "./types.js";
 
 // main() is gated to an operator context; the gate itself has its own lock test.
@@ -62,6 +65,17 @@ describe("run.ts", () => {
     expect(parseArgs(["node", "run.ts", "--report", "a.json,b.json", "--md", "x.md"])).toEqual({ mode: "report", report: ["a.json", "b.json"], md: "x.md" });
     expect(() => parseArgs(["node", "run.ts", "--leg", "both"])).toThrow(/--leg/);
     expect(() => parseArgs(["node", "run.ts", "--report", "a.json"])).toThrow(/--md/);
+  });
+
+  it("parses --switch (repeatable, NAME=value, none by default) and --compare pairs with an optional --reference", () => {
+    expect(parseArgs(["node", "run.ts"])).toMatchObject({ mode: "run", switches: {} });
+    expect(parseArgs(["node", "run.ts", "--switch", "MEMORY_OPEN_WORK=on"])).toMatchObject({ switches: { MEMORY_OPEN_WORK: "on" } });
+    expect(() => parseArgs(["node", "run.ts", "--switch", "MEMORY_OPEN_WORK"])).toThrow(/NAME=value/);
+    expect(() => parseArgs(["node", "run.ts", "--switch"])).toThrow(/NAME=value/);
+    expect(parseArgs(["node", "run.ts", "--compare", "a.json,b.json", "--md", "x.md"])).toEqual({ mode: "compare", compare: ["a.json", "b.json"], reference: [], md: "x.md" });
+    expect(parseArgs(["node", "run.ts", "--compare", "a,b,c,d", "--reference", "r", "--md", "x.md"])).toEqual({ mode: "compare", compare: ["a", "b", "c", "d"], reference: ["r"], md: "x.md" });
+    expect(() => parseArgs(["node", "run.ts", "--compare", "a,b,c", "--md", "x.md"])).toThrow(/pairs/);
+    expect(() => parseArgs(["node", "run.ts", "--compare", "a,b"])).toThrow(/--md/);
   });
 
   it("the baseline carries every caveat and prints an unmeasurable row as 'not scored'", () => {
@@ -137,5 +151,89 @@ describe("embedding budget (operator pays for this leg)", () => {
     expect(meter).toMatchObject({ calls: 2, refused: 1, exceeded: true });
     meter.restore(target);
     expect(target.fetch).toBe(sent);
+  });
+});
+
+describe("switches and --compare (Port 1)", () => {
+  const V2 = buildCorpusV2();
+  const pick = ["C3-01-ho15-s50", "C3-01-cr15-s50", "C4-01-r16-s50", "C2-01-s50"].map((id) => V2.scenarios.find((x) => x.id === id)!);
+  let dir: string;
+  let off: RunResult;
+  let on: RunResult;
+
+  const run = async (switches: string[], out: string): Promise<RunResult> => {
+    const corpus = { ...V2, scenarios: pick } as Corpus;
+    const path = join(dir, "corpus.json");
+    writeFileSync(path, JSON.stringify(corpus));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await main(["node", "run.ts", "--leg", "raw", "--sizes", "50", "--corpus", path, "--out", join(dir, out), ...switches], {});
+    log.mockRestore();
+    expect(code).toBe(0);
+    return JSON.parse(readFileSync(join(dir, out), "utf8")) as RunResult;
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-compare-"));
+    off = await run([], "off.json");
+    on = await run(["--switch", "MEMORY_OPEN_WORK=on"], "on.json");
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_OPEN_WORK;
+  });
+
+  it("a run records every switch state; the open_work note lifts handoff and leaves crowded / C4 alone", () => {
+    expect(off.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off" });
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "on" });
+    const hit = (r: RunResult, id: string) => r.probes.filter((p) => p.scenarioId === id).map((p) => p.proactive.hit);
+    expect(hit(off, "C3-01-ho15-s50")).toEqual([false, true]); // disjoint greeting lost, shared topical probe through recall
+    expect(hit(on, "C3-01-ho15-s50")).toEqual([true, true]);
+    expect(hit(on, "C3-01-cr15-s50")).toEqual(hit(off, "C3-01-cr15-s50"));
+    expect(on.probes.find((p) => p.scenarioId === "C3-01-ho15-s50")!.components.proactive.some((c) => c.startsWith("open_work:"))).toBe(true);
+    expect(off.probes.every((p) => p.components.proactive.every((c) => !c.startsWith("open_work:")))).toBe(true);
+
+    const md = renderCompare([[off, on]], [off]);
+    expect(md).toContain("switches MEMORY_OPEN_WORK=off");
+    expect(md).toContain("switches MEMORY_OPEN_WORK=on");
+    expect(md).toMatch(/\| C3 \| handoff \| 15 \| 0 \| 2 \| 50 \(100 \/ 0\) \| 100 \(100 \/ 100\) \| 100 \|/);
+    expect(md).toMatch(/\| C3 \| crowded \| 15 \| 0 \| 2 \| 50 \(100 \/ 0\) \| 50 \(100 \/ 0\) \| 0 \|/);
+    expect(md).toContain("| variant | K | other-channel rows | size 50 |");
+    expect(md).toContain("| handoff | 15 | 0 | 50 → 100 |");
+    expect(md).toContain("| crowded | 15 | 0 | 50 → 50 |");
+    expect(md).toMatch(/^1\. \*\*PASS\*\* — before reproduces reference commit .* on its 8 probes: 0 differ, 0 missing/m);
+    expect(md).toMatch(/^2\. \*\*PASS\*\* — C4 .* 1 of 1 rows identical/m);
+    expect(md).toMatch(/^3\. \*\*PASS\*\* — C1, C2, C5, C6, C7, C8: 0 changed cells/m);
+    expect(md).toMatch(/probes carry the open_work block; 0 changed without it or shrank \(PASS\)/);
+  });
+
+  it("switchSuffix names only the switches that differ from their defaults", () => {
+    expect(switchSuffix(DEFAULT_SWITCHES, DEFAULT_SWITCHES)).toBe("");
+    expect(switchSuffix({ MEMORY_OPEN_WORK: "on" }, DEFAULT_SWITCHES)).toBe("-memory-open-work-on");
+    expect(switchSuffix({ MEMORY_OPEN_WORK: "shadow" }, DEFAULT_SWITCHES)).toBe("-memory-open-work-shadow");
+    expect(switchSuffix({ A_B: "x", C: "y" }, { A_B: "x", C: "z" })).toBe("-c-y");
+  });
+
+  it("each null test fails when its condition breaks (reference drift, a C4 change, a C2 flip, a payload change without the note)", () => {
+    const clone = (r: RunResult) => JSON.parse(JSON.stringify(r)) as RunResult;
+    const ref = clone(off);
+    ref.probes[0].proactive.chars += 1;
+    expect(renderCompare([[off, on]], [ref])).toMatch(/^1\. \*\*FAIL\*\* .* 1 differ/m);
+    const missing = clone(off);
+    missing.meta.leg = "ideal";
+    expect(renderCompare([[off, on]], [missing])).toContain("1. Reproduction: no reference run for this leg — not checked.");
+
+    const c4 = clone(on);
+    const g = c4.gapAggregates!.find((x) => x.class === "C4" && x.surface === "proactive")!;
+    g.hitPct = g.hitPct === 100 ? 50 : 100;
+    expect(renderCompare([[off, c4]])).toMatch(/^2\. \*\*FAIL\*\* .* changed K: 16/m);
+
+    const c2 = clone(on);
+    const p = c2.probes.find((x) => x.class === "C2")!;
+    p.proactive.hit = !p.proactive.hit;
+    expect(renderCompare([[off, c2]])).toMatch(/^3\. \*\*FAIL\*\* .* 1 probes with a hit or stale-hit flip/m);
+
+    const size = clone(on);
+    size.probes.find((x) => x.class === "C2")!.proactive.chars += 7;
+    expect(renderCompare([[off, size]])).toMatch(/1 changed without it or shrank \(FAIL\)/);
   });
 });

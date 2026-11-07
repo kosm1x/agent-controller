@@ -327,7 +327,20 @@ import {
   dayLogEntryText,
   recordUserEvidence,
   SCOPE_RERUN_SUPERSEDED_SQL,
+  _testOpenWorkBlock,
 } from "./router.js";
+import { OPEN_WORK_HEADING, OPEN_WORK_SQL } from "./open-work.js";
+// Off by default (null → the real module); a string answers the fast path with it.
+const fastPathStub = vi.hoisted(() => ({ reply: null as string | null }));
+vi.mock("./fast-path.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./fast-path.js")>();
+  return {
+    ...actual,
+    fastPathRespond: (...args: Parameters<typeof actual.fastPathRespond>) =>
+      fastPathStub.reply === null ? actual.fastPathRespond(...args) : Promise.resolve(fastPathStub.reply),
+  };
+});
+import { SESSION_IDLE_THRESHOLD_MS } from "./session-summary.js";
 import {
   formatRelevantUserFactsBlock,
   formatStableUserFactsBlock,
@@ -8857,5 +8870,273 @@ describe("dayLogEntryText — visible cut marker", () => {
   it("a cut that would split a surrogate pair still gets one marker", () => {
     const out = dayLogEntryText("d".repeat(499) + "😀" + "e".repeat(10));
     expect(out).toBe("d".repeat(499) + "…");
+  });
+});
+
+// Port 1 (2026-11-06): session tail notes on the first turn after a gap
+// (open-work.ts, MEMORY_OPEN_WORK=off|shadow|on). Off must leave the task
+// description byte-identical; on puts the block in the VARIABLE half only.
+describe("MEMORY_OPEN_WORK — session tail notes in handleInbound", () => {
+  let router: MessageRouter;
+  const TAIL =
+    "User: Avancemos el informe trimestral de Valdoria con inventario.\nJarvis: Falta el anexo de proveedores y mandarlo a revisión con finanzas.";
+  const msgA = "cómo va el lanzamiento de acme";
+  const msgB = "ajusta mi dieta con más proteína";
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+  /** One two-exchange session that ended two days ago on the owner's WhatsApp channel. */
+  const loadTailRows = () => {
+    const now = Date.now();
+    dbAll.mockImplementation((sql: string) =>
+      sql === OPEN_WORK_SQL
+        ? [
+            { content: TAIL, created_at: iso(now - 2 * 86_400_000) },
+            { content: "User: Arranquemos el informe de Valdoria.\nJarvis: Estructura lista con ventas y gastos.", created_at: iso(now - 2 * 86_400_000 - 120_000) },
+          ]
+        : [],
+    );
+  };
+  const inbound = (text: string, from = "owner@s.whatsapp.net") =>
+    router.handleInbound({ channel: "whatsapp", from, text, timestamp: new Date() });
+  const lastCall = () => vi.mocked(submitTask).mock.calls.at(-1)![0];
+  const submitCount = () => vi.mocked(submitTask).mock.calls.length;
+  const openWorkTraces = () =>
+    traceMock.emitTraceEvent.mock.calls.map((c) => c[0]).filter((e) => e.name === "memory.open_work");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.mocked(submitTask)
+      .mockReset()
+      .mockResolvedValue({
+        taskId: "test-task-123",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      } as Awaited<ReturnType<typeof submitTask>>);
+    subscribers.length = 0;
+    _resetThreadPins();
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    router = new MessageRouter();
+    router.registerChannel(createMockAdapter("whatsapp"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete process.env.MEMORY_OPEN_WORK;
+    delete process.env.WHATSAPP_OWNER_JID;
+    dbAll.mockReset().mockImplementation(() => []);
+  });
+
+  it("off (unset or 'off') → the task description is byte-identical to a turn with no rows at all, and nothing is traced", async () => {
+    await inbound(msgA);
+    const baseline = lastCall().description;
+    loadTailRows();
+    await inbound(msgA);
+    expect(lastCall().description).toBe(baseline);
+    process.env.MEMORY_OPEN_WORK = "off";
+    await inbound(msgA);
+    expect(lastCall().description).toBe(baseline);
+    expect(baseline).not.toContain(OPEN_WORK_HEADING);
+    expect(dbAll.mock.calls.some(([sql]) => sql === OPEN_WORK_SQL)).toBe(false);
+    expect(openWorkTraces()).toEqual([]);
+  });
+
+  it("on → the block joins the variable half; the stable half is byte-identical across two different messages; the trace carries counts only", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    await inbound(msgA);
+    vi.advanceTimersByTime(SESSION_IDLE_THRESHOLD_MS); // a second gap turn
+    await inbound(msgB);
+    const calls = vi.mocked(submitTask).mock.calls.map((c) => c[0]);
+    expect(calls[0].tools).toEqual(calls[1].tools);
+    const [stableA, variableA] = calls[0].description.split(CACHE_BREAK_MARKER);
+    const [stableB, variableB] = calls[1].description.split(CACHE_BREAK_MARKER);
+    expect(stableA).toBe(stableB);
+    expect(stableA).not.toContain(OPEN_WORK_HEADING);
+    for (const variable of [variableA, variableB]) {
+      expect(variable).toContain(OPEN_WORK_HEADING);
+      expect(variable).toContain("- Sesión que terminó hace 2 días:\n" + TAIL);
+      expect(variable.endsWith(TAIL)).toBe(true); // after the checkpoint slot, last in the tail
+    }
+    const traces = openWorkTraces();
+    expect(traces).toHaveLength(2);
+    const block = variableA.slice(variableA.indexOf(OPEN_WORK_HEADING));
+    expect(traces[0]).toEqual({
+      taskId: "test-task-123",
+      name: "memory.open_work",
+      attrs: { mode: "on", reason: "notes", notes: 1, chars: block.length },
+    });
+    expect(JSON.stringify(traces[0])).not.toContain("Valdoria");
+  });
+
+  it("shadow → computes and traces, injects nothing (description equals off)", async () => {
+    loadTailRows();
+    await inbound(msgA);
+    const offDescription = lastCall().description;
+    process.env.MEMORY_OPEN_WORK = "shadow";
+    vi.advanceTimersByTime(SESSION_IDLE_THRESHOLD_MS);
+    await inbound(msgA);
+    expect(lastCall().description).toBe(offDescription);
+    const [trace] = openWorkTraces();
+    expect(trace.attrs).toMatchObject({ mode: "shadow", reason: "notes", notes: 1 });
+    expect((trace.attrs as { chars: number }).chars).toBeGreaterThan(TAIL.length);
+  });
+
+  it("cold path (channel not seen since start): the newest stored row is younger than the idle threshold → one lookup, no block, no trace", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    const now = Date.now();
+    dbAll.mockImplementation((sql: string) =>
+      sql === OPEN_WORK_SQL
+        ? [
+            { content: TAIL, created_at: iso(now - 5 * 60_000) },
+            { content: TAIL, created_at: iso(now - 7 * 60_000) },
+          ]
+        : [],
+    );
+    await inbound(msgA);
+    expect(lastCall().description).not.toContain(OPEN_WORK_HEADING);
+    expect(dbAll.mock.calls.filter(([sql]) => sql === OPEN_WORK_SQL)).toHaveLength(1);
+    expect(openWorkTraces()).toEqual([]);
+  });
+
+  it("a turn inside the idle threshold since the channel's last activity → no SELECT, no block, no trace (two quick messages after a gap: only the first gets notes)", async () => {
+    process.env.MEMORY_OPEN_WORK = "shadow";
+    loadTailRows();
+    await inbound(msgA);
+    expect(openWorkTraces()).toHaveLength(1);
+    process.env.MEMORY_OPEN_WORK = "on";
+    vi.advanceTimersByTime(30_000);
+    const before = dbAll.mock.calls.filter(([sql]) => sql === OPEN_WORK_SQL).length;
+    await inbound(msgB);
+    expect(dbAll.mock.calls.filter(([sql]) => sql === OPEN_WORK_SQL)).toHaveLength(before);
+    expect(lastCall().description).not.toContain(OPEN_WORK_HEADING);
+    expect(openWorkTraces()).toHaveLength(1);
+    // another sender's message on the same channel counts as activity too
+    vi.advanceTimersByTime(SESSION_IDLE_THRESHOLD_MS - 60_000);
+    await router.handleInbound({ channel: "whatsapp", from: "someone@s.whatsapp.net", text: "¿me pasas el número del proveedor?", timestamp: new Date() });
+    vi.advanceTimersByTime(120_000);
+    await inbound(msgA);
+    expect(dbAll.mock.calls.filter(([sql]) => sql === OPEN_WORK_SQL)).toHaveLength(before);
+    expect(lastCall().description).not.toContain(OPEN_WORK_HEADING);
+  });
+
+  it("a fast-path greeting does not use up the gap: 'Buenos días' after a night, then the real question 2 min later gets the notes", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    fastPathStub.reply = "¡Buenos días!";
+    const before = submitCount();
+    await inbound("Buenos días");
+    expect(submitCount()).toBe(before); // answered on the fast path, no task
+    fastPathStub.reply = null;
+    vi.advanceTimersByTime(2 * 60_000);
+    await inbound(msgA);
+    expect(lastCall().description).toContain(OPEN_WORK_HEADING);
+    expect(openWorkTraces()).toHaveLength(1);
+  });
+
+  it("a stored exchange counts as channel activity: a long task's reply resets the gap clock", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    router.startEventListeners();
+    await inbound(msgA);
+    expect(lastCall().description).toContain(OPEN_WORK_HEADING);
+    const queries = () => dbAll.mock.calls.filter(([sql]) => sql === OPEN_WORK_SQL).length;
+    const after1 = queries();
+    vi.advanceTimersByTime(10 * 60_000); // the task ran 10 min (under the 11-min abandon timer)
+    findHandler("task.completed")!({ data: { task_id: "test-task-123", agent_id: "fast", result: "Listo, quedó el resumen.", duration_ms: 600_000 } });
+    vi.advanceTimersByTime(15 * 60_000);
+    await inbound(msgB); // 25 min after the inbound (a gap), 15 min after the stored reply (not one)
+    expect(queries()).toBe(after1);
+    expect(lastCall().description).not.toContain(OPEN_WORK_HEADING);
+  });
+
+  it("a non-owner sender in a WhatsApp group thread gets no block and no lookup", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "120363000000000000@g.us",
+      text: "oigan, ¿seguimos con lo de ayer?",
+      timestamp: new Date(),
+      // the shape whatsapp.ts gives every @g.us message
+      metadata: { isGroup: true, groupJid: "120363000000000000@g.us", senderJid: "stranger@s.whatsapp.net", senderName: "stranger" },
+    });
+    const call = lastCall();
+    expect(call).toBeDefined();
+    expect(call.description).not.toContain(OPEN_WORK_HEADING);
+    expect(dbAll.mock.calls.some(([sql]) => sql === OPEN_WORK_SQL)).toBe(false);
+    expect(openWorkTraces()).toEqual([]);
+  });
+
+  it("a non-operator thread (community email sender) gets no block and no lookup", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    const emailAdapter = {
+      name: "email:comunidades",
+      mode: "community-manager" as const,
+      sentMessages: [] as OutgoingMessage[],
+      start: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockResolvedValue("id"),
+      onMessage: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isConnected: () => true,
+    };
+    router.registerChannel(emailAdapter as never);
+    await router.handleInbound({
+      channel: "email:comunidades" as never,
+      from: "alice@example.com",
+      text: "hola, ¿seguimos?",
+      timestamp: new Date(),
+    });
+    const call = lastCall();
+    expect(call).toBeDefined();
+    expect(call.description).not.toContain(OPEN_WORK_HEADING);
+    expect(dbAll.mock.calls.some(([sql]) => sql === OPEN_WORK_SQL)).toBe(false);
+    expect(openWorkTraces()).toEqual([]);
+  });
+
+  it("the scope re-run's rebuilt description carries the same block", async () => {
+    process.env.MEMORY_OPEN_WORK = "on";
+    loadTailRows();
+    const mocked = vi.mocked(submitTask);
+    await inbound("háblame de beeshake.com y su modelo de negocio");
+    const first = lastCall().description;
+    expect(first).toContain(OPEN_WORK_HEADING);
+    router.startEventListeners();
+    mocked.mockResolvedValueOnce({
+      taskId: "test-task-rerun",
+      agentType: "fast",
+      classification: { score: 1, reason: "test", explicit: false },
+    } as Awaited<ReturnType<typeof submitTask>>);
+    findHandler("task.completed")!({
+      data: {
+        task_id: "test-task-123",
+        agent_id: "fast",
+        result:
+          '`tweet_post` no está en el scope activo. Necesito que me lo actives con "usa tweet_post" para publicar.',
+        duration_ms: 500,
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const rerun = mocked.mock.calls.at(-1)![0];
+    expect(rerun.tags).toContain("scope-rerun");
+    const block = first.slice(first.indexOf(OPEN_WORK_HEADING));
+    expect(rerun.description.split(CACHE_BREAK_MARKER)[1].endsWith(block)).toBe(true);
+  });
+
+  it("_testOpenWorkBlock: off → nothing computed; on → the block, its items and the injected text", () => {
+    loadTailRows();
+    expect(_testOpenWorkBlock("whatsapp:seam-probe-1")).toEqual({ mode: "off", reason: "off", block: "", items: [], injected: "" });
+    process.env.MEMORY_OPEN_WORK = "on";
+    const on = _testOpenWorkBlock("whatsapp:seam-probe-2");
+    expect(on.mode).toBe("on");
+    expect(on.reason).toBe("notes");
+    expect(on.items).toEqual(["- Sesión que terminó hace 2 días:\n" + TAIL]);
+    expect(on.block.startsWith(OPEN_WORK_HEADING)).toBe(true);
+    expect(on.block.endsWith(on.items[0])).toBe(true);
+    expect(on.injected).toBe(on.block);
+    process.env.MEMORY_OPEN_WORK = "shadow";
+    const shadow = _testOpenWorkBlock("whatsapp:seam-probe-3");
+    expect(shadow.block).toBe(on.block);
+    expect(shadow.injected).toBe("");
   });
 });

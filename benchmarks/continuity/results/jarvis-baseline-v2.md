@@ -13,39 +13,39 @@ Caveats:
 
 Columns: hit % = every expect needle reached the surface; shared / disjoint = the probe does / does not share a content word with its target under the documented neutral stop-word list (README §Wording; a system can still reach a disjoint target through function words, substring matching, a recency fallback, or meaning); stale-hit % = a forbid needle reached it; carried = share of hits whose needle sat in a thread / recall / ambient component (not exclusive).
 
-## leg `raw` · embeddings off · commit 3b397f15 · corpus continuity-v2
+## leg `raw` · embeddings off · commit 4fc2fcf3 · corpus continuity-v2 · switches MEMORY_OPEN_WORK=off
 
-Run 2026-11-06T04:31:12.434Z, 129.0 s.
+Run 2026-11-06T10:53:45.158Z, 158.0 s.
 
 ### Recall classes (C1, C2, C5, C6, C8)
 
 | class | size | surface | n | hit % | hit % shared (n) | hit % disjoint (n) | stale-hit % | carried: thread / recall / ambient % | thread-only % | median chars | median ms |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| C1 old-fact | 50 | proactive | 96 | 86.5 | 97.9 (48) | 75 (48) | 0 | 86.7 / 71.1 / 57.8 | 14.5 | 3706 | 2.9 |
+| C1 old-fact | 50 | proactive | 96 | 86.5 | 97.9 (48) | 75 (48) | 0 | 86.7 / 71.1 / 57.8 | 14.5 | 3706 | 2.7 |
 | C1 old-fact | 50 | asked | 96 | 61.5 | 97.9 (48) | 25 (48) | 0 | 0 / 100 / 0 | 0 | 463 | 0.7 |
-| C1 old-fact | 500 | proactive | 96 | 53.1 | 81.3 (48) | 25 (48) | 0 | 47.1 / 72.5 / 47.1 | 0 | 3929.5 | 3.7 |
+| C1 old-fact | 500 | proactive | 96 | 53.1 | 81.3 (48) | 25 (48) | 0 | 47.1 / 72.5 / 47.1 | 0 | 3929.5 | 3.4 |
 | C1 old-fact | 500 | asked | 96 | 38.5 | 77.1 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 739.5 | 0.8 |
-| C1 old-fact | 5000 | proactive | 96 | 39.6 | 79.2 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 3951 | 9.1 |
+| C1 old-fact | 5000 | proactive | 96 | 39.6 | 79.2 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 3951 | 8.6 |
 | C1 old-fact | 5000 | asked | 96 | 39.6 | 79.2 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 723.5 | 1.3 |
-| C2 correction-wins | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 100 | 100 / 33.3 / 100 | 0 | 3677 | 3.0 |
+| C2 correction-wins | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 100 | 100 / 33.3 / 100 | 0 | 3677 | 2.7 |
 | C2 correction-wins | 50 | asked | 12 | 33.3 | 66.7 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 410.5 | 0.7 |
-| C2 correction-wins | 500 | proactive | 12 | 33.3 | 66.7 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3938.5 | 4.3 |
-| C2 correction-wins | 500 | asked | 12 | 33.3 | 66.7 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 696.5 | 0.9 |
-| C2 correction-wins | 5000 | proactive | 12 | 25 | 50 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3914.5 | 14.7 |
-| C2 correction-wins | 5000 | asked | 12 | 25 | 50 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 687.5 | 1.4 |
-| C5 who-said-it | 50 | proactive | 32 | 100 | 100 (16) | 100 (16) | 0 | 100 / 59.4 / 100 | 0 | 3787.5 | 3.1 |
+| C2 correction-wins | 500 | proactive | 12 | 33.3 | 66.7 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3938.5 | 3.7 |
+| C2 correction-wins | 500 | asked | 12 | 33.3 | 66.7 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 696.5 | 0.8 |
+| C2 correction-wins | 5000 | proactive | 12 | 25 | 50 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3914.5 | 12.8 |
+| C2 correction-wins | 5000 | asked | 12 | 25 | 50 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 687.5 | 1.2 |
+| C5 who-said-it | 50 | proactive | 32 | 100 | 100 (16) | 100 (16) | 0 | 100 / 59.4 / 100 | 0 | 3787.5 | 2.9 |
 | C5 who-said-it | 50 | asked | 32 | 59.4 | 100 (16) | 18.8 (16) | 0 | 0 / 100 / 0 | 0 | 641.5 | 0.8 |
-| C5 who-said-it | 500 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3888 | 4.9 |
+| C5 who-said-it | 500 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3888 | 5.5 |
 | C5 who-said-it | 500 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 743.5 | 1.0 |
-| C5 who-said-it | 5000 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3874.5 | 17.9 |
-| C5 who-said-it | 5000 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 694 | 1.8 |
-| C6 standing-preference-under-volume | 50 | proactive | 12 | 41.7 | 83.3 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3895.5 | 2.9 |
-| C6 standing-preference-under-volume | 500 | proactive | 12 | 33.3 | 66.7 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3981 | 5.5 |
-| C6 standing-preference-under-volume | 5000 | proactive | 12 | 25 | 50 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3926.5 | 16.1 |
-| C8 forgetting-done-right | 50 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3822 | 3.3 |
-| C8 forgetting-done-right | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 615.5 | 0.9 |
-| C8 forgetting-done-right | 500 | proactive | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 3893.5 | 4.3 |
-| C8 forgetting-done-right | 500 | asked | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 674 | 1.0 |
+| C5 who-said-it | 5000 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3874.5 | 15.6 |
+| C5 who-said-it | 5000 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 694 | 1.5 |
+| C6 standing-preference-under-volume | 50 | proactive | 12 | 41.7 | 83.3 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3895.5 | 2.8 |
+| C6 standing-preference-under-volume | 500 | proactive | 12 | 33.3 | 66.7 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3981 | 7.8 |
+| C6 standing-preference-under-volume | 5000 | proactive | 12 | 25 | 50 (6) | 0 (6) | 0 | 0 / 100 / 0 | 0 | 3926.5 | 15.5 |
+| C8 forgetting-done-right | 50 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3822 | 2.7 |
+| C8 forgetting-done-right | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 615.5 | 0.7 |
+| C8 forgetting-done-right | 500 | proactive | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 3893.5 | 8.8 |
+| C8 forgetting-done-right | 500 | asked | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 674 | 1.5 |
 | C8 forgetting-done-right | 5000 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3853.5 | 16.1 |
 | C8 forgetting-done-right | 5000 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 650 | 2.0 |
 
@@ -53,6 +53,11 @@ Run 2026-11-06T04:31:12.434Z, 129.0 s.
 
 | class | variant | K | other-channel rows | surface | n | hit % | hit % shared | hit % disjoint | carried: thread % | carried: recall % |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C3 | closer | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | crowded | 15 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | crowded | 20 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | handoff | 15 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | handoff | 20 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
 | C3 | hydrate | 0 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 75 |
 | C3 | hydrate | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | hydrate | 14 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
@@ -63,6 +68,8 @@ Run 2026-11-06T04:31:12.434Z, 129.0 s.
 | C3 | interleave | 5 | 20 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | live | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | live | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | longcloser | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | single | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
 | C4 | restart | 0 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 75 |
 | C4 | restart | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C4 | restart | 14 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
@@ -113,56 +120,61 @@ Strict: some surfaced occurrence of the figure is attributed to the expected aut
 | 5000 | proactive | 39.6 | 12 | 0 | 4.3 | 0 / 0 | enrichment:Contexto relevante del usuario 5 |
 | 5000 | asked | 39.6 | 12 | 0 | 4.3 | 0 / 0 | memory_search 5, jme_query 8 |
 
-Prompt budget: 0 of 1140 probes had a block dropped by buildJarvisSystemPrompt (checked with CORE_TOOLS only; production adds the scoped tools, so this is a lower bound).
+Prompt budget: 0 of 1392 probes had a block dropped by buildJarvisSystemPrompt (checked with CORE_TOOLS only; production adds the scoped tools, so this is a lower bound).
 
 Ingest and latency per filler size:
 
 | size | probes | rows written | ingest ms | rows/s | median proactive ms | median asked ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 50 | 380 | 21232 | 964 | 22034 | 3.2 | 0.7 |
-| 500 | 380 | 171472 | 6464 | 26528 | 4.8 | 0.9 |
-| 5000 | 380 | 1673968 | 102917 | 16265 | 15.1 | 1.6 |
+| 50 | 464 | 27364 | 1233 | 22195 | 3.1 | 0.7 |
+| 500 | 464 | 215404 | 8584 | 25094 | 4.9 | 0.9 |
+| 5000 | 464 | 2095900 | 126782 | 16531 | 14.7 | 1.5 |
 
-## leg `ideal` · embeddings off · commit 3b397f15 · corpus continuity-v2
+## leg `ideal` · embeddings off · commit 4fc2fcf3 · corpus continuity-v2 · switches MEMORY_OPEN_WORK=off
 
-Run 2026-11-06T04:33:33.217Z, 131.1 s.
+Run 2026-11-07T00:58:22.906Z, 184.4 s.
 
 ### Recall classes (C1, C2, C5, C6, C8)
 
 | class | size | surface | n | hit % | hit % shared (n) | hit % disjoint (n) | stale-hit % | carried: thread / recall / ambient % | thread-only % | median chars | median ms |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| C1 old-fact | 50 | proactive | 96 | 87.5 | 100 (48) | 75 (48) | 0 | 85.7 / 71.4 / 57.1 | 14.3 | 3795.5 | 3.2 |
+| C1 old-fact | 50 | proactive | 96 | 87.5 | 100 (48) | 75 (48) | 0 | 85.7 / 71.4 / 57.1 | 14.3 | 3795.5 | 3.3 |
 | C1 old-fact | 50 | asked | 96 | 62.5 | 100 (48) | 25 (48) | 0 | 0 / 100 / 0 | 0 | 557 | 0.8 |
-| C1 old-fact | 500 | proactive | 96 | 62.5 | 100 (48) | 25 (48) | 0 | 40 / 80 / 40 | 0 | 4010 | 4.1 |
+| C1 old-fact | 500 | proactive | 96 | 62.5 | 100 (48) | 25 (48) | 0 | 40 / 80 / 40 | 0 | 4010 | 4.0 |
 | C1 old-fact | 500 | asked | 96 | 50 | 100 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 764 | 0.9 |
-| C1 old-fact | 5000 | proactive | 96 | 50 | 100 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 4020 | 8.6 |
-| C1 old-fact | 5000 | asked | 96 | 50 | 100 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 753 | 1.2 |
-| C2 correction-wins | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 100 | 100 / 50 / 100 | 0 | 3769.5 | 4.3 |
-| C2 correction-wins | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 434.5 | 0.8 |
+| C1 old-fact | 5000 | proactive | 96 | 50 | 100 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 4020 | 9.6 |
+| C1 old-fact | 5000 | asked | 96 | 50 | 100 (48) | 0 (48) | 0 | 0 / 100 / 0 | 0 | 753 | 1.4 |
+| C2 correction-wins | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 100 | 100 / 50 / 100 | 0 | 3769.5 | 3.0 |
+| C2 correction-wins | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 434.5 | 0.7 |
 | C2 correction-wins | 500 | proactive | 12 | 50 | 100 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3971.5 | 4.8 |
 | C2 correction-wins | 500 | asked | 12 | 50 | 100 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 709 | 1.0 |
-| C2 correction-wins | 5000 | proactive | 12 | 41.7 | 83.3 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3958 | 16.3 |
-| C2 correction-wins | 5000 | asked | 12 | 41.7 | 83.3 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 687.5 | 1.7 |
-| C5 who-said-it | 50 | proactive | 32 | 100 | 100 (16) | 100 (16) | 0 | 100 / 59.4 / 100 | 0 | 3787.5 | 2.9 |
-| C5 who-said-it | 50 | asked | 32 | 59.4 | 100 (16) | 18.8 (16) | 0 | 0 / 100 / 0 | 0 | 641.5 | 0.8 |
-| C5 who-said-it | 500 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3888 | 4.8 |
-| C5 who-said-it | 500 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 743.5 | 1.0 |
-| C5 who-said-it | 5000 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3874.5 | 16.3 |
-| C5 who-said-it | 5000 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 694 | 1.4 |
-| C6 standing-preference-under-volume | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 41.7 / 100 | 0 | 4099.5 | 3.2 |
-| C6 standing-preference-under-volume | 500 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 33.3 / 100 | 0 | 4192 | 5.0 |
-| C6 standing-preference-under-volume | 5000 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 25 / 100 | 0 | 4142.5 | 16.2 |
-| C8 forgetting-done-right | 50 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3863 | 2.9 |
-| C8 forgetting-done-right | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 643.5 | 0.8 |
-| C8 forgetting-done-right | 500 | proactive | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 3965.5 | 4.8 |
-| C8 forgetting-done-right | 500 | asked | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 696 | 1.1 |
-| C8 forgetting-done-right | 5000 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3853.5 | 14.7 |
-| C8 forgetting-done-right | 5000 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 673.5 | 1.9 |
+| C2 correction-wins | 5000 | proactive | 12 | 41.7 | 83.3 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 3958 | 19.1 |
+| C2 correction-wins | 5000 | asked | 12 | 41.7 | 83.3 (6) | 0 (6) | 50 | 0 / 100 / 0 | 0 | 687.5 | 2.6 |
+| C5 who-said-it | 50 | proactive | 32 | 100 | 100 (16) | 100 (16) | 0 | 100 / 59.4 / 100 | 0 | 3787.5 | 3.8 |
+| C5 who-said-it | 50 | asked | 32 | 59.4 | 100 (16) | 18.8 (16) | 0 | 0 / 100 / 0 | 0 | 641.5 | 1.0 |
+| C5 who-said-it | 500 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3888 | 5.2 |
+| C5 who-said-it | 500 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 743.5 | 1.1 |
+| C5 who-said-it | 5000 | proactive | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 3874.5 | 21.3 |
+| C5 who-said-it | 5000 | asked | 32 | 56.3 | 100 (16) | 12.5 (16) | 0 | 0 / 100 / 0 | 0 | 694 | 1.7 |
+| C6 standing-preference-under-volume | 50 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 41.7 / 100 | 0 | 4099.5 | 3.3 |
+| C6 standing-preference-under-volume | 500 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 33.3 / 100 | 0 | 4192 | 5.2 |
+| C6 standing-preference-under-volume | 5000 | proactive | 12 | 100 | 100 (6) | 100 (6) | 0 | 0 / 25 / 100 | 0 | 4142.5 | 17.9 |
+| C8 forgetting-done-right | 50 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3863 | 3.2 |
+| C8 forgetting-done-right | 50 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 643.5 | 0.9 |
+| C8 forgetting-done-right | 500 | proactive | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 3965.5 | 5.1 |
+| C8 forgetting-done-right | 500 | asked | 12 | 50 | 100 (6) | 0 (6) | 41.7 | 0 / 100 / 0 | 0 | 696 | 1.2 |
+| C8 forgetting-done-right | 5000 | proactive | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 3853.5 | 17.2 |
+| C8 forgetting-done-right | 5000 | asked | 12 | 50 | 100 (6) | 0 (6) | 58.3 | 0 / 100 / 0 | 0 | 673.5 | 2.1 |
 
 ### C3 / C4 by gap K (pooled over filler sizes)
 
 | class | variant | K | other-channel rows | surface | n | hit % | hit % shared | hit % disjoint | carried: thread % | carried: recall % |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C3 | closer | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | crowded | 15 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | crowded | 20 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | handoff | 15 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | handoff | 20 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
 | C3 | hydrate | 0 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 75 |
 | C3 | hydrate | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | hydrate | 14 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
@@ -173,6 +185,8 @@ Run 2026-11-06T04:33:33.217Z, 131.1 s.
 | C3 | interleave | 5 | 20 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | live | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C3 | live | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | longcloser | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
+| C3 | single | 16 | 0 | proactive | 36 | 50 | 100 | 0 | 0 | 100 |
 | C4 | restart | 0 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 75 |
 | C4 | restart | 5 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
 | C4 | restart | 14 | 0 | proactive | 36 | 100 | 100 | 100 | 100 | 50 |
@@ -223,12 +237,12 @@ Strict: some surfaced occurrence of the figure is attributed to the expected aut
 | 5000 | proactive | 50 | 12 | 0 | 4.3 | 0 / 0 | enrichment:Contexto relevante del usuario 5, jme 8 |
 | 5000 | asked | 50 | 12 | 0 | 4.3 | 0 / 0 | memory_search 5, jme_query 8 |
 
-Prompt budget: 0 of 1140 probes had a block dropped by buildJarvisSystemPrompt (checked with CORE_TOOLS only; production adds the scoped tools, so this is a lower bound).
+Prompt budget: 0 of 1392 probes had a block dropped by buildJarvisSystemPrompt (checked with CORE_TOOLS only; production adds the scoped tools, so this is a lower bound).
 
 Ingest and latency per filler size:
 
 | size | probes | rows written | ingest ms | rows/s | median proactive ms | median asked ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 50 | 380 | 21388 | 1081 | 19793 | 3.4 | 0.8 |
-| 500 | 380 | 171628 | 6704 | 25601 | 4.8 | 0.9 |
-| 5000 | 380 | 1674124 | 104388 | 16037 | 15.2 | 1.6 |
+| 50 | 464 | 27520 | 1548 | 17779 | 3.4 | 0.8 |
+| 500 | 464 | 215560 | 8533 | 25260 | 5.0 | 1.0 |
+| 5000 | 464 | 2096056 | 147237 | 14236 | 17.7 | 1.9 |

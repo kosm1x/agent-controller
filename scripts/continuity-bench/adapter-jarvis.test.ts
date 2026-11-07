@@ -12,13 +12,16 @@ import { getDatabase } from "../../src/db/index.js";
 import {
   JARVIS_MARKERS,
   JME_HEADER,
+  DEFAULT_SWITCHES,
   JME_INJECTION_BUDGET_TOKENS,
   JarvisAdapter,
+  SWITCHES,
   assertScratchDbPath,
   assertUpsertStatus,
   enrichmentComponents,
   exchangeContent,
   promptBudget,
+  resolveSwitches,
   scratchDbPath,
   splitMemorySearch,
   sqliteUtc,
@@ -296,5 +299,72 @@ describe.each(["raw", "ideal"] as const)("JarvisAdapter v2 thread paths leg=%s",
     expect(s.hit).toBe(true);
     expect(s.authorMarked).toBe(true);
     expect(s.carriedBy).toContain("thread");
+  });
+});
+
+describe("production switches", () => {
+  it("resolveSwitches: every known switch defaults off, a given value wins, unknown names and values throw", () => {
+    expect(SWITCHES).toEqual({ MEMORY_OPEN_WORK: ["off", "shadow", "on"] });
+    expect(DEFAULT_SWITCHES).toEqual({ MEMORY_OPEN_WORK: "off" });
+    expect(resolveSwitches()).toEqual({ MEMORY_OPEN_WORK: "off" });
+    expect(resolveSwitches({ MEMORY_OPEN_WORK: "on" })).toEqual({ MEMORY_OPEN_WORK: "on" });
+    expect(() => resolveSwitches({ MEMORY_OPEN_WORKS: "on" })).toThrow(/unknown switch/);
+    expect(() => resolveSwitches({ MEMORY_OPEN_WORK: "yes" })).toThrow(/off\|shadow\|on/);
+  });
+});
+
+describe.each(["off", "shadow", "on"] as const)("JarvisAdapter open_work component MEMORY_OPEN_WORK=%s", (mode) => {
+  let dir: string;
+  let adapter: JarvisAdapter;
+  const runs: Record<string, ProbeRun[]> = {};
+  const ids = ["C3-01-ho15-s50", "C3-01-cl16-s50", "C3-01-cr15-s50", "C3-01-h5-s50", "C4-01-r16-s50"];
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-adapter-ow-"));
+    adapter = new JarvisAdapter(scratchDbPath(dir), "raw", { switches: { MEMORY_OPEN_WORK: mode } });
+    adapter.open();
+    for (const id of ids) runs[id] = await adapter.runScenario(v2(id), FILLER_SPEC_V1);
+  });
+  afterAll(() => {
+    adapter.close();
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_OPEN_WORK;
+  });
+
+  const ow = (id: string) => comp(runs[id][0], "proactive", "open_work");
+  const needle = (id: string) => v2(id).probes[0].expect[0];
+
+  it("open() sets the switch in this process and the adapter records it", () => {
+    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: mode });
+    expect(process.env.MEMORY_OPEN_WORK).toBe(mode);
+  });
+
+  it("the component appears only when the switch is on; shadow computes but injects nothing", () => {
+    for (const id of ids) {
+      if (mode !== "on") expect(ow(id), id).toBeUndefined();
+    }
+    if (mode !== "on") return;
+    for (const id of ["C3-01-ho15-s50", "C3-01-cl16-s50"]) {
+      const c = ow(id)!;
+      expect(c).toMatchObject({ name: "open_work", queryDriven: false, kind: "ambient" });
+      expect(c.text, id).toContain(needle(id));
+      expect(c.items.length, id).toBeGreaterThan(0);
+      expect(c.items.length, id).toBeLessThanOrEqual(3);
+      expect(scoreProbe(runs[id][0]).proactive.carriedBy, id).toContain("open_work");
+    }
+  });
+
+  it("crowded: three later sessions fill the cap of 3 and the open work is not among the notes", () => {
+    if (mode !== "on") return;
+    const c = ow("C3-01-cr15-s50")!;
+    expect(c.items).toHaveLength(3);
+    expect(c.text).not.toContain(needle("C3-01-cr15-s50"));
+    expect(scoreProbe(runs["C3-01-cr15-s50"][0]).proactive.hit).toBe(false);
+  });
+
+  it("no gap since the session tail (C3 hydrate K 5, C4 restart K 16): the needle never comes from a note", () => {
+    for (const id of ["C3-01-h5-s50", "C4-01-r16-s50"]) {
+      expect(ow(id)?.text ?? "", id).not.toContain(needle(id));
+    }
   });
 });

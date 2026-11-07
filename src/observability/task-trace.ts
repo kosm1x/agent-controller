@@ -87,7 +87,10 @@ export type TraceEventName =
   // config does not parse (record mode forced) or a handle two records declare
   | "capability.scope"
   | "capability.record_invalid"
-  | "capability.handle_shared";
+  | "capability.handle_shared"
+  // Session tail notes on the first turn after a gap (MEMORY_OPEN_WORK
+  // shadow|on): {mode, reason, notes, chars} — counts only, never note text
+  | "memory.open_work";
 
 export interface TraceEvent {
   taskId: string;

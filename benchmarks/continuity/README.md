@@ -13,13 +13,20 @@ V2=benchmarks/continuity/corpus-v2.json
 npx tsx scripts/continuity-bench/run.ts --leg raw   --sizes 50,500,5000 --corpus $V2
 npx tsx scripts/continuity-bench/run.ts --leg ideal --sizes 50,500,5000 --corpus $V2
 npx tsx scripts/continuity-bench/run.ts --report results/a.json,results/b.json --md results/jarvis-baseline-v2.md
+npx tsx scripts/continuity-bench/run.ts --leg raw --sizes 50,500,5000 --corpus $V2 --switch MEMORY_OPEN_WORK=on
+npx tsx scripts/continuity-bench/run.ts --compare before.json,after.json[,before2,after2] [--reference ref.json[,ref2]] --md results/port1-open-work.md
 npx tsx scripts/continuity-bench/generate.ts [--check]                          # v1 corpus + golden
 npx tsx scripts/continuity-bench/generate.ts --corpus-version continuity-v2 [--check]   # v2 corpus
 ```
 
-v2 has 444 scenarios and 1140 probes (380 per filler size). A leg takes about
-150 s on the VPS, most of it at size 5000. The default output name is
-`results/jarvis-<sha>-<leg>-emb-<on|off>-v2.json`.
+v2 has 570 scenarios and 1392 probes (464 per filler size): the 444 scenarios
+and 1140 probes of the first v2 build, byte-identical (a test pins their hash),
+then the 90 scenarios of the Port 1 variants below, then the 36 scenarios of
+the two known-limit variants (`single`, `longcloser`). A second hash pins the
+534 scenarios before those last 36. A leg takes about 155 to 185 s on the
+VPS, most of it at size 5000. The default output name is
+`results/jarvis-<sha>-<leg>-emb-<on|off>-v2.json`; a switch set away from its
+default adds `-<switch-name>-<value>` (e.g. `-memory-open-work-on`).
 
 **v1 vs v2.** `corpus-v1.json`, `filler-golden.json`, the filler algorithm and
 the v1 results are frozen. v2 is a new corpus file built on the same filler. It
@@ -94,6 +101,24 @@ Variants (`scenario.variant`):
 - `live`: the process held the thread as it happened. K = 5 and 16 only.
 - `interleave`: K = 5 plus 20 exchanges on a second channel (`channel: "secondary"`).
 - `restart`: C4 only. A real process restart comes after the gap.
+- `handoff` (K 15, 20): the open work ends a session on day 0, one complete
+  session on another topic (two exchanges and a short `session_end` with
+  nothing open) follows on day 4, then K gap exchanges on day 5, and the probe
+  on day 5.
+- `crowded` (K 15, 20): as `handoff` with three complete sessions on days 2, 3
+  and 4. Under Jarvis's cap of three session notes it is expected to miss the
+  open work; the row is there to show the cap.
+- `closer` (K 16): as `hydrate` K 16, but the first of the K rows is a short
+  closing exchange ("Gracias." / "De nada, hasta luego.") in the same session
+  as the open work, so the open work is no longer the session's last row.
+- `longcloser` (K 16): as `closer`, with small talk of 8+ content tokens as
+  the closer. Session tail notes are expected to miss it (known limit B
+  below); the row is there to show the limit.
+- `single` (K 16): as `hydrate` K 16, with the open work stated in a
+  one-exchange session (the `session_end` row alone). Expected to miss for
+  the same reason (known limit A below).
+
+The gap K is counted from the **last** `session_end` of a scenario.
 
 The size axis still runs, so the K numbers are pooled over the three sizes.
 
@@ -138,7 +163,7 @@ as `wordingAudit` (`disjointProbes`, `disjointSharingAnyToken3`, `leaks`).
   mostly "the", "para", "que" and "you".
 - The disjoint phrasings were reworded, and five v1 probe texts got v2-only
   rewordings, keeping each request's meaning.
-- It is now **0 of 570**: no disjoint probe shares a word of 3+ characters
+- It is now **0 of 660**: no disjoint probe shares a word of 3+ characters
   with its target, function words included.
 - Substring matches (LIKE) and a recency fallback can still reach the target. Every class is between 40 % and 60 % shared, and at
 size 50 every class is exactly 50 / 50.
@@ -154,7 +179,8 @@ size 50 every class is exactly 50 / 50.
 ```
 
 v2 ids: `C1-01-s500` and similar; C3 `C3-01-h14-s500` (hydrate K 14), `C3-01-l16-…` (live),
-`C3-01-i5x20-…` (interleave); C4 `C4-01-r14-…`.
+`C3-01-i5x20-…` (interleave), `C3-01-ho15-…` (handoff), `C3-01-cr15-…` (crowded),
+`C3-01-cl16-…` (closer); C4 `C4-01-r14-…`.
 
 - **Time.** `t` is in seconds since day 0 00:00 UTC (it can be negative), and `day` is `floor(t / 86400)`.
   Events use even `t` and filler uses odd `t`, so no two timeline items share a second.
@@ -369,6 +395,8 @@ put duplicates at ~12 %; that figure counts a looser match and was not re-measur
   - the always-injected profile + projects
   - `formatRelevantUserFactsBlock`, `enrichContext`
   - the JME `jmeRecallQuery → queryMemory → orderForInjection` chain
+  - the session tail notes (`_testOpenWorkBlock`, component `open_work`,
+    ambient), only when `MEMORY_OPEN_WORK=on`
 
   The JME block's text template is replicated from `fast-runner.ts`, and a test
   pins it to that source.
@@ -402,7 +430,10 @@ put duplicates at ~12 %; that figure counts a looser match and was not re-measur
     and any existing file.
   - It refuses embedding or remote-memory keys unless `--allow-embeddings` is
     passed. `COMMIT_DB_KEY` is refused always.
-  - `MEMORY_PRECEDENTS_MODE=off`.
+  - `MEMORY_PRECEDENTS_MODE=off`, and every switch in `SWITCHES`
+    (adapter-jarvis.ts) is set explicitly in the harness process: its
+    default, or the value given with `--switch NAME=value`. The states are
+    recorded in the result's `meta.switches`.
 
 ### Embeddings leg (`--allow-embeddings`)
 
@@ -446,6 +477,108 @@ This leg is not run in the baseline. It costs real embedding calls.
   Both exceed the default cap, so the limit has to be raised on purpose.
 - **Stored text.** Rows are stored and embedded as `scrubSecrets(content)`,
   exactly as `retain()` does (sqlite-backend.ts:215).
+
+## Session tail notes (Port 1, `MEMORY_OPEN_WORK`)
+
+`src/messaging/open-work.ts` derives up to three notes at turn start from the
+existing `conversations` rows of the base channel. No new table, no writer, no
+model call.
+
+- **Only the first turn after a gap reads the store.** The router keeps, per
+  channel and in memory, the time of the last inbound message or stored
+  exchange. A turn within `SESSION_IDLE_THRESHOLD_MS` (20 min) of it runs no
+  query, adds nothing to the prompt and emits no trace. A channel not seen
+  since the process started runs the query once; the query then also checks
+  that the channel's newest stored row is at least the threshold old.
+  Two quick messages after a gap: the first gets the notes, the second gets
+  none. A turn the router answers before the pipeline (a greeting on the fast
+  path) does not count as activity, and the query skips rows tagged
+  `fast-path`, so in "Buenos días" then the real question two minutes later,
+  the question gets the notes. The scorecard never sends a greeting, so it
+  cannot see this path; the router and unit tests cover it.
+- **One bounded query**: the newest 3000 rows of the bank inside the last 14
+  days are scanned (`idx_conversations_bank_created`), the channel tag is
+  filtered outside that scan, and at most 400 rows come back.
+- Rows are split into sessions at gaps of the threshold; a session needs two
+  exchanges. Its note is its last substantive row: walking back at most three
+  rows, the first with six content tokens, else the last row.
+- A note is dropped when its row is in the thread buffer, when it is a
+  poisoned exchange, or when its user line shares two 5+ character content
+  tokens with a newer note's user line (one note per topic). Assistant lines
+  are not compared, and a short list of request and acknowledgement words
+  ("necesito", "perfecto", "gracias", …) does not count. At most 3 notes of
+  600 characters; only the chosen rows are scrubbed.
+- Operator threads only (a non-owner sender in a WhatsApp group gets none).
+  The block goes after the cache break, so the stable half of the prompt is
+  unchanged.
+
+The switch is `MEMORY_OPEN_WORK=off|shadow|on`, default `off`. `shadow`
+computes the notes and traces `memory.open_work` (counts only) but injects
+nothing. The harness sets it in its own process with `--switch`.
+
+**The harness takes the cold path.** The bench writes each probe's rows into
+the store behind the router, so the router has seen no activity and
+`_testOpenWorkBlock` always runs the query; the gap is the age of the newest
+stored row. The in-memory activity check is covered by the router unit tests,
+not by the scorecard.
+
+`results/port1-open-work.md` is generated by `run.ts --compare` from a run with
+the switch off and one with it on, per leg, with the committed v2 runs as the
+reference. It reports C3/C4 per variant and K (pooled over sizes and per
+size), and three null tests:
+
+1. with the switch off, the run reproduces the reference probe for probe
+   (timings aside);
+2. C4 does not move, since the gap rows follow the session end with no idle
+   gap, so the session tail is in the buffer and dropped;
+3. C1, C2, C5, C6, C7 and C8 keep their hit, stale-hit, wording, author and
+   C7 cells, and payload chars change only on probes that carry the block.
+
+**Why null test 3 fails at size 500, and what size 5000 does instead.** The
+filler rows are evenly spaced over the scenario's filler window, so their
+density decides what the reader finds:
+
+- At size 50 the filler rows are hours apart. Each is its own one-row session
+  and is dropped, and the C2 and C5 facts are still in the thread buffer.
+- At size 500 one filler row lands 413 s before the C2 correction, inside the
+  idle threshold, so the two form a session that ends on the correction, and
+  the correction is the note. The same happens to 4 C5 probes (a stated
+  figure that ends its session). These are the C2 / C5 cells that move at
+  500, all misses that became hits.
+- At size 5000 the newest filler row is 645 s before the C2 probe, so the
+  gap check says `active` and no note is shown in C2, C5, C6, C7 or half of
+  C1. Where the gap holds, the filler is one long session whose last row is
+  an unrelated note: 24 of the 96 C1 probes, 60 of the 84 C4 probes, and 132
+  of the 204 C3 probes carry it at size 5000. In C3 it sits next to the
+  open-work note in 108 of them; in 24 (`hydrate` K 14, where the open work
+  is still in the thread, and `single`) it is the only note; in `crowded` the
+  cap of three keeps it out. The C3 figures per size are in the per-size
+  table of `port1-open-work.md`.
+
+Limits of this port:
+
+- **A note is where a session stopped.** It cannot tell finished work from
+  open work: a session that ended on a settled fact produces a note too
+  (the size-500 C2 / C5 moves above).
+- **The base channel is shared by every conversation on it.** On WhatsApp
+  every group and DM has the tag `whatsapp`, so the operator can be shown the
+  tail of a session held in another group or with another sender, and the
+  block says so. Activity by anyone on the channel also counts as "no gap",
+  so a message from another group within 20 min suppresses the notes.
+- **The scan reads the bank's newest 3000 rows in the window.** A channel
+  whose rows all fall outside them (a quiet channel next to a busy one) gets
+  no notes.
+- **Known limit A**: open work stated in a one-exchange session gives no
+  note (a session needs two exchanges); the `single` rows show it.
+- **Known limit B**: small talk of six or more content tokens after the open
+  work is substantive, so it becomes the note; the `longcloser` rows show it.
+- **Known limit D**: when the same sitting continues for 16 or more
+  exchanges with no pause, the session's last row is in the buffer and the
+  open work from its start is never shown.
+- **C4 is unchanged by design**: without an idle gap there is no earlier
+  session to note.
+- **Whether the model uses the note is not measured.** As everywhere in the
+  scorecard, a hit means the text reached the model.
 
 ## Limits
 

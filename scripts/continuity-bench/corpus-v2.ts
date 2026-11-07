@@ -14,6 +14,9 @@
  *     echoes (one side states, the other repeats).
  *   - every probe carries a mechanical `wording` label (wording.ts) and each
  *     class is roughly half "shared", half "disjoint".
+ *   - Port 1 (appended; the scenarios before them are unchanged): C3
+ *     `handoff`, `crowded` and `closer` (buildTailVariant), then, appended
+ *     after those, `single` and `longcloser` (the reader's known limits).
  * All content is synthetic (made-up names, places, figures).
  */
 
@@ -210,6 +213,115 @@ function buildOpenWork(cls: "C3" | "C4", b: number, variant: ScenarioVariant, ga
     variant,
     ...(otherChannelRows ? { otherChannelRows } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Port 1 (session tail notes) — C3 variants with later sessions / a closer.
+// ---------------------------------------------------------------------------
+
+/** handoff / crowded gap sizes; closer, longcloser and single run at K = 16 (a closer is the first of the 16). */
+export const HANDOFF_GAP_ROWS = [15, 20];
+export const CLOSER_GAP_ROWS = 16;
+
+/**
+ * Complete later sessions on other topics, per language: two exchanges (the
+ * second is the session's last substantive one) and a short wrap. No two
+ * sessions, and no session and an OPEN_WORK wrap, share two 5+-letter words.
+ */
+const LATER_SESSIONS: Record<"es" | "en", Array<Array<[string, string]>>> = {
+  es: [
+    [
+      ["Ayúdame a elegir el menú para la cena del sábado.", "Propongo crema de calabaza, pollo al horno y flan de postre."],
+      ["Perfecto, cambia el flan por pastel de elote.", "Hecho, el menú lleva pastel de elote."],
+    ],
+    [
+      ["Necesito una rutina corta de estiramientos para la mañana.", "Te armé cinco movimientos de cuello, hombros y espalda baja."],
+      ["Agrega uno para las muñecas.", "Agregué círculos de muñeca, ya son seis movimientos."],
+    ],
+    [
+      ["Revisa mi lista de lectura para diciembre.", "Tienes cuatro novelas y un ensayo; el orden por extensión funciona."],
+      ["Quita el ensayo, prefiero solo ficción.", "Quitado, quedan las cuatro novelas en orden."],
+    ],
+  ],
+  en: [
+    [
+      ["Plan a short birthday picnic for my nephew.", "Sure: sandwiches, lemonade and a kite at the riverside park."],
+      ["Swap the lemonade for juice boxes.", "Swapped, the picnic list now has juice boxes."],
+    ],
+    [
+      ["Suggest a weekly watering schedule for my balcony plants.", "Water the ferns Monday and Thursday, the cactus every other Sunday."],
+      ["Add the basil pot near the window too.", "Added basil: a little water every morning before noon."],
+    ],
+    [
+      ["Sort my podcast queue for the commute.", "I grouped it into history, science and comedy episodes."],
+      ["Put the science episodes first in the queue.", "Moved them, science episodes now lead the commute queue."],
+    ],
+  ],
+};
+const LATER_WRAP: Record<"es" | "en", { asUser: string; asAssistant: string; openWork: string }> = {
+  es: { asUser: "Gracias, es todo.", asAssistant: "Listo, nada pendiente.", openWork: "nada pendiente" },
+  en: { asUser: "Thanks, that's all.", asAssistant: "Done, nothing open.", openWork: "nothing open" },
+};
+const CLOSER: Record<"es" | "en", [string, string]> = {
+  es: ["Gracias.", "De nada, hasta luego."],
+  en: ["Thanks a lot!", "Anytime, talk soon."],
+};
+/** Small talk long enough (8+ content tokens) to read as substantive. */
+const LONG_CLOSER: Record<"es" | "en", [string, string]> = {
+  es: [
+    "Gracias, mañana temprano salgo a correr al parque con mi hermana y luego desayunamos.",
+    "Qué buen plan, disfruta la carrera por el parque y el desayuno con tu hermana.",
+  ],
+  en: [
+    "Thanks, tomorrow morning I am jogging around the lake with my sister before breakfast.",
+    "Sounds lovely, enjoy the jog around the lake and breakfast with your sister.",
+  ],
+};
+
+/**
+ * handoff: open work (day 0), one complete session on another topic (day 4),
+ * K gap rows (day 5), probes day 5 — the open work is then over 72 h old.
+ * crowded: the same with three later sessions (days 2, 3, 4). closer: the
+ * hydrate timeline with one short closing exchange right after the open-work
+ * row (same session), counted as the first of the K rows. longcloser: the
+ * same with small talk of 8+ content tokens as the closer. single: the
+ * hydrate timeline with the open work stated in a one-exchange session (the
+ * session_end row alone).
+ */
+function buildTailVariant(
+  b: number,
+  variant: "handoff" | "crowded" | "closer" | "longcloser" | "single",
+  gapRows: number,
+): Draft {
+  const w = OPEN_WORK[b];
+  const events = openWorkEvents(w);
+  const seed = fillerSeedFor("C3", b + 1) ^ Math.imul(gapRows + 1, 0x27d4eb2f);
+  let probeDay: number;
+  if (variant === "closer" || variant === "longcloser") {
+    events.push(exchange(0, events.length, ...(variant === "closer" ? CLOSER : LONG_CLOSER)[w.lang]));
+    events.push(...gapEvents(seed, 1, 0, gapRows - 1, 0));
+    probeDay = 3;
+  } else if (variant === "single") {
+    const end = events[events.length - 1];
+    events.splice(0, events.length, { ...end, t: eventT(0, 0) });
+    events.push(...gapEvents(seed, 1, 0, gapRows, 0));
+    probeDay = 3;
+  } else {
+    const days = variant === "handoff" ? [4] : [2, 3, 4];
+    for (const [i, day] of days.entries()) {
+      const turns = LATER_SESSIONS[w.lang][variant === "handoff" ? b % 3 : i];
+      const later = turns.map(([u, a], j) => exchange(day, j, u, a));
+      const wrap = LATER_WRAP[w.lang];
+      later.push({ day, t: eventT(day, later.length), session: `d${day}`, kind: "session_end", ...wrap });
+      events.push(...later);
+    }
+    events.push(...gapEvents(seed, 5, 0, gapRows, 0));
+    probeDay = 5;
+  }
+  const probes = [w.greetLater, C3_TOPICAL[b]].map((text, j) =>
+    probe(probeDay, j, { text, expect: [w.needle], forbid: [], surface: "proactive" }),
+  );
+  return { class: "C3", base: b + 1, lang: w.lang, fillerFromT: FROM_MINUS_30, fillerToT: 0, events, probes, gapRows, variant };
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +582,17 @@ function draftsV2(): DraftV2[] {
   for (let b = 0; b < 6; b++) out.push(buildC6(b));
   for (let b = 0; b < 6; b++) out.push(buildC7(b));
   for (let b = 0; b < 6; b++) out.push(buildC8(b));
+  // Port 1 additions, appended so the scenarios above keep their order and bytes.
+  for (let b = 0; b < 6; b++) {
+    for (const k of HANDOFF_GAP_ROWS) out.push({ ...buildTailVariant(b, "handoff", k), tag: `ho${k}` });
+    out.push({ ...buildTailVariant(b, "closer", CLOSER_GAP_ROWS), tag: `cl${CLOSER_GAP_ROWS}` });
+    for (const k of HANDOFF_GAP_ROWS) out.push({ ...buildTailVariant(b, "crowded", k), tag: `cr${k}` });
+  }
+  // Port 1 fold: the reader's known limits, appended after the rows above.
+  for (let b = 0; b < 6; b++) {
+    out.push({ ...buildTailVariant(b, "single", CLOSER_GAP_ROWS), tag: `sg${CLOSER_GAP_ROWS}` });
+    out.push({ ...buildTailVariant(b, "longcloser", CLOSER_GAP_ROWS), tag: `lc${CLOSER_GAP_ROWS}` });
+  }
   return out;
 }
 

@@ -666,9 +666,9 @@ export function validateCorpus(corpus: Corpus): WordingAudit {
   return audit;
 }
 
-/** v2 C3/C4: the gap rows sit after the session end (and before a restart), on the declared channels, and carry no needle. */
+/** v2 C3/C4: the gap rows sit after the last session end (and before a restart), on the declared channels, and carry no needle. */
 function checkGap(s: Scenario): void {
-  const end = s.events.findIndex((e) => e.kind === "session_end");
+  const end = s.events.map((e) => e.kind).lastIndexOf("session_end");
   if (end === -1) throw new Error(`${s.id}: gapRows without a session_end`);
   const restart = s.events.findIndex((e) => e.kind === "restart");
   const gap = s.events.slice(end + 1, restart === -1 ? undefined : restart);

@@ -14,6 +14,8 @@
  *     relevant    db/user-facts.ts formatRelevantUserFactsBlock(probe)
  *     enrichment  intelligence/enrichment.ts enrichContext(probe, channel)
  *     jme         memory/jme.ts jmeRecallQuery → queryMemory(k 8, min 0.25) → orderForInjection
+ *     open_work   router _testOpenWorkBlock (messaging/open-work.ts session tail
+ *                 notes), only when the MEMORY_OPEN_WORK switch is `on`
  *   ASKED (an explicit search with the probe text)
  *     memory_search  tools/builtin/memory.ts memorySearchTool.execute({bank: "jarvis"})
  *     jme_query      memory/jme.ts queryMemory(probe, k 8, min 0.25) — no tool exposes it
@@ -79,7 +81,7 @@ import type {
 
 export type Leg = "raw" | "ideal";
 
-type RouterApi = Pick<typeof routerModule, "_testThreadTurns" | "_testSeedThread" | "_testPushToThread">;
+type RouterApi = Pick<typeof routerModule, "_testThreadTurns" | "_testSeedThread" | "_testPushToThread" | "_testOpenWorkBlock">;
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ROUTER_URL = new URL("../../src/messaging/router.ts", import.meta.url).href;
@@ -232,10 +234,34 @@ export class EmbedCache {
   }
 }
 
+/**
+ * Production switches the harness may set in its own process (env names and
+ * allowed values). Every run sets each one explicitly, defaults below, and
+ * records the states in its result.
+ */
+export const SWITCHES = { MEMORY_OPEN_WORK: ["off", "shadow", "on"] } as const;
+export type SwitchName = keyof typeof SWITCHES;
+export type Switches = Record<SwitchName, string>;
+export const DEFAULT_SWITCHES: Switches = { MEMORY_OPEN_WORK: "off" };
+
+/** Throws on an unknown name or a value the switch does not take. */
+export function resolveSwitches(given: Readonly<Record<string, string>> = {}): Switches {
+  const out: Switches = { ...DEFAULT_SWITCHES };
+  for (const [name, value] of Object.entries(given)) {
+    if (!(name in SWITCHES)) throw new Error(`unknown switch ${name} (known: ${Object.keys(SWITCHES).join(", ")})`);
+    const allowed: readonly string[] = SWITCHES[name as SwitchName];
+    if (!allowed.includes(value)) throw new Error(`switch ${name} takes ${allowed.join("|")}, not ${value}`);
+    out[name as SwitchName] = value;
+  }
+  return out;
+}
+
 export interface AdapterOptions {
   /** Embed every stored row like retain() does (needs an embedding key in the environment). */
   embeddings?: boolean;
   embedCache?: EmbedCache;
+  /** Production switches for this process (resolveSwitches; absent = all defaults). */
+  switches?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -294,6 +320,7 @@ export class JarvisAdapter {
   readonly dbPath: string;
   readonly embeddings: boolean;
   readonly embedCache: EmbedCache;
+  readonly switches: Switches;
   /** Calls to restart(), for tests. */
   restartCount = 0;
   /** Thread keys used, in order, for tests. */
@@ -307,11 +334,13 @@ export class JarvisAdapter {
     this.dbPath = assertScratchDbPath(dbPath);
     this.embeddings = opts.embeddings === true;
     this.embedCache = opts.embedCache ?? new EmbedCache();
+    this.switches = resolveSwitches(opts.switches);
   }
 
   open(): void {
     // The P1 precedent lookup is shadow-only (logged, never injected): off.
     process.env.MEMORY_PRECEDENTS_MODE = "off";
+    for (const [name, value] of Object.entries(this.switches)) process.env[name] = value;
     initDatabase(this.dbPath);
   }
 
@@ -497,6 +526,10 @@ export class JarvisAdapter {
     if (relevant && kept.relevant)
       components.push({ name: "relevant_facts", queryDriven: true, kind: "recall", text: relevant, items: factLines(relevant) });
     if (kept.enrichment) components.push(...enrichmentComponents(contextBlock));
+    // router.ts handleInbound: the session tail notes join the variable tail (outside the budget loop).
+    const openWork = this.router._testOpenWorkBlock(threadKey);
+    if (openWork.injected)
+      components.push({ name: "open_work", queryDriven: false, kind: "ambient", text: openWork.injected, items: openWork.items });
     const dropped = [
       ...(profile && !kept.profile ? ["profile"] : []),
       ...(relevant && !kept.relevant ? ["relevant_facts"] : []),
