@@ -1432,6 +1432,23 @@ export function initDatabase(dbPath: string): Database.Database {
         );
       },
     },
+    {
+      version: 13,
+      description:
+        "memory_tombstones — the terms of a JME fact that was superseded, reworded or expired, so recall can silence the conversation rows that still carry the old value (MEMORY_TOMBSTONES record|on; dormant by default)",
+      up: (db) =>
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS memory_tombstones (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            fact_id    INTEGER NOT NULL,
+            reason     TEXT NOT NULL CHECK(reason IN ('superseded','reworded','expired')),
+            terms      TEXT NOT NULL,
+            new_terms  TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_memory_tombstones_created ON memory_tombstones(created_at DESC);
+        `),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

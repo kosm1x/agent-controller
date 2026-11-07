@@ -58,6 +58,7 @@ import {
   rareDocThreshold,
   recallFloorMode,
 } from "./sqlite-backend.js";
+import { clearTombstoneCache } from "./tombstones.js";
 import { getDatabase } from "../db/index.js";
 import { serializeEmbedding } from "./embeddings.js";
 import type { MemoryItem, RecallOptions } from "./types.js";
@@ -568,5 +569,194 @@ describe("SqliteMemoryBackend — recall floor (MEMORY_RECALL_FLOOR)", () => {
     it("stops counting at the cap", () => {
       expect(keywordDocFrequency("camion", BANK, 1)).toEqual(new Map([["camion", 1]]));
     });
+  });
+});
+
+describe("SqliteMemoryBackend — tombstones (MEMORY_TOMBSTONES)", () => {
+  // Real in-memory schema; tombstones are inserted directly (the write side is
+  // tombstones.test.ts). The tombstone is dated 2026-01-10; rows are seeded
+  // before or after it.
+  type Db = ReturnType<typeof getDatabase>;
+  let db: Db;
+  const BANK = "mc-jarvis";
+  const prev = { tomb: process.env.MEMORY_TOMBSTONES, floor: process.env.MEMORY_RECALL_FLOOR };
+  const BEFORE = "2026-01-09 00:00:00";
+  const AFTER = "2026-01-11 00:00:00";
+
+  const seed = (rows: Array<[string, string]>) => {
+    const ins = db.prepare(
+      "INSERT INTO conversations (bank, tags, content, trust_tier, source, created_at) VALUES (?, '[]', ?, 2, 'agent', ?)",
+    );
+    for (const [content, at] of rows) ins.run(BANK, content, at);
+  };
+  const tombstone = (terms: string[], newTerms: string[], at = "2026-01-10 00:00:00") => {
+    db.prepare(
+      "INSERT INTO memory_tombstones (created_at, fact_id, reason, terms, new_terms) VALUES (?, 1, 'superseded', ?, ?)",
+    ).run(at, JSON.stringify(terms), JSON.stringify(newTerms));
+    clearTombstoneCache();
+  };
+  const recall = (q: string, mode?: "off" | "record" | "on") => {
+    if (mode === undefined) delete process.env.MEMORY_TOMBSTONES;
+    else process.env.MEMORY_TOMBSTONES = mode;
+    return new SqliteMemoryBackend(false).recall(q, opts({ maxResults: 5 }));
+  };
+  const contents = (items: MemoryItem[]) => items.map((m) => m.content).sort();
+  const tombTraces = () =>
+    traceSpy.mock.calls
+      .map((c) => c[0] as { taskId: string; name: string; attrs: Record<string, unknown> })
+      .filter((t) => t.name === "memory.tombstone");
+
+  const OLD = "Usuario: el codigo del porton es 5821";
+  const OLD_LATE = "Usuario: el codigo del porton sigue en 5821";
+  const NEW = "Usuario: el codigo del porton cambio de 5821 a 7394";
+  const OTHER = "Usuario: el codigo del buzon es distinto";
+  const BANK_ROWS: Array<[string, string]> = [
+    [OLD, BEFORE],
+    [NEW, BEFORE],
+    [OTHER, BEFORE],
+    [OLD_LATE, AFTER],
+    ...Array.from({ length: 20 }, (_, i) => [`Usuario: reunion ${i} con el equipo`, BEFORE] as [string, string]),
+  ];
+
+  beforeAll(async () => {
+    const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
+    db = real.initDatabase(":memory:");
+  });
+  beforeEach(() => {
+    db.exec("DELETE FROM conversation_embeddings");
+    db.exec("DELETE FROM conversations");
+    db.exec("DELETE FROM memory_tombstones");
+    clearVectorCache();
+    clearTombstoneCache();
+    delete process.env.MEMORY_RECALL_FLOOR;
+    vi.mocked(getDatabase).mockReturnValue(db);
+    seed(BANK_ROWS);
+    tombstone(["5821"], ["7394"]);
+  });
+  afterEach(() => {
+    vi.mocked(getDatabase).mockImplementation(() => {
+      throw new Error("no db in test");
+    });
+    for (const [k, v] of [["MEMORY_TOMBSTONES", prev.tomb], ["MEMORY_RECALL_FLOOR", prev.floor]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("on: a pre-tombstone row with the old term is dropped; a later row, a new-term row and a row without the term are kept", async () => {
+    const out = contents(await recall("codigo del porton", "on"));
+    expect(out).toEqual([OTHER, NEW, OLD_LATE].sort());
+    expect(out).not.toContain(OLD);
+  });
+
+  it("on: a row holding a code's tokens apart, not as the run, is kept", async () => {
+    const apart = "Usuario: el codigo del porton va en el folio KVX, caja 482";
+    const run = "Usuario: el codigo del porton es el folio KVX-482";
+    seed([[apart, BEFORE], [run, BEFORE]]);
+    tombstone(["kvx 482"], []);
+    const out = contents(await recall("codigo del porton", "on"));
+    expect(out).toContain(apart);
+    expect(out).not.toContain(run);
+  });
+
+  it("off: the result is the HEAD result (the old row included), no trace, no tombstone statement", async () => {
+    const prepare = vi.spyOn(db, "prepare");
+    try {
+      const unset = contents(await recall("codigo del porton"));
+      const off = contents(await recall("codigo del porton", "off"));
+      expect(off).toEqual(unset);
+      expect(off).toEqual([OLD, NEW, OTHER, OLD_LATE].sort());
+      expect(prepare.mock.calls.some(([sql]) => String(sql).includes("memory_tombstones"))).toBe(false);
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(tombTraces()).toEqual([]);
+  });
+
+  it("record: returns the off result and traces what on would drop (counts only)", async () => {
+    const off = await recall("codigo del porton", "off");
+    const rec = await recall("codigo del porton", "record");
+    expect(contents(rec)).toEqual(contents(off));
+    expect(tombTraces()).toEqual([
+      { taskId: "memory-recall", name: "memory.tombstone", attrs: { mode: "record", bank: BANK, returned: 4, wouldDrop: 1 } },
+    ]);
+  });
+
+  it("on: another bank's rows are never filtered, and no tombstone statement runs for it (qa R1 W1)", async () => {
+    const ins = db.prepare(
+      "INSERT INTO conversations (bank, tags, content, trust_tier, source, created_at) VALUES ('mc-operational', '[]', ?, 2, 'agent', ?)",
+    );
+    ins.run(OLD, BEFORE);
+    process.env.MEMORY_TOMBSTONES = "on";
+    const prepare = vi.spyOn(db, "prepare");
+    try {
+      const out = await new SqliteMemoryBackend(false).recall("codigo del porton", opts({ maxResults: 5, bank: "mc-operational" }));
+      expect(contents(out)).toEqual([OLD]);
+      expect(prepare.mock.calls.some(([sql]) => String(sql).includes("memory_tombstones"))).toBe(false);
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(tombTraces()).toEqual([]);
+  });
+
+  it("on: the trace counts what was dropped", async () => {
+    await recall("codigo del porton", "on");
+    expect(tombTraces()).toEqual([
+      { taskId: "memory-recall", name: "memory.tombstone", attrs: { mode: "on", bank: BANK, returned: 3, dropped: 1 } },
+    ]);
+  });
+
+  it("on: the embedding path is filtered too", async () => {
+    // Found by embeddings only (no query keyword in it).
+    const embOld = "Usuario: anota 5821 para la entrada";
+    const embNew = "Usuario: anota 7394 para la entrada";
+    seed([[embOld, BEFORE], [embNew, BEFORE]]);
+    const vec = new Float32Array([1, 0, 0]);
+    const put = db.prepare("INSERT INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)");
+    for (const c of [embOld, embNew]) {
+      const { id } = db.prepare("SELECT id FROM conversations WHERE content = ?").get(c) as { id: number };
+      put.run(id, serializeEmbedding(vec));
+    }
+    embedSpy.mockResolvedValue(vec as never);
+    try {
+      const off = contents(await recall("zzz qqq", "off"));
+      expect(off).toEqual([embOld, embNew].sort());
+      expect(contents(await recall("zzz qqq", "on"))).toEqual([embNew]);
+    } finally {
+      embedSpy.mockResolvedValue(null);
+    }
+  });
+
+  it("on: the LIKE path and the newest-rows fallback are filtered too", async () => {
+    // "porto" is no FTS token of any row: FTS finds nothing, LIKE matches.
+    expect(contents(await recall("porto", "off"))).toContain(OLD);
+    expect(contents(await recall("porto", "on"))).toEqual([NEW, OLD_LATE].sort());
+    // Nothing matches at all: the newest rows, the old one among them, come back.
+    db.exec("DELETE FROM conversations WHERE content LIKE 'Usuario: reunion%'");
+    expect(contents(await recall("factura pendiente", "off"))).toContain(OLD);
+    expect(contents(await recall("factura pendiente", "on"))).toEqual([OTHER, NEW, OLD_LATE].sort());
+  });
+
+  it("on with the recall floor on: a row the floor keeps is still silenced", async () => {
+    // 124 rows: floor threshold 3, so "5821" (3 rows) is rare and the floor keeps all three.
+    seed(Array.from({ length: 100 }, (_, i) => [`Usuario: tarea ${i} cerrada`, BEFORE] as [string, string]));
+    process.env.MEMORY_RECALL_FLOOR = "on";
+    expect(contents(await recall("codigo porton 5821", "off"))).toEqual([OLD, NEW, OLD_LATE].sort());
+    expect(contents(await recall("codigo porton 5821", "on"))).toEqual([NEW, OLD_LATE].sort());
+  });
+
+  it("a failed tombstone load filters nothing and is traced as an error", async () => {
+    db.exec("ALTER TABLE memory_tombstones RENAME TO memory_tombstones_x");
+    try {
+      clearTombstoneCache();
+      const out = contents(await recall("codigo del porton", "on"));
+      expect(out).toContain(OLD);
+      expect(tombTraces()).toEqual([
+        { taskId: "memory-recall", name: "memory.tombstone", attrs: { mode: "on", bank: BANK, error: true } },
+      ]);
+    } finally {
+      db.exec("ALTER TABLE memory_tombstones_x RENAME TO memory_tombstones");
+      clearTombstoneCache();
+    }
   });
 });

@@ -15,6 +15,7 @@ import {
   renderBaseline,
   renderCompare,
   renderRecallFloorCompare,
+  renderTombstoneCompare,
   switchSuffix,
   type EmbedPlan,
   type RunResult,
@@ -184,8 +185,8 @@ describe("switches and --compare (Port 1)", () => {
   });
 
   it("a run records every switch state; the open_work note lifts handoff and leaves crowded / C4 alone", () => {
-    expect(off.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
-    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "on", MEMORY_RECALL_FLOOR: "off" });
+    expect(off.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "off" });
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "on", MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "off" });
     const hit = (r: RunResult, id: string) => r.probes.filter((p) => p.scenarioId === id).map((p) => p.proactive.hit);
     expect(hit(off, "C3-01-ho15-s50")).toEqual([false, true]); // disjoint greeting lost, shared topical probe through recall
     expect(hit(on, "C3-01-ho15-s50")).toEqual([true, true]);
@@ -271,7 +272,7 @@ describe("--compare (Port 2, MEMORY_RECALL_FLOOR)", () => {
   const c7 = (r: RunResult, surface: string) => r.aggregates.find((a) => a.class === "C7" && a.surface === surface)!;
 
   it("the floor run records its switch and cuts the C7 irrelevant items on both surfaces", () => {
-    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on" });
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on", MEMORY_TOMBSTONES: "off" });
     for (const s of ["proactive", "asked"]) {
       expect(c7(off, s).meanIrrelevant!, s).toBeGreaterThan(0);
       expect(c7(on, s).meanIrrelevant!, s).toBeLessThan(c7(off, s).meanIrrelevant!);
@@ -318,5 +319,79 @@ describe("--compare (Port 2, MEMORY_RECALL_FLOOR)", () => {
     const md = join(dir, "cmp.md");
     expect(await main(["node", "run.ts", "--compare", `${join(dir, "off.json")},${join(dir, "on.json")}`, "--md", md], {})).toBe(0);
     expect(readFileSync(md, "utf8")).toContain("# Port 2 — an honest empty recall");
+  });
+});
+
+describe("--compare (Port 3, MEMORY_TOMBSTONES)", () => {
+  const V2 = buildCorpusV2();
+  // C8-06: the temporary value is a figure (2:40) and stale at HEAD, but its fact is a plain
+  // event, not TRANSIENT_FACT_RE: it ages out with no tombstone and stays stale (qa R2 W2).
+  const pick = ["C2-01-s500", "C8-06-s500", "C1-01-s500"].map((id) => V2.scenarios.find((x) => x.id === id)!);
+  let dir: string;
+  let off: RunResult;
+  let on: RunResult;
+
+  const run = async (switches: string[], out: string): Promise<RunResult> => {
+    const path = join(dir, "corpus.json");
+    writeFileSync(path, JSON.stringify({ ...V2, scenarios: pick } as Corpus));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await main(["node", "run.ts", "--leg", "ideal", "--sizes", "500", "--corpus", path, "--out", join(dir, out), ...switches], {});
+    log.mockRestore();
+    expect(code).toBe(0);
+    return JSON.parse(readFileSync(join(dir, out), "utf8")) as RunResult;
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-compare-ts-"));
+    off = await run([], "off.json");
+    on = await run(["--switch", "MEMORY_TOMBSTONES=on"], "on.json");
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_OPEN_WORK;
+    delete process.env.MEMORY_RECALL_FLOOR;
+    delete process.env.MEMORY_TOMBSTONES;
+  });
+
+  const agg = (r: RunResult, cls: string, surface: string) => r.aggregates.find((a) => a.class === cls && a.surface === surface)!;
+
+  it("the tombstone run records its switch, drops the C2 stale hit, leaves the plain-event C8 one and keeps every hit", () => {
+    expect(on.meta.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "on" });
+    for (const s of ["proactive", "asked"]) {
+      for (const cls of ["C2", "C8"]) expect(agg(off, cls, s).staleHitPct, `${cls} ${s}`).toBeGreaterThan(0);
+      expect(agg(on, "C2", s).staleHitPct, `C2 ${s}`).toBe(0);
+      expect(agg(on, "C8", s).staleHitPct, `C8 ${s}`).toBe(agg(off, "C8", s).staleHitPct);
+      for (const cls of ["C1", "C2", "C8"]) expect(agg(on, cls, s).hitPct, `${cls} ${s}`).toBe(agg(off, cls, s).hitPct);
+    }
+  });
+
+  it("renders C2 / C8 per size, the stale carriers, the null tests, lost hits and the payload; main picks it", async () => {
+    const md = renderTombstoneCompare([[off, on]], [off]);
+    expect(md).toContain("# Port 3 — tombstones for corrected and expired facts: before / after");
+    const [b2, a2, b8, a8] = [agg(off, "C2", "asked"), agg(on, "C2", "asked"), agg(off, "C8", "asked"), agg(on, "C8", "asked")];
+    expect(md).toContain(
+      `| 500 | asked | ${a2.n} | ${b2.hitPct} → ${a2.hitPct} | ${b2.staleHitPct} → 0 | ${a8.n} | ${b8.hitPct} → ${a8.hitPct} | ${b8.staleHitPct} → ${b8.staleHitPct} |`,
+    );
+    expect(md).toMatch(/^\| C2 \| 500 \| asked \| memory_search \| [1-9]\d* → 0 \|$/m);
+    expect(md).toMatch(/^\| C8 \| 500 \| asked \| memory_search \| ([1-9]\d*) → \1 \|$/m);
+    expect(md).toMatch(/^1\. \*\*PASS\*\* — before reproduces reference commit .* 0 differ, 0 missing/m);
+    expect(md).toMatch(/^2\. \*\*unchanged\*\* — C1: \d+ cells .* 0 changed; 0 probes with a hit or stale-hit flip; 0 scored hits lost/m);
+    expect(md).toMatch(/^\| C2 \| asked \| 0 \| 0 \| [1-9]\d* \| 0 \| – \|$/m);
+    expect(md).toMatch(/^\| C8 \| \d+ \| \d+ → \d+ \|/m);
+    // A reference that differs is counted by class and by changed field.
+    const ref = JSON.parse(JSON.stringify(off)) as RunResult;
+    ref.probes.find((p) => p.class === "C2")!.asked.chars += 1;
+    const withRef = renderTombstoneCompare([[off, on]], [ref]);
+    expect(withRef).toMatch(/differing probes by class C2 1; 0 with a hit or stale-hit change; fields that changed: asked\.chars 1\./);
+    expect(withRef).toMatch(/^ {3}- why: the harness changed in Port 3, not the switch: .*supersedeCluster in every mode/m);
+    // A raw leg states its pair (raw writes no tombstones); an ideal leg does not.
+    expect(md).not.toContain("- raw pair:");
+    const asRaw = (r: RunResult) => ({ ...r, meta: { ...r.meta, leg: "raw" } }) as RunResult;
+    expect(renderTombstoneCompare([[asRaw(off), asRaw(on)]])).toContain(
+      `- raw pair: 3 scenarios / ${off.probes.length} probes (pre-\`sn\`, run ${off.meta.startedAt}); raw writes no tombstones, so \`on\` = \`off\` there.`,
+    );
+    const out = join(dir, "cmp.md");
+    expect(await main(["node", "run.ts", "--compare", `${join(dir, "off.json")},${join(dir, "on.json")}`, "--md", out], {})).toBe(0);
+    expect(readFileSync(out, "utf8")).toContain("# Port 3 — tombstones");
   });
 });

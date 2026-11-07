@@ -94,7 +94,14 @@ export type TraceEventName =
   // Recall floor (MEMORY_RECALL_FLOOR shadow|on), sqlite-backend.ts:
   // {mode, bank, returned, wouldDrop, rareTerms}, or {mode, bank, error: true}
   // when the rare-term lookup failed and the floor was skipped — counts only, never text
-  | "memory.recall_floor";
+  | "memory.recall_floor"
+  // Tombstones (MEMORY_TOMBSTONES record|on): on write (tombstones.ts)
+  // {mode, reason, terms, newTerms}, or {mode, reason: "reworded" |
+  // "expired", skipped: true} for a reword or a non-transient expiry (no
+  // tombstone); on recall (sqlite-backend.ts) {mode, bank,
+  // returned, wouldDrop|dropped}, or {mode, bank, error: true} when the load
+  // failed — counts only, never text
+  | "memory.tombstone";
 
 export interface TraceEvent {
   taskId: string;

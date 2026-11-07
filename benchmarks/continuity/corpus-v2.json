@@ -176,7 +176,7 @@
   }
  },
  "wordingAudit": {
-  "disjointProbes": 696,
+  "disjointProbes": 720,
   "disjointSharingAnyToken3": 0,
   "leaks": []
  },
@@ -34954,6 +34954,498 @@
    "variant": "longcloser"
   },
   {
+   "id": "C2-01-rp-s50",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 4.120.000 pesos.",
+     "asUser": "Ya no es 3.847.215, ahora es 4.120.000.",
+     "asAssistant": "Entendido, ajusto la referencia a 4.120.000."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-nf-s50",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto de la remodelación de la persona cambió; el monto nuevo llega luego.",
+     "asUser": "Ya no es 3.847.215, te paso el monto nuevo luego.",
+     "asAssistant": "Entendido, quedo pendiente del monto nuevo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-rw-s50",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Rocío, la prima de la persona, vive en Monterrey con su hermana.",
+     "durable": true,
+     "asUser": "Mi prima Rocío vive en Monterrey con su hermana.",
+     "asAssistant": "Qué bien, lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "Rocío, la prima de la persona, vive con su hermana.",
+     "asUser": "Rocío sigue viviendo con su hermana, por cierto.",
+     "asAssistant": "Anotado."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿En qué ciudad vive mi prima Rocío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "Le mando un regalo a mi familiar, ¿a cuál zona del país lo envío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-lv-s50",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El gafete de empleado de la persona es el 6614.",
+     "durable": true,
+     "asUser": "Mi gafete de empleado es el 6614.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona estaciona en el cajón 6614 del sótano (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana me tocó el cajón 6614 del sótano, igual que mi gafete.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de gafete?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "En la recepción me piden mi identificación laboral, ¿qué cifra doy?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-sn-s50",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es B negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es B negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la semana 14 la persona usa el teléfono de repuesto que termina en 5307.",
+     "durable": false,
+     "asUser": "En la semana 14 traigo el teléfono de repuesto, el que termina en 5307.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y a qué teléfono me marcan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para la transfusión, ¿qué grupo sanguíneo pongo y a qué número me localizan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-sn-s50",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's son's birthday is July 9.",
+     "durable": true,
+     "asUser": "My son's birthday is July 9.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On Day 3 of the camp, the person picks up their son at 4:15.",
+     "durable": false,
+     "asUser": "It's Day 3 of the camp, so I pick my son up at 4:15.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my son's birthday, and what time do I pick him up?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "When do we throw our boy's party, and what time do I collect him?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-sn-s50",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 50,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de socio del gimnasio de la persona es 77-3051.",
+     "durable": true,
+     "asUser": "Mi número de socio del gimnasio es 77-3051.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la W22 la persona usa el casillero 818 del gimnasio.",
+     "durable": false,
+     "asUser": "En la W22 me dieron el casillero 818 del gimnasio.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de socio del gimnasio y qué casillero uso?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para entrar al club deportivo, ¿con qué membresía me identifico y en cuál taquilla dejo mis cosas?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-sn-s50",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 50,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's team is the Harbor Owls.",
+     "durable": true,
+     "asUser": "I play for the Harbor Owls.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On this week's roster the person has kit code KT-5124.",
+     "durable": false,
+     "asUser": "On this week's roster my kit code is KT-5124.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Which team do I play for, and what's my kit code?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Filling in a league sign-up: which club am I with, and which uniform code is mine?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
    "id": "C1-01-s500",
    "class": "C1",
    "base": 1,
@@ -69726,6 +70218,498 @@
    "variant": "longcloser"
   },
   {
+   "id": "C2-01-rp-s500",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 4.120.000 pesos.",
+     "asUser": "Ya no es 3.847.215, ahora es 4.120.000.",
+     "asAssistant": "Entendido, ajusto la referencia a 4.120.000."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-nf-s500",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto de la remodelación de la persona cambió; el monto nuevo llega luego.",
+     "asUser": "Ya no es 3.847.215, te paso el monto nuevo luego.",
+     "asAssistant": "Entendido, quedo pendiente del monto nuevo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-rw-s500",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Rocío, la prima de la persona, vive en Monterrey con su hermana.",
+     "durable": true,
+     "asUser": "Mi prima Rocío vive en Monterrey con su hermana.",
+     "asAssistant": "Qué bien, lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "Rocío, la prima de la persona, vive con su hermana.",
+     "asUser": "Rocío sigue viviendo con su hermana, por cierto.",
+     "asAssistant": "Anotado."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿En qué ciudad vive mi prima Rocío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "Le mando un regalo a mi familiar, ¿a cuál zona del país lo envío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-lv-s500",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El gafete de empleado de la persona es el 6614.",
+     "durable": true,
+     "asUser": "Mi gafete de empleado es el 6614.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona estaciona en el cajón 6614 del sótano (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana me tocó el cajón 6614 del sótano, igual que mi gafete.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de gafete?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "En la recepción me piden mi identificación laboral, ¿qué cifra doy?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-sn-s500",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es B negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es B negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la semana 14 la persona usa el teléfono de repuesto que termina en 5307.",
+     "durable": false,
+     "asUser": "En la semana 14 traigo el teléfono de repuesto, el que termina en 5307.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y a qué teléfono me marcan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para la transfusión, ¿qué grupo sanguíneo pongo y a qué número me localizan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-sn-s500",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's son's birthday is July 9.",
+     "durable": true,
+     "asUser": "My son's birthday is July 9.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On Day 3 of the camp, the person picks up their son at 4:15.",
+     "durable": false,
+     "asUser": "It's Day 3 of the camp, so I pick my son up at 4:15.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my son's birthday, and what time do I pick him up?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "When do we throw our boy's party, and what time do I collect him?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-sn-s500",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 500,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de socio del gimnasio de la persona es 77-3051.",
+     "durable": true,
+     "asUser": "Mi número de socio del gimnasio es 77-3051.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la W22 la persona usa el casillero 818 del gimnasio.",
+     "durable": false,
+     "asUser": "En la W22 me dieron el casillero 818 del gimnasio.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de socio del gimnasio y qué casillero uso?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para entrar al club deportivo, ¿con qué membresía me identifico y en cuál taquilla dejo mis cosas?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-sn-s500",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 500,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's team is the Harbor Owls.",
+     "durable": true,
+     "asUser": "I play for the Harbor Owls.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On this week's roster the person has kit code KT-5124.",
+     "durable": false,
+     "asUser": "On this week's roster my kit code is KT-5124.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Which team do I play for, and what's my kit code?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Filling in a league sign-up: which club am I with, and which uniform code is mine?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
    "id": "C1-01-s5000",
    "class": "C1",
    "base": 1,
@@ -104496,6 +105480,498 @@
    ],
    "gapRows": 16,
    "variant": "longcloser"
+  },
+  {
+   "id": "C2-01-rp-s5000",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 4.120.000 pesos.",
+     "asUser": "Ya no es 3.847.215, ahora es 4.120.000.",
+     "asAssistant": "Entendido, ajusto la referencia a 4.120.000."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "4.120.000"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-nf-s5000",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El presupuesto aprobado para la remodelación de la persona es de 3.847.215 pesos.",
+     "durable": true,
+     "asUser": "El presupuesto aprobado para la remodelación es de 3.847.215 pesos.",
+     "asAssistant": "Perfecto, lo tomo como referencia."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "El presupuesto de la remodelación de la persona cambió; el monto nuevo llega luego.",
+     "asUser": "Ya no es 3.847.215, te paso el monto nuevo luego.",
+     "asAssistant": "Entendido, quedo pendiente del monto nuevo."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿Cuál es el presupuesto vigente de la remodelación?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "¿Con cuánto dinero contamos ya en la obra de la casa?",
+     "expect": [
+      "monto nuevo"
+     ],
+     "forbid": [
+      "3.847.215"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C2-01-rw-s5000",
+   "class": "C2",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 3098546683,
+   "fillerFromT": -2592000,
+   "fillerToT": 928860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Rocío, la prima de la persona, vive en Monterrey con su hermana.",
+     "durable": true,
+     "asUser": "Mi prima Rocío vive en Monterrey con su hermana.",
+     "asAssistant": "Qué bien, lo anoto."
+    },
+    {
+     "day": 5,
+     "t": 464520,
+     "session": "d5",
+     "kind": "correction",
+     "targetEventIndex": 0,
+     "text": "Rocío, la prima de la persona, vive con su hermana.",
+     "asUser": "Rocío sigue viviendo con su hermana, por cierto.",
+     "asAssistant": "Anotado."
+    }
+   ],
+   "probes": [
+    {
+     "day": 10,
+     "t": 928800,
+     "session": "d10",
+     "text": "¿En qué ciudad vive mi prima Rocío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 10,
+     "t": 928860,
+     "session": "d10",
+     "text": "Le mando un regalo a mi familiar, ¿a cuál zona del país lo envío?",
+     "expect": [
+      "Monterrey"
+     ],
+     "forbid": [],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-lv-s5000",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El gafete de empleado de la persona es el 6614.",
+     "durable": true,
+     "asUser": "Mi gafete de empleado es el 6614.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "Esta semana la persona estaciona en el cajón 6614 del sótano (solo esta semana).",
+     "durable": false,
+     "asUser": "Esta semana me tocó el cajón 6614 del sótano, igual que mi gafete.",
+     "asAssistant": "Va, lo tomo en cuenta esta semana."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de gafete?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "En la recepción me piden mi identificación laboral, ¿qué cifra doy?",
+     "expect": [
+      "6614"
+     ],
+     "forbid": [
+      "sótano"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-01-sn-s5000",
+   "class": "C8",
+   "base": 1,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1969565457,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El tipo de sangre de la persona es B negativo.",
+     "durable": true,
+     "asUser": "Mi tipo de sangre es B negativo.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la semana 14 la persona usa el teléfono de repuesto que termina en 5307.",
+     "durable": false,
+     "asUser": "En la semana 14 traigo el teléfono de repuesto, el que termina en 5307.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Para el formulario médico: ¿qué tipo de sangre tengo y a qué teléfono me marcan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para la transfusión, ¿qué grupo sanguíneo pongo y a qué número me localizan?",
+     "expect": [
+      "B negativo"
+     ],
+     "forbid": [
+      "5307"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-02-sn-s5000",
+   "class": "C8",
+   "base": 2,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 4216943020,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's son's birthday is July 9.",
+     "durable": true,
+     "asUser": "My son's birthday is July 9.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On Day 3 of the camp, the person picks up their son at 4:15.",
+     "durable": false,
+     "asUser": "It's Day 3 of the camp, so I pick my son up at 4:15.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "When is my son's birthday, and what time do I pick him up?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "When do we throw our boy's party, and what time do I collect him?",
+     "expect": [
+      "July 9"
+     ],
+     "forbid": [
+      "4:15"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-03-sn-s5000",
+   "class": "C8",
+   "base": 3,
+   "lang": "es",
+   "fillerSize": 5000,
+   "fillerSeed": 1632483899,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "El número de socio del gimnasio de la persona es 77-3051.",
+     "durable": true,
+     "asUser": "Mi número de socio del gimnasio es 77-3051.",
+     "asAssistant": "Anotado."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "En la W22 la persona usa el casillero 818 del gimnasio.",
+     "durable": false,
+     "asUser": "En la W22 me dieron el casillero 818 del gimnasio.",
+     "asAssistant": "Va, lo tomo en cuenta."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "¿Cuál es mi número de socio del gimnasio y qué casillero uso?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Para entrar al club deportivo, ¿con qué membresía me identifico y en cuál taquilla dejo mis cosas?",
+     "expect": [
+      "77-3051"
+     ],
+     "forbid": [
+      "818"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
+  },
+  {
+   "id": "C8-04-sn-s5000",
+   "class": "C8",
+   "base": 4,
+   "lang": "en",
+   "fillerSize": 5000,
+   "fillerSeed": 3877752022,
+   "fillerFromT": -2592000,
+   "fillerToT": 10432860,
+   "events": [
+    {
+     "day": 0,
+     "t": 32400,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "The person's team is the Harbor Owls.",
+     "durable": true,
+     "asUser": "I play for the Harbor Owls.",
+     "asAssistant": "Noted."
+    },
+    {
+     "day": 0,
+     "t": 32520,
+     "session": "d0",
+     "kind": "person_fact",
+     "text": "On this week's roster the person has kit code KT-5124.",
+     "durable": false,
+     "asUser": "On this week's roster my kit code is KT-5124.",
+     "asAssistant": "Ok, noted."
+    }
+   ],
+   "probes": [
+    {
+     "day": 120,
+     "t": 10432800,
+     "session": "d120",
+     "text": "Which team do I play for, and what's my kit code?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "shared"
+    },
+    {
+     "day": 120,
+     "t": 10432860,
+     "session": "d120",
+     "text": "Filling in a league sign-up: which club am I with, and which uniform code is mine?",
+     "expect": [
+      "Harbor Owls"
+     ],
+     "forbid": [
+      "KT-5124"
+     ],
+     "surface": "both",
+     "wording": "disjoint"
+    }
+   ]
   }
  ]
 }

@@ -19,12 +19,14 @@ npx tsx scripts/continuity-bench/generate.ts [--check]                          
 npx tsx scripts/continuity-bench/generate.ts --corpus-version continuity-v2 [--check]   # v2 corpus
 ```
 
-v2 has 570 scenarios and 1392 probes (464 per filler size): the 444 scenarios
+v2 has 594 scenarios and 1440 probes (480 per filler size): the 444 scenarios
 and 1140 probes of the first v2 build, byte-identical (a test pins their hash),
 then the 90 scenarios of the Port 1 variants below, then the 36 scenarios of
-the two known-limit variants (`single`, `longcloser`). A second hash pins the
-534 scenarios before those last 36. A leg takes about 155 to 185 s on the
-VPS, most of it at size 5000. The default output name is
+the two known-limit variants (`single`, `longcloser`), then the 24 Port 3
+scenarios (§Tombstones). A second hash pins the 534 scenarios before the
+known-limit variants, a third the 570 before the Port 3 ones, a fourth the
+582 before the C8 snapshot cases. A leg takes
+about 155 to 185 s on the VPS, most of it at size 5000. The default output name is
 `results/jarvis-<sha>-<leg>-emb-<on|off>-v2.json`; a switch set away from its
 default adds `-<switch-name>-<value>` (e.g. `-memory-open-work-on`).
 
@@ -386,6 +388,9 @@ put duplicates at ~12 %; that figure counts a looser match and was not re-measur
   - A durable `person_fact` (and its corrections) goes to `upsertFact` as `preference`, confidence 0.9.
     That is JME's only permanent kind; JME has no identity category.
   - A temporary fact goes in as `event` with a 7-day expiry.
+  - With embeddings off, a correction replaces its target through `supersedeCluster` at the
+    first nightly consolidation after it, and `pruneExpiredFacts()` runs once the timeline
+    is in (§Tombstones).
   - A `standing` instruction goes to `user_fact_set` (category `preferences`).
 
   No handoff or session summary is written: Jarvis has no such write path today.
@@ -448,7 +453,8 @@ This leg is not run in the baseline. It costs real embedding calls.
   its in-process cache. The harness does not cache those.
 - **Corrections.** With vectors, JME may absorb a correction as `skipped`
   (cos ≥ 0.95, the stored row takes the new wording) or as `superseded`
-  (≥ 0.85). Both are accepted. Without vectors only `inserted` is accepted.
+  (≥ 0.85). Both are accepted. Without vectors the harness supersedes the
+  correction's target itself through `supersedeCluster` (§Tombstones).
 - **Call budget.** Before any call, the run prints an **upper bound** on
   every embedding call it can make, broken down by source:
   - stored rows not yet in the bench cache
@@ -768,6 +774,185 @@ Limits of this port:
   filter hid that FTS match.
 - **Nothing is learned from use.** `was_used`, the outcome bias and the
   ranking are unchanged.
+
+## Tombstones (Port 3, `MEMORY_TOMBSTONES`)
+
+C2 corrects a fact and C8 lets a temporary one expire. JME supersedes,
+rewords and expires its own facts, but the `conversations` rows that carried
+the old value stay. With the switch off they still reach the model on 44.4 %
+of the C2 probes from size 500 and on 40.9 to 59.1 % of the C8 probes,
+through the enrichment block and `memory_search`.
+
+**What the harness had to change first.** With embeddings off, `upsertFact`
+cannot take its cosine decision and plain-inserts a correction, so neither
+leg ever superseded anything. The ideal leg now takes that decision from the
+corpus (a correction replaces its target's live row) and calls the
+production step after it, `supersedeCluster` in `src/memory/jme.ts`, which
+`upsertFact` itself calls. The supersede is dated at the first nightly
+consolidation after the correction: the `jme-consolidate` cron runs at 02:45
+local time and takes only turns at least 30 minutes old
+(`nextConsolidationT` in `adapter-jarvis.ts`), so a correction stated at
+09:00 on day 5 is superseded at 02:45 on day 6, before any probe. After the
+ingest the leg runs the production `pruneExpiredFacts()`, in place of the
+nightly cron. Both happen with the switch off too, since a keyed production
+instance supersedes: the ideal-leg `off` run therefore differs from the
+Port 2 commit on 18 C2 probes, all in the `jme` / `jme_query` components
+(the old fact is no longer a live JME row), with one hit gained at size
+5000. The raw leg reproduces the Port 2 commit on all 1,392 probes they
+share.
+
+**The write side (`src/memory/tombstones.ts`).** When a fact stops being
+true, `recordTombstone` writes a row to `memory_tombstones` (schema v13):
+
+- **When.** At two JME sites: a supersede (each replaced row), and the prune
+  for the transient class only: a `jme_facts` row with `category` `'event'`
+  or `'project'` whose text matches `TRANSIENT_FACT_RE` (the 30-day snapshot
+  class: a week marker, a day number, a count of tests or players), read
+  before the delete in the same transaction and dated at its `expires_at`.
+  A reword writes none: it restates the fact and its value stands. Any other
+  expired fact writes none either: a plain event lives a flat 30 days from
+  extraction, so it ages out without its value being shown false ("your
+  flight to Madrid is AM-0412" expiring must not silence "the AM-0412 leaves
+  at 7"). Both trace `{mode, reason: "reworded" | "expired", skipped:
+  true}`. A low-confidence row pruned before it expires gets nothing.
+- **Terms.** Codes and figures only: a chunk of 3 or more letters or digits
+  that holds a digit or is an all-capitals acronym, kept whole (the Port 2
+  code rule, `codeTermCandidates`). A word is never a term: JME facts carry
+  no bank, so there is no bank in which a word could be measured as rare.
+  `terms` are the old text's codes the new text does not hold; `new_terms`
+  the new text's codes the old text does not hold.
+- **Rare in the bank.** A code, on either side, is kept only when it is rare
+  in `mc-jarvis` by the Port 2 rule: held as a phrase (so "KVX-482" counts as
+  itself) by at least one and at most `max(1, ceil(0.02 × bank rows))` rows,
+  through Port 2's `keywordDocFrequency`. A common code ("2026", "CDMX")
+  would silence rows that have nothing to do with the fact. The check is a
+  bank row count plus one capped count per candidate of the fact's text, per
+  tombstone write: on a 12,600-row bank with 400 live facts, a supersede
+  write took a median of 2.8 ms (p95 4.5 ms) with both checks.
+- **Still held is not gone.** A term that a live `jme_facts` row still holds
+  (another row, confidence above 0, not expired at the write) is dropped, so
+  an expired weekly slot does not silence a durable fact that shares its
+  number. Reject markers (confidence 0) do not count as live: a rejected
+  value is not a claim. The check is one `SELECT` of the live facts per
+  tombstone write; writes happen only in the nightly consolidation and the
+  prune. Measured per write: a median of 1.4 ms with 400 live facts, 5.6 ms
+  with 2,000, 27.1 ms with 10,000 (p95 3.6, 8.7, 37.1 ms).
+- **Never a secret.** Stored secret values and bracketed placeholders are
+  blanked before the terms are cut, so no term is a value the scrubber would
+  mask, or a piece of one.
+- **Not written.** A tombstone with no term filters nothing and is not
+  written (the trace still counts it), except a supersede, whose row marks
+  the fact so the prune does not add a second, `expired`, tombstone for it.
+
+**The read side (`SqliteMemoryBackend.recall`).** Only a recall on bank
+`mc-jarvis` is filtered (`TOMBSTONE_BANK`): JME's episodes come from the
+operator exchange the router also retains there, so a tombstone speaks for
+that bank and no other. On every path (FTS5, embeddings, LIKE, the
+newest-rows fallback), before the final slice, a row is dropped when, for
+one tombstone, all three hold:
+
+1. the row was created before the tombstone;
+2. it holds one of the tombstone's terms, as a contiguous run of folded FTS
+   tokens;
+3. it holds none of the tombstone's new terms (a row that names the new
+   value is the correction itself, or newer news).
+
+The 500 newest tombstones that carry a term are loaded once and cached until
+the next write.
+
+**The switch.** `MEMORY_TOMBSTONES=off|record|on`, default `off`; any other
+value counts as `off`.
+
+- **`off`.** No table write, no load, no filter, no trace, and the prune runs
+  only its `DELETE`: the recall result is the one before this port.
+- **`record`.** Writes tombstones and traces, filters nothing. It exists to
+  build up the table and to count, on live traffic, how many recalled rows
+  `on` would drop before anyone turns it on.
+- **`on`.** Writes and filters.
+- **Traces** (`memory.tombstone`, counts only): on write `{mode, reason,
+  terms, newTerms}` under the task key `memory-tombstones` (a reword or a
+  non-transient expiry: `{mode, reason, skipped: true}`); on recall `{mode, bank,
+  returned, wouldDrop}` (record) or `{..., dropped}` (on) under
+  `memory-recall`, or `{mode, bank, error: true}` when the load failed, in
+  which case nothing is filtered.
+- **Cost.** On a scratch bank of 12,600 rows with 500 tombstones, a recall
+  went from a median of 5.7 to 5.9 ms with the switch off to 7.1 to 7.4 ms
+  with it on (p95 8.4 to 8.9 ms → 9.9 to 10.3 ms; `record` 7.7 ms, p95
+  10.6 ms); loading the 500 tombstones once took 4.0 ms.
+
+**The Port 3 corpus items** (24 scenarios, 48 probes; ids end `-rp`, `-nf`,
+`-rw`, `-lv`, `-sn` and the size):
+
+- **`rp`.** A C2 correction whose row repeats the old value and names the new
+  one ("Ya no es 3.847.215, ahora es 4.120.000.").
+- **`nf`.** The same with no new figure ("Ya no es 3.847.215, te paso el
+  monto nuevo luego.").
+- **`rw`.** A durable fact reworded so that it drops a word; the value must
+  still be recalled.
+- **`lv`.** A C8 temporary fact whose number a durable fact also holds; the
+  durable value must still be recalled.
+- **`sn`.** Four C8 temporary facts whose text carries a snapshot marker
+  `TRANSIENT_FACT_RE` accepts ("semana 14", "Day 3", "W22", "roster") and a
+  figure (a phone ending, a time, a locker number, a code): the one kind of
+  expiry that writes a tombstone. The second probe avoids the durable
+  fact's words.
+
+**Results** (`results/port3-tombstones.md`, embeddings off, sizes 50, 500,
+5000):
+
+- **Ideal leg, C2.** Stale-hit drops from 44.4 % to 16.7 % on both surfaces
+  at 500 and 5000, and on the asked surface at 50; hit stays at 50 %. At
+  size 50 the proactive surface stays at 88.9 % stale: the hydrated thread
+  still holds the exchange that stated the old value, and the thread is out
+  of scope.
+- **Ideal leg, C8.** Stale-hit drops from 50 / 40.9 / 59.1 % to 36.4 /
+  27.3 / 40.9 % on both surfaces; hit stays at 50 / 50 / 54.5 %. Every
+  probe that moved is an `sn` probe: the other C8 temporary facts say "this
+  week", not "semana 2", so each one ages out as a plain event and writes no
+  tombstone, and their cells are as with the switch off.
+- **The new items.** `rp` and `nf`: the stale value leaves `memory_search`
+  at every size and the enrichment block at 500 and 5000, and the hit is
+  kept. `rw`: unchanged, hits kept (a reword silences nothing). `lv`:
+  unchanged, the durable number is still recalled; its temporary fact is a
+  plain event, so its stale value stays. `sn`: stale-hit drops from 37.5 /
+  37.5 / 50 % to 0 at every size on both surfaces (3, 3 and 4 of 8 probes),
+  hit stays at 50 %.
+- **Raw leg.** Unchanged on every probe: without extraction there is no JME
+  fact to supersede or expire, so no tombstone is written.
+- **Other classes.** C1, C3, C4, C5, C6 and C7 do not move on either leg (0
+  of 75 cells, 0 probe flips); no hit is lost in any class.
+
+Limits of this port:
+
+- **Only rare codes and figures are silenced.** A value stated in words (a
+  drug, a neighbourhood, a city, a name) leaves no term, and neither does a
+  code common in the bank, so their rows stay: that is the residual C2
+  stale-hit above.
+- **Only a transient fact's expiry is silenced.** A plain event or a
+  durable fact that ages out leaves its rows in recall: the residual C8
+  stale-hit above. A temporary fact JME stores as a plain event ("this
+  week only") is covered only if its wording carries a snapshot marker.
+- **A correction with no new figure is silenced too.** The `nf` row holds
+  the old figure and no new term, so it is dropped like any older mention:
+  on the corpus probes it never ranks into `memory_search` or a 10-item
+  recall in either mode, and on two probes written to reach it ("¿Sigue
+  siendo 3.847.215 el presupuesto?", "¿Ya llegó el monto nuevo?") it was
+  recalled on 6 of 6 recalls with the switch off and 0 of 6 with it on. The
+  JME fact still carries the news, and the `rp` row, which names the new
+  figure, is kept on every recall.
+- **A correction whose new value is common is silenced too.** A new figure
+  held by more than 2 % of the bank's rows is dropped from `new_terms`, so
+  the correction row that names it gets no protecting term and is silenced
+  like the `nf` row.
+- **Only the 500 newest tombstones apply.** The load is capped at 500; an
+  older tombstone stops filtering once 500 newer ones exist (open question).
+- **The thread is untouched.** Rows already in the hydrated thread are not
+  filtered, as the size-50 C2 proactive cell shows.
+- **The raw leg and an extractor that misses.** Only a fact JME superseded
+  or expired leaves a tombstone. What extraction never stored, no tombstone
+  covers.
+- **A later mention of the old value survives.** A row created after the
+  tombstone is kept even when it repeats the old value.
 
 ## Limits
 

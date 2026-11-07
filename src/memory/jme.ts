@@ -28,6 +28,7 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { logRecall, redactSecrets } from "./recall-utility.js";
+import { recordTombstone, tombstoneMode, traceTombstoneSkipped } from "./tombstones.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
 import {
@@ -721,16 +722,44 @@ export function pruneExpiredFacts(): number {
   const now = Date.now();
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
-  const result = db
-    .prepare(
-      `DELETE FROM jme_facts
-       WHERE NOT (confidence = 0 AND category = 'preference')
-         AND ((expires_at IS NOT NULL AND expires_at < ?)
-           OR (confidence < 0.4 AND ts < ?))`,
-    )
-    .run(now, thirtyDaysAgo);
+  // MEMORY_TOMBSTONES record|on: only a transient fact (category 'event' or
+  // 'project' matching TRANSIENT_FACT_RE, the 30 d snapshot kind) stops
+  // being true at its expires_at, so its tombstone is dated there. Any other
+  // expired fact aged out by its TTL (a plain event's is a flat 30 d from
+  // extraction) and is unconfirmed, not false: a skip trace, no tombstone
+  // (qa R1 W3, qa R2 W2). A
+  // low-confidence row pruned before expiry gets none: dropping a weak fact
+  // is not evidence that its value changed. The SELECT, the tombstones and
+  // the DELETE share one transaction (qa R1 R4).
+  return db.transaction(() => {
+    if (tombstoneMode() !== "off") {
+      const expired = db
+        .prepare(
+          `SELECT id, fact_text, category, expires_at FROM jme_facts
+           WHERE category IN ('event', 'project')
+             AND expires_at IS NOT NULL AND expires_at < ?`,
+        )
+        .all(now) as Array<{ id: number; fact_text: string; category: JmeFactCategory; expires_at: number }>;
+      for (const f of expired) {
+        if (!TRANSIENT_FACT_RE.test(f.fact_text)) {
+          traceTombstoneSkipped("expired");
+          continue;
+        }
+        recordTombstone({ id: f.id, factText: f.fact_text }, null, "expired", f.expires_at, now);
+      }
+    }
 
-  return result.changes;
+    const result = db
+      .prepare(
+        `DELETE FROM jme_facts
+         WHERE NOT (confidence = 0 AND category = 'preference')
+           AND ((expires_at IS NOT NULL AND expires_at < ?)
+             OR (confidence < 0.4 AND ts < ?))`,
+      )
+      .run(now, thirtyDaysAgo);
+
+    return result.changes;
+  })();
 }
 
 /**
@@ -945,13 +974,12 @@ export async function upsertFact(
 
   let best: { id: number; sim: number; row: (typeof rows)[number] } | null =
     null;
-  const cluster: Array<{
-    id: number;
-    sim: number;
-    confirmed: boolean;
-    confidence: number;
-    permanent: boolean;
-  }> = [];
+  const cluster: Array<
+    SupersededFact & {
+      sim: number;
+      confirmed: boolean;
+    }
+  > = [];
   for (const row of rows) {
     let sim: number;
     try {
@@ -963,6 +991,7 @@ export async function upsertFact(
     if (sim >= CONSOLIDATOR_DEDUP_THRESHOLD) {
       cluster.push({
         id: row.id,
+        factText: row.fact_text,
         sim,
         confirmed: fact.category === "preference" && row.confidence >= 1.0,
         confidence: row.confidence,
@@ -1014,6 +1043,8 @@ export async function upsertFact(
           bestId,
         );
       });
+      // MEMORY_TOMBSTONES: a reword restates the fact, its value stands (qa R1 W3).
+      if (refreshWording) traceTombstoneSkipped("reworded");
     }
     return "skipped";
   }
@@ -1056,32 +1087,59 @@ export async function upsertFact(
   }
 
   if (cluster.length > 0) {
-    // Near-duplicate — supersede. Insert the NEW fact first, THEN expire the
-    // old cluster: a crash in between leaves a temporary duplicate (absorbed
-    // by the next run's skip) instead of losing the fact outright. The new
-    // row inherits the cluster's strongest class — an inferred 0.89
-    // re-extraction must not demote a stated 0.99 permanent preference to a
-    // 60 d guess (qa R2 C1): confidence = the max (≤ 0.99), permanent if any
-    // member was.
-    await writeFact({
-      ...clamped,
-      confidence: Math.min(
-        MODEL_PREFERENCE_MAX_CONFIDENCE,
-        Math.max(clamped.confidence ?? 1, ...cluster.map((c) => c.confidence)),
-      ),
-      expiresAt: cluster.some((c) => c.permanent) ? null : undefined,
-    });
-    const ids = cluster.map((c) => c.id);
-    writeWithRetry(() => {
-      db.prepare(
-        `UPDATE jme_facts SET expires_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`,
-      ).run(now, ...ids);
-    });
+    await supersedeCluster(clamped, cluster, now);
     return "superseded";
   }
 
   await writeFact(clamped);
   return "inserted";
+}
+
+/** A live jme_facts row the incoming fact replaces. */
+export interface SupersededFact {
+  id: number;
+  factText: string;
+  confidence: number;
+  /** expires_at IS NULL. */
+  permanent: boolean;
+}
+
+/**
+ * The supersede step of upsertFact, after its cosine decision (exported for
+ * the continuity harness, whose ideal leg knows the replaced row without
+ * embeddings). `fact` is the validated incoming fact (upsertFact's redacted,
+ * clamped copy).
+ *
+ * Near-duplicate — supersede. Insert the NEW fact first, THEN expire the
+ * old cluster: a crash in between leaves a temporary duplicate (absorbed
+ * by the next run's skip) instead of losing the fact outright. The new
+ * row inherits the cluster's strongest class — an inferred 0.89
+ * re-extraction must not demote a stated 0.99 permanent preference to a
+ * 60 d guess (qa R2 C1): confidence = the max (≤ 0.99), permanent if any
+ * member was. Each expired member gets a tombstone (MEMORY_TOMBSTONES
+ * record|on) dated `now`.
+ */
+export async function supersedeCluster(
+  fact: JmeFact,
+  cluster: readonly SupersededFact[],
+  now: number = Date.now(),
+): Promise<void> {
+  const db = getDatabase();
+  await writeFact({
+    ...fact,
+    confidence: Math.min(
+      MODEL_PREFERENCE_MAX_CONFIDENCE,
+      Math.max(fact.confidence ?? 1, ...cluster.map((c) => c.confidence)),
+    ),
+    expiresAt: cluster.some((c) => c.permanent) ? null : undefined,
+  });
+  const ids = cluster.map((c) => c.id);
+  writeWithRetry(() => {
+    db.prepare(
+      `UPDATE jme_facts SET expires_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`,
+    ).run(now, ...ids);
+  });
+  for (const c of cluster) recordTombstone(c, fact.factText, "superseded", now);
 }
 
 /**

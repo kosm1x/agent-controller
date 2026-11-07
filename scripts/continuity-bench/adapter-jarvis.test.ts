@@ -20,6 +20,7 @@ import {
   assertUpsertStatus,
   enrichmentComponents,
   exchangeContent,
+  nextConsolidationT,
   promptBudget,
   resolveSwitches,
   scratchDbPath,
@@ -304,14 +305,105 @@ describe.each(["raw", "ideal"] as const)("JarvisAdapter v2 thread paths leg=%s",
 
 describe("production switches", () => {
   it("resolveSwitches: every known switch defaults off, a given value wins, unknown names and values throw", () => {
-    expect(SWITCHES).toEqual({ MEMORY_OPEN_WORK: ["off", "shadow", "on"], MEMORY_RECALL_FLOOR: ["off", "shadow", "on"] });
-    expect(DEFAULT_SWITCHES).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
-    expect(resolveSwitches()).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" });
-    expect(resolveSwitches({ MEMORY_OPEN_WORK: "on" })).toEqual({ MEMORY_OPEN_WORK: "on", MEMORY_RECALL_FLOOR: "off" });
-    expect(resolveSwitches({ MEMORY_RECALL_FLOOR: "shadow" })).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "shadow" });
+    expect(SWITCHES).toEqual({
+      MEMORY_OPEN_WORK: ["off", "shadow", "on"],
+      MEMORY_RECALL_FLOOR: ["off", "shadow", "on"],
+      MEMORY_TOMBSTONES: ["off", "record", "on"],
+    });
+    const OFF = { MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "off" };
+    expect(DEFAULT_SWITCHES).toEqual(OFF);
+    expect(resolveSwitches()).toEqual(OFF);
+    expect(resolveSwitches({ MEMORY_OPEN_WORK: "on" })).toEqual({ ...OFF, MEMORY_OPEN_WORK: "on" });
+    expect(resolveSwitches({ MEMORY_RECALL_FLOOR: "shadow" })).toEqual({ ...OFF, MEMORY_RECALL_FLOOR: "shadow" });
+    expect(resolveSwitches({ MEMORY_TOMBSTONES: "record" })).toEqual({ ...OFF, MEMORY_TOMBSTONES: "record" });
     expect(() => resolveSwitches({ MEMORY_RECALL_FLOOR: "true" })).toThrow(/off\|shadow\|on/);
+    expect(() => resolveSwitches({ MEMORY_TOMBSTONES: "shadow" })).toThrow(/off\|record\|on/);
     expect(() => resolveSwitches({ MEMORY_OPEN_WORKS: "on" })).toThrow(/unknown switch/);
     expect(() => resolveSwitches({ MEMORY_OPEN_WORK: "yes" })).toThrow(/off\|shadow\|on/);
+  });
+});
+
+const C2: Scenario = {
+  ...base,
+  id: "C2-t",
+  class: "C2",
+  fillerToT: 10 * DAY + 64_800,
+  events: [
+    { day: 0, t: 32_400, session: "d0", kind: "person_fact", text: "The gate code of the person is 5821.", durable: true, asUser: "El código del portón es 5821.", asAssistant: "Anotado." },
+    { day: 5, t: 5 * DAY + 32_400, session: "d5", kind: "correction", targetEventIndex: 0, text: "The gate code of the person is 7394.", asUser: "Cambió el código del portón: ahora es 7394.", asAssistant: "Actualizado." },
+  ],
+  probes: [{ day: 10, t: 10 * DAY + 64_800, session: "d10", text: "¿Cuál es el código del portón?", expect: ["7394"], forbid: ["5821"], surface: "both" }],
+};
+
+describe.each(["off", "on"] as const)("JarvisAdapter ideal leg, embeddings off, MEMORY_TOMBSTONES=%s", (mode) => {
+  let dir: string;
+  let adapter: JarvisAdapter;
+  const runs: Record<string, ProbeRun> = {};
+  const facts: Record<string, string[]> = {};
+  const tombs: Record<string, Array<{ reason: string; terms: string }>> = {};
+  /** Seconds from the C2 correction row to its tombstone. */
+  let tombAfterCorrectionS: number | undefined;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "cb-adapter-ts-"));
+    adapter = new JarvisAdapter(scratchDbPath(dir), "ideal", { switches: { MEMORY_TOMBSTONES: mode } });
+    adapter.open();
+    for (const s of [C2, C8]) {
+      runs[s.id] = (await adapter.runScenario(s, FILLER_SPEC_V1))[0];
+      const db = getDatabase();
+      facts[s.id] = (db.prepare("SELECT fact_text FROM jme_facts ORDER BY id").all() as Array<{ fact_text: string }>).map((r) => r.fact_text);
+      tombs[s.id] = db.prepare("SELECT reason, terms FROM memory_tombstones ORDER BY id").all() as Array<{ reason: string; terms: string }>;
+      if (s.id === "C2-t" && mode === "on") {
+        const utc = (x: string) => Date.parse(`${x.replace(" ", "T")}Z`) / 1000;
+        const row = db.prepare("SELECT created_at FROM conversations WHERE content LIKE '%7394%' ORDER BY id LIMIT 1").get() as { created_at: string };
+        const tomb = db.prepare("SELECT created_at FROM memory_tombstones").get() as { created_at: string };
+        tombAfterCorrectionS = utc(tomb.created_at) - utc(row.created_at);
+      }
+    }
+  });
+  afterAll(() => {
+    adapter.close();
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.MEMORY_TOMBSTONES;
+  });
+
+  it("C2: the correction supersedes its target through jme.ts supersedeCluster; the prune deletes the old row", () => {
+    expect(facts["C2-t"]).toEqual(["The gate code of the person is 7394."]);
+  });
+
+  it("C8: the prune deletes the expired temporary fact", () => {
+    expect(facts["C8-t"]).toEqual(["El tipo de sangre de la persona es AB negativo."]);
+  });
+
+  it(mode === "on" ? "on: the supersede and the expiry each leave a tombstone" : "off: no tombstone is written", () => {
+    if (mode === "off") {
+      expect(tombs).toEqual({ "C2-t": [], "C8-t": [] });
+    } else {
+      expect(tombs["C2-t"]).toEqual([{ reason: "superseded", terms: '["5821"]' }]);
+      // A word is never a term (qa R1 W1): "Cuernavaca" leaves nothing to silence.
+      expect(tombs["C8-t"]).toEqual([]);
+    }
+  });
+
+  if (mode === "on")
+    it("on: the supersede is dated at the next nightly consolidation, not at the correction row (qa R1 W4)", () => {
+      // Correction at day 5 09:00, consolidated at day 6 02:45.
+      expect(tombAfterCorrectionS).toBe(6 * DAY + 9900 - (5 * DAY + 32_400));
+    });
+
+  it(mode === "on" ? "on: the C2 old value no longer reaches the explicit search" : "off: the C2 old value still reaches the explicit search", () => {
+    const text = comp(runs["C2-t"], "asked", "memory_search")?.text ?? "";
+    if (mode === "on") expect(text).not.toContain("5821");
+    else expect(text).toContain("5821");
+  });
+});
+
+describe("nextConsolidationT", () => {
+  it("is the first 02:45 at which the turn is 30 min settled", () => {
+    expect(nextConsolidationT(5 * DAY + 32_400)).toBe(6 * DAY + 9900);
+    expect(nextConsolidationT(DAY + 9900 - 1800)).toBe(DAY + 9900);
+    expect(nextConsolidationT(DAY + 9900 - 1799)).toBe(2 * DAY + 9900);
+    expect(nextConsolidationT(0)).toBe(9900);
   });
 });
 
@@ -334,7 +426,7 @@ describe("JarvisAdapter MEMORY_RECALL_FLOOR=on", () => {
   });
 
   it("open() sets the switch in this process and the adapter records it", () => {
-    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on" });
+    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "on", MEMORY_TOMBSTONES: "off" });
     expect(process.env.MEMORY_RECALL_FLOOR).toBe("on");
   });
 
@@ -373,7 +465,7 @@ describe.each(["off", "shadow", "on"] as const)("JarvisAdapter open_work compone
   const needle = (id: string) => v2(id).probes[0].expect[0];
 
   it("open() sets the switch in this process and the adapter records it", () => {
-    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: mode, MEMORY_RECALL_FLOOR: "off" });
+    expect(adapter.switches).toEqual({ MEMORY_OPEN_WORK: mode, MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "off" });
     expect(process.env.MEMORY_OPEN_WORK).toBe(mode);
     expect(process.env.MEMORY_RECALL_FLOOR).toBe("off");
   });

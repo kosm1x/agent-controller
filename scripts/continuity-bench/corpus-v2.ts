@@ -17,6 +17,12 @@
  *   - Port 1 (appended; the scenarios before them are unchanged): C3
  *     `handoff`, `crowded` and `closer` (buildTailVariant), then, appended
  *     after those, `single` and `longcloser` (the reader's known limits).
+ *   - Port 3 (appended after those; tombstones, qa R1 W4): C2 corrections
+ *     whose row repeats the old figure (`rp`, with the new one; `nf`, no new
+ *     figure yet), a correction that only rewords a durable fact (`rw`), and
+ *     a C8 temporary fact sharing its figure with the live durable one (`lv`),
+ *     then (qa R2 W2) four C8 temporary facts with a TRANSIENT_FACT_RE
+ *     snapshot marker and a figure (`sn`).
  * All content is synthetic (made-up names, places, figures).
  */
 
@@ -559,6 +565,172 @@ function buildC8(b: number): Draft {
 }
 
 // ---------------------------------------------------------------------------
+// Port 3 — the tombstone cases (qa R1 W4), on FACTS[2] (the budget) and new topics.
+// ---------------------------------------------------------------------------
+
+/** C2 on the budget whose correction row repeats the old figure: with the new one (`rp`) or none yet (`nf`). */
+function buildC2Repeat(kind: "rp" | "nf"): Draft {
+  const f = FACTS[2];
+  const fix =
+    kind === "rp"
+      ? {
+          text: "El presupuesto aprobado para la remodelación de la persona es de 4.120.000 pesos.",
+          asUser: "Ya no es 3.847.215, ahora es 4.120.000.",
+          asAssistant: "Entendido, ajusto la referencia a 4.120.000.",
+          needle: "4.120.000",
+        }
+      : {
+          text: "El presupuesto de la remodelación de la persona cambió; el monto nuevo llega luego.",
+          asUser: "Ya no es 3.847.215, te paso el monto nuevo luego.",
+          asAssistant: "Entendido, quedo pendiente del monto nuevo.",
+          needle: "monto nuevo",
+        };
+  const events: CorpusEvent[] = [
+    { day: 0, t: eventT(0, 0), session: "d0", kind: "person_fact", text: f.text, durable: true, asUser: f.say, asAssistant: f.ack },
+    { day: 5, t: eventT(5, 1), session: "d5", kind: "correction", targetEventIndex: 0, text: fix.text, asUser: fix.asUser, asAssistant: fix.asAssistant },
+  ];
+  const probes = [f.askAfterFix, C2_DISJOINT[0]].map((text, j) =>
+    probe(10, j, { text, expect: [fix.needle], forbid: [f.needle], surface: "both" }),
+  );
+  return { class: "C2", base: 1, lang: f.lang, fillerFromT: FROM_MINUS_30, fillerToT: probes[1].t, events, probes };
+}
+
+/** A correction that only rewords a durable fact, dropping a word the probe still asks for: nothing is stale. */
+function buildC2Reword(): Draft {
+  const events: CorpusEvent[] = [
+    {
+      day: 0,
+      t: eventT(0, 0),
+      session: "d0",
+      kind: "person_fact",
+      text: "Rocío, la prima de la persona, vive en Monterrey con su hermana.",
+      durable: true,
+      asUser: "Mi prima Rocío vive en Monterrey con su hermana.",
+      asAssistant: "Qué bien, lo anoto.",
+    },
+    {
+      day: 5,
+      t: eventT(5, 1),
+      session: "d5",
+      kind: "correction",
+      targetEventIndex: 0,
+      text: "Rocío, la prima de la persona, vive con su hermana.",
+      asUser: "Rocío sigue viviendo con su hermana, por cierto.",
+      asAssistant: "Anotado.",
+    },
+  ];
+  const probes = ["¿En qué ciudad vive mi prima Rocío?", "Le mando un regalo a mi familiar, ¿a cuál zona del país lo envío?"].map((text, j) =>
+    probe(10, j, { text, expect: ["Monterrey"], forbid: [], surface: "both" }),
+  );
+  return { class: "C2", base: 1, lang: "es", fillerFromT: FROM_MINUS_30, fillerToT: probes[1].t, events, probes };
+}
+
+/** C8 whose temporary fact shares its figure with the durable one: its expiry must not silence the durable figure. */
+function buildC8Live(): Draft {
+  const events: CorpusEvent[] = [
+    {
+      day: 0,
+      t: eventT(0, 0),
+      session: "d0",
+      kind: "person_fact",
+      text: "El gafete de empleado de la persona es el 6614.",
+      durable: true,
+      asUser: "Mi gafete de empleado es el 6614.",
+      asAssistant: "Anotado.",
+    },
+    {
+      day: 0,
+      t: eventT(0, 1),
+      session: "d0",
+      kind: "person_fact",
+      text: "Esta semana la persona estaciona en el cajón 6614 del sótano (solo esta semana).",
+      durable: false,
+      asUser: "Esta semana me tocó el cajón 6614 del sótano, igual que mi gafete.",
+      asAssistant: "Va, lo tomo en cuenta esta semana.",
+    },
+  ];
+  const probes = ["¿Cuál es mi número de gafete?", "En la recepción me piden mi identificación laboral, ¿qué cifra doy?"].map((text, j) =>
+    probe(120, j, { text, expect: ["6614"], forbid: ["sótano"], surface: "both" }),
+  );
+  return { class: "C8", base: 1, lang: "es", fillerFromT: FROM_MINUS_30, fillerToT: probes[1].t, events, probes };
+}
+
+/**
+ * C8 whose temporary fact carries a snapshot marker TRANSIENT_FACT_RE accepts
+ * ("semana 14", "Day 3", "W22", "roster") and a figure (qa R2 W2): the one
+ * kind of expiry that writes a tombstone. One per C8 figure type (a phone
+ * ending, a time, a locker number, a code); the second probe avoids the
+ * durable fact's words.
+ */
+const SNAPSHOT: Array<{
+  lang: "es" | "en";
+  durableText: string;
+  durableSay: string;
+  durableNeedle: string;
+  tempText: string;
+  tempSay: string;
+  tempNeedle: string;
+  probes: [string, string];
+}> = [
+  {
+    lang: "es",
+    durableText: "El tipo de sangre de la persona es B negativo.",
+    durableSay: "Mi tipo de sangre es B negativo.",
+    durableNeedle: "B negativo",
+    tempText: "En la semana 14 la persona usa el teléfono de repuesto que termina en 5307.",
+    tempSay: "En la semana 14 traigo el teléfono de repuesto, el que termina en 5307.",
+    tempNeedle: "5307",
+    probes: [
+      "Para el formulario médico: ¿qué tipo de sangre tengo y a qué teléfono me marcan?",
+      "Para la transfusión, ¿qué grupo sanguíneo pongo y a qué número me localizan?",
+    ],
+  },
+  {
+    lang: "en",
+    durableText: "The person's son's birthday is July 9.",
+    durableSay: "My son's birthday is July 9.",
+    durableNeedle: "July 9",
+    tempText: "On Day 3 of the camp, the person picks up their son at 4:15.",
+    tempSay: "It's Day 3 of the camp, so I pick my son up at 4:15.",
+    tempNeedle: "4:15",
+    probes: ["When is my son's birthday, and what time do I pick him up?", "When do we throw our boy's party, and what time do I collect him?"],
+  },
+  {
+    lang: "es",
+    durableText: "El número de socio del gimnasio de la persona es 77-3051.",
+    durableSay: "Mi número de socio del gimnasio es 77-3051.",
+    durableNeedle: "77-3051",
+    tempText: "En la W22 la persona usa el casillero 818 del gimnasio.",
+    tempSay: "En la W22 me dieron el casillero 818 del gimnasio.",
+    tempNeedle: "818",
+    probes: [
+      "¿Cuál es mi número de socio del gimnasio y qué casillero uso?",
+      "Para entrar al club deportivo, ¿con qué membresía me identifico y en cuál taquilla dejo mis cosas?",
+    ],
+  },
+  {
+    lang: "en",
+    durableText: "The person's team is the Harbor Owls.",
+    durableSay: "I play for the Harbor Owls.",
+    durableNeedle: "Harbor Owls",
+    tempText: "On this week's roster the person has kit code KT-5124.",
+    tempSay: "On this week's roster my kit code is KT-5124.",
+    tempNeedle: "KT-5124",
+    probes: ["Which team do I play for, and what's my kit code?", "Filling in a league sign-up: which club am I with, and which uniform code is mine?"],
+  },
+];
+
+function buildC8Snapshot(b: number): Draft {
+  const f = SNAPSHOT[b];
+  const events: CorpusEvent[] = [
+    { day: 0, t: eventT(0, 0), session: "d0", kind: "person_fact", text: f.durableText, durable: true, asUser: f.durableSay, asAssistant: f.lang === "es" ? "Anotado." : "Noted." },
+    { day: 0, t: eventT(0, 1), session: "d0", kind: "person_fact", text: f.tempText, durable: false, asUser: f.tempSay, asAssistant: f.lang === "es" ? "Va, lo tomo en cuenta." : "Ok, noted." },
+  ];
+  const probes = f.probes.map((text, j) => probe(120, j, { text, expect: [f.durableNeedle], forbid: [f.tempNeedle], surface: "both" }));
+  return { class: "C8", base: b + 1, lang: f.lang, fillerFromT: FROM_MINUS_30, fillerToT: probes[1].t, events, probes };
+}
+
+// ---------------------------------------------------------------------------
 
 interface DraftV2 extends Draft {
   /** Scenario id stem after the base number (C3/C4 variants). */
@@ -593,6 +765,10 @@ function draftsV2(): DraftV2[] {
     out.push({ ...buildTailVariant(b, "single", CLOSER_GAP_ROWS), tag: `sg${CLOSER_GAP_ROWS}` });
     out.push({ ...buildTailVariant(b, "longcloser", CLOSER_GAP_ROWS), tag: `lc${CLOSER_GAP_ROWS}` });
   }
+  // Port 3: the tombstone cases, appended after the rows above.
+  out.push({ ...buildC2Repeat("rp"), tag: "rp" }, { ...buildC2Repeat("nf"), tag: "nf" }, { ...buildC2Reword(), tag: "rw" }, { ...buildC8Live(), tag: "lv" });
+  // Port 3 R2 fold: C8 snapshot expiries, appended after the rows above.
+  for (let b = 0; b < SNAPSHOT.length; b++) out.push({ ...buildC8Snapshot(b), tag: "sn" });
   return out;
 }
 

@@ -26,7 +26,14 @@
  *
  * Legs: `raw` writes only `conversations` rows (no model in the loop);
  * `ideal` also writes person_fact/correction to jme_facts through upsertFact
- * and standing preferences through user_fact_set — perfect extraction.
+ * and standing preferences through user_fact_set — perfect extraction. With
+ * embeddings off, upsertFact cannot take its cosine decision and
+ * plain-inserts a correction, so the ideal leg takes that decision from the
+ * corpus (the correction replaces its target) and calls the production step
+ * after it, jme.ts supersedeCluster, at the first nightly consolidation after
+ * the correction (nextConsolidationT): the instant production would supersede
+ * it, and the date its tombstone carries. After the ingest, pruneExpiredFacts
+ * runs in place of the nightly cron.
  *
  * v2: secondary-channel events are tagged with another channel; C3 `live`
  * scenarios push the timeline through the router's own push seam into a
@@ -55,11 +62,15 @@ import { resetMemoryService } from "../../src/memory/index.js";
 import {
   factTtlMs,
   jmeRecallQuery,
+  pruneExpiredFacts,
+  redactForJme,
+  supersedeCluster,
   orderForInjection,
   queryMemory,
   upsertFact,
   type JmeFactCategory,
 } from "../../src/memory/jme.js";
+import { clearTombstoneCache } from "../../src/memory/tombstones.js";
 import { buildPrecedentBlock } from "../../src/messaging/precedent.js";
 import * as routerModule from "../../src/messaging/router.js";
 import { CORE_TOOLS } from "../../src/messaging/scope.js";
@@ -95,6 +106,17 @@ export const SECONDARY_CHANNEL = "whatsapp";
 const SECONDARY_TAGS = [SECONDARY_CHANNEL, "conversation", "outcome:success"];
 /** A temporary fact's lifetime under ideal extraction ("this week only"). */
 export const TEMPORARY_FACT_TTL_MS = 7 * 86_400_000;
+/**
+ * The jme-consolidate cron (rituals/scheduler.ts "45 2 * * *", rituals
+ * timezone) in corpus time, which is local time of day (generate.ts eventT):
+ * the first 02:45 at which a turn at `t` is settled (jme.ts
+ * CONSOLIDATOR_MIN_TURN_AGE_MS, 30 min).
+ */
+export function nextConsolidationT(t: number): number {
+  const CRON_S = 2 * 3600 + 45 * 60;
+  const settled = t + 30 * 60;
+  return Math.ceil((settled - CRON_S) / 86_400) * 86_400 + CRON_S;
+}
 /** Stated (> 0.7) facts; a stated preference is JME's only permanent kind. */
 const IDEAL_CONFIDENCE = 0.9;
 /** fast-runner.ts:293 / :1094 (pinned against the source by adapter-jarvis.test.ts). */
@@ -242,10 +264,11 @@ export class EmbedCache {
 export const SWITCHES = {
   MEMORY_OPEN_WORK: ["off", "shadow", "on"],
   MEMORY_RECALL_FLOOR: ["off", "shadow", "on"],
+  MEMORY_TOMBSTONES: ["off", "record", "on"],
 } as const;
 export type SwitchName = keyof typeof SWITCHES;
 export type Switches = Record<SwitchName, string>;
-export const DEFAULT_SWITCHES: Switches = { MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off" };
+export const DEFAULT_SWITCHES: Switches = { MEMORY_OPEN_WORK: "off", MEMORY_RECALL_FLOOR: "off", MEMORY_TOMBSTONES: "off" };
 
 /** Throws on an unknown name or a value the switch does not take. */
 export function resolveSwitches(given: Readonly<Record<string, string>> = {}): Switches {
@@ -309,7 +332,7 @@ export function idealCategory(fact: PersonFactEvent): JmeFactCategory {
   return fact.durable ? "preference" : "event";
 }
 
-const RESET_TABLES = ["conversation_embeddings", "conversations", "jme_facts", "user_facts", "recall_audit", "jme_turns"];
+const RESET_TABLES = ["conversation_embeddings", "conversations", "jme_facts", "user_facts", "recall_audit", "jme_turns", "memory_tombstones"];
 
 /**
  * Process-wide: the router module keeps hydrated threads in module state, so
@@ -413,6 +436,7 @@ export class JarvisAdapter {
     const db = getDatabase();
     for (const table of RESET_TABLES) db.prepare(`DELETE FROM ${table}`).run();
     clearEssentialsCache();
+    clearTombstoneCache();
 
     const nowMs = Date.now();
     const at = (t: number) => nowMs - (probe.t - t) * 1000;
@@ -456,10 +480,28 @@ export class JarvisAdapter {
           if (target.kind !== "person_fact") throw new Error(`${s.id}: correction target is not a person_fact`);
           const category = idealCategory(target);
           const sourceTask = `bench:${s.id}:e${i}`;
-          const status = await upsertFact({ sourceTask, factText: e.text, category, confidence: IDEAL_CONFIDENCE });
-          assertUpsertStatus(s.id, e.kind, status, this.embeddings);
-          if (status === "skipped") continue; // a near-identical live fact absorbed it: no new row
           const eventMs = at(e.t);
+          let status: string;
+          if (e.kind === "correction" && !this.embeddings) {
+            // The cosine decision upsertFact cannot take without vectors, taken
+            // from the corpus: the correction replaces its target's live row,
+            // at the nightly consolidation that would see it (qa R1 W4: dated
+            // at the correction row itself, the tombstone could never silence it).
+            const consolidatedMs = at(nextConsolidationT(e.t));
+            const old = db
+              .prepare("SELECT id, fact_text, confidence, expires_at FROM jme_facts WHERE source_task = ? AND (expires_at IS NULL OR expires_at > ?)")
+              .get(`bench:${s.id}:e${e.targetEventIndex}`, consolidatedMs) as
+              | { id: number; fact_text: string; confidence: number; expires_at: number | null }
+              | undefined;
+            if (!old) throw new Error(`${s.id}: correction target has no live jme_facts row`);
+            const fact = { sourceTask, factText: redactForJme(e.text.trim()), category, confidence: IDEAL_CONFIDENCE };
+            await supersedeCluster(fact, [{ id: old.id, factText: old.fact_text, confidence: old.confidence, permanent: old.expires_at === null }], consolidatedMs);
+            status = "superseded";
+          } else {
+            status = await upsertFact({ sourceTask, factText: e.text, category, confidence: IDEAL_CONFIDENCE });
+            assertUpsertStatus(s.id, e.kind, status, this.embeddings);
+          }
+          if (status === "skipped") continue; // a near-identical live fact absorbed it: no new row
           const ttl = target.durable ? factTtlMs(category, e.text, IDEAL_CONFIDENCE) : TEMPORARY_FACT_TTL_MS;
           db.prepare(
             "UPDATE jme_facts SET ts = ?, expires_at = ? WHERE id = (SELECT MAX(id) FROM jme_facts WHERE source_task = ?)",
@@ -470,6 +512,8 @@ export class JarvisAdapter {
           written++;
         }
       }
+      // The nightly jme-consolidate cron's prune (rituals/scheduler.ts), run once the timeline is in.
+      pruneExpiredFacts();
     }
     return { written, primaryRows: rows.filter((r) => !r.secondary).map((r) => r.content) };
   }

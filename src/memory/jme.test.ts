@@ -9,7 +9,7 @@
  *   5. jmeStats() returns correct counts
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 /** Fake Anthropic-shaped key assembled at runtime (a literal would trip the git secret guard). */
 const FAKE_SK = ["sk", "ant", "api03", "AbCdEf1234567890XyZabcdef"].join("-");
@@ -54,15 +54,18 @@ vi.mock("../lib/err-msg.js", () => ({
 
 // Mock recall telemetry so we can assert logRecall fires on every recall path
 const logRecallMock = vi.fn();
-vi.mock("./recall-utility.js", async () => ({
-  logRecall: (...args: unknown[]) => logRecallMock(...args),
-  // The REAL redactor: the JME pass layers on top of it.
-  redactSecrets: (
-    await vi.importActual<typeof import("./recall-utility.js")>(
-      "./recall-utility.js",
-    )
-  ).redactSecrets,
-}));
+vi.mock("./recall-utility.js", async () => {
+  const actual = await vi.importActual<typeof import("./recall-utility.js")>(
+    "./recall-utility.js",
+  );
+  return {
+    logRecall: (...args: unknown[]) => logRecallMock(...args),
+    // The REAL redactor: the JME pass layers on top of it.
+    redactSecrets: actual.redactSecrets,
+    // The REAL tokeniser: tombstone terms (fts-terms.ts) are built with it.
+    extractContentTokens: actual.extractContentTokens,
+  };
+});
 
 // Ruling 3c fold F7: one synthetic stored value stands in for the secret store.
 const SCRUB_SYN = vi.hoisted(() => "syn-" + "j".repeat(14));
@@ -2336,5 +2339,181 @@ describe("JME — read-side scrub (ruling 3c, audit R3 B1)", () => {
       snippet: string;
     }>;
     expect(rows).toEqual([{ snippet: "Muy largo, [oculto]" }]);
+  });
+});
+
+// ── Tombstones (MEMORY_TOMBSTONES) ───────────────────────────────────────────
+
+describe("JME — tombstones at the write sites", () => {
+  const prevMode = process.env.MEMORY_TOMBSTONES;
+  // The real schema (initDatabase: every migration, v13 included) behind the
+  // mocked getDatabase, emptied per test (qa R1 R3).
+  let realDb: Database.Database;
+  const tombs = () =>
+    mockDb
+      .prepare("SELECT fact_id, reason, terms, new_terms FROM memory_tombstones ORDER BY id")
+      .all() as Array<{ fact_id: number; reason: string; terms: string; new_terms: string }>;
+  const tombTraces = () =>
+    (
+      mockDb
+        .prepare("SELECT attrs FROM task_trace_events WHERE name = 'memory.tombstone' ORDER BY id")
+        .all() as Array<{ attrs: string }>
+    ).map((r) => JSON.parse(r.attrs) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    if (!realDb) {
+      const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
+      realDb = real.initDatabase(":memory:");
+    }
+    for (const t of ["memory_tombstones", "jme_facts", "task_trace_events", "conversations"]) realDb.exec(`DELETE FROM ${t}`);
+    realDb.exec("DELETE FROM sqlite_sequence WHERE name = 'jme_facts'");
+    // The codes the tests tombstone, each held by one mc-jarvis row: rare in the bank (qa R2 W1).
+    const conv = realDb.prepare(
+      "INSERT INTO conversations (bank, tags, content, trust_tier, source, created_at) VALUES ('mc-jarvis', '[]', ?, 2, 'agent', '2026-01-01 00:00:00')",
+    );
+    for (const c of ["5821", "7394", "W39 4410", "4460", "4470", "AM-0412"]) conv.run(`Usuario: ${c}`);
+    mockDb = realDb;
+    const emb = await import("./embeddings.js");
+    const vec = new Float32Array([1, 0, 0]);
+    vi.mocked(emb.embed).mockResolvedValue(vec);
+    vi.mocked(emb.serializeEmbedding).mockReturnValue(Buffer.from(vec.buffer));
+    vi.mocked(emb.deserializeEmbedding).mockReturnValue(vec);
+  });
+  afterEach(async () => {
+    const emb = await import("./embeddings.js");
+    vi.mocked(emb.embed).mockResolvedValue(null);
+    vi.mocked(emb.cosineSimilarity).mockReturnValue(0);
+    if (prevMode === undefined) delete process.env.MEMORY_TOMBSTONES;
+    else process.env.MEMORY_TOMBSTONES = prevMode;
+  });
+
+  const setMode = (mode: "off" | "record" | "on") => {
+    process.env.MEMORY_TOMBSTONES = mode;
+  };
+
+  async function supersede() {
+    const { upsertFact, CONSOLIDATOR_DEDUP_THRESHOLD } = await getJme();
+    const { cosineSimilarity } = await import("./embeddings.js");
+    await upsertFact({ sourceTask: "t1", factText: "The gate code is 5821.", category: "event" });
+    vi.mocked(cosineSimilarity).mockReturnValue(CONSOLIDATOR_DEDUP_THRESHOLD + 0.02);
+    return upsertFact({ sourceTask: "t2", factText: "The gate code is 7394.", category: "event" });
+  }
+  async function reword() {
+    const { upsertFact, CONSOLIDATOR_SKIP_THRESHOLD } = await getJme();
+    const { cosineSimilarity } = await import("./embeddings.js");
+    await upsertFact({ sourceTask: "t1", factText: "The balance is 3.847.215.", category: "event", confidence: 0.8 });
+    vi.mocked(cosineSimilarity).mockReturnValue(CONSOLIDATOR_SKIP_THRESHOLD + 0.01);
+    return upsertFact({ sourceTask: "t2", factText: "The balance is 2.960.400.", category: "event", confidence: 0.9 });
+  }
+  const insertFact = (factText: string, category: string, expiresAt: number | null, confidence = 0.9) =>
+    mockDb
+      .prepare("INSERT INTO jme_facts (source_task, ts, fact_text, category, expires_at, confidence) VALUES ('t', ?, ?, ?, ?, ?)")
+      .run(Date.now() - 1000, factText, category, expiresAt, confidence);
+  async function expire() {
+    const { pruneExpiredFacts } = await getJme();
+    insertFact("On Day 3 the gate code is 5821.", "event", Date.now() - 1000);
+    return pruneExpiredFacts();
+  }
+
+  it.each(["record", "on"] as const)("%s: a supersede writes a superseded tombstone for the replaced row", async (mode) => {
+    setMode(mode);
+    expect(await supersede()).toBe("superseded");
+    expect(tombs()).toEqual([{ fact_id: 1, reason: "superseded", terms: '["5821"]', new_terms: '["7394"]' }]);
+  });
+
+  it.each(["record", "on"] as const)("%s: a reword writes no tombstone, only a skipped trace (qa R1 W3)", async (mode) => {
+    setMode(mode);
+    expect(await reword()).toBe("skipped");
+    const row = mockDb.prepare("SELECT fact_text FROM jme_facts").get() as { fact_text: string };
+    expect(row.fact_text).toBe("The balance is 2.960.400.");
+    expect(tombs()).toEqual([]);
+    expect(tombTraces()).toEqual([{ mode, reason: "reworded", skipped: true }]);
+  });
+
+  it.each(["record", "on"] as const)("%s: the prune writes an expired tombstone, read before the row is deleted", async (mode) => {
+    setMode(mode);
+    expect(await expire()).toBe(1);
+    expect(mockDb.prepare("SELECT COUNT(*) AS n FROM jme_facts").get()).toEqual({ n: 0 });
+    expect(tombs()).toEqual([{ fact_id: 1, reason: "expired", terms: '["5821"]', new_terms: "[]" }]);
+  });
+
+  it("the prune tombstones only the transient class: an event or project with a snapshot marker (qa R1 W3, qa R2 W2)", async () => {
+    setMode("on");
+    const { pruneExpiredFacts } = await getJme();
+    const past = Date.now() - 1000;
+    insertFact("The W39 roster code is 4410.", "project", past); // 1: transient project
+    insertFact("The project budget is 4420.", "project", past); // 2: 90 d project
+    insertFact("The person prefers table 4430.", "preference", past, 0.5); // 3: inferred preference
+    insertFact("The decision was option 4440.", "decision", past); // 4
+    insertFact("The person felt 4450 times better.", "emotion", past); // 5
+    insertFact("The visit is at gate 4460.", "event", past); // 6: plain event, aged out
+    insertFact("On Day 2 the visit is at gate 4470.", "event", past); // 7: transient event
+    expect(pruneExpiredFacts()).toBe(7);
+    expect(tombs().map((t) => [t.fact_id, t.terms]).sort()).toEqual([
+      [1, '["w39","4410"]'],
+      [7, '["4470"]'],
+    ]);
+  });
+
+  it("a plain event that ages out writes no tombstone, only a skipped trace (qa R2 W2)", async () => {
+    setMode("on");
+    const { pruneExpiredFacts } = await getJme();
+    insertFact("Tu vuelo a Madrid es el AM-0412.", "event", Date.now() - 1000);
+    expect(pruneExpiredFacts()).toBe(1);
+    expect(tombs()).toEqual([]);
+    expect(tombTraces()).toEqual([{ mode: "on", reason: "expired", skipped: true }]);
+  });
+
+  it("an expiry whose value a live durable fact still holds writes nothing (qa R1 W3)", async () => {
+    setMode("on");
+    insertFact("The person's locker code is 5821.", "preference", null);
+    expect(await expire()).toBe(1);
+    expect(tombs()).toEqual([]);
+  });
+
+  it("the prune writes no second tombstone for a superseded row, none for a reject marker or a low-confidence row", async () => {
+    setMode("on");
+    await supersede();
+    const { pruneExpiredFacts } = await getJme();
+    // Push the superseded row's expiry into the past, add a reject marker and a stale low-confidence row.
+    mockDb.exec("UPDATE jme_facts SET expires_at = 1 WHERE id = 1");
+    const ins = mockDb.prepare(
+      "INSERT INTO jme_facts (source_task, ts, fact_text, category, expires_at, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    ins.run("t3", Date.now(), "The person rejected code 5821.", "preference", 1, 0);
+    ins.run("t4", 1, "The gate code might be 5821.", "event", null, 0.3);
+    expect(pruneExpiredFacts()).toBe(2);
+    expect(tombs().map((t) => t.reason)).toEqual(["superseded"]);
+  });
+
+  it("the prune's tombstones and DELETE share one transaction: a failed DELETE leaves no tombstone (qa R1 R4)", async () => {
+    setMode("on");
+    mockDb.exec("CREATE TRIGGER jme_no_delete BEFORE DELETE ON jme_facts BEGIN SELECT RAISE(ABORT, 'no delete'); END");
+    try {
+      await expect(expire()).rejects.toThrow("no delete");
+      expect(tombs()).toEqual([]);
+    } finally {
+      mockDb.exec("DROP TRIGGER jme_no_delete");
+    }
+  });
+
+  it("off: no site writes a tombstone or a trace, and the prune runs no tombstone statement (qa R1 R1)", async () => {
+    setMode("off");
+    expect(await supersede()).toBe("superseded");
+    mockDb.exec("DELETE FROM jme_facts");
+    expect(await reword()).toBe("skipped");
+    mockDb.exec("DELETE FROM jme_facts");
+    const prepare = vi.spyOn(mockDb, "prepare");
+    try {
+      expect(await expire()).toBe(1);
+      const sql = prepare.mock.calls.map(([q]) => String(q));
+      expect(sql.some((q) => q.includes("SELECT id, fact_text, category, expires_at"))).toBe(false);
+      expect(sql.some((q) => q.includes("memory_tombstones"))).toBe(false);
+      expect(sql.filter((q) => q.includes("DELETE FROM jme_facts"))).toHaveLength(1);
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(tombs()).toEqual([]);
+    expect(tombTraces()).toEqual([]);
   });
 });

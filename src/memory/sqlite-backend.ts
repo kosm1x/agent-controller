@@ -31,79 +31,26 @@ import type {
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import {
+  RARE_DOC_SHARE,
+  extractKeywords,
+  ftsTokens,
+  hasTokenRun,
+  keywordDocFrequency,
+  rareDocThreshold,
+  rareTermCandidates,
+} from "./fts-terms.js";
+export { keywordDocFrequency } from "./fts-terms.js";
+import {
+  TOMBSTONE_BANK,
+  loadTombstones,
+  silencedBy,
+  tombstoneMode,
+  type Tombstone,
+  type TombstoneMode,
+} from "./tombstones.js";
 
-/** Extract meaningful keywords from a query string for SQLite LIKE matching. */
-function extractKeywords(query: string): string[] {
-  const stopWords = new Set([
-    "el",
-    "la",
-    "los",
-    "las",
-    "un",
-    "una",
-    "de",
-    "del",
-    "en",
-    "con",
-    "por",
-    "para",
-    "que",
-    "es",
-    "y",
-    "o",
-    "a",
-    "al",
-    "se",
-    "no",
-    "su",
-    "mi",
-    "me",
-    "the",
-    "a",
-    "an",
-    "is",
-    "are",
-    "was",
-    "in",
-    "on",
-    "of",
-    "and",
-    "or",
-    "to",
-    "for",
-    "it",
-    "at",
-    "by",
-    "do",
-    "be",
-    "he",
-    "she",
-    "we",
-    "you",
-    "what",
-    "how",
-    "who",
-    "when",
-    "where",
-    "this",
-    "that",
-    "my",
-    "your",
-    "user",
-    "jarvis",
-    "fede",
-  ]);
-
-  // FTS5 reserved operators must be excluded — they cause syntax errors in MATCH
-  const fts5Operators = new Set(["and", "or", "not", "near"]);
-
-  return query
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !stopWords.has(w) && !fts5Operators.has(w))
-    .slice(0, 6); // Cap at 6 keywords to keep queries fast
-}
+export { RARE_DOC_SHARE, rareDocThreshold, rareTermCandidates };
 
 // ---------------------------------------------------------------------------
 // Recall floor (MEMORY_RECALL_FLOOR) — an honest empty recall
@@ -122,75 +69,6 @@ export type RecallFloorMode = "off" | "shadow" | "on";
 export function recallFloorMode(env: NodeJS.ProcessEnv = process.env): RecallFloorMode {
   const v = env.MEMORY_RECALL_FLOOR;
   return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
-}
-
-/** A keyword is rare when at most this share of the bank's rows contain it. */
-export const RARE_DOC_SHARE = 0.02;
-
-/** The rare-keyword document count for a bank of `bankRows` rows (never below 1). */
-export function rareDocThreshold(bankRows: number): number {
-  return Math.max(1, Math.ceil(RARE_DOC_SHARE * bankRows));
-}
-
-/** Tokens as the FTS5 unicode61 tokeniser cuts them: case and diacritics folded, split on anything not a letter or digit. */
-function ftsTokens(text: string): string[] {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
-}
-
-/** At most this many code / figure candidates per query (each is one capped count). */
-const MAX_CODE_TERMS = 6;
-
-/**
- * The query's candidate rare terms, each a space-joined run of FTS tokens:
- *   - the content tokens of the query keywords (4+ chars, stop-words out);
- *   - every whitespace-separated chunk that holds a digit or is an upper-case
- *     code ("KVX-482", "3.847.215", "IVA"), of 3+ letters and digits, kept
- *     whole as one phrase of its FTS tokens ("kvx 482", "3 847 215", "iva"),
- *     so a code or figure is judged as itself and not by its 3-digit parts.
- * A one-token chunk that is a stop-word does not count.
- */
-export function rareTermCandidates(query: string): string[] {
-  const out = new Set<string>(extractContentTokens(extractKeywords(query).join(" ")));
-  const codes: string[] = [];
-  for (const chunk of query.split(/\s+/)) {
-    const toks = ftsTokens(chunk);
-    if (toks.join("").length < 3) continue;
-    const bare = chunk.replace(/[^\p{L}\p{N}]/gu, "");
-    if (!/\p{N}/u.test(bare) && !/^\p{Lu}[\p{Lu}\p{N}]+$/u.test(bare)) continue;
-    const one = toks.length === 1 ? toks[0] : null;
-    if (one && (extractKeywords(one).length === 0 || (one.length >= 4 && extractContentTokens(one).size === 0))) continue;
-    codes.push(toks.join(" "));
-  }
-  for (const c of codes.slice(0, MAX_CODE_TERMS)) out.add(c);
-  return [...out];
-}
-
-/**
- * Document frequency of each candidate rare term of `query` (rareTermCandidates)
- * in `bank`: the number of bank rows whose FTS index holds the term as a phrase,
- * counted up to `cap` when given. The CROSS JOIN keeps the FTS match as the
- * outer loop; with a plain JOIN the planner can walk the bank index and probe
- * FTS once per row (~150 ms per term on a 12k-row bank).
- */
-export function keywordDocFrequency(query: string, bank: string, cap?: number): Map<string, number> {
-  const db = getDatabase();
-  const inner = `SELECT 1 FROM conversations_fts f CROSS JOIN conversations c ON c.id = f.rowid
-                 WHERE conversations_fts MATCH ? AND c.bank = ?`;
-  const stmt =
-    cap === undefined
-      ? db.prepare(`SELECT COUNT(*) AS n FROM (${inner})`)
-      : db.prepare(`SELECT COUNT(*) AS n FROM (${inner} LIMIT ?)`);
-  const out = new Map<string, number>();
-  for (const term of rareTermCandidates(query)) {
-    const args = cap === undefined ? [`"${term}"`, bank] : [`"${term}"`, bank, cap];
-    out.set(term, (stmt.get(...args) as { n: number }).n);
-  }
-  return out;
 }
 
 /**
@@ -212,13 +90,7 @@ function rareQueryTerms(query: string, bank: string): string[][] {
 /** True when `content`'s FTS tokens hold one of the rare token runs, contiguous. */
 function hasRareTerm(content: string, rare: readonly string[][]): boolean {
   if (rare.length === 0) return false;
-  const toks = ftsTokens(content);
-  return rare.some((run) => {
-    for (let i = 0; i + run.length <= toks.length; i++) {
-      if (run.every((t, j) => toks[i + j] === t)) return true;
-    }
-    return false;
-  });
+  return hasTokenRun(ftsTokens(content), rare);
 }
 
 /** task_trace_events key: a recall carries no task id (RecallOptions has none). */
@@ -247,6 +119,24 @@ function traceRecallFloorError(mode: RecallFloorMode, options: RecallOptions): v
   emitTraceEvent({
     taskId: RECALL_FLOOR_TRACE_KEY,
     name: "memory.recall_floor",
+    attrs: { mode, bank: options.bank, error: true },
+  });
+}
+
+/** One per recall under MEMORY_TOMBSTONES record|on (counts only): `wouldDrop` under record, `dropped` under on. */
+function traceTombstones(mode: TombstoneMode, options: RecallOptions, returned: number, drop: number): void {
+  emitTraceEvent({
+    taskId: RECALL_FLOOR_TRACE_KEY,
+    name: "memory.tombstone",
+    attrs: { mode, bank: options.bank, returned, [mode === "on" ? "dropped" : "wouldDrop"]: drop },
+  });
+}
+
+/** The tombstones could not be loaded: nothing is filtered for this recall (counts only). */
+function traceTombstonesError(mode: TombstoneMode, options: RecallOptions): void {
+  emitTraceEvent({
+    taskId: RECALL_FLOOR_TRACE_KEY,
+    name: "memory.tombstone",
     attrs: { mode, bank: options.bank, error: true },
   });
 }
@@ -459,6 +349,29 @@ export class SqliteMemoryBackend implements MemoryService {
           traceRecallFloorError(floorMode, options);
         }
       }
+      // Tombstones: loaded (cached) only under record|on and only for the
+      // bank JME consolidates (TOMBSTONE_BANK); a failed load filters
+      // nothing for this recall.
+      const tombMode = options.bank === TOMBSTONE_BANK ? tombstoneMode() : "off";
+      let tombs: readonly Tombstone[] | null = null;
+      if (tombMode !== "off") {
+        try {
+          tombs = loadTombstones();
+        } catch {
+          traceTombstonesError(tombMode, options);
+        }
+      }
+      let tombDrop = 0;
+      const unsilenced = <T extends { content: string; created_at: string }>(rows: T[]): T[] => {
+        if (!tombs || tombs.length === 0) return rows;
+        const kept = rows.filter((r) => !silencedBy(r, tombs!));
+        tombDrop += rows.length - kept.length;
+        return tombMode === "on" ? kept : rows;
+      };
+      const traced = <T>(out: T[]): T[] => {
+        if (tombs) traceTombstones(tombMode, options, out.length, tombDrop);
+        return out;
+      };
 
       // Build tag filter clause
       let tagClause = "";
@@ -620,28 +533,29 @@ export class SqliteMemoryBackend implements MemoryService {
             .prepare(matchSql)
             .all(...matchParams) as ScoredRow[];
           if (matched.length > 0) {
+            const live = unsilenced(matched);
             if (rare) {
-              const kept = matched.filter((r) => hasRareTerm(r.content, rare));
-              const wouldDrop = matched.length - kept.length;
+              const kept = live.filter((r) => hasRareTerm(r.content, rare));
+              const wouldDrop = live.length - kept.length;
               if (floorMode === "on") {
                 const scored = kept.map((r) => applyDecay(r, r.score));
                 scored.sort((a, b) => b._score - a._score);
                 const out = scored.slice(0, limit).map(({ _score: _, ...item }) => item);
                 traceRecallFloor(floorMode, options, out.length, wouldDrop, rare.length);
-                return out;
+                return traced(out);
               }
-              traceRecallFloor(floorMode, options, Math.min(limit, matched.length), wouldDrop, rare.length);
+              traceRecallFloor(floorMode, options, Math.min(limit, live.length), wouldDrop, rare.length);
             }
-            const scored = matched.map((r) => applyDecay(r, r.score));
+            const scored = live.map((r) => applyDecay(r, r.score));
             scored.sort((a, b) => b._score - a._score);
-            return scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+            return traced(scored.slice(0, limit).map(({ _score: _, ...item }) => item));
           }
         }
 
         // The floor drops the newest-rows fallback: nothing matched, so nothing is relevant.
         if (floorMode === "on" && rare) {
           traceRecallFloor(floorMode, options, 0, 0, rare.length);
-          return [];
+          return traced([]);
         }
 
         // No matches at all — return recent
@@ -651,23 +565,23 @@ export class SqliteMemoryBackend implements MemoryService {
           ORDER BY created_at DESC
           LIMIT ?
         `;
-        const rows = db
-          .prepare(sql)
-          .all(options.bank, ...tagParams, limit) as Array<{
-          content: string;
-          created_at: string;
-          trust_tier: number;
-          tags: string | null;
-        }>;
+        const rows = unsilenced(
+          db.prepare(sql).all(options.bank, ...tagParams, limit) as Array<{
+            content: string;
+            created_at: string;
+            trust_tier: number;
+            tags: string | null;
+          }>,
+        );
         if (rare) traceRecallFloor(floorMode, options, rows.length, rows.length, rare.length);
-        return rows.map((r) => ({
+        return traced(rows.map((r) => ({
           content: r.content,
           createdAt: r.created_at,
           trustTier: ([1, 2, 3, 4].includes(r.trust_tier)
             ? r.trust_tier
             : 3) as TrustTier,
           tags: parseTags(r.tags),
-        }));
+        })));
       }
 
       // --- Merge FTS5 + embedding results ---
@@ -718,9 +632,9 @@ export class SqliteMemoryBackend implements MemoryService {
       // sort. The floor used to be applied after decay, and the decay weight
       // alone (≥0.16 for every row in the DB) exceeded it — the filter was
       // dead and zero-relevance rows were injected (logic audit F17).
-      let scored = [...allResults.values()]
-        .filter((r) => r.mergedScore >= MIN_RELEVANCE_SCORE)
-        .map((r) => applyDecay(r, r.mergedScore));
+      let scored = unsilenced([...allResults.values()].filter((r) => r.mergedScore >= MIN_RELEVANCE_SCORE)).map((r) =>
+        applyDecay(r, r.mergedScore),
+      );
       scored.sort((a, b) => b._score - a._score);
 
       // Recall floor: an FTS-only row needs a rare query keyword; a row the
@@ -735,6 +649,8 @@ export class SqliteMemoryBackend implements MemoryService {
       if (scored.length === 0 && allResults.size > 0) {
         if (floorMode === "on" && floorDrop > 0) {
           console.warn(`[memory] Recall floor dropped all ${floorDrop} results (no rare query keyword)`);
+        } else if (tombMode === "on" && tombDrop > 0) {
+          console.warn(`[memory] Tombstones silenced all ${tombDrop} results (old values)`);
         } else {
           console.warn(
             `[memory] Relevance filter discarded all ${allResults.size} results (threshold=${MIN_RELEVANCE_SCORE})`,
@@ -761,7 +677,7 @@ export class SqliteMemoryBackend implements MemoryService {
         relevance: _score,
       }));
       if (rare) traceRecallFloor(floorMode, options, out.length, floorDrop, rare.length);
-      return out;
+      return traced(out);
     } catch {
       return [];
     }

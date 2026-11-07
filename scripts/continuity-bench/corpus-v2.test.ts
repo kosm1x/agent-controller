@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { TRANSIENT_FACT_RE } from "../../src/memory/jme.js";
 import { extractContentTokens } from "../../src/memory/recall-utility.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,6 +18,9 @@ describe("corpus-v2.json", () => {
   const committed = read("benchmarks/continuity/corpus-v2.json");
   const corpus = JSON.parse(committed) as Corpus;
   const at50 = corpus.scenarios.filter((s) => s.fillerSize === 50);
+  /** Port 3 (tombstones) appends, per size, rp / nf / rw / lv (qa R1 W4), then four sn (qa R2 W2). */
+  const isPort3 = (s: Scenario) => /-(rp|nf|rw|lv|sn)-s\d+$/.test(s.id);
+  const isSnapshot = (s: Scenario) => /-sn-s\d+$/.test(s.id);
 
   it("is byte-identical to a fresh generation and leaves v1 + the golden alone", async () => {
     expect(serialize(buildCorpusV2())).toBe(committed);
@@ -83,7 +87,7 @@ describe("corpus-v2.json", () => {
 
   it("Port 1 is additive: the 444 original scenarios are byte-identical (hash of the pre-Port-1 list) and come first", () => {
     const PORT1 = new Set(["handoff", "crowded", "closer", "single", "longcloser"]);
-    const original = corpus.scenarios.filter((s) => !PORT1.has(s.variant ?? ""));
+    const original = corpus.scenarios.filter((s) => !PORT1.has(s.variant ?? "") && !isPort3(s));
     expect(original).toHaveLength(444);
     expect(original.flatMap((s) => s.probes)).toHaveLength(1140);
     expect(createHash("sha256").update(JSON.stringify(original)).digest("hex")).toBe(
@@ -93,15 +97,13 @@ describe("corpus-v2.json", () => {
     for (const size of corpus.fillerSizes) {
       const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
       const firstNew = ids.findIndex((s) => PORT1.has(s.variant ?? ""));
-      expect(ids.slice(firstNew).every((s) => PORT1.has(s.variant ?? "")), String(size)).toBe(true);
+      expect(ids.slice(firstNew).every((s) => PORT1.has(s.variant ?? "") || isPort3(s)), String(size)).toBe(true);
     }
-    expect(corpus.scenarios).toHaveLength(570);
-    expect(corpus.scenarios.flatMap((s) => s.probes)).toHaveLength(1392);
   });
 
   it("the Port 1 fold is additive too: the 534 scenarios before single / longcloser are byte-identical (second hash) and come first", () => {
     const FOLD = new Set(["single", "longcloser"]);
-    const before = corpus.scenarios.filter((s) => !FOLD.has(s.variant ?? ""));
+    const before = corpus.scenarios.filter((s) => !FOLD.has(s.variant ?? "") && !isPort3(s));
     expect(before).toHaveLength(534);
     expect(before.flatMap((s) => s.probes)).toHaveLength(1320);
     expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
@@ -110,9 +112,81 @@ describe("corpus-v2.json", () => {
     for (const size of corpus.fillerSizes) {
       const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
       const firstNew = ids.findIndex((s) => FOLD.has(s.variant ?? ""));
-      expect(ids.slice(firstNew).every((s) => FOLD.has(s.variant ?? "")), String(size)).toBe(true);
-      expect(ids.length - firstNew, String(size)).toBe(12);
+      expect(ids.slice(firstNew).every((s) => FOLD.has(s.variant ?? "") || isPort3(s)), String(size)).toBe(true);
+      expect(ids.slice(firstNew).filter((s) => FOLD.has(s.variant ?? "")), String(size)).toHaveLength(12);
     }
+  });
+
+  it("Port 3 is additive: the 570 scenarios before the tombstone cases are byte-identical (third hash) and come first", () => {
+    // Hash bumped 2026-11-07 for the Port 3 R1 fold: the corpus gains the
+    // tombstone cases (C2 rp / nf / rw, C8 lv) the audit named; the 570
+    // scenarios before them hash as the committed corpus did.
+    const before = corpus.scenarios.filter((s) => !isPort3(s));
+    expect(before).toHaveLength(570);
+    expect(before.flatMap((s) => s.probes)).toHaveLength(1392);
+    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+      "ab0669f79e768671369fb0599092ea83a9b86dac56dd6841e5c4a66cfb01e942",
+    );
+    for (const size of corpus.fillerSizes) {
+      const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
+      expect(ids.slice(-8, -4).map((s) => s.id), String(size)).toEqual(
+        ["C2-01-rp", "C2-01-nf", "C2-01-rw", "C8-01-lv"].map((id) => `${id}-s${size}`),
+      );
+    }
+  });
+
+  it("the Port 3 R2 fold is additive: the 582 scenarios before the snapshot cases are byte-identical (fourth hash) and come first", () => {
+    // Hash bumped 2026-11-07 for the Port 3 R2 fold: the corpus gains four C8
+    // snapshot expiries (sn, qa R2 W2) so an expiry tombstone is measured; the
+    // 582 scenarios before them hash as the R1 fold's corpus did.
+    const before = corpus.scenarios.filter((s) => !isSnapshot(s));
+    expect(before).toHaveLength(582);
+    expect(before.flatMap((s) => s.probes)).toHaveLength(1416);
+    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+      "db84c0ef837b2af36c038182e6a4d047f347d7e1df24b295308cf28658df8fe9",
+    );
+    for (const size of corpus.fillerSizes) {
+      const ids = corpus.scenarios.filter((s) => s.fillerSize === size);
+      expect(ids.slice(-4).map((s) => s.id), String(size)).toEqual([1, 2, 3, 4].map((b) => `C8-0${b}-sn-s${size}`));
+    }
+    expect(corpus.scenarios).toHaveLength(594);
+    expect(corpus.scenarios.flatMap((s) => s.probes)).toHaveLength(1440);
+  });
+
+  it("snapshot cases: the temporary fact matches TRANSIENT_FACT_RE and holds the forbidden figure; the durable fact does not", () => {
+    const sn = at50.filter(isSnapshot);
+    expect(sn).toHaveLength(4);
+    for (const s of sn) {
+      const [durable, temp] = s.events;
+      if (durable.kind !== "person_fact" || temp.kind !== "person_fact") throw new Error(s.id);
+      expect([durable.durable, temp.durable], s.id).toEqual([true, false]);
+      expect(TRANSIENT_FACT_RE.test(temp.text), s.id).toBe(true);
+      expect(TRANSIENT_FACT_RE.test(durable.text), s.id).toBe(false);
+      expect(s.probes, s.id).toHaveLength(2);
+      for (const p of s.probes) {
+        const needle = p.forbid[0]!;
+        expect(/\d/.test(needle) && temp.text.includes(needle) && !durable.text.includes(needle), s.id).toBe(true);
+        expect(p.text.includes(needle), s.id).toBe(false);
+      }
+    }
+  });
+
+  it("Port 3 cases: rp / nf corrections repeat the old figure (rp with the new one), rw drops the asked word, lv shares the figure", () => {
+    const byTag = (tag: string) => at50.find((s) => s.id.endsWith(`-${tag}-s50`))!;
+    for (const tag of ["rp", "nf"]) {
+      const fix = byTag(tag).events[1];
+      expect(fix.kind).toBe("correction");
+      if (fix.kind !== "correction") continue;
+      expect(fix.asUser).toContain("3.847.215");
+      expect("text" in fix && fix.text.includes("3.847.215")).toBe(false);
+      expect(/\d/.test(fix.asUser.replace("3.847.215", ""))).toBe(tag === "rp");
+    }
+    const rw = byTag("rw");
+    expect(rw.probes.every((p) => p.forbid.length === 0 && p.expect[0] === "Monterrey")).toBe(true);
+    expect("text" in rw.events[1] && rw.events[1].text.includes("Monterrey")).toBe(false);
+    const lv = byTag("lv");
+    expect(lv.events.map((e) => ("text" in e ? e.text.includes("6614") : false))).toEqual([true, true]);
+    expect(lv.events.map((e) => (e.kind === "person_fact" ? e.durable : null))).toEqual([true, false]);
   });
 
   it("known-limit rows: single = the open work alone in a one-exchange session; longcloser = a closer of 8+ content tokens in the same session", () => {
