@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-07 19:14 UTC (**Memory ports 1–3 ARMED in observe-only modes by the operator (`MEMORY_OPEN_WORK=shadow`, `MEMORY_RECALL_FLOOR=shadow`, `MEMORY_TOMBSTONES=record`, drop-in `memory-ports.conf`, PID 871218, clean start, health 200). Jarvis behaves as before; ports 1–2 trace what they would change, port 3 records tombstones at the nightly consolidation without filtering. Readout of the counts ≈ 2026-11-14 decides which switch goes `on`.**)
+
 > Last updated: 2026-11-07 19:08 UTC (**Auto-memory leak CLOSED end to end: eval gate PASSED (78.68 vs 78.63; removing the leaked block left Jarvis's behaviour unchanged), DEPLOYED build `7610bb8e` PID 855955 at 19:05 UTC, PROVEN by the operator's C6 extracted re-run: 0 of 34 facts carry the leaked project (2 of 19 before). Jarvis is live with ports 1–3 dormant and the SDK isolated from the operator's Claude Code memory. Queue 4bp.**)
 
 > Last updated: 2026-11-07 07:04 UTC (**Port 4 MEASURED on the operator's real runs (35 Haiku calls, 0 failed): standing preferences are extracted 6/6 but never surface (facts land in `jme_facts`, reachable only by word match; the profile store that gives the ideal gain is written by no nightly path); corrections extracted 6/9, asked surface unchanged; durable identity facts all expired by the probe day. The runs also exposed a production leak: the SDK CLI loaded the operator's Claude Code auto-memory into every Jarvis call (16/26 scenarios carried its text) — FIXED IN CODE `8311e655` (`autoMemoryEnabled: false` + `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, both pinned), EVAL GATE OWED before deploy; queue 4bp. 14,388 tests.**)
@@ -382,6 +384,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-07 (19:14) | systemd drop-in only (operator) | Memory ports 1–3 ARMED `shadow`/`shadow`/`record`; verified in the live process environment; readout ≈ 11-14. |
 | 2026-11-07 (19:08) | deploy only (no code) | Auto-memory fix `8311e655`: eval gate PASS 78.68 vs 78.63 ($6.12), DEPLOYED `7610bb8e` PID 855955, PROVEN 0 leaked facts in 34 on the C6 extracted re-run. |
 | 2026-11-07 (07:04) | `src/inference/claude-sdk.ts` + test, `src/memory/jme.ts` (+ optional prompt date) + test, bench adapter/run/tests, README, `results/port4-extracted.md` | `8311e655`: auto-memory isolation fix (eval gate owed, not deployed); extracted-leg readout fold (per-fact category/TTL, consolidator counts, surfaced column); port 4 MEASURED from the operator's runs. Audits R3 (readout) + R4 PWW folded. Queue 4bk (4) MEASURED, 4bp new. |
 | 2026-11-07 (06:17) | bench `run.ts`, `adapter-jarvis.ts`, `score.ts` (export), 2 test files, README §Extracted leg; no `src/` change, no deploy | Memory port 4 `4c5d889f`: `--leg extracted` runs the production consolidator with `--run` consent, `--max-model-calls` cap (exit 3), `--window day|clean`, `--dry-run`; limits printed under every number; operator runs it (smoke → C6 6 calls → C2+C8 29 calls). Audits R1 PWW → R2 PASS. Queue 4bk port (4) stamped; 4bo (g)–(i). |
