@@ -40,6 +40,24 @@ export const CANARY_TASK_STATS_SQL = `SELECT
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
       FROM tasks WHERE created_at > ?`;
 
+const DELIVERY_MISS_TITLE_CLAUSES = RITUAL_EMAIL_TITLE_PREFIXES.map(
+  () => "(title LIKE ? OR title LIKE ?)",
+).join(" OR ");
+
+/**
+ * Delivery-miss statement; exported so its query plan is pinned. Without
+ * sqlite_stat1 the planner picked idx_tasks_status_started over the date index;
+ * the unary `+status` pins the created_at range (2026-11-07 MCEventLoopBlock:
+ * 8-11 s cold reads of 1,090 status rows vs ~30 in the 24h window).
+ */
+export const CANARY_DELIVERY_MISS_SQL = `SELECT output FROM tasks
+         WHERE created_at > ?
+         AND +status IN ('completed_with_concerns', 'failed')
+         AND (
+           (metadata LIKE '%"scheduled"%' AND metadata LIKE '%gmail_send%')
+           OR ${DELIVERY_MISS_TITLE_CLAUSES}
+         )`;
+
 interface CanaryResult {
   taskSuccessRate: number;
   totalTasks: number;
@@ -105,23 +123,12 @@ export function runCanaryCheck(): CanaryResult {
     // form all rituals use) and a bare `Prefix` fallback. Parameter-bound to
     // keep the SQL injection-proof even if the constant grows to include
     // user-contributed prefixes someday.
-    const titleClauses = RITUAL_EMAIL_TITLE_PREFIXES.map(
-      () => "(title LIKE ? OR title LIKE ?)",
-    ).join(" OR ");
     const titleParams: string[] = [];
     for (const prefix of RITUAL_EMAIL_TITLE_PREFIXES) {
       titleParams.push(`${prefix} —%`, prefix);
     }
     const emailTasks = db
-      .prepare(
-        `SELECT output FROM tasks
-         WHERE created_at > ?
-         AND status IN ('completed_with_concerns', 'failed')
-         AND (
-           (metadata LIKE '%"scheduled"%' AND metadata LIKE '%gmail_send%')
-           OR ${titleClauses}
-         )`,
-      )
+      .prepare(CANARY_DELIVERY_MISS_SQL)
       .all(cutoff, ...titleParams) as Array<{ output: string | null }>;
 
     for (const t of emailTasks) {

@@ -21,6 +21,18 @@ const MC_DIR = "/root/claude/mission-control";
 // of hanging to the timeout.
 const execFileAsync = promisify(execFile);
 
+// `+status` keeps the planner on idx_tasks_created_at instead of walking every
+// failed row via idx_tasks_status_started (rationale: CANARY_DELIVERY_MISS_SQL).
+export const RECURRING_FAILURES_SQL = `SELECT error, COUNT(*) as cnt FROM tasks
+         WHERE +status = 'failed'
+           AND error IS NOT NULL
+           AND error != 'Service shutdown'
+           AND created_at > datetime('now', ? || ' hours')
+         GROUP BY error
+         HAVING cnt >= 2
+         ORDER BY cnt DESC
+         LIMIT 5`;
+
 export interface ImprovementCandidate {
   type: "scope-miss" | "guard-trigger" | "tool-failure" | "task-failure";
   description: string;
@@ -42,17 +54,7 @@ export async function detectImprovements(
   // 1. Recurring task failures (same error pattern)
   try {
     const failures = db
-      .prepare(
-        `SELECT error, COUNT(*) as cnt FROM tasks
-         WHERE status = 'failed'
-           AND error IS NOT NULL
-           AND error != 'Service shutdown'
-           AND created_at > datetime('now', ? || ' hours')
-         GROUP BY error
-         HAVING cnt >= 2
-         ORDER BY cnt DESC
-         LIMIT 5`,
-      )
+      .prepare(RECURRING_FAILURES_SQL)
       .all(`-${hoursBack}`) as Array<{ error: string; cnt: number }>;
 
     for (const f of failures) {

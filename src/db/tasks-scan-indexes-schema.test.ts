@@ -16,8 +16,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "./index.js";
 import { IDLE_SQL } from "../triggers/idle-detect.js";
-import { CANARY_TASK_STATS_SQL } from "../rituals/canary.js";
+import {
+  CANARY_DELIVERY_MISS_SQL,
+  CANARY_TASK_STATS_SQL,
+  RITUAL_EMAIL_TITLE_PREFIXES,
+} from "../rituals/canary.js";
 import { LAST_24H_TASKS_SQL } from "../api/mcp-server/tools.js";
+import { RECURRING_FAILURES_SQL } from "../intelligence/improvement-detector.js";
+import { ensureReactionsTable } from "../reactions/store.js";
 
 let tmpDbPath: string | null = null;
 
@@ -63,6 +69,7 @@ describe("migration v10 — tasks indexes for idle-detect / canary / MCP status"
 
   it("idle-detect isIdle() SQL is a covering index range, not SCAN tasks", () => {
     initDatabase(":memory:");
+    ensureReactionsTable(getDatabase()); // production index set (idx_tasks_status_started)
     const p = plan(getDatabase(), IDLE_SQL, "-4 hours");
     expect(p).toContain("idx_tasks_spawn_updated");
     expect(p).toContain("COVERING INDEX");
@@ -72,18 +79,49 @@ describe("migration v10 — tasks indexes for idle-detect / canary / MCP status"
 
   it("canary task-stats SQL uses idx_tasks_created_at, not SCAN tasks", () => {
     initDatabase(":memory:");
+    ensureReactionsTable(getDatabase()); // production index set (idx_tasks_status_started)
     const p = plan(getDatabase(), CANARY_TASK_STATS_SQL, "2026-10-26 00:00:00");
     expect(p).toContain("idx_tasks_created_at");
     expect(p).toMatch(/^SEARCH tasks USING /);
     expect(p).not.toContain("SCAN tasks");
   });
 
+  it("canary delivery-miss SQL uses idx_tasks_created_at, not the status index", () => {
+    initDatabase(":memory:");
+    ensureReactionsTable(getDatabase()); // production index set (idx_tasks_status_started)
+    const titleParams = RITUAL_EMAIL_TITLE_PREFIXES.flatMap((prefix) => [
+      `${prefix} —%`,
+      prefix,
+    ]);
+    const p = plan(
+      getDatabase(),
+      CANARY_DELIVERY_MISS_SQL,
+      "2026-10-26 00:00:00",
+      ...titleParams,
+    );
+    expect(p).toContain("idx_tasks_created_at");
+    expect(p).toMatch(/^SEARCH tasks USING /);
+    expect(p).not.toContain("SCAN tasks");
+    expect(p).not.toContain("idx_tasks_status");
+  });
+
   it("MCP status last-24h COUNT uses idx_tasks_created_at, not SCAN tasks", () => {
     initDatabase(":memory:");
+    ensureReactionsTable(getDatabase()); // production index set (idx_tasks_status_started)
     const p = plan(getDatabase(), LAST_24H_TASKS_SQL);
     expect(p).toContain("idx_tasks_created_at");
     expect(p).toMatch(/^SEARCH tasks USING /);
     expect(p).not.toContain("SCAN tasks");
+  });
+
+  it("improvement-detector recurring-failures SQL uses idx_tasks_created_at, not the status index", () => {
+    initDatabase(":memory:");
+    ensureReactionsTable(getDatabase()); // production index set (idx_tasks_status_started)
+    const p = plan(getDatabase(), RECURRING_FAILURES_SQL, "-24");
+    expect(p).toContain("idx_tasks_created_at");
+    expect(p).toMatch(/^SEARCH tasks USING /);
+    expect(p).not.toContain("SCAN tasks");
+    expect(p).not.toContain("idx_tasks_status");
   });
 
   it("existing v9 DB (no indexes, rows present): v10 builds them; a re-run pinned to 9 is a no-op", () => {
