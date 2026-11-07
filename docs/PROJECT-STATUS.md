@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-07 19:53 UTC (**4bq `8c695d85`, 14,390 tests: the canary's delivery-miss query now plans through `idx_tasks_created_at` (`+status IN (…)`), reading ~30 rows of the last day instead of 1,090 historical rows whole; plan pinned on the production index set (RED without the `+`); same fix swept into the improvement detector's recurring-failures query. Root cause of the 4 overnight `MCEventLoopBlock` alerts: main-thread SQLite jobs on a cold file cache (cache flushed by a 14.5 GB OOM-killed vitest worker at 01:19 UTC, then kept at capacity); canary late by exactly the lag on both blocked ticks. Retention/consolidation cold cost → 4br ruling; vitest OOM → 4bs ruling. Deploy + proof (canary ticks within 1 s) = operator.**)
+
 > Last updated: 2026-11-07 19:14 UTC (**Memory ports 1–3 ARMED in observe-only modes by the operator (`MEMORY_OPEN_WORK=shadow`, `MEMORY_RECALL_FLOOR=shadow`, `MEMORY_TOMBSTONES=record`, drop-in `memory-ports.conf`, PID 871218, clean start, health 200). Jarvis behaves as before; ports 1–2 trace what they would change, port 3 records tombstones at the nightly consolidation without filtering. Readout of the counts ≈ 2026-11-14 decides which switch goes `on`.**)
 
 > Last updated: 2026-11-07 19:08 UTC (**Auto-memory leak CLOSED end to end: eval gate PASSED (78.68 vs 78.63; removing the leaked block left Jarvis's behaviour unchanged), DEPLOYED build `7610bb8e` PID 855955 at 19:05 UTC, PROVEN by the operator's C6 extracted re-run: 0 of 34 facts carry the leaked project (2 of 19 before). Jarvis is live with ports 1–3 dormant and the SDK isolated from the operator's Claude Code memory. Queue 4bp.**)
@@ -384,6 +386,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-07 (19:53) | `src/rituals/canary.ts`, `src/intelligence/improvement-detector.ts`, `src/db/tasks-scan-indexes-schema.test.ts` | `8c695d85`: canary delivery-miss SQL and the improvement detector's recurring-failures SQL exported with `+status` so the planner uses the date index; plan pins added on the production index set (`ensureReactionsTable`). qa R1 PASS WITH WARNINGS folded (W1 + sweep sibling). Queue 4bq (fix), 4br, 4bs (rulings). 14,390 tests. |
 | 2026-11-07 (19:14) | systemd drop-in only (operator) | Memory ports 1–3 ARMED `shadow`/`shadow`/`record`; verified in the live process environment; readout ≈ 11-14. |
 | 2026-11-07 (19:08) | deploy only (no code) | Auto-memory fix `8311e655`: eval gate PASS 78.68 vs 78.63 ($6.12), DEPLOYED `7610bb8e` PID 855955, PROVEN 0 leaked facts in 34 on the C6 extracted re-run. |
 | 2026-11-07 (07:04) | `src/inference/claude-sdk.ts` + test, `src/memory/jme.ts` (+ optional prompt date) + test, bench adapter/run/tests, README, `results/port4-extracted.md` | `8311e655`: auto-memory isolation fix (eval gate owed, not deployed); extracted-leg readout fold (per-fact category/TTL, consolidator counts, surfaced column); port 4 MEASURED from the operator's runs. Audits R3 (readout) + R4 PWW folded. Queue 4bk (4) MEASURED, 4bp new. |
