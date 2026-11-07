@@ -954,6 +954,128 @@ Limits of this port:
 - **A later mention of the old value survives.** A row created after the
   tombstone is kept even when it repeats the old value.
 
+## Extracted leg (Port 4, `--leg extracted`, PROVISIONAL)
+
+The ideal leg assumes perfect extraction. The extracted leg measures the real
+one: it ingests like `raw`, writes the stated-fact exchanges (standing,
+person_fact, correction) to `jme_turns` through the router's own
+`writeEpisodic`, runs the production nightly consolidator
+(`consolidateAll()` in `src/memory/jme.ts`, one Haiku call per run), then
+`pruneExpiredFacts()`, then probes. Nothing is hand-inserted into
+`jme_facts`; the consolidator's rows are dated at the night that wrote them
+and copied onto each probe's timeline with their TTL kept.
+
+- **One call per consolidation night.** The turns of one scenario are grouped
+  by the 02:45 run that would first see them (`nextConsolidationT`). C6 and
+  C8 take one call per scenario; C2 takes two, because its fact and its
+  correction are five days apart and production consolidates them on
+  different nights.
+- **Window.** `--window day` (the default) writes each night's stated turns
+  among 30 ordinary exchanges from the corpus's filler generator (seed fixed
+  per scenario and night, spread over the 24 hours that night consolidates),
+  plus the scenario's own filler dated in that window, in timeline order and
+  aged past the 30-minute settle window. An ordinary exchange that holds a
+  probe needle (expect or forbid) stops the run. A night past
+  `CONSOLIDATOR_MAX_TURNS` (400) keeps the stated turns and the newest
+  ordinary ones. `--window clean` writes the stated turns alone and is an
+  upper bound. The window is recorded in `meta.extraction.window`; each
+  scenario's `extraction` entry records `calls`, `turns`, `inserted`,
+  `caught`, `failedCalls` and the `facts` the consolidator left.
+- **`caught`** = every probe of the scenario has a live extracted fact that
+  holds all its expect needles (folded substring, as the scorer).
+
+### Limits
+
+1. **English facts, Spanish needles.** The consolidator writes facts in
+   English while many corpus needles are Spanish, so `caught` and hit %
+   understate what was extracted. The per-scenario `facts` are in the JSON
+   for a human read.
+2. **Embeddings off.** There is no cosine supersede, so in C2 the old and the
+   new value both stay live, and part of the ideal → extracted stale-hit gap
+   is the harness, not the extractor.
+3. **Window.** `clean` is an upper bound (the stated turns alone); `day` is
+   seeded ordinary exchanges, not the operator's real day.
+
+The `--report` extraction table and the `--compare ideal,extracted` page
+print these three limits under their headings, and every heading carries
+PROVISIONAL until an audit has read the result JSON.
+
+### Consent, cap and refusals
+
+| Condition | Result |
+| --- | --- |
+| Neither `--run` nor `--dry-run` | exit 2; the message names the model, the per-call cost of both windows and the cost at the cap |
+| Both `--run` and `--dry-run` | exit 2 |
+| `--allow-embeddings` | exit 2 (the leg's embedding calls are not budgeted) |
+| `--run` without `INFERENCE_PRIMARY_PROVIDER=claude-sdk` | exit 2 |
+| `--run` with `INFERENCE_SDK_LASTLINE_ENABLED=true` | exit 2 (a failed Haiku call would reach the fallback provider) |
+| `--run` without `MC_API_KEY` | exit 2 (the config loader requires it; any placeholder) |
+| The next call would exceed `--max-model-calls` (default 6) | exit 3 before that call, the calls made printed, no result written |
+| `--dry-run` | no model call; the turns are written and the calls counted, uncapped |
+| `--window` on another leg | refused by the argument parser |
+
+Defaults for this leg: `--classes C6`, `--sizes 50`, `--window day`,
+`--corpus benchmarks/continuity/corpus-v2.json`, and `--out` named after the
+classes and the window (`jarvis-<sha>-extracted-emb-off-v2-c6-day.json`).
+
+### Cost
+
+The cap counts `infer()` calls. One call can make up to 2 billed requests
+(the Haiku attempt, then its retry), so the worst case is twice the ceiling.
+Haiku 4.5 list price, $1 / $5 per million input / output tokens. Input: the
+3,276-character extraction prompt plus the transcript; `clean` sends 2 to 4
+short turns (about 1,000 tokens in all), `day` adds about 4,150 to 4,560
+characters of ordinary exchanges per night (C2 / C6 / C8 at size 50, about
+1,300 tokens more). Typical assumes a short JSON reply; ceiling assumes the
+full 1,024-token output. With subscription credentials the calls draw on
+the plan's quota instead.
+
+| Window | Calls | Typical | Ceiling | Worst case (2× billed) |
+| --- | ---: | ---: | ---: | ---: |
+| clean | 1 | $0.0015 | $0.0063 | $0.013 |
+| clean | 6 | $0.009 | $0.038 | $0.076 |
+| clean | 29 | $0.044 | $0.18 | $0.37 |
+| day | 1 | $0.0030 | $0.0076 | $0.015 |
+| day | 6 | $0.018 | $0.046 | $0.091 |
+| day | 29 | $0.087 | $0.22 | $0.44 |
+
+C6 at size 50 is 6 calls; C2 + C8 at size 50 is 29 (C2 9 × 2, C8 11 × 1).
+
+### Running it
+
+The operator runs it, from the repository root, after the commit so
+`meta.commit` matches the code. No key is typed: the Claude Agent SDK reads
+its own stored credentials, and `MC_API_KEY` is a placeholder. The embedding
+and remote-memory keys and the last-line switch are unset, and so is
+`ANTHROPIC_API_KEY`, so the SDK uses the stored credentials rather than a key.
+
+1. Smoke, nothing billed: the same line once with `HOME` set to an empty
+   directory (and no token or config-dir override). The SDK finds no credentials and both attempts of every call
+   fail before a billed request; expect `failed calls 1` on each scenario
+   line, `inserted 0`, and `failedCalls` equal to `calls` in the JSON.
+
+   ```bash
+   env -u GEMINI_API_KEY -u EMBEDDING_KEY -u COMMIT_DB_KEY -u INFERENCE_SDK_LASTLINE_ENABLED -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+     -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CONFIG_DIR HOME="$(mktemp -d)" INFERENCE_PRIMARY_PROVIDER=claude-sdk MC_API_KEY=bench-placeholder \
+     ./node_modules/.bin/tsx scripts/continuity-bench/run.ts --leg extracted --run --max-model-calls 6 \
+     --out /tmp/continuity-extracted-smoke.json
+   ```
+
+2. C6, size 50, 6 calls:
+
+   ```bash
+   env -u GEMINI_API_KEY -u EMBEDDING_KEY -u COMMIT_DB_KEY -u INFERENCE_SDK_LASTLINE_ENABLED -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+     INFERENCE_PRIMARY_PROVIDER=claude-sdk MC_API_KEY=bench-placeholder \
+     npx tsx scripts/continuity-bench/run.ts --leg extracted --run --max-model-calls 6 --classes C6 --sizes 50
+   ```
+
+3. C2 + C8, size 50, 29 calls: the same line with
+   `--max-model-calls 29 --classes C2,C8`.
+
+Each scenario prints one progress line (calls so far against the cap, turns,
+inserted, caught, failed calls). Render with
+`--compare <ideal.json>,<extracted.json> --md <out.md>`.
+
 ## Limits
 
 - **Words-only is the harness configuration, not production's.** With embeddings off every recall is
@@ -967,7 +1089,7 @@ Limits of this port:
     figures under `emb-off` therefore differ from a keyed production.
 - **The day-log is not written or searched.** It is the record of work done, not a chat memory, and no
   probe targets it.
-- **Consolidation is not run.** The nightly dedupe/consolidation passes never execute. The filler's
+- **Consolidation is not run** (outside the extracted leg, which runs `consolidateAll()` on the stated-fact turns only). The nightly dedupe/consolidation passes never execute. The filler's
   repeats (about 3 % exact; see the filler section) stay as separate rows,
   where a consolidated store would have merged them.
 - **No model in the loop.** The scorecard measures what reaches the model, not what the model answers.

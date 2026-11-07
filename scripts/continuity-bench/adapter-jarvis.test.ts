@@ -15,6 +15,8 @@ import {
   DEFAULT_SWITCHES,
   JME_INJECTION_BUDGET_TOKENS,
   JarvisAdapter,
+  ModelCallBudget,
+  ModelCallCapError,
   SWITCHES,
   assertScratchDbPath,
   assertUpsertStatus,
@@ -26,9 +28,11 @@ import {
   scratchDbPath,
   splitMemorySearch,
   sqliteUtc,
+  DAY_WINDOW_EXCHANGES,
+  dayWindowExchanges,
 } from "./adapter-jarvis.js";
 import { buildCorpusV2 } from "./corpus-v2.js";
-import { FILLER_SPEC_V1 } from "./filler.js";
+import { FILLER_SPEC_V1, generateFiller } from "./filler.js";
 import { scoreProbe, scoreProbeWith } from "./score.js";
 import type { ProbeRun, Scenario } from "./types.js";
 
@@ -496,6 +500,85 @@ describe.each(["off", "shadow", "on"] as const)("JarvisAdapter open_work compone
   it("no gap since the session tail (C3 hydrate K 5, C4 restart K 16): the needle never comes from a note", () => {
     for (const id of ["C3-01-h5-s50", "C4-01-r16-s50"]) {
       expect(ow(id)?.text ?? "", id).not.toContain(needle(id));
+    }
+  });
+});
+
+describe("ModelCallBudget (extracted leg)", () => {
+  it("takes calls up to the cap and refuses the next one before counting it", () => {
+    const b = new ModelCallBudget(2);
+    b.take("s1");
+    b.take("s2");
+    expect(b.calls).toBe(2);
+    let err: unknown;
+    try {
+      b.take("s3");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ModelCallCapError);
+    expect(err).toMatchObject({ calls: 2, max: 2, scenarioId: "s3", name: "ModelCallCapError" });
+    expect(b.calls).toBe(2);
+    expect(() => new ModelCallBudget(0).take("s")).toThrow(/cap 0 reached: 0 calls made/);
+  });
+
+  it("the extracted leg refuses to build without a budget", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cb-x-"));
+    expect(() => new JarvisAdapter(scratchDbPath(dir), "extracted")).toThrow(/extraction/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("dayWindowExchanges (extracted leg, --window day)", () => {
+  const V2 = buildCorpusV2();
+  const STATED = new Set(["standing", "person_fact", "correction"]);
+  const fillerOf = (s: Scenario) => generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT });
+
+  it("per stated night of every C2 / C6 / C8 s50 scenario: the seeded block plus the night's own filler, all in that night, no probe needle", () => {
+    let nights = 0;
+    for (const s of V2.scenarios.filter((x) => ["C2", "C6", "C8"].includes(x.class) && x.fillerSize === 50)) {
+      const filler = fillerOf(s);
+      const needles = s.probes.flatMap((p) => [...p.expect, ...p.forbid]).map((n) => n.toLowerCase());
+      for (const night of new Set(s.events.filter((e) => STATED.has(e.kind)).map((e) => nextConsolidationT(e.t)))) {
+        const items = dayWindowExchanges(s, V2.fillerSpec, night, filler);
+        const own = filler.filter((f) => nextConsolidationT(f.t) === night).length;
+        expect(items.length, s.id).toBe(DAY_WINDOW_EXCHANGES + own);
+        for (const x of items) {
+          expect(nextConsolidationT(x.t), s.id).toBe(night);
+          for (const n of needles) expect(`${x.user}\n${x.assistant}`.toLowerCase().includes(n), `${s.id}: ${n}`).toBe(false);
+        }
+        expect(dayWindowExchanges(s, V2.fillerSpec, night, filler)).toEqual(items);
+        expect(dayWindowExchanges(s, V2.fillerSpec, night + 86_400, filler).slice(0, 3)).not.toEqual(items.slice(0, 3));
+        nights++;
+      }
+    }
+    expect(nights).toBe(6 + 2 * 9 + 11);
+  });
+
+  it("throws when an ordinary exchange holds a probe needle (expect or forbid)", () => {
+    const s = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+    const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+    const word = dayWindowExchanges(s, V2.fillerSpec, night, [])[0].user.match(/\p{L}{6,}/u)![0];
+    const probes = s.probes.map((p, i) => (i === 0 ? { ...p, forbid: [word] } : p));
+    expect(() => dayWindowExchanges({ ...s, probes }, V2.fillerSpec, night, [])).toThrow(/probe needle/);
+    const expectProbes = s.probes.map((p, i) => (i === 1 ? { ...p, expect: [...p.expect, word.toUpperCase()] } : p));
+    expect(() => dayWindowExchanges({ ...s, probes: expectProbes }, V2.fillerSpec, night, [])).toThrow(/probe needle/);
+  });
+
+  it("a night past CONSOLIDATOR_MAX_TURNS keeps the stated turns and the newest ordinary ones: 400 turns (dry run, 300 filler items in one night)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cb-day-"));
+    const adapter = new JarvisAdapter(scratchDbPath(dir), "extracted", { extraction: { budget: new ModelCallBudget(Number.POSITIVE_INFINITY), dryRun: true, window: "day" } });
+    adapter.open();
+    try {
+      const base = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+      const night = nextConsolidationT(base.events.find((e) => e.kind === "standing")!.t);
+      const s: Scenario = { ...base, fillerSize: 300, fillerFromT: night - 86_400, fillerToT: night - 1800 };
+      expect(dayWindowExchanges(s, V2.fillerSpec, night, fillerOf(s)).length * 2 + 2).toBe(2 + 2 * (DAY_WINDOW_EXCHANGES + 300));
+      await adapter.runScenario(s, V2.fillerSpec);
+      expect(adapter.extractions[0]).toMatchObject({ scenarioId: "C6-01-s50", calls: 1, turns: 400, inserted: 0 });
+    } finally {
+      adapter.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

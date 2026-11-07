@@ -74,7 +74,7 @@ export function payloadText(s: SurfaceResult): string {
   return s.components.map((c) => c.text).join("\n\n");
 }
 
-const contains = (hay: string, needle: string) => fold(hay).includes(fold(needle));
+export const contains = (hay: string, needle: string) => fold(hay).includes(fold(needle));
 
 /** v1 helper: role of the nearest default marker at or before `index` in `item`, or null. */
 export function authorAt(item: string, index: number): Role | null {

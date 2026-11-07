@@ -5,6 +5,8 @@
  *     [--corpus benchmarks/continuity/corpus-v2.json] [--out <json>]
  *     [--allow-embeddings [--max-embed-calls 3000] [--embed-cache <file under TMPDIR>]]
  *     [--switch MEMORY_OPEN_WORK=on ...] [--switch MEMORY_RECALL_FLOOR=on] [--switch MEMORY_TOMBSTONES=on]
+ *   npx tsx scripts/continuity-bench/run.ts --leg extracted (--run | --dry-run) [--max-model-calls 6] \
+ *     [--window day|clean] [--classes C6] [--sizes 50] [--corpus ...] [--out <json>]
  *   npx tsx scripts/continuity-bench/run.ts --report <a.json,b.json,...> --md <out.md>
  *   npx tsx scripts/continuity-bench/run.ts --compare <before.json,after.json[,before2,after2...]> \
  *     [--reference <ref.json[,ref2.json]>] --md <out.md>
@@ -21,6 +23,22 @@
  * calls production makes itself) and refuses when that bound exceeds
  * --max-embed-calls; at run time a fetch meter refuses any call past the cap
  * and stops the run. The db is a fresh file under os.tmpdir(), removed at exit.
+ *
+ * `--leg extracted` is the one leg with a model in the loop: the production
+ * nightly consolidator (jme.ts consolidateAll -> infer, Haiku) runs once per
+ * consolidation night of each scenario. It refuses without `--run` (exit 2);
+ * `--dry-run` writes the turns and counts the calls without making one. Under
+ * `--run` it refuses (exit 2) unless INFERENCE_PRIMARY_PROVIDER=claude-sdk
+ * (the production path), INFERENCE_SDK_LASTLINE_ENABLED is not true (a failed
+ * Haiku call would go to the fallback provider) and MC_API_KEY is set (the
+ * config loader requires it; any placeholder, nothing is served). Before each
+ * call it checks --max-model-calls (default 6) and stops with exit 3 before
+ * the call that would exceed it, no result written. A call is one infer();
+ * it can make up to 2 billed SDK requests (Haiku, then its retry). `--window
+ * day` (default) writes each night's stated turns among seeded ordinary
+ * exchanges; `--window clean` writes the stated turns alone (an upper bound).
+ * Defaults: --classes C6, --sizes 50, --corpus corpus-v2.json, --out named
+ * after the classes and the window.
  */
 
 import { execSync } from "node:child_process";
@@ -45,6 +63,7 @@ import {
   type GapAggregate,
   type IngestStat,
 } from "./score.js";
+import type { ExtractionStat, ExtractionWindow } from "./adapter-jarvis.js";
 import type { Corpus, CorpusEvent, ProbeRun, ProbeScore, SurfaceScore } from "./types.js";
 import { CLASS_LABELS } from "./types.js";
 
@@ -54,7 +73,7 @@ export interface RunResult {
   meta: {
     system: "jarvis";
     commit: string;
-    leg: "raw" | "ideal";
+    leg: "raw" | "ideal" | "extracted";
     embeddings: "off" | "on";
     corpusVersion: string;
     sizes: number[];
@@ -67,6 +86,10 @@ export interface RunResult {
     embed?: { uniqueRowTexts: number; rowCalls: number; rowCacheHits: number; rowFailures?: number; fetches?: number; plan?: EmbedPlan };
     /** Production switch states this run set in its process (absent on results from before switches existed = all off). */
     switches?: Record<string, string>;
+    /** --classes filter (absent = every class). */
+    classes?: string[];
+    /** `extracted` leg: model calls made (dry-run: the calls the run would make), against the cap. */
+    extraction?: { mode: "run" | "dry-run"; calls: number; maxModelCalls: number; model: string; window: ExtractionWindow };
   };
   ingest: IngestStat[];
   aggregates: Aggregate[];
@@ -83,6 +106,8 @@ export interface RunResult {
   authorAggregates?: AuthorAggregate[];
   /** v2: per component name, its item cap (absent = no count cap). */
   caps?: Record<string, number | null>;
+  /** `extracted` leg: per scenario, what the real consolidator did. */
+  extraction?: ExtractionStat[];
 }
 
 const NOTES = [
@@ -94,6 +119,73 @@ const NOTES = [
   "Proactive ms is the sequential sum of the components; production runs enrichment and the scope classifier in parallel.",
   "JME block text replicates the fast-runner template (fast-runner.ts:1126-1139, pinned by a test); the facts come from the real queryMemory/orderForInjection.",
 ];
+
+/** Appended to the notes of an `extracted` run. */
+export const EXTRACTED_NOTE =
+  "extracted leg = raw + the jme_facts rows the production nightly consolidator wrote: the stated-fact exchanges (standing, person_fact, correction) through writeEpisodic (window `day`: among seeded ordinary exchanges of the same night; `clean`: alone, an upper bound; meta.extraction.window), then jme.ts consolidateAll once per consolidation night (one real model call each), and pruneExpiredFacts per probe. The consolidator writes facts in English; a Spanish needle is caught only when the fact keeps the word or figure.";
+
+/** Haiku 4.5 list price, USD per million tokens, for the cost line only. */
+export const EXTRACTION_PRICE_PER_MTOK = { input: 1, output: 5 };
+
+/**
+ * USD per model call at that list price (README §Extracted leg): typical =
+ * the measured input (clean about 1,000 tokens, day about 2,300) and a short
+ * reply; ceiling = the input at its largest plus the full 1,024-token output.
+ */
+export const EXTRACTION_COST_PER_CALL: Record<ExtractionWindow, { typical: number; ceiling: number }> = {
+  clean: { typical: 0.0015, ceiling: 0.0063 },
+  day: { typical: 0.003, ceiling: 0.0076 },
+};
+
+/** One infer() can make this many billed SDK requests (Haiku, then its retry); the cap counts infer() calls. */
+export const BILLED_REQUESTS_PER_CALL = 2;
+
+const usd = (v: number) => `$${v.toPrecision(2)}`;
+
+/** The window as every printed line names it. */
+export function windowLabel(w: ExtractionWindow): string {
+  return w === "clean" ? "clean (upper bound: the stated turns alone)" : "day (the stated turns among seeded ordinary exchanges)";
+}
+
+/** Typical, ceiling and 2x worst-case cost of `calls` model calls in one window. */
+export function extractionCostLine(w: ExtractionWindow, calls: number): string {
+  const c = EXTRACTION_COST_PER_CALL[w];
+  return `${calls} calls, window ${w}: about ${usd(calls * c.typical)} typical, ${usd(calls * c.ceiling)} ceiling, up to ${BILLED_REQUESTS_PER_CALL}x billed requests (Haiku + its retry) so ${usd(BILLED_REQUESTS_PER_CALL * calls * c.ceiling)} worst case`;
+}
+
+/** Printed under every extraction heading. */
+export const EXTRACTION_LIMITS = [
+  "Limits:",
+  "1. The consolidator writes facts in English while the corpus needles are Spanish or English: `caught` and hit % understate what was extracted; the per-scenario `facts` in the JSON are there for a human read.",
+  "2. Embeddings off: no cosine supersede, so in C2 the old and the new value both stay live; part of the ideal → extracted stale-hit gap is the harness, not the extractor.",
+  "3. Window: `clean` = the stated turns alone (an upper bound); `day` = the stated turns among seeded ordinary exchanges, not the operator's real day.",
+].join("\n");
+
+/**
+ * Why an `extracted` run may not start (exit 2), or null. Names the cost
+ * without --run; under --run, the provider settings the production
+ * consolidator needs (names only, never values).
+ */
+export function extractionRefusal(
+  args: { run: boolean; dryRun: boolean; maxModelCalls: number; allowEmbeddings: boolean; window: ExtractionWindow },
+  env: NodeJS.ProcessEnv,
+): string | null {
+  if (args.run && args.dryRun) return "--run and --dry-run are exclusive";
+  if (args.allowEmbeddings) return "the extracted leg runs with embeddings off only (its embedding bound is not counted)";
+  if (!args.run && !args.dryRun)
+    return (
+      "the extracted leg makes REAL model calls (the production consolidator, claude-haiku-4-5, one per consolidation night per scenario; " +
+      `per call about ${usd(EXTRACTION_COST_PER_CALL.clean.typical)} typical / ${usd(EXTRACTION_COST_PER_CALL.clean.ceiling)} ceiling with --window clean, ` +
+      `${usd(EXTRACTION_COST_PER_CALL.day.typical)} / ${usd(EXTRACTION_COST_PER_CALL.day.ceiling)} with --window day, at the list price of ${EXTRACTION_PRICE_PER_MTOK.input} / ${EXTRACTION_PRICE_PER_MTOK.output} USD per million input / output tokens; ` +
+      `at most --max-model-calls ${args.maxModelCalls}: ${extractionCostLine(args.window, args.maxModelCalls)}). ` +
+      "Pass --run to make them, or --dry-run to count them without a call"
+    );
+  if (args.dryRun) return null;
+  if (env.INFERENCE_PRIMARY_PROVIDER !== "claude-sdk") return "INFERENCE_PRIMARY_PROVIDER is not claude-sdk: the consolidator would not run on the production path";
+  if (env.INFERENCE_SDK_LASTLINE_ENABLED === "true") return "INFERENCE_SDK_LASTLINE_ENABLED=true: a failed Haiku call would go to the fallback provider; unset it";
+  if (!env.MC_API_KEY) return "MC_API_KEY is not set: the config loader requires it (any placeholder; the bench serves nothing)";
+  return null;
+}
 
 export function refuseReason(env: NodeJS.ProcessEnv, allowEmbeddings: boolean): string | null {
   if (env.COMMIT_DB_KEY) return "COMMIT_DB_KEY is set (pgvector reads and writes a live remote store) — refused even with --allow-embeddings";
@@ -108,8 +200,16 @@ export type CliArgs =
   | { mode: "compare"; compare: string[]; reference: string[]; md: string }
   | {
       mode: "run";
-      leg: "raw" | "ideal";
+      leg: "raw" | "ideal" | "extracted";
       sizes: number[];
+      /** `--classes C6,C2` (null = every class; the extracted leg defaults to C6). */
+      classes: string[] | null;
+      /** extracted leg: consent to the model calls / count them without one / the cap. */
+      run: boolean;
+      dryRun: boolean;
+      maxModelCalls: number;
+      /** extracted leg: what else each night's window holds (default day). */
+      window: ExtractionWindow;
       corpus: string;
       out: string | null;
       allowEmbeddings: boolean;
@@ -147,9 +247,18 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     switches[m[1]] = m[2];
   }
   const allowEmbeddings = argv.includes("--allow-embeddings");
-  const leg = (arg("--leg") ?? "raw") as "raw" | "ideal";
-  if (leg !== "raw" && leg !== "ideal") throw new Error("--leg must be raw or ideal");
-  const sizes = (arg("--sizes") ?? "50,500").split(",").map((s) => parseInt(s, 10));
+  const leg = (arg("--leg") ?? "raw") as "raw" | "ideal" | "extracted";
+  if (leg !== "raw" && leg !== "ideal" && leg !== "extracted") throw new Error("--leg must be raw, ideal or extracted");
+  const extracted = leg === "extracted";
+  const sizes = (arg("--sizes") ?? (extracted ? "50" : "50,500")).split(",").map((s) => parseInt(s, 10));
+  const classesArg = arg("--classes") ?? (extracted ? "C6" : undefined);
+  const classes = classesArg ? classesArg.split(",") : null;
+  if (classes && classes.some((k) => !(k in CLASS_LABELS))) throw new Error("--classes must be a comma list of C1..C8");
+  const maxModelCalls = parseInt(arg("--max-model-calls") ?? "6", 10);
+  if (!Number.isInteger(maxModelCalls) || maxModelCalls < 0) throw new Error("--max-model-calls must be a non-negative integer");
+  const window = (arg("--window") ?? "day") as ExtractionWindow;
+  if (window !== "day" && window !== "clean") throw new Error("--window must be day or clean");
+  if (arg("--window") !== undefined && !extracted) throw new Error("--window applies to --leg extracted only");
   if (sizes.some((n) => !Number.isInteger(n) || n < 0)) throw new Error("--sizes must be a comma list of integers");
   const maxEmbedCalls = parseInt(arg("--max-embed-calls") ?? "3000", 10);
   if (!Number.isInteger(maxEmbedCalls) || maxEmbedCalls < 0) throw new Error("--max-embed-calls must be a non-negative integer");
@@ -157,7 +266,12 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     mode: "run",
     leg,
     sizes,
-    corpus: resolve(arg("--corpus") ?? join(ROOT, "benchmarks/continuity/corpus-v1.json")),
+    classes,
+    run: argv.includes("--run"),
+    dryRun: argv.includes("--dry-run"),
+    maxModelCalls,
+    window,
+    corpus: resolve(arg("--corpus") ?? join(ROOT, `benchmarks/continuity/${extracted ? "corpus-v2.json" : "corpus-v1.json"}`)),
     out: arg("--out") ? resolve(arg("--out")!) : null,
     allowEmbeddings,
     maxEmbedCalls,
@@ -381,11 +495,12 @@ export function renderBaseline(results: RunResult[]): string {
   for (const r of results) {
     parts.push(
       "",
-      `## leg \`${r.meta.leg}\` · embeddings ${r.meta.embeddings} · commit ${r.meta.commit} · corpus ${r.meta.corpusVersion}${r.meta.switches ? ` · switches ${switchText(r)}` : ""}`,
+      `## leg \`${r.meta.leg}\` · embeddings ${r.meta.embeddings} · commit ${r.meta.commit} · corpus ${r.meta.corpusVersion}${r.meta.switches ? ` · switches ${switchText(r)}` : ""}${r.meta.leg === "extracted" ? ` · ${PROVISIONAL}` : ""}`,
       "",
       `Run ${r.meta.startedAt}, ${(r.meta.durationMs / 1000).toFixed(1)} s.`,
       "",
     );
+    if (r.extraction) parts.push(extractionTable(r), "");
     if (!v2 || !r.gapAggregates) {
       parts.push(markdownTable(r.aggregates));
     } else {
@@ -422,6 +537,68 @@ export function renderBaseline(results: RunResult[]): string {
           `| ${i.fillerSize} | ${i.probes} | ${i.rows} | ${i.ms} | ${i.rowsPerSec} | ${i.medianProactiveMs?.toFixed(1) ?? "–"} | ${i.medianAskedMs?.toFixed(1) ?? "–"} |`,
       ),
     );
+  }
+  return parts.join("\n") + "\n";
+}
+
+/** Every number from an `extracted` run carries this until the audit has read its JSON. */
+export const PROVISIONAL = "PROVISIONAL (real model extraction; not audited)";
+
+/** Per class and size: the real consolidator's calls, inserted facts and catches. */
+function extractionTable(r: RunResult, limits = true): string {
+  const x = r.meta.extraction;
+  const rows = new Map<string, ExtractionStat[]>();
+  for (const e of r.extraction ?? []) rows.set(`${e.class}|${e.fillerSize}`, [...(rows.get(`${e.class}|${e.fillerSize}`) ?? []), e]);
+  const sum = (es: ExtractionStat[], f: (e: ExtractionStat) => number) => es.reduce((a, e) => a + f(e), 0);
+  return [
+    `### Extraction (${PROVISIONAL})`,
+    "",
+    ...(limits ? [EXTRACTION_LIMITS, ""] : []),
+    x
+      ? `Mode ${x.mode}, model ${x.model}, window ${windowLabel(x.window)}: ${x.calls} model calls${x.mode === "dry-run" ? " counted, none made" : ` made, cap ${x.maxModelCalls}`}. Cost estimate: ${extractionCostLine(x.window, x.calls)}. Caught = every probe of the scenario has a live extracted fact holding all its expect needles (folded substring, as the scorer).`
+      : "",
+    "",
+    "| class | size | scenarios | model calls | turns | inserted | caught / total | failed calls |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...[...rows.entries()].map(([k, es]) => {
+      const [cls, size] = k.split("|");
+      return `| ${cls} | ${size} | ${es.length} | ${sum(es, (e) => e.calls)} | ${sum(es, (e) => e.turns)} | ${sum(es, (e) => e.inserted)} | ${es.filter((e) => e.caught).length} / ${es.length} | ${sum(es, (e) => e.failedCalls)} |`;
+    }),
+  ].join("\n");
+}
+
+/**
+ * Port 4: ideal (perfect extraction) beside extracted (the real consolidator)
+ * on the same classes and sizes; the gap is what real extraction loses.
+ */
+export function renderExtractionCompare(pairs: ReadonlyArray<readonly [RunResult, RunResult]>): string {
+  const parts: string[] = [
+    `# Port 4 — real extraction of stated facts: ideal / extracted (${PROVISIONAL})`,
+    "",
+    "Generated by `scripts/continuity-bench/run.ts --compare`; every figure below is computed from the result files named here. The extracted leg's facts come from one real model call per consolidation night; its numbers stay provisional until the audit has read the JSON.",
+    "",
+    EXTRACTION_LIMITS,
+    "",
+    `Cost per model call at the Haiku list price: window clean about ${usd(EXTRACTION_COST_PER_CALL.clean.typical)} typical / ${usd(EXTRACTION_COST_PER_CALL.clean.ceiling)} ceiling, window day ${usd(EXTRACTION_COST_PER_CALL.day.typical)} / ${usd(EXTRACTION_COST_PER_CALL.day.ceiling)}; one call can make up to ${BILLED_REQUESTS_PER_CALL}x billed requests (Haiku + its retry), so the worst case is ${BILLED_REQUESTS_PER_CALL}x the ceiling.`,
+  ];
+  for (const [ideal, extracted] of pairs) {
+    if (ideal.meta.leg !== "ideal" || extracted.meta.leg !== "extracted") throw new Error("--compare for the extracted leg takes ideal,extracted pairs");
+    parts.push(
+      "",
+      `## embeddings ${extracted.meta.embeddings} · corpus ${extracted.meta.corpusVersion}`,
+      "",
+      `- ideal: commit ${ideal.meta.commit}, run ${ideal.meta.startedAt}`,
+      `- extracted: commit ${extracted.meta.commit}, run ${extracted.meta.startedAt}, ${extracted.meta.extraction ? `${extracted.meta.extraction.mode}, window ${windowLabel(extracted.meta.extraction.window)}, ${extracted.meta.extraction.calls} model calls (${extracted.meta.extraction.model})` : "no extraction meta"}`,
+      "",
+      "| class | size | surface | n | hit % ideal → extracted | gap (pp) | stale-hit % ideal → extracted |",
+      "| --- | ---: | --- | ---: | ---: | ---: | ---: |",
+    );
+    for (const a of extracted.aggregates) {
+      const b = ideal.aggregates.find((x) => x.class === a.class && x.fillerSize === a.fillerSize && x.surface === a.surface);
+      const gap = b && a.hitPct !== null && b.hitPct !== null ? Math.round(10 * (a.hitPct - b.hitPct)) / 10 : null;
+      parts.push(`| ${a.class} | ${a.fillerSize} | ${a.surface} | ${a.n} | ${c(b?.hitPct)} → ${c(a.hitPct)} | ${c(gap)} | ${c(b?.staleHitPct)} → ${c(a.staleHitPct)} |`);
+    }
+    parts.push("", extractionTable(extracted, false));
   }
   return parts.join("\n") + "\n";
 }
@@ -915,7 +1092,22 @@ export function switchSuffix(switches: Readonly<Record<string, string>>, default
     .join("");
 }
 
-/** Returns the exit code: 0 done, 2 refused, 3 stopped at the embedding cap. */
+/** The default result file name; the extracted leg's also names its classes and window (`-c6-day`). */
+export function resultFileName(r: {
+  commit: string;
+  leg: string;
+  embeddings: string;
+  suffix: string;
+  switchTag: string;
+  classes: string[] | null;
+  window: ExtractionWindow;
+  dryRun: boolean;
+}): string {
+  const extractionTag = r.leg === "extracted" ? `-${(r.classes ?? []).map((k) => k.toLowerCase()).join("")}-${r.window}` : "";
+  return `jarvis-${r.commit}-${r.leg}-emb-${r.embeddings}${r.suffix}${r.switchTag}${extractionTag}${r.dryRun ? "-dry-run" : ""}.json`;
+}
+
+/** Returns the exit code: 0 done, 2 refused, 3 stopped at the embedding or model-call cap. */
 export async function main(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env): Promise<number> {
   requireOperatorContext("continuity-bench", { tty: false });
   const args = parseArgs(argv);
@@ -932,19 +1124,26 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
     const pairs: Array<[RunResult, RunResult]> = [];
     for (let i = 0; i < runs.length; i += 2) pairs.push([runs[i], runs[i + 1]]);
     const differs = (name: string) => pairs.some(([b, a]) => (b.meta.switches?.[name] ?? "off") !== (a.meta.switches?.[name] ?? "off"));
-    const render = differs("MEMORY_TOMBSTONES") ? renderTombstoneCompare : differs("MEMORY_RECALL_FLOOR") ? renderRecallFloorCompare : renderCompare;
+    const extractedPair = pairs.some(([b, a]) => b.meta.leg === "extracted" || a.meta.leg === "extracted");
+    const render = extractedPair
+      ? renderExtractionCompare
+      : differs("MEMORY_TOMBSTONES")
+        ? renderTombstoneCompare
+        : differs("MEMORY_RECALL_FLOOR")
+          ? renderRecallFloorCompare
+          : renderCompare;
     writeFileSync(resolve(args.md), render(pairs, args.reference.map(load)));
     console.log(`wrote ${args.md}`);
     return 0;
   }
 
-  const refused = refuseReason(env, args.allowEmbeddings);
+  const refused = refuseReason(env, args.allowEmbeddings) ?? (args.leg === "extracted" ? extractionRefusal(args, env) : null);
   if (refused) {
     console.error(`[continuity-bench] refusing: ${refused}`);
     return 2;
   }
   const embeddings = args.allowEmbeddings && (env.GEMINI_API_KEY || env.EMBEDDING_KEY) ? "on" : "off";
-  const { leg, sizes } = args;
+  const { leg, sizes, classes } = args;
   const corpus = JSON.parse(readFileSync(args.corpus, "utf8")) as Corpus;
   const commit = shortSha();
   const suffix = corpus.version === "continuity-v1" ? "" : `-${corpus.version.replace("continuity-", "")}`;
@@ -952,7 +1151,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   const switches = resolveSwitches(args.switches);
   const out =
     args.out ??
-    join(ROOT, `benchmarks/continuity/results/jarvis-${commit}-${leg}-emb-${embeddings}${suffix}${switchSuffix(switches, DEFAULT_SWITCHES)}.json`);
+    join(ROOT, "benchmarks/continuity/results", resultFileName({ commit, leg, embeddings, suffix, switchTag: switchSuffix(switches, DEFAULT_SWITCHES), classes, window: args.window, dryRun: args.dryRun }));
 
   // Scratch only: a fresh directory under TMPDIR, removed at exit.
   const scratch = mkdtempSync(join(tmpdir(), "continuity-bench-"));
@@ -960,12 +1159,12 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   process.on("exit", cleanup);
   process.env.JARVIS_KB_MIRROR_DIR ??= join(scratch, "kbmirror");
 
-  const { EmbedCache, JARVIS_MARKERS, JarvisAdapter, exchangeContent, scratchDbPath } = await import("./adapter-jarvis.js");
+  const { EmbedCache, JARVIS_MARKERS, EXTRACTION_MODEL_ID, JarvisAdapter, ModelCallBudget, ModelCallCapError, exchangeContent, scratchDbPath } = await import("./adapter-jarvis.js");
   const cache = new EmbedCache(embeddings === "on" ? (args.embedCache ?? join(scratch, "embed-cache.jsonl")) : null);
   let plan: EmbedPlan | null = null;
   const meter = new FetchMeter(args.maxEmbedCalls);
   if (embeddings === "on") {
-    plan = embedPlan(corpus, sizes, leg, exchangeContent, (t) => cache.has(t));
+    plan = embedPlan(corpus, sizes, leg === "ideal" ? "ideal" : "raw", exchangeContent, (t) => cache.has(t));
     console.log(`[continuity-bench] ${describePlan(plan)}`);
     const over = embedBudgetRefusal(plan, args.maxEmbedCalls);
     if (over) {
@@ -983,7 +1182,14 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   console.warn = quiet;
   console.info = quiet;
 
-  const adapter = new JarvisAdapter(scratchDbPath(scratch), leg, { embeddings: embeddings === "on", embedCache: cache, switches });
+  // A dry run counts every call it would make; only a real run is capped.
+  const budget = new ModelCallBudget(args.dryRun ? Number.POSITIVE_INFINITY : args.maxModelCalls);
+  const adapter = new JarvisAdapter(scratchDbPath(scratch), leg, {
+    embeddings: embeddings === "on",
+    embedCache: cache,
+    switches,
+    ...(leg === "extracted" ? { extraction: { budget, dryRun: args.dryRun, window: args.window } } : {}),
+  });
   adapter.open();
   const started = performance.now();
   const startedAt = new Date().toISOString();
@@ -991,14 +1197,21 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   try {
     for (const size of sizes) {
       const t0 = performance.now();
-      const scenarios = corpus.scenarios.filter((s) => s.fillerSize === size);
-      if (scenarios.length === 0) throw new Error(`corpus has no scenarios at size ${size}`);
+      const scenarios = corpus.scenarios.filter((s) => s.fillerSize === size && (!classes || classes.includes(s.class)));
+      if (scenarios.length === 0) throw new Error(`corpus has no scenarios at size ${size}${classes ? ` in ${classes.join(",")}` : ""}`);
       for (const s of scenarios) {
         try {
           runs.push(...(await adapter.runScenario(s, corpus.fillerSpec)));
         } catch (err) {
+          if (err instanceof ModelCallCapError) {
+            console.error(`[continuity-bench] stopped: ${err.calls} model calls made, cap ${err.max} reached before the next call in ${err.scenarioId}; no result written`);
+            return 3;
+          }
           if (!meter.exceeded) throw err; // e.g. the embed cache's consecutive-failure stop
         }
+        const x = leg === "extracted" ? adapter.extractions.at(-1) : undefined;
+        if (x)
+          log(`[continuity-bench] extracted ${s.id} (window ${windowLabel(args.window)}): ${budget.calls} model calls so far${args.dryRun ? " (dry run, none made)" : ` of ${args.maxModelCalls}`}; turns ${x.turns}, inserted ${x.inserted}, caught ${x.caught ? "yes" : "no"}, failed calls ${x.failedCalls}`);
         if (meter.exceeded) {
           console.error(`[continuity-bench] stopped: ${meter.calls} embedding calls made, cap ${args.maxEmbedCalls} reached in ${s.id}; no result written`);
           return 3;
@@ -1022,9 +1235,13 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
       sizes,
       startedAt,
       durationMs: Math.round(performance.now() - started),
-      notes: NOTES,
+      notes: leg === "extracted" ? [...NOTES, EXTRACTED_NOTE] : NOTES,
       markers: JARVIS_MARKERS,
       switches: { ...adapter.switches },
+      ...(classes ? { classes } : {}),
+      ...(leg === "extracted"
+        ? { extraction: { mode: args.dryRun ? ("dry-run" as const) : ("run" as const), calls: budget.calls, maxModelCalls: args.maxModelCalls, model: EXTRACTION_MODEL_ID, window: args.window } }
+        : {}),
       ...(embeddings === "on"
         ? {
             embed: {
@@ -1052,6 +1269,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
     gapAggregates: aggregateByGap(scores),
     authorAggregates: aggregateAuthor(scores),
     caps: capsOf(runs),
+    ...(leg === "extracted" ? { extraction: adapter.extractions } : {}),
   };
   writeFileSync(out, JSON.stringify(result, null, 1) + "\n");
   log(markdownTable(result.aggregates));

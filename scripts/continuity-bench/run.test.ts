@@ -2,25 +2,32 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { FILLER_SPEC_V1 } from "./filler.js";
+import { FILLER_SPEC_V1, generateFiller } from "./filler.js";
 import {
   BASELINE_CAVEATS,
+  EXTRACTED_NOTE,
+  EXTRACTION_LIMITS,
   FetchMeter,
+  PROVISIONAL,
   capsOf,
   embedBudgetRefusal,
   embedPlan,
+  extractionRefusal,
   main,
   parseArgs,
   refuseReason,
   renderBaseline,
   renderCompare,
+  renderExtractionCompare,
   renderRecallFloorCompare,
   renderTombstoneCompare,
+  resultFileName,
   switchSuffix,
+  windowLabel,
   type EmbedPlan,
   type RunResult,
 } from "./run.js";
-import { DEFAULT_SWITCHES, exchangeContent } from "./adapter-jarvis.js";
+import { DEFAULT_SWITCHES, dayWindowExchanges, exchangeContent, nextConsolidationT } from "./adapter-jarvis.js";
 import { buildCorpusV2 } from "./corpus-v2.js";
 import type { Corpus, ProbeRun, Scenario } from "./types.js";
 
@@ -29,6 +36,15 @@ vi.mock("../../src/lib/operator-gate.js", async (orig) => ({
   ...(await orig<typeof import("../../src/lib/operator-gate.js")>()),
   requireOperatorContext: () => {},
 }));
+
+// The extracted leg's model call: the production consolidator's infer(), never the network.
+const { inferMock, ritualFailureMock } = vi.hoisted(() => ({ inferMock: vi.fn(), ritualFailureMock: vi.fn() }));
+vi.mock("../../src/inference/adapter.js", async (orig) => ({
+  ...(await orig<typeof import("../../src/inference/adapter.js")>()),
+  infer: inferMock,
+}));
+// consolidateAll reports a failed window through the scheduler (dynamic import); keep the cron graph out.
+vi.mock("../../src/rituals/scheduler.js", () => ({ recordRitualFailure: ritualFailureMock }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -393,5 +409,251 @@ describe("--compare (Port 3, MEMORY_TOMBSTONES)", () => {
     const out = join(dir, "cmp.md");
     expect(await main(["node", "run.ts", "--compare", `${join(dir, "off.json")},${join(dir, "on.json")}`, "--md", out], {})).toBe(0);
     expect(readFileSync(out, "utf8")).toContain("# Port 3 — tombstones");
+  });
+});
+
+describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () => {
+  const V2 = buildCorpusV2();
+  const pick = ["C6-01-s50", "C6-02-s50"].map((id) => V2.scenarios.find((x) => x.id === id)!);
+  const PROVIDER = { INFERENCE_PRIMARY_PROVIDER: "claude-sdk", MC_API_KEY: "placeholder" };
+  const reply = (facts: unknown[]) => ({ content: JSON.stringify(facts) });
+  const VINETAS = { factText: "Fede wants every reply in viñetas cortas, never long paragraphs.", category: "preference", confidence: 0.9, inferred: false };
+  const BULLETS = { factText: "Fede prefers short bullet points over long paragraphs.", category: "preference", confidence: 0.9, inferred: false };
+  let dir: string;
+  let corpusPath: string;
+
+  const run = async (flags: string[], out: string, env: NodeJS.ProcessEnv = PROVIDER): Promise<number> => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      return await main(["node", "run.ts", "--leg", "extracted", "--corpus", corpusPath, "--out", join(dir, out), ...flags], env);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+    }
+  };
+  const load = (out: string) => JSON.parse(readFileSync(join(dir, out), "utf8")) as RunResult;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "cb-extracted-"));
+    corpusPath = join(dir, "corpus.json");
+    writeFileSync(corpusPath, JSON.stringify({ ...V2, scenarios: pick } as Corpus));
+  });
+  afterEach(() => {
+    inferMock.mockReset();
+    ritualFailureMock.mockReset();
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("parses the leg: defaults --classes C6, --sizes 50, --max-model-calls 6, no consent; other legs keep every class", () => {
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted"])).toMatchObject({ leg: "extracted", classes: ["C6"], sizes: [50], maxModelCalls: 6, run: false, dryRun: false });
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--run", "--classes", "C2,C8", "--max-model-calls", "29"])).toMatchObject({ classes: ["C2", "C8"], maxModelCalls: 29, run: true });
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--dry-run"])).toMatchObject({ dryRun: true, run: false });
+    expect(parseArgs(["node", "run.ts", "--leg", "raw"])).toMatchObject({ classes: null, sizes: [50, 500] });
+    expect(() => parseArgs(["node", "run.ts", "--classes", "C9"])).toThrow(/--classes/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--max-model-calls", "-1"])).toThrow(/--max-model-calls/);
+  });
+
+  it("defaults for the extracted leg: --window day, corpus v2, an --out named after the classes and the window; other legs unchanged", () => {
+    const x = parseArgs(["node", "run.ts", "--leg", "extracted"]);
+    expect(x).toMatchObject({ window: "day" });
+    expect(x.mode === "run" && x.corpus.endsWith("benchmarks/continuity/corpus-v2.json")).toBe(true);
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "clean"])).toMatchObject({ window: "clean" });
+    expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "night"])).toThrow(/--window must be day or clean/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "raw", "--window", "day"])).toThrow(/extracted only/);
+    for (const leg of ["raw", "ideal"]) {
+      const r = parseArgs(["node", "run.ts", "--leg", leg]);
+      expect(r.mode === "run" && r.corpus.endsWith("benchmarks/continuity/corpus-v1.json"), leg).toBe(true);
+    }
+    const base = { commit: "abc1234", embeddings: "off", suffix: "-v2", switchTag: "", dryRun: false };
+    expect(resultFileName({ ...base, leg: "extracted", classes: ["C6"], window: "day" })).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day.json");
+    expect(resultFileName({ ...base, leg: "extracted", classes: ["C2", "C8"], window: "clean", dryRun: true })).toBe("jarvis-abc1234-extracted-emb-off-v2-c2c8-clean-dry-run.json");
+    expect(resultFileName({ ...base, leg: "raw", classes: null, window: "day" })).toBe("jarvis-abc1234-raw-emb-off-v2.json");
+    expect(resultFileName({ ...base, leg: "ideal", classes: ["C6"], window: "day", switchTag: "-tombstones" })).toBe("jarvis-abc1234-ideal-emb-off-v2-tombstones.json");
+    expect(windowLabel("clean")).toMatch(/upper bound/);
+    expect(windowLabel("day")).toMatch(/seeded ordinary exchanges/);
+  });
+
+  it("extractionRefusal names the cost without consent and the provider settings under --run (names only)", () => {
+    const a = { run: false, dryRun: false, maxModelCalls: 6, allowEmbeddings: false, window: "day" as const };
+    expect(extractionRefusal(a, PROVIDER)).toMatch(
+      /REAL model calls.*claude-haiku-4-5.*\$0\.0015 typical \/ \$0\.0063 ceiling with --window clean, \$0\.0030 \/ \$0\.0076 with --window day.*--max-model-calls 6: 6 calls, window day: about \$0\.018 typical, \$0\.046 ceiling, up to 2x billed requests \(Haiku \+ its retry\) so \$0\.091 worst case.*--run.*--dry-run/s,
+    );
+    expect(extractionRefusal({ ...a, window: "clean", maxModelCalls: 29 }, PROVIDER)).toMatch(/29 calls, window clean: about \$0\.044 typical, \$0\.18 ceiling, up to 2x billed requests \(Haiku \+ its retry\) so \$0\.37 worst case/);
+    expect(extractionRefusal({ ...a, run: true, dryRun: true }, PROVIDER)).toMatch(/exclusive/);
+    expect(extractionRefusal({ ...a, dryRun: true }, {})).toBeNull();
+    expect(extractionRefusal({ ...a, dryRun: true, allowEmbeddings: true }, {})).toMatch(/embeddings off only/);
+    const r = { ...a, run: true };
+    expect(extractionRefusal(r, PROVIDER)).toBeNull();
+    expect(extractionRefusal(r, { MC_API_KEY: "placeholder" })).toMatch(/INFERENCE_PRIMARY_PROVIDER/);
+    expect(extractionRefusal(r, { ...PROVIDER, INFERENCE_SDK_LASTLINE_ENABLED: "true" })).toMatch(/INFERENCE_SDK_LASTLINE_ENABLED/);
+    expect(extractionRefusal(r, { INFERENCE_PRIMARY_PROVIDER: "claude-sdk" })).toMatch(/MC_API_KEY/);
+    const valued = { ...PROVIDER, MC_API_KEY: "secret-value-x", INFERENCE_SDK_LASTLINE_ENABLED: "true" };
+    for (const why of [extractionRefusal(r, valued), extractionRefusal(a, valued)]) expect(why).toEqual(expect.not.stringContaining("secret-value-x"));
+  });
+
+  it("without --run: exit 2 before any infer call, no result written", async () => {
+    expect(await run([], "none.json")).toBe(2);
+    expect(await run(["--run", "--dry-run"], "none.json")).toBe(2);
+    expect(await run(["--run"], "none.json", { MC_API_KEY: "placeholder" })).toBe(2);
+    expect(inferMock).not.toHaveBeenCalled();
+    expect(() => readFileSync(join(dir, "none.json"))).toThrow();
+  });
+
+  it("--run: one infer per consolidation night through the production consolidator; inserted and caught counted per scenario", async () => {
+    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
+    expect(await run(["--run", "--window", "clean"], "run.json")).toBe(0);
+    expect(inferMock).toHaveBeenCalledTimes(2);
+    const [req] = inferMock.mock.calls[0] as [{ messages: Array<{ role: string; content: string }>; model: string }];
+    expect(req.model).toBe("claude-haiku-4-5-20251001");
+    expect(req.messages[0].role).toBe("system");
+    expect(req.messages[1].content).toContain(`Fede: ${pick[0].events.find((e) => e.kind === "standing")!.asUser}`);
+    const r = load("run.json");
+    expect(r.meta.leg).toBe("extracted");
+    expect(r.meta.classes).toEqual(["C6"]);
+    expect(r.meta.extraction).toEqual({ mode: "run", calls: 2, maxModelCalls: 6, model: "claude-haiku-4-5-20251001", window: "clean" });
+    expect(r.meta.notes).toContain(EXTRACTED_NOTE);
+    expect(r.extraction).toEqual([
+      { scenarioId: "C6-01-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, caught: true, failedCalls: 0, facts: [VINETAS.factText] },
+      { scenarioId: "C6-02-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, caught: false, failedCalls: 0, facts: [BULLETS.factText] },
+    ]);
+    expect(r.probes.map((p) => p.scenarioId)).toEqual(["C6-01-s50", "C6-01-s50", "C6-02-s50", "C6-02-s50"]);
+    expect(ritualFailureMock).not.toHaveBeenCalled();
+  });
+
+  it("--run --window day (the default): each night's stated turns sit among its ordinary exchanges, in timeline order", async () => {
+    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
+    expect(await run(["--run"], "day.json")).toBe(0);
+    expect(inferMock).toHaveBeenCalledTimes(2);
+    const r = load("day.json");
+    expect(r.meta.extraction).toEqual({ mode: "run", calls: 2, maxModelCalls: 6, model: "claude-haiku-4-5-20251001", window: "day" });
+    for (const [i, s] of pick.entries()) {
+      const standing = s.events.find((e) => e.kind === "standing")!;
+      const filler = generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT });
+      const ordinary = dayWindowExchanges(s, V2.fillerSpec, nextConsolidationT(standing.t), filler);
+      expect(ordinary.length).toBeGreaterThanOrEqual(30);
+      const stat = r.extraction![i];
+      expect(stat.turns).toBe(2 + 2 * ordinary.length);
+      const [req] = inferMock.mock.calls[i] as [{ messages: Array<{ role: string; content: string }> }];
+      const lines = req.messages[1].content.split("\n\n---\n")[0].split("\n");
+      expect(lines.length).toBe(stat.turns);
+      const at = lines.indexOf(`Fede: ${standing.asUser}`);
+      expect(at, s.id).toBeGreaterThan(0);
+      expect(at, s.id).toBeLessThan(lines.length - 2);
+      const needles = s.probes.flatMap((p) => p.expect.map((n) => n.toLowerCase()));
+      const others = lines.filter((_l, k) => k !== at && k !== at + 1);
+      for (const n of needles) expect(others.some((l) => l.toLowerCase().includes(n)), `${s.id}: ${n}`).toBe(false);
+    }
+    expect(r.extraction!.map((e) => [e.inserted, e.caught, e.failedCalls])).toEqual([
+      [1, true, 0],
+      [1, false, 0],
+    ]);
+  });
+
+  it("a crowded night (300 filler items) is cut to CONSOLIDATOR_MAX_TURNS: the stated turns kept, the oldest ordinary ones dropped", async () => {
+    const base = pick[0];
+    const standing = base.events.find((e) => e.kind === "standing")!;
+    const night = nextConsolidationT(standing.t);
+    const s: Scenario = { ...base, fillerSize: 300, fillerFromT: night - 86_400, fillerToT: night - 1800 };
+    const crowded = join(dir, "crowded.json");
+    writeFileSync(crowded, JSON.stringify({ ...V2, scenarios: [s] } as Corpus));
+    inferMock.mockResolvedValue(reply([VINETAS]));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await main(["node", "run.ts", "--leg", "extracted", "--run", "--sizes", "300", "--corpus", crowded, "--out", join(dir, "crowded-out.json")], PROVIDER)).toBe(0);
+    log.mockRestore();
+    const [req] = inferMock.mock.calls[0] as [{ messages: Array<{ role: string; content: string }> }];
+    const lines = req.messages[1].content.split("\n\n---\n")[0].split("\n");
+    expect(lines.length).toBe(400);
+    expect(lines).toContain(`Fede: ${standing.asUser}`);
+    const ordinary = dayWindowExchanges(s, V2.fillerSpec, night, generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: 300, fromT: s.fillerFromT, toT: s.fillerToT })).sort((a, b) => a.t - b.t);
+    expect(lines.filter((l) => l.startsWith("Fede: ")).length).toBe(1 + 199);
+    expect(lines).toContain(`Fede: ${ordinary.at(-1)!.user}`);
+    const kept = new Set(ordinary.slice(-199).map((o) => o.user));
+    for (const o of ordinary.slice(0, -199)) if (!kept.has(o.user)) expect(lines).not.toContain(`Fede: ${o.user}`);
+    expect(JSON.parse(readFileSync(join(dir, "crowded-out.json"), "utf8")).extraction[0]).toMatchObject({ turns: 400, failedCalls: 0 });
+  });
+
+  it("an empty model reply keeps the window: failedCalls 1, nothing inserted, the failure reported", async () => {
+    inferMock.mockResolvedValue({ content: "" });
+    expect(await run(["--run", "--max-model-calls", "2"], "empty.json")).toBe(0);
+    const r = load("empty.json");
+    expect(r.extraction!.map((e) => [e.inserted, e.failedCalls, e.caught, e.facts.length])).toEqual([
+      [0, 1, false, 0],
+      [0, 1, false, 0],
+    ]);
+    await vi.waitFor(() => expect(ritualFailureMock).toHaveBeenCalled());
+  });
+
+  it("the cap: exit 3 before the (N+1)th call, N calls made, no result; N = scenarios passes", async () => {
+    inferMock.mockResolvedValue(reply([VINETAS]));
+    expect(await run(["--run", "--max-model-calls", "1"], "cap.json")).toBe(3);
+    expect(inferMock).toHaveBeenCalledTimes(1);
+    expect(() => readFileSync(join(dir, "cap.json"))).toThrow();
+    inferMock.mockClear();
+    expect(await run(["--run", "--max-model-calls", "0"], "cap0.json")).toBe(3);
+    expect(inferMock).not.toHaveBeenCalled();
+    expect(await run(["--run", "--max-model-calls", "2"], "cap2.json")).toBe(0);
+    expect(inferMock).toHaveBeenCalledTimes(2);
+    expect(load("cap2.json").meta.extraction!.calls).toBe(2);
+  });
+
+  it("--dry-run: 0 infer calls, the turns written and the calls counted (uncapped), 0 inserted, probes as raw", async () => {
+    expect(await run(["--dry-run", "--max-model-calls", "1", "--window", "clean"], "dry.json", {})).toBe(0);
+    expect(await run(["--dry-run", "--max-model-calls", "1"], "dry-day.json", {})).toBe(0);
+    expect(inferMock).not.toHaveBeenCalled();
+    const r = load("dry.json");
+    expect(r.meta.extraction).toEqual({ mode: "dry-run", calls: 2, maxModelCalls: 1, model: "claude-haiku-4-5-20251001", window: "clean" });
+    expect(r.extraction!.map((e) => [e.scenarioId, e.calls, e.turns, e.inserted, e.caught, e.failedCalls, e.facts])).toEqual([
+      ["C6-01-s50", 1, 2, 0, false, 0, []],
+      ["C6-02-s50", 1, 2, 0, false, 0, []],
+    ]);
+    const day = load("dry-day.json");
+    expect(day.meta.extraction).toMatchObject({ mode: "dry-run", calls: 2, window: "day" });
+    for (const e of day.extraction!) expect(e.turns, e.scenarioId).toBeGreaterThan(60);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await main(["node", "run.ts", "--leg", "raw", "--sizes", "50", "--classes", "C6", "--corpus", corpusPath, "--out", join(dir, "raw.json")], {})).toBe(0);
+    log.mockRestore();
+    const raw = load("raw.json");
+    expect(raw.meta.extraction).toBeUndefined();
+    expect(raw.extraction).toBeUndefined();
+    const fp = (x: RunResult) => x.probes.map((p) => [p.scenarioId, p.proactive.hit, p.proactive.staleHit, p.proactive.chars]);
+    expect(fp(r)).toEqual(fp(raw));
+    expect(fp(day)).toEqual(fp(raw));
+  });
+
+  it("renders the extraction table (PROVISIONAL) and the ideal / extracted gap; main --compare picks it", async () => {
+    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
+    expect(await run(["--run", "--window", "clean"], "run2.json")).toBe(0);
+    const extracted = load("run2.json");
+    const md = renderBaseline([extracted]);
+    expect(md).toContain(`### Extraction (${PROVISIONAL})\n\n${EXTRACTION_LIMITS}\n`);
+    expect(EXTRACTION_LIMITS).toMatch(/English.*Spanish.*`facts`/s);
+    expect(EXTRACTION_LIMITS).toMatch(/Embeddings off: no cosine supersede.*C2.*harness/s);
+    expect(EXTRACTION_LIMITS).toMatch(/`clean` = .*upper bound.*`day` = .*not the operator's real day/s);
+    expect(md).toContain("| C6 | 50 | 2 | 2 | 4 | 2 | 1 / 2 | 0 |");
+    expect(md).toContain(
+      "Mode run, model claude-haiku-4-5-20251001, window clean (upper bound: the stated turns alone): 2 model calls made, cap 6. Cost estimate: 2 calls, window clean: about $0.0030 typical, $0.013 ceiling, up to 2x billed requests (Haiku + its retry) so $0.025 worst case.",
+    );
+    const ideal: RunResult = {
+      ...extracted,
+      meta: { ...extracted.meta, leg: "ideal", extraction: undefined },
+      extraction: undefined,
+      aggregates: extracted.aggregates.map((a) => ({ ...a, hitPct: 100, staleHitPct: 0 })),
+    };
+    const cmp = renderExtractionCompare([[ideal, extracted]]);
+    const a = extracted.aggregates[0];
+    expect(cmp).toContain(`# Port 4 — real extraction of stated facts: ideal / extracted (${PROVISIONAL})`);
+    expect(cmp.split(EXTRACTION_LIMITS).length).toBe(2);
+    expect(cmp.indexOf(EXTRACTION_LIMITS)).toBeLessThan(cmp.indexOf("| class | size | surface"));
+    expect(cmp).toContain("window clean about $0.0015 typical / $0.0063 ceiling, window day $0.0030 / $0.0076; one call can make up to 2x billed requests");
+    expect(cmp).toContain("run, window clean (upper bound: the stated turns alone), 2 model calls");
+    expect(cmp).toContain(`| C6 | 50 | ${a.surface} | ${a.n} | 100 → ${a.hitPct} | ${Math.round(10 * (a.hitPct! - 100)) / 10} | 0 → ${a.staleHitPct} |`);
+    expect(() => renderExtractionCompare([[extracted, ideal]])).toThrow(/ideal,extracted/);
+    writeFileSync(join(dir, "ideal.json"), JSON.stringify(ideal));
+    const out = join(dir, "cmp.md");
+    expect(await main(["node", "run.ts", "--compare", `${join(dir, "ideal.json")},${join(dir, "run2.json")}`, "--md", out], {})).toBe(0);
+    expect(readFileSync(out, "utf8")).toContain("# Port 4 — real extraction");
   });
 });

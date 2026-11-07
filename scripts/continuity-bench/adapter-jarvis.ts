@@ -35,6 +35,18 @@
  * it, and the date its tombstone carries. After the ingest, pruneExpiredFacts
  * runs in place of the nightly cron.
  *
+ * `extracted` ingests as `raw`, then measures REAL extraction: once per
+ * scenario, before its probes, the exchanges that state a fact (standing,
+ * person_fact, correction) go into jme_turns through the router's
+ * writeEpisodic, aged past CONSOLIDATOR_MIN_TURN_AGE_MS, and the production
+ * nightly consolidator, jme.ts consolidateAll, runs once per consolidation
+ * night (nextConsolidationT) that holds one: one real model call each. The
+ * jme_facts rows it wrote are each probe's extracted facts, dated at that
+ * night on the probe's own timeline (the store is reset per probe, so the
+ * rows are copied, never re-authored); pruneExpiredFacts then runs as in
+ * `ideal`. A ModelCallBudget is checked before each call; with `dryRun`
+ * the turns are written and the calls counted, none is made.
+ *
  * v2: secondary-channel events are tagged with another channel; C3 `live`
  * scenarios push the timeline through the router's own push seam into a
  * thread the process already holds (no reload); profile / relevant facts /
@@ -55,11 +67,15 @@ import { closeDatabase, getDatabase, initDatabase } from "../../src/db/index.js"
 import { formatProjectsBlock } from "../../src/db/projects.js";
 import { formatRelevantUserFactsBlock, formatStableUserFactsBlock } from "../../src/db/user-facts.js";
 import { clearEmbeddingCache } from "../../src/inference/embeddings.js";
+import { HAIKU_MODEL_ID } from "../../src/inference/claude-sdk.js";
 import { enrichContext } from "../../src/intelligence/enrichment.js";
 import { clearEssentialsCache, getEssentialFacts } from "../../src/memory/essentials.js";
 import { embed, serializeEmbedding } from "../../src/memory/embeddings.js";
 import { resetMemoryService } from "../../src/memory/index.js";
 import {
+  CONSOLIDATOR_MAX_TURNS,
+  CONSOLIDATOR_MIN_TURN_AGE_MS,
+  consolidateAll,
   factTtlMs,
   jmeRecallQuery,
   pruneExpiredFacts,
@@ -68,6 +84,7 @@ import {
   orderForInjection,
   queryMemory,
   upsertFact,
+  writeEpisodic,
   type JmeFactCategory,
 } from "../../src/memory/jme.js";
 import { clearTombstoneCache } from "../../src/memory/tombstones.js";
@@ -78,9 +95,10 @@ import { memorySearchTool } from "../../src/tools/builtin/memory.js";
 import { userFactSetTool } from "../../src/tools/builtin/user-facts.js";
 import { scrubSecrets } from "../../src/lib/secret-refs.js";
 import { generateFiller } from "./filler.js";
-import type { AuthorMarkerSpec } from "./score.js";
+import { contains, type AuthorMarkerSpec } from "./score.js";
 import type {
   CorpusEvent,
+  FillerItem,
   FillerSpec,
   PersonFactEvent,
   Probe,
@@ -90,7 +108,7 @@ import type {
   SurfaceResult,
 } from "./types.js";
 
-export type Leg = "raw" | "ideal";
+export type Leg = "raw" | "ideal" | "extracted";
 
 type RouterApi = Pick<typeof routerModule, "_testThreadTurns" | "_testSeedThread" | "_testPushToThread" | "_testOpenWorkBlock">;
 
@@ -288,7 +306,98 @@ export interface AdapterOptions {
   embedCache?: EmbedCache;
   /** Production switches for this process (resolveSwitches; absent = all defaults). */
   switches?: Readonly<Record<string, string>>;
+  /** `extracted` leg: the model-call budget, whether to stop short of the call, and the turn window. */
+  extraction?: { budget: ModelCallBudget; dryRun: boolean; window: ExtractionWindow };
 }
+
+/**
+ * What else a consolidation night's window holds besides the stated-fact
+ * turns: `clean` nothing (an upper bound), `day` DAY_WINDOW_EXCHANGES seeded
+ * ordinary exchanges plus the scenario's own filler dated in that window.
+ */
+export type ExtractionWindow = "clean" | "day";
+
+/** `day` window: seeded ordinary exchanges per consolidation night. */
+export const DAY_WINDOW_EXCHANGES = 30;
+
+/**
+ * `day` window, one consolidation night: DAY_WINDOW_EXCHANGES ordinary
+ * exchanges from the corpus's filler generator (seed fixed per scenario and
+ * night) spread over the 24 h that night consolidates, plus the scenario's
+ * filler items dated in that window. Throws when one holds a probe needle
+ * (expect or forbid): an ordinary turn must not hand the extractor the answer.
+ */
+export function dayWindowExchanges(s: Scenario, spec: FillerSpec, night: number, filler: readonly FillerItem[]): FillerItem[] {
+  const seed = (s.fillerSeed ^ 0x6a09e667 ^ Math.imul(night, 0x85ebca6b)) >>> 0;
+  const seeded = generateFiller(spec, { seed, size: DAY_WINDOW_EXCHANGES, fromT: night - 86_400, toT: night - 30 * 60 });
+  const out = [...seeded, ...filler.filter((f) => nextConsolidationT(f.t) === night)];
+  const needles = s.probes.flatMap((p) => [...p.expect, ...p.forbid]);
+  for (const x of out) {
+    const hit = needles.find((n) => contains(x.user, n) || contains(x.assistant, n));
+    if (hit !== undefined) throw new Error(`${s.id}: a day-window exchange holds the probe needle "${hit}"`);
+  }
+  return out;
+}
+
+/** The model consolidateAll asks for (jme.ts infer call, `model: HAIKU_MODEL_ID`). */
+export const EXTRACTION_MODEL_ID = HAIKU_MODEL_ID;
+
+/** Thrown before the model call that would exceed the cap; `calls` were made. */
+export class ModelCallCapError extends Error {
+  constructor(
+    readonly calls: number,
+    readonly max: number,
+    readonly scenarioId: string,
+  ) {
+    super(`model call cap ${max} reached: ${calls} calls made, the next one (${scenarioId}) not made`);
+    this.name = "ModelCallCapError";
+  }
+}
+
+/** Counts the extracted leg's model calls (consolidateAll → infer, one per call) and refuses the one past `max` before it is made. */
+export class ModelCallBudget {
+  calls = 0;
+  constructor(readonly max: number) {}
+  take(scenarioId: string): void {
+    if (this.calls + 1 > this.max) throw new ModelCallCapError(this.calls, this.max, scenarioId);
+    this.calls++;
+  }
+}
+
+/** Per scenario, what the real consolidator did (`extracted` leg). */
+export interface ExtractionStat {
+  scenarioId: string;
+  class: string;
+  fillerSize: number;
+  /** Model calls made (with dryRun: the calls the run would make). */
+  calls: number;
+  /** jme_turns rows written through writeEpisodic. */
+  turns: number;
+  /** Facts consolidateAll inserted (factsInserted, summed over the calls); 0 with dryRun. */
+  inserted: number;
+  /** Every probe has a live extracted row holding all its expect needles (score.ts contains: folded substring). */
+  caught: boolean;
+  /** Calls after which jme_turns still held turns: consolidateAll keeps a window it could not consume (empty / unparseable reply, failed upsert, a throw). */
+  failedCalls: number;
+  /** fact_text of every row the consolidator left in jme_facts, in insert order. */
+  facts: string[];
+}
+
+/** A jme_facts row the consolidator wrote, kept to be dated onto each probe's timeline. */
+interface ExtractedRow {
+  /** The consolidation night (corpus seconds) whose call wrote it. */
+  night: number;
+  sourceTask: string;
+  factText: string;
+  category: string;
+  embedding: Buffer | null;
+  confidence: number;
+  /** expires_at − ts as written (null = permanent). */
+  ttlMs: number | null;
+}
+
+/** Events whose exchange states a fact a perfect extractor would keep. */
+const STATED_KINDS: ReadonlySet<CorpusEvent["kind"]> = new Set(["standing", "person_fact", "correction"]);
 
 /**
  * Splits memory_search output into its items. Items are `${i + 1}. ${content}${relevance}`
@@ -351,6 +460,9 @@ export class JarvisAdapter {
   restartCount = 0;
   /** Thread keys used, in order, for tests. */
   readonly threadKeys: string[] = [];
+  /** `extracted` leg: one entry per scenario run. */
+  readonly extractions: ExtractionStat[] = [];
+  private readonly extraction: AdapterOptions["extraction"];
 
   constructor(
     dbPath: string,
@@ -361,6 +473,8 @@ export class JarvisAdapter {
     this.embeddings = opts.embeddings === true;
     this.embedCache = opts.embedCache ?? new EmbedCache();
     this.switches = resolveSwitches(opts.switches);
+    if (leg === "extracted" && !opts.extraction) throw new Error("the extracted leg needs extraction: { budget, dryRun, window }");
+    this.extraction = opts.extraction;
   }
 
   open(): void {
@@ -378,9 +492,10 @@ export class JarvisAdapter {
   async runScenario(s: Scenario, spec: FillerSpec): Promise<ProbeRun[]> {
     const filler = generateFiller(spec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT });
     const runs: ProbeRun[] = [];
+    const extracted = this.leg === "extracted" ? await this.extract(s, spec, filler) : [];
     for (const [probeIndex, probe] of s.probes.entries()) {
       const t0 = performance.now();
-      const { written, primaryRows } = await this.ingest(s, filler, probe);
+      const { written, primaryRows } = await this.ingest(s, filler, probe, extracted);
       const ingestMs = performance.now() - t0;
       const restarted = s.events.some((e) => e.kind === "restart" && e.t < probe.t);
       if (restarted) await this.restart();
@@ -427,16 +542,85 @@ export class JarvisAdapter {
     for (const content of primaryRows.slice(-40)) this.router._testPushToThread(key, content);
   }
 
+  private resetStore(): void {
+    const db = getDatabase();
+    for (const table of RESET_TABLES) db.prepare(`DELETE FROM ${table}`).run();
+    clearEssentialsCache();
+    clearTombstoneCache();
+  }
+
+  /**
+   * `extracted` leg, once per scenario: the stated-fact exchanges before the
+   * last probe go to jme_turns as the router writes them (writeEpisodic, user
+   * then Jarvis turn, owner channel), grouped by the consolidation night that
+   * would first see them; with the `day` window each night's stated turns sit
+   * among that night's ordinary exchanges (dayWindowExchanges), in timeline
+   * order, the oldest ordinary ones dropped past CONSOLIDATOR_MAX_TURNS. Per
+   * night the turns are aged past the settle window and consolidateAll runs:
+   * one model call. Returns the rows it left.
+   */
+  private async extract(s: Scenario, spec: FillerSpec, filler: readonly FillerItem[]): Promise<ExtractedRow[]> {
+    const { budget, dryRun, window } = this.extraction!;
+    const db = getDatabase();
+    this.resetStore();
+    const lastProbe = Math.max(...s.probes.map((p) => p.t));
+    const nights = new Map<number, CorpusEvent[]>();
+    for (const e of s.events) {
+      if (!STATED_KINDS.has(e.kind) || e.t >= lastProbe || e.kind === "exchange" || (!e.asUser && !e.asAssistant)) continue;
+      const night = nextConsolidationT(e.t);
+      nights.set(night, [...(nights.get(night) ?? []), e]);
+    }
+    const stat: ExtractionStat = { scenarioId: s.id, class: s.class, fillerSize: s.fillerSize, calls: 0, turns: 0, inserted: 0, caught: false, failedCalls: 0, facts: [] };
+    const rows: Array<ExtractedRow & { id: number }> = [];
+    const turnCount = () => (db.prepare("SELECT COUNT(*) AS n FROM jme_turns").get() as { n: number }).n;
+    for (const [night, events] of [...nights].sort((a, b) => a[0] - b[0])) {
+      const taskId = `bench:${s.id}:n${night}`;
+      const stated = events.map((e) => ({ t: e.t, user: e.kind === "exchange" ? "" : (e.asUser ?? ""), assistant: e.kind === "exchange" ? "" : (e.asAssistant ?? "") }));
+      const statedTurns = stated.reduce((n, x) => n + (x.user ? 1 : 0) + (x.assistant ? 1 : 0), 0);
+      const ordinary = window === "day" ? dayWindowExchanges(s, spec, night, filler).sort((a, b) => a.t - b.t) : [];
+      const room = Math.max(0, Math.floor((CONSOLIDATOR_MAX_TURNS - statedTurns) / 2));
+      const items = [...stated, ...ordinary.slice(Math.max(0, ordinary.length - room))].sort((a, b) => a.t - b.t);
+      for (const x of items) {
+        if (x.user) writeEpisodic({ taskId, role: "user", content: x.user, channel: CHANNEL });
+        if (x.assistant) writeEpisodic({ taskId, role: "jarvis", content: x.assistant, channel: CHANNEL });
+        stat.turns += (x.user ? 1 : 0) + (x.assistant ? 1 : 0);
+      }
+      // writeEpisodic stamps Date.now(); consolidateAll reads only turns older than the settle window.
+      db.prepare("UPDATE jme_turns SET ts = ts - ?").run(CONSOLIDATOR_MIN_TURN_AGE_MS + 60_000);
+      budget.take(s.id);
+      stat.calls++;
+      if (dryRun) {
+        db.prepare("DELETE FROM jme_turns").run();
+        continue;
+      }
+      const lastId = (db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM jme_facts").get() as { id: number }).id;
+      const result = await consolidateAll();
+      stat.inserted += result.factsInserted;
+      if (turnCount() > 0) stat.failedCalls++;
+      const written = db
+        .prepare("SELECT id, source_task, ts, fact_text, category, embedding, expires_at, confidence FROM jme_facts WHERE id > ? ORDER BY id")
+        .all(lastId) as Array<{ id: number; source_task: string; ts: number; fact_text: string; category: string; embedding: Buffer | null; expires_at: number | null; confidence: number }>;
+      for (const r of written)
+        rows.push({ id: r.id, night, sourceTask: r.source_task, factText: r.fact_text, category: r.category, embedding: r.embedding, confidence: r.confidence, ttlMs: r.expires_at === null ? null : r.expires_at - r.ts });
+    }
+    const left = new Set((db.prepare("SELECT id FROM jme_facts").all() as Array<{ id: number }>).map((r) => r.id));
+    const kept = rows.filter((r) => left.has(r.id));
+    stat.facts = kept.map((r) => r.factText);
+    const liveAt = (r: ExtractedRow, t: number) => r.night < t && (r.ttlMs === null || r.night + r.ttlMs / 1000 > t);
+    stat.caught = !dryRun && s.probes.every((p) => p.expect.length > 0 && kept.some((r) => liveAt(r, p.t) && p.expect.every((n) => contains(r.factText, n))));
+    this.extractions.push(stat);
+    return kept;
+  }
+
   /** Clears the store and writes every item with t < probe.t, aged relative to now. */
   private async ingest(
     s: Scenario,
     filler: ReturnType<typeof generateFiller>,
     probe: Probe,
+    extracted: readonly ExtractedRow[] = [],
   ): Promise<{ written: number; primaryRows: string[] }> {
     const db = getDatabase();
-    for (const table of RESET_TABLES) db.prepare(`DELETE FROM ${table}`).run();
-    clearEssentialsCache();
-    clearTombstoneCache();
+    this.resetStore();
 
     const nowMs = Date.now();
     const at = (t: number) => nowMs - (probe.t - t) * 1000;
@@ -513,6 +697,18 @@ export class JarvisAdapter {
         }
       }
       // The nightly jme-consolidate cron's prune (rituals/scheduler.ts), run once the timeline is in.
+      pruneExpiredFacts();
+    } else if (this.leg === "extracted") {
+      // The consolidator's own rows, dated at the night that wrote them; their TTL kept.
+      const insert = db.prepare(
+        "INSERT INTO jme_facts (source_task, ts, fact_text, category, embedding, expires_at, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const r of extracted) {
+        if (r.night >= probe.t) continue;
+        const ts = at(r.night);
+        insert.run(r.sourceTask, ts, r.factText, r.category, r.embedding, r.ttlMs === null ? null : ts + r.ttlMs, r.confidence);
+        written++;
+      }
       pruneExpiredFacts();
     }
     return { written, primaryRows: rows.filter((r) => !r.secondary).map((r) => r.content) };
