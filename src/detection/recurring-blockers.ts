@@ -70,6 +70,17 @@ interface Cluster {
   lastSeen: string;
 }
 
+/**
+ * Failed tasks in the window, oldest first. Served by idx_tasks_status_updated_at
+ * (migration v16, queue 4br): a range on (status, updated_at) already in
+ * ORDER BY order, so no walk of every failed row and no temp b-tree. Exported
+ * so its query plan is pinned. Params: `-<days> days`, row cap.
+ */
+export const RECURRING_BLOCKERS_FAILED_SQL = `SELECT task_id, error, updated_at FROM tasks
+        WHERE status = 'failed' AND error IS NOT NULL AND error != ''
+          AND updated_at >= datetime('now', ?)
+        ORDER BY updated_at ASC LIMIT ?`;
+
 export interface DetectRecurringBlockersOptions {
   windowDays?: number;
   minTasks?: number;
@@ -88,12 +99,7 @@ export function detectRecurringBlockers(
   const db = getDatabase();
 
   const rows = db
-    .prepare(
-      `SELECT task_id, error, updated_at FROM tasks
-        WHERE status = 'failed' AND error IS NOT NULL AND error != ''
-          AND updated_at >= datetime('now', ?)
-        ORDER BY updated_at ASC LIMIT ?`,
-    )
+    .prepare(RECURRING_BLOCKERS_FAILED_SQL)
     .all(`-${windowDays} days`, MAX_FAILED_TASKS) as FailedRow[];
 
   // Cluster by signature. `updated_at ASC` ordering means the first row of a

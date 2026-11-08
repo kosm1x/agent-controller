@@ -1468,6 +1468,76 @@ export function initDatabase(dbPath: string): Database.Database {
         }
       },
     },
+    {
+      version: 15,
+      description:
+        "project_write_audit + trg_projects_after_update_audit — every UPDATE on projects leaves a row of when it happened and which columns changed (flags, never values); UPDATE only (queue 4by)",
+      up: (db) =>
+        // 2026-11-08 queue 4by: projects.credentials was rewritten by a writer
+        // that never went through updateProject (no updated_at stamp). A NEW
+        // table, not project_log: project_log rows are surfaced in the
+        // project tool's output and counted for cohort salience. The trigger
+        // stores flags only (`OLD.col IS NOT NEW.col`), never OLD/NEW content,
+        // and never touches the projects row: an updated_at_changed = 0 row
+        // suggests a writer that bypassed updateProject (a same-second
+        // updateProject also reads 0). What a row proves: an UPDATE happened
+        // at written_at and which columns it changed. It does NOT name the
+        // writer (match written_at against the journal for that) and does
+        // not cover INSERT OR REPLACE or DELETE (no UPDATE fires). No FK on
+        // project_id, so a later project delete does not erase the trail.
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS project_write_audit (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id             TEXT NOT NULL,
+            written_at             TEXT NOT NULL DEFAULT (datetime('now')),
+            id_changed             INTEGER NOT NULL,
+            slug_changed           INTEGER NOT NULL,
+            name_changed           INTEGER NOT NULL,
+            description_changed    INTEGER NOT NULL,
+            status_changed         INTEGER NOT NULL,
+            urls_changed           INTEGER NOT NULL,
+            credentials_changed    INTEGER NOT NULL,
+            config_changed         INTEGER NOT NULL,
+            commit_goal_id_changed INTEGER NOT NULL,
+            created_at_changed     INTEGER NOT NULL,
+            updated_at_changed     INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_project_write_audit_project ON project_write_audit(project_id, written_at);
+          CREATE TRIGGER IF NOT EXISTS trg_projects_after_update_audit
+          AFTER UPDATE ON projects
+          BEGIN
+            INSERT INTO project_write_audit (
+              project_id, written_at,
+              id_changed, slug_changed, name_changed, description_changed,
+              status_changed, urls_changed, credentials_changed, config_changed,
+              commit_goal_id_changed, created_at_changed, updated_at_changed
+            ) VALUES (
+              OLD.id, datetime('now'),
+              OLD.id IS NOT NEW.id,
+              OLD.slug IS NOT NEW.slug,
+              OLD.name IS NOT NEW.name,
+              OLD.description IS NOT NEW.description,
+              OLD.status IS NOT NEW.status,
+              OLD.urls IS NOT NEW.urls,
+              OLD.credentials IS NOT NEW.credentials,
+              OLD.config IS NOT NEW.config,
+              OLD.commit_goal_id IS NOT NEW.commit_goal_id,
+              OLD.created_at IS NOT NEW.created_at,
+              OLD.updated_at IS NOT NEW.updated_at
+            );
+          END;
+        `),
+    },
+    {
+      version: 16,
+      description:
+        "idx_tasks_status_updated_at — detectRecurringBlockers (status = 'failed' AND updated_at >= ? ORDER BY updated_at) walked every failed row via idx_tasks_status_started plus a temp b-tree on each morning briefing (queue 4br)",
+      up: (db) => {
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at)",
+        );
+      },
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

@@ -79,6 +79,22 @@ const TERMINAL_STATUSES = [
 ] as const;
 
 /**
+ * Prune candidates. Ages by the latest lifecycle timestamp we have — a task
+ * completed recently but created long ago must NOT be deleted. The COALESCE
+ * predicate is unindexable, so `created_at < ?` (same cutoff) narrows it:
+ * created_at is never later than completed_at or updated_at, so it drops no
+ * candidate and lets the planner range-scan idx_tasks_created_at (queue 4br).
+ * The unary `+status` keeps the planner off idx_tasks_status_started: the
+ * four terminal statuses are nearly every row (rationale:
+ * CANARY_DELIVERY_MISS_SQL in src/rituals/canary.ts).
+ * Params: ...TERMINAL_STATUSES, cutoff, cutoff.
+ */
+export const RETENTION_CANDIDATES_SQL = `SELECT task_id, parent_task_id FROM tasks
+       WHERE +status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})
+         AND COALESCE(completed_at, updated_at, created_at) < ?
+         AND created_at < ?`;
+
+/**
  * Operator ruling 2026-10-31 (queue 4au): a `blocked` task idle for more than
  * 7 days is terminal. Nothing else ever closes one (scope asks the router
  * could not re-run, BLOCKED replies that are not scope asks, scope asks inside
@@ -177,16 +193,9 @@ export function runTasksRetention(
     console.warn("[retention] stale blocked close failed:", errMsg(err));
   }
 
-  const statusList = TERMINAL_STATUSES.map(() => "?").join(",");
-  // Age by the latest lifecycle timestamp we have — a task completed recently
-  // but created long ago must NOT be deleted.
   const candidates = db
-    .prepare(
-      `SELECT task_id, parent_task_id FROM tasks
-       WHERE status IN (${statusList})
-         AND COALESCE(completed_at, updated_at, created_at) < ?`,
-    )
-    .all(...TERMINAL_STATUSES, cutoff) as Array<{
+    .prepare(RETENTION_CANDIDATES_SQL)
+    .all(...TERMINAL_STATUSES, cutoff, cutoff) as Array<{
     task_id: string;
     parent_task_id: string | null;
   }>;

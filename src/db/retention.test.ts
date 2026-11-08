@@ -365,7 +365,7 @@ describe("stale blocked close (queue 4au)", () => {
     const src = readFileSync(new URL("./retention.ts", import.meta.url), "utf8");
     const fn = src.indexOf("export function runTasksRetention(");
     const call = src.indexOf(".prepare(STALE_BLOCKED_CLOSE_SQL)");
-    const prune = src.indexOf("SELECT task_id, parent_task_id FROM tasks");
+    const prune = src.indexOf(".prepare(RETENTION_CANDIDATES_SQL)");
     expect(fn).toBeGreaterThan(-1);
     expect(call).toBeGreaterThan(fn);
     expect(prune).toBeGreaterThan(call);
