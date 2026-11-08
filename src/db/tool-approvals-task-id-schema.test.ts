@@ -45,10 +45,10 @@ const cols = (db: Database.Database): Array<{ name: string; type: string; notnul
   }>;
 
 describe("migration v11 — tool_approvals.task_id", () => {
-  it("fresh DB: head is v13 and tool_approvals has a nullable TEXT task_id", () => {
+  it("fresh DB: head is v14 and tool_approvals has a nullable TEXT task_id", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(cols(db).find((c) => c.name === "task_id")).toMatchObject({
       type: "TEXT",
       notnull: 0,
@@ -71,7 +71,7 @@ describe("migration v11 — tool_approvals.task_id", () => {
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(cols(db).some((c) => c.name === "task_id")).toBe(true);
     expect(db.prepare("SELECT tool, task_id FROM tool_approvals").all()).toEqual([
       { tool: "gmail_send", task_id: null },
@@ -83,7 +83,7 @@ describe("migration v11 — tool_approvals.task_id", () => {
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(cols(db).filter((c) => c.name === "task_id")).toHaveLength(1);
   });
 
@@ -119,7 +119,7 @@ describe("migration v11 — tool_approvals.task_id", () => {
 
     initDatabase(tmpDbPath);
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     type Row = { task_id: string; status: string; error: string | null; completed_at: string | null };
     const rows = db
       .prepare("SELECT task_id, status, error, completed_at FROM tasks ORDER BY task_id")

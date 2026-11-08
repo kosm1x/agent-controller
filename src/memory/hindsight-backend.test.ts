@@ -236,6 +236,41 @@ describe("HindsightMemoryBackend", () => {
       ]);
     });
 
+    it("logs topKIds aligned with kept after the bias re-sorts and drops (queue 4bt)", async () => {
+      // 21 results: positional relevance puts B at 1.0 and A at 0.95; A's
+      // outcome:success bonus (+0.10) moves it ahead of B.
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          { id: "idB", text: "B untagged", tags: [] },
+          { id: "idA", text: "A success", tags: ["outcome:success"] },
+          ...Array.from({ length: 19 }, (_, i) => ({ id: `r${i + 2}`, text: `rest ${i + 2}`, tags: [] })),
+        ],
+      });
+      logRecallSpy.mockClear();
+      const kept = await backend.recall("q", { bank: "mc-operational" });
+      expect(kept.slice(0, 2).map((r) => r.content)).toEqual(["A success", "B untagged"]);
+      const arg = logRecallSpy.mock.calls[0][0];
+      expect(arg.topKIds.slice(0, 2)).toEqual(["idA", "idB"]);
+      expect(arg.topKIds).toHaveLength(kept.length);
+      expect(arg.results).toEqual(kept);
+      for (const r of kept) expect(Object.getOwnPropertySymbols(r)).toEqual([]);
+
+      // A failed-tagged row is dropped: its id goes with it.
+      mockClient.recall.mockResolvedValueOnce({
+        results: [
+          { id: "x1", text: "first", tags: [] },
+          { id: "xF", text: "failed", tags: ["outcome:failed"] },
+          { id: "x3", text: "third", tags: [] },
+        ],
+      });
+      logRecallSpy.mockClear();
+      const kept2 = await backend.recall("q", { bank: "mc-operational" });
+      const arg2 = logRecallSpy.mock.calls[0][0];
+      expect(kept2.map((r) => r.content)).toEqual(["first", "third"]);
+      expect(arg2.topKIds).toEqual(["x1", "x3"]);
+      expect(arg2.topKIds).toHaveLength(kept2.length);
+    });
+
     it("treats missing vendor tags as empty array (no false-positive exclusion)", async () => {
       mockClient.recall.mockResolvedValueOnce({
         results: [{ id: "1", text: "no tags field" }],

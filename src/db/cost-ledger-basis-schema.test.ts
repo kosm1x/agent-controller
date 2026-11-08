@@ -48,10 +48,10 @@ const base = {
 };
 
 describe("migration v8 — cost_ledger.cost_basis", () => {
-  it("fresh DB: head is v13 (v8 included) and recordCost writes the basis, NULL when absent", () => {
+  it("fresh DB: head is v14 (v8 included) and recordCost writes the basis, NULL when absent", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(ledgerCols(db)).toContain("cost_basis");
 
     recordCost({ ...base, runId: "with", costBasis: "list" });
@@ -83,7 +83,7 @@ describe("migration v8 — cost_ledger.cost_basis", () => {
 
     initDatabase(tmpDbPath);
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(ledgerCols(db)).toContain("cost_basis");
     const row = db
       .prepare(`SELECT cost_basis FROM cost_ledger WHERE run_id = 'old'`)
@@ -103,6 +103,6 @@ describe("migration v8 — cost_ledger.cost_basis", () => {
     raw.close();
 
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
-    expect(getDatabase().pragma("user_version", { simple: true })).toBe(13);
+    expect(getDatabase().pragma("user_version", { simple: true })).toBe(14);
   });
 });

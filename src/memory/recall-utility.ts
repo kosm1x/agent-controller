@@ -346,9 +346,12 @@ interface LogRecallInput {
     unknown: number;
   };
   /**
-   * Stable Hindsight memory IDs returned for this recall (queue #8). JSON
-   * array. Lets per-memory utility analysis cross-reference rows against
-   * retain history. Only populated on the hindsight path — null elsewhere.
+   * Stable per-result IDs for this recall (queue #8), aligned by index with
+   * `results`. JSON array. Lets per-memory utility analysis cross-reference
+   * rows against retain history. Populated on the hindsight, JME, precedents
+   * and sqlite-primary (`conversations.id`, queue 4bt) paths. When given,
+   * `snippet_counts` is written beside it so `markRecallUtility` can map
+   * matched snippets back to these IDs (`used_ids`).
    */
   topKIds?: string[];
   /**
@@ -418,13 +421,21 @@ export function logRecall(input: LogRecallInput): void {
   try {
     const db = getDatabase();
 
+    // snippetCounts[i] = snippets result i actually contributed to
+    // allSnippets (after its own dedupe and the shared cap), so
+    // sum(snippetCounts) === allSnippets.length; results past the cap get 0.
     const allSnippets: string[] = [];
+    const snippetCounts: number[] = [];
     for (const r of input.results) {
-      if (allSnippets.length >= MAX_SNIPPETS_PER_RESULT * 10) break;
-      for (const s of deriveSnippets(r.content)) {
-        if (allSnippets.length >= MAX_SNIPPETS_PER_RESULT * 10) break;
-        allSnippets.push(s);
+      let n = 0;
+      if (allSnippets.length < MAX_SNIPPETS_PER_RESULT * 10) {
+        for (const s of deriveSnippets(r.content)) {
+          if (allSnippets.length >= MAX_SNIPPETS_PER_RESULT * 10) break;
+          allSnippets.push(s);
+          n++;
+        }
       }
+      snippetCounts.push(n);
     }
 
     // Queue #7 part 3 (2026-05-07): bump Prom counter from the breakdown so
@@ -440,12 +451,13 @@ export function logRecall(input: LogRecallInput): void {
       input.topKIds && input.topKIds.length > 0
         ? JSON.stringify(input.topKIds)
         : null;
+    const snippetCountsJson = topKJson ? JSON.stringify(snippetCounts) : null;
     writeWithRetry(() =>
       db
         .prepare(
           `INSERT INTO recall_audit
-             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown, top_k_ids, mode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (bank, query, source, result_count, result_snippets, latency_ms, excluded_count, outcome_breakdown, top_k_ids, mode, snippet_counts)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.bank,
@@ -458,6 +470,7 @@ export function logRecall(input: LogRecallInput): void {
           breakdownJson,
           topKJson,
           input.mode ?? null,
+          snippetCountsJson,
         ),
     );
   } catch (err) {
@@ -467,6 +480,44 @@ export function logRecall(input: LogRecallInput): void {
       errMsg(err),
     );
   }
+}
+
+/**
+ * `used_ids` (queue 4bt P2 Step 0): the `top_k_ids` entries (opaque strings,
+ * copied as-is) of the results that own at least one matched snippet, via
+ * `snippet_counts`. NULL when either array is absent or malformed, their
+ * lengths differ, or the counts do not sum to the stored snippet count.
+ * Limitation: a result that contributed 0 snippets (content too short to
+ * fingerprint, or past the 20-snippet cap) can never be marked used by this
+ * signal.
+ */
+function usedIdsJson(
+  topKRaw: string | null,
+  countsRaw: string | null,
+  snippetTotal: number,
+  matched: number[],
+): string | null {
+  if (!topKRaw || !countsRaw) return null;
+  let ids: unknown;
+  let counts: unknown;
+  try {
+    ids = JSON.parse(topKRaw);
+    counts = JSON.parse(countsRaw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(ids) || !Array.isArray(counts)) return null;
+  if (ids.length !== counts.length) return null;
+  if (!counts.every((c) => Number.isInteger(c) && c >= 0)) return null;
+  if (counts.reduce((a: number, c: number) => a + c, 0) !== snippetTotal) {
+    return null;
+  }
+  const owner: number[] = [];
+  counts.forEach((c: number, r) => {
+    for (let k = 0; k < c; k++) owner.push(r);
+  });
+  const usedResults = new Set(matched.map((i) => owner[i]));
+  return JSON.stringify(ids.filter((_, r) => usedResults.has(r)));
 }
 
 interface MarkUtilityInput {
@@ -514,17 +565,24 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
     .replace("T", " ")
     .slice(0, 19);
 
-  let rows: Array<{ id: number; result_snippets: string }>;
+  let rows: Array<{
+    id: number;
+    result_snippets: string;
+    top_k_ids: string | null;
+    snippet_counts: string | null;
+  }>;
   try {
     rows = db
       .prepare(
-        `SELECT id, result_snippets FROM recall_audit
+        `SELECT id, result_snippets, top_k_ids, snippet_counts FROM recall_audit
          WHERE was_used IS NULL AND created_at >= ?
          ORDER BY created_at DESC LIMIT ?`,
       )
       .all(cutoffIso, MAX_ROWS_PER_SWEEP) as Array<{
       id: number;
       result_snippets: string;
+      top_k_ids: string | null;
+      snippet_counts: string | null;
     }>;
   } catch (err) {
     console.warn(
@@ -540,7 +598,7 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
   const update = db.prepare(
     `UPDATE recall_audit
      SET was_used = ?, used_count = ?, task_id = ?, checked_at = datetime('now'),
-         match_type = ?, overlap_score = ?
+         match_type = ?, overlap_score = ?, used_ids = ?
      WHERE id = ? AND was_used IS NULL`,
   );
 
@@ -559,8 +617,10 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
     let matchCount = 0;
     let bestScore = 0;
     let rowMatchType: "verbatim" | "token-overlap" | "none" = "none";
+    const matched: number[] = []; // indexes into snippets
 
-    for (const s of snippets) {
+    for (let i = 0; i < snippets.length; i++) {
+      const s = snippets[i];
       if (typeof s !== "string" || s.length < SNIPPET_MIN_CHARS) continue;
 
       // Signal 1: verbatim. Score is hardcoded 1.0 — this is the strongest
@@ -571,6 +631,7 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
       // quality-vs-quantity questions (qa-auditor W4).
       if (responseLower.includes(s.toLowerCase())) {
         matchCount++;
+        matched.push(i);
         bestScore = 1.0;
         rowMatchType = "verbatim";
         continue;
@@ -581,11 +642,18 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
       if (score > bestScore) bestScore = score;
       if (overlap >= MIN_OVERLAP_TOKENS) {
         matchCount++;
+        matched.push(i);
         if (rowMatchType === "none") rowMatchType = "token-overlap";
       }
     }
 
     const wasUsed = matchCount > 0 ? 1 : 0;
+    const usedIds = usedIdsJson(
+      row.top_k_ids,
+      row.snippet_counts,
+      snippets.length,
+      matched,
+    );
     try {
       const result = writeWithRetry(() =>
         update.run(
@@ -594,6 +662,7 @@ export function markRecallUtility(input: MarkUtilityInput): MarkUtilityResult {
           taskId,
           rowMatchType,
           bestScore,
+          usedIds,
           row.id,
         ),
       );

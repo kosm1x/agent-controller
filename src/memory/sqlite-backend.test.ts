@@ -112,7 +112,7 @@ describe("SqliteMemoryBackend — recall instrumentation", () => {
       expect(row.source).toBe("sqlite-primary");
       expect(row.bank).toBe("mc-jarvis");
       expect(row.query).toBe("query text");
-      expect(row.results).toBe(KEPT);
+      expect(row.results).toEqual(KEPT);
       expect(row.excludedCount).toBe(2);
       expect(row.outcomeBreakdown).toEqual({
         success: 1,
@@ -127,7 +127,7 @@ describe("SqliteMemoryBackend — recall instrumentation", () => {
     it("returns the biased `kept` set, not the raw retrieval result", async () => {
       const backend = new SqliteMemoryBackend();
       const result = await backend.recall("query text", opts());
-      expect(result).toBe(KEPT);
+      expect(result).toEqual(KEPT);
     });
 
     it("tags the row with the resolved recall mode (default: coherence)", async () => {
@@ -758,5 +758,175 @@ describe("SqliteMemoryBackend — tombstones (MEMORY_TOMBSTONES)", () => {
       db.exec("ALTER TABLE memory_tombstones_x RENAME TO memory_tombstones");
       clearTombstoneCache();
     }
+  });
+});
+
+describe("SqliteMemoryBackend — recall_audit top_k_ids (queue 4bt P2 Step 0)", () => {
+  // Real in-memory schema and the REAL applyOutcomeBias (it filters and
+  // re-sorts), so the ids logged must follow the items through the bias.
+  type Db = ReturnType<typeof getDatabase>;
+  let db: Db;
+  const BANK = "mc-jarvis";
+  const prev = { tomb: process.env.MEMORY_TOMBSTONES, floor: process.env.MEMORY_RECALL_FLOOR };
+  const NORTE = "Usuario: el inventario de bodega norte quedo listo para el cierre";
+  const SUR = "Usuario: el inventario de bodega sur tiene faltantes graves";
+  const CENTRAL = "Usuario: revisar el inventario de bodega central antes del viernes";
+  const PORTON = "Usuario: el codigo del porton es 5821";
+  const FILLER = Array.from({ length: 20 }, (_, i) => `Usuario: reunion ${i} con el equipo de ventas`);
+  const ITEM_KEYS = ["content", "createdAt", "trustTier", "tags", "relevance"];
+  const FALLBACK_KEYS = ["content", "createdAt", "trustTier", "tags"];
+
+  const seed = (rows: Array<[string, string[]]>) => {
+    const ins = db.prepare(
+      "INSERT INTO conversations (bank, tags, content, trust_tier, source, created_at) VALUES (?, ?, ?, 2, 'agent', ?)",
+    );
+    rows.forEach(([content, tags], i) => {
+      const t = new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString().replace("T", " ").slice(0, 19);
+      ins.run(BANK, JSON.stringify(tags), content, t);
+    });
+  };
+  const idsOf = (content: string) =>
+    (db.prepare("SELECT id FROM conversations WHERE content = ? ORDER BY id").all(content) as Array<{ id: number }>).map(
+      (r) => String(r.id),
+    );
+  const idOf = (content: string) => idsOf(content)[0]!;
+  const logged = () => {
+    expect(logRecallSpy).toHaveBeenCalledTimes(1);
+    return logRecallSpy.mock.calls[0]![0] as { topKIds?: string[]; results: MemoryItem[] };
+  };
+  const recall = (q: string) => new SqliteMemoryBackend().recall(q, opts({ maxResults: 5 }));
+  // Every logged id is the decimal conversations.id of the item at the same index.
+  const expectAligned = (out: MemoryItem[]) => {
+    const row = logged();
+    expect(row.results).toEqual(out);
+    expect(row.topKIds).toHaveLength(out.length);
+    expect(row.topKIds).toEqual(out.map((m) => idOf(m.content)));
+    for (const id of row.topKIds!) expect(id).toMatch(/^[1-9][0-9]*$/);
+  };
+  const expectNoIdLeak = (out: MemoryItem[], keys: string[]) => {
+    for (const m of out) {
+      expect(Object.keys(m)).toEqual(keys);
+      expect(Object.getOwnPropertySymbols(m)).toEqual([]);
+    }
+    expect(JSON.stringify(out)).not.toMatch(/"_?id"/);
+  };
+
+  beforeAll(async () => {
+    const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
+    db = real.initDatabase(":memory:");
+  });
+  beforeEach(async () => {
+    const realBias = await vi.importActual<typeof import("./outcome-bias.js")>("./outcome-bias.js");
+    applyOutcomeBiasSpy.mockImplementation(realBias.applyOutcomeBias);
+    db.exec("DELETE FROM conversation_embeddings");
+    db.exec("DELETE FROM conversations");
+    clearVectorCache();
+    delete process.env.MEMORY_RECALL_FLOOR;
+    delete process.env.MEMORY_TOMBSTONES;
+    vi.mocked(getDatabase).mockReturnValue(db);
+    seed([
+      [NORTE, []],
+      [SUR, ["outcome:failed"]],
+      [CENTRAL, ["outcome:success"]],
+      [PORTON, []],
+      ...FILLER.map((c) => [c, []] as [string, string[]]),
+    ]);
+  });
+  afterEach(() => {
+    vi.mocked(getDatabase).mockImplementation(() => {
+      throw new Error("no db in test");
+    });
+    embedSpy.mockResolvedValue(null);
+    for (const [k, v] of [["MEMORY_TOMBSTONES", prev.tomb], ["MEMORY_RECALL_FLOOR", prev.floor]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("FTS path: one id per kept item, in order, after the bias drops and re-sorts", async () => {
+    const out = await recall("inventario bodega");
+    // outcome:failed is dropped by the coherence default; outcome:success is boosted first.
+    expect(out.map((m) => m.content)).toEqual([CENTRAL, NORTE]);
+    expectAligned(out);
+    expectNoIdLeak(out, ITEM_KEYS);
+  });
+
+  it("LIKE fallback path: ids of the LIKE rows", async () => {
+    // "porto" is no FTS token of any row: FTS finds nothing, LIKE matches both.
+    const porton2 = "Usuario: el portonazo de la entrada quedo abierto";
+    seed([[porton2, []]]);
+    const out = await recall("porto");
+    expect(out.map((m) => m.content).sort()).toEqual([PORTON, porton2].sort());
+    expectAligned(out);
+    expectNoIdLeak(out, FALLBACK_KEYS);
+  });
+
+  it("LIKE fallback with the recall floor on: ids of the rows the floor keeps", async () => {
+    // The floor-on LIKE exit needs FTS to return nothing while the rare term
+    // is an FTS token of the LIKE rows, i.e. the FTS layer failed: its
+    // statement throws here (the doc-frequency count still runs). "kvx 482"
+    // is rare: 2 rows, threshold 2 at > 100 bank rows.
+    const k1 = "Usuario: el folio KVX-482 quedo pendiente con el proveedor";
+    const k2 = "Usuario: el folio KVX-482 se cerro el martes";
+    seed([...Array.from({ length: 80 }, (_, i) => [`Usuario: tarea ${i} cerrada`, []] as [string, string[]]), [k1, []], [k2, []]]);
+    process.env.MEMORY_RECALL_FLOOR = "on";
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      if (sql.includes("ORDER BY f.rank")) throw new Error("fts down");
+      return prepare(sql);
+    }) as typeof db.prepare);
+    try {
+      const out = await recall("KVX-482");
+      expect(out.map((m) => m.content).sort()).toEqual([k1, k2].sort());
+      expectAligned(out);
+      expectNoIdLeak(out, FALLBACK_KEYS); // no `relevance`: the LIKE exit, not the merge
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("newest-rows fallback: ids of the newest rows", async () => {
+    const out = await recall("factura pendiente dentista");
+    expect(out).toHaveLength(5);
+    expectAligned(out);
+    expectNoIdLeak(out, FALLBACK_KEYS);
+  });
+
+  it("embedding path: ids of the rows found by embeddings only", async () => {
+    const vec = new Float32Array([1, 0, 0]);
+    const put = db.prepare("INSERT INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)");
+    for (const c of [NORTE, PORTON]) put.run(Number(idOf(c)), serializeEmbedding(vec));
+    embedSpy.mockResolvedValue(vec as never);
+    const out = await recall("zzz qqq");
+    expect(out.map((m) => m.content).sort()).toEqual([NORTE, PORTON].sort());
+    expectAligned(out);
+    expectNoIdLeak(out, ITEM_KEYS);
+  });
+
+  it("merge: a row found by FTS and embeddings, and a content stored twice, each keep one item and one id", async () => {
+    seed([[NORTE, []]]); // second conversations row with the same content
+    const [first, second] = idsOf(NORTE);
+    expect(second).toBeDefined();
+    const vec = new Float32Array([1, 0, 0]);
+    db.prepare("INSERT INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)").run(
+      Number(first),
+      serializeEmbedding(vec),
+    );
+    embedSpy.mockResolvedValue(vec as never);
+    const out = await recall("inventario bodega");
+    expect(out.filter((m) => m.content === NORTE)).toHaveLength(1);
+    const row = logged();
+    expect(row.topKIds).toHaveLength(out.length);
+    expect(new Set(row.topKIds).size).toBe(row.topKIds!.length);
+    const at = out.findIndex((m) => m.content === NORTE);
+    expect([first, second]).toContain(row.topKIds![at]);
+    expect(row.topKIds![out.findIndex((m) => m.content === CENTRAL)]).toBe(idOf(CENTRAL));
+  });
+
+  it("instrument=false returns the same items with the same keys and logs nothing", async () => {
+    const plain = await new SqliteMemoryBackend(false).recall("inventario bodega", opts({ maxResults: 5 }));
+    expect(logRecallSpy).not.toHaveBeenCalled();
+    expectNoIdLeak(plain, ITEM_KEYS);
+    expect(plain.map((m) => m.content).sort()).toEqual([CENTRAL, NORTE, SUR].sort());
   });
 });

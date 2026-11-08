@@ -15,7 +15,10 @@
  */
 
 import { HindsightClient } from "./hindsight-client.js";
-import { SqliteMemoryBackend } from "./sqlite-backend.js";
+import {
+  SqliteMemoryBackend,
+  applyOutcomeBiasWithIds,
+} from "./sqlite-backend.js";
 import { logRecall } from "./recall-utility.js";
 import { applyOutcomeBias } from "./outcome-bias.js";
 import { resolveRecallMode } from "./recall-mode.js";
@@ -289,7 +292,13 @@ export class HindsightMemoryBackend implements MemoryService {
         tags: r.tags ?? [],
         relevance: total > 1 ? 1 - idx / (total - 1) : 1,
       }));
-      const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
+      // queue 4bt: ids follow the items through the bias, so top_k_ids is
+      // index-aligned with `kept` (what result_snippets is built from).
+      const { kept, keptIds, excluded, breakdown } = applyOutcomeBiasWithIds(
+        raw,
+        response.results.map((r) => r.id),
+        options,
+      );
       if (excluded > 0) {
         console.log(
           `[memory] recall(hindsight) filtered ${excluded} outcome-tagged result(s)`,
@@ -304,7 +313,7 @@ export class HindsightMemoryBackend implements MemoryService {
         excludedCount: excluded,
         outcomeBreakdown: breakdown,
         mode: resolveRecallMode(options),
-        topKIds: response.results.map((r) => r.id), // queue #8
+        topKIds: keptIds, // queue #8
       });
       return kept;
     } catch (err) {

@@ -19,6 +19,7 @@ import { rerankByCoherence } from "./graph-rerank.js";
 import { recordRetainOutcome } from "../observability/prometheus.js";
 import { extractContentTokens, logRecall } from "./recall-utility.js";
 import { applyOutcomeBias } from "./outcome-bias.js";
+import type { OutcomeBiasResult } from "./outcome-bias.js";
 import { resolveRecallMode } from "./recall-mode.js";
 import type {
   MemoryService,
@@ -221,6 +222,38 @@ function scrubRecalled(items: MemoryItem[]): MemoryItem[] {
   });
 }
 
+/**
+ * 2026-11-08 queue 4bt P2 Step 0: a recalled row's id rides through
+ * `applyOutcomeBias` (which drops, re-sorts and spreads every item) under
+ * this symbol key, so `recall_audit.top_k_ids` names the rows actually
+ * logged, index-aligned with `kept`.
+ */
+const ROW_ID: unique symbol = Symbol("recallRowId");
+type IdTaggedItem<I> = MemoryItem & { [ROW_ID]: I };
+
+/**
+ * `applyOutcomeBias` plus `keptIds[i]` = the id of `kept[i]` (`ids[i]` is the
+ * id of `items[i]`). The key is stripped from `kept`: no consumer or
+ * formatter ever sees it. Used by sqlite-primary and Hindsight recalls.
+ */
+export function applyOutcomeBiasWithIds<I>(
+  items: MemoryItem[],
+  ids: readonly I[],
+  options: RecallOptions,
+): OutcomeBiasResult & { keptIds: I[] } {
+  const tagged: IdTaggedItem<I>[] = items.map((item, i) => ({
+    ...item,
+    [ROW_ID]: ids[i]!,
+  }));
+  const bias = applyOutcomeBias(tagged, options);
+  const keptTagged = bias.kept as IdTaggedItem<I>[];
+  return {
+    ...bias,
+    kept: keptTagged.map(({ [ROW_ID]: _id, ...item }) => item),
+    keptIds: keptTagged.map((k) => k[ROW_ID]),
+  };
+}
+
 export class SqliteMemoryBackend implements MemoryService {
   readonly backend = "sqlite" as const;
 
@@ -301,7 +334,7 @@ export class SqliteMemoryBackend implements MemoryService {
    */
   async recall(query: string, options: RecallOptions): Promise<MemoryItem[]> {
     if (!this.instrument) {
-      return scrubRecalled(await this.recallHybrid(query, options));
+      return scrubRecalled((await this.recallHybrid(query, options)).items);
     }
 
     // Primary-service path (HINDSIGHT_ENABLED=false). Apply the recall-side
@@ -309,13 +342,18 @@ export class SqliteMemoryBackend implements MemoryService {
     // in HindsightMemoryBackend — and write the recall_audit row that the
     // V8.1 correspondence audit + `mc-ctl recall-utility` consume.
     const start = Date.now();
-    const raw = scrubRecalled(await this.recallHybrid(query, options));
-    const { kept, excluded, breakdown } = applyOutcomeBias(raw, options);
+    const { items, ids } = await this.recallHybrid(query, options);
+    const { kept, keptIds, excluded, breakdown } = applyOutcomeBiasWithIds(
+      scrubRecalled(items),
+      ids,
+      options,
+    );
     logRecall({
       bank: options.bank,
       query,
       source: "sqlite-primary",
       results: kept,
+      topKIds: keptIds.map(String),
       latencyMs: Date.now() - start,
       excludedCount: excluded,
       outcomeBreakdown: breakdown,
@@ -329,10 +367,14 @@ export class SqliteMemoryBackend implements MemoryService {
     return kept;
   }
 
+  /**
+   * Returns the items plus `ids`, the `conversations.id` of each item at the
+   * same index (queue 4bt P2 Step 0). `ids` never reaches a consumer.
+   */
   private async recallHybrid(
     query: string,
     options: RecallOptions,
-  ): Promise<MemoryItem[]> {
+  ): Promise<{ items: MemoryItem[]; ids: number[] }> {
     try {
       const db = getDatabase();
       const limit = options.maxResults ?? 10;
@@ -398,6 +440,7 @@ export class SqliteMemoryBackend implements MemoryService {
       // Helper: compute decay-weighted final score
       const applyDecay = (
         row: {
+          id: number;
           content: string;
           created_at: string;
           trust_tier: number;
@@ -410,6 +453,7 @@ export class SqliteMemoryBackend implements MemoryService {
         trustTier: TrustTier;
         tags: string[];
         _score: number;
+        _id: number;
       } => {
         const ageDays =
           (now - new Date(row.created_at + "Z").getTime()) / 86_400_000;
@@ -423,11 +467,13 @@ export class SqliteMemoryBackend implements MemoryService {
           trustTier: tier,
           tags: parseTags(row.tags),
           _score: rawScore + decayWeight,
+          _id: row.id,
         };
       };
 
       // --- Layer 1: FTS5 full-text search (BM25 ranking) ---
       type ScoredRow = {
+        id: number;
         content: string;
         created_at: string;
         trust_tier: number;
@@ -440,7 +486,7 @@ export class SqliteMemoryBackend implements MemoryService {
         if (ftsQuery) {
           const ftsRows = db
             .prepare(
-              `SELECT c.content, c.created_at, c.trust_tier, c.tags, f.rank AS score
+              `SELECT c.id, c.content, c.created_at, c.trust_tier, c.tags, f.rank AS score
                FROM conversations_fts f
                JOIN conversations c ON c.id = f.rowid
                WHERE conversations_fts MATCH ?
@@ -490,6 +536,7 @@ export class SqliteMemoryBackend implements MemoryService {
             if (sim > 0.3) {
               // Only include above threshold
               embeddingResults.push({
+                id: row.id,
                 content: row.content,
                 created_at: row.created_at,
                 trust_tier: row.trust_tier,
@@ -514,7 +561,7 @@ export class SqliteMemoryBackend implements MemoryService {
             .join(" OR ");
           const likeParams = keywords.map((k) => `%${k}%`);
           const matchSql = `
-            SELECT content, created_at, trust_tier, tags,
+            SELECT id, content, created_at, trust_tier, tags,
               (${keywords.map(() => "CASE WHEN content LIKE ? THEN 1 ELSE 0 END").join(" + ")}) AS score
             FROM conversations
             WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
@@ -540,33 +587,39 @@ export class SqliteMemoryBackend implements MemoryService {
               if (floorMode === "on") {
                 const scored = kept.map((r) => applyDecay(r, r.score));
                 scored.sort((a, b) => b._score - a._score);
-                const out = scored.slice(0, limit).map(({ _score: _, ...item }) => item);
+                const top = scored.slice(0, limit);
+                const out = top.map(({ _score: _, _id: _i, ...item }) => item);
                 traceRecallFloor(floorMode, options, out.length, wouldDrop, rare.length);
-                return traced(out);
+                return { items: traced(out), ids: top.map((r) => r._id) };
               }
               traceRecallFloor(floorMode, options, Math.min(limit, live.length), wouldDrop, rare.length);
             }
             const scored = live.map((r) => applyDecay(r, r.score));
             scored.sort((a, b) => b._score - a._score);
-            return traced(scored.slice(0, limit).map(({ _score: _, ...item }) => item));
+            const top = scored.slice(0, limit);
+            return {
+              items: traced(top.map(({ _score: _, _id: _i, ...item }) => item)),
+              ids: top.map((r) => r._id),
+            };
           }
         }
 
         // The floor drops the newest-rows fallback: nothing matched, so nothing is relevant.
         if (floorMode === "on" && rare) {
           traceRecallFloor(floorMode, options, 0, 0, rare.length);
-          return traced([]);
+          return { items: traced([]), ids: [] };
         }
 
         // No matches at all — return recent
         const sql = `
-          SELECT content, created_at, trust_tier, tags FROM conversations
+          SELECT id, content, created_at, trust_tier, tags FROM conversations
           WHERE bank = ? ${tagClause.replace("c.tags", "tags")}
           ORDER BY created_at DESC
           LIMIT ?
         `;
         const rows = unsilenced(
           db.prepare(sql).all(options.bank, ...tagParams, limit) as Array<{
+            id: number;
             content: string;
             created_at: string;
             trust_tier: number;
@@ -574,7 +627,7 @@ export class SqliteMemoryBackend implements MemoryService {
           }>,
         );
         if (rare) traceRecallFloor(floorMode, options, rows.length, rows.length, rare.length);
-        return traced(rows.map((r) => ({
+        const items = traced(rows.map((r) => ({
           content: r.content,
           createdAt: r.created_at,
           trustTier: ([1, 2, 3, 4].includes(r.trust_tier)
@@ -582,6 +635,7 @@ export class SqliteMemoryBackend implements MemoryService {
             : 3) as TrustTier,
           tags: parseTags(r.tags),
         })));
+        return { items, ids: rows.map((r) => r.id) };
       }
 
       // --- Merge FTS5 + embedding results ---
@@ -611,6 +665,7 @@ export class SqliteMemoryBackend implements MemoryService {
       const allResults = new Map<
         string,
         {
+          id: number;
           content: string;
           created_at: string;
           trust_tier: number;
@@ -672,14 +727,15 @@ export class SqliteMemoryBackend implements MemoryService {
       // returned item so the recall-side outcome bias (outcome-bias.ts) has
       // a comparable score to add ±0.05–0.10 onto. Without this the bias
       // function falls back to insertion-order sort and the boost is a no-op.
-      const out = reranked.slice(0, limit).map(({ _score, ...item }) => ({
+      const top = reranked.slice(0, limit);
+      const out = top.map(({ _score, _id: _i, ...item }) => ({
         ...item,
         relevance: _score,
       }));
       if (rare) traceRecallFloor(floorMode, options, out.length, floorDrop, rare.length);
-      return traced(out);
+      return { items: traced(out), ids: top.map((r) => r._id) };
     } catch {
-      return [];
+      return { items: [], ids: [] };
     }
   }
 

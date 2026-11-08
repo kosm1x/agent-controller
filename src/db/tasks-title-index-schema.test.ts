@@ -52,10 +52,10 @@ const plan = (db: Database.Database, sql: string, ...params: unknown[]): string 
 const TITLE = "Morning briefing — 2026-11-05";
 
 describe("migration v12 — idx_tasks_title_status for the ritual scheduler", () => {
-  it("fresh DB: head is v13 with the index on (title, status)", () => {
+  it("fresh DB: head is v14 with the index on (title, status)", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(indexCols(db, "idx_tasks_title_status")).toEqual(["title", "status"]);
   });
 
@@ -94,7 +94,7 @@ describe("migration v12 — idx_tasks_title_status for the ritual scheduler", ()
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(indexCols(db, "idx_tasks_title_status")).toEqual(["title", "status"]);
     expect(db.prepare(ALREADY_RAN_TODAY_SQL).get(TITLE)).toEqual({ 1: 1 });
     expect(
@@ -110,6 +110,6 @@ describe("migration v12 — idx_tasks_title_status for the ritual scheduler", ()
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
   });
 });

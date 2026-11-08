@@ -35,10 +35,10 @@ const columns = (db: Database.Database): string[] =>
 const INSERT = "INSERT INTO memory_tombstones (fact_id, reason, terms, new_terms) VALUES (?, ?, ?, ?)";
 
 describe("migration v13 — memory_tombstones", () => {
-  it("fresh DB: head is v13 with the table, its columns and the created_at index", () => {
+  it("fresh DB: head is v14 with the table, its columns and the created_at index", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(columns(db)).toEqual(["id", "created_at", "fact_id", "reason", "terms", "new_terms"]);
     const idx = db.prepare("PRAGMA index_xinfo(idx_memory_tombstones_created)").all() as Array<{
       name: string | null;
@@ -83,7 +83,7 @@ describe("migration v13 — memory_tombstones", () => {
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(columns(db)).toEqual(["id", "created_at", "fact_id", "reason", "terms", "new_terms"]);
     expect(db.prepare("SELECT COUNT(*) AS n FROM conversations").get()).toEqual({ n: 1 });
     db.prepare(INSERT).run(4, "superseded", '["5821"]', '["7394"]');
@@ -94,7 +94,7 @@ describe("migration v13 — memory_tombstones", () => {
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(13);
+    expect(db.pragma("user_version", { simple: true })).toBe(14);
     expect(db.prepare("SELECT fact_id, reason, terms, new_terms FROM memory_tombstones").all()).toEqual([
       { fact_id: 4, reason: "superseded", terms: '["5821"]', new_terms: '["7394"]' },
     ]);

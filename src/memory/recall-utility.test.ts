@@ -21,6 +21,9 @@ interface AuditRow {
   checked_at: string | null;
   match_type: string | null;
   overlap_score: number | null;
+  top_k_ids?: string | null;
+  snippet_counts?: string | null;
+  used_ids?: string | null;
 }
 
 const store = {
@@ -43,6 +46,8 @@ const mockDb = {
               number | null,
               number | null | undefined,
             ];
+          const topK = args[8] as string | null;
+          const snippetCounts = args[10] as string | null;
           store.rows.push({
             id: store.nextId++,
             created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
@@ -59,6 +64,9 @@ const mockDb = {
             checked_at: null,
             match_type: null,
             overlap_score: null,
+            top_k_ids: topK,
+            snippet_counts: snippetCounts,
+            used_ids: null,
           });
           return { changes: 1, lastInsertRowid: store.nextId - 1 };
         },
@@ -69,15 +77,20 @@ const mockDb = {
         all: (cutoffIso: string, _limit: number) => {
           return store.rows
             .filter((r) => r.was_used == null && r.created_at >= cutoffIso)
-            .map((r) => ({ id: r.id, result_snippets: r.result_snippets }));
+            .map((r) => ({
+              id: r.id,
+              result_snippets: r.result_snippets,
+              top_k_ids: r.top_k_ids ?? null,
+              snippet_counts: r.snippet_counts ?? null,
+            }));
         },
       };
     }
     if (sql.startsWith("UPDATE recall_audit")) {
       return {
         run: (...args: unknown[]) => {
-          const [wasUsed, usedCount, taskId, matchType, overlapScore, id] =
-            args as [number, number, string, string, number, number];
+          const [wasUsed, usedCount, taskId, matchType, overlapScore, usedIds, id] =
+            args as [number, number, string, string, number, string | null, number];
           const row = store.rows.find((r) => r.id === id && r.was_used == null);
           if (!row) return { changes: 0 };
           row.was_used = wasUsed;
@@ -85,6 +98,7 @@ const mockDb = {
           row.task_id = taskId;
           row.match_type = matchType;
           row.overlap_score = overlapScore;
+          row.used_ids = usedIds;
           row.checked_at = new Date()
             .toISOString()
             .replace("T", " ")
@@ -97,8 +111,10 @@ const mockDb = {
   },
 };
 
+// A test may point getDatabase at a real in-memory DB (queue 4bt round trip).
+const dbSwitch: { real: unknown } = { real: null };
 vi.mock("../db/index.js", () => ({
-  getDatabase: () => mockDb,
+  getDatabase: () => dbSwitch.real ?? mockDb,
   writeWithRetry: (fn: () => unknown) => fn(),
 }));
 
@@ -115,6 +131,7 @@ import {
 beforeEach(() => {
   store.rows = [];
   store.nextId = 1;
+  dbSwitch.real = null;
 });
 
 describe("redactSecrets", () => {
@@ -833,5 +850,191 @@ describe("markRecallUtility — dual signal (Ship B)", () => {
     expect(store.rows[0].match_type).toBe("none");
     // overlap_score reflects the best partial overlap as diagnostics
     expect(store.rows[0].overlap_score).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue 4bt P2 Step 0 (2026-11-08): snippet_counts + used_ids
+// ---------------------------------------------------------------------------
+
+describe("snippet_counts + used_ids (queue 4bt P2 Step 0)", () => {
+  // Unique tokens per tag, ≥ 2 × SNIPPET_MAX_CHARS long → head + middle snippets.
+  const long = (tag: string) =>
+    Array.from({ length: 30 }, (_, k) => `${tag}palabra${k}`).join(" ");
+  // Between SNIPPET_MIN_CHARS and 2 × SNIPPET_MAX_CHARS → one snippet.
+  const medium = (tag: string) =>
+    Array.from({ length: 8 }, (_, k) => `${tag}medio${k}`).join(" ");
+  const SHORT = "demasiado corto para huella"; // < SNIPPET_MIN_CHARS → none
+  const A = long("a");
+  const B = long("b");
+  const C = long("c");
+  // Quotes result 2's head verbatim; shares no token with any other snippet.
+  const RESPONSE = `Respuesta: ${deriveSnippets(B)[0]} fin`;
+  const log = (topKIds?: string[], results = [A, B, C]) =>
+    logRecall({
+      bank: "mc-jarvis",
+      query: "q",
+      source: "sqlite-primary",
+      results: results.map((content) => ({ content })),
+      latencyMs: 1,
+      topKIds,
+    });
+  const manualRow = (over: Partial<AuditRow>) => {
+    log(["11", "22", "33"]);
+    Object.assign(store.rows[store.rows.length - 1]!, over);
+  };
+
+  it("(d) 3 results, the 2nd matched: used_ids is exactly that entry; used_count as without ids", () => {
+    log(["11", "22", "33"]);
+    log(); // same recall, no ids: today's behaviour
+    log(["7:0.912", "8:0.744", "9:0.701"]); // JME id:score entries stay opaque
+    expect(deriveSnippets(B)).toHaveLength(2);
+
+    const res = markRecallUtility({ taskId: "t-d", responseText: RESPONSE });
+    expect(res).toEqual({ updated: 3, used: 3 });
+    const [withIds, without, jme] = store.rows;
+    expect(withIds!.used_ids).toBe(JSON.stringify(["22"]));
+    expect(jme!.used_ids).toBe(JSON.stringify(["8:0.744"]));
+    expect(without!.used_ids).toBeNull();
+    expect(withIds!.used_count).toBe(1);
+    for (const r of [withIds!, jme!]) {
+      expect(r.used_count).toBe(without!.used_count);
+      expect(r.was_used).toBe(without!.was_used);
+      expect(r.match_type).toBe(without!.match_type);
+      expect(r.overlap_score).toBe(without!.overlap_score);
+    }
+  });
+
+  it("(d) no snippet matched: used_ids is [] (checked, nothing used), not NULL", () => {
+    log(["11", "22", "33"]);
+    markRecallUtility({ taskId: "t-d0", responseText: "nada que ver con esto" });
+    expect(store.rows[0]!.was_used).toBe(0);
+    expect(store.rows[0]!.used_ids).toBe("[]");
+  });
+
+  it("(e) top_k_ids NULL, counts absent, length mismatch, sum mismatch or malformed → used_ids NULL", () => {
+    manualRow({ top_k_ids: null });
+    manualRow({ snippet_counts: null });
+    manualRow({ top_k_ids: JSON.stringify(["11", "22"]) });
+    manualRow({ snippet_counts: JSON.stringify([2, 2, 1]) });
+    manualRow({ snippet_counts: "not json" });
+    manualRow({ snippet_counts: JSON.stringify([2, "2", 2]) });
+    markRecallUtility({ taskId: "t-e", responseText: RESPONSE });
+    expect(store.rows).toHaveLength(6);
+    for (const r of store.rows) {
+      expect(r.was_used).toBe(1);
+      expect(r.used_ids).toBeNull();
+    }
+  });
+
+  it("(g) a result under SNIPPET_MIN_CHARS contributes 0; the counts sum to the stored snippets", () => {
+    const M = medium("m");
+    log(["1", "2", "3"], [A, SHORT, M]);
+    const row = store.rows[0]!;
+    const counts = JSON.parse(row.snippet_counts!) as number[];
+    expect(counts).toEqual([2, 0, 1]);
+    expect(counts.reduce((a, c) => a + c, 0)).toBe(JSON.parse(row.result_snippets).length);
+  });
+
+  it("(h) 25 snippets' worth of results: the 20 cap splits a result, later ones get 0, the sum is 20", () => {
+    const results = [medium("m"), ...Array.from({ length: 12 }, (_, i) => long(`r${i}x`))];
+    log(results.map((_, i) => String(i + 1)), results);
+    const row = store.rows[0]!;
+    const counts = JSON.parse(row.snippet_counts!) as number[];
+    expect(counts).toEqual([1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0]);
+    expect(counts.reduce((a, c) => a + c, 0)).toBe(20);
+    expect(JSON.parse(row.result_snippets)).toHaveLength(20);
+  });
+
+  it("snippet_counts is NULL when no topKIds are given; result_snippets unchanged by it", () => {
+    log();
+    log(["11", "22", "33"]);
+    expect(store.rows[0]!.snippet_counts).toBeNull();
+    expect(store.rows[1]!.snippet_counts).toBe(JSON.stringify([2, 2, 2]));
+    expect(store.rows[1]!.result_snippets).toBe(store.rows[0]!.result_snippets);
+  });
+
+  it("(f) a fresh initDatabase has both columns at head v14, and the real SQL round-trips", async () => {
+    const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
+    const db = real.initDatabase(":memory:");
+    try {
+      const cols = (db.prepare("PRAGMA table_info(recall_audit)").all() as Array<{ name: string; type: string }>).filter(
+        (c) => c.name === "used_ids" || c.name === "snippet_counts",
+      );
+      expect(cols).toEqual([
+        expect.objectContaining({ name: "used_ids", type: "TEXT" }),
+        expect.objectContaining({ name: "snippet_counts", type: "TEXT" }),
+      ]);
+      expect(db.pragma("user_version", { simple: true })).toBe(14);
+
+      dbSwitch.real = db;
+      log(["11", "22", "33"]);
+      markRecallUtility({ taskId: "t-f", responseText: RESPONSE });
+      const row = db
+        .prepare("SELECT top_k_ids, snippet_counts, used_ids, used_count, was_used FROM recall_audit")
+        .get() as Record<string, unknown>;
+      expect(row).toEqual({
+        top_k_ids: JSON.stringify(["11", "22", "33"]),
+        snippet_counts: JSON.stringify([2, 2, 2]),
+        used_ids: JSON.stringify(["22"]),
+        used_count: 1,
+        was_used: 1,
+      });
+    } finally {
+      dbSwitch.real = null;
+      real.closeDatabase();
+    }
+  });
+
+  it("(f) an existing v13 DB without the columns: v14 adds both; a second boot stays at 14, no duplicate, no throw", async () => {
+    const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
+    const { default: Database } = await import("better-sqlite3");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { existsSync, unlinkSync } = await import("node:fs");
+    const path = join(tmpdir(), `mc-recall-audit-v14-${process.pid}-${Date.now()}.db`);
+    const cols = () =>
+      (real.getDatabase().prepare("PRAGMA table_info(recall_audit)").all() as Array<{ name: string }>)
+        .map((c) => c.name)
+        .filter((n) => n === "used_ids" || n === "snippet_counts");
+    try {
+      real.initDatabase(path);
+      real.closeDatabase();
+      // Back to the v13 shape: recall_audit as v13 had it, one old row.
+      const raw = new Database(path);
+      raw.exec(`
+        ALTER TABLE recall_audit DROP COLUMN used_ids;
+        ALTER TABLE recall_audit DROP COLUMN snippet_counts;
+        INSERT INTO recall_audit (bank, query, source, result_count, result_snippets) VALUES ('b', 'q', 'sqlite-primary', 0, '[]');
+        PRAGMA user_version = 13;
+      `);
+      expect(
+        (raw.prepare("PRAGMA table_info(recall_audit)").all() as Array<{ name: string }>).some(
+          (c) => c.name === "used_ids" || c.name === "snippet_counts",
+        ),
+      ).toBe(false);
+      raw.close();
+
+      real.initDatabase(path);
+      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(14);
+      expect(cols()).toEqual(["used_ids", "snippet_counts"]);
+      expect(real.getDatabase().prepare("SELECT used_ids, snippet_counts FROM recall_audit").all()).toEqual([
+        { used_ids: null, snippet_counts: null },
+      ]);
+      real.closeDatabase();
+
+      expect(() => real.initDatabase(path)).not.toThrow();
+      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(14);
+      expect(cols()).toEqual(["used_ids", "snippet_counts"]);
+    } finally {
+      real.closeDatabase();
+      for (const suffix of ["", "-wal", "-shm"]) {
+        try {
+          if (existsSync(path + suffix)) unlinkSync(path + suffix);
+        } catch {
+          /* best-effort cleanup */
+        }
+      }
+    }
   });
 });

@@ -178,8 +178,8 @@ export function initDatabase(dbPath: string): Database.Database {
     // 2026-05-07 queue #8: top_k_ids — stable Hindsight memory IDs returned by
     // the recall call. JSON array. Lets per-memory utility analysis cross-
     // reference recall_audit rows against retain history without snippet
-    // matching. Populated on the hindsight path; null on sqlite paths (no
-    // stable per-row IDs upstream of FTS5).
+    // matching. Populated on the hindsight, JME and precedents paths; since
+    // 2026-11-08 (queue 4bt) also on sqlite-primary (conversations.id).
     if (!recallAuditCols.some((c) => c.name === "top_k_ids")) {
       _db.exec("ALTER TABLE recall_audit ADD COLUMN top_k_ids TEXT");
     }
@@ -1448,6 +1448,25 @@ export function initDatabase(dbPath: string): Database.Database {
           );
           CREATE INDEX IF NOT EXISTS idx_memory_tombstones_created ON memory_tombstones(created_at DESC);
         `),
+    },
+    {
+      version: 14,
+      description:
+        "recall_audit.used_ids + snippet_counts — per-row use evidence for sqlite-primary recalls (queue 4bt P2 Step 0)",
+      up: (db) => {
+        // 2026-11-08 queue 4bt P2 Step 0. Probe first (same reason as v7): a
+        // DB pinned back below v14 still carries the columns. SQLite takes
+        // one ADD COLUMN per statement.
+        const cols = db
+          .prepare("PRAGMA table_info(recall_audit)")
+          .all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "used_ids")) {
+          db.exec("ALTER TABLE recall_audit ADD COLUMN used_ids TEXT");
+        }
+        if (!cols.some((c) => c.name === "snippet_counts")) {
+          db.exec("ALTER TABLE recall_audit ADD COLUMN snippet_counts TEXT");
+        }
+      },
     },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
