@@ -2511,6 +2511,23 @@ describe("JME — tombstones at the write sites", () => {
     }
   });
 
+  it("the prune drops a tombstone whose fact and silenced rows are gone, and keeps tonight's (queue 4bo (a))", async () => {
+    setMode("on");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      // Fact 99 never existed here and no bank row holds 9911: nothing left to silence.
+      mockDb
+        .prepare("INSERT INTO memory_tombstones (created_at, fact_id, reason, terms, new_terms) VALUES (?, 99, 'expired', ?, '[]')")
+        .run("2026-01-02 00:00:00", '["9911"]');
+      expect(await expire()).toBe(1);
+      // Tonight's tombstone: its fact is deleted, but the older bank row "Usuario: 5821" still carries the value.
+      expect(tombs()).toEqual([{ fact_id: 1, reason: "expired", terms: '["5821"]', new_terms: "[]" }]);
+      expect(log).toHaveBeenCalledWith("[memory] tombstone prune (on): 1 pruned of 2 whose fact is gone");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("off: no site writes a tombstone or a trace, and the prune runs no tombstone statement (qa R1 R1)", async () => {
     setMode("off");
     expect(await supersede()).toBe("superseded");

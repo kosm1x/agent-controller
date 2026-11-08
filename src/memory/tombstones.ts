@@ -75,9 +75,6 @@ export interface Tombstone {
 /** The bank whose recalls tombstones filter: where the router retains the exchanges JME consolidates (router.ts). */
 export const TOMBSTONE_BANK = "mc-jarvis";
 
-/** The filter reads at most this many tombstones, newest first. */
-export const TOMBSTONE_CAP = 500;
-
 let tombstoneCache: { db: object; list: Tombstone[] } | null = null;
 
 /** Drop the loaded tombstones; recordTombstone calls it after every write. */
@@ -85,9 +82,32 @@ export function clearTombstoneCache(): void {
   tombstoneCache = null;
 }
 
+interface TombstoneRow {
+  id: number;
+  created_at: string;
+  fact_id: number;
+  reason: TombstoneReason;
+  terms: string;
+  new_terms: string;
+}
+
+function toTombstone(r: TombstoneRow): Tombstone {
+  const runs = (json: string) => (JSON.parse(json) as string[]).map((t) => t.split(" "));
+  return {
+    id: r.id,
+    createdAt: r.created_at,
+    factId: r.fact_id,
+    reason: r.reason,
+    terms: runs(r.terms),
+    newTerms: runs(r.new_terms),
+  };
+}
+
 /**
- * The newest TOMBSTONE_CAP tombstones that carry a term, loaded once per
- * database handle and kept until clearTombstoneCache (a recall runs no
+ * Every tombstone that carries a term, newest first — no count cap (queue
+ * 4bo (a), ruled 2026-11-08: a capped load let the oldest stop applying and
+ * their stale rows return; retention is pruneTombstones' job). Loaded once
+ * per database handle and kept until clearTombstoneCache (a recall runs no
  * statement while the cache holds).
  */
 export function loadTombstones(): Tombstone[] {
@@ -96,45 +116,123 @@ export function loadTombstones(): Tombstone[] {
   const rows = db
     .prepare(
       `SELECT id, created_at, fact_id, reason, terms, new_terms FROM memory_tombstones
-       WHERE terms != '[]' ORDER BY created_at DESC, id DESC LIMIT ?`,
+       WHERE terms != '[]' ORDER BY created_at DESC, id DESC`,
     )
-    .all(TOMBSTONE_CAP) as Array<{
-    id: number;
-    created_at: string;
-    fact_id: number;
-    reason: TombstoneReason;
-    terms: string;
-    new_terms: string;
-  }>;
-  const runs = (json: string) => (JSON.parse(json) as string[]).map((t) => t.split(" "));
-  const list = rows.map((r) => ({
-    id: r.id,
-    createdAt: r.created_at,
-    factId: r.fact_id,
-    reason: r.reason,
-    terms: runs(r.terms),
-    newTerms: runs(r.new_terms),
-  }));
+    .all() as TombstoneRow[];
+  const list = rows.map(toTombstone);
   tombstoneCache = { db, list };
   return list;
 }
 
-/** The first tombstone that silences `row`, if any. */
+/** Per tombstone list: each term run's first token → the positions of the tombstones holding it, ascending. */
+const firstTokenIndex = new WeakMap<readonly Tombstone[], Map<string, number[]>>();
+
+function firstTokens(tombs: readonly Tombstone[]): Map<string, number[]> {
+  let ix = firstTokenIndex.get(tombs);
+  if (ix) return ix;
+  ix = new Map();
+  tombs.forEach((t, i) => {
+    for (const run of t.terms) {
+      const at = ix!.get(run[0]);
+      if (!at) ix!.set(run[0], [i]);
+      else if (at[at.length - 1] !== i) at.push(i);
+    }
+  });
+  firstTokenIndex.set(tombs, ix);
+  return ix;
+}
+
+/**
+ * The first tombstone (in `tombs` order) that silences `row`, if any. A run
+ * can match only where its first token is, so only the tombstones indexed
+ * under one of the row's tokens are checked: the list is unbounded (queue
+ * 4bo (a)), a per-tombstone scan cost ~50 ms per 90-row recall at 10k.
+ */
 export function silencedBy(
   row: { content: string; created_at: string },
   tombs: readonly Tombstone[],
 ): Tombstone | undefined {
-  let toks: string[] | null = null;
-  let seen: Set<string> | null = null;
-  for (const t of tombs) {
-    if (!(row.created_at < t.createdAt)) continue;
-    toks ??= ftsTokens(row.content);
-    seen ??= new Set(toks);
-    // A run can match only where its first token is: skip the scan otherwise.
-    if (!t.terms.some((run) => seen!.has(run[0]))) continue;
-    if (hasTokenRun(toks, t.terms) && !hasTokenRun(toks, t.newTerms)) return t;
+  const ix = firstTokens(tombs);
+  const toks = ftsTokens(row.content);
+  const hits = new Set<number>();
+  for (const tok of new Set(toks)) for (const i of ix.get(tok) ?? []) hits.add(i);
+  for (const i of [...hits].sort((a, b) => a - b)) {
+    const t = tombs[i]!;
+    if (row.created_at < t.createdAt && hasTokenRun(toks, t.terms) && !hasTokenRun(toks, t.newTerms)) return t;
   }
   return undefined;
+}
+
+/**
+ * Tombstone retention (queue 4bo (a), ruled 2026-11-08): no count cap; a
+ * tombstone lives until what it silences is gone. It is deleted when both hold:
+ *
+ *   - its jme_facts row (fact_id) no longer exists: while the row exists the
+ *     tombstone may be the `superseded` marker recordTombstone reads;
+ *   - no TOMBSTONE_BANK row it silences is left, judged by silencedBy itself
+ *     (the recall predicate): a row created after the tombstone is never
+ *     silenced, so once the older rows that carry the stale value are deleted
+ *     (memory consolidation) it can filter nothing again.
+ *
+ * Recall-neutral by construction. Runs nightly inside pruneExpiredFacts'
+ * transaction, after its DELETE. Mode `off` runs no statement. Never throws;
+ * returns the count deleted. One bank scan (rows older than the newest
+ * candidate), each row's tokens looked up in a first-token index of the
+ * candidates' terms.
+ */
+export function pruneTombstones(): number {
+  const mode = tombstoneMode();
+  if (mode === "off") return 0;
+  try {
+    const db = getDatabase();
+    const orphans = (
+      db
+        .prepare(
+          `SELECT t.id, t.created_at, t.fact_id, t.reason, t.terms, t.new_terms FROM memory_tombstones t
+           WHERE NOT EXISTS (SELECT 1 FROM jme_facts f WHERE f.id = t.fact_id)`,
+        )
+        .all() as TombstoneRow[]
+    ).map(toTombstone);
+    const doomed = new Set(orphans.map((t) => t.id));
+    const byFirst = new Map<string, Tombstone[]>();
+    let newest = "";
+    for (const t of orphans) {
+      if (t.terms.length === 0) continue;
+      if (t.createdAt > newest) newest = t.createdAt;
+      for (const run of t.terms) {
+        const bucket = byFirst.get(run[0]) ?? [];
+        if (!bucket.includes(t)) bucket.push(t);
+        byFirst.set(run[0], bucket);
+      }
+    }
+    if (byFirst.size > 0) {
+      const rows = db
+        .prepare("SELECT content, created_at FROM conversations WHERE bank = ? AND created_at < ?")
+        .iterate(TOMBSTONE_BANK, newest) as IterableIterator<{ content: string; created_at: string }>;
+      for (const row of rows) {
+        const left = new Set<Tombstone>();
+        for (const tok of new Set(ftsTokens(row.content))) {
+          for (const t of byFirst.get(tok) ?? []) if (doomed.has(t.id)) left.add(t);
+        }
+        for (let t = silencedBy(row, [...left]); t; t = silencedBy(row, [...left])) {
+          doomed.delete(t.id);
+          left.delete(t);
+        }
+      }
+    }
+    if (doomed.size > 0) {
+      const del = db.prepare("DELETE FROM memory_tombstones WHERE id = ?");
+      writeWithRetry(() => {
+        for (const id of doomed) del.run(id);
+      });
+      clearTombstoneCache();
+    }
+    console.log(`[memory] tombstone prune (${mode}): ${doomed.size} pruned of ${orphans.length} whose fact is gone`);
+    return doomed.size;
+  } catch (err) {
+    console.warn(`[memory] tombstone prune failed: ${errMsg(err)}`);
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------

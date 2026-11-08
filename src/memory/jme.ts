@@ -28,7 +28,7 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { logRecall, redactSecrets } from "./recall-utility.js";
-import { recordTombstone, tombstoneMode, traceTombstoneSkipped } from "./tombstones.js";
+import { pruneTombstones, recordTombstone, tombstoneMode, traceTombstoneSkipped } from "./tombstones.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
 import {
@@ -730,7 +730,9 @@ export function pruneExpiredFacts(): number {
   // (qa R1 W3, qa R2 W2). A
   // low-confidence row pruned before expiry gets none: dropping a weak fact
   // is not evidence that its value changed. The SELECT, the tombstones and
-  // the DELETE share one transaction (qa R1 R4).
+  // the DELETE share one transaction (qa R1 R4); so does the tombstone
+  // prune after the DELETE (queue 4bo (a): a tombstone lives until its fact
+  // row and every bank row it silences are gone; a no-op when off).
   return db.transaction(() => {
     if (tombstoneMode() !== "off") {
       const expired = db
@@ -757,6 +759,7 @@ export function pruneExpiredFacts(): number {
              OR (confidence < 0.4 AND ts < ?))`,
       )
       .run(now, thirtyDaysAgo);
+    pruneTombstones();
 
     return result.changes;
   })();

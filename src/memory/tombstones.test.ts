@@ -30,9 +30,9 @@ vi.mock("../lib/secret-refs.js", async (importOriginal) => ({
 }));
 
 import {
-  TOMBSTONE_CAP,
   clearTombstoneCache,
   loadTombstones,
+  pruneTombstones,
   recordTombstone,
   silencedBy,
   tombstoneMode,
@@ -318,18 +318,20 @@ describe("loadTombstones", () => {
     });
   });
 
-  it(`reads the ${TOMBSTONE_CAP} newest, newest first`, () => {
+  it("reads every tombstone, newest first: no count cap, the 501st-newest of 600 still silences (queue 4bo (a))", () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString().slice(0, 19).replace("T", " ");
     const ins = db.transaction(() => {
-      for (let i = 0; i <= TOMBSTONE_CAP; i++) {
-        const t = new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString().slice(0, 19).replace("T", " ");
-        insert(t, [`term${i}`]);
-      }
+      for (let i = 0; i < 600; i++) insert(at(i), [`term${i}`]);
     });
     ins();
     const list = loadTombstones();
-    expect(list).toHaveLength(TOMBSTONE_CAP);
-    expect(list[0]!.terms).toEqual([[`term${TOMBSTONE_CAP}`]]);
-    expect(list.at(-1)!.terms).toEqual([["term1"]]);
+    expect(list).toHaveLength(600);
+    expect(list[0]!.terms).toEqual([["term599"]]);
+    expect(list.at(-1)!.terms).toEqual([["term0"]]);
+    // A 500 cap dropped the 100 oldest: term99 is the 501st-newest, term0 the oldest.
+    const before = "2025-12-31 00:00:00";
+    expect(silencedBy({ content: "Usuario: el folio es term99", created_at: before }, list)?.terms).toEqual([["term99"]]);
+    expect(silencedBy({ content: "Usuario: el folio es term0", created_at: before }, list)?.terms).toEqual([["term0"]]);
   });
 
   it("is cached until a write (or clearTombstoneCache), and reloads for another database", () => {
@@ -351,6 +353,102 @@ describe("loadTombstones", () => {
     );
     vi.mocked(getDatabase).mockReturnValue(other);
     expect(loadTombstones()).toEqual([]);
+  });
+});
+
+describe("pruneTombstones", () => {
+  const insert = (createdAt: string, factId: number, terms: string[], newTerms: string[] = [], reason = "expired") =>
+    db
+      .prepare("INSERT INTO memory_tombstones (created_at, fact_id, reason, terms, new_terms) VALUES (?, ?, ?, ?, ?)")
+      .run(createdAt, factId, reason, JSON.stringify(terms), JSON.stringify(newTerms));
+  const liveFact = (id: number) =>
+    db.prepare("INSERT INTO jme_facts (id, source_task, ts, fact_text, category) VALUES (?, 't', 1, 'x', 'event')").run(id);
+  const conv = (bank: string, content: string, createdAt: string) =>
+    db
+      .prepare("INSERT INTO conversations (bank, tags, content, trust_tier, source, created_at) VALUES (?, '[]', ?, 2, 'agent', ?)")
+      .run(bank, content, createdAt);
+  const left = () => (db.prepare("SELECT fact_id FROM memory_tombstones ORDER BY fact_id").all() as Array<{ fact_id: number }>).map((r) => r.fact_id);
+  let log: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    log = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => log.mockRestore());
+
+  it("deletes a tombstone once its fact row and every bank row it silences are gone; keeps the rest", () => {
+    process.env.MEMORY_TOMBSTONES = "on";
+    const T = "2026-01-10 00:00:00";
+    liveFact(2);
+    liveFact(7);
+    insert(T, 1, ["5821"]); // fact gone, nothing left to silence → pruned
+    insert(T, 2, ["5822"]); // fact row still exists → kept
+    insert(T, 3, ["kvx 482"]); // fact gone, an older bank row holds the term → kept
+    insert(T, 4, ["5824"]); // fact gone, the only row holding it is newer → pruned
+    insert(T, 5, ["5825"], ["7395"]); // fact gone, the row holds the new term too (the correction) → pruned
+    insert(T, 6, ["5826"]); // fact gone, the row holding it is in another bank → pruned
+    insert(T, 7, [], [], "superseded"); // 0-term marker, fact row exists → kept
+    insert(T, 8, [], [], "superseded"); // 0-term marker, fact gone → pruned
+    conv("mc-jarvis", "Usuario: el folio es KVX-482", "2026-01-05 00:00:00");
+    conv("mc-jarvis", "Usuario: el codigo es 5824", "2026-01-11 00:00:00");
+    conv("mc-jarvis", "Usuario: era 5825, ahora es 7395", "2026-01-05 00:00:00");
+    conv("mc-operational", "nota 5826", "2026-01-05 00:00:00");
+    expect(loadTombstones()).toHaveLength(6);
+    expect(pruneTombstones()).toBe(5);
+    expect(left()).toEqual([2, 3, 7]);
+    expect(loadTombstones().map((t) => t.factId).sort()).toEqual([2, 3]); // the cache was dropped
+    expect(log).toHaveBeenCalledWith("[memory] tombstone prune (on): 5 pruned of 6 whose fact is gone");
+    // The kept one goes once its bank row does.
+    db.exec("DELETE FROM conversations WHERE content LIKE '%KVX-482%'");
+    expect(pruneTombstones()).toBe(1);
+    expect(left()).toEqual([2, 7]);
+  });
+
+  it("keeps every orphan that silences a row, not only the first; both go with the row", () => {
+    process.env.MEMORY_TOMBSTONES = "on";
+    insert("2026-01-10 00:00:00", 1, ["5821"]);
+    insert("2026-01-11 00:00:00", 2, ["kvx 482"]);
+    conv("mc-jarvis", "Usuario: el codigo 5821 y el folio KVX-482", "2026-01-05 00:00:00");
+    expect(pruneTombstones()).toBe(0);
+    expect(left()).toEqual([1, 2]);
+    db.exec("DELETE FROM conversations");
+    expect(pruneTombstones()).toBe(2);
+    expect(left()).toEqual([]);
+  });
+
+  it("record mode prunes too; zero tombstones prunes nothing and still logs the summary", () => {
+    process.env.MEMORY_TOMBSTONES = "record";
+    expect(pruneTombstones()).toBe(0);
+    expect(log).toHaveBeenCalledWith("[memory] tombstone prune (record): 0 pruned of 0 whose fact is gone");
+    insert("2026-01-10 00:00:00", 1, ["5821"]);
+    expect(pruneTombstones()).toBe(1);
+    expect(left()).toEqual([]);
+  });
+
+  it("off: deletes nothing and runs no statement", () => {
+    delete process.env.MEMORY_TOMBSTONES;
+    insert("2026-01-10 00:00:00", 1, ["5821"]);
+    const prepare = vi.spyOn(db, "prepare");
+    try {
+      expect(pruneTombstones()).toBe(0);
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(left()).toEqual([1]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("a failed prune returns 0 and never throws", () => {
+    process.env.MEMORY_TOMBSTONES = "on";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(getDatabase).mockImplementation(() => {
+      throw new Error("db gone");
+    });
+    try {
+      expect(pruneTombstones()).toBe(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("tombstone prune failed: db gone"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -380,5 +478,16 @@ describe("silencedBy", () => {
   });
   it("keeps a row that also holds a new term", () => {
     expect(silencedBy(row("Usuario: cambio de 5821 a 7394"), [tomb])).toBeUndefined();
+  });
+  it("returns the first silencing tombstone in list order, past ones that do not apply", () => {
+    const older = { ...tomb, id: 2, createdAt: "2026-01-05 00:00:00", terms: [["9931"], ["5821"]], newTerms: [] };
+    const other = { ...tomb, id: 3, terms: [["4410"]], newTerms: [] };
+    const list = [other, tomb, older];
+    expect(silencedBy(row("Usuario: 5821 y 9931"), list)).toBe(tomb);
+    // Created after `older`, before `tomb`; holds tomb's new term: neither applies.
+    expect(silencedBy(row("Usuario: 5821 y 7394", "2026-01-06 00:00:00"), list)).toBeUndefined();
+    // Holds tomb's new term but is older than `older`: `older` silences it.
+    expect(silencedBy(row("Usuario: 5821 y 7394", "2026-01-04 00:00:00"), list)).toBe(older);
+    expect(silencedBy(row("Usuario: 4410 y 5821"), list)).toBe(other);
   });
 });
