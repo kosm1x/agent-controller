@@ -66,6 +66,7 @@ Tests: `src/**/*.test.ts` (vitest, colocated with source).
 - Mock `infer`/`inferWithTools` via `vi.mock("../inference/adapter.js")` — never call real LLM in tests
 - Mock `getDatabase` when testing components that touch SQLite
 - Every new type field must have assertions in existing tests (cascading type changes break silently)
+- **Agent-run test runs are fenced (operator ruling 2026-11-08, queue 4ca)**: every vitest invocation by an agent (audits, mutation runs, bisects, scoped runs) is launched as `systemd-run --scope -p MemoryMax=6G -p MemorySwapMax=0 --quiet -- npx vitest run <scoped path>`. Why: on 11-07 a qa-auditor mutant raised `OPEN_WORK_SCAN_LIMIT` to 1e9 and one synchronous insert loop (`open-work.test.ts:282`) grew to 14.5 GB of native better-sqlite3 memory before the kernel killed it; `--max-old-space-size`, `testTimeout` and `maxWorkers` cannot stop that, only a process ceiling does. Scoping rules unchanged: never a bare run, never `src/`; `--poolOptions.forks.singleFork` breaks the suite (prometheus double-register), use `--no-file-parallelism` for sequential runs.
 
 ## Agent Design Principles
 
