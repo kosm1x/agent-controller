@@ -1089,7 +1089,7 @@ inserted, caught, failed calls). Render with
 
 ## Ablation report (P1 Stage A, post-hoc)
 
-`scripts/continuity-bench/ablation.ts` reads committed result JSONs (no run, no
+`scripts/continuity-bench/ablation.ts` reads local result JSONs (no run, no
 model) and answers "which store does the work, and which carries the stale and
 the noise". For each store group G, per class × surface (× size), over scored
 probes that expect something, it counts the hits lost and stale hits cleared
@@ -1102,7 +1102,7 @@ carrier and no prompt block was dropped. A split hit (a hit with an empty
 `carriedBy`), a `dropped` block, or a C7 probe whose recall counts (the names in
 the result's `caps`) do not sum to `irrelevantCount` is listed under "Not
 attributable". With `--strict` the reporter prints those ids and exits 3 without
-writing (2 is the operator-gate refusal). The committed Jarvis files have 0 of
+writing (2 is the operator-gate refusal). The local Jarvis result files have 0 of
 each. A component name in no group is listed as "ungrouped", never dropped.
 
 | group | components |
@@ -1121,7 +1121,7 @@ npx tsx scripts/continuity-bench/ablation.ts --results <a.json>[,<b.json>] --md 
 
 The markdown has pooled rows only; `--by-size` adds the per-size rows (`--json`
 always has them). Groups that move nothing in a file are named in one line.
-Report on the all-off raw and ideal runs plus the three switch-on runs: `results/p1-ablation-stage-a.md`.
+Report on the all-off raw and ideal runs plus the three switch-on runs: `results/p1-ablation-stage-a.md` (committed; the result JSONs are gitignored).
 
 - **Co-carried hits survive single ablations.** A single group's loss is a floor; `conversations*` shows the joint loss.
 - **Unwritten stores are unmeasured, not worthless.** The corpus never writes

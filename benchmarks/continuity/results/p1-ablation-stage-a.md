@@ -1,6 +1,6 @@
 # Continuity Scorecard: ablation report (P1 Stage A, post-hoc)
 
-Computed from committed result JSONs by `scripts/continuity-bench/ablation.ts`; no run, no model.
+Computed from the local result JSONs (`results/*.json` is gitignored; this report is the committed artefact) by `scripts/continuity-bench/ablation.ts`; no run, no model.
 
 | file | commit | leg | switches |
 | --- | --- | --- | --- |

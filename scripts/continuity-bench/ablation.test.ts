@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -181,9 +181,9 @@ describe("ablate: audit R1 folds", () => {
   });
 });
 
-describe("committed result smoke", () => {
-  it("raw acee7f13: C1 asked pooled hits 134, all lost without conv-recall", () => {
-    const file = join(dirname(fileURLToPath(import.meta.url)), "../../benchmarks/continuity/results/jarvis-acee7f13-raw-emb-off-v2.json");
+describe("local result smoke (results/*.json are gitignored; skipped when absent)", () => {
+  const file = join(dirname(fileURLToPath(import.meta.url)), "../../benchmarks/continuity/results/jarvis-acee7f13-raw-emb-off-v2.json");
+  it.skipIf(!existsSync(file))("raw acee7f13: C1 asked pooled hits 134, all lost without conv-recall", () => {
     const r = ablate(JSON.parse(readFileSync(file, "utf8")) as AblationInput);
     expect(row(r, "conv-recall", "C1", "asked")).toMatchObject({ n: 288, hits: 134, lost: 134 });
     expect(r.notAttributable).toEqual({ split: [], dropped: [], c7: [] });
