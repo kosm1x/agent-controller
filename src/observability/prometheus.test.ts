@@ -19,6 +19,8 @@ import {
   recordSkillRun,
   recordSwarmSubtaskRetry,
   recordTelegramInboundLag,
+  recordTelegramPollFailure,
+  recordTelegramPollSuccess,
 } from "./prometheus.js";
 
 // W3-R2 audit fix (round-2 2026-05-07): protect the prom-client registry
@@ -446,5 +448,15 @@ describe("recordTelegramInboundLag", () => {
     expect(await client.register.metrics()).toContain(
       "mc_telegram_inbound_lag_seconds 12.5",
     );
+  });
+
+  it("exports the getUpdates last-success gauge and failure counter (2026-11-08)", async () => {
+    recordTelegramPollSuccess(1700000000000);
+    recordTelegramPollFailure("timeout");
+    const out = await client.register.metrics();
+    expect(out).toContain(
+      "mc_telegram_poll_last_success_timestamp_seconds 1700000000",
+    );
+    expect(out).toContain('mc_telegram_poll_failures_total{kind="timeout"} 1');
   });
 });

@@ -135,6 +135,20 @@ groups:
           summary: 'MC event loop blocked {{ $value | printf "%.1f" }} s (max in the last 10 min)'
           description: 'max lag in the last 10 min: {{ $value | printf "%.1f" }}s'
 
+      # No successful Telegram getUpdates for 2 minutes (a healthy long poll
+      # returns at least every 30 s). 2026-11-08: 8 min of silent grammY
+      # retries delayed the operator's messages by 182 s (queue 4ar).
+      - alert: MCTelegramPollStalled
+        # Age on the LEFT: `and` keeps the left samples, so $value is the age.
+        # `> 0` drops the never-stamped series (an unlabelled Gauge starts at 0).
+        expr: time() - mc_telegram_poll_last_success_timestamp_seconds > 120 and mc_telegram_poll_last_success_timestamp_seconds > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'MC Telegram polling stalled for {{ $value | printf "%.0f" }} s'
+          description: 'seconds since the last successful getUpdates: {{ $value | printf "%.0f" }}'
+
       # MC tasks stuck running for more than 30 minutes
       - alert: MCStuckTasks
         expr: mc_tasks_active > 0

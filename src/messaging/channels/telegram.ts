@@ -6,6 +6,7 @@
  */
 
 import { Bot } from "grammy";
+import type { Transformer } from "grammy";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -21,7 +22,11 @@ import {
 } from "../../inference/transcription.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { EXTRACTED_FILE_MARKER } from "../extracted-file.js";
-import { recordTelegramInboundLag } from "../../observability/prometheus.js";
+import {
+  recordTelegramInboundLag,
+  recordTelegramPollFailure,
+  recordTelegramPollSuccess,
+} from "../../observability/prometheus.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -50,6 +55,70 @@ function logInboundLag(date: number, messageId: number): void {
     console.log(line);
   }
 }
+
+/**
+ * 2026-11-08: getUpdates failed for 8 min and grammY retried silently (its
+ * polling errors log only on `debug`), so 3 inbounds landed 182 s late. Every
+ * poll outcome now feeds a gauge/counter and failures warn (queue 4ar).
+ */
+export type PollErrorKind =
+  "timeout" | "network" | "aborted" | "other" | `http_${number}`;
+
+/** HttpError = transport (cause in `.error`); `error_code` = Bot API error. */
+export function classifyPollError(err: unknown): PollErrorKind {
+  const e = err as { name?: unknown; error?: unknown; error_code?: unknown };
+  if (typeof e?.error_code === "number") return `http_${e.error_code}`;
+  if (e?.name !== "HttpError") return "other";
+  const cause = e.error as { name?: unknown; message?: unknown } | undefined;
+  if (cause?.name === "AbortError") return "aborted";
+  if (String(cause?.message).includes("timed out after")) return "timeout";
+  return "network";
+}
+
+/** Counted but not warned: a clean stop, and 409 (the adapter logs each cycle). */
+const QUIET_POLL_KINDS = new Set(["aborted", "http_409"]);
+const POLL_SUMMARY_MAX = 160;
+
+function notePollFailure(err: unknown): void {
+  const kind = classifyPollError(err);
+  recordTelegramPollFailure(kind);
+  if (QUIET_POLL_KINDS.has(kind)) return;
+  const e = err as { name?: unknown; error?: unknown; description?: unknown };
+  const src = e?.name === "HttpError" ? e.error : err;
+  const summary =
+    src instanceof Error
+      ? `${src.name}: ${src.message}`
+      : String(e?.description);
+  // Redact BEFORE the cut (a cut token escapes the match), then drop URLs.
+  const safe = redactBotToken(summary).replace(/https?:\/\/\S+/g, "<url>");
+  console.warn(
+    `[telegram] getUpdates failed kind=${kind} ${safe.slice(0, POLL_SUMMARY_MAX)} (queue 4ar)`,
+  );
+}
+
+/**
+ * API transformer: observes getUpdates only, never alters the result. Bot API
+ * errors (409, 502…) resolve here as `{ ok: false }` (grammY throws
+ * GrammyError after the chain); transport errors throw HttpError.
+ */
+export const observeGetUpdates: Transformer = async (
+  prev,
+  method,
+  payload,
+  signal,
+) => {
+  if (method !== "getUpdates") return prev(method, payload, signal);
+  let res;
+  try {
+    res = await prev(method, payload, signal);
+  } catch (err) {
+    notePollFailure(err);
+    throw err;
+  }
+  if (res.ok) recordTelegramPollSuccess();
+  else notePollFailure(res);
+  return res;
+};
 
 /**
  * Remove the bot token from text that leaves this adapter (message text, log
@@ -501,6 +570,8 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
+    // Starts the MCTelegramPollStalled clock: a poll that never succeeds alerts.
+    recordTelegramPollSuccess();
     if (!BOT_TOKEN) {
       throw new Error(
         "TELEGRAM_BOT_TOKEN is required when TELEGRAM_ENABLED=true",
@@ -515,6 +586,7 @@ export class TelegramAdapter implements ChannelAdapter {
     this.bot = new Bot(BOT_TOKEN, {
       client: { timeoutSeconds: TELEGRAM_API_TIMEOUT_SECONDS },
     });
+    this.bot.api.config.use(observeGetUpdates);
     this.setupHandlers();
 
     // Initialize bot info (getMe) without starting polling

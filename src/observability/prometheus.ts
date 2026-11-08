@@ -970,6 +970,27 @@ export function recordTelegramInboundLag(seconds: number): void {
   telegramInboundLagSeconds.set(seconds);
 }
 
+// --- Telegram getUpdates outcomes (2026-11-08, queue 4ar) ---
+// grammY retries failed polls silently; 8 min of them delayed inbounds by
+// 182 s. Last-success age drives MCTelegramPollStalled; failures by kind.
+const telegramPollLastSuccessTimestamp = new client.Gauge({
+  name: "mc_telegram_poll_last_success_timestamp_seconds",
+  help: "Unix seconds of the last successful Telegram getUpdates",
+});
+const telegramPollFailuresTotal = new client.Counter({
+  name: "mc_telegram_poll_failures_total",
+  help: "Failed Telegram getUpdates calls bucketed by kind (timeout, network, aborted, http_<code>, other)",
+  labelNames: ["kind"] as const,
+});
+
+export function recordTelegramPollSuccess(nowMs = Date.now()): void {
+  telegramPollLastSuccessTimestamp.set(nowMs / 1000);
+}
+
+export function recordTelegramPollFailure(kind: string): void {
+  telegramPollFailuresTotal.inc({ kind });
+}
+
 // --- X (Twitter) posting backend health (per account) ---
 const xBackendHealthy = new client.Gauge({
   name: "mc_x_backend_healthy",

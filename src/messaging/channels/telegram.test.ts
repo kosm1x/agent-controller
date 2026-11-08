@@ -37,6 +37,7 @@ vi.mock("grammy", () => ({
       command: vi.fn(),
       on: vi.fn(),
       catch: vi.fn(),
+      api: { config: { use: vi.fn() } },
       init: vi.fn(async () => {
         throw new Error("stop after construct");
       }),
@@ -45,14 +46,22 @@ vi.mock("grammy", () => ({
 }));
 vi.mock("../../observability/prometheus.js", () => ({
   recordTelegramInboundLag: vi.fn(),
+  recordTelegramPollSuccess: vi.fn(),
+  recordTelegramPollFailure: vi.fn(),
 }));
 
 import { Bot } from "grammy";
-import { recordTelegramInboundLag } from "../../observability/prometheus.js";
+import {
+  recordTelegramInboundLag,
+  recordTelegramPollFailure,
+  recordTelegramPollSuccess,
+} from "../../observability/prometheus.js";
 import { TelegramAdapter } from "./telegram.js";
 import {
+  classifyPollError,
   decodeHtmlBytes,
   htmlToText,
+  observeGetUpdates,
   redactBotToken,
   sanitizeAttachmentName,
 } from "./telegram.js";
@@ -718,5 +727,201 @@ describe("getUpdates stall: 45 s client timeout + inbound lag signal (queue 4ar)
       warn.mockRestore();
       log.mockRestore();
     }
+  });
+});
+
+// 2026-11-08 (queue 4ar): 8 min of silent grammY getUpdates retries. Errors
+// mirror grammY 1.44's shapes (HttpError: name + `.error` cause; Bot API
+// failures resolve as `{ ok: false, error_code }` inside the transformer).
+describe("getUpdates observer: poll failures are counted and warned (queue 4ar)", () => {
+  class FakeHttpError extends Error {
+    constructor(
+      message: string,
+      readonly error: unknown,
+    ) {
+      super(message);
+      this.name = "HttpError";
+    }
+  }
+  type Prev = Parameters<typeof observeGetUpdates>[0];
+  const call = (prev: (...a: unknown[]) => Promise<unknown>, method: string) =>
+    observeGetUpdates(
+      prev as unknown as Prev,
+      method as "getUpdates",
+      {} as never,
+    );
+
+  function reset() {
+    vi.mocked(recordTelegramPollSuccess).mockClear();
+    vi.mocked(recordTelegramPollFailure).mockClear();
+  }
+
+  it("is installed on the bot's API client right after construction", async () => {
+    vi.mocked(Bot).mockClear();
+    reset();
+    await expect(new TelegramAdapter().start()).rejects.toThrow(
+      "stop after construct",
+    );
+    const bot = vi.mocked(Bot).mock.results[0]!.value as {
+      api: { config: { use: ReturnType<typeof vi.fn> } };
+    };
+    expect(bot.api.config.use).toHaveBeenCalledWith(observeGetUpdates);
+    // start() stamps once up front so MCTelegramPollStalled has a clock.
+    expect(recordTelegramPollSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes other methods straight through and records nothing", async () => {
+    reset();
+    const res = { ok: true, result: { message_id: 1 } };
+    const prev = vi.fn(async () => res);
+    await expect(call(prev, "sendMessage")).resolves.toBe(res);
+    expect(prev).toHaveBeenCalledWith("sendMessage", {}, undefined);
+    expect(recordTelegramPollSuccess).not.toHaveBeenCalled();
+    expect(recordTelegramPollFailure).not.toHaveBeenCalled();
+  });
+
+  it("a successful getUpdates stamps success once and returns the result", async () => {
+    reset();
+    const res = { ok: true, result: [] };
+    await expect(call(async () => res, "getUpdates")).resolves.toBe(res);
+    expect(recordTelegramPollSuccess).toHaveBeenCalledTimes(1);
+    expect(recordTelegramPollFailure).not.toHaveBeenCalled();
+  });
+
+  it("a timed-out getUpdates records kind=timeout, warns one redacted line, rethrows", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = new FakeHttpError(
+      "Network request for 'getUpdates' failed!",
+      new Error(
+        `Request to 'getUpdates' timed out after 45 seconds ${FAKE_TOKEN} https://api.telegram.org/bot${FAKE_TOKEN}/getUpdates`,
+      ),
+    );
+    try {
+      await expect(
+        call(async () => {
+          throw err;
+        }, "getUpdates"),
+      ).rejects.toBe(err);
+      expect(recordTelegramPollFailure).toHaveBeenCalledWith("timeout");
+      expect(recordTelegramPollSuccess).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toContain("[telegram] getUpdates failed kind=timeout");
+      expect(line).toContain("timed out after 45 seconds");
+      expect(line).toMatch(/ \(queue 4ar\)$/);
+      expect(line).not.toContain("retrying");
+      expect(line).not.toContain(FAKE_TOKEN);
+      expect(line).not.toContain(FAKE_TOKEN.split(":")[1]!.slice(0, 8));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a Bot API 502 resolved as ok:false records http_502 and still returns it", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = { ok: false, error_code: 502, description: "Bad Gateway" };
+    try {
+      await expect(call(async () => res, "getUpdates")).resolves.toBe(res);
+      expect(recordTelegramPollFailure).toHaveBeenCalledWith("http_502");
+      expect(recordTelegramPollSuccess).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls[0]![0])).toContain(
+        "kind=http_502 Bad Gateway",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a network failure keeps the reason and replaces the URL with <url>", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cause = new Error(
+      `request to https://api.telegram.org/bot${FAKE_TOKEN}/getUpdates failed, reason: connect ETIMEDOUT 192.0.2.10:443`,
+    );
+    cause.name = "FetchError";
+    try {
+      await expect(
+        call(async () => {
+          throw new FakeHttpError("x", cause);
+        }, "getUpdates"),
+      ).rejects.toBeInstanceOf(FakeHttpError);
+      expect(recordTelegramPollFailure).toHaveBeenCalledWith("network");
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        "[telegram] getUpdates failed kind=network FetchError: request to <url> failed, reason: connect ETIMEDOUT 192.0.2.10:443 (queue 4ar)",
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a token straddling the 160-char cut is redacted before the cut", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // "Error: " (7) + 128 - 7 pad puts the token at offset 128: 32 chars of it
+    // would survive a cut-then-redact order.
+    const cause = new Error("x".repeat(128 - 7) + FAKE_TOKEN);
+    try {
+      await expect(
+        call(async () => {
+          throw new FakeHttpError("x", cause);
+        }, "getUpdates"),
+      ).rejects.toBeInstanceOf(FakeHttpError);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toContain("[REDACTED]");
+      expect(line).not.toContain(FAKE_TOKEN.slice(0, 15));
+      expect(line).not.toContain(FAKE_TOKEN.split(":")[1]!.slice(0, 8));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a clean stop (AbortError) is counted but not warned, and rethrown", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const err = new FakeHttpError(
+      "x",
+      Object.assign(new Error("aborted"), { name: "AbortError" }),
+    );
+    try {
+      await expect(
+        call(async () => {
+          throw err;
+        }, "getUpdates"),
+      ).rejects.toBe(err);
+      expect(recordTelegramPollFailure).toHaveBeenCalledWith("aborted");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a 409 is counted but not warned (the adapter logs each 409 cycle)", async () => {
+    reset();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = { ok: false, error_code: 409, description: "Conflict" };
+    try {
+      await expect(call(async () => res, "getUpdates")).resolves.toBe(res);
+      expect(recordTelegramPollFailure).toHaveBeenCalledWith("http_409");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each([
+    [{ name: "GrammyError", error_code: 502 }, "http_502"],
+    [new FakeHttpError("x", new Error("connect ECONNREFUSED")), "network"],
+    [
+      new FakeHttpError(
+        "x",
+        Object.assign(new Error("aborted"), { name: "AbortError" }),
+      ),
+      "aborted",
+    ],
+    [new Error("boom"), "other"],
+  ])("classifyPollError(%#) -> %s", (err, kind) => {
+    expect(classifyPollError(err)).toBe(kind);
   });
 });
