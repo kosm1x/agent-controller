@@ -1087,6 +1087,46 @@ Each scenario prints one progress line (calls so far against the cap, turns,
 inserted, caught, failed calls). Render with
 `--compare <ideal.json>,<extracted.json> --md <out.md>`.
 
+## Ablation report (P1 Stage A, post-hoc)
+
+`scripts/continuity-bench/ablation.ts` reads committed result JSONs (no run, no
+model) and answers "which store does the work, and which carries the stale and
+the noise". For each store group G, per class × surface (× size), over scored
+probes that expect something, it counts the hits lost and stale hits cleared
+without G; for C7, the query-driven items (`irrelevantCount`) G returned.
+
+**Rule.** A hit is lost iff every component in `carriedBy` (those holding every
+expect needle) is in G. A stale hit is cleared iff every component in
+`staleCarriedBy` is in G. The rule is exact only while every hit has a single
+carrier and no prompt block was dropped. A split hit (a hit with an empty
+`carriedBy`), a `dropped` block, or a C7 probe whose recall counts (the names in
+the result's `caps`) do not sum to `irrelevantCount` is listed under "Not
+attributable". With `--strict` the reporter prints those ids and exits 3 without
+writing (2 is the operator-gate refusal). The committed Jarvis files have 0 of
+each. A component name in no group is listed as "ungrouped", never dropped.
+
+| group | components |
+| --- | --- |
+| `thread` | `thread`, `precedent` |
+| `conv-recall` | `enrichment:Contexto relevante del usuario`, `memory_search` |
+| `essentials` | `essentials` |
+| `jme` | `jme`, `jme_query` |
+| `user_facts` | `profile`, `relevant_facts` |
+| `open_work` | `open_work` |
+| `conversations*` | thread ∪ conv-recall ∪ essentials ∪ open_work |
+
+```bash
+npx tsx scripts/continuity-bench/ablation.ts --results <a.json>[,<b.json>] --md <out.md> [--json <out.json>] [--by-size] [--strict]
+```
+
+The markdown has pooled rows only; `--by-size` adds the per-size rows (`--json`
+always has them). Groups that move nothing in a file are named in one line.
+Report on the all-off raw and ideal runs plus the three switch-on runs: `results/p1-ablation-stage-a.md`.
+
+- **Co-carried hits survive single ablations.** A single group's loss is a floor; `conversations*` shows the joint loss.
+- **Unwritten stores are unmeasured, not worthless.** The corpus never writes
+  mc-operational (`enrichment:Aprendizajes previos`), KG, KB or day-logs.
+
 ## Limits
 
 - **Words-only is the harness configuration, not production's.** With embeddings off every recall is
