@@ -7,7 +7,7 @@ contactPoints:
       - uid: telegram-jarvis-1
         type: telegram
         settings:
-          bottoken: "8643042240:AAEZHLvZEGwGX5b358ii4DpciY7-8DGCaYM"
+          bottoken: "$TELEGRAM_BOT_TOKEN"
           chatid: "6535368701"
           parse_mode: HTML
           disable_web_page_preview: true
