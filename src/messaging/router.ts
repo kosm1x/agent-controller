@@ -3136,6 +3136,24 @@ export class MessageRouter {
       // when feedbackTaskId is available — no duplicate recording needed here.
       // Persist positive feedback to memory so Jarvis learns what works
       if (signal === "positive") {
+        // Queue 4bt P4: read the marker BEFORE the ack — the ack's send
+        // (noteSend) clears it, so a later read always reports no marker.
+        const threadId = this.operatorThreadKey(msg, tk);
+        if (!praiseAttributed && threadId !== undefined) {
+          // Only a marker for THIS thread counts (a group's last reply may
+          // belong to another sender's thread).
+          const raw = this.lastTaskReply.get(`${msg.channel}\u0000${msg.from}`);
+          const marker = raw !== undefined && raw.tk === threadId ? raw : undefined;
+          const uptimeS = Math.round(process.uptime());
+          emitTraceEvent({
+            taskId: marker?.taskId ?? "unattributed",
+            name: "feedback.unattributed",
+            attrs: { signal: "positive", hadMarker: marker !== undefined, uptimeS },
+          });
+          console.log(
+            `[router] positive feedback NOT attributed (marker=${marker ? "yes" : "no"}, uptime_s=${uptimeS}) (queue 4bt P4)`,
+          );
+        }
         this.sendToChannel(
           msg.channel,
           msg.from,

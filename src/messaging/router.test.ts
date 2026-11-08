@@ -729,6 +729,99 @@ describe("MessageRouter", () => {
         }
       });
 
+      // Queue 4bt P4: an unattributed positive rating leaves one trace row
+      // and one journal line, so ratings lost to restarts become a count.
+      const unattributedTraces = () =>
+        traceMock.emitTraceEvent.mock.calls
+          .map(([ev]) => ev)
+          .filter((ev) => ev.name === "feedback.unattributed");
+
+      it("feedback.unattributed: no marker (after a restart) → taskId 'unattributed', hadMarker false, uptimeS, honest ack", async () => {
+        traceMock.emitTraceEvent.mockClear();
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          // "Excelente!!" stays pure praise; the trace must not carry the text.
+          await router.handleInbound(turn("Excelente!!"));
+          const events = unattributedTraces();
+          expect(events).toHaveLength(1);
+          expect(events[0].taskId).toBe("unattributed");
+          expect(Object.keys(events[0].attrs).sort()).toEqual([
+            "hadMarker",
+            "signal",
+            "uptimeS",
+          ]);
+          expect(events[0].attrs.signal).toBe("positive");
+          expect(events[0].attrs.hadMarker).toBe(false);
+          expect(typeof events[0].attrs.uptimeS).toBe("number");
+          expect(JSON.stringify(events[0])).not.toContain("Excelente");
+          const lines = logSpy.mock.calls
+            .map(([l]) => String(l))
+            .filter((l) => l.includes("positive feedback NOT attributed"));
+          expect(lines).toHaveLength(1);
+          expect(lines[0]).toMatch(
+            /^\[router\] positive feedback NOT attributed \(marker=no, uptime_s=\d+\) \(queue 4bt P4\)$/,
+          );
+          expect(sent()).toEqual([HONEST]);
+        } finally {
+          logSpy.mockRestore();
+        }
+      });
+
+      it("feedback.unattributed: stale marker (lookup disagrees) → taskId = marker task, hadMarker true", async () => {
+        await deliverReply("task-db");
+        traceMock.emitTraceEvent.mockClear();
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-other");
+        await router.handleInbound(turn("excelente"));
+        const events = unattributedTraces();
+        expect(events).toHaveLength(1);
+        expect(events[0].taskId).toBe("task-db");
+        expect(events[0].attrs.hadMarker).toBe(true);
+        expect(feedbackTraces()).toEqual([]);
+        expect(sent()).toEqual([HONEST]);
+      });
+
+      it("feedback.unattributed: stale marker (lookup returns null) → taskId = marker task, hadMarker true", async () => {
+        await deliverReply("task-db");
+        traceMock.emitTraceEvent.mockClear();
+        await router.handleInbound(turn("excelente"));
+        const events = unattributedTraces();
+        expect(events).toHaveLength(1);
+        expect(events[0].taskId).toBe("task-db");
+        expect(events[0].attrs.hadMarker).toBe(true);
+      });
+
+      it("feedback.unattributed: NOT emitted for an attributed window 'excelente' (only feedback.explicit)", async () => {
+        const { checkFeedbackWindow } =
+          await import("../intelligence/outcome-tracker.js");
+        traceMock.emitTraceEvent.mockClear();
+        vi.mocked(checkFeedbackWindow).mockReturnValueOnce("task-win");
+        await router.handleInbound(turn("excelente"));
+        expect(unattributedTraces()).toEqual([]);
+        expect(feedbackTraces()).toHaveLength(1);
+        expect(sent()).toEqual(["👍"]);
+      });
+
+      it("feedback.unattributed: NOT emitted for an attributed thread-lookup 'excelente'", async () => {
+        await deliverReply("task-db");
+        traceMock.emitTraceEvent.mockClear();
+        praiseMocks.findLatestOutcomeTaskForThread.mockReturnValue("task-db");
+        await router.handleInbound(turn("excelente"));
+        expect(unattributedTraces()).toEqual([]);
+        expect(feedbackTraces()).toHaveLength(1);
+      });
+
+      it("feedback.unattributed: NOT emitted for negative / rephrase / neutral", async () => {
+        await deliverReply("task-db");
+        traceMock.emitTraceEvent.mockClear();
+        await router.handleInbound(turn("no"));
+        await router.handleInbound(
+          turn("dame el reporte de ventas del mes pasado"),
+        );
+        await router.handleInbound(turn("gracias"));
+        await router.handleInbound(turn("ok"));
+        expect(unattributedTraces()).toEqual([]);
+      });
+
       // V8.1 gate (Brief C): an "excelente" after a schedule/ritual broadcast
       // rates that broadcast's task — trace only, source "broadcast".
       describe("broadcast attribution", () => {
@@ -783,6 +876,19 @@ describe("MessageRouter", () => {
           expect(praiseMocks.bridgePraisedTaskToEvalCase).not.toHaveBeenCalled();
           expect(praiseMocks.findLatestOutcomeTaskForThread).not.toHaveBeenCalled();
           expect(sent()).toEqual(["👍"]);
+        });
+
+        it("feedback.unattributed: NOT emitted for a positive credited to a broadcast", async () => {
+          ritualBroadcast("task-bc");
+          await router.handleInbound(turn("excelente"));
+          expect(
+            traceMock.emitTraceEvent.mock.calls
+              .map(([ev]) => ev)
+              .filter((ev) => ev.name === "feedback.unattributed"),
+          ).toEqual([]);
+          expect(feedbackTraces()).toEqual([
+            broadcastTrace("task-bc", "positive"),
+          ]);
         });
 
         it("an OPEN chat window loses to the broadcast: window not consumed, chat task gets nothing", async () => {
@@ -1306,6 +1412,35 @@ describe("MessageRouter", () => {
           groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
         );
         expect(feedbackWrites()).toEqual([]);
+        expect(sent()).toEqual([HONEST]);
+      });
+
+      it("feedback.unattributed: NOT emitted for a non-operator sender (plain 👍)", async () => {
+        await deliverReply(
+          "task-member",
+          groupTurn("@jarvis agenda algo", "member@s.whatsapp.net"),
+        );
+        traceMock.emitTraceEvent.mockClear();
+        await router.handleInbound(
+          groupTurn("@jarvis excelente", "member@s.whatsapp.net"),
+        );
+        expect(unattributedTraces()).toEqual([]);
+        expect(sent()).toEqual(["👍"]);
+      });
+
+      it("feedback.unattributed: a marker for ANOTHER thread does not count → 'unattributed', hadMarker false", async () => {
+        await deliverReply(
+          "task-member",
+          groupTurn("@jarvis agenda algo", "member@s.whatsapp.net"),
+        );
+        traceMock.emitTraceEvent.mockClear();
+        await router.handleInbound(
+          groupTurn("@jarvis excelente", "owner@s.whatsapp.net"),
+        );
+        const events = unattributedTraces();
+        expect(events).toHaveLength(1);
+        expect(events[0].taskId).toBe("unattributed");
+        expect(events[0].attrs.hadMarker).toBe(false);
         expect(sent()).toEqual([HONEST]);
       });
 

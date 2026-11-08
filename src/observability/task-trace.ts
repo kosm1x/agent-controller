@@ -63,6 +63,9 @@ export type TraceEventName =
   // V8.1 gate (ruling 2026-10-06): explicit operator feedback on a task,
   // emitted whether or not the task has a task_outcomes row
   | "feedback.explicit"
+  // queue 4bt P4: an operator positive rating the router could not attribute
+  // to a task ({signal, hadMarker, uptimeS}); taskId = stale marker or "unattributed"
+  | "feedback.unattributed"
   // V8.4 completion ledger (2026-08-16)
   | "gates.evaluated"
   | "gates.readback"
