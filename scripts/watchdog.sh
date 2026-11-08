@@ -63,6 +63,33 @@ prom_query() {
 # service was healthy mid-task — the restart killed in-flight work
 # (pm_paper_rebalance died mid-run on 07-12). Confirm with a second probe
 # 10s later before touching the service.
+#
+# 4bz (2026-11-08): restarting MC inside the janitor window (10-04, 10-18,
+# 11-08) breaks the janitor's exclusive mc.db access.
+# kb-janitor.service stops mission-control on purpose for its Sunday 10:00 UTC
+# mc.db window (~20-38 s) and starts it again itself via ExecStopPost; MC then
+# needs ~11 s to listen. kb_janitor_running prints the janitor state and returns
+# 0 while it runs (Type=oneshot: is-active says "activating", exit 3, so
+# `is-active --quiet` alone never matches) or ended < 90 s ago (boot grace).
+# Anything else (failed, unit missing, systemctl error, unparseable timestamp)
+# returns 1 and the normal restart proceeds.
+kb_janitor_running() {
+  local st inact now
+  st=$(systemctl is-active kb-janitor.service 2>/dev/null)
+  case "$st" in
+    active|activating|deactivating|reloading) echo "$st"; return 0 ;;
+  esac
+  inact=$(systemctl show kb-janitor.service -p InactiveEnterTimestampMonotonic --value 2>/dev/null)
+  now=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+  if [[ "$inact" =~ ^[1-9][0-9]*$ && "$now" =~ ^[0-9]+$ ]]; then
+    inact=$((inact / 1000000))
+    if [ "$now" -ge "$inact" ] && [ $((now - inact)) -lt 90 ]; then
+      echo "${st:-unknown} (ended $((now - inact))s ago)"
+      return 0
+    fi
+  fi
+  return 1
+}
 for svc in mission-control; do
   # A masked/disabled unit is intentionally down — don't fight the operator.
   if ! systemctl is-enabled --quiet "$svc" 2>/dev/null; then
@@ -73,6 +100,10 @@ for svc in mission-control; do
     sleep 10
     if systemctl is-active --quiet "$svc"; then
       echo "$LOG_PREFIX probe 2: $svc active — transient blip, NO restart"
+      continue
+    fi
+    if JANITOR_STATE=$(kb_janitor_running); then
+      echo "$LOG_PREFIX kb-janitor $JANITOR_STATE — maintenance window, NO restart of $svc"
       continue
     fi
     systemctl restart "$svc"
@@ -99,6 +130,8 @@ if [ "$MC_HEALTH" != "200" ]; then
   MC_HEALTH_RETRY=$(mc_probe)
   if [ "$MC_HEALTH_RETRY" = "200" ]; then
     echo "$LOG_PREFIX probe 2: MC health 200 — transient blip, NO restart"
+  elif JANITOR_STATE=$(kb_janitor_running); then
+    echo "$LOG_PREFIX kb-janitor $JANITOR_STATE — maintenance window, NO restart (MC health HTTP $MC_HEALTH_RETRY)"
   else
     systemctl restart mission-control
     sleep 5
@@ -150,7 +183,9 @@ fi
 # (live growth; VACUUM would not). NEVER auto-VACUUM here: it rewrites the
 # irreplaceable DB and needs ~2x disk.
 MC_DB=/root/claude/mission-control/data/mc.db
-if [ -f "$MC_DB" ]; then
+if JANITOR_STATE=$(kb_janitor_running); then
+  echo "$LOG_PREFIX kb-janitor $JANITOR_STATE — skipping mc.db size check (janitor holds mc.db)"
+elif [ -f "$MC_DB" ]; then
   MC_DB_MB=$(du -m "$MC_DB" | cut -f1)
   PCT=$(sqlite3 -readonly "$MC_DB" "SELECT freelist_count*100/page_count FROM pragma_freelist_count, pragma_page_count;" 2>/dev/null || true)
   [[ "$PCT" =~ ^[0-9]+$ ]] || { PCT=""; echo "$LOG_PREFIX WARNING: mc.db freelist probe failed"; }
