@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 04:2x UTC (**SDK bump 0.3.285 → 0.3.316 PREPARED, operator-run (queue 4cc)**: runbook `docs/planning/sdk-bump-2026-11-09/RUNBOOK.md` + `/root/sdk-bump-2026-11-09.sh`; no code patch; auto-memory fix HOLDS on CLI 2.1.316; one model-visible change (tool-description cap 2,048 → 4,096, 6 tools reach the model in full) → paid eval gate MANDATORY, run from a copy with the service up; qa R1→R2 PASS-W, 40/40 harness cases, 5 mutants RED; live build `68991e63` PID 4098103 unchanged until the operator runs gate → script → deploy)
+
 > Last updated: 2026-11-09 03:4x UTC (**three 11-01 monthly-review leftovers RULED one by one (queue 4cc)**: MCP v2 no date, `ignore now`, re-read 12-01 · L3 A2A no consumer, no date, re-check 12-01 · Agent SDK bump NOW → **0.3.316** (newest past the 7-day release-age rule; 0.3.319 refused until 11-13), runbook `docs/planning/sdk-bump-2026-11-09/` in preparation on a scratch copy, operator runs install + eval gate + deploy; recon vs roadmap refreshed `cb6b9a5e` → `docs/planning/recon-vs-roadmap-2026-11-09.md`: Credibility proven on grading, Replicability/Teachability/Scalability still 22 days; nothing deployed, live build `68991e63` PID 4098103 unchanged)
 
 > Last updated: 2026-11-09 01:14 UTC (**DEPLOYED 01:10:32 UTC build `68991e63` PID 4098103, 0 startup errors**: thread hydration bounded (4bn/4cb) and the weekly review re-enabled (4az c, `[rituals] weekly-review: scheduled (0 20 * * 0)` in the journal) are LIVE; PROOFs due: tombstone prune line 02:45 MX 11-09 · first weekly review Sunday 11-15 20:00 MX · watchdog quiet window Sunday 11-15 10:00 UTC.)
@@ -410,6 +412,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (04:2x) | SDK bump 0.3.316 PREPARED: runbook + operator script, no code patch, gate mandatory (6 fuller tool descriptions), qa R1→R2 PASS-W | NEXT: operator gate (≈$6) → script → deploy → smoke → tool-search validation (≈$0.80) |
 | 2026-11-09 (03:4x) | recon vs roadmap refreshed `cb6b9a5e`; rulings 4cc: MCP v2 no date (12-01), A2A no consumer (12-01), SDK bump NOW → 0.3.316 (runbook in preparation, operator-run) | NEXT: runbook audit → operator install/gate/deploy → operator-profile session |
 | 2026-11-09 (01:14) | deploy by the operator: build `68991e63` PID 4098103 (was 3600568), 2 s transition, 0 error lines; hydration bound + weekly review LIVE | PROOF: first weekly review 11-15 20:00 MX |
 | 2026-11-09 (00:44) | `895393e3` messaging hydration bound (4bn, 4cb) · `970a7af1` weekly review rewrite + re-enable (4az c) · `9eac0e95` continuity bench calibration (4bo g/h/i, rulings A/B) — each qa-audited (R1; bench R1+R2), pre-commit suite green ×3, CI green | DEPLOY pending for the two `src/` bundles; bench needs none |
