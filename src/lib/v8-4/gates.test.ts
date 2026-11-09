@@ -831,7 +831,9 @@ describe("gateSpecsFromGoal — a check on a guessed KB root lands ABANDONED (qu
         id: "g-3.1",
         criterion: "README has chapter headings",
         kind: "manual",
-        abandonReason: `check names a guessed KB root — the harness read-back proves the write: ${guessed}`,
+        // The reason quotes the check capped at 120 chars (gates.ts display
+        // cap); the path embeds TMPDIR, so expect the same capped form (4cb).
+        abandonReason: `check names a guessed KB root — the harness read-back proves the write: ${guessed.slice(0, 120)}`,
       },
       {
         id: "g-3.2",

@@ -97,8 +97,11 @@ import { emitTraceEvent } from "../observability/task-trace.js";
 import {
   formatOpenWorkBlock,
   formatOpenWorkNote,
+  OPEN_WORK_SCAN_LIMIT,
+  OPEN_WORK_WINDOW_MS,
   openWorkMode,
   selectOpenWork,
+  sqliteUtc,
   type OpenWorkMode,
   type OpenWorkReason,
 } from "./open-work.js";
@@ -1598,6 +1601,28 @@ function getThreadTurns(channel: string): ConversationTurn[] {
 }
 
 /**
+ * Thread hydration (hydrateThreadIfNeeded). Args: THREAD_VERIFIED_TAG, window
+ * start, OPEN_WORK_SCAN_LIMIT, channel tag, THREAD_BUFFER_SIZE. Bounded like
+ * OPEN_WORK_SQL (queue 4bn): only the newest OPEN_WORK_SCAN_LIMIT rows of the
+ * bank inside OPEN_WORK_WINDOW_MS are scanned (idx_conversations_bank_created),
+ * then the channel-tag filter, so a channel with fewer than THREAD_BUFFER_SIZE
+ * rows no longer walks the whole bank history. Ordered by created_at only, as
+ * before: an id tiebreak adds a temp b-tree and flips same-second rows.
+ * The outer ORDER BY is the order contract; conversations-hydration-plan.test.ts
+ * proves it adds no sort.
+ */
+export const THREAD_HYDRATION_SQL = `SELECT content,
+           EXISTS (SELECT 1 FROM json_each(tags) jv WHERE jv.value = ?) AS verified
+         FROM (
+           SELECT tags, content, created_at FROM conversations
+           WHERE bank = 'mc-jarvis' AND created_at >= ?
+           ORDER BY created_at DESC
+           LIMIT ?)
+         WHERE EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = ?)
+         ORDER BY created_at DESC
+         LIMIT ?`;
+
+/**
  * On first access per channel, hydrate the thread buffer from SQLite conversations.
  * This ensures conversation continuity survives process restarts.
  */
@@ -1617,17 +1642,16 @@ function hydrateThreadIfNeeded(tk: string): void {
 
   try {
     const db = getDatabase();
+    const windowStart = sqliteUtc(Date.now() - OPEN_WORK_WINDOW_MS);
     const rows = db
-      .prepare(
-        `SELECT content,
-           EXISTS (SELECT 1 FROM json_each(tags) jv WHERE jv.value = ?) AS verified
-         FROM conversations
-         WHERE bank = 'mc-jarvis'
-         AND EXISTS (SELECT 1 FROM json_each(tags) je WHERE je.value = ?)
-         ORDER BY created_at DESC
-         LIMIT ?`,
-      )
-      .all(THREAD_VERIFIED_TAG, baseChannel, THREAD_BUFFER_SIZE) as {
+      .prepare(THREAD_HYDRATION_SQL)
+      .all(
+        THREAD_VERIFIED_TAG,
+        windowStart,
+        OPEN_WORK_SCAN_LIMIT,
+        baseChannel,
+        THREAD_BUFFER_SIZE,
+      ) as {
       content: string;
       verified?: number;
     }[];
@@ -5649,9 +5673,11 @@ export class MessageRouter {
     if (!isOwnerChannel(msg.channel, this.channels.get(msg.channel)?.mode)) {
       return undefined;
     }
-    if (msg.metadata?.isGroup) {
+    // Defence in depth (queue 4bn): the adapter flags every `@g.us` JID, but
+    // a group address without the flag is still a group.
+    if (msg.metadata?.isGroup || msg.from.endsWith("@g.us")) {
       const owner = this.getOwnerAddress(msg.channel);
-      if (!owner || msg.metadata.senderJid !== owner) return undefined;
+      if (!owner || msg.metadata?.senderJid !== owner) return undefined;
     }
     return tk;
   }

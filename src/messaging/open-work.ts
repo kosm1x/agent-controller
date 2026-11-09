@@ -97,7 +97,7 @@ export interface OpenWorkSelection {
 }
 
 /** SQLite `datetime('now')` text (UTC, no zone) ↔ epoch ms. */
-function sqliteUtc(ms: number): string {
+export function sqliteUtc(ms: number): string {
   return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
 }
 function parseSqliteUtc(s: string): number {

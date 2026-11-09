@@ -327,9 +327,15 @@ import {
   dayLogEntryText,
   recordUserEvidence,
   SCOPE_RERUN_SUPERSEDED_SQL,
+  THREAD_HYDRATION_SQL,
   _testOpenWorkBlock,
 } from "./router.js";
-import { OPEN_WORK_HEADING, OPEN_WORK_SQL } from "./open-work.js";
+import {
+  OPEN_WORK_HEADING,
+  OPEN_WORK_SCAN_LIMIT,
+  OPEN_WORK_SQL,
+  OPEN_WORK_WINDOW_MS,
+} from "./open-work.js";
 // Off by default (null → the real module); a string answers the fast path with it.
 const fastPathStub = vi.hoisted(() => ({ reply: null as string | null }));
 vi.mock("./fast-path.js", async (importOriginal) => {
@@ -1823,6 +1829,21 @@ describe("MessageRouter", () => {
           threadId: "whatsapp:grp@g.us:owner@s.whatsapp.net",
         }),
       );
+    });
+
+    // Queue 4bn: defence in depth — a `@g.us` address is a group even when
+    // the adapter's isGroup flag is missing, so no owner sender ⇒ no threadId.
+    it("omits threadId for a group address whose isGroup flag is missing", async () => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "grp@g.us",
+        text: "@jarvis agenda algo",
+        timestamp: new Date(),
+      });
+      const last = (submitTask as any).mock.calls.at(-1)[0];
+      expect(last).toBeDefined();
+      expect(last.threadId).toBeUndefined();
     });
 
     // S6 WS2: an operator turn naming a project carries it to the dispatcher
@@ -5855,6 +5876,9 @@ describe("MessageRouter", () => {
       "La herramienta está bloqueada en esta sesión, no tengo acceso.";
     const OWNER = "owner@s.whatsapp.net";
 
+    /** SQLite `datetime('now')` text (UTC, no zone) for epoch ms. */
+    const sqlUtc = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+
     /** A real :memory: db with the production DDL (schema.sql + task_gates). */
     function memDb(): Database.Database {
       const db = new Database(":memory:");
@@ -6000,17 +6024,18 @@ describe("MessageRouter", () => {
       const ins = db.prepare(
         "INSERT INTO conversations (bank, tags, content, created_at) VALUES ('mc-jarvis', ?, ?, ?)",
       );
+      // Inside the hydration window (queue 4bn): hours ago, not fixed dates.
       ins.run(
         JSON.stringify(["telegram", "conversation", "outcome:success", "thread-verified"]),
         `User: guarda\nJarvis: ${FIX_A}`,
-        "2026-10-17 01:00:00",
+        sqlUtc(Date.now() - 3 * 3_600_000),
       );
       ins.run(
         JSON.stringify(["telegram", "conversation"]),
         `User: actualiza\nJarvis: ${FIX_C}`,
-        "2026-10-17 02:00:00",
+        sqlUtc(Date.now() - 2 * 3_600_000),
       );
-      ins.run(null, `User: nulo\nJarvis: ${FIX_A}`, "2026-10-17 03:00:00");
+      ins.run(null, `User: nulo\nJarvis: ${FIX_A}`, sqlUtc(Date.now() - 3_600_000));
       realDb.db = db;
       try {
         // A fresh compound key hydrates from the `telegram` channel tag.
@@ -6029,6 +6054,69 @@ describe("MessageRouter", () => {
         realDb.db = null;
         db.close();
       }
+    });
+
+    // Queue 4bn: hydration reads the newest OPEN_WORK_SCAN_LIMIT bank rows
+    // inside OPEN_WORK_WINDOW_MS (THREAD_HYDRATION_SQL), then the channel tag.
+    it("4bn hydration on a real db: a channel with < 15 rows gets all of them in the window, none older than the window", () => {
+      const db = memDb();
+      const ins = db.prepare(
+        "INSERT INTO conversations (bank, tags, content, created_at) VALUES ('mc-jarvis', ?, ?, ?)",
+      );
+      const now = Date.now();
+      ins.run(JSON.stringify(["telegram"]), "User: viejo\nJarvis: fuera de la ventana", sqlUtc(now - OPEN_WORK_WINDOW_MS - 3_600_000));
+      for (let i = 0; i < 4; i++) {
+        ins.run(JSON.stringify(["telegram"]), `User: t${i}\nJarvis: r${i}`, sqlUtc(now - (10 - i) * 3_600_000));
+        ins.run(JSON.stringify(["whatsapp"]), `User: w${i}\nJarvis: x${i}`, sqlUtc(now - (10 - i) * 3_600_000 + 60_000));
+      }
+      realDb.db = db;
+      try {
+        const tk = "telegram:4bn-few";
+        _testThreadTurns(tk);
+        expect(_testThreadEntries(tk).map((e) => e.text)).toEqual(
+          [0, 1, 2, 3].map((i) => `User: t${i}\nJarvis: r${i}`),
+        );
+      } finally {
+        realDb.db = null;
+        db.close();
+      }
+    });
+
+    it("4bn hydration on a real db: ≥ 15 rows → the newest 15, oldest first", () => {
+      const db = memDb();
+      const ins = db.prepare(
+        "INSERT INTO conversations (bank, tags, content, created_at) VALUES ('mc-jarvis', ?, ?, ?)",
+      );
+      const now = Date.now();
+      for (let i = 0; i < 20; i++) {
+        ins.run(JSON.stringify(["telegram"]), `User: t${i}\nJarvis: r${i}`, sqlUtc(now - (40 - i) * 60_000));
+        ins.run(JSON.stringify(["email:otro"]), `User: e${i}\nJarvis: y${i}`, sqlUtc(now - (40 - i) * 60_000 + 1_000));
+      }
+      realDb.db = db;
+      try {
+        const tk = "telegram:4bn-many";
+        _testThreadTurns(tk);
+        expect(_testThreadEntries(tk).map((e) => e.text)).toEqual(
+          Array.from({ length: 15 }, (_, k) => `User: t${k + 5}\nJarvis: r${k + 5}`),
+        );
+      } finally {
+        realDb.db = null;
+        db.close();
+      }
+    });
+
+    it("4bn hydration runs THREAD_HYDRATION_SQL with the window start, the scan bound, the tag and 15", () => {
+      const tk = "telegram:4bn-args";
+      const before = Date.now();
+      _testThreadTurns(tk);
+      const call = dbAll.mock.calls.find((c) => c[0] === THREAD_HYDRATION_SQL)!;
+      expect(call).toBeDefined();
+      const [, verifiedTag, windowStart, scan, tag, limit] = call;
+      expect([verifiedTag, scan, tag, limit]).toEqual(["thread-verified", OPEN_WORK_SCAN_LIMIT, "telegram", 15]);
+      expect(windowStart).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/); // SQLite datetime text, not ISO
+      const startMs = Date.parse(String(windowStart).replace(" ", "T") + "Z");
+      expect(Math.abs(startMs - (before - OPEN_WORK_WINDOW_MS))).toBeLessThan(5_000);
+      expect(THREAD_HYDRATION_SQL).toMatch(/LIMIT \?\)\s+WHERE EXISTS \(SELECT 1 FROM json_each\(tags\) je[\s\S]*LIMIT \?$/);
     });
 
     it("W1 hasExchangeEvidence on a real db: own tools, own/child harness gates", () => {
@@ -9058,6 +9146,7 @@ describe("MEMORY_OPEN_WORK — session tail notes in handleInbound", () => {
     delete process.env.MEMORY_OPEN_WORK;
     delete process.env.WHATSAPP_OWNER_JID;
     dbAll.mockReset().mockImplementation(() => []);
+    fastPathStub.reply = null;
   });
 
   it("off (unset or 'off') → the task description is byte-identical to a turn with no rows at all, and nothing is traced", async () => {
@@ -9160,7 +9249,6 @@ describe("MEMORY_OPEN_WORK — session tail notes in handleInbound", () => {
     const before = submitCount();
     await inbound("Buenos días");
     expect(submitCount()).toBe(before); // answered on the fast path, no task
-    fastPathStub.reply = null;
     vi.advanceTimersByTime(2 * 60_000);
     await inbound(msgA);
     expect(lastCall().description).toContain(OPEN_WORK_HEADING);
