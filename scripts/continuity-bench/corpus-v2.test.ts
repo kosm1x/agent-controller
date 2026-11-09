@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CLOSER_GAP_ROWS, GAP_ROWS, HANDOFF_GAP_ROWS, buildCorpusV2 } from "./corpus-v2.js";
+import { CLOSER_GAP_ROWS, EXPECT_EN_ES, GAP_ROWS, HANDOFF_GAP_ROWS, buildCorpusV2, expectEnFor } from "./corpus-v2.js";
 import { FILLER_SPEC_V1 } from "./filler.js";
 import { OPEN_WORK, buildCorpus, outputsFor, serialize, validateCorpus } from "./generate.js";
 import type { Corpus, Scenario } from "./types.js";
@@ -21,6 +21,8 @@ describe("corpus-v2.json", () => {
   /** Port 3 (tombstones) appends, per size, rp / nf / rw / lv (qa R1 W4), then four sn (qa R2 W2). */
   const isPort3 = (s: Scenario) => /-(rp|nf|rw|lv|sn)-s\d+$/.test(s.id);
   const isSnapshot = (s: Scenario) => /-sn-s\d+$/.test(s.id);
+  /** The scenarios as they were before ruling B added `expectEn` (2026-11-08): the four additivity pins hash this view, so they still prove nothing else moved. */
+  const noEn = (xs: Scenario[]) => xs.map((s) => ({ ...s, probes: s.probes.map(({ expectEn: _en, ...p }) => p) }));
 
   it("is byte-identical to a fresh generation and leaves v1 + the golden alone", async () => {
     expect(serialize(buildCorpusV2())).toBe(committed);
@@ -90,7 +92,7 @@ describe("corpus-v2.json", () => {
     const original = corpus.scenarios.filter((s) => !PORT1.has(s.variant ?? "") && !isPort3(s));
     expect(original).toHaveLength(444);
     expect(original.flatMap((s) => s.probes)).toHaveLength(1140);
-    expect(createHash("sha256").update(JSON.stringify(original)).digest("hex")).toBe(
+    expect(createHash("sha256").update(JSON.stringify(noEn(original))).digest("hex")).toBe(
       "ea3402f379e6b96b24b5001f43dd7b17339657277fa225516c10b92a1eab04b1",
     );
     // per size, the additions follow every original scenario
@@ -106,7 +108,7 @@ describe("corpus-v2.json", () => {
     const before = corpus.scenarios.filter((s) => !FOLD.has(s.variant ?? "") && !isPort3(s));
     expect(before).toHaveLength(534);
     expect(before.flatMap((s) => s.probes)).toHaveLength(1320);
-    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+    expect(createHash("sha256").update(JSON.stringify(noEn(before))).digest("hex")).toBe(
       "e1ee251dc1057a33e47eaf1b3ebf60e5accae85574c7fbbdef0fbf454f6c15f5",
     );
     for (const size of corpus.fillerSizes) {
@@ -124,7 +126,7 @@ describe("corpus-v2.json", () => {
     const before = corpus.scenarios.filter((s) => !isPort3(s));
     expect(before).toHaveLength(570);
     expect(before.flatMap((s) => s.probes)).toHaveLength(1392);
-    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+    expect(createHash("sha256").update(JSON.stringify(noEn(before))).digest("hex")).toBe(
       "ab0669f79e768671369fb0599092ea83a9b86dac56dd6841e5c4a66cfb01e942",
     );
     for (const size of corpus.fillerSizes) {
@@ -142,7 +144,7 @@ describe("corpus-v2.json", () => {
     const before = corpus.scenarios.filter((s) => !isSnapshot(s));
     expect(before).toHaveLength(582);
     expect(before.flatMap((s) => s.probes)).toHaveLength(1416);
-    expect(createHash("sha256").update(JSON.stringify(before)).digest("hex")).toBe(
+    expect(createHash("sha256").update(JSON.stringify(noEn(before))).digest("hex")).toBe(
       "db84c0ef837b2af36c038182e6a4d047f347d7e1df24b295308cf28658df8fe9",
     );
     for (const size of corpus.fillerSizes) {
@@ -151,6 +153,21 @@ describe("corpus-v2.json", () => {
     }
     expect(corpus.scenarios).toHaveLength(594);
     expect(corpus.scenarios.flatMap((s) => s.probes)).toHaveLength(1440);
+  });
+
+  it("ruling B (queue 4bo i): every probe with an expect needle carries expectEn, Spanish needles through EXPECT_EN_ES, English ones as they are; nothing else moved (the pins above hash the corpus without it)", () => {
+    const all = corpus.scenarios.flatMap((s) => s.probes.map((p) => ({ s, p })));
+    expect(all.filter(({ p }) => p.expectEn !== undefined)).toHaveLength(1404);
+    for (const { s, p } of all) {
+      if (p.expect.length === 0) expect(p.expectEn, s.id).toBeUndefined();
+      else expect(p.expectEn, s.id).toEqual(s.lang === "en" ? p.expect : p.expect.flatMap((n) => EXPECT_EN_ES[n]));
+    }
+    const esNeedles = new Set(corpus.scenarios.filter((s) => s.lang === "es").flatMap((s) => s.probes.flatMap((p) => p.expect)));
+    expect([...esNeedles].sort()).toEqual(Object.keys(EXPECT_EN_ES).sort());
+    expect(EXPECT_EN_ES["3.847.215"]).toEqual(["3,847,215"]);
+    expect(EXPECT_EN_ES["viñetas"]).toEqual(["bullet"]);
+    expect(() => expectEnFor("es", ["sin traducción"])).toThrow(/no English rendering/);
+    expect(createHash("sha256").update(JSON.stringify(corpus.scenarios)).digest("hex")).toBe("68aeeac29c717c19ee415d5f7de78614b1e2446106ed4fe3901bca1d60e9fcd5");
   });
 
   it("snapshot cases: the temporary fact matches TRANSIENT_FACT_RE and holds the forbidden figure; the durable fact does not", () => {

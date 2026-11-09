@@ -5,13 +5,27 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { FILLER_SPEC_V1, generateFiller } from "./filler.js";
 import {
   BASELINE_CAVEATS,
+  CONSOLIDATOR_TURN_CAP,
+  CORPUS_FILES,
+  DAY_TURNS_ARCHIVED,
+  DEFAULT_CORPUS,
   EXTRACTED_NOTE,
+  EXTRACTION_COST_PER_CALL,
+  EXTRACTION_PROMPT_TOKENS,
   EXTRACTION_LIMITS,
   FetchMeter,
+  MEASURED_DAY_TURNS,
+  MEASURED_DAY_TURN_TOKENS,
+  MEASURED_NIGHTLY_INPUT_TOKENS,
+  DAY_TURN_TOKENS_MAX,
+  UNPADDED_TURN_TOKENS,
   PROVISIONAL,
   capsOf,
   embedBudgetRefusal,
+  dayText,
   embedPlan,
+  extractionCostLine,
+  extractionCostPerCall,
   extractionRefusal,
   main,
   parseArgs,
@@ -27,7 +41,8 @@ import {
   type EmbedPlan,
   type RunResult,
 } from "./run.js";
-import { DEFAULT_SWITCHES, dayWindowExchanges, exchangeContent, nextConsolidationT } from "./adapter-jarvis.js";
+import { DAY_WINDOW_EXCHANGES, DEFAULT_SWITCHES, dayPool, dayWindowExchanges, exchangeContent, nextConsolidationT } from "./adapter-jarvis.js";
+import { CONSOLIDATOR_MAX_TURNS } from "../../src/memory/jme.js";
 import { buildCorpusV2 } from "./corpus-v2.js";
 import type { Corpus, ProbeRun, Scenario } from "./types.js";
 
@@ -463,10 +478,6 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "clean"])).toMatchObject({ window: "clean" });
     expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "night"])).toThrow(/--window must be day or clean/);
     expect(() => parseArgs(["node", "run.ts", "--leg", "raw", "--window", "day"])).toThrow(/extracted only/);
-    for (const leg of ["raw", "ideal"]) {
-      const r = parseArgs(["node", "run.ts", "--leg", leg]);
-      expect(r.mode === "run" && r.corpus.endsWith("benchmarks/continuity/corpus-v1.json"), leg).toBe(true);
-    }
     const base = { commit: "abc1234", embeddings: "off", suffix: "-v2", switchTag: "", dryRun: false };
     expect(resultFileName({ ...base, leg: "extracted", classes: ["C6"], window: "day" })).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day.json");
     expect(resultFileName({ ...base, leg: "extracted", classes: ["C2", "C8"], window: "clean", dryRun: true })).toBe("jarvis-abc1234-extracted-emb-off-v2-c2c8-clean-dry-run.json");
@@ -474,6 +485,145 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     expect(resultFileName({ ...base, leg: "ideal", classes: ["C6"], window: "day", switchTag: "-tombstones" })).toBe("jarvis-abc1234-ideal-emb-off-v2-tombstones.json");
     expect(windowLabel("clean")).toMatch(/upper bound/);
     expect(windowLabel("day")).toMatch(/seeded ordinary exchanges/);
+  });
+
+  it("every leg shares one default corpus, v2; --corpus v1 / v2 name the committed files (v1 stays reproducible), anything else is a path (queue 4bo g)", () => {
+    expect(DEFAULT_CORPUS).toBe("v2");
+    const corpusOf = (argv: string[]) => {
+      const r = parseArgs(["node", "run.ts", ...argv]);
+      return r.mode === "run" ? r.corpus : "";
+    };
+    const defaults = [[], ["--leg", "raw"], ["--leg", "ideal"], ["--leg", "extracted"]].map(corpusOf);
+    expect(new Set(defaults).size).toBe(1);
+    expect(defaults[0].endsWith(CORPUS_FILES.v2)).toBe(true);
+    for (const leg of ["raw", "ideal", "extracted"]) {
+      expect(corpusOf(["--leg", leg, "--corpus", "v1"]).endsWith("benchmarks/continuity/corpus-v1.json"), leg).toBe(true);
+      expect(corpusOf(["--leg", leg, "--corpus", "v2"])).toBe(defaults[0]);
+    }
+    expect(corpusOf(["--corpus", "benchmarks/continuity/corpus-v1.json"])).toBe(corpusOf(["--corpus", "v1"]));
+    expect(corpusOf(["--corpus", "/x/y.json"])).toBe("/x/y.json");
+  });
+
+  it("--day-turns / --day-mix: default the measured window (MEASURED_DAY_TURNS mixed), the archived one by flag, even integers only, extracted --window day only (queue 4bo h)", () => {
+    expect(DAY_TURNS_ARCHIVED).toBe(2 * DAY_WINDOW_EXCHANGES);
+    expect(CONSOLIDATOR_TURN_CAP).toBe(CONSOLIDATOR_MAX_TURNS);
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted"])).toMatchObject({ dayTurns: MEASURED_DAY_TURNS, dayMix: "mixed", dayTurnTokens: MEASURED_DAY_TURN_TOKENS });
+    expect(parseArgs(["node", "run.ts", "--leg", "raw"])).toMatchObject({ dayTurns: MEASURED_DAY_TURNS, dayMix: "mixed", dayTurnTokens: MEASURED_DAY_TURN_TOKENS });
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turns", "60", "--day-mix", "smalltalk", "--day-turn-tokens", "0"])).toMatchObject({ dayTurns: 60, dayMix: "smalltalk", dayTurnTokens: 0 });
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turn-tokens", String(DAY_TURN_TOKENS_MAX)])).toMatchObject({ dayTurnTokens: DAY_TURN_TOKENS_MAX });
+    for (const n of ["-1", "2.5", "x", String(DAY_TURN_TOKENS_MAX + 1)]) expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turn-tokens", n]), n).toThrow(/--day-turn-tokens must be an integer from 0 to 120/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "clean", "--day-turn-tokens", "0"])).toThrow(/extracted --window day only/);
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turns", "240", "--day-mix", "mixed"])).toMatchObject({ dayTurns: 240, dayMix: "mixed" });
+    expect(parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turns", "0"])).toMatchObject({ dayTurns: 0 });
+    for (const n of ["7", "-2", "1.5", "x", "--run"]) expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--day-turns", n]), n).toThrow(/--day-turns must be/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--day-mix", "tools"])).toThrow(/--day-mix must be/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "raw", "--day-turns", "120"])).toThrow(/extracted --window day only/);
+    expect(() => parseArgs(["node", "run.ts", "--leg", "extracted", "--window", "clean", "--day-mix", "mixed"])).toThrow(/extracted --window day only/);
+    const base = { commit: "abc1234", embeddings: "off", suffix: "-v2", switchTag: "", dryRun: false, leg: "extracted", classes: ["C6"], window: "day" as const };
+    expect(resultFileName({ ...base, day: { turns: 240, mix: "mixed" } })).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day-t240-mixed.json");
+    expect(resultFileName({ ...base, day: { turns: 240, mix: "smalltalk" } })).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day-t240.json");
+    expect(resultFileName(base)).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day.json");
+    expect(resultFileName({ ...base, day: { turns: 1190, mix: "mixed", turnTokens: 50 } })).toBe("jarvis-abc1234-extracted-emb-off-v2-c6-day-t1190-mixed-p50.json");
+    expect(dayText(undefined)).toBe("");
+    expect(dayText({ turns: 240, mix: "mixed" })).toBe(", day 240 seeded turns mixed");
+    expect(dayText({ turns: 1190, mix: "mixed", turnTokens: 50 })).toBe(", day 1190 seeded turns mixed padded to 50 tokens");
+  });
+
+  it("MEASURED_DAY_TURNS is derived from the measured ledger: nearest even of (median input − prompt) / chars-per-4 tokens per seeded mixed turn at that size (MEASURED 2026-11-08)", () => {
+    const x = [...MEASURED_NIGHTLY_INPUT_TOKENS];
+    expect(x.length).toBe(30);
+    expect(x).toEqual([...x].sort((p, q) => p - q));
+    const median = (x[14] + x[15]) / 2;
+    expect(median).toBe(20951);
+    expect(EXTRACTION_PROMPT_TOKENS).toBe(1000);
+    const pool = dayPool(V2.scenarios);
+    const STATED = new Set(["standing", "person_fact", "correction"]);
+    const tokensPerTurn = (turns: number, mix: "mixed" | "smalltalk") => {
+      let chars = 0;
+      let n = 0;
+      for (const s of V2.scenarios.filter((y) => ["C2", "C6", "C8"].includes(y.class) && y.fillerSize === 50))
+        for (const night of new Set(s.events.filter((e) => STATED.has(e.kind)).map((e) => nextConsolidationT(e.t))))
+          for (const item of dayWindowExchanges(s, V2.fillerSpec, night, [], { turns, mix, pool })) {
+            chars += `Fede: ${item.user}\n`.length + `Jarvis: ${item.assistant}\n`.length;
+            n += 2;
+          }
+      return chars / n / 4;
+    };
+    const tpt = tokensPerTurn(MEASURED_DAY_TURNS, "mixed");
+    expect(tpt).toBeGreaterThan(16.7);
+    expect(tpt).toBeLessThan(16.85);
+    expect(tokensPerTurn(MEASURED_DAY_TURNS, "smalltalk")).toBeGreaterThan(17.0);
+    const derived = 2 * Math.round((median - EXTRACTION_PROMPT_TOKENS) / tpt / 2);
+    expect(`(${median} - ${EXTRACTION_PROMPT_TOKENS}) / ${tpt.toFixed(2)} -> ${derived}`).toBe(`(20951 - 1000) / 16.77 -> ${MEASURED_DAY_TURNS}`);
+    expect(MEASURED_DAY_TURNS).toBe(1190);
+  });
+
+  it("MEASURED_DAY_TURN_TOKENS is derived from the measured ledger: (median input − prompt) / the 400-turn cap; a default night's call then carries about the median (ruling A, MEASURED 2026-11-08)", () => {
+    const x = [...MEASURED_NIGHTLY_INPUT_TOKENS];
+    const median = (x[14] + x[15]) / 2;
+    const perTurn = (median - EXTRACTION_PROMPT_TOKENS) / CONSOLIDATOR_TURN_CAP;
+    expect(`(${median} - ${EXTRACTION_PROMPT_TOKENS}) / ${CONSOLIDATOR_TURN_CAP} = ${perTurn.toFixed(1)} -> ${Math.round(perTurn)}`).toBe(`(20951 - 1000) / 400 = 49.9 -> ${MEASURED_DAY_TURN_TOKENS}`);
+    expect(MEASURED_DAY_TURN_TOKENS).toBe(50);
+    expect(DAY_TURN_TOKENS_MAX).toBeLessThan(500 / 4);
+    expect(UNPADDED_TURN_TOKENS).toBe(17);
+    // Measured on the default (MEASURED_DAY_TURNS mixed turns padded to 50): what the call sees is the night's oldest 400 turns.
+    const pool = dayPool(V2.scenarios);
+    const STATED = new Set(["standing", "person_fact", "correction"]);
+    let seededChars = 0;
+    let seededTurns = 0;
+    const inputs: number[] = [];
+    for (const s of V2.scenarios.filter((y) => ["C2", "C6", "C8"].includes(y.class) && y.fillerSize === 50)) {
+      const nights = new Map<number, Array<{ t: number; user: string; assistant: string }>>();
+      for (const e of s.events) if (STATED.has(e.kind) && e.kind !== "exchange") nights.set(nextConsolidationT(e.t), [...(nights.get(nextConsolidationT(e.t)) ?? []), { t: e.t, user: e.asUser, assistant: e.asAssistant }]);
+      for (const [night, stated] of nights) {
+        const seeded = dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: MEASURED_DAY_TURNS, mix: "mixed", pool, turnTokens: MEASURED_DAY_TURN_TOKENS });
+        for (const item of seeded) {
+          seededChars += `Fede: ${item.user}\n`.length + `Jarvis: ${item.assistant}\n`.length;
+          seededTurns += 2;
+        }
+        const lines = [...stated, ...seeded].sort((a, b) => a.t - b.t).flatMap((i) => [...(i.user ? [`Fede: ${i.user}`] : []), ...(i.assistant ? [`Jarvis: ${i.assistant}`] : [])]);
+        inputs.push(EXTRACTION_PROMPT_TOKENS + lines.slice(0, CONSOLIDATOR_TURN_CAP).join("\n").length / 4);
+      }
+    }
+    const tpt = seededChars / seededTurns / 4;
+    expect(tpt).toBeGreaterThan(48);
+    expect(tpt).toBeLessThan(52);
+    const mean = inputs.reduce((a, b) => a + b, 0) / inputs.length;
+    expect(Math.abs(mean - median) / median).toBeLessThan(0.05);
+  });
+
+  it("the day cost scales the day − clean increment linearly with --day-turns; the archived window and clean are unchanged", () => {
+    expect(extractionCostPerCall("day")).toBe(EXTRACTION_COST_PER_CALL.day);
+    expect(extractionCostPerCall("day", 60)).toBe(EXTRACTION_COST_PER_CALL.day);
+    expect(extractionCostPerCall("clean", 240)).toBe(EXTRACTION_COST_PER_CALL.clean);
+    const x = extractionCostPerCall("day", 240);
+    expect(x.typical).toBeCloseTo(0.0015 + 4 * 0.0015, 10);
+    expect(x.ceiling).toBeCloseTo(0.0063 + 4 * 0.0013, 10);
+    expect(extractionCostPerCall("day", 0)).toEqual(EXTRACTION_COST_PER_CALL.clean);
+    expect(extractionCostLine("day", 6)).toBe(extractionCostLine("day", 6, 60));
+    expect(extractionCostLine("day", 6)).not.toMatch(/--day-turns/);
+    expect(extractionCostLine("day", 6, 240)).toMatch(/^6 calls, window day \(--day-turns 240, scaled linearly from 60\): about \$0\.045 typical, \$0\.069 ceiling/);
+    // Past the consolidator's cap the call sees at most 400 turns: the cost stops growing and the line says so.
+    expect(extractionCostPerCall("day", MEASURED_DAY_TURNS)).toEqual(extractionCostPerCall("day", 400));
+    expect(extractionCostLine("day", 6, MEASURED_DAY_TURNS)).toMatch(new RegExp(`^6 calls, window day \\(--day-turns ${MEASURED_DAY_TURNS}, at most 400 reach the call, scaled linearly from 60\\)`));
+    expect(extractionCostLine("day", 6, 400)).not.toMatch(/at most 400/);
+    const a = { run: false, dryRun: false, maxModelCalls: 6, allowEmbeddings: false, window: "day" as const };
+    expect(extractionRefusal({ ...a, dayTurns: 240 }, {})).toContain(extractionCostLine("day", 6, 240));
+    // Padding scales the increment by the seeded tokens: 400 turns of 50 against 60 of 17.
+    const p = extractionCostPerCall("day", MEASURED_DAY_TURNS, MEASURED_DAY_TURN_TOKENS);
+    const f = (400 * 50) / (60 * UNPADDED_TURN_TOKENS);
+    expect(p.typical).toBeCloseTo(0.0015 + f * 0.0015, 10);
+    expect(p.ceiling).toBeCloseTo(0.0063 + f * 0.0013, 10);
+    expect(extractionCostPerCall("day", 60, 0)).toBe(EXTRACTION_COST_PER_CALL.day);
+    expect(extractionCostPerCall("day", 240, 10)).toEqual(extractionCostPerCall("day", 240));
+    expect(extractionCostLine("day", 6, MEASURED_DAY_TURNS, MEASURED_DAY_TURN_TOKENS)).toMatch(
+      /^6 calls, window day \(--day-turns 1190, at most 400 reach the call, --day-turn-tokens 50 against 17 unpadded, scaled linearly from 60\): about \$0\.19 typical, \$0\.19 ceiling/,
+    );
+    expect(extractionCostLine("day", 6, 60, 50)).toMatch(/\(--day-turns 60, --day-turn-tokens 50 against 17 unpadded, scaled linearly from 60\)/);
+    // W4 (audit R1): the refusal's per-call day price is the configured one, not the archived window's.
+    const why = extractionRefusal({ ...a, dayTurns: MEASURED_DAY_TURNS, dayTurnTokens: MEASURED_DAY_TURN_TOKENS }, {})!;
+    expect(why).toContain(`$0.0015 typical / $0.0063 ceiling with --window clean, $${p.typical.toPrecision(2)} / $${p.ceiling.toPrecision(2)} with --window day`);
+    expect(why).toContain(extractionCostLine("day", 6, MEASURED_DAY_TURNS, MEASURED_DAY_TURN_TOKENS));
   });
 
   it("extractionRefusal names the cost without consent and the provider settings under --run (names only)", () => {
@@ -521,8 +671,8 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
       return { text, category: "preference", night, ttlMs: null, expiresAtT: null };
     };
     expect(r.extraction).toEqual([
-      { scenarioId: "C6-01-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, consolidator: counts, caught: true, failedCalls: 0, facts: [factOf(pick[0], VINETAS.factText)] },
-      { scenarioId: "C6-02-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, inserted: 1, consolidator: counts, caught: false, failedCalls: 0, facts: [factOf(pick[1], BULLETS.factText)] },
+      { scenarioId: "C6-01-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, cutTurns: 0, inserted: 1, consolidator: counts, caught: true, failedCalls: 0, facts: [factOf(pick[0], VINETAS.factText)] },
+      { scenarioId: "C6-02-s50", class: "C6", fillerSize: 50, calls: 1, turns: 2, cutTurns: 0, inserted: 1, consolidator: counts, caught: false, failedCalls: 0, facts: [factOf(pick[1], BULLETS.factText)] },
     ]);
     // The prompt's "today" is the consolidation night's date as the last probe sees it, not the run's date.
     for (const [i, s] of pick.entries()) {
@@ -537,9 +687,9 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     expect(ritualFailureMock).not.toHaveBeenCalled();
   });
 
-  it("--run --window day (the default): each night's stated turns sit among its ordinary exchanges, in timeline order", async () => {
+  it("--run --window day, the archived day settings (60 smalltalk turns, unpadded): each night's stated turns sit among its ordinary exchanges, in timeline order, nothing labelled", async () => {
     inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
-    expect(await run(["--run"], "day.json")).toBe(0);
+    expect(await run(["--run", "--day-turns", "60", "--day-mix", "smalltalk", "--day-turn-tokens", "0"], "day.json")).toBe(0);
     expect(inferMock).toHaveBeenCalledTimes(2);
     const r = load("day.json");
     expect(r.meta.extraction).toEqual({ mode: "run", calls: 2, maxModelCalls: 6, model: "claude-haiku-4-5-20251001", window: "day" });
@@ -566,7 +716,31 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     ]);
   });
 
-  it("a crowded night (300 filler items) is cut to CONSOLIDATOR_MAX_TURNS: the stated turns kept, the oldest ordinary ones dropped", async () => {
+  it("--run with padding (60 smalltalk turns at 50 tokens): the stated turns reach the call byte for byte, every seeded turn is padded (audit R2 W2)", async () => {
+    inferMock.mockResolvedValueOnce(reply([VINETAS])).mockResolvedValueOnce(reply([BULLETS]));
+    expect(await run(["--run", "--day-turns", "60", "--day-mix", "smalltalk", "--day-turn-tokens", String(MEASURED_DAY_TURN_TOKENS)], "day-padded.json")).toBe(0);
+    expect(inferMock).toHaveBeenCalledTimes(2);
+    for (const [i, s] of pick.entries()) {
+      const standing = s.events.find((e) => e.kind === "standing")!;
+      const night = nextConsolidationT(standing.t);
+      const filler = generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT });
+      const plain = dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 60, mix: "smalltalk" });
+      const padded = dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 60, mix: "smalltalk", turnTokens: MEASURED_DAY_TURN_TOKENS });
+      const [req] = inferMock.mock.calls[i] as [{ messages: Array<{ role: string; content: string }> }];
+      const lines = req.messages[1].content.split("\n\n---\n")[0].split("\n");
+      const timeline = [{ t: standing.t, user: standing.asUser, assistant: standing.asAssistant }, ...padded].sort((a, b) => a.t - b.t).flatMap((x) => [`Fede: ${x.user}`, `Jarvis: ${x.assistant}`]);
+      expect(lines, s.id).toEqual(timeline);
+      const at = lines.indexOf(`Fede: ${standing.asUser}`);
+      expect(at, s.id).toBeGreaterThan(0);
+      expect(lines[at + 1], s.id).toBe(`Jarvis: ${standing.asAssistant}`);
+      for (const [k, x] of padded.slice(0, 30).entries()) {
+        expect(x.user.length, s.id).toBeGreaterThan(plain[k].user.length);
+        expect(lines).toContain(`Fede: ${x.user}`);
+      }
+    }
+  });
+
+  it("a crowded night (300 filler items) is cut as consolidateAll cuts it: the oldest CONSOLIDATOR_MAX_TURNS turns, stated ones not privileged; the rest counted in cutTurns (audit R1 W1)", async () => {
     const base = pick[0];
     const standing = base.events.find((e) => e.kind === "standing")!;
     const night = nextConsolidationT(standing.t);
@@ -575,18 +749,19 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     writeFileSync(crowded, JSON.stringify({ ...V2, scenarios: [s] } as Corpus));
     inferMock.mockResolvedValue(reply([VINETAS]));
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    expect(await main(["node", "run.ts", "--leg", "extracted", "--run", "--sizes", "300", "--corpus", crowded, "--out", join(dir, "crowded-out.json")], PROVIDER)).toBe(0);
+    expect(await main(["node", "run.ts", "--leg", "extracted", "--run", "--sizes", "300", "--day-turns", "60", "--day-mix", "smalltalk", "--day-turn-tokens", "0", "--corpus", crowded, "--out", join(dir, "crowded-out.json")], PROVIDER)).toBe(0);
     log.mockRestore();
     const [req] = inferMock.mock.calls[0] as [{ messages: Array<{ role: string; content: string }> }];
     const lines = req.messages[1].content.split("\n\n---\n")[0].split("\n");
-    expect(lines.length).toBe(400);
+    const ordinary = dayWindowExchanges(s, V2.fillerSpec, night, generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: 300, fromT: s.fillerFromT, toT: s.fillerToT }));
+    const timeline = [{ t: standing.t, user: standing.asUser, assistant: standing.asAssistant }, ...ordinary].sort((a, b) => a.t - b.t).flatMap((x) => [`Fede: ${x.user}`, `Jarvis: ${x.assistant}`]);
+    expect(timeline.length).toBe(2 + 2 * (DAY_WINDOW_EXCHANGES + 300));
+    expect(lines).toEqual(timeline.slice(0, 400));
     expect(lines).toContain(`Fede: ${standing.asUser}`);
-    const ordinary = dayWindowExchanges(s, V2.fillerSpec, night, generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: 300, fromT: s.fillerFromT, toT: s.fillerToT })).sort((a, b) => a.t - b.t);
-    expect(lines.filter((l) => l.startsWith("Fede: ")).length).toBe(1 + 199);
-    expect(lines).toContain(`Fede: ${ordinary.at(-1)!.user}`);
-    const kept = new Set(ordinary.slice(-199).map((o) => o.user));
-    for (const o of ordinary.slice(0, -199)) if (!kept.has(o.user)) expect(lines).not.toContain(`Fede: ${o.user}`);
-    expect(JSON.parse(readFileSync(join(dir, "crowded-out.json"), "utf8")).extraction[0]).toMatchObject({ turns: 400, failedCalls: 0 });
+    const newest = timeline.slice(400).filter((l) => !timeline.slice(0, 400).includes(l));
+    expect(newest.length).toBeGreaterThan(100);
+    for (const l of newest) expect(lines).not.toContain(l);
+    expect(JSON.parse(readFileSync(join(dir, "crowded-out.json"), "utf8")).extraction[0]).toMatchObject({ turns: 400, cutTurns: timeline.length - 400, failedCalls: 0 });
   });
 
   it("an empty model reply keeps the window: failedCalls 1, nothing inserted, the failure reported", async () => {
@@ -623,9 +798,16 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
       ["C6-01-s50", 1, 2, 0, false, 0, [], { extracted: 0, skipped: 0, superseded: 0, dropped: 0 }],
       ["C6-02-s50", 1, 2, 0, false, 0, [], { extracted: 0, skipped: 0, superseded: 0, dropped: 0 }],
     ]);
+    // The default day (MEASURED_DAY_TURNS mixed, padded to MEASURED_DAY_TURN_TOKENS) is past the consolidator's cap: every night's call sees its oldest 400 turns, the rest is counted, and the run is labelled.
     const day = load("dry-day.json");
-    expect(day.meta.extraction).toMatchObject({ mode: "dry-run", calls: 2, window: "day" });
-    for (const e of day.extraction!) expect(e.turns, e.scenarioId).toBeGreaterThan(60);
+    expect(day.meta.extraction).toMatchObject({ mode: "dry-run", calls: 2, window: "day", day: { turns: MEASURED_DAY_TURNS, mix: "mixed", turnTokens: MEASURED_DAY_TURN_TOKENS } });
+    for (const [i, s] of pick.entries()) {
+      const e = day.extraction![i];
+      const night = nextConsolidationT(s.events.find((x) => x.kind === "standing")!.t);
+      const own = generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT }).filter((f) => nextConsolidationT(f.t) === night).length;
+      expect(e.turns, s.id).toBe(CONSOLIDATOR_TURN_CAP);
+      expect(e.cutTurns, s.id).toBe(2 + MEASURED_DAY_TURNS + 2 * own - CONSOLIDATOR_TURN_CAP);
+    }
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await main(["node", "run.ts", "--leg", "raw", "--sizes", "50", "--classes", "C6", "--corpus", corpusPath, "--out", join(dir, "raw.json")], {})).toBe(0);
     log.mockRestore();
@@ -635,6 +817,48 @@ describe("extracted leg (Port 4, real consolidateAll with a mocked infer)", () =
     const fp = (x: RunResult) => x.probes.map((p) => [p.scenarioId, p.proactive.hit, p.proactive.staleHit, p.proactive.chars]);
     expect(fp(r)).toEqual(fp(raw));
     expect(fp(day)).toEqual(fp(raw));
+  });
+
+  it("--day-turns 120 --day-mix mixed (dry run): the night holds 120 seeded turns drawn with the other scenario's standing fact; meta and report name the settings", async () => {
+    expect(await run(["--dry-run", "--day-turns", "120", "--day-mix", "mixed"], "dry-mixed.json", {})).toBe(0);
+    expect(inferMock).not.toHaveBeenCalled();
+    const r = load("dry-mixed.json");
+    expect(r.meta.extraction).toEqual({ mode: "dry-run", calls: 2, maxModelCalls: 6, model: "claude-haiku-4-5-20251001", window: "day", day: { turns: 120, mix: "mixed", turnTokens: MEASURED_DAY_TURN_TOKENS } });
+    for (const [i, s] of pick.entries()) {
+      const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+      const own = generateFiller(V2.fillerSpec, { seed: s.fillerSeed, size: s.fillerSize, fromT: s.fillerFromT, toT: s.fillerToT }).filter((f) => nextConsolidationT(f.t) === night).length;
+      expect(r.extraction![i].turns, s.id).toBe(2 + 120 + 2 * own);
+    }
+    expect(renderBaseline([r])).toContain(`window ${windowLabel("day")}, day 120 seeded turns mixed padded to 50 tokens: 2 model calls counted, none made`);
+    expect(await run(["--dry-run", "--day-turns", "120", "--day-mix", "smalltalk", "--day-turn-tokens", "0"], "dry-120.json", {})).toBe(0);
+    expect(load("dry-120.json").meta.extraction!.day).toEqual({ turns: 120, mix: "smalltalk" });
+    expect(await run(["--dry-run", "--day-turns", "60", "--day-mix", "smalltalk"], "dry-60-padded.json", {})).toBe(0);
+    expect(load("dry-60-padded.json").meta.extraction!.day).toEqual({ turns: 60, mix: "smalltalk", turnTokens: MEASURED_DAY_TURN_TOKENS });
+    expect(await run(["--dry-run", "--day-turns", "60", "--day-mix", "smalltalk", "--day-turn-tokens", "0"], "dry-archived.json", {})).toBe(0);
+    expect(load("dry-archived.json").meta.extraction!.day).toBeUndefined();
+  });
+
+  it("--run: corpus v2's expectEn list lets the English fact catch a Spanish-needle probe; the same probes without it are not caught (queue 4bo i, ruling B)", async () => {
+    for (const p of pick[0].probes) expect(p.expectEn).toEqual(["bullet"]);
+    for (const p of pick[1].probes) expect(p.expectEn).toEqual(p.expect);
+    inferMock.mockResolvedValue(reply([BULLETS]));
+    expect(await run(["--run", "--window", "clean", "--max-model-calls", "2"], "en.json")).toBe(0);
+    expect(load("en.json").extraction!.map((e) => [e.scenarioId, e.caught])).toEqual([
+      ["C6-01-s50", true],
+      ["C6-02-s50", false],
+    ]);
+    const noEn = join(dir, "corpus-no-en.json");
+    writeFileSync(noEn, JSON.stringify({ ...V2, scenarios: pick.map((s) => ({ ...s, probes: s.probes.map(({ expectEn: _en, ...p }) => p) })) } as Corpus));
+    const silent = [vi.spyOn(console, "log").mockImplementation(() => {}), vi.spyOn(console, "error").mockImplementation(() => {})];
+    try {
+      expect(await main(["node", "run.ts", "--leg", "extracted", "--run", "--window", "clean", "--max-model-calls", "2", "--corpus", noEn, "--out", join(dir, "no-en.json")], PROVIDER)).toBe(0);
+    } finally {
+      for (const x of silent) x.mockRestore();
+    }
+    expect(load("no-en.json").extraction!.map((e) => [e.scenarioId, e.caught])).toEqual([
+      ["C6-01-s50", false],
+      ["C6-02-s50", false],
+    ]);
   });
 
   it("renders the extraction table (PROVISIONAL) and the ideal / extracted gap; main --compare picks it", async () => {

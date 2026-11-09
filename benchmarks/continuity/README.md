@@ -34,7 +34,10 @@ default adds `-<switch-name>-<value>` (e.g. `-memory-open-work-on`).
 the v1 results are frozen. v2 is a new corpus file built on the same filler. It
 adds a gap axis for C3/C4, author cases for C5, a wording label on every probe,
 and paired probes in C2, C6, C7 and C8. Every v2 field is optional, so a v1
-reader still parses v2 and a v1 result still scores.
+reader still parses v2 and a v1 result still scores. `run.ts` reads v2 by
+default on every leg; `--corpus v1` (or `--corpus v2`) names a committed file,
+any other value is a path, so `--corpus v1` reproduces the archived v1
+baseline.
 
 ## What is measured
 
@@ -971,27 +974,87 @@ and copied onto each probe's timeline with their TTL kept.
   correction are five days apart and production consolidates them on
   different nights.
 - **Window.** `--window day` (the default) writes each night's stated turns
-  among 30 ordinary exchanges from the corpus's filler generator (seed fixed
-  per scenario and night, spread over the 24 hours that night consolidates),
+  among seeded ordinary exchanges (`--day-turns` / 2 of them, below; 30 of
+  the corpus's filler generator in the archived window; seed fixed per
+  scenario and night, spread over the 24 hours that night consolidates),
   plus the scenario's own filler dated in that window, in timeline order and
   aged past the 30-minute settle window. An ordinary exchange that holds a
-  probe needle (expect or forbid) stops the run. A night past
-  `CONSOLIDATOR_MAX_TURNS` (400) keeps the stated turns and the newest
-  ordinary ones. `--window clean` writes the stated turns alone and is an
-  upper bound. The window is recorded in `meta.extraction.window`; each
-  scenario's `extraction` entry records `calls`, `turns`, `inserted`, the
-  consolidator's own counts (`consolidator`: extracted, skipped, superseded,
-  dropped), `caught`, `failedCalls` and the `facts` the consolidator left,
-  each with its `category`, `night`, `ttlMs` and `expiresAtT` (corpus
-  seconds; null = permanent).
+  probe needle (expect or forbid) stops the run. `--window clean` writes the
+  stated turns alone and is an upper bound. The window is recorded in
+  `meta.extraction.window`; each scenario's `extraction` entry records
+  `calls`, `turns`, `cutTurns`, `inserted`, the consolidator's own counts
+  (`consolidator`: extracted, skipped, superseded, dropped), `caught`,
+  `failedCalls` and the `facts` the consolidator left, each with its
+  `category`, `night`, `ttlMs` and `expiresAtT` (corpus seconds; null =
+  permanent).
+- **Window limit.** A night's call sees its oldest `CONSOLIDATOR_MAX_TURNS`
+  (400) turns, as `consolidateAll` reads them (`ORDER BY ts ASC, id ASC
+  LIMIT 400`; stated turns are not privileged): the bench writes exactly
+  those and counts the newer ones in `cutTurns`. One divergence is left:
+  production keeps the newer turns for the next night (and prunes them after
+  7 days), while the bench, which makes one call per night that holds a
+  stated turn and simulates no other night, drops them. Until 2026-11-08 the
+  bench kept the stated turns plus the newest ordinary ones instead (audit R1
+  W1). The stated turns sit at 09:00, about 6 h into the 24 h window; the
+  oldest 400 turns of a default night run from 02:45 to about 10:30, so they
+  hold them (every C2 / C6 / C8 night at size 50). A day large enough to push
+  the oldest 400 before 09:00 (about 1,500 seeded turns) would cut the stated
+  turns too: `cutTurns` counts turns, not which ones.
+- **Day size, mix and turn length (`--window day` only).** `--day-turns <n>`
+  (an even integer) is the seeded ordinary turns per night, `--day-mix` what
+  they are and `--day-turn-tokens <n>` (0 to 120) the tokens each seeded
+  turn is padded to. The defaults are calibrated from the live ledger
+  (MEASURED 2026-11-08, queue 4bo(h)): 30 nightly consolidator calls
+  (`agent_type` `sdk:unattributed`, model `claude-haiku-4-5-20251001`) had a
+  median input of 20,951 tokens, about 19,951 of transcript after the
+  ~1,000-token prompt.
+  - `MEASURED_DAY_TURNS` = 1190: 19,951 / 16.77 tokens per unpadded `mixed`
+    turn (rendered chars / 4). The call sees only 400 of them (Window
+    limit), oldest first, so this count sets how much of the day is cut,
+    not the load.
+  - `MEASURED_DAY_TURN_TOKENS` = 50: 19,951 / 400 = 49.9 (operator ruling
+    A). Each seeded turn (filler and pool items, not the stated turns or the
+    scenario's own filler) is padded with whole sentences of the corpus
+    filler: the templates of the turn's language (a pool item's from its
+    scenario, generator filler's from its text) and role, slots from the
+    filler vocabulary, in a seeded order, each at most once per turn,
+    stopping nearest the target (adapter `padTurn`). A default night's call
+    then carries about 21k input tokens (pinned by a test within 5 % of the
+    median). Jarvis turns are cut at 500 characters in the transcript, hence
+    the 120 ceiling; padding never grows a Jarvis turn past 500.
+  - `--day-turns 60 --day-mix smalltalk --day-turn-tokens 0` reproduces the
+    archived results (`DAY_TURNS_ARCHIVED`, no padding).
+
+  `mixed` seeds `DAY_MIX_SHARES` (40 % work, 10 % durable facts, an
+  assumption) from the corpus, the rest filler. Work = every exchange of a
+  session before its `session_end`, plus that `session_end` (32 distinct
+  exchanges: the C3/C4 task threads; the corpus has no tool output, and
+  `jme_turns` holds only the final reply). Facts = the standing and durable
+  `person_fact` renderings of every scenario. Pool items are drawn without
+  replacement: a pool smaller than its share gives each item once a night
+  and the filler makes up the rest (the filler itself can repeat a sentence
+  by chance). A pool item holding one of the scenario's probe needles is left
+  out, and so is a fact sharing a content token with the scenario's probed
+  events (see Limit 3). The draws are deterministic for a seed and a pool;
+  the pool follows the corpus order, so editing the corpus moves them. Any
+  day setting other than the archived one is recorded in
+  `meta.extraction.day` and named in the output file
+  (`-c6-day-t1190-mixed-p50`) and in the report lines.
 - **Prompt date.** The consolidator's prompt carries "today"; the leg passes
   each consolidation night's date (as the last probe sees it) through
   `consolidateAll({ today })`, so relative dates resolve on the timeline.
   Production passes nothing and keeps the real date.
 - **`caught` (lexical, live at probe)** = every probe of the scenario has an
   extracted fact live at the probe's time that holds all its expect needles
-  (folded substring, as the scorer). It says nothing about whether recall
-  surfaces that fact.
+  (folded substring, as the scorer), or all of the probe's optional
+  `expectEn` needles (an English rendering of `expect`, matched with accents
+  and case folded on both sides). v2 carries `expectEn` on each of its 1,404
+  probes with an expect needle (operator ruling B; C7's 36 have none): a
+  Spanish scenario's needle through `EXPECT_EN_ES` in `corpus-v2.ts` (names
+  as they are, figures in English separators without their unit, dates
+  month first, phrases by the words a rendering shares), an English one's
+  as it is. v1 carries none. Hit / stale never read it. It says nothing
+  about whether recall surfaces that fact.
 - **`surfaced n/N`** (compare page) = probes of a row whose JME recall layers
   (`jme`, `jme_query`) returned at least one item on that surface.
 
@@ -1000,12 +1063,27 @@ and copied onto each probe's timeline with their TTL kept.
 1. **English facts, Spanish needles.** The consolidator writes facts in
    English while many corpus needles are Spanish, so `caught` and hit %
    understate what was extracted. The per-scenario `facts` are in the JSON
-   for a human read.
+   for a human read. v2's `expectEn` lists lift `caught` (not hit %); the
+   archived C6 runs recompute from 3 / 6 to 6 / 6 with them (C6-01, C6-03,
+   C6-05). The C2 + C8 run is stored 6 / 20 (live at probe: C8 facts expired
+   before it); without liveness (that file stores bare fact strings) it
+   recomputes 14 → 16 (C8-01, C8-01-sn). The stored `caught` of those files
+   is left as it was computed. Known looseness: a short anchor such as
+   "direct" or a bare figure can match a fact that states something else, and
+   "B negative" is a substring of "AB negative", so a C8-01-sn fact naming
+   the rival blood type would also count.
 2. **Embeddings off.** There is no cosine supersede, so in C2 the old and the
    new value both stay live, and part of the ideal → extracted stale-hit gap
    is the harness, not the extractor.
 3. **Window.** `clean` is an upper bound (the stated turns alone); `day` is
-   seeded ordinary exchanges, not the operator's real day.
+   seeded ordinary exchanges, not the operator's real day. Its input is
+   calibrated to the measured median (400 turns padded to 50 tokens), but the
+   padding is filler sentences, its mix is an assumption, and the facts it
+   seeds are other scenarios' answer keys: a fact sharing a content token
+   (wording.ts `contentTokens`) with the scenario's probed events (those
+   holding an expect or forbid needle) is left out, so a day never states a
+   rival value of a probed attribute (C2 / C8 attributes, the AB / B negative
+   blood-type pair, the two birthdays).
 
 The `--report` extraction table and the `--compare ideal,extracted` page
 print these three limits under their headings, and every heading carries
@@ -1026,8 +1104,11 @@ PROVISIONAL until an audit has read the result JSON.
 | `--window` on another leg | refused by the argument parser |
 
 Defaults for this leg: `--classes C6`, `--sizes 50`, `--window day`,
-`--corpus benchmarks/continuity/corpus-v2.json`, and `--out` named after the
-classes and the window (`jarvis-<sha>-extracted-emb-off-v2-c6-day.json`).
+`--day-turns 1190 --day-mix mixed --day-turn-tokens 50`, `--corpus v2`, and
+`--out` named after the classes, the window and the day settings
+(`jarvis-<sha>-extracted-emb-off-v2-c6-day-t1190-mixed-p50.json`; the
+archived `-c6-day` name with `--day-turns 60 --day-mix smalltalk
+--day-turn-tokens 0`).
 
 ### Cost
 
@@ -1039,7 +1120,12 @@ short turns (about 1,000 tokens in all), `day` adds about 4,150 to 4,560
 characters of ordinary exchanges per night (C2 / C6 / C8 at size 50, about
 1,300 tokens more). Typical assumes a short JSON reply; ceiling assumes the
 full 1,024-token output. With subscription credentials the calls draw on
-the plan's quota instead.
+the plan's quota instead. The table is the archived 60-turn window; another
+day setting scales the day − clean increment per call linearly in seeded
+tokens: at most the 400 turns a call can see, at `--day-turn-tokens` each
+(17 unpadded, measured), against the archived 60 × 17 (an estimate; the
+default is about $0.031 typical / $0.032 ceiling a call). The refusal names
+the per-call price of the configured day setting.
 
 | Window | Calls | Typical | Ceiling | Worst case (2× billed) |
 | --- | ---: | ---: | ---: | ---: |

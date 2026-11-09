@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getDatabase } from "../../src/db/index.js";
+import { CONSOLIDATOR_JARVIS_TURN_MAX_CHARS } from "../../src/memory/jme.js";
 import {
   JARVIS_MARKERS,
   JME_HEADER,
@@ -29,10 +30,15 @@ import {
   splitMemorySearch,
   sqliteUtc,
   DAY_WINDOW_EXCHANGES,
+  DAY_MIX_SHARES,
+  dayPool,
   dayWindowExchanges,
+  factCatches,
+  foldAccents,
+  padTurn,
 } from "./adapter-jarvis.js";
 import { buildCorpusV2 } from "./corpus-v2.js";
-import { FILLER_SPEC_V1, generateFiller } from "./filler.js";
+import { FILLER_SPEC_V1, fill, generateFiller, xorshift32 } from "./filler.js";
 import { scoreProbe, scoreProbeWith } from "./score.js";
 import type { ProbeRun, Scenario } from "./types.js";
 
@@ -565,7 +571,239 @@ describe("dayWindowExchanges (extracted leg, --window day)", () => {
     expect(() => dayWindowExchanges({ ...s, probes: expectProbes }, V2.fillerSpec, night, [])).toThrow(/probe needle/);
   });
 
-  it("a night past CONSOLIDATOR_MAX_TURNS keeps the stated turns and the newest ordinary ones: 400 turns (dry run, 300 filler items in one night)", async () => {
+  it("the default day spec is the archived window: DAY_WINDOW_EXCHANGES of filler small talk, the same items as an explicit 60-turn smalltalk spec", () => {
+    const s = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+    const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+    const filler = fillerOf(s);
+    const seed = (s.fillerSeed ^ 0x6a09e667 ^ Math.imul(night, 0x85ebca6b)) >>> 0;
+    const archived = generateFiller(V2.fillerSpec, { seed, size: DAY_WINDOW_EXCHANGES, fromT: night - 86_400, toT: night - 30 * 60 });
+    const own = filler.filter((f) => nextConsolidationT(f.t) === night);
+    expect(dayWindowExchanges(s, V2.fillerSpec, night, filler)).toEqual([...archived, ...own]);
+    expect(dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 60, mix: "smalltalk" })).toEqual([...archived, ...own]);
+    expect(dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix: "smalltalk" }).length).toBe(60 + own.length);
+    expect(dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 0, mix: "smalltalk" })).toEqual(own);
+    for (const turns of [7, -2, 1.5]) expect(() => dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns, mix: "smalltalk" }), String(turns)).toThrow(/non-negative even integer/);
+    expect(() => dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 60, mix: "mixed" })).toThrow(/needs the corpus pool/);
+  });
+
+  it("dayPool: work = a session's exchanges before its session_end plus that session_end; facts = standing + durable person_fact; deduplicated", () => {
+    const pool = dayPool(V2.scenarios);
+    const has = (items: Array<{ user: string; assistant: string }>, user: string) => items.some((x) => x.user === user);
+    expect(has(pool.work, "Vamos a avanzar con el informe trimestral de Valdoria.")).toBe(true);
+    expect(has(pool.work, "Ok, lo dejamos aquí por hoy.")).toBe(true);
+    expect(pool.work.length).toBe(32);
+    // A C4 gap row (same session id, after the session_end) is not work.
+    const c4gap = V2.scenarios.find((x) => x.id === "C4-02-r5-s50")!.events.find((e) => e.kind === "exchange" && e.t > 32_640)!;
+    expect(c4gap.kind === "exchange" && has(pool.work, c4gap.user)).toBe(false);
+    // A gap row (filler-generated exchange after the session ended) is not work.
+    const gap = V2.scenarios.find((x) => x.id === "C3-01-ho15-s50")!.events.find((e) => e.kind === "exchange" && e.session === "d5")!;
+    expect(gap.kind === "exchange" && has(pool.work, gap.user)).toBe(false);
+    expect(has(pool.facts, "From now on, always give me temperatures in Celsius.")).toBe(true);
+    expect(has(pool.facts, "Mi tipo de sangre es AB negativo.")).toBe(true);
+    expect(has(pool.facts, "Esta semana nada más estoy trabajando desde Cuernavaca.")).toBe(false); // not durable
+    expect(has(pool.facts, "Ojo, el comité recortó el monto: ahora es de 2.960.400 pesos.")).toBe(false); // a correction
+    for (const items of [pool.work, pool.facts]) expect(new Set(items.map((x) => `${x.user}\t${x.assistant}`)).size).toBe(items.length);
+    const distinct = new Set(V2.scenarios.flatMap((x) => x.events.flatMap((e) => (e.kind === "standing" || (e.kind === "person_fact" && e.durable) ? [`${e.asUser}\t${e.asAssistant}`] : []))));
+    expect(pool.facts.length).toBe(distinct.size);
+    expect(pool.facts.length).toBe(26);
+  });
+
+  it("mixed: turns / 2 seeded exchanges, DAY_MIX_SHARES from the pools (no probe needle), the rest filler; in the night, deterministic, per night", () => {
+    const pool = dayPool(V2.scenarios);
+    const workKeys = new Set(pool.work.map((x) => `${x.user}\t${x.assistant}`));
+    const factKeys = new Set(pool.facts.map((x) => `${x.user}\t${x.assistant}`));
+    let nights = 0;
+    for (const s of V2.scenarios.filter((x) => ["C2", "C6", "C8"].includes(x.class) && x.fillerSize === 50)) {
+      const filler = fillerOf(s);
+      const needles = s.probes.flatMap((p) => [...p.expect, ...p.forbid]).map((n) => n.toLowerCase());
+      for (const night of new Set(s.events.filter((e) => STATED.has(e.kind)).map((e) => nextConsolidationT(e.t)))) {
+        const own = filler.filter((f) => nextConsolidationT(f.t) === night).length;
+        const items = dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix: "mixed", pool });
+        expect(items.length, s.id).toBe(60 + own);
+        const seeded = items.slice(0, 60);
+        const work = seeded.filter((x) => workKeys.has(`${x.user}\t${x.assistant}`)).length;
+        const facts = seeded.filter((x) => factKeys.has(`${x.user}\t${x.assistant}`)).length;
+        expect(work, s.id).toBe(Math.round(60 * DAY_MIX_SHARES.work));
+        expect(facts, s.id).toBe(Math.round(60 * DAY_MIX_SHARES.facts));
+        for (const x of items) {
+          expect(nextConsolidationT(x.t), s.id).toBe(night);
+          for (const n of needles) expect(`${x.user}\n${x.assistant}`.toLowerCase().includes(n), `${s.id}: ${n}`).toBe(false);
+        }
+        expect(dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix: "mixed", pool })).toEqual(items);
+        expect(dayWindowExchanges(s, V2.fillerSpec, night + 86_400, filler, { turns: 120, mix: "mixed", pool }).slice(0, 5)).not.toEqual(items.slice(0, 5));
+        nights++;
+      }
+    }
+    expect(nights).toBe(6 + 2 * 9 + 11);
+  });
+
+  it("mixed leaves out a pool item that holds one of the scenario's probe needles (instead of throwing)", () => {
+    const s = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+    const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+    const needle = s.probes[0].expect[0];
+    const pool = { work: [{ user: `Hoy hablamos de ${needle} otra vez.`, assistant: "Va.", lang: "es" as const }], facts: [{ user: `Me gusta ${needle}.`, assistant: "Anotado.", lang: "es" as const }] };
+    const items = dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: 60, mix: "mixed", pool });
+    expect(items.length).toBe(30);
+    expect(items.some((x) => x.assistant === "Va." || x.assistant === "Anotado.")).toBe(false);
+  });
+
+  it("DAY_MIX_SHARES is the documented assumption, literally (audit R1 R2)", () => {
+    expect(DAY_MIX_SHARES).toEqual({ work: 0.4, facts: 0.1 });
+  });
+
+  it("mixed draws each pool item at most once per night (audit R1 W2): a day larger than the pools gives every eligible item once and fills the rest", () => {
+    const pool = dayPool(V2.scenarios);
+    const s = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+    const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+    const items = dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: 1190, mix: "mixed", pool });
+    expect(items.length).toBe(595);
+    const key = (x: { user: string; assistant: string }) => `${x.user}\t${x.assistant}`;
+    const poolKeys = new Set([...pool.work, ...pool.facts].map(key));
+    const drawn = items.filter((x) => poolKeys.has(key(x)));
+    expect(new Set(drawn.map(key)).size).toBe(drawn.length);
+    expect(items.filter((x) => pool.work.some((w) => key(w) === key(x))).length).toBe(pool.work.length);
+  });
+
+  it("mixed leaves out of the facts pool every fact sharing a content token with the scenario's probed events (audit R1 W3): no rival blood type, no rival birthday", () => {
+    const pool = dayPool(V2.scenarios);
+    const drawnFacts = (id: string) => {
+      const s = V2.scenarios.find((x) => x.id === id)!;
+      const out = new Set<string>();
+      for (const night of new Set(s.events.filter((e) => STATED.has(e.kind)).map((e) => nextConsolidationT(e.t))))
+        for (const x of dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: 1190, mix: "mixed", pool })) if (pool.facts.some((f) => f.user === x.user)) out.add(x.user);
+      return out;
+    };
+    const c801 = drawnFacts("C8-01-s50");
+    expect(c801.has("Mi tipo de sangre es B negativo.")).toBe(false);
+    expect(c801.has("Mi tipo de sangre es AB negativo.")).toBe(false);
+    expect(c801.size).toBeGreaterThan(0);
+    expect(drawnFacts("C8-01-sn-s50").has("Mi tipo de sangre es AB negativo.")).toBe(false);
+    expect(drawnFacts("C8-06-s50").has("My son's birthday is July 9.")).toBe(false);
+    // Unrelated facts still come: C6-01 (short bullet replies) draws the blood types.
+    expect(drawnFacts("C6-01-s50").has("Mi tipo de sangre es B negativo.")).toBe(true);
+  });
+
+  it("padTurn: whole filler sentences of the turn's language and role, none twice, to about the target; 0 or a long turn unchanged", () => {
+    const next = xorshift32(7);
+    expect(padTurn("Hola.", "user", 0, V2.fillerSpec, next, "es")).toBe("Hola.");
+    expect(padTurn("", "user", 50, V2.fillerSpec, next, "es")).toBe("");
+    const long = "x".repeat(400);
+    expect(padTurn(long, "assistant", 50, V2.fillerSpec, next, "en")).toBe(long);
+    // The language test sorts every filler sentence the way it was generated.
+    const es = /[¿¡áéíóúñ]|\b(?:el|la|los|las|de|del|que|mi|es|un|una|para|por|con)\b/i;
+    const g = xorshift32(11);
+    for (const lang of ["es", "en"] as const)
+      for (const role of ["user", "assistant"] as const)
+        for (const tpl of V2.fillerSpec.templates[lang][role]) for (let k = 0; k < 20; k++) expect(es.test(fill(tpl, V2.fillerSpec.vocab[lang], g)), `${lang} ${tpl}`).toBe(lang === "es");
+    const esc = (x: string) => x.replace(/[.*+?^$()|[\]\\]/g, "\\$&");
+    const sentences = (lang: "es" | "en", role: "user" | "assistant") => V2.fillerSpec.templates[lang][role].map((t) => new RegExp(`^${t.split(/\{\w+\}/).map(esc).join(".+?")}$`, "u"));
+    const items = generateFiller(V2.fillerSpec, { seed: 3, size: 400, fromT: 0, toT: 86_400 });
+    let chars = 0;
+    for (const x of items) {
+      for (const [role, text, label] of [["user", x.user, "Fede: "], ["assistant", x.assistant, "Jarvis: "]] as const) {
+        const lang = es.test(text) ? "es" : "en";
+        const padded = padTurn(text, role, 50, V2.fillerSpec, next, lang);
+        expect(padded.startsWith(text)).toBe(true);
+        const added = padded.slice(text.length).trim();
+        expect(added.length).toBeGreaterThan(0);
+        chars += (label + padded).length;
+        // Split where a template of that language and role starts (its text before the first slot).
+        const starts = V2.fillerSpec.templates[lang][role].map((t) => t.split("{")[0]);
+        const cuts = [...added].flatMap((_c, i) => ((i === 0 || added[i - 1] === " ") && starts.some((st) => added.startsWith(st, i)) ? [i] : []));
+        const parts = cuts.map((c, k) => added.slice(c, cuts[k + 1]).trim());
+        expect(cuts[0]).toBe(0);
+        for (const part of parts) expect(sentences(lang, role).some((re) => re.test(part)), part).toBe(true);
+        expect(new Set(parts).size).toBe(parts.length);
+        expect(parts.includes(text)).toBe(false);
+      }
+    }
+    const tpt = chars / (2 * items.length) / 4;
+    expect(tpt).toBeGreaterThan(47);
+    expect(tpt).toBeLessThan(53);
+  });
+
+  it("every pool item is padded in its source scenario's language, short Spanish replies included (audit R2 W1); padding never grows a Jarvis turn past CONSOLIDATOR_JARVIS_TURN_MAX_CHARS (R4)", () => {
+    const pool = dayPool(V2.scenarios);
+    const langsOf = new Map<string, Set<string>>();
+    for (const sc of V2.scenarios) for (const x of [...dayPool([sc]).work, ...dayPool([sc]).facts]) langsOf.set(`${x.user}\t${x.assistant}`, (langsOf.get(`${x.user}\t${x.assistant}`) ?? new Set()).add(sc.lang));
+    const items = [...pool.work, ...pool.facts];
+    for (const x of items) expect([...langsOf.get(`${x.user}\t${x.assistant}`)!], x.user).toEqual([x.lang]);
+    expect(items.some((x) => x.assistant === "Anotado." && x.lang === "es")).toBe(true);
+    const esc = (x: string) => x.replace(/[.*+?^$()|[\]\\]/g, "\\$&");
+    const sentences = (lang: "es" | "en", role: "user" | "assistant") => V2.fillerSpec.templates[lang][role].map((t) => new RegExp(`^${t.split(/\{\w+\}/).map(esc).join(".+?")}$`, "u"));
+    const next = xorshift32(5);
+    let padded = 0;
+    for (const x of items)
+      for (const [role, text] of [["user", x.user], ["assistant", x.assistant]] as const) {
+        if (!text) continue;
+        const out = padTurn(text, role, 50, V2.fillerSpec, next, x.lang);
+        const added = out.slice(text.length).trim();
+        if (!added) continue;
+        padded++;
+        const starts = V2.fillerSpec.templates[x.lang][role].map((t) => t.split("{")[0]);
+        const cuts = [...added].flatMap((_c, i) => ((i === 0 || added[i - 1] === " ") && starts.some((st) => added.startsWith(st, i)) ? [i] : []));
+        expect(cuts[0], `${x.lang} ${text}`).toBe(0);
+        for (const [k, c] of cuts.entries()) {
+          const part = added.slice(c, cuts[k + 1]).trim();
+          expect(sentences(x.lang, role).some((re) => re.test(part)), `${x.lang} ${text}: ${part}`).toBe(true);
+        }
+      }
+    expect(padded).toBeGreaterThan(items.length);
+    // The same through dayWindowExchanges: a drawn pool item is padded in its own language, whatever its text looks like.
+    const byKey = new Map(items.map((x) => [`${x.user}\t${x.assistant}`, x]));
+    const inLang = (added: string, lang: "es" | "en", role: "user" | "assistant") => {
+      const starts = V2.fillerSpec.templates[lang][role].map((t) => t.split("{")[0]);
+      const cuts = [...added].flatMap((_c, i) => ((i === 0 || added[i - 1] === " ") && starts.some((st) => added.startsWith(st, i)) ? [i] : []));
+      return cuts[0] === 0 && cuts.every((c, k) => sentences(lang, role).some((re) => re.test(added.slice(c, cuts[k + 1]).trim())));
+    };
+    let checked = 0;
+    let short = 0;
+    for (const s of V2.scenarios.filter((x) => x.fillerSize === 50 && ["C2", "C6", "C8"].includes(x.class))) {
+      const night = nextConsolidationT(s.events.find((e) => e.kind === "standing" || e.kind === "person_fact")!.t);
+      const plain = dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: 400, mix: "mixed", pool });
+      const pad = dayWindowExchanges(s, V2.fillerSpec, night, [], { turns: 400, mix: "mixed", pool, turnTokens: 50 });
+      for (const [k, x] of plain.entries()) {
+        const item = byKey.get(`${x.user}\t${x.assistant}`);
+        if (!item) continue;
+        for (const role of ["user", "assistant"] as const) {
+          const added = pad[k][role].slice(x[role].length).trim();
+          if (!added) continue;
+          checked++;
+          if (role === "assistant" && x.assistant.length < 40 && item.lang === "es") short++;
+          expect(inLang(added, item.lang, role), `${s.id} ${item.lang} ${x[role]}`).toBe(true);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(1000);
+    expect(short).toBeGreaterThan(0);
+    const g = xorshift32(9);
+    // 120 = run.ts DAY_TURN_TOKENS_MAX; 200 aims past the cut, so only the cap holds the turn under it.
+    for (const tokens of [120, 200])
+      for (const x of generateFiller(V2.fillerSpec, { seed: 4, size: 300, fromT: 0, toT: 86_400 }))
+        for (const lang of ["es", "en"] as const) expect(padTurn(x.assistant, "assistant", tokens, V2.fillerSpec, g, lang).length).toBeLessThanOrEqual(CONSOLIDATOR_JARVIS_TURN_MAX_CHARS);
+  });
+
+  it("padding leaves the unpadded draws in place: turnTokens 0 is the unpadded day, item for item; padded turns keep their text as a prefix and the scenario's own filler is not padded", () => {
+    const pool = dayPool(V2.scenarios);
+    const s = V2.scenarios.find((x) => x.id === "C6-01-s50")!;
+    const night = nextConsolidationT(s.events.find((e) => e.kind === "standing")!.t);
+    const filler = fillerOf(s);
+    for (const mix of ["smalltalk", "mixed"] as const) {
+      const plain = dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix, pool });
+      expect(dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix, pool, turnTokens: 0 })).toEqual(plain);
+      const padded = dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 120, mix, pool, turnTokens: 50 });
+      expect(padded.length).toBe(plain.length);
+      for (const [i, x] of padded.entries()) {
+        expect(x.t).toBe(plain[i].t);
+        expect(x.user.startsWith(plain[i].user) && x.assistant.startsWith(plain[i].assistant)).toBe(true);
+      }
+      expect(padded.slice(60)).toEqual(plain.slice(60));
+      expect(padded.slice(0, 60).filter((x, i) => x.user !== plain[i].user).length).toBeGreaterThan(50);
+    }
+    for (const turnTokens of [-1, 2.5]) expect(() => dayWindowExchanges(s, V2.fillerSpec, night, filler, { turns: 60, mix: "smalltalk", turnTokens }), String(turnTokens)).toThrow(/turnTokens must be/);
+  });
+
+  it("a night past CONSOLIDATOR_MAX_TURNS writes its oldest 400 turns, as consolidateAll reads them, and counts the rest in cutTurns (dry run, 300 filler items in one night)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cb-day-"));
     const adapter = new JarvisAdapter(scratchDbPath(dir), "extracted", { extraction: { budget: new ModelCallBudget(Number.POSITIVE_INFINITY), dryRun: true, window: "day" } });
     adapter.open();
@@ -575,10 +813,27 @@ describe("dayWindowExchanges (extracted leg, --window day)", () => {
       const s: Scenario = { ...base, fillerSize: 300, fillerFromT: night - 86_400, fillerToT: night - 1800 };
       expect(dayWindowExchanges(s, V2.fillerSpec, night, fillerOf(s)).length * 2 + 2).toBe(2 + 2 * (DAY_WINDOW_EXCHANGES + 300));
       await adapter.runScenario(s, V2.fillerSpec);
-      expect(adapter.extractions[0]).toMatchObject({ scenarioId: "C6-01-s50", calls: 1, turns: 400, inserted: 0 });
+      expect(adapter.extractions[0]).toMatchObject({ scenarioId: "C6-01-s50", calls: 1, turns: 400, cutTurns: 2 + 2 * (DAY_WINDOW_EXCHANGES + 300) - 400, inserted: 0 });
     } finally {
       adapter.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("factCatches (extracted leg `caught`, queue 4bo i)", () => {
+  it("without expectEn it is the scorer's expect match alone", () => {
+    expect(factCatches("Fede quiere viñetas cortas.", { expect: ["viñetas"] })).toBe(true);
+    expect(factCatches("Fede wants short bullet points.", { expect: ["viñetas"] })).toBe(false);
+    expect(factCatches("Fede wants short bullet points.", { expect: ["viñetas"], expectEn: [] })).toBe(false);
+  });
+
+  it("an English needle list catches the English fact, accents and case folded on both sides; every needle of a list must hold", () => {
+    const p = { expect: ["viñetas", "párrafos"], expectEn: ["bullet", "paragraph"] };
+    expect(factCatches("Fede prefers short BULLET points over long paragraphs.", p)).toBe(true);
+    expect(factCatches("Fede prefers short bullet points.", p)).toBe(false);
+    expect(factCatches("Fede quiere viñetas, nunca párrafos.", p)).toBe(true);
+    expect(factCatches("Fede's daughter goes to Colegio Tamarindos in Zacatlan.", { expect: ["Zacatlán"], expectEn: ["zacatlán"] })).toBe(true);
+    expect(foldAccents("Ñandú ÁÉÍÓÚ")).toBe("nandu aeiou");
   });
 });

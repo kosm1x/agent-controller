@@ -102,7 +102,7 @@ export function xorshift32(seed: number): () => number {
   };
 }
 
-function fill(template: string, slots: Record<string, string[]>, next: () => number): string {
+export function fill(template: string, slots: Record<string, string[]>, next: () => number): string {
   return template.replace(/\{(\w+)\}/g, (_m, slot: string) => {
     if (slot === "n") return String(2 + (next() % 18));
     const options = slots[slot];

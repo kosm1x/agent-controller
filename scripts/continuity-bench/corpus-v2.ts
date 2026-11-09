@@ -772,6 +772,61 @@ function draftsV2(): DraftV2[] {
   return out;
 }
 
+/**
+ * Ruling B (queue 4bo i, 2026-11-08): the English rendering of each Spanish
+ * scenario's expect needle, as the consolidator writes facts in English
+ * (read only by the extracted leg's `caught`, adapter factCatches). Names
+ * stay as they are; figures take the English separators (3.847.215 →
+ * 3,847,215; 23,6 → 23.6; 5,20 → 5.2, which also matches 5.20) and lose their
+ * unit (kilos / kg, miligramos / mg, personas / people vary); a date reads
+ * month first; a phrase keeps the words a rendering of it shares (checked
+ * against the archived 62edad61 / 7610bb8e extracted facts for C2 / C6 / C8:
+ * "short bullet points", "before 10:00 AM", "direct ... when discussing
+ * health"). An English scenario's needle is its own rendering.
+ */
+export const EXPECT_EN_ES: Readonly<Record<string, string[]>> = {
+  Corvalino: ["Corvalino"],
+  "3.847.215": ["3,847,215"],
+  Arrayanes: ["Arrayanes"],
+  "2.960.400": ["2,960,400"],
+  Tamarindos: ["Tamarindos"],
+  "Casa Nopalera": ["Casa Nopalera"],
+  "4.120.000": ["4,120,000"],
+  "monto nuevo": ["new amount"],
+  Monterrey: ["Monterrey"],
+  "anexo de proveedores": ["supplier annex"],
+  "boletos de regreso": ["return tickets"],
+  "segundo semestre": ["second semester"],
+  "18.450": ["18,450"],
+  "135 personas": ["135"],
+  "23,6 kilos": ["23.6"],
+  "14.780": ["14,780"],
+  "850 miligramos": ["850"],
+  "17 de marzo": ["March 17"],
+  "6:35": ["6:35"],
+  "5,20 metros": ["5.2"],
+  viñetas: ["bullet"],
+  "diez de la mañana": ["before 10"],
+  "sin rodeos": ["direct"],
+  "AB negativo": ["AB negative"],
+  vegetarian: ["vegetarian"],
+  "44-9182": ["44-9182"],
+  "6614": ["6614"],
+  "B negativo": ["B negative"],
+  "77-3051": ["77-3051"],
+};
+
+/** `expectEn` of one probe: none without an expect needle (C7); a Spanish scenario's needles through EXPECT_EN_ES (a needle missing from it throws), an English one's as they are. */
+export function expectEnFor(lang: "es" | "en", expect: readonly string[]): string[] | undefined {
+  if (expect.length === 0) return undefined;
+  if (lang === "en") return [...expect];
+  return expect.flatMap((n) => {
+    const en = EXPECT_EN_ES[n];
+    if (!en) throw new Error(`corpus v2: no English rendering of the needle "${n}" (EXPECT_EN_ES)`);
+    return en;
+  });
+}
+
 export function buildCorpusV2(version = CORPUS_VERSION_V2): Corpus {
   const scenarios: Scenario[] = [];
   for (const size of FILLER_SIZES) {
@@ -782,7 +837,10 @@ export function buildCorpusV2(version = CORPUS_VERSION_V2): Corpus {
         id: `${d.class}-${String(d.base).padStart(2, "0")}${tag ? `-${tag}` : ""}-s${size}`,
         fillerSize: size,
         fillerSeed: fillerSeedFor(d.class, d.base),
-        probes: d.probes.map((p) => ({ ...p, wording: wordingOf(d.events, p) })),
+        probes: d.probes.map((p) => {
+          const expectEn = expectEnFor(d.lang, p.expect);
+          return { ...p, wording: wordingOf(d.events, p), ...(expectEn ? { expectEn } : {}) };
+        }),
       };
       // Stable key order: the v1 keys first, then the v2 ones.
       scenarios.push({

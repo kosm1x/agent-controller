@@ -73,6 +73,7 @@ import { clearEssentialsCache, getEssentialFacts } from "../../src/memory/essent
 import { embed, serializeEmbedding } from "../../src/memory/embeddings.js";
 import { resetMemoryService } from "../../src/memory/index.js";
 import {
+  CONSOLIDATOR_JARVIS_TURN_MAX_CHARS,
   CONSOLIDATOR_MAX_TURNS,
   CONSOLIDATOR_MIN_TURN_AGE_MS,
   consolidateAll,
@@ -94,7 +95,7 @@ import { CORE_TOOLS } from "../../src/messaging/scope.js";
 import { memorySearchTool } from "../../src/tools/builtin/memory.js";
 import { userFactSetTool } from "../../src/tools/builtin/user-facts.js";
 import { scrubSecrets } from "../../src/lib/secret-refs.js";
-import { generateFiller } from "./filler.js";
+import { fill, generateFiller, xorshift32 } from "./filler.js";
 import { contains, type AuthorMarkerSpec } from "./score.js";
 import type {
   CorpusEvent,
@@ -107,6 +108,7 @@ import type {
   SurfaceComponent,
   SurfaceResult,
 } from "./types.js";
+import { contentTokens, targetEvents } from "./wording.js";
 
 export type Leg = "raw" | "ideal" | "extracted";
 
@@ -307,13 +309,14 @@ export interface AdapterOptions {
   /** Production switches for this process (resolveSwitches; absent = all defaults). */
   switches?: Readonly<Record<string, string>>;
   /** `extracted` leg: the model-call budget, whether to stop short of the call, and the turn window. */
-  extraction?: { budget: ModelCallBudget; dryRun: boolean; window: ExtractionWindow };
+  extraction?: { budget: ModelCallBudget; dryRun: boolean; window: ExtractionWindow; day?: DaySpec };
 }
 
 /**
  * What else a consolidation night's window holds besides the stated-fact
- * turns: `clean` nothing (an upper bound), `day` DAY_WINDOW_EXCHANGES seeded
- * ordinary exchanges plus the scenario's own filler dated in that window.
+ * turns: `clean` nothing (an upper bound), `day` seeded ordinary exchanges
+ * (DaySpec; default DAY_WINDOW_EXCHANGES of small talk) plus the scenario's
+ * own filler dated in that window.
  */
 export type ExtractionWindow = "clean" | "day";
 
@@ -321,15 +324,193 @@ export type ExtractionWindow = "clean" | "day";
 export const DAY_WINDOW_EXCHANGES = 30;
 
 /**
- * `day` window, one consolidation night: DAY_WINDOW_EXCHANGES ordinary
- * exchanges from the corpus's filler generator (seed fixed per scenario and
- * night) spread over the 24 h that night consolidates, plus the scenario's
- * filler items dated in that window. Throws when one holds a probe needle
- * (expect or forbid): an ordinary turn must not hand the extractor the answer.
+ * What the seeded ordinary turns are: `smalltalk` (the default, the archived
+ * results) = the filler generator only; `mixed` = DAY_MIX_SHARES of corpus
+ * work-session turns and durable facts from other scenarios, the rest filler.
  */
-export function dayWindowExchanges(s: Scenario, spec: FillerSpec, night: number, filler: readonly FillerItem[]): FillerItem[] {
+export type DayMix = "smalltalk" | "mixed";
+
+/**
+ * `mixed`: the share of the seeded exchanges drawn from each corpus pool (the
+ * rest is filler small talk). An assumption, not a measurement: the ledger
+ * gives the window's size, not its composition.
+ */
+export const DAY_MIX_SHARES = { work: 0.4, facts: 0.1 } as const;
+
+/** One exchange a `mixed` day can draw (no timestamp: the window assigns it), in its source scenario's language (padTurn pads it in that language). */
+export interface DayPoolItem {
+  user: string;
+  assistant: string;
+  lang: "es" | "en";
+}
+
+/**
+ * The corpus turns a `mixed` day draws from. work = every exchange of a
+ * session before its session_end, plus the session_end's own rendering
+ * (C3/C4 task threads and their later sessions: the corpus's Jarvis-does-work
+ * turns; it holds no tool output, and jme_turns stores only the final reply,
+ * router.ts writeEpisodic); facts = standing and durable person_fact
+ * renderings. Deduplicated, in corpus order.
+ */
+export interface DayPool {
+  work: DayPoolItem[];
+  facts: DayPoolItem[];
+}
+
+/**
+ * The `day` window's seeded part: how many ordinary turns (run.ts
+ * `--day-turns`), drawn from what (`--day-mix`; pool required for `mixed`),
+ * and the tokens each seeded turn is padded to (`--day-turn-tokens`, see
+ * padTurn; absent or 0 = no padding, the archived turns).
+ */
+export interface DaySpec {
+  turns: number;
+  mix: DayMix;
+  pool?: DayPool;
+  turnTokens?: number;
+}
+
+/**
+ * Spanish mark or function word (the filler's Spanish templates all carry one,
+ * its English ones none; pinned by a test). Used only for generator filler,
+ * which does not carry its language; pool items carry their scenario's (audit
+ * R2 W1: short Spanish replies such as "Anotado." read as English here).
+ */
+const SPANISH_RE = /[¿¡áéíóúñ]|\b(?:el|la|los|las|de|del|que|mi|es|un|una|para|por|con)\b/i;
+
+/**
+ * Pads one seeded turn to about `tokens` tokens of its rendered transcript
+ * line (`Fede: ` / `Jarvis: ` + text, chars / 4, the bench's approximation)
+ * with whole sentences of the corpus filler (FILLER_SPEC templates of the
+ * turn's language and role, slots from its vocab, filler.ts `fill`): the
+ * templates in a seeded order, each at most once per turn, a sentence the
+ * turn already holds skipped, stopping where the next sentence would land
+ * farther from the target than the turn already is. A turn already at or past
+ * the target, or `tokens` 0, is returned unchanged. A Jarvis turn never grows
+ * past CONSOLIDATOR_JARVIS_TURN_MAX_CHARS, where the transcript cuts it. The
+ * filler never holds a probe needle (generate.ts asserts it), and
+ * dayWindowExchanges re-checks.
+ */
+export function padTurn(text: string, role: "user" | "assistant", tokens: number, spec: FillerSpec, next: () => number, lang: "es" | "en"): string {
+  const label = role === "user" ? "Fede: " : "Jarvis: ";
+  const target = 4 * tokens;
+  if (tokens <= 0 || !text || (label + text).length >= target) return text;
+  const order = [...spec.templates[lang][role]];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = next() % (i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  let out = text;
+  for (const tpl of order) {
+    const len = (label + out).length;
+    if (len >= target) break;
+    const sentence = fill(tpl, spec.vocab[lang], next);
+    if (out.includes(sentence)) continue;
+    if (Math.abs(len + 1 + sentence.length - target) >= Math.abs(len - target)) break;
+    if (role === "assistant" && out.length + 1 + sentence.length > CONSOLIDATOR_JARVIS_TURN_MAX_CHARS) break;
+    out = `${out} ${sentence}`;
+  }
+  return out;
+}
+
+/** Builds the `mixed` pools from the corpus's scenarios (see DayPool). */
+export function dayPool(scenarios: readonly Scenario[]): DayPool {
+  const work = new Map<string, DayPoolItem>();
+  const facts = new Map<string, DayPoolItem>();
+  const add = (m: Map<string, DayPoolItem>, user: string, assistant: string, lang: "es" | "en") => {
+    const key = `${user}\t${assistant}`;
+    if ((user || assistant) && !m.has(key)) m.set(key, { user, assistant, lang });
+  };
+  for (const s of scenarios) {
+    // A session's work ends at its session_end; later rows of the same session (C4's gap) are filler.
+    const endT = new Map<string, number>();
+    for (const e of s.events) if (e.kind === "session_end") endT.set(e.session, Math.max(e.t, endT.get(e.session) ?? -Infinity));
+    for (const e of s.events) {
+      if (e.kind === "exchange" && e.t < (endT.get(e.session) ?? -Infinity)) add(work, e.user, e.assistant, s.lang);
+      else if (e.kind === "session_end") add(work, e.asUser, e.asAssistant, s.lang);
+      else if (e.kind === "standing" || (e.kind === "person_fact" && e.durable)) add(facts, e.asUser, e.asAssistant, s.lang);
+    }
+  }
+  return { work: [...work.values()], facts: [...facts.values()] };
+}
+
+/**
+ * `mixed`: `size` exchanges over [fromT, toT): DAY_MIX_SHARES of pool items
+ * (each pool read from a seeded start, consecutively, so a work session tends
+ * to stay together, without replacement: a pool smaller than its share gives
+ * each item once and the filler makes up the rest), the rest filler from the
+ * generator, shuffled with the seed and timed like the filler (odd seconds,
+ * evenly spread). Left out of both pools: items holding one of this
+ * scenario's probe needles. Left out of the facts pool (other scenarios'
+ * answer keys): a fact sharing a content token (wording.ts contentTokens)
+ * with this scenario's probed events (those holding an expect or forbid
+ * needle), so a day never states a rival value of a probed attribute
+ * (C8-01's blood type against C8-01-sn's). Deterministic for a given seed and
+ * pool; the pool's order is the corpus's (dayPool), so editing the corpus
+ * moves the draws.
+ */
+function mixedDay(s: Scenario, spec: FillerSpec, seed: number, size: number, fromT: number, toT: number, pool: DayPool): SeededItem[] {
+  const needles = s.probes.flatMap((p) => [...p.expect, ...p.forbid]);
+  const clear = (x: DayPoolItem) => !needles.some((n) => contains(x.user, n) || contains(x.assistant, n));
+  const probed = new Set<string>();
+  for (const p of s.probes) {
+    if (p.expect.length + p.forbid.length === 0) continue;
+    for (const e of targetEvents(s.events, { expect: [...p.expect, ...p.forbid] }))
+      for (const t of e.kind === "exchange" ? [e.user, e.assistant] : [e.asUser, e.asAssistant, "text" in e ? e.text : ""]) for (const tok of contentTokens(t)) probed.add(tok);
+  }
+  const unrelated = (x: DayPoolItem) => ![...contentTokens(`${x.user}\n${x.assistant}`)].some((tok) => probed.has(tok));
+  const next = xorshift32(seed);
+  const draw = (items: DayPoolItem[], share: number) => {
+    const n = Math.min(items.length, Math.round(size * share));
+    const start = n === 0 ? 0 : next() % items.length;
+    return Array.from({ length: n }, (_, i) => items[(start + i) % items.length]);
+  };
+  const drawn = [...draw(pool.work.filter(clear), DAY_MIX_SHARES.work), ...draw(pool.facts.filter((x) => clear(x) && unrelated(x)), DAY_MIX_SHARES.facts)];
+  const small = generateFiller(spec, { seed: (seed ^ 0x5bd1e995) >>> 0, size: size - drawn.length, fromT, toT });
+  const all: Array<Omit<SeededItem, "t">> = [...drawn, ...small];
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = next() % (i + 1);
+    [all[i], all[j]] = [all[j], all[i]];
+  }
+  const span = toT - fromT;
+  return all.map((x, k) => ({ t: fromT + 2 * Math.floor((k * span) / (2 * size)) + 1, user: x.user, assistant: x.assistant, ...(x.lang ? { lang: x.lang } : {}) }));
+}
+
+/** A seeded day exchange: pool items carry their language, generator filler does not (padTurn's caller detects it). */
+type SeededItem = FillerItem & { lang?: "es" | "en" };
+
+/**
+ * `day` window, one consolidation night: `day.turns` / 2 ordinary exchanges
+ * (default DAY_WINDOW_EXCHANGES, filler small talk; `mixed`: see mixedDay),
+ * seed fixed per scenario and night, spread over the 24 h that night
+ * consolidates, each turn padded to `day.turnTokens` (padTurn, its own seed:
+ * the unpadded draws do not move), plus the scenario's filler items dated in
+ * that window (not padded).
+ * Throws when one holds a probe needle (expect or forbid): an ordinary turn
+ * must not hand the extractor the answer.
+ */
+export function dayWindowExchanges(
+  s: Scenario,
+  spec: FillerSpec,
+  night: number,
+  filler: readonly FillerItem[],
+  day: DaySpec = { turns: 2 * DAY_WINDOW_EXCHANGES, mix: "smalltalk" },
+): FillerItem[] {
+  const size = day.turns / 2;
+  if (!Number.isInteger(size) || size < 0) throw new Error(`day window: turns must be a non-negative even integer, not ${day.turns}`);
+  if (day.mix === "mixed" && !day.pool) throw new Error("day window: mix mixed needs the corpus pool (dayPool)");
+  const turnTokens = day.turnTokens ?? 0;
+  if (!Number.isInteger(turnTokens) || turnTokens < 0) throw new Error(`day window: turnTokens must be a non-negative integer, not ${day.turnTokens}`);
   const seed = (s.fillerSeed ^ 0x6a09e667 ^ Math.imul(night, 0x85ebca6b)) >>> 0;
-  const seeded = generateFiller(spec, { seed, size: DAY_WINDOW_EXCHANGES, fromT: night - 86_400, toT: night - 30 * 60 });
+  const fromT = night - 86_400;
+  const toT = night - 30 * 60;
+  const drawn: SeededItem[] = day.mix === "mixed" ? mixedDay(s, spec, seed, size, fromT, toT, day.pool!) : generateFiller(spec, { seed, size, fromT, toT });
+  const pad = xorshift32((seed ^ 0x27d4eb2f) >>> 0);
+  const seeded = drawn.map((x) => {
+    if (turnTokens === 0) return { t: x.t, user: x.user, assistant: x.assistant };
+    const lang = x.lang ?? (SPANISH_RE.test(`${x.user} ${x.assistant}`) ? "es" : "en");
+    return { t: x.t, user: padTurn(x.user, "user", turnTokens, spec, pad, lang), assistant: padTurn(x.assistant, "assistant", turnTokens, spec, pad, lang) };
+  });
   const out = [...seeded, ...filler.filter((f) => nextConsolidationT(f.t) === night)];
   const needles = s.probes.flatMap((p) => [...p.expect, ...p.forbid]);
   for (const x of out) {
@@ -337,6 +518,21 @@ export function dayWindowExchanges(s: Scenario, spec: FillerSpec, night: number,
     if (hit !== undefined) throw new Error(`${s.id}: a day-window exchange holds the probe needle "${hit}"`);
   }
   return out;
+}
+
+/** Case- and accent-folded text (NFD, combining marks dropped), for the `expectEn` match only. */
+export const foldAccents = (x: string): string => x.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/**
+ * `caught`, one extracted fact against one probe: every `expect` needle (the
+ * scorer's `contains`, unchanged), or else every `expectEn` needle, accents
+ * and case folded on both sides. Without `expectEn` this is the `expect`
+ * match alone, as before.
+ */
+export function factCatches(fact: string, p: Pick<Probe, "expect" | "expectEn">): boolean {
+  if (p.expect.every((n) => contains(fact, n))) return true;
+  const en = p.expectEn ?? [];
+  return en.length > 0 && en.every((n) => foldAccents(fact).includes(foldAccents(n)));
 }
 
 /** The model consolidateAll asks for (jme.ts infer call, `model: HAIKU_MODEL_ID`). */
@@ -371,13 +567,15 @@ export interface ExtractionStat {
   fillerSize: number;
   /** Model calls made (with dryRun: the calls the run would make). */
   calls: number;
-  /** jme_turns rows written through writeEpisodic. */
+  /** jme_turns rows written through writeEpisodic: what the calls saw (at most CONSOLIDATOR_MAX_TURNS a night). */
   turns: number;
+  /** A night's turns past CONSOLIDATOR_MAX_TURNS, the newest ones, not written: production leaves them for the next night, the bench (one call per stated night) drops them. */
+  cutTurns: number;
   /** Facts consolidateAll inserted (factsInserted, summed over the calls); 0 with dryRun. */
   inserted: number;
   /** consolidateAll's other counts, summed over the calls (ConsolidateResult): facts the model returned, absorbed by a near-identical live fact, superseding one, refused by redaction. */
   consolidator: { extracted: number; skipped: number; superseded: number; dropped: number };
-  /** Lexical, live at probe: every probe has an extracted row live at its time that holds all its expect needles (score.ts contains: folded substring). */
+  /** Lexical, live at probe: every probe has an extracted row live at its time that holds all its expect needles (score.ts contains: folded substring) or all its expectEn needles (factCatches). */
   caught: boolean;
   /** Calls after which jme_turns still held turns: consolidateAll keeps a window it could not consume (empty / unparseable reply, failed upsert, a throw). */
   failedCalls: number;
@@ -569,12 +767,15 @@ export class JarvisAdapter {
    * then Jarvis turn, owner channel), grouped by the consolidation night that
    * would first see them; with the `day` window each night's stated turns sit
    * among that night's ordinary exchanges (dayWindowExchanges), in timeline
-   * order, the oldest ordinary ones dropped past CONSOLIDATOR_MAX_TURNS. Per
+   * order. A night writes its oldest CONSOLIDATOR_MAX_TURNS turns, the ones
+   * consolidateAll reads (`ORDER BY ts ASC ... LIMIT 400`, stated turns not
+   * privileged); the newer ones are counted in cutTurns and dropped, where
+   * production would carry them to the next night. Per
    * night the turns are aged past the settle window and consolidateAll runs:
    * one model call. Returns the rows it left.
    */
   private async extract(s: Scenario, spec: FillerSpec, filler: readonly FillerItem[]): Promise<ExtractedRow[]> {
-    const { budget, dryRun, window } = this.extraction!;
+    const { budget, dryRun, window, day } = this.extraction!;
     const db = getDatabase();
     this.resetStore();
     const lastProbe = Math.max(...s.probes.map((p) => p.t));
@@ -590,6 +791,7 @@ export class JarvisAdapter {
       fillerSize: s.fillerSize,
       calls: 0,
       turns: 0,
+      cutTurns: 0,
       inserted: 0,
       consolidator: { extracted: 0, skipped: 0, superseded: 0, dropped: 0 },
       caught: false,
@@ -601,15 +803,15 @@ export class JarvisAdapter {
     for (const [night, events] of [...nights].sort((a, b) => a[0] - b[0])) {
       const taskId = `bench:${s.id}:n${night}`;
       const stated = events.map((e) => ({ t: e.t, user: e.kind === "exchange" ? "" : (e.asUser ?? ""), assistant: e.kind === "exchange" ? "" : (e.asAssistant ?? "") }));
-      const statedTurns = stated.reduce((n, x) => n + (x.user ? 1 : 0) + (x.assistant ? 1 : 0), 0);
-      const ordinary = window === "day" ? dayWindowExchanges(s, spec, night, filler).sort((a, b) => a.t - b.t) : [];
-      const room = Math.max(0, Math.floor((CONSOLIDATOR_MAX_TURNS - statedTurns) / 2));
-      const items = [...stated, ...ordinary.slice(Math.max(0, ordinary.length - room))].sort((a, b) => a.t - b.t);
-      for (const x of items) {
-        if (x.user) writeEpisodic({ taskId, role: "user", content: x.user, channel: CHANNEL });
-        if (x.assistant) writeEpisodic({ taskId, role: "jarvis", content: x.assistant, channel: CHANNEL });
-        stat.turns += (x.user ? 1 : 0) + (x.assistant ? 1 : 0);
-      }
+      const ordinary = window === "day" ? dayWindowExchanges(s, spec, night, filler, day) : [];
+      const turns = [...stated, ...ordinary]
+        .sort((a, b) => a.t - b.t)
+        .flatMap((x) => [...(x.user ? [{ role: "user" as const, content: x.user }] : []), ...(x.assistant ? [{ role: "jarvis" as const, content: x.assistant }] : [])]);
+      // consolidateAll reads the oldest CONSOLIDATOR_MAX_TURNS (jme.ts `ORDER BY ts ASC, id ASC LIMIT ?`): write exactly those.
+      const seen = turns.slice(0, CONSOLIDATOR_MAX_TURNS);
+      for (const x of seen) writeEpisodic({ taskId, role: x.role, content: x.content, channel: CHANNEL });
+      stat.turns += seen.length;
+      stat.cutTurns += turns.length - seen.length;
       // writeEpisodic stamps Date.now(); consolidateAll reads only turns older than the settle window.
       db.prepare("UPDATE jme_turns SET ts = ts - ?").run(CONSOLIDATOR_MIN_TURN_AGE_MS + 60_000);
       budget.take(s.id);
@@ -637,7 +839,7 @@ export class JarvisAdapter {
     const kept = rows.filter((r) => left.has(r.id));
     stat.facts = kept.map((r) => ({ text: r.factText, category: r.category, night: r.night, ttlMs: r.ttlMs, expiresAtT: r.ttlMs === null ? null : r.night + r.ttlMs / 1000 }));
     const liveAt = (r: ExtractedRow, t: number) => r.night < t && (r.ttlMs === null || r.night + r.ttlMs / 1000 > t);
-    stat.caught = !dryRun && s.probes.every((p) => p.expect.length > 0 && kept.some((r) => liveAt(r, p.t) && p.expect.every((n) => contains(r.factText, n))));
+    stat.caught = !dryRun && s.probes.every((p) => p.expect.length > 0 && kept.some((r) => liveAt(r, p.t) && factCatches(r.factText, p)));
     this.extractions.push(stat);
     return kept;
   }

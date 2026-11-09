@@ -2,14 +2,19 @@
  * Continuity Scorecard — runner (offline, no LLM, scratch db only).
  *
  *   npx tsx scripts/continuity-bench/run.ts --leg raw --sizes 50,500 \
- *     [--corpus benchmarks/continuity/corpus-v2.json] [--out <json>]
+ *     [--corpus v2|v1|<path>] [--out <json>]
  *     [--allow-embeddings [--max-embed-calls 3000] [--embed-cache <file under TMPDIR>]]
  *     [--switch MEMORY_OPEN_WORK=on ...] [--switch MEMORY_RECALL_FLOOR=on] [--switch MEMORY_TOMBSTONES=on]
  *   npx tsx scripts/continuity-bench/run.ts --leg extracted (--run | --dry-run) [--max-model-calls 6] \
- *     [--window day|clean] [--classes C6] [--sizes 50] [--corpus ...] [--out <json>]
+ *     [--window day|clean] [--day-turns <n>] [--day-mix smalltalk|mixed] [--day-turn-tokens <n>] \
+ *     [--classes C6] [--sizes 50] [--corpus ...] [--out <json>]
  *   npx tsx scripts/continuity-bench/run.ts --report <a.json,b.json,...> --md <out.md>
  *   npx tsx scripts/continuity-bench/run.ts --compare <before.json,after.json[,before2,after2...]> \
  *     [--reference <ref.json[,ref2.json]>] --md <out.md>
+ *
+ * `--corpus` defaults to v2 (benchmarks/continuity/corpus-v2.json) on every
+ * leg; `v1` and `v2` name the committed files (`--corpus v1` reproduces the
+ * archived v1 baseline), anything else is a path.
  *
  * Switches are production env switches set in this process only (each run
  * sets every known switch, defaults off, and records the states in meta).
@@ -37,8 +42,18 @@
  * it can make up to 2 billed SDK requests (Haiku, then its retry). `--window
  * day` (default) writes each night's stated turns among seeded ordinary
  * exchanges; `--window clean` writes the stated turns alone (an upper bound).
- * Defaults: --classes C6, --sizes 50, --corpus corpus-v2.json, --out named
- * after the classes and the window.
+ * With `day`, `--day-turns <n>` (even; default MEASURED_DAY_TURNS, calibrated
+ * from the live nightly ledger 2026-11-08) is the seeded ordinary turns per
+ * night and `--day-mix` what they are: `mixed` (default: corpus work-session
+ * turns and durable facts of other scenarios among the filler, adapter
+ * DAY_MIX_SHARES) or `smalltalk` (filler only); `--day-turn-tokens <n>`
+ * (default MEASURED_DAY_TURN_TOKENS) pads each seeded turn to about n tokens
+ * with corpus filler sentences (adapter padTurn; 0 = no padding). A night's
+ * call sees its oldest 400 turns (consolidateAll's cap). The archived
+ * results' window is `--day-turns 60 --day-mix smalltalk --day-turn-tokens 0`
+ * (DAY_TURNS_ARCHIVED). Defaults: --classes C6, --sizes 50, --out named
+ * after the classes and the window, plus `-t<n>[-mixed][-p<tokens>]` unless
+ * the day settings are the archived ones.
  */
 
 import { execSync } from "node:child_process";
@@ -63,7 +78,7 @@ import {
   type GapAggregate,
   type IngestStat,
 } from "./score.js";
-import type { ExtractionStat, ExtractionWindow } from "./adapter-jarvis.js";
+import type { DayMix, ExtractionStat, ExtractionWindow } from "./adapter-jarvis.js";
 import type { Corpus, CorpusEvent, ProbeRun, ProbeScore, SurfaceScore } from "./types.js";
 import { CLASS_LABELS } from "./types.js";
 
@@ -89,7 +104,15 @@ export interface RunResult {
     /** --classes filter (absent = every class). */
     classes?: string[];
     /** `extracted` leg: model calls made (dry-run: the calls the run would make), against the cap. */
-    extraction?: { mode: "run" | "dry-run"; calls: number; maxModelCalls: number; model: string; window: ExtractionWindow };
+    extraction?: {
+      mode: "run" | "dry-run";
+      calls: number;
+      maxModelCalls: number;
+      model: string;
+      window: ExtractionWindow;
+      /** `day` window settings, present unless they are the archived results' (DAY_TURNS_ARCHIVED, smalltalk, no padding). */
+      day?: DayLabel;
+    };
   };
   ingest: IngestStat[];
   aggregates: Aggregate[];
@@ -137,6 +160,92 @@ export const EXTRACTION_COST_PER_CALL: Record<ExtractionWindow, { typical: numbe
   day: { typical: 0.003, ceiling: 0.0076 },
 };
 
+/**
+ * The archived `day` results' seeded ordinary turns per night (adapter
+ * DAY_WINDOW_EXCHANGES × 2, pinned by a test; reproduce them with
+ * `--day-turns 60 --day-mix smalltalk`); the `day` cost above was measured at it.
+ */
+export const DAY_TURNS_ARCHIVED = 60;
+
+/**
+ * Total input tokens of the nightly consolidator's cost_ledger row, one per
+ * night, 30 nights 2026-10-10 → 2026-11-08, sorted (queue 4bo h). Measured
+ * 2026-11-08 by the orchestrating session with `sqlite3 -readonly` on mc.db:
+ * cost_ledger rows agent_type='sdk:unattributed', model LIKE '%haiku%',
+ * created_at 08:40–09:00 UTC, last 30 days, prompt_tokens +
+ * cache_read_tokens + cache_creation_tokens.
+ */
+export const MEASURED_NIGHTLY_INPUT_TOKENS = [
+  1935, 2475, 2547, 3330, 9707, 10627, 10827, 14109, 14285, 14707, 14811, 15443, 16055, 16831, 19147, 22755, 23221, 26253, 31543, 34951, 37563,
+  42811, 46413, 48269, 58315, 65265, 67563, 67737, 73157, 96357,
+] as const;
+
+/** The extraction prompt's share of each nightly call's input, in tokens (about 1,000; README §Cost). */
+export const EXTRACTION_PROMPT_TOKENS = 1000;
+
+/**
+ * MEASURED 2026-11-08 (queue 4bo h): the `day` window's default seeded turns.
+ * Derivation (recomputed by a pin test): median of MEASURED_NIGHTLY_INPUT_TOKENS
+ * = (19147 + 22755) / 2 = 20951 (the 15th and 16th of 30); minus
+ * EXTRACTION_PROMPT_TOKENS = 19951 transcript tokens; tokens per seeded turn =
+ * rendered chars / 4 (the bench's own approximation, adapter JME budget),
+ * each turn rendered as consolidateAll does ("Fede: " / "Jarvis: " + text,
+ * one line), unpadded, over the seeded `mixed` turns of the 35 stated nights
+ * of C2 / C6 / C8 at size 50 = 16.77 at this size (`smalltalk` 17.2); 19951 /
+ * 16.77 = 1189.7, nearest even integer 1190. (Re-derived the same day after
+ * audit R1 W2 / W3, pool items drawn once and rival facts left out: the
+ * first derivation, with repeated pool items, was 15.08 → 1324.)
+ * consolidateAll reads at most CONSOLIDATOR_TURN_CAP turns a night, the
+ * OLDEST (`ORDER BY ts ASC ... LIMIT 400`, stated turns not privileged; the
+ * bench kept the stated turns plus the newest until 2026-11-08, audit R1 W1),
+ * so the call sees 400 of these turns: at 15 tokens about 7k input tokens,
+ * below the measured median. Hence MEASURED_DAY_TURN_TOKENS (operator ruling
+ * A): the turns are padded so 400 of them reach the median.
+ */
+export const MEASURED_DAY_TURNS = 1190;
+
+/** consolidateAll's per-night turn cap (jme.ts CONSOLIDATOR_MAX_TURNS, pinned by a test): no call sees more. */
+export const CONSOLIDATOR_TURN_CAP = 400;
+
+/**
+ * MEASURED 2026-11-08 (queue 4bo h, operator ruling A): tokens each seeded
+ * `day` turn is padded to (`--day-turn-tokens`, adapter padTurn, chars / 4 of
+ * the rendered line). Derivation (recomputed by a pin test): (median 20951 −
+ * EXTRACTION_PROMPT_TOKENS 1000) / CONSOLIDATOR_TURN_CAP 400 = 49.9, nearest
+ * integer 50: a night's call at the cap then carries about the measured
+ * median input.
+ */
+export const MEASURED_DAY_TURN_TOKENS = 50;
+
+/** `--day-turn-tokens` ceiling: a Jarvis turn is cut at 500 characters in the transcript (jme.ts CONSOLIDATOR_JARVIS_TURN_MAX_CHARS), about 125 tokens; padTurn never grows one past that. */
+export const DAY_TURN_TOKENS_MAX = 120;
+
+/** Tokens per unpadded seeded turn (smalltalk, rendered chars / 4: 17.2 measured at the archived 60 turns), the cost scaling's base. */
+export const UNPADDED_TURN_TOKENS = 17;
+
+/** The `day` settings a result records (absent = the archived 60 smalltalk turns, unpadded); turnTokens only when padded. */
+export interface DayLabel {
+  turns: number;
+  mix: DayMix;
+  turnTokens?: number;
+}
+
+/**
+ * USD per model call for `dayTurns` seeded turns padded to `turnTokens`:
+ * `clean` and the archived window as measured; any other `day` setting
+ * scales the day − clean increment linearly in seeded tokens from the
+ * archived DAY_TURNS_ARCHIVED × UNPADDED_TURN_TOKENS (an estimate), counting
+ * at most CONSOLIDATOR_TURN_CAP turns (the call never sees more) at
+ * max(turnTokens, UNPADDED_TURN_TOKENS) each.
+ */
+export function extractionCostPerCall(w: ExtractionWindow, dayTurns: number = DAY_TURNS_ARCHIVED, turnTokens = 0): { typical: number; ceiling: number } {
+  if (w === "clean" || (dayTurns === DAY_TURNS_ARCHIVED && turnTokens === 0)) return EXTRACTION_COST_PER_CALL[w];
+  const c = EXTRACTION_COST_PER_CALL.clean;
+  const d = EXTRACTION_COST_PER_CALL.day;
+  const f = (Math.min(dayTurns, CONSOLIDATOR_TURN_CAP) * Math.max(turnTokens, UNPADDED_TURN_TOKENS)) / (DAY_TURNS_ARCHIVED * UNPADDED_TURN_TOKENS);
+  return { typical: c.typical + f * (d.typical - c.typical), ceiling: c.ceiling + f * (d.ceiling - c.ceiling) };
+}
+
 /** One infer() can make this many billed SDK requests (Haiku, then its retry); the cap counts infer() calls. */
 export const BILLED_REQUESTS_PER_CALL = 2;
 
@@ -147,10 +256,18 @@ export function windowLabel(w: ExtractionWindow): string {
   return w === "clean" ? "clean (upper bound: the stated turns alone)" : "day (the stated turns among seeded ordinary exchanges)";
 }
 
-/** Typical, ceiling and 2x worst-case cost of `calls` model calls in one window. */
-export function extractionCostLine(w: ExtractionWindow, calls: number): string {
-  const c = EXTRACTION_COST_PER_CALL[w];
-  return `${calls} calls, window ${w}: about ${usd(calls * c.typical)} typical, ${usd(calls * c.ceiling)} ceiling, up to ${BILLED_REQUESTS_PER_CALL}x billed requests (Haiku + its retry) so ${usd(BILLED_REQUESTS_PER_CALL * calls * c.ceiling)} worst case`;
+/** `, day <n> seeded turns <mix>[ padded to <t> tokens]` for a result whose day settings are not the archived ones (else empty). */
+export function dayText(day: DayLabel | undefined): string {
+  return day ? `, day ${day.turns} seeded turns ${day.mix}${day.turnTokens ? ` padded to ${day.turnTokens} tokens` : ""}` : "";
+}
+
+/** Typical, ceiling and 2x worst-case cost of `calls` model calls in one window (`day`: at `dayTurns` seeded turns padded to `turnTokens`). */
+export function extractionCostLine(w: ExtractionWindow, calls: number, dayTurns: number = DAY_TURNS_ARCHIVED, turnTokens = 0): string {
+  const c = extractionCostPerCall(w, dayTurns, turnTokens);
+  const capped = dayTurns > CONSOLIDATOR_TURN_CAP ? `, at most ${CONSOLIDATOR_TURN_CAP} reach the call` : "";
+  const padded = turnTokens > 0 ? `, --day-turn-tokens ${turnTokens} against ${UNPADDED_TURN_TOKENS} unpadded` : "";
+  const scaled = w === "day" && (dayTurns !== DAY_TURNS_ARCHIVED || turnTokens > 0) ? ` (--day-turns ${dayTurns}${capped}${padded}, scaled linearly from ${DAY_TURNS_ARCHIVED})` : "";
+  return `${calls} calls, window ${w}${scaled}: about ${usd(calls * c.typical)} typical, ${usd(calls * c.ceiling)} ceiling, up to ${BILLED_REQUESTS_PER_CALL}x billed requests (Haiku + its retry) so ${usd(BILLED_REQUESTS_PER_CALL * calls * c.ceiling)} worst case`;
 }
 
 /** Printed under every extraction heading. */
@@ -167,19 +284,21 @@ export const EXTRACTION_LIMITS = [
  * consolidator needs (names only, never values).
  */
 export function extractionRefusal(
-  args: { run: boolean; dryRun: boolean; maxModelCalls: number; allowEmbeddings: boolean; window: ExtractionWindow },
+  args: { run: boolean; dryRun: boolean; maxModelCalls: number; allowEmbeddings: boolean; window: ExtractionWindow; dayTurns?: number; dayTurnTokens?: number },
   env: NodeJS.ProcessEnv,
 ): string | null {
   if (args.run && args.dryRun) return "--run and --dry-run are exclusive";
   if (args.allowEmbeddings) return "the extracted leg runs with embeddings off only (its embedding bound is not counted)";
-  if (!args.run && !args.dryRun)
+  if (!args.run && !args.dryRun) {
+    const day = extractionCostPerCall("day", args.dayTurns, args.dayTurnTokens);
     return (
       "the extracted leg makes REAL model calls (the production consolidator, claude-haiku-4-5, one per consolidation night per scenario; " +
       `per call about ${usd(EXTRACTION_COST_PER_CALL.clean.typical)} typical / ${usd(EXTRACTION_COST_PER_CALL.clean.ceiling)} ceiling with --window clean, ` +
-      `${usd(EXTRACTION_COST_PER_CALL.day.typical)} / ${usd(EXTRACTION_COST_PER_CALL.day.ceiling)} with --window day, at the list price of ${EXTRACTION_PRICE_PER_MTOK.input} / ${EXTRACTION_PRICE_PER_MTOK.output} USD per million input / output tokens; ` +
-      `at most --max-model-calls ${args.maxModelCalls}: ${extractionCostLine(args.window, args.maxModelCalls)}). ` +
+      `${usd(day.typical)} / ${usd(day.ceiling)} with --window day, at the list price of ${EXTRACTION_PRICE_PER_MTOK.input} / ${EXTRACTION_PRICE_PER_MTOK.output} USD per million input / output tokens; ` +
+      `at most --max-model-calls ${args.maxModelCalls}: ${extractionCostLine(args.window, args.maxModelCalls, args.dayTurns, args.dayTurnTokens)}). ` +
       "Pass --run to make them, or --dry-run to count them without a call"
     );
+  }
   if (args.dryRun) return null;
   if (env.INFERENCE_PRIMARY_PROVIDER !== "claude-sdk") return "INFERENCE_PRIMARY_PROVIDER is not claude-sdk: the consolidator would not run on the production path";
   if (env.INFERENCE_SDK_LASTLINE_ENABLED === "true") return "INFERENCE_SDK_LASTLINE_ENABLED=true: a failed Haiku call would go to the fallback provider; unset it";
@@ -210,6 +329,12 @@ export type CliArgs =
       maxModelCalls: number;
       /** extracted leg: what else each night's window holds (default day). */
       window: ExtractionWindow;
+      /** extracted leg, `day` window: seeded ordinary turns per night (`--day-turns`, default MEASURED_DAY_TURNS). */
+      dayTurns: number;
+      /** extracted leg, `day` window: what those turns are (`--day-mix`, default mixed). */
+      dayMix: DayMix;
+      /** extracted leg, `day` window: tokens each seeded turn is padded to (`--day-turn-tokens`, default MEASURED_DAY_TURN_TOKENS; 0 = none). */
+      dayTurnTokens: number;
       corpus: string;
       out: string | null;
       allowEmbeddings: boolean;
@@ -218,6 +343,10 @@ export type CliArgs =
       /** `--switch NAME=VALUE`, repeatable (validated against the adapter's SWITCHES at run time). */
       switches: Record<string, string>;
     };
+
+/** The committed corpus files `--corpus v1|v2` names; v2 is every leg's default. */
+export const CORPUS_FILES = { v1: "benchmarks/continuity/corpus-v1.json", v2: "benchmarks/continuity/corpus-v2.json" } as const;
+export const DEFAULT_CORPUS: keyof typeof CORPUS_FILES = "v2";
 
 export function parseArgs(argv: readonly string[]): CliArgs {
   const arg = (name: string) => {
@@ -259,6 +388,19 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   const window = (arg("--window") ?? "day") as ExtractionWindow;
   if (window !== "day" && window !== "clean") throw new Error("--window must be day or clean");
   if (arg("--window") !== undefined && !extracted) throw new Error("--window applies to --leg extracted only");
+  const dayTurnsArg = arg("--day-turns");
+  const dayMixArg = arg("--day-mix");
+  const dayTurnTokensArg = arg("--day-turn-tokens");
+  if ((dayTurnsArg !== undefined || dayMixArg !== undefined || dayTurnTokensArg !== undefined) && (!extracted || window !== "day"))
+    throw new Error("--day-turns, --day-mix and --day-turn-tokens apply to --leg extracted --window day only");
+  const dayTurns = dayTurnsArg === undefined ? MEASURED_DAY_TURNS : Number(dayTurnsArg);
+  if (!Number.isInteger(dayTurns) || dayTurns < 0 || dayTurns % 2 !== 0) throw new Error("--day-turns must be a non-negative even integer (two turns per exchange)");
+  const dayMix = (dayMixArg ?? "mixed") as DayMix;
+  if (dayMix !== "smalltalk" && dayMix !== "mixed") throw new Error("--day-mix must be smalltalk or mixed");
+  const dayTurnTokens = dayTurnTokensArg === undefined ? MEASURED_DAY_TURN_TOKENS : Number(dayTurnTokensArg);
+  if (!Number.isInteger(dayTurnTokens) || dayTurnTokens < 0 || dayTurnTokens > DAY_TURN_TOKENS_MAX)
+    throw new Error(`--day-turn-tokens must be an integer from 0 to ${DAY_TURN_TOKENS_MAX} (a Jarvis turn is cut at 500 characters)`);
+  const corpusArg = arg("--corpus") ?? DEFAULT_CORPUS;
   if (sizes.some((n) => !Number.isInteger(n) || n < 0)) throw new Error("--sizes must be a comma list of integers");
   const maxEmbedCalls = parseInt(arg("--max-embed-calls") ?? "3000", 10);
   if (!Number.isInteger(maxEmbedCalls) || maxEmbedCalls < 0) throw new Error("--max-embed-calls must be a non-negative integer");
@@ -271,7 +413,10 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     dryRun: argv.includes("--dry-run"),
     maxModelCalls,
     window,
-    corpus: resolve(arg("--corpus") ?? join(ROOT, `benchmarks/continuity/${extracted ? "corpus-v2.json" : "corpus-v1.json"}`)),
+    dayTurns,
+    dayMix,
+    dayTurnTokens,
+    corpus: Object.hasOwn(CORPUS_FILES, corpusArg) ? join(ROOT, CORPUS_FILES[corpusArg as keyof typeof CORPUS_FILES]) : resolve(corpusArg),
     out: arg("--out") ? resolve(arg("--out")!) : null,
     allowEmbeddings,
     maxEmbedCalls,
@@ -555,7 +700,7 @@ function extractionTable(r: RunResult, limits = true): string {
     "",
     ...(limits ? [EXTRACTION_LIMITS, ""] : []),
     x
-      ? `Mode ${x.mode}, model ${x.model}, window ${windowLabel(x.window)}: ${x.calls} model calls${x.mode === "dry-run" ? " counted, none made" : ` made, cap ${x.maxModelCalls}`}. Cost estimate: ${extractionCostLine(x.window, x.calls)}. Caught (lexical, live at probe) = every probe of the scenario has an extracted fact live at the probe's time holding all its expect needles (folded substring, as the scorer).`
+      ? `Mode ${x.mode}, model ${x.model}, window ${windowLabel(x.window)}${dayText(x.day)}: ${x.calls} model calls${x.mode === "dry-run" ? " counted, none made" : ` made, cap ${x.maxModelCalls}`}. Cost estimate: ${extractionCostLine(x.window, x.calls, x.day?.turns, x.day?.turnTokens)}. Caught (lexical, live at probe) = every probe of the scenario has an extracted fact live at the probe's time holding all its expect needles (folded substring, as the scorer).`
       : "",
     "",
     "| class | size | scenarios | model calls | turns | inserted | caught (lexical, live at probe) / total | failed calls |",
@@ -595,7 +740,7 @@ export function renderExtractionCompare(pairs: ReadonlyArray<readonly [RunResult
       `## embeddings ${extracted.meta.embeddings} · corpus ${extracted.meta.corpusVersion}`,
       "",
       `- ideal: commit ${ideal.meta.commit}, run ${ideal.meta.startedAt}`,
-      `- extracted: commit ${extracted.meta.commit}, run ${extracted.meta.startedAt}, ${extracted.meta.extraction ? `${extracted.meta.extraction.mode}, window ${windowLabel(extracted.meta.extraction.window)}, ${extracted.meta.extraction.calls} model calls (${extracted.meta.extraction.model})` : "no extraction meta"}`,
+      `- extracted: commit ${extracted.meta.commit}, run ${extracted.meta.startedAt}, ${extracted.meta.extraction ? `${extracted.meta.extraction.mode}, window ${windowLabel(extracted.meta.extraction.window)}${dayText(extracted.meta.extraction.day)}, ${extracted.meta.extraction.calls} model calls (${extracted.meta.extraction.model})` : "no extraction meta"}`,
       "",
       "| class | size | surface | n | hit % ideal → extracted | gap (pp) | stale-hit % ideal → extracted | surfaced n/N (extracted: jme or jme_query > 0) |",
       "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
@@ -1099,7 +1244,7 @@ export function switchSuffix(switches: Readonly<Record<string, string>>, default
     .join("");
 }
 
-/** The default result file name; the extracted leg's also names its classes and window (`-c6-day`). */
+/** The default result file name; the extracted leg's also names its classes and window (`-c6-day`), and non-default day settings (`-t120-mixed`, `-p50` when padded). */
 export function resultFileName(r: {
   commit: string;
   leg: string;
@@ -1109,8 +1254,10 @@ export function resultFileName(r: {
   classes: string[] | null;
   window: ExtractionWindow;
   dryRun: boolean;
+  day?: DayLabel;
 }): string {
-  const extractionTag = r.leg === "extracted" ? `-${(r.classes ?? []).map((k) => k.toLowerCase()).join("")}-${r.window}` : "";
+  const dayTag = r.day ? `-t${r.day.turns}${r.day.mix === "mixed" ? "-mixed" : ""}${r.day.turnTokens ? `-p${r.day.turnTokens}` : ""}` : "";
+  const extractionTag = r.leg === "extracted" ? `-${(r.classes ?? []).map((k) => k.toLowerCase()).join("")}-${r.window}${dayTag}` : "";
   return `jarvis-${r.commit}-${r.leg}-emb-${r.embeddings}${r.suffix}${r.switchTag}${extractionTag}${r.dryRun ? "-dry-run" : ""}.json`;
 }
 
@@ -1156,9 +1303,14 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   const suffix = corpus.version === "continuity-v1" ? "" : `-${corpus.version.replace("continuity-", "")}`;
   const { DEFAULT_SWITCHES, resolveSwitches } = await import("./adapter-jarvis.js");
   const switches = resolveSwitches(args.switches);
+  // Recorded (meta, file name) unless the day settings are the archived results' (60 smalltalk turns, unpadded).
+  const day: DayLabel | undefined =
+    leg === "extracted" && args.window === "day" && (args.dayTurns !== DAY_TURNS_ARCHIVED || args.dayMix !== "smalltalk" || args.dayTurnTokens !== 0)
+      ? { turns: args.dayTurns, mix: args.dayMix, ...(args.dayTurnTokens ? { turnTokens: args.dayTurnTokens } : {}) }
+      : undefined;
   const out =
     args.out ??
-    join(ROOT, "benchmarks/continuity/results", resultFileName({ commit, leg, embeddings, suffix, switchTag: switchSuffix(switches, DEFAULT_SWITCHES), classes, window: args.window, dryRun: args.dryRun }));
+    join(ROOT, "benchmarks/continuity/results", resultFileName({ commit, leg, embeddings, suffix, switchTag: switchSuffix(switches, DEFAULT_SWITCHES), classes, window: args.window, dryRun: args.dryRun, day }));
 
   // Scratch only: a fresh directory under TMPDIR, removed at exit.
   const scratch = mkdtempSync(join(tmpdir(), "continuity-bench-"));
@@ -1166,7 +1318,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
   process.on("exit", cleanup);
   process.env.JARVIS_KB_MIRROR_DIR ??= join(scratch, "kbmirror");
 
-  const { EmbedCache, JARVIS_MARKERS, EXTRACTION_MODEL_ID, JarvisAdapter, ModelCallBudget, ModelCallCapError, exchangeContent, scratchDbPath } = await import("./adapter-jarvis.js");
+  const { EmbedCache, JARVIS_MARKERS, EXTRACTION_MODEL_ID, JarvisAdapter, ModelCallBudget, ModelCallCapError, dayPool, exchangeContent, scratchDbPath } = await import("./adapter-jarvis.js");
   const cache = new EmbedCache(embeddings === "on" ? (args.embedCache ?? join(scratch, "embed-cache.jsonl")) : null);
   let plan: EmbedPlan | null = null;
   const meter = new FetchMeter(args.maxEmbedCalls);
@@ -1195,7 +1347,16 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
     embeddings: embeddings === "on",
     embedCache: cache,
     switches,
-    ...(leg === "extracted" ? { extraction: { budget, dryRun: args.dryRun, window: args.window } } : {}),
+    ...(leg === "extracted"
+      ? {
+          extraction: {
+            budget,
+            dryRun: args.dryRun,
+            window: args.window,
+            day: { turns: args.dayTurns, mix: args.dayMix, turnTokens: args.dayTurnTokens, ...(args.dayMix === "mixed" ? { pool: dayPool(corpus.scenarios) } : {}) },
+          },
+        }
+      : {}),
   });
   adapter.open();
   const started = performance.now();
@@ -1218,7 +1379,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
         }
         const x = leg === "extracted" ? adapter.extractions.at(-1) : undefined;
         if (x)
-          log(`[continuity-bench] extracted ${s.id} (window ${windowLabel(args.window)}): ${budget.calls} model calls so far${args.dryRun ? " (dry run, none made)" : ` of ${args.maxModelCalls}`}; turns ${x.turns}, inserted ${x.inserted}, caught ${x.caught ? "yes" : "no"}, failed calls ${x.failedCalls}`);
+          log(`[continuity-bench] extracted ${s.id} (window ${windowLabel(args.window)}${dayText(day)}): ${budget.calls} model calls so far${args.dryRun ? " (dry run, none made)" : ` of ${args.maxModelCalls}`}; turns ${x.turns} (cut ${x.cutTurns}), inserted ${x.inserted}, caught ${x.caught ? "yes" : "no"}, failed calls ${x.failedCalls}`);
         if (meter.exceeded) {
           console.error(`[continuity-bench] stopped: ${meter.calls} embedding calls made, cap ${args.maxEmbedCalls} reached in ${s.id}; no result written`);
           return 3;
@@ -1247,7 +1408,7 @@ export async function main(argv: readonly string[] = process.argv, env: NodeJS.P
       switches: { ...adapter.switches },
       ...(classes ? { classes } : {}),
       ...(leg === "extracted"
-        ? { extraction: { mode: args.dryRun ? ("dry-run" as const) : ("run" as const), calls: budget.calls, maxModelCalls: args.maxModelCalls, model: EXTRACTION_MODEL_ID, window: args.window } }
+        ? { extraction: { mode: args.dryRun ? ("dry-run" as const) : ("run" as const), calls: budget.calls, maxModelCalls: args.maxModelCalls, model: EXTRACTION_MODEL_ID, window: args.window, ...(day ? { day } : {}) } }
         : {}),
       ...(embeddings === "on"
         ? {

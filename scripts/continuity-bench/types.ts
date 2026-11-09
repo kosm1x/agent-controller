@@ -89,6 +89,15 @@ export interface Probe {
   text: string;
   /** Every needle must be present (case-insensitive substring). Empty = C7: nothing may be recalled. */
   expect: string[];
+  /**
+   * Optional English rendering of `expect`, read only by the extracted leg's
+   * `caught` (the consolidator writes facts in English): a fact catches the
+   * probe when it holds every `expect` needle or, failing that, every
+   * `expectEn` needle with accents and case folded. The scorer's hit / stale
+   * never read it. Corpus v2 carries it on every probe with an expect needle
+   * (corpus-v2.ts EXPECT_EN_ES, operator ruling B); v1 does not.
+   */
+  expectEn?: string[];
   /** Any needle present = stale hit. */
   forbid: string[];
   surface: ProbeSurface;
