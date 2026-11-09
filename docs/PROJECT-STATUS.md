@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 01:14 UTC (**DEPLOYED 01:10:32 UTC build `68991e63` PID 4098103, 0 startup errors**: thread hydration bounded (4bn/4cb) and the weekly review re-enabled (4az c, `[rituals] weekly-review: scheduled (0 20 * * 0)` in the journal) are LIVE; PROOFs due: tombstone prune line 02:45 MX 11-09 · first weekly review Sunday 11-15 20:00 MX · watchdog quiet window Sunday 11-15 10:00 UTC.)
+
 > Last updated: 2026-11-09 00:44 UTC (**five 11-08 rulings executed, three bundles committed, CI green, nothing deployed yet**: 4bn+4cb `895393e3` thread hydration bounded to the open-work window (14 d / newest 3000 bank rows; idle channel → empty buffer after restart; 479 live rows / 14 d) · 4az(c) `970a7af1` weekly review rewritten on the day-log, re-enabled Sunday 20:00 MX, emailed (Monday one-liner ruled) · 4bo(g,h,i) `9eac0e95` continuity bench: v2 default, nightly load measured on the ledger (median 20,951 tokens), turns padded to 50 tokens, oldest-400 cut, `expectEn` on 1,404 probes. **DEPLOY pending** for the first two; first weekly review 2026-11-15.)
 
 > Last updated: 2026-11-08 22:37 UTC (**4bs RESOLVED — no leaking test; the 11-07 14.5 GB OOM was a qa-auditor mutation run of `open-work.test.ts` (unbounded loop after `OPEN_WORK_SCAN_LIMIT` was raised to 1e9), not the pre-commit suite**: 588 files swept one worker at a time under a 6 GB cgroup ceiling, worker peak max 341 MB, shard peak max 540 MB, memory released after every file; no vitest config change; follow-ups 4ca (memory ceiling for agent-run vitest, ruling) + 4cb. **4bo (a) DEPLOYED 22:06 UTC `c5038aba` PID 3600568.**)
@@ -406,6 +408,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (01:14) | deploy by the operator: build `68991e63` PID 4098103 (was 3600568), 2 s transition, 0 error lines; hydration bound + weekly review LIVE | PROOF: first weekly review 11-15 20:00 MX |
 | 2026-11-09 (00:44) | `895393e3` messaging hydration bound (4bn, 4cb) · `970a7af1` weekly review rewrite + re-enable (4az c) · `9eac0e95` continuity bench calibration (4bo g/h/i, rulings A/B) — each qa-audited (R1; bench R1+R2), pre-commit suite green ×3, CI green | DEPLOY pending for the two `src/` bundles; bench needs none |
 | 2026-11-08 (22:37) | docs only (`next-sessions-queue.md` 4bs/4bq/4ca/4cb, AGENT_LEARNINGS) | **4bs RESOLVED**: no test leaks; the 11-07 OOM was a mutation run of `open-work.test.ts` with an unbounded loop (kernel OOM table parent = `npm exec vitest run src/messaging/open-work.test.ts`); 4bq attribution corrected; 4ca ruling queued. |
 | 2026-11-08 (22:03) | `scripts/watchdog.sh`, `scripts/healthcheck.sh` · `src/memory/tombstones.ts`, `src/memory/jme.ts` + tests | **4bz** `2b657bbb` kb-janitor guard APPLIED 22:01 UTC (both restart sites + mc.db probe skip; healthcheck defers before the alert). **4bo (a)** `c61958fc` tombstone lifecycle prune, DEPLOYED 22:06 UTC build `c5038aba` PID 3600568. |
