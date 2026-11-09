@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 17:5x UTC (**Hermes port 1 BUILT `9489ab3e` (queue 4cd)**: evicted tool results move from the read-blocked `data/tool-results/` to root-only `tool-results/` so `file_read` can open them; a pruned spill answers `expired: true`; qa R1 FAIL on a world-writable `/var/tmp` choice → relocated, R2 PASS; DEPLOY pending.)
+
 > Last updated: 2026-11-09 07:0x UTC (**Hermes upstream review v0.21.6 → v0.23.0 filed (queue 4cd)**: `docs/planning/hermes-upstream-review-2026-11-09.md`, 8 ranked ports verified against live code + 30 d counts; 1 SHIP NOW (evicted tool results point at a read-guard-blocked path; trigger fired 15× via `shell_exec`), 4 SHIP LATER with triggers (redaction gaps, email `From:` parser blocks arming email, untrusted `.git/config`, vision key fallback), 3 DEFER; shell gate let 4 reads of `data/x-post-receipts` that `file_read` blocks; next review 12-01)
 
 > Last updated: 2026-11-09 06:2x UTC (**SDK bump 0.3.285 → 0.3.316 DEPLOYED + first call PROVEN (queue 4cc)**: paid gate from the copy PASS 78.90 vs 78.63 (scope_prompt 66.84 vs 64.74); bump commit `f12bc403` (package.json + lockfile), deploy build `f12bc403` PID 422082 06:21:08 UTC, 0 startup errors, SDK 0.3.316 / CLI 2.1.316 live; first post-restart call 06:25:48 UTC on Sonnet 5.5 with cost > 0, 0 model/version errors; CI green. tool-search validation PASS 06:3x UTC (5/5 phases, armed prompt 71 % smaller, retrieval + inline hit, builtin sealed) → bump CLOSED)
@@ -416,6 +418,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (17:5x) | Hermes port 1 built `9489ab3e`: spill dir → `/root/claude/mission-control/tool-results/` (root-only, gitignored), `file_read` expired answer, read guard untouched; qa R1 FAIL (`/var/tmp` squat) → relocated → R2 PASS; deploy pending | queue 4cd |
 | 2026-11-09 (07:0x) | Hermes upstream review v0.21.6 → v0.23.0 filed: 8 ranked ports, 1 SHIP NOW (eviction path vs read guard, trigger fired), 4 SHIP LATER, 3 DEFER; `x-post-receipts` shell-read flag | NEXT: operator decides on port 1 (S, no gate); review again 12-01 (queue 4cd) |
 | 2026-11-09 (06:2x) | SDK bump DEPLOYED: gate PASS 78.90 vs 78.63, bump `f12bc403`, build `f12bc403` PID 422082, SDK 0.3.316 / CLI 2.1.316 live, first call PROVEN 06:25 UTC, tool-search validation PASS 5/5 06:3x UTC, CI green | CLOSED; operator deletes `/root/tmp-sdk-bump-gate` |
 | 2026-11-09 (04:2x) | SDK bump 0.3.316 PREPARED: runbook + operator script, no code patch, gate mandatory (6 fuller tool descriptions), qa R1→R2 PASS-W | NEXT: operator gate (≈$6) → script → deploy → smoke → tool-search validation (≈$0.80) |
