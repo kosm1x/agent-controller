@@ -1,446 +1,395 @@
 # Agent Controller
 
-A unified orchestrator that receives tasks and routes them to the right kind of AI agent — from fast in-process tool loops to heavy planning agents to coordinated swarms — all through a single API.
+Agent Controller is a single TypeScript service that takes tasks over HTTP or chat, picks an
+execution strategy for each one (a quick in-process tool loop, a sandboxed container, a
+plan-execute-reflect loop, or a parallel swarm), runs it with LLM inference and tools, and
+reports the result. It is built for one operator who runs it as a personal assistant called
+**Jarvis**, reached over Telegram and WhatsApp. The service and its systemd unit are named
+`mission-control`, and so is the npm package.
+
+Terms used below:
+
+- **Task**: one unit of work, submitted with a title and a description. Tasks are stored in SQLite.
+- **Runner**: the strategy that executes a task. There are five: `fast`, `nanoclaw`, `heavy`,
+  `swarm`, `a2a`.
+- **Tool**: a function the model can call (shell, files, web, Google Workspace, and so on). A
+  fresh clone registers 180 tools; production registers 251 (see [How it works](#how-it-works)).
+- **Claude Agent SDK**: Anthropic's library (`@anthropic-ai/claude-agent-sdk`) that runs Claude
+  with tools; the production inference path.
+- **MCP** (Model Context Protocol): a standard for exposing tools from a separate server process.
+- **A2A** (Agent2Agent): a JSON-RPC protocol for one agent to hand a task to another.
+- **Prometheus**: in this repo, the name of the plan-execute-reflect loop (`src/prometheus/`).
+  The `/metrics` endpoint is unrelated: it serves Prometheus-the-monitoring-system metrics.
+- **Ritual**: a scheduled job, such as the morning briefing or the nightly close (an end-of-day
+  review of the day-log, the KB file `logs/day-logs/<date>.md` that records the day's chat
+  activity, and a plan for tomorrow).
+- **KB**: the Jarvis knowledge base, markdown files stored in the database (`jarvis_files`).
 
 ---
 
-## What is this?
+## Quick start
 
-Agent Controller is a single backend service that sits between you and your AI agents. You submit a task through the API. It classifies by complexity, picks the right execution strategy, runs it, and streams results back in real time.
+Tested path: Linux, Node 22. Steps 1-3 need no credentials. Step 4 needs a Claude login.
 
-Five runner types, one dispatcher:
+### 1. Install and check the setup (no credentials)
 
-- **Fast** runs in-process. LLM + tools, loop until done, return. Seconds, not minutes. Good for: running a command, fetching data, quick file edits.
+```bash
+git clone https://github.com/kosm1x/agent-controller.git
+cd agent-controller
+npm ci
+npm run typecheck
+npx vitest run src/config.test.ts
+```
 
-- **NanoClaw** spawns an isolated Docker container with the full NanoClaw agent runtime — persistent sessions, container-scoped filesystem, rich tool ecosystem. Good for: tasks needing isolation, longer tool sessions, CRM-type workloads.
+`npm ci` prints `npm warn deprecated …` lines, an `npm audit` vulnerability summary and possibly
+an `npm notice New major version of npm available` block; none of them blocks the install (exit 0). `npm run typecheck` prints npm's script header (`> tsc --noEmit`),
+no errors, and exits 0. The test run ends with:
 
-- **Heavy** runs in-process Plan-Execute-Reflect. Decomposes tasks into a goal graph (DAG), executes with structured error recovery, then reflects on outcomes. Good for: multi-step reasoning, research, architecture work.
+```
+ ✓ src/config.test.ts (17 tests) 8ms
 
-- **Swarm** combines planning with parallel execution. Decomposes a large task into a goal graph, then fans out independent goals as sub-tasks — each routed back through the dispatcher to fast or NanoClaw agents running in parallel. Good for: audits across multiple modules, comprehensive analysis, any task with parallelizable sub-work.
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+```
 
-- **A2A** delegates to external A2A-compatible agents. Discovers the remote agent via its agent card, sends the task via JSON-RPC, polls until complete. Good for: interop with LangGraph, CrewAI, AutoGen, or other MC instances.
+### 2. Start the server (no credentials)
 
-You don't have to choose. Set `agent_type: "auto"` and the classifier picks. Or override explicitly. (A2A is explicit-only — the classifier never auto-selects it.)
+The server does **not** read a `.env` file. Pass variables in the environment. `MC_API_KEY` is the
+only variable that is always required. Use any string you like; it is the key clients send in
+the `X-Api-Key` header. With `INFERENCE_PRIMARY_PROVIDER=claude-sdk` no other variable is
+required at boot.
+
+```bash
+MC_API_KEY=dev-local-key MC_BIND_HOST=127.0.0.1 INFERENCE_PRIMARY_PROVIDER=claude-sdk npm run dev
+```
+
+`MC_BIND_HOST=127.0.0.1` keeps the server off the network: the default is `0.0.0.0` (all
+interfaces), which would expose it behind a trivial key.
+
+Startup takes about 4 seconds. **The one signal that boot succeeded is the `Mission Control
+listening` line.** Its form depends on whether output goes to a terminal:
+
+```
+# piped or redirected (JSON):
+{"level":"info",…,"module":"mc","port":8080,"msg":"Mission Control listening"}
+# in a terminal (pretty-printed):
+[22:37:51] INFO (244): Mission Control listening
+    module: "mc"
+    port: 8080
+```
+
+The database is created at `./data/mc.db`, relative to the directory you start from (here the
+repo root), with a series of `[db] schema migration vN applied` lines on the first boot. On a fresh clone these lines are also expected and harmless:
+
+| Line | Why |
+| --- | --- |
+| `[mcp] browser: failed to connect — spawn ./bin/lightpanda ENOENT` and `[mcp] graphify-code: failed to connect — spawn ./venv/graphify/bin/python ENOENT` | `mcp-servers.json` lists MCP servers whose binaries are installed only on the production host. Their tools are skipped. |
+| `[mcp] xpoz: env XPOZ_API_TOKEN has no value — omitted`, then a Node stack trace `Error: Cannot find module '/root/claude/projects/xpoz-pipeline/dist/mcp-server.js'` ending in `Node.js v22.23.4`, then `[mcp] xpoz: failed to connect — MCP error -32000: Connection closed` | The `xpoz` server is a script from another project. The trace is the MCP **child process** exiting, not the server. |
+| `[mcp] ⚠️ DEGRADED: 3 MCP server(s) failed to connect (browser, graphify-code, xpoz). Auto-reconnect started.` | Summary of the three lines above. |
+| `{"level":"error",…,"errors":["gmail_send: backing tool 'gmail_send' not in registry"],"msg":"V8.3 capability seed reported errors"}` | V8.3 (`src/lib/v8-3/`) tracks how much autonomy each risky action, such as sending email, has earned. At boot it seeds the `capability_autonomy` table with five such capabilities at level 1 (always ask first), each backed by a tool; `gmail_send` exists only when the Google variables are set. |
+| `[jarvis-fs] KB mirror DISABLED for this process …` | The KB disk mirror runs only against the production database. |
+| `[intel] Starting 9 collectors: usgs, nws, gdelt, frankfurter, cisa_kev, coingecko, treasury, google_news, geo_rss` | The Intelligence Depot (`src/intel/`): collectors that poll public data feeds over outbound HTTP and store signals. They start on every boot; there is no switch to turn them off. |
+
+If port 8080 is taken, add `MC_PORT=8090` and use that port below.
+
+### 3. Check health (no credentials)
+
+In a second terminal, once the `listening` line has appeared (about 4 seconds after start):
+
+```bash
+curl -s http://127.0.0.1:8080/health
+```
+
+Expected output: one JSON object that begins like this:
+
+```
+{"status":"healthy","timestamp":"…","version":"0.1.0","db":"ok","inference":"unreachable",…
+```
+
+`inference` is `"ok"` when `~/.claude/.credentials.json` exists (see step 4).
+`"tools":{"toolCount":0,…}` counts tools *called* since start, not tools loaded. The detailed body
+is returned only to loopback/private peers or a request with a valid `X-Api-Key`. Public peers
+get `status` and `timestamp` only.
+
+### 4. Run a task (needs credentials)
+
+The `claude-sdk` provider runs through the Claude Agent SDK, which authenticates like Claude
+Code. Install the Claude Code CLI (official instructions:
+https://docs.claude.com/en/docs/claude-code/overview), run `claude` once and log in. The login
+writes `~/.claude/.credentials.json`, which is what production uses and what `/health` checks.
+That is the only verified path. The code passes its whole environment to the SDK
+(`src/inference/claude-sdk.ts`), so the SDK's own `ANTHROPIC_API_KEY` support may work, but it
+is untested here and `/health` still reports `"inference":"unreachable"` without the login file.
+With the server from step 2 still running:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/tasks \
+  -H "X-Api-Key: dev-local-key" -H "Content-Type: application/json" \
+  -d '{"title":"Ping","description":"Reply with the single word pong.","agent_type":"fast"}'
+```
+
+The response is `201` with `{"task_id":"…","agent_type":"fast","classification":…,"status":"queued"}`.
+`classification` explains the routing: `{"score":…,"reason":…,"explicit":…}`. With an explicit
+`agent_type` it is `{"score":-1,"reason":"Explicit override: fast","explicit":true}`; with
+`auto` it carries the complexity score. Poll the task:
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<task_id> -H "X-Api-Key: dev-local-key"
+```
+
+The result is `{"task":{…,"status":"completed","output":…},"runs":[…],"subtasks":[]}`. While the
+task is running, `status` is `queued` or `running`.
+
+To use an OpenAI-compatible endpoint instead of the Claude SDK, leave
+`INFERENCE_PRIMARY_PROVIDER` unset and set `INFERENCE_PRIMARY_URL`, `INFERENCE_PRIMARY_KEY` and
+`INFERENCE_PRIMARY_MODEL` (all three are then required at boot).
+
+The web dashboard is at `http://127.0.0.1:8080/dashboard/`. It asks for the API key in the page.
+Stop the server with Ctrl+C in its terminal.
 
 ---
 
-## Why does this exist?
+## Requirements
 
-Most agent frameworks force a choice: fast but shallow, or smart but slow.
+| Need | Why |
+| --- | --- |
+| Node.js >= 22 and npm | `engines` in `package.json`. npm 10 (10.9.9, tested in a clean `node:22` container) and npm 12 (production host) both install it. |
+| `curl` | The Quick start checks in steps 3 and 4. Slim images such as `node:22-slim` do not include it. |
+| Linux | Production and CI run on Linux. The single-instance lock (one server per database file) uses a Linux abstract socket, a socket name with no file on disk. Where that lock is not available, the server logs `single-instance guard unavailable` and continues. |
+| Python 3, `make`, a C++ compiler | Only when `better-sqlite3` has no prebuilt binary for your platform. Its install script is `prebuild-install \|\| node-gyp rebuild --release`: it downloads a prebuilt binary (published for LTS Node versions) and falls back to compiling with node-gyp, which needs these tools. The repo's `Dockerfile` installs them on top of `node:22-slim` for this reason. |
+| Claude Code login, or an OpenAI-compatible endpoint | Inference. See [Configuration](#configuration). |
+| Docker (optional) | Needed for the `nanoclaw` runner and for `HEAVY_RUNNER_CONTAINERIZED=true`. Build the image with `bash scripts/build-mc-image.sh`. |
+| `sqlite3` CLI (optional) | Used by the `mc-ctl` admin script. |
+| Supabase/pgvector, Google OAuth, Telegram bot, WhatsApp device (optional) | Integrations that turn on when their variables are set. |
 
-This project combines both — and adds coordination:
+The production host lays projects out under `/root/claude/`. A few features are tied to that
+layout: the KB disk mirror (`/root/claude/jarvis-kb`, written only when the open database is the
+production `data/mc.db`) and the write allow-list of the file, shell and git tools. On any other
+path these features stay off or refuse writes.
 
-- **NanoClaw** (the engine behind crm-azteca) proved that container-per-task tool loops handle 90% of real-world agent work. Fast, reliable, production-tested with 1100+ passing tests.
+---
 
-- **Prometheus** (the Plan-Execute-Reflect core, now rewritten in TypeScript) showed that the remaining 10% — complex multi-step tasks — needs planning, error recovery, and reflection.
+## Configuration
 
-- **Research validation** (March 2026): The orchestrator-worker pattern is the most deployed multi-agent architecture in production. Difficulty-aware routing drops cost 30-70% while maintaining quality. Anthropic's own guidance endorses this exact tiered approach.
+All configuration comes from environment variables. Core settings are parsed once at startup in
+`src/config.ts`. Runner limits are in `src/config/constants.ts`. Feature flags are read where they
+are used. In production the variables come from systemd: `EnvironmentFile=.env` plus drop-ins
+under `/etc/systemd/system/mission-control.service.d/`. `.env.example` in the repo root is the
+maintained template for that file (`env.example`, without the dot, is an older copy).
 
-Agent Controller doesn't replace either pattern. It routes to the right one — and can coordinate swarms of them.
+### Required
 
-### Design principles
+| Variable | Required | Controls | Example (fake) |
+| --- | --- | --- | --- |
+| `MC_API_KEY` | Always. Boot fails with `Missing required env var: MC_API_KEY`. | Key checked against the `X-Api-Key` header on `/api/*` and `/a2a`. | `dev-local-key` |
+| `INFERENCE_PRIMARY_URL` | When the provider is `openai`, which is the default if `INFERENCE_PRIMARY_PROVIDER` is not `claude-sdk`. | Base URL of an OpenAI-compatible `/v1/chat/completions` API. | `https://llm.example.com/v1` |
+| `INFERENCE_PRIMARY_KEY` | Same as above. | API key for that endpoint. | `sk-example-not-real` |
+| `INFERENCE_PRIMARY_MODEL` | Same as above. | Model name for that endpoint. | `example-model-large` |
 
-1. **100% TypeScript.** One language, one build, one test suite. The Prometheus core was rewritten from Python to TypeScript to eliminate cross-language friction. Shared inference adapter, shared types, no mirroring.
+### Core (optional)
 
-2. **Multi-provider inference.** Claude Agent SDK (primary, Max Plan billing) + raw HTTP to any OpenAI-compatible endpoint (fallback). Groq, DashScope, Anthropic API, OpenAI, Together, DeepInfra. 3-provider cascade with circuit breaker + automatic failover. One env var to switch primary provider.
+| Variable | Default | Controls |
+| --- | --- | --- |
+| `INFERENCE_PRIMARY_PROVIDER` | `openai` | `claude-sdk` routes inference through the Claude Agent SDK (production setting). Any other value means `openai`. |
+| `SONNET_MODEL_ID` / `SONNET_EFFORT` | `claude-sonnet-4-6` / unset | Model used by the main `claude-sdk` path, and the effort setting for it. An ID must match `claude-sonnet-<n>…`. |
+| `INFERENCE_FALLBACK_URL` / `_KEY` / `_MODEL` | unset | Second OpenAI-compatible provider, tried after the primary fails. |
+| `INFERENCE_TERTIARY_URL` / `_KEY` / `_MODEL` | unset | Third provider. |
+| `INFERENCE_SDK_LASTLINE_ENABLED` | `false` | `true` runs the fallback provider after both Claude SDK attempts fail. Each such call is logged. |
+| `INFERENCE_TIMEOUT_MS` / `INFERENCE_MAX_TOKENS` / `INFERENCE_MAX_RETRIES` | `60000` / `6144` / `3` | Limits for the OpenAI-compatible adapter. |
+| `MC_PORT` | `8080` | HTTP port. Boot fails with `Port 8080 already in use` if it is taken. |
+| `MC_BIND_HOST` | `0.0.0.0` | Listen address. |
+| `MC_DB_PATH` | `./data/mc.db` | SQLite file. Created if missing. |
+| `MC_MCP_CONFIG` | `./mcp-servers.json` | MCP server list. |
+| `LOG_LEVEL` | `info` | Pino log level. Output is pretty-printed on a TTY and JSON otherwise. |
+| `MAX_CONCURRENT_CONTAINERS` | `5` | Maximum number of sandbox containers running at once. |
+| `HEAVY_RUNNER_CONTAINERIZED` / `HEAVY_RUNNER_IMAGE` | `false` / `mission-control:latest` | Run `heavy` tasks in a container, and the image used for that container and for `nanoclaw`. |
+| `GOAL_TIMEOUT_MS` / `ORCHESTRATOR_TIMEOUT_MS` | `120000` / `600000` | Per-goal and whole-run timeouts for the heavy runner. |
+| `SANDBOX_BACKEND` | `docker` | `docker` (plain `docker run`) or `opensandbox` (Alibaba's OpenSandbox lifecycle server, which adds an egress allow-list). Any other value stops the boot. |
+| `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` / `SANDBOX_EGRESS_ALLOW` | `127.0.0.1:8098` / unset / empty | OpenSandbox server, its key, and the egress allow-list (comma-separated domains). |
+| `A2A_AGENT_NAME` / `A2A_AGENT_URL` | unset / `http://localhost:<port>` | Setting the name turns on `/.well-known/agent.json` and `/a2a`. Without it those routes do not exist. |
+| `JARVIS_MCP_ENABLED` | unset | `true`/`1`/`yes`/`on` turns on the read-only MCP server at `/mcp`. |
+| `RITUALS_ENABLED` | unset | `true` starts the scheduled rituals and proactive triggers. |
+| `BUDGET_ENABLED` / `BUDGET_ENFORCE` | `false` / `false` | Spend checks at dispatch. They log and show on `/health`. Production never blocks a task on budget. |
 
-3. **Simplicity first.** One process. SQLite. No Redis, no Postgres, no message queues. Runs on a single VPS. Per Anthropic: "Find the simplest solution possible, and only increase complexity when needed."
+### Channels and integrations (optional)
 
-4. **Ephemeral execution.** NanoClaw containers start, work, exit. No idle agents consuming resources. Heavy/Swarm run in-process with try/catch isolation.
+Each integration is off until its variables are set.
 
-5. **Observable by default.** Every state change emits an event to a crash-safe SQLite-backed bus. SSE endpoint for real-time monitoring. Token usage tracked per run.
+| Feature | Variables |
+| --- | --- |
+| Telegram | `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` |
+| WhatsApp (via Baileys, an unofficial WhatsApp Web library; the paired session is stored in `./data/whatsapp-session`) | `WHATSAPP_ENABLED=true`, `WHATSAPP_OWNER_JID`, optional `WHATSAPP_GROUP_JIDS` |
+| Email | `EMAIL_ENABLED=true` plus per-account variables; see `docs/EMAIL-CHANNEL.md` |
+| Google Workspace tools | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`; see `docs/GOOGLE-OAUTH-RUNBOOK.md` |
+| Embeddings / pgvector memory | `EMBEDDING_PROVIDER`, `EMBEDDING_URL`, `EMBEDDING_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` |
+| Hindsight (an external memory service run as a Docker container; off by default, the SQLite backend is used instead) | `HINDSIGHT_ENABLED`, `HINDSIGHT_URL`, `HINDSIGHT_API_KEY`, `HINDSIGHT_RECALL_ENABLED` |
+| Web search / research | `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY`, `JINA_API_KEY`, `GEMINI_API_KEY` |
+| WordPress tools | `WP_SITES` (JSON map of sites) |
+| Finance data | `ALPHAVANTAGE_API_KEY`, `POLYGON_API_KEY`, `FRED_API_KEY`, `CMC_PRO_API_KEY` |
+| GitHub tools | `JARVIS_GH_TOKEN`, `JARVIS_GH_USER`, `JARVIS_GH_EMAIL` |
+| CRM bridge | `CRM_API_URL`, `CRM_API_TOKEN` |
 
-6. **Protocol-aware.** REST API for task management. MCP for external tool servers. A2A for agent-to-agent interoperability. All protocol endpoints coexist on a single Hono server.
+The code reads about 140 other variables, mostly feature flags and tuning knobs. All of them are
+optional. To list them:
 
-7. **Dashboard included.** Real-time web UI at `/dashboard/` — task management, agent fleet monitoring, live event stream, goal graph visualization. No build pipeline, no extra dependencies.
+```bash
+grep -rhoE "process\.env\.[A-Z0-9_]+" src --include=*.ts --exclude=*.test.ts | sort -u
+```
 
 ---
 
 ## How it works
 
-### Task lifecycle
-
 ```
-POST /api/tasks           POST /a2a (JSON-RPC)
-      |                        |
-      |   ┌────────────────────┘
-      |   |     sendMessage → mapper → submitTask()
-      v   v
-  Classifier ── score 0-2:  fast
-      |         score 3-5:  nanoclaw
-      |         score 6-8:  heavy
-      |         score 9+:   swarm
-      |         explicit:   a2a (delegate to remote)
-      v
-  Dispatcher ── concurrency guard (max 5 containers)
-      |         create task + run rows
-      |
-      +──── Fast Runner ──────── in-process tool loop ──── result
-      |
-      +──── NanoClaw Runner ──── Docker container ──────── result
-      |                          (NanoClaw runtime)
-      +──── Heavy Runner ─────── in-process ──────────── result
-      |                          (Plan-Execute-Reflect)
-      +──── Swarm Runner ─────── Heavy planner ──────┐
-      |                                              |
-      |                     sub-tasks dispatched ←───┘
-      |                     in parallel to fast/
-      |                     nanoclaw runners
-      |                           |
-      |                     results aggregated
-      |                     reflector evaluates
-      |                           |
-      |                         result
-      |
-      +──── A2A Runner ─────── delegate to remote ──── poll ──── result
-                                A2A agent via
-                                JSON-RPC
+POST /api/tasks ─┐   Telegram / WhatsApp / email ─┐   POST /a2a (when enabled)
+                 v                                v
+        src/dispatch/classifier.ts  ── scores the task, or uses agent_type if given
+                 │     score 0-2 fast · 3-5 nanoclaw · 6-8 heavy · 9+ swarm
+                 v
+        src/dispatch/dispatcher.ts  ── creates task + run rows, enforces the container limit
+                 │
+   ┌─────────┬───┴──────┬───────────┬──────────┐
+  fast    nanoclaw    heavy       swarm       a2a
 ```
 
-### Fast runner
+| Runner | File | What it does |
+| --- | --- | --- |
+| `fast` | `src/runners/fast-runner.ts` | Runs in-process: an LLM with tools in a loop until it answers. Up to 30 rounds (55 for coding, 35 for browser tasks), set in `src/config/constants.ts`. Guards catch repeated calls and loops. |
+| `nanoclaw` | `src/runners/nanoclaw-runner.ts` | Coding sandbox. `src/runners/nanoclaw-worker.ts` runs the Prometheus loop (see `heavy`) with the coding tools inside a Docker (or OpenSandbox) container built from the `mission-control:latest` image. It works only on this repo. A task aimed at another repo is sent to `heavy` instead. |
+| `heavy` | `src/runners/heavy-runner.ts`, `src/prometheus/` | **Prometheus** plan-execute-reflect loop. It splits the task into a graph of goals (`goal-graph.ts`, `planner.ts`), runs each goal with retries and a self-check (`executor.ts`), replans when goals fail or block, and then evaluates the result (`reflector.ts`). |
+| `swarm` | `src/runners/swarm-runner.ts` | Plans like `heavy`, then sends each independent goal back through the dispatcher as a sub-task, so the goals run in parallel. Cancelling the parent cancels the sub-tasks. |
+| `a2a` | `src/runners/a2a-runner.ts`, `src/a2a/` | Sends the task to a remote agent over the A2A protocol (JSON-RPC, agent card at `/.well-known/agent.json`). Only used when you pass `agent_type: "a2a"` and `input.a2a_target`. The classifier never picks it. |
 
-Calls an LLM with tools, loops until text-only response. Parallel tool execution. Up to 55 rounds (coding) / 35 (browser) / 30 default (`MAX_ROUNDS_CODING` / `MAX_ROUNDS_BROWSER` / `MAX_ROUNDS_DEFAULT` in `src/config/constants.ts`). Multi-layer guards: doom-loop detection, escalation ladder, circuit breakers, session repair.
+Chat messages (Telegram/WhatsApp/email) go through `src/messaging/router.ts`. It assembles the
+Jarvis system prompt and the relevant KB files, picks the tool groups for the message, and runs
+the task. Every reply passes a delivery filter before it is sent.
 
-251 tools across 5 ToolSources (live registry at the 2026-10-23 00:0x UTC boot, build `9ad4d843`: `Tool sources reported 280 tools; registry holds 251` — registry: builtin 163 + MCP 58 + Google 22 + memory 2 + Skills 5; the sources report MCP as 87 before the concurrent-diff double count is dropped; was 234 at the 2026-09-26 boot, MCP grew with the record servers and builtin with `expand_read`; per-source breakdown in `docs/TOOL-CATALOG.md`) — builtin (incl. Google-Workspace, WordPress, memory, CRM, teaching, video, coding), MCP-bridge (registered dynamically from `mcp-servers.json`: browser, playwright, graphify-code, xpoz), Google (22), memory (`memory_kg_query`, `memory_forget` — registered without Hindsight since 2026-09-12), Skills (5). New tools declare their name ONCE via `defineTool()` (src/tools/define-tool.ts) and fail with `{error}` JSON (2026-07-05 convention converge). Every non-MCP production tool carries all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) per v7.6 Spine 4. Tool deferral sends name+description only for rarely-used tools — full schema returned on first call (~52% prompt token reduction).
+Other parts:
 
-### NanoClaw runner
+- **Inference**: `src/inference/adapter.ts` is the entry point. `claude-sdk.ts` holds the Claude
+  Agent SDK path: Sonnet by default, Haiku as fallback, Opus for heavy-runner planning.
+  `adapter-openai.ts` is the OpenAI-compatible path with failover and backoff.
+- **Tools**: five sources are registered at boot in `src/index.ts`: builtin
+  (`src/tools/sources/builtin.ts`), MCP (`mcp-servers.json`, tools named `<server>__<tool>`),
+  Google, memory and skills. A fresh clone registers 180 (`"totalTools":180`); the N in `Tool
+  sources reported N tools; registry holds 180` varies by boot because concurrent sources can
+  double-count, so trust the registry. Production registered 251 on 2026-11-09, adding the
+  Google source (22 tools), WordPress (`WP_SITES`), CRM (`CRM_API_TOKEN`), the Google Workspace
+  CLI tool and MCP servers that connect only there. Per-tool catalog: `docs/TOOL-CATALOG.md`.
+  Rarely used tools reach the model as name and description; the full schema follows on first use.
+- **Storage**: one SQLite file (`better-sqlite3`, WAL mode). The schema is in
+  `src/db/schema.sql`, with migrations in `src/db/index.ts`. Events go to a SQLite-backed bus
+  (`src/lib/event-bus.ts`), and `/api/events/stream` serves them over SSE.
+- **Schedulers**: rituals (`src/rituals/`, only with `RITUALS_ENABLED=true`), user-defined
+  schedules (`src/rituals/dynamic.ts`), and the Intelligence Depot collectors
+  (`src/intel/scheduler.ts`, always on).
 
-Spawns a Docker container with the NanoClaw agent runtime. Full tool ecosystem (Bash, file ops, web search, browser). Persistent sessions. Container-scoped filesystem. Communication via stdin/stdout sentinel protocol.
+### HTTP API
 
-### Heavy runner
+`/api/*` requires `X-Api-Key` and is rate-limited per IP.
 
-Runs the Prometheus Plan-Execute-Reflect loop in-process:
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/tasks` | Submit a task: `title`, `description` (required); `agent_type` (`auto` or a runner name), `tools`, `input`, `priority`, `tags`, `gates`, `interactive`, `conversationHistory` (optional). |
+| `GET` | `/api/tasks` | List tasks (`status`, `agent_type`, `parent`, `limit`, `offset`). |
+| `GET` | `/api/tasks/:id` | Task with its runs and sub-tasks. |
+| `POST` | `/api/tasks/:id/cancel` | Cancel a task, including its sub-tasks. |
+| `POST` / `GET` | `/api/agents/register`, `/api/agents/heartbeat`, `/api/agents` | Agent registry. |
+| `GET` | `/api/events/stream` | SSE event stream. |
+| `POST` | `/api/jarvis-pull` | Research question from the CRM. |
+| various | `/api/admin/*` | Operator endpoints (kill switch, tool list, Drive maintenance). |
+| `GET` | `/health` | No key needed. Full detail for private peers or key holders, liveness only for everyone else. |
+| `GET` | `/metrics` | Prometheus metrics. Private peers or key holders only. |
+| `GET` | `/dashboard/` | Web dashboard (`public/dashboard/`). The API key is entered in the page. |
+| `GET`, `POST` | `/.well-known/agent.json`, `/a2a` | A2A agent card and JSON-RPC (`sendMessage`, `getTask`, `cancelTask`, `sendStreamingMessage`). Only when `A2A_AGENT_NAME` is set. |
+| `POST` | `/mcp` | Read-only MCP server. Only when `JARVIS_MCP_ENABLED` is set. |
 
-1. **Plan** — decompose into goal graph (DAG with dependencies)
-2. **Execute** — work through goals with error recovery (retry, alternative, decompose, escalate)
-3. **Self-assess** — each goal checks its output against completion criteria; if not met, injects reflection and re-runs (up to 2 rounds)
-4. **Reflect** — evaluate results, extract learnings
-
-Auto-replans if tool failure rate exceeds threshold or goals get blocked.
-
-### Swarm runner
-
-The planner decomposes the task into a goal graph. Each independent goal becomes a sub-task routed back through the dispatcher. Sub-tasks run in parallel (fast or NanoClaw, based on classification). As sub-tasks complete, newly unblocked goals dispatch. Results aggregate. Reflector evaluates the whole.
-
-Parent-child relationship tracked in the database. Cancelling a swarm cancels all sub-tasks.
-
-### A2A runner
-
-Delegates tasks to external A2A-compatible agents. The runner:
-
-1. Fetches the remote agent's card from `/.well-known/agent.json` (cached 5 min)
-2. Sends the task via `sendMessage` JSON-RPC
-3. Polls `getTask` with exponential backoff (1s → 15s, 10 min timeout)
-
-Requires explicit `agent_type: "a2a"` and `input: { a2a_target: "http://remote:8080", a2a_key: "optional" }`.
-
-### A2A server
-
-MC also acts as an A2A server — external agents can discover MC and submit tasks:
-
-- `GET /.well-known/agent.json` — Agent card (no auth, per A2A spec)
-- `POST /a2a` — JSON-RPC endpoint (requires `X-Api-Key`)
-  - `sendMessage` — submit a task
-  - `getTask` — get task status + artifacts
-  - `cancelTask` — cancel a task
-  - `sendStreamingMessage` — submit + receive SSE updates
-
-### Inference adapter
-
-The live deployment routes through the **Claude Agent SDK** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`; unset, `src/config.ts` falls back to `openai`). The OpenAI-compatible path below is the fallback/alternative, selected with `INFERENCE_PRIMARY_PROVIDER=openai` — vendor-agnostic raw HTTP to any `/v1/chat/completions` endpoint, adapted from NanoClaw's production code.
-
-Configure the OpenAI-compat path via environment:
-
-```
-INFERENCE_PRIMARY_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-INFERENCE_PRIMARY_KEY=sk-...
-INFERENCE_PRIMARY_MODEL=qwen3-235b-a22b
-
-INFERENCE_FALLBACK_URL=https://api.minimax.chat/v1   # optional
-INFERENCE_FALLBACK_KEY=...                            # optional
-INFERENCE_FALLBACK_MODEL=MiniMax-M1                   # optional
-```
-
-Automatic failover, exponential backoff on 429/5xx, SSE streaming, truncation detection, model-specific guards.
-
-### MCP tool servers (v2)
-
-Any MCP-compatible tool server can be connected via `mcp-servers.json`:
-
-```json
-{
-  "filesystem": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-  }
-}
-```
-
-MCP tools are automatically discovered at startup and registered alongside built-in tools. Tool names are namespaced as `{serverId}__{toolName}` (e.g., `filesystem__read_file`). All existing runners (fast, heavy, swarm) can use MCP tools with zero configuration — just include the namespaced tool name in the `tools` array when submitting a task, or omit `tools` to make all tools available.
-
-Set `MC_MCP_CONFIG` to point to a custom config path, or place `mcp-servers.json` in the project root. If the config file doesn't exist, the system works exactly as before with only built-in tools.
+A task submitted through the API has no chat in which to confirm a high-risk action. By default
+such an action is refused. Pass `"interactive": false` to run the task with the same
+confirmation rules as a scheduled task.
 
 ---
 
-## API
+## Development
 
-All endpoints require `X-Api-Key` header except health check.
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | `tsx watch src/index.ts`: runs from source and reloads on changes. |
+| `npm run typecheck` | `tsc --noEmit`. Must report zero errors. |
+| `npm run typecheck:tests` | Type-checks the test files (`tsconfig.test.json`). |
+| `npx vitest run <file or dir/>` | Runs the tests for what you changed. Tests are `src/**/*.test.ts` and `scripts/**/*.test.ts`, next to the code they test. |
+| `npm run build` | `tsc` to `dist/`, copies the runtime assets, builds the docs pages. |
+| `npm start` | `node dist/index.js`. |
+| `npm run tune:baseline:dry` / `npm run tune:run:dry` | Offline eval and a mock overnight tuning loop (no spend). |
+| `npm run eval:gate -- --run` | Model-swap gate. It uses real inference (about $5 and 13 minutes per run). Run it before changing a model ID, the system prompt or a tool description, and do not ship on exit 1. |
 
-| Method | Path                      | What it does                                   |
-| ------ | ------------------------- | ---------------------------------------------- |
-| `POST` | `/api/tasks`              | Submit a task                                  |
-| `GET`  | `/api/tasks`              | List tasks (filter by status, type, parent)    |
-| `GET`  | `/api/tasks/:id`          | Task detail with runs and sub-tasks            |
-| `POST` | `/api/tasks/:id/cancel`   | Cancel (cascades to sub-tasks)                 |
-| `POST` | `/api/agents/register`    | Agent self-registration                        |
-| `POST` | `/api/agents/heartbeat`   | Agent heartbeat                                |
-| `GET`  | `/api/agents`             | List agents                                    |
-| `GET`  | `/api/events/stream`      | SSE real-time event stream                     |
-| `GET`  | `/health`                 | Liveness public; detail needs key/private peer |
-| `GET`  | `/dashboard/`             | Web dashboard (no auth, JS handles API key)    |
-| `GET`  | `/.well-known/agent.json` | A2A agent card (no auth)                       |
-| `POST` | `/a2a`                    | A2A JSON-RPC endpoint                          |
+Testing rules:
 
-### Examples
+- Run scoped tests (one file, or the narrowest directory). The whole suite, about 590 test files,
+  can run out of memory on a small machine. CI (`.github/workflows/ci.yml`) runs it in 3 shards.
+- Tests never call a real LLM. Mock `infer`/`inferWithTools` with
+  `vi.mock("../inference/adapter.js")`.
+- Optional pre-commit hook (typecheck plus `vitest related` on staged `.ts` files):
+  `git config core.hooksPath scripts/git-hooks`.
 
-```bash
-# Fast task
-curl -X POST http://localhost:8080/api/tasks \
-  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
-  -d '{"title":"Disk usage","description":"Show disk usage for all volumes","agent_type":"fast","tools":["shell"]}'
+Where to add things (conventions in `CLAUDE.md`, full text in `docs/CLAUDE-REFERENCE.md`):
 
-# Heavy task — Plan-Execute-Reflect
-curl -X POST http://localhost:8080/api/tasks \
-  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
-  -d '{"title":"Refactor auth","description":"Analyze auth module, identify issues, fix, verify with tests","agent_type":"heavy"}'
-
-# Swarm task — fans out to parallel agents
-curl -X POST http://localhost:8080/api/tasks \
-  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
-  -d '{"title":"Full audit","description":"Audit all 12 service modules for security vulnerabilities, each module independently","agent_type":"swarm"}'
-
-# Watch events in real time
-curl -N http://localhost:8080/api/events/stream -H "X-Api-Key: $MC_API_KEY"
-
-# A2A: Discover agent capabilities (no auth)
-curl http://localhost:8080/.well-known/agent.json
-
-# A2A: Send a task via JSON-RPC
-curl -X POST http://localhost:8080/a2a \
-  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"sendMessage","id":1,"params":{"message":{"role":"user","parts":[{"type":"text","text":"What is 2+2?"}]}}}'
-
-# A2A: Delegate to a remote agent
-curl -X POST http://localhost:8080/api/tasks \
-  -H "X-Api-Key: $MC_API_KEY" -H "Content-Type: application/json" \
-  -d '{"title":"Remote task","description":"Delegate this","agent_type":"a2a","input":{"a2a_target":"http://other-agent:8080","a2a_key":"their-key"}}'
-```
+- **Tool**: define it with `defineTool()` (`src/tools/define-tool.ts`) and register it in
+  `src/tools/sources/builtin.ts`. Add a row to `src/tools/rule-of-two.ts`, which marks whether the tool reads untrusted
+  input or sensitive data (a run that combines both with a state-changing tool needs human
+  confirmation, after Meta's "Agents Rule of Two"). Set all four MCP hints
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). Failures return
+  `{error}` JSON.
+- **Runner**: add it under `src/runners/` and import it for its side effect in `src/index.ts`.
+- **Schema change**: add it to the `SCHEMA_MIGRATIONS` list in `src/db/index.ts`. The list is
+  append-only.
+- **Cron job**: use `scheduleCron()` from `src/lib/cron.ts`, not `cron.schedule` directly.
 
 ---
 
-## Where things live
+## Deployment / operations
 
-```
-agent-controller/
-  src/
-    index.ts                 # Server entry point (Hono + @hono/node-server)
-    config.ts                # Environment configuration
+Production runs on a single VPS as the systemd unit `mission-control`. It runs the **compiled
+`dist/`** (`ExecStart=node dist/index.js`, `WorkingDirectory` = the repo, `EnvironmentFile=.env`),
+not the TypeScript source. A source edit has no effect until it is deployed.
 
-    db/
-      index.ts               # better-sqlite3 singleton, WAL, pragmas
-      schema.sql             # Tasks, runs, agents tables
+- **Deploy**: `./scripts/deploy.sh [--force] [--drain <seconds>]`. **Only the operator runs it**,
+  from a login session. The script refuses to run from inside the service, and agent sessions are
+  blocked from running it. The script:
+  1. Checks the database migrations on a throwaway database.
+  2. Runs `npm run build` and records the build commit.
+  3. Rebuilds the sandbox image if `package-lock.json` changed.
+  4. Refuses to restart while tasks are running, unless `--force` or `--drain` is given.
+  5. Restarts the unit and checks that the old process has exited.
+- **After a deploy**: `systemctl is-active mission-control`, then
+  `journalctl -u mission-control --since '30 sec ago'`, then exercise the endpoint or workflow
+  you changed.
+- **Logs**: `journalctl -u mission-control -f`, or `./mc-ctl logs 50`.
+- **Admin CLI**: `./mc-ctl status | tasks --status=failed | task <id> | tools | schedules |
+  sandboxes …`. It reads `data/mc.db` read-only with the `sqlite3` CLI and the
+  API on `http://localhost:8080`. Run `./mc-ctl` with no arguments to list all commands.
+- **Health**: `scripts/healthcheck.sh` (cron) checks `/health` and alerts on Telegram.
+- **Database**: `data/mc.db` holds Jarvis's memory and KB. Never delete or reset it. Back it up
+  with `scripts/backup-db.sh`.
+- **Not used in production**: `docker-compose.yml` and the `Makefile` targets. Production does
+  not run on Docker; Docker is used only for the sandbox image. The compose file requires the
+  three `INFERENCE_PRIMARY_*` variables.
 
-    api/
-      index.ts               # Route registration
-      auth.ts                # X-Api-Key middleware
-      routes/
-        tasks.ts             # CRUD + submit + cancel
-        agents.ts            # Register, heartbeat, list
-        events.ts            # SSE stream
-        health.ts            # GET /health
-
-    dispatch/
-      classifier.ts          # 5-way heuristic classification
-      dispatcher.ts          # Task lifecycle + runner routing + concurrency
-
-    runners/
-      types.ts               # RunnerInput/Output interfaces
-      fast-runner.ts         # In-process tool loop
-      nanoclaw-runner.ts     # NanoClaw Docker container spawn
-      heavy-runner.ts        # In-process Plan-Execute-Reflect
-      swarm-runner.ts        # Plan decomposition + sub-task fan-out
-      a2a-runner.ts          # Delegate to external A2A agents
-      container.ts           # Docker spawn/kill/timeout helpers
-
-    inference/
-      adapter.ts             # OpenAI-compatible multi-provider LLM client
-
-    tools/
-      types.ts               # Tool interface
-      registry.ts            # Tool registry
-      builtin/
-        shell.ts             # Shell exec (timeout, max output)
-        http.ts              # HTTP fetch
-        file.ts              # File read/write
-
-    mcp/                     # MCP tool server integration (v2)
-      types.ts               # Config schema, namespace separator
-      config.ts              # Load mcp-servers.json
-      bridge.ts              # MCP tool → MC Tool adapter
-      manager.ts             # Connect servers, discover tools, register
-                             # (lifecycle owned by tools/sources/mcp.ts)
-
-    a2a/                     # A2A agent interoperability (v2)
-      types.ts               # A2A protocol types, JSON-RPC, status mapping
-      agent-card.ts          # Dynamic agent card builder
-      mapper.ts              # Bidirectional MC ↔ A2A conversion
-      server.ts              # JSON-RPC handler (sendMessage, getTask, etc.)
-      client.ts              # RPC client + agent card cache
-      index.ts               # Barrel exports
-
-    prometheus/              # Plan-Execute-Reflect core (TypeScript)
-      goal-graph.ts          # DAG: goals, dependencies, status, validation
-      orchestrator.ts        # Plan-Execute-Reflect loop with replan triggers
-      planner.ts             # LLM-driven task decomposition into goal graph
-      executor.ts            # Goal execution with error recovery + self-assessment
-      reflector.ts           # Post-task evaluation + learning extraction
-
-    lib/                     # Reused infrastructure
-      event-bus.ts           # Event bus singleton
-      events/                # Persistent event bus (SQLite-backed)
-
-  public/
-    dashboard/
-      index.html             # SPA shell, CSS, layout
-      app.js                 # State management, SSE, init flow
-      api.js                 # REST + SSE client (fetch-based)
-      components.js          # All UI rendering components
-      graph.js               # Goal graph SVG renderer
-```
+Project state and history: `docs/ROADMAP.md` (one page, current), `docs/PROJECT-STATUS.md`
+(phase history), `docs/V8-VISION.md`, `docs/V9-ROADMAP.md`, `docs/BETA.md`.
 
 ---
 
-## Running it
+## Troubleshooting
 
-### Local development
-
-```bash
-cp .env.example .env       # Edit with your inference provider credentials
-npm install
-npm run dev
-```
-
-Requires: Node 22+, Docker (for NanoClaw runner only), inference provider credentials.
-
-### Docker
-
-```bash
-docker compose build
-docker compose up
-```
-
-Agent Controller spawns NanoClaw containers on-demand via the Docker socket.
-
-### Environment variables
-
-| Variable                     | Required    | Default                   | Description                                                                             |
-| ---------------------------- | ----------- | ------------------------- | --------------------------------------------------------------------------------------- |
-| `MC_API_KEY`                 | Yes         | —                         | API key for authentication                                                              |
-| `MC_PORT`                    | No          | `8080`                    | Server port                                                                             |
-| `MC_DB_PATH`                 | No          | `./data/mc.db`            | SQLite database path                                                                    |
-| `INFERENCE_PRIMARY_PROVIDER` | No          | `openai`                  | `claude-sdk` (Sonnet via Agent SDK, the live setting) or `openai` (OpenAI-compat below) |
-| `INFERENCE_PRIMARY_URL`      | If `openai` | —                         | LLM provider base URL (unused under `claude-sdk`)                                       |
-| `INFERENCE_PRIMARY_KEY`      | If `openai` | —                         | LLM provider API key (unused under `claude-sdk`)                                        |
-| `INFERENCE_PRIMARY_MODEL`    | If `openai` | —                         | Model name (unused under `claude-sdk`)                                                  |
-| `INFERENCE_FALLBACK_URL`     | No          | —                         | Fallback provider URL                                                                   |
-| `INFERENCE_FALLBACK_KEY`     | No          | —                         | Fallback provider key                                                                   |
-| `INFERENCE_FALLBACK_MODEL`   | No          | —                         | Fallback model name                                                                     |
-| `INFERENCE_SDK_LASTLINE_ENABLED` | No      | `false`                   | `true` arms the `fallback` provider as a last line after both Claude SDK legs fail (loud: journal line + `inference.lastline` trace) |
-| `INFERENCE_TIMEOUT_MS`       | No          | `60000`                   | LLM call timeout                                                                        |
-| `INFERENCE_MAX_TOKENS`       | No          | `6144`                    | Max tokens per response                                                                 |
-| `HEAVY_RUNNER_IMAGE`         | No          | `mission-control:latest`  | Container image for the NanoClaw runner and the containerized heavy runner              |
-| `MAX_CONCURRENT_CONTAINERS`  | No          | `5`                       | Max simultaneous containers                                                             |
-| `MC_MCP_CONFIG`              | No          | `./mcp-servers.json`      | Path to MCP servers config                                                              |
-| `A2A_AGENT_NAME`             | No          | `Mission Control`         | A2A agent card display name                                                             |
-| `A2A_AGENT_URL`              | No          | `http://localhost:{port}` | A2A agent card base URL                                                                 |
-
----
-
-## Current status
-
-**Development state (2026-10-26): production, live on a single VPS as "Jarvis" (Telegram; the email channel is wired but not enabled — see `docs/EMAIL-CHANNEL.md`).** deployed build `d620aacb` (DEPLOYED 2026-10-25 22:12:47 UTC PID 3867829, 0 startup errors, health 200; `2c5e41ba` queue 4y f/g/h: silent script entries warn + exit 2 across 18 scripts, `.mjs` KB one-shots gated, `gdrive_list` query parenthesized); earlier build `534033a0` (DEPLOYED 2026-10-25 21:20:38 UTC PID 3748707, 0 startup errors, health 200; `0d398551` Google News geo_rss query tightened, PROVEN 6/9 on-topic on the startup poll); earlier build `4b864f10` (DEPLOYED 2026-10-25 21:02:22 UTC PID 3697717, 0 startup errors, health 200; `75c98add` reliefweb dropped, 5 feeds, PROVEN on the startup poll with 0 feed-failed lines); earlier build `99566ce6` (DEPLOYED 2026-10-25 20:49:07 UTC PID 3655299, 0 startup errors, health 200; PR #64 residual fold `b06ecda7`: geo_rss warns per failed feed — proved at once by reliefweb.int HTTP 406, queue 4ak W6 —, gdelt HTTP errors name the file, `count` deltas print `(Δ ±x)`; `75c98add` drops reliefweb: 5 feeds, cap 50 = threshold 50, ruled 2026-10-25); earlier build `a8d328c4` (DEPLOYED 2026-10-25 02:45:42 UTC PID 2039682, 0 startup errors, health 200; PR #64 GDELT export files + `geo_rss` adapter, PROVEN 02:45:47 UTC with 18 `gdelt` + 41 `geo_rss` rows on the startup poll; eval gate PASS 78.13/78.63); earlier build `e74e8b2f` (DEPLOYED 2026-10-23 20:14 UTC PID 3491764, 0 startup errors, health 200; queue 4a b/c/f Drive sync: recreate-once on 404, every KB writer syncs, per-path lock; `b5c7ca02` (19:32 UTC) carried the 3r residual, `20502177` (18:11 UTC) armed the 4ai Fireworks last line, still ARMED on this build; `f9f37aa7` carried 4i); earlier build `00bcb65` (DEPLOYED 2026-10-20 06:45 UTC as build `00bcb65` PID 3586179 (0 startup errors, health 200, dist carries the helper on both paths); queue 4t mutation ledger re-hooked; the previous build `d188e97` (06:14 UTC) was DEPLOYED 2026-10-20 06:14 UTC as build `d188e97` PID 3487230 (0 startup errors, health 200); queue 4u swarm retry mirrors the first spawn; the previous build `c856008` (05:28 UTC) was DEPLOYED 2026-10-20 05:28 UTC as build `c856008` PID 3389518 (0 startup errors, health 200, dist carries `taskIdEnv`); queue 4aa: shell_exec children carry `MC_TASK_ID`, tweet receipt + gate bound to the task; the previous build `acfc0c0` (04:37 UTC) was DEPLOYED 2026-10-20 04:37 UTC as build `acfc0c0` PID 3280446 (0 startup errors, health 200, dist carries the `eval` deny entry + reason text); tweet-ritual receipt gate `0d80dfc` + W3 step 2 `mc-ctl eval` deny text; the previous build `9e62194` (02:12 UTC) was DEPLOYED 2026-10-20 02:12 UTC as build `9e62194` PID 2976146 (0 startup errors, health 200, dist carries `drive-query.js`, the in-flight memo and the pageToken follow); queue 4y residuals: Drive query escaping at every `q=` site, oldest-wins folder pick with duplicate warning, in-flight folder-create memo, reindex drain gate under test; the previous build `ff95c82` (01:18 UTC) was (0 startup errors, health 200, dist carries `kb-write-drain`, the settle exports and the `unref`'d INDEX timer); queue 4y: KB one-shot scripts drain the fire-and-forget pgvector/Drive syncs and regenerate INDEX.md before closing the db); the previous build `8037649` (23:20 UTC) carried the DENUE SQL path fix `7f389eb` — the SQL PATH prompt uses the read-only role and the one-span single-quoted form with `$$…$$` literals that the 5a shell gate admits, eval gate PASS 23:13 UTC on 278 cases; the 19:55 build `17c4ff5` (PID 2162185 → 2509412 after the operator's 22:46 UTC `apt-get upgrade` restarted containerd/caddy/mission-control/agentic-crm, same build, 0 tasks touched) brought 4v = grader prompt v2 + HARNESS-VERIFIED GATES section + `prompt_v` trace; the 17:19 build `b084932` brought 4s; the 04:44 build `88ed431` brought 4p; the 2026-10-18 build `1e1efdc` brought 4o G1 lineage; the 2026-10-01 build `b402df9` brought upstream-review hardening — boot singleton guard, kernel-resolved read guard, auth-retry replay guard, dead-schedule reap, process-group kill for the suite tools, credential redaction at the persistence seams, MCP dead-server recovery; `docs/planning/hermes-upstream-review-2026-10-01.md`); prior `634e4c5` (`jarvis_file_list` keeps the newest files when a listing is clamped — the Morning Sync day-log fix; DEPLOYED 2026-10-01 18:35 UTC); before it `7110035` (JME hardening after the adversarial audit; DEPLOYED 2026-09-30 05:31 UTC, PID 2062080; operator steps done: `JME_REDACT_ALLOW_EMAILS` set, `mc-ctl jme-dedup --apply` 8 rows, cleanup 50 rows → 397 live facts, 0 duplicate clusters); prior `2aa6ce9` + `14f57d1` (DEPLOYED 2026-09-30 03:36 UTC, PID 1806846, 235 tools; PROVEN live the same minute: `tool_approvals` row 1 pending → confirmed, one continuation task, `run_schedule` delivered the Pharma report at 03:38 UTC); in `7110035`: consolidator turns ordered `ts, id`, one turn per line, secret/PII redaction before insert (`JME_REDACT_ALLOW_EMAILS` allow-list), exact-cosine dedup with class-guarded skip/supersede, 30 d / 60 d / permanent TTLs, recall confidence floor + relative cutoff 0.20, `mc-ctl jme-dedup [--apply]`; prior `6a660e1` (the DENUE guard fires only when the user's own text names DENUE, and a failed heavy run records the tools it called; with `7d3faa6`, the scheduled-task fix for the canary: the chat-only DENUE advisory is no longer injected into scheduled tasks and rituals, their retries keep `interactive:false` and never repeat an irreversible action), DEPLOYED 2026-09-29 17:52 UTC (PID 759443; build verified in `dist/`, behaviour proof = the next scheduled runs); in that build: `14f57d1` (`run_schedule` — runs an existing active schedule on demand from an operator chat; one extra run, refused inside background runs) and `2aa6ce9` (the confirmation gate now runs on the Claude SDK path: high-risk tools ask the operator in chat, the reply carries a harness-rendered line of what will run, a confirmed action is followed by one automatic continuation, `google_workspace_cli` reads pass, and interactive tasks with no chat to ask in — API, A2A, sub-tasks, retries, heavy runs — are refused; `tool_approvals` had 0 rows since 2026-04-10); running the **Sonnet 5.5 canary** (`55a1897`: env-driven `SONNET_MODEL_ID` / `SONNET_EFFORT`, unset = byte-identical; operator drop-in `sonnet-canary.conf` = `claude-sonnet-5-5` / effort `low` since 2026-09-29 05:09 UTC; 7-day readout due ~2026-10-06; harness + results `docs/planning/sonnet-tier-benchmark-2026-09-29.md`); prior deployed build #50 `fb93b31` (2026-09-26, entity-extractor project terms from the projects registry); earlier baseline: system-hardening sweep 2026-07-05 (`34fbb4f`+`bed561f`, `docs/planning/system-hardening-sweep-2026-07-05.md`). **234 tools** live across 5 ToolSources (registry count from the 2026-09-26 03:21 UTC boot log; static enumeration 194 re-measured 2026-09-26 (builtin 150 + WordPress 10 + CRM 1 + GWS 1 + Google 22 + memory 5 + skills 5)); **13,822 tests** passing (`2c5e41ba`, full-suite pre-commit run 2026-10-25 22:03 UTC; 13,801 at `0d398551`; 13,800 at `75c98add`; 13,800 at `b06ecda7`; 13,785 at `6f752cb0`; 13,774 at `6b7dc893`; 13,754 at `182b02a5`; 13,748 at `ad7b7209`; 13,744 at `8b4fb68f`; 13,663 at `427fc816`; 13,330 at `7f389eb`; 13,327 at `db5bb68`; 13,319 at full-suite pre-commit run 2026-10-19 late, `4c75090`; 13,310 at `2d1f5c9`; 13,307 at `6feb6f6`; 10,067 at `b402df9`; 9,815 at `af7c280`; jarvis-pull tool path DEPLOYED 2026-09-30 16:00:55 UTC, PID 3158070, proven 16:03 UTC loopback + 16:32 UTC WhatsApp turn: one route hit each, 2 tool calls, sources cited); zero type errors; 18 core + 2 messaging deps. Inference: **Claude Agent SDK primary** (`INFERENCE_PRIMARY_PROVIDER=claude-sdk`) — Sonnet 4.6 primary by default (`SONNET_MODEL_ID` env override; the live canary runs Sonnet 5.5 with adaptive thinking, effort `low`), Haiku 4.5 fallback for `infer()`/`inferWithTools()`, Opus→Sonnet model-tiering on the Prometheus heavy path (`PROMETHEUS_ECONOMY_MODEL` kill switch); the OpenAI-compat fallback/tertiary slots (`INFERENCE_FALLBACK_*`, `INFERENCE_TERTIARY_*`) are empty in the live process, so inference is Claude-only; since `8b4fb68f` the `fallback` slot is ARMED as a loud last line (`INFERENCE_SDK_LASTLINE_ENABLED=true`, Fireworks `qwen3p8-max`, DEPLOYED 2026-10-23 18:11 UTC build `20502177`; queue 4ai; `scripts/bench-fireworks-fallback.ts` ranks the candidates). Hindsight recall is demoted (`HINDSIGHT_RECALL_ENABLED=false`) in favor of the SQLite FTS5 + pgvector hybrid.
-
-**Current capability layer — V8 ("Jarvis as colleague"):**
-
-- **V8.1 Morning-Surface briefing (ACTIVE).** The 06:00 cron constructs + delivers a daily strategic briefing (`runMorningSurface`), gated on the §13 activation gate (`mc-ctl briefing-gate`). Runbook: `docs/V8.1-GUIDE.md`.
-- **V8.2 Strategic Initiative Layer (SHADOW, armed 2026-06-19).** The judgment-assembly producer (`src/lib/v8-2/produce.ts`) runs inside the morning brief: per brief it assembles up to 3 strategic _judgments_ — decompose → evidence ledger → RAPID-D options → author `[K]`-cited prose → critic loop → confidence/hedge floor — writing `judgments` + `attributed_claims` rows for measurement. A **delivery layer** (`V82_DELIVERY_ENABLED`, a 2nd flag, default OFF — SHIPPED dormant 2026-06-26) can surface those judgments into the brief — appended before the promote/discard footer via the §9 delivery-time drop-vs-surface filter — but until it is armed the brief still ships only its V8.1 prose. Plus a 02:30 sycophancy probe. Flags `V82_JUDGMENT_PRODUCER_ENABLED` + `V82_DELIVERY_ENABLED` (systemd drop-ins, not `.env`). §17 has PASSED since 2026-08-02, when check 6a (green/red acceptance ratio) was removed as unmeasurable — so the remaining gate is bilateral voice, and arming delivery is now a product decision rather than a §17 prerequisite. Spec: `docs/planning/v8-capability-2-spec.md`.
-  - _Latest (2026-06-26):_ two V8.2 ships landed dormant — (1) the **delivery layer** (`85de206`; `src/lib/v8-2/judgment-render.ts` + `V82_DELIVERY_ENABLED`) surfacing shadow judgments into the brief, and (2) the **§17 6a acceptance recalibration** to brief-grain (`183460e`; `briefConfidenceColor`): the gate's promote-ratio was measured per judgment, so a promoted mixed-color brief lifted green and red equally and the ratio collapsed toward 1.0 — now each brief is scored by its lead (highest-leverage) judgment's color, else plurality. Arming delivery is the only path off §17's `insufficient_data` (acceptance can't accrue with delivery off). — **Superseded 2026-08-02**: 6a was removed as unmeasurable, so §17 no longer has an acceptance term and delivery is not a prerequisite for it.
-- **V8.3 Autonomous Execution Gates — decision seam LIVE at the registry chokepoint (2026-08-08), source-stratified (2026-08-17).** Every path to a gated tool funnels through `ToolRegistry.execute` (chat via task-executor, Prometheus, claude-sdk MCP bridge, rituals) and is ledgered audit-only; the confirm-flow seam (`trigger.ts`) records its own row. Rows carry `source` = interactive | operator | background (persisted on the `proposed` event; operator chat runs on their thread key) and `mc-ctl v83-gate` reports the 7d shadow by source. Substrate history (2026-06-24): Phase 0+1 of the Control layer: a 4-table decision ledger (`capability_autonomy`, `capability_trust_signals`, `decisions`, `decision_events`) + `audit_decisions` view, boot-applied; 6 capabilities seeded at L1 and hint-cross-checked against the live registry; an `assertV82Dependencies` fail-loud boot gate. **Inert by construction** — nothing reads the ledger and no decision is ever written; the decision pipeline (Phases 2–7) + Wiener PI controller (v2) are pending. `src/lib/v8-3/`; spec `docs/planning/v8-capability-3-spec.md`.
-
-Prior milestones (v1–v7) are summarized in the phase table below; full per-session history is in `docs/PROJECT-STATUS.md`.
-
-| Phase        | Status | What                                                                                                                                                                 |
-| ------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1           | Done   | Foundation — Hono server, SQLite, 5-way classifier, dispatcher, fast/nanoclaw/heavy/swarm/a2a runners, Prometheus core, MCP integration, A2A protocol, web dashboard |
-| v2.1–v2.13   | Done   | Tool plugin system, browser (Lightpanda), web search/read, local PDF, Google Workspace (19 tools), Hindsight memory, adaptive intelligence                           |
-| v2.14–v2.22  | Done   | Production guards, coding toolkit, WordPress (10 tools), hallucination detector, dynamic tool scoping, Telegram vision, sandboxed shell                              |
-| v2.23–v2.26  | Done   | Jarvis unification, project entity, strategic autonomy, HyperAgents, self-tuning overnight loop                                                                      |
-| v2.27–v2.30  | Done   | Self-tuning eval harness, 7-layer hallucination defense, 3 new tools (pdf_read, hf_generate, hf_spaces), fast-path (~2s), Telegram streaming, scope isolation        |
-| v3.0         | Done   | Production hardening — systemd, Pino logging, 3-layer guardrails, model benchmark, provider rotation                                                                 |
-| v4.0 S1–S9   | Done   | DB indexes, shell security, Gemini research, observability, hallucination protocol, Playwright, scope telemetry, decomposition (894 tests)                           |
-| v5.0 S1a–S1b | Done   | Guard upgrades (4-layer doom-loop, escalation ladder, circuit breakers, session repair) + Memory (compaction pipeline, auto-persist, spending quotas)                |
-| v5.0 S2      | Done   | Concurrent task isolation (per-task context, task_history tool)                                                                                                      |
-| v5.0 S4      | Done   | CRM integration (bidirectional REST, jarvis-pull)                                                                                                                    |
-| v5.0 S5b     | Done   | Knowledge maps (2 tools, 2 tables, Prometheus integrated)                                                                                                            |
-| v5.0 S5c     | Done   | Research verification (provenance tracking, source anchoring, condensation)                                                                                          |
-| v5.0 S5      | Done   | Classifier calibration (dynamic messaging tier, rephrase fix, feedback quality loop, weighted eval scoring)                                                          |
-| v5.0 S6–S8   | Done   | Intelligence Depot (8 sources, delta engine, alert router, baselines, z-scores, 4 Jarvis tools, ritual integration)                                                  |
-| Coding       | Done   | 6 git/GitHub tools, coding directive, NanoClaw Docker sandbox (nanoclaw-coding:latest), volume mount support, sandbox E2E verified                                   |
-| NorthStar    | Done   | Visions/goals/objectives/tasks as plain markdown files in Jarvis file system (replaced 22-tool database system)                                                      |
-| v6           | Done   | Unified file system, hybrid memory (FTS5 + pgvector + Ebbinghaus decay), pgvector KB migration                                                                       |
-| v7.x         | Done   | Financial signal stack (F1–F9), video production, SEO/GEO suite, teaching module, Skill Evolution Engine, NorthStar↔COMMIT sync; 30-day 5-dimension hardening closed |
-| v8.1         | Active | Morning-Surface daily strategic briefing — construct + deliver, §13 activation gate, drift/temporal-spread surfacing                                                 |
-| v8.2         | Shadow | Strategic Initiative Layer — judgment-assembly producer (decompose→author→critic→confidence), sycophancy probe; write+measure, not yet delivered (armed 2026-06-19)  |
-
-See `docs/V7-ROADMAP.md` + `docs/V8-VISION.md` for the active roadmap and `docs/PROJECT-STATUS.md` for detailed phase history. v6 roadmap archived at `docs/archive/V6-ROADMAP-session67-final.md`.
-
-### Jarvis — the user-facing persona
-
-Jarvis is a strategic AI assistant accessible via Telegram and WhatsApp. Built on top of the agent controller:
-
-- **251 tools across 5 ToolSources** (live registry at the 2026-10-23 00:0x UTC boot; builtin incl. Google-Workspace/WordPress/memory/CRM/teaching/video/coding, MCP-bridge, Google, memory, Skills — breakdown in `docs/TOOL-CATALOG.md`). Every non-MCP tool annotated with all 4 MCP-spec hints (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) — v7.6 Spine 4 (2026-05-08).
-- **Tool deferral** — most tools deferred (name+desc only, full schema on first call). ~52% prompt token reduction
-- **Background agents** — "lanza un agente" spawns parallel workers with fork child boilerplate, structured output, 3 max concurrent
-- **Coding capability** — write code, run tests, commit, push to GitHub, create PRs (6 git tools, NanoClaw Docker sandbox)
-- **Video production** — 9 tools: script → per-scene TTS → overlay composition → FFmpeg → MP4 (324 voices, background library, HiDPI screenshots)
-- **Content pipeline** — screenshot_element (HiDPI), humanize_text (AI writing filter), dashboard_generate (ECharts), social publishing scaffolding
-- **NorthStar** — visions, goals, objectives, tasks as plain markdown files in unified file system
-- **Unified file system** — 350 files, 8-folder hierarchy (NorthStar, projects, knowledge, logs, directives, workspace, inbox, VPS). Project README auto-injection
-- **9 automated rituals** (morning briefing, nightly close, weekly review, skill evolution, overnight tuning, proactive scanner, signal intelligence, evolution log, diff digest)
-- **Dynamic tool scoping** — 15-30 full-schema tools per message (down from 60-80), with KB omission for read-only tasks
-- **7-layer hallucination defense** + verification discipline nudge + critical system reminder (re-injected every 3 rounds)
-- **Path safety pipeline** — 6-check validatePathSafety + isDangerousRemovalPath + DANGEROUS_FILES/DIRECTORIES
-- **Behavioral coherence** — 10 patterns from Claude Code architecture (tool deferral, structured compaction, never-delegate-understanding, continue-vs-spawn, memory drift verification)
-- **Streaming responses** — progressive Telegram message updates
-- **Fast-path** — 1-2 word greetings skip full pipeline (~2s). 3+ words always use enhancer + tools
-- **Hybrid memory** — FTS5 full-text + pgvector semantic search (Supabase) + Ebbinghaus retention decay + background memory extraction
-- **Intel Depot** — 8 signal sources, delta engine, z-score anomaly detection, 4 Jarvis tools
-- **Document research** — Gemini-powered deep analysis, summaries, study guides, quizzes, podcast generation
-- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs, Slides, Tasks (22 tools)
-- **WordPress multi-site** — content management with destruction safeguards (10 tools)
-- **Autonomous improvement** — SG1-SG5 safeguards (diff digest, kill switch, immutable core, directive cooldown, pre-cycle git tags)
-- **Multi-provider inference** — Claude Agent SDK primary (Sonnet 4.6, Haiku 4.5 fallback, Opus→Sonnet heavy-path tiering); OpenAI-compat fallback/tertiary slots supported but empty in the live deployment. Switchable via `INFERENCE_PRIMARY_PROVIDER` env var
-
----
-
-## Origins
-
-Built from analysis of two open-source frameworks and one production system:
-
-- **hermes-agent** (nousresearch) — 814 files, 50+ tools, 85+ skills. Taught us agent architecture. Its gaps (no planning, no reflection) defined the Prometheus core.
-
-- **mission-control** (builderz-labs) — 546 files, Next.js fleet dashboard. Taught us fleet orchestration. Its 136 issues shaped our infrastructure improvements.
-
-- **NanoClaw** — Production engine for crm-azteca's WhatsApp AI agents. 1100+ tests. Proved that container-per-task tool loops handle most real agent work. Its inference adapter, container spawning, and concurrency patterns are directly reused.
-
-Validated against industry research (March 2026): orchestrator-worker is the dominant production pattern, difficulty-aware routing saves 30-70% cost, and Anthropic endorses the tiered complexity approach.
+| Symptom | Cause and fix |
+| --- | --- |
+| `Missing required env var: INFERENCE_PRIMARY_URL` at boot | The provider defaulted to `openai`. Set `INFERENCE_PRIMARY_PROVIDER=claude-sdk`, or set all three `INFERENCE_PRIMARY_*` variables. |
+| `Port 8080 already in use — kill the old process first` | Another process holds the port. Set `MC_PORT` to a free port. |
+| `Another mission-control instance already holds database …` | Two processes cannot share one database file. Stop the other instance, or point `MC_DB_PATH` at another file. |
+| `SANDBOX_BACKEND must be "docker" or "opensandbox"` | The value has a typo. The boot refuses it on purpose, so that a typo cannot silently switch sandboxes to the backend without egress limits. |
+| `[mcp] <server>: failed to connect` | Its binary or path is missing (see the table in [step 2](#2-start-the-server-no-credentials)). Its tools are skipped. Remove the entry from `mcp-servers.json` or install the binary. |
+| `nanoclaw` tasks fail with an image-missing or `built from a different package-lock.json` error | The `mission-control:latest` image is missing or out of date. Run `bash scripts/build-mc-image.sh`. |
+| `/health` shows `"inference":"unreachable"` with `claude-sdk` | `~/.claude/.credentials.json` is missing or empty. Log in with Claude Code. |
+| Production behaves like old code after an edit | The service runs `dist/`, so deploy (operator). If a live tsx process is involved, clear its cache: `rm -rf /tmp/tsx-$(id -u)/`. |
+| A full `vitest run` is killed for running out of memory | Run tests scoped to a file or directory. CI runs the whole suite in shards. |
