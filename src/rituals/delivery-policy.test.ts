@@ -9,7 +9,6 @@ import {
   EMAILED_SHARE,
   PUSH_CAP,
   TELEGRAM_PUSH_WORD_CAP,
-  WORD_CAP,
   applyRitualDeliveryPolicy,
   budgetUsed,
   capWords,
@@ -401,6 +400,39 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
     const [body, pointer] = d.text.split("\n\n📄 ");
     expect(body.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(EMAILED_PUSH_WORD_CAP);
     expect(pointer).toBe("Completo en el correo · mc-ctl task t1");
+  });
+
+  // 4az c (2026-11-08): weekly-review emails the full review, so it is an
+  // emailed ritual — capped push with the inbox pointer, and it shares the
+  // one-emailed-push-a-day budget (a delivered digest the same day defers it).
+  it("weekly-review is emailed: capped push with the inbox pointer, inside the emailed share", () => {
+    const review = Array.from({ length: 60 }, (_, i) => `- proyecto ${i} avanzó con el despliegue esta semana`).join("\n");
+    const d = applyRitualDeliveryPolicy("weekly-review", "t-week", review, { now: NOW });
+    expect(d.deliver).toBe(true);
+    const [body, pointer] = d.text.split("\n\n📄 ");
+    expect(body.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(EMAILED_PUSH_WORD_CAP);
+    expect(pointer).toBe("Completo en el correo · mc-ctl task t-week");
+    expect(budgetUsed(DAY)).toMatchObject({ pushes: 1, emailedPushes: 1 });
+    const later = applyRitualDeliveryPolicy("signal-intelligence", "t-dig", "palabra ".repeat(50).trim(), { now: NOW });
+    expect(later).toMatchObject({ deliver: false, reason: "budget" });
+  });
+
+  // Audit R1 W3: the real Sunday order — the 06:00 digest takes the emailed
+  // share, so the 20:00 review push is deferred (the email itself is sent by
+  // the ritual's gmail_send, untouched by this seam). Exempting weekly-review
+  // from the share is a pending operator ruling.
+  it("weekly-review after a delivered 06:00 digest the same MX day is deferred (emailed share) and queued", () => {
+    const morning = new Date("2026-08-24T12:00:00Z"); // 06:00 MX
+    const evening = new Date("2026-08-25T02:00:00Z"); // 20:00 MX, same MX day
+    const digest = applyRitualDeliveryPolicy("signal-intelligence", "t-dig", "palabra ".repeat(50).trim(), { now: morning });
+    expect(digest.deliver).toBe(true);
+    const review = "- proyecto avanzó con el despliegue esta semana\n".repeat(20).trim();
+    const d = applyRitualDeliveryPolicy("weekly-review", "t-week", review, { now: evening });
+    expect(d).toMatchObject({ deliver: false, reason: "budget" });
+    expect(budgetUsed(DAY)).toMatchObject({ pushes: 1, emailedPushes: 1 });
+    const queued = pendingDeferrals();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].title).toBe("weekly-review");
   });
 
   it("R2 C1: the sent-before ledger records the PRE-cap text — a repeat beyond the Telegram cut is still a repeat", () => {

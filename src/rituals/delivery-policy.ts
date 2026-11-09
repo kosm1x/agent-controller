@@ -72,6 +72,8 @@ export const EMAILED_RITUALS: ReadonlySet<string> = new Set([
   "signal-intelligence",
   "market-morning-scan",
   "nightly-close",
+  // 4az c, 2026-11-08: emails the full review; Telegram gets the capped push.
+  "weekly-review",
 ]);
 
 /**

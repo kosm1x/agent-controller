@@ -79,11 +79,12 @@ export const rituals: RitualDefinition[] = [
     id: "weekly-review",
     title: "Weekly review",
     // Sunday 8:00 PM — comprehensive weekly strategic review.
-    // DISABLED 2026-06-23: its prompt reads NorthStar for "objetivos estancados /
-    // metas huérfanas / tareas vencidas" — sources the operator ruled are not
-    // work-truth. Re-enable only behind a day-log-grounded rewrite.
+    // Disabled 2026-06-23 (its prompt read the retired work-source hierarchy);
+    // RE-ENABLED 2026-11-08 (operator ruling, queue 4az residue c) behind the
+    // day-log-grounded rewrite: the week's seven days are harness-loaded and
+    // embedded, plus the active projects (src/rituals/weekly-review.ts).
     cron: "0 20 * * 0",
-    enabled: false,
+    enabled: true,
   },
   {
     id: "overnight-tuning",
