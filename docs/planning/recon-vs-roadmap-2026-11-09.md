@@ -25,5 +25,5 @@ Credibility keeps moving and now carries the proof it lacked three days ago. Eve
 
 ## Next (same order as 11-06; item 1a is done, the rest has not started)
 1. Operator: (a) first enforce-mode grade review DONE 11-09 (3 grades, all met); (b) rule on the MCP v2 date and the A2A consumer date.
-2. Operator: SDK bump 0.3.285 → 0.3.316 with `npm run eval:gate -- --run` — DONE 11-09 06:21 UTC (`f12bc403`, gate PASS 78.90 vs 78.63; tool-search validation pending).
+2. Operator: SDK bump 0.3.285 → 0.3.316 with `npm run eval:gate -- --run` — DONE 11-09 06:21 UTC (`f12bc403`, gate PASS 78.90 vs 78.63; tool-search validation PASS 5/5).
 3. A session for the operator profile (the first S6 step that moves Replicability and Scalability together), then the onboarding guide.

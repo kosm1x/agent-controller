@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-11-09 06:2x UTC (**SDK bump 0.3.285 → 0.3.316 DEPLOYED + first call PROVEN (queue 4cc)**: paid gate from the copy PASS 78.90 vs 78.63 (scope_prompt 66.84 vs 64.74); bump commit `f12bc403` (package.json + lockfile), deploy build `f12bc403` PID 422082 06:21:08 UTC, 0 startup errors, SDK 0.3.316 / CLI 2.1.316 live; first post-restart call 06:25:48 UTC on Sonnet 5.5 with cost > 0, 0 model/version errors; CI green. Pending: operator tool-search validation `scripts/validate-tool-search.ts --run`)
+> Last updated: 2026-11-09 06:2x UTC (**SDK bump 0.3.285 → 0.3.316 DEPLOYED + first call PROVEN (queue 4cc)**: paid gate from the copy PASS 78.90 vs 78.63 (scope_prompt 66.84 vs 64.74); bump commit `f12bc403` (package.json + lockfile), deploy build `f12bc403` PID 422082 06:21:08 UTC, 0 startup errors, SDK 0.3.316 / CLI 2.1.316 live; first post-restart call 06:25:48 UTC on Sonnet 5.5 with cost > 0, 0 model/version errors; CI green. tool-search validation PASS 06:3x UTC (5/5 phases, armed prompt 71 % smaller, retrieval + inline hit, builtin sealed) → bump CLOSED)
 
 > Last updated: 2026-11-09 04:2x UTC (**SDK bump 0.3.285 → 0.3.316 PREPARED, operator-run (queue 4cc)**: runbook `docs/planning/sdk-bump-2026-11-09/RUNBOOK.md` + `/root/sdk-bump-2026-11-09.sh`; no code patch; auto-memory fix HOLDS on CLI 2.1.316; one model-visible change (tool-description cap 2,048 → 4,096, 6 tools reach the model in full) → paid eval gate MANDATORY, run from a copy with the service up; qa R1→R2 PASS-W, 40/40 harness cases, 5 mutants RED; live build `68991e63` PID 4098103 unchanged until the operator runs gate → script → deploy)
 
@@ -414,7 +414,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
-| 2026-11-09 (06:2x) | SDK bump DEPLOYED: gate PASS 78.90 vs 78.63, bump `f12bc403`, build `f12bc403` PID 422082, SDK 0.3.316 / CLI 2.1.316 live, first call PROVEN 06:25 UTC, CI green | NEXT: operator tool-search validation (≈$0.80) → delete `/root/tmp-sdk-bump-gate` |
+| 2026-11-09 (06:2x) | SDK bump DEPLOYED: gate PASS 78.90 vs 78.63, bump `f12bc403`, build `f12bc403` PID 422082, SDK 0.3.316 / CLI 2.1.316 live, first call PROVEN 06:25 UTC, tool-search validation PASS 5/5 06:3x UTC, CI green | CLOSED; operator deletes `/root/tmp-sdk-bump-gate` |
 | 2026-11-09 (04:2x) | SDK bump 0.3.316 PREPARED: runbook + operator script, no code patch, gate mandatory (6 fuller tool descriptions), qa R1→R2 PASS-W | NEXT: operator gate (≈$6) → script → deploy → smoke → tool-search validation (≈$0.80) |
 | 2026-11-09 (03:4x) | recon vs roadmap refreshed `cb6b9a5e`; rulings 4cc: MCP v2 no date (12-01), A2A no consumer (12-01), SDK bump NOW → 0.3.316 (runbook in preparation, operator-run) | NEXT: runbook audit → operator install/gate/deploy → operator-profile session |
 | 2026-11-09 (01:14) | deploy by the operator: build `68991e63` PID 4098103 (was 3600568), 2 s transition, 0 error lines; hydration bound + weekly review LIVE | PROOF: first weekly review 11-15 20:00 MX |
