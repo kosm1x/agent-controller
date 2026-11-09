@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 20:23 UTC (**4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist)**; port-1 proof now has a durable sensor: first `evicted_spill` row = PROVEN)
+
 > Last updated: 2026-11-09 20:17 UTC (**4ce(b) BUILT `b034949c`**: `file_read` on a spill now marks its `tool.called` trace row `evicted_spill: true` (boolean only, path never stored) — durable proof sensor for port 1; qa R1 PASS-w/W → fold → R2 PASS-w/W (order-pin test folded); deploy pending via `/root/deploy-4ce-2026-11-09.sh`)
 
 > Last updated: 2026-11-09 17:58 UTC (**Hermes port 1 DEPLOYED `9e416451` PID 1487901 (queue 4cd)**: evicted tool results now spill to root-only `tool-results/`, readable by `file_read`; 0 startup errors; PROOF pending on the next eviction.)
@@ -422,6 +424,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (20:23) | 4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist); proof pending = first marked `file_read` row | queue 4ce |
 | 2026-11-09 (20:17) | 4ce(b) BUILT `b034949c`: `evicted_spill` boolean marker on `file_read` trace rows for spill paths (aliases `path`/`file_path`/`filepath`), qa R1→fold→R2→fold-w/W (order-pin test folded); deploy pending | queue 4ce |
 | 2026-11-09 (17:58) | Hermes port 1 DEPLOYED `9e416451` PID 1487901, 0 startup errors, stale `data/tool-results/` removed; proof pending | queue 4cd |
 | 2026-11-09 (17:5x) | Hermes port 1 built `9489ab3e`: spill dir → `/root/claude/mission-control/tool-results/` (root-only, gitignored), `file_read` expired answer, read guard untouched; qa R1 FAIL (`/var/tmp` squat) → relocated → R2 PASS; deploy pending | queue 4cd |
