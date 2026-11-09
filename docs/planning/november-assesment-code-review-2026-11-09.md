@@ -1,0 +1,209 @@
+# November Assesment — dimension 1 (CODE): review and ruling list
+
+> Opened and closed 2026-11-09 (UTC) at `main` `982aced9`, live build `ecae5e88`. Read-only: nothing in `src/`, `scripts/` or the live host was changed. This file ends at the ruling list; nothing is built until the operator rules.
+> Parent: `docs/planning/november-assesment-2026-11-09.md` (§1 Code, score 6). Queue: 4cf, 4cg.
+
+## Method
+
+Eight sub-dimensions, each worked the same way:
+
+1. One or more fresh reviewers (no shared context) with the code, the assessment's measurements and the instruction to verify, extend and size — not to confirm.
+2. The orchestrator re-checked every load-bearing claim by direct read, and ran every live-data count itself (read-only).
+3. A separate adversarial verifier per item tried to refute the report with its own scripts.
+4. Only what survived all three is below. Where the three disagreed, the correction is stated.
+
+No test, typecheck or build was run by any reviewer; every measurement is parse-only or a read-only count. Security and privacy findings are stated here as categories only; file-level detail is kept off-repo.
+
+## Bottom line
+
+- **The score stands at 6, for different reasons.** The assessment blamed size (very large files, no linter, dormant code). The review found size is mostly tolerable and several of those claims were wrong. What actually holds the score down is narrower and more fixable: **(1)** three gaps in the guards around what the agent may write and merge; **(2)** a deploy script that replaces the running code before it checks whether it may, and a post-deploy check that cannot see a failure; **(3)** failures that are logged but never counted or alerted, including a success mark shown to the operator after an approved action failed; **(4)** tests that are numerous and honest but thin exactly where the guards and the emergency path live.
+- **What is good and should not be touched:** typing discipline (6 `any`, 0 `@ts-ignore`), the completion ledger (0 bypasses), one database handle, exact dependency pins, real-SQLite tests as the house pattern, the shell gate's structure, and the habit of writing the reason next to the code — about two-thirds of the history-tagged comments carry a real constraint.
+- **Nothing found is on fire.** No evidence of data loss or of a bad deploy having run; whether the agent ever merged its own work cannot be answered either way from stored data. Every item is a latent risk or a small live defect.
+
+### Where the assessment was wrong
+
+| Assessment said | Review found |
+| --- | --- |
+| The alternate inference adapter is dormant | It is the armed emergency path (0 fires ever). Four of its branches are reached by no test. |
+| Six functions are too long, five files too large | Eight functions over 500 lines, 22 files over 1,000. Two long functions are genuinely harmful (`dispatchWithSlot`, `orchestrate`); the two inference loops must NOT be split. |
+| 138 dynamic imports hide coupling | 173 `import()` calls; they hide almost nothing (the largest cycle grows from 25 to 26 files when they are counted). |
+| No linter | No TypeScript linter, but ~30 source-reading lock tests already enforce conventions. A typed linter fits this host badly. |
+| 95 % of commits are the agent's | 966 commits in 90 days; ≈ 20 are autonomous agent commits. The rest are operator sessions under the same git identity. |
+| Finance is dormant | Finance tools run every weekday. Only the prediction-market branch is idle (parked 10-04). |
+| Duplicated helpers are a maintenance burden | Duplication is 0.6–0.8 % of lines. It matters only in a handful of guard copies that have drifted apart. |
+| 39 stale compiled files are a deploy hazard | They are inert. The hazard is the ORDER of the deploy steps. |
+| Tests mock their own subject; the suite needs ~6 GB | 0 self-mocks. Measured worker peak 341 MB. |
+| 268 silent catches are a risk; migrate ~900 console calls to the logger | The count is right; ~75–90 % are correct. The migration would break operator tooling that greps console text. The real short list is ~15 sites. |
+| History comments are noise | About two-thirds carry a real constraint; one in twenty is false. What rots is references to other code (line numbers, names, "same as"). |
+
+## The ruling list
+
+Fifteen decisions. Each has a recommendation; "no ruling needed" work is listed under the batch it belongs to. Recommended build order = the order below.
+
+| # | Decision | Options | Recommendation |
+| --- | --- | --- | --- |
+| 1 | **Security batch first?** Three guard gaps (S1–S3 below). | go (right after this list) / now / later | **go** — smallest change with the largest risk reduction in this review |
+| 2 | After S2 the agent can no longer propose changes to its own guard files; those become operator-session work only. | accept / keep proposals possible via a reviewed exception path | **accept** — it is already the stated intent |
+| 3 | Separate GitHub identity for the agent, so branch rules can tell agent from operator. | now / later / no | **later** — S3 closes the gap in code; this is the durable version |
+| 4 | Public-repository hygiene (P1–P3 below): personal data in tracked files; three ignored-but-tracked directories, one holding the auditor's records; docs that describe currently-open weaknesses. | accept / clean current files and untrack the three directories / also rewrite public history / make the repository private | **clean and untrack**; history rewrite only if the operator judges the content sensitive (destructive: breaks clones, forks and the agent's worktree; caches remain) |
+| 5 | Deploy: refuse a dirty working tree by default (`--allow-dirty` to override)? | refuse / keep warn-and-record | **refuse** |
+| 6 | Deploy: snapshot the database automatically when a migration will run? | yes / no | **yes** (seconds, ~560 MB, helper exists) |
+| 7 | Full test suite on every host commit (194 s, growing ~16–20 %/month). | keep / keep + memory fence + add docs-coupled tests / related-files locally, CI as the full gate | **keep + fence + docs-coupled tests** — the 13 red CI runs of the last 17 days are 5 episodes, and 4 of the 5 began on a commit that staged no `.ts` file, where the hook runs nothing (the longest, 9 runs, began on a docs commit that edited a file a test reads; the cause of the other three was not read from the job logs) |
+| 8 | Emergency inference path drill: fix its five known defects and pin its unreached branches before it is ever needed. | now (in this dimension) / in dimension 3 Resilience | **now** — it has never run live and would be first used on the worst day |
+| 9 | Structure work: how far. | (a) cycle cuts + ratchet only / (b) + pure moves out of `router.ts` and `fast-runner.ts` / (c) + splitting the production SDK path into its own function | **(b)**; (c) only after the tests of batches 5 and 6 exist |
+| 10 | Low-activity areas (13.8 % of lines; 86 tools never called in 134 days). Standing ruling: never-called is not removable. | (a) leave / (b) add a per-area registration switch, default ON | **(a)** — plus narrowing the CI video exclusion (Q10) |
+| 11 | Unreachable code: 30 exports referenced nowhere, plus four named dead symbols (`hasUserConfirmedDeletion` with its 21 tests, `tierToProvider`, a `conditionMatches` re-export, `execAsync` in the shell tool). Operator names what goes. | remove all / remove named ones / leave | **remove all** (not tools, not areas; plain unreachable code) |
+| 12 | Comment rule. | (a) leave / (b) "why, not when": keep constraints, cite a symbol and never a line number, a "keep in sync" comment names the test that pins it / (c) strip history tags | **(b)** for new and touched comments; no mass rewrite |
+| 13 | The agent's own test tool runs in the primary checkout while its edits live in its worktree. | run in the worktree / change the tool description (eval gate) | **run in the worktree** |
+| 14 | Three redaction helpers each miss pattern classes the others have. Unifying changes the labels in stored recall rows. | unify / leave | **unify** |
+| 15 | One paid eval-gate run for all model-visible fixes together (batch 10). | schedule after batches 1–4 / skip | **schedule once**, after the behaviour fixes |
+
+## Batches
+
+Sizes: S = under a day, M = one to three days, including audit. Every code batch ships as usual: builder → separate auditor → full suite at commit → CI → operator deploy → proof.
+
+### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
+
+| Id | Category | Severity | Size |
+| --- | --- | --- | --- |
+| S1 | **Write-boundary parity.** The write-capable tools do not all enforce the same path boundary. Fix = one shared boundary + a parity table test that drives every write-capable tool over the same forbidden paths. | High | S–M |
+| S2 | **Self-modification guard coverage.** The protected-file guard does not cover every location in which the agent can edit code. | High (governance) | S |
+| S3 | **Merge authority enforced in code.** "The agent cannot merge its own work" is a prose rule that code does not enforce on every route. Whether it was ever broken is not answerable from stored data (agent and operator share one login). | High (governance) | S |
+| S4 | Two guards that fail open by accident (their "safe to ignore" reason holds only at boot or in tests). | Medium | S |
+| S5 | Redaction helpers with mutually missing pattern classes (ruling 14). | Low–Medium | S |
+| S6 | A guard helper lives in a file that is not on the protected list. | Low | S |
+| S7 | Child-process environment scope on the primary inference path. | Medium (dimension 6) | — |
+| S8 | Operator-only hardening, two items (write protection of the live build tree; install-policy parity of the sandbox image). | Low | S |
+| P1 | **Personal data in tracked files** (ruling 4): email addresses at real-looking domains in 49 files, phone or chat-id shapes in 7 (14 of these are tests; whether each value is real was not checked). | Medium | S |
+| P2 | **Ignored but still tracked**: three directories listed in `.gitignore` remain tracked — browser page snapshots (25 files), logs (4), the auditor agent's memory (218 files, 191 of them audit records). | Medium | S |
+| P3 | **Open weaknesses described in public text**: 237 lines pair weakness wording with a guard name (planning docs, archive, source comments, one project-instructions invariant). Going-forward rule adopted 11-09: categories in the repo, detail off-repo. | Low–Medium | rule |
+| T1 | Tooling: two source files contain a NUL byte, so plain `grep` skips them silently (every sweep must use `grep -a`). Fix = remove the bytes + a lock test. | Low | S |
+
+Guard tests today: of 24 cells (four write-capable tools × six forbidden-path categories) 5 have a behavioural test, 5 a unit-only test, 14 none. The parity table test of S1 fills all 24.
+
+### Batch 2 — Deploy path (rulings 5, 6)
+
+Findings: the script builds over the live `dist/` BEFORE it checks for running tasks, so any of eight exit paths after the build (blocked, build error, Ctrl-C…) leaves new code on disk under the old process — and 91 unit starts in 30 days were not all deploys (≈ 18 were health-check, watchdog or package-upgrade restarts that boot whatever is on disk, with none of the deploy checks). The post-restart check passes on a crash loop (it stops at the first new PID), its error count has never matched a logger line since it was written (07-05; the logger writes level labels, the pattern expects numbers) and its window is the few seconds the PID switch took. There is no rollback; the printed hint is unsafe. CI never runs the build.
+
+| Id | Change | Size |
+| --- | --- | --- |
+| R1 | Guard first; build into a per-build directory; flip a `dist` symlink; keep the previous tree. The old process keeps importing its own tree until it exits. Closes the half-deployed state and the mixed-tree window, removes the stale files, makes rollback free. | S–M |
+| R2 | `--rollback` (flip back, restart, same checks); delete the unsafe hint. | S |
+| R3 | Real post-restart check: same main PID for ≥ 15 s; loopback health shows the channel connected; tool count equals the previous boot; corrected error pattern and window. | S |
+| R4 | Provenance: one syslog line per deploy and one boot line naming the build. | S |
+| R5 | CI job runs the build. | S |
+| R6 | Deploy compares host `node_modules` with the lockfile and refuses on mismatch. | S |
+| R9 | Lint `mc-ctl` in the shell-lint workflow; delete its one check that greps for strings no code emits. | S |
+
+Interim operating rule until R1 ships: **a deploy that stops before the restart is half-done — re-run it to the end.**
+
+### Batch 3 — Live defects (ruling 13 only)
+
+| Id | Defect | Size |
+| --- | --- | --- |
+| V2 | **False success mark.** After the operator approves an action, a failure is shown as "✅ … ejecutado" when the tool reports it as plain text or under a key other than `error` (6 of 18 confirmation-required tools: deploy, apply-proposal, structured PDF ingest, skill run, the dev test step, batch delete). The card then counts as succeeded: later items on it run and the original request resumes. | S–M |
+| L1 | `cancelTask` can flip a `completed_with_concerns` task to `cancelled` (its terminal set omits that status; 1,106 of 4,778 tasks have it). | S |
+| X1 | A run that fails the required-tools check books no cost (returns before the ledger write) — the only ledger gap in 30 days. | S |
+| X2 | Corrupted warning glyph in the background-agent limit message. | S |
+| X3 | The fast-path reply skips the deliverable sanitizer (0 uses in 30 days). | S |
+| D5, D8, D9 | Byte-identical critic-verdict parser (56 lines) → one home; four copies of an output-path validator; an SMTP fix that landed only in the copy. | S each |
+| L3, L5, L7 | One raw cron registration; a budget default that contradicts config; database work outside its `try`. | S each |
+| D3 | The agent's own test tool checks the primary checkout, not the worktree that holds its edits (ruling 13; 4 calls ever). | S |
+| D7 | The usage merge on the auth-retry path drops cache tokens (alternate inference path only). | S |
+| X5, X6, X8, V11 | Stop path: stop calls outside any `try`, one stop function never called, a listener never removed, a singleton set before its tables exist. | S |
+
+### Batch 4 — Failures become visible (no ruling needed)
+
+Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next to 60 console lines with error wording. Failures are written, not counted.
+
+| Id | Change | Size |
+| --- | --- | --- |
+| V6 | Console errors get a journal priority (a ~10-line shim at boot, extracted so it is testable). No call site changes; operator grep patterns unchanged. | S |
+| V4 | Data writes that can fail without a trace (conversation row, cost rows, embedding, mutation log…) → rate-limited warning + one counter. Correct the 23 comments that justify the silence with a boot-only or test-only condition. | S |
+| V5 | Prompt blocks that can vanish silently (knowledge injection incl. mandatory directives, profile block, the "unverified" caveat, a pending confirmation card) → one trace event each. | S |
+| V7 | Default listener on the event bus's error channel (it has had no subscriber since 03-12). | S |
+| V8 | Scheduled jobs: callbacks return their promise; the scheduler's failure event is recorded as a failed run; the ten cron modules that never report failures use the shared recorder. (They are logged today, not alerted.) | S then M |
+| V9 | Alert rule on provider success rate; counter for failed outbound delivery. | S |
+| V12 | Ratchet: comment-only catches may not grow past 268 without a stated reason. | S |
+| X4 | Decision points in the router and fast runner that log but emit no trace event. | S–M |
+
+Not worth doing: migrating the ~900 console calls; a logging framework; Result types.
+
+### Batch 5 — Tests (ruling 7)
+
+589 files, ≈ 11,500 cases, +20.7 % last month. Honest overall (0 self-mocks; ≈ 15 named cases that cannot fail). Thin where it matters:
+
+| Id | Change | Size |
+| --- | --- | --- |
+| Q1 | Guard parity table (= S1). | — |
+| Q2 | Fix the named cannot-fail cases; test the real cancel-message branch instead of a copy of its regexes. | S |
+| Q3 | Docs-coupled tests (24 test files read docs) run when `docs/` is staged. | S |
+| Q4 | Fake timers in the two files that sleep for real (≥ 93 s by CI log timestamps; one shard's critical path). | S |
+| Q5 | Typecheck the 55 scripts (≈ 11,100 lines, incl. the deploy preflight and the eval gate) on CI. | S–M |
+| Q6 | Host hook: include deletion-only commits, typecheck test files, run inside the memory fence (operator-applied; the hook is unversioned). | S |
+| Q8 | SQL that no test runs on a real database (15 of 76 SQL modules); stop hand-copying tables without their constraints (36 test files, 20 copies drop CHECK/UNIQUE). | M |
+| Q9 | Unique temp directories in the three test files that use fixed names (two runs of the same file collide). | S |
+| Q10 | Narrow the CI video exclusion to the 13 files that need a binary (4 of 17 do not). | S |
+
+Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; local sharding.
+
+### Batch 6 — Emergency inference path drill (ruling 8)
+
+Armed, never fired. Five defects on it (a retried write that succeeds is reported as not completed → the user resends → duplicate write; spend of the primary attempts lost from the ledger when it engages; a retry leg that ignores cancellation; a round counter that misreports early exits to the model; a breaker-open message that hides the cause) and four branches no test reaches (413 retry, the alternate provider call, the stream parser, the escalation switch). Fix + pin together. M.
+
+### Batch 7 — Coupling and structure (ruling 9)
+
+Prerequisites for ANY file move (new in this review): seven source-text test pins and three module-path mocks that break on a move; scripts are not typechecked, so a dropped re-export fails silently; the protected-file list is by exact path, so every new file is added in the same commit; model-visible strings must move byte-identical (a string-multiset identity check is each slice's done-check); moves land right after an agent merge.
+
+| Id | Change | Effect | Size |
+| --- | --- | --- | --- |
+| G0 | Ratchet test with a baseline of today's cycles (25 / 8 / 4 / 2 files) and mutual directory pairs. | Cycles cannot grow. | S |
+| G3 | Seeding and variant activation out of `initDatabase`; tuning DDL becomes a leaf. | `db/index` leaves every cycle (25 → 8/4/2); scripts that open the live database stop writing to it; removes two latent load-order hazards. | M |
+| G1, G2 | Failure recorder → leaf; messaging trio (cache marker module, router constructed in `index`, poison check passed in). | Removes the 2-file and 8-file cycles. | S, S–M |
+| G4 | Two redundant dynamic imports → static. | — | S |
+| A1–A4 | Router: prompt builder, thread buffer, pure helpers, post-delivery side effects → own modules. | 5,696 → ≈ 4,050 lines. | S–M each |
+| B1–B3 | Fast runner: hallucination guard, domain helpers, message assembly → modules. | File shrinks; `execute` (1,950 lines) changes little until (c). | S each |
+| C1, C2 | `main`: shutdown closure and the nine optional-cron blocks → modules. | — | S each |
+| D1–D3 | Inference: tool layer → own file; metrics → leaf; comment repair. | — | M, S, S |
+| F1 | `dispatchWithSlot` → same-file private helpers, one per commit. | — | M |
+| (c) B4, B5, F2 | SDK path and alternate path as separate functions; `orchestrate` and swarm `execute` after tests. | `execute` ≈ 180 lines. | M each |
+
+Not now: an interceptor table (tried and dropped 07-05); splitting the two inference loops; the 4-file inference cycle (real recursion); a directory layer rule (42 of 45 directories are mutually reachable); bulk dynamic→static conversion.
+
+### Batch 8 — Conventions (no ruling needed)
+
+Order that survived refutation: fix the violations first (batch 3), then four or five targeted lock tests with named allow-lists (raw cron, extra database handle, plain-string failure returns in tool catches, column-adds outside the migration list, container calls outside the container module), generalise only past ~8 rules. Also: two `CLAUDE.md` invariants whose wording does not match the real rule ("model ids only in adapters", "`.describe()` on every Zod field"); the description lint that omits one tool source; ledger-line prefixes typed by hand at 7 sites. Honest limit: a source-reading test is not selected by related-files runs — only the host's full-suite hook and CI see it.
+
+### Batch 9 — Low-activity areas and unreachable code (rulings 10, 11)
+
+Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called; over 134 days 86 never; 0-call areas = 26,923 of 195,264 lines; their share of the classifier prompt ≈ 20 %. No ruling needed: narrow the CI exclusion (Q10).
+
+### Batch 10 — Model-visible fixes, one eval-gate run (ruling 15)
+
+18 tool handlers that return a plain failure string instead of the `{error}` shape; a planner prompt that lists a check binary the shell gate refuses; a shell tool description that recommends a command the gate refuses; 27 schema properties without a description; a false doc comment on the two history flatteners (leave the flatteners themselves).
+
+### Batch 11 — Comments (ruling 12)
+
+23 % of non-blank lines are comments (41,718); 2,191 carry a date, queue id or audit-round tag. Two independent samples: about two-thirds of those carry a real constraint (18 % a constraint found nowhere else, 47 % one that a test also pins), a quarter are narrative, **one in twenty is stale or false**. Stripping them would be wrong; trusting them is also wrong. What rots is not the date but the reference to other code: of 27 `file:line` citations 3 are right, 21 point at the wrong line and 3 past the end of the file; of 30 "keep in sync / same as" claims checked, 6 are false (one of them on a write guard — S1). Harm on record: `8311e655` (a comment claimed an isolation that did not exist; audits trusted it for four months) and `2cc8000a` (a ruling made from a stale comment).
+
+| Id | Change | Size |
+| --- | --- | --- |
+| C1 | Correct the ≈ 17 comments found false (three on guards or invariants; the rest e.g. a header whose counts no longer match the prompt below it, a TODO five months past its date, two orphaned doc blocks). | S |
+| C2 | Replace the 24 wrong line citations with symbol names. | S |
+| C3 | Enforce rule (b) with a grep over ADDED diff lines in a CI workflow (no baseline; third-party type files allowed). A source-reading lock test would not be selected by related-files runs. | S |
+| C5 | 68 comment units point at ~50 files that are not in this repository → a one-line reason instead, when the comment is next touched. | — |
+
+Not worth doing: stripping or mass-rewriting history tags; moving incident history into docs; a number-versus-code sweep (4–5 low mismatches in 132); a JSDoc parameter sweep (2 in 31); script usage blocks (0 wrong of 15 checked).
+
+## What this review did not answer
+
+- Whether a blocked deploy ever left a half-deployed tree (deploy output is not kept).
+- Whether the agent ever merged its own pull request (one shared login; command text is not stored by design).
+- A four-worker memory peak for the suite (only the sequential sweep was measured).
+- Volume semantics of the sandbox backend after a `dist` symlink flip (to be checked in R1's build).
+- Per-group scope activation counts; any environment override of the gated-capability list.
+- Conversation-write loss (no independent table to compare against).
+
+## Next
+
+Operator rules on the fifteen decisions. Build starts with batch 1. Dimension 2 (Performance) opens when the code batches the operator selects are shipped and proven, or earlier if the operator says so.

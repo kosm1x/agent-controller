@@ -245,7 +245,7 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 
 | Dimension | Opened | Review | Rulings | Shipped | Re-score |
 | --- | --- | --- | --- | --- | --- |
-| 1 Code | next session | — | — | — | — |
+| 1 Code | 2026-11-09 | done 2026-11-09 23:13 UTC → `november-assesment-code-review-2026-11-09.md` (8 sub-dimensions, each reviewed, re-checked and refuted) | 15 pending | — | — |
 | 2 Performance | — | — | — | — | — |
 | 3 Resilience | — | — | — | — | — |
 | 4 Memory | — | — | — | — | — |
@@ -255,6 +255,8 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 | 8 Currency | — | — | — | — | — |
 
 ## Next session: CODE (dimension 1)
+
+> Done 2026-11-09 23:13 UTC: review and ruling list in `november-assesment-code-review-2026-11-09.md`. Several measurements in §1 above were corrected there (its table "Where the assessment was wrong"). The brief below is kept as the record of what was asked.
 
 Open with a thorough multi-agent review of the code dimension, one reviewer per sub-dimension, each given the code and the measurements above and asked to verify, extend and size the work, not to confirm the candidate list:
 
