@@ -461,3 +461,49 @@ describe("file_write — KB registry parity (item 11)", () => {
     expect(mocks.declareReadbackGate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("file_read — evicted tool result past its retention window", () => {
+  const enoent = (p: string) =>
+    Object.assign(
+      new Error(`ENOENT: no such file or directory, open '${p}'`),
+      { code: "ENOENT" },
+    );
+
+  beforeEach(() => {
+    mocks.mockReadFileSync.mockReset();
+  });
+
+  it("answers expired: true with a pruned notice for a missing evicted file", async () => {
+    const p = "/root/claude/mission-control/tool-results/web-read-1-abcd.txt";
+    mocks.mockReadFileSync.mockImplementationOnce(() => {
+      throw enoent(p);
+    });
+    const parsed = JSON.parse(await fileReadTool.execute({ path: p }));
+    expect(parsed.expired).toBe(true);
+    expect(parsed.error).toMatch(/pruned after its one-hour retention window/);
+    // The model decides whether the content is still needed (Hermes #139894).
+    expect(parsed.error).not.toMatch(/re-?run|run again|call again/i);
+  });
+
+  it("keeps the plain error for a missing file elsewhere", async () => {
+    const p = "/tmp/missing.txt";
+    mocks.mockReadFileSync.mockImplementationOnce(() => {
+      throw enoent(p);
+    });
+    const parsed = JSON.parse(await fileReadTool.execute({ path: p }));
+    expect(parsed).toEqual({
+      error: `ENOENT: no such file or directory, open '${p}'`,
+    });
+  });
+
+  it("keeps the plain error for a non-ENOENT failure inside the eviction dir", async () => {
+    const p = "/root/claude/mission-control/tool-results/web-read-2.txt";
+    mocks.mockReadFileSync.mockImplementationOnce(() => {
+      throw Object.assign(new Error("EACCES: permission denied"), {
+        code: "EACCES",
+      });
+    });
+    const parsed = JSON.parse(await fileReadTool.execute({ path: p }));
+    expect(parsed).toEqual({ error: "EACCES: permission denied" });
+  });
+});

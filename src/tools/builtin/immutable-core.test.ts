@@ -6,6 +6,7 @@ import {
   readdirSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -684,6 +685,55 @@ describe("validatePathSafety", () => {
       // accidentally block a legitimate sibling directory.
       const result = validatePathSafety("/root/.ssh-backup/notes.txt", "read");
       expect(result.safe).toBe(true);
+    });
+  });
+
+  describe("evicted tool results (/root/claude/mission-control/tool-results)", () => {
+    it("the new eviction dir is readable; the old data/ location stays blocked", () => {
+      expect(
+        validatePathSafety(
+          "/root/claude/mission-control/tool-results/web-read-1.txt",
+          "read",
+        ).safe,
+      ).toBe(true);
+      const old = validatePathSafety(
+        "/root/claude/mission-control/data/tool-results/web-read-1.txt",
+        "read",
+      );
+      expect(old.safe).toBe(false);
+      expect(old.reason).toContain("/root/claude/mission-control/data/");
+    });
+
+    it("judges a symlink inside an eviction dir by its kernel-resolved target", () => {
+      const dir = mkdtempSync(join(tmpdir(), "vps-evict-"));
+      try {
+        const evict = join(dir, "tool-results");
+        mkdirSync(evict);
+        writeFileSync(join(evict, "web-read-1.txt"), "ok");
+        expect(
+          validatePathSafety(join(evict, "web-read-1.txt"), "read").safe,
+        ).toBe(true);
+        // File link to a blocked path (target need not exist).
+        symlinkSync(
+          "/root/claude/mission-control/data/x",
+          join(evict, "web-read-2.txt"),
+        );
+        expect(
+          validatePathSafety(join(evict, "web-read-2.txt"), "read").safe,
+        ).toBe(false);
+        // Directory link into the blocked tree.
+        symlinkSync("/root/claude/mission-control/data", join(evict, "d"));
+        expect(validatePathSafety(join(evict, "d", "x"), "read").safe).toBe(
+          false,
+        );
+        // Link to an existing secret file.
+        symlinkSync("/etc/shadow", join(evict, "web-read-3.txt"));
+        expect(
+          validatePathSafety(join(evict, "web-read-3.txt"), "read").safe,
+        ).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 

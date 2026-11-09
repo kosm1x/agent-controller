@@ -32,6 +32,7 @@ import {
   upsertFromDiskWrite,
 } from "../../db/jarvis-reindex.js";
 import { errMsg } from "../../lib/err-msg.js";
+import { isEvictedPath } from "../../lib/eviction.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
 import {
@@ -197,6 +198,9 @@ async function readDocx(filePath: string): Promise<string> {
   return result.value;
 }
 
+const EVICTED_EXPIRED_NOTICE =
+  "This saved tool result was pruned after its one-hour retention window and is no longer available.";
+
 export const fileReadTool: Tool = {
   name: "file_read",
   readOnlyHint: true,
@@ -334,6 +338,17 @@ For small files (≤${LARGE_FILE_THRESHOLD} chars), the full content is returned
         size: totalChars, // legacy field name kept for compatibility
       });
     } catch (err) {
+      // An evicted tool result swept after its retention window: say so,
+      // and leave whether the content is still needed to the model.
+      if (
+        (err as NodeJS.ErrnoException)?.code === "ENOENT" &&
+        isEvictedPath(path)
+      ) {
+        return JSON.stringify({
+          error: EVICTED_EXPIRED_NOTICE,
+          expired: true,
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       return JSON.stringify({ error: message });
     }

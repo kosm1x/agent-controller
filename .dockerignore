@@ -1,6 +1,7 @@
 node_modules
 dist
 data
+tool-results
 backups
 logs
 venv

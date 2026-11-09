@@ -1,22 +1,54 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { evictToFile, hasEvictedPath } from "./eviction.js";
+import {
+  evictToFile,
+  getEvictDir,
+  hasEvictedPath,
+  isEvictedPath,
+} from "./eviction.js";
 
-const TEST_DIR = join(process.cwd(), "data", "tool-results");
+// Per-run scratch dir: tests never write the live eviction directory.
+// The eviction dir itself does not exist yet, so evictToFile creates it.
+let ROOT: string;
+let TEST_DIR: string;
 
-afterEach(() => {
-  // Clean up test files
-  try {
-    const files = require("node:fs").readdirSync(TEST_DIR);
-    for (const f of files) {
-      if (f.startsWith("test-")) {
-        rmSync(join(TEST_DIR, f), { force: true });
-      }
+beforeAll(() => {
+  ROOT = mkdtempSync(join(tmpdir(), "mc-evict-test-"));
+  TEST_DIR = join(ROOT, "tool-results");
+  vi.stubEnv("MC_TOOL_RESULTS_DIR", TEST_DIR);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  rmSync(ROOT, { recursive: true, force: true });
+});
+
+describe("eviction directory", () => {
+  it("defaults to /root/claude/mission-control/tool-results when the env is unset", () => {
+    vi.stubEnv("MC_TOOL_RESULTS_DIR", "");
+    try {
+      expect(getEvictDir()).toBe("/root/claude/mission-control/tool-results");
+    } finally {
+      vi.stubEnv("MC_TOOL_RESULTS_DIR", TEST_DIR);
     }
-  } catch {
-    // dir may not exist
-  }
+  });
+
+  it("honours MC_TOOL_RESULTS_DIR and creates it root-only", () => {
+    expect(getEvictDir()).toBe(TEST_DIR);
+    expect(existsSync(TEST_DIR)).toBe(false);
+    const { filePath } = evictToFile("x".repeat(1000), "test-env", 100);
+    expect(filePath!.startsWith(TEST_DIR + "/")).toBe(true);
+    expect(statSync(TEST_DIR).mode & 0o777).toBe(0o700);
+  });
+
+  it("isEvictedPath is true only inside the eviction directory", () => {
+    expect(isEvictedPath(join(TEST_DIR, "web-read-1.txt"))).toBe(true);
+    expect(isEvictedPath(TEST_DIR)).toBe(false);
+    expect(isEvictedPath(TEST_DIR + "-sibling/x.txt")).toBe(false);
+    expect(isEvictedPath(join(TEST_DIR, "..", "x.txt"))).toBe(false);
+  });
 });
 
 describe("evictToFile", () => {
@@ -31,7 +63,8 @@ describe("evictToFile", () => {
     expect(existsSync(filePath!)).toBe(true);
     expect(readFileSync(filePath!, "utf-8")).toBe(content);
     expect(preview).toContain("DOCUMENT TRUNCATED");
-    expect(preview).toContain("file_read");
+    expect(preview).toContain(`file_read(path="${filePath}")`);
+    expect(preview).toContain("kept for about one hour");
     expect(preview).toContain("TABLE OF CONTENTS");
     expect(preview).toContain("Heading 1");
     expect(preview).toContain("Heading 2");
@@ -97,6 +130,22 @@ describe("hasEvictedPath", () => {
     expect(
       hasEvictedPath('Use file_read(path="data/tool-results/foo.txt")'),
     ).toBe(true);
+  });
+
+  it("detects the new eviction directory path", () => {
+    expect(
+      hasEvictedPath(`Use file_read(path="${join(TEST_DIR, "web-read-1.txt")}")`),
+    ).toBe(true);
+    vi.stubEnv("MC_TOOL_RESULTS_DIR", "");
+    try {
+      expect(
+        hasEvictedPath(
+          'Full content saved to: /root/claude/mission-control/tool-results/web-read-1.txt',
+        ),
+      ).toBe(true);
+    } finally {
+      vi.stubEnv("MC_TOOL_RESULTS_DIR", TEST_DIR);
+    }
   });
 
   it("returns false for normal content", () => {

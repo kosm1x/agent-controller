@@ -12,10 +12,13 @@ import {
   unlinkSync,
   statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 
-const EVICT_DIR = join(process.cwd(), "data", "tool-results");
+// Outside the read-blocked mission-control data tree so file_read can open
+// what the preview points at; under root-owned /root so no other account can
+// create or redirect it. MC_TOOL_RESULTS_DIR is an override (used by tests).
+const DEFAULT_EVICT_DIR = "/root/claude/mission-control/tool-results";
 const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 const CLEANUP_PROBABILITY = 0.1; // run cleanup ~10% of evictions to avoid I/O on every call
 
@@ -37,9 +40,10 @@ export function evictToFile(
 
   let filePath: string | undefined;
   try {
-    mkdirSync(EVICT_DIR, { recursive: true });
+    const dir = getEvictDir();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     const suffix = randomBytes(4).toString("hex");
-    filePath = join(EVICT_DIR, `${filenamePrefix}-${Date.now()}-${suffix}.txt`);
+    filePath = join(dir, `${filenamePrefix}-${Date.now()}-${suffix}.txt`);
     writeFileSync(filePath, content, "utf-8");
   } catch {
     // Disk full or permissions error — fall back to simple truncation
@@ -66,19 +70,38 @@ export function evictToFile(
     content.slice(0, maxPreviewChars) +
     `\n\n--- DOCUMENT TRUNCATED (${content.length} chars total) ---` +
     `\nFull content saved to: ${filePath}` +
-    `\nUse file_read(path="${filePath}") to read specific sections.` +
+    `\nUse file_read(path="${filePath}") to read specific sections (the file is kept for about one hour).` +
     toc;
 
   return { preview, filePath };
 }
 
+/** The directory evicted tool results are written to. */
+export function getEvictDir(): string {
+  return process.env.MC_TOOL_RESULTS_DIR || DEFAULT_EVICT_DIR;
+}
+
+/**
+ * True when `path` is lexically inside the eviction directory (no symlink
+ * resolution; the read itself is judged by the read guard on the
+ * kernel-resolved path).
+ */
+export function isEvictedPath(path: string): boolean {
+  return resolve(path).startsWith(resolve(getEvictDir()) + sep);
+}
+
 /**
  * Check if a tool result already contains a file eviction path.
  * Used by adapter.ts to skip double-eviction when web_read already evicted.
+ * The old data/tool-results/ spelling stays recognised for conversations
+ * that still carry a path from before the move. A file_read result that
+ * echoes a path in the eviction directory also matches, so a large `lines=`
+ * slice of a spilled file is passed whole instead of being spilled again.
  */
 export function hasEvictedPath(result: string): boolean {
   return (
     result.includes("full_content_path") ||
+    result.includes(resolve(getEvictDir()) + "/") ||
     result.includes("data/tool-results/")
   );
 }
@@ -86,11 +109,12 @@ export function hasEvictedPath(result: string): boolean {
 /** Remove eviction files older than MAX_AGE_MS. */
 function cleanupOldFiles(): void {
   try {
-    const files = readdirSync(EVICT_DIR);
+    const dir = getEvictDir();
+    const files = readdirSync(dir);
     const now = Date.now();
     for (const file of files) {
       try {
-        const fullPath = join(EVICT_DIR, file);
+        const fullPath = join(dir, file);
         const stat = statSync(fullPath);
         if (now - stat.mtimeMs > MAX_AGE_MS) {
           unlinkSync(fullPath);
