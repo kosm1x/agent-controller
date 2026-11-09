@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 17:58 UTC (**Hermes port 1 DEPLOYED `9e416451` PID 1487901 (queue 4cd)**: evicted tool results now spill to root-only `tool-results/`, readable by `file_read`; 0 startup errors; PROOF pending on the next eviction.)
+
 > Last updated: 2026-11-09 17:5x UTC (**Hermes port 1 BUILT `9489ab3e` (queue 4cd)**: evicted tool results move from the read-blocked `data/tool-results/` to root-only `tool-results/` so `file_read` can open them; a pruned spill answers `expired: true`; qa R1 FAIL on a world-writable `/var/tmp` choice → relocated, R2 PASS; DEPLOY pending.)
 
 > Last updated: 2026-11-09 07:0x UTC (**Hermes upstream review v0.21.6 → v0.23.0 filed (queue 4cd)**: `docs/planning/hermes-upstream-review-2026-11-09.md`, 8 ranked ports verified against live code + 30 d counts; 1 SHIP NOW (evicted tool results point at a read-guard-blocked path; trigger fired 15× via `shell_exec`), 4 SHIP LATER with triggers (redaction gaps, email `From:` parser blocks arming email, untrusted `.git/config`, vision key fallback), 3 DEFER; shell gate let 4 reads of `data/x-post-receipts` that `file_read` blocks; next review 12-01)
@@ -418,6 +420,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (17:58) | Hermes port 1 DEPLOYED `9e416451` PID 1487901, 0 startup errors, stale `data/tool-results/` removed; proof pending | queue 4cd |
 | 2026-11-09 (17:5x) | Hermes port 1 built `9489ab3e`: spill dir → `/root/claude/mission-control/tool-results/` (root-only, gitignored), `file_read` expired answer, read guard untouched; qa R1 FAIL (`/var/tmp` squat) → relocated → R2 PASS; deploy pending | queue 4cd |
 | 2026-11-09 (07:0x) | Hermes upstream review v0.21.6 → v0.23.0 filed: 8 ranked ports, 1 SHIP NOW (eviction path vs read guard, trigger fired), 4 SHIP LATER, 3 DEFER; `x-post-receipts` shell-read flag | NEXT: operator decides on port 1 (S, no gate); review again 12-01 (queue 4cd) |
 | 2026-11-09 (06:2x) | SDK bump DEPLOYED: gate PASS 78.90 vs 78.63, bump `f12bc403`, build `f12bc403` PID 422082, SDK 0.3.316 / CLI 2.1.316 live, first call PROVEN 06:25 UTC, tool-search validation PASS 5/5 06:3x UTC, CI green | CLOSED; operator deletes `/root/tmp-sdk-bump-gate` |

@@ -78,7 +78,7 @@ eval gate v4 incumbent 78.63 (last PASS 78.90, 11-09). Memory:
   text and a guard path, no prompt/description/model/classifier). Risk: a carve-out in
   the read guard is a security edit — needs the kernel-resolved-path test and qa-auditor.
 - **Recommendation: SHIP NOW.**
-- **Status: RULED ship-now 2026-11-09 (new folder); BUILT `9489ab3e` 17:5x UTC — `/root/claude/mission-control/tool-results/` (root-only; the first choice `/var/tmp/…` failed qa R1: world-writable parent), `file_read` expired answer; deploy + proof pending, tracked in queue 4cd.**
+- **Status: RULED ship-now 2026-11-09 (new folder); BUILT `9489ab3e` 17:5x UTC — `/root/claude/mission-control/tool-results/` (root-only; the first choice `/var/tmp/…` failed qa R1: world-writable parent), `file_read` expired answer; DEPLOYED 17:58 UTC `9e416451`; proof pending, tracked in queue 4cd.**
 
 ### 2. Redaction misses connection strings, URL userinfo, private keys — Hermes #149435 / #148862 / #149470
 
