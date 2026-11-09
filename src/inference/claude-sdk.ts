@@ -55,6 +55,7 @@ import type {
 import { scrubOutboundText, SecretScrubUnavailableError } from "./adapter.js";
 import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
+import { isEvictedPath } from "../lib/eviction.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import {
   makeGatesStopHook,
@@ -201,8 +202,9 @@ function finalTurnBodyLength(text: string): number {
 }
 
 /** Queue 4ah-c: caps for the `tool.called` trace row's `arg_keys`. 32 keys
- *  of 48 chars + the truncated flag stay under task-trace's ATTRS_MAX_CHARS
- *  (2,000), so a worst-case row is never stored as a `truncated` wrapper. */
+ *  of 48 chars + the truncated flag + the 4ce `evicted_spill` marker stay
+ *  under task-trace's ATTRS_MAX_CHARS (2,000; worst case 1,693), so a
+ *  worst-case row is never stored as a `truncated` wrapper. */
 const TRACE_ARG_KEYS_MAX = 32;
 const TRACE_ARG_KEY_MAX_CHARS = 48;
 
@@ -224,6 +226,25 @@ function toolArgKeysAttrs(
   return keys.length > TRACE_ARG_KEYS_MAX
     ? { arg_keys: argKeys, arg_keys_truncated: true }
     : { arg_keys: argKeys };
+}
+
+/**
+ * `tool.called` attrs = `toolArgKeysAttrs(input)` plus, for a `file_read`
+ * whose path (`path ?? file_path ?? filepath`, file_read's own chain) is
+ * inside the evicted-tool-results dir, `evicted_spill: true` (queue 4ce,
+ * ruling 2026-11-09): a boolean only, the path never enters attrs.
+ */
+function toolCalledAttrs(
+  toolName: string | undefined,
+  input: unknown,
+): Record<string, unknown> | undefined {
+  const attrs = toolArgKeysAttrs(input);
+  if (!attrs || toolName !== "file_read") return attrs;
+  const args = input as Record<string, unknown>;
+  const path = args.path ?? args.file_path ?? args.filepath;
+  return typeof path === "string" && isEvictedPath(path)
+    ? { ...attrs, evicted_spill: true }
+    : attrs;
 }
 
 /**
@@ -1540,9 +1561,13 @@ export async function queryClaudeSdk(opts: {
           const turnLatencyMs = Date.now() - lastTurnEndedAt;
           // Queue 4ah-c (ruling 2026-10-23): each row carries the KEY NAMES
           // of its own tool_use input (toolCallsWithArgs is index-aligned
-          // with toolCallNames), never the values.
+          // with toolCallNames), never the values; queue 4ce adds the
+          // boolean evicted_spill marker for file_read on a spill file.
           for (let i = toolCountBeforeTurn; i < toolCallNames.length; i++) {
-            const attrs = toolArgKeysAttrs(toolCallsWithArgs[i]?.input);
+            const attrs = toolCalledAttrs(
+              toolCallNames[i],
+              toolCallsWithArgs[i]?.input,
+            );
             emitTraceEvent({
               taskId: opts.trace.taskId,
               runId: opts.trace.runId,

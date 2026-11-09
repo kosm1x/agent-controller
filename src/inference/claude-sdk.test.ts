@@ -131,6 +131,9 @@ import { STOP_HOOK_SDK_TIMEOUT_S } from "../lib/v8-4/stop-hook.js";
 import type { ChatMessage, ToolDefinition } from "./adapter.js";
 import { providerMetrics } from "./adapter-openai.js";
 import { BudgetExhaustedError } from "../budget/service.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 beforeEach(() => {
   mockMessages.value = [];
@@ -4429,6 +4432,149 @@ describe("queryClaudeSdk task-trace emission (V8.5 Phase 6)", () => {
       { name: "mcp__jarvis__x", input: { [longKey]: 1, short: 2 } },
     ]);
     expect(ev.attrs).toEqual({ arg_keys: ["q".repeat(48), "short"] });
+  });
+
+  // Queue 4ce (ruling 2026-11-09): file_read on a spill file carries the
+  // boolean evicted_spill marker; the path never enters attrs.
+  describe("tool.called evicted_spill marker", () => {
+    let root: string;
+    let evictDir: string;
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), "mc-4ce-"));
+      evictDir = join(root, "tool-results");
+      vi.stubEnv("MC_TOOL_RESULTS_DIR", evictDir);
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("file_read inside the evict dir carries evicted_spill: true and never the path", async () => {
+      const spill = join(evictDir, "zz-spill-4ce.txt");
+      const [ev] = await toolCalledEvents([
+        { name: "mcp__jarvis__file_read", input: { path: spill } },
+      ]);
+      expect(ev.tool).toBe("file_read");
+      expect(ev.attrs).toEqual({ arg_keys: ["path"], evicted_spill: true });
+      const json = JSON.stringify(ev.attrs);
+      expect(json).not.toContain(spill);
+      expect(json).not.toContain("zz-spill-4ce");
+      expect(json).not.toContain(root);
+    });
+
+    it("file_read outside the evict dir (incl. a sibling prefix) carries no marker", async () => {
+      const evs = await toolCalledEvents([
+        {
+          name: "mcp__jarvis__file_read",
+          input: { path: join(root, "tool-results-x", "a.txt") },
+        },
+        { name: "mcp__jarvis__file_read", input: { path: evictDir } },
+        {
+          name: "mcp__jarvis__file_read",
+          input: { path: "/root/claude/zz-other.md" },
+        },
+      ]);
+      expect(evs).toHaveLength(3);
+      for (const ev of evs) {
+        expect(ev.attrs).toEqual({ arg_keys: ["path"] });
+        expect(ev.attrs).not.toHaveProperty("evicted_spill");
+      }
+    });
+
+    it("a non-file_read tool with a path inside the evict dir carries no marker", async () => {
+      const [ev] = await toolCalledEvents([
+        {
+          name: "mcp__jarvis__file_write",
+          input: { path: join(evictDir, "a.txt"), content: "zz" },
+        },
+      ]);
+      expect(ev.tool).toBe("file_write");
+      expect(ev.attrs).toEqual({ arg_keys: ["path", "content"] });
+    });
+
+    it("file_read with a non-string path carries no marker and does not throw", async () => {
+      const evs = await toolCalledEvents([
+        { name: "mcp__jarvis__file_read", input: { path: 7 } },
+        { name: "mcp__jarvis__file_read", input: { path: null } },
+        { name: "mcp__jarvis__file_read", input: { path: [evictDir] } },
+        { name: "mcp__jarvis__file_read", input: {} },
+      ]);
+      expect(evs.map((e) => e.attrs)).toEqual([
+        { arg_keys: ["path"] },
+        { arg_keys: ["path"] },
+        { arg_keys: ["path"] },
+        { arg_keys: [] },
+      ]);
+    });
+
+    it("file_read under the file_path / filepath aliases follows file_read's own key chain", async () => {
+      const evs = await toolCalledEvents([
+        {
+          name: "mcp__jarvis__file_read",
+          input: { file_path: join(evictDir, "zz-alias.txt") },
+        },
+        {
+          name: "mcp__jarvis__file_read",
+          input: { filepath: join(root, "tool-results-x", "a.txt") },
+        },
+      ]);
+      expect(evs.map((e) => e.attrs)).toEqual([
+        { arg_keys: ["file_path"], evicted_spill: true },
+        { arg_keys: ["filepath"] },
+      ]);
+      expect(JSON.stringify(evs[0].attrs)).not.toContain("zz-alias");
+    });
+
+    it("file_read's key chain order wins: path before file_path / filepath", async () => {
+      const outside = join(root, "tool-results-x", "a.txt");
+      const evs = await toolCalledEvents([
+        {
+          name: "mcp__jarvis__file_read",
+          input: { path: join(evictDir, "zz-order.txt"), filepath: outside },
+        },
+        {
+          name: "mcp__jarvis__file_read",
+          input: { path: outside, file_path: join(evictDir, "zz-order.txt") },
+        },
+      ]);
+      expect(evs[0].attrs).toEqual({
+        arg_keys: ["path", "filepath"],
+        evicted_spill: true,
+      });
+      expect(evs[1].attrs).toEqual({ arg_keys: ["path", "file_path"] });
+      expect(evs[1].attrs).not.toHaveProperty("evicted_spill");
+    });
+
+    it("worst case (40 long keys + a spill path) is stored whole with the marker, no truncated wrapper", async () => {
+      const input: Record<string, unknown> = Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [
+          String(i).padStart(2, "0") + "w".repeat(98),
+          i,
+        ]),
+      );
+      input.path = join(evictDir, "zz-worst.txt");
+      const [ev] = await toolCalledEvents([
+        { name: "mcp__jarvis__file_read", input },
+      ]);
+      const actual = await vi.importActual<
+        typeof import("../observability/task-trace.js")
+      >("../observability/task-trace.js");
+      const { initDatabase, closeDatabase } = await import("../db/index.js");
+      initDatabase(":memory:");
+      try {
+        actual.emitTraceEvent(ev);
+        const [row] = actual.getTrace(ev.taskId);
+        expect(row.attrs!.length).toBeLessThan(actual.ATTRS_MAX_CHARS);
+        const stored = JSON.parse(row.attrs!);
+        expect(stored).not.toHaveProperty("truncated");
+        expect(stored.arg_keys).toHaveLength(32);
+        expect(stored.arg_keys_truncated).toBe(true);
+        expect(stored.evicted_spill).toBe(true);
+        expect(row.attrs).not.toContain("zz-worst");
+      } finally {
+        closeDatabase();
+      }
+    });
   });
 
   it("worst case (40 keys of 100 chars) is stored whole by the real emitTraceEvent, no truncated wrapper", async () => {
