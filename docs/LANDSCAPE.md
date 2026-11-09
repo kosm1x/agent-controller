@@ -47,7 +47,7 @@ The register the weekly scan and the monthly deep review read (cadence: `docs/RO
 | `@modelcontextprotocol/sdk` 1.32.0 [b2] | adopt (within caret) | **adopted 2026-10-10** (operator-run under a stopped service; `npx npm@10 ci` scratch check clean; MCP test files 175/175; sandbox image rebuilt). 1.32.1 (2026-10-05) stays inside `min-release-age` until 2026-10-12 | L2 | 2026-10-10 |
 | MCP validation errors as tool errors [b3] | borrow | verified 2026-10-09: 1.29.0 and 1.32.0 both throw -32602 on bad arguments; borrow needs a bypass of `registerTool` validation → parked | L2 | 2026-10-09 |
 | Deterministic `tools/list` order [b4] | borrow | cache-hit drop (`audit-claim`) | S5 | 2026-10-03 |
-| MCP 2026-07-28 stateless protocol, v2 SDK [b5] | ignore now | an SDK sets `LATEST_PROTOCOL_VERSION = 2026-07-28` | operator ruling | 2026-10-03 |
+| MCP 2026-07-28 stateless protocol, v2 SDK [b5] | ignore now (re-affirmed 11-09, no date; re-read 12-01) | an SDK sets `LATEST_PROTOCOL_VERSION = 2026-07-28` (installed 1.32.x speaks `2025-11-25`), or a failing client | operator ruling | 2026-11-09 |
 | Drop deprecated `logging` capability on `/mcp` [b6] | adopt at the next touch of `/mcp` | MCP v2 migration | operator ruling | 2026-10-03 |
 | MCP MRTR, tasks extension, OAuth/CIMD [b7–b9] | ignore | a configured server needs it; `/mcp` exposed wider | none / operator | 2026-10-03 |
 | `traceparent` in MCP `_meta` [b10] | borrow later | multi-hop MCP debugging needed | L4 | 2026-10-03 |
