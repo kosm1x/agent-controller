@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-09 20:17 UTC (**4ce(b) BUILT `b034949c`**: `file_read` on a spill now marks its `tool.called` trace row `evicted_spill: true` (boolean only, path never stored) — durable proof sensor for port 1; qa R1 PASS-w/W → fold → R2 PASS-w/W (order-pin test folded); deploy pending via `/root/deploy-4ce-2026-11-09.sh`)
+
 > Last updated: 2026-11-09 17:58 UTC (**Hermes port 1 DEPLOYED `9e416451` PID 1487901 (queue 4cd)**: evicted tool results now spill to root-only `tool-results/`, readable by `file_read`; 0 startup errors; PROOF pending on the next eviction.)
 
 > Last updated: 2026-11-09 17:5x UTC (**Hermes port 1 BUILT `9489ab3e` (queue 4cd)**: evicted tool results move from the read-blocked `data/tool-results/` to root-only `tool-results/` so `file_read` can open them; a pruned spill answers `expired: true`; qa R1 FAIL on a world-writable `/var/tmp` choice → relocated, R2 PASS; DEPLOY pending.)
@@ -420,6 +422,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-09 (20:17) | 4ce(b) BUILT `b034949c`: `evicted_spill` boolean marker on `file_read` trace rows for spill paths (aliases `path`/`file_path`/`filepath`), qa R1→fold→R2→fold-w/W (order-pin test folded); deploy pending | queue 4ce |
 | 2026-11-09 (17:58) | Hermes port 1 DEPLOYED `9e416451` PID 1487901, 0 startup errors, stale `data/tool-results/` removed; proof pending | queue 4cd |
 | 2026-11-09 (17:5x) | Hermes port 1 built `9489ab3e`: spill dir → `/root/claude/mission-control/tool-results/` (root-only, gitignored), `file_read` expired answer, read guard untouched; qa R1 FAIL (`/var/tmp` squat) → relocated → R2 PASS; deploy pending | queue 4cd |
 | 2026-11-09 (07:0x) | Hermes upstream review v0.21.6 → v0.23.0 filed: 8 ranked ports, 1 SHIP NOW (eviction path vs read guard, trigger fired), 4 SHIP LATER, 3 DEFER; `x-post-receipts` shell-read flag | NEXT: operator decides on port 1 (S, no gate); review again 12-01 (queue 4cd) |
