@@ -937,6 +937,126 @@ describe("selfAssess — tool-call audit + truncation window (2026-05-26)", () =
     expect(capturedUserContent).toContain("<redacted>");
   });
 
+  it("bounds the redaction work on a huge tool argument: only a prefix is redacted, the displayed cut is unchanged", async () => {
+    let capturedUserContent = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      capturedUserContent = user.content;
+      return {
+        content: JSON.stringify({ met: true, unmetCriteria: [], reasoning: "" }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    // ~1 MB of header-like text inside one literal: the key-name pass is
+    // quadratic on it when it sees the whole argument.
+    const huge = JSON.stringify({ h: "Authorization: Bearer token ".repeat(40_000) });
+    expect(huge.length).toBeGreaterThan(1_000_000);
+    const goal = makeGoal({ completionCriteria: ["c1"] });
+    const t0 = performance.now();
+    await selfAssess(goal, "output", [{ name: "http_request", args: huge }]);
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    const line = capturedUserContent.split("\n").find((l) => l.startsWith("1. http_request("))!;
+    // 400 displayed chars + "…" + ")" after the name.
+    expect(line.length).toBe("1. http_request(".length + 400 + 2);
+  });
+
+  /** The audit line selfAssess shows the judge for one http_request call. */
+  async function renderedAuditLine(args: string): Promise<string> {
+    let captured = "";
+    mockInfer.mockImplementationOnce(async ({ messages }) => {
+      const user = messages.find(
+        (m: { role: string }) => m.role === "user",
+      ) as { content: string };
+      captured = user.content;
+      return {
+        content: JSON.stringify({ met: true, unmetCriteria: [], reasoning: "" }),
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        provider: "mock",
+        latency_ms: 0,
+      };
+    });
+    await selfAssess(makeGoal({ completionCriteria: ["c1"] }), "output", [
+      { name: "http_request", args },
+    ]);
+    return captured.split("\n").find((l) => l.startsWith("1. http_request("))!;
+  }
+
+  // Opaque: no shape rule knows it, and it is not one run of token characters.
+  const opaqueLong = "Ab3+x/9Qz~".repeat(500);
+
+  it("a secret-named value cut open by the redaction cap shows none of its characters", async () => {
+    const line = await renderedAuditLine(JSON.stringify({ password: opaqueLong }));
+    // The cut text is not JSON, so the plain-text pass then rewrites the
+    // key-name placeholder under the JSON password-field rule.
+    expect(line).toBe('1. http_request({"password":"[REDACTED]")');
+    expect(line).not.toContain("Ab3");
+    expect(line).not.toContain("9Qz");
+  });
+
+  it("a nested secret-named value cut open by the redaction cap shows none of its characters", async () => {
+    const line = await renderedAuditLine(JSON.stringify({ auth: { token: opaqueLong } }));
+    expect(line).toBe('1. http_request({"auth":{"token":"<redacted>")');
+    expect(line).not.toContain("Ab3");
+  });
+
+  it("a fixed-length key cut by the redaction cap leaves no fragment once an earlier value shrinks", async () => {
+    const key = "AI" + "za" + "Sy" + "Ab3".repeat(11);
+    const head = '{"password":"';
+    const mid = '","note":"see ';
+    // The key starts 10 characters before the cap, so the cap cuts its body.
+    const value = opaqueLong.slice(0, 4_000 - 10 - head.length - mid.length);
+    const args = head + value + mid + key + '"}';
+    expect(args.indexOf(key)).toBe(4_000 - 10);
+    const line = await renderedAuditLine(args);
+    expect(line).toContain('"note":"see ');
+    expect(line).not.toContain("AIza");
+  });
+
+  it("a secret-named value cut by the redaction cap right after an escape's backslash shows none of its characters", async () => {
+    const head = '{"password":"';
+    const value = opaqueLong.slice(0, 4_000 - 1 - head.length) + "\n" + "tail";
+    const args = JSON.stringify({ password: value });
+    // The escape's backslash is the last character the cap keeps.
+    expect(args.indexOf("\\n")).toBe(4_000 - 1);
+    const line = await renderedAuditLine(args);
+    expect(line).toBe('1. http_request({"password":"[REDACTED]")');
+    expect(line).not.toContain("Ab3");
+  });
+
+  it("a three-segment token cut inside its last segment by the cap leaves no fragment once an earlier value shrinks", async () => {
+    const jwt = "ey" + "J" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0In0" + "." + "abc_DEF-ghi123XYZ";
+    const lastDot = jwt.lastIndexOf(".");
+    const head = '{"password":"';
+    const mid = '","note":"see ';
+    // The cap keeps 5 characters of the last segment: too short for the
+    // token rule, so only the trailing-run strip can remove the fragment.
+    const keep = lastDot + 1 + 5;
+    const value = opaqueLong.slice(0, 4_000 - keep - head.length - mid.length);
+    const args = head + value + mid + jwt + '"}';
+    expect(args.indexOf(jwt) + keep).toBe(4_000);
+    const line = await renderedAuditLine(args);
+    expect(line).toContain('"note":"see ');
+    expect(line).not.toContain("ey" + "J");
+    expect(line).not.toContain("In0");
+  });
+
+  it("a secret wholly inside the displayed part is removed when the JSON is cut later", async () => {
+    const pat = "gh" + "p_" + "Ab3".repeat(12);
+    const line = await renderedAuditLine(JSON.stringify({ note: "see " + pat, pad: "x ".repeat(3_000) }));
+    expect(line).toContain('"note":"see ');
+    expect(line).not.toContain("gh" + "p_");
+  });
+
+  it("a value that is not secret-named and is cut by the cap is displayed as before", async () => {
+    const args = JSON.stringify({ note: "hello world ".repeat(500) });
+    const line = await renderedAuditLine(args);
+    expect(line).toBe("1. http_request(" + args.slice(0, 400) + "…)");
+  });
+
   it("does not truncate outputs at or below 5000 chars", async () => {
     let capturedUserContent = "";
     mockInfer.mockImplementationOnce(async ({ messages }) => {

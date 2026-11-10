@@ -486,7 +486,7 @@ const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /\bgithub_pat_[A-Za-z0-9_]{20,}/,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/, // Slack
-  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
+  /\bAKIA[A-Z2-7]{16}\b/, // AWS access key id (base32 body: [A-Z2-7])
   /\bfw_[A-Za-z0-9]{16,}/, // Fireworks
   /:\/\/[^\s/:@]*:[^\s/@]+@/, // URL userinfo user:pass@ (empty user too: redis://:pw@)
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,

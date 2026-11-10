@@ -28,6 +28,7 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { logRecall, redactSecrets } from "./recall-utility.js";
+import { REDACTION_PLACEHOLDER_SOURCE } from "../lib/redact-secrets.js";
 import { pruneTombstones, recordTombstone, tombstoneMode, traceTombstoneSkipped } from "./tombstones.js";
 import { infer } from "../inference/adapter.js";
 import { HAIKU_MODEL_ID } from "../inference/claude-sdk.js";
@@ -833,9 +834,15 @@ export const POSSIBLE_CORRECTION_TASK_ID = "jme-possible-correction";
 
 // ── Redaction (JME-specific pass over redactSecrets) ────────────────────────
 
-/** Placeholder a JME redaction leaves behind (plus redactSecrets' labels). */
-const JME_PLACEHOLDER_RE =
-  /\[(?:email|tax-id|uuid|token|digits|secret|card|REDACTED-[A-Z-]+)\]/g;
+/** Placeholder a JME redaction leaves behind, plus every placeholder style
+ * the shared secret list can emit (`[REDACTED]`, `[REDACTED_KEY]`,
+ * `[REDACTED-<KIND>]`, …), so text that is mostly redacted secrets counts as
+ * mostly placeholders whichever style produced it. */
+const JME_PLACEHOLDER_RE = new RegExp(
+  String.raw`\[(?:email|tax-id|uuid|token|digits|secret|card)\]|` +
+    REDACTION_PLACEHOLDER_SOURCE,
+  "g",
+);
 
 /** A fact whose text is more than this share placeholders is dropped. */
 export const REDACTED_FACT_MAX_PLACEHOLDER_SHARE = 0.4;

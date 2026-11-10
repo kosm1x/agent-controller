@@ -20,6 +20,7 @@ import type { RecallMode } from "./recall-mode.js";
 import type { MemoryItem } from "./types.js";
 import { recordRecallOutcomes } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { redactSecretText } from "../lib/redact-secrets.js";
 
 /** Time window for claiming unmatched recall rows during a turn-end sweep. */
 export const MATCH_WINDOW_MS = 60_000;
@@ -52,29 +53,20 @@ const MAX_SNIPPETS_PER_RESULT = 2;
 const MAX_ROWS_PER_SWEEP = 50;
 
 /**
- * Strip well-known credential patterns out of strings before they hit mc.db.
- * Defense-in-depth (qa-auditor W3, 2026-04-29) — user may paste secrets in
- * chat that flow into recall queries / source memories. Replace with marker
- * so we still see the structure but lose the value.
+ * Strip credential shapes out of strings before they hit mc.db.
+ * Defense-in-depth — the user may paste secrets in chat that flow into recall
+ * queries / source memories. The shapes are the shared list
+ * (`src/lib/redact-secrets.ts`, the one list every redaction path uses); each
+ * is replaced by a `[REDACTED-<KIND>]` marker so the structure stays visible
+ * while the value is lost. Memory text does not get the generic 40+ hex rule
+ * (commit hashes and sha256 ids are ordinary content here), and its name-led
+ * rules fire only on secret-like names and values (`namedValues:
+ * "secret-like"`): a fact such as `auth_mode=oauth` or `token_budget=5000`
+ * is the operator's own data, and losing it silently costs more than a
+ * missed low-entropy value.
  */
-const SECRET_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /sk-[A-Za-z0-9-]{20,}/g, label: "[REDACTED-OPENAI-LIKE]" },
-  { re: /sk-ant-[A-Za-z0-9-]{20,}/g, label: "[REDACTED-ANTHROPIC]" },
-  { re: /AKIA[0-9A-Z]{16}/g, label: "[REDACTED-AWS-AKID]" },
-  { re: /AIza[0-9A-Za-z_-]{35}/g, label: "[REDACTED-GOOGLE-API]" },
-  { re: /ghp_[0-9A-Za-z]{36}/g, label: "[REDACTED-GITHUB-PAT]" },
-  {
-    re: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-    label: "[REDACTED-JWT]",
-  },
-];
-
 export function redactSecrets(text: string): string {
-  let out = text;
-  for (const { re, label } of SECRET_PATTERNS) {
-    out = out.replace(re, label);
-  }
-  return out;
+  return redactSecretText(text, { style: "kind", namedValues: "secret-like" });
 }
 
 /** Normalize whitespace + cap length, used on queries before insert. */

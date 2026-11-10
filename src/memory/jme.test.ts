@@ -2108,6 +2108,41 @@ describe("JME hardening R2 folds (qa R2 2026-09-30)", () => {
     },
   );
 
+  it.each([["[REDACTED_KEY] ok"], ["Bearer [REDACTED] ok"], ["sha [REDACTED_HEX]"], ["k [REDACTED-GITHUB-TOKEN]"]])(
+    "every placeholder style the shared secret list emits counts toward the placeholder share: %s",
+    async (factText) => {
+      const { upsertFact } = await getJme();
+      expect(
+        await upsertFact({ sourceTask: "t", factText, category: "event", confidence: 0.9 }),
+      ).toBe("dropped");
+      await restoreVectors();
+    },
+  );
+
+  it.each([
+    ["Usar auth_mode=oauth en Drive"],
+    ["Config: primary_key=id"],
+    ["Pedro usa hotkey=ctrl+k"],
+    // A reference or a placeholder names a secret; it does not hold one.
+    ["En el ejemplo va API_KEY=YOUR_API_KEY_HERE"],
+    ["El CI lee TOKEN=${GITHUB_TOKEN}"],
+    ["En código: token=process.env.TOKEN"],
+    ["Se configura apiKey=config.apiKey"],
+  ])(
+    "an ordinary NAME=value fact is stored with its value: %s",
+    async (factText) => {
+      const { upsertFact } = await getJme();
+      expect(
+        await upsertFact({ sourceTask: "t", factText, category: "event", confidence: 0.9 }),
+      ).toBe("inserted");
+      const texts = (
+        mockDb.prepare(`SELECT fact_text FROM jme_facts`).all() as Array<{ fact_text: string }>
+      ).map((r) => r.fact_text);
+      expect(texts).toContain(factText);
+      await restoreVectors();
+    },
+  );
+
   it("W7: jmeRecallQuery recalls a single entity and ignores filler words", async () => {
     const { jmeRecallQuery } = await getJme();
     for (const q of ["¿y Trustr?", "¿y VLMP?", "¿qué es TDD?", "ok procede con el plan"]) {

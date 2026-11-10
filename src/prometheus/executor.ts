@@ -28,6 +28,7 @@ import {
   condenseSearchResults,
 } from "./provenance.js";
 import { errMsg } from "../lib/err-msg.js";
+import { redactSecretText } from "../lib/redact-secrets.js";
 
 // v7.9 Prometheus Sonnet port — see planner.ts for the rationale.
 function useSdkPath(): boolean {
@@ -133,16 +134,56 @@ function windowOutputForAssess(text: string): string {
   );
 }
 
-/** Lightweight redaction for JSON-stringified tool args before they hit the
- * judge prompt. Defensive against tools that accept secrets in args
- * (api_key, bearer, password fields). Replaces values of suspect keys with
- * "<redacted>" before the truncation pass. Conservative key match — names
- * are case-insensitive substrings. */
-function redactSecretsInArgs(args: string): string {
-  return args.replace(
-    /("(?:[^"\\]|\\.)*?(?:api[_-]?key|bearer|password|secret|token|access[_-]?token|refresh[_-]?token|authorization)(?:[^"\\]|\\.)*?"\s*:\s*)"(?:[^"\\]|\\.)*?"/gi,
+/** A JSON string literal, escapes included. Linear: the two body
+ * alternatives start with disjoint characters. */
+const JSON_STRING_LITERAL_RE = /"(?:[^"\\]|\\.)*"/g;
+
+/** Redaction for JSON-stringified tool args before they hit the judge
+ * prompt, in two passes. (1) By key name: values of suspect keys (api_key,
+ * bearer, password, … — case-insensitive substrings) become "<redacted>",
+ * including a value cut open at the end of the text (no closing quote).
+ * (2) By value shape: every string literal goes through the shared secret
+ * list (`src/lib/redact-secrets.ts`), so a secret-shaped value under an
+ * ordinary key is removed too; a literal the list leaves alone keeps its
+ * original bytes. Args that are not valid JSON go through the shared list as
+ * plain text. */
+export function redactSecretsInArgs(args: string): string {
+  const byKey = args.replace(
+    /("(?:[^"\\]|\\.)*?(?:api[_-]?key|bearer|password|secret|token|access[_-]?token|refresh[_-]?token|authorization)(?:[^"\\]|\\.)*?"\s*:\s*)"(?:[^"\\]|\\.)*?(?:"|\\?$)/gi,
     '$1"<redacted>"',
   );
+  try {
+    JSON.parse(byKey);
+  } catch {
+    return redactSecretText(byKey, { style: "generic" });
+  }
+  return byKey.replace(JSON_STRING_LITERAL_RE, (literal) => {
+    const value = JSON.parse(literal) as string;
+    const redacted = redactSecretText(value, { style: "generic" });
+    return redacted === value ? literal : JSON.stringify(redacted);
+  });
+}
+
+/** Args text redacted per call, ten times the 400 chars displayed. The cap
+ * bounds the redaction work on a huge argument (the key-name pass is
+ * quadratic in literal length). Redaction runs before the display cut, so a
+ * secret that starts within the cap is removed whole even when it straddles
+ * the 400th character. What the cap cuts open is not displayed in part: a
+ * secret-named value cut open is replaced whole by the key-name pass, and the
+ * trailing run of token characters is dropped before redaction, so a
+ * fixed-length key cut in the middle cannot survive as a fragment that slides
+ * into the displayed part when an earlier value shrinks to its placeholder.
+ * Text past the cap is never seen and never displayed. */
+const AUDIT_ARGS_REDACT_MAX = 4_000;
+
+/** `args` cut to AUDIT_ARGS_REDACT_MAX, minus the trailing run of token
+ * characters (`[A-Za-z0-9_.-]`) when it was cut. */
+function capArgsForRedaction(args: string): string {
+  if (args.length <= AUDIT_ARGS_REDACT_MAX) return args;
+  const capped = args.slice(0, AUDIT_ARGS_REDACT_MAX);
+  let end = capped.length;
+  while (end > 0 && /[\w.-]/.test(capped[end - 1]!)) end--;
+  return capped.slice(0, end);
 }
 
 /** Render the tool-call audit for selfAssess. Empty string when no calls were
@@ -155,7 +196,7 @@ function redactSecretsInArgs(args: string): string {
 function renderToolCallAudit(audit: readonly ToolCallAudit[]): string {
   if (audit.length === 0) return "";
   const lines = audit.map((tc, i) => {
-    const redacted = redactSecretsInArgs(tc.args);
+    const redacted = redactSecretsInArgs(capArgsForRedaction(tc.args));
     const args =
       redacted.length > 400 ? redacted.slice(0, 400) + "…" : redacted;
     return `${i + 1}. ${tc.name}(${args})`;

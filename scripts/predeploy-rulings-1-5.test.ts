@@ -298,7 +298,8 @@ describe("reproduceSearch", () => {
 
 describe("withheld collision base (audit R1 W1)", () => {
   it("never prints a value-shaped key through a colliding base name, in any case form", () => {
-    const ak = j("AK", "IA", "Q7RT", "M2XW", "9PLB", "K4ZD");
+    // Body in the access-key alphabet [A-Z2-7] (16 characters).
+    const ak = j("AK", "IA", "Q7RT", "M2XW", "6PLB", "K4ZD");
     expect(safeLabel(ak)).toBeNull();
     const c = buildCensus(
       [{ category: "g", key: ak, value: V.factShape }],
@@ -310,6 +311,13 @@ describe("withheld collision base (audit R1 W1)", () => {
     expect(out).not.toContain(ak.toUpperCase());
     for (let i = 0; i + 6 <= ak.length; i++) expect(out).not.toContain(ak.slice(i, i + 6).toUpperCase());
     expect(out).toContain("[NAME WITHHELD: SHAPED LIKE A CREDENTIAL] — 2 ENTRIES");
+  });
+
+  it("does not withhold by shape a base name of the same length whose body has a digit outside [A-Z2-7]", () => {
+    // 0, 1, 8 and 9 are not in the access-key alphabet: an ordinary code.
+    const code = j("AK", "IA", "Q7RT", "M2XW", "9PLB", "K4ZD");
+    expect(code).toHaveLength(20);
+    expect(safeLabel(code)).toBe(code);
   });
 });
 
