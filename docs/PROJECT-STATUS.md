@@ -1,6 +1,6 @@
 # Project Status — Agent Controller (Mission Control)
 
-> Last updated: 2026-11-10 21:01 UTC (**CODE batch 1 (security) BUILT, NOT deployed**: seven commits `613662f0` → `fc3ba82c`, each audited by a separate reviewer and green on CI (fail-closed guards, one write boundary + protected list in every checkout, push-time check of the protected list, one secret redactor, three directories + one config file untracked, example data synthetic); merge-authority piece STOPPED after 3 failed audit rounds → ruling 4cl; rulings also open in 4cm and 4cn; deploy line follows the 4cl ruling)
+> Last updated: 2026-11-10 21:01 UTC (**CODE batch 1 (security) BUILT, NOT deployed**: seven commits `613662f0` → `fc3ba82c`, each audited by a separate reviewer and green on CI (fail-closed guards, one write boundary + protected list in every checkout, push-time check of the protected list, one secret redactor, three directories + one config file untracked, example data synthetic); merge-authority piece STOPPED after 3 failed audit rounds → ruling 4cl; rulings also open in 4cm and 4cn; the built pieces can be deployed now, S3 follows in a later deploy)
 
 > Last updated: 2026-11-09 20:23 UTC (**4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist)**; port-1 proof now has a durable sensor: first `evicted_spill` row = PROVEN)
 
