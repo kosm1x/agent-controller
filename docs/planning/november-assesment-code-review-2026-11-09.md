@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Build status 2026-11-10 21:01 UTC — built, NOT deployed.** In the repository, each piece audited by a separate reviewer and green on CI: S4 `613662f0` · S1 + S2 + S6 `0d3ffed9` (test fix `cb65fa7e`) · the protected list checked again on the result when a branch is pushed `791fd0c8` · S5 `5cb63e76` · P2 `f4ba7f0c` (three directories untracked) · P1 `fc3ba82c` (example data in docs, comments and tests is synthetic; one ignored config file untracked; values the running program uses are left for a ruling, queue 4cn). OPEN: S3 stopped after three failed audit rounds, operator ruling needed (queue 4cl); the shell-route part of S1/S2 touches the same file and waits on it; S8 operator script prepared, not run, three rulings (queue 4cm); S7 stays with dimension 6. The deploy line is handed over once S3 is ruled.
+
 | Id | Category | Severity | Size |
 | --- | --- | --- | --- |
 | S1 | **Write-boundary parity.** The write-capable tools do not all enforce the same path boundary. Fix = one shared boundary + a parity table test that drives every write-capable tool over the same forbidden paths. | High | S–M |
