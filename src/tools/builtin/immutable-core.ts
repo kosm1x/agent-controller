@@ -27,8 +27,14 @@ export const MC_WORKTREE_ROOT = "/root/claude/mission-control-jarvis/";
  * worker can push from it, so protected files are protected there too.
  */
 export const MC_CONTAINER_ROOT = "/workspace/";
+/**
+ * This project's GitHub repository (`owner/repo`, lower case): what makes a
+ * clone at any path a clone of this repository, and the only place a
+ * mission-control checkout's origin may point.
+ */
+export const MC_GITHUB_SLUG = "kosm1x/agent-controller";
 /** Every checkout of this repo on the agent's write paths; protected paths hold in all of them. */
-const MC_CHECKOUT_ROOTS = [MC_PRIMARY_ROOT, MC_WORKTREE_ROOT, MC_CONTAINER_ROOT];
+export const MC_CHECKOUT_ROOTS: readonly string[] = [MC_PRIMARY_ROOT, MC_WORKTREE_ROOT, MC_CONTAINER_ROOT];
 
 /** Exact file paths (relative to each checkout root in MC_CHECKOUT_ROOTS). */
 const IMMUTABLE_FILES: string[] = [
@@ -54,6 +60,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/tools/builtin/jarvis-dev.ts", // worktree bootstrap + PR flow
   "src/tools/builtin/jarvis-self-repair.ts", // self-repair instructions
   "src/tools/builtin/cwd-lock.ts", // serialises git sequences per worktree
+  "src/tools/builtin/protected-push.ts", // protected files checked again at push + PR
   "src/tools/rule-of-two.ts", // per-tool risk rows (Rule of Two)
   "src/lib/operator-gate.ts", // operator-only command gate
   "src/lib/v8-4/gate-check.ts", // runs the completion-gate checks

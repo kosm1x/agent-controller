@@ -50,6 +50,7 @@ describe("isImmutableCorePath", () => {
       "src/tools/builtin/jarvis-dev.ts",
       "src/tools/builtin/jarvis-self-repair.ts",
       "src/tools/builtin/cwd-lock.ts",
+      "src/tools/builtin/protected-push.ts",
       "src/tools/rule-of-two.ts",
       "src/lib/operator-gate.ts",
       "src/lib/v8-4/gate-check.ts",

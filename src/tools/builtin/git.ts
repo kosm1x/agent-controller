@@ -14,6 +14,7 @@ import { buildChildEnv } from "../../mcp/env-deny.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 import { repoRootOf, withCwdLock } from "./cwd-lock.js";
+import { isMcRepository, mcProtectedPathsRefusal } from "./protected-push.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
@@ -477,7 +478,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       const cwd = args.cwd as string | undefined;
       // Path guard FIRST so a blocked/invalid cwd surfaces its real reason
       // instead of being swallowed by the "no origin" catch below (qa #3).
-      resolveWorkDir(cwd);
+      const workDir = resolveWorkDir(cwd);
 
       // Verify auth
       try {
@@ -552,16 +553,26 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         branch = "main";
       }
 
-      // Safety: block pushing main from mission-control — only jarvis/* branches allowed
-      const resolvedCwd = resolve(cwd ?? DEFAULT_CWD);
-      if (
-        resolvedCwd.startsWith("/root/claude/mission-control") &&
-        branch === "main"
-      ) {
-        return JSON.stringify({
-          error:
-            "Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.",
-        });
+      // Safety: block pushing main of mission-control — only jarvis/* branches
+      // allowed — from any clone of this project, not only the checkout roots.
+      if (branch === "main") {
+        let ours: boolean;
+        try {
+          ours =
+            resolve(cwd ?? DEFAULT_CWD).startsWith(
+              "/root/claude/mission-control",
+            ) || (await isMcRepository(workDir));
+        } catch (err) {
+          return JSON.stringify({
+            error: `Nothing was pushed: could not verify whether this repository is mission-control (${errMsg(err).slice(0, 300)}).`,
+          });
+        }
+        if (ours) {
+          return JSON.stringify({
+            error:
+              "Pushing to main on mission-control is blocked. Use jarvis_dev to create a jarvis/* branch and push from there.",
+          });
+        }
       }
 
       // Fetch + rebase to avoid push rejection from a diverged remote. Each step
@@ -616,6 +627,12 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
           });
         }
       }
+
+      // Protected files hold at the push too: a mission-control branch that
+      // changes one is refused here, after the rebase (what is pushed) and
+      // before anything is sent.
+      const protectedRefusal = await mcProtectedPathsRefusal(workDir);
+      if (protectedRefusal) return JSON.stringify({ error: protectedRefusal });
 
       // Check for uncommitted changes — warn before the LLM claims success
       const status = await runArgs("git", ["status", "--short"], 30_000, cwd);
@@ -871,6 +888,14 @@ Returns the PR URL on success.`,
             `Pass the cwd where you ran git_commit (e.g. the jarvis worktree).`,
         });
       }
+
+      // The pull request carries the branch as origin has it, however it got
+      // there: a mission-control branch that changes a protected file gets
+      // no pull request. The comparison is always against the default branch,
+      // whatever `base` is passed: protected files are judged against what the
+      // project runs.
+      const protectedRefusal = await mcProtectedPathsRefusal(workDir, head);
+      if (protectedRefusal) return JSON.stringify({ error: protectedRefusal });
 
       // --head makes the PR head explicit so gh does not depend on upstream
       // tracking (the jarvis token-URL push path cannot set one).

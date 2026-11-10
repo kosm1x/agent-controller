@@ -9,6 +9,15 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 const mockExec = vi.fn().mockReturnValue("");
 const mockExecFile = vi.fn().mockReturnValue("");
 const mockExecFileSync = vi.fn().mockReturnValue("");
+// The protected-file check's own git children (protected-push.ts) are told
+// apart by their leading `-c core.hooksPath=/dev/null` and answered here, so
+// the tools' own once-queues on mockExecFile stay in order. Default "": a
+// repository with no remotes, i.e. not this project.
+const mockCheckGit = vi.fn().mockReturnValue("");
+const isCheckGit = (args: unknown[]) =>
+  args[0] === "git" &&
+  (args[1] as string[])[0] === "-c" &&
+  (args[1] as string[])[1] === "core.hooksPath=/dev/null";
 // stdin.end() of every async child (W3: a prompting child must fail fast).
 const mockStdinEnd = vi.fn();
 
@@ -55,7 +64,9 @@ function asyncChild(impl: (...args: unknown[]) => string | Promise<string>) {
 
 vi.mock("child_process", () => ({
   exec: asyncChild((...args: unknown[]) => mockExec(...args)),
-  execFile: asyncChild((...args: unknown[]) => mockExecFile(...args)),
+  execFile: asyncChild((...args: unknown[]) =>
+    isCheckGit(args) ? mockCheckGit(...args) : mockExecFile(...args),
+  ),
   execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 }));
 
@@ -113,6 +124,7 @@ describe("git tools", () => {
     mockExec.mockReturnValue("");
     mockExecFile.mockReturnValue("");
     mockExecFileSync.mockReturnValue("");
+    mockCheckGit.mockReset().mockReturnValue("");
   });
 
   describe("git_status", () => {
@@ -1084,7 +1096,9 @@ describe("git tools", () => {
         expect(opts.env).not.toBe(process.env);
         // Every child, the token push included, had stdin closed.
         expect(mockStdinEnd).toHaveBeenCalledTimes(
-          mockExec.mock.calls.length + mockExecFile.mock.calls.length,
+          mockExec.mock.calls.length +
+            mockExecFile.mock.calls.length +
+            mockCheckGit.mock.calls.length,
         );
       });
 
@@ -1198,6 +1212,7 @@ describe("git tools", () => {
       vi.resetModules();
       const { ghCreatePrTool: freshPrTool } = await import("./git.js");
       mockStdinEnd.mockClear();
+      mockCheckGit.mockClear();
       mockExecFileSync
         .mockReturnValueOnce("jarvis/feat/x\n") // getCurrentBranch(workDir)
         .mockReturnValueOnce("jarvis/feat/x\n"); // isJarvisBranch → getCurrentBranch
@@ -1206,8 +1221,10 @@ describe("git tools", () => {
         title: "t",
         body: "b",
         cwd: "/root/claude/myrepo",
-      }); // 1 × direct execFileAsync("gh")
-      expect(mockStdinEnd).toHaveBeenCalledTimes(1);
+      }); // 1 × direct execFileAsync("gh"), plus the protected-file check's scope read
+      expect(mockStdinEnd).toHaveBeenCalledTimes(
+        1 + mockCheckGit.mock.calls.length,
+      );
     });
 
     describe("awaited steps hold git_push until the child completes (W5)", () => {
@@ -1455,6 +1472,255 @@ describe("git tools", () => {
       expect(
         await gitStatusTool.execute({ cwd: "/root/claude/cuatro-flor" }),
       ).toContain("clean");
+    });
+  });
+
+  // The protected-file list holds at the push and at the pull request too:
+  // a branch of this project (a checkout root, or any clone whose remotes name
+  // the project) that changes a protected path is refused there and nothing
+  // is sent. Other repositories are not checked.
+  describe("protected files are checked again at the push and the pull request", () => {
+    const WT = "/root/claude/mission-control-jarvis";
+    const CLONE = "/root/claude/some-clone";
+    const BASE = "b".repeat(40);
+    const PROJECT_URL = "https://github.com/kosm1x/agent-controller.git";
+    const sent = (verb: string) =>
+      mockExecFile.mock.calls.some(
+        (c) => c[0] === "git" && (c[1] as string[]).includes(verb),
+      );
+    const ghCalled = () => mockExecFile.mock.calls.some((c) => c[0] === "gh");
+    /** The check's git subcommands, in order (after `-c core.hooksPath=/dev/null`). */
+    const checkVerbs = () =>
+      mockCheckGit.mock.calls.map((c) => (c[1] as string[])[2]);
+    /**
+     * Answers for a branch on `branch`: the tools' own git/gh children, and the
+     * check's (remotes all `remoteUrl`, merge base `mergeBase`, changed paths
+     * `diff`). `listingFails` makes the path listing fail after the merge base.
+     */
+    const answer = (
+      diff: string,
+      opts: {
+        branch?: string;
+        remoteUrl?: string;
+        mergeBase?: string | Error;
+        listingFails?: boolean;
+        remoteNames?: string;
+        urlReadFails?: boolean;
+        fetchError?: Error;
+      } = {},
+    ) => {
+      const branch = opts.branch ?? "jarvis/feat/x";
+      const remoteUrl = opts.remoteUrl ?? PROJECT_URL;
+      for (const m of [mockExec, mockExecFile, mockExecFileSync, mockCheckGit])
+        m.mockReset().mockReturnValue("");
+      mockExecFileSync.mockReturnValue(`${branch}\n`);
+      mockExec.mockImplementation((cmd: unknown) => {
+        const c = String(cmd);
+        if (c.startsWith("gh auth status")) return "✓ Logged in";
+        if (c.startsWith("git remote get-url")) return remoteUrl;
+        if (c.startsWith("gh repo view")) return '{"name":"agent-controller"}';
+        if (c.startsWith("git branch --show-current")) return branch;
+        return "";
+      });
+      mockExecFile.mockImplementation((cmd: unknown, args: unknown) => {
+        const a = args as string[];
+        if (cmd === "gh") return "https://github.com/kosm1x/agent-controller/pull/5";
+        if (a[0] === "push") return `abc..def ${branch} -> ${branch}`;
+        return "";
+      });
+      mockCheckGit.mockImplementation((_cmd: unknown, args: unknown) => {
+        const a = (args as string[]).slice(2);
+        if (a[0] === "rev-parse") return ".git\n";
+        if (a[0] === "remote" && a.length === 1)
+          return opts.remoteNames ?? "origin\n";
+        if (opts.urlReadFails && (a[0] === "ls-remote" || a[0] === "remote"))
+          throw new Error("error: could not read the remote");
+        if (a[0] === "ls-remote") return `${remoteUrl}\n`;
+        if (a[0] === "fetch" && opts.fetchError) throw opts.fetchError;
+        if (a[0] === "remote") return `${remoteUrl}\n`;
+        if (a[0] === "symbolic-ref") return `refs/heads/${branch}\n`;
+        if (a[0] === "merge-base") {
+          const mb = opts.mergeBase ?? `${BASE}\n`;
+          if (mb instanceof Error) throw mb;
+          return mb;
+        }
+        if (a[0] === "diff") {
+          if (opts.listingFails)
+            throw new Error("fatal: bad object " + BASE);
+          return diff;
+        }
+        return "";
+      });
+    };
+
+    it("git_push in the jarvis worktree: a branch that changes protected files is refused and nothing is pushed", async () => {
+      answer("src/index.ts\0.github/workflows/ci.yml\0docs/a.md\0");
+      const out = JSON.parse(await gitPushTool.execute({ cwd: WT }));
+      expect(out.error).toContain("src/index.ts");
+      expect(out.error).toContain(".github/workflows/ci.yml");
+      expect(out.error).not.toContain("docs/a.md");
+      expect(out.error).toContain("operator session");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push in the jarvis worktree: a branch of ordinary files is pushed after the check", async () => {
+      answer("docs/a.md\0");
+      expect(await gitPushTool.execute({ cwd: WT })).toContain(
+        "-> jarvis/feat/x",
+      );
+      expect(checkVerbs()).toContain("merge-base");
+      expect(checkVerbs()).toContain("diff");
+    });
+
+    it("git_push in the jarvis worktree: when the merge base cannot be computed the push is refused", async () => {
+      answer("", {
+        mergeBase: new Error("fatal: Not a valid object name refs/remotes/origin/main"),
+      });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: WT }));
+      expect(out.error).toContain("could not run");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push: a merge base that is not a commit id is refused as unverifiable", async () => {
+      answer("", { mergeBase: "not-a-commit-id\n" });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: WT }));
+      expect(out.error).toContain("could not run");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push: a path listing that fails after the merge base is refused as unverifiable", async () => {
+      answer("", { listingFails: true });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: WT }));
+      expect(out.error).toContain("could not run");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push in another repository: the check is not applied", async () => {
+      answer("src/index.ts\0", {
+        remoteUrl: "https://github.com/EurekaMD-net/cuatro-flor.git",
+      });
+      expect(
+        await gitPushTool.execute({ cwd: "/root/claude/cuatro-flor" }),
+      ).toContain("-> jarvis/feat/x");
+      expect(checkVerbs()).not.toContain("merge-base");
+    });
+
+    it("git_push from a clone of this project outside the checkout roots: a protected change is refused", async () => {
+      answer("src/index.ts\0");
+      const out = JSON.parse(await gitPushTool.execute({ cwd: CLONE }));
+      expect(out.error).toContain("src/index.ts");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push from a clone of this project outside the checkout roots: the default branch is refused", async () => {
+      answer("", { branch: "main" });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: CLONE }));
+      expect(out.error).toContain("Pushing to main on mission-control is blocked");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push of another project's default branch: unchanged, it is pushed", async () => {
+      answer("", {
+        branch: "main",
+        remoteUrl: "https://github.com/EurekaMD-net/cuatro-flor.git",
+      });
+      expect(
+        await gitPushTool.execute({ cwd: "/root/claude/cuatro-flor" }),
+      ).toContain("-> main");
+    });
+
+    it("git_push of the default branch when the remotes cannot be read: refused", async () => {
+      answer("", { branch: "main" });
+      mockCheckGit.mockImplementation((_cmd: unknown, args: unknown) => {
+        if ((args as string[])[2] === "remote")
+          throw new Error("error: could not lock config file .git/config");
+        return "";
+      });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: CLONE }));
+      expect(out.error).toContain("could not verify");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push from a clone whose remote URL cannot be read: refused as unverifiable", async () => {
+      answer("docs/a.md\0", { urlReadFails: true });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: CLONE }));
+      expect(out.error).toContain("could not verify");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("git_push from a clone with a remote named like an option: refused as unverifiable", async () => {
+      answer("docs/a.md\0", { remoteNames: "-x\n" });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: CLONE }));
+      expect(out.error).toContain("could not verify");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("the check's git children run without prompts, replacement objects or grafts, and its fetch updates only the refs it names", async () => {
+      answer("docs/a.md\0");
+      await gitPushTool.execute({ cwd: WT });
+      expect(mockCheckGit.mock.calls.length).toBeGreaterThan(0);
+      for (const c of mockCheckGit.mock.calls) {
+        const env = (c[2] as { env: Record<string, string> }).env;
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+        expect(env.GIT_NO_REPLACE_OBJECTS).toBe("1");
+        expect(env.GIT_GRAFT_FILE).toBe("/dev/null");
+      }
+      const fetch = mockCheckGit.mock.calls.find(
+        (c) => (c[1] as string[])[2] === "fetch",
+      )![1] as string[];
+      expect(fetch).toContain("--refmap=");
+    });
+
+    it("a check that could not run names the failing step only, never git's error text", async () => {
+      answer("docs/a.md\0", {
+        fetchError: new Error(
+          "fatal: unable to access 'https://x-access-token:abc@github.com/kosm1x/agent-controller.git/': Could not resolve host",
+        ),
+      });
+      const out = JSON.parse(await gitPushTool.execute({ cwd: WT }));
+      expect(out.error).toContain("could not run");
+      expect(out.error).toContain("origin reachable");
+      expect(out.error).not.toContain("://");
+      expect(out.error).not.toContain("x-access-token");
+      expect(sent("push")).toBe(false);
+    });
+
+    it("gh_create_pr in the jarvis worktree: a remote branch that changes protected files gets no pull request", async () => {
+      answer("src/tools/builtin/git.ts\0");
+      const out = JSON.parse(
+        await ghCreatePrTool.execute({ title: "t", body: "b", cwd: WT }),
+      );
+      expect(out.error).toContain("src/tools/builtin/git.ts");
+      expect(ghCalled()).toBe(false);
+      // The pull request is built on the branch as origin has it.
+      const fetch = mockCheckGit.mock.calls.find(
+        (c) => (c[1] as string[])[2] === "fetch",
+      )![1] as string[];
+      expect(fetch).toContain(
+        "+refs/heads/jarvis/feat/x:refs/remotes/origin/jarvis/feat/x",
+      );
+    });
+
+    it("gh_create_pr in the jarvis worktree: a remote branch of ordinary files gets its pull request", async () => {
+      answer("docs/a.md\0");
+      expect(
+        await ghCreatePrTool.execute({ title: "t", body: "b", cwd: WT }),
+      ).toContain("pull/5");
+      expect(checkVerbs()).toContain("merge-base");
+    });
+
+    it("gh_create_pr in another repository: the check is not applied", async () => {
+      answer("src/index.ts\0", {
+        remoteUrl: "https://github.com/EurekaMD-net/myrepo.git",
+      });
+      expect(
+        await ghCreatePrTool.execute({
+          title: "t",
+          body: "b",
+          cwd: "/root/claude/myrepo",
+        }),
+      ).toContain("pull/5");
+      expect(checkVerbs()).not.toContain("merge-base");
     });
   });
 });

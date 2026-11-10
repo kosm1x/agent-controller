@@ -21,6 +21,7 @@ import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
 import { withCwdLock } from "./cwd-lock.js";
 import { MC_WORKTREE_ROOT } from "./immutable-core.js";
+import { mcProtectedPathsRefusal } from "./protected-push.js";
 
 // The test gate MUST run async: a synchronous exec blocks mission-control's
 // event loop for the whole run (the full suite took ~2 min before ruling 4
@@ -821,6 +822,16 @@ async function commitPushOpenPr(
     return JSON.stringify({
       error: `Commit failed: ${msg}`,
     });
+  }
+
+  // Protected files hold at the push too: the committed branch is checked
+  // before anything is sent (this push is also what the PR below carries).
+  const protectedRefusal = await mcProtectedPathsRefusal(MC_DIR);
+  if (protectedRefusal) {
+    console.log(
+      `[jarvis_dev] action=pr REFUSED — ${branch} changes protected files or could not be checked`,
+    );
+    return JSON.stringify({ error: protectedRefusal });
   }
 
   try {

@@ -11,10 +11,23 @@ import { promisify } from "util";
 const CACHE_FILE = "/root/claude/mission-control/.git/jarvis-test-cache.json";
 
 const m = vi.hoisted(() => {
-  // git answers: a jarvis/* branch with one changed .ts file.
-  const git = (args: string[]): string => {
+  // git answers: a jarvis/* branch with one changed .ts file. The protected-
+  // file check before the push (its git children lead with
+  // `-c core.hooksPath=/dev/null`) reads origin, the merge base and
+  // `branch.diff`.
+  const branch = { diff: "src/x.ts\0" };
+  const git = (argv: string[]): string => {
+    const args =
+      argv[0] === "-c" && argv[1] === "core.hooksPath=/dev/null"
+        ? argv.slice(2)
+        : argv;
+    if (args[0] === "ls-remote" || args[0] === "remote")
+      return "https://github.com/kosm1x/agent-controller.git\n";
     if (args[0] === "branch") return "jarvis/feat/x\n";
     if (args[0] === "rev-parse") return "abc123\n";
+    if (args[0] === "symbolic-ref") return "refs/heads/jarvis/feat/x\n";
+    if (args[0] === "merge-base") return `${"b".repeat(40)}\n`;
+    if (args[0] === "diff" && args.includes("--no-relative")) return branch.diff;
     if (args[0] === "status" && args.includes("-z")) return " M src/x.ts\0";
     if (args[0] === "diff" && args.includes("-z"))
       return args.some((a) => a.endsWith("...HEAD")) ? "src/x.ts\0" : "";
@@ -47,7 +60,7 @@ const m = vi.hoisted(() => {
   });
   // false → ensureJarvisWorktree runs `git worktree add` (jarvis-dev.ts:49).
   const fsState = { worktreeExists: true };
-  return { execFileSync, execFileAsync, execFile, fsState, children };
+  return { execFileSync, execFileAsync, execFile, fsState, children, branch };
 });
 
 vi.mock("child_process", async (orig) => ({
@@ -107,6 +120,7 @@ const gateCall = (bin: string) =>
 
 beforeEach(() => {
   m.fsState.worktreeExists = true;
+  m.branch.diff = "src/x.ts\0";
   m.execFileSync.mockClear();
   m.execFileAsync.mockClear();
   m.children.length = 0;
@@ -260,5 +274,37 @@ describe("jarvis_dev action=pr — per-cwd lock on the worktree (4ao f)", () => 
     await holder;
     expect(JSON.parse(await pr).pr_url).toBe("https://github.com/o/r/pull/9");
     expect(argvs().some((a) => a.startsWith("git push -u origin"))).toBe(true);
+  });
+});
+
+// The protected-file list holds at the push: action=pr checks what the
+// committed branch changes against origin/main before anything is sent.
+describe("jarvis_dev action=pr — protected files are checked again before the push", () => {
+  const argvs = () =>
+    (m.execFileAsync.mock.calls as unknown[][]).map(
+      (c) => `${c[0]} ${(c[1] as string[]).join(" ")}`,
+    );
+
+  it("a branch that changes a protected file is refused after the commit: nothing is pushed, no pull request", async () => {
+    m.branch.diff = "src/x.ts\0src/tools/builtin/jarvis-dev.ts\0";
+    const out = JSON.parse(
+      await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" }),
+    );
+    expect(out.error).toContain("src/tools/builtin/jarvis-dev.ts");
+    expect(out.error).not.toContain("src/x.ts");
+    expect(argvs().some((a) => a.startsWith("git commit "))).toBe(true);
+    expect(argvs().some((a) => a.startsWith("git push"))).toBe(false);
+    expect(argvs().some((a) => a.startsWith("gh "))).toBe(false);
+  });
+
+  it("a branch of ordinary files is checked, then pushed", async () => {
+    const out = JSON.parse(
+      await jarvisDevTool.execute({ action: "pr", title: "t", body: "b" }),
+    );
+    expect(out.pr_url).toBe("https://github.com/o/r/pull/9");
+    const at = (prefix: string) => argvs().findIndex((a) => a.startsWith(prefix));
+    const mergeBase = at("git -c core.hooksPath=/dev/null merge-base");
+    expect(mergeBase).toBeGreaterThan(at("git commit "));
+    expect(mergeBase).toBeLessThan(at("git push -u origin"));
   });
 });
