@@ -1559,7 +1559,7 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
         const tool = childCalls[input.title] ?? "gmail_send";
         // The fast runner's own context (shares the dispatcher's sink).
         const ctx = runnerExecutionContext(input.taskId, true);
-        outcome.set(input.title, await createTaskExecutor(registry, ctx)(tool, { to: "a@b.mx" }));
+        outcome.set(input.title, await createTaskExecutor(registry, ctx)(tool, { to: "user5@example.com" }));
         return { success: true, output: "child ok" } as RunnerOutput;
       },
     });
@@ -1617,7 +1617,7 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
   it("a declared gmail_send is allowed and the child completes", async () => {
     await runRoot(scheduled("root-declared", ["web_search", "gmail_send"]), ["child-of-root-declared"]);
     expect(JSON.parse(outcome.get("child-of-root-declared")!)).toEqual({ ok: true });
-    expect(registry.execute).toHaveBeenCalledWith("gmail_send", { to: "a@b.mx" });
+    expect(registry.execute).toHaveBeenCalledWith("gmail_send", { to: "user5@example.com" });
     const names = finalOf("child-of-root-declared").map((e) => e.name);
     expect(names).toContain("task.completed");
     expect(names).not.toContain("task.failed");
@@ -1668,7 +1668,7 @@ describe("background batch child: undeclared high-risk tools (ruling 2026-10-03)
       ["child-of-root-nolist-low"],
     );
     expect(JSON.parse(outcome.get("child-of-root-nolist-low")!)).toEqual({ ok: true });
-    expect(registry.execute).toHaveBeenCalledWith("web_search", { to: "a@b.mx" });
+    expect(registry.execute).toHaveBeenCalledWith("web_search", { to: "user5@example.com" });
     expect(finalOf("child-of-root-nolist-low").map((e) => e.name)).toContain("task.completed");
     expect(recordRitualFailure).not.toHaveBeenCalled();
   });

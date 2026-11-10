@@ -89,7 +89,7 @@ are pinned in `classify.test.ts`.
   "summary": { "total": 3, "safe": 1, "risky": 0, "invalid": 2, "unknown": 0 },
   "budget": { "usedToday": 3, "dailyCap": 500, "breakerOpen": false },
   "results": [
-    { "email": "ana@clinic.mx", "verdict": "safe", "reason": "deliverable", "provider": "google_workspace" },
+    { "email": "user1@mail.example.com", "verdict": "safe", "reason": "deliverable", "provider": "google_workspace" },
     { "email": "contacto@gmial.com", "verdict": "invalid", "reason": "nxdomain", "suggestion": "contacto@gmail.com" }
   ]
 }

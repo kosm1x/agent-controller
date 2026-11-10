@@ -123,7 +123,7 @@ describe("handleScheduledTaskResult → delivery seam", () => {
   it("an email-only schedule (Pharma) never broadcasts but its items enter the sent-before ledger", async () => {
     watchScheduledTask(
       "t5",
-      makeSchedule({ schedule_id: "pharma", name: "Reporte Diario Pharma", delivery: "email", email_to: "javier@eurekamd.net" }),
+      makeSchedule({ schedule_id: "pharma", name: "Reporte Diario Pharma", delivery: "email", email_to: "user3@example.com" }),
     );
     handleScheduledTaskResult(
       "t5",

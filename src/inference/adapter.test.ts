@@ -709,7 +709,7 @@ describe("salvageTruncatedContent", () => {
 
   it("handles body field name", () => {
     const raw =
-      '{"to": "test@test.com", "body": "Email body content here' +
+      '{"to": "test@example.com", "body": "Email body content here' +
       "z".repeat(300);
     const result = salvageTruncatedContent(raw);
     expect(result).not.toBeNull();

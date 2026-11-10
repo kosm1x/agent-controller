@@ -10,7 +10,7 @@ import {
 describe("withholdReasons", () => {
   it("names each rule that fires and agrees with mustNotLeave", () => {
     const cases: [string, string[]][] = [
-      ["escríbele a ana@ejemplo.mx por favor", ["email"]],
+      ["escríbele a user28@example.com por favor", ["email"]],
       ["Password: hunter2!x", ["keyword", "pass_contra", "label_value"]],
       ["Xy7kQ9zz", ["bare_token"]],
       ["la contraseña es lo de siempre", ["keyword"]],
@@ -62,14 +62,14 @@ describe("tallyWithholds", () => {
       {
         channel: "a",
         user: "resume el día",
-        jarvis: "claro, escribe a ana@ejemplo.mx",
+        jarvis: "claro, escribe a user28@example.com",
       },
       { channel: "b", user: "otro canal, limpio", jarvis: "ok" },
       { channel: "a", user: "gracias, sigue", jarvis: "listo" }, // withheld by a's previous reply
       { channel: "b", user: "Password: hunter2!x", jarvis: "no" }, // its own message
       { channel: "a", user: "y ahora?", jarvis: "listo" }, // a's previous turn is clean
       { channel: "b", user: "sigue", jarvis: "ok" }, // b's previous USER text is not a part (only after a poisoned exchange, not replayed)
-      { channel: "c", user: "hola", jarvis: "manda a b@c.mx" },
+      { channel: "c", user: "hola", jarvis: "manda a user29@example.org" },
       { channel: "c", user: "ya", jarvis: "ok" }, // withheld by c's previous reply
     ];
     const t = tallyWithholds(ex);

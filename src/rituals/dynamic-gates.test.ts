@@ -226,7 +226,7 @@ describe("schedule submissions carry detectionText (2026-09-29)", () => {
       cronExpr: "* * * * *",
       tools: ["web_search", "gmail_send"],
       delivery: "email",
-      emailTo: "a@b.mx",
+      emailTo: "user5@example.com",
     });
     startDynamicScheduler();
     (mocks.scheduleCron.mock.calls[0]![2] as () => void)();

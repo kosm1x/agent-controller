@@ -17,7 +17,7 @@ Two distinct use cases share one transport, picked per account via
   as Telegram: one trusted sender, full tool access. Used for a private
   Jarvis admin mailbox.
 - **community-manager** — Jarvis is the named community manager of a
-  public-facing org mailbox (e.g. `comunidades@mexiconecesario.org.mx`).
+  public-facing org mailbox (e.g. `community@example.org`).
   _Anyone_ writing to that address gets read and answered on behalf of the
   organisation. Tool scope is forced to a read-only / lookup allowlist so a
   stranger cannot drive destructive actions; replies are per-sender (each
@@ -349,7 +349,7 @@ cascade (`554 5.7.1 Disabled by user from hPanel`). Operator reactivated via
 hPanel + rotated password; service resumed without issue. Lesson captured in
 `feedback_email_bounce_cascade` memory. Filter caught its first real
 production bounce live at 06:09 (`Skipped bounce/auto-reply from
-mailer-daemon@fr-int-smtpout25.hostinger.io`).
+mailer-daemon@example.com`).
 
 ## Known limitations
 
@@ -414,7 +414,7 @@ EMAIL_ACCOUNTS=comunidades,proyecto2
 
 EMAIL_COMUNIDADES_IMAP_HOST=imap.hostinger.com
 EMAIL_COMUNIDADES_SMTP_HOST=smtp.hostinger.com
-EMAIL_COMUNIDADES_USERNAME=comunidades@mexiconecesario.org.mx
+EMAIL_COMUNIDADES_USERNAME=community@example.org
 EMAIL_COMUNIDADES_PASSWORD=<provider app password>
 EMAIL_COMUNIDADES_OWNER_ADDRESS=<only this sender is processed>
 # optional: EMAIL_COMUNIDADES_ADDRESS / _IMAP_PORT / _SMTP_PORT / _POLL_INTERVAL_MS

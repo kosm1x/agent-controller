@@ -8,12 +8,12 @@ vi.mock("../../email-verify/index.js", () => ({
 import { emailVerifyTool } from "./email-verify.js";
 
 const safe = {
-  email: "ana@clinic.mx",
+  email: "user1@example.com",
   verdict: "safe",
   reason: "deliverable",
-  syntax: { valid: true, normalized: "ana@clinic.mx", suggestion: null },
-  mx: { acceptsMail: true, hosts: ["mx.clinic.mx"], provider: "other" },
-  smtp: { host: "mx.clinic.mx", deliverable: true, catchAll: false, fullInbox: false, disabled: false, replyCode: 250, reply: "Ok" },
+  syntax: { valid: true, normalized: "user1@example.com", suggestion: null },
+  mx: { acceptsMail: true, hosts: ["mx.example.com"], provider: "other" },
+  smtp: { host: "mx.example.com", deliverable: true, catchAll: false, fullInbox: false, disabled: false, replyCode: 250, reply: "Ok" },
   misc: { disposable: false, roleAccount: false, freeProvider: false },
   note: null,
   durationMs: 12,
@@ -47,18 +47,18 @@ describe("email_verify", () => {
 
   it("accepts a single string, returns compact rows, summary and budget", async () => {
     verifyMany.mockResolvedValue({ results: [safe], summary: { total: 1, safe: 1, risky: 0, invalid: 0, unknown: 0 } });
-    const out = JSON.parse(await emailVerifyTool.execute({ emails: "ana@clinic.mx" }));
-    expect(verifyMany).toHaveBeenCalledWith(["ana@clinic.mx"], { skipSmtp: false, catchAllProbe: true });
+    const out = JSON.parse(await emailVerifyTool.execute({ emails: "user1@example.com" }));
+    expect(verifyMany).toHaveBeenCalledWith(["user1@example.com"], { skipSmtp: false, catchAllProbe: true });
     expect(out.summary.safe).toBe(1);
     expect(out.budget.dailyCap).toBe(500);
-    expect(out.results[0]).toEqual({ email: "ana@clinic.mx", verdict: "safe", reason: "deliverable", provider: "other" });
+    expect(out.results[0]).toEqual({ email: "user1@example.com", verdict: "safe", reason: "deliverable", provider: "other" });
     expect(out.halted).toBeUndefined();
   });
 
   it("passes skip_smtp / catch_all_probe through and returns full rows when verbose", async () => {
     verifyMany.mockResolvedValue({ results: [safe], summary: { total: 1, safe: 1, risky: 0, invalid: 0, unknown: 0 } });
-    const out = JSON.parse(await emailVerifyTool.execute({ emails: ["ana@clinic.mx"], skip_smtp: true, catch_all_probe: false, verbose: true }));
-    expect(verifyMany).toHaveBeenCalledWith(["ana@clinic.mx"], { skipSmtp: true, catchAllProbe: false });
+    const out = JSON.parse(await emailVerifyTool.execute({ emails: ["user1@example.com"], skip_smtp: true, catch_all_probe: false, verbose: true }));
+    expect(verifyMany).toHaveBeenCalledWith(["user1@example.com"], { skipSmtp: true, catchAllProbe: false });
     expect(out.results[0].smtp.replyCode).toBe(250);
   });
 
@@ -75,17 +75,17 @@ describe("email_verify", () => {
       results: [{ ...safe, verdict: "unknown", reason: "daily_cap_reached", smtp: null }],
       summary: { total: 1, safe: 0, risky: 0, invalid: 0, unknown: 1 },
     });
-    const out = JSON.parse(await emailVerifyTool.execute({ emails: ["ana@clinic.mx"] }));
+    const out = JSON.parse(await emailVerifyTool.execute({ emails: ["user1@example.com"] }));
     expect(out.halted).toBe("daily_cap_reached");
     verifyMany.mockResolvedValue({
       results: [{ ...safe, verdict: "unknown", reason: "batch_deadline", smtp: null }],
       summary: { total: 1, safe: 0, risky: 0, invalid: 0, unknown: 1 },
     });
-    expect(JSON.parse(await emailVerifyTool.execute({ emails: ["ana@clinic.mx"] })).halted).toBe("batch_deadline");
+    expect(JSON.parse(await emailVerifyTool.execute({ emails: ["user1@example.com"] })).halted).toBe("batch_deadline");
   });
 
   it("wraps engine failures as {error}", async () => {
     verifyMany.mockRejectedValue(new Error("boom"));
-    expect(JSON.parse(await emailVerifyTool.execute({ emails: ["ana@clinic.mx"] })).error).toMatch(/boom/);
+    expect(JSON.parse(await emailVerifyTool.execute({ emails: ["user1@example.com"] })).error).toMatch(/boom/);
   });
 });

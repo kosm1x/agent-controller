@@ -104,9 +104,9 @@ describe("TaskExecutionContext", () => {
 
     it("same tool, same args (any key order, any item) → duplicate, nothing added", () => {
       const ctx = new TaskExecutionContext("t");
-      ctx.setPendingConfirmation("gmail_send", { to: "a@b.com", subject: "x" });
+      ctx.setPendingConfirmation("gmail_send", { to: "user27@example.com", subject: "x" });
       expect(ctx.addPendingConfirmation("wp_delete", { id: 7 })).toBe("queued");
-      expect(ctx.addPendingConfirmation("gmail_send", { subject: "x", to: "a@b.com" })).toBe("duplicate");
+      expect(ctx.addPendingConfirmation("gmail_send", { subject: "x", to: "user27@example.com" })).toBe("duplicate");
       expect(ctx.addPendingConfirmation("wp_delete", { id: 7 })).toBe("duplicate");
       expect(ctx.getPendingConfirmation()!.items).toHaveLength(2);
     });

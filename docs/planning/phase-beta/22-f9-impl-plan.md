@@ -26,7 +26,7 @@
 - **Auto-rebalance on green ship_gate** — Deferred to F9.1 if operator wants. Current F8 `paper_rebalance` refuses when `ship_blocked=1`, and F7.5 currently blocks on the seeded data. Auto-firing a rebalance from a ritual requires explicit operator opt-in per rebalance via override_ship_gate; keeping this manual in v1 matches the principle "F7.5 exists to gate F8; ritual exists to surface intelligence, not to trade".
 - **News ingestion pipeline** — Uses existing `intel_query` from the signal-intelligence ritual. New sources deferred to γ.
 - **Multi-venue ritual coverage** — F8.1b concern (adds Polymarket positions to the EOD recap once the adapter ships).
-- **Multi-user personalization / per-user budgets** — v1 is single-operator (hardcoded `fede@eurekamd.net` via the existing morning-briefing pattern).
+- **Multi-user personalization / per-user budgets** — v1 is single-operator (hardcoded `operator@example.com` via the existing morning-briefing pattern).
 - **Intraday alerts** — weekly-first lock holds; intraday is F10's concern.
 - **Alert-budget cost metering** — v1 tracks token counts only. USD cost attribution is a follow-up once LLM-provider price-per-token data is surfaced.
 

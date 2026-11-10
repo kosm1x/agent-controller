@@ -108,7 +108,7 @@ export type DataSourceCitation = z.infer<typeof DataSourceCitationSchema>;
  * Spec §6 baseline: morning_brief | proposal | signal_intel | project_status | ad_hoc.
  * v7.7 Spine 1 Phase 2 retrofit deltas (per V7.7-GUIDE.md Spine 1):
  *   - closure_doc      — codifies the v7.6 closure-audit pattern that caught 4 fidelity bugs
- *   - community_email  — comunidades@mexiconecesario.org.mx reply path (live since 2026-05-15)
+ *   - community_email  — community@example.org reply path (live since 2026-05-15)
  * Spec amendment: docs/planning/v8-substrate-s2-spec.md §6 — kept in sync at Spine 1 close.
  */
 export const REPORT_SURFACES = [

@@ -92,17 +92,17 @@ describe("classifyRcpt — phrase fallback for prose-only servers", () => {
   });
 
   it.each([
-    "550 5.1.1 <x@clinica.mx>: Recipient address rejected: User unknown in relay recipient table",
+    "550 5.1.1 <user6@example.com>: Recipient address rejected: User unknown in relay recipient table",
     "550 5.4.1 Recipient address rejected: Access denied. AS(201806281)",
-    "550 5.1.1 <x@clinica.mx>: Recipient address rejected: User unknown in local recipient table",
+    "550 5.1.1 <user6@example.com>: Recipient address rejected: User unknown in local recipient table",
     "550 5.1.1 User unknown; rejecting",
   ])("R2 C-1: common mailbox rejections stay invalid despite 'relay'/'access denied' prose: %s", (raw) => {
     expect(classifyRcpt(parseReply(`${raw}\r\n`))).toBe("invalid");
   });
 
   it.each([
-    ["554 delivery error: dd This user doesn't have a yahoo.com account (x@yahoo.com) [0] - mta4123.mail.gq1.yahoo.com", "invalid"],
-    ["554 delivery error: dd This user doesn't have a aol.com account (x@aol.com) [0] - mta4321.mail.bf1.yahoo.com", "invalid"],
+    ["554 delivery error: dd This user doesn't have a yahoo.com account (user1@yahoo.com) [0] - mta4123.mail.gq1.yahoo.com", "invalid"],
+    ["554 delivery error: dd This user doesn't have a aol.com account (user1@aol.com) [0] - mta4321.mail.bf1.yahoo.com", "invalid"],
     ["550 5.1.2 Mailbox does not exist.", "invalid"], // Stalwart
     ["550 El usuario no tiene una cuenta en este servidor", "invalid"],
     ["452 4.3.1 Insufficient system storage", "temp_failure"], // server disk, not the mailbox (R3 W-2)
@@ -119,7 +119,7 @@ describe("classifyRcpt — phrase fallback for prose-only servers", () => {
     ["550 5.7.26 This mail has been blocked because the sender is unauthenticated. Gmail requires all senders to authenticate; the message does not have authentication information", "blocked"],
     ["452 Too many recipients from 4.2.2.1", "temp_failure"], // IP-shaped token is not an enhanced code
     ["550 Mailbox unavailable; relay host 5.2.1.9 refused", "invalid"],
-    ["451 4.7.1 Please try again later; your message from noreply@thelodge.com is queued", "greylisted"], // "helo" inside a hostname
+    ["451 4.7.1 Please try again later; your message from noreply@mail.example.com is queued", "greylisted"], // "helo" inside a hostname
     ["451 4.3.0 Temporarily rejected, greylisting is active; mail from this client host will be accepted on retry", "greylisted"],
     ["450 4.7.1 <x@y.z>: Recipient address rejected: Greylisted, see http://postgrey.schweikert.net/help/y.z.html", "greylisted"],
     ["550 5.7.1 <mail>: Helo command rejected: need fully-qualified hostname", "blocked"],
@@ -132,7 +132,7 @@ describe("classifyRcpt — phrase fallback for prose-only servers", () => {
     ["550 5.7.0 Sender does not have a mailbox on this server", "blocked"], // R5 C-1: subject-anchored
     ["550 5.7.1 We do not have an account for this domain", "blocked"],
     ["550 5.7.1 The sender doesn't have a valid account", "blocked"],
-    ["554 5.1.1 This user doesn't have a yahoo.com account (x@yahoo.com) [0] - mta", "invalid"],
+    ["554 5.1.1 This user doesn't have a yahoo.com account (user1@yahoo.com) [0] - mta", "invalid"],
     ["550 The recipient does not have an account here", "invalid"],
     ["550 El usuario no tiene cuenta en este dominio", "invalid"],
     ["550 Invalid User (#5.1.1)", "invalid"], // qmail trailing code (R5 W-5)

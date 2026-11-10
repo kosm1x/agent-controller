@@ -118,7 +118,7 @@ describe("detectsHallucinatedExecution", () => {
   it("detects partial hallucination: first-person email claim", () => {
     expect(
       detectsHallucinatedExecution(
-        "Envié el reporte a fede@eurekamd.net con los datos.",
+        "Envié el reporte a operator@example.com con los datos.",
         ["web_search"],
       ),
     ).toBe(true);

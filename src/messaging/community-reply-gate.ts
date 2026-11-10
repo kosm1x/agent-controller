@@ -1,7 +1,7 @@
 /**
  * V8 substrate S2 — community-manager email reply write-gate (v7.7 Spine 1 Phase 2b).
  *
- * The community-manager email path (e.g. `comunidades@mexiconecesario.org.mx`)
+ * The community-manager email path (e.g. `community@example.org`)
  * sends LLM-composed replies to external members of the public. Unlike the
  * morning_brief retrofit (Phase 2a, where the audit is OBSERVABILITY and the
  * brief ships regardless of verdict), here the critic IS a TRUE WRITE-GATE:

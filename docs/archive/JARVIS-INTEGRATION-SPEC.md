@@ -103,7 +103,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...    # Option A: service role (preferred)
 
 # Option B: user auth (if no service role key)
 SUPABASE_ANON_KEY=eyJ...
-COMMIT_USER_EMAIL=fede@eurekamd.net
+COMMIT_USER_EMAIL=operator@example.com
 COMMIT_USER_PASSWORD=123456
 
 # Optional

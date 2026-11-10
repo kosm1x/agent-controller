@@ -20,8 +20,8 @@ function opts(port: number, extra: Partial<ProbeOptions> = {}): ProbeOptions {
     port,
     heloName: "test.eurekams.net",
     fromEmail: "postmaster@eurekams.net",
-    toEmail: "ana@clinic.mx",
-    domain: "clinic.mx",
+    toEmail: "user1@example.com",
+    domain: "example.com",
     skipCatchAll: true,
     timeoutMs: 1500,
     allowPrivateAddresses: true,
@@ -42,7 +42,7 @@ describe("smtpReplyEnd", () => {
 describe("probeMailbox — guards", () => {
   it("refuses CRLF / angle-bracket injection in any envelope token", async () => {
     for (const bad of [
-      { toEmail: "ana@clinic.mx\r\nRCPT TO:<x@y.z>" },
+      { toEmail: "user1@example.com\r\nRCPT TO:<x@y.z>" },
       { fromEmail: "a@b.c>\r\nDATA" },
       { heloName: "x y" },
     ]) {
@@ -66,7 +66,7 @@ describe("probeMailbox — guards", () => {
 describe("probeMailbox — address handling", () => {
   it("connects through the pre-filtered address list, never re-resolving the hostname", async () => {
     // "mx.fake.test" does not exist in DNS: if the socket resolved the name itself this would fail.
-    const s = await server({ rcpt: { "ana@clinic.mx": "250 Ok" } });
+    const s = await server({ rcpt: { "user1@example.com": "250 Ok" } });
     const r = await probeMailbox(opts(s.port, { host: "mx.fake.test", addresses: [{ address: "127.0.0.1", family: 4 }] }));
     expect(r.rcpt?.code).toBe(250);
     expect(r.address).toBe("127.0.0.1");
@@ -93,10 +93,10 @@ describe("probeMailbox — address handling", () => {
 describe("probeMailbox — conversation", () => {
   it("runs the full conversation with a multi-line banner, fragmented replies and a HELO fallback", async () => {
     const s = await server({
-      banner: "220-mx.clinic.mx ESMTP\r\n220 ready",
+      banner: "220-mx.example.com ESMTP\r\n220 ready",
       ehlo: "502 5.5.1 EHLO not implemented",
       fragment: true,
-      rcpt: { "ana@clinic.mx": "250 2.1.5 Ok" },
+      rcpt: { "user1@example.com": "250 2.1.5 Ok" },
     });
     const r = await probeMailbox(opts(s.port, { skipCatchAll: false }));
     expect(r.envelopeFailure).toBeNull();
@@ -104,11 +104,11 @@ describe("probeMailbox — conversation", () => {
     expect(r.catchAll?.code).toBe(550);
     expect(s.commands.slice(0, 3)).toEqual(["EHLO test.eurekams.net", "HELO test.eurekams.net", "MAIL FROM:<postmaster@eurekams.net>"]);
     expect(s.commands.filter((c) => c.startsWith("RCPT TO"))).toHaveLength(2);
-    expect(s.commands[3]).toMatch(/^RCPT TO:<[a-z0-9]{1,12}@clinic\.mx>$/);
+    expect(s.commands[3]).toMatch(/^RCPT TO:<[a-z0-9]{1,12}@example\.com>$/);
   });
 
   it("uses the null reverse path when fromEmail is empty", async () => {
-    const s = await server({ rcpt: { "ana@clinic.mx": "250 Ok" } });
+    const s = await server({ rcpt: { "user1@example.com": "250 Ok" } });
     const r = await probeMailbox(opts(s.port, { fromEmail: "" }));
     expect(r.rcpt?.code).toBe(250);
     expect(s.commands[1]).toBe("MAIL FROM:<>");

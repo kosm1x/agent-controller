@@ -72,7 +72,7 @@
 
 2. **Overdue Task**: 1 task currently overdue requires attention.
 
-3. **Email Configuration Issue**: Morning briefing was sent to incorrect email domain (`fede@eureka.md` instead of `fede@eurekamd.net`). Automation needs correction.
+3. **Email Configuration Issue**: Morning briefing was sent to incorrect email domain (`operator@example.net` instead of `operator@example.com`). Automation needs correction.
 
 ---
 
@@ -82,7 +82,7 @@
 
 2. **Priority Focus**: With 5 in-progress tasks, consider limiting concurrent work to 2-3 high-priority items for better focus.
 
-3. **Automation Fix**: Correct the morning briefing email configuration to send to `fede@eurekamd.net`.
+3. **Automation Fix**: Correct the morning briefing email configuration to send to `operator@example.com`.
 
 4. **Launch Preparation**: Foundation event on March 25th is 5 days away — ensure all critical path items are prioritized.
 

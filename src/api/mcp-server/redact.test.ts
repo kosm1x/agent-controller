@@ -200,7 +200,7 @@ const PERSISTED_ID_SAMPLES = [
   "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", // Google Doc id (44 base64url)
   "-1001234567890", // Telegram group chat id
   "telegram:-1001234567890", // thread key
-  "whatsapp:5215512345678@s.whatsapp.net",
+  "whatsapp:5210000000000@s.whatsapp.net",
   "https://example.com/search?q=hello+world&page=2&sort=desc",
   "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit?usp=sharing",
 ];

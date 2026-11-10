@@ -23,7 +23,7 @@ export function formatForWhatsApp(text: string): string {
 
   // Code spans are literal (audit 2026-09-30 round 3): lift them out BEFORE
   // any markdown or tag rule runs and restore them last, as formatForTelegram
-  // does — otherwise `Peter <evil@x.com>` lost the address to the tag strip
+  // does — otherwise `Sam <user50@example.com>` lost the address to the tag strip
   // and `__init__.py` became `_init_.py`. NUL placeholders (never in LLM text).
   const spans: string[] = [];
   const hold = (literal: string): string =>

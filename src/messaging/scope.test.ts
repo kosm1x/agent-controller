@@ -643,40 +643,40 @@ describe("scope pattern matching", () => {
   });
 
   it("activates google for a send verb + bare email ADDRESS (no email noun)", () => {
-    // 2026-06-17 confabulation root cause: "Envía esto a javier@eurekamd.net.
+    // 2026-06-17 confabulation root cause: "Envía esto a user3@example.com.
     // Confirma el envío" classified to `intel` (no "correo"/"gmail" noun) →
     // gmail_send out of scope → the model confabulated a "don't ask block" and
     // punted. A send verb + recipient address must force-add google.
     expect(
-      scope("Envía esto a javier@eurekamd.net. Confirma el envío"),
+      scope("Envía esto a user3@example.com. Confirma el envío"),
     ).toContain("gmail_send");
-    expect(scope("manda el reporte a ana.lopez@empresa.com.mx")).toContain(
+    expect(scope("manda el reporte a user56@team.example.net")).toContain(
       "gmail_send",
     );
-    expect(scope("reenvía esto a bob@y.org por favor")).toContain("gmail_send");
+    expect(scope("reenvía esto a user57@shop.example.com por favor")).toContain("gmail_send");
     // Enclitic imperatives + voseo of mandar (accent on first syllable) — qa W1.
-    expect(scope("mándalo a carla@x.com")).toContain("gmail_send");
-    expect(scope("mándaselo a dev@team.io ahora")).toContain("gmail_send");
-    expect(scope("mandá el archivo a sol@x.com")).toContain("gmail_send");
+    expect(scope("mándalo a user58@example.org")).toContain("gmail_send");
+    expect(scope("mándaselo a dev@clinic.example.org ahora")).toContain("gmail_send");
+    expect(scope("mandá el archivo a user59@example.org")).toContain("gmail_send");
     // Negative: a bare address with NO send verb must NOT pull gmail_send
     // (avoids over-firing on addresses quoted in unrelated prose).
     expect(
-      scope("el dueño del registro es pedro@x.com según la base"),
+      scope("el dueño del registro es user60@example.org según la base"),
     ).not.toContain("gmail_send");
     // Negative: the English "send" alt is boundary-anchored, so it must NOT
     // match inside "sendero" even with an address present.
     expect(
-      scope("déjale el sobre en el sendero donde vive pedro@x.com"),
+      scope("déjale el sobre en el sendero donde vive user60@example.org"),
     ).not.toContain("gmail_send");
   });
 
   it("force-adds gmail_send on the SEMANTIC path when classifier mis-routes a send+address", () => {
     // The exact live 2026-06-17 bug: the LLM classifier returned ["intel"] for
-    // "Envía esto a javier@eurekamd.net", dropping gmail_send → confabulated
+    // "Envía esto a user3@example.com", dropping gmail_send → confabulated
     // "don't ask block". The semantic-path injection must still force-add google
     // even when a (wrong) pre-classified group set is supplied.
     const tools = scopeToolsForMessage(
-      "Envía esto a javier@eurekamd.net. Confirma el envío",
+      "Envía esto a user3@example.com. Confirma el envío",
       [],
       DEFAULT_SCOPE_PATTERNS,
       ALL_ON,
@@ -1351,14 +1351,14 @@ describe("scope pattern matching", () => {
       "verifica estos correos",
       "verify these emails",
       "check these email addresses",
-      "email_verify ana@x.mx",
-      "revisa si ana@x.mx existe",
+      "email_verify user40@mail.example.com",
+      "revisa si user40@mail.example.com existe",
       "¿este correo es válido?",
       "which of these will bounce?",
       "cuántos rebotan de esta lista",
       // Audit R3 W-7
-      "checa si ana@clinic.mx es real",
-      "is contacto@clinica.mx a real address?",
+      "checa si user1@example.net es real",
+      "is contacto@corp.example.org a real address?",
       "depura la lista de correos antes del envío",
       "tell me which emails in this list are dead",
       "¿este correo existe o va a rebotar?",
@@ -1369,8 +1369,8 @@ describe("scope pattern matching", () => {
       "¿son válidos estos correos?",
       "quiero saber si estos correos existen antes de la campaña",
       "puedes checar si rebotan estos correos",
-      "validate ana@clinic.mx before I send",
-      "does contacto@clinica.mx exist?",
+      "validate user1@example.net before I send",
+      "does contacto@corp.example.org exist?",
       "¿cuáles de estos correos van a rebotar?",
     ]) {
       const tools = scope(msg);
@@ -1392,7 +1392,7 @@ describe("scope pattern matching", () => {
       // Audit R3
       "revisa si el correo de ayer tiene el adjunto",
       "revisa mi correo de hoy y dime qué llegó",
-      "mándale un correo a ana@clinic.mx con la propuesta",
+      "mándale un correo a user1@example.net con la propuesta",
       "cuántos cheques rebotaron el mes pasado",
       "verifica que el pago se haya aplicado",
       "check the numbers in the August report",

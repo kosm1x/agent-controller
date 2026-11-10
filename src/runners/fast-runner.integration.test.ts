@@ -2450,7 +2450,7 @@ describe("confirmation gate on the claude-sdk path", () => {
       const ctx = currentExecutionContext()!;
       ctx.setPendingConfirmation("wp_delete", { id: 7 });
       ctx.recordGatedCall("wp_delete");
-      expect(ctx.addPendingConfirmation("gmail_send", { to: "a@b.com" })).toBe("queued");
+      expect(ctx.addPendingConfirmation("gmail_send", { to: "user27@example.com" })).toBe("queued");
       ctx.recordGatedCall("gmail_send");
       return makeSdkResult({ text: "", toolCalls: ["wp_delete", "gmail_send"] });
     });
@@ -2458,7 +2458,7 @@ describe("confirmation gate on the claude-sdk path", () => {
       taskId: "sdk-gate-list",
       runId: "run-sdk-gate-list",
       title: "Borra y avisa",
-      description: "Borra el post 7 y avisa a a@b.com",
+      description: "Borra el post 7 y avisa a user27@example.com",
     });
     const output = result.output as { pendingConfirmation?: unknown; text: string };
     expect(output.pendingConfirmation).toEqual({
@@ -2466,7 +2466,7 @@ describe("confirmation gate on the claude-sdk path", () => {
       args: { id: 7 },
       items: [
         { toolName: "wp_delete", args: { id: 7 } },
-        { toolName: "gmail_send", args: { to: "a@b.com" } },
+        { toolName: "gmail_send", args: { to: "user27@example.com" } },
       ],
     });
     expect(output.text).toBe(

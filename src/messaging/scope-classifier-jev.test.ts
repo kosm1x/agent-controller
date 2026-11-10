@@ -131,7 +131,7 @@ describe("classifyScopeGroupsWithJev", () => {
   });
 
   it("never sends a message carrying an e-mail address", async () => {
-    expect(await ask("escribe a ana@clinica.mx y confirma")).toBeNull();
+    expect(await ask("escribe a user55@example.com y confirma")).toBeNull();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 

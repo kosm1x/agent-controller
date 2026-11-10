@@ -100,14 +100,14 @@ describe("seo_schema_generate", () => {
           postalCode: "01000",
           addressCountry: "MX",
         },
-        telephone: "+52-555-1234",
+        telephone: "+52-000-0000",
       },
     });
     expect(result.validation.valid).toBe(true);
     const jsonLd = JSON.parse(result.json_ld);
     expect(jsonLd["@type"]).toBe("LocalBusiness");
     expect(jsonLd.address["@type"]).toBe("PostalAddress");
-    expect(jsonLd.telephone).toBe("+52-555-1234");
+    expect(jsonLd.telephone).toBe("+52-000-0000");
   });
 
   it("generates BreadcrumbList schema with positioned items", async () => {

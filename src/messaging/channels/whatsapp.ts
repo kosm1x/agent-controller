@@ -231,8 +231,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
           null;
 
         // Group: only respond when bot is mentioned (text or structured mention)
-        // Bot identity: phone-based JID (5215640501088@s.whatsapp.net) AND
-        // LID-based JID (196692976615515@lid). WhatsApp uses LID in mentions.
+        // Bot identity: phone-based JID (5210000000000@s.whatsapp.net) AND
+        // LID-based JID (155555555550105@lid). WhatsApp uses LID in mentions.
         const botJid = this.sock?.user?.id;
         const botNumber = botJid?.split(":")[0]?.split("@")[0];
         const botLid = this.sock?.user?.lid?.split(":")[0]?.split("@")[0];

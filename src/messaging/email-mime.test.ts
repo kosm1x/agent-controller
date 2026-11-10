@@ -24,13 +24,13 @@ describe("assertNoCrlf", () => {
   });
 
   it("rejects an embedded CR", () => {
-    expect(() => assertNoCrlf("a@b.com\rX-Evil: 1", "addr")).toThrow(
+    expect(() => assertNoCrlf("user27@example.org\rX-Evil: 1", "addr")).toThrow(
       /CR or LF/,
     );
   });
 
   it("rejects an embedded LF", () => {
-    expect(() => assertNoCrlf("a@b.com\nRCPT TO:<x>", "addr")).toThrow(
+    expect(() => assertNoCrlf("user27@example.org\nRCPT TO:<x>", "addr")).toThrow(
       /CR or LF/,
     );
   });
@@ -108,8 +108,8 @@ describe("decodeBase64Body", () => {
 
 describe("parseHeaders", () => {
   it("parses simple headers into a lowercase-keyed map", () => {
-    const h = parseHeaders("From: a@b.com\r\nSubject: Hi");
-    expect(h.get("from")).toBe("a@b.com");
+    const h = parseHeaders("From: user27@example.org\r\nSubject: Hi");
+    expect(h.get("from")).toBe("user27@example.org");
     expect(h.get("subject")).toBe("Hi");
   });
 
@@ -159,7 +159,7 @@ describe("parseEmail", () => {
 
   it("decodes a base64 body", () => {
     const raw =
-      "From: o@e.com\r\n" +
+      "From: user33@example.com\r\n" +
       "Content-Transfer-Encoding: base64\r\n" +
       "Content-Type: text/plain\r\n" +
       "\r\n" +
@@ -169,7 +169,7 @@ describe("parseEmail", () => {
 
   it("extracts the text/plain part from multipart/alternative", () => {
     const raw =
-      "From: o@e.com\r\n" +
+      "From: user33@example.com\r\n" +
       'Content-Type: multipart/alternative; boundary="BND"\r\n' +
       "\r\n" +
       "--BND\r\n" +
@@ -186,7 +186,7 @@ describe("parseEmail", () => {
 
   it("falls back to stripped HTML when there is no text/plain part", () => {
     const raw =
-      "From: o@e.com\r\n" +
+      "From: user33@example.com\r\n" +
       'Content-Type: multipart/alternative; boundary="BND"\r\n' +
       "\r\n" +
       "--BND\r\n" +
@@ -199,7 +199,7 @@ describe("parseEmail", () => {
 
   it("strips the quoted reply from the body", () => {
     const raw =
-      "From: o@e.com\r\n" +
+      "From: user33@example.com\r\n" +
       "Content-Type: text/plain\r\n" +
       "\r\n" +
       "my answer\r\n> quoted\r\n";
@@ -253,20 +253,20 @@ describe("buildMimeMessage", () => {
   it("rejects a header value containing a CRLF (injection guard)", () => {
     expect(() =>
       buildMimeMessage({
-        from: "j@e.com",
-        to: "o@e.com\r\nBcc: attacker@evil.com",
+        from: "user44@example.com",
+        to: "user33@example.com\r\nBcc: user45@mail.example.com",
         subject: "ok",
         body: "x",
-        messageId: "<x@e.com>",
+        messageId: "<user46@example.com>",
       }),
     ).toThrow(/CR or LF/);
     expect(() =>
       buildMimeMessage({
-        from: "j@e.com",
-        to: "o@e.com",
+        from: "user44@example.com",
+        to: "user33@example.com",
         subject: "ok\r\nX-Injected: 1",
         body: "x",
-        messageId: "<x@e.com>",
+        messageId: "<user46@example.com>",
       }),
     ).toThrow(/CR or LF/);
   });
@@ -276,11 +276,11 @@ describe("buildMimeMessage", () => {
     // another auto-responder loops forever. Incident 2026-05-15 was triggered
     // by a single send that bounced and the bounce was answered.
     const mime = buildMimeMessage({
-      from: "a@x.com",
-      to: "b@x.com",
+      from: "user47@example.net",
+      to: "user48@example.net",
       subject: "test",
       body: "hi",
-      messageId: "<x@x.com>",
+      messageId: "<user49@example.net>",
     });
     expect(mime).toMatch(/^Auto-Submitted: auto-replied$/m);
     expect(mime).toMatch(/^Precedence: bulk$/m);
@@ -288,11 +288,11 @@ describe("buildMimeMessage", () => {
 
   it("round-trips a non-ASCII body and subject", () => {
     const mime = buildMimeMessage({
-      from: "j@e.com",
-      to: "o@e.com",
+      from: "user44@example.com",
+      to: "user33@example.com",
       subject: "Café ☕",
       body: "respuesta en español",
-      messageId: "<x@e.com>",
+      messageId: "<user46@example.com>",
     });
     const subjectLine = mime
       .split("\r\n")

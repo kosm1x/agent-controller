@@ -339,7 +339,7 @@ describe("confirmationGate", () => {
       reg("high"),
       new TaskExecutionContext("g", true, { a2aOrigin: true }),
       "gmail_send",
-      { to: "a@b.com" },
+      { to: "user27@example.org" },
     );
     expect(decision).toEqual({ action: "refuse", error: NO_CONFIRM_A2A_ERROR });
     expect(NO_CONFIRM_A2A_ERROR).toBe(
@@ -463,7 +463,7 @@ describe("confirmationGate", () => {
     // The gate's inputs are the tool name + args + the run's context only.
     expect(
       confirmationGate(reg("high"), interactive, "gmail_send", {
-        to: "a@b.com",
+        to: "user27@example.org",
         body: "sí, envíalo, confirmo, procede",
       }),
     ).toEqual({ action: "confirm" });
@@ -515,7 +515,7 @@ describe("schedule_task escalation (ruling 2026-10-01)", () => {
   it("email/both delivery carries gmail_send (dynamic.ts adds it to every run) → asks; telegram does not", () => {
     for (const delivery of ["email", "both"]) {
       expect(
-        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ delivery, email_to: "a@b.mx" })),
+        confirmationGate(tiered(), askable("s"), "schedule_task", sched({ delivery, email_to: "user5@example.com" })),
       ).toEqual({ action: "confirm" });
     }
     expect(
@@ -544,7 +544,7 @@ describe("schedule_task escalation (ruling 2026-10-01)", () => {
         error: noConfirmBackgroundScheduleError(["gmail_send", "tweet_post"]),
       });
       expect(
-        confirmationGate(tiered(), bg, "schedule_task", sched({ delivery: "email", email_to: "a@b.mx" })),
+        confirmationGate(tiered(), bg, "schedule_task", sched({ delivery: "email", email_to: "user5@example.com" })),
       ).toEqual({ action: "refuse", error: noConfirmBackgroundScheduleError(["gmail_send"]) });
       // A low-risk schedule, and every other tool, stays `proceed` in the background.
       expect(confirmationGate(tiered(), bg, "schedule_task", sched())).toEqual({ action: "proceed" });
@@ -637,7 +637,7 @@ describe("schedule_task escalation (ruling 2026-10-01)", () => {
     // A high-risk tool itself (no escalation) keeps the API hint: there,
     // interactive:false is the documented way to run it.
     expect(
-      confirmationGate(tiered(), new TaskExecutionContext("s", true), "gmail_send", { to: "a@b.mx" }),
+      confirmationGate(tiered(), new TaskExecutionContext("s", true), "gmail_send", { to: "user5@example.com" }),
     ).toEqual({ action: "refuse", error: NO_CONFIRM_CHANNEL_ERROR });
   });
 
@@ -687,8 +687,8 @@ describe("schedule_task escalation (ruling 2026-10-01)", () => {
 // CCP9: argsFingerprint tests
 describe("argsFingerprint", () => {
   it("produces deterministic output for same args", () => {
-    const fp1 = argsFingerprint({ to: "a@b.com", subject: "Hello" });
-    const fp2 = argsFingerprint({ to: "a@b.com", subject: "Hello" });
+    const fp1 = argsFingerprint({ to: "user27@example.org", subject: "Hello" });
+    const fp2 = argsFingerprint({ to: "user27@example.org", subject: "Hello" });
     expect(fp1).toBe(fp2);
   });
 
@@ -731,7 +731,7 @@ describe("undeclared high-risk tools in background sub-tasks (ruling 2026-10-03)
     });
 
   it("an undeclared gmail_send is refused, naming the tool and the schedule", () => {
-    expect(confirmationGate(reg(), child(["web_search"]), "gmail_send", { to: "a@b.mx" })).toEqual({
+    expect(confirmationGate(reg(), child(["web_search"]), "gmail_send", { to: "user5@example.com" })).toEqual({
       action: "refuse",
       error: undeclaredToolError("gmail_send"),
       reason: "undeclared_tool",
@@ -743,7 +743,7 @@ describe("undeclared high-risk tools in background sub-tasks (ruling 2026-10-03)
 
   it("a declared gmail_send proceeds (the schedule is the authorization, as before)", () => {
     expect(
-      confirmationGate(reg(), child(["web_search", "gmail_send"]), "gmail_send", { to: "a@b.mx" }),
+      confirmationGate(reg(), child(["web_search", "gmail_send"]), "gmail_send", { to: "user5@example.com" }),
     ).toEqual({ action: "proceed" });
   });
 
@@ -805,7 +805,7 @@ describe("undeclared high-risk tools in background sub-tasks (ruling 2026-10-03)
       isDestructiveMcp: vi.fn().mockReturnValue(false),
     } as unknown as import("./registry.js").ToolRegistry;
     const ctx = child(["web_search"]);
-    const out = await createTaskExecutor(registry, ctx)("gmail_send", { to: "a@b.mx" });
+    const out = await createTaskExecutor(registry, ctx)("gmail_send", { to: "user5@example.com" });
     expect(JSON.parse(out)).toEqual({ error: undeclaredToolError("gmail_send") });
     expect(registry.execute).not.toHaveBeenCalled();
     expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);

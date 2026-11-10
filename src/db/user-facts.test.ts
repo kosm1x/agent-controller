@@ -677,7 +677,7 @@ describe("user-facts", () => {
         ["infra", "credenciales_servidor", "srv.example.com", false],
         ["infra", "credenciales_dominio", "example.com", false],
         ["infra", "oauth_client", "mi-app-web", false],
-        ["infra", "auth_phone", "+52 55 1234 5678", false],
+        ["infra", "auth_phone", "+52 00 0000 0000", false],
         ["infra", "credenciales_cuenta", "jdoe", false],
         ["infra", "credenciales_nombre", "Cuenta principal", false],
         ["infra", "credenciales_puerto", pwMix, true],

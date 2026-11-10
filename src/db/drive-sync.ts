@@ -19,7 +19,7 @@ import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "./live-db.js";
 // Configuration
 // ---------------------------------------------------------------------------
 
-/** Root folder ID — "Jarvis Knowledge Base" in peter.blades@gmail.com Drive. */
+/** Root folder ID — "Jarvis Knowledge Base" in assistant@example.com Drive. */
 const ROOT_FOLDER_ID = process.env.DRIVE_KB_FOLDER_ID ?? "";
 
 // ---------------------------------------------------------------------------

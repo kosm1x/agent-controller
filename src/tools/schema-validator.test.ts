@@ -154,7 +154,7 @@ describe("jsonSchemaToZod", () => {
     });
     expect(schema).not.toBeNull();
 
-    const result = validateArgs(schema!, { to: "test@test.com" });
+    const result = validateArgs(schema!, { to: "test@example.com" });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).toContain("subject");

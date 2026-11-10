@@ -18,11 +18,11 @@ describe("pendingConfirmations", () => {
   });
 
   it("stores and retrieves a pending confirmation", () => {
-    storePendingConfirmation(tk, "gmail_send", { to: "a@b.com" }, "send email");
+    storePendingConfirmation(tk, "gmail_send", { to: "user27@example.net" }, "send email");
     const pending = getPendingConfirmation(tk);
     expect(pending).not.toBeNull();
     expect(pending!.toolName).toBe("gmail_send");
-    expect(pending!.args.to).toBe("a@b.com");
+    expect(pending!.args.to).toBe("user27@example.net");
     expect(pending!.summary).toBe("send email");
   });
 
@@ -37,7 +37,7 @@ describe("pendingConfirmations", () => {
   });
 
   it("overwrites existing pending for same thread", () => {
-    storePendingConfirmation(tk, "gmail_send", { to: "a@b.com" }, "first");
+    storePendingConfirmation(tk, "gmail_send", { to: "user27@example.net" }, "first");
     storePendingConfirmation(tk, "gdrive_delete", { id: "xyz" }, "second");
     const pending = getPendingConfirmation(tk);
     expect(pending!.toolName).toBe("gdrive_delete");
@@ -396,7 +396,7 @@ function rows(tk: string): Row[] {
 
 describe("tool_approvals durability", () => {
   const tk = "telegram:12345";
-  const args = { to: "a@b.mx", subject: "Hola", body: "x" };
+  const args = { to: "user5@example.com", subject: "Hola", body: "x" };
 
   beforeEach(() => {
     initDatabase(":memory:");
@@ -410,7 +410,7 @@ describe("tool_approvals durability", () => {
   });
 
   it("writes a pending row bound to the args hash", () => {
-    storePendingConfirmation(tk, "gmail_send", args, "gmail_send(to: a@b.mx)");
+    storePendingConfirmation(tk, "gmail_send", args, "gmail_send(to: user5@example.com)");
     const r = rows(tk);
     expect(r).toHaveLength(1);
     expect(r[0].decision).toBe("pending");
@@ -437,7 +437,7 @@ describe("tool_approvals durability", () => {
 
   it("argsSha256 is key-order insensitive and value sensitive", () => {
     expect(argsSha256({ a: 1, b: [1, { c: 2 }] })).toBe(argsSha256({ b: [1, { c: 2 }], a: 1 }));
-    expect(argsSha256({ to: "a@b.mx" })).not.toBe(argsSha256({ to: "a@b.mx " }));
+    expect(argsSha256({ to: "user5@example.com" })).not.toBe(argsSha256({ to: "user5@example.com " }));
   });
 
   it("confirming records approver + decided_at and returns the exact operation", () => {
@@ -483,7 +483,7 @@ describe("tool_approvals durability", () => {
   it("a mutated pending op never executes: hash mismatch → null + superseded", () => {
     storePendingConfirmation(tk, "gmail_send", args, "s");
     const pending = getPendingConfirmation(tk)!;
-    (pending.args as Record<string, unknown>).to = "attacker@evil.mx"; // tamper in place
+    (pending.args as Record<string, unknown>).to = "user34@mail.example.com"; // tamper in place
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(resolvePendingConfirmation(tk, "confirmed", "sender-42")).toBeNull();
     expect(warn).toHaveBeenCalled();
@@ -539,12 +539,12 @@ describe("renderConfirmationSummary (audit 2026-09-30 W1)", () => {
     const line = renderConfirmationSummary("gmail_send", {
       body: { html: "<p>hola</p>" },
       subject: "Reporte",
-      to: "a@b.com",
-      cc: ["c@d.com"],
+      to: "user27@example.net",
+      cc: ["user35@corp.example.org"],
       attachments: [{ name: "r.pdf" }],
     });
     expect(line).toBe(
-      'gmail_send(to: a@b.com, cc: ["c@d.com"], subject: Reporte, {"attachments":[{"name":"r.pdf"}],"body":{"html":"<p>hola</p>"}})',
+      'gmail_send(to: user27@example.net, cc: ["user35@corp.example.org"], subject: Reporte, {"attachments":[{"name":"r.pdf"}],"body":{"html":"<p>hola</p>"}})',
     );
     expect(line).not.toContain("[object Object]");
   });
@@ -654,18 +654,18 @@ describe("renderConfirmationSummary (audit 2026-09-30 W1)", () => {
       description: "d".repeat(600),
       start: "2026-10-01T10:00:00-06:00",
       end: "2026-10-01T11:00:00-06:00",
-      attendees: ["externo@otra.com"],
+      attendees: ["user36@team.example.net"],
     });
     expect(cal).toContain(
-      'calendar_create(start: 2026-10-01T10:00:00-06:00, end: 2026-10-01T11:00:00-06:00, attendees: ["externo@otra.com"], {"title":"Reunión","description":"ddd',
+      'calendar_create(start: 2026-10-01T10:00:00-06:00, end: 2026-10-01T11:00:00-06:00, attendees: ["user36@team.example.net"], {"title":"Reunión","description":"ddd',
     );
     expect(
       renderConfirmationSummary("gdrive_share", {
         file_id: "f1",
-        email: "x@y.com",
+        email: "user37@shop.example.com",
         role: "writer",
       }),
-    ).toBe("gdrive_share(file_id: f1, email: x@y.com, role: writer)");
+    ).toBe("gdrive_share(file_id: f1, email: user37@shop.example.com, role: writer)");
     expect(
       renderConfirmationSummary("wp_plugins", {
         site: "radar",
@@ -730,13 +730,13 @@ describe("renderConfirmationSummary (audit 2026-09-30 W1)", () => {
 
   it("W-C: the line is one line with no backtick, so it can sit in inline code", () => {
     const line = renderConfirmationSummary("gmail_send", {
-      to: "a`b@x.mx",
+      to: "a`user38@example.org",
       subject: "linea1\nlinea2",
       body: "`x`",
     });
     expect(line).not.toMatch(/[`\n]/);
     expect(line).toBe(
-      'gmail_send(to: "a\\u0060b@x.mx", subject: "linea1\\nlinea2", {"body":"\\u0060x\\u0060"})',
+      'gmail_send(to: "a\\u0060user38@example.org", subject: "linea1\\nlinea2", {"body":"\\u0060x\\u0060"})',
     );
   });
 });
@@ -774,11 +774,11 @@ describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () =
       cron: "0 8 * * *",
       tools: ["web_search", "gmail_send"],
       delivery: "email",
-      email_to: "ana@x.mx",
+      email_to: "user40@example.org",
       name: "Reporte",
     });
     expect(line).toBe(
-      'schedule_task(name: Reporte, cron: 0 8 * * *, tools: ["web_search","gmail_send"], delivery: email, email_to: ana@x.mx, {"description":"Busca noticias"}) · usará sin pedir confirmación: gmail_send (cadencia: diario 08:00)',
+      'schedule_task(name: Reporte, cron: 0 8 * * *, tools: ["web_search","gmail_send"], delivery: email, email_to: user40@example.org, {"description":"Busca noticias"}) · usará sin pedir confirmación: gmail_send (cadencia: diario 08:00)',
     );
   });
 
@@ -812,8 +812,8 @@ describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () =
     expect(line).toBe(
       'schedule_task(name: R, cron: 0 8 * * *, tools: ["web_search"], delivery: telegram)',
     );
-    expect(renderConfirmationSummary("gmail_send", { to: "a@b.mx", tools: ["tweet_post"] })).toBe(
-      'gmail_send(to: a@b.mx, {"tools":["tweet_post"]})',
+    expect(renderConfirmationSummary("gmail_send", { to: "user5@example.com", tools: ["tweet_post"] })).toBe(
+      'gmail_send(to: user5@example.com, {"tools":["tweet_post"]})',
     );
   });
 
@@ -866,9 +866,9 @@ describe("renderConfirmationSummary — schedule_task (ruling 2026-10-01)", () =
 
 describe("approval expiry notice (ruling 2026-10-01)", () => {
   const tk = "telegram:999";
-  const args = { to: "a@b.mx", body: "hola equipo, el reporte" };
+  const args = { to: "user5@example.com", body: "hola equipo, el reporte" };
   const TTL = 5 * 60 * 1000;
-  const summary = "gmail_send(to: a@b.mx)";
+  const summary = "gmail_send(to: user5@example.com)";
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -889,7 +889,7 @@ describe("approval expiry notice (ruling 2026-10-01)", () => {
 
   it("the exact Spanish line, reusing the card's summary", () => {
     expect(renderExpiryNotice(summary)).toBe(
-      "⏱ La aprobación para `gmail_send(to: a@b.mx)` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.",
+      "⏱ La aprobación para `gmail_send(to: user5@example.com)` venció sin respuesta. Si aún lo quieres, pídemelo de nuevo.",
     );
   });
 
@@ -1040,9 +1040,9 @@ import { getTrace } from "../observability/task-trace.js";
 
 describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
   const tk = "telegram";
-  const args = { to: "a@b.mx", body: "x" };
+  const args = { to: "user5@example.com", body: "x" };
   const TTL = 5 * 60 * 1000;
-  const summary = "gmail_send(to: a@b.mx)";
+  const summary = "gmail_send(to: user5@example.com)";
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -1128,7 +1128,7 @@ describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
   });
 
   it("recipient not resolvable: lapses silently at the TTL (no_notifier), logged, never a guessed chat", () => {
-    const key = "email:acct:someone@x.mx";
+    const key = "email:acct:user41@example.org";
     storePendingConfirmation(key, "gmail_send", args, summary);
     age(key, 0); // align SQLite's clock with the fake one
     _resetPendingConfirmationsForTests();
@@ -1178,7 +1178,7 @@ describe("expiry trace and boot re-arm (re-audit 2026-10-03)", () => {
   it("a tampered pending row is not re-armed (superseded)", () => {
     storePendingConfirmation(tk, "gmail_send", args, summary);
     getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE thread_key = ?").run(
-      JSON.stringify({ to: "other@x.mx" }),
+      JSON.stringify({ to: "user42@example.org" }),
       tk,
     );
     _resetPendingConfirmationsForTests();
@@ -1215,9 +1215,9 @@ import {
 
 describe("audit A2/A3: boot notice once, never stale; notified only on a delivered send", () => {
   const tk = "telegram";
-  const args = { to: "a@b.mx", body: "x" };
+  const args = { to: "user5@example.com", body: "x" };
   const TTL = 5 * 60 * 1000;
-  const summary = "gmail_send(to: a@b.mx)";
+  const summary = "gmail_send(to: user5@example.com)";
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -1433,7 +1433,7 @@ describe("queue 4l: a confirmation card holds a list of actions", () => {
   const TTL = 5 * 60 * 1000;
   const docA = { service: "docs", resource: "documents", method: "batchUpdate", params: { documentId: "A" } };
   const docB = { service: "docs", resource: "documents", method: "batchUpdate", params: { documentId: "B" } };
-  const mail = { to: "a@b.mx", subject: "Hola" };
+  const mail = { to: "user5@example.com", subject: "Hola" };
   const items = [
     { toolName: "google_workspace_cli", args: docA, summary: "gws A" },
     { toolName: "google_workspace_cli", args: docB, summary: "gws B" },
@@ -1508,7 +1508,7 @@ describe("queue 4l: a confirmation card holds a list of actions", () => {
   it("the args-hash re-check applies to EVERY item: a tampered later item voids the card (nothing returned, all superseded)", () => {
     storePendingConfirmationList(tk, items);
     const card = getPendingConfirmation(tk)!;
-    (card.items[2].args as Record<string, unknown>).to = "attacker@evil.mx";
+    (card.items[2].args as Record<string, unknown>).to = "user34@mail.example.com";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(resolvePendingConfirmation(tk, "confirmed", "sender-1")).toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("args hash mismatch for gmail_send"));
@@ -1572,7 +1572,7 @@ describe("queue 4l: a confirmation card holds a list of actions", () => {
   it("a restart with one tampered row voids the whole regrouped card", () => {
     storePendingConfirmationList(tk, items);
     const last = all()[2].id;
-    getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE id = ?").run(JSON.stringify({ to: "x@evil.mx" }), last);
+    getDatabase().prepare("UPDATE tool_approvals SET args_json = ? WHERE id = ?").run(JSON.stringify({ to: "user43@mail.example.com" }), last);
     _resetPendingConfirmationsForTests();
     expect(getPendingConfirmation(tk)).toBeNull();
     expect(all().map((x) => x.decision)).toEqual(["superseded", "superseded", "superseded"]);
@@ -1615,7 +1615,7 @@ describe("queue 4l: a confirmation card holds a list of actions", () => {
 
 describe("tool_approvals.task_id (v11): the card's task survives a restart", () => {
   const tk = "telegram:7777";
-  const args = { to: "a@b.mx", subject: "Hola" };
+  const args = { to: "user5@example.com", subject: "Hola" };
   const approvalTaskIds = (): Array<string | null> =>
     (
       getDatabase()

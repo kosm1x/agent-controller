@@ -598,8 +598,8 @@ export const PREVIEW_SITE_RE =
 // truth — between the DEFAULT_SCOPE_PATTERNS rule (regex-fallback path) and the
 // google safety-net injection (semantic path) so they cannot drift, same dual
 // use as JOURNAL_AUTHORING_RE above. Bounded ≤80-char gap (no ReDoS); the verb
-// is required so a bare quoted address ("el dueño es pedro@x.com") doesn't fire.
-// 2026-06-17: "Envía esto a javier@eurekamd.net. Confirma el envío" classified
+// is required so a bare quoted address ("el dueño es user60@example.org") doesn't fire.
+// 2026-06-17: "Envía esto a user3@example.com. Confirma el envío" classified
 // to `intel` (gmail_send out of scope) → the model confabulated a "don't ask
 // block" and punted (scope_telemetry). The mandar arm is `m[aá]nd[aá]` (not
 // `mand[aá]`) so the accent-on-first-syllable enclitic imperatives `mándalo`/
@@ -1297,7 +1297,7 @@ export function scopeToolsForMessage(
     }
     // Email-send injection (semantic path): a send verb + recipient ADDRESS
     // carries gmail_send intent even with no email noun. The classifier routed
-    // "Envía esto a javier@eurekamd.net. Confirma el envío" to `intel`, so
+    // "Envía esto a user3@example.com. Confirma el envío" to `intel`, so
     // gmail_send was out of scope → the model confabulated a "don't ask block"
     // and punted (2026-06-17). Shared EMAIL_SEND_RE with the DEFAULT_SCOPE_PATTERNS
     // rule (regex-fallback path) so both paths self-heal identically.

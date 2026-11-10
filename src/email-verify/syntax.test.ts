@@ -3,11 +3,11 @@ import { checkSyntax, levenshtein, suggestDomain } from "./syntax.js";
 
 describe("checkSyntax", () => {
   it("accepts a plain address and lowercases the domain", () => {
-    const r = checkSyntax("  Dr.Perez+x@Hospital-ABC.com.MX ");
+    const r = checkSyntax("  Dr.Sample+x@Example.Org ");
     expect(r.isValid).toBe(true);
-    expect(r.domain).toBe("hospital-abc.com.mx");
-    expect(r.localPart).toBe("dr.perez+x");
-    expect(r.normalized).toBe("dr.perez+x@hospital-abc.com.mx");
+    expect(r.domain).toBe("example.org");
+    expect(r.localPart).toBe("dr.sample+x");
+    expect(r.normalized).toBe("dr.sample+x@example.org");
   });
 
   it.each([
@@ -46,8 +46,8 @@ describe("suggestDomain", () => {
     expect(levenshtein("", "abc")).toBe(3);
   });
   it("suggests a nearby provider", () => {
-    expect(suggestDomain("ana", "gmial.com")).toBe("ana@gmail.com");
-    expect(suggestDomain("ana", "hotmal.com")).toBe("ana@hotmail.com");
+    expect(suggestDomain("user2", "gmial.com")).toBe("user2@gmail.com");
+    expect(suggestDomain("user2", "hotmal.com")).toBe("user2@hotmail.com");
   });
   it("returns null for the provider itself or a distant domain", () => {
     expect(suggestDomain("ana", "gmail.com")).toBeNull();

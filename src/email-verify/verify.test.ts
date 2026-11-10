@@ -54,8 +54,8 @@ async function make(script: FakeSmtpScript, extra: Partial<ConstructorParameters
 
 describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
   it("safe: mailbox accepted, random address rejected", async () => {
-    const { s, v } = await make({ rcpt: { "ana@clinic.mx": "250 2.1.5 Ok", default: "550 5.1.1 User unknown" } });
-    const r = await v.verify("Ana@Clinic.mx");
+    const { s, v } = await make({ rcpt: { "user1@example.com": "250 2.1.5 Ok", default: "550 5.1.1 User unknown" } });
+    const r = await v.verify("User1@Example.Com");
     expect(r.verdict).toBe("safe");
     expect(r.reason).toBe("deliverable");
     expect(r.smtp?.catchAll).toBe(false);
@@ -70,7 +70,7 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
 
   it("invalid: server rejects the mailbox", async () => {
     const { v } = await make({ rcpt: { default: "550 5.1.1 The email account that you tried to reach does not exist" } });
-    const r = await v.verify("nobody@clinic.mx");
+    const r = await v.verify("nobody@example.com");
     expect(r.verdict).toBe("invalid");
     expect(r.reason).toBe("mailbox_rejected");
     expect(r.smtp?.deliverable).toBe(false);
@@ -78,18 +78,18 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
 
   it("risky: catch-all domain, and the catch-all answer is cached per domain", async () => {
     const { s, v } = await make({ rcpt: { default: "250 2.1.5 Ok" } });
-    const r1 = await v.verify("a@catchall.mx");
+    const r1 = await v.verify("user7@mail.example.com");
     expect(r1.verdict).toBe("risky");
     expect(r1.reason).toBe("catch_all_domain");
-    const r2 = await v.verify("b@catchall.mx");
+    const r2 = await v.verify("user8@mail.example.com");
     expect(r2.reason).toBe("catch_all_domain");
     // 2 RCPT for the first address (random + target), 1 for the second (cached catch-all).
     expect(s.commands.filter((c) => c.startsWith("RCPT TO"))).toHaveLength(3);
   });
 
   it("risky: role account even when deliverable", async () => {
-    const { v } = await make({ rcpt: { "ventas@clinic.mx": "250 Ok", default: "550 User unknown" } });
-    const r = await v.verify("ventas@clinic.mx");
+    const { v } = await make({ rcpt: { "ventas@example.com": "250 Ok", default: "550 User unknown" } });
+    const r = await v.verify("ventas@example.com");
     expect(r.verdict).toBe("risky");
     expect(r.reason).toBe("role_account");
     expect(r.misc.roleAccount).toBe(true);
@@ -97,12 +97,12 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
 
   it("risky: full inbox; invalid: disabled account", async () => {
     const { v } = await make({
-      rcpt: { "full@clinic.mx": "452 4.2.2 Mailbox full", "gone@clinic.mx": "550 5.2.1 Account disabled", default: "550 User unknown" },
+      rcpt: { "user9@example.com": "452 4.2.2 Mailbox full", "user10@example.com": "550 5.2.1 Account disabled", default: "550 User unknown" },
     });
-    const full = await v.verify("full@clinic.mx");
+    const full = await v.verify("user9@example.com");
     expect(full.verdict).toBe("risky");
     expect(full.smtp?.fullInbox).toBe(true);
-    const gone = await v.verify("gone@clinic.mx");
+    const gone = await v.verify("user10@example.com");
     expect(gone.verdict).toBe("invalid");
     expect(gone.reason).toBe("mailbox_disabled");
   });
@@ -125,7 +125,7 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
         return base(opts);
       },
     });
-    const r = await v.verify("late@clinic.mx");
+    const r = await v.verify("user11@example.com");
     expect(calls).toBe(2);
     expect(r.verdict).toBe("safe");
     expect(r.smtp?.catchAll).toBe(false);
@@ -138,18 +138,18 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
         throw new Error(`cannot resolve MX host ${h}`);
       },
     });
-    const r = await v.verify("ana@clinic.mx");
+    const r = await v.verify("user1@example.com");
     expect(r.reason).toMatch(/^smtp_unreachable: cannot resolve/);
     expect(v.governor.usage().usedToday).toBe(0);
   });
 
   it("unknown/greylisted when the retry is greylisted too, and unknown results are not cached", async () => {
     const { s, v } = await make({ rcpt: { default: "451 4.7.1 Greylisted, try again later" } });
-    const r = await v.verify("late@clinic.mx");
+    const r = await v.verify("user11@example.com");
     expect(r.verdict).toBe("unknown");
     expect(r.reason).toBe("greylisted");
     const before = s.connections;
-    await v.verify("late@clinic.mx");
+    await v.verify("user11@example.com");
     expect(s.connections).toBeGreaterThan(before);
   });
 
@@ -161,19 +161,19 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
       now: () => t,
       governance: { ...DEFAULT_GOVERNANCE, hostGapMs: 0, breakerThreshold: 2, breakerCooldownMs: 60_000 },
     });
-    const r1 = await v.verify("a@clinic.mx");
+    const r1 = await v.verify("user12@example.com");
     expect(r1.verdict).toBe("unknown");
     expect(r1.reason).toBe("blocked_by_host");
     expect(v.governor.breakerOpen()).toBe(false);
-    await v.verify("b@clinic.mx");
+    await v.verify("user13@example.com");
     expect(v.governor.usage().breakerOpen).toBe(true);
     const before = s.connections;
-    const r3 = await v.verify("c@clinic.mx");
+    const r3 = await v.verify("user14@example.com");
     expect(r3.reason).toBe("circuit_open");
     expect(r3.smtp).toBeNull();
     expect(s.connections).toBe(before); // no connection while open
     t += 60_001;
-    const r4 = await v.verify("d@clinic.mx");
+    const r4 = await v.verify("user15@example.com");
     expect(r4.reason).toBe("blocked_by_host"); // probing resumed, no latch
     expect(s.connections).toBe(before + 1);
   });
@@ -190,7 +190,7 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
         return { rcpt: null, catchAll: null, envelopeFailure: { stage: "mail_from", reply: { code: 554, enhanced: "5.7.1", text: "Client host blocked" } }, address: "1.1.1.1" };
       },
     });
-    const r = await v.verify("late@clinic.mx");
+    const r = await v.verify("user11@example.com");
     expect(calls).toBe(2);
     expect(r.reason).toBe("blocked_by_host");
     expect(v.governor.usage().breakerOpen).toBe(true);
@@ -209,19 +209,19 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
         };
       },
     });
-    await v.verify("uno@catchall.mx");
-    await v.verify("dos@catchall.mx");
+    await v.verify("user16@mail.example.com");
+    await v.verify("user17@mail.example.com");
     expect(n).toBe(2);
     // Both probes still asked the catch-all question (nothing was cached).
-    expect((await v.verify("tres@catchall.mx")).smtp?.catchAll).toBe(false);
+    expect((await v.verify("user18@mail.example.com")).smtp?.catchAll).toBe(false);
     expect(n).toBe(3);
   });
 
   it("MX failover: first host refuses the connection, second answers", async () => {
     const dead = await server({ dropOnConnect: true, rcpt: {} });
-    const live = await server({ rcpt: { "ana@clinic.mx": "250 Ok", default: "550 User unknown" } });
+    const live = await server({ rcpt: { "user1@example.com": "250 Ok", default: "550 User unknown" } });
     const v = verifier([dead.port, live.port], { probe: await routed([dead.port, live.port]) });
-    const r = await v.verify("ana@clinic.mx");
+    const r = await v.verify("user1@example.com");
     expect(r.verdict).toBe("safe");
     expect(r.smtp?.host).toBe("mx1.127.0.0.1");
     expect(r.mx.hosts).toEqual(["mx0.127.0.0.1", "mx1.127.0.0.1"]);
@@ -229,10 +229,10 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
 
   it("unknown/unreachable when every MX host times out, with a typo suggestion", async () => {
     const { v } = await make({ delayMs: 3000, rcpt: {} }, { timeoutMs: 200 });
-    const r = await v.verify("ana@gmial.com");
+    const r = await v.verify("user2@gmial.com");
     expect(r.verdict).toBe("unknown");
     expect(r.reason).toMatch(/^smtp_unreachable: banner: timeout/);
-    expect(r.syntax.suggestion).toBe("ana@gmail.com");
+    expect(r.syntax.suggestion).toBe("user2@gmail.com");
   });
 
   it("connect timeout is bounded independently of the per-step timeout", async () => {
@@ -244,7 +244,7 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
       probe: async (o) => (await import("./smtp-client.js")).probeMailbox({ ...o, connectTimeoutMs: 150 }),
     });
     const t0 = Date.now();
-    const r = await v.verify("ana@clinic.mx");
+    const r = await v.verify("user1@example.com");
     expect(Date.now() - t0).toBeLessThan(2_000);
     // Blackholed here (timeout); a host with a route to 10/8 gets an immediate E*UNREACH instead.
     expect(r.reason).toMatch(/smtp_unreachable: connect: connect (timeout after 150ms|E[A-Z]+)/);
@@ -257,11 +257,11 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
       probe: await routed([dead.port, live.port]),
       governance: { ...DEFAULT_GOVERNANCE, hostGapMs: 0, dailyCap: 1 },
     });
-    const r = await v.verify("a@clinic.mx");
+    const r = await v.verify("user12@example.com");
     expect(r.reason).toBe("daily_cap_reached");
     expect(dead.connections).toBe(1);
     expect(live.connections).toBe(0);
-    const r2 = await v.verify("b@clinic.mx");
+    const r2 = await v.verify("user13@example.com");
     expect(r2.reason).toBe("daily_cap_reached");
     expect(dead.connections).toBe(1);
   });
@@ -279,9 +279,9 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
       },
       governance: { ...DEFAULT_GOVERNANCE, hostGapMs: 100 },
     });
-    await v.verify("a@clinic.mx"); // slot at t=0 → no sleep
+    await v.verify("user12@example.com"); // slot at t=0 → no sleep
     const before = s.connections;
-    const r = await v.verify("b@clinic.mx"); // slot at t=100 → sleep → deadline blown
+    const r = await v.verify("user13@example.com"); // slot at t=100 → sleep → deadline blown
     expect(r.reason).toBe("verify_deadline");
     expect(s.connections).toBe(before);
     expect(v.governor.usage().usedToday).toBe(1);
@@ -296,18 +296,18 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
       maxVerifyMs: 300,
       now: () => (t += 250), // every clock read advances 250 ms
     });
-    const r = await v.verify("a@clinic.mx");
+    const r = await v.verify("user12@example.com");
     expect(r.reason).toBe("verify_deadline");
     expect(slow.connections).toBeLessThan(3);
   });
 
   it("caches safe/invalid results for 24h", async () => {
-    const { s, v } = await make({ rcpt: { "ana@clinic.mx": "250 Ok", default: "550 User unknown" } });
-    await v.verify("ana@clinic.mx");
+    const { s, v } = await make({ rcpt: { "user1@example.com": "250 Ok", default: "550 User unknown" } });
+    await v.verify("user1@example.com");
     const before = s.connections;
-    const again = await v.verify("ANA@clinic.mx");
+    const again = await v.verify("USER1@example.com");
     expect(again.verdict).toBe("safe");
-    expect(again.email).toBe("ana@clinic.mx");
+    expect(again.email).toBe("user1@example.com");
     expect(s.connections).toBe(before);
   });
 });
@@ -325,7 +325,7 @@ describe("EmailVerifier — stages before SMTP", () => {
   it("disposable domains are risky without a probe", async () => {
     let probes = 0;
     const v = new EmailVerifier({ mxLookup: async () => [{ exchange: "mx.x", priority: 1 }], probe: async () => (probes++, null as never) });
-    const r = await v.verify("x@mailinator.com");
+    const r = await v.verify("user1@mailinator.com");
     expect(r.verdict).toBe("risky");
     expect(r.reason).toBe("disposable_domain");
     expect(probes).toBe(0);
@@ -338,11 +338,11 @@ describe("EmailVerifier — stages before SMTP", () => {
         throw Object.assign(new Error("ETIMEOUT"), { code: "ETIMEOUT" });
       },
     });
-    const typo = await v.verify("ana@gmial.com");
+    const typo = await v.verify("user2@gmial.com");
     expect(typo.verdict).toBe("invalid");
     expect(typo.reason).toBe("nxdomain");
-    expect(typo.syntax.suggestion).toBe("ana@gmail.com");
-    const flaky = await v.verify("ana@flaky.mx");
+    expect(typo.syntax.suggestion).toBe("user2@gmail.com");
+    const flaky = await v.verify("user19@lab.example.net");
     expect(flaky.verdict).toBe("unknown");
     expect(flaky.reason).toBe("dns_error");
   });
@@ -353,7 +353,7 @@ describe("EmailVerifier — stages before SMTP", () => {
       mxLookup: async () => [{ exchange: "aspmx.l.google.com", priority: 1 }],
       probe: async () => (probes++, null as never),
     });
-    const r = await v.verify("ana@clinic.mx", { skipSmtp: true });
+    const r = await v.verify("user1@example.com", { skipSmtp: true });
     expect(r.verdict).toBe("unknown");
     expect(r.reason).toBe("smtp_skipped");
     expect(r.mx.provider).toBe("google_workspace");
@@ -379,7 +379,7 @@ describe("EmailVerifier — stages before SMTP", () => {
       resolveTargets: async () => [{ address: "1.1.1.1", family: 4 }],
       sleep: async () => {},
     });
-    const r = await v.verify("someone@gmail.com");
+    const r = await v.verify("user3@gmail.com");
     expect(seen).toEqual([true]);
     expect(r.mx.provider).toBe("gmail");
     expect(r.verdict).toBe("safe");
@@ -390,7 +390,7 @@ describe("EmailVerifier.verifyMany", () => {
   it("stops starting rows after maxBatchMs and marks the rest batch_deadline", async () => {
     let t = 0;
     const { v } = await make({ rcpt: { default: "250 Ok" } }, { now: () => (t += 100) });
-    const { results, summary } = await v.verifyMany(["a@one.mx", "b@two.mx", "c@three.mx", "d@four.mx"], { maxBatchMs: 250 });
+    const { results, summary } = await v.verifyMany(["user20@example.org", "user21@corp.example.org", "user22@home.example.com", "user23@site1.example.com"], { maxBatchMs: 250 });
     expect(results).toHaveLength(4);
     const late = results.filter((r) => r.reason === "batch_deadline");
     expect(late.length).toBeGreaterThan(0);
@@ -402,13 +402,13 @@ describe("EmailVerifier.verifyMany", () => {
 
   it("de-duplicates, interleaves domains and summarises", async () => {
     const { s, v } = await make({
-      rcpt: { "a@one.mx": "250 Ok", "b@two.mx": "550 5.1.1 User unknown", default: "550 5.1.1 User unknown" },
+      rcpt: { "user20@example.org": "250 Ok", "user21@corp.example.org": "550 5.1.1 User unknown", default: "550 5.1.1 User unknown" },
     });
-    const { results, summary } = await v.verifyMany(["a@one.mx", "A@one.mx", "b@two.mx", "bad", "c@one.mx"]);
+    const { results, summary } = await v.verifyMany(["user20@example.org", "USER20@example.org", "user21@corp.example.org", "bad", "user24@example.org"]);
     expect(results).toHaveLength(4);
     expect(summary).toEqual({ total: 4, safe: 1, invalid: 3, risky: 0, unknown: 0 });
-    // Interleaved: one.mx, two.mx, (bad), one.mx — never two one.mx back to back.
-    expect(results.map((r) => r.email)).toEqual(["a@one.mx", "b@two.mx", "bad", "c@one.mx"]);
+    // Interleaved: example.org, corp.example.org, (bad), example.org — never two example.org back to back.
+    expect(results.map((r) => r.email)).toEqual(["user20@example.org", "user21@corp.example.org", "bad", "user24@example.org"]);
     expect(s.connections).toBe(3);
   });
 });
@@ -460,7 +460,7 @@ describe("envelope configuration guard (audit R4 C-1)", () => {
     }
     expect(envelopeConfigError("mail.eurekams.net", "postmaster@mail")).toMatch(/not a routable address/);
     expect(envelopeConfigError("mail.eurekams.net", "postmaster")).toMatch(/not a routable address/);
-    expect(envelopeConfigError("mail.eurekams.net", "post master@x.mx")).toMatch(/not a routable address/);
+    expect(envelopeConfigError("mail.eurekams.net", "post user25@site2.example.com")).toMatch(/not a routable address/);
     expect(envelopeConfigError("mail.eurekams.net", "a@localhost.localdomain")).toMatch(/not a routable address/);
     expect(envelopeConfigError("mail.eurekams.net", "")).toBeNull(); // null sender is fine
     expect(envelopeConfigError("mail.eurekams.net", "postmaster@eurekams.net")).toBeNull();
@@ -471,11 +471,11 @@ describe("envelope configuration guard (audit R4 C-1)", () => {
     let probes = 0;
     const v = new EmailVerifier({
       heloName: "mail",
-      mxLookup: async () => (dns++, [{ exchange: "mx.clinic.mx", priority: 1 }]),
+      mxLookup: async () => (dns++, [{ exchange: "mx.example.com", priority: 1 }]),
       probe: async () => (probes++, null as never),
     });
     expect(v.configError).toMatch(/not a public fully-qualified/);
-    const r = await v.verify("ana@clinic.mx");
+    const r = await v.verify("user1@example.com");
     expect(r.verdict).toBe("unknown");
     expect(r.reason).toMatch(/^misconfigured: HELO name "mail" is not a public/);
     expect(dns).toBe(1); // MX stage still runs (cheap, informative)
@@ -492,7 +492,7 @@ describe("envelope configuration guard (audit R4 C-1)", () => {
         address: "1.1.1.1",
       }),
     });
-    const r = await v.verify("a@clinic.mx");
+    const r = await v.verify("user12@example.com");
     expect(r.reason).toBe("blocked_by_host");
     expect(v.governor.usage().breakerOpen).toBe(false);
   });
@@ -505,8 +505,8 @@ describe("defaults", () => {
     process.env.EMAIL_VERIFY_HELO = "mail.eurekams.net";
     try {
       expect(verifierOptionsFromEnv().fromEmail).toBe("postmaster@eurekams.net");
-      process.env.EMAIL_VERIFY_FROM = "verify@eurekams.net";
-      expect(verifierOptionsFromEnv().fromEmail).toBe("verify@eurekams.net");
+      process.env.EMAIL_VERIFY_FROM = "user26@example.net";
+      expect(verifierOptionsFromEnv().fromEmail).toBe("user26@example.net");
       process.env.EMAIL_VERIFY_FROM = "";
       expect(verifierOptionsFromEnv().fromEmail).toBe("");
     } finally {

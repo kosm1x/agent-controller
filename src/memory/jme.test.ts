@@ -1422,7 +1422,7 @@ describe("JME hardening — redactForJme (A2)", () => {
     "repo /root/claude/promo-video-agent",
     "tools agent_create/update/list/delete",
     "service eurekams-intelligence-ui on 8092",
-    "phone +52 1 220 584 7540",
+    "phone +52 1 000 000 0000",
     "zip 1234567 is seven digits",
     "league 160656642 ESPN",
     "Williams universe has 1234567890 dollars of volume",
@@ -2084,13 +2084,13 @@ describe("JME hardening R2 folds (qa R2 2026-09-30)", () => {
 
   it("W3: JME_REDACT_ALLOW_EMAILS keeps the operator's own addresses (read per call; unset = all redacted)", async () => {
     const { redactForJme } = await getJme();
-    const text = "mail Fede.Ops@example.com and someone@else.org";
+    const text = "mail Owner.Ops@example.com and user30@example.com";
     const prev = process.env.JME_REDACT_ALLOW_EMAILS;
     try {
       delete process.env.JME_REDACT_ALLOW_EMAILS;
       expect(redactForJme(text)).toBe("mail [email] and [email]");
-      process.env.JME_REDACT_ALLOW_EMAILS = " fede.ops@example.com , x@y.io";
-      expect(redactForJme(text)).toBe("mail Fede.Ops@example.com and [email]");
+      process.env.JME_REDACT_ALLOW_EMAILS = " owner.ops@example.com , user31@example.org";
+      expect(redactForJme(text)).toBe("mail Owner.Ops@example.com and [email]");
     } finally {
       if (prev === undefined) delete process.env.JME_REDACT_ALLOW_EMAILS;
       else process.env.JME_REDACT_ALLOW_EMAILS = prev;

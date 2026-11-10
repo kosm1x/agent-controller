@@ -385,7 +385,7 @@ describe("R3 audit W3 — thread-scoped checkpoints", () => {
       content: mk("t-c", "**Thread:** email:comunidades"),
     });
     expect(
-      findRecentCheckpoint("email:comunidades:alice@x.com"),
+      findRecentCheckpoint("email:comunidades:user62@example.com"),
     ).not.toBeNull();
     expect(findRecentCheckpoint("telegram")).toBeNull();
     // R4 info: the ":" separator is load-bearing — a sibling-prefixed
@@ -393,8 +393,8 @@ describe("R3 audit W3 — thread-scoped checkpoints", () => {
     mockGetFile.mockReturnValue({
       content: mk("t-c", "**Thread:** email"),
     });
-    expect(findRecentCheckpoint("email2:bob@x.com")).toBeNull();
-    expect(findRecentCheckpoint("email:bob@x.com")).not.toBeNull();
+    expect(findRecentCheckpoint("email2:user63@example.com")).toBeNull();
+    expect(findRecentCheckpoint("email:user63@example.com")).not.toBeNull();
   });
 
   it("an unstamped checkpoint matches any thread (legacy/runner writers)", () => {

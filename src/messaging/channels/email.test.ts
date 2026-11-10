@@ -47,7 +47,7 @@ function clearEmailEnv(): void {
 function setComunidades(overrides: Record<string, string> = {}): void {
   process.env.EMAIL_COMUNIDADES_IMAP_HOST = "imap.hostinger.com";
   process.env.EMAIL_COMUNIDADES_SMTP_HOST = "smtp.hostinger.com";
-  process.env.EMAIL_COMUNIDADES_USERNAME = "comunidades@mexiconecesario.org.mx";
+  process.env.EMAIL_COMUNIDADES_USERNAME = "community@example.org";
   process.env.EMAIL_COMUNIDADES_PASSWORD = "app-password";
   process.env.EMAIL_COMUNIDADES_OWNER_ADDRESS = "Owner@Example.com";
   for (const [k, v] of Object.entries(overrides)) process.env[k] = v;
@@ -113,10 +113,10 @@ describe("parseEmailAccounts", () => {
       imapPort: 993,
       smtpHost: "smtp.hostinger.com",
       smtpPort: 465,
-      username: "comunidades@mexiconecesario.org.mx",
+      username: "community@example.org",
       password: "app-password",
       // fromAddress defaults to username
-      fromAddress: "comunidades@mexiconecesario.org.mx",
+      fromAddress: "community@example.org",
       // mode defaults to owner-only
       mode: "owner-only",
       // owner address is lowercased
@@ -132,13 +132,13 @@ describe("parseEmailAccounts", () => {
     setComunidades({
       EMAIL_COMUNIDADES_IMAP_PORT: "1993",
       EMAIL_COMUNIDADES_SMTP_PORT: "2465",
-      EMAIL_COMUNIDADES_ADDRESS: "no-reply@mexiconecesario.org.mx",
+      EMAIL_COMUNIDADES_ADDRESS: "no-reply@example.org",
       EMAIL_COMUNIDADES_POLL_INTERVAL_MS: "30000",
     });
     const [acct] = parseEmailAccounts();
     expect(acct?.imapPort).toBe(1993);
     expect(acct?.smtpPort).toBe(2465);
-    expect(acct?.fromAddress).toBe("no-reply@mexiconecesario.org.mx");
+    expect(acct?.fromAddress).toBe("no-reply@example.org");
     expect(acct?.pollIntervalMs).toBe(30_000);
   });
 
@@ -211,7 +211,7 @@ describe("parseEmailAccounts", () => {
     process.env.EMAIL_COMUNIDADES_IMAP_HOST = "imap.hostinger.com";
     process.env.EMAIL_COMUNIDADES_SMTP_HOST = "smtp.hostinger.com";
     process.env.EMAIL_COMUNIDADES_USERNAME =
-      "comunidades@mexiconecesario.org.mx";
+      "community@example.org";
     process.env.EMAIL_COMUNIDADES_PASSWORD = "pw";
     process.env.EMAIL_COMUNIDADES_MODE = "community-manager";
     // no OWNER_ADDRESS
@@ -225,7 +225,7 @@ describe("parseEmailAccounts", () => {
     process.env.EMAIL_COMUNIDADES_IMAP_HOST = "imap.hostinger.com";
     process.env.EMAIL_COMUNIDADES_SMTP_HOST = "smtp.hostinger.com";
     process.env.EMAIL_COMUNIDADES_USERNAME =
-      "comunidades@mexiconecesario.org.mx";
+      "community@example.org";
     process.env.EMAIL_COMUNIDADES_PASSWORD = "pw";
     process.env.EMAIL_COMUNIDADES_MODE = "owner-only";
     expect(() => parseEmailAccounts()).toThrow(
@@ -237,9 +237,9 @@ describe("parseEmailAccounts", () => {
     process.env.EMAIL_ACCOUNTS = "comunidades";
     setComunidades({
       EMAIL_COMUNIDADES_MODE: "community-manager",
-      EMAIL_COMUNIDADES_OWNER_ADDRESS: "Escalation@Org.MX",
+      EMAIL_COMUNIDADES_OWNER_ADDRESS: "User32@Example.Net",
     });
-    expect(parseEmailAccounts()[0]?.ownerAddress).toBe("escalation@org.mx");
+    expect(parseEmailAccounts()[0]?.ownerAddress).toBe("user32@example.net");
   });
 
   it("throws when two accounts point at the same (host, username) mailbox", () => {
@@ -249,7 +249,7 @@ describe("parseEmailAccounts", () => {
     // mailbox, would race to STORE \Seen and double-deliver.
     process.env.EMAIL_PROYECTO2_IMAP_HOST = "imap.hostinger.com";
     process.env.EMAIL_PROYECTO2_SMTP_HOST = "smtp.hostinger.com";
-    process.env.EMAIL_PROYECTO2_USERNAME = "comunidades@mexiconecesario.org.mx";
+    process.env.EMAIL_PROYECTO2_USERNAME = "community@example.org";
     process.env.EMAIL_PROYECTO2_PASSWORD = "pw2";
     process.env.EMAIL_PROYECTO2_OWNER_ADDRESS = "owner@example.com";
     expect(() => parseEmailAccounts()).toThrow(/same mailbox/);
@@ -314,7 +314,7 @@ describe("imapQuote", () => {
 
 describe("extractFetchLiteral", () => {
   it("pulls the literal payload of the announced byte length", () => {
-    const payload = "From: o@e.com\r\n\r\nbody";
+    const payload = "From: user33@mail.example.com\r\n\r\nbody";
     const resp =
       `* 1 FETCH (BODY[] {${payload.length}}\r\n` + `${payload})\r\na1 OK\r\n`;
     expect(extractFetchLiteral(resp)).toBe(payload);
@@ -333,9 +333,9 @@ describe("EmailAdapter identity", () => {
       imapPort: 993,
       smtpHost: "smtp.hostinger.com",
       smtpPort: 465,
-      username: "comunidades@mexiconecesario.org.mx",
+      username: "community@example.org",
       password: "pw",
-      fromAddress: "comunidades@mexiconecesario.org.mx",
+      fromAddress: "community@example.org",
       mode: "owner-only",
       ownerAddress: "owner@example.com",
       pollIntervalMs: 60_000,
@@ -355,9 +355,9 @@ describe("EmailAdapter identity", () => {
       imapPort: 993,
       smtpHost: "smtp.hostinger.com",
       smtpPort: 465,
-      username: "comunidades@mexiconecesario.org.mx",
+      username: "community@example.org",
       password: "pw",
-      fromAddress: "comunidades@mexiconecesario.org.mx",
+      fromAddress: "community@example.org",
       mode: "community-manager",
       ownerAddress: null,
       pollIntervalMs: 60_000,
@@ -380,7 +380,7 @@ describe("isAutoReplyOrBounce", () => {
 
   it("drops mailer-daemon by From local-part", () => {
     const raw = headers({
-      From: "Mail Delivery System <MAILER-DAEMON@mailchannels.net>",
+      From: "Mail Delivery System <MAILER-DAEMON@corp.example.org>",
       Subject: "Undelivered Mail Returned to Sender",
     });
     expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
@@ -395,7 +395,7 @@ describe("isAutoReplyOrBounce", () => {
   });
 
   it("drops no-reply / noreply senders", () => {
-    for (const sender of ["no-reply@x.com", "noreply@x.com"]) {
+    for (const sender of ["no-reply@example.com", "noreply@example.com"]) {
       const raw = headers({ From: sender, Subject: "Receipt" });
       expect(isAutoReplyOrBounce(parseEmail(raw), raw)).toBe(true);
     }
@@ -421,7 +421,7 @@ describe("isAutoReplyOrBounce", () => {
 
   it("drops on Precedence: bulk", () => {
     const raw = headers({
-      From: "newsletter@x.com",
+      From: "newsletter@example.com",
       Subject: "Newsletter",
       Precedence: "bulk",
     });

@@ -74,7 +74,7 @@ describe("activateBestVariant — scope pattern overrides merge by group (2026-0
     activateBestVariant();
     const utility = DEFAULT_SCOPE_PATTERNS.filter((p) => p.group === "utility");
     expect(utility.length).toBeGreaterThan(0);
-    expect(utility.some((p) => p.pattern.test("verifica si kosmixx@gmail.com existe"))).toBe(true);
+    expect(utility.some((p) => p.pattern.test("verifica si user4@example.com existe"))).toBe(true);
   });
 
   it("does nothing without a variant", () => {

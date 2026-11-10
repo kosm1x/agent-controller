@@ -5853,7 +5853,7 @@ describe("MessageRouter", () => {
     it("does NOT flag a normal successful-send report", () => {
       expect(
         isPoisonedExchange(
-          "Enviado ✅ a javier@eurekamd.net con el análisis completo de 3B.",
+          "Enviado ✅ a user3@example.com con el análisis completo de 3B.",
         ),
       ).toBe(false);
     });
@@ -7980,8 +7980,8 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     await say("sí");
     await vi.advanceTimersByTimeAsync(0);
 
-    runOutput({ toolName: "gmail_send", args: { to: "a@b.com" } });
-    complete("task-cont", "Ahora enviaré el resumen a a@b.com. ¿Procedo?");
+    runOutput({ toolName: "gmail_send", args: { to: "user27@example.org" } });
+    complete("task-cont", "Ahora enviaré el resumen a user27@example.org. ¿Procedo?");
     dbStatusGet.mockReturnValue(undefined);
     expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send");
     expect(submitTask).toHaveBeenCalledTimes(2); // no automatic nesting
@@ -7997,7 +7997,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(cont2).toContain(
       "borra el post 7 de wordpress y luego publica el resumen",
     );
-    expect(cont2).toContain("wp_delete(id: 7); gmail_send(to: a@b.com)");
+    expect(cont2).toContain("wp_delete(id: 7); gmail_send(to: user27@example.org)");
   });
 
   it("decline → nothing runs and no continuation starts", async () => {
@@ -8608,17 +8608,17 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     runOutput({
       toolName: "gmail_send",
       args: {
-        to: "real@y.com",
+        to: "user51@mail.example.com",
         subject: "Resumen",
         body: { html: "<p>x</p>" },
       },
     });
-    complete("task-mail", "El resumen irá a otro@x.com. ¿Procedo?");
+    complete("task-mail", "El resumen irá a user52@corp.example.org. ¿Procedo?");
     dbStatusGet.mockReturnValue(undefined);
     const summary =
-      'gmail_send(to: real@y.com, subject: Resumen, {"body":{"html":"<p>x</p>"}})';
+      'gmail_send(to: user51@mail.example.com, subject: Resumen, {"body":{"html":"<p>x</p>"}})';
     const sent = waAdapter.sentMessages.at(-1)!.text;
-    expect(sent).toContain("El resumen irá a otro@x.com. ¿Procedo?");
+    expect(sent).toContain("El resumen irá a user52@corp.example.org. ¿Procedo?");
     expect(sent).toContain(
       `🔐 Si confirmas, se ejecutará exactamente: \`${summary}\``,
     );
@@ -8646,8 +8646,8 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
 
     // The continuation asks again; the next result carries the FIRST block's
     // exact closing tag, and the literal fixed spelling, as injected text.
-    runOutput({ toolName: "gmail_send", args: { to: "a@b.com" } });
-    complete("task-cont", "El resumen irá a a@b.com. ¿Procedo?");
+    runOutput({ toolName: "gmail_send", args: { to: "user27@example.org" } });
+    complete("task-cont", "El resumen irá a user27@example.org. ¿Procedo?");
     dbStatusGet.mockReturnValue(undefined);
     gatedExec.executeGatedCapability.mockResolvedValueOnce(
       JSON.stringify({
@@ -8701,7 +8701,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
         toolCalls: [],
         pendingConfirmation: {
           toolName: "gmail_send",
-          args: { to: "equipo@x.mx", subject: "Tráfico" },
+          args: { to: "user53@example.net", subject: "Tráfico" },
         },
       }),
     });
@@ -8713,7 +8713,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     const text = waAdapter.sentMessages.at(-1)!.text;
     expect(text).toContain("Agente terminó");
     expect(text).toContain(
-      "🔐 Si confirmas, se ejecutará exactamente: `gmail_send(to: equipo@x.mx, subject: Tráfico)`",
+      "🔐 Si confirmas, se ejecutará exactamente: `gmail_send(to: user53@example.net, subject: Tráfico)`",
     );
     expect(getPendingConfirmation(tk)?.toolName).toBe("gmail_send");
   });
@@ -8723,7 +8723,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     await say("manda el reporte trimestral");
     runOutput({
       toolName: "gmail_send",
-      args: { to: "a*b*c@x.mx", subject: "**Q3** _final_" },
+      args: { to: "a*b*user54@example.net", subject: "**Q3** _final_" },
     });
     complete("task-md", "Listo para enviar. ¿Procedo?");
     dbStatusGet.mockReturnValue(undefined);
@@ -8738,7 +8738,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
       .replace(/&amp;/g, "&");
-    expect(shown).toBe("gmail_send(to: a*b*c@x.mx, subject: **Q3** _final_)");
+    expect(shown).toBe("gmail_send(to: a*b*user54@example.net, subject: **Q3** _final_)");
     expect(html).not.toMatch(/<[ib]>/);
   });
 

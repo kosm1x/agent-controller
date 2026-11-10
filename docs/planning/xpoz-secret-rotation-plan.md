@@ -3,7 +3,7 @@
 **Status:** drafted 2026-04-30, awaiting execution.
 **Trigger phrase next session:** "execute the xpoz secret rotation plan."
 **Repo affected:** `EurekaMD-net/xpoz-intelligence-pipeline-manager` (PUBLIC).
-**Asset at risk:** xpoz.ai upstream-scraper Bearer token, account `peter.blades@gmail.com`, no expiration.
+**Asset at risk:** xpoz.ai upstream-scraper Bearer token, account `assistant@example.com`, no expiration.
 
 ## Why
 
@@ -21,7 +21,7 @@ This is a single-secret leak in a small repo (4 commits touch the file, 1.5 MB t
 
 ### Step 1 — Rotate the key on xpoz.ai (manual, user)
 
-1. Log in to `mcp.xpoz.ai` dashboard with `peter.blades@gmail.com`.
+1. Log in to `mcp.xpoz.ai` dashboard with `assistant@example.com`.
 2. Issue a new API key.
 3. Capture the new key value — we'll need it in step 2.
 4. **Do NOT revoke the old key yet** — we want pipeline continuity through step 5.

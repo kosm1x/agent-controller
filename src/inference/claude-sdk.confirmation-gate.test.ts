@@ -209,7 +209,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const ctx = fastChatRoot("t-ph");
     const ph = "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
     const text = await inRun(OPERATOR, ctx, () =>
-      call("gmail_send", { to: "a@b.com", body: `clave: ${ph}` }),
+      call("gmail_send", { to: "user27@example.com", body: `clave: ${ph}` }),
     );
     expect(reg.execute).not.toHaveBeenCalled();
     const parsed = JSON.parse(text);
@@ -232,7 +232,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     );
     // The same call without the placeholder still asks.
     const ok = await inRun(OPERATOR, fastChatRoot("t-ph2"), () =>
-      call("gmail_send", { to: "a@b.com", body: "hola" }),
+      call("gmail_send", { to: "user27@example.com", body: "hola" }),
     );
     expect(JSON.parse(ok).error).toBe("CONFIRMATION_REQUIRED");
   });
@@ -243,7 +243,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const ctx = fastChatRoot("t-two");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
     const second = await inRun(OPERATOR, ctx, () =>
-      call("gmail_send", { to: "a@b.com" }),
+      call("gmail_send", { to: "user27@example.com" }),
     );
     expect(reg.execute).not.toHaveBeenCalled();
     const parsed = JSON.parse(second);
@@ -257,7 +257,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       args: { id: 7 },
       items: [
         { toolName: "wp_delete", args: { id: 7 } },
-        { toolName: "gmail_send", args: { to: "a@b.com" } },
+        { toolName: "gmail_send", args: { to: "user27@example.com" } },
       ],
     });
     expect(ctx.getGatedCalls()).toEqual(["wp_delete", "gmail_send"]);
@@ -280,7 +280,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
       1, 2, 3, 4, 5, 6, 7, 8,
     ]);
     const ninth = await inRun(OPERATOR, ctx, () =>
-      call("gmail_send", { to: "a@b.com" }),
+      call("gmail_send", { to: "user27@example.com" }),
     );
     const error = JSON.parse(ninth).error as string;
     expect(error).toContain("Ya hay una confirmación pendiente");
@@ -304,7 +304,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
     const ph = "[oculto · úsalo por nombre: $SECRET_DEMO_X en shell_exec, {{SECRET_DEMO_X}} en http_fetch/navegador]";
     const text = await inRun(OPERATOR, ctx, () =>
-      call("gmail_send", { to: "a@b.com", body: `clave: ${ph}` }),
+      call("gmail_send", { to: "user27@example.com", body: `clave: ${ph}` }),
     );
     expect(JSON.parse(text).error).toMatch(/^No ejecuté gmail_send/);
     expect(ctx.getPendingConfirmation()).toEqual(WP_DELETE_CARD);
@@ -373,7 +373,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const ctx = fastChatRoot("t-3r-ungated");
     await inRun(OPERATOR, ctx, () => call("wp_delete", { id: 7 }));
     // Queue 4l: a queued second gated call does not change 3r for the next.
-    await inRun(OPERATOR, ctx, () => call("gmail_send", { to: "a@b.com" }));
+    await inRun(OPERATOR, ctx, () => call("gmail_send", { to: "user27@example.com" }));
     const text = await inRun(OPERATOR, ctx, () =>
       call("web_search", { q: "x" }),
     );
@@ -430,7 +430,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     });
     ctx.setPendingConfirmation("wp_delete", { id: 7 });
     const text = await inRun(BACKGROUND, ctx, () =>
-      call("gmail_send", { to: "a@b.com" }),
+      call("gmail_send", { to: "user27@example.com" }),
     );
     expect(JSON.parse(text)).toEqual({ error: undeclaredToolError("gmail_send") });
     expect(ctx.undeclaredRefusalSink).toEqual(["gmail_send"]);
@@ -446,7 +446,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     ]) {
       const ctx = dispatcherCtx("t-cron", false, facts);
       const text = await inRun(BACKGROUND, ctx, () =>
-        call("gmail_send", { to: "a@b.com" }),
+        call("gmail_send", { to: "user27@example.com" }),
       );
       expect(JSON.parse(text).ok).toBe(true);
       // ...and the fast runner's own context inherits interactive=false.
@@ -465,7 +465,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const ctx = dispatcherCtx("t-child", false, { inheritedDeclaredTools: ["web_search"] });
     const text = await inRun(BACKGROUND, ctx, () =>
       runWithExecutionContext(runnerExecutionContext("t-child", true), () =>
-        call("gmail_send", { to: "a@b.com" }),
+        call("gmail_send", { to: "user27@example.com" }),
       ),
     );
     expect(JSON.parse(text)).toEqual({ error: undeclaredToolError("gmail_send") });
@@ -481,7 +481,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const ok = await inRun(
       BACKGROUND,
       dispatcherCtx("t-child-2", false, { inheritedDeclaredTools: ["gmail_send"] }),
-      () => call("gmail_send", { to: "a@b.com" }),
+      () => call("gmail_send", { to: "user27@example.com" }),
     );
     expect(JSON.parse(ok).ok).toBe(true);
   });
@@ -503,7 +503,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     ] as const) {
       const ctx = dispatcherCtx("t-heavy", true, facts);
       const text = await inRun(OPERATOR, ctx, () =>
-        call("gmail_send", { to: "a@b.com" }),
+        call("gmail_send", { to: "user27@example.com" }),
       );
       expect(JSON.parse(text)).toEqual({ error });
       expect(ctx.getPendingConfirmation()).toBeNull();
@@ -547,7 +547,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const a2a = dispatcherCtx("t-a2a", true, { a2aOrigin: true });
     const text = await inRun(BACKGROUND, a2a, () =>
       runWithExecutionContext(runnerExecutionContext("t-a2a", true), () =>
-        call("gmail_send", { to: "a@b.com" }),
+        call("gmail_send", { to: "user27@example.com" }),
       ),
     );
     expect(JSON.parse(text)).toEqual({ error: NO_CONFIRM_A2A_ERROR });
@@ -571,7 +571,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
   });
 
   it("outside any dispatched run (no run, no context) proceeds as before", async () => {
-    await call("gmail_send", { to: "a@b.com" });
+    await call("gmail_send", { to: "user27@example.com" });
     expect(reg.execute).toHaveBeenCalledTimes(1);
   });
 
@@ -635,7 +635,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     // gmail_send declared, or implied by email delivery: parked, not created.
     for (const over of [
       { tools: ["web_search", "gmail_send"] },
-      { delivery: "email", email_to: "a@b.mx" },
+      { delivery: "email", email_to: "user5@example.org" },
     ]) {
       const ctx = fastChatRoot("t-s2");
       const text = await inRun(OPERATOR, ctx, () =>
@@ -658,7 +658,7 @@ describe("wrapTool confirmation gate (claude-sdk path)", () => {
     const cron = dispatcherCtx("t-cron-mail", false, {});
     const sent = await inRun(BACKGROUND, cron, () =>
       runWithExecutionContext(runnerExecutionContext("t-cron-mail", true), () =>
-        call("gmail_send", { to: "a@b.mx", body: "reporte diario completo" }),
+        call("gmail_send", { to: "user5@example.org", body: "reporte diario completo" }),
       ),
     );
     expect(JSON.parse(sent).ok).toBe(true);
@@ -954,7 +954,7 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
 
   it("4l: a second gated call in the same response joins the card and does NOT abort the query", async () => {
     const seen: Seen & { texts?: string[]; abortedAt?: number[] } = {};
-    scripted(seen, null, moreCalls(seen, [["gmail_send", { to: "a@b.com" }]]));
+    scripted(seen, null, moreCalls(seen, [["gmail_send", { to: "user27@example.com" }]]));
     const ctx = fastChatRoot("t-4l-loop");
     const result = await run(ctx);
     expect(seen.abortedAt).toEqual([0]);
@@ -993,7 +993,7 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
       seen,
       null,
       moreCalls(seen, [
-        ["gmail_send", { to: "a@b.com" }],
+        ["gmail_send", { to: "user27@example.com" }],
         ["web_search", { q: "x" }],
       ]),
     );
@@ -1025,7 +1025,7 @@ describe("3r: a call after a pending confirmation ends the SDK loop", () => {
         if (turn1) yield assistantText(turn1);
         await call("wp_delete", { id: 7 });
         if (turn2 !== null) yield assistantText(turn2);
-        if (opts.joinCard) await call("gmail_send", { to: "a@b.com" });
+        if (opts.joinCard) await call("gmail_send", { to: "user27@example.com" });
         seen.refusal = await call("web_search", { q: "x" });
         seen.reason = ac.signal.reason;
         if (ac.signal.aborted) {
