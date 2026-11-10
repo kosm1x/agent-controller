@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-10 22:14 UTC (**CODE batch 1 (security) DEPLOYED 2026-11-10 22:13 UTC as build `9928c1a8` (PID 705777, 0 startup errors, health 200, same PID after 25 s)**: fail-closed guards, one write boundary + protected list in every checkout, push-time check of the protected list, one secret redactor; operator ran the deploy, session verified it. OPEN: merge-authority piece (ruling 4cl), shell-route piece after it, rulings 4cm / 4cn / 4cj)
+
 > Last updated: 2026-11-10 21:01 UTC (**CODE batch 1 (security) BUILT, NOT deployed**: seven commits `613662f0` → `fc3ba82c`, each audited by a separate reviewer and green on CI (fail-closed guards, one write boundary + protected list in every checkout, push-time check of the protected list, one secret redactor, three directories + one config file untracked, example data synthetic); merge-authority piece STOPPED after 3 failed audit rounds → ruling 4cl; rulings also open in 4cm and 4cn; the built pieces can be deployed now, S3 follows in a later deploy)
 
 > Last updated: 2026-11-09 20:23 UTC (**4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist)**; port-1 proof now has a durable sensor: first `evicted_spill` row = PROVEN)
@@ -426,6 +428,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-10 (22:13) | CODE batch 1 (security) DEPLOYED 2026-11-10 22:13 UTC as build `9928c1a8` (PID 705777, 0 startup errors, health 200, same PID after 25 s): `613662f0` fail-closed guards · `0d3ffed9` one write boundary + protected list in every checkout · `791fd0c8` protected list checked again at push · `5cb63e76` one secret redactor · `f4ba7f0c` + `fc3ba82c` repository hygiene; each builder → separate reviewer (up to 3 rounds) → full suite 15,904 → CI green. Merge-authority piece stopped after 3 failed audit rounds | queue 4cl (ruling) · 4cm · 4cn · 4co |
 | 2026-11-09 (20:23) | 4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist); proof pending = first marked `file_read` row | queue 4ce |
 | 2026-11-09 (20:17) | 4ce(b) BUILT `b034949c`: `evicted_spill` boolean marker on `file_read` trace rows for spill paths (aliases `path`/`file_path`/`filepath`), qa R1→fold→R2→fold-w/W (order-pin test folded); deploy pending | queue 4ce |
 | 2026-11-09 (17:58) | Hermes port 1 DEPLOYED `9e416451` PID 1487901, 0 startup errors, stale `data/tool-results/` removed; proof pending | queue 4cd |
