@@ -215,11 +215,19 @@ function expectRefused(out: string, reason: RegExp): void {
   expect(err).toMatch(reason);
 }
 
-/** Passed every gate: shell allows, the file tools reach the filesystem (tripwire / missing file). */
+/**
+ * Passed every gate: shell allows, the file tools reach the filesystem
+ * (tripwire / missing file). The filesystem's own answer depends on the host:
+ * a non-root user is refused a stat under /root/ with EACCES. That still means
+ * the boundary let the path through, so a permission error counts, as long as
+ * it carries none of the refusal reasons (`R`, or a tool's "<Op> blocked:").
+ */
 function expectPastBoundary(out: string): void {
   const err = errorOf(out);
   if (err === null) return;
-  expect(err).toMatch(/TRIPWIRE|File not found|ENOENT|no such file/);
+  expect(err).toMatch(/TRIPWIRE|File not found|ENOENT|no such file|EACCES|EPERM|permission denied/);
+  expect(err).not.toMatch(/blocked/);
+  for (const reason of Object.values(R)) expect(err).not.toMatch(reason);
 }
 
 const R = {
