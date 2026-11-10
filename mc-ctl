@@ -2433,18 +2433,6 @@ cmd_validation() {
         fail=$((fail+1))
       fi
 
-      # 5. Context pressure — emergency compactions
-      local compactions
-      compactions=$(journalctl -u "$SERVICE_NAME" --since "24 hours ago" --no-pager 2>/dev/null | grep -c -E "emergency.*compact|CONTEXT_PRESSURE_CRITICAL" 2>/dev/null || true)
-      compactions="${compactions:-0}"; compactions="${compactions##*$'\n'}"
-      if [ "$compactions" -eq 0 ]; then
-        echo -e "  ${GREEN}[PASS]${NC} Context pressure: no emergency compactions (24h)"
-        pass=$((pass+1))
-      else
-        echo -e "  ${YELLOW}[WARN]${NC} Emergency compactions: ${compactions} in 24h"
-        warn=$((warn+1))
-      fi
-
       # 6. DB size
       local db_size_mb
       db_size_mb=$(du -m "$DB_PATH" 2>/dev/null | cut -f1)

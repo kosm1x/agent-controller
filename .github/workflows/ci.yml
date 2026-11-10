@@ -39,6 +39,24 @@ jobs:
             echo "tsconfig.test.json type-checks only $n test files ($s under scripts/; expected > 500 and > 0): an exclude or a dropped include makes this gate pass vacuously" >&2
             exit 1
           fi
+      - name: build (npm run build + artifact check)
+        # Without this step the compile emit, the asset copies and the docs build
+        # first run on the operator's deploy. The checks mirror package.json
+        # "build" one line per copy (a new copy there needs a line here) plus the
+        # entry file the unit starts; test -e follows the pm-shim symlinks.
+        run: |
+          npm run build
+          fail=0
+          missing() { echo "npm run build did not produce $1 ($2)" >&2; fail=1; }
+          test -s dist/index.js || missing dist/index.js "service entry: node dist/index.js"
+          test -s dist/db/schema.sql || missing dist/db/schema.sql "cp src/db/schema.sql"
+          test -s dist/tuning/seed-cases.json || missing dist/tuning/seed-cases.json "cp src/tuning/seed-cases.json"
+          test -x dist/tools/builtin/pm-shim/pm-shim.sh || missing dist/tools/builtin/pm-shim/pm-shim.sh "cp -a src/tools/builtin/pm-shim, executable"
+          for f in src/tools/builtin/pm-shim/*; do test -e "dist/tools/builtin/pm-shim/${f##*/}" || missing "dist/tools/builtin/pm-shim/${f##*/}" "cp -a src/tools/builtin/pm-shim"; done
+          test -s public/docs/index.html || missing public/docs/index.html "scripts/build-docs.sh"
+          test -s public/docs/llms.txt || missing public/docs/llms.txt "scripts/build-docs.sh"
+          test -s public/docs/llms-full.txt || missing public/docs/llms-full.txt "scripts/build-docs.sh"
+          exit $fail
 
   test:
     runs-on: ubuntu-latest

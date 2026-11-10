@@ -3,10 +3,10 @@ name: lint-scripts
 on:
   push:
     branches: [main]
-    paths: ["scripts/**/*.sh", ".github/workflows/lint-scripts.yml"]
+    paths: ["scripts/**/*.sh", "mc-ctl", ".github/workflows/lint-scripts.yml"]
   pull_request:
     branches: [main]
-    paths: ["scripts/**/*.sh", ".github/workflows/lint-scripts.yml"]
+    paths: ["scripts/**/*.sh", "mc-ctl", ".github/workflows/lint-scripts.yml"]
 
 jobs:
   lint:
@@ -18,7 +18,7 @@ jobs:
         run: |
           set -e
           fail=0
-          for f in scripts/**/*.sh scripts/*.sh; do
+          for f in scripts/**/*.sh scripts/*.sh mc-ctl; do
             [ -f "$f" ] || continue
             if bash -n "$f"; then
               echo "PASS: $f"
@@ -33,7 +33,7 @@ jobs:
         run: |
           set -e
           fail=0
-          for f in scripts/**/*.sh scripts/*.sh; do
+          for f in scripts/**/*.sh scripts/*.sh mc-ctl; do
             [ -f "$f" ] || continue
             if shellcheck -x -e SC1091 --severity=error "$f"; then
               echo "shellcheck PASS: $f"
