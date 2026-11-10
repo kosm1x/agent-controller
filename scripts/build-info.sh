@@ -10,6 +10,9 @@
 #   (default)  write dist/build-info.json; exit 0 even when dirty
 #   --check    print the same report, write nothing; exit 3 when dirty
 set -euo pipefail
+# The code-path list lives in one helper shared with the deploy's dirty-tree check.
+# shellcheck source=scripts/lib/code-paths.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/code-paths.sh"
 
 CHECK="no"
 case "${1:-}" in
@@ -27,13 +30,11 @@ COMMIT_SHORT=$(git rev-parse --short HEAD)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-STATUS=$(git status --porcelain=v1 --untracked-files=no -- \
-  src/ scripts/ package.json package-lock.json 'tsconfig*.json')
-UNTRACKED=$(git ls-files --others --exclude-standard -- src/ scripts/)
+DIRTY_LIST=$(code_dirty_files)
 DIRTY_FILES=()
 while IFS= read -r f; do
   if [[ -n "$f" ]]; then DIRTY_FILES+=("$f"); fi
-done < <(cut -c4- <<<"$STATUS"; printf '%s\n' "$UNTRACKED")
+done <<<"$DIRTY_LIST"
 
 echo "[deploy] Built ${COMMIT_SHORT} (${BRANCH})"
 if [[ ${#DIRTY_FILES[@]} -gt 0 ]]; then

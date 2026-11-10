@@ -9,6 +9,7 @@ import { acquireSingleInstance } from "./lib/single-instance.js";
 import { registerReadbackVerifiers } from "./lib/v8-4/readback-verifiers.js";
 import { serve } from "@hono/node-server";
 import { createLogger } from "./lib/logger.js";
+import { readBuildInfo } from "./lib/build-info.js";
 import { readShutdownGraceMs } from "./lib/shutdown-grace.js";
 import { withTimeout } from "./lib/with-timeout.js";
 import { setMaxContainers } from "./dispatch/dispatcher.js";
@@ -96,6 +97,12 @@ const log = createLogger("mc");
 let instanceGuard: Server | null = null;
 
 async function main(): Promise<void> {
+  // Which commit this process runs: dist/build-info.json sits next to the
+  // compiled entry point, so the journal ties each boot to a build.
+  log.info(
+    { build: readBuildInfo(new URL("./build-info.json", import.meta.url)) },
+    "running build",
+  );
   const config = getConfig();
   // MAX_CONCURRENT_CONTAINERS was parsed but never applied — the dispatcher
   // ran on its hard-coded 5 regardless of the env (reliability audit R6).

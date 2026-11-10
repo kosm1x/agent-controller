@@ -139,6 +139,33 @@ describe("mc-guard hook (cloud copy)", () => {
     "bash <<-EOF\n\t./scripts/deploy.sh\n\tEOF",
     // Round 2: past the nesting cap is a deny, not an allow
     "eval eval eval eval eval eval eval eval ls",
+    // The deploy lib where it runs: sourced, a shell's script or stdin, the program; deploy_run as the program
+    "source scripts/lib/deploy-checks.sh",
+    ". scripts/lib/deploy-checks.sh",
+    "source /root/claude/mission-control/scripts/lib/deploy-checks.sh; deploy_run",
+    "bash scripts/lib/deploy-checks.sh",
+    "sh ./scripts/lib/deploy-checks.sh",
+    "./scripts/lib/deploy-checks.sh",
+    "bash < scripts/lib/deploy-checks.sh",
+    "bash -c 'source scripts/lib/deploy-checks.sh && deploy_run --force'",
+    "bash -x scripts/lib/deploy-checks.sh",
+    "bash -o errexit scripts/lib/deploy-checks.sh",
+    "bash -- scripts/lib/deploy-checks.sh",
+    "source -- scripts/lib/deploy-checks.sh",
+    "bash <<EOF\nsource scripts/lib/deploy-checks.sh\nEOF",
+    "deploy_run",
+    "deploy_run --allow-dirty",
+    "cd /root/claude/mission-control && deploy_run --force",
+    "sudo deploy_run",
+    "bash -c deploy_run",
+    // The lib's step functions as the program
+    "deploy_restart",
+    "deploy_build",
+    "deploy_take_snapshot 16",
+    "ls; deploy_build",
+    "true && deploy_restart",
+    "bash -c 'deploy_take_snapshot 16'",
+    "bash -c deploy_restart",
   ])("denies %j", (command) => {
     expect(decide(command)).toBe("deny");
   });
@@ -218,6 +245,25 @@ describe("mc-guard hook (cloud copy)", () => {
     "cat <<-EOF\n\t./scripts/deploy.sh\n\tEOF\necho ok",
     "cat <<EOF\n\tnotes\n\tEOF\n./scripts/deploy.sh",
     "eval eval ls",
+    // Reading, checking and testing the deploy lib stays allowed
+    "grep -a x scripts/lib/deploy-checks.sh",
+    "grep -a deploy_run scripts/lib/deploy-checks.sh scripts/deploy.sh",
+    "cat scripts/lib/deploy-checks.sh",
+    "sed -n 1,40p scripts/lib/deploy-checks.sh",
+    "bash -n scripts/lib/deploy-checks.sh",
+    "shellcheck -e SC1091 --severity=error scripts/lib/deploy-checks.sh",
+    "sha256sum scripts/lib/deploy-checks.sh",
+    "cp scripts/lib/deploy-checks.sh /tmp/x/",
+    "npx vitest run scripts/deploy-checks.test.ts",
+    "systemd-run --scope -p MemoryMax=6G --quiet -- npx vitest run scripts/deploy-checks.test.ts",
+    "git diff scripts/lib/deploy-checks.sh",
+    // Copying over or editing the lib does not run it
+    "cp /some/backup scripts/lib/deploy-checks.sh",
+    "python3 x.py scripts/lib/deploy-checks.sh",
+    "node x.js scripts/lib/deploy-checks.sh",
+    "perl -pi -e 's/a/b/' scripts/lib/deploy-checks.sh",
+    // bash runs its first operand: mut.sh here, with the lib as mut.sh's $1
+    "bash mut.sh scripts/lib/deploy-checks.sh",
   ])("allows %j", (command) => {
     expect(decide(command)).toBe("allow");
   });

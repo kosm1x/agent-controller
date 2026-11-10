@@ -66,6 +66,14 @@ const IMMUTABLE_FILES: string[] = [
   "src/lib/v8-4/gate-check.ts", // runs the completion-gate checks
   "src/runners/container.ts", // nanoclaw container spawn + mounts
   "scripts/deploy.sh", // operator deploy
+  "scripts/lib/deploy-checks.sh", // deploy decisions sourced by deploy.sh
+  "scripts/lib/code-paths.sh", // dirty-tree path list sourced by the deploy
+  // Files the deploy executes: editing one changes what an operator deploy runs.
+  "scripts/lib/operator-gate.sh", // operator-only gate sourced by deploy.sh and mc-ctl
+  "scripts/build-info.sh", // build provenance record
+  "scripts/build-mc-image.sh", // sandbox image rebuild
+  "scripts/validate-migration-runner.ts", // migration preflight
+  "scripts/backup-db.sh", // pre-migration snapshot
   "mc-ctl", // operator admin CLI
   "vitest.config.ts", // decides which tests run (the test gate itself)
 ];

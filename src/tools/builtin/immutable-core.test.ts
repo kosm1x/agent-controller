@@ -56,6 +56,13 @@ describe("isImmutableCorePath", () => {
       "src/lib/v8-4/gate-check.ts",
       "src/runners/container.ts",
       "scripts/deploy.sh",
+      "scripts/lib/deploy-checks.sh",
+      "scripts/lib/code-paths.sh",
+      "scripts/lib/operator-gate.sh",
+      "scripts/build-info.sh",
+      "scripts/build-mc-image.sh",
+      "scripts/validate-migration-runner.ts",
+      "scripts/backup-db.sh",
       "mc-ctl",
       "vitest.config.ts",
     ];

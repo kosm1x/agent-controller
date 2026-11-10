@@ -21,6 +21,9 @@
 # Denied (CLAUDE.md Infrastructure / Invariants):
 #   a. running deploy.sh: any word naming deploy.sh unless the program is a
 #      reader/editor (cat less grep sed git diff vim ...) -- operator-run.
+#      Its lib scripts/lib/deploy-checks.sh only where it RUNS (source/., a
+#      shell's script or stdin, the program), and deploy_* functions as the
+#      program; copying or editing the lib stays allowed.
 #   b. sqlite3 on *mc.db (also file: URIs) without -readonly or ?mode=ro --
 #      DDL/writes are operator-run.
 #   c. destroying or overwriting mc.db / -wal / -shm: rm mv truncate shred unlink
@@ -67,6 +70,10 @@ const WRAPPERS = {
 };
 const DB_RE = /(^|[\/:])mc\.db(-wal|-shm)?($|\?)/;
 const DEPLOY_RE = /(^|\/)deploy\.sh$/;
+// deploy.sh's lib: its functions build, snapshot and restart, so it is denied
+// where it runs; it refuses to load outside an operator context as well.
+const DEPLOY_LIB_RE = /(^|\/)deploy-checks\.sh$/;
+const DEPLOY_FN_RE = /^deploy_[a-z_]+$/;
 // The repo's data dir only: `data`, `./data/`, `data/*`, or <...>/mission-control(-jarvis)/data.
 const DATA_DIR_RE = /^(\.\/)?data\/?(\*)?$|(^|\/)mission-control(-jarvis)?\/data\/?(\*)?$/;
 const DATA_PATH_RE = /^(\.\/)?data(\/|$)|(^|\/)mission-control(-jarvis)?\/data(\/|$)/;
@@ -241,8 +248,18 @@ function check(cmd, depth = 0) {
       const pos = args.filter((a) => !a.startsWith("-"));
       if (pos.length && DEPLOY_RE.test(pos[pos.length - 1])) return R_DEPLOY;
     } else if (!reader && all.some((w) => !/\s/.test(w) && DEPLOY_RE.test(w))) return R_DEPLOY;
+    // The lib runs as the program, sourced, or as a shell's script (the first
+    // operand; `bash x.sh <lib>` runs x.sh). A lib step function as the program.
+    if (DEPLOY_FN_RE.test(b) || DEPLOY_LIB_RE.test(r.prog)) return R_DEPLOY;
+    if ((b === "source" || b === ".") && DEPLOY_LIB_RE.test((args[0] === "--" ? args[1] : args[0]) ?? "")) return R_DEPLOY;
+    if (SHELLS.has(b) && b !== "su" && !syntaxOnly && shellC(r) === undefined) {
+      let k = 0;
+      while (k < args.length && /^[-+]./.test(args[k]) && args[k] !== "--") k += /^[-+][oO]$/.test(args[k]) ? 2 : 1;
+      if (args[k] === "--") k++;
+      if (DEPLOY_LIB_RE.test(args[k] ?? "")) return R_DEPLOY;
+    }
     if (SHELLS.has(b) && !syntaxOnly) {
-      if (s.redirs.some((rd) => rd.op === "<" && DEPLOY_RE.test(rd.target))) return R_DEPLOY;
+      if (s.redirs.some((rd) => rd.op === "<" && (DEPLOY_RE.test(rd.target) || DEPLOY_LIB_RE.test(rd.target)))) return R_DEPLOY;
       const c = shellC(r);
       for (const body of [c, ...s.heredocs.map((h) => h.body), ...s.herestrings]) {
         if (body === undefined) continue;
