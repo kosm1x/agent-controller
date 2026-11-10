@@ -3746,6 +3746,72 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("prefixes the caveat when the task's grade cannot be read (unknown is treated as unverified)", async () => {
+      // A completion whose status row cannot be read has no proof it was
+      // verified, so it is never delivered as a clean answer.
+      dbGetBySql.mockImplementation((sql: string) => {
+        if (sql.includes("SELECT spawn_type, title, status, agent_type FROM tasks")) {
+          throw new Error("database disk image is malformed");
+        }
+        return undefined;
+      });
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const msg: IncomingMessage = {
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "verifica el PDF",
+          timestamp: new Date(),
+        };
+        await router.handleInbound(msg);
+        router.startEventListeners();
+
+        const completedHandler = findHandler("task.completed");
+        completedHandler!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "heavy",
+            result: { finalAnswer: "Reporte de cifras." },
+            duration_ms: 500,
+          },
+        });
+
+        expect(waAdapter.sentMessages[1].text).toBe(
+          "⚠️ Completado con reservas — no verifiqué todos los criterios al 100%:\n\nReporte de cifras.",
+        );
+        expect(errSpy).toHaveBeenCalledWith(
+          expect.stringContaining("test-task-123"),
+          expect.stringContaining("database disk image is malformed"),
+        );
+      } finally {
+        dbGetBySql.mockReset().mockImplementation(() => undefined);
+        errSpy.mockRestore();
+      }
+    });
+
+    it("delivers a clean answer when the task row is simply missing", async () => {
+      // dbStatusGet defaults to undefined: no row is not a read failure.
+      const msg: IncomingMessage = {
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "normal",
+        timestamp: new Date(),
+      };
+      await router.handleInbound(msg);
+      router.startEventListeners();
+
+      findHandler("task.completed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          result: { text: "Respuesta normal." },
+          duration_ms: 500,
+        },
+      });
+
+      expect(waAdapter.sentMessages[1].text).toBe("Respuesta normal.");
+    });
+
     it("sends a fallback ack when a chat task completes with EMPTY text (2026-07-11)", async () => {
       // The model can answer a contentless ack ("sirve") with a bare
       // "STATUS: DONE" → parseRunnerStatus strips it → output.text === "".

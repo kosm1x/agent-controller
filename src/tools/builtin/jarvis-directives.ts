@@ -15,10 +15,13 @@ import {
 } from "../../db/jarvis-fs.js";
 import { getDatabase } from "../../db/index.js";
 import { nowMexIsoDate } from "../../lib/timezone.js";
+import { errMsg } from "../../lib/err-msg.js";
 
 const PROPOSALS_PREFIX = "knowledge/proposals/";
 const DECISIONS_PREFIX = "logs/decisions/";
 const COOLDOWN_KEY = "directive_last_proposal_at";
+const DEFAULT_COOLDOWN_HOURS = 48;
+const COOLDOWN_UNVERIFIED = `❌ Could not verify the proposal cooldown — proposal not created. Try again later.`;
 
 // ---------------------------------------------------------------------------
 // jarvis_propose_directive
@@ -94,10 +97,17 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
 
   async execute(args: Record<string, unknown>): Promise<string> {
     // SG4: Directive cooldown — max 1 proposal per DIRECTIVE_COOLDOWN_HOURS (default 48)
-    const cooldownHours = parseInt(
-      process.env.DIRECTIVE_COOLDOWN_HOURS ?? "48",
+    // parseInt reads the leading integer, so that integer decides ("0.5" and
+    // "0x10" both read as 0). 0 or below disables the cooldown; a value with
+    // no leading integer (unset, empty, text) falls back to the default
+    // rather than reading as "off".
+    const parsedCooldown = parseInt(
+      process.env.DIRECTIVE_COOLDOWN_HOURS ?? "",
       10,
     );
+    const cooldownHours = Number.isFinite(parsedCooldown)
+      ? parsedCooldown
+      : DEFAULT_COOLDOWN_HOURS;
     if (cooldownHours > 0) {
       try {
         const db = getDatabase();
@@ -107,6 +117,13 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
 
         if (lastProposal) {
           const lastTime = new Date(lastProposal.value).getTime();
+          if (!Number.isFinite(lastTime)) {
+            // A timestamp that does not parse is as unknown as a failed read.
+            console.error(
+              "[jarvis_propose_directive] stored cooldown timestamp is not a valid date — proposal refused",
+            );
+            return COOLDOWN_UNVERIFIED;
+          }
           const elapsedHours = (Date.now() - lastTime) / (1000 * 60 * 60);
           if (elapsedHours < cooldownHours) {
             const remaining = (cooldownHours - elapsedHours).toFixed(1);
@@ -118,8 +135,14 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
             ].join("\n");
           }
         }
-      } catch {
-        // safeguard_state table may not exist yet — proceed without cooldown
+      } catch (err) {
+        // safeguard_state is created by the schema at boot, so a failed read
+        // is a real database error. An unknown cooldown is not an expired one:
+        // refuse rather than let the rate limit lapse.
+        console.error(
+          `[jarvis_propose_directive] cooldown read failed — proposal refused: ${errMsg(err)}`,
+        );
+        return COOLDOWN_UNVERIFIED;
       }
     }
 
@@ -187,8 +210,12 @@ AFTER PROPOSING: Tell the user what you proposed and ask for approval.`,
          VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
       ).run(COOLDOWN_KEY, new Date().toISOString());
-    } catch {
-      // Non-fatal — cooldown tracking failure shouldn't block proposals
+    } catch (err) {
+      // The proposal is already written, so it stands; the error is logged
+      // because without this timestamp the next cooldown check cannot see it.
+      console.error(
+        `[jarvis_propose_directive] cooldown timestamp write failed: ${errMsg(err)}`,
+      );
     }
 
     return [

@@ -4205,8 +4205,14 @@ export class MessageRouter {
         gradedDown =
           task?.status === "completed_with_concerns" &&
           task?.agent_type === "heavy";
-      } catch {
-        // DB not available (e.g. in tests) — treat as normal task
+      } catch (err) {
+        // Without the row there is no proof the result was verified, so the
+        // reply carries the caveat rather than reading as a clean answer.
+        gradedDown = true;
+        console.error(
+          `[router] task grade read failed for ${taskId} — delivering with the unverified caveat:`,
+          errMsg(err),
+        );
       }
       // Read tool calls once — shared by extractPattern + auto-persist + background extraction
       // (C1 audit fix: hoisted above all consumers to eliminate duplicate DB read)
