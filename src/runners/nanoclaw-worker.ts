@@ -20,6 +20,7 @@ import { toolRegistry } from "../tools/registry.js";
 import { shellTool } from "../tools/builtin/shell.js";
 import { fileReadTool, fileWriteTool } from "../tools/builtin/file.js";
 import { fileEditTool } from "../tools/builtin/code-editing.js";
+import { MC_CONTAINER_ROOT } from "../tools/builtin/immutable-core.js";
 import {
   grepTool,
   globTool,
@@ -45,7 +46,7 @@ import {
 import { errMsg } from "../lib/err-msg.js";
 
 /** Writable working copy the coding agent edits/commits/pushes from. */
-const WORKSPACE = "/workspace";
+const WORKSPACE = MC_CONTAINER_ROOT.replace(/\/$/, "");
 
 /**
  * Set up a WRITABLE clone of the read-only repo mount so coding tasks can edit,

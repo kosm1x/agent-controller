@@ -28,3 +28,16 @@ describe("nanoclaw-worker sandbox-sentinel wiring", () => {
     expect(SRC).not.toMatch(/sandboxStopEmitted\([^)]*finalAnswer/);
   });
 });
+
+describe("nanoclaw-worker clone directory", () => {
+  // The protected-path rules cover the worker's clone only because WORKSPACE
+  // is derived from immutable-core.ts MC_CONTAINER_ROOT (the worker
+  // self-invokes main() on import, so this is pinned by source).
+  it("derives WORKSPACE from MC_CONTAINER_ROOT", () => {
+    expect(SRC).toMatch(
+      /import \{ MC_CONTAINER_ROOT \} from "\.\.\/tools\/builtin\/immutable-core\.js";/,
+    );
+    expect(SRC).toMatch(/const WORKSPACE = MC_CONTAINER_ROOT\.replace\(\/\\\/\$\/, ""\);/);
+    expect(SRC.match(/const WORKSPACE =/g)).toHaveLength(1);
+  });
+});

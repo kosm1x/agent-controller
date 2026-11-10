@@ -12,15 +12,9 @@ import {
   formatCandidates,
 } from "../intelligence/improvement-detector.js";
 import { getDatabase } from "../db/index.js";
+import { SELF_IMPROVEMENT_ALLOWED as ALLOWED_PATHS } from "../tools/builtin/write-boundary.js";
 
 const MAX_PRS_PER_DAY = 3;
-const ALLOWED_PATHS = [
-  "src/tools/",
-  "src/intel/",
-  "src/messaging/scope.ts",
-  "src/messaging/prompt-sections.ts",
-  "src/video/",
-];
 
 /**
  * Check if we're under the daily PR cap.

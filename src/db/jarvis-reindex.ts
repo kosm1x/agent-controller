@@ -58,9 +58,8 @@ export const MANAGED_FILE_RE = /^skills\/[^/]+\/SKILL\.md$/i;
  */
 export const REFRESH_EXEMPT = ["logs/day-logs/"];
 
-/** The refusal sentence for a model write under `logs/day-logs/` (all writers share it). */
-export const DAY_LOG_MANAGED =
-  "logs/day-logs/ is mechanically managed (verbatim interaction log). Write the narrative companion to logs/day-narratives/ instead.";
+/** The refusal sentence for a model write under `logs/day-logs/` (all writers share it; defined beside the write boundary). */
+export { DAY_LOG_MANAGED } from "../tools/builtin/write-boundary.js";
 
 export interface ReindexResult {
   /** Files on disk under the mirror root. */

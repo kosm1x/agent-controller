@@ -65,7 +65,7 @@ Ruled by the operator on 2026-11-10 at 15:07 UTC, in one answer: **all fifteen a
 | # | Ruling |
 | --- | --- |
 | 1 | **go** — the security batch is built first |
-| 2 | **accept** — guard files become operator-session work only |
+| 2 | **accept** — guard files become operator-session work only. Clarified 2026-11-10 15:55 UTC when the build showed the protected list also holds core files (message handling, task routing, database setup, scheduling; 5 of the agent's 10 merged pull requests touched one): **guards and core both protected, in both checkouts, as a transitory state** — the goal is the agent improving its own code safely; exit conditions = queue 4cj |
 | 3 | **later** — separate GitHub identity for the agent stays open, no date |
 | 4 | **clean current files and untrack the three directories**; no history rewrite (it stays a separate operator decision) |
 | 5 | **refuse** a dirty working tree at deploy (`--allow-dirty` overrides) |

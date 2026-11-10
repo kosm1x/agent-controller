@@ -12,6 +12,7 @@ import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
+import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 import { repoRootOf, withCwdLock } from "./cwd-lock.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
@@ -25,7 +26,7 @@ const MC_DIR = "/root/claude/mission-control/";
 // guarantees a branch can only be checked out in ONE worktree, so the
 // split is structural, not advisory. The jarvis/* branch rule continues
 // to apply inside the worktree.
-export const JARVIS_MC_WORKTREE = "/root/claude/mission-control-jarvis/";
+export const JARVIS_MC_WORKTREE = MC_WORKTREE_ROOT;
 // Every EurekaMD/Jarvis project lives under /root/claude/ — some at the top level
 // (vlcrm, intelligence-ops-mcp, eurekams-intelligence-ui, …), some under projects/
 // (EurekaMS-Landing, …). A single prefix covers them all and cannot drift, which the

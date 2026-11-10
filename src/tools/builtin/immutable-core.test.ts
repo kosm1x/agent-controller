@@ -12,13 +12,19 @@ import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { kernelWalk, realResolve } from "./write-guard.js";
 import {
+  holdsImmutableCorePath,
   isImmutableCorePath,
   validatePathSafety,
   isDangerousRemovalPath,
   isPreciousPath,
+  MC_PRIMARY_ROOT,
+  MC_WORKTREE_ROOT,
+  MC_CONTAINER_ROOT,
 } from "./immutable-core.js";
 
 const MC = "/root/claude/mission-control/";
+const WT = "/root/claude/mission-control-jarvis/";
+const CT = "/workspace/";
 
 describe("isImmutableCorePath", () => {
   describe("immutable files", () => {
@@ -38,15 +44,75 @@ describe("isImmutableCorePath", () => {
       "src/tools/builtin/file.ts",
       "src/tools/builtin/code-editing.ts",
       "src/tools/builtin/shell.ts",
+      "src/tools/builtin/write-guard.ts",
+      "src/tools/builtin/write-boundary.ts",
+      "src/tools/builtin/git.ts",
+      "src/tools/builtin/jarvis-dev.ts",
+      "src/tools/builtin/jarvis-self-repair.ts",
+      "src/tools/builtin/cwd-lock.ts",
+      "src/tools/rule-of-two.ts",
+      "src/lib/operator-gate.ts",
+      "src/lib/v8-4/gate-check.ts",
+      "src/runners/container.ts",
+      "scripts/deploy.sh",
+      "mc-ctl",
+      "vitest.config.ts",
     ];
 
-    for (const file of immutableFiles) {
-      it(`blocks ${file}`, () => {
-        const result = isImmutableCorePath(`${MC}${file}`);
-        expect(result.immutable).toBe(true);
-        expect(result.reason).toContain(file);
-      });
+    // The same list holds in the primary checkout, Jarvis's worktree and the
+    // container worker's clone.
+    for (const root of [MC, WT, CT]) {
+      for (const file of immutableFiles) {
+        it(`blocks ${root}${file}`, () => {
+          const result = isImmutableCorePath(`${root}${file}`);
+          expect(result.immutable).toBe(true);
+          expect(result.reason).toContain(file);
+        });
+      }
     }
+  });
+
+  describe("checkout roots", () => {
+    it("exports the three checkout roots with a trailing slash", () => {
+      expect(MC_PRIMARY_ROOT).toBe(MC);
+      expect(MC_WORKTREE_ROOT).toBe(WT);
+      expect(MC_CONTAINER_ROOT).toBe(CT);
+    });
+
+    it("allows the container clone's non-protected files", () => {
+      expect(isImmutableCorePath(`${CT}src/intel/x.ts`).immutable).toBe(false);
+      expect(isImmutableCorePath(`${CT}scripts/fix.ts`).immutable).toBe(false);
+      expect(isImmutableCorePath("/workspace-other/src/index.ts").immutable).toBe(false);
+    });
+
+    // Every protected prefix, in both checkouts.
+    const prefixes: Array<[string, string]> = [
+      ["src/api/", "src/api/routes/health.ts"],
+      ["src/tools/builtin/pm-shim/", "src/tools/builtin/pm-shim/pm-shim.sh"],
+      [".github/", ".github/workflows/ci.yml"],
+      ["scripts/git-hooks/", "scripts/git-hooks/pre-commit"],
+    ];
+    for (const root of [MC, WT, CT]) {
+      for (const [prefix, file] of prefixes) {
+        it(`blocks ${root}${file} (prefix ${prefix})`, () => {
+          const result = isImmutableCorePath(`${root}${file}`);
+          expect(result.immutable).toBe(true);
+          expect(result.reason).toContain(prefix);
+        });
+      }
+    }
+
+    it("allows the worktree's non-protected files", () => {
+      expect(isImmutableCorePath(`${WT}src/tools/builtin/weather.ts`).immutable).toBe(false);
+      expect(isImmutableCorePath(`${WT}scripts/reindex-jarvis-kb.ts`).immutable).toBe(false);
+      expect(isImmutableCorePath(`${WT}docs/ROADMAP.md`).immutable).toBe(false);
+    });
+
+    it("does not treat a sibling directory sharing the name prefix as a checkout", () => {
+      expect(
+        isImmutableCorePath("/root/claude/mission-control-other/src/index.ts").immutable,
+      ).toBe(false);
+    });
   });
 
   describe("immutable directories", () => {
@@ -151,6 +217,33 @@ describe("isImmutableCorePath", () => {
       );
       expect(result.immutable).toBe(true);
     });
+  });
+});
+
+describe("holdsImmutableCorePath (recursive delete of a directory)", () => {
+  for (const root of [MC, WT, CT]) {
+    it(`refuses ${root} itself and directories above protected files`, () => {
+      expect(holdsImmutableCorePath(root.slice(0, -1)).immutable).toBe(true);
+      expect(holdsImmutableCorePath(`${root}src`).immutable).toBe(true);
+      expect(holdsImmutableCorePath(`${root}src/tools/builtin`).immutable).toBe(true);
+      expect(holdsImmutableCorePath(`${root}src/tools/builtin/`).immutable).toBe(true);
+      expect(holdsImmutableCorePath(`${root}src/rituals`).reason).toContain("src/rituals/");
+      expect(holdsImmutableCorePath(`${root}.github`).reason).toContain(".github/");
+      expect(holdsImmutableCorePath(`${root}scripts`).reason).toContain("scripts/");
+      expect(holdsImmutableCorePath(`${root}scripts/git-hooks`).immutable).toBe(true);
+      expect(holdsImmutableCorePath(`${root}src/lib/v8-4`).reason).toContain("gate-check.ts");
+    });
+
+    it(`allows ${root} directories that hold no protected file`, () => {
+      expect(holdsImmutableCorePath(`${root}src/intel`).immutable).toBe(false);
+      expect(holdsImmutableCorePath(`${root}docs`).immutable).toBe(false);
+      expect(holdsImmutableCorePath(`${root}scripts/other`).immutable).toBe(false);
+    });
+  }
+
+  it("ignores paths outside every checkout", () => {
+    expect(holdsImmutableCorePath("/root/claude").immutable).toBe(false);
+    expect(holdsImmutableCorePath("/tmp/src").immutable).toBe(false);
   });
 });
 

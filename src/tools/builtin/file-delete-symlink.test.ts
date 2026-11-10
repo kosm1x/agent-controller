@@ -25,7 +25,9 @@ describe("file_delete — symlinked parent", () => {
       const r = JSON.parse(
         await fileDeleteTool.execute({ path: `${inside}/lnk/victim.txt` }),
       );
-      expect(String(r.error)).toMatch(/outside allowed paths/);
+      // The resolved parent is under /var/, which the write boundary denies
+      // before its allow-list.
+      expect(String(r.error)).toMatch(/\/var\/ is protected/);
       expect(existsSync(`${outside}/victim.txt`)).toBe(true);
       // R2 C2: `lnk/..` is the parent of the link's TARGET, not of the link.
       mkdirSync(`${outside}/deep`);
@@ -33,7 +35,7 @@ describe("file_delete — symlinked parent", () => {
       const up = JSON.parse(
         await fileDeleteTool.execute({ path: `${inside}/deep/../victim.txt` }),
       );
-      expect(String(up.error)).toMatch(/outside allowed paths/);
+      expect(String(up.error)).toMatch(/\/var\/ is protected/);
       expect(existsSync(`${outside}/victim.txt`)).toBe(true);
     } finally {
       rmSync(outside, { recursive: true, force: true });

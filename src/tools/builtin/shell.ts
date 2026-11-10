@@ -5,16 +5,17 @@
  * The guard prevents accidental destructive commands — not an adversarial sandbox.
  */
 
-import { exec, execFileSync, spawn } from "child_process";
+import { exec, spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
-import { isImmutableCorePath, isBlockedEnvFile, NORTHSTAR_DISK_REASON } from "./immutable-core.js";
+import { isBlockedEnvFile, NORTHSTAR_DISK_REASON } from "./immutable-core.js";
 import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
-import { realResolve, isOperatorConfigPath } from "./write-guard.js";
+import { realResolve } from "./write-guard.js";
+import { checkWriteBoundary, RITUAL_WRITABLE_DOCS, type BoundaryVerdict } from "./write-boundary.js";
 import {
   buildFlailingBlockMessage,
   checkFlailing,
@@ -799,23 +800,6 @@ function envWriteTarget(segment: string): string | null {
   return written.find(isEnvWriteTarget) ?? null;
 }
 
-/** Safe path prefixes for write operations.
- *  Jarvis can read anything but writes are restricted to project dirs.
- *  /root/claude/mission-control/ is OFF LIMITS unless on a jarvis/* branch.
- *  Queue #11 (2026-05-07): jarvis-kb path read dynamically via
- *  getJarvisKbRoot() so JARVIS_KB_MIRROR_DIR overrides flow through tools too. */
-function getAllowWritePrefixes(): string[] {
-  return [
-    `${getJarvisKbRoot()}/`, // may resolve outside /root/claude via JARVIS_KB_MIRROR_DIR
-    "/root/claude/", // every EurekaMD/Jarvis project repo lives here; mission-control is
-    // still gated by DENY_WRITE_PATTERNS + isImmutableCorePath above (the allow-list is
-    // checked LAST), so this does not weaken its source protection. Replaces a per-repo
-    // enumeration that silently blocked writes to any repo it forgot.
-    "/tmp/",
-    "/workspace/",
-  ];
-}
-
 /** Standard /dev/null sinks used as discard targets in shell idioms.
  *  These match captureWriteTargets' shape (`>` redirect to absolute path) but
  *  are not actual writes — they discard. Exempting them here prevents
@@ -826,27 +810,32 @@ const WRITE_INDICATOR_EXEMPT = new Set([
   "/dev/stdout",
 ]);
 
-function isMissionControlWriteAllowed(): boolean {
-  try {
-    const branch = execFileSync("git", ["branch", "--show-current"], {
-      cwd: "/root/claude/mission-control",
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim();
-    return /^jarvis\/(feat|fix|refactor)\/.+$/.test(branch);
-  } catch {
-    return false;
+/**
+ * shell_exec's wording of a write-boundary refusal. Paths outside the
+ * allow-list (system dirs and the operator home included) keep the
+ * "outside allowed paths" sentence that task-gate evidence quotes
+ * (gate-check.test.ts, consumer.test.ts pin it).
+ */
+function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdict, { allowed: true }>): string {
+  switch (verdict.rule) {
+    case "immutable":
+      return `write to immutable core file blocked: ${targetPath}`;
+    case "operator-config":
+      return `write to operator config blocked: ${targetPath}`;
+    case "system-dir":
+    case "operator-home":
+    case "outside-allow-list":
+      return `write to '${targetPath}' outside allowed paths`;
+    default:
+      return `write blocked: ${verdict.reason}`;
   }
 }
-
-/** Docs files Jarvis can write on main branch (operational logs, not source code). */
-const RITUAL_WRITABLE_DOCS = ["docs/EVOLUTION-LOG.md"];
 
 const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     // Standing orders on disk (audit R2-C2): the KB root is on the write
     // allow-list, so the directives tree is denied here like file_write /
-    // code_edit deny it. Basename-bound on purpose — the guard sees command
+    // file_edit deny it. Basename-bound on purpose — the guard sees command
     // text, not a resolved path; relative writes after a `cd` stay a known
     // residual (queue).
     pattern: /\/jarvis-kb\/directives(?:\/|$)/i,
@@ -876,10 +865,11 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
       "jarvis-kb/projects/<slug>/project.md is the project's record — change a project with project_update",
   },
   {
+    // The primary checkout by text: the shared boundary refuses it as a
+    // resolved prefix; this also carries the append-only ritual-doc rule below.
     pattern: /\/root\/claude\/mission-control\//,
     reason: "Jarvis cannot modify its own source code via shell_exec",
-    // Dynamic override: allowed on jarvis/* branches (checked at runtime)
-  } as { pattern: RegExp; reason: string },
+  },
 ];
 
 /** Shell operators at the start of an unquoted token, longest spelling first. */
@@ -2979,32 +2969,14 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     // Security decisions below use this resolved path; the ritual-doc append regex
     // further down still matches the RAW target against the original command text.
     const targetPath = realResolve(value);
-    // SG3: Immutable core — blocked even on jarvis/* branches
-    if (isImmutableCorePath(targetPath).immutable) {
-      return {
-        allowed: false,
-        reason: `write to immutable core file blocked: ${targetPath}`,
-      };
+    // The shared write boundary (same decision as file_write / file_edit /
+    // file_delete), then shell_exec's own text rules below.
+    const verdict = checkWriteBoundary(targetPath, "write", getJarvisKbRoot());
+    if (!verdict.allowed) {
+      return { allowed: false, reason: shellBoundaryReason(targetPath, verdict) };
     }
-    // Deny-first: the operator's own config (.claude/ settings+hooks, .mcp.json,
-    // umbrella CLAUDE.md) lives under /root/claude/ but is not project content —
-    // rewriting it is a guardrail/command-execution vector.
-    if (isOperatorConfigPath(targetPath)) {
-      return {
-        allowed: false,
-        reason: `write to operator config blocked: ${targetPath}`,
-      };
-    }
-    // Check deny list first (mission-control is protected unless on jarvis/* branch)
     for (const deny of DENY_WRITE_PATTERNS) {
       if (deny.pattern.test(targetPath)) {
-        // Dynamic override for mission-control on jarvis/* branches
-        if (
-          targetPath.includes("/mission-control/") &&
-          isMissionControlWriteAllowed()
-        ) {
-          continue;
-        }
         // Narrow exception: ritual-writable docs (operational logs, not source).
         // APPEND-ONLY: the exemption applies only to an append redirect (`>>`).
         // A bare `>`, `tee` (overwrite), `mv`, or `cp` to one of these paths would
@@ -3044,15 +3016,6 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
         }
         return { allowed: false, reason: deny.reason };
       }
-    }
-    const isSafe = getAllowWritePrefixes().some((prefix) =>
-      targetPath.startsWith(prefix),
-    );
-    if (!isSafe) {
-      return {
-        allowed: false,
-        reason: `write to '${targetPath}' outside allowed paths`,
-      };
     }
   }
 

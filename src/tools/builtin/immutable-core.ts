@@ -11,9 +11,26 @@ import { basename as baseOf, posix, relative, resolve } from "path";
 import { realpathSync } from "fs";
 import { kernelWalk, realResolve, realResolveParent } from "./write-guard.js";
 
-const MC_ROOT = "/root/claude/mission-control/";
+/** The operator's primary checkout (operator-session territory). */
+export const MC_PRIMARY_ROOT = "/root/claude/mission-control/";
+/**
+ * Jarvis's linked worktree of the same repo: every mission-control change
+ * Jarvis makes happens here (jarvis_dev bootstraps it, git_* run here). A
+ * protected file is protected in every checkout — the worktree's copy is what
+ * a jarvis/* branch carries into a PR. The one definition of this path
+ * (jarvis-dev.ts and git.ts import it).
+ */
+export const MC_WORKTREE_ROOT = "/root/claude/mission-control-jarvis/";
+/**
+ * The nanoclaw container worker's clone of the repo (nanoclaw-worker.ts
+ * `WORKSPACE` is derived from it). file_write / file_edit run there and the
+ * worker can push from it, so protected files are protected there too.
+ */
+export const MC_CONTAINER_ROOT = "/workspace/";
+/** Every checkout of this repo on the agent's write paths; protected paths hold in all of them. */
+const MC_CHECKOUT_ROOTS = [MC_PRIMARY_ROOT, MC_WORKTREE_ROOT, MC_CONTAINER_ROOT];
 
-/** Exact file paths (relative to mission-control root). */
+/** Exact file paths (relative to each checkout root in MC_CHECKOUT_ROOTS). */
 const IMMUTABLE_FILES: string[] = [
   "src/index.ts",
   "src/config.ts",
@@ -30,10 +47,29 @@ const IMMUTABLE_FILES: string[] = [
   "src/tools/builtin/file.ts", // write guard
   "src/tools/builtin/code-editing.ts", // edit guard
   "src/tools/builtin/shell.ts", // shell guard
+  "src/tools/builtin/write-guard.ts", // symlink resolution + operator-config predicate
+  "src/tools/builtin/write-boundary.ts", // shared positional write boundary
+  // Files that hold a refusal or authority decision (operator ruling 2026-11-10).
+  "src/tools/builtin/git.ts", // git cwd allow-list, push/merge authority
+  "src/tools/builtin/jarvis-dev.ts", // worktree bootstrap + PR flow
+  "src/tools/builtin/jarvis-self-repair.ts", // self-repair instructions
+  "src/tools/builtin/cwd-lock.ts", // serialises git sequences per worktree
+  "src/tools/rule-of-two.ts", // per-tool risk rows (Rule of Two)
+  "src/lib/operator-gate.ts", // operator-only command gate
+  "src/lib/v8-4/gate-check.ts", // runs the completion-gate checks
+  "src/runners/container.ts", // nanoclaw container spawn + mounts
+  "scripts/deploy.sh", // operator deploy
+  "mc-ctl", // operator admin CLI
+  "vitest.config.ts", // decides which tests run (the test gate itself)
 ];
 
-/** Directory prefixes (relative to mission-control root) — all files under these are immutable. */
-const IMMUTABLE_PREFIXES: string[] = ["src/api/", "src/tools/builtin/pm-shim/"];
+/** Directory prefixes (relative to each checkout root) — all files under these are immutable. */
+const IMMUTABLE_PREFIXES: string[] = [
+  "src/api/",
+  "src/tools/builtin/pm-shim/",
+  ".github/", // CI workflows (the merge gate)
+  "scripts/git-hooks/", // pre-commit gate
+];
 
 /**
  * Check if an absolute path is in the immutable core.
@@ -45,8 +81,9 @@ export function isImmutableCorePath(absolutePath: string): {
   reason?: string;
 } {
   const resolved = resolve(absolutePath);
-  if (!resolved.startsWith(MC_ROOT)) return { immutable: false };
-  const rel = resolved.slice(MC_ROOT.length);
+  const root = MC_CHECKOUT_ROOTS.find((r) => resolved.startsWith(r));
+  if (!root) return { immutable: false };
+  const rel = resolved.slice(root.length);
 
   for (const file of IMMUTABLE_FILES) {
     if (rel === file) {
@@ -66,6 +103,30 @@ export function isImmutableCorePath(absolutePath: string): {
     }
   }
 
+  return { immutable: false };
+}
+
+/**
+ * A recursive delete of a DIRECTORY takes every file below it, so a directory
+ * that holds an immutable file (or is a checkout root) is as protected as the
+ * file itself. Used by the delete operation of the write boundary.
+ */
+export function holdsImmutableCorePath(absolutePath: string): {
+  immutable: boolean;
+  reason?: string;
+} {
+  const resolved = resolve(absolutePath);
+  for (const root of MC_CHECKOUT_ROOTS) {
+    if (resolved === root.slice(0, -1)) {
+      return { immutable: true, reason: `Immutable core: ${root} is a mission-control checkout` };
+    }
+    if (!resolved.startsWith(root)) continue;
+    const dir = `${resolved.slice(root.length)}/`;
+    const held = [...IMMUTABLE_FILES, ...IMMUTABLE_PREFIXES].find((p) => p.startsWith(dir));
+    if (held) {
+      return { immutable: true, reason: `Immutable core directory: ${dir} holds ${held}` };
+    }
+  }
   return { immutable: false };
 }
 
@@ -724,7 +785,7 @@ export function isProjectRecordDiskPath(
 
 /**
  * Disk-side twin of `standingOrdersGuard` for the absolute-path tools
- * (`file_write`, `file_delete`, `code_edit`). The KB mirror's `directives/` is
+ * (`file_write`, `file_delete`, `file_edit`). The KB mirror's `directives/` is
  * the operator-facing copy (synced to Drive) and kb-reindex used to import
  * disk-only paths as rows, so an editor write or a recursive delete there was
  * another door into the standing orders (audit R1-C3, R2-C2). Matches the tree

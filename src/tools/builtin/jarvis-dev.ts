@@ -20,6 +20,7 @@ import {
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
 import { withCwdLock } from "./cwd-lock.js";
+import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 
 // The test gate MUST run async: a synchronous exec blocks mission-control's
 // event loop for the whole run (the full suite took ~2 min before ruling 4
@@ -36,7 +37,7 @@ const execFileAsync = promisify(execFile);
 // flipped underfoot). Git guarantees one-branch-one-worktree, so the split
 // is structural. The primary stays operator-only.
 const PRIMARY_DIR = "/root/claude/mission-control";
-const MC_DIR = "/root/claude/mission-control-jarvis";
+const MC_DIR = MC_WORKTREE_ROOT.replace(/\/$/, "");
 const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
 
 /**

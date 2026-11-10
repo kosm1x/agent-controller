@@ -12,6 +12,7 @@ import { getDatabase } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
 import { execGroupKill } from "./shell.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+import { SELF_IMPROVEMENT_ALLOWED } from "./write-boundary.js";
 import {
   relatedScopeSummary,
   relatedTestCommand,
@@ -50,14 +51,8 @@ export async function withSuiteRunLock<T>(
   }
 }
 
-// Files Jarvis is allowed to modify (S2 scope limit)
-const ALLOWED_PATHS = [
-  "src/tools/",
-  "src/intel/",
-  "src/messaging/scope.ts",
-  "src/messaging/prompt-sections.ts",
-  "src/video/",
-];
+// The path list quoted in the repair instructions (defined in write-boundary.ts).
+const ALLOWED_PATHS = SELF_IMPROVEMENT_ALLOWED;
 
 async function currentBranch(): Promise<string> {
   try {

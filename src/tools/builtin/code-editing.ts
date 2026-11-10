@@ -20,21 +20,14 @@ import {
   mkdirSync,
   statSync,
 } from "fs";
-import { execFileSync } from "child_process";
 import { dirname } from "path";
 import type { Tool } from "../types.js";
-import {
-  isImmutableCorePath,
-  isProjectRecordDiskPath,
-  isSkillFileDiskPath,
-  isStandingOrdersDiskPath,
-  validatePathSafety,
-} from "./immutable-core.js";
+import { validatePathSafety } from "./immutable-core.js";
+import { checkWriteBoundary } from "./write-boundary.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { realResolve } from "./write-guard.js";
 import { scrubSecrets, secretSpans } from "../../lib/secret-refs.js";
 import {
-  DAY_LOG_MANAGED,
   kbRegistryPath,
   registryNewerThanDisk,
   upsertFromDiskWrite,
@@ -42,43 +35,6 @@ import {
 import { errMsg } from "../../lib/err-msg.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
-
-// Same write boundaries as file.ts — mission-control allowed on jarvis/* branches
-const DENY_EDIT_PREFIXES = ["/root/claude/mission-control/", "/root/.claude/"];
-
-// Jarvis self-improvement path restrictions (S5 safety gate)
-const SELF_IMPROVEMENT_ALLOWED = [
-  "src/tools/",
-  "src/intel/",
-  "src/messaging/scope.ts",
-  "src/messaging/prompt-sections.ts",
-  "src/video/",
-];
-
-function getJarvisBranch(): string {
-  try {
-    return execFileSync("git", ["branch", "--show-current"], {
-      cwd: "/root/claude/mission-control",
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
-function isOnJarvisBranch(): boolean {
-  return /^jarvis\/(feat|fix|refactor)\/.+$/.test(getJarvisBranch());
-}
-
-/** On jarvis/fix/* branches, restrict edits to ALLOWED_PATHS. */
-function isPathAllowedForSelfImprovement(filePath: string): boolean {
-  const branch = getJarvisBranch();
-  // Only restrict on fix branches (autonomous improvement)
-  if (!branch.startsWith("jarvis/fix/")) return true;
-  const rel = filePath.replace("/root/claude/mission-control/", "");
-  return SELF_IMPROVEMENT_ALLOWED.some((p) => rel.startsWith(p));
-}
 
 /**
  * Left-to-right non-overlapping matches of `needle` in `hay` (the same
@@ -182,54 +138,15 @@ RULES:
       return JSON.stringify({ error: `Edit blocked: ${readSafety.reason}` });
     }
 
-    // Enforce write boundaries. realpath first: writeFileSync follows a
-    // symlink, so the gates must see its target (audit 2026-09-22 R1 C2).
+    // The shared write boundary (same decision as file_write, file_delete
+    // and shell_exec). realpath first: writeFileSync follows a symlink, so the
+    // boundary must see its target (audit 2026-09-22 R1 C2).
     const resolved = realResolve(path);
-    // SG3: Immutable core — blocked even on jarvis/* branches
-    const immCheck = isImmutableCorePath(resolved);
-    if (immCheck.immutable) {
-      return JSON.stringify({
-        error: `Edit blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
-      });
-    }
-    // Standing orders on disk (audit R1-C3) — same refusal as file_write.
-    if (isStandingOrdersDiskPath(realResolve(path), getJarvisKbRoot())) {
-      return JSON.stringify({
-        error: `Edit blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
-      });
-    }
-    if (isProjectRecordDiskPath(realResolve(path), getJarvisKbRoot())) {
-      return JSON.stringify({
-        error: `Edit blocked: ${resolved} is a project record (jarvis-kb/projects/<slug>/project.md) — PROJECT_RECORD_PROTECTED: change the project with project_update`,
-      });
-    }
-    if (isSkillFileDiskPath(realResolve(path), getJarvisKbRoot())) {
-      return JSON.stringify({
-        error: `Edit blocked: ${resolved} is a skill definition — write skills/<name>/SKILL.md with jarvis_file_write, which runs the skill critic and registers the version`,
-      });
+    const verdict = checkWriteBoundary(resolved, "edit", getJarvisKbRoot());
+    if (!verdict.allowed) {
+      return JSON.stringify({ error: `Edit blocked: ${verdict.reason}` });
     }
     const kbRel = kbRegistryPath(resolved);
-    if (kbRel?.startsWith("logs/day-logs/")) {
-      return JSON.stringify({ error: `Edit blocked: ${DAY_LOG_MANAGED}` });
-    }
-    const denied = DENY_EDIT_PREFIXES.find((p) => resolved.startsWith(p));
-    if (
-      denied &&
-      !(denied === "/root/claude/mission-control/" && isOnJarvisBranch())
-    ) {
-      return JSON.stringify({
-        error: `Edit blocked: ${resolved} is protected. Jarvis cannot modify its own source code.`,
-      });
-    }
-    // S5 safety: on jarvis/fix/* branches, restrict to allowed paths
-    if (
-      resolved.startsWith("/root/claude/mission-control/") &&
-      !isPathAllowedForSelfImprovement(resolved)
-    ) {
-      return JSON.stringify({
-        error: `Edit blocked: ${resolved} is outside self-improvement scope. Allowed: ${SELF_IMPROVEMENT_ALLOWED.join(", ")}`,
-      });
-    }
     if (oldString === undefined || oldString === null)
       return JSON.stringify({ error: "old_string is required" });
     if (newString === undefined || newString === null)

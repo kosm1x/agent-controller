@@ -3,19 +3,17 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync } from "fs";
-import { execFileSync } from "child_process";
 import { dirname, extname, resolve } from "path";
 import type { Tool } from "../types.js";
 import {
-  isImmutableCorePath,
   isNorthStarDiskPath,
   NORTHSTAR_DISK_REASON,
   isProjectRecordDiskPath,
-  isSkillFileDiskPath,
   isStandingOrdersDiskPath,
   validatePathSafety,
   isDangerousRemovalPath,
 } from "./immutable-core.js";
+import { checkWriteBoundary } from "./write-boundary.js";
 import { LARGE_FILE_THRESHOLD } from "../../config/constants.js";
 import {
   parseLineRanges,
@@ -26,169 +24,31 @@ import {
 } from "../../lib/file-slicing.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import { scrubSecrets } from "../../lib/secret-refs.js";
-import {
-  DAY_LOG_MANAGED,
-  kbRegistryPath,
-  upsertFromDiskWrite,
-} from "../../db/jarvis-reindex.js";
+import { kbRegistryPath, upsertFromDiskWrite } from "../../db/jarvis-reindex.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { isEvictedPath } from "../../lib/eviction.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 import { declareReadbackGate, sha8 } from "../../lib/v8-4/readback.js";
-import {
-  realResolve,
-  realResolveParent,
-  isOperatorConfigPath,
-} from "./write-guard.js";
+import { realResolve, realResolveParent } from "./write-guard.js";
 
 /** Hard cap on a single `file_read` payload — protects against pathological
  *  slice requests (e.g. lines='1-100000' on a giant log). */
 const MAX_READ = 50_000; // chars
 
-// Jarvis write boundaries — can read anything, writes restricted to project dirs.
-// /root/claude/mission-control/ is OFF LIMITS (Jarvis's own source code).
-// Granted: project workspaces, tmp, user directories.
-// Queue #11 (2026-05-07): jarvis-kb path read dynamically via getJarvisKbRoot()
-// so JARVIS_KB_MIRROR_DIR overrides flow through tools too (tests, alt deploys).
-function getAllowWritePrefixes(): string[] {
-  return [
-    `${getJarvisKbRoot()}/`, // may resolve outside /root/claude via JARVIS_KB_MIRROR_DIR
-    "/root/claude/", // every EurekaMD/Jarvis project repo lives here; mission-control is
-    // still gated by DENY_WRITE_PREFIXES + isImmutableCorePath above (the allow-list is
-    // checked LAST), so this does not weaken its source protection. Replaces a per-repo
-    // enumeration that silently blocked writes to any repo it forgot.
-    "/tmp/",
-    "/workspace/",
-  ];
-}
-const DENY_WRITE_PREFIXES = [
-  "/root/claude/mission-control/", // dynamic — overridden on jarvis/* branches
-  "/root/.claude/",
-  "/etc/",
-  "/usr/",
-  "/var/",
-];
-
-const SELF_IMPROVEMENT_ALLOWED = [
-  "src/tools/",
-  "src/intel/",
-  "src/messaging/scope.ts",
-  "src/messaging/prompt-sections.ts",
-  "src/video/",
-];
-
-/** Docs files Jarvis can write on main branch (operational logs, not source code). */
-const RITUAL_WRITABLE_DOCS = ["docs/EVOLUTION-LOG.md"];
-
-function getJarvisBranchFile(): string {
-  try {
-    return execFileSync("git", ["branch", "--show-current"], {
-      cwd: "/root/claude/mission-control",
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
-function isOnJarvisBranch(): boolean {
-  return /^jarvis\/(feat|fix|refactor)\/.+$/.test(getJarvisBranchFile());
-}
-
+// Jarvis can read anything; where it may write is the shared boundary in
+// write-boundary.ts (same decision as file_edit, file_delete and shell_exec).
 function isWriteAllowed(path: string): { allowed: boolean; reason?: string } {
   // Path safety pipeline (Claude Code pattern): TOCTOU, shell expansion, dangerous files
   const safety = validatePathSafety(path, "write");
   if (!safety.safe) {
     return { allowed: false, reason: `Write blocked: ${safety.reason}` };
   }
-
   // realpath first so a symlink inside an allowed dir can't smuggle the write
-  // outside the deny/immutable/allow gates.
-  const resolved = realResolve(path);
-  // SG3: Immutable core — blocked even on jarvis/* branches
-  const immCheck = isImmutableCorePath(resolved);
-  if (immCheck.immutable) {
-    return {
-      allowed: false,
-      reason: `Write blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
-    };
-  }
-  // Deny-first: the operator's own config (.claude/ settings+hooks, .mcp.json,
-  // umbrella CLAUDE.md) lives under /root/claude/ but is not project content —
-  // rewriting it is a guardrail/command-execution vector.
-  if (isOperatorConfigPath(resolved)) {
-    return {
-      allowed: false,
-      reason: `Write blocked: ${resolved} is operator config (Claude Code settings/hooks, MCP config, or umbrella CLAUDE.md), not project content.`,
-    };
-  }
-  // Standing orders on disk (audit R1-C3): refuse jarvis-kb/directives/ exactly
-  // like the KB file tools do — the disk copy is operator-facing and used to be
-  // re-imported as a live row by the hourly kb-reindex.
-  if (isStandingOrdersDiskPath(resolved, getJarvisKbRoot())) {
-    return {
-      allowed: false,
-      reason: `Write blocked: ${resolved} is a standing order (jarvis-kb/directives/) — changes go through jarvis_propose_directive`,
-    };
-  }
-  // NorthStar retired (2026-11-03): the disk mirror is refused like the KB tools refuse it.
-  if (isNorthStarDiskPath(resolved, getJarvisKbRoot())) {
-    return { allowed: false, reason: `Write blocked: ${NORTHSTAR_DISK_REASON}` };
-  }
-  // S6 WS1: a project record is changed only through project_update.
-  if (isProjectRecordDiskPath(resolved, getJarvisKbRoot())) {
-    return {
-      allowed: false,
-      reason: `Write blocked: ${resolved} is a project record (jarvis-kb/projects/<slug>/project.md) — PROJECT_RECORD_PROTECTED: change the project with project_update`,
-    };
-  }
-  if (isSkillFileDiskPath(resolved, getJarvisKbRoot())) {
-    return {
-      allowed: false,
-      reason: `Write blocked: ${resolved} is a skill definition — write skills/<name>/SKILL.md with jarvis_file_write, which runs the skill critic and registers the version`,
-    };
-  }
-  for (const deny of DENY_WRITE_PREFIXES) {
-    if (resolved.startsWith(deny)) {
-      // Dynamic override for mission-control on jarvis/* branches
-      if (deny === "/root/claude/mission-control/" && isOnJarvisBranch()) {
-        continue;
-      }
-      // Narrow exception: ritual-writable docs (operational logs, not source)
-      if (deny === "/root/claude/mission-control/") {
-        const rel = resolved.replace("/root/claude/mission-control/", "");
-        if (RITUAL_WRITABLE_DOCS.includes(rel)) {
-          continue;
-        }
-      }
-      return {
-        allowed: false,
-        reason: `Write blocked: ${deny} is protected. Jarvis cannot modify its own source code or system files.`,
-      };
-    }
-  }
-  // S5 safety: on jarvis/fix/* branches, restrict to allowed paths
-  if (resolved.startsWith("/root/claude/mission-control/")) {
-    const branch = getJarvisBranchFile();
-    if (branch.startsWith("jarvis/fix/")) {
-      const rel = resolved.replace("/root/claude/mission-control/", "");
-      if (!SELF_IMPROVEMENT_ALLOWED.some((p) => rel.startsWith(p))) {
-        return {
-          allowed: false,
-          reason: `Write blocked: outside self-improvement scope. Allowed: ${SELF_IMPROVEMENT_ALLOWED.join(", ")}`,
-        };
-      }
-    }
-  }
-  const allowPrefixes = getAllowWritePrefixes();
-  if (allowPrefixes.some((p) => resolved.startsWith(p))) {
-    return { allowed: true };
-  }
-  return {
-    allowed: false,
-    reason: `Write blocked: ${resolved} is outside Jarvis's allowed write directories. Allowed: ${allowPrefixes.join(", ")}`,
-  };
+  // outside the boundary.
+  const verdict = checkWriteBoundary(realResolve(path), "write", getJarvisKbRoot());
+  return verdict.allowed
+    ? { allowed: true }
+    : { allowed: false, reason: `Write blocked: ${verdict.reason}` };
 }
 
 /** Convert .docx to plain text using mammoth (lazy-loaded). */
@@ -442,9 +302,6 @@ AFTER WRITING: Report the file path written.`,
       return JSON.stringify({ error: writeCheck.reason });
     }
     const kbRel = kbRegistryPath(realResolve(path));
-    if (kbRel?.startsWith("logs/day-logs/")) {
-      return JSON.stringify({ error: `Write blocked: ${DAY_LOG_MANAGED}` });
-    }
 
     try {
       mkdirSync(dirname(path), { recursive: true });
@@ -482,13 +339,6 @@ AFTER WRITING: Report the file path written.`,
     }
   },
 };
-
-// ---------------------------------------------------------------------------
-// Allowed paths for deletion — same as shell_exec write prefixes
-// ---------------------------------------------------------------------------
-
-// Delete uses same boundaries as write
-const getAllowDeletePrefixes = getAllowWritePrefixes;
 
 export const fileDeleteTool: Tool = {
   name: "file_delete",
@@ -570,24 +420,17 @@ CAUTION: This is irreversible. Verify the path is correct before calling.`,
     // (audit 2026-09-22 R1, R2 C2).
     const absPath = realResolveParent(rawPath);
 
-    // SG3: Immutable core — blocked even on jarvis/* branches
-    const immCheck = isImmutableCorePath(absPath);
-    if (immCheck.immutable) {
-      return JSON.stringify({
-        error: `Deletion blocked: ${immCheck.reason}. This file cannot be modified by Jarvis.`,
-      });
+    // The shared write boundary, delete semantics (a directory that holds a
+    // protected path is protected too).
+    const kbRoot = getJarvisKbRoot();
+    const verdict = checkWriteBoundary(absPath, "delete", kbRoot);
+    if (!verdict.allowed) {
+      return JSON.stringify({ error: `Deletion blocked: ${verdict.reason}` });
     }
 
-    // Safety: only allow deletion under known safe prefixes, at least 1 level deep
-    const allowDeletePrefixes = getAllowDeletePrefixes();
-    const matchedPrefix = allowDeletePrefixes.find((p) =>
-      absPath.startsWith(p),
-    );
-    if (!matchedPrefix) {
-      return JSON.stringify({
-        error: `Deletion blocked: '${absPath}' is outside allowed paths (${allowDeletePrefixes.join(", ")})`,
-      });
-    }
+    // Delete-specific: at least 1 level below the allow-list entry that
+    // admitted the path.
+    const matchedPrefix = verdict.prefix;
     // Prevent deleting the prefix root or top-level project directories
     const relative = absPath.slice(matchedPrefix.length);
     if (!relative || relative === "/") {
