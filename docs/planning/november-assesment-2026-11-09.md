@@ -245,7 +245,7 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 
 | Dimension | Opened | Review | Rulings | Shipped | Re-score |
 | --- | --- | --- | --- | --- | --- |
-| 1 Code | 2026-11-09 | done 2026-11-09 23:13 UTC → `november-assesment-code-review-2026-11-09.md` (8 sub-dimensions, each reviewed, re-checked and refuted) | 15 pending | — | — |
+| 1 Code | 2026-11-09 | done 2026-11-09 23:13 UTC → `november-assesment-code-review-2026-11-09.md` (8 sub-dimensions, each reviewed, re-checked and refuted) | 15 ruled 2026-11-10 15:07 UTC, all as recommended | — | — |
 | 2 Performance | — | — | — | — | — |
 | 3 Resilience | — | — | — | — | — |
 | 4 Memory | — | — | — | — | — |

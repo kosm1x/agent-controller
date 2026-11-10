@@ -58,6 +58,28 @@ Fifteen decisions. Each has a recommendation; "no ruling needed" work is listed 
 | 14 | Three redaction helpers each miss pattern classes the others have. Unifying changes the labels in stored recall rows. | unify / leave | **unify** |
 | 15 | One paid eval-gate run for all model-visible fixes together (batch 10). | schedule after batches 1–4 / skip | **schedule once**, after the behaviour fixes |
 
+## Rulings
+
+Ruled by the operator on 2026-11-10 at 15:07 UTC, in one answer: **all fifteen as recommended**, build to start.
+
+| # | Ruling |
+| --- | --- |
+| 1 | **go** — the security batch is built first |
+| 2 | **accept** — guard files become operator-session work only |
+| 3 | **later** — separate GitHub identity for the agent stays open, no date |
+| 4 | **clean current files and untrack the three directories**; no history rewrite (it stays a separate operator decision) |
+| 5 | **refuse** a dirty working tree at deploy (`--allow-dirty` overrides) |
+| 6 | **yes** — automatic database snapshot before a migrating deploy |
+| 7 | **keep** the full suite at host commit, **plus** the memory fence and the docs-coupled tests |
+| 8 | **now** — the emergency inference path drill is part of this dimension |
+| 9 | **(b)** — cycle cuts, ratchet and pure moves; (c) only after the tests of batches 5 and 6 exist |
+| 10 | **(a) leave** the low-activity areas; narrow the CI video exclusion (Q10) |
+| 11 | **remove all** — the 30 unreferenced exports and the four named dead symbols |
+| 12 | **(b)** — "why, not when" for new and touched comments; no mass rewrite |
+| 13 | **run in the worktree** |
+| 14 | **unify** the three redaction helpers |
+| 15 | **schedule once** — one eval-gate run after the behaviour fixes |
+
 ## Batches
 
 Sizes: S = under a day, M = one to three days, including audit. Every code batch ships as usual: builder → separate auditor → full suite at commit → CI → operator deploy → proof.
@@ -206,4 +228,4 @@ Not worth doing: stripping or mass-rewriting history tags; moving incident histo
 
 ## Next
 
-Operator rules on the fifteen decisions. Build starts with batch 1. Dimension 2 (Performance) opens when the code batches the operator selects are shipped and proven, or earlier if the operator says so.
+Ruled 2026-11-10 (section "Rulings"). Build order = queue item 4ch, starting with batch 1. Dimension 2 (Performance) opens when the code batches the operator selects are shipped and proven, or earlier if the operator says so.
