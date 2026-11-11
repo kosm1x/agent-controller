@@ -2794,6 +2794,49 @@ export function checkPrimaryMcGitMutation(
 }
 
 /**
+ * Merge authority (operator ruling 2026-11-10): merging, approving and changing branch protection are the
+ * operator's actions. A tripwire for plainly written forms; the hosting side holds the barrier. In a segment
+ * with a word whose basename is `gh`, it refuses the later words `pr merge`, `pr review` with `--approve`/`-a`
+ * after them, or `api` with a merge, approval, protection, ruleset or collaborator target after it. Words are
+ * psqlRawTokens' (a quoted span is one word, compared without its quotes); an unquoted word is cut into
+ * segments by SEGMENT_SPLIT_RE.
+ */
+const MERGE_AUTHORITY_REASON =
+  "merging, approving and changing branch protection are the operator's actions — open or update the pull request and report its link instead";
+const MERGE_AUTHORITY_API_RE = /\/merge|\/protection|\/rulesets|\/collaborators|mergePullRequest|enablePullRequestAutoMerge|event=APPROVE/i;
+function checkMergeAuthority(command: string): string | null {
+  let words: string[] = [];
+  const segments = [words];
+  // A line continuation, a tab and a carriage return separate words like a space.
+  for (const token of psqlRawTokens(command.replace(/\\\r?\n/g, " ").replace(/[\t\r]/g, " "))) {
+    (/['"]/.test(token) ? [token] : token.split(SEGMENT_SPLIT_RE)).forEach((piece, k) => {
+      if (k > 0) segments.push((words = []));
+      const word = piece.replace(/["'\\]/g, "").replace(/^[({]+|[)}]+$/g, "");
+      if (word) words.push(word);
+    });
+  }
+  for (const w of segments) {
+    const gh = w.findIndex((x) => x.replace(/^.*\//, "") === "gh");
+    if (gh < 0) continue;
+    // One forward pass: once `pr review` or `api` has been seen, every later word is "after" it.
+    let review = false;
+    let api = false;
+    for (let i = gh + 1; i < w.length; i++) {
+      const x = w[i]!;
+      if (review && (x === "--approve" || x === "-a")) return MERGE_AUTHORITY_REASON;
+      if (api && MERGE_AUTHORITY_API_RE.test(x)) return MERGE_AUTHORITY_REASON;
+      if (x === "pr" && w[i + 1] === "merge") return MERGE_AUTHORITY_REASON;
+      if (x === "pr" && w[i + 1] === "review") {
+        review = true;
+        i++;
+      }
+      if (x === "api") api = true;
+    }
+  }
+  return null;
+}
+
+/**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
  */
@@ -2858,6 +2901,11 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
   const pmRawViolation = checkPackageManagerRaw(command, undefined, { docker: !opts.reentry });
   if (pmRawViolation) {
     return { allowed: false, reason: pmRawViolation };
+  }
+  // A `bash -c`/`sh -c`/`eval` string reaches this check through the package-manager gate's re-validation.
+  const mergeAuthority = checkMergeAuthority(sanitized);
+  if (mergeAuthority) {
+    return { allowed: false, reason: mergeAuthority };
   }
 
   // Every assignment in the command, for the deny-verb check (audit R2 W1); computed once: linear.
