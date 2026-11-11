@@ -154,6 +154,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 4 — Failures become visible (no ruling needed)
 
+**Status 2026-11-11 19:28 UTC — fourth wave COMMITTED `cf363d67` (queue 4dr), not yet deployed: dropped prompt blocks are counted and traced; nothing the model reads changes. Two review rounds. Left in this batch: trace events for router and fast-runner decisions (router part building), the comment clean-up, the ratchet.**
+
 **Status 2026-11-11 18:38 UTC — third wave COMMITTED `ccef640e` (queue 4dp), not yet deployed: provider-failing alert rule, outbound send-failure counter, two cost-row write sites, a test over the rules file. Two review rounds. Fourth wave (prompt blocks that vanish) is building.**
 
 **Status 2026-11-11 10:06 UTC — second wave COMMITTED `9b14beaa` (queue 4dn), not yet deployed: failed scheduled jobs are recorded and alert like a missed run, no job detaches its promise, ten self-catching jobs count their failures. Two review rounds, round 2 passed. One ruling opened (should those ten jobs alert). Third wave (provider alert rule, outbound send counter, two cost-row sites) is in review.**
@@ -198,6 +200,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; local sharding.
 
 ### Batch 6 — Emergency inference path drill (ruling 8)
+
+**Status 2026-11-11 19:28 UTC — piece A COMMITTED `78f1bebf` (queue 4ds), not yet deployed: the OpenAI-compatible adapter names an open breaker, counts the rounds that ran, keeps streamed usage; untested branches pinned. Piece B (the fast runner's retry and hand-over legs) is building; the mocked drill follows; the paid drill stays a later operator decision.**
 
 **Status 2026-11-11 02:55 UTC — re-checked by a read-only reviewer (queue 4cz): all five defects present, a sixth probable (usage figures on streamed replies); the drill is planned as a fully mocked end-to-end test; a paid test against the real provider is a separate operator decision.**
 

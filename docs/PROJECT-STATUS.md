@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 19:28 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 four waves `ba5d334e` + `9b14beaa` + `ccef640e` + `cf363d67`, batch 6 piece A `78f1bebf`; queue 4dh–4ds; the second shell write check commit waits for a ruling (4dq); after the next deploy the monitoring container must be restarted to load the new alert rule; LIVE build is still `555c888f`)
+
 > Last updated: 2026-11-11 18:38 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 first three waves `ba5d334e` + `9b14beaa` + `ccef640e`; queue 4dh–4dq; the second shell write check commit waits for a ruling (4dq); after the next deploy the monitoring container must be restarted to load the new alert rule; LIVE build is still `555c888f`)
 
 > Last updated: 2026-11-11 10:06 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 first two waves `ba5d334e` + `9b14beaa`; queue 4dh–4do; the read-only command replay waits for the second shell write check commit, then the deploy; after it a scheduled job that fails outright alerts the owner, and the journal shows errors and warnings at their real level; LIVE build is still `555c888f`)
