@@ -152,6 +152,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 4 — Failures become visible (no ruling needed)
 
+**Status 2026-11-11 10:06 UTC — second wave COMMITTED `9b14beaa` (queue 4dn), not yet deployed: failed scheduled jobs are recorded and alert like a missed run, no job detaches its promise, ten self-catching jobs count their failures. Two review rounds, round 2 passed. One ruling opened (should those ten jobs alert). Third wave (provider alert rule, outbound send counter, two cost-row sites) is in review.**
+
 **Status 2026-11-11 08:21 UTC — first wave COMMITTED `ba5d334e` (queue 4dm), not yet deployed: bus subscriber failures logged, journal priority for console errors and warnings, failed best-effort writes counted. Two review rounds, round 2 passed. Next: scheduled jobs, the provider alert rule, router and dispatcher sites, prompt blocks, trace events, comments, ratchet.**
 
 **Status 2026-11-11 02:55 UTC — re-checked by a read-only reviewer (queue 4cy): all eight items open; recounts: comment-only catches 264, silence-justifying comments 15 plus 2 borderline (the 23 below could not be reproduced). One ruling is asked (page or only record the failures of ten background jobs); built after batch 3.**
