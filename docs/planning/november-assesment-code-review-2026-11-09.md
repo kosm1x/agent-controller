@@ -125,20 +125,24 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-11 02:55 UTC — re-checked against the code by a read-only reviewer: none of the 17 is fixed yet and four are wider than first described (V2, L3, X3, D7). Fourteen need no ruling and are built after the pending deploy; V2, D8 and D3 wait for rulings (queue 4cx).**
+
 | Id | Defect | Size |
 | --- | --- | --- |
-| V2 | **False success mark.** After the operator approves an action, a failure is shown as "✅ … ejecutado" when the tool reports it as plain text or under a key other than `error` (6 of 18 confirmation-required tools: deploy, apply-proposal, structured PDF ingest, skill run, the dev test step, batch delete). The card then counts as succeeded: later items on it run and the original request resumes. | S–M |
+| V2 | **False success mark.** After the operator approves an action, a failure is shown as "✅ … ejecutado" when the tool reports it as plain text or under a key other than `error` (7 of 18 confirmation-required tools at the 2026-11-11 recount: deploy, apply-proposal, structured PDF ingest, skill run, the dev test step, batch delete, and memory-forget on a partial failure). The card then counts as succeeded: later items on it run and the original request resumes. | S–M |
 | L1 | `cancelTask` can flip a `completed_with_concerns` task to `cancelled` (its terminal set omits that status; 1,106 of 4,778 tasks have it). | S |
 | X1 | A run that fails the required-tools check books no cost (returns before the ledger write) — the only ledger gap in 30 days. | S |
 | X2 | Corrupted warning glyph in the background-agent limit message. | S |
 | X3 | The fast-path reply skips the deliverable sanitizer (0 uses in 30 days). | S |
 | D5, D8, D9 | Byte-identical critic-verdict parser (56 lines) → one home; four copies of an output-path validator; an SMTP fix that landed only in the copy. | S each |
-| L3, L5, L7 | One raw cron registration; a budget default that contradicts config; database work outside its `try`. | S each |
+| L3, L5, L7 | Three raw cron registrations in two modules (2026-11-11 recount); a budget default that contradicts config; database work outside its `try`. | S each |
 | D3 | The agent's own test tool checks the primary checkout, not the worktree that holds its edits (ruling 13; 4 calls ever). | S |
 | D7 | The usage merge on the auth-retry path drops cache tokens (alternate inference path only). | S |
 | X5, X6, X8, V11 | Stop path: stop calls outside any `try`, one stop function never called, a listener never removed, a singleton set before its tables exist. | S |
 
 ### Batch 4 — Failures become visible (no ruling needed)
+
+**Status 2026-11-11 02:55 UTC — re-checked by a read-only reviewer (queue 4cy): all eight items open; recounts: comment-only catches 264, silence-justifying comments 15 plus 2 borderline (the 23 below could not be reproduced). One ruling is asked (page or only record the failures of ten background jobs); built after batch 3.**
 
 Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next to 60 console lines with error wording. Failures are written, not counted.
 
@@ -174,6 +178,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; local sharding.
 
 ### Batch 6 — Emergency inference path drill (ruling 8)
+
+**Status 2026-11-11 02:55 UTC — re-checked by a read-only reviewer (queue 4cz): all five defects present, a sixth probable (usage figures on streamed replies); the drill is planned as a fully mocked end-to-end test; a paid test against the real provider is a separate operator decision.**
 
 Armed, never fired. Five defects on it (a retried write that succeeds is reported as not completed → the user resends → duplicate write; spend of the primary attempts lost from the ledger when it engages; a retry leg that ignores cancellation; a round counter that misreports early exits to the model; a breaker-open message that hides the cause) and four branches no test reaches (413 retry, the alternate provider call, the stream parser, the escalation switch). Fix + pin together. M.
 
