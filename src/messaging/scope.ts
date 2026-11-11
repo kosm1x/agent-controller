@@ -30,6 +30,7 @@ export const CORE_TOOLS = [
   "data_summarize", // Always available — deterministic counts/stats over CSV/JSONL/markdown (usability Phase 3.1)
   "list_dir", // Always available — browse VPS filesystem when user says "local"
   "task_history", // Always available — LLM can query its own past executions
+  "ritual_read", // Always available — full text of past rituals / scheduled reports (task_history previews 500 chars)
   "jarvis_file_read", // NorthStar visions/goals live here
   "jarvis_file_list", // List files in Jarvis file system
 ];

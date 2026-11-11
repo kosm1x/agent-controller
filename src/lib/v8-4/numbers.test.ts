@@ -514,3 +514,10 @@ describe("jina_search (2026-10-22)", () => {
     expect(CHECKABLE_SOURCE_RE.test("jina_search precio del plan")).toBe(true);
   });
 });
+
+describe("ritual_read", () => {
+  it("a read-back of the agent's own stored text is not evidence", () => {
+    expect(EVIDENCE_TOOL_RE.test("ritual_read")).toBe(false);
+    expect(CHECKABLE_SOURCE_RE.test("ritual_read cierre del 10")).toBe(false);
+  });
+});

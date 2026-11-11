@@ -397,7 +397,8 @@ describe("MCP annotation coverage (v7.6 Spine 4)", () => {
     // 2026-10-06: 194 → 193 (northstar_sync retired with the COMMIT app).
     // 2026-10-15: 193 → 194 (expand_read — Expand fetch + Highlights with citation links).
     // 2026-10-22: 194 → 195 (jina_search — Jina search with optional page text, queue 4ah).
-    expect(ALL_TOOLS.length).toBe(195);
+    // 2026-11-11: 195 → 196 (ritual_read — full text of past rituals / scheduled reports).
+    expect(ALL_TOOLS.length).toBe(196);
   });
 
   // ──────────────────────────────────────────────────────────────────

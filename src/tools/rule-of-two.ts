@@ -217,6 +217,7 @@ export const RULE_OF_TWO_CLASSIFICATION: Readonly<
   project_list: B,
   project_update: B,
   task_history: B,
+  ritual_read: B, // same class as task_history: the agent's own stored output
   batch_decompose: B,
   submit_report: B,
   dashboard_generate: B,

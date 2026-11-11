@@ -51,6 +51,7 @@ const READ_ONLY_TOOLS = new Set([
   "project_list",
   "project_get",
   "task_history",
+  "ritual_read",
   "crm_query",
   "jarvis_file_read",
   "jarvis_file_list",

@@ -336,6 +336,15 @@ describe("R4 audit pins", () => {
     });
   });
 
+  it("ritual_read: a read-back of the agent's own stored text is not evidence", () => {
+    seedTask("t-ritual", "x");
+    enterRunToolContext("t-ritual", () => {
+      expect(fuenteIsCheckable("ritual_read nightly-close")).toBe(false);
+      recordRunTool("ritual_read");
+      expect(fuenteIsCheckable("ritual_read nightly-close")).toBe(false);
+    });
+  });
+
   it("trace attrs: artifact and fuente are redacted BEFORE their 120/80-char cuts", () => {
     // Built at runtime — no key-shaped literal in the (public) repo.
     const key = "AIza" + "b".repeat(35);

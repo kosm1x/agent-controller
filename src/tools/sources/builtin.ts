@@ -76,6 +76,7 @@ import {
   geminiAudioOverviewTool,
 } from "../builtin/gemini-research.js";
 import { taskHistoryTool } from "../builtin/task-history.js";
+import { ritualReadTool } from "../builtin/ritual-read.js";
 import { crmQueryTool } from "../builtin/crm-query.js";
 import {
   jarvisFileReadTool,
@@ -262,6 +263,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   geminiResearchTool,
   geminiAudioOverviewTool,
   taskHistoryTool,
+  ritualReadTool,
   intelQueryTool,
   intelStatusTool,
   intelAlertHistoryTool,
