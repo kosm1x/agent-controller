@@ -187,6 +187,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-11 03:31 UTC — re-checked by a read-only reviewer with a parse-only import graph (queue 4dc): cycles unchanged (25 / 8 / 4 / 2 files), mutual directory pairs 60 (57 at the review); the failure recorder moves first because batch 4 needs it; seven of the listed moves are pure, six wait (A2, A4, B3, C1, D1, F1).**
+
 Prerequisites for ANY file move (new in this review): seven source-text test pins and three module-path mocks that break on a move; scripts are not typechecked, so a dropped re-export fails silently; the protected-file list is by exact path, so every new file is added in the same commit; model-visible strings must move byte-identical (a string-multiset identity check is each slice's done-check); moves land right after an agent merge.
 
 | Id | Change | Effect | Size |
