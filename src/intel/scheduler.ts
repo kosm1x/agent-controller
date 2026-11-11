@@ -13,6 +13,7 @@ import { evaluateDeltas, shouldSuppress, createAlert } from "./alert-router.js";
 import { deliverPendingAlerts } from "./alert-delivery.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scheduleCron } from "../lib/cron.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -153,6 +154,7 @@ export function startIntelCollectors(): void {
       } catch (err) {
         // writeWithRetry rethrows after its retries; an uncaught throw here
         // would take the whole service down via the uncaughtException handler.
+        noteJobFailure("intel-signal-prune", err);
         console.warn(`[intel] Signal pruning failed (non-fatal): ${String(err)}`);
       }
     },

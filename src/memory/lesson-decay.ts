@@ -203,7 +203,7 @@ export function registerDecayCron(): void {
     "lesson-decay",
     "0 2 * * 0",
     () => {
-      runDecaySweep().catch((err) => {
+      return runDecaySweep().catch((err) => {
         console.warn(
           "[lesson-decay] Cron sweep failed:",
           errMsg(err),
@@ -218,16 +218,18 @@ export function registerDecayCron(): void {
     "retention-nightly",
     "0 3 * * *",
     () => {
-      runRetentionSweep().catch((err) => {
-        console.warn(
-          "[retention] Nightly sweep failed:",
-          errMsg(err),
-        );
-      });
-      // S4: Force INDEX.md regen if stale
-      import("../db/jarvis-index.js")
-        .then(({ regenerateIndex }) => regenerateIndex())
-        .catch(() => {});
+      return Promise.all([
+        runRetentionSweep().catch((err) => {
+          console.warn(
+            "[retention] Nightly sweep failed:",
+            errMsg(err),
+          );
+        }),
+        // S4: Force INDEX.md regen if stale
+        import("../db/jarvis-index.js")
+          .then(({ regenerateIndex }) => regenerateIndex())
+          .catch(() => {}),
+      ]);
     },
     { timezone: "America/Mexico_City" },
   );

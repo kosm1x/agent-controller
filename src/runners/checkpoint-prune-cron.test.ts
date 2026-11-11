@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import client from "prom-client";
 
 // Mock both prune functions so we exercise the cron wrapper in isolation.
 // Pattern mirrors the in-test mocks used by other runner-side wrappers
@@ -70,7 +71,34 @@ describe("runCheckpointPrune", () => {
     });
     expect(() => runCheckpointPrune(SILENT)).not.toThrow();
   });
+
+  it("a prune that throws → the tick returns and mc_job_failures_total{job=checkpoint-prune} goes up by one", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockPruneCheckpoints.mockImplementation(() => {
+      throw new Error("simulated DB lock");
+    });
+    const before = await jobFailures("checkpoint-prune");
+    expect(runCheckpointPrune(SILENT)).toEqual({ snapshots: 0, checkpoints: 0 });
+    expect(await jobFailures("checkpoint-prune")).toBe(before + 1);
+  });
+
+  it("a snapshot prune that throws → the tick returns and mc_job_failures_total{job=checkpoint-prune} goes up by one", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockPruneSnapshots.mockImplementation(() => {
+      throw new Error("simulated DB lock");
+    });
+    const before = await jobFailures("checkpoint-prune");
+    expect(runCheckpointPrune(SILENT)).toEqual({ snapshots: 0, checkpoints: 0 });
+    expect(await jobFailures("checkpoint-prune")).toBe(before + 1);
+  });
 });
+
+async function jobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}
 
 describe("registerCheckpointPruneCron", () => {
   it("is idempotent — calling twice stops the prior job first", () => {

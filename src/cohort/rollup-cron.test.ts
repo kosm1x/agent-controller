@@ -1,5 +1,5 @@
 import client from "prom-client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import {
   registerCohortRollupCron,
@@ -30,6 +30,7 @@ beforeEach(() => {
 afterEach(() => {
   stopCohortRollupCron();
   closeDatabase();
+  vi.restoreAllMocks();
 });
 
 function seedProject(id: string, name: string): void {
@@ -88,6 +89,18 @@ describe("runCohortRollup", () => {
     const errAfter =
       (await metricValue("mc_cohort_rollup_total", { result: "error" })) ?? 0;
     expect(errAfter).toBeGreaterThan(errBefore);
+  });
+
+  it("a failed roll-up counts one mc_job_failures_total{job=cohort-rollup}", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const before =
+      (await metricValue("mc_job_failures_total", { job: "cohort-rollup" })) ?? 0;
+    closeDatabase(); // next roll-up fails
+    expect(runCohortRollup(SILENT)).toBeNull();
+    initDatabase(":memory:"); // for afterEach
+    expect(
+      await metricValue("mc_job_failures_total", { job: "cohort-rollup" }),
+    ).toBe(before + 1);
   });
 });
 

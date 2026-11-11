@@ -17,6 +17,7 @@ import { probeAllAccounts } from "./index.js";
 import { getXProbeCron } from "./config.js";
 import type { RouterProbe } from "./types.js";
 import { errMsg } from "../err-msg.js";
+import { noteJobFailure } from "../../observability/failure-counters.js";
 
 export interface XProbeLog {
   info: (msg: string) => void;
@@ -76,6 +77,7 @@ export async function runXProbeTick(deps: XProbeTickDeps): Promise<void> {
       }
     }
   } catch (err) {
+    noteJobFailure("x-health-probe", err);
     log.warn(`[x-probe] tick failed (non-fatal): ${errMsg(err)}`);
   }
 }
@@ -111,7 +113,7 @@ function tickWithRealDeps(log: XProbeLog): Promise<void> {
 export function registerXProbeCron(log: XProbeLog = NOOP_LOG): boolean {
   stopXProbeCron();
   const schedule = getXProbeCron();
-  scheduledJob = scheduleCron("x-health-probe", schedule, () => void tickWithRealDeps(log), {
+  scheduledJob = scheduleCron("x-health-probe", schedule, () => tickWithRealDeps(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(`registered X probe cron (${schedule}, ${RITUALS_TIMEZONE})`);

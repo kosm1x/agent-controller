@@ -77,7 +77,7 @@ export function registerSkillsTestSweepCron(
     "skills-test-sweep",
     SWEEP_CRON,
     () =>
-      void runSkillsTestSweep(log).catch((err) => {
+      runSkillsTestSweep(log).catch((err) => {
         log.warn("sweep tick failed", {
           error: errMsg(err),
         });

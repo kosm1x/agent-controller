@@ -3,6 +3,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import client from "prom-client";
+
+async function jobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}
 
 // Mock the adapter registry
 vi.mock("./adapters/index.js", () => ({
@@ -106,6 +114,19 @@ describe("intel scheduler", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("Signal pruning failed"),
     );
+  });
+
+  it("a throwing pruner counts one mc_job_failures_total{job=intel-signal-prune}", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockPruneOldSignals.mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    startIntelCollectors();
+    const prune = cronJobs.filter((j) => j.id === "intel-signal-prune").at(-1)!;
+    const before = await jobFailures("intel-signal-prune");
+    expect(() => prune.fn()).not.toThrow();
+    expect(await jobFailures("intel-signal-prune")).toBe(before + 1);
   });
 
   it("pruner is a wall-clock daily cron, stopped on shutdown (a boot-relative 24 h interval rarely fired)", () => {

@@ -23,6 +23,7 @@ import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { handleTaskCompleted } from "./n-turn.js";
 import { runMorningSurface } from "./morning-surface.js";
 import { runIdleDetectCheck } from "./idle-detect.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 
 const jobs: ScheduledTask[] = [];
 
@@ -52,7 +53,7 @@ export function startTriggers(): void {
     );
   }
   jobs.push(
-    scheduleCron("morning-surface", morningExpr, () => void runMorningSurface(), {
+    scheduleCron("morning-surface", morningExpr, () => runMorningSurface(), {
       timezone: RITUALS_TIMEZONE,
     }),
   );
@@ -68,8 +69,9 @@ export function startTriggers(): void {
       "idle-detect",
       IDLE_DETECT_CRON,
       () =>
-        void runIdleDetectCheck().catch((err) => {
+        runIdleDetectCheck().catch((err) => {
           console.error("[triggers] idle-detect check failed:", err);
+          noteJobFailure("idle-detect", err);
         }),
       { timezone: RITUALS_TIMEZONE },
     ),

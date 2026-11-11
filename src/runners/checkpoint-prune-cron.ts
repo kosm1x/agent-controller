@@ -24,6 +24,7 @@ import { pruneExpiredSnapshots } from "../prometheus/snapshot.js";
 import { pruneExpiredCheckpoints } from "./checkpoint.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { errMsg } from "../lib/err-msg.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -89,6 +90,7 @@ export function runCheckpointPrune(log: PruneLog = DEFAULT_LOG): {
   try {
     snapshots = pruneExpiredSnapshots();
   } catch (err) {
+    noteJobFailure("checkpoint-prune", err);
     log.warn("pruneExpiredSnapshots threw (contract violation)", {
       error: errMsg(err),
     });
@@ -96,6 +98,7 @@ export function runCheckpointPrune(log: PruneLog = DEFAULT_LOG): {
   try {
     checkpoints = pruneExpiredCheckpoints();
   } catch (err) {
+    noteJobFailure("checkpoint-prune", err);
     log.warn("pruneExpiredCheckpoints threw (contract violation)", {
       error: errMsg(err),
     });

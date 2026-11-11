@@ -48,6 +48,18 @@ vi.mock("./evaluator.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./push.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./push.js")>();
+  return {
+    ...actual,
+    loadNewlyEmittedP0Alerts: vi.fn(actual.loadNewlyEmittedP0Alerts),
+  };
+});
+
+// The push step asks the messaging layer for its router; no test loads the
+// real channels.
+vi.mock("../../messaging/index.js", () => ({ getRouter: vi.fn(() => null) }));
+
 beforeEach(() => {
   initDatabase(":memory:");
 });
@@ -109,6 +121,13 @@ async function readEvalErrCount(
   return m ? Number(m[1]) : 0;
 }
 
+async function readJobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}
+
 describe("recordS3EvaluatorError counter — runCadenceTick integration", () => {
   it("bumps {cadence, kind='signal'} when evaluateSignal throws", async () => {
     seedSignal("nightly");
@@ -130,11 +149,21 @@ describe("recordS3EvaluatorError counter — runCadenceTick integration", () => 
     const { noticeError } = await import("./scheduler.js");
     const before = await readEvalErrCount("hourly", "tick");
     // noticeError is async-awaitable so tests can lock the dynamic-import
-    // path; the production caller in registerS3CronJobs uses `void` to
-    // preserve fire-and-forget semantics.
+    // path; the production caller in registerS3CronJobs returns the chain
+    // to node-cron.
     await noticeError("hourly", new Error("synthetic tick failure"));
     const after = await readEvalErrCount("hourly", "tick");
     expect(after - before).toBe(1);
+  });
+
+  it("a tick-level failure counts one mc_job_failures_total{job=s3-<cadence>}", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { noticeError } = await import("./scheduler.js");
+    const before = await readJobFailures("s3-weekly");
+    await expect(
+      noticeError("weekly", new Error("synthetic tick failure")),
+    ).resolves.toBeUndefined();
+    expect(await readJobFailures("s3-weekly")).toBe(before + 1);
   });
 
   it("bumps {kind='burst'} on direct counter call (locks label contract; integration via signal-kind sibling)", async () => {
@@ -151,5 +180,54 @@ describe("recordS3EvaluatorError counter — runCadenceTick integration", () => 
     recordS3EvaluatorError("every_4h", "burst");
     const after = await readEvalErrCount("every_4h", "burst");
     expect(after - before).toBe(1);
+  });
+});
+
+describe("mc_job_failures_total — runCadenceTick's caught failures", () => {
+  /** One seeded signal whose evaluation emits alert 1. */
+  async function oneAlert(): Promise<void> {
+    seedSignal("nightly");
+    const evaluator = await import("./evaluator.js");
+    (evaluator.evaluateSignal as unknown as Mock).mockResolvedValueOnce(1);
+  }
+
+  it("a burst-detection failure counts one mc_job_failures_total{job=s3-nightly}", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await oneAlert();
+    const burst = await import("./burst.js");
+    (burst.detectBursts as unknown as Mock).mockImplementationOnce(() => {
+      throw new Error("synthetic burst failure");
+    });
+    const push = await import("./push.js");
+    (push.loadNewlyEmittedP0Alerts as unknown as Mock).mockReturnValueOnce([]);
+
+    const { runCadenceTick } = await import("./scheduler.js");
+    const before = await readJobFailures("s3-nightly");
+    const result = await runCadenceTick("nightly");
+
+    expect(result).toMatchObject({ alertsEmitted: 1, bundlesEmitted: 0 });
+    expect(await readJobFailures("s3-nightly")).toBe(before + 1);
+  });
+
+  it("a push-dispatch failure counts one mc_job_failures_total{job=s3-nightly}", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await oneAlert();
+    const burst = await import("./burst.js");
+    (burst.loadRecentUnbundledAlerts as unknown as Mock).mockReturnValueOnce([]);
+    const push = await import("./push.js");
+    (push.loadNewlyEmittedP0Alerts as unknown as Mock).mockImplementationOnce(
+      () => {
+        throw new Error("synthetic push failure");
+      },
+    );
+
+    const { runCadenceTick } = await import("./scheduler.js");
+    const before = await readJobFailures("s3-nightly");
+    const result = await runCadenceTick("nightly");
+
+    expect(result).toMatchObject({ alertsEmitted: 1, pushesDispatched: 0 });
+    expect(await readJobFailures("s3-nightly")).toBe(before + 1);
   });
 });

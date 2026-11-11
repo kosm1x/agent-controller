@@ -448,7 +448,7 @@ export function startRitualScheduler(): void {
       ritual.id,
       ritual.cron,
       () =>
-        void executeRitual(ritual).catch((err) => {
+        executeRitual(ritual).catch((err) => {
           console.error(`[rituals] ${ritual.id}: execute failed —`, err);
           recordRitualFailure(ritual.id, err, "execute");
         }),

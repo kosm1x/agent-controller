@@ -24,6 +24,7 @@ import { runTriageAnalysis } from "./analyze.js";
 import { persistTriageReport, hasOpenTriageWithin } from "./persist.js";
 import { runTriageTick, type TriageTickLog } from "./tick.js";
 import { errMsg } from "../err-msg.js";
+import { noteJobFailure } from "../../observability/failure-counters.js";
 
 /** Every 6h on the hour, MX. The throttle (one open report / 6h) prevents
  *  duplicate reports for the same ongoing issue between ticks. */
@@ -34,9 +35,9 @@ let scheduledJob: ScheduledTask | null = null;
 
 const NOOP_LOG: TriageTickLog = { info: () => {}, warn: () => {} };
 
-/** One tick wired to the real Prometheus / DB / SDK deps. Never throws — it fires
- *  real SDK calls, so the cron callback must `.catch` (a throw → unhandled
- *  rejection). */
+/** One tick wired to the real Prometheus / DB / SDK deps. Never rejects: it
+ *  catches its own work (real SDK calls); the scheduler records a rejection if
+ *  one ever escapes. */
 async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
   try {
     const db = getDatabase();
@@ -57,6 +58,7 @@ async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
       log,
     );
   } catch (err) {
+    noteJobFailure("self-healing-triage", err);
     log.warn("[triage] tick failed (non-fatal)", {
       err: errMsg(err),
     });
@@ -66,7 +68,7 @@ async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
 /** Register (idempotent — stops any prior job first). */
 export function registerTriageCron(log: TriageTickLog = NOOP_LOG): boolean {
   stopTriageCron();
-  scheduledJob = scheduleCron("self-healing-triage", TRIAGE_CRON, () => void tickWithRealDeps(log), {
+  scheduledJob = scheduleCron("self-healing-triage", TRIAGE_CRON, () => tickWithRealDeps(log), {
     timezone: RITUALS_TIMEZONE,
   });
   log.info(

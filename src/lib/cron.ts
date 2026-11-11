@@ -18,6 +18,9 @@
  *   `schedule.run_failed` (phase "missed") so reaction rules, /health and
  *   the operator alert path see it. (Attaching the listener also suppresses
  *   node-cron's own console-only warn — we replace it, not duplicate it.)
+ * - a job function that throws or rejects is recorded the same way (phase
+ *   "execute"). A job function returns its promise (`() => job()`), never
+ *   `() => void job()`: a detached promise's rejection never reaches node-cron.
  */
 
 import cron, {
@@ -63,6 +66,34 @@ export function scheduleCron(
       console.error(
         `[cron] ${id}: event bus unavailable for missed-execution record (${errMsg(busErr)})`,
       );
+    }
+  });
+  // The job function threw or its returned promise rejected. node-cron logs
+  // the bare error without the job id; this line and the event carry the id,
+  // so the failure reaches the same alert path as a missed run.
+  task.on("execution:failed", (ctx) => {
+    try {
+      // An error whose message cannot be read still gives the line and event.
+      let message: string;
+      try {
+        message = errMsg(ctx.execution?.error);
+      } catch {
+        message = "(unreadable error)";
+      }
+      console.error(`[cron] ${id}: execution failed: ${message.slice(0, 200)}`);
+      try {
+        getEventBus().emitEvent("schedule.run_failed", {
+          ritual_id: id,
+          error: message.slice(0, 1000),
+          phase: "execute",
+        });
+      } catch (busErr) {
+        console.error(
+          `[cron] ${id}: event bus unavailable for failed-execution record (${errMsg(busErr)})`,
+        );
+      }
+    } catch {
+      // a recorder must not throw into the scheduler
     }
   });
   return task;

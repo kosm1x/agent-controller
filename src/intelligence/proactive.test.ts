@@ -26,6 +26,14 @@ import {
   isProactiveTask,
 } from "./proactive.js";
 import type { MessageRouter } from "../messaging/router.js";
+import client from "prom-client";
+
+async function jobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}
 
 function createMockRouter(): MessageRouter {
   return {
@@ -42,6 +50,7 @@ function createMockRouter(): MessageRouter {
 
 describe("proactive", () => {
   let router: MessageRouter;
+  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,6 +60,8 @@ describe("proactive", () => {
   afterEach(() => {
     stopProactiveScheduler();
     vi.unstubAllEnvs();
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
   });
 
   describe("startProactiveScheduler", () => {
@@ -78,6 +89,43 @@ describe("proactive", () => {
         title: expect.stringContaining("Proactive scan"),
         interactive: false,
       });
+    });
+
+    it("a scan whose submit throws resolves and counts one mc_job_failures_total{job=proactive-nudge}", async () => {
+      errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubEnv("PROACTIVE_NUDGE_ENABLED", "true");
+      const { submitTask } = await import("../dispatch/dispatcher.js");
+      vi.mocked(submitTask).mockRejectedValueOnce(new Error("queue down"));
+      startProactiveScheduler(router);
+      const call = vi
+        .mocked(cron.schedule)
+        .mock.calls.find((c) => c[0] === "0 8,12,16,20 * * *");
+      const before = await jobFailures("proactive-nudge");
+      await expect(
+        (call![1] as () => Promise<void>)(),
+      ).resolves.toBeUndefined();
+      expect(await jobFailures("proactive-nudge")).toBe(before + 1);
+      expect(submitTask).toHaveBeenCalledTimes(1);
+    });
+
+    it("a scan that throws before its submit resolves and counts one mc_job_failures_total{job=proactive-nudge}", async () => {
+      errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubEnv("PROACTIVE_NUDGE_ENABLED", "true");
+      const throwing = {
+        ...createMockRouter(),
+        getLastMessageTime: () => {
+          throw new Error("router gone");
+        },
+      } as unknown as MessageRouter;
+      startProactiveScheduler(throwing);
+      const call = vi
+        .mocked(cron.schedule)
+        .mock.calls.find((c) => c[0] === "0 8,12,16,20 * * *");
+      const before = await jobFailures("proactive-nudge");
+      await expect(
+        (call![1] as () => Promise<void>)(),
+      ).resolves.toBeUndefined();
+      expect(await jobFailures("proactive-nudge")).toBe(before + 1);
     });
 
     it("does NOT schedule the NorthStar nudge by default (operator ruling 2026-06-23)", () => {

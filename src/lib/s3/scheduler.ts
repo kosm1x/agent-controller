@@ -29,6 +29,7 @@ import { loadEnabledSignalsByCadence, type Cadence } from "./registry.js";
 import { seedSignalsIdempotent } from "./seed-signals.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { errMsg } from "../err-msg.js";
+import { noteJobFailure } from "../../observability/failure-counters.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -76,7 +77,7 @@ export function registerS3CronJobs(): number {
     const job = scheduleCron(
       `s3-${c}`,
       cronExpr,
-      () => void runCadenceTick(c).catch((err) => noticeError(c, err)),
+      () => runCadenceTick(c).catch((err) => noticeError(c, err)),
       { timezone: S3_TIMEZONE },
     );
     scheduledJobs.push(job);
@@ -167,6 +168,7 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
         bundlesEmitted += 1;
       }
     } catch (err) {
+      noteJobFailure(`s3-${cadence}`, err);
       console.error(
         `[s3] burst detection failed:`,
         errMsg(err),
@@ -203,6 +205,7 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
         pushesDispatched = await dispatchPushAlerts(router, messages);
       }
     } catch (err) {
+      noteJobFailure(`s3-${cadence}`, err);
       console.error(
         `[s3] push dispatch failed:`,
         errMsg(err),
@@ -229,14 +232,14 @@ export async function runCadenceTick(cadence: Cadence): Promise<{
 }
 
 // Exported + async so tests can await the dynamic-import + counter bump.
-// Production callsite (registerS3CronJobs:73) is the void-prefixed chain
-// `void runCadenceTick(c).catch((err) => noticeError(c, err))` — the cron
-// callback chain is void-prefixed end-to-end; noticeError's returned promise
-// is fire-and-forget at the cron-callback boundary.
+// Production callsite (registerS3CronJobs) returns the chain
+// `runCadenceTick(c).catch((err) => noticeError(c, err))` to node-cron;
+// noticeError never rejects, so that chain always resolves.
 export async function noticeError(
   cadence: Cadence,
   err: unknown,
 ): Promise<void> {
+  noteJobFailure(`s3-${cadence}`, err);
   console.error(
     `[s3] cron tick threw (${cadence}):`,
     errMsg(err),

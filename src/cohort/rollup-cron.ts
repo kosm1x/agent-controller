@@ -16,6 +16,7 @@ import { recordCohortRollup } from "../observability/prometheus.js";
 import { type RollUpResult, rollUpCohort } from "./self-defining.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { errMsg } from "../lib/err-msg.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 
 // Derive from the env-overridable canonical value — a hardcoded literal here
 // would silently split this cron from the rituals if RITUALS_TIMEZONE is set.
@@ -79,6 +80,7 @@ export function runCohortRollup(
     return result;
   } catch (err) {
     recordCohortRollup("error");
+    noteJobFailure("cohort-rollup", err);
     log.warn("cohort roll-up failed", {
       error: errMsg(err),
     });

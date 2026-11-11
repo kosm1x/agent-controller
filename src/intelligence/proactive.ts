@@ -13,6 +13,7 @@ import { scheduleCron } from "../lib/cron.js";
 import type { MessageRouter } from "../messaging/router.js";
 import { submitTask } from "../dispatch/dispatcher.js";
 import { createLogger } from "../lib/logger.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 import {
   startSessionEndWriter,
   stopSessionEndWriter,
@@ -57,7 +58,8 @@ export function startProactiveScheduler(router: MessageRouter): void {
   job = scheduleCron("proactive-nudge", 
     NUDGE_CRON,
     () => {
-      runProactiveScan().catch((err) => {
+      return runProactiveScan().catch((err) => {
+        noteJobFailure("proactive-nudge", err);
         log.warn({ err }, "scan failed");
       });
     },
@@ -151,6 +153,7 @@ No saludes. No agregues contexto innecesario. Ve directo al punto.`,
     // and the event handler below will broadcast if warranted
     watchProactiveTask(result.taskId);
   } catch (err) {
+    noteJobFailure("proactive-nudge", err);
     log.warn({ err }, "failed to submit scan");
   }
 }

@@ -12,6 +12,7 @@ import { runTasksRetention, pruneTelemetry } from "./retention.js";
 import { pruneTraceEvents } from "../observability/task-trace.js";
 import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { errMsg } from "../lib/err-msg.js";
+import { noteJobFailure } from "../observability/failure-counters.js";
 
 const RETENTION_CRON = "30 4 * * *";
 
@@ -68,6 +69,7 @@ export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
       });
     }
   } catch (err) {
+    noteJobFailure("tasks-retention", err);
     log.warn("retention sweep threw (contract violation)", {
       error: errMsg(err),
     });
@@ -85,6 +87,7 @@ export function runRetentionTick(log: RetentionLog = DEFAULT_LOG): void {
       log.info("telemetry retention", t);
     }
   } catch (err) {
+    noteJobFailure("tasks-retention", err);
     log.warn("telemetry retention failed", { error: errMsg(err) });
   }
 }

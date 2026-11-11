@@ -511,7 +511,7 @@ export function startDynamicScheduler(): void {
     "dynamic-schedules-poller",
     "* * * * *",
     () => {
-      checkAndExecuteSchedules().catch((err) => {
+      return checkAndExecuteSchedules().catch((err) => {
         console.error(`[schedules] Execution error: ${errMsg(err)}`);
       });
     },

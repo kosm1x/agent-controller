@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import client from "prom-client";
 
 // Stub the sweeps so the tick's logging contract is exercised in isolation
 // (same grain as runners/checkpoint-prune-cron.test.ts).
@@ -56,3 +57,36 @@ describe("runRetentionTick", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe("runRetentionTick — a swallowed failure is counted", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("the sweep throws → the tick returns and mc_job_failures_total{job=tasks-retention} goes up by one", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockRunTasksRetention.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const before = await jobFailures("tasks-retention");
+    expect(() => runRetentionTick({ info: () => {}, warn: () => {} })).not.toThrow();
+    expect(await jobFailures("tasks-retention")).toBe(before + 1);
+  });
+
+  it("the telemetry prune throws → the tick returns and mc_job_failures_total{job=tasks-retention} goes up by one", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockPruneTelemetry.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const before = await jobFailures("tasks-retention");
+    expect(() => runRetentionTick({ info: () => {}, warn: () => {} })).not.toThrow();
+    expect(await jobFailures("tasks-retention")).toBe(before + 1);
+  });
+});
+
+async function jobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}

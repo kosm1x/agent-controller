@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import client from "prom-client";
 import {
   runXProbeTick,
   type XProbeLog,
@@ -120,3 +121,36 @@ describe("runXProbeTick (multi-account)", () => {
     await expect(t.run()).resolves.toBeUndefined();
   });
 });
+
+describe("runXProbeTick — a swallowed failure is counted", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it("the probe throws → the tick resolves and mc_job_failures_total{job=x-health-probe} goes up by one", async () => {
+    const before = await jobFailures("x-health-probe");
+    await expect(
+      runXProbeTick({
+        probeAll: async () => {
+          throw new Error("x.com unreachable");
+        },
+        record: vi.fn(),
+        notify: vi.fn(async () => {}),
+        state: new Map(),
+        log: SILENT,
+      }),
+    ).resolves.toBeUndefined();
+    expect(await jobFailures("x-health-probe")).toBe(before + 1);
+  });
+});
+
+async function jobFailures(job: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_job_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.job === job)?.value ?? 0;
+}

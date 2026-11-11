@@ -21,6 +21,7 @@ import { scheduleCron } from "../cron.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { runSycophancyProbe, checkSycophancyDrift } from "./sycophancy.js";
 import { errMsg } from "../err-msg.js";
+import { noteJobFailure } from "../../observability/failure-counters.js";
 
 export interface ProbeCronLog {
   info: (msg: string, fields?: Record<string, unknown>) => void;
@@ -34,8 +35,8 @@ const PROBE_TIMEZONE = RITUALS_TIMEZONE;
 
 let scheduledJob: ScheduledTask | null = null;
 
-/** Run one probe tick. Never throws — it fires real SDK calls, so the cron
- *  callback must `.catch` (a throw would become an unhandled rejection). */
+/** Run one probe tick. Never rejects: it catches its own work (real SDK
+ *  calls); the scheduler records a rejection if one ever escapes. */
 async function runProbeTick(log: ProbeCronLog): Promise<void> {
   try {
     const results = await runSycophancyProbe();
@@ -46,6 +47,7 @@ async function runProbeTick(log: ProbeCronLog): Promise<void> {
       blockerOpened: drift.blockerOpened,
     });
   } catch (err) {
+    noteJobFailure("sycophancy-probe", err);
     log.warn("sycophancy probe tick failed (non-fatal)", {
       err: errMsg(err),
     });
@@ -57,7 +59,7 @@ export function registerSycophancyProbeCron(
   log: ProbeCronLog = DEFAULT_LOG,
 ): boolean {
   stopSycophancyProbeCron();
-  scheduledJob = scheduleCron("sycophancy-probe", PROBE_CRON, () => void runProbeTick(log), {
+  scheduledJob = scheduleCron("sycophancy-probe", PROBE_CRON, () => runProbeTick(log), {
     timezone: PROBE_TIMEZONE,
   });
   log.info(
