@@ -29,7 +29,8 @@ export async function migrateLearningsToHindsight(
       return;
     }
   } catch {
-    // Table may not exist
+    // learnings comes from schema.sql, so this is a failed marker read: swallowed,
+    // and the migration is skipped until the next boot.
     return;
   }
 

@@ -543,7 +543,8 @@ export function collectMetrics(): void {
       embeddingsTotal.set(embedCount.cnt);
     }
   } catch {
-    // DB not ready — metrics will be zero
+    // A failed query is swallowed: gauges this pass did not reach keep their previous
+    // value (stale, or absent if never set) until a later collectMetrics succeeds.
   }
 }
 

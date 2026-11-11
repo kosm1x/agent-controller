@@ -338,7 +338,8 @@ async function main(): Promise<void> {
     const { seedRateLimitersFromHistory } = await import("./finance/budget.js");
     seedRateLimitersFromHistory();
   } catch {
-    // Non-fatal — table may not exist on fresh installs
+    // api_call_budget comes from schema.sql, so this is a failed read: swallowed, the
+    // rate limiters not yet seeded start empty and count only calls made after boot.
   }
 
   // Initialize tool sources (plugin system)
@@ -761,7 +762,8 @@ async function main(): Promise<void> {
         `UPDATE runs SET status='failed', error='Service shutdown', completed_at=datetime('now') WHERE status='running'`,
       ).run();
     } catch {
-      // Non-fatal — DB may already be closed
+      // The database closes only in step 7, so this is a failed UPDATE (e.g. busy):
+      // swallowed; reconcileOrphanedTasks fails those tasks at the next boot.
     }
 
     // 7. Cancel pending INDEX.md regeneration + WAL checkpoint + close database

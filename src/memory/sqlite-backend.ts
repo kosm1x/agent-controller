@@ -506,7 +506,8 @@ export class SqliteMemoryBackend implements MemoryService {
           ftsResults.push(...ftsRows);
         }
       } catch {
-        // FTS5 table may not exist yet — fall through to LIKE
+        // conversations_fts comes from schema.sql; a failed FTS query is swallowed
+        // and recall goes on with the embedding and LIKE layers.
       }
 
       // --- Layer 2: Embedding semantic search (cosine similarity) ---

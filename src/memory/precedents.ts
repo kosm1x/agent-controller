@@ -197,7 +197,8 @@ export function findPrecedents(
         (gateStmt.all(row.task_id) as { state: string }[]).map((g) => g.state),
       );
     } catch {
-      // task_gates absent (fresh DB) — verdict stays "none"
+      // gateStmt is prepared above, so a missing task_gates throws there, not here;
+      // a failed per-row read is swallowed and the verdict stays "none".
     }
     const body = bodyStmt.get(row.task_id) as
       | { output: string | null; error: string | null }

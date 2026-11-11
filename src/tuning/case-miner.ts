@@ -205,7 +205,8 @@ function mineTierMismatches(days: number = 14): MinedCase[] {
       });
     }
   } catch {
-    // model_tier column may not exist yet — non-fatal
+    // task_outcomes.model_tier comes from initDatabase; a failed query is swallowed
+    // and this run mines no tier-mismatch cases.
   }
 
   return cases;

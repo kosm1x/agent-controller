@@ -216,7 +216,8 @@ export function getActiveTestCases(category?: TestCaseCategory): TestCase[] {
       .prepare(`SELECT * FROM mined_test_cases ${where} ORDER BY case_id`)
       .all(...params) as TestCaseRow[];
   } catch {
-    // Table may not exist yet
+    // mined_test_cases comes from ensureTuningTables (run by initDatabase); a failed
+    // read is swallowed and only the manual cases are returned.
   }
 
   return [

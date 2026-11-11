@@ -498,7 +498,8 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
         message: "Container heartbeat",
       });
     } catch {
-      // Best-effort — the bus may be uninitialised (tests).
+      // emitEvent throws when its SQLite persist fails (that heartbeat is lost) or a
+      // listener throws after the persist; either way the next progress sentinel emits again.
     }
   };
   // Fallback to the real, present image (mission-control:latest). The former
@@ -668,7 +669,8 @@ export function killContainer(handle: ContainerHandle): void {
       try {
         handle.process.kill("SIGKILL");
       } catch {
-        // Already dead
+        // ChildProcess.kill returns false, not a throw, for an exited process; it
+        // throws only for an unknown signal name, so nothing is expected here.
       }
     },
   );

@@ -33,7 +33,8 @@ function getApiKey(): string | null {
     const fact = facts.find((f) => f.key === "gemini_api_key");
     if (fact) return fact.value;
   } catch {
-    /* DB not ready */
+    // The database is open whenever a tool runs: a failed user_facts read is
+    // swallowed and the caller reports the key as missing.
   }
   return null;
 }

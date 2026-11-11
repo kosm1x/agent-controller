@@ -1188,7 +1188,8 @@ function getOutcomeAdjustments(input: ClassificationInput): OutcomeAdjustment {
         }
       }
     } catch {
-      /* non-fatal — model_tier column may not exist yet */
+      // queryFeedbackQuality returns [] on a query error, so only getDatabase()
+      // throwing (database not initialized) lands here; signal 5 is skipped.
     }
 
     // Clamp to prevent wild swings

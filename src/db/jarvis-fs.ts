@@ -977,6 +977,7 @@ Después de una compactación, el contexto anterior se resume. Los datos clave s
       );
     }
   } catch {
-    // DB may not have the table yet on very first init
+    // jarvis_files is created earlier in setUpDatabase; a failed read or write is
+    // swallowed and every directive not yet written stays absent until the next initDatabase.
   }
 }

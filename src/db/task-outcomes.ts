@@ -246,7 +246,8 @@ export function queryRunnerStats(days: number): RunnerStats[] {
       )
       .all(days) as RunnerStats[];
   } catch {
-    // cost_ledger may not exist — fall back to query without JOIN
+    // cost_ledger comes from initDatabase, so this is a failed joined query; the
+    // retry drops the join and reports 0 cost.
     return db
       .prepare(
         `SELECT

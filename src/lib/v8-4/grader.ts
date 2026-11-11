@@ -287,7 +287,7 @@ function readProvenance(taskId: string): string[] {
         `${r.tool_name} ${r.url ?? r.query ?? ""} [${r.status}]${r.snippet ? ` "${r.snippet.slice(0, 200)}"` : ""}`,
     );
   } catch {
-    return []; // table absent (tests) or unreadable — the digest is best-effort
+    return []; // failed task_provenance read (initDatabase creates it): no provenance lines in the prompt
   }
 }
 
@@ -459,7 +459,8 @@ export async function runGrader(
     try {
       queryDb.close();
     } catch {
-      /* already closed */
+      // close() is a no-op on a closed handle and throws only while a statement is
+      // busy: swallowed, and that read-only connection stays open.
     }
   };
   const ac = new AbortController();
