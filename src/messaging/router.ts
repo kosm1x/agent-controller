@@ -202,7 +202,11 @@ import {
   handleRitualesCommand,
 } from "../rituals/rituales-command.js";
 import { detectProjectInMessage } from "./kb-injection.js";
-import { noteSendFailure } from "../observability/failure-counters.js";
+import {
+  noteSendFailure,
+  notePromptBlockDropped,
+  type PromptBlock,
+} from "../observability/failure-counters.js";
 
 /**
  * S6 WS2: the project an OPERATOR chat turn names (the KB README detector),
@@ -3384,11 +3388,17 @@ export class MessageRouter {
     // half); only the relevance-scored facts depend on it (variable half).
     let stableProfileBlock = "";
     let userFactsBlock = "";
+    // Built before the task exists: the drop is traced after submitTask.
+    let droppedProfileBlock: PromptBlock | null = null;
+    let profileBuilt = false;
     try {
       stableProfileBlock = formatStableUserFactsBlock() + formatProjectsBlock();
+      profileBuilt = true;
       userFactsBlock = formatRelevantUserFactsBlock(msg.text);
-    } catch {
+    } catch (err) {
       // Non-fatal — DB may not have the tables yet
+      droppedProfileBlock = profileBuilt ? "relevant_facts" : "profile";
+      notePromptBlockDropped(droppedProfileBlock, "error", err);
     }
 
     // Dynamic tool scoping — uses semantic groups if available, regex fallback.
@@ -3654,6 +3664,14 @@ export class MessageRouter {
           notes: openWork.items.length,
           chars: openWork.block.length,
         },
+      });
+    }
+
+    if (droppedProfileBlock) {
+      emitTraceEvent({
+        taskId: result.taskId,
+        name: "prompt.block_dropped",
+        attrs: { block: droppedProfileBlock, reason: "error" },
       });
     }
 
@@ -4268,6 +4286,19 @@ export class MessageRouter {
         }
       } catch {
         /* DB or JSON parse failure — proceed with empty tool list */
+        // The run's row could not be read, so whether it carried a
+        // confirmation card is unknown; none is shown or stored.
+        // A fixed error, not the caught one: a parse failure's message quotes the row.
+        notePromptBlockDropped(
+          "confirmation_card",
+          "error",
+          new Error("run row unreadable"),
+        );
+        emitTraceEvent({
+          taskId,
+          name: "confirmation.card_check_failed",
+          attrs: { reason: "row_unreadable" },
+        });
       }
 
       // Safety net: auto-persist critical data the LLM may have ignored.

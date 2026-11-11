@@ -22,6 +22,7 @@ import { GoalStatus, ErrorStrategy, parseLLMJson } from "./types.js";
 import type { Goal, GoalResult, ExecutionResult, TokenUsage } from "./types.js";
 import { getMemoryService } from "../memory/index.js";
 import { buildKnowledgeBaseSections } from "../messaging/kb-injection.js";
+import { emitTraceEvent } from "../observability/task-trace.js";
 import {
   extractProvenance,
   classifySources,
@@ -325,6 +326,8 @@ async function buildGoalPrompt(
   goal: Goal,
   context: string,
   toolNames: string[],
+  // The task a dropped KB block is traced on (unset = counted only).
+  taskId?: string,
 ): Promise<{ stable: string; variable: string }> {
   const criteria =
     goal.completionCriteria.length > 0
@@ -340,7 +343,20 @@ async function buildGoalPrompt(
   // Pull always-read + enforce + scope-conditional KB the same way fast-runner
   // does — heavy/swarm tasks were operating without `enforce` directives like
   // repo-authorization.md until the kb-injection module was extracted.
-  const kb = buildKnowledgeBaseSections(toolNames, goal.description, "executor");
+  const kb = buildKnowledgeBaseSections(
+    toolNames,
+    goal.description,
+    "executor",
+    undefined,
+    taskId
+      ? (block, reason) =>
+          emitTraceEvent({
+            taskId,
+            name: "prompt.block_dropped",
+            attrs: { block, reason },
+          })
+      : undefined,
+  );
 
   const stable =
     `You are executing a single goal as part of a larger plan. Use the available tools to achieve the goal.\n\n` +
@@ -438,7 +454,12 @@ export async function executeGoal(
     }
 
     try {
-      const prompt = await buildGoalPrompt(goal, context, toolNames ?? []);
+      const prompt = await buildGoalPrompt(
+        goal,
+        context,
+        toolNames ?? [],
+        trace?.taskId,
+      );
       // The self-assessment retry re-sends these messages, so it keeps the
       // same split.
       const messages: ChatMessage[] = [

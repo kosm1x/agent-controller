@@ -21,6 +21,11 @@ import { KB_README_RE } from "../projects/record.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { recordMemoryInjection } from "../observability/prometheus.js";
 import {
+  notePromptBlockDropped,
+  type PromptBlock,
+  type PromptBlockDropReason,
+} from "../observability/failure-counters.js";
+import {
   CRM_TOOLS_SCOPE,
   GOOGLE_TOOLS,
   WORDPRESS_TOOLS,
@@ -169,6 +174,25 @@ export type KbRowFilter = (row: {
 }) => boolean;
 
 const ALLOW_ALL: KbRowFilter = () => true;
+
+/**
+ * Told when a builder had to leave the knowledge-base block out, so the
+ * caller, which knows the task, can record it on the task's trace.
+ */
+export type KbDropCallback = (
+  block: PromptBlock,
+  reason: PromptBlockDropReason,
+) => void;
+
+/** A builder's catch: count the dropped block and tell the caller. Never throws. */
+function noteKbDropped(err: unknown, onError?: KbDropCallback): void {
+  notePromptBlockDropped("kb", "error", err);
+  try {
+    onError?.("kb", "error");
+  } catch {
+    // the caller's callback must not undo the builder's fallback
+  }
+}
 
 /** S6 ruling 4b: the row's record-derived `config.kb_readme` wins when it is
  *  a KB-relative .md under `projects/` (audit R1 C1: anything else is ignored,
@@ -377,12 +401,15 @@ function collectVariableSections(
  *                     because explicit project mention is a strong signal).
  * @param logTag       Optional log prefix (default `"runner"`) — distinguishes
  *                     fast-runner vs executor in journalctl output.
+ * @param onError      Optional: called once when the block could not be built
+ *                     and is left out (the return value is null as before).
  */
 export function buildKnowledgeBaseSection(
   scopedTools: string[],
   enforceOnly = false,
   messageText?: string,
   logTag = "runner",
+  onError?: KbDropCallback,
 ): string | null {
   try {
     // Conditional rows go through collectVariableSections(): counting them
@@ -428,7 +455,8 @@ export function buildKnowledgeBaseSection(
     // a week live) would swamp the histogram (qa R2 W-4).
     if (logTag === "fast-runner") recordMemoryInjection("kb", block.length);
     return block;
-  } catch {
+  } catch (err) {
+    noteKbDropped(err, onError);
     return null;
   }
 }
@@ -512,12 +540,15 @@ export function capStableContent(
  *                     enforce, always-read, conditional and the
  *                     force-injected guardrail rows — is injected only when
  *                     it passes; the project README is skipped entirely.
+ * @param onError      Optional: called once when the blocks could not be built
+ *                     and are left out (both halves null as before).
  */
 export function buildKnowledgeBaseSections(
   scopedTools: string[],
   messageText?: string,
   logTag = "runner",
   rowAllowed?: KbRowFilter,
+  onError?: KbDropCallback,
 ): { stable: string | null; variable: string | null } {
   try {
     const stableFiles = getFilesByQualifier("enforce", "always-read");
@@ -557,7 +588,8 @@ export function buildKnowledgeBaseSections(
       recordMemoryInjection("kb_variable", variable?.length ?? 0);
     }
     return { stable, variable };
-  } catch {
+  } catch (err) {
+    noteKbDropped(err, onError);
     return { stable: null, variable: null };
   }
 }

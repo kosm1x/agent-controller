@@ -41,6 +41,13 @@ vi.mock("../db/jarvis-fs.js", () => ({
   getFile: vi.fn(() => null),
 }));
 
+// Trace writer: a dropped KB block is traced on the goal's task.
+const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
+vi.mock("../observability/task-trace.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../observability/task-trace.js")>()),
+  emitTraceEvent: traceMock.emitTraceEvent,
+}));
+
 // Mock tool registry
 vi.mock("../tools/registry.js", () => ({
   toolRegistry: {
@@ -1174,5 +1181,61 @@ describe("executeGoal / executeGraph — SDK trace pass-through", () => {
     expect(sdk.asInferWithTools).toHaveBeenCalledTimes(2);
     expect(optionsOf(0).trace).toStrictEqual(TRACE);
     expect(optionsOf(1).trace).toStrictEqual(TRACE);
+  });
+});
+
+describe("executeGoal — a KB block that cannot be built", () => {
+  const TRACE = { taskId: "t-kb", runId: "r-kb" };
+  const okResult = {
+    content: "ok",
+    messages: [{ role: "assistant" as const, content: "ok" }],
+    toolRepairs: [],
+    exitReason: "natural",
+    roundsCompleted: 1,
+    contextPressure: 0,
+    totalUsage: { prompt_tokens: 5, completion_tokens: 5 },
+  };
+  const drops = () =>
+    traceMock.emitTraceEvent.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.name === "prompt.block_dropped");
+
+  it("the KB read throws → the goal prompt is the prompt of a goal with no KB rows, and one prompt.block_dropped {kb, error}", async () => {
+    const { getFilesByQualifier } = await import("../db/jarvis-fs.js");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockInferWithTools.mockResolvedValueOnce(okResult);
+      await executeGoal(makeGoal(), "", ["shell_exec"], undefined, undefined, undefined, true, TRACE);
+      const absent = mockInferWithTools.mock.calls.at(-1)![0];
+      expect(String(absent[0]?.content)).not.toContain("[JARVIS KNOWLEDGE BASE]");
+      expect(drops()).toEqual([]);
+
+      vi.mocked(getFilesByQualifier).mockImplementationOnce(() => {
+        throw new Error("DB closed");
+      });
+      mockInferWithTools.mockResolvedValueOnce(okResult);
+      await executeGoal(makeGoal(), "", ["shell_exec"], undefined, undefined, undefined, true, TRACE);
+      expect(mockInferWithTools.mock.calls.at(-1)![0]).toEqual(absent);
+      expect(drops()).toEqual([
+        { taskId: "t-kb", name: "prompt.block_dropped", attrs: { block: "kb", reason: "error" } },
+      ]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("without a task to trace on, the drop is counted only", async () => {
+    const { getFilesByQualifier } = await import("../db/jarvis-fs.js");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.mocked(getFilesByQualifier).mockImplementationOnce(() => {
+        throw new Error("DB closed");
+      });
+      mockInferWithTools.mockResolvedValueOnce(okResult);
+      await executeGoal(makeGoal(), "", ["shell_exec"]);
+      expect(drops()).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

@@ -8,6 +8,7 @@ import client from "prom-client";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { ensureV84Tables } from "../lib/v8-4/schema.js";
+import { _resetWriteFailureThrottle } from "../observability/failure-counters.js";
 
 // Shared subscribers array — cleared in beforeEach
 const subscribers: Array<{
@@ -6888,6 +6889,16 @@ describe("MessageRouter — community-reply write-gate (v7.7 Phase 2b)", () => {
   });
 });
 
+async function promptBlockCount(block: string, reason: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_prompt_block_dropped_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return (
+    values.find((v) => v.labels.block === block && v.labels.reason === reason)
+      ?.value ?? 0
+  );
+}
+
 async function sendFailureCount(channel: string, path: string): Promise<number> {
   const metric = client.register.getSingleMetric("mc_outbound_send_failures_total");
   if (!metric) return 0;
@@ -8076,6 +8087,56 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(getPendingConfirmation(tk)?.args).toEqual({ id: 7 });
     expect(waAdapter.sentMessages.at(-1)!.text).toContain("¿Procedo?");
     expect(gatedExec.executeGatedCapability).not.toHaveBeenCalled();
+  });
+
+  it("the run's row cannot be read → no card is shown or stored (the reply of a run with no card), one confirmation.card_check_failed and one count", async () => {
+    const reply = "Voy a borrar el post 7 «Hola». ¿Procedo?";
+    const cardLost = () =>
+      traceMock.emitTraceEvent.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.name === "confirmation.card_check_failed");
+    // A run with no card: the reply the operator gets without one.
+    queueTask("task-plain");
+    await say("borra el post 7 de wordpress");
+    runOutput(null);
+    complete("task-plain", reply);
+    const plain = waAdapter.sentMessages.at(-1)!.text;
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(cardLost()).toEqual([]);
+
+    queueTask("task-lost");
+    await say("borra el post 8 de wordpress");
+    const before = await promptBlockCount("confirmation_card", "error");
+    dbStatusGet.mockReturnValue({ status: "completed", output: "{not json" });
+    complete("task-lost", reply);
+    dbStatusGet.mockReturnValue(undefined);
+    expect(waAdapter.sentMessages.at(-1)!.text).toBe(plain);
+    expect(getPendingConfirmation(tk)).toBeNull();
+    expect(cardLost()).toEqual([
+      { taskId: "task-lost", name: "confirmation.card_check_failed", attrs: { reason: "row_unreadable" } },
+    ]);
+    expect(await promptBlockCount("confirmation_card", "error")).toBe(before + 1);
+  });
+
+  it("the run's stored output is not valid JSON → no console line of this path quotes it", async () => {
+    // A parse error's message quotes the start of its input: the marker leads.
+    const MARKER = "ZQXMARK";
+    _resetWriteFailureThrottle();
+    const spies = (["error", "warn", "log", "info"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {}),
+    );
+    try {
+      queueTask("task-marker");
+      await say("borra el post 9 de wordpress");
+      dbStatusGet.mockReturnValue({ status: "completed", output: `${MARKER}-run-output` });
+      complete("task-marker", "Listo.");
+      dbStatusGet.mockReturnValue(undefined);
+      const lines = spies.flatMap((s) => s.mock.calls.map((c) => c.map(String).join(" ")));
+      expect(lines).toContain("[prompt-block] confirmation_card dropped (error): run row unreadable");
+      expect(lines.filter((l) => l.includes(MARKER))).toEqual([]);
+    } finally {
+      for (const s of spies) s.mockRestore();
+    }
   });
 
   it("S6 ruling 5b: a confirmed tweet_post resolves the X accounts of the task's project only", async () => {
@@ -9277,6 +9338,57 @@ describe("buildJarvisSystemPrompt — profile + projects in the stable half", ()
     expect(variableB).toContain("**diet**");
     expect(stableA).not.toContain(RELEVANT);
   });
+
+  it.each([
+    ["profile", 1],
+    ["relevant_facts", 2],
+  ] as const)(
+    "%s cannot be built → the task runs with the prompt of a turn with no profile rows, and one prompt.block_dropped",
+    async (block, failingRead) => {
+      process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+      vi.mocked(submitTask).mockResolvedValue({
+        taskId: "test-task-123",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      } as Awaited<ReturnType<typeof submitTask>>);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const router = new MessageRouter();
+        router.registerChannel(createMockAdapter("whatsapp"));
+        const drops = () =>
+          traceMock.emitTraceEvent.mock.calls
+            .map((c) => c[0])
+            .filter((e) => e.name === "prompt.block_dropped");
+        // No rows: the turn without the blocks.
+        dbAll.mockReset().mockImplementation(() => []);
+        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: msgA, timestamp: new Date() });
+        const absent = vi.mocked(submitTask).mock.calls.at(-1)![0].description;
+        expect(absent).not.toContain(PROFILE);
+        expect(absent).not.toContain(RELEVANT);
+        expect(drops()).toEqual([]);
+
+        // The n-th user_facts read of the turn throws (1 = the profile, 2 = the relevant facts).
+        let factReads = 0;
+        const before = await promptBlockCount(block, "error");
+        dbAll.mockImplementation((sql: string) => {
+          if (sql.includes("FROM user_facts") && ++factReads === failingRead) {
+            throw new Error("no such table: user_facts");
+          }
+          return [];
+        });
+        await router.handleInbound({ channel: "whatsapp", from: "owner@s.whatsapp.net", text: msgA, timestamp: new Date() });
+        expect(factReads).toBeGreaterThanOrEqual(failingRead);
+        expect(vi.mocked(submitTask).mock.calls.at(-1)![0].description).toBe(absent);
+        expect(drops()).toEqual([
+          { taskId: "test-task-123", name: "prompt.block_dropped", attrs: { block, reason: "error" } },
+        ]);
+        expect(await promptBlockCount(block, "error")).toBe(before + 1);
+      } finally {
+        errorSpy.mockRestore();
+        delete process.env.WHATSAPP_OWNER_JID;
+      }
+    },
+  );
 
   it("(b) stable carries the profile and projects; variable carries neither; telemetry counts both blocks", () => {
     const profile = stableProfile();

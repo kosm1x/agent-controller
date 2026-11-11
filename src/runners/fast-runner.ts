@@ -41,6 +41,7 @@ import {
   buildKnowledgeBaseSection,
   buildKnowledgeBaseSections,
   conditionMatches,
+  type KbDropCallback,
 } from "../messaging/kb-injection.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
@@ -225,6 +226,7 @@ import { errMsg } from "../lib/err-msg.js";
 import { withTimeout } from "../lib/with-timeout.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { notePromptBlockDropped } from "../observability/failure-counters.js";
 
 /** Confirmation words from the user — built from the shared vocabulary in
  * `messaging/confirmation-verbs.ts` so this regex stays in lockstep with
@@ -991,6 +993,13 @@ export const fastRunner: Runner = {
         .pop()?.content;
       const needsPrecedent = input.conversationHistory.length > 1;
       const assemblyStart = Date.now();
+      // A KB block the builder had to leave out is recorded on this task.
+      const onKbDropped: KbDropCallback = (block, reason) =>
+        emitTraceEvent({
+          taskId: input.taskId,
+          name: "prompt.block_dropped",
+          attrs: { block, reason },
+        });
 
       // Sprint 1 R-3 (2026-05-23): parallel pre-fetch of independent reads.
       // The two TRULY parallel legs are essentials (dynamic import +
@@ -1025,6 +1034,7 @@ export const fastRunner: Runner = {
                   true,
                   lastUserMsg,
                   "fast-runner",
+                  onKbDropped,
                 ),
               }
             : {
@@ -1036,6 +1046,7 @@ export const fastRunner: Runner = {
                   // External caller: only the allow-listed enforce rows and
                   // the opt-in rows of the external KB policy.
                   input.external ? isExternalKbInjectable : undefined,
+                  onKbDropped,
                 ),
               },
         ),
@@ -1127,7 +1138,8 @@ export const fastRunner: Runner = {
       // stable systemPrompt cache prefix.
       // Runs only on the chat path (conversationHistory present).
       // Timeout: 1,500 ms — embed() can take up to 30 s; fail-fast keeps
-      // every chat turn responsive. On timeout the block is silently skipped.
+      // every chat turn responsive. On timeout the block is skipped (counted
+      // and traced as a dropped block).
       const JME_QUERY_TIMEOUT_MS = 1_500;
       // Cap query text to ~2,000 chars (~500 tokens) so embed() never gets
       // a wall of text that inflates latency.
@@ -1185,8 +1197,22 @@ export const fastRunner: Runner = {
           if (!isReadOnlyTask && typeof lastUserMsg === "string")
             shadowMemoryRecall(input.taskId, lastUserMsg, jmeFacts);
         }
-      } catch {
+      } catch (err) {
         // Non-fatal — JME must never block the runner
+        // Recorded only when the block is not in (a throw after the push
+        // leaves it in). The recall's deadline is withTimeout's rejection.
+        if (!jmeBlock) {
+          const reason =
+            err instanceof Error && err.message === "jme-recall timeout"
+              ? "timeout"
+              : "error";
+          notePromptBlockDropped("facts", reason, err);
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "prompt.block_dropped",
+            attrs: { block: "facts", reason },
+          });
+        }
       }
 
       // W3 ruling A (ii), 2026-10-27: the injected KB rows and JME facts are

@@ -227,6 +227,7 @@ export async function plan(
   // Inject enforce-only KB so plan-time prompts respect MANDATORY directives
   // (e.g. directives/repo-authorization.md). Skip always-read/conditional —
   // the planner only needs hard policy, not the per-task SOP.
+  // A KB drop here is counted only: the planner has no task to trace on.
   const enforceKb = buildKnowledgeBaseSection([], true, undefined, "planner");
   const systemPrompt = enforceKb
     ? `${enforceKb}\n\n${PLAN_SYSTEM}`
@@ -275,6 +276,7 @@ export async function replan(
   reason: string,
   useOpus = true,
 ): Promise<{ graph: GoalGraph; usage: TokenUsage }> {
+  // A KB drop here is counted only: the planner has no task to trace on.
   const enforceKb = buildKnowledgeBaseSection([], true, undefined, "planner");
   const systemPrompt = enforceKb
     ? `${enforceKb}\n\n${REPLAN_SYSTEM}`

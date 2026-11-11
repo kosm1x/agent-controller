@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import client from "prom-client";
 import {
   noteJobFailure,
+  notePromptBlockDropped,
   noteSendFailure,
   noteWriteFailure,
   writeFailuresTotal,
@@ -341,5 +342,116 @@ describe("noteSendFailure", () => {
       throw new Error("stderr closed");
     });
     expect(() => noteSendFailure("telegram", "reply", new Error("x"))).not.toThrow();
+  });
+});
+
+async function blockCount(block: string, reason: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_prompt_block_dropped_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return (
+    values.find((v) => v.labels.block === block && v.labels.reason === reason)
+      ?.value ?? 0
+  );
+}
+
+describe("notePromptBlockDropped", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    _resetWriteFailureThrottle();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("increments mc_prompt_block_dropped_total per block and reason pair, every time", async () => {
+    const before = await blockCount("facts", "timeout");
+    const otherReason = await blockCount("facts", "error");
+    const otherBlock = await blockCount("kb", "timeout");
+    notePromptBlockDropped("facts", "timeout", new Error("jme-recall timeout"));
+    notePromptBlockDropped("facts", "timeout", new Error("jme-recall timeout"));
+    expect(await blockCount("facts", "timeout")).toBe(before + 2);
+    expect(await blockCount("facts", "error")).toBe(otherReason);
+    expect(await blockCount("kb", "timeout")).toBe(otherBlock);
+  });
+
+  it("logs the block, the reason and the error message", () => {
+    notePromptBlockDropped("profile", "error", new Error("no such table: user_facts"));
+    expect(errorSpy.mock.calls).toEqual([
+      ["[prompt-block] profile dropped (error): no such table: user_facts"],
+    ]);
+  });
+
+  it("logs at most one line per block/reason per minute, then the exact suppressed count", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const before = await blockCount("kb", "error");
+    notePromptBlockDropped("kb", "error", new Error("a"));
+    notePromptBlockDropped("kb", "error", new Error("b"));
+    vi.advanceTimersByTime(59_999);
+    notePromptBlockDropped("kb", "error", new Error("c"));
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    notePromptBlockDropped("kb", "timeout", new Error("d"));
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy.mock.calls[1]).toEqual(["[prompt-block] kb dropped (timeout): d"]);
+
+    vi.advanceTimersByTime(1);
+    notePromptBlockDropped("kb", "error", new Error("e"));
+    expect(errorSpy).toHaveBeenCalledTimes(3);
+    expect(errorSpy.mock.calls[2]).toEqual([
+      "[prompt-block] kb dropped (error): e (+2 suppressed)",
+    ]);
+    // The counter counts every drop, logged or suppressed.
+    expect(await blockCount("kb", "error")).toBe(before + 4);
+  });
+
+  it("caps the message at 200 characters", () => {
+    notePromptBlockDropped("confirmation_card", "error", new Error("q".repeat(1000)));
+    expect(errorSpy.mock.calls[0]).toEqual([
+      "[prompt-block] confirmation_card dropped (error): " + "q".repeat(200),
+    ]);
+  });
+
+  it("throttles apart from noteWriteFailure, noteJobFailure and noteSendFailure", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    noteWriteFailure("unknown", new Error("w"));
+    noteJobFailure("unknown" as JobFailureId, new Error("j"));
+    noteSendFailure("whatsapp", "notice", new Error("s"));
+    notePromptBlockDropped("relevant_facts", "error", new Error("p"));
+    notePromptBlockDropped("relevant_facts", "error", new Error("p2"));
+    expect(errorSpy.mock.calls).toEqual([
+      ["[write-failure] unknown: w"],
+      ["[job-failure] unknown: j"],
+      ["[send-failure] whatsapp/notice: s"],
+      ["[prompt-block] relevant_facts dropped (error): p"],
+    ]);
+  });
+
+  it("never throws, even when reading the error's message throws", async () => {
+    const hostile = new Error("x");
+    Object.defineProperty(hostile, "message", {
+      get() {
+        throw new Error("getter boom");
+      },
+    });
+    const before = await blockCount("facts", "error");
+    expect(() => notePromptBlockDropped("facts", "error", hostile)).not.toThrow();
+    expect(await blockCount("facts", "error")).toBe(before + 1);
+    expect(errorSpy.mock.calls[0]).toEqual([
+      "[prompt-block] facts dropped (error): (unreadable error)",
+    ]);
+  });
+
+  it("never throws when console.error itself throws", () => {
+    errorSpy.mockImplementation(() => {
+      throw new Error("stderr closed");
+    });
+    expect(() => notePromptBlockDropped("kb", "error", new Error("x"))).not.toThrow();
   });
 });

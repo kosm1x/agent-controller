@@ -5,7 +5,8 @@
  * src/observability/prometheus.ts serves, and logged once per site per minute.
  * Scheduled jobs that catch their own failure count them the same way, by job
  * id (`noteJobFailure`), and so do outbound messages whose send failed, by
- * channel and kind of send (`noteSendFailure`).
+ * channel and kind of send (`noteSendFailure`), and so do optional prompt
+ * blocks left out because building them failed (`notePromptBlockDropped`).
  *
  * Leaf module: called from catch blocks, so it imports nothing that tests
  * mock with partial factories, and it never throws.
@@ -51,8 +52,9 @@ const jobFailuresTotal =
 
 /** One log line per key per interval: a missing table fails every call. */
 const LOG_INTERVAL_MS = 60_000;
-// Keyed by tag + key, where the key is a fixed write site or a fixed job id
-// (the id the job passes to scheduleCron), never a string built from data.
+// Keyed by tag + key, where the key is a fixed write site, a fixed job id
+// (the id the job passes to scheduleCron) or a closed label pair, never a
+// string built from data.
 // That is what keeps these maps bounded.
 const lastLogAt = new Map<string, number>();
 const suppressed = new Map<string, number>();
@@ -178,4 +180,56 @@ export function noteSendFailure(
     // counting is best-effort too
   }
   logThrottled("send-failure", `${label}/${path}`, err);
+}
+
+const PROMPT_BLOCK_NAME = "mc_prompt_block_dropped_total";
+
+// Same get-or-create as the write counter above.
+const promptBlockDroppedTotal =
+  (client.register.getSingleMetric(PROMPT_BLOCK_NAME) as
+    | client.Counter<"block" | "reason">
+    | undefined) ??
+  new client.Counter({
+    name: PROMPT_BLOCK_NAME,
+    help: "Optional prompt blocks left out of a task's prompt because building them failed, by block and reason",
+    labelNames: ["block", "reason"] as const,
+  });
+
+/**
+ * The optional prompt blocks whose construction can fail and be left out:
+ * `kb` = the knowledge-base block (mandatory directives included: they are
+ * built in the same step), `profile` = the operator profile + active projects
+ * (router), `relevant_facts` = the message-scored user facts (router),
+ * `facts` = the remembered-facts recall (fast runner), `confirmation_card` =
+ * the run's row could not be read, so whether it carried a confirmation card
+ * is unknown and none is shown or stored (router). Closed so the label stays
+ * bounded.
+ */
+export type PromptBlock =
+  | "kb"
+  | "profile"
+  | "relevant_facts"
+  | "facts"
+  | "confirmation_card";
+
+/** `timeout` = the step ran out of its deadline; `error` = it threw. */
+export type PromptBlockDropReason = "error" | "timeout";
+
+/**
+ * Count a prompt block that was left out because building it failed, and log
+ * it (throttled). Record-only: the block stays dropped and the task runs
+ * without it. The line carries the block, the reason and the error message
+ * only: never prompt text. Never throws.
+ */
+export function notePromptBlockDropped(
+  block: PromptBlock,
+  reason: PromptBlockDropReason,
+  err?: unknown,
+): void {
+  try {
+    promptBlockDroppedTotal.inc({ block, reason });
+  } catch {
+    // counting is best-effort too
+  }
+  logThrottled("prompt-block", `${block} dropped (${reason})`, err);
 }

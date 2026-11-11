@@ -104,7 +104,13 @@ export type TraceEventName =
   // tombstone); on recall (sqlite-backend.ts) {mode, bank,
   // returned, wouldDrop|dropped}, or {mode, bank, error: true} when the load
   // failed — counts only, never text
-  | "memory.tombstone";
+  | "memory.tombstone"
+  // An optional prompt block was left out because building it failed
+  // ({block, reason}: closed enums, never prompt text)
+  | "prompt.block_dropped"
+  // The run's row could not be read, so whether it carried a confirmation
+  // card is unknown; none is shown or stored ({reason}: closed enum)
+  | "confirmation.card_check_failed";
 
 export interface TraceEvent {
   taskId: string;

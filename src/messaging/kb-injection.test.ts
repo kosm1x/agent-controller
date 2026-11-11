@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import client from "prom-client";
+import { _resetWriteFailureThrottle } from "../observability/failure-counters.js";
 import {
   conditionMatches,
   detectProjectInMessage,
@@ -34,8 +36,13 @@ import { getProject } from "../db/projects.js";
 // Ruling 3c (audit round 4 B1-b): one synthetic stored value stands in for
 // the secret store.
 const KB_SYN = vi.hoisted(() => "kbs-" + "t".repeat(14));
+// A test can make the scrub fail (secret index unavailable).
+const scrubFail = vi.hoisted(() => ({ on: false }));
 vi.mock("../lib/secret-refs.js", () => ({
-  scrubSecrets: (t: string) => t.replaceAll(KB_SYN, "[oculto]"),
+  scrubSecrets: (t: string) => {
+    if (scrubFail.on) throw new Error("secret index unavailable");
+    return t.replaceAll(KB_SYN, "[oculto]");
+  },
 }));
 
 vi.mock("../observability/prometheus.js", () => ({
@@ -1191,5 +1198,95 @@ describe("capStableContent — ruling 3c, audit round 5: scrub before the cut", 
     expect(capped).not.toContain("kbs-");
     expect(capped).toContain("[oculto]");
     warn.mockRestore();
+  });
+});
+
+describe("a KB block that cannot be built is left out, counted and reported to the caller", () => {
+  const rows = [
+    { path: "enforce.md", title: "Enforce", content: "MUST", qualifier: "enforce", condition: null, priority: 100 },
+    { path: "always.md", title: "Always", content: "ALW", qualifier: "always-read", condition: null, priority: 50 },
+  ];
+  const dropped = async (): Promise<number> => {
+    const metric = client.register.getSingleMetric("mc_prompt_block_dropped_total");
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return values.find((v) => v.labels.block === "kb" && v.labels.reason === "error")?.value ?? 0;
+  };
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    _resetWriteFailureThrottle();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFilesByQualifier).mockImplementation((...quals) =>
+      rows.filter((r) => (quals as string[]).includes(r.qualifier)) as never,
+    );
+    vi.mocked(getFile).mockReset();
+  });
+  afterEach(() => {
+    scrubFail.on = false;
+    errorSpy.mockRestore();
+    vi.mocked(getFilesByQualifier).mockReset();
+    vi.mocked(getFile).mockReset();
+  });
+
+  it("buildKnowledgeBaseSection: the row read throws → null, one count, the caller told once with (kb, error)", async () => {
+    vi.mocked(getFilesByQualifier).mockImplementation(() => {
+      throw new Error("DB closed");
+    });
+    const onError = vi.fn();
+    const before = await dropped();
+    expect(buildKnowledgeBaseSection([], true, undefined, "planner", onError)).toBe(null);
+    expect(await dropped()).toBe(before + 1);
+    expect(onError.mock.calls).toEqual([["kb", "error"]]);
+    expect(errorSpy.mock.calls).toEqual([["[prompt-block] kb dropped (error): DB closed"]]);
+  });
+
+  it("buildKnowledgeBaseSections: the row read throws → both halves null, one count, the caller told once", async () => {
+    vi.mocked(getFilesByQualifier).mockImplementation(() => {
+      throw new Error("DB closed");
+    });
+    const onError = vi.fn();
+    const before = await dropped();
+    expect(buildKnowledgeBaseSections([], undefined, "fast-runner", undefined, onError)).toEqual({
+      stable: null,
+      variable: null,
+    });
+    expect(await dropped()).toBe(before + 1);
+    expect(onError.mock.calls).toEqual([["kb", "error"]]);
+  });
+
+  it("a scrub failure (fail closed: no KB block) is counted as a drop of the same block", async () => {
+    scrubFail.on = true;
+    const single = vi.fn();
+    const split = vi.fn();
+    const before = await dropped();
+    expect(buildKnowledgeBaseSection([], true, undefined, "planner", single)).toBe(null);
+    expect(buildKnowledgeBaseSections([], undefined, "executor", undefined, split)).toEqual({
+      stable: null,
+      variable: null,
+    });
+    expect(await dropped()).toBe(before + 2);
+    expect(single.mock.calls).toEqual([["kb", "error"]]);
+    expect(split.mock.calls).toEqual([["kb", "error"]]);
+  });
+
+  it("a built block calls nothing; a callback that throws does not change the fallback", async () => {
+    const onError = vi.fn();
+    const before = await dropped();
+    expect(buildKnowledgeBaseSection([], true, undefined, "planner", onError)).toContain("MANDATORY: Enforce");
+    expect(buildKnowledgeBaseSections([], undefined, "executor", undefined, onError).stable).toContain("ALW");
+    expect(onError).not.toHaveBeenCalled();
+    expect(await dropped()).toBe(before);
+
+    scrubFail.on = true;
+    const throwing = () => {
+      throw new Error("caller bug");
+    };
+    expect(buildKnowledgeBaseSection([], true, undefined, "planner", throwing)).toBe(null);
+    expect(buildKnowledgeBaseSections([], undefined, "executor", undefined, throwing)).toEqual({
+      stable: null,
+      variable: null,
+    });
   });
 });
