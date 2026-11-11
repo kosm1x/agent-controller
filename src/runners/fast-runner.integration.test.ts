@@ -44,7 +44,11 @@ vi.mock("../config.js", () => ({
 // Tool registry: provide 4 fake tools (≤6 threshold → skipDeferral=true
 // → all definitions loaded full, simplest test path). file_write is in
 // `WRITE_TOOLS` so the hallucination guard can light up against it.
-vi.mock("../tools/registry.js", () => ({
+vi.mock("../tools/registry.js", async (importOriginal) => ({
+  // The REAL target derivation: the retry leg's write clearing reads it.
+  writeTargetKeys: (
+    await importOriginal<typeof import("../tools/registry.js")>()
+  ).writeTargetKeys,
   toolRegistry: {
     getDefinitions: vi.fn(() => [
       {
@@ -3367,5 +3371,377 @@ describe("injected grounding joins the numbers-evidence corpus (W3 ruling A (ii)
       conversationHistory: [{ role: "user", content: "¿cuántas filas hay?" }],
     });
     expect(takeToolEvidence("task-inj-ro").join("\n")).toContain("7,777");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// The hallucination retry leg: a failed leg-1 write that the retry then
+// completes on the same target is done; anything short of positive
+// evidence leaves it failed. The retry is cancellable with the task.
+// ────────────────────────────────────────────────────────────────────
+describe("hallucination retry — a write the retry completes counts as done", () => {
+  const PATH_A = '{"path":"/tmp/x.txt","content":"hola"}';
+  const PATH_B = '{"path":"/tmp/y.txt","content":"hola"}';
+  const DOC = '{"document_id":"doc-12345678","text":"hola"}';
+  const OK = '{"ok":true}';
+  const FAIL = '{"error":"timeout after 30s"}';
+  const call = (id: string, name: string, args = PATH_A): ChatMessage => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name, arguments: args } }],
+  });
+  const res = (id: string, content: string): ChatMessage => ({
+    role: "tool",
+    content,
+    tool_call_id: id,
+  });
+
+  /** Leg 1 ends with `leg1` and a success claim; the retry leg's messages
+   *  repeat leg 1's as a prefix (as the real tool loop returns them), then
+   *  the retry prompt, then `retryNew`. */
+  async function run(
+    leg1: ChatMessage[],
+    retryNew: ChatMessage[],
+    extra: { signal?: AbortSignal } = {},
+    retry: { content?: string; exitReason?: string } = {},
+  ) {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "✅ Escribí el archivo.", messages: leg1 }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "✅ Archivo escrito de nuevo.\n\nSTATUS: DONE",
+        messages: [
+          ...leg1,
+          { role: "user", content: "ALTO: reintenta" },
+          ...retryNew,
+        ],
+        ...retry,
+      }),
+    );
+    return fastRunner.execute({
+      taskId: "task-rw",
+      runId: "run-rw",
+      title: "Write a file",
+      description: "Escribe 'hola' en /tmp/x.txt",
+      ...extra,
+    });
+  }
+
+  /** The diagnosis block of the "not completed" replacement. */
+  const diagnosisOf = (r: RunnerOutput): string =>
+    (outputText(r) ?? "").split("**Errores de herramientas**:")[1] ?? "";
+
+  /** The write stayed failed: the answer is replaced and the retry failed. */
+  function expectStillFailed(r: RunnerOutput, tool = "file_write"): void {
+    expect(r.status).toBe("DONE_WITH_CONCERNS");
+    expect(outputText(r)).toContain("⚠️ No completé la acción solicitada.");
+    expect(diagnosisOf(r)).toContain(`- ${tool}: `);
+    expect(mockRecordRetry).toHaveBeenCalledWith("fail");
+    expect(mockRecordRetry).not.toHaveBeenCalledWith("success");
+  }
+
+  /** The write counts as done: the retry's answer is kept. */
+  function expectDone(r: RunnerOutput): void {
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(r.status).toBe("DONE");
+    expect(outputText(r)).toBe("✅ Archivo escrito de nuevo.");
+    expect(mockRecordRetry).toHaveBeenCalledWith("success");
+    expect(mockRecordRetry).not.toHaveBeenCalledWith("fail");
+  }
+
+  it("a write that failed in leg 1 and succeeded in the retry on the same target → done, the retry's answer kept, retry outcome success", async () => {
+    expectDone(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", OK),
+      ]),
+    );
+  });
+
+  it("the retry completes the same target under other arguments → done", async () => {
+    expectDone(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write", '{"path":"/tmp/x.txt","content":"otro"}'),
+        res("c2", OK),
+      ]),
+    );
+  });
+
+  it("the retry writes another target → the first target stays failed", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write", PATH_B),
+        res("c2", OK),
+      ]),
+    );
+  });
+
+  it("a tool with no derivable target: equal arguments in another key order resolve it", async () => {
+    expectDone(
+      await run(
+        [call("c1", "shell_exec", '{"command":"touch /tmp/x","timeout":5}'), res("c1", FAIL)],
+        [call("c2", "shell_exec", '{"timeout":5,"command":"touch /tmp/x"}'), res("c2", OK)],
+      ),
+    );
+  });
+
+  it("a tool with no derivable target: other arguments do not resolve it", async () => {
+    expectStillFailed(
+      await run(
+        [call("c1", "shell_exec", '{"command":"touch /tmp/x"}'), res("c1", FAIL)],
+        [call("c2", "shell_exec", '{"command":"touch /tmp/y"}'), res("c2", OK)],
+      ),
+      "shell_exec",
+    );
+  });
+
+  it("a verified write that the retry completed raises no 'Write verification failed' concern", async () => {
+    const r = await run([call("c1", "gdocs_write", DOC), res("c1", FAIL)], [
+      call("c2", "gdocs_write", DOC),
+      res("c2", '{"document_id":"doc-12345678"}'),
+    ]);
+    expect(r.status).toBe("DONE");
+    expect(r.concerns ?? []).toEqual([]);
+    expect(mockRecordRetry).toHaveBeenCalledWith("success");
+  });
+
+  it("the retry leg's own verified write is still checked for its success marker", async () => {
+    const r = await run([call("c1", "gdocs_write", DOC), res("c1", FAIL)], [
+      call("c2", "gdocs_write", DOC),
+      res("c2", OK),
+    ]);
+    expect(r.status).toBe("DONE_WITH_CONCERNS");
+    expect(r.concerns).toEqual([
+      'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+    ]);
+  });
+
+  it("negative: the retry's write fails again → answer replaced, retry outcome fail", async () => {
+    const r = await run([call("c1", "file_write"), res("c1", FAIL)], [
+      call("c2", "file_write"),
+      res("c2", FAIL),
+    ]);
+    expectStillFailed(r);
+    expect(diagnosisOf(r)).toContain("- file_write: " + FAIL);
+    expect(r.concerns).toEqual([
+      "Hallucination detected — hallucination persists after retry. Response mechanically replaced with honest tool inventory",
+    ]);
+  });
+
+  it("negative: the retry never calls the failed write → answer replaced, retry outcome fail", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_read", '{"path":"/tmp/x.txt"}'),
+        res("c2", '{"ok":true,"content":"hola"}'),
+      ]),
+    );
+  });
+
+  it.each([
+    ["a leading Error text", "Error: disk full"],
+    ["success false", '{"success":false,"errors":1}'],
+    ["ok false", '{"ok":false}'],
+    ["a deferred-tool schema expansion", '{"deferred_expansion":true,"message":"schema"}'],
+    ["an error object after whitespace", '  {"error":"disk full"}'],
+    ["a leading cross mark", "❌ no se pudo escribir"],
+    ["an empty result", ""],
+  ])("a retry result that is %s resolves nothing", async (_label, content) => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", content),
+      ]),
+    );
+  });
+
+  it("a retry call with no result resolves nothing", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+      ]),
+    );
+  });
+
+  it("a retry call with an empty id resolves nothing", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("", "file_write"),
+        res("", OK),
+      ]),
+    );
+  });
+
+  it("a retry call reusing a leg-1 id resolves nothing, even with a positive result", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c1", "file_write"),
+        res("c1", OK),
+      ]),
+    );
+  });
+
+  it("a reused leg-1 id next to another tool's success leaves the write failed", async () => {
+    const both: ChatMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "file_write", arguments: PATH_A } },
+        { id: "c9", type: "function", function: { name: "file_edit", arguments: PATH_B } },
+      ],
+    };
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        both,
+        res("c1", FAIL),
+        res("c9", OK),
+      ]),
+    );
+  });
+
+  it("confirmation required, then success on the same target in the retry → done", async () => {
+    expectDone(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", '{"error":"CONFIRMATION_REQUIRED"}'),
+        call("c3", "file_write"),
+        res("c3", OK),
+      ]),
+    );
+  });
+
+  it("confirmation required only in the retry → stays failed", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", '{"error":"CONFIRMATION_REQUIRED"}'),
+      ]),
+    );
+  });
+
+  it("the last retry call to the target decides: success then failure → stays failed", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", OK),
+        call("c3", "file_write"),
+        res("c3", FAIL),
+      ]),
+    );
+  });
+
+  it("two writes failed in leg 1, the retry completes one → still failed, the diagnosis names only the other", async () => {
+    const r = await run(
+      [
+        call("c1", "file_write"),
+        res("c1", FAIL),
+        call("c3", "file_edit", PATH_B),
+        res("c3", '{"error":"timeout after 31s"}'),
+      ],
+      [call("c2", "file_write"), res("c2", OK)],
+    );
+    expectStillFailed(r, "file_edit");
+    expect(diagnosisOf(r)).not.toContain("- file_write: ");
+  });
+
+  it("without a retry, a verified write that failed once and succeeded once keeps its verification concern", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo, actualicé los dos documentos.\n\nSTATUS: DONE",
+        messages: [
+          call("c1", "gdocs_write", DOC),
+          res("c1", FAIL),
+          call("c2", "gdocs_write", '{"document_id":"doc-87654321"}'),
+          res("c2", '{"document_id":"doc-87654321"}'),
+        ],
+      }),
+    );
+    const r = await fastRunner.execute({
+      taskId: "task-rw-noretry",
+      runId: "run-rw-noretry",
+      title: "Update two documents",
+      description: "Actualiza los dos documentos",
+    });
+    expect(mockInferWithTools).toHaveBeenCalledTimes(1);
+    expect(r.status).toBe("DONE_WITH_CONCERNS");
+    expect(r.concerns).toEqual([
+      'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+    ]);
+  });
+
+  it("an aborted retry is never the answer and resolves nothing, even after another successful leg-1 write", async () => {
+    const leg1 = [
+      call("c0", "file_edit", PATH_B),
+      res("c0", OK),
+      call("c1", "file_write"),
+      res("c1", FAIL),
+    ];
+    const r = await run(
+      leg1,
+      [call("c2", "file_write"), res("c2", OK)],
+      {},
+      { content: "[aborted]", exitReason: "aborted" },
+    );
+    expect(outputText(r)).not.toContain("[aborted]");
+    expectStillFailed(r);
+  });
+
+  it("an id repeated inside the retry leg: success then failure on the same target → stays failed", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write"), res("c1", FAIL)], [
+        call("c2", "file_write"),
+        res("c2", OK),
+        call("c2", "file_write"),
+        res("c2", FAIL),
+      ]),
+    );
+  });
+
+  it("an id repeated inside the retry leg cannot borrow an earlier call's verification marker", async () => {
+    const r = await run([call("c1", "gdocs_write", DOC), res("c1", FAIL)], [
+      call("c2", "gdocs_write", DOC),
+      res("c2", '{"document_id":"doc-12345678"}'),
+      call("c2", "gdocs_write", DOC),
+      res("c2", OK),
+    ]);
+    expect(r.status).toBe("DONE_WITH_CONCERNS");
+    expect(r.concerns).toEqual([
+      'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+    ]);
+  });
+
+  it("a multi-target write is resolved only when the retry writes every target again", async () => {
+    const both = '{"entries":[{"path":"/kb/a.md"},{"path":"/kb/b.md"}]}';
+    expectStillFailed(
+      await run([call("c1", "kb_batch_insert", both), res("c1", FAIL)], [
+        call("c2", "kb_batch_insert", '{"entries":[{"path":"/kb/a.md"}]}'),
+        res("c2", OK),
+      ]),
+      "kb_batch_insert",
+    );
+  });
+
+  it("a failed call whose arguments give no key (valid JSON, not an object) never resolves", async () => {
+    expectStillFailed(
+      await run([call("c1", "file_write", '["/tmp/x.txt"]'), res("c1", FAIL)], [
+        call("c2", "file_write", '["/tmp/x.txt"]'),
+        res("c2", OK),
+      ]),
+    );
+  });
+
+  it("the retry leg's inference call carries the task's cancellation signal and task id", async () => {
+    const ac = new AbortController();
+    await run(
+      [call("c1", "file_write"), res("c1", FAIL)],
+      [call("c2", "file_write"), res("c2", OK)],
+      { signal: ac.signal },
+    );
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    const opts = mockInferWithTools.mock.calls[1]![3];
+    expect(opts?.signal).toBe(ac.signal);
+    expect(opts?.taskId).toBe("task-rw");
+    // The final text arrives whole: the retry leg streams nothing.
+    expect(opts?.onTextChunk).toBeUndefined();
   });
 });

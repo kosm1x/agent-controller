@@ -12,8 +12,8 @@ import {
   lastlineEligible,
   sdkLastline,
 } from "../inference/adapter.js";
-import type { ChatMessage } from "../inference/adapter.js";
-import { toolRegistry } from "../tools/registry.js";
+import type { ChatMessage, ToolCall } from "../inference/adapter.js";
+import { toolRegistry, writeTargetKeys } from "../tools/registry.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { parseRunnerStatus } from "./status.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
@@ -285,6 +285,66 @@ function sdkUsageAsLoop(u: {
       cache_creation_tokens: u.cacheCreationTokens,
     }),
   };
+}
+
+/** A tool result the openai path counts as a failed call: a tool-level
+ *  error object or an argument fault, not any text that mentions "error". */
+function isToolErrorContent(content: string): boolean {
+  return (
+    content.startsWith('{"error"') ||
+    content.startsWith('{"error":') ||
+    content.includes("Tool call truncated") ||
+    content.includes("Invalid arguments for")
+  );
+}
+
+/** A tool result that positively reports success: present, not an error by
+ *  this runner's rule nor by the registry's (it mirrors `isErrorResult` in
+ *  tools/registry.ts: a leading `{"error"`, `Error` or ❌ after optional
+ *  whitespace), not a JSON object whose `success` or `ok` is false, and not
+ *  a deferred-tool schema expansion (a schema shown, not a write done). */
+function isPositiveToolResult(content: string): boolean {
+  if (content.trim() === "" || isToolErrorContent(content)) return false;
+  if (/^\s*(\{\s*"error"|Error\b|❌)/.test(content)) return false;
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const o = parsed as Record<string, unknown>;
+      if (o.success === false || o.ok === false) return false;
+      if (o.deferred_expansion === true) return false;
+    }
+  } catch {
+    // Not JSON: the text tests above decide.
+  }
+  return true;
+}
+
+/** The keys a write call targets, each tagged with its tool: the artifact
+ *  keys `writeTargetKeys` derives from its arguments, else the arguments
+ *  themselves in key-sorted form so that equal values match in any order.
+ *  Unparseable arguments give no key, so such a call never matches. */
+function writeCallKeys(tc: ToolCall): string[] {
+  const name = tc.function?.name;
+  if (!name) return [];
+  let args: unknown;
+  try {
+    args = JSON.parse(tc.function.arguments);
+  } catch {
+    return [];
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) return [];
+  const targets = writeTargetKeys(name, args as Record<string, unknown>);
+  if (targets.length > 0) {
+    return targets.map((t) => JSON.stringify([name, "target", t]));
+  }
+  const sorted = JSON.stringify(args, (_k, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : v,
+  );
+  return [JSON.stringify([name, "args", sorted])];
 }
 
 /** SDK built-ins that can land in a run's toolCalls and change nothing:
@@ -2392,6 +2452,12 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         );
       }
 
+      // The hallucination retry leg's own messages (empty when no retry ran)
+      // and the failed leg-1 write calls it resolved; the write verification
+      // below reads both.
+      let retryLegMessages: ChatMessage[] = [];
+      const resolvedLeg1CallIds = new Set<string>();
+
       // CCP4: Structured failure recovery protocol.
       // 4 steps: diagnose (extract error) → classify (transient vs permanent) →
       // targeted correction (retry with context OR skip) → respect sound strategy.
@@ -2430,6 +2496,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
 
         // Step 3 — Decide: retry only if transient errors + budget headroom
         const shouldRetry = hasHeadroom && !allPermanent;
+        // The failed writes the retry did not then complete; without a
+        // retry, every leg-1 failure.
+        let unresolvedWriteTools = failedWriteTools;
 
         if (shouldRetry) {
           console.log(
@@ -2519,6 +2588,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               providerName: tierToProvider(input.modelTier),
               effort: tierToEffort(input.modelTier),
               tokenBudget,
+              signal: input.signal,
+              taskId: input.taskId,
               // Retry leg of the same dispatched run — same aggregate. (3.3)
               costLedger: false,
             },
@@ -2552,10 +2623,95 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             }
           }
 
+          // An aborted retry resolves nothing and is never the answer: its
+          // text is the abort placeholder or an unfinished partial.
+          const retryAborted = retryResult.exitReason === "aborted";
+          // The retry leg's own calls: its messages repeat leg 1's as a
+          // prefix, so a call belongs to the retry only when its id is
+          // non-empty and leg 1 never carried it, and its result is read
+          // only after that shared prefix.
+          const leg1CallIds = new Set(
+            result.messages.flatMap(
+              (m) => m.tool_calls?.map((tc) => tc.id) ?? [],
+            ),
+          );
+          const isRetryCallId = (id: string | undefined): boolean =>
+            !!id && !leg1CallIds.has(id);
+          let prefixLen = 0;
+          while (
+            prefixLen < result.messages.length &&
+            retryResult.messages[prefixLen] === result.messages[prefixLen]
+          ) {
+            prefixLen++;
+          }
+          retryLegMessages = retryAborted
+            ? []
+            : retryResult.messages.slice(prefixLen).flatMap((m) => {
+                if (m.role === "tool") {
+                  return isRetryCallId(m.tool_call_id) ? [m] : [];
+                }
+                const calls =
+                  m.tool_calls?.filter((tc) => isRetryCallId(tc.id)) ?? [];
+                return calls.length > 0 ? [{ ...m, tool_calls: calls }] : [];
+              });
+          // A failed leg-1 write call is resolved only by retry calls of the
+          // same tool to the same target, and only when the LAST of them
+          // returned a present, positive result. A retry that completes the
+          // write under other arguments for the same target counts; one sent
+          // to another target does not, and the user is told the first
+          // target was not completed.
+          // Each call reads the first result after its own message, so an id
+          // the provider repeats cannot borrow an earlier call's result.
+          const lastOutcome = new Map<string, boolean>();
+          for (let ri = 0; ri < retryLegMessages.length; ri++) {
+            for (const tc of retryLegMessages[ri].tool_calls ?? []) {
+              const res = retryLegMessages
+                .slice(ri + 1)
+                .find((r) => r.role === "tool" && r.tool_call_id === tc.id);
+              const ok = isPositiveToolResult(
+                typeof res?.content === "string" ? res.content : "",
+              );
+              for (const key of writeCallKeys(tc)) lastOutcome.set(key, ok);
+            }
+          }
+          // A tool stays unresolved while any of its failed calls is, or
+          // when no failed call of it can be found.
+          const unresolvedNames = new Set<string>();
+          const failedCallNames = new Set<string>();
+          for (let fi = 0; fi < result.messages.length; fi++) {
+            for (const tc of result.messages[fi].tool_calls ?? []) {
+              const name = tc.function?.name;
+              if (!name || !failedWriteTools.includes(name)) continue;
+              const fRes = result.messages
+                .slice(fi + 1)
+                .find((m) => m.role === "tool" && m.tool_call_id === tc.id);
+              if (
+                !isToolErrorContent(
+                  typeof fRes?.content === "string" ? fRes.content : "",
+                )
+              ) {
+                continue;
+              }
+              failedCallNames.add(name);
+              const keys = writeCallKeys(tc);
+              if (
+                keys.length > 0 &&
+                keys.every((k) => lastOutcome.get(k) === true)
+              ) {
+                resolvedLeg1CallIds.add(tc.id);
+              } else {
+                unresolvedNames.add(name);
+              }
+            }
+          }
+          unresolvedWriteTools = failedWriteTools.filter(
+            (t) => unresolvedNames.has(t) || !failedCallNames.has(t),
+          );
+
           const retryCalledWrite = retryToolsCalled.some((t) =>
             WRITE_TOOLS.has(t),
           );
-          if (retryCalledWrite) {
+          if (retryCalledWrite && !retryAborted) {
             // Retry succeeded — use its results
             parsed = retryParsed;
             toolsCalled.length = 0;
@@ -2575,7 +2731,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             parsed.cleanContent,
             toolsCalled,
             lastUserMessage,
-            failedWriteTools,
+            unresolvedWriteTools,
           )
         ) {
           // Retry fixed it — skip replacement.
@@ -2606,8 +2762,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
 
           // Build error diagnosis for the user when tools failed
           const errorDiagnosis =
-            hasToolErrors && failedWriteTools.length > 0
-              ? `\n\n**Errores de herramientas**:\n${failedWriteTools
+            hasToolErrors && unresolvedWriteTools.length > 0
+              ? `\n\n**Errores de herramientas**:\n${unresolvedWriteTools
                   .map((t) => {
                     const err = failedToolCalls.get(t) ?? "desconocido";
                     const cls = classifyToolError(err);
@@ -2721,15 +2877,22 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         gtasks_create: '"id"',
         wp_publish: '"post_id"',
       };
-      for (const msg of result.messages) {
+      const verifyMessages = [...result.messages, ...retryLegMessages];
+      for (let vi = 0; vi < verifyMessages.length; vi++) {
+        const msg = verifyMessages[vi];
         if (msg.role !== "assistant" || !msg.tool_calls) continue;
         for (const tc of msg.tool_calls) {
           const name = tc.function?.name;
           if (!name || !WRITE_VERIFICATION[name]) continue;
           if (!toolsCalled.includes(name)) continue; // already flagged as failed
-          const toolResultMsg = result.messages.find(
-            (m) => m.role === "tool" && m.tool_call_id === tc.id,
-          );
+          // A failed leg-1 call the retry completed is not a silent failure.
+          if (resolvedLeg1CallIds.has(tc.id)) continue;
+          // A retry-leg call reads the first result after its own message,
+          // so a repeated id cannot borrow an earlier call's marker; leg 1's
+          // calls keep their whole-list lookup.
+          const toolResultMsg = verifyMessages
+            .slice(vi < result.messages.length ? 0 : vi + 1)
+            .find((m) => m.role === "tool" && m.tool_call_id === tc.id);
           const content =
             typeof toolResultMsg?.content === "string"
               ? toolResultMsg.content
