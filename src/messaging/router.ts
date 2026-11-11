@@ -2379,7 +2379,7 @@ export class MessageRouter {
           this.sendToChannel(
             msg.channel,
             msg.from,
-            "⚠�� Ya hay 3 agentes activos. Espera a que terminen o cancela uno con 'cancela agente'.",
+            "⚠️ Ya hay 3 agentes activos. Espera a que terminen o cancela uno con 'cancela agente'.",
           );
           return true;
         }
@@ -3230,18 +3230,26 @@ export class MessageRouter {
         );
         const threadTurns = getThreadTurns(tk);
         const response = await fastPathRespond(msg.text, threadTurns);
+        // Same deliverable filter as every other LLM send; what is delivered
+        // is what gets logged, buffered and retained. Empty, or the filter
+        // added a failure line → the full pipeline handles the message.
+        const filtered = sanitizeDeliverable(response);
+        if (filtered.stripped.length > 0) {
+          console.log(
+            `[router] deliverable-filter fast-path stripped=[${filtered.stripped.join(",")}]`,
+          );
+        }
+        if (!filtered.text || filtered.failureLine !== undefined) return false;
+        const out = filtered.text;
 
-        this.sendToChannel(msg.channel, msg.from, response);
-        appendDayLog("JARVIS", response);
+        this.sendToChannel(msg.channel, msg.from, out);
+        appendDayLog("JARVIS", out);
 
-        const cappedResponse = capThreadReply(
-          response,
-          THREAD_LAST_RESPONSE_CAP,
-        );
+        const cappedResponse = capThreadReply(out, THREAD_LAST_RESPONSE_CAP);
         pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
         try {
-          const exchange = `User: ${msg.text}\nJarvis: ${response}`;
+          const exchange = `User: ${msg.text}\nJarvis: ${out}`;
           getMemoryService()
             .retain(exchange, {
               bank: "mc-jarvis",
@@ -4000,9 +4008,13 @@ export class MessageRouter {
       await Promise.allSettled([...this.gateInflight]);
     }
 
-    // Stop channels
+    // Stop channels — one adapter failing to stop must not leave the rest running
     for (const adapter of this.channels.values()) {
-      await adapter.stop();
+      try {
+        await adapter.stop();
+      } catch (err) {
+        console.error(`[router] ${adapter.name} stop failed:`, err);
+      }
     }
     this.channels.clear();
   }

@@ -266,6 +266,25 @@ function sumLoopUsage(a: LoopUsage, b: LoopUsage): LoopUsage {
   };
 }
 
+/** An SDK leg's usage in the tool loop's field names. A cache count is
+ *  emitted only when nonzero, as the SDK's own loop mapping does, so an
+ *  absent field stays absent. */
+function sdkUsageAsLoop(u: {
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}): LoopUsage {
+  return {
+    prompt_tokens: u.promptTokens,
+    completion_tokens: u.completionTokens,
+    ...(u.cacheReadTokens > 0 && { cache_read_tokens: u.cacheReadTokens }),
+    ...(u.cacheCreationTokens > 0 && {
+      cache_creation_tokens: u.cacheCreationTokens,
+    }),
+  };
+}
+
 /** SDK built-ins that can land in a run's toolCalls and change nothing:
  *  `queryClaudeSdk` admits only `ToolSearch` (`tools: ["ToolSearch"]` when
  *  armed; every other built-in is disabled). A fresh leg must re-run it to
@@ -1507,6 +1526,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       // fallback provider is armed (sdkLastline) — `break sdkPath` then runs
       // the request on the openai path below, with its post-processing.
       let lastline: { model: string } | null = null;
+      // Usage of the SDK attempts the last line abandons: those legs run
+      // unmetered (costLedger: false), so the reported total must carry them.
+      let abandonedSdkUsage: LoopUsage | null = null;
       // One journal line + one trace event per engagement (emitTraceEvent
       // never throws — tracing must not break the traced task).
       const engageLastline = (
@@ -1768,6 +1790,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           const armed = sdkLastline();
           if (armed) {
             lastline = engageLastline(armed, "api_error", sdkResult.errorClass);
+            abandonedSdkUsage = sdkUsageAsLoop(sdkResult.usage);
             break sdkPath;
           }
         }
@@ -1875,6 +1898,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                   : sdkLastline();
               if (armed) {
                 lastline = engageLastline(armed, "auth");
+                abandonedSdkUsage = sdkUsageAsLoop(
+                  mergeSdkLegs(sdkResult, authLeg).usage,
+                );
                 break sdkPath;
               }
               sdkResult = {
@@ -2737,6 +2763,9 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         }
       }
 
+      const reportedUsage = abandonedSdkUsage
+        ? sumLoopUsage(abandonedSdkUsage, result.totalUsage)
+        : result.totalUsage;
       return {
         success:
           parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
@@ -2764,13 +2793,13 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           parsed.status === "DONE" || parsed.status === "DONE_WITH_CONCERNS",
         ),
         tokenUsage: {
-          promptTokens: result.totalUsage.prompt_tokens,
-          completionTokens: result.totalUsage.completion_tokens,
-          ...(result.totalUsage.cache_read_tokens !== undefined && {
-            cacheReadTokens: result.totalUsage.cache_read_tokens,
+          promptTokens: reportedUsage.prompt_tokens,
+          completionTokens: reportedUsage.completion_tokens,
+          ...(reportedUsage.cache_read_tokens !== undefined && {
+            cacheReadTokens: reportedUsage.cache_read_tokens,
           }),
-          ...(result.totalUsage.cache_creation_tokens !== undefined && {
-            cacheCreationTokens: result.totalUsage.cache_creation_tokens,
+          ...(reportedUsage.cache_creation_tokens !== undefined && {
+            cacheCreationTokens: reportedUsage.cache_creation_tokens,
           }),
           // 2026-05-10 cutover audit C1: actualModel from inferWithTools
           // surfaces SDK-routed Haiku/Opus correctly; absent on OpenAI path.

@@ -456,6 +456,108 @@ describe("MessageRouter", () => {
     delete process.env.TELEGRAM_OWNER_CHAT_ID;
   });
 
+  describe("stopAll", () => {
+    it("stops every adapter even when an earlier one's stop rejects, and resolves", async () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(waAdapter.stop).mockRejectedValueOnce(new Error("stop failed"));
+      const tgAdapter = createMockAdapter("telegram");
+      router.registerChannel(tgAdapter);
+
+      await expect(router.stopAll()).resolves.toBeUndefined();
+      expect(waAdapter.stop).toHaveBeenCalledTimes(1);
+      expect(tgAdapter.stop).toHaveBeenCalledTimes(1);
+      expect(err).toHaveBeenCalledWith(
+        expect.stringContaining("whatsapp"),
+        expect.any(Error),
+      );
+      err.mockRestore();
+    });
+  });
+
+  describe("conversational fast path delivery", () => {
+    const owner = "owner@s.whatsapp.net";
+    const greet = () =>
+      router.handleInbound({
+        channel: "whatsapp",
+        from: owner,
+        text: "Buenos días",
+        timestamp: new Date(),
+      });
+    const dayLogWrites = () =>
+      dbRun.mock.calls
+        .map((c) => JSON.stringify(c))
+        .filter((c) => c.includes("day-logs"));
+
+    afterEach(() => {
+      fastPathStub.reply = null;
+    });
+
+    it("delivers the filtered reply, and the day log, thread and retention get the same filtered text", async () => {
+      const clean = "¡Buenos días! ¿En qué te ayudo hoy?";
+      fastPathStub.reply = `${clean}\n[positive feedback acknowledged]`;
+      const submitsBefore = vi.mocked(submitTask).mock.calls.length;
+      await greet();
+
+      expect(vi.mocked(submitTask).mock.calls.length).toBe(submitsBefore);
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([clean]);
+      const dayLog = dayLogWrites().join(" ");
+      expect(dayLog).toContain(clean);
+      expect(dayLog).not.toContain("positive feedback acknowledged");
+      const last = _testThreadEntries(threadKey("whatsapp", owner)).at(-1)!;
+      expect(last.text).toBe(`User: Buenos días\nJarvis: ${clean}`);
+      const retained = memoryRetainSpy.mock.calls
+        .map((c) => c[0] as string)
+        .filter((t) => t.startsWith("User: Buenos días"));
+      expect(retained).toEqual([`User: Buenos días\nJarvis: ${clean}`]);
+    });
+
+    /** The fast path declined: the normal path took the message, and no
+     *  fast-path reply was sent, logged, buffered or retained. */
+    async function expectFallThrough(): Promise<void> {
+      const submitsBefore = vi.mocked(submitTask).mock.calls.length;
+      const logsBefore = dayLogWrites().length;
+      const threadBefore = _testThreadEntries(threadKey("whatsapp", owner));
+      const retainsBefore = memoryRetainSpy.mock.calls.length;
+      await greet();
+
+      expect(vi.mocked(submitTask).mock.calls.length).toBe(submitsBefore + 1);
+      // Only the normal path's acknowledgement goes out.
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([
+        "Recibido, trabajando en ello...",
+      ]);
+      // Only the inbound USER line is logged, never a JARVIS line.
+      expect(
+        dayLogWrites()
+          .slice(logsBefore)
+          .filter((c) => c.includes("**JARVIS**")),
+      ).toEqual([]);
+      expect(_testThreadEntries(threadKey("whatsapp", owner))).toEqual(
+        threadBefore,
+      );
+      expect(
+        memoryRetainSpy.mock.calls
+          .slice(retainsBefore)
+          .filter((c) => JSON.stringify(c[1] ?? {}).includes("fast-path")),
+      ).toEqual([]);
+    }
+
+    it("a reply that is empty after filtering is not sent and falls through to the normal path", async () => {
+      fastPathStub.reply = " \n\n ";
+      await expectFallThrough();
+    });
+
+    it("a reply made only of a strippable marker falls through: the filter's failure sentence is never sent", async () => {
+      fastPathStub.reply = "[positive feedback acknowledged]";
+      await expectFallThrough();
+    });
+
+    it("a reply that is an API-error marker falls through: the filter's failure sentence is never sent", async () => {
+      fastPathStub.reply =
+        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Output blocked by content filtering policy"}}';
+      await expectFallThrough();
+    });
+  });
+
   describe("inbound", () => {
     it("hands a follow-up inside the feedback window to the Jev shadow, beside the regex label", async () => {
       const { checkFeedbackWindow } =

@@ -173,3 +173,75 @@ describe("src/index.ts boot order", () => {
     expect(db).toBeLessThan(reconcile);
   });
 });
+
+describe("src/index.ts stop sequence", () => {
+  /** The stop closure's body, comments stripped. */
+  function stopSequence(): string {
+    const src = readFileSync(resolve(__dirname, "../index.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const start = src.indexOf("const shutdown = async () => {");
+    const end = src.indexOf('process.on("SIGTERM", shutdown)');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return src.slice(start, end);
+  }
+
+  it("starts no dynamic import it does not await (process.exit would win the race)", () => {
+    const seq = stopSequence();
+    const imports = [...seq.matchAll(/(\bawait\s+)?\bimport\(/g)];
+    for (const m of imports) expect(m[1], m[0]).toBeDefined();
+    expect(seq).not.toContain('import("./db/jarvis-index.js")');
+  });
+
+  it("cancels pending index regeneration before the database is closed", () => {
+    const seq = stopSequence();
+    const cancel = seq.indexOf("cancelPendingRegeneration(");
+    const close = seq.indexOf("closeDatabase(");
+    expect(cancel).toBeGreaterThanOrEqual(0);
+    expect(close).toBeGreaterThan(cancel);
+  });
+
+  it("stops the triggers along with the other schedulers", () => {
+    const seq = stopSequence();
+    expect(seq).toContain("stopTriggers()");
+    expect(seq.indexOf("stopTriggers()")).toBeLessThan(
+      seq.indexOf("readShutdownGraceMs("),
+    );
+  });
+
+  it("runs every stop call of the scheduler step through safeStop", () => {
+    const seq = stopSequence();
+    const from = seq.indexOf("httpServer.close();");
+    const to = seq.indexOf('await import("./lib/s3/scheduler.js")');
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(to).toBeGreaterThan(from);
+    const step = seq.slice(from + "httpServer.close();".length, to);
+    const wrapped = /safeStop\(\s*"[^"]+",\s*\(\)\s*=>\s*[\w.]+\(\)\s*,?\s*\);/g;
+    const calls = step.match(wrapped) ?? [];
+    expect(calls.length).toBe(6);
+    const rest = step.replace(wrapped, "");
+    expect(rest).not.toMatch(/\bstop\w*\s*\(/i);
+  });
+
+  it("runs the scheduler step's stop calls unconditionally", () => {
+    const seq = stopSequence();
+    const last = seq.lastIndexOf("safeStop(", seq.indexOf("readShutdownGraceMs("));
+    const step = seq.slice(seq.indexOf("safeStop("), seq.indexOf(";", last) + 1);
+    expect(step).toContain("stopTriggers()");
+    expect(step).not.toMatch(/\bif\s*\(/);
+    expect(step).not.toContain("?");
+  });
+
+  it("cancels index regeneration unconditionally, right before the close", () => {
+    const seq = stopSequence();
+    const cancel = seq.indexOf("cancelPendingRegeneration(");
+    const tail = seq.slice(
+      seq.lastIndexOf("}", cancel),
+      seq.indexOf("closeDatabase("),
+    );
+    expect(tail).toContain("cancelPendingRegeneration(");
+    expect(tail).not.toMatch(/\bif\s*\(/);
+    expect(tail).not.toContain("?");
+  });
+});

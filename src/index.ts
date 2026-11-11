@@ -23,11 +23,14 @@ import {
   closeDatabase,
   reconcileOrphanedTasks,
 } from "./db/index.js";
-import { regenerateIndex } from "./db/jarvis-index.js";
+import {
+  regenerateIndex,
+  cancelPendingRegeneration,
+} from "./db/jarvis-index.js";
 import { getJarvisKbRoot, getKbMirrorWriteDir } from "./db/jarvis-fs.js";
 import { initEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
-import { startTriggers } from "./triggers/index.js";
+import { startTriggers, stopTriggers } from "./triggers/index.js";
 import { createApp } from "./api/index.js";
 import {
   startRitualScheduler,
@@ -92,6 +95,17 @@ async function checkPort(port: number): Promise<void> {
 }
 
 const log = createLogger("mc");
+
+/** Run one stop step. A throw is logged with the step's name and swallowed so
+ *  the later steps (drain, task marking, checkpoint, exit) still run.
+ *  For synchronous stop functions only: a returned promise's rejection is not caught here. */
+function safeStop(name: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    log.warn({ err, step: name }, "stop step failed (non-fatal)");
+  }
+}
 
 /** Held for the process lifetime; the socket lock dies with the process. */
 let instanceGuard: Server | null = null;
@@ -648,11 +662,12 @@ async function main(): Promise<void> {
     httpServer.close();
 
     // 2. Stop schedulers + collectors
-    reactionManager.stop();
-    stopIntelCollectors();
-    stopDynamicScheduler();
-    stopProactiveScheduler();
-    stopRitualScheduler();
+    safeStop("reactionManager", () => reactionManager.stop());
+    safeStop("intelCollectors", () => stopIntelCollectors());
+    safeStop("dynamicScheduler", () => stopDynamicScheduler());
+    safeStop("proactiveScheduler", () => stopProactiveScheduler());
+    safeStop("ritualScheduler", () => stopRitualScheduler());
+    safeStop("triggers", () => stopTriggers());
 
     // v7.7 Spine 2: stop S3 cron jobs so an in-flight tick doesn't hit a
     // closed DB during shutdown. Dynamic import keeps boot independent.
@@ -747,9 +762,7 @@ async function main(): Promise<void> {
     }
 
     // 7. Cancel pending INDEX.md regeneration + WAL checkpoint + close database
-    import("./db/jarvis-index.js")
-      .then((m) => m.cancelPendingRegeneration())
-      .catch(() => {});
+    safeStop("indexRegeneration", () => cancelPendingRegeneration());
     closeDatabase();
 
     process.exit(0);

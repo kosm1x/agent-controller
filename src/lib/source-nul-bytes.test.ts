@@ -6,6 +6,7 @@
  * (`\u0000`), which compiles to the same value.
  */
 import { afterAll, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -87,6 +88,26 @@ describe("source files carry no literal NUL byte", () => {
       expect(perRoot[join(REPO, d)] ?? 0, `files scanned under ${d}/`).toBeGreaterThan(0);
     }
     expect(offenders.map((f) => relative(REPO, f))).toEqual([]);
+  });
+
+  // U+FFFD is what a broken encoding step leaves behind; in a source string it
+  // reaches the reader as a box. kb-backup.test.ts holds one on purpose (it
+  // tests stripping it).
+  it("no tracked .ts file under src/ contains U+FFFD", () => {
+    const files = execFileSync("git", ["ls-files", ":(glob)src/**/*.ts"], {
+      cwd: REPO,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    expect(files.length).toBeGreaterThan(1000);
+    expect(files).toContain("src/index.ts");
+    const offenders = files.filter(
+      (f) =>
+        f !== "src/db/kb-backup.test.ts" &&
+        readFileSync(join(REPO, f), "utf8").includes(String.fromCharCode(0xfffd)),
+    );
+    expect(offenders).toEqual([]);
   });
 
   describe("detector on a fixture tree", () => {

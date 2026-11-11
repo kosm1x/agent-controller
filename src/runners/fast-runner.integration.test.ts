@@ -1975,6 +1975,151 @@ describe("SDK last line on the fast-runner chat path", () => {
     expect(result.tokenUsage?.actualModel).toBe(FW_MODEL);
   });
 
+  it("(xi-u) api_error last line: the reported usage is the abandoned SDK leg plus the fallback run", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: OVERLOADED_EMPTY,
+        errorClass: "overloaded",
+        usage: {
+          promptTokens: 300,
+          completionTokens: 7,
+          cacheReadTokens: 200,
+          cacheCreationTokens: 50,
+        },
+      }),
+    );
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo.\n\nSTATUS: DONE",
+        model: FW_MODEL,
+        totalUsage: { prompt_tokens: 1000, completion_tokens: 100 },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-usage",
+      runId: "run-ll-api-usage",
+      title: "Tarea",
+      description: "Busca algo",
+    });
+
+    expect(mockLastline).toHaveBeenCalledTimes(1);
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 1300,
+      completionTokens: 107,
+      cacheReadTokens: 200,
+      cacheCreationTokens: 50,
+      actualModel: FW_MODEL,
+    });
+  });
+
+  it("(xi-u0) an abandoned SDK leg with zero cache counts adds no cache fields to a fallback run without them", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: OVERLOADED_EMPTY,
+        errorClass: "overloaded",
+        usage: {
+          promptTokens: 300,
+          completionTokens: 7,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        },
+      }),
+    );
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo.\n\nSTATUS: DONE",
+        model: FW_MODEL,
+        totalUsage: { prompt_tokens: 1000, completion_tokens: 100 },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-api-usage0",
+      runId: "run-ll-api-usage0",
+      title: "Tarea",
+      description: "Busca algo",
+    });
+
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 1300,
+      completionTokens: 107,
+      actualModel: FW_MODEL,
+    });
+  });
+
+  it("(viii-u) auth last line: the reported usage is both abandoned SDK legs plus the fallback run", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    const sdkUsage = {
+      promptTokens: 400,
+      completionTokens: 5,
+      cacheReadTokens: 100,
+      cacheCreationTokens: 20,
+    };
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, usage: sdkUsage }),
+    );
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({ text: AUTH_FAIL, usage: sdkUsage }),
+    );
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo.\n\nSTATUS: DONE",
+        model: FW_MODEL,
+        totalUsage: {
+          prompt_tokens: 1000,
+          completion_tokens: 100,
+          cache_read_tokens: 1,
+        },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-auth-usage",
+      runId: "run-ll-auth-usage",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(mockLastline).toHaveBeenCalledTimes(1);
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 1800,
+      completionTokens: 110,
+      cacheReadTokens: 201,
+      cacheCreationTokens: 40,
+      actualModel: FW_MODEL,
+    });
+  });
+
+  it("(vii-u) SDK throw last line: the throw carries no usage, only the fallback run is reported", async () => {
+    mockSdkLastline.mockReturnValue({ model: FW_MODEL });
+    mockQuerySdk.mockRejectedValueOnce(new Error("sdk subprocess died"));
+    mockLastline.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo.\n\nSTATUS: DONE",
+        model: FW_MODEL,
+        totalUsage: { prompt_tokens: 1000, completion_tokens: 100 },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "ll-throw-usage",
+      runId: "run-ll-throw-usage",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    // No cache field on either side → none reported.
+    expect(result.tokenUsage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 100,
+      actualModel: FW_MODEL,
+    });
+  });
+
   it("(xii) overloaded API error after a side-effecting leg 1 → NO last line, today's text", async () => {
     mockSdkLastline.mockReturnValue({ model: FW_MODEL });
     mockQuerySdk.mockResolvedValueOnce(
