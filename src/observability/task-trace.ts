@@ -110,7 +110,29 @@ export type TraceEventName =
   | "prompt.block_dropped"
   // The run's row could not be read, so whether it carried a confirmation
   // card is unknown; none is shown or stored ({reason}: closed enum)
-  | "confirmation.card_check_failed";
+  | "confirmation.card_check_failed"
+  // Router reply path ({…}: closed enums, counts and booleans, never text).
+  // The task row read cancelled when its completed/failed event arrived; the
+  // event was dropped, no reply sent ({on: completed | failed, pending})
+  | "reply.skipped_cancelled"
+  // A ritual's output was not broadcast ({reason}: the delivery policy's
+  // reason, or "empty_output" from the router when the output had no text)
+  | "reply.ritual_not_broadcast"
+  // The deliverable filter removed or replaced part of the reply ({filter, stripped, failureLine})
+  | "reply.filtered"
+  // The reply text was empty; the fallback ack was sent instead
+  | "reply.empty_fallback"
+  // A confirmation card was stored for the operator's next message ({items, continuation})
+  | "confirmation.card_stored"
+  // The scope-ask gate's choice for the reply ({decision: rerun | no_group | deliver_as_is, missing, groups})
+  | "scope.rerun_decided"
+  // The wider-scope re-run of this task was submitted (on the first task)
+  | "scope.rerun_submitted"
+  // The submit of this task's wider-scope re-run, or a step right after it,
+  // failed; the fallback line was sent ({submitted}: whether the submit itself had resolved)
+  | "scope.rerun_submit_failed"
+  // The router started a background agent; this is its task ({tools}: count)
+  | "agent.background_spawned";
 
 export interface TraceEvent {
   taskId: string;

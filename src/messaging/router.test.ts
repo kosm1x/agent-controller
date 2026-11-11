@@ -215,6 +215,11 @@ vi.mock("../observability/task-trace.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../observability/task-trace.js")>()),
   emitTraceEvent: traceMock.emitTraceEvent,
 }));
+/** Every trace event of one name emitted so far in this test. */
+const tracedEvents = (name: string) =>
+  traceMock.emitTraceEvent.mock.calls
+    .map(([ev]) => ev as { taskId: string; name: string; tool?: string; attrs?: object })
+    .filter((ev) => ev.name === name);
 
 const userFactsMock = vi.hoisted(() => ({
   setUserFact: undefined as unknown as ReturnType<typeof vi.fn>,
@@ -2576,6 +2581,8 @@ describe("MessageRouter", () => {
           .filter((c) => c.includes("day-logs"));
         expect(dayLog.join(" ")).toContain("revisa el acceso [oculto]");
         expect(dayLog.join(" ")).not.toContain(SCRUB_SYN);
+        // A chat turn, not a background agent.
+        expect(tracedEvents("agent.background_spawned")).toEqual([]);
       } finally {
         memoryRecallSpy.mockResolvedValue({ memories: [] });
       }
@@ -2598,6 +2605,13 @@ describe("MessageRouter", () => {
       expect(sub.title).toContain("[oculto]");
       expect(sub.description).toContain("investiga el acceso [oculto]");
       expect(JSON.stringify([sub.title, sub.description])).not.toContain(SCRUB_SYN);
+      expect(tracedEvents("agent.background_spawned")).toEqual([
+        {
+          taskId: "test-task-123",
+          name: "agent.background_spawned",
+          attrs: { tools: sub.tools!.length },
+        },
+      ]);
     });
 
     // S6 WS2 (R2 W3b): the background-agent submit is the second chat seam.
@@ -2712,6 +2726,14 @@ describe("MessageRouter", () => {
       expect(delivered).not.toContain("I'll verify");
       expect(delivered.startsWith("Commit 8a49b05 listo.")).toBe(true);
       expect(delivered).toContain("Dime «sigue» para continuar.");
+      // sdk_error_marker, status_line, narration — counted, never named.
+      expect(tracedEvents("reply.filtered")).toEqual([
+        {
+          taskId: "test-task-123",
+          name: "reply.filtered",
+          attrs: { filter: "deliverable", stripped: 3, failureLine: true },
+        },
+      ]);
     });
 
     it("usability Phase 2 (R3 audit C1): a background-agent notice keeps EVERY ledger line past the 500-char cap — including the ones appended last", async () => {
@@ -2748,6 +2770,8 @@ describe("MessageRouter", () => {
         expect(text).toContain("⏳ Sin releer");
         expect(text).toContain("Gates: 1/1 met");
         expect(text).toContain("..."); // the body WAS capped
+        // Nothing for the deliverable filter to remove here.
+        expect(tracedEvents("reply.filtered")).toEqual([]);
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }
@@ -3914,6 +3938,7 @@ describe("MessageRouter", () => {
       });
 
       expect(waAdapter.sentMessages[1].text).toBe("Respuesta normal.");
+      expect(tracedEvents("reply.empty_fallback")).toEqual([]);
     });
 
     it("sends a fallback ack when a chat task completes with EMPTY text (2026-07-11)", async () => {
@@ -3944,6 +3969,9 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages).toHaveLength(2);
       expect(waAdapter.sentMessages[1].text).toBe("✓");
       expect(waAdapter.sentMessages[1].to).toBe("owner@s.whatsapp.net");
+      expect(tracedEvents("reply.empty_fallback")).toEqual([
+        { taskId: "test-task-123", name: "reply.empty_fallback" },
+      ]);
     });
 
     it("delivers a swarm {content} object result as prose, not raw JSON (2026-06-20)", async () => {
@@ -4308,6 +4336,8 @@ describe("MessageRouter", () => {
         expect(mocked.mock.calls.length).toBe(calls);
         expect(waAdapter.sentMessages).toHaveLength(2);
         expect(waAdapter.sentMessages[1].text).toBe(reply);
+        // No scope ask detected: the gate takes no decision.
+        expect(tracedEvents("scope.rerun_decided")).toEqual([]);
       } finally {
         dbStatusGet.mockReturnValue(undefined);
       }
@@ -4392,6 +4422,18 @@ describe("MessageRouter", () => {
           ).toEqual([
             ["[router] scope-miss first leg test-task-123 cancelled (superseded by rerun-leg-2)"],
           ]);
+          // Both on the first leg: its reply is the one withheld.
+          expect(tracedEvents("scope.rerun_decided")).toEqual([
+            {
+              taskId: "test-task-123",
+              name: "scope.rerun_decided",
+              attrs: { decision: "rerun", missing: 1, groups: 1 },
+            },
+          ]);
+          expect(tracedEvents("scope.rerun_submitted")).toEqual([
+            { taskId: "test-task-123", name: "scope.rerun_submitted" },
+          ]);
+          expect(tracedEvents("scope.rerun_submit_failed")).toEqual([]);
           db.close();
         },
       );
@@ -4455,6 +4497,14 @@ describe("MessageRouter", () => {
         expect(mocked.mock.calls.length).toBe(calls);
         expect(waAdapter.sentMessages.at(-1)!.text).toBe(scopeMissFallbackLine("no_rerun"));
         expect(supersedeRuns()).toEqual([]);
+        expect(tracedEvents("scope.rerun_decided")).toEqual([
+          {
+            taskId: "test-task-123",
+            name: "scope.rerun_decided",
+            attrs: { decision: "no_group", missing: 1, groups: 0 },
+          },
+        ]);
+        expect(tracedEvents("scope.rerun_submitted")).toEqual([]);
       });
 
       it("deliver_as_is: a weak scope mention is delivered and the leg is not touched", async () => {
@@ -4482,6 +4532,14 @@ describe("MessageRouter", () => {
         expect(mocked.mock.calls.length).toBe(calls);
         expect(waAdapter.sentMessages.at(-1)!.text).toContain("Lo que sí puedo hacer");
         expect(supersedeRuns()).toEqual([]);
+        expect(tracedEvents("scope.rerun_decided")).toEqual([
+          {
+            taskId: "test-task-123",
+            name: "scope.rerun_decided",
+            attrs: { decision: "deliver_as_is", missing: 0, groups: 0 },
+          },
+        ]);
+        expect(tracedEvents("scope.rerun_submitted")).toEqual([]);
       });
 
       it("a DB failure on the close is warned and the re-run still happens", async () => {
@@ -4550,8 +4608,51 @@ describe("MessageRouter", () => {
         });
         expect(log.mock.calls.some((c) => String(c[0]).includes("first leg"))).toBe(false);
         expect(waAdapter.sentMessages.at(-1)!.text).toBe(scopeMissFallbackLine("error"));
+        expect(tracedEvents("scope.rerun_submit_failed")).toEqual([
+          {
+            taskId: "test-task-123",
+            name: "scope.rerun_submit_failed",
+            attrs: { submitted: false },
+          },
+        ]);
+        expect(tracedEvents("scope.rerun_submitted")).toEqual([]);
         realDb.db = null;
         db.close();
+      });
+
+      it("a step after the re-run submit resolved throws: the failure event says the submit had resolved", async () => {
+        const db = tasksDb("test-task-123", "blocked");
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        // The re-run notice is the first send inside the submit's .then body;
+        // a synchronous throw there reaches the same catch as a failed submit.
+        waAdapter.send.mockImplementation((m: OutgoingMessage) => {
+          if (m.text === SCOPE_RERUN_NOTICE) throw new Error("send failed");
+          waAdapter.sentMessages.push(m);
+          return Promise.resolve("msg-id-1");
+        });
+        try {
+          await askOnFailedPath("blocked", "rerun-then-throws", db);
+          for (let i = 0; i < 5; i++) await Promise.resolve();
+          expect(errSpy).toHaveBeenCalledWith(
+            "[router] scope-miss re-run submit failed:",
+            expect.any(Error),
+          );
+          expect(tracedEvents("scope.rerun_submitted")).toEqual([
+            { taskId: "test-task-123", name: "scope.rerun_submitted" },
+          ]);
+          expect(tracedEvents("scope.rerun_submit_failed")).toEqual([
+            {
+              taskId: "test-task-123",
+              name: "scope.rerun_submit_failed",
+              attrs: { submitted: true },
+            },
+          ]);
+          expect(waAdapter.sentMessages.at(-1)!.text).toBe(scopeMissFallbackLine("error"));
+        } finally {
+          errSpy.mockRestore();
+          realDb.db = null;
+          db.close();
+        }
       });
     });
 
@@ -5151,6 +5252,40 @@ describe("MessageRouter", () => {
       expect(opts.tags).toContain("outcome:failed");
       expect(opts.tags).toContain("whatsapp");
       expect(opts.async).toBe(true);
+      // Not cancelled: the failure is handled, nothing is skipped.
+      expect(tracedEvents("reply.skipped_cancelled")).toEqual([]);
+    });
+
+    it("handleTaskFailed skips a task whose row reads cancelled: no reply, one reply.skipped_cancelled", async () => {
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "long-running query",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      dbStatusGet.mockReturnValue({ status: "cancelled" });
+      try {
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "late failure",
+            recoverable: false,
+            attempts: 1,
+          },
+        });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+      expect(waAdapter.sentMessages).toHaveLength(1);
+      expect(tracedEvents("reply.skipped_cancelled")).toEqual([
+        {
+          taskId: "test-task-123",
+          name: "reply.skipped_cancelled",
+          attrs: { on: "failed", pending: true },
+        },
+      ]);
     });
 
     it("handleTaskCompleted short-circuits when status is cancelled (round-2 audit C1)", async () => {
@@ -5188,6 +5323,48 @@ describe("MessageRouter", () => {
       expect(memoryRetainSpy).not.toHaveBeenCalled();
       // Reset for subsequent tests
       dbStatusGet.mockReturnValue(undefined);
+      // After the reset, so a failure here cannot leak the stub into later tests.
+      expect(tracedEvents("reply.skipped_cancelled")).toEqual([
+        {
+          taskId: "test-task-123",
+          name: "reply.skipped_cancelled",
+          attrs: { on: "completed", pending: true },
+        },
+      ]);
+    });
+
+    it("a cancelled task with no pending reply is skipped on both paths with pending false", () => {
+      router.startEventListeners();
+      dbStatusGet.mockReturnValue({ status: "cancelled" });
+      try {
+        findHandler("task.completed")!({
+          data: { task_id: "untracked-done", agent_id: "fast", result: "tarde", duration_ms: 1 },
+        });
+        findHandler("task.failed")!({
+          data: {
+            task_id: "untracked-failed",
+            agent_id: "fast",
+            error: "late failure",
+            recoverable: false,
+            attempts: 1,
+          },
+        });
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+      expect(waAdapter.sentMessages).toHaveLength(0);
+      expect(tracedEvents("reply.skipped_cancelled")).toEqual([
+        {
+          taskId: "untracked-done",
+          name: "reply.skipped_cancelled",
+          attrs: { on: "completed", pending: false },
+        },
+        {
+          taskId: "untracked-failed",
+          name: "reply.skipped_cancelled",
+          attrs: { on: "failed", pending: false },
+        },
+      ]);
     });
 
     it("should retain conversation with outcome:failed tag on task.cancelled", async () => {
@@ -5449,6 +5626,7 @@ describe("MessageRouter", () => {
 
       expect(waAdapter.sentMessages).toHaveLength(1);
       expect(waAdapter.sentMessages[0].text).toBe("Buenos días, Fede...");
+      expect(tracedEvents("reply.ritual_not_broadcast")).toEqual([]);
     });
 
     it("usability Phase 0.1/0.3: a ritual broadcast is filtered at the broadcastToAll seam (mutation guard)", async () => {
@@ -5532,6 +5710,34 @@ describe("MessageRouter", () => {
       });
 
       expect(waAdapter.sentMessages).toHaveLength(0);
+      expect(tracedEvents("reply.ritual_not_broadcast")).toEqual([
+        {
+          taskId: "evo-task-1",
+          name: "reply.ritual_not_broadcast",
+          attrs: { reason: "suppressed" },
+        },
+      ]);
+    });
+
+    it("a ritual whose output has no text is not broadcast: one reply.ritual_not_broadcast, reason empty_output", () => {
+      router.watchRitualTask("empty-ritual-1", "morning-briefing");
+      router.startEventListeners();
+      findHandler("task.completed")!({
+        data: {
+          task_id: "empty-ritual-1",
+          agent_id: "heavy",
+          result: { text: "" },
+          duration_ms: 5000,
+        },
+      });
+      expect(waAdapter.sentMessages).toHaveLength(0);
+      expect(tracedEvents("reply.ritual_not_broadcast")).toEqual([
+        {
+          taskId: "empty-ritual-1",
+          name: "reply.ritual_not_broadcast",
+          attrs: { reason: "empty_output" },
+        },
+      ]);
     });
 
     it("non-digest rituals still broadcast the full deliverable", () => {
@@ -8087,6 +8293,14 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     expect(getPendingConfirmation(tk)?.args).toEqual({ id: 7 });
     expect(waAdapter.sentMessages.at(-1)!.text).toContain("¿Procedo?");
     expect(gatedExec.executeGatedCapability).not.toHaveBeenCalled();
+    expect(tracedEvents("confirmation.card_stored")).toEqual([
+      {
+        taskId: "task-orig",
+        name: "confirmation.card_stored",
+        tool: "wp_delete",
+        attrs: { items: 1, continuation: true },
+      },
+    ]);
   });
 
   it("the run's row cannot be read → no card is shown or stored (the reply of a run with no card), one confirmation.card_check_failed and one count", async () => {
@@ -8103,6 +8317,7 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
     const plain = waAdapter.sentMessages.at(-1)!.text;
     expect(getPendingConfirmation(tk)).toBeNull();
     expect(cardLost()).toEqual([]);
+    expect(tracedEvents("confirmation.card_stored")).toEqual([]);
 
     queueTask("task-lost");
     await say("borra el post 8 de wordpress");

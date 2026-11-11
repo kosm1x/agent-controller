@@ -2491,6 +2491,11 @@ export class MessageRouter {
         console.log(
           `[router] Background agent spawned: ${result.taskId} — "${taskText.slice(0, 60)}"`,
         );
+        emitTraceEvent({
+          taskId: result.taskId,
+          name: "agent.background_spawned",
+          attrs: { tools: scopedTools.length },
+        });
         return true;
       } catch (err) {
         console.error("[router] Background agent spawn failed:", err);
@@ -4078,6 +4083,11 @@ export class MessageRouter {
           this.pendingReplies.delete(taskId);
           trackTaskOutcome(taskId, 0, false, stale.channel);
         }
+        emitTraceEvent({
+          taskId,
+          name: "reply.skipped_cancelled",
+          attrs: { on: "completed", pending: stale !== undefined },
+        });
         return;
       }
     } catch {
@@ -4104,6 +4114,11 @@ export class MessageRouter {
           console.log(
             `[router] ritual ${ritualId} not broadcast (${decision.reason})`,
           );
+          emitTraceEvent({
+            taskId,
+            name: "reply.ritual_not_broadcast",
+            attrs: { reason: decision.reason },
+          });
         } else {
           // Phase 5: the seam may have filtered / capped / lead-lined the text.
           this.withBroadcastTask(taskId, () =>
@@ -4112,6 +4127,13 @@ export class MessageRouter {
             console.error(`[router] Ritual broadcast failed:`, err);
           });
         }
+      } else {
+        // No text to broadcast; the reason is the router's, not the policy's.
+        emitTraceEvent({
+          taskId,
+          name: "reply.ritual_not_broadcast",
+          attrs: { reason: "empty_output" },
+        });
       }
       // F9 audit C2: close the alert-budget loop for budget-aware rituals.
       // Market-morning-scan + market-eod-scan consume from the daily cap; a
@@ -4194,6 +4216,16 @@ export class MessageRouter {
           (sanitized.failureKind ? ` failure=${sanitized.failureKind}` : "") +
           (sanitized.englishLeading ? " english_leading" : ""),
       );
+      // Which filter and how many labels — never what was removed.
+      emitTraceEvent({
+        taskId,
+        name: "reply.filtered",
+        attrs: {
+          filter: "deliverable",
+          stripped: sanitized.stripped.length,
+          failureLine: sanitized.failureLine !== undefined,
+        },
+      });
     } else if (sanitized?.englishLeading) {
       console.log(`[router] deliverable-filter task=${taskId} english_leading`);
     }
@@ -4476,6 +4508,15 @@ export class MessageRouter {
         console.log(
           `[router] Stored pending confirmation (${confirmItems.length}): ${confirmItems.map((c) => c.summary).join(" | ")}`,
         );
+        emitTraceEvent({
+          taskId,
+          name: "confirmation.card_stored",
+          tool: confirmItems[0].toolName,
+          attrs: {
+            items: confirmItems.length,
+            continuation: pending.rerunSpec !== undefined,
+          },
+        });
         if (pending.rerunSpec) {
           this.confirmationResumes.set(pending.tk, {
             taskId,
@@ -4635,6 +4676,7 @@ export class MessageRouter {
       console.warn(
         `[router] Task ${taskId} completed with empty text — sending fallback ack`,
       );
+      emitTraceEvent({ taskId, name: "reply.empty_fallback" });
       const fallback = "✓";
       if (pending.streamController) {
         pending.streamController.finalize(fallback).catch(() => {
@@ -4677,6 +4719,11 @@ export class MessageRouter {
           this.pendingReplies.delete(taskId);
           trackTaskOutcome(taskId, 0, false, stale.channel);
         }
+        emitTraceEvent({
+          taskId,
+          name: "reply.skipped_cancelled",
+          attrs: { on: "failed", pending: stale !== undefined },
+        });
         return;
       }
     } catch {
@@ -5250,6 +5297,11 @@ export class MessageRouter {
       console.warn(
         `[router] scope-miss task=${taskId} tools=[${missing.join(",")}] — no group supplies them, delivering fallback`,
       );
+      emitTraceEvent({
+        taskId,
+        name: "scope.rerun_decided",
+        attrs: { decision: "no_group", missing: missing.length, groups: 0 },
+      });
       return "no_group";
     }
     // R2 audit C2: every requested tool was already in the list — the model
@@ -5265,6 +5317,11 @@ export class MessageRouter {
       console.log(
         `[router] scope-miss task=${taskId} weak scope mention, tools in scope — delivering as-is`,
       );
+      emitTraceEvent({
+        taskId,
+        name: "scope.rerun_decided",
+        attrs: { decision: "deliver_as_is", missing: 0, groups: 0 },
+      });
       return "deliver_as_is";
     }
     // Sticky prior for the thread = this turn's base + the widening (bounded).
@@ -5285,6 +5342,16 @@ export class MessageRouter {
         ? `[router] scope-miss task=${taskId} tools=[${requestedTools.join(",")}] were already in scope (hallucinated ask) — re-running with a correction note`
         : `[router] scope-miss task=${taskId} tools=[${missing.join(",")}] → +groups [${[...newGroups].join(",")}] (${widened.length} tools), re-running turn silently`,
     );
+    // missing 0 = every asked tool was already in scope (the correction-note re-run).
+    emitTraceEvent({
+      taskId,
+      name: "scope.rerun_decided",
+      attrs: {
+        decision: "rerun",
+        missing: missing.length,
+        groups: newGroups.size,
+      },
+    });
     previousScopeGroups.set(pending.tk, stickyGroups);
     previousScopeAt.set(pending.tk, Date.now());
     let scopeRowId = 0;
@@ -5322,6 +5389,8 @@ export class MessageRouter {
       : "";
     const abort = new AbortController();
     const rerunDescription = spec.buildDescription(widened);
+    // The catch below also sees a throw from the steps after the submit resolved.
+    let submitted = false;
     submitTask({
       title: spec.title,
       description: rerunDescription + correction,
@@ -5339,6 +5408,7 @@ export class MessageRouter {
       abortController: abort,
     })
       .then((result) => {
+        submitted = true;
         if (scopeRowId > 0) {
           try {
             linkScopeToTask(scopeRowId, result.taskId);
@@ -5383,6 +5453,7 @@ export class MessageRouter {
         console.log(
           `[router] scope-miss re-run of ${taskId} → task ${result.taskId}`,
         );
+        emitTraceEvent({ taskId, name: "scope.rerun_submitted" });
         try {
           const { changes } = getDatabase()
             .prepare(SCOPE_RERUN_SUPERSEDED_SQL)
@@ -5423,6 +5494,11 @@ export class MessageRouter {
       })
       .catch((err) => {
         console.error(`[router] scope-miss re-run submit failed:`, err);
+        emitTraceEvent({
+          taskId,
+          name: "scope.rerun_submit_failed",
+          attrs: { submitted },
+        });
         const line = scopeMissFallbackLine("error");
         if (stream) {
           stream.finalize(line).catch(() => {
