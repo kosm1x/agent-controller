@@ -41,3 +41,24 @@ describe("nanoclaw-worker clone directory", () => {
     expect(SRC.match(/const WORKSPACE =/g)).toHaveLength(1);
   });
 });
+
+describe("nanoclaw-worker GitHub identity", () => {
+  // GitHub children run under the agent's own account; nothing falls back to a
+  // login stored on the host. The worker self-invokes main() on import, so the
+  // clone's credential wiring is pinned by source.
+  it("the clone resets every credential helper, then answers github.com from the agent's token; no gh login is wired", () => {
+    expect(SRC).not.toMatch(/setup-git/);
+    expect(SRC).toMatch(/config\("credential\.helper", ""\);\s*config\(AGENT_CREDENTIAL_HELPER_KEY, AGENT_CREDENTIAL_HELPER\);/);
+  });
+
+  it("commits carry the agent's identity", () => {
+    expect(SRC).toMatch(/const \{ name, email \} = agentCommitIdentity\(\);/);
+    expect(SRC).toMatch(/config\("user\.email", email\);\s*config\("user\.name", name\);/);
+  });
+
+  it("the environment note is told whether the agent's token is configured", () => {
+    expect(SRC).toMatch(
+      /const envNote = buildEnvironmentNote\(workspace, agentGithubConfigured\(\)\);/,
+    );
+  });
+});

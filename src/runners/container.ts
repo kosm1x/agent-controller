@@ -13,6 +13,7 @@ import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
 import { getEventBus } from "../lib/event-bus.js";
 import { redactCredentialsForPersist } from "../api/mcp-server/redact.js";
+import { AGENT_GITHUB_ENV_NAMES } from "../lib/github-authority.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -48,7 +49,8 @@ export const SANDBOX_NEUTRALIZED_ENV = new Map<string, string>([
 export const VOLUME_ALLOWED_PREFIXES = [
   "/root/claude/",
   "/tmp/",
-  "/root/.config/gh", // gh CLI auth (read-only for jarvis_dev PRs)
+  // No gh login directory: GitHub in the sandbox runs under the agent's own
+  // token, passed in the runner's env (nanoclaw-runner.ts), never a mounted login.
   "/root/.claude/.credentials.json", // Claude Agent SDK auth (read-only, Sonnet runner path)
 ];
 
@@ -105,8 +107,8 @@ export function volumeRefusal(spec: string): string | null {
   // W1). Symlinks are deliberately not resolved: specs are runner literals,
   // never model input. Boundary-safe: a directory prefix (`…/`) admits only a
   // real sub-path (never the whole directory), a file/dir entry without `/`
-  // admits itself or a sub-path — `/root/.config/gh` must not admit
-  // `/root/.config/gh-evil`, `…credentials.json` must not admit `…json.bak`.
+  // admits itself or a sub-path — `…credentials.json` must not admit
+  // `…credentials.json.bak` or `…credentials.json-evil`.
   const norm = posix.normalize(hostPath);
   const allowed = VOLUME_ALLOWED_PREFIXES.some((p) =>
     p.endsWith("/")
@@ -410,11 +412,17 @@ export function buildDockerRunArgs(opts: {
   ];
 
   // Environment variables (control-plane creds neutralized — see
-  // SANDBOX_NEUTRALIZED_ENV).
+  // SANDBOX_NEUTRALIZED_ENV). The agent's GitHub names travel as `-e NAME`
+  // only: the agent's token never travels through an argv. The docker client
+  // reads their values from its own env (dockerClientEnv).
   if (opts.envVars) {
     for (const [key, value] of Object.entries(opts.envVars)) {
-      const safeValue = SANDBOX_NEUTRALIZED_ENV.get(key) ?? value;
-      args.push("-e", `${key}=${safeValue}`);
+      const neutral = SANDBOX_NEUTRALIZED_ENV.get(key);
+      if (neutral === undefined && ENV_BY_NAME_ONLY.has(key)) {
+        args.push("-e", key);
+      } else {
+        args.push("-e", `${key}=${neutral ?? value}`);
+      }
     }
   }
 
@@ -437,6 +445,27 @@ export function buildDockerRunArgs(opts: {
   if (opts.command) args.push(...opts.command);
 
   return args;
+}
+
+/** envVars names passed to `docker run` by name only (their values ride in dockerClientEnv). */
+const ENV_BY_NAME_ONLY: ReadonlySet<string> = new Set(AGENT_GITHUB_ENV_NAMES);
+
+/**
+ * The docker client's own env: the service env plus the values of the
+ * ENV_BY_NAME_ONLY entries of `envVars`, so `-e NAME` hands the container
+ * exactly the value the runner chose. No other envVars entry is added here:
+ * names such as proxy or `DOCKER_*` settings would change the client itself.
+ */
+export function dockerClientEnv(
+  envVars: Record<string, string> | undefined,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, value] of Object.entries(envVars ?? {})) {
+    if (ENV_BY_NAME_ONLY.has(key) && !SANDBOX_NEUTRALIZED_ENV.has(key)) {
+      env[key] = value;
+    }
+  }
+  return env;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +521,7 @@ export function spawnContainer(opts: SpawnContainerOptions): ContainerHandle {
   // Spawn the container process
   const proc = spawn("docker", args, {
     stdio: ["pipe", "pipe", "pipe"],
+    env: dockerClientEnv(opts.envVars),
   });
 
   // Write input to stdin

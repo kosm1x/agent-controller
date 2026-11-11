@@ -18,6 +18,7 @@ import { getToolAnnotations } from "../tools/types.js";
 import { resetSecretRefsForTest } from "../lib/secret-refs.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { McpManager, buildSpawnEnv } from "./manager.js";
+import { NO_STORED_LOGIN_NAMES } from "./env-deny.js";
 import type { McpServerConfig } from "./types.js";
 
 /** A newline-delimited JSON-RPC MCP server with no dependencies. */
@@ -417,7 +418,46 @@ describe("WS3a — record env entries reach a real child under the server's own 
       env: { FIXED: "1" },
       source: { kind: "record", slug: "acme", trusted: true },
     });
-    expect(Object.keys(env).sort()).toEqual(Object.keys(getDefaultEnvironment()).sort());
+    expect(Object.keys(env).sort()).toEqual(
+      [...Object.keys(getDefaultEnvironment()), ...NO_STORED_LOGIN_NAMES].sort(),
+    );
+  });
+});
+
+// MCP children get no stored GitHub login by default: the no-stored-login
+// settings go on last, over anything the config declares, and a record may
+// not declare gh's or git's config names at all.
+describe("MCP children get no stored login by default", () => {
+  it("service server: an empty gh config directory and git's credential helpers reset, over a declared value", () => {
+    const env = buildSpawnEnv("svc-login", {
+      command: "node",
+      env: { GH_CONFIG_DIR: "/elsewhere", GIT_CONFIG_COUNT: "0" },
+    });
+    expect(env.GH_CONFIG_DIR).toMatch(/mc-gh-config-/);
+    expect(readdirSync(env.GH_CONFIG_DIR)).toEqual([]);
+    expect(env.GIT_CONFIG_COUNT).toBe("1");
+    expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("");
+  });
+
+  it("record server: the same settings, and declared GH_ / GIT_CONFIG / XDG_CONFIG_HOME names are omitted", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const env = buildSpawnEnv("acme-login", {
+      command: "node",
+      envSpec: [
+        { name: "GH_HOST", value: "example.invalid" },
+        { name: "GIT_CONFIG_GLOBAL", value: "/elsewhere" },
+        { name: "XDG_CONFIG_HOME", value: "/elsewhere" },
+      ],
+      source: { kind: "record", slug: "acme", trusted: true },
+    });
+    expect(env).not.toHaveProperty("GH_HOST");
+    expect(env).not.toHaveProperty("GIT_CONFIG_GLOBAL");
+    expect(env).not.toHaveProperty("XDG_CONFIG_HOME");
+    expect(env.GH_CONFIG_DIR).toMatch(/mc-gh-config-/);
+    expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("reserved"))).toHaveLength(3);
+    warn.mockRestore();
   });
 });
 
@@ -519,7 +559,9 @@ describe("audit R1 W3/W4 — record env names (buildSpawnEnv)", () => {
     const env = buildSpawnEnv("acme-r2", rec(["ACME_API_TOKEN", "SYN_DECLARED_NAME"]));
     expect(env.ACME_API_TOKEN).toBeUndefined();
     expect(env.SYN_DECLARED_NAME).toBeUndefined();
-    expect(Object.keys(env).sort()).toEqual(Object.keys(getDefaultEnvironment()).sort());
+    expect(Object.keys(env).sort()).toEqual(
+      [...Object.keys(getDefaultEnvironment()), ...NO_STORED_LOGIN_NAMES].sort(),
+    );
     expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
       "[mcp] acme-r2: env ACME_API_TOKEN is not in project acme's secrets (SECRET_ACME_API_TOKEN); omitted",
       "[mcp] acme-r2: env SYN_DECLARED_NAME is not in project acme's secrets (SECRET_SYN_DECLARED_NAME); omitted",

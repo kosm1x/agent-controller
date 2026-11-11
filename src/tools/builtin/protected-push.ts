@@ -21,6 +21,7 @@ import { join } from "path";
 import { promisify } from "util";
 import { errMsg } from "../../lib/err-msg.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+import { githubAuthority } from "../../lib/github-authority.js";
 import {
   isImmutableCorePath,
   MC_CHECKOUT_ROOTS,
@@ -91,16 +92,28 @@ async function git(
 ): Promise<string> {
   // The checkout's own hooks, grafts and replacement objects play no part in
   // the check: it reads the commits the push sends, as they are.
+  const checkEnv = {
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_GRAFT_FILE: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  // The fetch talks to GitHub, so it runs under the agent's own account like
+  // the push it guards; without the agent's token it fails closed (the check
+  // could not run, so nothing is sent). The other steps are local reads.
+  let env: Record<string, string>;
+  if (args[0] === "fetch") {
+    const github = githubAuthority();
+    if ("refusal" in github) throw new Error(`${step} failed`);
+    env = { ...github.env, ...checkEnv };
+  } else {
+    env = buildChildEnv(checkEnv);
+  }
   const p = execFileAsync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repoDir,
     encoding: "utf-8",
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
-    env: buildChildEnv({
-      GIT_NO_REPLACE_OBJECTS: "1",
-      GIT_GRAFT_FILE: "/dev/null",
-      GIT_TERMINAL_PROMPT: "0",
-    }),
+    env,
   });
   p.child.stdin?.end();
   try {

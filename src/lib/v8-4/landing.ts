@@ -13,6 +13,8 @@
  * verified) · `null` (no claim in the report — stays UNVERIFIED, never met).
  */
 import { execFile } from "node:child_process";
+import { buildChildEnv } from "../../mcp/env-deny.js";
+import { githubAuthority } from "../github-authority.js";
 
 export type LandingExec = (
   cmd: string,
@@ -20,8 +22,37 @@ export type LandingExec = (
   opts: { cwd?: string; timeoutMs: number },
 ) => Promise<{ stdout: string; exitCode: number | null }>;
 
+/** The probe's children that read GitHub (`gh …`, `git ls-remote`, `git fetch`). */
+function readsGithub(cmd: string, args: readonly string[]): boolean {
+  return cmd === "gh" || (cmd === "git" && ["ls-remote", "fetch"].includes(args[0]));
+}
+
+/**
+ * The probe's reads of GitHub run under the agent's own account; nothing
+ * falls back to a login stored on the host. Without the agent's token such a
+ * read is not spawned and answers as unreachable (exit 1), so the claim stays
+ * unverified, never met. Local reads get the base allow-list.
+ */
 export const defaultLandingExec: LandingExec = (cmd, args, opts) =>
   new Promise((resolve) => {
+    // An env that cannot be built (its empty config directory cannot be
+    // created) answers like an unreachable remote: the claim stays unverified.
+    let env: Record<string, string>;
+    try {
+      if (readsGithub(cmd, args)) {
+        const github = githubAuthority();
+        if ("refusal" in github) {
+          resolve({ stdout: "", exitCode: 1 });
+          return;
+        }
+        env = github.env;
+      } else {
+        env = buildChildEnv({ GIT_TERMINAL_PROMPT: "0" });
+      }
+    } catch {
+      resolve({ stdout: "", exitCode: 1 });
+      return;
+    }
     execFile(
       cmd,
       args,
@@ -30,11 +61,7 @@ export const defaultLandingExec: LandingExec = (cmd, args, opts) =>
         timeout: opts.timeoutMs,
         maxBuffer: 1024 * 1024,
         encoding: "utf-8",
-        env: {
-          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-          HOME: process.env.HOME ?? "/root",
-          GIT_TERMINAL_PROMPT: "0",
-        },
+        env,
       },
       (err, stdout) => {
         const code =

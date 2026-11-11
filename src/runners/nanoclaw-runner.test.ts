@@ -143,7 +143,6 @@ describe("nanoclawRunner", () => {
           "/root/claude/mission-control/dist:/app/dist:ro",
           "/root/claude/mission-control/prompt_modules:/app/prompt_modules:ro",
           "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
-          "/root/.config/gh:/root/.config/gh:ro",
           "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
         ],
       }),
@@ -230,10 +229,83 @@ describe("nanoclawRunner", () => {
         volumes: expect.arrayContaining([
           "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
           "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
-          "/root/.config/gh:/root/.config/gh:ro",
         ]),
       }),
     );
+  });
+
+  // GitHub children run under the agent's own account; nothing falls back to a
+  // login stored on the host. The sandbox's one GitHub credential is the
+  // agent's token in the runner's env.
+  describe("GitHub in the sandbox runs as the agent's own account", () => {
+    const run = async () => {
+      mockSpawnContainer.mockReturnValue({
+        name: "mc-nanoclaw-test-gh",
+        process: {} as ContainerHandle["process"],
+        result: Promise.resolve({
+          status: "success",
+          result: JSON.stringify({ success: true, content: "ok" }),
+        } as ContainerOutput),
+        kill: vi.fn(),
+      });
+      await nanoclawRunner.execute({
+        taskId: "task-gh",
+        runId: "run-gh",
+        title: "T",
+        description: "D",
+        tools: [],
+      });
+      return mockSpawnContainer.mock.calls[0][0];
+    };
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.each(["openai", "claude-sdk"])(
+      "provider %s: the agent's token is the ONLY GitHub credential passed — env names only, no gh login mount",
+      async (provider) => {
+        mockGetConfig.mockReturnValue({
+          ...makeConfig(),
+          inferencePrimaryProvider: provider,
+        } as ReturnType<typeof getConfig>);
+        vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+        vi.stubEnv("JARVIS_GH_USER", "agent-bot");
+        vi.stubEnv("JARVIS_GH_EMAIL", "agent@example.invalid");
+        vi.stubEnv("GH_TOKEN", "synthetic-token");
+        vi.stubEnv("GITHUB_TOKEN", "synthetic-token");
+        const call = await run();
+        expect(call.envVars).toMatchObject({
+          JARVIS_GH_TOKEN: "canary-gh-token",
+          JARVIS_GH_USER: "agent-bot",
+          JARVIS_GH_EMAIL: "agent@example.invalid",
+        });
+        const githubNames = Object.keys(call.envVars ?? {}).filter((k) =>
+          /GH|GITHUB|GIT_/i.test(k),
+        );
+        expect(githubNames.sort()).toEqual([
+          "JARVIS_GH_EMAIL",
+          "JARVIS_GH_TOKEN",
+          "JARVIS_GH_USER",
+        ]);
+        const values = Object.values(call.envVars ?? {});
+        expect(values.filter((v) => v === "canary-gh-token")).toHaveLength(1);
+        expect(values).not.toContain("synthetic-token");
+        for (const v of call.volumes ?? []) {
+          expect(v).not.toMatch(/\.config\/gh|hosts\.yml|\.git-credentials|\.gitconfig/);
+        }
+        expect(JSON.stringify(call.input)).not.toContain("canary-gh-token");
+      },
+    );
+
+    it("without the agent's token: no GitHub credential at all, and the sandbox still spawns", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "");
+      vi.stubEnv("JARVIS_GH_USER", "");
+      vi.stubEnv("JARVIS_GH_EMAIL", "");
+      const call = await run();
+      expect(
+        Object.keys(call.envVars ?? {}).filter((k) => /GH|GITHUB/i.test(k)),
+      ).toEqual([]);
+    });
   });
 
   it("forwards tools in container input", async () => {

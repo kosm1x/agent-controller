@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
+import { GITHUB_UNAVAILABLE } from "../lib/github-authority.js";
 import {
   buildEnvironmentNote,
   RO_REPO,
@@ -128,5 +130,34 @@ describe("sandboxStopEmitted — judged on RAW goal text, not the extracted deli
     const r = exec({ "g-1": goal("<deliverable>ok</deliverable>"), "g-2": goal() });
     expect(sandboxStopEmitted(`quoted ${TARGET_NOT_IN_SANDBOX}`, r)).toBe(true);
     expect(sandboxStopEmitted("all good", r)).toBe(false);
+  });
+});
+
+// GitHub in the sandbox runs under the agent's own token. Without it the note
+// gives no push instruction and says GitHub is unavailable; with it the
+// (model-visible) note text is fixed byte for byte.
+describe("buildEnvironmentNote — the agent's GitHub token", () => {
+  const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+  it("token configured: the note is byte-identical to the pinned text, with and without the default argument", () => {
+    const note = buildEnvironmentNote("/workspace", true);
+    expect(sha(note)).toBe("174b007840e4fc0485234018f684bce528f84fae2f762cceef662d9c8324775f");
+    expect(note).toBe(buildEnvironmentNote("/workspace"));
+    expect(sha(buildEnvironmentNote(null, true))).toBe("1ef15f33033cd405690c64d235a452e54b7d0708109622ce80f4de0e6ac8d836");
+  });
+
+  it("no token: no push instruction, and the note says GitHub is unavailable", () => {
+    const note = buildEnvironmentNote("/workspace", false);
+    expect(note).not.toContain("git push");
+    expect(note).not.toContain("push auth");
+    expect(note).toContain(`[GITHUB] ${GITHUB_UNAVAILABLE}`);
+    // Everything else is the configured note minus the delivery sentence.
+    expect(note.replace(`\n\n[GITHUB] ${GITHUB_UNAVAILABLE}`, "")).toBe(
+      buildEnvironmentNote("/workspace", true).replace(
+        / To DELIVER a change[^\n]*?Report the pushed branch name\./,
+        "",
+      ),
+    );
+    expect(buildEnvironmentNote(null, false)).toContain(`[GITHUB] ${GITHUB_UNAVAILABLE}`);
   });
 });

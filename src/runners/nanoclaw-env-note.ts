@@ -26,6 +26,7 @@
  */
 
 import type { ExecutionResult } from "../prometheus/types.js";
+import { GITHUB_UNAVAILABLE } from "../lib/github-authority.js";
 
 /** Read-only reference mount of the host repo inside the container (never writable). */
 export const RO_REPO = "/root/claude/mission-control";
@@ -61,9 +62,20 @@ export function sandboxStopEmitted(
   );
 }
 
-export function buildEnvironmentNote(workspace: string | null): string {
+/** The delivery instruction; only true when the agent's GitHub token is configured. */
+const DELIVER_SENTENCE = ` To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`;
+
+/**
+ * `githubConfigured` = the agent's GitHub token is set. Without it the note
+ * leaves out the delivery (push) instruction and says GitHub is unavailable;
+ * with it the note is unchanged.
+ */
+export function buildEnvironmentNote(
+  workspace: string | null,
+  githubConfigured = true,
+): string {
   const base = workspace
-    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` holds only the read-only git history the workspace was cloned from — it is not a working tree; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools). To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`
+    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` holds only the read-only git history the workspace was cloned from — it is not a working tree; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools).${githubConfigured ? DELIVER_SENTENCE : ""}`
     : `\n\n[ENVIRONMENT] Isolated container; no writable workspace could be set up (\`${RO_REPO}\` holds only the read-only git history) — you cannot read source and cannot commit; report this and stop.`;
 
   const scopeGuard = `\n\n[SANDBOX SCOPE — CRITICAL] This container holds ONLY the mission-control repository. It does NOT contain any other repository, landing site, or project — not a landing site, not a sibling \`/root/claude/<repo>\`, nothing else. If your task asks you to work on ANYTHING other than mission-control itself (e.g. "termina la landing", "el sitio de X", another repo or project), that target is NOT in this sandbox. You MUST STOP, make NO file edits, and reply EXACTLY with: "${TARGET_NOT_IN_SANDBOX}: this task targets <name>, which is not in the nanoclaw sandbox — it must run on a host runner." Editing mission-control's own source to "make progress" on an unrelated task is a CRITICAL error — never do it.`;
@@ -72,5 +84,7 @@ export function buildEnvironmentNote(workspace: string | null): string {
 
   const hostStateGuard = `\n\n[HOST STATE — NOT IN THIS SANDBOX] Jarvis's live database (\`data/mc.db\`), knowledge base and Gemini uploads are NOT in this container — only mission-control's git history is. Any SQLite file you find or create here (including \`$MC_DB_PATH\`, the worker's own scratch DB) is a throwaway container-local copy: writes to it SUCCEED but never reach Jarvis and are discarded when the container exits. The host tools that write Jarvis state (jarvis_file_write, gemini_upload, …) are not registered here. Editing mission-control SOURCE that touches the database (migrations, schema, queries) and running tests that open their own temp or in-memory SQLite is normal coding work — do it. But if the task's GOAL is to change Jarvis's live data (save or ingest a document/attachment into the KB, insert or update rows, upload a file to Gemini), you MUST STOP, make NO writes, and reply EXACTLY with: "${TARGET_NOT_IN_SANDBOX}: this task writes Jarvis's live state (mc.db / KB), which is not in the nanoclaw sandbox — it must run on a host runner."`;
 
-  return base + scopeGuard + evasionGuard + hostStateGuard;
+  const githubNote = githubConfigured ? "" : `\n\n[GITHUB] ${GITHUB_UNAVAILABLE}`;
+
+  return base + scopeGuard + evasionGuard + hostStateGuard + githubNote;
 }

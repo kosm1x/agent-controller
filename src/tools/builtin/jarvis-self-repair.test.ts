@@ -68,7 +68,11 @@ const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
   });
 vi.mock("./shell.js", () => ({ execGroupKill }));
 vi.mock("child_process", () => ({ execFile, execFileSync }));
-vi.mock("fs", () => ({ existsSync: vi.fn(() => true) }));
+// mkdtempSync: every child env carries an empty GH_CONFIG_DIR (env-deny.ts).
+vi.mock("fs", () => ({
+  existsSync: vi.fn(() => true),
+  mkdtempSync: vi.fn(() => "/tmp/mc-gh-config-test"),
+}));
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
 
 import {

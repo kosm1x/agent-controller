@@ -54,6 +54,8 @@ vi.mock("fs", () => ({
   }),
   symlinkSync: vi.fn(),
   writeFileSync,
+  // Every child env carries an empty GH_CONFIG_DIR (env-deny.ts).
+  mkdtempSync: vi.fn(() => "/tmp/mc-gh-config-test"),
 }));
 vi.mock("./shell.js", () => ({ execGroupKill }));
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
@@ -308,7 +310,14 @@ describe("jarvis_dev action=pr — tree re-checked under the cwd lock (qa R1 W3)
   it("control: an unchanged tree passes the re-check and reaches staging", async () => {
     changed.heads = [];
     answer("", "Test Files  1 passed (1)\nTests  2 passed (2)");
-    const out = await pr();
+    // pr is refused up front without the agent's GitHub token; with it, staging is reached.
+    vi.stubEnv("JARVIS_GH_TOKEN", "synthetic-token");
+    let out: Awaited<ReturnType<typeof pr>>;
+    try {
+      out = await pr();
+    } finally {
+      vi.unstubAllEnvs();
+    }
     // The gate mock reports a clean porcelain, so staging finds nothing.
     expect(out.error).toBe("Nothing to commit (or only sensitive files changed).");
   });

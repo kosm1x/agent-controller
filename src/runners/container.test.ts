@@ -8,13 +8,18 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 // Real spawn by default; one spec swaps in a fake docker process.
-const spawnMock = vi.hoisted(() => ({ fake: null as unknown }));
+const spawnMock = vi.hoisted(() => ({
+  fake: null as unknown,
+  calls: [] as unknown[][],
+}));
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
   return {
     ...actual,
-    spawn: (...args: Parameters<typeof actual.spawn>) =>
-      spawnMock.fake ?? actual.spawn(...args),
+    spawn: (...args: Parameters<typeof actual.spawn>) => {
+      spawnMock.calls.push(args);
+      return spawnMock.fake ?? actual.spawn(...args);
+    },
   };
 });
 // spawnContainer only reads heavyRunnerImage (the spec passes `image` anyway).
@@ -40,6 +45,7 @@ import {
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
   spawnContainer,
+  dockerClientEnv,
 } from "./container.js";
 
 describe("generateContainerName", () => {
@@ -205,6 +211,75 @@ describe("buildDockerRunArgs — H5 hardening", () => {
     expect(joined).toContain("MC_DB_PATH=/tmp/mc.db");
   });
 
+  // The agent's token never travels through an argv: its names go to
+  // `docker run` as `-e NAME` and the docker client holds the values.
+  it("the agent's GitHub names pass by name only; their values ride in the docker client's env", () => {
+    const args = buildDockerRunArgs({
+      ...base,
+      envVars: {
+        JARVIS_GH_TOKEN: "canary-gh-token",
+        JARVIS_GH_USER: "agent-bot",
+        JARVIS_GH_EMAIL: "agent-bot@example.invalid",
+        MC_DB_PATH: "/tmp/mc.db",
+      },
+    });
+    for (const a of args) expect(a).not.toContain("canary-gh-token");
+    for (const name of ["JARVIS_GH_TOKEN", "JARVIS_GH_USER", "JARVIS_GH_EMAIL"]) {
+      expect(args[args.indexOf(name) - 1]).toBe("-e");
+    }
+    expect(args).toContain("MC_DB_PATH=/tmp/mc.db");
+    const env = dockerClientEnv({
+      JARVIS_GH_TOKEN: "canary-gh-token",
+      MC_DB_PATH: "/tmp/mc.db",
+      MC_API_KEY: "REAL-control-plane-secret",
+    });
+    expect(env.JARVIS_GH_TOKEN).toBe("canary-gh-token");
+    // Only the agent's names are added to the client's own env.
+    expect(env.MC_DB_PATH).toBe(process.env.MC_DB_PATH);
+    expect(env.MC_API_KEY).toBe(process.env.MC_API_KEY);
+  });
+
+  it.each([
+    ["token present", { JARVIS_GH_TOKEN: "canary-gh-token", JARVIS_GH_USER: "agent-bot", JARVIS_GH_EMAIL: "agent-bot@example.invalid" }],
+    ["token absent", {}],
+  ])("spawnContainer (%s): no argv element of the docker invocation holds the token; the container still gets the names", async (_label, gh) => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+    const proc = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    spawnMock.fake = proc;
+    spawnMock.calls.length = 0;
+    try {
+      const h = spawnContainer({
+        image: "img:test",
+        input: { prompt: "p" },
+        envVars: { MC_DB_PATH: "/tmp/mc.db", ...gh },
+        timeoutMs: 5_000,
+      });
+      proc.emit("close", 0);
+      await h.result;
+      const [cmd, argv, opts] = spawnMock.calls[0] as [
+        string,
+        string[],
+        { env?: NodeJS.ProcessEnv },
+      ];
+      expect(cmd).toBe("docker");
+      for (const a of argv) expect(a).not.toContain("canary-gh-token");
+      for (const name of Object.keys(gh)) expect(argv).toContain(name);
+      if ("JARVIS_GH_TOKEN" in gh) {
+        expect(opts.env?.JARVIS_GH_TOKEN).toBe("canary-gh-token");
+      } else {
+        expect(argv).not.toContain("JARVIS_GH_TOKEN");
+      }
+    } finally {
+      spawnMock.fake = null;
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("still enforces the volume host-path allowlist (and, since 2026-09-01, read-only)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const args = buildDockerRunArgs({
@@ -258,8 +333,6 @@ describe("volumeRefusal — allow-listed host path AND read-only, one gate for b
     "/root/claude/mission-control:/root/claude/mission-control:ro",
     "/root/claude/mission-control/dist:/app/dist:ro",
     "/tmp/jarvis-downloads:/tmp/jarvis-downloads:ro",
-    "/root/.config/gh:/root/.config/gh:ro",
-    "/root/.config/gh/hosts.yml:/x/hosts.yml:ro",
     "/root/.claude/.credentials.json:/root/.claude/.credentials.json:ro",
     "/root/claude//mission-control:/x:ro", // `//` normalizes to an allowed sub-path
     "/root/claude/./mission-control/dist:/app/dist:ro",
@@ -274,7 +347,11 @@ describe("volumeRefusal — allow-listed host path AND read-only, one gate for b
     ["/root/claude/mission-control:/w:ro,z", "not read-only"],
     ["/etc/passwd:/x:ro", "outside allowed paths"],
     ["/root/claude:/x:ro", "outside allowed paths"], // prefix is `/root/claude/`
-    ["/root/.config/gh-evil:/x:ro", "outside allowed paths"], // boundary
+    // GitHub in the sandbox runs under the agent's own token from the runner's
+    // env; a gh login directory is never a mount source.
+    ["/root/.config/gh:/root/.config/gh:ro", "outside allowed paths"],
+    ["/root/.config/gh/hosts.yml:/x/hosts.yml:ro", "outside allowed paths"],
+    ["/root/.claude/.credentials.json-evil:/x:ro", "outside allowed paths"], // boundary
     ["/root/.claude/.credentials.json.bak:/x:ro", "outside allowed paths"],
     ["/root:/x:ro", "outside allowed paths"],
     ["/root/claude/../.ssh:/x:ro", "outside allowed paths"], // `..` judged normalized (R1 W1)

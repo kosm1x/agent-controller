@@ -21,7 +21,7 @@ import { errMsg } from "../lib/err-msg.js";
 import { getProject } from "../db/projects.js";
 import { projectCredentialByName } from "../lib/secret-refs.js";
 import { applyDeferredHeadRule } from "../projects/scope-groups.js";
-import { ENV_NAME_RE, isDeniedEnvName } from "./env-deny.js";
+import { ENV_NAME_RE, isDeniedEnvName, noStoredLoginEnv } from "./env-deny.js";
 import { ENV_VALUE_FORBIDDEN_RE } from "./record-env.js";
 import { cachedProjectStatus } from "../lib/project-status-cache.js";
 
@@ -34,7 +34,8 @@ import { cachedProjectStatus } from "../lib/project-status-cache.js";
  * record's `secrets`) or a literal non-secret value; a reference miss, an
  * unlisted reference or a reserved name (env-deny.ts) is omitted — the
  * service env never reaches a record child. Warnings carry NAMES only.
- * Never the whole service env.
+ * Never the whole service env. The no-stored-login settings (env-deny.ts
+ * noStoredLoginEnv) go on last, so children get no stored login by default.
  */
 export function buildSpawnEnv(
   serverId: string,
@@ -86,7 +87,7 @@ export function buildSpawnEnv(
       }
       env[name] = secret;
     }
-    return env;
+    return { ...env, ...noStoredLoginEnv() };
   }
   if (config.env) Object.assign(env, config.env);
   for (const name of config.envNames ?? []) {
@@ -101,7 +102,7 @@ export function buildSpawnEnv(
     }
     env[name] = value;
   }
-  return env;
+  return { ...env, ...noStoredLoginEnv() };
 }
 
 const warned = new Set<string>();

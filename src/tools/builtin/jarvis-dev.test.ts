@@ -368,6 +368,7 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fixtureWt.dir = "";
     rmSync(root, { recursive: true, force: true });
   });
@@ -449,8 +450,22 @@ describe("jarvis_dev action=branch — base is fresh origin/main (PRs #33/#37, 2
     });
   });
 
+  // The fetch talks to GitHub, so it runs under the agent's own account;
+  // nothing falls back to a login stored on the host.
+  it("through the real run(), the fetch without the agent's token is refused before it spawns; no branch is created", async () => {
+    fixtureWt.dir = wt;
+    vi.stubEnv("JARVIS_GH_TOKEN", "");
+    const out = JSON.parse(await actionBranch("fix", "new-thing"));
+    expect(out.error).toContain(
+      "git fetch origin main failed — not branching from a stale base: GitHub is unavailable",
+    );
+    expect(out.error).toContain("JARVIS_GH_TOKEN");
+    expect(inWt(["branch", "--list", "jarvis/fix/new-thing"])).toBe("");
+  });
+
   it("a failing git child through the real run() returns the same error text execFileSync produced", async () => {
     fixtureWt.dir = wt;
+    vi.stubEnv("JARVIS_GH_TOKEN", "synthetic-token");
     const missing = join(root, "missing.git");
     inWt(["remote", "set-url", "origin", missing]);
     // What the pre-async run() surfaced: execFileSync's error message.

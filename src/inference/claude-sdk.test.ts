@@ -3612,6 +3612,29 @@ describe("SDK 0.3 migration (V8.5 Phase 1)", () => {
     });
   });
 
+  it("the model-SDK child env never carries the agent's GitHub token (only GitHub children get it)", async () => {
+    mockMessages.value = [
+      {
+        type: "result",
+        subtype: "success",
+        result: "ok",
+        num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ];
+    vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+    try {
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "sys", toolNames: [] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const opts = lastQueryArgs.value?.options as {
+      env?: Record<string, string | undefined>;
+    };
+    expect(opts.env?.JARVIS_GH_TOKEN).toBeUndefined();
+    expect(Object.values(opts.env ?? {})).not.toContain("canary-gh-token");
+  });
+
   it("pins alwaysLoad: true on the jarvis MCP server (0.3.x defers tools behind tool search)", async () => {
     mockMessages.value = [
       {

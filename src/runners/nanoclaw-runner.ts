@@ -29,6 +29,7 @@ import {
   recordNanoclawImageMissing,
 } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
+import { AGENT_GITHUB_ENV_NAMES } from "../lib/github-authority.js";
 import { renderConversationContext } from "./conversation-context.js";
 
 export const nanoclawRunner: Runner = {
@@ -136,6 +137,15 @@ export const nanoclawRunner: Runner = {
         // Claude Agent SDK reads ~/.claude/.credentials.json via os.homedir() → HOME.
         envVars.HOME = "/root";
       }
+      // GitHub children run under the agent's own account; nothing falls back
+      // to a login stored on the host. The agent's token is the ONLY GitHub
+      // credential the sandbox gets (no gh login is mounted); the worker's
+      // tools read it from these names, as on the host (github-authority.ts).
+      // Without it the workspace is still set up and pushes are refused.
+      for (const name of AGENT_GITHUB_ENV_NAMES) {
+        const value = process.env[name];
+        if (value) envVars[name] = value;
+      }
 
       // Sec3 round-1 fix: mission-control is mounted read-only. 2026-09-10
       // (security audit SEC-02): ONLY the git history — the worker clones it
@@ -148,7 +158,6 @@ export const nanoclawRunner: Runner = {
         // sandbox must execute what the host runs (2026-09-01, see container.ts).
         ...RUNTIME_CODE_MOUNTS,
         "/root/claude/mission-control/.git:/root/claude/mission-control/.git:ro",
-        "/root/.config/gh:/root/.config/gh:ro",
         // Host channels (telegram.ts, gdrive_download) save attachments here;
         // without this mount an attachment-bearing task is unwinnable in the
         // sandbox (task 8251, 2026-08-08: 8 min of fs sweeps + mc.db WAL

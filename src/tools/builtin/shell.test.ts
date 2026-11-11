@@ -3402,6 +3402,88 @@ describe("ruling 3c — $SECRET_X is exported only into the child that names it"
   });
 });
 
+// GitHub children run under the agent's own account; nothing falls back to a
+// login stored on the host. `gh`/`git` typed in the shell see the agent's own
+// token as GH_TOKEN (the one secret-shaped name added back after the scrub),
+// an empty GH_CONFIG_DIR and reset credential helpers; output masking covers
+// the token's shape.
+describe("shell_exec child — GitHub runs as the agent's own account", () => {
+  // A real-shape classic token (masked by shape); concatenated so no scanner
+  // reads the fixture as a key.
+  const AGENT_TOKEN = "ghp" + "_abcdefghijklmnopqrstu";
+  beforeEach(() => {
+    _resetFlailingGuard();
+  });
+
+  it("the child gets GH_TOKEN, an empty GH_CONFIG_DIR, the helper reset and the github.com helper; never JARVIS_GH_TOKEN", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", AGENT_TOKEN);
+    try {
+      const r = JSON.parse(
+        await shellTool.execute({
+          command:
+            'test -n "$GH_TOKEN" && echo token-set; test -z "$JARVIS_GH_TOKEN" && echo no-service-name; test -d "$GH_CONFIG_DIR" && printf config-files=; ls -A "$GH_CONFIG_DIR" | wc -l; echo "count=$GIT_CONFIG_COUNT k0=$GIT_CONFIG_KEY_0 v0=[$GIT_CONFIG_VALUE_0] k1=$GIT_CONFIG_KEY_1"',
+        }),
+      );
+      expect(r.exit_code).toBe(0);
+      expect(r.stdout).toBe(
+        "token-set\nno-service-name\nconfig-files=0\ncount=2 k0=credential.helper v0=[] k1=credential.https://github.com.helper\n",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("output masking covers the token's shape: an echoed token never reaches the result", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", AGENT_TOKEN);
+    try {
+      const r = JSON.parse(
+        await shellTool.execute({
+          command: 'echo "out $GH_TOKEN"; echo "err $GH_TOKEN" >&2',
+        }),
+      );
+      expect(JSON.stringify(r)).not.toContain(AGENT_TOKEN);
+      expect(JSON.stringify(r)).not.toContain("abcdefghijklmnopqrstu");
+      expect(r.stdout).toMatch(/^out \S/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("the agent's token is masked by VALUE too: a token no shape rule knows never reaches stdout or stderr (success and error paths)", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+    try {
+      for (const command of [
+        'echo "out $GH_TOKEN"; echo "err $GH_TOKEN" >&2',
+        'echo "out $GH_TOKEN"; echo "err $GH_TOKEN" >&2; exit 3',
+      ]) {
+        const r = JSON.parse(await shellTool.execute({ command }));
+        expect(JSON.stringify(r)).not.toContain("canary-gh-token");
+        expect(r.stdout).toMatch(/^out \S/);
+        expect(r.stderr).toMatch(/^err \S/);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("without the agent's token: no GH_TOKEN, and the child still gets no stored login by default", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "");
+    try {
+      const r = JSON.parse(
+        await shellTool.execute({
+          command:
+            'test -z "$GH_TOKEN" && echo no-token; printf config-files=; ls -A "$GH_CONFIG_DIR" | wc -l; echo "count=$GIT_CONFIG_COUNT k0=$GIT_CONFIG_KEY_0 v0=[$GIT_CONFIG_VALUE_0]"',
+        }),
+      );
+      expect(r.stdout).toBe(
+        "no-token\nconfig-files=0\ncount=1 k0=credential.helper v0=[]\n",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("queue 4aa — the child env names the current run's task as MC_TASK_ID", () => {
   beforeEach(() => {
     _resetFlailingGuard();

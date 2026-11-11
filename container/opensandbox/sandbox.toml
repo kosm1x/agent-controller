@@ -18,7 +18,7 @@ execd_image = "mc-opensandbox-execd:v1.0.22"   # keep=true derivative (nightly p
 [storage]
 # Prefix allow-list for host bind mounts — mirrors VOLUME_ALLOWED_PREFIXES in
 # src/runners/container.ts. Anything else is rejected server-side.
-allowed_host_paths = ["/root/claude/", "/tmp/jarvis-downloads", "/root/.config/gh", "/root/.claude/.credentials.json"]
+allowed_host_paths = ["/root/claude/", "/tmp/jarvis-downloads", "/root/.claude/.credentials.json"]
 volume_default_size = "1Gi"
 
 [store]

@@ -24,8 +24,14 @@ import { resolve as resolvePath } from "node:path";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../../db/index.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
-import { pmShimMissing, validateShellCommand, withPmShimPath } from "../../tools/builtin/shell.js";
+import {
+  pmShimMissing,
+  validateShellCommand,
+  withAgentGithubEnv,
+  withPmShimPath,
+} from "../../tools/builtin/shell.js";
 import { redactSecrets } from "../../api/mcp-server/redact.js";
+import { redactAgentToken } from "../github-authority.js";
 import {
   MAX_EVIDENCE,
   checkPathTokens,
@@ -125,13 +131,20 @@ export function evidenceTail(output: string, max = MAX_EVIDENCE): string {
     .map((s) => s.trim())
     .filter(Boolean);
   const last = lines.slice(-2).join(" | ");
-  return redactSecrets(last || "(no output)").slice(0, max);
+  // The agent's token by value (any shape), then secret shapes; before the cut.
+  return redactSecrets(redactAgentToken(last || "(no output)")).slice(0, max);
 }
 
 export type CheckExecutor = (
   command: string,
   opts: { cwd?: string; timeoutMs: number; taskId?: string },
-) => Promise<{ output: string; exitCode: number | null; timedOut: boolean }>;
+) => Promise<{
+  output: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  /** The child was never started (its env could not be built): a FAILED check. */
+  notStarted?: boolean;
+}>;
 
 /** Default executor: /bin/sh -c in its own process group, killed whole on timeout. */
 export const runShellCheck: CheckExecutor = (command, opts) =>
@@ -142,18 +155,35 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
       resolve({ output: shimMissing, exitCode: 126, timedOut: false });
       return;
     }
+    // Same package-manager shim as shell_exec — a check may not do what the tool may not do.
+    // Same GitHub identity too: a `gh`/`git` read in a check runs as the agent's own account,
+    // never a login stored on the host (withAgentGithubEnv). Building it can throw (its empty
+    // config directory cannot be created): then nothing runs and the check FAILS, closed.
+    let env: NodeJS.ProcessEnv;
+    try {
+      env = withAgentGithubEnv(
+        withPmShimPath({
+          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+          HOME: process.env.HOME ?? "/root",
+          LANG: process.env.LANG ?? "C.UTF-8",
+          TZ: process.env.TZ ?? "UTC",
+          MC_TASK_ID: opts.taskId ?? "",
+        }),
+      );
+    } catch (err) {
+      resolve({
+        output: `check environment could not be built: ${err instanceof Error ? err.message : String(err)}`,
+        exitCode: null,
+        timedOut: false,
+        notStarted: true,
+      });
+      return;
+    }
     const child = spawn("/bin/sh", ["-c", command], {
       cwd: opts.cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      // Same package-manager shim as shell_exec — a check may not do what the tool may not do.
-      env: withPmShimPath({
-        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-        HOME: process.env.HOME ?? "/root",
-        LANG: process.env.LANG ?? "C.UTF-8",
-        TZ: process.env.TZ ?? "UTC",
-        MC_TASK_ID: opts.taskId ?? "",
-      }),
+      env,
     });
     let buf = "";
     let timedOut = false;
@@ -244,6 +274,15 @@ export async function runCheck(
     timeoutMs: opts.timeoutMs,
     taskId: opts.taskId,
   });
+  if (res.notStarted) {
+    // Never matched against EXPECT: a check that did not run observed nothing.
+    return {
+      ok: false,
+      evidence: evidenceTail(res.output, 200),
+      exitCode: null,
+      timedOut: false,
+    };
+  }
   if (res.timedOut) {
     return {
       ok: false,

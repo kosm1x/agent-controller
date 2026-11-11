@@ -314,6 +314,48 @@ describe("runCheck", () => {
   });
 });
 
+// The check's env carries an empty gh config directory created on first use.
+// When it cannot be created nothing runs and the check FAILS (fail closed):
+// the promise resolves, and EXPECT is never matched against the error text.
+describe("runShellCheck — an env that cannot be built fails the check, closed", () => {
+  afterEach(() => {
+    vi.doUnmock("fs");
+    vi.resetModules();
+  });
+
+  it("resolves notStarted with no child, and runCheck FAILS even with a match-anything EXPECT", async () => {
+    vi.resetModules();
+    vi.doMock("fs", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("fs")>();
+      return {
+        ...actual,
+        mkdtempSync: (prefix: string, ...rest: unknown[]) => {
+          if (String(prefix).includes("mc-gh-config-")) throw new Error("EACCES: mkdtemp refused (test)");
+          return (actual.mkdtempSync as (...a: unknown[]) => string)(prefix, ...rest);
+        },
+      };
+    });
+    // The file-level shell.js mock is a cached factory result holding the
+    // already-created directory: load the real module graph fresh instead.
+    vi.doUnmock("../../tools/builtin/shell.js");
+    const fresh = await import("./gate-check.js");
+    const r = await fresh.runShellCheck("echo CHILD-RAN", { timeoutMs: 5000 });
+    expect(r).toEqual({
+      output: "check environment could not be built: EACCES: mkdtemp refused (test)",
+      exitCode: null,
+      timedOut: false,
+      notStarted: true,
+    });
+    const outcome = await fresh.runCheck(
+      { check_cmd: "echo CHILD-RAN", expect: "/.*/" },
+      { timeoutMs: 5000, exec: fresh.runShellCheck },
+    );
+    expect(outcome).toMatchObject({ ok: false, exitCode: null, timedOut: false });
+    expect(outcome.notRunnable).toBeUndefined();
+    expect(outcome.evidence).toContain("check environment could not be built");
+  });
+});
+
 describe("runShellCheck (real subprocess)", () => {
   it("fails closed when the package-manager shim is missing: no child spawns (qa R4 W-1)", async () => {
     shimProbe.missing = "[pm-shim] missing: /nowhere/npm — test";
@@ -351,6 +393,41 @@ describe("runShellCheck (real subprocess)", () => {
     expect(slow.timedOut).toBe(true);
     expect(Date.now() - t0).toBeLessThan(3000);
   }, 10_000);
+
+  // GitHub children run under the agent's own account; nothing falls back to
+  // a login stored on the host. A check's `gh`/`git` read gets the agent's own
+  // token, an empty GH_CONFIG_DIR and reset credential helpers.
+  it("a check runs GitHub reads as the agent: GH_TOKEN, an empty GH_CONFIG_DIR, helpers reset; never JARVIS_GH_TOKEN", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+    try {
+      const r = await runShellCheck(
+        'echo "tok=$GH_TOKEN svc=[$JARVIS_GH_TOKEN] count=$GIT_CONFIG_COUNT k0=$GIT_CONFIG_KEY_0 v0=[$GIT_CONFIG_VALUE_0]"; test -z "$(ls -A "$GH_CONFIG_DIR")" && echo config-empty',
+        { timeoutMs: 5000 },
+      );
+      expect(r.exitCode).toBe(0);
+      expect(r.output).toBe(
+        "tok=canary-gh-token svc=[] count=2 k0=credential.helper v0=[]\nconfig-empty\n",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("a token echoed by a check is masked in the evidence (shape-based redaction)", () => {
+    const token = "ghp" + "_abcdefghijklmnopqrstu";
+    expect(evidenceTail(`token ${token}`)).not.toContain("abcdefghijklmnopqrstu");
+  });
+
+  it("the agent's token is masked in the evidence by VALUE, whatever its shape", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+    try {
+      expect(evidenceTail("token canary-gh-token")).not.toContain("canary-gh-token");
+      const r = await runShellCheck('echo "tok=$GH_TOKEN"', { timeoutMs: 5000 });
+      expect(evidenceTail(r.output)).toBe("tok=***");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
   it("runs with a minimal environment — service secrets never reach a check", async () => {
     process.env.V84_TEST_SECRET = "s3cret";

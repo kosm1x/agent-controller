@@ -23,6 +23,8 @@ import {
 } from "../flailing-guard.js";
 import { redactCredentials, redactSecrets } from "../../api/mcp-server/redact.js";
 import { scrubSecrets, secretEnvForCommand } from "../../lib/secret-refs.js";
+import { noStoredLoginEnv } from "../../mcp/env-deny.js";
+import { agentGithubEnv, redactAgentToken } from "../../lib/github-authority.js";
 import { currentRunTaskId } from "../rule-of-two.js";
 
 /**
@@ -255,6 +257,28 @@ export const PIP_VENV_ENV = { PIP_REQUIRE_VIRTUALENV: "1" } as const;
 export function withPmShimPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const rest = (env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter((d) => d !== PM_SHIM_DIR);
   return withDockerConfig({ ...env, ...PIP_VENV_ENV, PATH: [PM_SHIM_DIR, ...rest].join(":") });
+}
+
+/**
+ * Output masking for every shell_exec stdout/stderr return: the agent's token
+ * by VALUE (whatever its shape), stored secrets (ruling 3c), then credential
+ * shapes. Runs before any cut so nothing is split.
+ */
+function maskShellOutput(text: string): string {
+  return redactCredentials(scrubSecrets(redactAgentToken(text)));
+}
+
+/**
+ * GitHub children run under the agent's own account: children get no stored login by default.
+ * The env gets the no-stored-login settings (an empty `GH_CONFIG_DIR`, git's credential helpers
+ * reset) and, when it is configured, the agent's own token as `GH_TOKEN`
+ * with the github.com credential helper that reads it — so `gh` or `git push` typed in the shell
+ * runs as the agent. `GH_TOKEN` is the ONE secret-shaped name added back after the
+ * buildScrubbedEnv scrub, on purpose: it is the agent's own login, limited to what the operator
+ * granted that account, and output masking (maskShellOutput) covers its value and its shape.
+ */
+export function withAgentGithubEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, ...noStoredLoginEnv(), ...(agentGithubEnv() ?? {}) };
 }
 
 /**
@@ -3184,7 +3208,11 @@ RESTRICTIONS:
         // Audit B3: withPmShimPath also pins DOCKER_CONFIG so a HOME override cannot move the docker config.
         // Queue 4aa: MC_TASK_ID names the current run's task (absent outside a run) so a
         // child can bind a receipt to it; the gate harness injects the same name.
-        env: { ...withPmShimPath(buildScrubbedEnv()), ...secretEnvForCommand(command), ...taskIdEnv() },
+        env: {
+          ...withAgentGithubEnv(withPmShimPath(buildScrubbedEnv())),
+          ...secretEnvForCommand(command),
+          ...taskIdEnv(),
+        },
       });
 
       // Best-effort backstop for credential SHAPES (sk-…, KEY=…, JSON secret
@@ -3193,7 +3221,7 @@ RESTRICTIONS:
       // (base64, xxd) and unrecognised names still pass — the process-level
       // defence is buildScrubbedEnv. Redact before the cut so a key is never split;
       // stored secrets (ruling 3c) are scrubbed first for the same reason.
-      const safeOut = redactCredentials(scrubSecrets(stdout));
+      const safeOut = maskShellOutput(stdout);
       const trimmed =
         safeOut.length > MAX_OUTPUT
           ? safeOut.slice(0, MAX_OUTPUT) +
@@ -3207,7 +3235,7 @@ RESTRICTIONS:
       };
       // Surface non-empty stderr even on success — many tools (npm, tsc, git,
       // curl -v) write progress/diagnostics there. Dropping it blinds the agent.
-      if (stderr) result.stderr = redactCredentials(scrubSecrets(stderr)).slice(0, MAX_OUTPUT);
+      if (stderr) result.stderr = maskShellOutput(stderr).slice(0, MAX_OUTPUT);
       return JSON.stringify(result);
     } catch (err: unknown) {
       // promisify(exec) rejects with the exit code on `code` (number) — unlike
@@ -3244,8 +3272,8 @@ RESTRICTIONS:
       if (stderr.includes("[pm-shim] refused:")) console.error(`[pm-shim] refused (shell_exec): ${redactSecrets(command).slice(0, 300)}`);
       return JSON.stringify({
         exit_code: exitCode,
-        stdout: redactCredentials(scrubSecrets(error.stdout ?? "")).slice(0, MAX_OUTPUT),
-        stderr: redactCredentials(scrubSecrets(stderr)).slice(0, MAX_OUTPUT),
+        stdout: maskShellOutput(error.stdout ?? "").slice(0, MAX_OUTPUT),
+        stderr: maskShellOutput(stderr).slice(0, MAX_OUTPUT),
       });
     }
   },

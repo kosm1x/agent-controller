@@ -1344,6 +1344,8 @@ export async function queryClaudeSdk(opts: {
     thinking: benchmarkOverride?.thinking ?? defaultThinkingFor(effectiveModel),
     env: {
       ...process.env,
+      // The model process never holds the agent's GitHub token; GitHub children get it from github-authority.ts.
+      JARVIS_GH_TOKEN: undefined,
       CLAUDE_AGENT_SDK_CLIENT_APP: "mission-control/1.0.0",
       // V8.5 Phase 3.2: the tool-search capability lives behind a binary
       // env flag read by the CLI subprocess — options.env REPLACES the

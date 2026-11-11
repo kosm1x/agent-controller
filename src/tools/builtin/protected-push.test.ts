@@ -10,10 +10,27 @@
  */
 import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+
+// Pass-through around the check's own async git children: each child's
+// argv and options are recorded, then the real execFile runs it.
+const childCalls = vi.hoisted(() => [] as Array<{ args: string[]; opts: { env?: Record<string, string> } }>);
+vi.mock("child_process", async (orig) => {
+  const actual = await orig<typeof import("child_process")>();
+  const { promisify } = await import("util");
+  const real = actual.execFile as unknown as Record<symbol, (...a: unknown[]) => unknown>;
+  const wrapped = Object.assign((...a: unknown[]) => (actual.execFile as (...x: unknown[]) => unknown)(...a), {
+    [promisify.custom]: (cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
+      childCalls.push({ args, opts });
+      return real[promisify.custom]!(cmd, args, opts);
+    },
+  });
+  return { ...actual, execFile: wrapped };
+});
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MC_GITHUB_SLUG } from "./immutable-core.js";
+import { AGENT_CREDENTIAL_HELPER_KEY } from "../../lib/github-authority.js";
 import {
   branchProtectedPathsRefusal,
   githubSlugOf,
@@ -51,6 +68,8 @@ const commitAll = (cwd: string, msg: string) => {
 };
 
 beforeEach(() => {
+  // The check's fetch runs under the agent's own GitHub account.
+  vi.stubEnv("JARVIS_GH_TOKEN", "synthetic-token");
   root = mkdtempSync(join(tmpdir(), "protected-push-"));
   upstream = join(root, "upstream");
   work = join(root, "work");
@@ -66,6 +85,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -196,6 +216,31 @@ describe("branchProtectedPathsRefusal — fails closed when the comparison canno
     git(work, ["checkout", "-q", "--orphan", "jarvis/feat/orphan"]);
     commitAll(work, "unrelated root");
     expect(await check()).toContain("could not run");
+  });
+
+  // The fetch talks to GitHub under the agent's own account; nothing falls
+  // back to a login stored on the host, so without the agent's token the
+  // check cannot run and nothing is sent.
+  it("the fetch child runs under the agent's account: its token, git's helpers reset then the github.com helper, and the check's own settings", async () => {
+    childCalls.length = 0;
+    await check();
+    const fetch = childCalls.find((c) => c.args.includes("fetch"));
+    expect(fetch).toBeDefined();
+    const env = fetch!.opts.env!;
+    expect(env.GH_TOKEN).toBe("synthetic-token");
+    expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("");
+    expect(env.GIT_CONFIG_KEY_1).toBe(AGENT_CREDENTIAL_HELPER_KEY);
+    expect(env.GIT_NO_REPLACE_OBJECTS).toBe("1");
+    expect(env.GIT_GRAFT_FILE).toBe("/dev/null");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+  });
+
+  it("refuses when the agent's GitHub token is not configured (the fetch runs under the agent's account only)", async () => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "");
+    const refusal = await check();
+    expect(refusal).toContain("could not run");
+    expect(refusal).toContain("fetching origin failed");
   });
 });
 

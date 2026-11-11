@@ -118,6 +118,11 @@ import {
 } from "./git.js";
 
 describe("git tools", () => {
+  // GitHub children run under the agent's own account: its token is
+  // configured unless a test says otherwise.
+  beforeEach(() => {
+    vi.stubEnv("JARVIS_GH_TOKEN", "test-token");
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -190,7 +195,7 @@ describe("git tools", () => {
       mockExecFile
         .mockReturnValueOnce("") // git add (execFile)
         .mockReturnValueOnce("[main abc1234] test commit"); // git commit (execFile)
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch (execFileSync)
+      mockExecFileSync.mockReturnValueOnce("main"); // getCurrentBranch (execFileSync)
       mockExec.mockReturnValueOnce("1 file changed"); // git diff --cached --stat (exec)
       const result = await gitCommitTool.execute({
         files: ["src/foo.ts"],
@@ -204,15 +209,12 @@ describe("git tools", () => {
     });
 
     it("commits with --no-verify on jarvis/* branches (hook runs the full suite; tool timeout is 30s)", async () => {
-      vi.stubEnv("JARVIS_GH_TOKEN", "test-token");
-      vi.resetModules();
-      const { gitCommitTool: freshCommitTool } = await import("./git.js");
       mockExecFile
         .mockReturnValueOnce("") // git add
         .mockReturnValueOnce("[jarvis/feat/jme-phase0 def5678] test"); // git commit
       mockExecFileSync.mockReturnValueOnce("jarvis/feat/jme-phase0"); // getCurrentBranch
       mockExec.mockReturnValueOnce("1 file changed"); // git diff --cached --stat
-      const result = await freshCommitTool.execute({
+      const result = await gitCommitTool.execute({
         files: ["src/foo.ts"],
         message: "test commit",
       });
@@ -221,28 +223,39 @@ describe("git tools", () => {
         (c) => Array.isArray(c[1]) && (c[1] as string[])[0] === "commit",
       );
       expect(commitCall![1]).toContain("--no-verify");
-      expect(commitCall![1]).toContain("--author");
     });
 
-    it("still uses --no-verify on jarvis/* branches without JARVIS_GH_TOKEN (no --author)", async () => {
-      vi.stubEnv("JARVIS_GH_TOKEN", "");
-      vi.resetModules();
-      const { gitCommitTool: freshCommitTool } = await import("./git.js");
+    // Agent commits name the agent as author AND committer, on every branch,
+    // whether or not its GitHub token is configured; a commit is local and
+    // carries no token.
+    it.each([
+      ["main", "test-token"],
+      ["jarvis/feat/jme-phase0", "test-token"],
+      ["main", ""],
+    ])("the commit child on %s (token %j) carries the agent identity as author and committer, no token", async (branch, token) => {
+      vi.stubEnv("JARVIS_GH_TOKEN", token);
+      vi.stubEnv("JARVIS_GH_USER", "agent-bot");
+      vi.stubEnv("JARVIS_GH_EMAIL", "agent@example.invalid");
       mockExecFile
         .mockReturnValueOnce("") // git add
-        .mockReturnValueOnce("[jarvis/feat/jme-phase0 aaa9999] test"); // git commit
-      mockExecFileSync.mockReturnValueOnce("jarvis/feat/jme-phase0"); // getCurrentBranch
+        .mockReturnValueOnce("[x aaa9999] test"); // git commit
+      mockExecFileSync.mockReturnValueOnce(branch); // getCurrentBranch
       mockExec.mockReturnValueOnce("1 file changed"); // git diff --cached --stat
-      const result = await freshCommitTool.execute({
-        files: ["src/foo.ts"],
-        message: "test commit",
-      });
-      expect(result).toContain("aaa9999");
+      expect(
+        await gitCommitTool.execute({ files: ["src/foo.ts"], message: "m" }),
+      ).toContain("aaa9999");
       const commitCall = mockExecFile.mock.calls.find(
         (c) => Array.isArray(c[1]) && (c[1] as string[])[0] === "commit",
-      );
-      expect(commitCall![1]).toContain("--no-verify");
-      expect(commitCall![1]).not.toContain("--author");
+      )!;
+      expect(commitCall[1]).not.toContain("--author");
+      const env = (commitCall[2] as { env: Record<string, string> }).env;
+      expect(env).toMatchObject({
+        GIT_AUTHOR_NAME: "agent-bot",
+        GIT_AUTHOR_EMAIL: "agent@example.invalid",
+        GIT_COMMITTER_NAME: "agent-bot",
+        GIT_COMMITTER_EMAIL: "agent@example.invalid",
+      });
+      expect(env).not.toHaveProperty("GH_TOKEN");
     });
   });
 
@@ -260,7 +273,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
         .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push (runArgs)
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch (execFileSync)
       const result = await gitPushTool.execute({});
       expect(result).toContain("ba2005e");
     });
@@ -318,17 +330,125 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
         .mockReturnValueOnce("Everything up-to-date"); // git push (runArgs)
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch (execFileSync)
       const result = await gitPushTool.execute({});
       expect(result).toBe("Already up-to-date — no new commits to push.");
     });
 
-    it("returns error when auth fails", async () => {
+    // A failed token check is a rejected token OR an unreachable GitHub; the
+    // result says so and carries gh's first output line, token masked.
+    it("a failed token check: could not verify (rejected, or GitHub unreachable), plus gh's first line, token masked", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "ghp_canaryToken123");
       mockExec.mockImplementation(() => {
-        throw new Error("not logged in");
+        throw Object.assign(new Error("Command failed: gh auth status 2>&1"), {
+          stdout: "HTTP 401: Bad credentials for ghp_canaryToken123\n  - The token in GH_TOKEN is invalid.",
+          stderr: "",
+        });
       });
-      const result = await gitPushTool.execute({});
-      expect(JSON.parse(result).error).toContain("GitHub auth not configured");
+      const { error } = JSON.parse(await gitPushTool.execute({}));
+      expect(error).toBe(
+        "Could not verify the agent's token with GitHub (rejected, or GitHub unreachable), so nothing was pushed; the operator can check the agent's token. gh said: HTTP 401: Bad credentials for ***",
+      );
+      expect(error).not.toContain("gh auth login");
+    });
+
+    // gh opens its status output with a bare host line; the reason follows.
+    it("a token check that cannot reach GitHub: same sentence, and the reason line after gh's host line is reported", async () => {
+      mockExec.mockImplementation(() => {
+        throw Object.assign(new Error("Command failed: gh auth status 2>&1"), {
+          stdout: "github.com\n  X error connecting to api.github.com\n  - check your internet connection",
+          stderr: "",
+        });
+      });
+      const { error } = JSON.parse(await gitPushTool.execute({}));
+      expect(error).toContain("Could not verify the agent's token with GitHub (rejected, or GitHub unreachable)");
+      expect(error).toMatch(/gh said: X error connecting to api\.github\.com$/);
+      expect(mockExecFile).not.toHaveBeenCalledWith("git", expect.arrayContaining(["push"]), expect.anything());
+    });
+
+    // GitHub children run under the agent's own account; nothing falls back
+    // to a login stored on the host. Without the agent's token nothing is
+    // spawned at all.
+    it("without the agent's token: one clear refusal and no child process", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "");
+      mockExec.mockClear();
+      mockExecFile.mockClear();
+      const { error } = JSON.parse(await gitPushTool.execute({}));
+      expect(error).toContain("JARVIS_GH_TOKEN");
+      expect(error).toContain("nothing was sent to GitHub");
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    it("every GitHub child of the push (auth check, repo check, fetch, push) runs as the agent, on any branch", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "ghp_canaryToken123");
+      mockExec.mockClear();
+      mockExecFile.mockClear();
+      mockExec
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/some-org/cuatro-flor.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFile
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("") // git branch -r — empty
+        .mockReturnValueOnce("") // git status --short
+        .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
+      expect(await gitPushTool.execute({})).toContain("ba2005e");
+      const envOf = (o: unknown) => (o as { env: Record<string, string> }).env;
+      const github = [
+        ...mockExec.mock.calls
+          .filter((c) => /^gh /.test(String(c[0])))
+          .map((c) => envOf(c[1])),
+        ...mockExecFile.mock.calls
+          .filter((c) => ["fetch", "push"].includes((c[1] as string[])[0]))
+          .map((c) => envOf(c[2])),
+      ];
+      expect(github).toHaveLength(4);
+      for (const env of github) {
+        expect(env.GH_TOKEN).toBe("ghp_canaryToken123");
+        expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+        expect(env.GIT_CONFIG_VALUE_0).toBe("");
+        expect(env.GIT_CONFIG_KEY_1).toBe("credential.https://github.com.helper");
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+        expect(env).not.toHaveProperty("JARVIS_GH_TOKEN");
+      }
+      // The push is the plain named-remote push; the token is in no argv.
+      const push = mockExecFile.mock.calls.find(
+        (c) => (c[1] as string[])[0] === "push",
+      )!;
+      expect(push[1]).toEqual(["push", "-u", "origin", "main"]);
+      const argvs = JSON.stringify([
+        ...mockExec.mock.calls.map((c) => c[0]),
+        ...mockExecFile.mock.calls.map((c) => c[1]),
+      ]);
+      expect(argvs).not.toContain("ghp_canaryToken123");
+      // Local children carry no token.
+      const local = mockExecFile.mock.calls.find(
+        (c) => (c[1] as string[])[0] === "status",
+      )!;
+      expect(envOf(local[2])).not.toHaveProperty("GH_TOKEN");
+    });
+
+    it("a push GitHub refuses for lack of write access: one sentence naming the operator's invitation, no other route", async () => {
+      mockExec
+        .mockReturnValueOnce("✓ Logged in") // gh auth status
+        .mockReturnValueOnce("https://github.com/someone/elsewhere.git") // git remote get-url
+        .mockReturnValueOnce('{"name":"elsewhere"}') // gh repo view
+        .mockReturnValueOnce("main"); // git branch --show-current
+      mockExecFile
+        .mockReturnValueOnce("") // git fetch origin
+        .mockReturnValueOnce("") // git branch -r — empty
+        .mockReturnValueOnce("") // git status --short
+        .mockImplementationOnce(() => {
+          throw Object.assign(new Error("Command failed: git push -u origin main"), {
+            stderr:
+              "remote: Permission to someone/elsewhere.git denied to agent-bot.\nfatal: unable to access 'https://github.com/someone/elsewhere.git/': The requested URL returned error: 403",
+          });
+        }); // git push
+      const { error } = JSON.parse(await gitPushTool.execute({}));
+      expect(error).toBe(
+        "GitHub refused this: the agent's GitHub account has no write access to someone/elsewhere; the operator can invite that account to it.",
+      );
     });
 
     it("returns error on detached HEAD", async () => {
@@ -363,7 +483,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git branch -r — empty remote, nothing to rebase (runArgs)
         .mockReturnValueOnce("") // git status --short (runArgs)
         .mockReturnValueOnce("* [new branch]      main -> main"); // git push -u origin main
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const result = await gitPushTool.execute({
         cwd: "/root/claude/trustr",
         remote: "https://github.com/EurekaMD-net/trustr.git",
@@ -452,7 +571,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git rebase
         .mockReturnValueOnce("") // git status --short
         .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const result = await gitPushTool.execute({
         remote: "https://github.com/EurekaMD-net/other.git",
       });
@@ -479,8 +597,12 @@ describe("git tools", () => {
         remote: "https://github.com/EurekaMD-net/ghost.git",
       });
       const { error } = JSON.parse(result);
-      expect(error).toContain("EurekaMD-net/ghost does not exist on GitHub");
-      expect(error).toContain("gh_repo_create");
+      // Leads with the access sentence; creating a repository is not offered.
+      expect(error).toMatch(
+        /^The agent's GitHub account has no access to \S+\/ghost \(the operator can invite the account to it\)/,
+      );
+      expect(error).not.toContain("gh_repo_create");
+      expect(error).not.toMatch(/creat/i);
       expect(mockExecFile).not.toHaveBeenCalledWith(
         "git",
         expect.arrayContaining(["remote"]),
@@ -503,7 +625,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git branch -r — empty
         .mockReturnValueOnce("") // git status --short
         .mockReturnValueOnce("* [new branch]      main -> main"); // git push
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const result = await gitPushTool.execute({
         cwd: "/root/claude/trustr",
         remote: "https://github.com/EurekaMD-net/trustr.io.git",
@@ -600,7 +721,7 @@ describe("git tools", () => {
         .mockImplementationOnce(() => {
           throw new Error("error: No such remote 'origin'");
         }) // pre-flight: git remote get-url origin → none (the case this exists for)
-        .mockReturnValue("https://github.com/EurekaMD-net/trustr"); // gh repo create
+        .mockReturnValue("https://github.com/agent-bot/trustr"); // gh repo create
       const result = await ghRepoCreateTool.execute({
         name: "trustr",
         private: true,
@@ -612,7 +733,7 @@ describe("git tools", () => {
         expect.arrayContaining([
           "repo",
           "create",
-          "EurekaMD-net/trustr",
+          "trustr",
           "--private",
           "--source",
           expect.stringContaining("/root/claude/trustr"),
@@ -621,7 +742,7 @@ describe("git tools", () => {
         ]),
         expect.anything(),
       );
-      expect(result).toContain("https://github.com/EurekaMD-net/trustr");
+      expect(result).toContain("https://github.com/agent-bot/trustr");
       expect(result).toContain("origin");
       expect(result).toContain("git_push");
     });
@@ -629,7 +750,7 @@ describe("git tools", () => {
     it("without cwd, creates the GitHub repo only (no --source) and says so", async () => {
       mockExecFile.mockClear();
       mockExecFile.mockReturnValue(
-        "https://github.com/EurekaMD-net/trustr",
+        "https://github.com/agent-bot/trustr",
       );
       const result = await ghRepoCreateTool.execute({ name: "trustr" });
       const ghArgs = mockExecFile.mock.calls[0]?.[1] as string[];
@@ -637,6 +758,114 @@ describe("git tools", () => {
       expect(ghArgs).not.toContain("--source");
       expect(ghArgs).not.toContain("--remote");
       expect(result).not.toContain("Remote 'origin' configured");
+    });
+
+    // A name without an owner goes to the agent's own account; the result
+    // says where the repository was created.
+    it("a name without an owner: gh gets the bare name, runs as the agent, and the result names the agent's account", async () => {
+      vi.stubEnv("JARVIS_GH_USER", "agent-bot");
+      mockExecFile.mockClear();
+      mockExecFile.mockReturnValue("https://github.com/agent-bot/r");
+      const result = await ghRepoCreateTool.execute({ name: "r" });
+      const gh = mockExecFile.mock.calls.find((c) => c[0] === "gh")!;
+      expect((gh[1] as string[]).slice(0, 3)).toEqual(["repo", "create", "r"]);
+      expect((gh[2] as { env: Record<string, string> }).env.GH_TOKEN).toBe(
+        "test-token",
+      );
+      expect(result).toContain(
+        "The repository was created under the agent's own GitHub account (agent-bot).",
+      );
+    });
+
+    it("an explicit owner/name is passed through and the result names that owner", async () => {
+      mockExecFile.mockClear();
+      mockExecFile.mockReturnValue("https://github.com/some-org/r");
+      const result = await ghRepoCreateTool.execute({ name: "some-org/r" });
+      const gh = mockExecFile.mock.calls.find((c) => c[0] === "gh")!;
+      expect((gh[1] as string[])[2]).toBe("some-org/r");
+      expect(result).toContain("The repository was created under some-org.");
+    });
+
+    // An explicit owner that is the agent's own account (any case) is the
+    // agent's own account: same result sentence, same refusal wording.
+    it("an owner equal to the agent's own account: the result names the agent's own account", async () => {
+      vi.stubEnv("JARVIS_GH_USER", "agent-bot");
+      mockExecFile.mockClear();
+      mockExecFile.mockReturnValue("https://github.com/agent-bot/r");
+      const result = await ghRepoCreateTool.execute({ name: "Agent-Bot/r" });
+      expect(result).toContain(
+        "The repository was created under the agent's own GitHub account (agent-bot).",
+      );
+      expect(result).not.toContain("created under Agent-Bot");
+    });
+
+    it("an owner equal to the agent's own account: a refusal says the token may lack the permission, never an invitation", async () => {
+      vi.stubEnv("JARVIS_GH_USER", "agent-bot");
+      mockExecFile.mockClear();
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Command failed: gh repo create AGENT-BOT/r"), {
+          stderr: "GraphQL: Resource not accessible by personal access token (createRepository)",
+        });
+      });
+      const { error } = JSON.parse(await ghRepoCreateTool.execute({ name: "AGENT-BOT/r" }));
+      expect(error).toBe(
+        "GitHub refused this: the agent's token may lack the permission to create repositories under its own account; the operator can check the agent's token.",
+      );
+    });
+
+    it("an owner the agent's account cannot create under: one sentence naming the operator's invitation", async () => {
+      mockExecFile.mockClear();
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Command failed: gh repo create some-org/r"), {
+          stderr: "GraphQL: agent-bot cannot create a repository for some-org. (createRepository)",
+        });
+      });
+      const { error } = JSON.parse(
+        await ghRepoCreateTool.execute({ name: "some-org/r" }),
+      );
+      expect(error).toBe(
+        "GitHub refused this: the agent's GitHub account has no write access to some-org; the operator can invite that account to it.",
+      );
+    });
+
+    // Under the agent's own account nobody can be invited: the refusal says
+    // the token may lack the permission to create repositories.
+    it("a refusal under the agent's own account: the token may lack the permission, never an invitation", async () => {
+      mockExecFile.mockClear();
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Command failed: gh repo create r"), {
+          stderr: "GraphQL: Resource not accessible by personal access token (createRepository)",
+        });
+      });
+      const { error } = JSON.parse(await ghRepoCreateTool.execute({ name: "r" }));
+      expect(error).toBe(
+        "GitHub refused this: the agent's token may lack the permission to create repositories under its own account; the operator can check the agent's token.",
+      );
+      expect(error).not.toContain("invite");
+    });
+
+    it("a non-access failure that echoes the agent's token: the error is returned with the token masked", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
+      mockExecFile.mockClear();
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(
+          new Error("Command failed: gh repo create r\nunexpected answer for canary-gh-token"),
+          { stderr: "unexpected answer for canary-gh-token" },
+        );
+      });
+      const result = await ghRepoCreateTool.execute({ name: "r" });
+      expect(result).not.toContain("canary-gh-token");
+      expect(JSON.parse(result)).toEqual({
+        error: "Command failed: gh repo create r\nunexpected answer for ***",
+      });
+    });
+
+    it("without the agent's token: refused before gh runs", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "");
+      mockExecFile.mockClear();
+      const { error } = JSON.parse(await ghRepoCreateTool.execute({ name: "r" }));
+      expect(error).toContain("JARVIS_GH_TOKEN");
+      expect(mockExecFile.mock.calls.some((c) => c[0] === "gh")).toBe(false);
     });
 
     it("refuses a cwd outside the allowed project domain before calling gh", async () => {
@@ -685,6 +914,10 @@ describe("git tools", () => {
     });
   });
 
+  // Every child gets the base allow-list, never the service env. Local
+  // children carry no GitHub token; GitHub children add only the agent's
+  // own token (as GH_TOKEN) to that base; children get no stored login by
+  // default (empty GH_CONFIG_DIR, credential helpers reset).
   describe("child env is the base allow-list, never the service env (queue 3h)", () => {
     const CANARIES: Record<string, string> = {
       CANARY_API_KEY: "canary-value-1",
@@ -694,20 +927,36 @@ describe("git tools", () => {
     };
     beforeEach(() => {
       for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
+      vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
       mockExec.mockClear();
       mockExecFileSync.mockClear();
       mockExecFile.mockClear();
     });
-    const expectBaseEnv = (opts: unknown) => {
-      const env = (opts as { env?: Record<string, string> }).env;
+    const expectAllowListed = (env: Record<string, string> | undefined) => {
       expect(env).toBeDefined();
       expect(env).not.toBe(process.env);
       expect(env!.PATH).toBe(process.env.PATH);
       expect(env!.HOME).toBe(process.env.HOME);
-      expect(env).not.toHaveProperty("GH_TOKEN");
+      expect(env!.GH_CONFIG_DIR).toMatch(/mc-gh-config-/);
+      expect(env!.GIT_CONFIG_KEY_0).toBe("credential.helper");
+      expect(env!.GIT_CONFIG_VALUE_0).toBe("");
+      expect(env).not.toHaveProperty("JARVIS_GH_TOKEN");
       for (const name of Object.keys(CANARIES))
         expect(env).not.toHaveProperty(name);
       expect(JSON.stringify(env)).not.toContain("canary-value");
+    };
+    /** A local child: the base, no token. */
+    const expectBaseEnv = (opts: unknown) => {
+      const env = (opts as { env?: Record<string, string> }).env;
+      expectAllowListed(env);
+      expect(env).not.toHaveProperty("GH_TOKEN");
+      expect(JSON.stringify(env)).not.toContain("canary-gh-token");
+    };
+    /** A GitHub child: the base plus the agent's token as GH_TOKEN only. */
+    const expectAgentEnv = (opts: unknown) => {
+      const env = (opts as { env?: Record<string, string> }).env;
+      expectAllowListed(env);
+      expect(env!.GH_TOKEN).toBe("canary-gh-token");
     };
 
     it("git_status: the exec run() children", async () => {
@@ -725,7 +974,7 @@ describe("git tools", () => {
       expectBaseEnv(call![2]);
     });
 
-    it("git_push on a non-jarvis branch: `gh repo view` (run) and `git push` (runArgs), no GH_TOKEN", async () => {
+    it("git_push on a non-jarvis branch: `gh repo view` (run) and `git push` (runArgs) get the agent's token, `git remote add` does not", async () => {
       mockExec
         .mockReturnValueOnce("✓ Logged in") // gh auth status
         .mockImplementationOnce(() => {
@@ -739,7 +988,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git branch -r
         .mockReturnValueOnce("") // git status --short
         .mockReturnValueOnce("main -> main"); // git push
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const result = await gitPushTool.execute({
         cwd: "/root/claude/trustr",
         remote: "https://github.com/o/r.git",
@@ -749,12 +997,16 @@ describe("git tools", () => {
         String(c[0]).startsWith("gh repo view"),
       );
       expect(view).toBeDefined();
-      expectBaseEnv(view![1]);
+      expectAgentEnv(view![1]);
       const push = mockExecFile.mock.calls.find(
         (c) => c[0] === "git" && (c[1] as string[])[0] === "push",
       );
       expect(push).toBeDefined();
-      expectBaseEnv(push![2]);
+      expectAgentEnv(push![2]);
+      const add = mockExecFile.mock.calls.find(
+        (c) => c[0] === "git" && (c[1] as string[])[0] === "remote",
+      );
+      expectBaseEnv(add![2]);
     });
 
     it("getCurrentBranch: the `git branch --show-current` child", () => {
@@ -765,12 +1017,29 @@ describe("git tools", () => {
       expectBaseEnv(call[2]);
     });
 
-    it("gh_repo_create: the runArgs gh child, no GH_TOKEN", async () => {
+    it("gh_repo_create: the runArgs gh child gets the agent's token", async () => {
       mockExecFile.mockReturnValue("https://github.com/o/r");
       await ghRepoCreateTool.execute({ name: "r" });
       const gh = mockExecFile.mock.calls.find((c) => c[0] === "gh");
       expect(gh).toBeDefined();
-      expectBaseEnv(gh![2]);
+      expectAgentEnv(gh![2]);
+    });
+
+    it("gh_create_pr on any branch: the gh child gets the agent's token", async () => {
+      for (const branch of ["feature-x", "jarvis/feat/x"]) {
+        mockExecFile.mockClear();
+        mockExecFile.mockReturnValueOnce("https://github.com/o/r/pull/7");
+        mockExecFileSync.mockReturnValueOnce(`${branch}\n`);
+        expect(
+          await ghCreatePrTool.execute({
+            title: "t",
+            body: "b",
+            cwd: "/root/claude/myrepo",
+          }),
+        ).toContain("pull/7");
+        const gh = mockExecFile.mock.calls.find((c) => c[0] === "gh")!;
+        expectAgentEnv(gh[2]);
+      }
     });
   });
 
@@ -789,7 +1058,6 @@ describe("git tools", () => {
           "https://github.com/kosm1x/agent-controller/pull/42",
         ); // gh pr create
       mockExecFileSync.mockReturnValueOnce("feature-x\n"); // getCurrentBranch(workDir)
-      mockExecFileSync.mockReturnValueOnce("feature-x\n"); // isJarvisBranch → getCurrentBranch
       const result = await ghCreatePrTool.execute({
         title: "Add feature",
         body: "## Summary\nNew feature",
@@ -806,38 +1074,74 @@ describe("git tools", () => {
       expect(opts.cwd).toBe("/root/claude/myrepo");
     });
 
-    it("jarvis/* PR: the gh child gets the base + GH_TOKEN only, never the service env (queue 3h)", async () => {
-      const canaries: Record<string, string> = {
-        CANARY_API_KEY: "canary-value-1",
-        FIREWORKS_API_KEY: "canary-value-2",
-        TELEGRAM_BOT_TOKEN: "canary-value-3",
-        SOME_UNRELATED_SETTING: "canary-value-4",
-      };
-      for (const [k, v] of Object.entries(canaries)) vi.stubEnv(k, v);
-      vi.stubEnv("JARVIS_GH_TOKEN", "canary-gh-token");
-      vi.resetModules();
-      const { ghCreatePrTool: freshPrTool } = await import("./git.js");
-      mockExecFile
-        .mockReturnValueOnce("https://github.com/o/r/pull/7"); // gh pr create
-      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x\n"); // getCurrentBranch(workDir)
-      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x\n"); // isJarvisBranch → getCurrentBranch
-      const result = await freshPrTool.execute({
-        title: "t",
-        body: "b",
-        cwd: "/root/claude/myrepo",
+    it("without the agent's token: refused before gh runs", async () => {
+      vi.stubEnv("JARVIS_GH_TOKEN", "");
+      mockExecFile.mockClear();
+      mockExecFileSync.mockReturnValueOnce("feature-x\n"); // getCurrentBranch(workDir)
+      const { error } = JSON.parse(
+        await ghCreatePrTool.execute({
+          title: "t",
+          body: "b",
+          cwd: "/root/claude/myrepo",
+        }),
+      );
+      expect(error).toContain("JARVIS_GH_TOKEN");
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    // The access answer is read from gh's stderr only: the error message
+    // embeds the argv, so a body that mentions "403" is the caller's text.
+    it("a pull-request body that mentions 403 does not turn a failure into a no-access refusal", async () => {
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(
+          new Error("Command failed: gh pr create --title t --body fixes the HTTP 403 on login"),
+          { stderr: "pull request create failed: GraphQL: Head sha can't be blank (createPullRequest)" },
+        );
       });
-      expect(result).toContain("pull/7");
-      const ghCall = mockExecFile.mock.calls.at(-1)!;
-      expect(ghCall[0]).toBe("gh");
-      const env = (ghCall[2] as { env: Record<string, string> }).env;
-      expect(env).not.toBe(process.env);
-      expect(env.GH_TOKEN).toBe("canary-gh-token");
-      expect(env.PATH).toBe(process.env.PATH);
-      expect(env.HOME).toBe(process.env.HOME);
-      expect(env).not.toHaveProperty("JARVIS_GH_TOKEN");
-      for (const name of Object.keys(canaries))
-        expect(env).not.toHaveProperty(name);
-      expect(JSON.stringify(env)).not.toContain("canary-value");
+      mockExecFileSync.mockReturnValueOnce("feature-x\n"); // getCurrentBranch(workDir)
+      const { error } = JSON.parse(
+        await ghCreatePrTool.execute({
+          title: "t",
+          body: "fixes the HTTP 403 on login",
+          cwd: "/root/claude/myrepo",
+        }),
+      );
+      expect(error).not.toContain("no write access");
+      expect(error).toContain("Command failed: gh pr create");
+    });
+
+    it("a rate-limit answer (a 403 too) is not a no-access refusal", async () => {
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Command failed: gh pr create"), {
+          stderr: "HTTP 403: API rate limit exceeded for user ID 1. (https://api.github.com/graphql)",
+        });
+      });
+      mockExecFileSync.mockReturnValueOnce("feature-x\n"); // getCurrentBranch(workDir)
+      const { error } = JSON.parse(
+        await ghCreatePrTool.execute({ title: "t", body: "b", cwd: "/root/claude/myrepo" }),
+      );
+      expect(error).not.toContain("no write access");
+      expect(error).toBe("Command failed: gh pr create");
+    });
+
+    it("a pull request GitHub refuses for lack of access: one sentence naming the operator's invitation", async () => {
+      mockExecFile.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Command failed: gh pr create"), {
+          stderr:
+            "pull request create failed: GraphQL: Resource not accessible by personal access token (createPullRequest)",
+        });
+      });
+      mockExecFileSync.mockReturnValueOnce("feature-x\n"); // getCurrentBranch(workDir)
+      const { error } = JSON.parse(
+        await ghCreatePrTool.execute({
+          title: "t",
+          body: "b",
+          cwd: "/root/claude/myrepo",
+        }),
+      );
+      expect(error).toBe(
+        "GitHub refused this: the agent's GitHub account has no write access to the repository in /root/claude/myrepo; the operator can invite that account to it.",
+      );
     });
 
     it("refuses when cwd is on the base branch — the pre-fix wrong-checkout failure mode", async () => {
@@ -912,7 +1216,6 @@ describe("git tools", () => {
         .mockReturnValueOnce("") // git branch -r — nothing to rebase
         .mockReturnValueOnce("") // git status --short
         .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const { order, result } = await yieldsToEventLoop(() =>
         gitPushTool.execute({}),
       );
@@ -921,40 +1224,20 @@ describe("git tools", () => {
     });
 
     it("gh_repo_create yields before settling", async () => {
-      mockExecFile.mockReturnValueOnce("https://github.com/EurekaMD-net/r");
+      mockExecFile.mockReturnValueOnce("https://github.com/agent-bot/r");
       const { order, result } = await yieldsToEventLoop(() =>
         ghRepoCreateTool.execute({ name: "r" }),
       );
       expect(order).toEqual(["tick", "done"]);
-      expect(result).toContain("EurekaMD-net/r");
+      expect(result).toContain("agent-bot/r");
     });
 
-    it("gh_create_pr (non-jarvis, runArgs) yields before settling", async () => {
-      mockExecFileSync
-        .mockReturnValueOnce("feature-x\n") // getCurrentBranch(workDir)
-        .mockReturnValueOnce("feature-x\n"); // isJarvisBranch → getCurrentBranch
-      mockExecFile.mockReturnValueOnce("https://github.com/o/r/pull/1");
-      const { order, result } = await yieldsToEventLoop(() =>
-        ghCreatePrTool.execute({
-          title: "t",
-          body: "b",
-          cwd: "/root/claude/myrepo",
-        }),
-      );
-      expect(order).toEqual(["tick", "done"]);
-      expect(result).toContain("pull/1");
-    });
-
-    it("gh_create_pr (jarvis/* GH_TOKEN child) yields before settling", async () => {
+    it("gh_create_pr (runArgs, the agent's token) yields before settling", async () => {
       vi.stubEnv("JARVIS_GH_TOKEN", "tok");
-      vi.resetModules();
-      const { ghCreatePrTool: freshPrTool } = await import("./git.js");
-      mockExecFileSync
-        .mockReturnValueOnce("jarvis/feat/x\n") // getCurrentBranch(workDir)
-        .mockReturnValueOnce("jarvis/feat/x\n"); // isJarvisBranch → getCurrentBranch
+      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x\n"); // getCurrentBranch(workDir)
       mockExecFile.mockReturnValueOnce("https://github.com/o/r/pull/2");
       const { order, result } = await yieldsToEventLoop(() =>
-        freshPrTool.execute({
+        ghCreatePrTool.execute({
           title: "t",
           body: "b",
           cwd: "/root/claude/myrepo",
@@ -970,7 +1253,8 @@ describe("git tools", () => {
     });
 
     // Was "spawnSync git ETIMEDOUT" under execFileSync; the async child reports
-    // the command line instead (token path redacted — see the W1 test below).
+    // the command line instead (the token is in no command line; redaction
+    // is tested below).
     it('a timed-out push (killed, code null) returns {error: "Command failed: <cmd>\\n"}', async () => {
       mockExec
         .mockReturnValueOnce("✓ Logged in") // gh auth status
@@ -988,7 +1272,6 @@ describe("git tools", () => {
         .mockImplementationOnce(() => {
           throw timeout;
         }); // git push → timed out
-      mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
       const result = await gitPushTool.execute({});
       expect(JSON.parse(result)).toEqual({
         error: "Command failed: git push -u origin main\n",
@@ -1034,44 +1317,37 @@ describe("git tools", () => {
       expect(JSON.parse(result)).toEqual({ error: msg });
     });
 
-    // Queue 4ao (e): the PAT used to ride in the push URL
-    // (https://user:TOKEN@github.com/…), visible in `ps` and in the async
-    // error's command line. It now reaches git only through the child env +
-    // a credential helper; redaction stays as defence in depth.
-    describe("jarvis token push: the PAT never enters a command line (4ao e)", () => {
+    // The agent's token reaches git only through the child env and the
+    // github.com credential helper (src/lib/github-authority.ts), never an
+    // argv or a URL, so `ps` and an async error's command line cannot carry
+    // it; redaction is defence in depth. The real-git check of the helper
+    // lives in github-authority.test.ts.
+    describe("the agent's token never enters a command line (4ao e)", () => {
       const TOKEN = "ghp_canaryToken123";
-      const jarvisPushSetup = async () => {
+      const pushSetup = (branch = "jarvis/feat/x") => {
         vi.stubEnv("JARVIS_GH_TOKEN", TOKEN);
         vi.stubEnv("JARVIS_GH_USER", "PiotrCoderDroid");
-        vi.resetModules();
-        const mod = await import("./git.js");
         mockExec
           .mockReturnValueOnce("✓ Logged in") // gh auth status
           .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git") // git remote get-url
           .mockReturnValueOnce('{"name":"cuatro-flor"}') // gh repo view
-          .mockReturnValueOnce("jarvis/feat/x") // git branch --show-current
-          .mockReturnValueOnce("https://github.com/EurekaMD-net/cuatro-flor.git"); // remote get-url (token path)
-        mockExecFileSync.mockReturnValueOnce("jarvis/feat/x"); // isJarvisBranch → getCurrentBranch
+          .mockReturnValueOnce(branch); // git branch --show-current
         mockExecFile.mockClear();
-        return mod;
       };
       const pushCall = () =>
         mockExecFile.mock.calls.find(
           (c) => c[0] === "git" && (c[1] as string[]).includes("push"),
         )!;
 
-      it("pushes to the plain URL with the credential helper; the token is only in the child env", async () => {
-        const { gitPushTool: freshPushTool, JARVIS_PUSH_CREDENTIAL_ARGS } =
-          await jarvisPushSetup();
+      it("pushes to the named remote; the token is only in the child env, the helper only names it", async () => {
+        pushSetup();
         mockStdinEnd.mockClear();
         mockExecFile
           .mockReturnValueOnce("") // git fetch origin
           .mockReturnValueOnce("") // git branch -r
           .mockReturnValueOnce("") // git status --short
-          .mockReturnValueOnce("abc..def jarvis/feat/x -> jarvis/feat/x") // git push
-          .mockReturnValueOnce("") // git fetch origin jarvis/feat/x
-          .mockReturnValueOnce(""); // git branch --set-upstream-to
-        const result = await freshPushTool.execute({});
+          .mockReturnValueOnce("abc..def jarvis/feat/x -> jarvis/feat/x"); // git push
+        const result = await gitPushTool.execute({});
         expect(result).toContain("-> jarvis/feat/x");
         const [cmd, argv, opts] = pushCall() as [
           string,
@@ -1079,22 +1355,18 @@ describe("git tools", () => {
           { env: Record<string, string> },
         ];
         expect(cmd).toBe("git");
-        expect(argv).toEqual([
-          ...JARVIS_PUSH_CREDENTIAL_ARGS,
-          "push",
-          "https://github.com/EurekaMD-net/cuatro-flor.git",
-          "jarvis/feat/x",
-        ]);
+        expect(argv).toEqual(["push", "-u", "origin", "jarvis/feat/x"]);
         // No argv word carries the token or a user:secret@ URL.
         expect(JSON.stringify(argv)).not.toContain(TOKEN);
         expect(argv.some((a) => /:\/\/[^/]*@/.test(a))).toBe(false);
         // The helper names the env vars; the values live only in the env.
-        expect(argv[3]).toContain('"$GH_TOKEN"');
+        expect(opts.env.GIT_CONFIG_VALUE_1).toContain('"$GH_TOKEN"');
+        expect(opts.env.GIT_CONFIG_VALUE_1).not.toContain(TOKEN);
         expect(opts.env.GH_TOKEN).toBe(TOKEN);
         expect(opts.env.JARVIS_GH_USER).toBe("PiotrCoderDroid");
         expect(opts.env).not.toHaveProperty("JARVIS_GH_TOKEN");
         expect(opts.env).not.toBe(process.env);
-        // Every child, the token push included, had stdin closed.
+        // Every child, the push included, had stdin closed.
         expect(mockStdinEnd).toHaveBeenCalledTimes(
           mockExec.mock.calls.length +
             mockExecFile.mock.calls.length +
@@ -1102,8 +1374,8 @@ describe("git tools", () => {
         );
       });
 
-      it("a timed-out token push returns the token-free command line; a token echoed in stderr is still masked", async () => {
-        const { gitPushTool: freshPushTool } = await jarvisPushSetup();
+      it("a timed-out push returns the token-free command line; a token echoed in stderr is still masked", async () => {
+        pushSetup();
         mockExecFile
           .mockReturnValueOnce("") // git fetch origin
           .mockReturnValueOnce("") // git branch -r
@@ -1117,67 +1389,18 @@ describe("git tools", () => {
               { killed: true, code: null, signal: "SIGTERM", stdout: "", stderr: "" },
             );
           }); // git push → timed out
-        const result = await freshPushTool.execute({});
+        const result = await gitPushTool.execute({});
         expect(result).not.toContain(TOKEN);
         expect(result).not.toContain("PiotrCoderDroid:");
         const { error } = JSON.parse(result) as { error: string };
-        expect(error).toContain(
-          "push https://github.com/EurekaMD-net/cuatro-flor.git jarvis/feat/x",
-        );
+        expect(error).toContain("push -u origin jarvis/feat/x");
         expect(error).toContain("remote: bad credentials ***");
-      });
-
-      it("real git: the helper answers from the env and overrides a configured helper (synthetic HOME, no network)", async () => {
-        const { JARVIS_PUSH_CREDENTIAL_ARGS } = await import("./git.js");
-        const real =
-          await vi.importActual<typeof import("child_process")>(
-            "child_process",
-          );
-        const { mkdtempSync, writeFileSync, rmSync } = await import("fs");
-        const { tmpdir } = await import("os");
-        const home = mkdtempSync(`${tmpdir()}/git-cred-`);
-        try {
-          // A competing helper, like the operator's gh one, for github.com.
-          writeFileSync(
-            `${home}/.gitconfig`,
-            '[credential "https://github.com"]\n\thelper = "!f() { echo username=operator; echo password=WRONG; }; f"\n',
-          );
-          const fill = (args: readonly string[]) =>
-            real.execFileSync("git", [...args, "credential", "fill"], {
-              cwd: home,
-              encoding: "utf-8",
-              timeout: 10_000,
-              input: "protocol=https\nhost=github.com\npath=o/r.git\n\n",
-              env: {
-                PATH: process.env.PATH ?? "",
-                HOME: home,
-                GIT_CONFIG_NOSYSTEM: "1",
-                GIT_TERMINAL_PROMPT: "0",
-                GH_TOKEN: "synthetic-token",
-                JARVIS_GH_USER: "PiotrCoderDroid",
-              },
-            });
-          const out = fill(JARVIS_PUSH_CREDENTIAL_ARGS);
-          expect(out).toContain("username=PiotrCoderDroid\n");
-          expect(out).toContain("password=synthetic-token\n");
-          expect(out).not.toContain("WRONG");
-          // Control: without the reset, the configured helper wins.
-          expect(fill(JARVIS_PUSH_CREDENTIAL_ARGS.slice(2))).toContain(
-            "password=WRONG",
-          );
-        } finally {
-          rmSync(home, { recursive: true, force: true });
-        }
       });
     });
 
-    it("a failed jarvis gh PR never returns the GH token (W1)", async () => {
+    it("a failed gh PR never returns the agent's token (W1)", async () => {
       vi.stubEnv("JARVIS_GH_TOKEN", "ghp_canaryToken123");
-      vi.resetModules();
-      const { ghCreatePrTool: freshPrTool } = await import("./git.js");
-      mockExecFileSync
-        .mockReturnValueOnce("jarvis/feat/x\n") // getCurrentBranch(workDir)
-        .mockReturnValueOnce("jarvis/feat/x\n"); // isJarvisBranch → getCurrentBranch
+      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x\n"); // getCurrentBranch(workDir)
       mockExecFile.mockImplementationOnce(() => {
         throw Object.assign(
           new Error(
@@ -1186,7 +1409,7 @@ describe("git tools", () => {
           { code: 1, stdout: "", stderr: "HTTP 401: bad token ghp_canaryToken123" },
         );
       });
-      const result = await freshPrTool.execute({
+      const result = await ghCreatePrTool.execute({
         title: "t",
         body: "b",
         cwd: "/root/claude/myrepo",
@@ -1197,7 +1420,7 @@ describe("git tools", () => {
       });
     });
 
-    it("closes stdin of every run(), runArgs() and jarvis gh child so a prompt fails fast (W3)", async () => {
+    it("closes stdin of every run() and runArgs() child, the gh ones included, so a prompt fails fast (W3)", async () => {
       mockStdinEnd.mockClear();
       mockExec.mockReturnValueOnce("").mockReturnValueOnce("main");
       await gitStatusTool.execute({}); // 2 × run()
@@ -1208,20 +1431,15 @@ describe("git tools", () => {
       await gitDiffTool.execute({}); // 1 × runArgs()
       expect(mockStdinEnd).toHaveBeenCalledTimes(1);
 
-      vi.stubEnv("JARVIS_GH_TOKEN", "tok");
-      vi.resetModules();
-      const { ghCreatePrTool: freshPrTool } = await import("./git.js");
       mockStdinEnd.mockClear();
       mockCheckGit.mockClear();
-      mockExecFileSync
-        .mockReturnValueOnce("jarvis/feat/x\n") // getCurrentBranch(workDir)
-        .mockReturnValueOnce("jarvis/feat/x\n"); // isJarvisBranch → getCurrentBranch
+      mockExecFileSync.mockReturnValueOnce("jarvis/feat/x\n"); // getCurrentBranch(workDir)
       mockExecFile.mockReturnValueOnce("https://github.com/o/r/pull/3");
-      await freshPrTool.execute({
+      await ghCreatePrTool.execute({
         title: "t",
         body: "b",
         cwd: "/root/claude/myrepo",
-      }); // 1 × direct execFileAsync("gh"), plus the protected-file check's scope read
+      }); // 1 × runArgs("gh"), plus the protected-file check's scope read
       expect(mockStdinEnd).toHaveBeenCalledTimes(
         1 + mockCheckGit.mock.calls.length,
       );
@@ -1253,7 +1471,6 @@ describe("git tools", () => {
           .mockReturnValueOnce("") // git branch -r
           .mockReturnValueOnce("") // git status --short
           .mockReturnValueOnce("5b0cc1a..ba2005e main -> main"); // git push
-        mockExecFileSync.mockReturnValueOnce("main"); // isJarvisBranch → getCurrentBranch
         let settled = false;
         const p = gitPushTool.execute({}).then((r) => {
           settled = true;
@@ -1336,9 +1553,7 @@ describe("git tools", () => {
         .mockReturnValueOnce("5b0cc1a..ba2005e main -> main") // push: git push
         .mockReturnValueOnce("") // commit: git add
         .mockReturnValueOnce("[main abc1234] c"); // commit: git commit
-      mockExecFileSync
-        .mockReturnValueOnce("main") // push: isJarvisBranch
-        .mockReturnValueOnce("main"); // commit: getCurrentBranch
+      mockExecFileSync.mockReturnValueOnce("main"); // commit: getCurrentBranch
       const push = gitPushTool.execute({ cwd: "/root/claude/cuatro-flor" });
       await vi.waitFor(() => expect(mockExecFile).toHaveBeenCalledTimes(1)); // the held fetch
       const commit = gitCommitTool.execute({

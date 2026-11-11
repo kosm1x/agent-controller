@@ -11,6 +11,14 @@ import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { errMsg } from "../../lib/err-msg.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+import {
+  OWN_ACCOUNT_CREATE_REFUSAL,
+  agentCommitIdentityEnv,
+  githubAccessRefusal,
+  githubAuthority,
+  githubNoAccess,
+  redactAgentToken,
+} from "../../lib/github-authority.js";
 import { realResolve, isOperatorConfigPath } from "./write-guard.js";
 import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 import { repoRootOf, withCwdLock } from "./cwd-lock.js";
@@ -18,7 +26,6 @@ import { isMcRepository, mcProtectedPathsRefusal } from "./protected-push.js";
 
 // Jarvis's git domain — EurekaMD org projects + mission-control on jarvis/* branches.
 const DEFAULT_CWD = "/root/claude/cuatro-flor";
-const GITHUB_ORG = "EurekaMD-net";
 const MC_DIR = "/root/claude/mission-control/";
 // P1 fix (2026-07-12): Jarvis's mission-control git work happens in a
 // DEDICATED linked worktree, never the primary checkout. On 07-12 his
@@ -48,21 +55,14 @@ const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
 /** git_push `remote`: a plain GitHub HTTPS URL — no credentials, port, or path beyond owner/repo. */
 const GITHUB_HTTPS_REMOTE_RE =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
+/** owner/repo of a GitHub remote URL (dots allowed: "trustr.io"), anchored at the URL end. */
+const GITHUB_SLUG_RE =
+  /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 
-// Jarvis's GitHub identity — used for commits, pushes, and PRs on jarvis/* branches.
-// Configured via .env: JARVIS_GH_TOKEN, JARVIS_GH_USER, JARVIS_GH_EMAIL.
-const JARVIS_GH_TOKEN = process.env.JARVIS_GH_TOKEN;
-const JARVIS_GH_USER = process.env.JARVIS_GH_USER ?? "PiotrCoderDroid";
-const JARVIS_GH_EMAIL = process.env.JARVIS_GH_EMAIL ?? "peter.blades@gmail.com";
-
-/**
- * Check if this is a Jarvis-authored branch and Piotr's token is configured.
- * Returns true if git operations should use Jarvis's identity.
- */
-function isJarvisBranch(cwd?: string): boolean {
-  const branch = getCurrentBranch(cwd ?? DEFAULT_CWD);
-  return JARVIS_BRANCH_RE.test(branch) && !!JARVIS_GH_TOKEN;
-}
+// GitHub identity: every child that talks to GitHub runs under the agent's
+// own account (src/lib/github-authority.ts) on every branch and repository;
+// nothing falls back to a login stored on the host. Local children carry the
+// agent's commit identity, so its commits name it as author and committer.
 
 /**
  * Get the current git branch for a directory.
@@ -70,7 +70,7 @@ function isJarvisBranch(cwd?: string): boolean {
  */
 export function getCurrentBranch(cwd: string): string {
   // Stays sync on purpose: an ms-scale local read whose caller
-  // (isJarvisBranch) is a sync guard.
+  // (checkMissionControlAccess) is a sync guard.
   try {
     return execFileSync("git", ["branch", "--show-current"], {
       cwd,
@@ -146,15 +146,6 @@ const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
 /**
- * Mask a secret in text returned to the model. Async child errors carry the
- * full command line; the jarvis token never enters one since queue 4ao (e),
- * so masking the token itself is defence in depth.
- */
-function redactSecret(text: string, secret: string | undefined): string {
-  return secret ? text.split(secret).join("***") : text;
-}
-
-/**
  * Per-cwd lock around a git tool's execute (queue 4ao (f)(ii)): a multi-step
  * sequence (fetch→rebase→push, add→commit) on one repository runs one at a
  * time; different repositories run in parallel. Keyed on the repository root
@@ -178,21 +169,34 @@ function lockedByCwd(
 }
 
 /**
- * Credential helper for the jarvis token push (queue 4ao (e)): git asks it for
- * the password and it answers from the child's env (GH_TOKEN, JARVIS_GH_USER),
- * so the token never appears in an argv, a URL or a journal line — only the
- * env NAMES do. The empty helper first resets every configured helper (the
- * operator's gh one included), so the push authenticates as Jarvis.
- * GH_TOKEN is in the env of git AND of every child git spawns — a repo's
- * pre-push hook (or any hook the push runs) can read it. Today the repos
- * Jarvis pushes carry only a pre-commit hook, which a push does not run.
+ * Env of a local git child: the base allow-list, never the service env (queue
+ * 3h), plus the agent's commit identity (author AND committer of a commit or
+ * rebase). It carries no GitHub token; GitHub children pass the env from
+ * githubAuthority() instead.
  */
-export const JARVIS_PUSH_CREDENTIAL_ARGS = [
-  "-c",
-  "credential.helper=",
-  "-c",
-  `credential.helper=!f() { test "$1" = get && printf 'username=%s\\npassword=%s\\n' "\${JARVIS_GH_USER:-x-access-token}" "$GH_TOKEN"; }; f`,
-] as const;
+function localEnv(): Record<string, string> {
+  return buildChildEnv(agentCommitIdentityEnv());
+}
+
+/** A bare hostname line (one token with dots, no spaces), as gh starts its status output. */
+const BARE_HOST_RE = /^[^\s.]+(?:\.[^\s.]+)+$/;
+
+/**
+ * The git_push result when `gh auth status` fails: the token was rejected or
+ * GitHub could not be reached, plus the program's reason line (token masked)
+ * so the two can be told apart. gh opens with a bare host line and gives the
+ * reason after it, so the first non-empty line that is not a bare hostname is
+ * reported, else the first non-empty line.
+ */
+function authCheckFailure(err: unknown): string {
+  const e = err as { stdout?: string; stderr?: string };
+  const out = [e?.stdout, e?.stderr].filter(Boolean).join("\n") || errMsg(err);
+  const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
+  const first = redactAgentToken(
+    lines.find((l) => !BARE_HOST_RE.test(l)) ?? lines[0] ?? "",
+  ).slice(0, 200);
+  return `Could not verify the agent's token with GitHub (rejected, or GitHub unreachable), so nothing was pushed; the operator can check the agent's token.${first ? ` gh said: ${first}` : ""}`;
+}
 
 /** Safe exec: uses execFile with array args to prevent shell injection. */
 async function runArgs(
@@ -200,14 +204,13 @@ async function runArgs(
   args: string[],
   timeout = 30_000,
   cwd?: string,
+  env: Record<string, string> = localEnv(),
 ): Promise<string> {
   const p = execFileAsync(cmd, args, {
     cwd: resolveWorkDir(cwd),
     encoding: "utf-8" as const,
     timeout,
-    // Base allow-list, never the service env (queue 3h): git reads its
-    // config and gh its auth through HOME; a pre-commit hook runs tests.
-    env: buildChildEnv(),
+    env,
   });
   p.child.stdin?.end();
   const { stdout } = await p;
@@ -219,12 +222,13 @@ async function run(
   cmd: string,
   timeout = 30_000,
   cwd?: string,
+  env: Record<string, string> = localEnv(),
 ): Promise<string> {
   const p = execAsync(cmd, {
     cwd: resolveWorkDir(cwd),
     encoding: "utf-8" as const,
     timeout,
-    env: buildChildEnv(),
+    env,
   });
   p.child.stdin?.end();
   const { stdout } = await p;
@@ -415,16 +419,10 @@ AFTER COMMIT: Report the commit hash, branch, files committed, and commit messag
       // budget fighting exactly this). CI on push/PR is the enforced gate.
       // Gated on the branch alone — the hook-timeout problem is a function of
       // branch+hook, not of the push identity token.
+      // Author and committer are the agent on every branch (localEnv).
       const commitArgs = ["commit", "-m", message];
       const branch = getCurrentBranch(cwd ?? DEFAULT_CWD);
-      if (JARVIS_BRANCH_RE.test(branch)) {
-        commitArgs.push("--no-verify");
-        // Piotr's identity as author when configured. Committer stays as
-        // root (VPS operator), author shows as PiotrCoderDroid.
-        if (JARVIS_GH_TOKEN) {
-          commitArgs.push("--author", `${JARVIS_GH_USER} <${JARVIS_GH_EMAIL}>`);
-        }
-      }
+      if (JARVIS_BRANCH_RE.test(branch)) commitArgs.push("--no-verify");
       const result = await runArgs("git", commitArgs, 30_000, cwd);
       return result;
     } catch (err) {
@@ -480,13 +478,18 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // instead of being swallowed by the "no origin" catch below (qa #3).
       const workDir = resolveWorkDir(cwd);
 
-      // Verify auth
+      // Every GitHub child below (auth check, repo check, fetch, push) runs
+      // under the agent's own account; without its token nothing is sent.
+      const github = githubAuthority();
+      if ("refusal" in github) return JSON.stringify({ error: github.refusal });
+      const githubEnv = github.env;
+
+      // Verify auth. A failure here is either a rejected token or GitHub
+      // being unreachable; the program's first output line tells which.
       try {
-        await run("gh auth status 2>&1");
-      } catch {
-        return JSON.stringify({
-          error: "GitHub auth not configured. Run `gh auth login` first.",
-        });
+        await run("gh auth status 2>&1", 30_000, undefined, githubEnv);
+      } catch (authErr) {
+        return JSON.stringify({ error: authCheckFailure(authErr) });
       }
 
       // Verify remote exists — or wire it from `remote`. shell_exec denies
@@ -515,20 +518,23 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
         }
         remote = pendingRemote = remoteArg;
       }
-      if (remote.includes("github.com")) {
-        // Full owner/repo (dots allowed: "trustr.io"), anchored at the URL end so
-        // nothing but [A-Za-z0-9_.-] ever reaches the gh shell string (qa #2/#8).
-        const match = remote.match(
-          /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/,
-        );
-        if (match) {
-          try {
-            await run(`gh repo view ${match[1]} --json name 2>&1`);
-          } catch {
-            return JSON.stringify({
-              error: `Remote repository ${match[1]} does not exist on GitHub. Create it first with gh_repo_create.`,
-            });
-          }
+      // Full owner/repo (dots allowed: "trustr.io"), anchored at the URL end so
+      // nothing but [A-Za-z0-9_.-] ever reaches the gh shell string (qa #2/#8).
+      const slug = remote.includes("github.com")
+        ? remote.match(GITHUB_SLUG_RE)?.[1]
+        : undefined;
+      if (slug) {
+        try {
+          await run(
+            `gh repo view ${slug} --json name 2>&1`,
+            30_000,
+            undefined,
+            githubEnv,
+          );
+        } catch {
+          return JSON.stringify({
+            error: `The agent's GitHub account has no access to ${slug} (the operator can invite the account to it), or that repository does not exist; nothing was pushed.`,
+          });
         }
       }
       // Only after the GitHub repo is confirmed to exist — never leave a dangling origin.
@@ -581,7 +587,7 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
       // non-fast-forward rejection — the dead-end Jarvis hit on williams-entry-radar
       // (diverged + dirty tree → silent rebase failure → rejected push → stuck).
       try {
-        await runArgs("git", ["fetch", "origin"], 15_000, cwd);
+        await runArgs("git", ["fetch", "origin"], 15_000, cwd, githubEnv);
       } catch {
         // Offline or no remote yet — let the push attempt surface the real error.
       }
@@ -636,67 +642,29 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       // Check for uncommitted changes — warn before the LLM claims success
       const status = await runArgs("git", ["status", "--short"], 30_000, cwd);
-      // On jarvis/* branches, push using Piotr's PAT so GitHub attributes
-      // the push to PiotrCoderDroid instead of kosm1x. The PAT reaches git
-      // only through the child env + credential helper (queue 4ao (e)) —
-      // never in the push URL, so `ps` and error text cannot carry it.
+      // The push authenticates as the agent on every branch and repository:
+      // the token reaches git only through the child env and the github.com
+      // credential helper (src/lib/github-authority.ts), never in an argv or
+      // URL, so `ps` and error text cannot carry it.
       let pushResult: string;
-      if (isJarvisBranch(cwd) && JARVIS_GH_TOKEN) {
-        const remoteUrl = await run("git remote get-url origin", 10_000, cwd);
-        const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
-        if (match) {
-          const p = execFileAsync(
-            "git",
-            [
-              ...JARVIS_PUSH_CREDENTIAL_ARGS,
-              "push",
-              `https://github.com/${match[1]}.git`,
-              branch,
-            ],
-            {
-              cwd: resolveWorkDir(cwd),
-              encoding: "utf-8",
-              timeout: 60_000,
-              // Base allow-list + the two names the helper reads (queue 3h).
-              env: buildChildEnv({
-                GH_TOKEN: JARVIS_GH_TOKEN,
-                JARVIS_GH_USER,
-              }),
-            },
-          );
-          p.child.stdin?.end();
-          pushResult = (await p).stdout.trim();
-          // A URL push can't take -u (upstream needs a named remote), leaving
-          // the branch without tracking — which strands any follow-on
-          // `gh pr create` that infers the head from upstream. Fetch the ref
-          // we just pushed and set tracking best-effort; the push itself
-          // already succeeded.
-          try {
-            await runArgs("git", ["fetch", "origin", branch], 15_000, cwd);
-            await runArgs(
-              "git",
-              ["branch", `--set-upstream-to=origin/${branch}`, branch],
-              10_000,
-              cwd,
-            );
-          } catch {
-            // Tracking is a convenience — never fail the push over it.
-          }
-        } else {
-          pushResult = await runArgs(
-            "git",
-            ["push", "-u", "origin", branch],
-            60_000,
-            cwd,
-          );
-        }
-      } else {
+      try {
         pushResult = await runArgs(
           "git",
           ["push", "-u", "origin", branch],
           60_000,
           cwd,
+          githubEnv,
         );
+      } catch (pushErr) {
+        const refusal = githubAccessRefusal(
+          (pushErr as { stderr?: string }).stderr,
+          slug ?? "this repository",
+        );
+        if (!refusal) throw pushErr;
+        console.warn(
+          `[git_push] ${refusal} ${redactAgentToken(errMsg(pushErr)).slice(0, 300)}`,
+        );
+        return JSON.stringify({ error: refusal });
       }
 
       // "Everything up-to-date" means nothing was pushed — distinguish from actual push
@@ -709,10 +677,8 @@ AFTER PUSH: Report the branch name, remote URL, and number of commits pushed.`,
 
       return pushResult || `Pushed ${branch} to origin.`;
     } catch (err) {
-      // Defence in depth: the token is no longer in any command line.
-      return JSON.stringify({
-        error: redactSecret(errMsg(err), JARVIS_GH_TOKEN),
-      });
+      // Defence in depth: the token is in no command line.
+      return JSON.stringify({ error: redactAgentToken(errMsg(err)) });
     }
   }),
 };
@@ -774,10 +740,18 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
       const rawName = args.name as string;
       if (!rawName) return JSON.stringify({ error: "name is required." });
 
-      // Default to EurekaMD-net org if no org prefix given
-      const name = rawName.includes("/") ? rawName : `${GITHUB_ORG}/${rawName}`;
+      // A name without an owner goes to the agent's own account (gh creates
+      // it under the account it runs as); an explicit owner/name is passed
+      // through and GitHub decides whether that account may create it there.
+      // An owner equal to the agent's own account is the agent's own account.
+      const named = rawName.includes("/") ? rawName.split("/")[0] : undefined;
+      const agentUser = process.env.JARVIS_GH_USER;
+      const owner =
+        named && agentUser && named.toLowerCase() === agentUser.toLowerCase()
+          ? undefined
+          : named;
 
-      const ghArgs = ["repo", "create", name];
+      const ghArgs = ["repo", "create", rawName];
       ghArgs.push(args.private ? "--private" : "--public");
       if (args.description)
         ghArgs.push("--description", args.description as string);
@@ -805,13 +779,32 @@ Creates the repo under EurekaMD-net org by default. Does NOT push code — use g
         }
         ghArgs.push("--source", sourceDir, "--remote", "origin");
       }
-      const result = await runArgs("gh", ghArgs, 30_000);
-      const created = result || `Created repository ${name}.`;
+      const github = githubAuthority();
+      if ("refusal" in github) return JSON.stringify({ error: github.refusal });
+      let result: string;
+      try {
+        result = await runArgs("gh", ghArgs, 30_000, undefined, github.env);
+      } catch (createErr) {
+        const stderr = (createErr as { stderr?: string }).stderr;
+        // Under the agent's own account nobody can be invited: the token may
+        // lack the permission to create repositories.
+        const refusal = owner
+          ? githubAccessRefusal(stderr, owner)
+          : githubNoAccess(stderr)
+            ? OWN_ACCOUNT_CREATE_REFUSAL
+            : null;
+        if (!refusal) throw createErr;
+        return JSON.stringify({ error: refusal });
+      }
+      const where = owner
+        ? `under ${owner}`
+        : `under the agent's own GitHub account${agentUser ? ` (${agentUser})` : ""}`;
+      const created = `${result || `Created repository ${rawName}.`}\nThe repository was created ${where}.`;
       return sourceDir
         ? `${created}\nRemote 'origin' configured in ${sourceDir}. Next: git_push with cwd=${sourceDir}.`
         : created;
     } catch (err) {
-      return JSON.stringify({ error: errMsg(err) });
+      return JSON.stringify({ error: redactAgentToken(errMsg(err)) });
     }
   }),
 };
@@ -889,6 +882,11 @@ Returns the PR URL on success.`,
         });
       }
 
+      // The pull request is opened by the agent's own account, on every
+      // branch; without its token nothing is sent.
+      const github = githubAuthority();
+      if ("refusal" in github) return JSON.stringify({ error: github.refusal });
+
       // The pull request carries the branch as origin has it, however it got
       // there: a mission-control branch that changes a protected file gets
       // no pull request. The comparison is always against the default branch,
@@ -898,7 +896,7 @@ Returns the PR URL on success.`,
       if (protectedRefusal) return JSON.stringify({ error: protectedRefusal });
 
       // --head makes the PR head explicit so gh does not depend on upstream
-      // tracking (the jarvis token-URL push path cannot set one).
+      // tracking (a branch pushed another way may have none).
       const prArgs = [
         "pr",
         "create",
@@ -911,26 +909,18 @@ Returns the PR URL on success.`,
         "--head",
         head,
       ];
-      let result: string;
-      // On jarvis/* branches, create PR as PiotrCoderDroid using Piotr's PAT.
-      if (isJarvisBranch(workDir) && JARVIS_GH_TOKEN) {
-        const p = execFileAsync("gh", prArgs, {
-          cwd: workDir,
-          timeout: 60_000,
-          encoding: "utf-8",
-          // Base allow-list + GH_TOKEN only, never the service env (queue 3h).
-          env: buildChildEnv({ GH_TOKEN: JARVIS_GH_TOKEN }),
-        });
-        p.child.stdin?.end();
-        result = (await p).stdout.trim();
-      } else {
-        result = await runArgs("gh", prArgs, 60_000, workDir);
+      try {
+        return await runArgs("gh", prArgs, 60_000, workDir, github.env);
+      } catch (prErr) {
+        const refusal = githubAccessRefusal(
+          (prErr as { stderr?: string }).stderr,
+          `the repository in ${workDir}`,
+        );
+        if (!refusal) throw prErr;
+        return JSON.stringify({ error: refusal });
       }
-      return result;
     } catch (err) {
-      return JSON.stringify({
-        error: redactSecret(errMsg(err), JARVIS_GH_TOKEN),
-      });
+      return JSON.stringify({ error: redactAgentToken(errMsg(err)) });
     }
   }),
 };

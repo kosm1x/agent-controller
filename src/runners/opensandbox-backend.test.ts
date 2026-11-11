@@ -285,6 +285,42 @@ describe("spawnOpenSandbox", () => {
     expect(calls.close).toBe(1);
   });
 
+  // The agent's token never travels through an argv or a log line: on this
+  // backend it rides in the create request body's env only.
+  it("the agent's token goes in the create request's env, never in the command or a console line", async () => {
+    const logged: unknown[][] = [];
+    const record = (...a: unknown[]) => void logged.push(a);
+    const spies = (["log", "warn", "error", "info", "debug"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(record),
+    );
+    try {
+      const calls = makeFake();
+      const h = spawnOpenSandbox({
+        input: { prompt: "p" },
+        command: ["node", "dist/runners/nanoclaw-worker.js"],
+        envVars: {
+          JARVIS_GH_TOKEN: "canary-gh-token",
+          JARVIS_GH_USER: "agent-bot",
+        },
+        // A refused mount makes the backend's warn path run too.
+        volumes: ["/etc/passwd:/x:ro"],
+        timeoutMs: 5_000,
+        name: "mc-nanoclaw-gh",
+      });
+      await h.result;
+      await vi.waitFor(() => expect(calls.kill).toBe(1));
+      const created = calls.create[0] as { env: Record<string, string> };
+      expect(created.env.JARVIS_GH_TOKEN).toBe("canary-gh-token");
+      expect(calls.runs[0].command).not.toContain("canary-gh-token");
+      expect(JSON.stringify(calls.writes)).not.toContain("canary-gh-token");
+      expect(logged.length).toBeGreaterThan(0);
+      expect(JSON.stringify(logged)).not.toContain("canary-gh-token");
+    } finally {
+      for (const s of spies) s.mockRestore();
+      vi.spyOn(console, "log").mockImplementation(() => {});
+    }
+  });
+
   it("activity timeout: a silent worker is killed and the result reports the timeout (heartbeats would have reset it)", async () => {
     vi.useFakeTimers();
     const calls = makeFake({

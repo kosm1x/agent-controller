@@ -44,6 +44,12 @@ import {
   sandboxStopEmitted,
 } from "./nanoclaw-env-note.js";
 import { errMsg } from "../lib/err-msg.js";
+import {
+  AGENT_CREDENTIAL_HELPER,
+  AGENT_CREDENTIAL_HELPER_KEY,
+  agentCommitIdentity,
+  agentGithubConfigured,
+} from "../lib/github-authority.js";
 
 /** Writable working copy the coding agent edits/commits/pushes from. */
 const WORKSPACE = MC_CONTAINER_ROOT.replace(/\/$/, "");
@@ -54,7 +60,7 @@ const WORKSPACE = MC_CONTAINER_ROOT.replace(/\/$/, "");
  * container must never write the host tree), so without this the agent dies on
  * `git commit` ("Read-only file system"). The clone gets the host's current
  * HEAD; the image's installed deps are symlinked in so tests run; push auth is
- * wired from the mounted gh token. Returns the workspace path, or null on
+ * the agent's own token from the env. Returns the workspace path, or null on
  * failure (read-only/analysis tasks still work from the `:ro` mount).
  */
 function setupCodingWorkspace(): string | null {
@@ -75,16 +81,19 @@ function setupCodingWorkspace(): string | null {
       "origin",
     ]).trim();
     run("git", ["-C", WORKSPACE, "remote", "set-url", "origin", ghUrl]);
-    // Wire `git push` auth from the mounted gh token + a commit identity.
-    run("gh", ["auth", "setup-git"]);
-    run("git", [
-      "-C",
-      WORKSPACE,
-      "config",
-      "user.email",
-      "jarvis@mission-control.local",
-    ]);
-    run("git", ["-C", WORKSPACE, "config", "user.name", "Jarvis (nanoclaw)"]);
+    // GitHub children run under the agent's own account; nothing falls back to
+    // a login stored on the host. The clone's config resets every credential
+    // helper and answers github.com from the agent's token in the env (the
+    // helper text names env variables, never a value); commits carry the
+    // agent's identity. Without the token the workspace is still created and
+    // pushes are refused (the note below says so).
+    const { name, email } = agentCommitIdentity();
+    const config = (key: string, value: string): string =>
+      run("git", ["-C", WORKSPACE, "config", key, value]);
+    config("credential.helper", "");
+    config(AGENT_CREDENTIAL_HELPER_KEY, AGENT_CREDENTIAL_HELPER);
+    config("user.email", email);
+    config("user.name", name);
     process.chdir(WORKSPACE);
     // The image sets NODE_ENV=production; if the agent runs `npm install` it
     // would strip devDependencies (vitest, tsc) and clobber the symlink. Unset
@@ -135,7 +144,7 @@ async function main(): Promise<void> {
   // Clone it into one the agent can edit/commit/push from. Returns null for the
   // rare read-only task (still works against the :ro mount).
   const workspace = setupCodingWorkspace();
-  const envNote = buildEnvironmentNote(workspace);
+  const envNote = buildEnvironmentNote(workspace, agentGithubConfigured());
 
   // Build code index so code_search has data (from the workspace if cloned).
   try {

@@ -19,6 +19,12 @@ import {
 } from "./changed-tests.js";
 import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+import {
+  agentCommitIdentityEnv,
+  githubAccessRefusal,
+  githubAuthority,
+  redactAgentToken,
+} from "../../lib/github-authority.js";
 import { withCwdLock } from "./cwd-lock.js";
 import { MC_WORKTREE_ROOT } from "./immutable-core.js";
 import { mcProtectedPathsRefusal } from "./protected-push.js";
@@ -223,11 +229,42 @@ async function run(
     cwd: MC_DIR,
     timeout: opts?.timeout ?? GIT_TIMEOUT_MS,
     encoding: "utf-8",
-    // Base allow-list (queue 3h): push authenticates through HOME's gh config.
-    env: buildChildEnv(),
+    env: gitEnv(args),
   });
   p.child.stdin?.end();
   return (await p).stdout.trim();
+}
+
+/** git subcommands that talk to the remote. */
+const GIT_NETWORK_VERBS = new Set(["fetch", "push", "pull", "ls-remote"]);
+
+/**
+ * Env of a git child (base allow-list, queue 3h). A child that talks to
+ * GitHub runs under the agent's own account (src/lib/github-authority.ts);
+ * nothing falls back to a login stored on the host, so without the agent's
+ * token it is refused (thrown) before it spawns. A local child carries the
+ * agent's commit identity (author AND committer) and no token.
+ */
+function gitEnv(args: string[]): Record<string, string> {
+  if (!GIT_NETWORK_VERBS.has(args[0])) {
+    return buildChildEnv(agentCommitIdentityEnv());
+  }
+  const github = githubAuthority();
+  if ("refusal" in github) throw new Error(github.refusal);
+  return github.env;
+}
+
+/** An error's message with the agent's token masked. */
+function safeMsg(err: unknown): string {
+  return redactAgentToken(err instanceof Error ? err.message : String(err));
+}
+
+/** GitHub's "no write access" wording in a child's stderr, as one sentence. */
+function accessRefusal(err: unknown): string | null {
+  return githubAccessRefusal(
+    (err as { stderr?: string } | null)?.stderr,
+    "the mission-control repository",
+  );
 }
 
 async function currentBranch(): Promise<string> {
@@ -395,9 +432,7 @@ export async function actionBranch(
   }
 
   const failure = (what: string, err: unknown) =>
-    JSON.stringify({
-      error: `${what}: ${err instanceof Error ? err.message : err}`,
-    });
+    JSON.stringify({ error: `${what}: ${safeMsg(err)}` });
 
   // A new branch is cut from a FRESH origin/main — never from local `main`,
   // which this linked worktree can't check out (the primary holds it). The
@@ -758,6 +793,18 @@ async function commitPushOpenPr(
     });
   }
 
+  // The push and the pull request run under the agent's own account: without
+  // its token nothing is committed, pushed or opened.
+  const github = githubAuthority();
+  if ("refusal" in github) {
+    console.log(
+      `[jarvis_dev] action=pr REFUSED — the agent's GitHub token is not configured; nothing was committed on ${branch}`,
+    );
+    return JSON.stringify({
+      error: `${github.refusal} Nothing was committed.`,
+    });
+  }
+
   // Stage, commit, push — filter sensitive files
   // Sec8 round-1 fix: widened filter covers private-key filenames (id_rsa,
   // id_ed25519), auth dotfiles (.npmrc, .netrc, .gitconfig, .git-credentials,
@@ -791,7 +838,7 @@ async function commitPushOpenPr(
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
       maxBuffer: EXEC_MAX_BUFFER,
-      env: buildChildEnv(),
+      env: gitEnv(PR_STATUS_ARGS),
     });
     porcelainRun.child.stdin?.end();
     const { stdout: porcelain } = await porcelainRun;
@@ -838,10 +885,11 @@ async function commitPushOpenPr(
     await run(["push", "-u", "origin", branch]);
     console.log(`[jarvis_dev] action=pr pushed ${branch} to origin`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeMsg(err);
     console.log(`[jarvis_dev] action=pr PUSH FAILED on ${branch}: ${msg}`);
+    const refusal = accessRefusal(err);
     return JSON.stringify({
-      error: `Push failed: ${msg}`,
+      error: refusal ?? `Push failed: ${msg}`,
     });
   }
 
@@ -866,8 +914,9 @@ async function commitPushOpenPr(
       cwd: MC_DIR,
       timeout: GIT_TIMEOUT_MS,
       encoding: "utf-8",
-      // Operator's own gh auth via HOME; no GH_TOKEN (queue 3h).
-      env: buildChildEnv(),
+      // Base allow-list + the agent's own token (queue 3h); both attempts,
+      // the label retry included.
+      env: github.env,
     });
     p.child.stdin?.end();
     return (await p).stdout.trim();
@@ -879,14 +928,16 @@ async function commitPushOpenPr(
     prUrl = await createPr([...baseArgs, "--label", "jarvis-authored"]);
     console.log(`[jarvis_dev] action=pr opened with label: ${prUrl}`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const labelMissing = /not found|could not add label/i.test(msg);
+    const msg = safeMsg(err);
+    const refusal = accessRefusal(err);
+    const labelMissing = !refusal && /not found|could not add label/i.test(msg);
     if (!labelMissing) {
       console.log(
         `[jarvis_dev] action=pr GH-CREATE FAILED on ${branch}: ${msg}`,
       );
       return JSON.stringify({
-        error: `PR creation failed (code is pushed to ${branch}): ${msg}`,
+        error:
+          refusal ?? `PR creation failed (code is pushed to ${branch}): ${msg}`,
         branch,
         pushed: true,
       });
@@ -897,12 +948,14 @@ async function commitPushOpenPr(
       labelApplied = false;
       console.log(`[jarvis_dev] action=pr opened without label: ${prUrl}`);
     } catch (err2) {
-      const msg2 = err2 instanceof Error ? err2.message : String(err2);
+      const msg2 = safeMsg(err2);
       console.log(
         `[jarvis_dev] action=pr GH-CREATE FAILED (no label retry) on ${branch}: ${msg2}`,
       );
       return JSON.stringify({
-        error: `PR creation failed (code is pushed to ${branch}): ${msg2}`,
+        error:
+          accessRefusal(err2) ??
+          `PR creation failed (code is pushed to ${branch}): ${msg2}`,
         branch,
         pushed: true,
       });
