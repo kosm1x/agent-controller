@@ -66,16 +66,20 @@ export function sandboxStopEmitted(
 const DELIVER_SENTENCE = ` To DELIVER a change you MUST create a branch, commit, and \`git push -u origin <branch>\` (push auth + the GitHub remote are already configured). Report the pushed branch name.`;
 
 /**
- * `githubConfigured` = the agent's GitHub token is set. Without it the note
- * leaves out the delivery (push) instruction and says GitHub is unavailable;
- * with it the note is unchanged.
+ * `githubConfigured` = the agent's GitHub token is set. Without it GitHub is
+ * unavailable, so the note names no push anywhere: the workspace sentence
+ * lists only file edits and test runs, the delivery instruction is left out,
+ * and the note says GitHub is unavailable.
  */
 export function buildEnvironmentNote(
   workspace: string | null,
   githubConfigured = true,
 ): string {
+  const workspaceWork = githubConfigured
+    ? "file edits, test runs, commits and pushes"
+    : "file edits and test runs";
   const base = workspace
-    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL file edits, test runs, commits and pushes there. \`${RO_REPO}\` holds only the read-only git history the workspace was cloned from — it is not a working tree; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools).${githubConfigured ? DELIVER_SENTENCE : ""}`
+    ? `\n\n[ENVIRONMENT] You are in an isolated Docker container. Your WRITABLE working copy of the mission-control repo is at ${workspace} and is already your working directory — do ALL ${workspaceWork} there. \`${RO_REPO}\` holds only the read-only git history the workspace was cloned from — it is not a working tree; never write or commit in it. Dependencies are ALREADY installed (node_modules is present) — run tests directly with \`npx vitest run <file>\`; do NOT run \`npm install\`/\`npm ci\` (unnecessary, and it will strip dev tools).${githubConfigured ? DELIVER_SENTENCE : ""}`
     : `\n\n[ENVIRONMENT] Isolated container; no writable workspace could be set up (\`${RO_REPO}\` holds only the read-only git history) — you cannot read source and cannot commit; report this and stop.`;
 
   const scopeGuard = `\n\n[SANDBOX SCOPE — CRITICAL] This container holds ONLY the mission-control repository. It does NOT contain any other repository, landing site, or project — not a landing site, not a sibling \`/root/claude/<repo>\`, nothing else. If your task asks you to work on ANYTHING other than mission-control itself (e.g. "termina la landing", "el sitio de X", another repo or project), that target is NOT in this sandbox. You MUST STOP, make NO file edits, and reply EXACTLY with: "${TARGET_NOT_IN_SANDBOX}: this task targets <name>, which is not in the nanoclaw sandbox — it must run on a host runner." Editing mission-control's own source to "make progress" on an unrelated task is a CRITICAL error — never do it.`;

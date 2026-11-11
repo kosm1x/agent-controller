@@ -760,6 +760,18 @@ describe("git tools", () => {
       expect(result).not.toContain("Remote 'origin' configured");
     });
 
+    // The model-visible texts state the same rule the handler applies.
+    it("a bare name goes to the agent's own account: the description and the name parameter say so and name no organization", () => {
+      const fn = ghRepoCreateTool.definition.function;
+      const nameParam = (
+        fn.parameters as { properties: { name: { description: string } } }
+      ).properties.name.description;
+      for (const text of [fn.description, nameParam]) {
+        expect(text).toMatch(/agent's own GitHub account/);
+        expect(text).not.toMatch(/organi[sz]ation/i);
+      }
+    });
+
     // A name without an owner goes to the agent's own account; the result
     // says where the repository was created.
     it("a name without an owner: gh gets the bare name, runs as the agent, and the result names the agent's account", async () => {

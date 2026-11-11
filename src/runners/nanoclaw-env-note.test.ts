@@ -146,18 +146,25 @@ describe("buildEnvironmentNote — the agent's GitHub token", () => {
     expect(sha(buildEnvironmentNote(null, true))).toBe("1ef15f33033cd405690c64d235a452e54b7d0708109622ce80f4de0e6ac8d836");
   });
 
-  it("no token: no push instruction, and the note says GitHub is unavailable", () => {
+  it("no token: no mention of pushing, and the note says GitHub is unavailable", () => {
     const note = buildEnvironmentNote("/workspace", false);
-    expect(note).not.toContain("git push");
-    expect(note).not.toContain("push auth");
+    expect(note).not.toMatch(/push/i);
+    expect(note).toContain("do ALL file edits and test runs there.");
     expect(note).toContain(`[GITHUB] ${GITHUB_UNAVAILABLE}`);
-    // Everything else is the configured note minus the delivery sentence.
+    // Everything else is the configured note minus the delivery sentence and
+    // with the workspace sentence naming only file edits and test runs.
     expect(note.replace(`\n\n[GITHUB] ${GITHUB_UNAVAILABLE}`, "")).toBe(
-      buildEnvironmentNote("/workspace", true).replace(
-        / To DELIVER a change[^\n]*?Report the pushed branch name\./,
-        "",
-      ),
+      buildEnvironmentNote("/workspace", true)
+        .replace(
+          / To DELIVER a change[^\n]*?Report the pushed branch name\./,
+          "",
+        )
+        .replace(
+          "file edits, test runs, commits and pushes",
+          "file edits and test runs",
+        ),
     );
+    expect(buildEnvironmentNote(null, false)).not.toMatch(/push/i);
     expect(buildEnvironmentNote(null, false)).toContain(`[GITHUB] ${GITHUB_UNAVAILABLE}`);
   });
 });

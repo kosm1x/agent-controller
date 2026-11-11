@@ -694,7 +694,7 @@ export const ghRepoCreateTool: Tool = {
     type: "function",
     function: {
       name: "gh_repo_create",
-      description: `Create a new GitHub repository under the EurekaMD-net organization.
+      description: `Create a new GitHub repository under the agent's own GitHub account.
 MUST be called before git_push if the remote repo doesn't exist yet.
 
 USE WHEN:
@@ -707,14 +707,14 @@ creates the repo AND configures it as remote \`origin\` there, so git_push works
 next. Without \`cwd\` only the GitHub repo is created and the local repo has no
 remote — wire it afterwards with git_push(remote=<url>). shell_exec cannot modify
 git remotes.
-Creates the repo under EurekaMD-net org by default. Does NOT push code — use git_push after.`,
+A bare name creates the repo under the agent's own GitHub account; owner/name creates it under that owner only if the agent's account has access there; when GitHub refuses that access, the tool says so and names the remedy. Does NOT push code — use git_push after.`,
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
             description:
-              "Repository name (e.g. 'my-project'). Created under EurekaMD-net org by default.",
+              "Repository name (e.g. 'my-project'), created under the agent's own GitHub account. 'owner/name' creates it under that owner only if the agent's account has access there; when GitHub refuses that access, the tool says so and names the remedy.",
           },
           description: {
             type: "string",
