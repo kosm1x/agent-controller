@@ -840,7 +840,10 @@ const WRITE_INDICATOR_EXEMPT = new Set([
  * "outside allowed paths" sentence that task-gate evidence quotes
  * (gate-check.test.ts, consumer.test.ts pin it).
  */
-function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdict, { allowed: true }>): string {
+function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdict, { allowed: true }>, relative = false): string {
+  if (relative && verdict.rule === "primary-checkout") {
+    return `write blocked: ${verdict.reason} A relative path resolves against the shell's working directory, which is the service's own unless the command cds first: write under /tmp/ or cd into the worktree first.`;
+  }
   switch (verdict.rule) {
     case "immutable":
       return `write to immutable core file blocked: ${targetPath}`;
@@ -859,9 +862,8 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     // Standing orders on disk (audit R2-C2): the KB root is on the write
     // allow-list, so the directives tree is denied here like file_write /
-    // file_edit deny it. Basename-bound on purpose — the guard sees command
-    // text, not a resolved path; relative writes after a `cd` stay a known
-    // residual (queue).
+    // file_edit deny it. Matched against each write target as resolved (a
+    // relative target against the cwd the command has reached).
     pattern: /\/jarvis-kb\/directives(?:\/|$)/i,
     reason:
       "jarvis-kb/directives/ holds Jarvis's standing orders — changes go through jarvis_propose_directive",
@@ -878,8 +880,7 @@ const DENY_WRITE_PATTERNS: { pattern: RegExp; reason: string }[] = [
     // project's contract and the hourly kb-reindex projects it onto the row,
     // so a shell write there is a door around project_update and its refusals.
     // Denied: the record itself, the `projects/<slug>` folder and the
-    // `projects` dir (a cp/mv INTO either lands a record). Same basename-bound
-    // residuals as directives/ above (relative writes after a `cd`). The
+    // `projects` dir (a cp/mv INTO either lands a record). The
     // tail is a negative path-char class (R2 W1), so a glued redirection
     // (`project.md>/dev/null`, `project.md</tmp/x`) is still denied. The
     // `<slug>` segment also matches a FILE directly under `projects/`
@@ -912,6 +913,8 @@ const SHELL_BUILTINS = new Set(["eval", "source", "."]);
 const BASH_DIALECT_SHELLS = new Set(["bash", "zsh", "ksh", "rbash"]);
 /** Words after which the next word is still in command position. */
 const COMMAND_PREFIXES = new Set(["exec", "env", "sudo", "timeout", "nice", "nohup", "xargs", "command", "time", "{", "!", "if", "then", "do", "else", "elif", "while", "until"]);
+/** Words a builtin `cd` can stand behind and still move the shell's own cwd. */
+const CD_TRANSPARENT = new Set(["{", "!", "if", "then", "do", "else", "elif", "while", "until", "command"]);
 /** Text judged as commands (a heredoc body, a quoted string) is nested at most this deep. */
 const MAX_TEXT_DEPTH = 4;
 /** A flat brace group with more alternatives than this is not judged. */
@@ -921,7 +924,7 @@ const PROCESS_SUBSTITUTION_REASON = "process substitution <() or >() is blocked"
 /** A file a command writes: the word as spelled (`raw`), its value after quote
  *  removal (`value`, what is judged) and whether the write appends (`>>`, `&>>`,
  *  `tee -a`); or, with `refuse`, why the command is refused without judging. */
-type WriteTarget = { raw: string; value: string; isAppend: boolean; refuse?: string };
+type WriteTarget = { raw: string; value: string; isAppend: boolean; refuse?: string; relative?: boolean };
 /** A shell word: as spelled, after quote removal, with every quoted or escaped character as NUL,
  *  and whether any part of it was quoted or escaped. */
 type ShellWord = { raw: string; value: string; bare: string; quoted: boolean };
@@ -997,8 +1000,20 @@ function braceExpansion(w: ShellWord): ShellWord[] | undefined {
  * A command name from a variable (`| $SHELL`, `$0`) is refused. Judged text is
  * lexed with dash rules, or bash's when the shell word is bash/zsh/ksh/rbash,
  * nested at most MAX_TEXT_DEPTH deep. Linear in the length of `s` per depth.
+ *
+ * At the top level (not judged text, not a re-entry) a target that is not
+ * absolute is judged as the shell resolves it: an unquoted `~`, `$HOME` or
+ * `${HOME}` head against the home directory, any other word against the cwd
+ * (`opts.cwd`, moved by each `cd`/`pushd`/`popd` that runs in this shell: not
+ * one in a pipeline, a background job or a subshell). Judged so: every write
+ * redirection word except a `>&` dup, tee's files, and for cp/mv/scp in
+ * command position the `-t` directory or else the last of two or more
+ * positionals. A `$PWD` head is the cwd; a word from another variable, or an
+ * scp `host:x`, is not a local path. With an unknowable cwd, a `~name` head,
+ * or past MAX_RELATIVE_TARGET_BYTES, a relative target is refused. Judged text keeps absolute targets only: a heredoc body or a
+ * quoted string may be prose (`> quote`, `a -> b`).
  */
-function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: number; shell?: boolean; quotedText?: boolean } = {}): WriteTarget[] {
+function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: number; shell?: boolean; quotedText?: boolean; cwd?: string } = {}): WriteTarget[] {
   type Token = ShellWord | { op: string };
   const tokens: Token[] = [];
   const out: WriteTarget[] = [];
@@ -1103,6 +1118,8 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
         }
       }
       const raw = s.slice(start, Math.min(i, n));
+      // `2>f`: an fd number, not a word. dash reads one digit (`12>f` is the word `12`), bash several.
+      if (delimTabs === undefined && (opts.reentry || commandText ? /^\d+$/ : /^\d$/).test(raw) && "<>".includes(s[i] ?? "x")) continue;
       if (opts.reentry && dollarQuote) refuse(raw, `ANSI-C/locale quoting is not judged under bash re-entry: ${raw}`);
       if (delimTabs !== undefined) heredocs.push({ delim: value, tabs: delimTabs, quoted });
       delimTabs = undefined;
@@ -1110,15 +1127,50 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
     }
   }
 
-  // A judged word: every word its brace expansion produces; an expansion that is not judged is
-  // refused when it can produce an absolute path (`/…`, `{…`); a relative one stays relative.
-  const judge = (w: ShellWord, isAppend: boolean): void => {
-    const alts = braceExpansion(w);
-    if (!alts) {
-      if (/^[/{]/.test(w.value)) refuse(w.raw, `brace expansion in a write target is not judged: ${w.raw}`);
+  // Top-level words (`relative`) are judged relative too, against `cwd` (see the doc comment above).
+  const relative = !commandText && !opts.reentry;
+  let cwd = opts.cwd ?? process.cwd();
+  let relativeBytes = MAX_RELATIVE_TARGET_BYTES; // what is left of the budget
+  const home = process.env.HOME ?? "/root";
+  const spellOut = (raw: string, why: string): void =>
+    refuse(raw, `write target '${raw}' ${why} and cannot be checked — spell the directory out (an absolute path, or an absolute \`cd\` first)`);
+  // A relative word is joined to the cwd unnormalised: realResolve walks `..` after symlinks, as the kernel does.
+  const land = (a: ShellWord, isAppend: boolean, rel: boolean): void => {
+    const v = a.value;
+    if (v.startsWith("/")) {
+      out.push({ raw: a.raw, value: v, isAppend });
       return;
     }
-    for (const a of alts) if (a.value.startsWith("/")) out.push({ raw: a.raw, value: a.value, isAppend });
+    if (!rel || !v) return;
+    const head = /^\$(?:HOME|\{HOME\}|PWD|\{PWD\})(?=\/|$)/.exec(v)?.[0] ?? (a.raw[0] === "~" && v[0] === "~" ? /^~[^/]*/.exec(v)![0] : "");
+    if (head === "~" || head.includes("HOME")) out.push({ raw: a.raw, value: home + v.slice(head.length), isAppend });
+    else if (head[0] === "~") spellOut(a.raw, "names another user's home directory"); // `~name`
+    else if (v[0] === "$" && !head) return; // another variable: not a local path
+    else if (cwd === UNKNOWN_CWD) spellOut(a.raw, "is relative to an unknowable cwd");
+    else if ((relativeBytes -= cwd.length + 1 + v.length - head.length) < 0) spellOut(a.raw, "takes this command's relative write targets past the total path length checked in one command");
+    else out.push({ raw: a.raw, value: `${cwd}/${v.slice(head.length)}`, isAppend, relative: true }); // `$PWD/x` too
+  };
+  // A judged word: every word its brace expansion produces; an expansion that is not judged is
+  // refused when it can produce a judged path (`/…`, `{…`, or any word but a `$` one under `rel`).
+  const judge = (w: ShellWord, isAppend: boolean, rel = false): void => {
+    const alts = braceExpansion(w);
+    if (!alts) {
+      if (/^[/{]/.test(w.value) || (rel && !w.value.startsWith("$"))) refuse(w.raw, `brace expansion in a write target is not judged: ${w.raw}`);
+      return;
+    }
+    for (const a of alts) land(a, isAppend, rel);
+  };
+  // The command word of a simple command: after `X=1` assignments and COMMAND_PREFIXES with their flags.
+  const commandAt = (words: ShellWord[]): number => {
+    let at = 0;
+    for (;;) {
+      while (at < words.length && /^[A-Za-z_]\w*=/.test(words[at]!.value)) at++; // `X=1 cmd`
+      const prefix = words[at]?.value.replace(/^.*\//, "");
+      if (prefix === undefined || !COMMAND_PREFIXES.has(prefix)) return at;
+      at++;
+      while (at < words.length && words[at]!.value.startsWith("-")) at++; // `sudo -n`, `nice -n 5`
+      if (prefix === "timeout" && at < words.length) at++; // its duration
+    }
   };
   // The arguments of one simple command (redirections and their words removed). The first word whose
   // value, without a directory, is a verb opens the scan, anywhere in the command (`sudo cp`, `xargs
@@ -1173,6 +1225,12 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
     for (const w of op === "tee" ? files : [...dirs, ...files.slice(1)]) {
       if (w.value.startsWith("/")) out.push({ raw: w.raw, value: w.value, isAppend });
     }
+    // In command position (or right after find's `-exec`), relative words are judged too: tee's files;
+    // mv/cp/scp's `-t` directory, else the last of two or more positionals (find's `;`/`+` dropped).
+    if (!relative || (at !== commandAt(words) && !/^-(?:exec|execdir|ok|okdir)$/.test(words[at - 1]?.value ?? ""))) return;
+    const positionals = /^[;+]$/.test(files[files.length - 1]?.value ?? "") ? files.slice(0, -1) : files;
+    const dest = op === "tee" ? positionals : dirs.length > 0 ? dirs : positionals.length >= 2 ? positionals.slice(-1) : [];
+    for (const w of dest) if (!w.value.startsWith("/") && !(op === "scp" && /^[^/]*:/.test(w.value))) judge(w, isAppend, true); // scp `host:x` is remote
   };
 
   // Shell words in one simple command, its command name from a variable, and its quoted text.
@@ -1180,15 +1238,7 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
   let bashDialect = opts.reentry === true;
   const texts: string[] = [];
   const scanCommand = (words: ShellWord[]): void => {
-    let at = 0;
-    for (;;) {
-      while (at < words.length && /^[A-Za-z_]\w*=/.test(words[at]!.value)) at++; // `X=1 cmd`
-      const prefix = words[at]?.value.replace(/^.*\//, "");
-      if (prefix === undefined || !COMMAND_PREFIXES.has(prefix)) break;
-      at++;
-      while (at < words.length && words[at]!.value.startsWith("-")) at++; // `sudo -n`, `nice -n 5`
-      if (prefix === "timeout" && at < words.length) at++; // its duration
-    }
+    const at = commandAt(words);
     words.forEach((w, k) => {
       const base = w.value.replace(/^.*\//, "");
       if ((SHELL_BINARIES.has(base) && (!w.quoted || k === at)) || (k === at && SHELL_BUILTINS.has(base))) {
@@ -1214,20 +1264,51 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
     texts.push(words.map((w) => w.value).join(" ")); // `echo "cp a" "/x" | sh` prints one command line
   };
 
+  // Where a command leaves this shell's cwd. `cd`/`pushd`/`popd` are builtins only behind keywords,
+  // `command [-p]` and `X=1` words (`env cd`, `nohup cd` run a program); a cd is assumed to succeed. An
+  // operand that is not one plain word (an expansion, a glob, an option but `-L`/`--`, a space or paren, a
+  // second operand, `~name`), a relative one with CDPATH in the command, or a cwd past 4096 bytes is unknowable.
+  const cdpath = s.includes("CDPATH");
+  const moveCwd = (words: ShellWord[]): string => {
+    let at = 0;
+    const through = (v: string): boolean => CD_TRANSPARENT.has(v) || /^[A-Za-z_]\w*=/.test(v) || (v === "-p" && words[at - 1]?.value === "command");
+    while (at < words.length && through(words[at]!.value)) at++;
+    const verb = words[at]?.value;
+    if (verb !== "cd" && verb !== "pushd" && verb !== "popd") return cwd;
+    let op = at + 1;
+    if (verb === "cd") for (const flag of ["-L", "--"]) if (words[op]?.value === flag) op++; // `cd -L -- DIR` is `cd DIR`
+    const w = words[op];
+    if (!w) return verb === "cd" ? home : UNKNOWN_CWD;
+    if (verb === "popd" || words.length > op + 1) return UNKNOWN_CWD;
+    const head = /^(?:\$HOME|\$\{HOME\}|~)(?=\/|$)/.exec(w.bare)?.[0] ?? "";
+    const v = head ? home + w.value.slice(head.length) : w.value; // a quoted `"~/x"` is a literal name
+    if (!v || /^-|[\s()$`]/.test(v) || /[*?[]|^~/.test(w.bare.slice(head.length))) return UNKNOWN_CWD;
+    if (!v.startsWith("/") && (cdpath || cwd === UNKNOWN_CWD)) return UNKNOWN_CWD;
+    const next = resolvePath(cwd, v); // logical, as `cd` without -P
+    return next.length > MAX_TRACKED_CWD ? UNKNOWN_CWD : next;
+  };
   let words: ShellWord[] = [];
+  const cwdStack: string[] = []; // `(cd /x && …) && …`: the subshell's cd does not leak
+  let piped = false; // the command after a `|` runs in a subshell: its cd does not move this shell
   for (let k = 0; k < tokens.length; k++) {
     const t = tokens[k]!;
     if ("value" in t) words.push(t);
     else if (COMMAND_SEPARATORS.has(t.op)) {
       judgeCommand(words);
       scanCommand(words);
+      if (relative) {
+        if (!piped && !/^(?:\||\|&|&)$/.test(t.op)) cwd = moveCwd(words);
+        if (t.op === "(") cwdStack.push(cwd);
+        else if (t.op === ")") cwd = cwdStack.pop() ?? cwd;
+        piped = t.op === "|" || t.op === "|&";
+      }
       words = [];
     } else {
-      // A redirection consumes the next word. `>&1`, `>&-`, `>&$fd` are dups: their word is not absolute.
+      // A redirection consumes the next word. `>&1`, `>&-`, `>&$fd` are dups: their word is judged only when absolute.
       const next = tokens[k + 1];
       if (next && "value" in next) {
         k++;
-        if (WRITE_REDIRECTIONS.has(t.op)) judge(next, t.op === ">>" || t.op === "&>>");
+        if (WRITE_REDIRECTIONS.has(t.op)) judge(next, t.op === ">>" || t.op === "&>>", relative && t.op !== ">&");
       }
     }
   }
@@ -1767,6 +1848,12 @@ export function checkEnvReset(segment: string): string | null {
 
 /** `cd -` / `cd $VAR`: the directory is unknowable here, so `npx` cannot prove a local bin. */
 const UNKNOWN_CWD = "/nonexistent/unknown-cwd";
+/** A tracked cwd past this many bytes is unknowable: fail closed, and no later step resolves a longer path. */
+const MAX_TRACKED_CWD = 4096;
+/** One command's relative write targets, joined to the cwd, total at most this many bytes: each is walked in full. */
+const MAX_RELATIVE_TARGET_BYTES = 32768;
+/** A gate's next cwd: unknowable from the first one past MAX_TRACKED_CWD to the end of its walk (`walk.capped`). */
+const capCwd = (next: string, walk: { capped?: boolean }): string => ((walk.capped ||= next.length > MAX_TRACKED_CWD) ? UNKNOWN_CWD : next);
 const OPERATOR =
   "a dependency or registry change is an operator decision (dependency trust audit 2026-09-16) — report the exact command for the operator instead";
 
@@ -2424,6 +2511,7 @@ export function checkPackageManagerRaw(
   const pipBuilt = pipBuiltName(command, scan);
   if (pipBuilt) return pipEnvRefusal(pipBuilt);
   const stack: string[] = [];
+  const walk = {};
   for (const part of scan.split(/([()])|[\n;]|(?<![<>])\||(?<![<>])&(?!>)/)) {
     if (!part) continue;
     if (part === "(") {
@@ -2437,7 +2525,7 @@ export function checkPackageManagerRaw(
     const tokens = part.split(/[\s,[\]{}`$]+/).filter(Boolean);
     if (tokens.length === 0) continue;
     if (CD_WORD_RE.test(tokens[0]!.replace(/^.*\//, ""))) {
-      cwd = nextCwd(tokens.join(" "), cwd);
+      cwd = capCwd(nextCwd(tokens.join(" "), cwd), walk);
       continue;
     }
     // Docker (ruling 5): command position = leading assignments/redirections, or behind a wrapper,
@@ -2683,7 +2771,7 @@ export function checkPackageManagerMutation(
     // `bash -c "…"` / `eval …`: validate the string as its own command.
     const inner = rest.filter((t) => base === "eval" || !/^-[a-z]+$/.test(t)).join(" ");
     if (inner.trim()) {
-      const verdict = validateShellCommand(inner, { reentry: true });
+      const verdict = validateShellCommand(inner, { reentry: true, cwd });
       if (!verdict.allowed) return `inside \`${base}\`: ${verdict.reason}`;
     }
     return null;
@@ -2863,8 +2951,9 @@ function checkMergeAuthority(command: string): string | null {
 /**
  * Validate a shell command before execution.
  * Returns { allowed: true } or { allowed: false, reason }.
+ * `opts.cwd`: the directory the command's shell starts in (default process.cwd()); relative write targets resolve against it.
  */
-export function validateShellCommand(command: string, opts: { reentry?: boolean } = {}): {
+export function validateShellCommand(command: string, opts: { reentry?: boolean; cwd?: string } = {}): {
   allowed: boolean;
   reason?: string;
 } {
@@ -2918,6 +3007,7 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
   // cwd as the package-manager gate sees it: an absolute `cd` earlier in the
   // command moves it; otherwise shell_exec's default cwd (the primary checkout).
   let segmentCwd = process.cwd();
+  const segmentWalk = {};
   const cwdStack: string[] = []; // `(cd /tmp && ls) && npx …` — the subshell's cd does not leak (qa R3 N-5)
   let pendingPops = 0;
 
@@ -2942,7 +3032,7 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
 
     for (; pendingPops > 0; pendingPops--) segmentCwd = cwdStack.pop() ?? segmentCwd;
     for (let k = 0; k < (/^\(+/.exec(trimmed)?.[0].length ?? 0); k++) cwdStack.push(segmentCwd);
-    segmentCwd = nextCwd(trimmed, segmentCwd);
+    segmentCwd = capCwd(nextCwd(trimmed, segmentCwd), segmentWalk);
     pendingPops = /\)+$/.exec(trimmed)?.[0].length ?? 0; // the subshell closes AFTER this segment runs
 
     // Extract base command (first token), strip any path prefix
@@ -3028,10 +3118,10 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
   const secretVerdict = checkSecretPaths(sanitized);
   if (!secretVerdict.allowed) return secretVerdict;
 
-  // Check write paths — if command writes to absolute paths, verify they're safe.
+  // Check write paths: every target, absolute or resolved against the cwd, goes to the write boundary.
   // The raw command: captureWriteTargets skips every heredoc body itself and
   // judges the opener line, so the stripped form's heuristics do not steer it.
-  for (const { raw: rawTarget, value, isAppend, refuse } of captureWriteTargets(command, { reentry: opts.reentry })) {
+  for (const { raw: rawTarget, value, isAppend, refuse, relative } of captureWriteTargets(command, { reentry: opts.reentry, cwd: opts.cwd })) {
     if (refuse) return { allowed: false, reason: refuse };
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
     // `>` redirect shape but are not real writes — exempt them (the unquoted
@@ -3045,7 +3135,7 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
     // file_delete), then shell_exec's own text rules below.
     const verdict = checkWriteBoundary(targetPath, "write", getJarvisKbRoot());
     if (!verdict.allowed) {
-      return { allowed: false, reason: shellBoundaryReason(targetPath, verdict) };
+      return { allowed: false, reason: shellBoundaryReason(targetPath, verdict, relative) };
     }
     for (const deny of DENY_WRITE_PATTERNS) {
       if (deny.pattern.test(targetPath)) {
@@ -3058,10 +3148,8 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean 
         // operator (not just the path) blocks those overwrite redirects here.
         //
         // BEST-EFFORT, NOT AIRTIGHT: this lives inside the captureWriteTargets loop,
-        // so truncation primitives it doesn't capture still slip past —
-        // `>|` clobber, `truncate -s 0`, `sed -i`, and RELATIVE paths (the service
-        // cwd is /root/claude/mission-control, so `> docs/EVOLUTION-LOG.md` hits
-        // the real log with no absolute match). This is defense-in-depth against
+        // so it sees only the targets that walk captures (absolute ones, and
+        // relative ones resolved against the cwd). This is defense-in-depth against
         // the realistic ritual mistake (`>` vs `>>`); durable git persistence is
         // the only real backstop against truncation. See the write-target
         // hardening follow-up + memory feedback_evolution_log_truncation.

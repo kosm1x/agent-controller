@@ -240,7 +240,7 @@ export async function runCheck(
     };
   }
   // Same guard as shell_exec — a check may not do what the tool may not do.
-  const guard = validateShellCommand(row.check_cmd);
+  const guard = validateShellCommand(row.check_cmd, { cwd: opts.cwd });
   if (!guard.allowed) {
     // Nothing ran, so nothing was observed: ABANDONED with the reason, not
     // FAILED — a guard-refused check (`$(...)`, task 35f4f5e5 on 2026-09-14)

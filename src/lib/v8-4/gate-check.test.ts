@@ -29,6 +29,7 @@ import {
   undefinedShellVars,
 } from "./gate-check.js";
 import type { LandingExec } from "./landing.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 beforeEach(() => {
   initDatabase(":memory:");
@@ -1360,5 +1361,24 @@ describe("ledgerBudgetMs", () => {
         DEFAULT_LEDGER_BUDGET_MS,
       );
     }
+  });
+});
+
+describe("runCheck — the guard judges a relative write against the directory the check runs in", () => {
+  it("a check run in the KB root writes relative paths there: allowed where the boundary allows, refused where it refuses", async () => {
+    const kb = getJarvisKbRoot();
+    const cwds: Array<string | undefined> = [];
+    const exec: CheckExecutor = async (_cmd, o) => {
+      cwds.push(o.cwd);
+      return { output: "ok", exitCode: 0, timedOut: false };
+    };
+    const ok = await runCheck({ check_cmd: "echo x > notes/gate-out.txt", expect: null }, { cwd: kb, timeoutMs: 1000, exec });
+    expect(ok.notRunnable).toBeUndefined();
+    expect(ok.ok).toBe(true);
+    expect(cwds).toEqual([kb]);
+    const refused = await runCheck({ check_cmd: "echo x > directives/core.md", expect: null }, { cwd: kb, timeoutMs: 1000, exec });
+    expect(refused.notRunnable).toBe(true);
+    expect(refused.evidence).toMatch(/^check rejected by shell guard: /);
+    expect(cwds).toEqual([kb]);
   });
 });

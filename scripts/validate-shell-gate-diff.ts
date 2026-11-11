@@ -56,6 +56,7 @@ import { redactSecrets } from "../src/api/mcp-server/redact.js";
 import { scrubSecrets } from "../src/lib/secret-refs.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import { isMainModule } from "../src/lib/is-main-module.js";
+import { MC_PRIMARY_ROOT } from "../src/tools/builtin/immutable-core.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -420,7 +421,8 @@ async function main(): Promise<number> {
   }
   try {
     const { validateShellCommand } = await import("../src/tools/builtin/shell.js");
-    const diffs = diffCommands(pop.commands, (c) => validateShellCommand(c), loaded.validate);
+    // The replayed commands ran in the service's directory (the primary checkout), wherever this script runs.
+    const diffs = diffCommands(pop.commands, (c) => validateShellCommand(c, { cwd: MC_PRIMARY_ROOT }), loaded.validate);
     console.log(formatReport(pop, diffs, args));
     const code = exitCodeFor(pop, diffs);
     console.log(`\nexit ${code}: ${code === 0 ? "no unexplained difference" : "unexplained differences (non-docker or docker-newly-allowed)"}`);

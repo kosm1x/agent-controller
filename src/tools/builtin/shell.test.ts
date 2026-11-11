@@ -16,7 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENV_READ_ALLOWLIST } from "./immutable-core.js";
+import { ENV_READ_ALLOWLIST, MC_PRIMARY_ROOT, MC_WORKTREE_ROOT } from "./immutable-core.js";
+import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 import {
   shellTool,
   validateShellCommand,
@@ -1136,7 +1137,7 @@ B`;
       "echo 'a > /opt/b' > /tmp/z",
       "cp a /tmp/example/x",
       "cp a '/tmp/example/{x,../../opt/example/out}'", // a quoted brace is text
-      "mv foo.{txt,md}", // a relative expansion stays relative
+      "mv foo.{txt,md}", // each alternative of a relative expansion lands in the cwd
       "exec 3<>/tmp/x",
       "echo x >>& /opt/example/out.txt", // a bash syntax error: `>>` has no word, nothing is written
       // A quote in a body stays in the body; a quoted body or a quoted string is data without a shell word.
@@ -1163,7 +1164,8 @@ B`;
       "echo x > $'\\x2froot/.bashrc'",
       "echo $'a\\'b'",
     ])("allows %s", (cmd) => {
-      expect(validateShellCommand(cmd)).toEqual({ allowed: true });
+      // An explicit cwd: relative targets resolve against it, not the runner's working directory.
+      expect(validateShellCommand(cmd, { cwd: "/tmp" })).toEqual({ allowed: true });
     });
 
     // Under bash re-entry (`bash -c`, a shell heredoc) `$'…'` / `$"…"` read differently from dash: refused.
@@ -1279,6 +1281,25 @@ B`;
         expect(m.ms, unit).toBeLessThan(linearBound(1500)); // the same bound as the package-manager gate's linear test
       }
     }, 120_000); // 3 runs per input: ~13 s on the VPS, ~3x that on the CI runner
+
+    it("stays near-linear on a chain of relative `cd`s (the tracked cwd stops at 4096 bytes)", async () => {
+      // Each `cd b` lengthens the tracked cwd and every later target carries it. Past 4096 bytes the cwd is
+      // unknowable, so no target is longer. CPU time, minimum of 3, ratio as in the heredoc test above.
+      const time = async (n: number): Promise<number> =>
+        (await minCpuMs(() => validateShellCommand("cd b;echo>c;".repeat(n), { cwd: "/tmp" }))).ms;
+      const half = await time(5000);
+      const full = await time(10000);
+      expect(full / half, `10000: ${full.toFixed(0)} ms / 5000: ${half.toFixed(0)} ms`).toBeLessThan(3);
+    }, 120_000);
+
+    it("stays linear on many relative targets under a deep cwd (a byte budget on their joined paths)", async () => {
+      // Every relative target is walked in full, so their joined length is capped per command.
+      const cmd = (n: number): string => `cd /tmp/zzq-none${"/d".repeat(2040)} && :` + ">a".repeat(n);
+      const time = async (n: number): Promise<number> => (await minCpuMs(() => validateShellCommand(cmd(n), { cwd: "/tmp" }))).ms;
+      const half = await time(30_000);
+      const full = await time(60_000);
+      expect(full / half, `60000: ${full.toFixed(0)} ms / 30000: ${half.toFixed(0)} ms`).toBeLessThan(3);
+    }, 120_000);
   });
 
   describe("williams-entry-radar write access", () => {
@@ -1657,8 +1678,7 @@ describe("shellTool exec contract", () => {
 describe("validateShellCommand — RITUAL_WRITABLE_DOCS append-only gate (2026-06-17)", () => {
   // Coverage note: these pin the WRITE_INDICATORS-captured overwrite forms the
   // gate actually blocks (`>`, tee, etc.). The gate is best-effort, NOT airtight —
-  // it does NOT close `>|` / `truncate` / `sed -i` / relative-path truncation
-  // (those skip WRITE_INDICATORS entirely). Durable git persistence is the real
+  // durable git persistence is the real
   // backstop; see feedback_evolution_log_truncation.
   //
   // The append-only rule holds whatever branch the primary checkout is on:
@@ -1825,7 +1845,8 @@ describe("checkUnscopedTestRun — the shell-tool mirror of vitest-scope-guard",
 });
 
 describe("execGroupKill — timeout reaps the whole process group", () => {
-  it("kills backgrounded grandchildren on timeout (no orphan survives)", async () => {
+  // Host rule: signal-sending cases run on CI only.
+  it.skipIf(!process.env.CI)("kills backgrounded grandchildren on timeout (no orphan survives)", async () => {
     const marker = `orphan-probe-${Date.now()}`;
     const result = JSON.parse(
       await shellTool.execute({
@@ -1850,7 +1871,8 @@ describe("execGroupKill — timeout reaps the whole process group", () => {
     expect(Number(survivors)).toBe(0);
   }, 15_000);
 
-  it("helper kills a grandchild directly (jarvis_test_run / vps_deploy path)", async () => {
+  // Host rule: signal-sending cases run on CI only.
+  it.skipIf(!process.env.CI)("helper kills a grandchild directly (jarvis_test_run / vps_deploy path)", async () => {
     const err = (await execGroupKill(
       "sh -c 'sleep 30 & echo $!; sleep 30'",
       { timeout: 200, maxBuffer: 1024, env: process.env, cwd: tmpdir() },
@@ -2101,8 +2123,9 @@ describe("package-manager gate — shell_exec has no install authority (dependen
     expect(r.reason, cmd).toMatch(why);
     expect(r.reason, cmd).toMatch(/operator decision/);
   };
+  // An explicit cwd: relative write targets (`mv u* out/`) resolve against it, not the runner's working directory.
   const allowed = (cmd: string) =>
-    expect(validateShellCommand(cmd), cmd).toEqual({ allowed: true });
+    expect(validateShellCommand(cmd, { cwd: "/tmp" }), cmd).toEqual({ allowed: true });
 
   it("blocks node package-manager mutations in every spelling", () => {
     for (const cmd of [
@@ -4075,6 +4098,136 @@ describe("NorthStar retired — shell_exec refuses jarvis-kb/NorthStar", () => {
       const r2 = validateShellCommand(`echo x > ${base}/link2/new.md`);
       expect(r2.allowed).toBe(false);
       expect(String(r2.reason)).toContain(REASON);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("validateShellCommand — relative and post-cd write targets reach the write boundary", () => {
+  const P = MC_PRIMARY_ROOT.replace(/\/$/, "");
+  const W = MC_WORKTREE_ROOT.replace(/\/$/, "");
+  const K = getJarvisKbRoot();
+
+  it.each([
+    [P, "echo x > dist/index.js"],
+    [P, "cp /tmp/x.js dist/index.js"],
+    [P, "echo x >> src/config.ts"],
+    ["/tmp", `cd ${W} && echo x > src/tools/builtin/shell.ts`],
+    ["/tmp", `cd ${W}/src && cp /tmp/x tools/builtin/shell.ts`],
+    ["/tmp", `cd ${K} && echo x > directives/core.md`],
+    ["/tmp", "echo x >> ~/.bashrc"],
+    ["/tmp", "echo x > $HOME/.bashrc"],
+    ["/tmp", "cd - && echo x > o"],
+    [P, "(cd /tmp && true) && echo x > o"],
+    [P, "cd /tmp | true; echo x > o"],
+    [P, "cd /tmp & echo x > o"],
+    [P, "echo x | tee dist/a.js"],
+    [P, "find /tmp -name x -exec cp {} dist/ \\;"],
+    [P, "env cd /tmp && echo x > dist/index.js"],
+    [P, "nohup cd /tmp && echo x > dist/index.js"],
+    [P, "echo x > a:b"],
+    [P, "cp /tmp/a a:/../package.json"],
+    ["/tmp", "echo x >> ~root/.bashrc"],
+    ["/tmp", "cd ~root && echo x >> .bashrc"],
+    ["/tmp", `CDPATH=${P} cd dist && echo x > index.js`],
+    ["/tmp", `cd 'a)/../../${P.slice(1)}' && echo x > package.json`],
+    [P, 'cd "dir with space" && echo x > o'],
+    ["/tmp", 'cd "dir with space" && echo x > o'],
+    [P, "echo x > $PWD/dist/index.js"],
+    [P, "cp /tmp/x 12>/dev/null"],
+    ["/tmp", `timeout -v 5 "$SHELL" -c 'echo x > ${P}/package.json'`],
+    ["/tmp", `timeout --foreground 5 /bin/s? -c 'echo x > ${P}/package.json'`],
+    ["/tmp", "timeout -v 5 $X arg"],
+    ["/tmp", "timeout --foreground 5 $X arg"],
+    ["/tmp", "timeout -v 5 /bin/s? -c id"],
+    ["/tmp", 'timeout -p 5 "$CMD"'],
+    [P, "cd /tmp extra; echo x > package.json"],
+    [P, "cd -P /tmp && echo x > f"],
+  ])("refuses (cwd %s): %s", (cwd, cmd) => {
+    expect(validateShellCommand(cmd, { cwd }).allowed).toBe(false);
+  });
+
+  it("an unknowable cwd asks for the directory to be spelled out", () => {
+    expect(validateShellCommand("cd - && echo x > o", { cwd: "/tmp" }).reason).toContain("spell the directory out");
+  });
+
+  it("a relative target in the primary checkout carries the working-directory hint", () => {
+    const r = validateShellCommand("echo x > out.txt", { cwd: P });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("A relative path resolves against the shell's working directory");
+    expect(validateShellCommand(`echo x > ${P}/out.txt`).reason).not.toContain("A relative path");
+  });
+
+  it.each([
+    [P, "cd /root/claude/proj && echo x > out"],
+    [P, `(cd ${W} && echo x > notes.txt)`],
+    [P, "cp /tmp/a /tmp/b 2>/dev/null"],
+    [P, "scp a host:x"],
+    [P, "grep -rn cp src/ dist/"],
+    [P, "echo tee dist/a.js"],
+    [P, "echo mv a b"],
+    [P, "command cd /tmp && echo x > f"],
+    [P, "cd -- /tmp && echo x > f"],
+    [P, "cd -L /tmp && echo x > f"],
+    ["/tmp", `cd /tmp/${"d".repeat(195)} && :` + Array.from({ length: 40 }, (_, k) => ` >f${k + 1}`).join("")],
+    ["/tmp", "echo x > $PWD/ok.txt"],
+    [P, "grep -rn tee src/"],
+    [P, "cp -t /tmp/out src/a src/b"],
+    [P, "git -C /root/claude/proj mv a b"],
+    [P, "cat > /tmp/notes.md <<EOF\n> quote\na -> b\nEOF"],
+    [P, "cat >> docs/EVOLUTION-LOG.md << 'ENTRY'\n## 2026-11-11\nbody\nENTRY"],
+    ["/tmp", "echo x > out.txt"],
+    ["/tmp", "npx tsc > tsc.log"],
+    ["/tmp", "curl -s http://127.0.0.1:1/ > resp.json"],
+  ])("allows (cwd %s): %s", (cwd, cmd) => {
+    expect(validateShellCommand(cmd, { cwd })).toEqual({ allowed: true });
+  });
+
+  it("a relative overwrite of the ritual log stays refused as append-only", () => {
+    expect(validateShellCommand("echo x > docs/EVOLUTION-LOG.md", { cwd: P }).reason).toContain("append-only");
+  });
+
+  it("another user's home and a cwd past 4096 bytes ask for the directory to be spelled out", () => {
+    expect(validateShellCommand("echo x >> ~root/.bashrc", { cwd: "/tmp" }).reason).toMatch(/another user's home directory .*spell the directory out/);
+    expect(validateShellCommand(`cd ${"b/".repeat(2000)} && echo x > c`, { cwd: "/tmp" })).toEqual({ allowed: true });
+    expect(validateShellCommand(`cd ${"b/".repeat(2050)} && echo x > c`, { cwd: "/tmp" }).reason).toMatch(/unknowable cwd .*spell the directory out/);
+  });
+
+  it("the package-manager gate's cwd past 4096 bytes is its unknown directory; at 4096 the verdict is unchanged", () => {
+    // `/tmp/` + 2046 × `b/` resolves to exactly 4096 bytes; 2050 × to 4104.
+    expect(validateShellCommand(`cd /tmp/${"b/".repeat(2046)} && npm run build`)).toEqual({ allowed: true });
+    expect(validateShellCommand(`cd /tmp/${"b/".repeat(2050)} && npm run build`).reason).toMatch(
+      /^`npm run build` from an unknowable cwd cannot be checked against its package\.json/,
+    );
+    // Unknown for the rest of the walk: a later absolute `cd` does not make it known again.
+    expect(validateShellCommand(`cd /tmp/${"b/".repeat(2050)}; cd /tmp/x && npm run build`).reason).toMatch(
+      /^`npm run build` from an unknowable cwd cannot be checked against its package\.json/,
+    );
+  });
+
+  it("one command's relative targets, joined to the cwd, total at most 32768 bytes", () => {
+    const deep = "/tmp/zzq-none" + "/d".repeat(2040); // 4093 bytes; `a` joined to it is 4095
+    expect(validateShellCommand(">a".repeat(8), { cwd: deep })).toEqual({ allowed: true }); // 32760
+    const overBudget = /relative write targets past the total path length checked in one command .*spell the directory out/;
+    expect(validateShellCommand(">a".repeat(9), { cwd: deep }).reason).toMatch(overBudget);
+    // A `$PWD` head counts too: `$PWD/a` joined is 4096 bytes, so 8 are exactly 32768.
+    expect(validateShellCommand(">$PWD/a".repeat(8), { cwd: deep })).toEqual({ allowed: true });
+    expect(validateShellCommand(">$PWD/a".repeat(9), { cwd: deep }).reason).toMatch(overBudget);
+  });
+
+  it("`~/x` resolves against the home directory, outside the write allow-list", () => {
+    expect(validateShellCommand("echo x > ~/notes-allowed-or-not", { cwd: "/tmp" }).allowed).toBe(false);
+  });
+
+  it("joins a relative target to the cwd unnormalised, so `..` is walked after a symlink as the kernel does", () => {
+    const base = mkdtempSync(join(tmpdir(), "mc-shell-rel-"));
+    try {
+      symlinkSync(`${P}/src`, `${base}/lnk`); // a link into the primary checkout
+      mkdirSync(`${base}/sub`);
+      expect(validateShellCommand("echo x > lnk/../package.json", { cwd: base }).allowed).toBe(false);
+      expect(validateShellCommand("cd lnk && echo x > ../package.json", { cwd: base }).allowed).toBe(false);
+      expect(validateShellCommand("echo x > sub/../ok.txt", { cwd: base })).toEqual({ allowed: true });
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
