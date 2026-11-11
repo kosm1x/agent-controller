@@ -9,7 +9,7 @@ vi.mock("./watchlist-seed.js", () => ({
   formatSeedResult: (r: { symbol: string }) => r.symbol,
 }));
 const mockRecordFailure = vi.fn();
-vi.mock("../rituals/scheduler.js", () => ({
+vi.mock("../rituals/ritual-failure.js", () => ({
   recordRitualFailure: (...a: unknown[]) => mockRecordFailure(...a),
 }));
 const mockSchedule = vi.fn(() => ({ stop: vi.fn() }));

@@ -39,6 +39,7 @@ describe("isImmutableCorePath", () => {
       "src/db/index.ts",
       "src/db/jarvis-fs.ts",
       "src/rituals/scheduler.ts",
+      "src/rituals/ritual-failure.ts",
       "src/rituals/autonomous-improvement.ts",
       "src/tools/builtin/immutable-core.ts",
       "src/tools/builtin/file.ts",

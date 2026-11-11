@@ -14,7 +14,7 @@
 
 import { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
-import { recordRitualFailure } from "../rituals/scheduler.js";
+import { recordRitualFailure } from "../rituals/ritual-failure.js";
 import { formatSeedResult, refreshWeeklyWatchlist } from "./watchlist-seed.js";
 
 const REFRESH_TIMEZONE = "America/New_York";

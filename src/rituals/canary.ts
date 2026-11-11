@@ -15,7 +15,7 @@ import { scheduleCron } from "../lib/cron.js";
 import { getDatabase } from "../db/index.js";
 import { getRouter } from "../messaging/index.js";
 import { errMsg } from "../lib/err-msg.js";
-import { recordRitualFailure } from "./scheduler.js";
+import { recordRitualFailure } from "./ritual-failure.js";
 
 const TIMEZONE = process.env.RITUALS_TIMEZONE ?? "America/Mexico_City";
 
