@@ -13,6 +13,7 @@ import { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../cron.js";
 import { RITUALS_TIMEZONE } from "../../rituals/config.js";
 import { getDatabase } from "../../db/index.js";
+import { getConfig } from "../../config.js";
 import {
   detectAnomalies,
   queryPrometheus,
@@ -45,6 +46,7 @@ async function tickWithRealDeps(log: TriageTickLog): Promise<void> {
           detectAnomalies({
             queryPrometheus,
             getStuckTaskCount: () => getStuckTaskCount(db),
+            budgetDailyLimitUsd: getConfig().budgetDailyLimitUsd,
           }),
         recentTriageExists: () => hasOpenTriageWithin(db, THROTTLE_HOURS),
         analyze: (anomalies) =>

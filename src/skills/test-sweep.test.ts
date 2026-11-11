@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import {
+  registerSkillsTestSweepCron,
   runSkillsTestSweep,
+  stopSkillsTestSweepCron,
   SweepLog,
   SWEEP_RETEST_RUNS,
   SWEEP_TEST_TIMEOUT_MS,
 } from "./test-sweep.js";
+import { RITUALS_TIMEZONE } from "../rituals/config.js";
 import { infer } from "../inference/adapter.js";
 import {
   claimCertificationRun,
@@ -26,6 +29,14 @@ vi.mock("./test-runner.js", async (importOriginal) => {
 });
 
 const mockRunSkillTests = vi.mocked(runSkillTests);
+
+const mockScheduleCron = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => ({ stop: vi.fn() })),
+);
+vi.mock("../lib/cron.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/cron.js")>()),
+  scheduleCron: mockScheduleCron,
+}));
 
 const mockInfer = vi.mocked(infer);
 
@@ -312,5 +323,23 @@ describe("runSkillsTestSweep", () => {
     const result = await runSkillsTestSweep(SILENT);
     // current_version_id IS NULL is filtered out at the query level → examined=0
     expect(result.examined).toBe(0);
+  });
+});
+
+describe("registerSkillsTestSweepCron", () => {
+  afterEach(() => {
+    stopSkillsTestSweepCron();
+    mockScheduleCron.mockClear();
+  });
+
+  it("schedules through the shared cron helper with the 6-hourly expression and the rituals timezone", () => {
+    expect(registerSkillsTestSweepCron(SILENT)).toBe(true);
+    expect(mockScheduleCron).toHaveBeenCalledTimes(1);
+    expect(mockScheduleCron).toHaveBeenCalledWith(
+      "skills-test-sweep",
+      "0 2,8,14,20 * * *",
+      expect.any(Function),
+      { timezone: RITUALS_TIMEZONE },
+    );
   });
 });

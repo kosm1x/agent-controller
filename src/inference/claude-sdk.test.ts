@@ -2455,6 +2455,39 @@ describe("/loop — queryClaudeSdk({unlimited}) arms no wall-clock timer (2026-0
   });
 });
 
+describe("queryClaudeSdk removes the caller's abort listener when the query ends", () => {
+  const ok = () =>
+    [
+      {
+        type: "result",
+        subtype: "success",
+        result: "Listo.\n\nSTATUS: DONE",
+        num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0.001,
+        duration_ms: 10,
+      },
+    ] as unknown as MockMessage[];
+
+  it("removes its abort listener from a never-aborted caller signal when the query ends", async () => {
+    mockMessages.value = ok();
+    const ac = new AbortController();
+    const add = vi.spyOn(ac.signal, "addEventListener");
+    const remove = vi.spyOn(ac.signal, "removeEventListener");
+    await queryClaudeSdk({
+      prompt: "t",
+      systemPrompt: "s",
+      toolNames: [],
+      abortSignal: ac.signal,
+    });
+    const added = add.mock.calls.filter((c) => c[0] === "abort");
+    expect(added).toHaveLength(1);
+    expect(remove).toHaveBeenCalledWith("abort", added[0][1]);
+    // Once-only: a caller abort during the query also detaches it.
+    expect(added[0][2]).toEqual({ once: true });
+  });
+});
+
 describe("queryClaudeSdk abort/timeout preserves usage + omits authoritative cost (#225)", () => {
   it("accumulates per-turn usage from assistant messages so abort writes non-zero tokens", async () => {
     // Three assistant turns with per-turn usage but NO terminal `result`

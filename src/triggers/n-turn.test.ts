@@ -15,6 +15,31 @@ vi.mock("../reflection/runner.js", () => ({
   reflectionOutputHasConsumer: () => hasConsumerMock(),
 }));
 
+// The run-record write can be made to throw; every other call goes to the
+// real implementation against the in-memory DB.
+const h = vi.hoisted(() => ({
+  throwOnRecord: false,
+  nTurnLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("./throttle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./throttle.js")>();
+  return {
+    ...actual,
+    recordTriggerRun: (...a: Parameters<typeof actual.recordTriggerRun>) => {
+      if (h.throwOnRecord) throw new Error("trigger_runs write failed");
+      return actual.recordTriggerRun(...a);
+    },
+  };
+});
+vi.mock("../lib/logger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/logger.js")>();
+  return {
+    ...actual,
+    createLogger: (module: string) =>
+      module === "triggers:n-turn" ? h.nTurnLog : actual.createLogger(module),
+  };
+});
+
 import type { Event } from "../lib/events/types.js";
 import {
   REFLECTION_FREQ,
@@ -52,6 +77,8 @@ beforeEach(() => {
   runReflectionMock.mockReset();
   hasConsumerMock.mockReset();
   hasConsumerMock.mockReturnValue(true);
+  h.throwOnRecord = false;
+  h.nTurnLog.error.mockReset();
   runReflectionMock.mockResolvedValue({
     ran: true,
     scope: {},
@@ -126,6 +153,25 @@ describe("handleTaskCompleted — N-turn counter", () => {
       .prepare(`SELECT COUNT(*) AS c FROM trigger_runs WHERE outcome='skipped'`)
       .get() as { c: number };
     expect(skipped.c).toBe(1);
+  });
+
+  it("logs, and leaves no unhandled rejection, when the run-record write throws", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      h.throwOnRecord = true;
+      completeRootTasks(REFLECTION_FREQ);
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).toEqual([]);
+      expect(runReflectionMock).not.toHaveBeenCalled();
+      expect(h.nTurnLog.error).toHaveBeenCalledTimes(1);
+      const [fields] = h.nTurnLog.error.mock.calls[0] as [{ err: Error }];
+      expect(fields.err.message).toBe("trigger_runs write failed");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 

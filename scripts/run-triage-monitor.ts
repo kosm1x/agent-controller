@@ -20,6 +20,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initDatabase, closeDatabase, getDatabase } from "../src/db/index.js";
+import { getConfig } from "../src/config.js";
 import {
   detectAnomalies,
   queryPrometheus,
@@ -53,9 +54,21 @@ async function main(): Promise<number> {
   initDatabase(DB_PATH);
   try {
     const db = getDatabase();
+    // The limit has one source (config). A standalone run may lack the
+    // service settings getConfig() requires; then no spend is above an
+    // infinite limit, so only the budget check is skipped.
+    let budgetDailyLimitUsd = Number.POSITIVE_INFINITY;
+    try {
+      budgetDailyLimitUsd = getConfig().budgetDailyLimitUsd;
+    } catch (err) {
+      console.warn(
+        `[triage] config unavailable (${err instanceof Error ? err.message : String(err)}): budget check skipped`,
+      );
+    }
     const anomalies = await detectAnomalies({
       queryPrometheus,
       getStuckTaskCount: () => getStuckTaskCount(db),
+      budgetDailyLimitUsd,
     });
 
     if (anomalies.length === 0) {

@@ -73,7 +73,11 @@ export function handleTaskCompleted(event: Event<"task.completed">): void {
     if (foregroundCount < REFLECTION_FREQ) return;
 
     foregroundCount = 0;
-    void fireNTurnReflection();
+    // Detached: the checks and the run-record write before its own try can
+    // throw, so the rejection is logged here instead of left unhandled.
+    fireNTurnReflection().catch((err: unknown) =>
+      log.error({ err }, "n-turn reflection failed before the pass ran"),
+    );
   } catch (err) {
     log.warn({ err }, "n-turn handler error (swallowed)");
   }

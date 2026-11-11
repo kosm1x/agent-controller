@@ -1193,12 +1193,17 @@ export async function queryClaudeSdk(opts: {
   }
 
   const abortController = new AbortController();
+  // Removed at cleanup below so a long-lived caller signal does not keep one
+  // listener per finished query.
+  const onCallerAbort = () => abortController.abort();
   if (opts.abortSignal) {
     // A signal aborted BEFORE this point never fires the listener; for an
     // `unlimited` query there is no timer to catch that race (qa-audit W6).
     if (opts.abortSignal.aborted) abortController.abort();
     else
-      opts.abortSignal.addEventListener("abort", () => abortController.abort());
+      opts.abortSignal.addEventListener("abort", onCallerAbort, {
+        once: true,
+      });
   }
 
   // Hard timeout: kill the subprocess if it hangs. SDK has no built-in timeout
@@ -1830,6 +1835,7 @@ export async function queryClaudeSdk(opts: {
   }
 
   clearTimeout(timeoutTimer);
+  opts.abortSignal?.removeEventListener("abort", onCallerAbort);
   releaseLiveQuery();
   releasePendingSet();
 

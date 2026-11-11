@@ -344,7 +344,8 @@ function withTimeout<T>(
 }
 
 /**
- * Find the end of an SMTP reply: a line whose code is followed by a space.
+ * Find the end of an SMTP reply: a line whose code is followed by a space or
+ * by nothing (a bare `250` final line is valid; `-` marks a continuation).
  * Exported for unit testing — multi-line replies (`250-...` / `250 ...`) are a
  * common provider-specific edge case.
  */
@@ -354,7 +355,7 @@ export function smtpReplyEnd(buf: string): number {
     const nl = buf.indexOf("\r\n", pos);
     if (nl === -1) return -1;
     const line = buf.slice(pos, nl);
-    if (/^\d{3} /.test(line)) return nl + 2;
+    if (/^\d{3}( |$)/.test(line)) return nl + 2;
     pos = nl + 2;
   }
 }

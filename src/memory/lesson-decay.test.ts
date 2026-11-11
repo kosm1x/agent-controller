@@ -11,6 +11,14 @@ vi.mock("../db/pgvector.js", () => ({
   })),
 }));
 
+const mockScheduleCron = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => ({ stop: vi.fn() })),
+);
+vi.mock("../lib/cron.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/cron.js")>()),
+  scheduleCron: mockScheduleCron,
+}));
+
 // Mock fetch for RPC calls
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -177,5 +185,40 @@ describe("runRetentionSweep (M2)", () => {
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.eviction_threshold).toBe(0.3);
+  });
+});
+
+describe("registerDecayCron", () => {
+  afterEach(() => {
+    mockScheduleCron.mockClear();
+  });
+
+  it("schedules the weekly decay and nightly retention jobs through the shared cron helper", async () => {
+    const { registerDecayCron } = await import("./lesson-decay.js");
+    registerDecayCron();
+    // Let any deferred registration settle before asserting.
+    await new Promise((r) => setImmediate(r));
+    expect(mockScheduleCron).toHaveBeenCalledTimes(2);
+    expect(mockScheduleCron).toHaveBeenCalledWith(
+      "lesson-decay",
+      "0 2 * * 0",
+      expect.any(Function),
+      { timezone: "America/Mexico_City" },
+    );
+    expect(mockScheduleCron).toHaveBeenCalledWith(
+      "retention-nightly",
+      "0 3 * * *",
+      expect.any(Function),
+      { timezone: "America/Mexico_City" },
+    );
+  });
+
+  it("schedules nothing when pgvector is not enabled", async () => {
+    const { isPgvectorEnabled } = await import("../db/pgvector.js");
+    vi.mocked(isPgvectorEnabled).mockReturnValueOnce(false);
+    const { registerDecayCron } = await import("./lesson-decay.js");
+    registerDecayCron();
+    await new Promise((r) => setImmediate(r));
+    expect(mockScheduleCron).not.toHaveBeenCalled();
   });
 });

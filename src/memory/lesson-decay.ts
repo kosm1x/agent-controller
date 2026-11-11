@@ -19,6 +19,7 @@ import {
   supabaseHeaders,
 } from "../db/pgvector.js";
 import { errMsg } from "../lib/err-msg.js";
+import { scheduleCron } from "../lib/cron.js";
 
 const SUPABASE_RPC_URL = "https://db.mycommit.net/rest/v1/rpc";
 
@@ -197,45 +198,41 @@ export function registerDecayCron(): void {
     return;
   }
 
-  import("node-cron")
-    .then((cron) => {
-      // M1: Weekly confidence decay (Sundays 2 AM)
-      cron.default.schedule(
-        "0 2 * * 0",
-        () => {
-          runDecaySweep().catch((err) => {
-            console.warn(
-              "[lesson-decay] Cron sweep failed:",
-              errMsg(err),
-            );
-          });
-        },
-        { timezone: "America/Mexico_City" },
-      );
+  // M1: Weekly confidence decay (Sundays 2 AM)
+  scheduleCron(
+    "lesson-decay",
+    "0 2 * * 0",
+    () => {
+      runDecaySweep().catch((err) => {
+        console.warn(
+          "[lesson-decay] Cron sweep failed:",
+          errMsg(err),
+        );
+      });
+    },
+    { timezone: "America/Mexico_City" },
+  );
 
-      // M2: Nightly retention scoring + S4 INDEX.md regen (daily 3 AM)
-      cron.default.schedule(
-        "0 3 * * *",
-        () => {
-          runRetentionSweep().catch((err) => {
-            console.warn(
-              "[retention] Nightly sweep failed:",
-              errMsg(err),
-            );
-          });
-          // S4: Force INDEX.md regen if stale
-          import("../db/jarvis-index.js")
-            .then(({ regenerateIndex }) => regenerateIndex())
-            .catch(() => {});
-        },
-        { timezone: "America/Mexico_City" },
-      );
+  // M2: Nightly retention scoring + S4 INDEX.md regen (daily 3 AM)
+  scheduleCron(
+    "retention-nightly",
+    "0 3 * * *",
+    () => {
+      runRetentionSweep().catch((err) => {
+        console.warn(
+          "[retention] Nightly sweep failed:",
+          errMsg(err),
+        );
+      });
+      // S4: Force INDEX.md regen if stale
+      import("../db/jarvis-index.js")
+        .then(({ regenerateIndex }) => regenerateIndex())
+        .catch(() => {});
+    },
+    { timezone: "America/Mexico_City" },
+  );
 
-      console.log(
-        "[lesson-decay] Crons scheduled: M1 Sundays 2 AM + M2+S4 nightly 3 AM",
-      );
-    })
-    .catch(() => {
-      console.warn("[lesson-decay] Failed to register crons");
-    });
+  console.log(
+    "[lesson-decay] Crons scheduled: M1 Sundays 2 AM + M2+S4 nightly 3 AM",
+  );
 }

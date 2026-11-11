@@ -1,9 +1,11 @@
 /**
  * Shared verdict-JSON extraction for critic LLM responses.
  *
- * Both S2 (`src/audit/critic.ts`) and S5 (`src/skills/critic.ts`) emit a
- * critic system prompt that asks for `{verdict, critique}` JSON and call
- * `infer()`. They share the same JSON-extraction discipline:
+ * S5 (`src/skills/critic.ts`) and the community reply gate
+ * (`src/messaging/community-reply-gate.ts`) emit a critic system prompt that
+ * asks for `{verdict, critique}` JSON and call `infer()`
+ * (`src/skills/mini-runner.ts` uses `extractBalancedObjects` only). They
+ * share the same JSON-extraction discipline:
  *
  *   - accept pure JSON
  *   - tolerate a markdown code fence wrapping the JSON

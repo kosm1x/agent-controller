@@ -16,7 +16,8 @@
  * on every boot.
  */
 
-import cron, { type ScheduledTask } from "node-cron";
+import { type ScheduledTask } from "node-cron";
+import { scheduleCron } from "../lib/cron.js";
 import { getDatabase } from "../db/index.js";
 import { createLogger } from "../lib/logger.js";
 import {
@@ -72,7 +73,8 @@ export function registerSkillsTestSweepCron(
   log: SweepLog = DEFAULT_LOG,
 ): boolean {
   stopSkillsTestSweepCron();
-  scheduledJob = cron.schedule(
+  scheduledJob = scheduleCron(
+    "skills-test-sweep",
     SWEEP_CRON,
     () =>
       void runSkillsTestSweep(log).catch((err) => {

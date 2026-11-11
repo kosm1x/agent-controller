@@ -3,7 +3,7 @@
 # set-softcap.sh — set the daily budget SOFT CAP (warn-only) for mission-control.
 #
 # The cap is the env var BUDGET_DAILY_LIMIT_USD, read at BOOT by config.ts
-# (`float("BUDGET_DAILY_LIMIT_USD", 10.0)`). It is a SOFT cap by default
+# (`float("BUDGET_DAILY_LIMIT_USD", 50.0)`). It is a SOFT cap by default
 # (budgetEnforce=false): crossing it logs a warn + fires the daily budget
 # alert but does NOT block tasks. This script edits .env, restarts the
 # service, and verifies the live value via /health.

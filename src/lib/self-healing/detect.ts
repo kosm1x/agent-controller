@@ -86,6 +86,9 @@ export function recentTaskErrors(db: Database.Database, limit = 8): string[] {
 export interface DetectDeps {
   queryPrometheus: (expr: string) => Promise<number | null>;
   getStuckTaskCount: () => number;
+  /** Daily spend limit in USD; callers pass `getConfig().budgetDailyLimitUsd`
+   *  so this check and the budget module agree on one value. */
+  budgetDailyLimitUsd: number;
 }
 
 interface PromCheck {
@@ -161,7 +164,7 @@ export async function detectAnomalies(deps: DetectDeps): Promise<Anomaly[]> {
   }
 
   // Budget: daily spend over the configured limit.
-  const limit = Number(process.env.BUDGET_DAILY_LIMIT_USD ?? "10");
+  const limit = deps.budgetDailyLimitUsd;
   const spend = await deps.queryPrometheus("max(mc_budget_daily_spend_usd)");
   if (spend !== null && spend > limit) {
     anomalies.push({

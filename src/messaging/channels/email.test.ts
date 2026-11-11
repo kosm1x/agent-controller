@@ -273,6 +273,12 @@ describe("smtpReplyEnd", () => {
   it("does not end on a continuation line alone", () => {
     expect(smtpReplyEnd("250-only\r\n")).toBe(-1);
   });
+
+  it("ends on a final line that is a bare code with no text", () => {
+    expect(smtpReplyEnd("250\r\n")).toBe(5);
+    const buf = "250-first\r\n250\r\n";
+    expect(smtpReplyEnd(buf)).toBe(buf.length);
+  });
 });
 
 describe("imapTaggedEnd", () => {
