@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import client from "prom-client";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { ensureV84Tables } from "../lib/v8-4/schema.js";
@@ -6860,6 +6861,121 @@ describe("MessageRouter — community-reply write-gate (v7.7 Phase 2b)", () => {
     expect(adapter.send).toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((router as any).gateInflight.size).toBe(0);
+  });
+
+  it("community-manager email: the gated send fails → resolves false and mc_outbound_send_failures_total{channel=email,path=reply} went up by one", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    adapter.send.mockRejectedValueOnce(new Error("SMTP 421"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const before = await sendFailureCount("email", "reply");
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sent = await (router as any).sendLLMReplyToChannel(
+        "email:comunidades",
+        "alice@example.com",
+        "Hola, gracias por escribirnos.",
+      );
+      expect(sent).toBe(false);
+      expect(await sendFailureCount("email", "reply")).toBe(before + 1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});
+
+async function sendFailureCount(channel: string, path: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_outbound_send_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return (
+    values.find((v) => v.labels.channel === channel && v.labels.path === path)
+      ?.value ?? 0
+  );
+}
+
+describe("MessageRouter — an outbound send that fails is counted, still swallowed", () => {
+  let router: MessageRouter;
+  let waAdapter: ReturnType<typeof createMockAdapter>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscribers.length = 0;
+    process.env.WHATSAPP_OWNER_JID = "owner@s.whatsapp.net";
+    router = new MessageRouter();
+    waAdapter = createMockAdapter("whatsapp");
+    router.registerChannel(waAdapter);
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  // Only this spy: restoreAllMocks would also strip the module mocks' default
+  // implementations that later describes in this file rely on.
+  afterEach(() => {
+    delete process.env.WHATSAPP_OWNER_JID;
+    errSpy.mockRestore();
+  });
+
+  it("notice (sendToChannel) fails → the inbound turn still completes and {whatsapp,notice} went up by one", async () => {
+    waAdapter.send.mockRejectedValueOnce(new Error("socket closed"));
+    const before = await sendFailureCount("whatsapp", "notice");
+    await router.handleInbound({
+      channel: "whatsapp",
+      from: "owner@s.whatsapp.net",
+      text: "Para ya",
+      timestamp: new Date(),
+    });
+    // The send is fire-and-forget: let its rejection handler run.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(waAdapter.send).toHaveBeenCalledTimes(1);
+    expect(waAdapter.sentMessages).toHaveLength(0);
+    expect(submitTask).not.toHaveBeenCalled();
+    expect(await sendFailureCount("whatsapp", "notice")).toBe(before + 1);
+  });
+
+  it("reply (sendLLMReplyToChannel) fails → resolves false and {whatsapp,reply} went up by one", async () => {
+    waAdapter.send.mockRejectedValueOnce(new Error("socket closed"));
+    const before = await sendFailureCount("whatsapp", "reply");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sent = await (router as any).sendLLMReplyToChannel(
+      "whatsapp",
+      "owner@s.whatsapp.net",
+      "hola",
+    );
+    expect(sent).toBe(false);
+    expect(await sendFailureCount("whatsapp", "reply")).toBe(before + 1);
+  });
+
+  it("broadcast fails → broadcastToAll still resolves with the tally and {whatsapp,broadcast} went up by one", async () => {
+    waAdapter.send.mockRejectedValueOnce(new Error("socket closed"));
+    const before = await sendFailureCount("whatsapp", "broadcast");
+    const tally = await router.broadcastToAll("Aviso sintético", undefined, {
+      raw: true,
+    });
+    expect(tally).toEqual({ sent: 0, failed: 1 });
+    expect(await sendFailureCount("whatsapp", "broadcast")).toBe(before + 1);
+  });
+
+  it("briefing fails → sendBriefingToOwner still resolves with the tally and {whatsapp,briefing} went up by one", async () => {
+    waAdapter.send.mockRejectedValueOnce(new Error("socket closed"));
+    const before = await sendFailureCount("whatsapp", "briefing");
+    const tally = await router.sendBriefingToOwner("Brief sintético", {
+      raw: true,
+    });
+    expect(tally).toEqual({ sent: 0, failed: 1 });
+    expect(await sendFailureCount("whatsapp", "briefing")).toBe(before + 1);
+  });
+
+  it("a channel that is not registered (switched off) never reaches a send and is not counted", async () => {
+    const before = await sendFailureCount("telegram", "reply");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sent = await (router as any).sendLLMReplyToChannel("telegram", "12345", "hola");
+    expect(sent).toBe(false);
+    expect(await sendFailureCount("telegram", "reply")).toBe(before);
   });
 });
 

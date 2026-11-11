@@ -258,6 +258,24 @@ groups:
           summary: "Mission Control hourly spend above 95% of limit for 10m"
           description: 'Hourly spend is {{ $value | printf "%.2f" }}× the hourly limit — likely a retry-storm or runaway loop. Enforcement is OFF; this is an anomaly signal, not a block. Check journalctl -u mission-control for a provider retry loop.'
 
+      # An inference provider failing most of its calls in the last 10 minutes.
+      # mc_provider_success_rate keeps being exported after a provider goes
+      # idle (computed from its last retained samples), so on its own it would
+      # fire forever on an old failure. mc_provider_latency_avg_ms exists only
+      # while the provider has a sample in the 10-min window, and while it does,
+      # mc_provider_requests_total is that window's sample count: the rule needs
+      # a fresh window with at least 5 calls, so one failed call of one is not
+      # an alert. `and` keeps the left samples, so $value is the success rate.
+      # Limit: it needs at least 5 recorded calls in the 10-min window for 10m, so it fires under steady traffic; on a quiet stretch a failing provider may never reach it (a call refused by its open circuit breaker, or skipped as degraded, is not recorded as a call).
+      - alert: MCProviderFailing
+        expr: mc_provider_success_rate < 0.5 and on(provider) mc_provider_latency_avg_ms and on(provider) mc_provider_requests_total >= 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'MC provider {{ $labels.provider }} succeeding on {{ $value | humanizePercentage }} of calls (last 10 min)'
+          description: 'success rate {{ $value | printf "%.2f" }} over at least 5 calls in the 10-min window, sustained 10m. Check the provider and the inference fallback path.'
+
   # Monitoring-of-monitoring: the exporters every vps-system + postgres rule
   # depends on. If node-exporter dies, CPU/mem/disk rules go dark with no alert;
   # this makes that visible (2026-07-05 sweep).

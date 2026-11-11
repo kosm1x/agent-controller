@@ -202,6 +202,7 @@ import {
   handleRitualesCommand,
 } from "../rituals/rituales-command.js";
 import { detectProjectInMessage } from "./kb-injection.js";
+import { noteSendFailure } from "../observability/failure-counters.js";
 
 /**
  * S6 WS2: the project an OPERATOR chat turn names (the KB README detector),
@@ -3908,6 +3909,7 @@ export class MessageRouter {
                 this.lastBroadcast.delete(name);
               }
               console.error(`[router] Broadcast to ${name} failed:`, err);
+              noteSendFailure(name, "broadcast", err);
               if (onChannelFailure) {
                 try {
                   onChannelFailure(name, err);
@@ -3972,6 +3974,7 @@ export class MessageRouter {
           .catch((err) => {
             failed++;
             console.error(`[router] Briefing send to ${name} failed:`, err);
+            noteSendFailure(name, "briefing", err);
           }),
       );
     }
@@ -5527,6 +5530,7 @@ export class MessageRouter {
     const msg: OutgoingMessage = { channel, to, text };
     adapter.send(msg).catch((err) => {
       console.error(`[router] Send to ${channel} failed:`, err);
+      noteSendFailure(channel, "notice", err);
     });
   }
 
@@ -5586,6 +5590,7 @@ export class MessageRouter {
         () => true,
         (err) => {
           console.error(`[router] Send to ${channel} failed:`, err);
+          noteSendFailure(channel, "reply", err);
           return false;
         },
       );
@@ -5634,6 +5639,7 @@ export class MessageRouter {
         return true;
       } catch (err) {
         console.error(`[router] Send to ${channel} failed:`, err);
+        noteSendFailure(channel, "reply", err);
         return false;
       }
     })();

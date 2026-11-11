@@ -4,7 +4,8 @@
  * failure is counted on the default prom-client registry that
  * src/observability/prometheus.ts serves, and logged once per site per minute.
  * Scheduled jobs that catch their own failure count them the same way, by job
- * id (`noteJobFailure`).
+ * id (`noteJobFailure`), and so do outbound messages whose send failed, by
+ * channel and kind of send (`noteSendFailure`).
  *
  * Leaf module: called from catch blocks, so it imports nothing that tests
  * mock with partial factories, and it never throws.
@@ -12,6 +13,7 @@
 import client from "prom-client";
 import { errMsg } from "../lib/err-msg.js";
 import type { Cadence } from "../lib/s3/registry.js";
+import type { ChannelName } from "../messaging/types.js";
 
 export type WriteFailureSite =
   | "conversation"
@@ -133,4 +135,47 @@ export function noteJobFailure(id: JobFailureId, err: unknown): void {
     // counting is best-effort too
   }
   logThrottled("job-failure", id, err);
+}
+
+const SEND_NAME = "mc_outbound_send_failures_total";
+
+// Same get-or-create as the write counter above.
+const sendFailuresTotal =
+  (client.register.getSingleMetric(SEND_NAME) as
+    | client.Counter<"channel" | "path">
+    | undefined) ??
+  new client.Counter({
+    name: SEND_NAME,
+    help: "Outbound messages whose send failed and was swallowed, by channel and kind of send",
+    labelNames: ["channel", "path"] as const,
+  });
+
+/**
+ * The router's send helpers, one per kind of send: `notice` = router-authored
+ * text to one chat (sendToChannel), `reply` = model-derived text to one chat
+ * (sendLLMReplyToChannel), `broadcast` = every owner push channel
+ * (broadcastToAll), `briefing` = every owner channel incl. owner-only email
+ * (sendBriefingToOwner). Closed so the `path` label stays bounded.
+ */
+export type SendFailurePath = "notice" | "reply" | "broadcast" | "briefing";
+
+/**
+ * Count an outbound send that failed and was swallowed, and log it
+ * (throttled). Every mailbox (`email:<id>`) counts as `email`, so the
+ * `channel` label is one of whatsapp / telegram / email: never an address,
+ * chat id or mailbox id. Never throws.
+ */
+export function noteSendFailure(
+  channel: ChannelName,
+  path: SendFailurePath,
+  err: unknown,
+): void {
+  let label = "unknown";
+  try {
+    label = channel.startsWith("email") ? "email" : channel;
+    sendFailuresTotal.inc({ channel: label, path });
+  } catch {
+    // counting is best-effort too
+  }
+  logThrottled("send-failure", `${label}/${path}`, err);
 }

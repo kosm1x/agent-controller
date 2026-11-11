@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import client from "prom-client";
 import {
   noteJobFailure,
+  noteSendFailure,
   noteWriteFailure,
   writeFailuresTotal,
   _resetWriteFailureThrottle,
@@ -220,5 +221,125 @@ describe("noteJobFailure", () => {
       throw new Error("stderr closed");
     });
     expect(() => noteJobFailure("idle-detect", new Error("x"))).not.toThrow();
+  });
+});
+
+async function sendCount(channel: string, path: string): Promise<number> {
+  const metric = client.register.getSingleMetric("mc_outbound_send_failures_total");
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return (
+    values.find((v) => v.labels.channel === channel && v.labels.path === path)
+      ?.value ?? 0
+  );
+}
+
+describe("noteSendFailure", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    _resetWriteFailureThrottle();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("increments mc_outbound_send_failures_total per channel and path pair, every time", async () => {
+    const before = await sendCount("whatsapp", "reply");
+    const otherPath = await sendCount("whatsapp", "notice");
+    const otherChannel = await sendCount("telegram", "reply");
+    noteSendFailure("whatsapp", "reply", new Error("socket closed"));
+    noteSendFailure("whatsapp", "reply", new Error("socket closed"));
+    expect(await sendCount("whatsapp", "reply")).toBe(before + 2);
+    expect(await sendCount("whatsapp", "notice")).toBe(otherPath);
+    expect(await sendCount("telegram", "reply")).toBe(otherChannel);
+  });
+
+  it("every mailbox counts as channel=email, so the label never carries a mailbox id", async () => {
+    const before = await sendCount("email", "briefing");
+    noteSendFailure("email:acme", "briefing", new Error("SMTP 421"));
+    noteSendFailure("email", "briefing", new Error("SMTP 421"));
+    expect(await sendCount("email", "briefing")).toBe(before + 2);
+    expect(await sendCount("email:acme", "briefing")).toBe(0);
+    expect(errorSpy.mock.calls[0]).toEqual(["[send-failure] email/briefing: SMTP 421"]);
+  });
+
+  it("logs the channel, the kind of send and the error message", () => {
+    noteSendFailure("telegram", "broadcast", new Error("Telegram bot not initialized"));
+    expect(errorSpy.mock.calls).toEqual([
+      ["[send-failure] telegram/broadcast: Telegram bot not initialized"],
+    ]);
+  });
+
+  it("logs at most one line per channel/path per minute, then the exact suppressed count", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const before = await sendCount("telegram", "notice");
+    noteSendFailure("telegram", "notice", new Error("a"));
+    noteSendFailure("telegram", "notice", new Error("b"));
+    vi.advanceTimersByTime(59_999);
+    noteSendFailure("telegram", "notice", new Error("c"));
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    noteSendFailure("telegram", "reply", new Error("d"));
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy.mock.calls[1]).toEqual(["[send-failure] telegram/reply: d"]);
+
+    vi.advanceTimersByTime(1);
+    noteSendFailure("telegram", "notice", new Error("e"));
+    expect(errorSpy).toHaveBeenCalledTimes(3);
+    expect(errorSpy.mock.calls[2]).toEqual([
+      "[send-failure] telegram/notice: e (+2 suppressed)",
+    ]);
+    // The counter counts every failure, logged or suppressed.
+    expect(await sendCount("telegram", "notice")).toBe(before + 4);
+  });
+
+  it("caps the message at 200 characters", () => {
+    noteSendFailure("whatsapp", "broadcast", new Error("z".repeat(1000)));
+    expect(errorSpy.mock.calls[0]).toEqual([
+      "[send-failure] whatsapp/broadcast: " + "z".repeat(200),
+    ]);
+  });
+
+  it("throttles apart from noteWriteFailure and noteJobFailure", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    noteWriteFailure("unknown", new Error("w"));
+    noteJobFailure("unknown" as JobFailureId, new Error("j"));
+    noteSendFailure("whatsapp", "notice", new Error("s"));
+    noteWriteFailure("unknown", new Error("w2"));
+    noteJobFailure("unknown" as JobFailureId, new Error("j2"));
+    noteSendFailure("whatsapp", "notice", new Error("s2"));
+    expect(errorSpy.mock.calls).toEqual([
+      ["[write-failure] unknown: w"],
+      ["[job-failure] unknown: j"],
+      ["[send-failure] whatsapp/notice: s"],
+    ]);
+  });
+
+  it("never throws, even when reading the error's message throws", async () => {
+    const hostile = new Error("x");
+    Object.defineProperty(hostile, "message", {
+      get() {
+        throw new Error("getter boom");
+      },
+    });
+    const before = await sendCount("whatsapp", "briefing");
+    expect(() => noteSendFailure("whatsapp", "briefing", hostile)).not.toThrow();
+    expect(await sendCount("whatsapp", "briefing")).toBe(before + 1);
+    expect(errorSpy.mock.calls[0]).toEqual([
+      "[send-failure] whatsapp/briefing: (unreadable error)",
+    ]);
+  });
+
+  it("never throws when console.error itself throws", () => {
+    errorSpy.mockImplementation(() => {
+      throw new Error("stderr closed");
+    });
+    expect(() => noteSendFailure("telegram", "reply", new Error("x"))).not.toThrow();
   });
 });

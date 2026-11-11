@@ -70,6 +70,7 @@ import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
 import { classifyConcernReason } from "../intelligence/concern-reason.js";
 import { attributeNewTask } from "../projects/attribution.js";
+import { noteWriteFailure } from "../observability/failure-counters.js";
 
 // Per-window soft-cap warn timestamps. Rate-limits the warn log so an
 // operator over budget for the rest of the month doesn't get 60+ warn
@@ -1018,8 +1019,9 @@ async function dispatchWithSlot(
                 costUsdOverride: result.tokenUsage.actualCostUsd,
               }),
             });
-          } catch {
+          } catch (err) {
             // Cost recording must never block completion
+            noteWriteFailure("cost_attempt", err);
           }
         }
         // Restart the stuck-task clock for the fallback attempt: the watchdog
@@ -1486,8 +1488,9 @@ function recordRunCost(
           cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
         }),
       });
-    } catch {
+    } catch (err) {
       // Cost recording should never block task completion
+      noteWriteFailure("cost_task", err);
     }
   }
 }

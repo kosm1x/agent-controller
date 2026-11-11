@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import client from "prom-client";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -644,6 +645,26 @@ describe("dispatchTask books the run's cost on the required-tools paths", () => 
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toEqual(expectedCost(taskId));
   });
+
+  it("the cost row write fails → the task still completes and mc_write_failures_total{site=cost_task} went up by one", async () => {
+    const costTaskCount = async () =>
+      (await client.register.getSingleMetric("mc_write_failures_total")?.get())?.values.find(
+        (v) => v.labels.site === "cost_task",
+      )?.value ?? 0;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(recordCost).mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const before = await costTaskCount();
+    const { taskId, calls } = await runAndCollectCost(["pm_paper_rebalance"], {
+      requiredTools: ["pm_paper_rebalance"],
+    });
+    expect(calls).toHaveLength(1);
+    expect(
+      emitTraceMock.mock.calls.some((c) => c[0].taskId === taskId && c[0].name === "task.completed"),
+    ).toBe(true);
+    expect(await costTaskCount()).toBe(before + 1);
+  });
 });
 
 // 2026-10-04: DONE_WITH_CONCERNS went 9% → 42% of fast tasks and the model's
@@ -1063,6 +1084,52 @@ describe("dispatchTask confirmation-gate context", () => {
     expect(emitTraceMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "task.fallback" }),
     );
+  });
+
+  it("the failed attempt's cost row cannot be written → the fallback still runs and mc_write_failures_total{site=cost_attempt} went up by one", async () => {
+    const attemptCount = async () =>
+      (await client.register.getSingleMetric("mc_write_failures_total")?.get())?.values.find(
+        (v) => v.labels.site === "cost_attempt",
+      )?.value ?? 0;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: "nanoclaw",
+      score: 5,
+      reason: "coding",
+      explicit: false,
+      modelTier: "standard",
+    } as unknown as ReturnType<typeof classify>);
+    registerRunner({
+      type: "nanoclaw",
+      // A no-op sandbox failure that spent tokens → its attempt row is written.
+      execute: async () =>
+        ({ success: false, tokenUsage: { promptTokens: 10, completionTokens: 5 } }) as RunnerOutput,
+    });
+    // The first cost row is the attempt's (the fast fallback reports no usage).
+    vi.mocked(recordCost).mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const before = await attemptCount();
+    await runAll([
+      {
+        title: "misrouted-chat-cost",
+        description: "d",
+        threadId: "telegram:42",
+        replyTracked: true,
+        tags: ["messaging", "telegram"],
+      },
+    ]);
+    expect(vi.mocked(recordCost)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordCost).mock.calls[0][0]).toMatchObject({
+      agentType: "nanoclaw",
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    expect(seen.has("misrouted-chat-cost")).toBe(true); // the fast fallback ran
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task.fallback" }),
+    );
+    expect(await attemptCount()).toBe(before + 1);
   });
 
   it("a sub-task inherits interactive=false and chat origin from the submitting run, never routerRoot", async () => {
