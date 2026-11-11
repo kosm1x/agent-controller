@@ -8,6 +8,7 @@ import {
   beforeAll,
   afterAll,
 } from "vitest";
+import promClient from "prom-client";
 
 type MockMessage = Record<string, unknown>;
 
@@ -3985,6 +3986,33 @@ describe("cost-ledger seam metering (V8.5 Phase 3.3)", () => {
       toolNames: [],
     });
     expect(result.text).toContain("done");
+  });
+
+  describe("write-failure counter", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("every ledger write failure is counted as a cost_sdk write failure", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const sdkFailures = async (): Promise<number> => {
+        const metric = promClient.register.getSingleMetric("mc_write_failures_total");
+        if (!metric) return 0;
+        const { values } = await metric.get();
+        return values.find((v) => v.labels.site === "cost_sdk")?.value ?? 0;
+      };
+      recordCostMock.mockImplementation(() => {
+        throw new Error("SQLITE_CANTOPEN: no db in this process");
+      });
+      const before = await sdkFailures();
+      mockMessages.value = [SEAM_SUCCESS_RESULT];
+      const first = await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+      mockMessages.value = [SEAM_SUCCESS_RESULT];
+      await queryClaudeSdk({ prompt: "p", systemPrompt: "s", toolNames: [] });
+      expect(first.text).toContain("done");
+      expect(await sdkFailures()).toBe(before + 2);
+    });
   });
 
   it("threads costLedger through queryClaudeSdkAsInfer", async () => {

@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import promClient from "prom-client";
 
 // getDatabase throws → recallHybrid's outer try/catch returns [] — a
 // deterministic empty `raw` so the wrapper assertions don't depend on DB
@@ -175,6 +176,55 @@ describe("SqliteMemoryBackend — retain (ruling 3c)", () => {
     expect(run.mock.calls[0]).toContain("Usuario: la clave es [oculto]");
     expect(JSON.stringify(run.mock.calls)).not.toContain(SCRUB_SYN);
     expect(embedSpy).toHaveBeenCalledWith("Usuario: la clave es [oculto]");
+  });
+
+  describe("write failures", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const writeFailures = async (site: string): Promise<number> => {
+      const metric = promClient.register.getSingleMetric("mc_write_failures_total");
+      if (!metric) return 0;
+      const { values } = await metric.get();
+      return values.find((v) => v.labels.site === site)?.value ?? 0;
+    };
+
+    it("a failed conversation write still resolves and is counted", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const before = await writeFailures("conversation");
+      vi.mocked(getDatabase).mockReturnValueOnce({
+        prepare: () => ({
+          run: () => {
+            throw new Error("SQLITE_BUSY: database is locked");
+          },
+        }),
+      } as unknown as ReturnType<typeof getDatabase>);
+      await expect(
+        new SqliteMemoryBackend().retain("Usuario: hola", { bank: "mc-jarvis" }),
+      ).resolves.toBeUndefined();
+      expect(await writeFailures("conversation")).toBe(before + 1);
+    });
+
+    it("a failed embedding write is swallowed and counted", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const before = await writeFailures("embedding");
+      embedSpy.mockResolvedValueOnce(new Float32Array([0.1, 0.2]) as never);
+      const prepare = (sql: string) => ({
+        run: () => {
+          if (sql.includes("conversation_embeddings")) {
+            throw new Error("no such table: conversation_embeddings");
+          }
+          return { lastInsertRowid: 7 };
+        },
+      });
+      vi.mocked(getDatabase).mockReturnValueOnce({
+        prepare,
+      } as unknown as ReturnType<typeof getDatabase>);
+      await new SqliteMemoryBackend().retain("Usuario: hola", { bank: "mc-jarvis" });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(await writeFailures("embedding")).toBe(before + 1);
+    });
   });
 });
 

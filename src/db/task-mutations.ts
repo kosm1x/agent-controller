@@ -10,6 +10,7 @@
  */
 
 import { getDatabase } from "./index.js";
+import { noteWriteFailure } from "../observability/failure-counters.js";
 
 // ---------------------------------------------------------------------------
 // Schema (auto-created on first use)
@@ -122,8 +123,9 @@ export function recordMutation(
         "INSERT INTO task_mutations (task_id, tool_name, operation, file_path) VALUES (?, ?, ?, ?)",
       )
       .run(taskId, toolName, operation, filePath);
-  } catch {
-    // Non-fatal — mutation log is best-effort
+  } catch (err) {
+    // Non-fatal — mutation log is best-effort; a failed write is counted
+    noteWriteFailure("mutation_log", err);
   }
 }
 

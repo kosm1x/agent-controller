@@ -199,6 +199,18 @@ export class PersistentEventBus extends EventEmitter {
       defaultWorkspaceId: config.defaultWorkspaceId ?? "default",
     };
 
+    // A failing subscriber is reported on "bus.error"; log it so the failure
+    // leaves a trace. Only the event type and the error message: never the
+    // event data. A logger must not break delivery, so it never throws.
+    this.on("bus.error", (e: { event_type?: string; error?: string }) => {
+      try {
+        // Capped: an error message can quote the input the subscriber was parsing.
+        console.error(`[bus] subscriber failed: ${e.event_type}: ${String(e.error).slice(0, 200)}`);
+      } catch {
+        // ignore: delivery to the remaining subscribers comes first
+      }
+    });
+
     this.initSchema();
     this.prepareStatements();
     this.restoreSequence();

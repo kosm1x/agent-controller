@@ -12,6 +12,7 @@ import {
   projectSecretDisplay,
 } from "../lib/secret-refs.js";
 import { invalidateProjectStatus } from "../lib/project-status-cache.js";
+import { noteWriteFailure } from "../observability/failure-counters.js";
 
 export interface Project {
   id: string;
@@ -315,8 +316,9 @@ export function logProjectAction(
     db.prepare(
       "INSERT INTO project_log (project_id, action, details) VALUES (?, ?, ?)",
     ).run(projectId, action, details ?? null);
-  } catch {
-    // Non-fatal — logging should never block
+  } catch (err) {
+    // Non-fatal — logging should never block; a failed write is counted
+    noteWriteFailure("project_log", err);
   }
 }
 

@@ -120,3 +120,127 @@ describe("PersistentEventBus persisted-copy redaction", () => {
     expect(received[0]!.data).toBe(data);
   });
 });
+
+describe("PersistentEventBus subscriber failures are logged", () => {
+  const MARKER = "payload-marker-7c1e";
+  let db: Database.Database;
+  let bus: PersistentEventBus;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    bus = new PersistentEventBus({ db, cleanupIntervalMs: 0 });
+  });
+
+  afterEach(() => {
+    bus.destroy();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  function payload() {
+    return {
+      task_id: "3f2b8c1e-9d4a-4e6b-8f1a-2c3d4e5f6a7b",
+      agent_id: MARKER,
+      error: `failed with ${MARKER}`,
+      recoverable: false,
+      attempts: 1,
+    };
+  }
+
+  function loggedText(spy: ReturnType<typeof vi.spyOn>): string {
+    return spy.mock.calls.flat().map(String).join("\n");
+  }
+
+  it("a synchronous throw is logged with the event type and the error message; other subscribers still run", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const before: string[] = [];
+    const after: string[] = [];
+    bus.subscribe("task.failed", (e) => {
+      before.push(e.id);
+    });
+    bus.subscribe("task.failed", () => {
+      throw new Error("sync boom");
+    });
+    bus.subscribe("task.failed", (e) => {
+      after.push(e.id);
+    });
+
+    const event = bus.emitEvent("task.failed", payload());
+
+    expect(before).toEqual([event.id]);
+    expect(after).toEqual([event.id]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0]).toBe(
+      "[bus] subscriber failed: task.failed: sync boom",
+    );
+  });
+
+  it("an async rejection is logged with the event type and the error message; other subscribers still run", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const after: string[] = [];
+    bus.subscribe("task.failed", async () => {
+      throw new Error("async boom");
+    });
+    bus.subscribe("task.failed", (e) => {
+      after.push(e.id);
+    });
+
+    const event = bus.emitEvent("task.failed", payload());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(after).toEqual([event.id]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0]).toBe(
+      "[bus] subscriber failed: task.failed: async boom",
+    );
+  });
+
+  it("the logged line never carries the event data", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    bus.subscribe("task.failed", () => {
+      throw new Error("sync boom");
+    });
+    bus.subscribe("task.failed", async () => {
+      throw new Error("async boom");
+    });
+
+    bus.emitEvent("task.failed", payload());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(loggedText(spy)).not.toContain(MARKER);
+  });
+
+  it("a logger that throws does not stop delivery or the publish call", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {
+      throw new Error("stderr closed");
+    });
+    const after: string[] = [];
+    bus.subscribe("task.failed", () => {
+      throw new Error("sync boom");
+    });
+    bus.subscribe("task.failed", (e) => {
+      after.push(e.id);
+    });
+
+    let event: Event | undefined;
+    expect(() => {
+      event = bus.emitEvent("task.failed", payload());
+    }).not.toThrow();
+    expect(after).toEqual([event!.id]);
+  });
+
+  it("the logged error text is capped at 200 characters", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    bus.subscribe("task.failed", () => {
+      throw new Error("x".repeat(1000));
+    });
+
+    bus.emitEvent("task.failed", payload());
+
+    const prefix = "[bus] subscriber failed: task.failed: ";
+    const line = String(spy.mock.calls[0]![0]);
+    expect(line.startsWith(prefix)).toBe(true);
+    expect(line).toBe(prefix + "x".repeat(200));
+  });
+});

@@ -57,6 +57,7 @@ import { traceScrubUnavailable } from "../lib/secret-ref-trace.js";
 import { errMsg } from "../lib/err-msg.js";
 import { isEvictedPath } from "../lib/eviction.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { noteWriteFailure } from "../observability/failure-counters.js";
 import {
   makeGatesStopHook,
   STOP_HOOK_SDK_TIMEOUT_S,
@@ -2077,6 +2078,7 @@ function warnIfDeferredToolUnresolved(result: unknown): void {
 
 let seamRecordFailureWarned = false;
 function warnSeamRecordFailureOnce(err: unknown): void {
+  noteWriteFailure("cost_sdk", err);
   if (seamRecordFailureWarned) return;
   seamRecordFailureWarned = true;
   console.warn(

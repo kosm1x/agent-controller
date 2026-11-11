@@ -32,6 +32,7 @@ import type {
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
+import { noteWriteFailure } from "../observability/failure-counters.js";
 import {
   RARE_DOC_SHARE,
   extractKeywords,
@@ -308,8 +309,9 @@ export class SqliteMemoryBackend implements MemoryService {
               db.prepare(
                 "INSERT OR REPLACE INTO conversation_embeddings (conversation_id, embedding) VALUES (?, ?)",
               ).run(rowId, serializeEmbedding(vec));
-            } catch {
-              /* non-fatal */
+            } catch (err) {
+              // best-effort: a failed write must not fail the turn; it is counted
+              noteWriteFailure("embedding", err);
             }
           }
         })
@@ -319,8 +321,9 @@ export class SqliteMemoryBackend implements MemoryService {
             errMsg(err),
           );
         });
-    } catch {
-      // DB may not be initialized in tests — best-effort
+    } catch (err) {
+      // best-effort: a failed write must not fail the turn; it is counted
+      noteWriteFailure("conversation", err);
     }
   }
 

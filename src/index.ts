@@ -4,6 +4,9 @@
  * Initializes database, event bus, MCP servers, and starts the Hono HTTP server.
  */
 
+// First import: console.error/warn reach the journal at their real priority
+// before any other module evaluates.
+import "./lib/journal-priority-install.js";
 import { createServer, type Server } from "net";
 import { acquireSingleInstance } from "./lib/single-instance.js";
 import { registerReadbackVerifiers } from "./lib/v8-4/readback-verifiers.js";

@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import promClient from "prom-client";
 import {
   classifyMutation,
   getMutations,
+  recordMutation,
   recordMutationFromResult,
 } from "./task-mutations.js";
 import { closeDatabase, initDatabase } from "./index.js";
@@ -200,5 +202,27 @@ describe("recordMutationFromResult", () => {
       JSON.stringify({ content: "x" }),
     );
     expect(getMutations("t-read")).toEqual([]);
+  });
+});
+
+describe("recordMutation write failure", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a failed mutation-log write does not throw and is counted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    closeDatabase();
+    const failures = async (): Promise<number> => {
+      const metric = promClient.register.getSingleMetric("mc_write_failures_total");
+      if (!metric) return 0;
+      const { values } = await metric.get();
+      return values.find((v) => v.labels.site === "mutation_log")?.value ?? 0;
+    };
+    const before = await failures();
+    expect(() =>
+      recordMutation("t-nodb", "file_write", "modify", "/tmp/a.txt"),
+    ).not.toThrow();
+    expect(await failures()).toBe(before + 1);
   });
 });

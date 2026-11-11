@@ -10,13 +10,14 @@
  * stamps updated_at_changed = 1, no audit row carries column content, and the
  * migration re-runs cleanly.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
+import promClient from "prom-client";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDatabase, getDatabase, initDatabase } from "./index.js";
-import { createProject, updateProject } from "./projects.js";
+import { createProject, logProjectAction, updateProject } from "./projects.js";
 
 let tmpDbPath: string | null = null;
 
@@ -229,5 +230,25 @@ describe("migration v15 — project_write_audit trigger", () => {
     expect(auditRows(db, p.id)).toEqual([
       expect.objectContaining({ status_changed: 1, credentials_changed: 0, updated_at_changed: 0 }),
     ]);
+  });
+});
+
+describe("logProjectAction write failure", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a failed project-log write does not throw and is counted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    closeDatabase();
+    const failures = async (): Promise<number> => {
+      const metric = promClient.register.getSingleMetric("mc_write_failures_total");
+      if (!metric) return 0;
+      const { values } = await metric.get();
+      return values.find((v) => v.labels.site === "project_log")?.value ?? 0;
+    };
+    const before = await failures();
+    expect(() => logProjectAction("proj-nodb", "updated", "status")).not.toThrow();
+    expect(await failures()).toBe(before + 1);
   });
 });
