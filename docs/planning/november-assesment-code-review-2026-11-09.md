@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Status 2026-11-11 18:38 UTC — second shell write check commit: three review rounds, never looser than the committed check in any of them; round 3 found one cost point on a nested-command path, the third cost point in three rounds, so the work stopped for a ruling (queue 4dq). Uncommitted until ruled.**
+
 **Status 2026-11-11 07:33 UTC — shell write check, first commit COMMITTED `a7ed9174` (queue 4dj), not yet deployed; three review rounds, round 3 passed; the operator runs the read-only replay before the deploy that carries it. Next: second commit, then the third after the replay.**
 
 **Build status 2026-11-10 21:01 UTC — built; the pieces listed here are deployed (see the end of this paragraph).** In the repository, each piece audited by a separate reviewer and green on CI: S4 `613662f0` · S1 + S2 + S6 `0d3ffed9` (test fix `cb65fa7e`) · the protected list checked again on the result when a branch is pushed `791fd0c8` · S5 `5cb63e76` · P2 `f4ba7f0c` (three directories untracked) · P1 `fc3ba82c` (example data in docs, comments and tests is synthetic; one ignored config file untracked; values the running program uses are left for a ruling, queue 4cn). S3 RULED 2026-11-10: the simple rule plus the agent's own GitHub identity, `main` protected on GitHub the same day (queue 4cp); the simple rule `9bc76c44` and identity separation `f17c22e4` are COMMITTED (2026-11-11), not yet deployed: one operator host script, then the deploy (queue 4cs); two text corrections `651151ba` ride the same eval run and deploy (4cu); designs are done for the remaining shell piece (4cv) and for the per-build deploy with rollback (4cw, rulings needed); the shell-route part of S1/S2 touches the same file and follows it; S8 operator script prepared, not run, three rulings (queue 4cm); S7 stays with dimension 6. **DEPLOYED 2026-11-10 22:13 UTC as build `9928c1a8` (PID 705777, 0 startup errors, health 200, same PID after 25 s).** The container worker runs the same build (the build folder is mounted read-only over the image's copy). Live proof is by the test suites; the guards are not probed against real files on purpose, so the first refusal seen in normal use is the field confirmation. S3 and the shell-route piece follow in a later deploy.
@@ -151,6 +153,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 | X5, X6, X8, V11 | Stop path: stop calls outside any `try`, one stop function never called, a listener never removed, a singleton set before its tables exist. | S |
 
 ### Batch 4 — Failures become visible (no ruling needed)
+
+**Status 2026-11-11 18:38 UTC — third wave COMMITTED `ccef640e` (queue 4dp), not yet deployed: provider-failing alert rule, outbound send-failure counter, two cost-row write sites, a test over the rules file. Two review rounds. Fourth wave (prompt blocks that vanish) is building.**
 
 **Status 2026-11-11 10:06 UTC — second wave COMMITTED `9b14beaa` (queue 4dn), not yet deployed: failed scheduled jobs are recorded and alert like a missed run, no job detaches its promise, ten self-catching jobs count their failures. Two review rounds, round 2 passed. One ruling opened (should those ten jobs alert). Third wave (provider alert rule, outbound send counter, two cost-row sites) is in review.**
 
