@@ -208,6 +208,8 @@ Not now: an interceptor table (tried and dropped 07-05); splitting the two infer
 
 ### Batch 8 — Conventions (no ruling needed)
 
+**Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): five rules in one compiler-parsed lock test with named allow-lists; three sentences of the agent instructions corrected; hand-typed ledger prefixes are 10 sites, not 7; one new defect found on the way (queue 4df).**
+
 Order that survived refutation: fix the violations first (batch 3), then four or five targeted lock tests with named allow-lists (raw cron, extra database handle, plain-string failure returns in tool catches, column-adds outside the migration list, container calls outside the container module), generalise only past ~8 rules. Also: two `CLAUDE.md` invariants whose wording does not match the real rule ("model ids only in adapters", "`.describe()` on every Zod field"); the description lint that omits one tool source; ledger-line prefixes typed by hand at 7 sites. Honest limit: a source-reading test is not selected by related-files runs — only the host's full-suite hook and CI see it.
 
 ### Batch 9 — Low-activity areas and unreachable code (rulings 10, 11)
@@ -216,9 +218,13 @@ Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called
 
 ### Batch 10 — Model-visible fixes, one eval-gate run (ruling 15)
 
+**Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4dd): 17 plain-failure sites (not 18) plus 19 siblings in the same handlers; three more wrong texts found; the eval run cannot see failure shapes or the planner prompt, which get unit tests instead.**
+
 18 tool handlers that return a plain failure string instead of the `{error}` shape; a planner prompt that lists a check binary the shell gate refuses; a shell tool description that recommends a command the gate refuses; 27 schema properties without a description; a false doc comment on the two history flatteners (leave the flatteners themselves).
 
 ### Batch 11 — Comments (ruling 12)
+
+**Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): 22 false comments with corrected text, 46 file-and-line citations (about 10 right); C3 becomes a shrink-only test instead of a workflow step.**
 
 23 % of non-blank lines are comments (41,718); 2,191 carry a date, queue id or audit-round tag. Two independent samples: about two-thirds of those carry a real constraint (18 % a constraint found nowhere else, 47 % one that a test also pins), a quarter are narrative, **one in twenty is stale or false**. Stripping them would be wrong; trusting them is also wrong. What rots is not the date but the reference to other code: of 27 `file:line` citations 3 are right, 21 point at the wrong line and 3 past the end of the file; of 30 "keep in sync / same as" claims checked, 6 are false (one of them on a write guard — S1). Harm on record: `8311e655` (a comment claimed an isolation that did not exist; audits trusted it for four months) and `2cc8000a` (a ruling made from a stale comment).
 

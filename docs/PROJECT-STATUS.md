@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 03:52 UTC (no code change; batches 8, 10 and 11 of the code build re-checked by read-only reviewers, queue 4dd, 4de; one new defect recorded, 4df; every remaining batch of the code build has now been re-checked against the current code; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
+
 > Last updated: 2026-11-11 03:31 UTC (no code change; batch 7 (coupling and structure) of the code build re-checked by a read-only reviewer, queue 4dc; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
 
 > Last updated: 2026-11-11 03:14 UTC (no code change; batch 5 (tests) of the code build re-checked by a read-only reviewer, queue 4db; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
