@@ -238,3 +238,122 @@ describe("audit S2: declared tool list bounds the openai path", () => {
     ).toEqual([]);
   });
 });
+
+describe("roundsCompleted reports the rounds that ran, not the limit", () => {
+  const MAX = 6;
+  async function loop(
+    responses: unknown[],
+    opts: Record<string, unknown> = {},
+  ) {
+    inferMock.mockReset();
+    for (const r of responses) inferMock.mockResolvedValueOnce(r);
+    inferMock.mockResolvedValue({ content: "resumen final", usage });
+    return inferWithToolsViaOpenAi(
+      [{ role: "user", content: "haz algo" }],
+      [def("web_search")],
+      vi.fn(async () => JSON.stringify({ ok: true })),
+      {
+        maxRounds: MAX,
+        skipToolNudge: true,
+        exemptAnalysisParalysis: true,
+        ...opts,
+      },
+    );
+  }
+
+  it("token budget reached after the first round → 1", async () => {
+    const result = await loop([callTool("web_search")], { tokenBudget: 1 });
+    expect(result.exitReason).toBe("token_budget");
+    expect(result.roundsCompleted).toBe(1);
+    // round 1 + the wrap-up call
+    expect(inferMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("token budget, then the final wrap-up call fails → wrapup_failed reports the 1 round that ran", async () => {
+    inferMock.mockReset();
+    inferMock
+      .mockResolvedValueOnce(callTool("web_search"))
+      .mockRejectedValueOnce(new Error("wrap-up unavailable"));
+    const result = await inferWithToolsViaOpenAi(
+      [{ role: "user", content: "haz algo" }],
+      [def("web_search")],
+      vi.fn(async () => JSON.stringify({ ok: true })),
+      {
+        maxRounds: MAX,
+        skipToolNudge: true,
+        exemptAnalysisParalysis: true,
+        tokenBudget: 1,
+      },
+    );
+    expect(inferMock).toHaveBeenCalledTimes(2);
+    expect(result.exitReason).toBe("wrapup_failed");
+    // The last assistant message is the tool-call turn (no text).
+    expect(result.content).toBe("[max tool rounds reached]");
+    expect(result.roundsCompleted).toBe(1);
+  });
+
+  it("think-block exhaustion on the second round → 2", async () => {
+    const result = await loop([
+      callTool("web_search"),
+      { content: "<think>solo razonamiento</think>", usage },
+    ]);
+    expect(result.exitReason).toBe("think_exhaustion");
+    expect(result.roundsCompleted).toBe(2);
+  });
+
+  it("natural finish and the genuine used-all-rounds exit keep their values", async () => {
+    const natural = await loop([callTool("web_search"), finalText]);
+    expect(natural.exitReason).toBe("natural");
+    expect(natural.roundsCompleted).toBe(2);
+
+    const rounds = Array.from({ length: MAX }, (_, i) => ({
+      content: null,
+      tool_calls: [
+        {
+          id: `c-${i}`,
+          type: "function",
+          function: { name: "web_search", arguments: JSON.stringify({ q: `q${i}` }) },
+        },
+      ],
+      usage,
+    }));
+    const capped = await loop(rounds);
+    expect(capped.exitReason).toBe("max_rounds");
+    expect(capped.roundsCompleted).toBe(MAX);
+  });
+
+  it("phantom-action escalation: nudge, then provider switch, then wrap-up at round 3 → 3", async () => {
+    // Text claiming a delivery that no delivery tool performed.
+    const phantom = (i: number) => ({
+      content: "Ya envié el correo con el reporte completo.",
+      tool_calls: [
+        {
+          id: `p-${i}`,
+          type: "function",
+          function: { name: "web_search", arguments: JSON.stringify({ q: `p${i}` }) },
+        },
+      ],
+      usage,
+    });
+    const result = await loop([phantom(0), phantom(1), phantom(2)], {
+      providerName: "fallback",
+    });
+    expect(result.exitReason).toBe("escalation_wrapup");
+    expect(result.roundsCompleted).toBe(3);
+    const selections = inferMock.mock.calls.map(
+      (c) => (c[1] as { providerName?: string }).providerName,
+    );
+    // Rounds 1–2 on the caller's provider; the switch after round 2 clears
+    // the pin (auto-select) for round 3; the wrap-up call carries no pin.
+    expect(selections).toEqual(["fallback", "fallback", undefined, undefined]);
+    expect(
+      Object.prototype.hasOwnProperty.call(inferMock.mock.calls[3][1], "providerName"),
+    ).toBe(false);
+    // The two continue-steps each left their notice for the next round.
+    const userTexts = result.messages
+      .filter((m) => m.role === "user")
+      .map((m) => String(m.content));
+    expect(userTexts.filter((t) => t.startsWith("SYSTEM: Your approach"))).toHaveLength(1);
+    expect(userTexts.filter((t) => t.startsWith("SYSTEM: Multiple guard"))).toHaveLength(1);
+  });
+});

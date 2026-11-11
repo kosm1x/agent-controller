@@ -641,6 +641,8 @@ async function parseSSEStream(
 
           try {
             const chunk = JSON.parse(data);
+            // Before the delta guard: the final usage chunk has empty choices.
+            if (chunk.usage) usage = chunk.usage;
             const delta = chunk.choices?.[0]?.delta;
             if (!delta) continue;
 
@@ -671,8 +673,6 @@ async function parseSSEStream(
                 }
               }
             }
-
-            if (chunk.usage) usage = chunk.usage;
           } catch {
             /* skip malformed chunks */
           }
@@ -746,6 +746,10 @@ export async function inferViaOpenAi(
     if (probe === null) {
       console.warn(
         `[inference] Circuit breaker OPEN for ${provider.name}, skipping`,
+      );
+      // Name the skip so an all-skipped chain does not throw "undefined".
+      lastError ??= new Error(
+        `Circuit breaker OPEN for ${provider.name} — refusing call until cooldown elapses`,
       );
       continue;
     }
@@ -1342,6 +1346,8 @@ export async function inferWithToolsViaOpenAi(
   let totalPrompt = 0;
   let totalCompletion = 0;
   let exitReason = "max_rounds";
+  // Rounds whose inference call returned: an early exit reports these, not the limit.
+  let roundsRan = 0;
   let has413Retried = false;
   // Consecutive main-loop compactions that left the conversation still over
   // threshold — the compaction-exhaustion guard below breaks the loop at k=2.
@@ -1616,6 +1622,7 @@ export async function inferWithToolsViaOpenAi(
         throw err;
       }
     }
+    roundsRan = round + 1;
     totalPrompt += response.usage.prompt_tokens;
     totalCompletion += response.usage.completion_tokens;
 
@@ -2040,6 +2047,7 @@ export async function inferWithToolsViaOpenAi(
   }
 
   // Force one final toolless call to synthesize results
+  const roundsReported = exitReason === "max_rounds" ? maxRounds : roundsRan;
   console.log(
     `[inference] Wrap-up triggered: ${exitReason} (totalTokens=${totalPrompt + totalCompletion}${tokenBudget < Infinity ? `, ceiling=${tokenBudget}` : ""})`,
   );
@@ -2083,7 +2091,7 @@ Provide your final response based ONLY on actual tool results. Do not request an
       },
       toolRepairs,
       exitReason,
-      roundsCompleted: maxRounds,
+      roundsCompleted: roundsReported,
       contextPressure,
       compactionApplied,
     };
@@ -2104,7 +2112,7 @@ Provide your final response based ONLY on actual tool results. Do not request an
       },
       toolRepairs,
       exitReason: "wrapup_failed",
-      roundsCompleted: maxRounds,
+      roundsCompleted: roundsReported,
       contextPressure,
       compactionApplied,
     };
