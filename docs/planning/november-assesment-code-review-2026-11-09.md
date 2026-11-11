@@ -152,6 +152,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 4 — Failures become visible (no ruling needed)
 
+**Status 2026-11-11 08:21 UTC — first wave COMMITTED `ba5d334e` (queue 4dm), not yet deployed: bus subscriber failures logged, journal priority for console errors and warnings, failed best-effort writes counted. Two review rounds, round 2 passed. Next: scheduled jobs, the provider alert rule, router and dispatcher sites, prompt blocks, trace events, comments, ratchet.**
+
 **Status 2026-11-11 02:55 UTC — re-checked by a read-only reviewer (queue 4cy): all eight items open; recounts: comment-only catches 264, silence-justifying comments 15 plus 2 borderline (the 23 below could not be reproduced). One ruling is asked (page or only record the failures of ten background jobs); built after batch 3.**
 
 Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next to 60 console lines with error wording. Failures are written, not counted.
@@ -196,6 +198,8 @@ Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; loca
 Armed, never fired. Five defects on it (a retried write that succeeds is reported as not completed → the user resends → duplicate write; spend of the primary attempts lost from the ledger when it engages; a retry leg that ignores cancellation; a round counter that misreports early exits to the model; a breaker-open message that hides the cause) and four branches no test reaches (413 retry, the alternate provider call, the stream parser, the escalation switch). Fix + pin together. M.
 
 ### Batch 7 — Coupling and structure (ruling 9)
+
+**Status 2026-11-11 08:21 UTC — first piece COMMITTED `71b42aa2` (queue 4dl), not yet deployed: the ritual failure recorder is a leaf module and one import loop is gone. The rest of the batch (cycle cuts, ratchet, pure moves) keeps its place in the order.**
 
 **Status 2026-11-11 03:31 UTC — re-checked by a read-only reviewer with a parse-only import graph (queue 4dc): cycles unchanged (25 / 8 / 4 / 2 files), mutual directory pairs 60 (57 at the review); the failure recorder moves first because batch 4 needs it; seven of the listed moves are pure, six wait (A2, A4, B3, C1, D1, F1).**
 
