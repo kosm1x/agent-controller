@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 07:33 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes in `12ad31f3`, `e59234af`, `a823bbf9`, and the shell write check `a7ed9174`; queue 4dh–4dk; the operator runs the read-only command replay before the next deploy; LIVE build is still `555c888f`)
+
 > Last updated: 2026-11-11 06:33 UTC (batch 3: ten fixes COMMITTED in `12ad31f3` and `e59234af`, not yet deployed, queue 4dh and 4di; shell write piece failed round 2 of review and is being corrected for the last round; LIVE build is still `555c888f`)
 
 > Last updated: 2026-11-11 05:30 UTC (batch 3 first six fixes COMMITTED `12ad31f3`, not yet deployed, queue 4dh; shell write piece back with its builder after round 1 of review; LIVE build is still `555c888f`)
