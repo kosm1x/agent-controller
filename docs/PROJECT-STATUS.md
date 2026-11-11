@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 02:32 UTC (**COMMITTED, NOT deployed**, CI green: two text corrections `651151ba` (queue 4cu) on top of the simple merge rule, identity separation and the `ritual_read` tool; next are the operator's eval run, one host script and the deploy (4cr, 4cs); designs done for the remaining shell piece (4cv) and for the per-build deploy with rollback (4cw); live build is still `9928c1a8`)
+
 > Last updated: 2026-11-11 01:59 UTC (**COMMITTED, NOT deployed**: the simple merge rule `9bc76c44`, identity separation `f17c22e4` (the agent acts on GitHub under its own account, from one module; queue 4cs) and the `ritual_read` tool `7c33e46f` (full text of a past ritual on request; eval gate owed, queue 4cr), on top of the batch 2 deploy-path checks; the deploy needs one operator host script first; live build is still `9928c1a8`)
 
 > Last updated: 2026-11-10 23:40 UTC (**CODE batch 2 deploy-path checks COMMITTED, NOT deployed**: `e8d35597` CI runs the build + `8f81accd` the deploy refuses before building, snapshots before a migration and verifies after the restart; merge authority RULED 11-10 = the simple rule + the agent's own GitHub identity, `main` protected on GitHub, queue 4cp; live build is still `9928c1a8`)
