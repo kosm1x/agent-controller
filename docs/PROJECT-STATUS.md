@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 04:29 UTC (**DEPLOYED 2026-11-11 04:27 UTC as build `555c888f`** after an operator-run eval gate PASS, 77.72 against 78.63: deploy script with checks, CI build job, merge tripwire, the agent's own GitHub identity, the ritual-reading tool, text corrections; proofs owed in chat, queue 4dg; the code build has resumed with the shell write piece and batch 3)
+
 > Last updated: 2026-11-11 03:52 UTC (no code change; batches 8, 10 and 11 of the code build re-checked by read-only reviewers, queue 4dd, 4de; one new defect recorded, 4df; every remaining batch of the code build has now been re-checked against the current code; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
 
 > Last updated: 2026-11-11 03:31 UTC (no code change; batch 7 (coupling and structure) of the code build re-checked by a read-only reviewer, queue 4dc; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
@@ -442,6 +444,7 @@ External pattern sources: Crucix (delta engine, alerts), aden-hive/hive (compact
 
 ## Recent Changes
 
+| 2026-11-11 (04:27) | DEPLOYED 04:27 UTC as build `555c888f` (PID 1982427, stable after 15 s, health 200, 252 tools against 251, no error-level lines, verdict OK, one deploy record) after an eval gate PASS (77.72 against 78.63, threshold 76.63; tool selection probed 161, excluded 26): `e8d35597` CI runs the build · `8f81accd` deploy checks before building and verifies after restarting, refuses uncommitted code, snapshots the database before a migrating deploy · `9bc76c44` tripwire for merge, approve and branch-protection commands · `f17c22e4` the agent acts on GitHub under its own account, from one place · `7c33e46f` tool that returns the full text of a past ritual · `651151ba` text corrections; each builder → separate reviewer → full suite → CI green. Operator also hid the operator's own GitHub login from the service and the sandbox. Proofs owed in chat | queue 4dg · 4cp · 4cr · 4cs · 4cu |
 | 2026-11-10 (22:13) | CODE batch 1 (security) DEPLOYED 2026-11-10 22:13 UTC as build `9928c1a8` (PID 705777, 0 startup errors, health 200, same PID after 25 s): `613662f0` fail-closed guards · `0d3ffed9` one write boundary + protected list in every checkout · `791fd0c8` protected list checked again at push · `5cb63e76` one secret redactor · `f4ba7f0c` + `fc3ba82c` repository hygiene; each builder → separate reviewer (up to 3 rounds) → full suite 15,904 → CI green. Merge-authority piece stopped after 3 failed audit rounds | queue 4cl (ruling) · 4cm · 4cn · 4co |
 | 2026-11-09 (20:23) | 4ce(b) DEPLOYED 20:23 UTC `ecae5e88` PID 1742686 (0 startup errors, health 200, marker in dist); proof pending = first marked `file_read` row | queue 4ce |
 | 2026-11-09 (20:17) | 4ce(b) BUILT `b034949c`: `evicted_spill` boolean marker on `file_read` trace rows for spill paths (aliases `path`/`file_path`/`filepath`), qa R1→fold→R2→fold-w/W (order-pin test folded); deploy pending | queue 4ce |
