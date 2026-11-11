@@ -38,7 +38,26 @@ export function initDatabase(dbPath: string): Database.Database {
   mkdirSync(dirname(dbPath), { recursive: true });
 
   _db = new BetterSqlite3(dbPath);
+  // Code run during setup reaches the handle through getDatabase(), so it is
+  // assigned first; a failed step must not leave a half-initialised handle
+  // behind (getDatabase() would serve an incomplete schema and a second
+  // initDatabase() would return it instead of retrying).
+  try {
+    setUpDatabase(_db);
+  } catch (err) {
+    try {
+      _db.close();
+    } catch {
+      // The setup error is the one to surface.
+    }
+    _db = null;
+    throw err;
+  }
+  return _db;
+}
 
+/** Pragmas, schema and migrations for a freshly opened connection. */
+function setUpDatabase(_db: Database.Database): void {
   // Performance pragmas
   _db.pragma("journal_mode = WAL");
   _db.pragma("synchronous = NORMAL");
@@ -1548,8 +1567,6 @@ export function initDatabase(dbPath: string): Database.Database {
       );
     }
   }
-
-  return _db;
 }
 
 /**

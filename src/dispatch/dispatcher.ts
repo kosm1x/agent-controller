@@ -1179,6 +1179,7 @@ async function dispatchWithSlot(
             result.output,
             `Required tools not called after retry: ${missing.join(", ")}${why}`,
           );
+          recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
           emitTraceEvent({
             taskId,
             runId,
@@ -1231,6 +1232,7 @@ async function dispatchWithSlot(
           result.output,
           `Required tools not called: ${missing.join(", ")}${why}`,
         );
+        recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
         emitTraceEvent({
           taskId,
           runId,
@@ -1298,53 +1300,7 @@ async function dispatchWithSlot(
       }
     }
 
-    // Record cost in ledger (if budget feature is available and we have token
-    // data). Phantom-zero guard (open since 2026-05-23): an aborted/timed-out
-    // SDK query that streamed no assistant turn yields all-zero usage with no
-    // authoritative cost; recording it writes a $0.00 / tokens=0 row that
-    // pollutes cost accounting. Skip it — but preserve legitimate $0 rows from
-    // real no-op tasks (success=true). See isPhantomZeroCostRow.
-    if (result.tokenUsage && isPhantomZeroCostRow(result)) {
-      log.info(
-        { taskId, runId, agentType, status: result.status ?? null },
-        "cost-ledger: skipping phantom zero-cost row (aborted run, zero usage)",
-      );
-    } else if (result.tokenUsage) {
-      try {
-        // Prefer the model ID the inference layer actually invoked over the
-        // config-derived label — under claude-sdk, cfg.inferencePrimaryModel
-        // is an unused/stale string and would mislabel every row.
-        const model = result.tokenUsage.actualModel ?? getModelFromTask(taskId);
-        recordCost({
-          runId,
-          taskId,
-          // effectiveAgentType so a nanoclaw→fast rescue books its cost as "fast"
-          // (the failed nanoclaw attempt's cost was already recorded separately).
-          agentType: effectiveAgentType,
-          model,
-          promptTokens: result.tokenUsage.promptTokens,
-          completionTokens: result.tokenUsage.completionTokens,
-          // Prefer provider-reported cost. The Anthropic SDK reports $0 under
-          // Max auth (accurate) where calculateCost() would overstate using a
-          // generic API rate card. Falls back to the pricing-table compute
-          // when actualCostUsd is undefined (openai path, older callers).
-          ...(result.tokenUsage.actualCostUsd !== undefined && {
-            costUsdOverride: result.tokenUsage.actualCostUsd,
-          }),
-          // v8 S4: persist cache breakdown for cache-hit ratio observability.
-          // claude-sdk path sets these; openai/qwen path leaves undefined and
-          // the ledger defaults to 0.
-          ...(result.tokenUsage.cacheReadTokens !== undefined && {
-            cacheReadTokens: result.tokenUsage.cacheReadTokens,
-          }),
-          ...(result.tokenUsage.cacheCreationTokens !== undefined && {
-            cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
-          }),
-        });
-      } catch {
-        // Cost recording should never block task completion
-      }
-    }
+    recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
 
     // V8.5 Phase 6: terminal trace event. For a failed task the last
     // tool.called row before this one names the terminal round/tool; here we
@@ -1472,6 +1428,67 @@ function getModelTierFromTask(taskId: string): string | undefined {
     return parsed.modelTier;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Book one run's token spend in the cost ledger. Called once per run on every
+ * path that ends it after the runner returned (including the required-tools
+ * early returns, whose retry is a separate task with its own run).
+ */
+function recordRunCost(
+  result: RunnerOutput,
+  runId: string,
+  taskId: string,
+  agentType: AgentType,
+  effectiveAgentType: AgentType,
+): void {
+  // Record cost in ledger (if budget feature is available and we have token
+  // data). Phantom-zero guard (open since 2026-05-23): an aborted/timed-out
+  // SDK query that streamed no assistant turn yields all-zero usage with no
+  // authoritative cost; recording it writes a $0.00 / tokens=0 row that
+  // pollutes cost accounting. Skip it — but preserve legitimate $0 rows from
+  // real no-op tasks (success=true). See isPhantomZeroCostRow.
+  if (result.tokenUsage && isPhantomZeroCostRow(result)) {
+    log.info(
+      { taskId, runId, agentType, status: result.status ?? null },
+      "cost-ledger: skipping phantom zero-cost row (aborted run, zero usage)",
+    );
+  } else if (result.tokenUsage) {
+    try {
+      // Prefer the model ID the inference layer actually invoked over the
+      // config-derived label — under claude-sdk, cfg.inferencePrimaryModel
+      // is an unused/stale string and would mislabel every row.
+      const model = result.tokenUsage.actualModel ?? getModelFromTask(taskId);
+      recordCost({
+        runId,
+        taskId,
+        // effectiveAgentType so a nanoclaw→fast rescue books its cost as "fast"
+        // (the failed nanoclaw attempt's cost was already recorded separately).
+        agentType: effectiveAgentType,
+        model,
+        promptTokens: result.tokenUsage.promptTokens,
+        completionTokens: result.tokenUsage.completionTokens,
+        // Prefer provider-reported cost. The Anthropic SDK reports $0 under
+        // Max auth (accurate) where calculateCost() would overstate using a
+        // generic API rate card. Falls back to the pricing-table compute
+        // when actualCostUsd is undefined (openai path, older callers).
+        ...(result.tokenUsage.actualCostUsd !== undefined && {
+          costUsdOverride: result.tokenUsage.actualCostUsd,
+        }),
+        // v8 S4: persist cache breakdown for cache-hit ratio observability.
+        // claude-sdk path sets these; openai/qwen path leaves undefined and
+        // the ledger defaults to 0.
+        ...(result.tokenUsage.cacheReadTokens !== undefined && {
+          cacheReadTokens: result.tokenUsage.cacheReadTokens,
+        }),
+        ...(result.tokenUsage.cacheCreationTokens !== undefined && {
+          cacheCreationTokens: result.tokenUsage.cacheCreationTokens,
+        }),
+      });
+    } catch {
+      // Cost recording should never block task completion
+    }
   }
 }
 
@@ -1718,8 +1735,11 @@ export function cancelTask(taskId: string): boolean {
   const db = getDatabase();
   const task = getTask(taskId);
   if (!task) return false;
+  // Same terminal set as the updateTaskStatus guards: a task that completed
+  // with concerns has delivered its answer and stays as it is.
   if (
     task.status === "completed" ||
+    task.status === "completed_with_concerns" ||
     task.status === "failed" ||
     task.status === "cancelled"
   ) {
@@ -1738,7 +1758,7 @@ export function cancelTask(taskId: string): boolean {
 
     const subtasks = db
       .prepare(
-        "SELECT task_id FROM tasks WHERE parent_task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+        "SELECT task_id FROM tasks WHERE parent_task_id = ? AND status NOT IN ('completed', 'completed_with_concerns', 'failed', 'cancelled')",
       )
       .all(taskId) as { task_id: string }[];
     for (const sub of subtasks) {

@@ -246,7 +246,12 @@ function makeInferResult(
   overrides: Partial<{
     content: string;
     messages: ChatMessage[];
-    totalUsage: { prompt_tokens: number; completion_tokens: number };
+    totalUsage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      cache_read_tokens?: number;
+      cache_creation_tokens?: number;
+    };
     toolRepairs: Array<{ original: string; repaired: string }>;
     exitReason: string;
     roundsCompleted: number;
@@ -1071,6 +1076,114 @@ describe("Phase 4.3 auth-failure retry", () => {
     expect(result.status).toBe("DONE_WITH_CONCERNS");
     expect(outputText(result)).toContain("rotar el token");
     expect(outputText(result)).not.toContain("authentication_error");
+  });
+
+  it("a successful retry reports both legs' usage, cache counts included", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content:
+          "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]",
+        exitReason: "provider_failure",
+        totalUsage: {
+          prompt_tokens: 1_000,
+          completion_tokens: 50,
+          cache_read_tokens: 300,
+          cache_creation_tokens: 40,
+        },
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "STATUS: DONE\nListo.",
+        totalUsage: {
+          prompt_tokens: 2_000,
+          completion_tokens: 80,
+          cache_read_tokens: 700,
+          cache_creation_tokens: 60,
+        },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-auth-usage",
+      runId: "run-auth-usage",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.tokenUsage).toMatchObject({
+      promptTokens: 3_000,
+      completionTokens: 130,
+      cacheReadTokens: 1_000,
+      cacheCreationTokens: 100,
+    });
+  });
+
+  it("a cache count stays absent when neither leg reports it", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content:
+          "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]",
+        exitReason: "provider_failure",
+        totalUsage: { prompt_tokens: 1_000, completion_tokens: 50 },
+      }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "STATUS: DONE\nListo.",
+        totalUsage: { prompt_tokens: 2_000, completion_tokens: 80 },
+      }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-auth-usage-nocache",
+      runId: "run-auth-usage-nocache",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.tokenUsage).toMatchObject({ promptTokens: 3_000, completionTokens: 130 });
+    expect(result.tokenUsage).not.toHaveProperty("cacheReadTokens");
+    expect(result.tokenUsage).not.toHaveProperty("cacheCreationTokens");
+  });
+
+  it("a retry that fails again still reports both legs' usage", async () => {
+    const authFail = (usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+    }) =>
+      makeInferResult({
+        content:
+          "[error_during_execution — API Error: 401 authentication_error: OAuth token has been revoked]",
+        exitReason: "provider_failure",
+        totalUsage: usage,
+      });
+    mockInferWithTools.mockResolvedValueOnce(
+      authFail({ prompt_tokens: 1_000, completion_tokens: 50, cache_read_tokens: 300, cache_creation_tokens: 40 }),
+    );
+    mockInferWithTools.mockResolvedValueOnce(
+      authFail({ prompt_tokens: 2_000, completion_tokens: 80, cache_read_tokens: 700, cache_creation_tokens: 60 }),
+    );
+
+    const result = await fastRunner.execute({
+      taskId: "task-auth-usage-2",
+      runId: "run-auth-usage-2",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("DONE_WITH_CONCERNS");
+    expect(result.tokenUsage).toMatchObject({
+      promptTokens: 3_000,
+      completionTokens: 130,
+      cacheReadTokens: 1_000,
+      cacheCreationTokens: 100,
+    });
   });
 });
 

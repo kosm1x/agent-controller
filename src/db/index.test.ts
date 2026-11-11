@@ -6,16 +6,18 @@ import { describe, it, expect, vi , afterEach } from "vitest";
 
 // Mock the database module to test writeWithRetry in isolation
 const mockPragma = vi.fn();
+const mockExec = vi.hoisted(() => vi.fn());
+const mockClose = vi.hoisted(() => vi.fn());
 vi.mock("better-sqlite3", () => ({
   default: vi.fn(() => ({
     pragma: mockPragma,
-    exec: vi.fn(),
+    exec: mockExec,
     prepare: vi.fn(() => ({
       run: vi.fn(() => ({ changes: 0, lastInsertRowid: 0 })),
       get: vi.fn(),
       all: vi.fn(() => []),
     })),
-    close: vi.fn(),
+    close: mockClose,
   })),
 }));
 
@@ -27,7 +29,14 @@ vi.mock("../tuning/activation.js", () => ({
   activateBestVariant: vi.fn(),
 }));
 
-import { initDatabase, writeWithRetry } from "./index.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  closeDatabase,
+  getDatabase,
+  initDatabase,
+  writeWithRetry,
+} from "./index.js";
 
 // Initialize the mock database
 initDatabase("/tmp/test-wal-jitter.db");
@@ -81,5 +90,30 @@ describe("writeWithRetry", () => {
     const obj = writeWithRetry(() => ({ key: "value", count: 5 }));
     expect(obj.key).toBe("value");
     expect(obj.count).toBe(5);
+  });
+});
+
+// A failed initialisation must not leave a half-built handle: getDatabase()
+// would hand out a database with an incomplete schema and a second
+// initDatabase() would return it instead of retrying.
+describe("initDatabase when an initialisation step fails", () => {
+  it("throws the original error, leaves no handle, and a later call initialises", () => {
+    const dbPath = join(tmpdir(), "init-failure.db");
+    closeDatabase();
+    mockClose.mockClear();
+    mockExec.mockImplementationOnce(() => {
+      throw new Error("schema step failed");
+    });
+    // A close error during the cleanup must not hide the original error.
+    mockClose.mockImplementationOnce(() => {
+      throw new Error("close failed");
+    });
+
+    expect(() => initDatabase(dbPath)).toThrow("schema step failed");
+    expect(mockClose).toHaveBeenCalledTimes(1);
+    expect(() => getDatabase()).toThrow("Database not initialized");
+
+    const db = initDatabase(dbPath);
+    expect(getDatabase()).toBe(db);
   });
 });

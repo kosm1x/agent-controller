@@ -124,6 +124,7 @@ import {
 } from "../inference/execution-context.js";
 import { outsideRunToolContext } from "../tools/rule-of-two.js";
 import { classify } from "./classifier.js";
+import { recordCost } from "../budget/service.js";
 import { takeConcernDetail } from "../db/task-outcomes.js";
 
 beforeEach(() => {
@@ -347,6 +348,50 @@ describe("cancelTask", () => {
     // Should have called run() for: cancel main task + cancel main runs + cancel subtask + cancel subtask runs
     expect(mockRun.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
+
+  // completed_with_concerns is a final state: the run delivered its answer.
+  it("returns false for a task that completed with concerns and leaves its row alone", () => {
+    mockGet.mockReturnValueOnce({ task_id: "cwc-1", status: "completed_with_concerns" });
+    expect(cancelTask("cwc-1")).toBe(false);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("cancelling a parent leaves a child that completed with concerns unchanged", () => {
+    // The child lookup honours the SQL's own NOT IN list, so the test sees what
+    // the statement would select on a real table. The child query's list and the
+    // terminal check in the recursive cancelTask call each keep a finished child
+    // unchanged, so reverting only one of them leaves this test green.
+    const rows: Record<string, { task_id: string; parent_task_id: string | null; status: string }> = {
+      "parent-1": { task_id: "parent-1", parent_task_id: null, status: "running" },
+      "child-1": { task_id: "child-1", parent_task_id: "parent-1", status: "completed_with_concerns" },
+    };
+    const defaultPrepare = mockPrepare.getMockImplementation()!;
+    const tablePrepare = (sql: string) => ({
+      get: (id: string) => (sql.startsWith("SELECT * FROM tasks WHERE task_id") ? rows[id] : undefined),
+      all: (parent: string) => {
+        const m = /parent_task_id = \? AND status NOT IN \(([^)]*)\)/.exec(sql);
+        if (!m) return [];
+        const excluded = m[1].split(",").map((s) => s.trim().replace(/'/g, ""));
+        return Object.values(rows)
+          .filter((r) => r.parent_task_id === parent && !excluded.includes(r.status))
+          .map((r) => ({ task_id: r.task_id }));
+      },
+      run: (id: string) => {
+        if (sql.startsWith("UPDATE tasks SET status = 'cancelled'") && rows[id]) {
+          rows[id].status = "cancelled";
+        }
+      },
+    });
+    mockPrepare.mockImplementation(tablePrepare as unknown as typeof defaultPrepare);
+
+    try {
+      expect(cancelTask("parent-1")).toBe(true);
+      expect(rows["parent-1"].status).toBe("cancelled");
+      expect(rows["child-1"].status).toBe("completed_with_concerns");
+    } finally {
+      mockPrepare.mockImplementation(defaultPrepare);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -527,6 +572,77 @@ describe("dispatchTask required-tools failure names the runner's reason", () => 
       if (!mockRun.mock.calls.some((c) => c.includes(expected)))
         throw new Error("failed-status write not seen yet");
     });
+  });
+});
+
+// A run that spent tokens is booked once, whichever way it ends: the
+// required-tools retry is a new task with its own run, so the first run's
+// spend is recorded on the first run.
+describe("dispatchTask books the run's cost on the required-tools paths", () => {
+  const usage = {
+    promptTokens: 120,
+    completionTokens: 30,
+    actualModel: "test-actual-model",
+    actualCostUsd: 0.0123,
+    cacheReadTokens: 400,
+    cacheCreationTokens: 50,
+  };
+
+  async function runAndCollectCost(
+    toolCalls: string[],
+    extra: { requiredTools?: string[]; _isRequiredToolRetry?: boolean },
+  ) {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, output: "x", durationMs: 0, toolCalls, tokenUsage: { ...usage } }) as RunnerOutput,
+    });
+    const { taskId } = await submitTask({ title: "Cost on retry path", description: "d", ...extra });
+    await vi.waitFor(() => {
+      const done = emitTraceMock.mock.calls.some(
+        (c) => c[0].taskId === taskId && (c[0].name === "task.failed" || c[0].name === "task.completed"),
+      );
+      if (!done) throw new Error("no terminal trace event yet");
+    });
+    const calls = vi.mocked(recordCost).mock.calls.filter((c) => c[0].taskId === taskId);
+    return { taskId, calls };
+  }
+
+  function expectedCost(taskId: string) {
+    return {
+      runId: expect.any(String),
+      taskId,
+      agentType: "fast",
+      model: "test-actual-model",
+      promptTokens: 120,
+      completionTokens: 30,
+      costUsdOverride: 0.0123,
+      cacheReadTokens: 400,
+      cacheCreationTokens: 50,
+    };
+  }
+
+  it("first attempt missing a required tool (auto-retry): one cost row for that run", async () => {
+    const { taskId, calls } = await runAndCollectCost([], { requiredTools: ["pm_paper_rebalance"] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toEqual(expectedCost(taskId));
+  });
+
+  it("retry still missing a required tool: one cost row for that run", async () => {
+    const { taskId, calls } = await runAndCollectCost([], {
+      requiredTools: ["pm_paper_rebalance"],
+      _isRequiredToolRetry: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toEqual(expectedCost(taskId));
+  });
+
+  it("normal completion still books exactly one cost row", async () => {
+    const { taskId, calls } = await runAndCollectCost(["pm_paper_rebalance"], {
+      requiredTools: ["pm_paper_rebalance"],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toEqual(expectedCost(taskId));
   });
 });
 

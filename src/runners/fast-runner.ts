@@ -245,6 +245,27 @@ const CONFIRM_PATTERN = buildConfirmRegex("strict");
 const AUTH_ERROR_RE =
   /\b401\b|authentication_error|authentication_failed|invalid x-api-key|OAuth token.{0,40}(expired|revoked)|OAuth session expired|token (expirad|revocad)/i;
 
+type LoopUsage = Awaited<ReturnType<typeof inferWithTools>>["totalUsage"];
+
+/** Usage of two legs of one run, summed field by field: every leg's tokens
+ *  reach the ledger. An optional cache count stays absent when neither leg
+ *  reported it (the OpenAI path has no prompt cache). */
+function sumLoopUsage(a: LoopUsage, b: LoopUsage): LoopUsage {
+  return {
+    prompt_tokens: a.prompt_tokens + b.prompt_tokens,
+    completion_tokens: a.completion_tokens + b.completion_tokens,
+    ...((a.cache_read_tokens !== undefined ||
+      b.cache_read_tokens !== undefined) && {
+      cache_read_tokens: (a.cache_read_tokens ?? 0) + (b.cache_read_tokens ?? 0),
+    }),
+    ...((a.cache_creation_tokens !== undefined ||
+      b.cache_creation_tokens !== undefined) && {
+      cache_creation_tokens:
+        (a.cache_creation_tokens ?? 0) + (b.cache_creation_tokens ?? 0),
+    }),
+  };
+}
+
 /** SDK built-ins that can land in a run's toolCalls and change nothing:
  *  `queryClaudeSdk` admits only `ToolSearch` (`tools: ["ToolSearch"]` when
  *  armed; every other built-in is disabled). A fresh leg must re-run it to
@@ -2101,27 +2122,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             ...resumeResult,
             roundsCompleted:
               result.roundsCompleted + resumeResult.roundsCompleted,
-            totalUsage: {
-              prompt_tokens:
-                result.totalUsage.prompt_tokens +
-                resumeResult.totalUsage.prompt_tokens,
-              completion_tokens:
-                result.totalUsage.completion_tokens +
-                resumeResult.totalUsage.completion_tokens,
-              ...((result.totalUsage.cache_read_tokens !== undefined ||
-                resumeResult.totalUsage.cache_read_tokens !== undefined) && {
-                cache_read_tokens:
-                  (result.totalUsage.cache_read_tokens ?? 0) +
-                  (resumeResult.totalUsage.cache_read_tokens ?? 0),
-              }),
-              ...((result.totalUsage.cache_creation_tokens !== undefined ||
-                resumeResult.totalUsage.cache_creation_tokens !==
-                  undefined) && {
-                cache_creation_tokens:
-                  (result.totalUsage.cache_creation_tokens ?? 0) +
-                  (resumeResult.totalUsage.cache_creation_tokens ?? 0),
-              }),
-            },
+            totalUsage: sumLoopUsage(result.totalUsage, resumeResult.totalUsage),
           };
           console.log(
             `[recovery] auto-resume finished: ${result.exitReason} (task ${input.taskId})`,
@@ -2173,14 +2174,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             // consumed tokens the ledger must see.
             result = {
               ...authRetry,
-              totalUsage: {
-                prompt_tokens:
-                  result.totalUsage.prompt_tokens +
-                  authRetry.totalUsage.prompt_tokens,
-                completion_tokens:
-                  result.totalUsage.completion_tokens +
-                  authRetry.totalUsage.completion_tokens,
-              },
+              totalUsage: sumLoopUsage(result.totalUsage, authRetry.totalUsage),
             };
             console.log(
               `[recovery] auth retry succeeded (task ${input.taskId})`,
@@ -2188,6 +2182,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           } else {
             result = {
               ...result,
+              totalUsage: sumLoopUsage(result.totalUsage, authRetry.totalUsage),
               content:
                 "⚠️ Credenciales del proveedor de inferencia inválidas o revocadas (401). Reintenté una vez sin éxito — no reintentaré más. Necesitas rotar el token (operator).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
             };
