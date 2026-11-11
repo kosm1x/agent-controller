@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 05:30 UTC (batch 3 first six fixes COMMITTED `12ad31f3`, not yet deployed, queue 4dh; shell write piece back with its builder after round 1 of review; LIVE build is still `555c888f`)
+
 > Last updated: 2026-11-11 04:29 UTC (**DEPLOYED 2026-11-11 04:27 UTC as build `555c888f`** after an operator-run eval gate PASS, 77.72 against 78.63: deploy script with checks, CI build job, merge tripwire, the agent's own GitHub identity, the ritual-reading tool, text corrections; proofs owed in chat, queue 4dg; the code build has resumed with the shell write piece and batch 3)
 
 > Last updated: 2026-11-11 03:52 UTC (no code change; batches 8, 10 and 11 of the code build re-checked by read-only reviewers, queue 4dd, 4de; one new defect recorded, 4df; every remaining batch of the code build has now been re-checked against the current code; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)

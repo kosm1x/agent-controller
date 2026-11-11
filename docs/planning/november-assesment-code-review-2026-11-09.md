@@ -127,6 +127,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-11 05:30 UTC — first six fixes COMMITTED `12ad31f3` (queue 4dh), not yet deployed: verdict parser, email reply end, reflection failure log, abort listener, self-healing budget limit, three scheduled jobs through the shared helper; each with a test that fails without it, reviewed in two rounds. Remaining: the fixes in protected files, one at a time, and V2, D8, D3 after rulings (4cx).**
+
 **Status 2026-11-11 02:55 UTC — re-checked against the code by a read-only reviewer: none of the 17 is fixed yet and four are wider than first described (V2, L3, X3, D7). Fourteen need no ruling and are built after the pending deploy; V2, D8 and D3 wait for rulings (queue 4cx).**
 
 | Id | Defect | Size |
