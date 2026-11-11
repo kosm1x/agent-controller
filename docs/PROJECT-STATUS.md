@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-11 03:14 UTC (no code change; batch 5 (tests) of the code build re-checked by a read-only reviewer, queue 4db; still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
+
 > Last updated: 2026-11-11 02:55 UTC (no code change; batches 3, 4 and 6 of the code build were re-checked against the code by read-only reviewers and are ready to build after the pending deploy (queue 4cx, 4cy, 4cz); one operator item at convenience (4da); still **COMMITTED, NOT deployed**: everything since `9928c1a8`, which is the live build)
 
 > Last updated: 2026-11-11 02:32 UTC (**COMMITTED, NOT deployed**, CI green: two text corrections `651151ba` (queue 4cu) on top of the simple merge rule, identity separation and the `ritual_read` tool; next are the operator's eval run, one host script and the deploy (4cr, 4cs); designs done for the remaining shell piece (4cv) and for the per-build deploy with rollback (4cw); live build is still `9928c1a8`)
