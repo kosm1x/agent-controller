@@ -154,6 +154,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 4 — Failures become visible (no ruling needed)
 
+**Status 2026-11-11 20:33 UTC — comment clean-up COMMITTED `d5db2ff1` (queue 4dt) and router trace events COMMITTED `26d89ef9` (queue 4du), not yet deployed: seventeen catch comments say what is swallowed; nine reply decisions of the router leave a trace event. Left in this batch: trace events for the fast runner's own decisions, the ratchet.**
+
 **Status 2026-11-11 19:28 UTC — fourth wave COMMITTED `cf363d67` (queue 4dr), not yet deployed: dropped prompt blocks are counted and traced; nothing the model reads changes. Two review rounds. Left in this batch: trace events for router and fast-runner decisions (router part building), the comment clean-up, the ratchet.**
 
 **Status 2026-11-11 18:38 UTC — third wave COMMITTED `ccef640e` (queue 4dp), not yet deployed: provider-failing alert rule, outbound send-failure counter, two cost-row write sites, a test over the rules file. Two review rounds. Fourth wave (prompt blocks that vanish) is building.**
@@ -200,6 +202,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; local sharding.
 
 ### Batch 6 — Emergency inference path drill (ruling 8)
+
+**Status 2026-11-11 20:33 UTC — piece B COMMITTED `91fadfc9` (queue 4dv), not yet deployed: a write the retry completes counts as done on positive evidence only; the retry leg can be cancelled. Three review rounds. The mocked end-to-end drill is building; the paid drill stays a later operator decision.**
 
 **Status 2026-11-11 19:28 UTC — piece A COMMITTED `78f1bebf` (queue 4ds), not yet deployed: the OpenAI-compatible adapter names an open breaker, counts the rounds that ran, keeps streamed usage; untested branches pinned. Piece B (the fast runner's retry and hand-over legs) is building; the mocked drill follows; the paid drill stays a later operator decision.**
 
