@@ -65,6 +65,7 @@ describe("skill-discovery", () => {
 
     await detectRecurringPatterns();
     // No error, no proposal (insufficient data)
+    expect(submitTask).not.toHaveBeenCalled();
   });
 
   it("should detect recurring pattern with 3+ occurrences", async () => {

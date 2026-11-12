@@ -116,17 +116,22 @@ describe("baselines", () => {
     });
 
     it("skips window with insufficient samples", () => {
+      mockStmt.run.mockClear();
+      mockStmt.get.mockClear();
+      // A real mean with one sample: only the sample-count condition skips.
       mockStmt.get.mockReturnValue({
-        mean: null,
+        mean: 50,
         stddev: 0,
-        min_val: null,
-        max_val: null,
+        min_val: 50,
+        max_val: 50,
         sample_count: 1,
       });
 
       computeBaseline("test", "metric1");
       // With sample_count < 2, no UPSERT should happen
       // (the SELECT still runs but the INSERT is skipped)
+      expect(mockStmt.get).toHaveBeenCalledTimes(2);
+      expect(mockStmt.run).not.toHaveBeenCalled();
     });
   });
 

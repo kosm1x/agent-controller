@@ -381,6 +381,7 @@ describe("parseProjectRecord — every error reason", () => {
   });
 
   it("the error message never carries record content", () => {
+    expect.assertions(1);
     const secretish = "zz-" + "q".repeat(12);
     try {
       parseProjectRecord(block({ slug: "ok-slug", name: secretish, status: "nope" }), {

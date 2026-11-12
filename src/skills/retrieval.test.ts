@@ -220,11 +220,11 @@ describe("retrieveSkills — fallback paths", () => {
     mockGenerateEmbedding.mockResolvedValueOnce(null);
 
     const result = await retrieveSkills("wordpress sync");
-    // findSkillsByKeywords filters active=1; we still need a match
-    expect(result.length).toBeGreaterThanOrEqual(0);
-    if (result.length > 0) {
-      expect(result[0].source).toBe("keyword");
-    }
+    // findSkillsByKeywords filters active=1; the seeded row is active and its
+    // trigger matches, so the fallback must return it.
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("wordpress_sync");
+    expect(result[0].source).toBe("keyword");
   });
 
   it("falls back to keyword when ALL embedded rows have wrong dim (R1-W1 regression)", async () => {

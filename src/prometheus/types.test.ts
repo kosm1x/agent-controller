@@ -132,7 +132,7 @@ describe("parseLLMJson", () => {
     const tests = [
       "garbage prose 123",
       "{trailing comma,}",
-      `prefix {"oops": "${"X".repeat(400)}"}` /* invalid wrap */,
+      `prefix {"oops": "${"X".repeat(400)}",}` /* invalid wrap */,
     ];
     for (const input of tests) {
       let err: LLMJsonParseError | null = null;
@@ -141,6 +141,7 @@ describe("parseLLMJson", () => {
       } catch (e) {
         if (e instanceof LLMJsonParseError) err = e;
       }
+      expect(err).not.toBeNull();
       if (err) {
         // The .message must be exactly the generic string. No append, no
         // suffix, no embedded sample. If it ever changes, the test author

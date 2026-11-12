@@ -182,10 +182,11 @@ describe("runAlphaCombination — single-signal cases", () => {
     // Exactly one signal present
     expect(r.signals.length).toBe(1);
     const activeSignals = r.signals.filter((s) => !s.excluded);
-    if (activeSignals.length > 0) {
-      // When active, single-signal weight must be 1 (|w| sums to 1)
-      expect(Math.abs(activeSignals[0]!.weight)).toBeCloseTo(1, 5);
-    }
+    // The fixture's one signal must be active, or the weight check below
+    // would never run.
+    expect(activeSignals).toHaveLength(1);
+    // When active, single-signal weight must be 1 (|w| sums to 1)
+    expect(Math.abs(activeSignals[0]!.weight)).toBeCloseTo(1, 5);
   });
 });
 
