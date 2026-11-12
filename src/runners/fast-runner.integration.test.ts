@@ -241,6 +241,12 @@ import {
 const mockInferWithTools = vi.mocked(inferWithTools);
 const mockWriteCheckpoint = vi.mocked(writeCheckpoint);
 const mockRecordRetry = vi.mocked(recordFastRetryOutcome);
+/** Every trace event of one name emitted so far in this test. */
+const tracedEvents = (name: string) =>
+  vi
+    .mocked(emitTraceEvent)
+    .mock.calls.map(([ev]) => ev)
+    .filter((ev) => ev.name === name);
 
 /** The structured output's `text`; undefined when the output is a plain string or absent. */
 const outputText = (r: RunnerOutput) =>
@@ -330,6 +336,8 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       expect(mockInferWithTools).toHaveBeenCalledTimes(1);
       // No checkpoint when exit is clean
       expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+      // A plain answer after a read: nothing replaces it.
+      expect(tracedEvents("answer.replaced")).toEqual([]);
     });
 
     it("records actualModel from inferWithTools in tokenUsage", async () => {
@@ -412,6 +420,8 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       });
 
       expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+      // A clean exit starts no extra leg.
+      expect(tracedEvents("recovery.leg_started")).toEqual([]);
     });
   });
 
@@ -461,6 +471,28 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       // Retry was attempted → counter incremented with "fail"
       expect(mockInferWithTools).toHaveBeenCalledTimes(2);
       expect(mockRecordRetry).toHaveBeenCalledWith("fail");
+      // No write tool failed: the retry starts on the narration alone.
+      expect(tracedEvents("recovery.leg_started")).toEqual([
+        {
+          taskId: "task-C",
+          name: "recovery.leg_started",
+          attrs: { kind: "write_retry", path: "openai", failedWrites: 0 },
+        },
+      ]);
+      expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+        {
+          taskId: "task-C",
+          name: "recovery.write_retry_outcome",
+          attrs: { outcome: "fail", unresolved: 0, aborted: false },
+        },
+      ]);
+      expect(tracedEvents("answer.replaced")).toEqual([
+        {
+          taskId: "task-C",
+          name: "answer.replaced",
+          attrs: { kind: "not_completed", path: "openai" },
+        },
+      ]);
     });
 
     it("records retry='success' when retry produces a clean tool call", async () => {
@@ -515,6 +547,15 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       expect(result.status).toBe("DONE");
       const text = (result.output as { text?: string }).text ?? "";
       expect(text).not.toMatch(/⚠️|No completé/);
+      expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+        {
+          taskId: "task-C2",
+          name: "recovery.write_retry_outcome",
+          attrs: { outcome: "success", unresolved: 0, aborted: false },
+        },
+      ]);
+      // The retry's own answer is kept: the runner replaces nothing.
+      expect(tracedEvents("answer.replaced")).toEqual([]);
     });
 
     it("records retry='skipped' when no token headroom — retry is decided against, mechanical replacement fires without a retry attempt", async () => {
@@ -542,6 +583,109 @@ describe("fastRunner.execute() — integration (R-4)", () => {
       // Mechanical replacement still fires (hallucinated content + no retry)
       expect(result.status).toBe("DONE_WITH_CONCERNS");
       expect(mockRecordRetry).toHaveBeenCalledWith("skipped");
+      // No retry leg ran, so neither its start nor its outcome is traced.
+      expect(tracedEvents("recovery.leg_started")).toEqual([]);
+      expect(tracedEvents("recovery.write_retry_outcome")).toEqual([]);
+    });
+
+    it("a narrated read with no tool call is replaced by the not-verified text, one event naming that rule", async () => {
+      // No headroom: the replacement fires without a retry leg.
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "He revisado el artículo: ENLACE NO ENCONTRADO.",
+          messages: [] as ChatMessage[],
+          totalUsage: { prompt_tokens: 25000, completion_tokens: 100 },
+        }),
+      );
+
+      const result = await fastRunner.execute({
+        taskId: "task-C4",
+        runId: "run-C4",
+        title: "Check a post",
+        description: "Revisa si el artículo tiene enlaces",
+      });
+
+      expect(mockInferWithTools).toHaveBeenCalledTimes(1);
+      expect(outputText(result)).toMatch(/^⚠️ No verifiqué realmente/);
+      expect(tracedEvents("answer.replaced")).toEqual([
+        {
+          taskId: "task-C4",
+          name: "answer.replaced",
+          attrs: { kind: "read_not_verified", path: "openai" },
+        },
+      ]);
+    });
+
+    it("a short refusal after a successful tool call is replaced by the last tool result, one event", async () => {
+      const toolOutput = '{"ok":true,"content":"' + "fila de datos ".repeat(6) + '"}';
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "No puedo darte más detalle.",
+          messages: [
+            {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: { name: "file_read", arguments: "{}" },
+                },
+              ],
+            },
+            { role: "tool", content: toolOutput, tool_call_id: "c1" },
+          ],
+        }),
+      );
+
+      const result = await fastRunner.execute({
+        taskId: "task-C5",
+        runId: "run-C5",
+        title: "Read a file",
+        description: "Lee el archivo de datos",
+      });
+
+      expect(result.status).toBe("DONE_WITH_CONCERNS");
+      expect(outputText(result)).toBe(toolOutput);
+      expect(tracedEvents("answer.replaced")).toEqual([
+        {
+          taskId: "task-C5",
+          name: "answer.replaced",
+          attrs: { kind: "tool_result", path: "openai" },
+        },
+      ]);
+    });
+
+    it("a short refusal after a tool call whose results are all too short to show keeps the answer: no event", async () => {
+      mockInferWithTools.mockResolvedValueOnce(
+        makeInferResult({
+          content: "No puedo darte más detalle.",
+          messages: [
+            {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: { name: "file_read", arguments: "{}" },
+                },
+              ],
+            },
+            { role: "tool", content: '{"ok":true}', tool_call_id: "c1" },
+          ],
+        }),
+      );
+
+      const result = await fastRunner.execute({
+        taskId: "task-C6",
+        runId: "run-C6",
+        title: "Read a file",
+        description: "Lee el archivo de datos",
+      });
+
+      expect(outputText(result)).toContain("No puedo darte más detalle.");
+      expect(tracedEvents("answer.replaced")).toEqual([]);
     });
   });
 
@@ -1131,6 +1275,16 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
     // Completed second leg → no checkpoint, no ¿Sigo?
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
     expect(outputText(result)).not.toContain("¿Sigo?");
+    // One extra leg, the resume — no auth retry after it.
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-resume",
+        name: "recovery.leg_started",
+        attrs: { kind: "auto_resume", path: "openai", reason: "max_rounds" },
+      },
+    ]);
+    // The resume leg completed, so nothing records it as failed.
+    expect(tracedEvents("recovery.leg_failed")).toEqual([]);
   });
 
   it("double cap: delivers partial + ¿Sigo? and writes ONE checkpoint with summed rounds", async () => {
@@ -1183,6 +1337,22 @@ describe("Phase 4.3 auto-resume on max_rounds/token_budget", () => {
 
     expect(outputText(result)).toContain("Avance parcial real.");
     expect(mockWriteCheckpoint).toHaveBeenCalledTimes(1);
+    // The leg started, then threw: the start is still on the trace.
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-resume-fail",
+        name: "recovery.leg_started",
+        attrs: { kind: "auto_resume", path: "openai", reason: "token_budget" },
+      },
+    ]);
+    // A leg that threw is told apart from one that completed.
+    expect(tracedEvents("recovery.leg_failed")).toEqual([
+      {
+        taskId: "task-resume-fail",
+        name: "recovery.leg_failed",
+        attrs: { kind: "auto_resume", path: "openai" },
+      },
+    ]);
   });
 });
 
@@ -1209,6 +1379,51 @@ describe("Phase 4.3 auth-failure retry", () => {
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
     expect(outputText(result)).not.toContain("401");
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-auth",
+        name: "recovery.leg_started",
+        attrs: { kind: "auth_retry", path: "openai" },
+      },
+    ]);
+    // The retry cleared it: no canned escalation replaces the answer.
+    expect(tracedEvents("answer.replaced")).toEqual([]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([]);
+  });
+
+  it("an auth retry leg that throws is recorded as a failed leg, never as an escalation", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content:
+          "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]",
+        exitReason: "provider_failure",
+      }),
+    );
+    mockInferWithTools.mockRejectedValueOnce(new Error("provider down"));
+
+    await fastRunner.execute({
+      taskId: "task-auth-throw",
+      runId: "run-auth-throw",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+
+    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-auth-throw",
+        name: "recovery.leg_started",
+        attrs: { kind: "auth_retry", path: "openai" },
+      },
+    ]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([
+      {
+        taskId: "task-auth-throw",
+        name: "recovery.leg_failed",
+        attrs: { kind: "auth_retry", path: "openai" },
+      },
+    ]);
+    expect(tracedEvents("answer.replaced")).toEqual([]);
   });
 
   it("still-failing auth escalates in Spanish — never delivers the raw 401", async () => {
@@ -1231,6 +1446,13 @@ describe("Phase 4.3 auth-failure retry", () => {
     expect(result.status).toBe("DONE_WITH_CONCERNS");
     expect(outputText(result)).toContain("rotar el token");
     expect(outputText(result)).not.toContain("authentication_error");
+    expect(tracedEvents("answer.replaced")).toEqual([
+      {
+        taskId: "task-auth-2",
+        name: "answer.replaced",
+        attrs: { kind: "auth_escalation", path: "openai" },
+      },
+    ]);
   });
 
   it("a successful retry reports both legs' usage, cache counts included", async () => {
@@ -1460,6 +1682,14 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       expect.arrayContaining(["shell_exec", "jarvis_file_write"]),
     );
     expect(mockWriteCheckpoint).not.toHaveBeenCalled();
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "sdk-resume",
+        name: "recovery.leg_started",
+        attrs: { kind: "auto_resume", path: "sdk" },
+      },
+    ]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([]);
   });
 
   it("double cap → partial + ¿Sigo? + a checkpoint on the SDK path", async () => {
@@ -1517,6 +1747,47 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
     expect(outputText(result)).not.toContain("401");
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "sdk-auth",
+        name: "recovery.leg_started",
+        attrs: { kind: "auth_retry", path: "sdk" },
+      },
+    ]);
+    // The retry cleared it: no canned escalation replaces the answer.
+    expect(tracedEvents("answer.replaced")).toEqual([]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([]);
+  });
+
+  it("an SDK auth retry leg that throws is recorded as a failed leg, never as an escalation", async () => {
+    mockQuerySdk.mockResolvedValueOnce(
+      makeSdkResult({
+        text: "[error_during_execution — API Error: 401 authentication_error: OAuth token has expired]\n\nSTATUS: BLOCKED — provider error.",
+      }),
+    );
+    mockQuerySdk.mockRejectedValueOnce(new Error("provider down"));
+    await fastRunner.execute({
+      taskId: "sdk-auth-throw",
+      runId: "run-sdk-auth-throw",
+      title: "Tarea",
+      description: "Haz algo",
+    });
+    expect(mockQuerySdk).toHaveBeenCalledTimes(2);
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "sdk-auth-throw",
+        name: "recovery.leg_started",
+        attrs: { kind: "auth_retry", path: "sdk" },
+      },
+    ]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([
+      {
+        taskId: "sdk-auth-throw",
+        name: "recovery.leg_failed",
+        attrs: { kind: "auth_retry", path: "sdk" },
+      },
+    ]);
+    expect(tracedEvents("answer.replaced")).toEqual([]);
   });
 
   it("still-failing auth escalates in Spanish, never the raw 401", async () => {
@@ -1536,6 +1807,13 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     expect(result.status).toBe("DONE_WITH_CONCERNS");
     expect(outputText(result)).toContain("rotar el token");
     expect(outputText(result)).not.toContain("authentication_error");
+    expect(tracedEvents("answer.replaced")).toEqual([
+      {
+        taskId: "sdk-auth-2",
+        name: "answer.replaced",
+        attrs: { kind: "auth_escalation", path: "sdk" },
+      },
+    ]);
   });
 
   // Hermes #106546 class: an auth failure on turn N must not replay the
@@ -1789,6 +2067,7 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
       description: "Haz algo largo",
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(1);
+    expect(tracedEvents("recovery.leg_started")).toEqual([]);
   });
 
   it("a task ABOUT a 401 (no SDK error marker) keeps its content — no retry, no escalation", async () => {
@@ -1805,6 +2084,8 @@ describe("Phase 4.3 recovery on the claude-sdk path (R1 C1)", () => {
     });
     expect(mockQuerySdk).toHaveBeenCalledTimes(1);
     expect(outputText(result)).toContain("Authorization");
+    expect(tracedEvents("recovery.leg_started")).toEqual([]);
+    expect(tracedEvents("answer.replaced")).toEqual([]);
   });
 });
 
@@ -1835,6 +2116,13 @@ describe("R4 audit W1 — a thrown resume still counts as THE recovery leg", () 
 
     expect(mockQuerySdk).toHaveBeenCalledTimes(2);
     expect(outputText(result)).toContain("Parte 1");
+    expect(tracedEvents("recovery.leg_failed")).toEqual([
+      {
+        taskId: "sdk-three-leg",
+        name: "recovery.leg_failed",
+        attrs: { kind: "auto_resume", path: "sdk" },
+      },
+    ]);
   });
 });
 
@@ -1937,6 +2225,10 @@ describe("SDK last line on the fast-runner chat path", () => {
         attrs: { provider: "fallback", model: FW_MODEL, reason: "auth" },
       },
     ]);
+    // The hand-over to the last line is not an escalation, and the auth leg
+    // that failed auth again completed — it did not throw.
+    expect(tracedEvents("answer.replaced")).toEqual([]);
+    expect(tracedEvents("recovery.leg_failed")).toEqual([]);
   });
 
   it("(ix) auth retry still failing after a side-effecting leg 1 → NO last line, today's apology", async () => {
@@ -2826,6 +3118,8 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect(result.toolCalls).toEqual(["wp_list_posts"]);
     expect(output.toolCalls).toEqual(["wp_list_posts"]);
     expect(output.text).toContain("¿Procedo?");
+    // The model's own question is delivered: nothing replaces it.
+    expect(tracedEvents("answer.replaced")).toEqual([]);
   });
 
   it("a short BLOCKED reply with a pending confirmation still completes (router must store it)", async () => {
@@ -2856,6 +3150,13 @@ describe("confirmation gate on the claude-sdk path", () => {
     expect((result.output as { text: string }).text).toBe(
       "Esta acción requiere tu confirmación: wp_delete. ¿Procedo?",
     );
+    expect(tracedEvents("answer.replaced")).toEqual([
+      {
+        taskId: "sdk-gate-empty",
+        name: "answer.replaced",
+        attrs: { kind: "confirmation_prompt", path: "sdk" },
+      },
+    ]);
   });
 
   it("queue 4l: a card with two queued calls reaches the output whole, in order; the empty-reply question names both", async () => {
@@ -3457,6 +3758,20 @@ describe("hallucination retry — a write the retry completes counts as done", (
         res("c2", OK),
       ]),
     );
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.leg_started",
+        attrs: { kind: "write_retry", path: "openai", failedWrites: 1 },
+      },
+    ]);
+    expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.write_retry_outcome",
+        attrs: { outcome: "success", unresolved: 0, aborted: false },
+      },
+    ]);
   });
 
   it("the retry completes the same target under other arguments → done", async () => {
@@ -3504,6 +3819,7 @@ describe("hallucination retry — a write the retry completes counts as done", (
     expect(r.status).toBe("DONE");
     expect(r.concerns ?? []).toEqual([]);
     expect(mockRecordRetry).toHaveBeenCalledWith("success");
+    expect(tracedEvents("write.verification_concern")).toEqual([]);
   });
 
   it("the retry leg's own verified write is still checked for its success marker", async () => {
@@ -3514,6 +3830,13 @@ describe("hallucination retry — a write the retry completes counts as done", (
     expect(r.status).toBe("DONE_WITH_CONCERNS");
     expect(r.concerns).toEqual([
       'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+    ]);
+    expect(tracedEvents("write.verification_concern")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "write.verification_concern",
+        attrs: { concerns: 1 },
+      },
     ]);
   });
 
@@ -3526,6 +3849,13 @@ describe("hallucination retry — a write the retry completes counts as done", (
     expect(diagnosisOf(r)).toContain("- file_write: " + FAIL);
     expect(r.concerns).toEqual([
       "Hallucination detected — hallucination persists after retry. Response mechanically replaced with honest tool inventory",
+    ]);
+    expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.write_retry_outcome",
+        attrs: { outcome: "fail", unresolved: 1, aborted: false },
+      },
     ]);
   });
 
@@ -3642,6 +3972,21 @@ describe("hallucination retry — a write the retry completes counts as done", (
     );
     expectStillFailed(r, "file_edit");
     expect(diagnosisOf(r)).not.toContain("- file_write: ");
+    // Two failed writes start the retry; one is still unresolved after it.
+    expect(tracedEvents("recovery.leg_started")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.leg_started",
+        attrs: { kind: "write_retry", path: "openai", failedWrites: 2 },
+      },
+    ]);
+    expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.write_retry_outcome",
+        attrs: { outcome: "fail", unresolved: 1, aborted: false },
+      },
+    ]);
   });
 
   it("without a retry, a verified write that failed once and succeeded once keeps its verification concern", async () => {
@@ -3667,6 +4012,71 @@ describe("hallucination retry — a write the retry completes counts as done", (
     expect(r.concerns).toEqual([
       'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
     ]);
+    expect(tracedEvents("write.verification_concern")).toEqual([
+      {
+        taskId: "task-rw-noretry",
+        name: "write.verification_concern",
+        attrs: { concerns: 1 },
+      },
+    ]);
+  });
+
+  it("the verification event counts only its own concerns: two writes without their marker next to a delivery miss", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo, actualicé los dos documentos.\n\nSTATUS: DONE",
+        messages: [
+          call("c1", "gdocs_write", DOC),
+          res("c1", OK),
+          call("c2", "gdocs_write", '{"document_id":"doc-87654321"}'),
+          res("c2", OK),
+        ],
+      }),
+    );
+    const r = await fastRunner.execute({
+      taskId: "task-rw-two",
+      runId: "run-rw-two",
+      title: "Update two documents",
+      description: "Actualiza los dos documentos y avisa por correo",
+      tools: ["gdocs_write", "gmail_send"],
+    });
+    expect(mockInferWithTools).toHaveBeenCalledTimes(1);
+    expect(r.concerns).toEqual([
+      "Delivery miss: gmail_send was in scope but never called. Email was not sent.",
+      'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+      'Write verification failed: gdocs_write was called but result lacks expected success marker ("document_id").',
+    ]);
+    expect(tracedEvents("write.verification_concern")).toEqual([
+      {
+        taskId: "task-rw-two",
+        name: "write.verification_concern",
+        attrs: { concerns: 2 },
+      },
+    ]);
+  });
+
+  it("a delivery miss alone is not a write verification concern: no verification event", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({
+        content: "Listo, actualicé el documento.\n\nSTATUS: DONE",
+        messages: [
+          call("c1", "gdocs_write", DOC),
+          res("c1", '{"document_id":"doc-12345678"}'),
+        ],
+      }),
+    );
+    const r = await fastRunner.execute({
+      taskId: "task-rw-miss",
+      runId: "run-rw-miss",
+      title: "Update a document",
+      description: "Actualiza el documento y avisa por correo",
+      tools: ["gdocs_write", "gmail_send"],
+    });
+    expect(mockInferWithTools).toHaveBeenCalledTimes(1);
+    expect(r.concerns).toEqual([
+      "Delivery miss: gmail_send was in scope but never called. Email was not sent.",
+    ]);
+    expect(tracedEvents("write.verification_concern")).toEqual([]);
   });
 
   it("an aborted retry is never the answer and resolves nothing, even after another successful leg-1 write", async () => {
@@ -3684,6 +4094,13 @@ describe("hallucination retry — a write the retry completes counts as done", (
     );
     expect(outputText(r)).not.toContain("[aborted]");
     expectStillFailed(r);
+    expect(tracedEvents("recovery.write_retry_outcome")).toEqual([
+      {
+        taskId: "task-rw",
+        name: "recovery.write_retry_outcome",
+        attrs: { outcome: "fail", unresolved: 1, aborted: true },
+      },
+    ]);
   });
 
   it("an id repeated inside the retry leg: success then failure on the same target → stays failed", async () => {

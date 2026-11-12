@@ -132,7 +132,25 @@ export type TraceEventName =
   // failed; the fallback line was sent ({submitted}: whether the submit itself had resolved)
   | "scope.rerun_submit_failed"
   // The router started a background agent; this is its task ({tools}: count)
-  | "agent.background_spawned";
+  | "agent.background_spawned"
+  // Fast runner decisions ({…}: closed enums, counts and booleans, never text).
+  // `path: openai` names the openai-style tool loop, last-line legs included.
+  // The runner starts one more leg on its own ({kind: auto_resume | auth_retry
+  // | write_retry, path: sdk | openai}; an openai auto_resume adds {reason:
+  // max_rounds | token_budget}, a write_retry adds {failedWrites}: count of
+  // distinct failed write tool names)
+  | "recovery.leg_started"
+  // A started leg threw and the runner went on without it ({kind: auto_resume
+  // | auth_retry, path}); without it a leg that threw looks like one that completed
+  | "recovery.leg_failed"
+  // The write retry's outcome as its counter records it ({outcome: success |
+  // fail, unresolved: count of distinct write tool names still failed, aborted})
+  | "recovery.write_retry_outcome"
+  // The runner replaced the answer with its own text or a tool result ({kind:
+  // auth_escalation | confirmation_prompt | not_completed | read_not_verified | tool_result, path})
+  | "answer.replaced"
+  // A called write tool's result lacks its success marker; a concern was added ({concerns}: count)
+  | "write.verification_concern";
 
 export interface TraceEvent {
   taskId: string;

@@ -1892,6 +1892,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           recoveryLegUsed = true;
           try {
             const firstLegText = sdkResult.text;
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.leg_started",
+              attrs: { kind: "auto_resume", path: "sdk" },
+            });
             const resumeLeg = await runWithExecutionContext(taskContext, () =>
               queryClaudeSdk({
                 prompt: continuationPrompt(
@@ -1925,6 +1930,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             console.warn(
               `[recovery] auto-resume failed, delivering first-leg partial: ${errMsg(resumeErr)}`,
             );
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.leg_failed",
+              attrs: { kind: "auto_resume", path: "sdk" },
+            });
           }
         }
 
@@ -1946,6 +1956,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // back and misread as a second auth failure.
           const firstLegText = sdkResult.text;
           try {
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.leg_started",
+              attrs: { kind: "auth_retry", path: "sdk" },
+            });
             const authLeg = await runWithExecutionContext(taskContext, () =>
               queryClaudeSdk({
                 prompt: ranTools
@@ -1993,12 +2008,22 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                 ...mergeSdkLegs(sdkResult, authLeg),
                 text: "⚠️ Credenciales del proveedor de inferencia inválidas, expiradas o revocadas. Reintenté una vez sin éxito — no reintentaré más. Operador: `claude /login` en el VPS (o rotar el token).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
               };
+              emitTraceEvent({
+                taskId: input.taskId,
+                name: "answer.replaced",
+                attrs: { kind: "auth_escalation", path: "sdk" },
+              });
               console.warn(
                 `[recovery] auth retry still failing — escalating (task ${input.taskId})`,
               );
             }
           } catch (authErr) {
             console.warn(`[recovery] auth retry threw: ${errMsg(authErr)}`);
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.leg_failed",
+              attrs: { kind: "auth_retry", path: "sdk" },
+            });
           }
         }
 
@@ -2090,6 +2115,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
                   ? `Estas ${pendingConfirmation.items.length} acciones requieren tu confirmación: ${pendingNames}. ¿Procedo?`
                   : `Esta acción requiere tu confirmación: ${pendingNames}. ¿Procedo?`,
             };
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "answer.replaced",
+              attrs: { kind: "confirmation_prompt", path: "sdk" },
+            });
           }
         }
 
@@ -2200,6 +2230,15 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           `[recovery] auto-resume after ${result.exitReason} round ${result.roundsCompleted}/${maxRounds} (task ${input.taskId})`,
         );
         try {
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "recovery.leg_started",
+            attrs: {
+              kind: "auto_resume",
+              path: "openai",
+              reason: result.exitReason,
+            },
+          });
           const resumeResult = await runInfer(
             [
               ...result.messages,
@@ -2245,6 +2284,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           console.warn(
             `[recovery] auto-resume failed, delivering first-leg partial: ${errMsg(resumeErr)}`,
           );
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "recovery.leg_failed",
+            attrs: { kind: "auto_resume", path: "openai" },
+          });
         }
       }
 
@@ -2266,6 +2310,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           `[recovery] auth-class failure detected, retrying once (task ${input.taskId})`,
         );
         try {
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "recovery.leg_started",
+            attrs: { kind: "auth_retry", path: "openai" },
+          });
           const authRetry = await runInfer(
             messages,
             definitions,
@@ -2298,12 +2347,22 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               content:
                 "⚠️ Credenciales del proveedor de inferencia inválidas o revocadas (401). Reintenté una vez sin éxito — no reintentaré más. Necesitas rotar el token (operator).\n\nSTATUS: DONE_WITH_CONCERNS — fallo de autenticación, tarea no ejecutada.",
             };
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "answer.replaced",
+              attrs: { kind: "auth_escalation", path: "openai" },
+            });
             console.warn(
               `[recovery] auth retry still failing — escalating (task ${input.taskId})`,
             );
           }
         } catch (authErr) {
           console.warn(`[recovery] auth retry threw: ${errMsg(authErr)}`);
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "recovery.leg_failed",
+            attrs: { kind: "auth_retry", path: "openai" },
+          });
         }
       }
 
@@ -2499,6 +2558,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // The failed writes the retry did not then complete; without a
         // retry, every leg-1 failure.
         let unresolvedWriteTools = failedWriteTools;
+        // Whether the retry leg ended aborted; read by its outcome event.
+        let retryLegAborted = false;
 
         if (shouldRetry) {
           console.log(
@@ -2579,6 +2640,15 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           }
           retryMessages.push({ role: "user", content: retryContent });
 
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "recovery.leg_started",
+            attrs: {
+              kind: "write_retry",
+              path: "openai",
+              failedWrites: failedWriteTools.length,
+            },
+          });
           const retryResult = await runInfer(
             retryMessages,
             definitions,
@@ -2626,6 +2696,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // An aborted retry resolves nothing and is never the answer: its
           // text is the abort placeholder or an unfinished partial.
           const retryAborted = retryResult.exitReason === "aborted";
+          retryLegAborted = retryAborted;
           // The retry leg's own calls: its messages repeat leg 1's as a
           // prefix, so a call belongs to the retry only when its id is
           // non-empty and leg 1 never carried it, and its result is read
@@ -2741,12 +2812,33 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // by the outer `if (detectsHallucinatedExecution)` at line 1338).
           if (shouldRetry) {
             recordFastRetryOutcome("success");
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.write_retry_outcome",
+              attrs: {
+                outcome: "success",
+                unresolved: unresolvedWriteTools.length,
+                aborted: retryLegAborted,
+              },
+            });
           }
         } else {
           // Sprint 1 R-1: record retry outcome. "fail" means a retry ran but
           // still hallucinated; "skipped" means we decided against retry
           // entirely (permanent errors or no token headroom).
           recordFastRetryOutcome(shouldRetry ? "fail" : "skipped");
+          // A skipped retry ran no leg, so it has no outcome event.
+          if (shouldRetry) {
+            emitTraceEvent({
+              taskId: input.taskId,
+              name: "recovery.write_retry_outcome",
+              attrs: {
+                outcome: "fail",
+                unresolved: unresolvedWriteTools.length,
+                aborted: retryLegAborted,
+              },
+            });
+          }
           // Step 4 — Honest replacement with diagnosis
           const reason = allPermanent
             ? "permanent tool errors (retry skipped)"
@@ -2788,6 +2880,14 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             ],
             statusSource: parsed.statusSource,
           };
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "answer.replaced",
+            attrs: {
+              kind: readHalluc ? "read_not_verified" : "not_completed",
+              path: "openai",
+            },
+          });
         }
       }
 
@@ -2823,6 +2923,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
               "LLM refused to format tool results. Raw tool output shown.",
             ],
           };
+          emitTraceEvent({
+            taskId: input.taskId,
+            name: "answer.replaced",
+            attrs: { kind: "tool_result", path: "openai" },
+          });
         }
       }
 
@@ -2878,6 +2983,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         wp_publish: '"post_id"',
       };
       const verifyMessages = [...result.messages, ...retryLegMessages];
+      // Concerns before the write verification; the ones after it are its own.
+      const qpBeforeVerify = qpConcerns.length;
       for (let vi = 0; vi < verifyMessages.length; vi++) {
         const msg = verifyMessages[vi];
         if (msg.role !== "assistant" || !msg.tool_calls) continue;
@@ -2903,6 +3010,14 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             );
           }
         }
+      }
+      // How many concerns the verification added — never which tool.
+      if (qpConcerns.length > qpBeforeVerify) {
+        emitTraceEvent({
+          taskId: input.taskId,
+          name: "write.verification_concern",
+          attrs: { concerns: qpConcerns.length - qpBeforeVerify },
+        });
       }
 
       if (qpConcerns.length > 0) {
