@@ -185,6 +185,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-12 18:17 UTC — first part COMMITTED `782b6945` + `f5c254c8` + `9e5949ed` + `547137a8` (queue 4ec): Q5 (every script type-checked), the small Q2 cases, Q9 with the two live-folder hazards, the racing test, Q4 (simulated time in both slow files). Left: the Q2 cancel-pattern test, Q8, Q10, the process-group cases of the shell test (CI-only), and the operator-applied host commit check (Q3 + Q6).**
+
 **Status 2026-11-11 03:14 UTC — re-checked by a read-only reviewer (queue 4db): every item open; recounts by the reviewer's method differ from the table below (docs-reading tests 4 plus 1, not 24; SQL modules without a real-database test of their own 34; hand-copied tables that drop a constraint 30 in 21 files; 12 of 17 excluded video test files look runnable on CI, not 4); Q5 measured at 0 errors; three hazards in existing tests are fixed with this batch.**
 
 589 files, ≈ 11,500 cases, +20.7 % last month. Honest overall (0 self-mocks; ≈ 15 named cases that cannot fail). Thin where it matters:
