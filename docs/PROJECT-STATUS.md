@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-12 02:08 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 complete `ba5d334e` + `9b14beaa` + `ccef640e` + `cf363d67` + `d5db2ff1` + `26d89ef9` + `a6cb3888` + `cf360d49`, batch 6 `78f1bebf` + `91fadfc9` + `4146e642`; queue 4dh–4dz; the second shell write check commit waits for a ruling (4dq); a reply check for mailbox passwords is building (4dz); after the next deploy the monitoring container must be restarted to load the new alert rule; LIVE build is still `555c888f`)
+
 > Last updated: 2026-11-11 20:33 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 `ba5d334e` + `9b14beaa` + `ccef640e` + `cf363d67` + `d5db2ff1` + `26d89ef9`, batch 6 `78f1bebf` + `91fadfc9`; queue 4dh–4dv; the second shell write check commit waits for a ruling (4dq); after the next deploy the monitoring container must be restarted to load the new alert rule; LIVE build is still `555c888f`)
 
 > Last updated: 2026-11-11 19:28 UTC (COMMITTED, not yet deployed: batch 3 sixteen fixes, the shell write check `a7ed9174`, the recorder leaf `71b42aa2`, batch 4 four waves `ba5d334e` + `9b14beaa` + `ccef640e` + `cf363d67`, batch 6 piece A `78f1bebf`; queue 4dh–4ds; the second shell write check commit waits for a ruling (4dq); after the next deploy the monitoring container must be restarted to load the new alert rule; LIVE build is still `555c888f`)
