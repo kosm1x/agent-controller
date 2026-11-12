@@ -944,9 +944,9 @@ function tierToEffort(tier?: string): "low" | "medium" | "high" | undefined {
   return undefined;
 }
 
-export const fastRunner: Runner = {
-  type: "fast",
-
+// The branches (SDK, last line / OpenAI loop, thrown error). Callers go
+// through `fastRunner`, which applies the cancellation rule to every one.
+const fastRunnerBranches = {
   async execute(input: RunnerInput): Promise<RunnerOutput> {
     const start = Date.now();
     // Get tool definitions for requested tools (or all if none specified).
@@ -3122,6 +3122,40 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       clearInterval(heartbeat);
       // TaskExecutionContext is GC'd with the task — no global cleanup needed
     }
+  },
+};
+
+/**
+ * A cancelled run is never reported as completed, on any branch: when the
+ * caller's signal is aborted, or the loop stopped on the abort, the run failed
+ * as cancelled, whatever partial text or status the branch produced. Output
+ * and token usage stay so the spend is still booked. The exit-reason check is
+ * a second line of defence: the loop's abort comes from the same signal, so
+ * the two always coincide and no test can separate them.
+ */
+function cancelledOutcome(
+  input: RunnerInput,
+  out: RunnerOutput,
+): RunnerOutput {
+  const exitReason =
+    out.output && typeof out.output === "object"
+      ? (out.output as { exitReason?: unknown }).exitReason
+      : undefined;
+  if (!input.signal?.aborted && exitReason !== "aborted") return out;
+  return {
+    ...out,
+    success: false,
+    status: undefined,
+    terminationReason: "aborted",
+    error: "cancelled",
+  };
+}
+
+export const fastRunner: Runner = {
+  type: "fast",
+
+  async execute(input: RunnerInput): Promise<RunnerOutput> {
+    return cancelledOutcome(input, await fastRunnerBranches.execute(input));
   },
 };
 

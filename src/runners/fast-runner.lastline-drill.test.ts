@@ -360,6 +360,28 @@ function sdkOverloaded() {
   };
 }
 
+/** Leg 1 ends on an error class the last line accepts, but its text is an
+ *  authentication failure. */
+function sdkAuthFailure() {
+  return {
+    ...sdkOverloaded(),
+    text: "[error_api_response — authentication_failed, status 401: OAuth session expired] No content produced.\n\nSTATUS: BLOCKED — the SDK leg ended on an API error.",
+    errorClass: "unknown",
+  };
+}
+
+/** An SDK leg that answers. */
+function sdkAnswer(text: string) {
+  const { errorClass: _drop, ...rest } = sdkOverloaded();
+  return { ...rest, text, usage: { ...rest.usage, promptTokens: 120, completionTokens: 9 } };
+}
+
+const lastlineTraces = () =>
+  traceMock.mock.calls
+    .map((c) => c[0] as { name: string; attrs?: Record<string, unknown> })
+    .filter((e) => e.name === "inference.lastline")
+    .map((e) => e.attrs);
+
 function run(extra: Partial<RunnerInput> = {}): Promise<RunnerOutput> {
   return fastRunner.execute({
     taskId: "drill-task",
@@ -460,6 +482,51 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expectSealed();
   });
 
+  it("an authentication failure inside an accepted error class is not handed over: the auth retry runs on the SDK and its answer stands", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(sdkAuthFailure())
+      .mockResolvedValueOnce(sdkAnswer("Example Corp has three offices.\n\nSTATUS: DONE"));
+    stubFetch();
+
+    const r = await run();
+
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(wire.calls).toHaveLength(0);
+    expect(lastlineTraces()).toEqual([]);
+    expect(r.success).toBe(true);
+    expect(r.status).toBe("DONE");
+    expect(outputOf(r)?.text).toBe("Example Corp has three offices.");
+    expectSealed();
+  });
+
+  it("an authentication failure that the auth retry repeats is handed over once, as an auth hand-over", async () => {
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk
+      .mockResolvedValueOnce(sdkAuthFailure())
+      .mockResolvedValueOnce(sdkAuthFailure());
+    stubFetch(
+      jsonAnswer({ content: "Example Corp has three offices.\n\nSTATUS: DONE" }, usage(40, 5)),
+    );
+
+    const r = await run();
+
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(wire.calls).toHaveLength(1);
+    expect(lastlineTraces()).toEqual([
+      { provider: "fallback", model: FALLBACK_MODEL, reason: "auth" },
+    ]);
+    expect(r.success).toBe(true);
+    expect(outputOf(r)?.text).toBe("Example Corp has three offices.");
+    // Both SDK legs and the fallback round.
+    expect(r.tokenUsage).toEqual({
+      promptTokens: 300 + 300 + 40,
+      completionTokens: 7 + 7 + 5,
+      actualModel: FALLBACK_MODEL,
+    });
+    expectSealed();
+  });
+
   it("a write that failed in the streamed main leg and succeeded in the non-streamed retry leg on the same target counts as done", async () => {
     const chunks: string[] = [];
     tools.results.push('{"error":"timeout after 30s"}', '{"ok":true}');
@@ -506,7 +573,7 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expectSealed();
   });
 
-  it("a request-too-large answer is compacted once at the aggressive threshold and the compacted conversation is resent; the resent call counts as the next round", async () => {
+  it("a request-too-large answer is compacted once at the aggressive threshold and the compacted conversation is resent; the resend reuses the round index (a refused request is not a model turn)", async () => {
     stubFetch(
       () => new Response("request entity too large", { status: 413 }),
       jsonAnswer({ content: "Example Corp answer after compaction.\n\nSTATUS: DONE" }),
@@ -522,7 +589,7 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expect(r.success).toBe(true);
     expect(outputOf(r)?.text).toBe("Example Corp answer after compaction.");
     expect(outputOf(r)?.exitReason).toBe("natural");
-    expect(outputOf(r)?.roundsCompleted).toBe(2);
+    expect(outputOf(r)?.roundsCompleted).toBe(1);
     expectSealed();
   });
 
@@ -545,7 +612,48 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expectSealed();
   });
 
-  it.todo("a last-line run cancelled inside a tool call does not report success");
+  it("a last-line run cancelled inside a tool call does not report success", async () => {
+    const controller = new AbortController();
+    tools.results.push(() => {
+      controller.abort();
+      return '{"ok":true}';
+    });
+    stubFetch(
+      jsonAnswer({ content: null, tool_calls: [toolCall("c1", "file_write", WRITE_ARGS)] }),
+    );
+
+    const r = await run({ signal: controller.signal });
+
+    expect(r.success).toBe(false);
+    expect(r.status).toBeUndefined();
+    expect(r.terminationReason).toBe("aborted");
+    expect(r.error).toBe("cancelled");
+    // The spend is still reported, so the cost is booked.
+    expect(r.tokenUsage).toMatchObject({ actualModel: FALLBACK_MODEL });
+    expectSealed();
+  });
+
+  it("an SDK-path run cancelled mid-answer does not report success and is not handed over", async () => {
+    const controller = new AbortController();
+    sdk.queryClaudeSdk.mockReset();
+    sdk.queryClaudeSdk.mockImplementationOnce(async () => {
+      controller.abort();
+      // The SDK hands back what streamed before the abort: no STATUS line.
+      return sdkAnswer("Example Corp has three off");
+    });
+    stubFetch();
+
+    const r = await run({ signal: controller.signal });
+
+    expect(sdk.queryClaudeSdk).toHaveBeenCalledTimes(1);
+    expect(wire.calls).toHaveLength(0);
+    expect(lastlineTraces()).toEqual([]);
+    expect(r.success).toBe(false);
+    expect(r.status).toBeUndefined();
+    expect(r.terminationReason).toBe("aborted");
+    expect(r.error).toBe("cancelled");
+    expect(r.tokenUsage).toMatchObject({ promptTokens: 120, completionTokens: 9 });
+  });
 
   it("an open fallback breaker refuses the hand-over without a request; the failure names the breaker and the provider", async () => {
     circuitRegistry

@@ -794,6 +794,122 @@ describe("cancelTask aborts the running runner (reliability audit R4)", () => {
   });
 });
 
+// A task the user cancelled is closed as cancelled whatever the runner hands
+// back after the abort: the run row is not "completed" or "failed", no
+// completed delivery and no failure alarm (task.cancelled already went out),
+// and the spend of the partial run is still booked.
+describe("dispatchTask: a result that arrives after its task was cancelled", () => {
+  it.each([
+    ["a success result (partial text)", true],
+    ["a failure result", false],
+  ])("%s closes the run as cancelled; no task.completed or task.failed", async (_label, success) => {
+    let returned = false;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        await new Promise<void>((resolve) => {
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        returned = true;
+        const out: RunnerOutput = {
+          success,
+          output: { text: "Example Corp has three off" },
+          ...(success ? { status: "DONE" as const } : { error: "cancelled" }),
+          toolCalls: [],
+          tokenUsage: { promptTokens: 120, completionTokens: 9 },
+          durationMs: 1,
+        };
+        return out;
+      },
+    });
+    const { taskId } = await submitTask({
+      title: "cancel me",
+      description: "long running chat",
+      tags: ["messaging"],
+      requiredTools: ["web_search"],
+    });
+    await vi.waitFor(() => {
+      if (!mockPrepare.mock.calls.length) throw new Error("not dispatched");
+    });
+    mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+    mockAll.mockReturnValueOnce([]); // no subtasks
+    expect(cancelTask(taskId)).toBe(true);
+    await vi.waitFor(() => {
+      if (!returned) throw new Error("runner did not return");
+      if (!vi.mocked(recordCost).mock.calls.length) throw new Error("cost not booked yet");
+    });
+
+    const runRowStatuses = mockRun.mock.calls
+      .map((c) => c[0] as { runId?: string; status?: string } | undefined)
+      .filter((p) => p?.runId !== undefined && p.status !== undefined)
+      .map((p) => p!.status);
+    expect(runRowStatuses).not.toContain("completed");
+    expect(runRowStatuses).not.toContain("failed");
+    // The cancelled row keeps what the runner reported: its usage and its text.
+    const cancelledRow = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, unknown> | undefined)
+      .find((p) => p?.runId !== undefined && "tokenUsage" in p && !("status" in p));
+    expect(cancelledRow).toBeDefined();
+    expect(JSON.parse(String(cancelledRow!.tokenUsage))).toEqual({
+      promptTokens: 120,
+      completionTokens: 9,
+    });
+    expect(String(cancelledRow!.output)).toContain("Example Corp has three off");
+    const sqls = mockPrepare.mock.calls.map((c) => String(c[0]));
+    expect(
+      sqls.some((q) => /UPDATE runs SET\s+status = 'cancelled'[\s\S]*run_id = @runId/.test(q)),
+    ).toBe(true);
+
+    const events = emitEventMock.mock.calls.map((c) => c[0]);
+    expect(events).not.toContain("task.completed");
+    expect(events).not.toContain("task.failed");
+    expect(events.filter((e) => e === "task.cancelled")).toHaveLength(1);
+    // No required-tools retry task is spawned for a cancelled run.
+    expect(
+      sqls.filter((q) => q.includes("INSERT INTO tasks")),
+    ).toHaveLength(1);
+    expect(recordCost).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordCost).mock.calls[0][0]).toMatchObject({
+      taskId,
+      promptTokens: 120,
+      completionTokens: 9,
+    });
+  });
+
+  it("a runner that throws on the abort closes the run as cancelled, not failed", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        await new Promise<void>((resolve) => {
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        throw new Error("This operation was aborted");
+      },
+    });
+    const { taskId } = await submitTask({
+      title: "cancel me",
+      description: "long running chat",
+    });
+    await vi.waitFor(() => {
+      if (!mockPrepare.mock.calls.length) throw new Error("not dispatched");
+    });
+    mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+    mockAll.mockReturnValueOnce([]); // no subtasks
+    expect(cancelTask(taskId)).toBe(true);
+
+    const runRowStatuses = () =>
+      mockRun.mock.calls
+        .map((c) => c[0] as { runId?: string; status?: string } | undefined)
+        .filter((p) => p?.runId !== undefined && p.status !== undefined)
+        .map((p) => p!.status);
+    await vi.waitFor(() => {
+      if (!runRowStatuses().length) throw new Error("run row not closed yet");
+    });
+    expect(runRowStatuses()).toEqual(["cancelled"]);
+    expect(emitEventMock.mock.calls.map((c) => c[0])).not.toContain("task.failed");
+  });
+});
+
 // 2026-09-29: the fast runner's DENUE guard reads ONLY the text the user (or
 // the schedule author) wrote — dropping this forward silently reverts every
 // chat and schedule to the title+description fallback.

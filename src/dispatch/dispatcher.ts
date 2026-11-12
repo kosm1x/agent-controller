@@ -966,6 +966,40 @@ async function dispatchWithSlot(
       ),
     );
 
+    // A cancelled task is closed as cancelled, whatever the runner handed back
+    // after the abort: never a completed run, never a completed delivery of the
+    // partial text, never a failure alarm (task.failed feeds the reaction
+    // engine). cancelTask already marked the task and emitted task.cancelled.
+    // No fallback re-run, retry or completion ledger; the spend is still booked.
+    if (abortController.signal.aborted) {
+      db.prepare(
+        `
+        UPDATE runs SET
+          status = 'cancelled',
+          runner_status = NULL,
+          output = @output,
+          error = @error,
+          token_usage = @tokenUsage,
+          tool_calls = @toolCalls,
+          duration_ms = @durationMs,
+          completed_at = datetime('now')
+        WHERE run_id = @runId
+      `,
+      ).run({
+        runId,
+        output: result.output
+          ? stringifyRedacted(result.output, ["pendingConfirmation"])
+          : null,
+        error: redactCredentialsForPersist(result.error),
+        tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
+        toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
+        durationMs: Date.now() - start,
+      });
+      updateTaskStatus(taskId, "cancelled");
+      recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
+      return;
+    }
+
     // Fast-fallback for a chat that misrouted to the nanoclaw coding sandbox and
     // failed there WITHOUT an error. The sandbox mounts ONLY mission-control, so a
     // plain question — or any non-mc-coding chat that slips classification — has
@@ -1386,10 +1420,15 @@ async function dispatchWithSlot(
     const errorMsg = errMsg(err);
     db.prepare(
       `
-      UPDATE runs SET status = 'failed', error = @error, completed_at = datetime('now')
+      UPDATE runs SET status = @status, error = @error, completed_at = datetime('now')
       WHERE run_id = @runId
     `,
-    ).run({ runId, error: redactCredentialsForPersist(errorMsg) });
+    ).run({
+      runId,
+      // A runner that throws on its abort was cancelled, not failed.
+      status: abortController.signal.aborted ? "cancelled" : "failed",
+      error: redactCredentialsForPersist(errorMsg),
+    });
 
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
     emitTraceEvent({

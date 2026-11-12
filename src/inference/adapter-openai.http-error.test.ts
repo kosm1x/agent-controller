@@ -178,6 +178,74 @@ describe("inferViaOpenAi — circuit-breaker probe", () => {
   });
 });
 
+describe("inferViaOpenAi — a caller's cancellation is not a provider failure", () => {
+  const abortError = () =>
+    new DOMException("This operation was aborted", "AbortError");
+
+  // The caller cancels while the request is in flight; the request then
+  // rejects the way fetch does on an aborted signal.
+  function stubFetchCancelledBy(caller: AbortController) {
+    const fetchMock = vi.fn(async () => {
+      caller.abort();
+      throw abortError();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("an abort during the request leaves the breaker's failure count unchanged, is not logged as a timeout, and is not failed over", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    cfg.inferenceFallbackUrl = "http://127.0.0.1:9/v1";
+    cfg.inferenceFallbackModel = "test-model";
+    const caller = new AbortController();
+    const fetchMock = stubFetchCancelledBy(caller);
+
+    const err = await inferViaOpenAi(request, { signal: caller.signal }).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+
+    expect(circuitRegistry.get("primary").getStatus().failures).toBe(0);
+    expect(circuitRegistry.get("fallback").getStatus().failures).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.flat().join("\n")).not.toContain("(timeout)");
+    // The caller's own abort error comes back unwrapped.
+    expect(err).toMatchObject({ name: "AbortError" });
+  });
+
+  it("a half-open breaker whose probe request the caller cancels gives the probe back: a probe is handed out again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const primary = circuitRegistry.get("primary", {
+      failureThreshold: 1,
+      cooldownMs: 0,
+    });
+    primary.recordFailure(); // OPEN; the next admission is the HALF_OPEN probe
+    const caller = new AbortController();
+    const fetchMock = stubFetchCancelledBy(caller);
+
+    await inferViaOpenAi(request, { signal: caller.signal }).catch(() => {});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the probe request went out
+    // Released unjudged: back to OPEN with the cooldown spent, not held.
+    expect(primary.getStatus().state).toBe("OPEN");
+    expect(primary.allowRequest()).toBe(true);
+  });
+
+  it("an abort the caller did not ask for (the request timeout) still counts as a provider failure", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw abortError();
+      }),
+    );
+    await expect(
+      inferViaOpenAi(request, { signal: new AbortController().signal }),
+    ).rejects.toThrow(/All inference providers failed/);
+    expect(circuitRegistry.get("primary").getStatus().failures).toBe(1);
+  });
+});
+
 /** A body that delivers each string as its own network chunk. */
 function chunkedBody(parts: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();

@@ -709,7 +709,9 @@ export async function inferViaOpenAi(
   const config = getConfig();
 
   // Provider pin (SDK last line): only the named provider is considered —
-  // never a failover to the rest of the list, and no breaker side effects.
+  // never a failover to the rest of the list. The pinned provider's own
+  // circuit breaker still gates the call and records its outcome; no other
+  // provider's breaker is consulted or touched.
   const providers = loadProviders().filter(
     (p) => !onlyProvider || p.name === onlyProvider,
   );
@@ -806,6 +808,12 @@ export async function inferViaOpenAi(
         // metrics, no retry or failover (every provider needs the same scrub).
         if (err instanceof SecretScrubUnavailableError) {
           breaker.releaseProbe(probe); // a HALF_OPEN probe goes back unjudged
+          throw err;
+        }
+        // The caller cancelled: not a provider failure and not a timeout — no
+        // breaker or provider metrics record, no retry, no failover.
+        if (signal?.aborted) {
+          breaker.releaseProbe(probe);
           throw err;
         }
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -1349,6 +1357,11 @@ export async function inferWithToolsViaOpenAi(
   // Rounds whose inference call returned: an early exit reports these, not the limit.
   let roundsRan = 0;
   let has413Retried = false;
+  // A request refused as too large (413) produced no model turn, so its resend
+  // reuses the round index. At most one resend per index: the 413 latch can be
+  // reset by a pre-round compaction, and this keeps the loop bounded anyway
+  // (at most 2 × maxRounds main calls).
+  let resent413Round = -1;
   // Consecutive main-loop compactions that left the conversation still over
   // threshold — the compaction-exhaustion guard below breaks the loop at k=2.
   let noProgressCompactions = 0;
@@ -1555,8 +1568,13 @@ export async function inferWithToolsViaOpenAi(
       const errText = errMsg(err);
 
       // 413 auto-compression: force-compress via pipeline and retry once
-      if (errText.includes("413") && !has413Retried) {
+      if (
+        errText.includes("413") &&
+        !has413Retried &&
+        resent413Round !== round
+      ) {
         has413Retried = true;
+        resent413Round = round;
         console.log(
           `[inference] 413 payload too large at round ${round}, force-compressing`,
         );
@@ -1568,6 +1586,7 @@ export async function inferWithToolsViaOpenAi(
           options?.compressionFocusTopic,
         );
         conversation = c413.messages;
+        round--; // the resend is the same round: no turn was produced
         continue;
       }
 
