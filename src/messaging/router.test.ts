@@ -338,11 +338,41 @@ import {
   _testOpenWorkBlock,
 } from "./router.js";
 import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetMailboxPasswords,
+  forgetProvenPasswords,
+  provenPasswords,
+  recordUserPasswordProof,
+} from "../lib/v8-4/mailbox-passwords.js";
+import { enterRunToolContext } from "../tools/rule-of-two.js";
+import {
   OPEN_WORK_HEADING,
   OPEN_WORK_SCAN_LIMIT,
   OPEN_WORK_SQL,
   OPEN_WORK_WINDOW_MS,
 } from "./open-work.js";
+// The seen store reads the database, which is mocked here: a test names the
+// fingerprints the mailbox tool "printed" (synthetic), or makes the check throw.
+const seenStub = vi.hoisted(() => ({
+  fps: new Set<string>(),
+  calls: 0,
+  fail: false,
+}));
+vi.mock("../lib/v8-4/mailbox-passwords.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/v8-4/mailbox-passwords.js")>();
+  return {
+    ...actual,
+    isSeenPassword: (fp: string) => {
+      seenStub.calls++;
+      if (seenStub.fail) throw new Error("seen store unavailable");
+      return seenStub.fps.has(fp);
+    },
+  };
+});
 // Off by default (null → the real module); a string answers the fast path with it.
 const fastPathStub = vi.hoisted(() => ({ reply: null as string | null }));
 vi.mock("./fast-path.js", async (importOriginal) => {
@@ -547,6 +577,48 @@ describe("MessageRouter", () => {
           .filter((c) => JSON.stringify(c[1] ?? {}).includes("fast-path")),
       ).toEqual([]);
     }
+
+    it("a mailbox password the tool printed has no proof on the fast path: withheld in place, and the day log, thread and retention get the withheld text", async () => {
+      const stale = "PriorTestPassWordQRS2345";
+      seenStub.fps.add(passwordFingerprint(stale));
+      try {
+        fastPathStub.reply = `¡Hola! box@example.test, contraseña: \`${stale}\``;
+        const submitsBefore = vi.mocked(submitTask).mock.calls.length;
+        await greet();
+
+        expect(vi.mocked(submitTask).mock.calls.length).toBe(submitsBefore);
+        const sent = waAdapter.sentMessages.map((m) => m.text);
+        expect(sent).toEqual([
+          `¡Hola! box@example.test, contraseña: \`${PASSWORD_WITHHELD_PLACEHOLDER}\`\n\n${PASSWORD_WITHHELD_LINE}`,
+        ]);
+        expect(dayLogWrites().join(" ")).not.toContain(stale);
+        const last = _testThreadEntries(threadKey("whatsapp", owner)).at(-1)!;
+        expect(last.text).not.toContain(stale);
+        expect(
+          memoryRetainSpy.mock.calls.map((c) => c[0] as string).join("\n"),
+        ).not.toContain(stale);
+      } finally {
+        seenStub.fps.clear();
+      }
+    });
+
+    it("the fast-path check takes the user's own message as proof: a value typed there passes unchanged", () => {
+      // Only greetings reach the fast path, so the method is called directly.
+      const typed = "PriorTestPassWordQRS2345";
+      seenStub.fps.add(passwordFingerprint(typed));
+      try {
+        const gate = router as unknown as {
+          withholdFastPathPasswords(text: string, userText: string): string;
+        };
+        const reply = `Listo, queda ${typed}.`;
+        expect(gate.withholdFastPathPasswords(reply, `ponle ${typed}`)).toBe(reply);
+        expect(gate.withholdFastPathPasswords(reply, "ponle otra")).toBe(
+          `Listo, queda ${PASSWORD_WITHHELD_PLACEHOLDER}.\n\n${PASSWORD_WITHHELD_LINE}`,
+        );
+      } finally {
+        seenStub.fps.clear();
+      }
+    });
 
     it("a reply that is empty after filtering is not sent and falls through to the normal path", async () => {
       fastPathStub.reply = " \n\n ";
@@ -2887,6 +2959,22 @@ describe("MessageRouter", () => {
       ]);
       recordUserEvidence("task-evidence-4", "solo", undefined);
       expect(numbers.takeToolEvidence("task-evidence-4")).toEqual(["solo"]);
+    });
+
+    it("recordUserEvidence: only the message of this turn is password proof, never an earlier user turn", () => {
+      _resetMailboxPasswords();
+      const now = "FakeTestPassWordXYZ2345";
+      const before = "PriorTestPassWordQRS2345";
+      recordUserEvidence("task-evidence-pw", `ponle ${now}`, [
+        { role: "user", content: `la anterior era ${before}` },
+      ]);
+      const proof = provenPasswords("task-evidence-pw");
+      expect(proof.has(passwordFingerprint(now))).toBe(true);
+      expect(proof.has(passwordFingerprint(before))).toBe(false);
+      // A record after the task was freed (the re-run's late `.then`) is refused.
+      forgetProvenPasswords("task-evidence-pw");
+      recordUserEvidence("task-evidence-pw", `ponle ${now}`, undefined);
+      expect(provenPasswords("task-evidence-pw").size).toBe(0);
     });
 
     it("audit R3 S3: the scope re-run's rebuilt description is scrubbed too", async () => {
@@ -8084,6 +8172,94 @@ describe("holdScopeAsks — streaming guard (2026-09-06)", () => {
     feed("exec` para esto.");
     feed(" Pídeme con \"usa shell_exec\".");
     expect(s.calls).toEqual(["append:Necesito `shell_", "reset:⏳"]);
+  });
+
+  describe("mailbox passwords", () => {
+    const STALE = "PriorTestPassWordQRS2345";
+    const screen = () => {
+      const st = { shown: "" };
+      return {
+        st,
+        appendChunk: (t: string) => {
+          st.shown += t;
+        },
+        reset: (p = "⏳") => {
+          st.shown = p;
+        },
+      };
+    };
+    beforeEach(() => {
+      _resetMailboxPasswords();
+      seenStub.fps.clear();
+      seenStub.calls = 0;
+      seenStub.fail = false;
+    });
+    afterEach(() => {
+      seenStub.fps.clear();
+      seenStub.fail = false;
+    });
+
+    it("a seen value with no proof wipes the placeholder and holds every later chunk until finalize", () => {
+      seenStub.fps.add(passwordFingerprint(STALE));
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      feed("Listo: box@example.test\n");
+      feed("contraseña: `PriorTestPa");
+      feed("ssWordQRS2345`");
+      expect(s.st.shown).toBe("⏳");
+      // Latched: unlike a scope ask, it never streams again — if finalize then
+      // fails and a fresh send goes out, the old message shows only the placeholder.
+      feed(" Aquí el resto. ".repeat(80));
+      feed("Fin.");
+      expect(s.st.shown).toBe("⏳");
+    });
+
+    it("a still-growing final run is checked once it reaches 16, and again as it grows", () => {
+      seenStub.fps.add(passwordFingerprint(STALE));
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      feed("clave ");
+      for (const ch of STALE) feed(ch);
+      expect(s.st.shown).toBe("⏳");
+    });
+
+    it("a value proven in this run streams through", () => {
+      seenStub.fps.add(passwordFingerprint(STALE));
+      recordUserPasswordProof("t-stream", `es ${STALE}`);
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      enterRunToolContext("t-stream", () => {
+        feed("queda ");
+        feed(STALE);
+      });
+      expect(s.st.shown).toBe(`queda ${STALE}`);
+    });
+
+    it("only the new tail is scanned: each candidate is checked once on a long stream", () => {
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      const piece = "folio ABCDEFGH23456789XYZ listo. ";
+      for (let i = 0; i < 2000; i++) feed(piece);
+      expect(seenStub.calls).toBe(2000);
+      expect(s.st.shown).toBe(piece.repeat(2000));
+    });
+
+    it("a check that throws holds the stream", () => {
+      seenStub.fail = true;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      feed("hola ");
+      expect(s.st.shown).toBe("hola ");
+      feed("ABCDEFGH23456789XYZ");
+      expect(s.st.shown).toBe("⏳");
+      feed(" más");
+      expect(s.st.shown).toBe("⏳");
+      expect(warn.mock.calls.map((c) => c.join(" "))).toEqual([
+        "[router] password-gate stream check failed — holding the stream",
+      ]);
+      warn.mockRestore();
+    });
   });
 
   it("qa-audit W1: a reply that asked and then kept going streams again in full once the ask scrolls out", () => {

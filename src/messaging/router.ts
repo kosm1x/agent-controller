@@ -182,6 +182,17 @@ import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
 import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
+  candidateFingerprints,
+  hasUnprovenValue,
+  withholdUnprovenValues,
+} from "../lib/v8-4/password-gate.js";
+import {
+  isSeenPassword,
+  provenPasswords,
+  recordUserPasswordProof,
+} from "../lib/v8-4/mailbox-passwords.js";
+import { currentRunTaskId } from "../tools/rule-of-two.js";
+import {
   detectScopeMiss,
   stripScopeAskTail,
   groupsForTool,
@@ -580,6 +591,9 @@ export function recordUserEvidence(
   history: readonly ConversationTurn[] | undefined,
 ): void {
   try {
+    // Only this turn's message is password proof (mailbox-passwords.ts);
+    // the earlier user turns feed the figure corpus alone.
+    recordUserPasswordProof(taskId, message);
     recordToolEvidence(taskId, message);
     const userTurns = (history ?? [])
       .filter((t) => t.role === "user")
@@ -902,6 +916,28 @@ interface ScopeRerunSpec {
 }
 
 /**
+ * The stream hold's password test (password-gate.ts): a value the mailbox
+ * tool printed that this run has not proven, from `from` on. The run is the
+ * one whose stream this is (the chunk arrives inside its tool context; with
+ * no run, nothing is proven). A failing check holds (the safe side).
+ */
+function holdForPassword(text: string, from: number): boolean {
+  try {
+    const proven = provenPasswords(currentRunTaskId());
+    return hasUnprovenValue(
+      text,
+      { isSeen: isSeenPassword, isProven: (fp) => proven.has(fp) },
+      from,
+    );
+  } catch {
+    console.warn(
+      "[router] password-gate stream check failed — holding the stream",
+    );
+    return true;
+  }
+}
+
+/**
  * Streaming guard for scope asks (2026-09-06). The Telegram placeholder was
  * edited with the raw reply as it streamed, so «Necesito `shell_exec` para
  * esto.» was on the operator's screen for the seconds before the scope-miss
@@ -922,8 +958,24 @@ export function holdScopeAsks(stream: {
 }): (chunk: string) => void {
   let accumulated = "";
   let holding = false;
+  // An unproven mailbox password (password-gate.ts) latches the hold: it is
+  // withheld at completion, so it never stays on screen — finalize() writes
+  // the checked text, and if finalize fails the old message shows only the
+  // placeholder. Only the new tail is scanned (a run cut by the previous
+  // end is walked back), so a long reply stays linear.
+  let passwordHeld = false;
+  let scanned = 0;
   return (chunk: string) => {
     accumulated += chunk;
+    if (passwordHeld) return;
+    const from = scanned;
+    scanned = accumulated.length;
+    if (holdForPassword(accumulated, from)) {
+      passwordHeld = true;
+      if (!holding) stream.reset("⏳");
+      holding = true;
+      return;
+    }
     if (looksLikeScopeAsk(accumulated)) {
       if (!holding) {
         holding = true;
@@ -3250,7 +3302,9 @@ export class MessageRouter {
           );
         }
         if (!filtered.text || filtered.failureLine !== undefined) return false;
-        const out = filtered.text;
+        // No tools ran here: a mailbox password can only come from the
+        // thread, so the user's message is the only proof (password-gate.ts).
+        const out = this.withholdFastPathPasswords(filtered.text, msg.text);
 
         this.sendToChannel(msg.channel, msg.from, out);
         appendDayLog("JARVIS", out);
@@ -5596,6 +5650,32 @@ export class MessageRouter {
       const r = this.resolveApprovalRecipient(tk);
       return r ? this.expiryNotifier(r.channel, r.to, tk) : null;
     });
+  }
+
+  /**
+   * password-gate.ts on the conversational fast path (no task, no tools):
+   * the user's message is the only proof. Counts only in the log line; on
+   * any failure the text passes through unchanged.
+   */
+  private withholdFastPathPasswords(text: string, userText: string): string {
+    try {
+      const proven = new Set(candidateFingerprints(userText));
+      const gated = withholdUnprovenValues(text, {
+        isSeen: isSeenPassword,
+        isProven: (fp) => proven.has(fp),
+      });
+      if (gated.checked > 0) {
+        console.log(
+          `[router] password-gate fast-path checked=${gated.checked} withheld=${gated.withheld}`,
+        );
+      }
+      return gated.text;
+    } catch {
+      console.warn(
+        "[router] password-gate fast-path check failed — text passed through unchanged",
+      );
+      return text;
+    }
   }
 
   /**

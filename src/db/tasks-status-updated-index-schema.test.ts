@@ -53,10 +53,10 @@ const TERMINAL = ["completed", "completed_with_concerns", "failed", "cancelled"]
 const CUTOFF = "2026-08-10 00:00:00";
 
 describe("migration v16 — idx_tasks_status_updated_at (recurring blockers)", () => {
-  it("fresh DB: head is v16 with the index on (status, updated_at)", () => {
+  it("fresh DB: head is v17 with the index on (status, updated_at)", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     expect(indexCols(db, "idx_tasks_status_updated_at")).toEqual([
       "status",
       "updated_at",
@@ -121,7 +121,7 @@ describe("migration v16 — idx_tasks_status_updated_at (recurring blockers)", (
     raw.close();
 
     initDatabase(tmpDbPath);
-    expect(getDatabase().pragma("user_version", { simple: true })).toBe(16);
+    expect(getDatabase().pragma("user_version", { simple: true })).toBe(17);
     expect(indexCols(getDatabase(), "idx_tasks_status_updated_at")).toEqual([
       "status",
       "updated_at",
@@ -132,6 +132,6 @@ describe("migration v16 — idx_tasks_status_updated_at (recurring blockers)", (
     pin.exec("PRAGMA user_version = 15;");
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
-    expect(getDatabase().pragma("user_version", { simple: true })).toBe(16);
+    expect(getDatabase().pragma("user_version", { simple: true })).toBe(17);
   });
 });

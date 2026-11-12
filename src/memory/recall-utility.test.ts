@@ -954,7 +954,7 @@ describe("snippet_counts + used_ids (queue 4bt P2 Step 0)", () => {
     expect(store.rows[1]!.result_snippets).toBe(store.rows[0]!.result_snippets);
   });
 
-  it("(f) a fresh initDatabase has both columns at head v16, and the real SQL round-trips", async () => {
+  it("(f) a fresh initDatabase has both columns at head v17, and the real SQL round-trips", async () => {
     const real = await vi.importActual<typeof import("../db/index.js")>("../db/index.js");
     const db = real.initDatabase(":memory:");
     try {
@@ -965,7 +965,7 @@ describe("snippet_counts + used_ids (queue 4bt P2 Step 0)", () => {
         expect.objectContaining({ name: "used_ids", type: "TEXT" }),
         expect.objectContaining({ name: "snippet_counts", type: "TEXT" }),
       ]);
-      expect(db.pragma("user_version", { simple: true })).toBe(16);
+      expect(db.pragma("user_version", { simple: true })).toBe(17);
 
       dbSwitch.real = db;
       log(["11", "22", "33"]);
@@ -1016,7 +1016,7 @@ describe("snippet_counts + used_ids (queue 4bt P2 Step 0)", () => {
       raw.close();
 
       real.initDatabase(path);
-      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(16);
+      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(17);
       expect(cols()).toEqual(["used_ids", "snippet_counts"]);
       expect(real.getDatabase().prepare("SELECT used_ids, snippet_counts FROM recall_audit").all()).toEqual([
         { used_ids: null, snippet_counts: null },
@@ -1024,7 +1024,7 @@ describe("snippet_counts + used_ids (queue 4bt P2 Step 0)", () => {
       real.closeDatabase();
 
       expect(() => real.initDatabase(path)).not.toThrow();
-      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(16);
+      expect(real.getDatabase().pragma("user_version", { simple: true })).toBe(17);
       expect(cols()).toEqual(["used_ids", "snippet_counts"]);
     } finally {
       real.closeDatabase();

@@ -81,6 +81,9 @@ export type TraceEventName =
   // Usability Phase 3 (2026-08-23): artifact provenance + citation checks
   | "provenance.checked"
   | "citations.checked"
+  // password-gate.ts: a reply stated mailbox passwords ({checked, withheld}:
+  // counts only, never a value)
+  | "password.checked"
   // Queue 2026-10-08 (late) item 10: done-claim after a failed write
   | "write.failure_claim"
   // S6 WS2: the project a new task was attributed to at insert ({slug, source}, or nulls)

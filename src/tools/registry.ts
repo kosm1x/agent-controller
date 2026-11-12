@@ -21,6 +21,7 @@ import {
   recordWriteOutcome,
   targetsRunWrite,
 } from "../lib/v8-4/numbers.js";
+import { registerMailboxResult } from "../lib/v8-4/mailbox-passwords.js";
 import { toolMetrics } from "../observability/tool-metrics.js";
 import {
   resolveRenderedPlaceholders,
@@ -491,6 +492,10 @@ export class ToolRegistry {
     try {
       const result = scrubResult(await tool.execute(resolved.args));
       toolMetrics.record(name, Date.now() - start, true);
+      // Mailbox passwords (mailbox-passwords.ts): on the result the model
+      // receives, independent of the evidence rules below — a run that wrote
+      // a file must not lose a real login result. Never throws.
+      registerMailboxResult(name, args, result, currentRunTaskId());
       // V8.4 numbers-provenance corpus: every tool result of the current run
       // (task id from the run-tool context; no-op outside a run). Digested +
       // capped inside the collector; freed by the dispatcher at completion.

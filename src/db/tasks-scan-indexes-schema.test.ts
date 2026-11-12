@@ -56,10 +56,10 @@ const plan = (db: Database.Database, sql: string, ...params: unknown[]): string 
     .join("\n");
 
 describe("migration v10 — tasks indexes for idle-detect / canary / MCP status", () => {
-  it("fresh DB: head is v16 with both v10 indexes on the expected columns", () => {
+  it("fresh DB: head is v17 with both v10 indexes on the expected columns", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     expect(indexCols(db, "idx_tasks_spawn_updated")).toEqual([
       "spawn_type",
       "updated_at",
@@ -142,7 +142,7 @@ describe("migration v10 — tasks indexes for idle-detect / canary / MCP status"
 
     initDatabase(tmpDbPath);
     let db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     expect(indexCols(db, "idx_tasks_spawn_updated")).toEqual([
       "spawn_type",
       "updated_at",
@@ -156,6 +156,6 @@ describe("migration v10 — tasks indexes for idle-detect / canary / MCP status"
     pin.close();
     expect(() => initDatabase(tmpDbPath!)).not.toThrow();
     db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
   });
 });

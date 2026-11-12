@@ -29,6 +29,12 @@ export const REPORT_PERSIST_PREFIX = "📄 Reporte guardado:";
  */
 export const SWARM_FOOTER_PREFIX = "[swarm] sin verificar: ";
 
+/**
+ * password-gate.ts: the one line appended when a mailbox password this run
+ * did not prove was withheld — a harness line, never a model claim.
+ */
+export const PASSWORD_WITHHELD_PREFIX = "🔒 No confirmé";
+
 /** Prefixes of every line the completion ledger can append to a deliverable. */
 export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "✔ Verificado:",
@@ -41,6 +47,7 @@ export const LEDGER_LINE_PREFIXES: readonly string[] = [
   "⚠️ Quité ", // "⚠️ Quité N referencias que no existen…"
   REPORT_PERSIST_PREFIX,
   SWARM_FOOTER_PREFIX,
+  PASSWORD_WITHHELD_PREFIX,
 ];
 
 export function isLedgerLine(line: string): boolean {

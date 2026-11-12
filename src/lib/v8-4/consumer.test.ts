@@ -19,11 +19,23 @@ import {
 import { declareGates, listGates, recordGateResult } from "./gates.js";
 import {
   _resetToolEvidence,
+  auditNumbers,
   recordInjectedEvidence,
   recordToolEvidence,
   recordWriteOutcome,
   takeWriteOutcome,
 } from "./numbers.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "./password-gate.js";
+import {
+  _resetMailboxPasswords,
+  provenPasswords,
+  recordUserPasswordProof,
+  registerMailboxResult,
+} from "./mailbox-passwords.js";
 import { emitTraceEvent } from "../../observability/task-trace.js";
 import { isLedgerLine } from "./ledger-lines.js";
 import { _resetCitationCache } from "./citations.js";
@@ -50,7 +62,15 @@ const mockRunGrader = vi.mocked(runGrader);
 // Item 10: pass-through spies, so a test can make the take / the emit fail.
 vi.mock("./numbers.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./numbers.js")>();
-  return { ...actual, takeWriteOutcome: vi.fn(actual.takeWriteOutcome) };
+  return {
+    ...actual,
+    takeWriteOutcome: vi.fn(actual.takeWriteOutcome),
+    auditNumbers: vi.fn(actual.auditNumbers),
+  };
+});
+vi.mock("./mailbox-passwords.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./mailbox-passwords.js")>();
+  return { ...actual, provenPasswords: vi.fn(actual.provenPasswords) };
 });
 vi.mock("../../observability/task-trace.js", async (importOriginal) => {
   const actual =
@@ -58,6 +78,8 @@ vi.mock("../../observability/task-trace.js", async (importOriginal) => {
   return { ...actual, emitTraceEvent: vi.fn(actual.emitTraceEvent) };
 });
 const mockTakeWrite = vi.mocked(takeWriteOutcome);
+const mockProven = vi.mocked(provenPasswords);
+const mockAuditNumbers = vi.mocked(auditNumbers);
 const mockEmit = vi.mocked(emitTraceEvent);
 
 const ENV_KEYS = [
@@ -1549,5 +1571,213 @@ describe("applyCompletionLedger — ONE verdict for trace, footer and output.gat
     const out = await applyCompletionLedger(base());
     expect(out.gates).toBeNull();
     expect((out.output as { text: string }).text).toBe("Listo. Hice todo.");
+  });
+});
+
+describe("applyCompletionLedger — a mailbox password needs proof from this run", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const STALE = "PriorTestPassWordQRS2345";
+  const DIGITS = "2345678923456789"; // a value the numbers audit reads as a figure
+  const BOX = "box@example.test";
+  const verifiedOut = (pw: string) =>
+    JSON.stringify({
+      stdout: `verified: IMAP login OK\npassword: ${pw}\nlogin: ${BOX}\n`,
+      exit_code: 0,
+    });
+  // The mailbox tool printed and proved the value in an earlier task.
+  const seenEarlier = (pw: string) =>
+    registerMailboxResult("shell_exec", { command: "stalwart-inbox show box" }, verifiedOut(pw), "t0");
+  const provedNow = (pw: string) =>
+    registerMailboxResult("shell_exec", { command: "stalwart-inbox show box" }, verifiedOut(pw), "t1");
+  const textOf = (o: RunnerOutput["output"]) =>
+    typeof o === "string" ? o : (o as { text: string }).text;
+
+  beforeEach(() => {
+    _resetMailboxPasswords();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a stale value is withheld, one line is appended, logs and trace carry counts only", async () => {
+    seenEarlier(STALE);
+    const log = vi.mocked(console.log);
+    const out = await applyCompletionLedger(
+      base({ result: okResult({ text: `Listo: ${BOX}\n| clave | \`${STALE}\` |` }) }),
+    );
+    expect(textOf(out.output)).toBe(
+      `Listo: ${BOX}\n| clave | \`${PASSWORD_WITHHELD_PLACEHOLDER}\` |\n\n${PASSWORD_WITHHELD_LINE}`,
+    );
+    const traces = traceNames("t1");
+    expect(traces.find((t) => t.name === "password.checked")?.attrs).toEqual({ checked: 1, withheld: 1 });
+    const lines = log.mock.calls.map((c) => c.join(" "));
+    expect(lines.filter((l) => l.includes("password-gate"))).toEqual([
+      "[v8-4] password-gate task=t1 checked=1 withheld=1",
+    ]);
+    const everything = JSON.stringify([out, traces, lines]);
+    expect(everything).not.toContain(STALE);
+    expect(everything).not.toContain(passwordFingerprint(STALE));
+  });
+
+  it("the numbers audit and the grader see the withheld text (a value with digit groups)", async () => {
+    const DIG = "Fake2926Pass4455Test7788";
+    seenEarlier(DIG);
+    process.env.TASK_GATES_GRADER = "shadow";
+    registerGradeSpecs("t1", PROSE, "do the thing");
+    graderReturns([{ id: "GR-g-1.1", verdict: "met", evidence: "ok" }]);
+    mockAuditNumbers.mockClear();
+    const out = await applyCompletionLedger(base({ result: okResult({ text: `clave: ${DIG}` }) }));
+    await _drainShadowGradesForTests();
+    const delivered = `clave: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`;
+    expect(textOf(out.output)).toBe(delivered);
+    expect(mockAuditNumbers).toHaveBeenCalled();
+    expect(mockAuditNumbers.mock.calls[0]![0]).toBe(delivered);
+    expect(JSON.stringify(mockAuditNumbers.mock.calls)).not.toContain(DIG);
+    expect(mockRunGrader).toHaveBeenCalledTimes(1);
+    expect(mockRunGrader.mock.calls[0]![0].deliverable).toBe(delivered);
+  });
+
+  it("a value proven in this run passes untouched", async () => {
+    seenEarlier(PW);
+    provedNow(PW);
+    const text = `Listo: ${BOX}\ncontraseña: \`${PW}\``;
+    const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+    expect(textOf(out.output)).toBe(text);
+    expect(traceNames("t1").find((t) => t.name === "password.checked")?.attrs).toEqual({ checked: 1, withheld: 0 });
+  });
+
+  it("a value the user typed in this turn passes untouched", async () => {
+    seenEarlier(STALE);
+    recordUserPasswordProof("t1", `ponle esta: ${STALE}`);
+    const text = `Listo, ${BOX} queda con ${STALE}`;
+    const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+    expect(textOf(out.output)).toBe(text);
+  });
+
+  it("a value seen in an earlier task and read back from a note by a file tool is withheld", async () => {
+    seenEarlier(STALE);
+    recordToolEvidence("t1", `notas: ${BOX} -> ${STALE}`);
+    recordInjectedEvidence("t1", `[JME MEMORY]\n1. [fact] ${BOX}: ${STALE}`);
+    const out = await applyCompletionLedger(base({ result: okResult({ text: `${BOX}: ${STALE}` }) }));
+    expect(textOf(out.output)).toBe(`${BOX}: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`);
+  });
+
+  it("two values, one proven: checked 2, withheld 1", async () => {
+    seenEarlier(STALE);
+    provedNow(PW);
+    const out = await applyCompletionLedger(
+      base({ result: okResult({ text: `nueva: ${PW}\nanterior: ${STALE}` }) }),
+    );
+    expect(textOf(out.output)).toBe(
+      `nueva: ${PW}\nanterior: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`,
+    );
+    expect(traceNames("t1").find((t) => t.name === "password.checked")?.attrs).toEqual({ checked: 2, withheld: 1 });
+  });
+
+  it("a reply with no seen value is byte-identical and leaves no trace", async () => {
+    const text = `${BOX} contraseña: \`${STALE}\``;
+    const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+    expect(textOf(out.output)).toBe(text);
+    expect(traceNames("t1").some((t) => t.name === "password.checked")).toBe(false);
+  });
+
+  describe("a JSON-encoded string carrier stays valid JSON, the line inside the text field", () => {
+    const carriers: Array<[string, string, string]> = [
+      ["a \\n escape", JSON.stringify({ text: `clave:\n${STALE}`, content: `resumen ${STALE}` }), "clave:\n"],
+      ["a \\t escape", JSON.stringify({ text: `clave:\t${STALE}` }), "clave:\t"],
+      ["a \\u00f1 escape", `{"text":"contrase\\u00f1a \\u00f1${STALE}"}`, "contraseña ñ"],
+    ];
+    it.each(carriers)("%s directly before the value", async (_name, carrier, before) => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult(carrier) }));
+      expect(typeof out.output).toBe("string");
+      expect(out.output as string).not.toContain(STALE);
+      const parsed = JSON.parse(out.output as string) as { text: string; content?: string };
+      expect(parsed.text).toBe(`${before}${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`);
+      expect((out.output as string).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+      if (parsed.content !== undefined) expect(parsed.content).toBe(`resumen ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    });
+
+    it("a proven value in such a carrier: output byte-identical to the input", async () => {
+      seenEarlier(STALE);
+      provedNow(STALE);
+      const carrier = JSON.stringify({ text: `clave:\n${STALE}` });
+      const out = await applyCompletionLedger(base({ result: okResult(carrier) }));
+      expect(out.output).toBe(carrier);
+    });
+
+    it("a JSON carrier with no deliverable field takes the plain-text path: the value is gone", async () => {
+      seenEarlier(STALE);
+      const carrier = JSON.stringify({ answer: `clave: ${STALE}` });
+      const out = await applyCompletionLedger(base({ result: okResult(carrier) }));
+      expect(JSON.stringify(out.output)).not.toContain(STALE);
+      expect(out.output).toBe(
+        `${JSON.stringify({ answer: `clave: ${PASSWORD_WITHHELD_PLACEHOLDER}` })}\n\n${PASSWORD_WITHHELD_LINE}`,
+      );
+    });
+
+    it("a string that starts with { but is not JSON takes the plain-text path", async () => {
+      seenEarlier(STALE);
+      const text = `{ clave:\n${STALE}`;
+      const out = await applyCompletionLedger(base({ result: okResult(text) }));
+      expect(out.output).toBe(`${`{ clave:\n${PASSWORD_WITHHELD_PLACEHOLDER}`}\n\n${PASSWORD_WITHHELD_LINE}`);
+    });
+  });
+
+  it("every text field of the output loses the value, not only the delivered one", async () => {
+    seenEarlier(STALE);
+    const out = await applyCompletionLedger(
+      base({ result: okResult({ finalAnswer: `${BOX}: ${STALE}`, content: `resumen: ${STALE}` }) }),
+    );
+    expect(JSON.stringify(out.output)).not.toContain(STALE);
+    expect(JSON.stringify(out.output).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+  });
+
+  it("an object whose text already carries the line and a new unproven value: the line stays once", async () => {
+    seenEarlier(STALE);
+    const out = await applyCompletionLedger(
+      base({ result: okResult({ text: `nueva: ${STALE}\n\n${PASSWORD_WITHHELD_LINE}` }) }),
+    );
+    expect(textOf(out.output)).toBe(`nueva: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`);
+    expect(textOf(out.output).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+  });
+
+  it("a plain string that already carries the line and a new unproven value: the line stays once", async () => {
+    seenEarlier(STALE);
+    const out = await applyCompletionLedger(
+      base({ result: okResult(`nueva: ${STALE}\n\n${PASSWORD_WITHHELD_LINE}`) }),
+    );
+    expect(out.output).toBe(`nueva: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`);
+    expect((out.output as string).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+  });
+
+  it("is idempotent: a second pass over its own output changes nothing", async () => {
+    seenEarlier(STALE);
+    const first = await applyCompletionLedger(base({ result: okResult({ text: `${BOX}: ${STALE}` }) }));
+    const second = await applyCompletionLedger(
+      base({ taskId: "t2", runId: "r2", result: okResult(first.output) }),
+    );
+    expect(textOf(second.output)).toBe(textOf(first.output));
+  });
+
+  it("the run's proven set is freed with its evidence", async () => {
+    provedNow(PW);
+    expect(provenPasswords("t1").size).toBe(1);
+    await applyCompletionLedger(base());
+    expect(provenPasswords("t1").size).toBe(0);
+  });
+
+  it("an internal failure passes the text through unchanged with one fixed warn line", async () => {
+    seenEarlier(STALE);
+    mockProven.mockImplementationOnce(() => {
+      throw new Error("proof store unavailable");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const text = `${BOX}: ${STALE}`;
+    const out = await applyCompletionLedger(base({ result: okResult({ text }) }));
+    expect(textOf(out.output)).toBe(text);
+    const lines = warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("password-gate"));
+    expect(lines).toEqual(["[v8-4] password-gate task=t1 check failed — text passed through unchanged"]);
   });
 });

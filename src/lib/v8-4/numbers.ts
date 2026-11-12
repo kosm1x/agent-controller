@@ -37,6 +37,7 @@
  */
 
 import { isLedgerLine } from "./ledger-lines.js";
+import { forgetProvenPasswords } from "./mailbox-proven.js";
 
 const MAX_ITEM_CHARS = 8 * 1024;
 const MAX_TASK_CHARS = 256 * 1024;
@@ -65,6 +66,7 @@ export function takeToolEvidence(taskId: string): string[] {
   evidenceByTask.delete(taskId);
   writtenByTask.delete(taskId);
   lastWriteByTask.delete(taskId);
+  forgetProvenPasswords(taskId);
   return entry ? entry.chunks : [];
 }
 

@@ -727,6 +727,78 @@ describe("evidence corpus typing (usability Phase 3 — R1 C4, R2 C-1/C-4, R3 C-
     });
     expect(takeToolEvidence("t-lau")).toEqual(["independent 123456", "Ventas: $9,400,000"]);
   });
+
+  it("mailbox tool results (show / set-password / create, with and without `| head -12`) register through the real execute: seen and proven for the run", async () => {
+    const { reg, enterRunToolContext, takeToolEvidence } = await setup();
+    const mp = await import("../lib/v8-4/mailbox-passwords.js");
+    const { passwordFingerprint } = await import("../lib/v8-4/password-gate.js");
+    mp._resetMailboxPasswords();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const box = "box@example.test";
+    // The tool's output: its lead lines, then print_verified_block.
+    const lead: Record<string, string[]> = {
+      show: [],
+      "set-password": [`password rotated for ${box}`],
+      create: [`created ${box}`, "credential file: /tmp/example-cred", "webmail: added to the webmail list"],
+    };
+    const block = (pw: string) => [
+      "verified: IMAP login OK",
+      `password: ${pw}`,
+      "the password contains no look-alike characters (no l, I, 1, O, 0); copy and paste it rather than typing where possible",
+      `login: ${box}`,
+      "incoming: IMAP mail.example.test port 993 SSL/TLS",
+      "outgoing: SMTP mail.example.test port 465 SSL/TLS",
+      "ports 587 and 143 are not served by this server",
+      "This is the ONLY valid password for this mailbox; every password shown earlier is dead.",
+      "Tell the user exactly this value; do not run set-password again unless the user asks for a new password.",
+    ];
+    const pwOf = (command: string) =>
+      `FakeTestPassWord${command.includes("head") ? "H" : "N"}${command.split(" ")[1].replace("-", "").slice(0, 4)}2345`;
+    const t = makeTool("shell_exec");
+    (t as { readOnlyHint?: boolean }).readOnlyHint = false;
+    t.execute = async (a) => {
+      const command = String(a.command);
+      const sub = command.split(" ")[1].split(" ")[0];
+      let lines = [...lead[sub], ...block(pwOf(command))];
+      if (command.includes("| head -12")) lines = lines.slice(0, 12);
+      return JSON.stringify({ stdout: lines.join("\n") + "\n", exit_code: 0 });
+    };
+    reg.register(t);
+    const w = makeTool("file_write");
+    w.execute = async () => '{"success":true}';
+    reg.register(w);
+    const commands = [
+      "stalwart-inbox show box",
+      "stalwart-inbox set-password box",
+      "stalwart-inbox create box",
+      "stalwart-inbox show box | head -12",
+      "stalwart-inbox set-password box | head -12",
+      "stalwart-inbox create box | head -12",
+    ];
+    expect(new Set(commands.map(pwOf)).size).toBe(commands.length);
+    await enterRunToolContext("t-mail", async () => {
+      for (const command of commands) await reg.execute("shell_exec", { command });
+    });
+    const proven = new Set(mp.provenPasswords("t-mail"));
+    for (const command of commands) {
+      const fp = passwordFingerprint(pwOf(command));
+      expect(mp.isSeenPassword(fp)).toBe(true);
+      expect(proven.has(fp)).toBe(true);
+    }
+    expect(takeToolEvidence("t-mail")).toHaveLength(commands.length);
+    expect(mp.provenPasswords("t-mail").size).toBe(0); // freed with the evidence
+
+    // A run that wrote a file first, and a command that targets it: no
+    // figure evidence, but the login result still registers.
+    const late = "stalwart-inbox set-password box | tee /tmp/box-notes.txt";
+    await enterRunToolContext("t-mail-w", async () => {
+      await reg.execute("file_write", { path: "/tmp/box-notes.txt", content: "x" });
+      await reg.execute("shell_exec", { command: late });
+    });
+    expect(mp.provenPasswords("t-mail-w").has(passwordFingerprint(pwOf(late)))).toBe(true);
+    expect(takeToolEvidence("t-mail-w")).toEqual([]);
+    vi.restoreAllMocks();
+  });
 });
 
 describe("writeTargetKeys — every row pinned (R4 audit W4-1)", () => {

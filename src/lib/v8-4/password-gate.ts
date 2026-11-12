@@ -1,0 +1,186 @@
+/**
+ * A mailbox password reaches the user only when this run proved it.
+ *
+ * The agent manages mailboxes with a command-line tool that prints a password
+ * only after a real login with it. A password the agent repeats from the
+ * conversation may already have been replaced. So the check works on the
+ * VALUE, never on the wording around it: a value the mailbox tool has ever
+ * printed ("seen", mailbox-passwords.ts) may appear in a reply only when it
+ * is also "proven" — printed by the mailbox tool in THIS run, or
+ * typed by the user in this turn's message. Anything else in a reply is
+ * never touched: no labels, no address rule, no layout rules.
+ *
+ * Candidates: the maximal runs of ASCII letters and digits of length 16–64
+ * (what the tool generates), found in one linear pass with no pattern
+ * engine. A longer run is not a candidate, so a seen value inside a longer
+ * letter/digit run is left alone. Formatting around a value (backticks,
+ * table cells, fences, bold, HTML tags) needs no handling: its delimiters
+ * are not letters or digits.
+ *
+ * Fail: every seen-and-unproven occurrence is replaced by
+ * `PASSWORD_WITHHELD_PLACEHOLDER` and `PASSWORD_WITHHELD_LINE` is appended
+ * once. Never blocked, never an error, never a second model call.
+ * Idempotent: the placeholder and the line hold no candidate.
+ *
+ * Pure: no store, no log. Values are compared by fingerprint
+ * (`passwordFingerprint`); callers log and trace counts only.
+ *
+ * Known limits (stated, not solved):
+ *   - a value the tool printed before this code existed is not seen until
+ *     the tool prints it again;
+ *   - a value the tool never printed is never touched;
+ *   - only the reply is checked: text a tool sends or writes elsewhere is
+ *     outside this check;
+ *   - it protects against handing over a password that was not just
+ *     confirmed; it is not a confidentiality control (which is why a partial
+ *     value may flash in a stream before the hold, and why stored run output
+ *     is not rewritten);
+ *   - streaming: the live message is reset as soon as a seen-and-unproven
+ *     value is in the streamed text, so the value can be on screen for a
+ *     moment before the reset; the final message is always the checked
+ *     text. The stream is not buffered.
+ */
+
+import { createHash } from "node:crypto";
+import { PASSWORD_WITHHELD_PREFIX } from "./ledger-lines.js";
+
+export const PASSWORD_MIN_LEN = 16;
+export const PASSWORD_MAX_LEN = 64;
+
+export const PASSWORD_WITHHELD_PLACEHOLDER = "[contraseña retenida]";
+
+/** The one line appended when at least one value was withheld. */
+export const PASSWORD_WITHHELD_LINE = `${PASSWORD_WITHHELD_PREFIX} con la herramienta en esta respuesta lo que marqué como ${PASSWORD_WITHHELD_PLACEHOLDER} y lo retuve; cuando me lo vuelvas a pedir, lo leeré con la herramienta antes de contestar.`;
+
+const FINGERPRINT_PREFIX = "mission-control/mailbox-password/v1:";
+
+/** sha256 hex of a fixed prefix + the value: stored, never the value. */
+export function passwordFingerprint(value: string): string {
+  return createHash("sha256")
+    .update(FINGERPRINT_PREFIX + value)
+    .digest("hex");
+}
+
+function isAsciiAlnum(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122)
+  );
+}
+
+export interface CandidateRun {
+  start: number;
+  end: number;
+}
+
+/**
+ * Maximal letter/digit runs of length 16–64 that end at or after `from`.
+ * A run cut by `from` is walked back to its start, at most 65 characters: a
+ * walk that stops inside the run leaves 65 or more of it ahead, which is
+ * too long to be a candidate. Linear.
+ */
+export function candidateRuns(text: string, from = 0): CandidateRun[] {
+  const out: CandidateRun[] = [];
+  const n = text.length;
+  let i = Math.max(0, Math.min(from, n));
+  let back = 0;
+  while (
+    i > 0 &&
+    back <= PASSWORD_MAX_LEN &&
+    isAsciiAlnum(text.charCodeAt(i - 1))
+  ) {
+    i--;
+    back++;
+  }
+  while (i < n) {
+    if (!isAsciiAlnum(text.charCodeAt(i))) {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < n && isAsciiAlnum(text.charCodeAt(i))) i++;
+    const len = i - start;
+    if (len >= PASSWORD_MIN_LEN && len <= PASSWORD_MAX_LEN) {
+      out.push({ start, end: i });
+    }
+  }
+  return out;
+}
+
+/** Fingerprints of every candidate in a text (the user's own message). */
+export function candidateFingerprints(text: string): string[] {
+  return candidateRuns(text).map((r) =>
+    passwordFingerprint(text.slice(r.start, r.end)),
+  );
+}
+
+/** What the check asks about a fingerprint; never sees a value. */
+export interface PasswordValueCheck {
+  isSeen(fingerprint: string): boolean;
+  isProven(fingerprint: string): boolean;
+}
+
+/**
+ * True when the text, from `from` on, holds a seen-and-unproven value (the
+ * stream hold). The seen store is asked only when a candidate exists.
+ */
+export function hasUnprovenValue(
+  text: string,
+  check: PasswordValueCheck,
+  from = 0,
+): boolean {
+  for (const r of candidateRuns(text, from)) {
+    const fp = passwordFingerprint(text.slice(r.start, r.end));
+    if (check.isSeen(fp) && !check.isProven(fp)) return true;
+  }
+  return false;
+}
+
+export interface PasswordGateResult {
+  text: string;
+  /** Candidates found in the seen set. */
+  checked: number;
+  /** Of those, the occurrences replaced (seen and not proven). */
+  withheld: number;
+}
+
+/** Replaces each seen-and-unproven occurrence; appends nothing. */
+export function replaceUnprovenValues(
+  text: string,
+  check: PasswordValueCheck,
+): PasswordGateResult {
+  let checked = 0;
+  let withheld = 0;
+  let out = "";
+  let last = 0;
+  for (const r of candidateRuns(text)) {
+    const fp = passwordFingerprint(text.slice(r.start, r.end));
+    if (!check.isSeen(fp)) continue;
+    checked++;
+    if (check.isProven(fp)) continue;
+    withheld++;
+    out += text.slice(last, r.start) + PASSWORD_WITHHELD_PLACEHOLDER;
+    last = r.end;
+  }
+  if (withheld === 0) return { text, checked, withheld };
+  return { text: out + text.slice(last), checked, withheld };
+}
+
+/** Appends the line unless the text already carries it. */
+export function withPasswordWithheldLine(text: string): string {
+  return text.includes(PASSWORD_WITHHELD_LINE)
+    ? text
+    : `${text}\n\n${PASSWORD_WITHHELD_LINE}`;
+}
+
+/** `replaceUnprovenValues` plus the one line when anything was withheld. */
+export function withholdUnprovenValues(
+  text: string,
+  check: PasswordValueCheck,
+): PasswordGateResult {
+  const res = replaceUnprovenValues(text, check);
+  return res.withheld > 0
+    ? { ...res, text: withPasswordWithheldLine(res.text) }
+    : res;
+}

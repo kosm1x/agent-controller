@@ -1557,6 +1557,18 @@ function setUpDatabase(_db: Database.Database): void {
         );
       },
     },
+    {
+      version: 17,
+      description:
+        "mailbox_password_seen — sha256 fingerprints (never the value) of every password the mailbox tool printed, so a reply can withhold one this run did not prove (src/lib/v8-4/mailbox-passwords.ts; newest 5,000 kept)",
+      up: (db) =>
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS mailbox_password_seen (
+            fingerprint TEXT PRIMARY KEY NOT NULL,
+            first_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+        `),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {

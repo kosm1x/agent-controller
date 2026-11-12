@@ -85,6 +85,13 @@ import {
   type WriteOutcome,
 } from "./numbers.js";
 
+import {
+  PASSWORD_WITHHELD_LINE,
+  replaceUnprovenValues,
+  type PasswordValueCheck,
+} from "./password-gate.js";
+import { passwordCheckFor, provenPasswords } from "./mailbox-passwords.js";
+
 export const LANDING_GATE_ID = "G-landing";
 
 export const LANDING_GATE_SPEC: GateSpec = {
@@ -188,6 +195,74 @@ export function appendToDeliverable(
   // (R1 audit W14 — it vanished exactly when the run produced nothing).
   next.text = suffix;
   return next;
+}
+
+/** Every text field loses each seen-and-unproven value; the line once. */
+function withholdInObject(
+  output: Record<string, unknown>,
+  check: PasswordValueCheck,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...output };
+  for (const field of DELIVERABLE_FIELDS) {
+    const cur = copy[field];
+    if (typeof cur === "string") {
+      copy[field] = replaceUnprovenValues(cur, check).text;
+    }
+  }
+  if ((extractDeliverableText(copy) ?? "").includes(PASSWORD_WITHHELD_LINE)) {
+    return copy;
+  }
+  return appendToDeliverable(
+    copy as RunnerOutput["output"],
+    PASSWORD_WITHHELD_LINE,
+  ) as Record<string, unknown>;
+}
+
+/**
+ * password-gate.ts at the one seam where the final text and the run's proof
+ * are both in hand. Called only when the delivered text had a hit: then
+ * every text field (not only the delivered one) loses each seen-and-unproven
+ * value and the one line is appended to the delivered text. A JSON-encoded
+ * string carrier (the shape `extractDeliverableText` parses) is rewritten as
+ * the object and re-encoded, so it stays valid JSON with the line inside the
+ * delivered field; any other string takes the plain-text path.
+ */
+function withholdUnprovenInOutput(
+  output: RunnerOutput["output"],
+  check: PasswordValueCheck,
+): RunnerOutput["output"] {
+  if (typeof output === "string") {
+    const carrier = parseJsonCarrier(output);
+    if (carrier) return JSON.stringify(withholdInObject(carrier, check));
+    const text = replaceUnprovenValues(output, check).text;
+    return text.includes(PASSWORD_WITHHELD_LINE)
+      ? text
+      : appendToDeliverable(text, PASSWORD_WITHHELD_LINE);
+  }
+  if (!output || typeof output !== "object") return output;
+  return withholdInObject(
+    output as Record<string, unknown>,
+    check,
+  ) as RunnerOutput["output"];
+}
+
+/** The object of a JSON-encoded carrier whose deliverable comes from it. */
+function parseJsonCarrier(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // Not JSON: the plain-text path.
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  return extractDeliverableText(parsed) === null
+    ? null
+    : (parsed as Record<string, unknown>);
 }
 
 /** Statuses the grader judges; anything else is an interrupted run (outcomes `interrupted`). */
@@ -470,7 +545,7 @@ export async function applyCompletionLedger(
   const { taskId, runId, result } = args;
   let output = result.output;
   let taskStatus = args.taskStatus;
-  const deliverable = extractDeliverableText(output) ?? "";
+  let deliverable = extractDeliverableText(output) ?? "";
 
   // ── numbers audit (always; free) ─────────────────────────────────────────
   // Usability Phase 3 (2026-08-23): runs on EVERY deliverable — a turn with
@@ -487,6 +562,37 @@ export async function applyCompletionLedger(
     lastWrite = takeWriteOutcome(taskId);
   } catch (err) {
     lastWriteErr = err ?? new Error("takeWriteOutcome failed");
+  }
+  // ── mailbox passwords (password-gate.ts) ────────────────────────────────
+  // Before the evidence is taken, the numbers audit and the grader, so all
+  // of them see what the user sees. Never throws into delivery: on any
+  // failure the text passes unchanged. Counts only — a value or fingerprint
+  // never reaches a log line or a trace.
+  try {
+    if (deliverable) {
+      const check = passwordCheckFor(provenPasswords(taskId));
+      const audit = replaceUnprovenValues(deliverable, check);
+      if (audit.checked > 0) {
+        if (audit.withheld > 0) {
+          const next = withholdUnprovenInOutput(output, check);
+          deliverable = extractDeliverableText(next) ?? "";
+          output = next;
+        }
+        console.log(
+          `[v8-4] password-gate task=${taskId} checked=${audit.checked} withheld=${audit.withheld}`,
+        );
+        emitTraceEvent({
+          taskId,
+          runId,
+          name: "password.checked",
+          attrs: { checked: audit.checked, withheld: audit.withheld },
+        });
+      }
+    }
+  } catch {
+    console.warn(
+      `[v8-4] password-gate task=${taskId} check failed — text passed through unchanged`,
+    );
   }
   const evidence = takeToolEvidence(taskId);
   try {

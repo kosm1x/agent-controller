@@ -45,10 +45,10 @@ const auditRows = (db: Database.Database, projectId: string): AuditRow[] =>
 const FAKE_SECRET = "fake-key-1-zzqv";
 
 describe("migration v15 — project_write_audit trigger", () => {
-  it("fresh DB: head is v16 with the audit table and the trigger", () => {
+  it("fresh DB: head is v17 with the audit table and the trigger", () => {
     initDatabase(":memory:");
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     const trg = db
       .prepare(
         "SELECT tbl_name FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_projects_after_update_audit'",
@@ -198,7 +198,7 @@ describe("migration v15 — project_write_audit trigger", () => {
       pin.close();
       expect(() => initDatabase(tmpDbPath!)).not.toThrow();
       const db = getDatabase();
-      expect(db.pragma("user_version", { simple: true })).toBe(16);
+      expect(db.pragma("user_version", { simple: true })).toBe(17);
       expect(auditRows(db, p.id)).toHaveLength(1);
       const n = db
         .prepare(
@@ -225,7 +225,7 @@ describe("migration v15 — project_write_audit trigger", () => {
 
     initDatabase(tmpDbPath);
     const db = getDatabase();
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     db.prepare("UPDATE projects SET status = 'paused' WHERE id = ?").run(p.id);
     expect(auditRows(db, p.id)).toEqual([
       expect.objectContaining({ status_changed: 1, credentials_changed: 0, updated_at_changed: 0 }),
