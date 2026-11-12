@@ -316,7 +316,7 @@ confirmation rules as a scheduled task.
 | --- | --- |
 | `npm run dev` | `tsx watch src/index.ts`: runs from source and reloads on changes. |
 | `npm run typecheck` | `tsc --noEmit`. Must report zero errors. |
-| `npm run typecheck:tests` | Type-checks the test files (`tsconfig.test.json`). |
+| `npm run typecheck:tests` | Type-checks the test files and every script under `scripts/` (`tsconfig.test.json`). |
 | `npx vitest run <file or dir/>` | Runs the tests for what you changed. Tests are `src/**/*.test.ts` and `scripts/**/*.test.ts`, next to the code they test. |
 | `npm run build` | `tsc` to `dist/`, copies the runtime assets, builds the docs pages. |
 | `npm start` | `node dist/index.js`. |
