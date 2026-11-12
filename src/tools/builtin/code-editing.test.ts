@@ -2,11 +2,12 @@
  * Tests for file_edit tool.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import {
   writeFileSync,
   readFileSync,
   mkdirSync,
+  mkdtempSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -29,7 +30,14 @@ vi.mock("../../lib/v8-4/readback.js", async (importOriginal) => ({
   declareReadbackGate: reindexMocks.declareReadbackGate,
 }));
 
-const TEST_DIR = "/tmp/mc-test-code-editing";
+// One folder per run, owned by this file: a fixed /tmp name collides with a
+// parallel run and can be pre-created (or symlinked) by another user.
+const ROOT = mkdtempSync("/tmp/mc-test-code-editing-");
+const TEST_DIR = `${ROOT}/work`;
+
+afterAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+});
 
 describe("file_edit", () => {
   beforeEach(() => {
@@ -222,7 +230,7 @@ describe("file_edit — skill definitions on disk refused", () => {
 // edit reads the file first — a link to a read-blocked file must be refused.
 describe("file_edit — symlink to a read-blocked file", () => {
   it("refuses before reading the target", async () => {
-    const dir = "/tmp/mc-test-code-editing-link";
+    const dir = `${ROOT}/link`;
     mkdirSync(dir, { recursive: true });
     try {
       symlinkSync("/etc/shadow", `${dir}/ak`);
@@ -266,7 +274,7 @@ describe("file_edit — symlink to a read-blocked file", () => {
 // Queue §2026-10-08 item 11: an edit under the KB root reaches the registry
 // (W1's first false positive graded a stale registry copy of a file_edit).
 describe("file_edit — KB registry parity (item 11)", () => {
-  const KB = "/tmp/mc-test-code-editing-kb";
+  const KB = `${ROOT}/kb`;
   let prevMirror: string | undefined;
 
   beforeEach(() => {

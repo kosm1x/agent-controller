@@ -241,10 +241,17 @@ describe("video tools", () => {
 
     it("blocks when concurrency limit reached", async () => {
       // Need a real html file so parser passes, then DB cnt=2 trips the gate.
+      // The file lives in a folder this test owns (never the live
+      // /root/tmp-video-html/), and the parser's allow-list points there.
       const fs = await import("fs");
       const path = await import("path");
-      fs.mkdirSync("/root/tmp-video-html", { recursive: true });
-      const htmlPath = path.join("/root/tmp-video-html", `concurrency-test.html`);
+      const os = await import("os");
+      const { __setHtmlPathAllowedPrefixForTests } = await import(
+        "../../video/html-parser.js"
+      );
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-test-video-compose-"));
+      __setHtmlPathAllowedPrefixForTests(`${dir}/`);
+      const htmlPath = path.join(dir, `concurrency-test.html`);
       fs.writeFileSync(
         htmlPath,
         `<html><body><div data-start="0" data-duration="1"></div></body></html>`,
@@ -261,7 +268,8 @@ describe("video tools", () => {
         const parsed = JSON.parse(result);
         expect(parsed.error).toMatch(/Too many active/);
       } finally {
-        fs.rmSync(htmlPath, { force: true });
+        __setHtmlPathAllowedPrefixForTests();
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 

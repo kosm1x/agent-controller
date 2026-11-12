@@ -1,15 +1,77 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, symlinkSync, existsSync } from "fs";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import {
+  writeFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  existsSync,
+} from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import {
   parseHtmlComposition,
   validateHtmlPath,
   HTML_PATH_ALLOWED_PREFIX,
+  __setHtmlPathAllowedPrefixForTests,
 } from "./html-parser.js";
 
-const TMP_DIR = "/root/tmp-video-html";
-const OUTSIDE_DIR = "/root/tmp-video-html-outside";
+// The live html-compose tool works in /root/tmp-video-html/ (operator files).
+// Every fs write/remove this file makes is checked: one aimed at the live
+// folder (or a sibling spelled with its prefix) is recorded and NOT performed,
+// and the file fails in the last afterAll.
+const liveTouches = vi.hoisted(() => [] as string[]);
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  const guard =
+    <A extends unknown[], R>(name: string, fn: (...a: A) => R) =>
+    (...args: A): R | undefined => {
+      const hit = args.find(
+        (a) => typeof a === "string" && a.startsWith("/root/tmp-video-html"),
+      );
+      if (hit !== undefined) {
+        liveTouches.push(`${name} ${String(hit)}`);
+        return undefined;
+      }
+      return fn(...args);
+    };
+  const guarded = {
+    mkdirSync: guard("mkdirSync", actual.mkdirSync),
+    writeFileSync: guard("writeFileSync", actual.writeFileSync),
+    rmSync: guard("rmSync", actual.rmSync),
+    symlinkSync: guard("symlinkSync", actual.symlinkSync),
+  };
+  return { ...actual, ...guarded, default: { ...actual, ...guarded } };
+});
+
+// A folder this file owns; the parser's allow-list points at it for the run.
+const ROOT = mkdtempSync(join(tmpdir(), "mc-test-video-html-"));
+const TMP_DIR = join(ROOT, "compose");
+const OUTSIDE_DIR = join(ROOT, "outside");
 const jobId = `html-parser-test-${Date.now()}`;
+
+// The allow-list as the module loaded it, observed before any setter call:
+// a string-only check that fails at the prefix test, no file-system call.
+const loadTimeRejection = (() => {
+  try {
+    validateHtmlPath(`${ROOT}/load-time-probe.html`);
+    return "accepted";
+  } catch (err) {
+    return (err as Error).message;
+  }
+})();
+
+beforeAll(() => {
+  mkdirSync(TMP_DIR, { recursive: true });
+  mkdirSync(OUTSIDE_DIR, { recursive: true });
+  __setHtmlPathAllowedPrefixForTests(`${TMP_DIR}/`);
+});
+
+afterAll(() => {
+  __setHtmlPathAllowedPrefixForTests();
+  rmSync(ROOT, { recursive: true, force: true });
+  expect(liveTouches).toEqual([]);
+});
 
 function writeHtml(name: string, body: string): string {
   const p = join(TMP_DIR, `${jobId}-${name}.html`);
@@ -18,20 +80,6 @@ function writeHtml(name: string, body: string): string {
 }
 
 describe("html-parser — validateHtmlPath", () => {
-  beforeAll(() => {
-    mkdirSync(TMP_DIR, { recursive: true });
-    mkdirSync(OUTSIDE_DIR, { recursive: true });
-  });
-
-  afterAll(() => {
-    try {
-      rmSync(TMP_DIR, { recursive: true, force: true });
-      rmSync(OUTSIDE_DIR, { recursive: true, force: true });
-    } catch {
-      /* noop */
-    }
-  });
-
   it("accepts a valid absolute path under allowlist", () => {
     const p = writeHtml("ok", "<html><body></body></html>");
     expect(() => validateHtmlPath(p)).not.toThrow();
@@ -55,8 +103,30 @@ describe("html-parser — validateHtmlPath", () => {
 
   it("rejects outside allowlist", () => {
     expect(() => validateHtmlPath("/tmp/other/file.html")).toThrow(
-      HTML_PATH_ALLOWED_PREFIX,
+      `html_path must live under ${TMP_DIR}/`,
     );
+  });
+
+  // The service's own prefix: checked on the string alone (the prefix test
+  // runs before any file system call), so the live folder is not read.
+  it("enforces the live composition folder when no test prefix is set", () => {
+    expect(HTML_PATH_ALLOWED_PREFIX).toBe("/root/tmp-video-html/");
+    expect(loadTimeRejection).toBe(
+      "html_path must live under /root/tmp-video-html/",
+    );
+    __setHtmlPathAllowedPrefixForTests();
+    try {
+      expect(() => validateHtmlPath(`${TMP_DIR}/x.html`)).toThrow(
+        "html_path must live under /root/tmp-video-html/",
+      );
+    } finally {
+      __setHtmlPathAllowedPrefixForTests(`${TMP_DIR}/`);
+    }
+    for (const bad of [TMP_DIR, "relative/", "/", "//", "/tmp/../"]) {
+      expect(() => __setHtmlPathAllowedPrefixForTests(bad)).toThrow(
+        "allowed prefix must be an absolute folder other than '/', ending with '/'",
+      );
+    }
   });
 
   it("rejects non-.html extension", () => {
@@ -83,7 +153,7 @@ describe("html-parser — validateHtmlPath", () => {
 
   it("rejects missing file", () => {
     expect(() =>
-      validateHtmlPath(`/root/tmp-video-html/does-not-exist-${Date.now()}.html`),
+      validateHtmlPath(`${TMP_DIR}/does-not-exist-${Date.now()}.html`),
     ).toThrow(/does not exist/);
   });
 
@@ -100,10 +170,6 @@ describe("html-parser — validateHtmlPath", () => {
 });
 
 describe("html-parser — parseHtmlComposition", () => {
-  beforeAll(() => {
-    mkdirSync(TMP_DIR, { recursive: true });
-  });
-
   it("computes data-driven duration from max(start+duration)", () => {
     const p = writeHtml(
       "data-driven",

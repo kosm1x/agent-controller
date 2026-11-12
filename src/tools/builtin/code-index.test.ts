@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 
 // Mock the DB
@@ -26,7 +26,14 @@ import { extractSymbols } from "./code-index.js";
 // Export extractSymbols for testing or test indirectly.
 
 describe("code-index", () => {
-  const tmpDir = "/tmp/code-index-test";
+  // One folder per run, owned by this file (a fixed /tmp name collides with
+  // a parallel run and can be pre-created by another user).
+  const root = mkdtempSync("/tmp/code-index-test-");
+  const tmpDir = join(root, "work");
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();

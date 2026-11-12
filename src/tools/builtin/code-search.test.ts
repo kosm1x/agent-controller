@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from "vitest";
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync, rmdirSync, symlinkSync, accessSync, existsSync, constants as fsConstants } from "fs";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, chmodSync, existsSync } from "fs";
 import { spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -35,6 +35,32 @@ vi.mock("child_process", async (importOriginal) => {
   };
 });
 
+// A stand-in for the operator's Claude home (`/root/.claude/`) inside this
+// file's own temp root, so the session-store case never creates or removes
+// anything under the real one. The read guard sees a path under the stand-in
+// as the same path under `/root/.claude/` (pure string judgement, the real
+// rule); the file system work stays in the stand-in. Empty = no mapping.
+const fakeClaudeHome = vi.hoisted(() => ({ dir: "" }));
+vi.mock("./immutable-core.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./immutable-core.js")>();
+  const { resolve } = await import("path");
+  const asClaudeHome = (p: string): string =>
+    fakeClaudeHome.dir && p.startsWith(fakeClaudeHome.dir)
+      ? "/root/.claude/" + p.slice(fakeClaudeHome.dir.length)
+      : p;
+  return {
+    ...actual,
+    readDenylistReason: (probe: string) => actual.readDenylistReason(asClaudeHome(probe)),
+    validatePathSafety: (p: string, op: "read" | "write" | "delete") => {
+      const r = actual.validatePathSafety(p, op);
+      const abs = resolve(p);
+      if (!r.safe || asClaudeHome(abs) === abs) return r;
+      const reason = actual.readDenylistReason(asClaudeHome(abs));
+      return reason ? { safe: false, reason } : r;
+    },
+  };
+});
+
 // CI runners (ubuntu-latest) have no rg, so the grep fallback runs there;
 // these tests must hold on both engines.
 const HAS_RG = !spawnSync("rg", ["--version"]).error;
@@ -50,7 +76,14 @@ import {
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import { invalidateSecretRefs } from "../../lib/secret-refs.js";
 
-const TEST_DIR = "/tmp/mc-test-code-search";
+// One folder per run, owned by this file: a fixed /tmp name collides with a
+// parallel run and can be pre-created (or symlinked) by another user.
+const ROOT = mkdtempSync("/tmp/mc-test-code-search-");
+const TEST_DIR = `${ROOT}/work`;
+
+afterAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+});
 
 describe("grep", () => {
   beforeEach(() => {
@@ -159,19 +192,11 @@ describe("grep", () => {
   // "./projects/p/x.jsonl" is a path under the process cwd and passes.
   // Synthetic fixture under the real /root/.claude/ default-deny rule (the
   // audit's probe: path=/root/.claude/, glob projects/**): projects/<p>/ is
-  // readable, a session store beside memory/ is not.
-  const CLAUDE_PROJECTS = "/root/.claude/projects";
-  const claudeWritable = (() => {
-    try {
-      accessSync(existsSync(CLAUDE_PROJECTS) ? CLAUDE_PROJECTS : "/root/.claude", fsConstants.W_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  it.skipIf(!claudeWritable)("a dir-glob search does not list a denylisted session store under the root (SF-B)", async () => {
-    const hadProjects = existsSync(CLAUDE_PROJECTS);
-    const proj = `${CLAUDE_PROJECTS}/-mc-test-code-search-${process.pid}`;
+  // readable, a session store beside memory/ is not. The tree lives in the
+  // stand-in Claude home (see fakeClaudeHome), never in the real one.
+  it("a dir-glob search does not list a denylisted session store under the root (SF-B)", async () => {
+    fakeClaudeHome.dir = `${ROOT}/claude-home/`;
+    const proj = `${fakeClaudeHome.dir}projects/-mc-test-code-search`;
     mkdirSync(`${proj}/sess`, { recursive: true });
     mkdirSync(`${proj}/memory`, { recursive: true });
     try {
@@ -198,14 +223,8 @@ describe("grep", () => {
       );
       expect(ok.matches).toBe(`${proj}/memory/m.md`);
     } finally {
-      rmSync(proj, { recursive: true, force: true });
-      if (!hadProjects) {
-        try {
-          rmdirSync(CLAUDE_PROJECTS); // only if still empty
-        } catch {
-          // something else now lives there — leave it
-        }
-      }
+      fakeClaudeHome.dir = "";
+      rmSync(`${ROOT}/claude-home`, { recursive: true, force: true });
     }
   });
 
@@ -643,13 +662,25 @@ describe("glob / list_dir do not block the event loop", () => {
     }
   });
 
+  // Deterministic: "fd" is a script that only sleeps, so the 50 ms timeout
+  // always wins (a 1 ms timeout raced a real find walk and could lose).
   it("glob returns the timeout error JSON instead of throwing", async () => {
-    missingBins.add("fd");
-    __setGlobTimeoutForTests(1);
-    const r = JSON.parse(
-      await globTool.execute({ pattern: "*.txt", path: BIG_DIR }),
-    );
-    expect(r).toEqual({ error: "glob timed out after 1 ms" });
+    const sleeper = `${ROOT}/fd-sleeps`;
+    writeFileSync(sleeper, "#!/bin/sh\nexec sleep 60\n");
+    chmodSync(sleeper, 0o755);
+    remapBins.set("fd", sleeper);
+    __setGlobTimeoutForTests(50);
+    try {
+      children.length = 0;
+      const r = JSON.parse(
+        await globTool.execute({ pattern: "*.txt", path: BIG_DIR }),
+      );
+      expect(r).toEqual({ error: "glob timed out after 50 ms" });
+      // The timed-out child was stopped, not left sleeping.
+      expect(children.at(-1)?.signalCode).toBe("SIGKILL");
+    } finally {
+      remapBins.delete("fd");
+    }
   });
 });
 

@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import {
   validateViewport,
   renderHtmlComposition,
@@ -9,7 +10,14 @@ import {
 } from "./html-renderer.js";
 import type { ParsedHtmlComposition } from "./html-parser.js";
 
-const TMP_HTML_DIR = "/root/tmp-video-html";
+// A folder this file owns, never the live composition folder
+// (/root/tmp-video-html/): the browser is mocked, so any readable path works.
+const TMP_HTML_DIR = mkdtempSync(join(tmpdir(), "mc-test-video-render-"));
+
+afterAll(() => {
+  rmSync(TMP_HTML_DIR, { recursive: true, force: true });
+});
+
 const jobId = `html-renderer-test-${Date.now()}`;
 
 function sampleComposition(
@@ -267,17 +275,6 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
     });
   });
 
-  afterEach(() => {
-    const dir = join(FRAME_ROOT, jobId);
-    if (existsSync(dir)) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        /* noop */
-      }
-    }
-  });
-
   it("renders N frames for totalDurationSec × fps", async () => {
     const comp = sampleComposition({ totalDurationSec: 2 });
     const outputPath = `/tmp/video-jobs/${jobId}-A.mp4`;
@@ -299,6 +296,7 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
       fps: 24,
       width: 640,
       height: 480,
+      outputPath: join(TMP_HTML_DIR, `${jobId}-B.mp4`),
     });
     expect(mocks.launchMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -312,6 +310,7 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
       fps: 24,
       width: 640,
       height: 480,
+      outputPath: join(TMP_HTML_DIR, `${jobId}-SW.mp4`),
     });
     expect(mocks.newContextMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -409,6 +408,7 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
       fps: 24,
       width: 640,
       height: 480,
+      outputPath: join(TMP_HTML_DIR, `${jobId}-I.mp4`),
     });
     expect(mocks.routeMock).toHaveBeenCalledWith("**/*", expect.any(Function));
     // The goto should have been called after route registration.

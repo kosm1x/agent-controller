@@ -25,6 +25,27 @@ import path from "path";
  */
 export const HTML_PATH_ALLOWED_PREFIX = "/root/tmp-video-html/";
 
+/**
+ * The prefix `validateHtmlPath` enforces: always HTML_PATH_ALLOWED_PREFIX in
+ * the service. Tests point it at a folder they own, so a test run never
+ * writes into (or removes) the live composition folder.
+ */
+let allowedPrefix = HTML_PATH_ALLOWED_PREFIX;
+/** Test hook: enforce `prefix` instead (no argument restores the default). */
+export function __setHtmlPathAllowedPrefixForTests(prefix?: string): void {
+  if (
+    prefix !== undefined &&
+    (!prefix.endsWith("/") ||
+      !path.isAbsolute(prefix) ||
+      path.resolve(prefix) === "/")
+  ) {
+    throw new Error(
+      "allowed prefix must be an absolute folder other than '/', ending with '/'",
+    );
+  }
+  allowedPrefix = prefix ?? HTML_PATH_ALLOWED_PREFIX;
+}
+
 /** Path-level forbidden chars mirror composition-protocol.ts for consistency. */
 const PATH_FORBIDDEN_CHARS = /[\n\r'"`$\\\0]/;
 
@@ -75,8 +96,8 @@ export function validateHtmlPath(p: unknown): string {
   if (PATH_FORBIDDEN_CHARS.test(p)) {
     throw new Error("html_path contains forbidden character");
   }
-  if (!p.startsWith(HTML_PATH_ALLOWED_PREFIX)) {
-    throw new Error(`html_path must live under ${HTML_PATH_ALLOWED_PREFIX}`);
+  if (!p.startsWith(allowedPrefix)) {
+    throw new Error(`html_path must live under ${allowedPrefix}`);
   }
   if (path.extname(p).toLowerCase() !== ".html") {
     throw new Error("html_path must have .html extension");
@@ -94,7 +115,7 @@ export function validateHtmlPath(p: unknown): string {
 
   // Symlink-escape defense: resolve and re-check allowlist.
   const real = realpathSync(p);
-  if (!real.startsWith(HTML_PATH_ALLOWED_PREFIX)) {
+  if (!real.startsWith(allowedPrefix)) {
     throw new Error(
       `html_path resolves via symlink outside allowlist: ${real}`,
     );
