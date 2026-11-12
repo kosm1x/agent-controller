@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GoalStatus } from "./types.js";
 import type { Goal } from "./types.js";
 import { GoalGraph } from "./goal-graph.js";
+import { CB_COOLDOWN_MS } from "../config/constants.js";
 
 // Mock inference adapter
 vi.mock("../inference/adapter.js", () => ({
@@ -100,6 +101,22 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
     updatedAt: new Date().toISOString(),
     ...overrides,
   };
+}
+
+/**
+ * Run `start()` under fake timers and advance simulated time by `ms`, so the
+ * executor's retry back-off (2 s, then 4 s) elapses without a real wait.
+ * Real timers come back even when the run throws.
+ */
+async function withFakeTime<T>(ms: number, start: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers();
+  try {
+    const pending = start();
+    await vi.advanceTimersByTimeAsync(ms);
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 beforeEach(() => {
@@ -229,7 +246,7 @@ describe("executeGoal", () => {
         totalUsage: { prompt_tokens: 100, completion_tokens: 50 },
       });
 
-    const result = await executeGoal(makeGoal(), "");
+    const result = await withFakeTime(2_000, () => executeGoal(makeGoal(), ""));
     expect(result.ok).toBe(true);
     expect(result.result).toBe("Succeeded on retry");
     expect(mockInferWithTools).toHaveBeenCalledTimes(2);
@@ -241,10 +258,13 @@ describe("executeGoal", () => {
       .mockRejectedValueOnce(new Error("timeout"))
       .mockRejectedValueOnce(new Error("timeout"));
 
-    const result = await executeGoal(makeGoal(), "");
+    const result = await withFakeTime(2_000 + 4_000, () =>
+      executeGoal(makeGoal(), ""),
+    );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("timeout");
     expect(result.toolFailures).toBe(1);
+    expect(mockInferWithTools).toHaveBeenCalledTimes(3);
   });
 
   it("Dim-4 round-2 C-RES-4: classifies Circuit breaker OPEN as transient and retries", async () => {
@@ -270,13 +290,21 @@ describe("executeGoal", () => {
         totalUsage: { prompt_tokens: 20, completion_tokens: 10 },
       });
 
-    const result = await executeGoal(makeGoal(), "");
-    expect(result.ok).toBe(true);
-    expect(mockInferWithTools).toHaveBeenCalledTimes(2);
-    // Timeout is forgiving — breaker retry uses CB_COOLDOWN_MS (30s default)
-    // + up to 5s jitter. Real delivery would sleep the full cooldown; this
-    // test tolerates that because the mock resolves on the second call.
-  }, 45_000);
+    // The breaker retry waits CB_COOLDOWN_MS + up to 5 s of jitter, in
+    // simulated time: no retry before the cool-down, one after it.
+    vi.useFakeTimers();
+    try {
+      const pending = executeGoal(makeGoal(), "");
+      await vi.advanceTimersByTimeAsync(CB_COOLDOWN_MS - 1);
+      expect(mockInferWithTools).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_001);
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(mockInferWithTools).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("injects [JARVIS KNOWLEDGE BASE] into system prompt when enforce file present", async () => {
     const { getFilesByQualifier } = await import("../db/jarvis-fs.js");
@@ -458,7 +486,7 @@ describe("executeGraph", () => {
       dependsOn: ["g-1"],
     });
 
-    const result = await executeGraph(graph);
+    const result = await withFakeTime(2_000 + 4_000, () => executeGraph(graph));
 
     expect(graph.getGoal("g-1").status).toBe(GoalStatus.FAILED);
     expect(graph.getGoal("g-2").status).toBe(GoalStatus.BLOCKED);

@@ -114,6 +114,32 @@ const mockGetTask = vi.mocked(getTask);
 const mockSubmitTask = vi.mocked(submitTask);
 const mockGetRunToolCalls = vi.mocked(getRunToolCalls);
 
+/**
+ * swarmRunner.execute in simulated time: the runner sleeps one 3 s poll
+ * interval between status checks, so every case used to wait real seconds.
+ * The interval itself is unchanged; the timers run under fake time.
+ *
+ * Under fake time a poll loop that never sees its end state runs to the
+ * 10-min / 30-min ceiling in real milliseconds and the case would still pass,
+ * so the simulated elapsed time is bounded to one 3 s poll interval (every
+ * case here settles in zero or one poll; none is about the ceiling itself).
+ */
+async function executeWithFakePolls(
+  input: Parameters<typeof swarmRunner.execute>[0],
+): ReturnType<typeof swarmRunner.execute> {
+  vi.useFakeTimers();
+  try {
+    const startedAt = Date.now();
+    const pending = swarmRunner.execute(input);
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(3_000);
+    return result;
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 interface Tracker {
   goalId: string;
   taskId: string;
@@ -613,7 +639,7 @@ describe("swarm final answer — '## Shared findings' never reaches the operator
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "seam-parent",
       runId: "run-seam",
       title: "Compare fees",
@@ -656,7 +682,7 @@ describe("swarm final answer — '## Shared findings' never reaches the operator
     } as never);
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
-      await swarmRunner.execute({
+      await executeWithFakePolls({
         taskId: "root-parent",
         runId: "run-root",
         title: "Compare fees",
@@ -705,7 +731,7 @@ describe("V9 W1 — swarm children get their goal's prose criteria as grade spec
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
 
-    await swarmRunner.execute({
+    await executeWithFakePolls({
       taskId: "grade-parent",
       runId: "run-grade",
       title: "Compare fees",
@@ -1371,7 +1397,7 @@ describe("swarm chain demotion (task 7466)", () => {
       }),
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "parent-1",
       runId: "run-1",
       title: "chat chain",
@@ -1410,7 +1436,7 @@ describe("swarm chain demotion (task 7466)", () => {
       error: "child exploded",
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "parent-2",
       runId: "run-2",
       title: "chat chain",
@@ -1443,7 +1469,7 @@ describe("swarm chain demotion (task 7466)", () => {
       output: JSON.stringify({ content: "qualified answer" }),
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "parent-4",
       runId: "run-4",
       title: "chat chain",
@@ -1471,7 +1497,7 @@ describe("swarm chain demotion (task 7466)", () => {
       output: null,
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "parent-5",
       runId: "run-5",
       title: "chat chain",
@@ -1509,7 +1535,7 @@ describe("swarm chain demotion (task 7466)", () => {
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "parent-3",
       runId: "run-3",
       title: "true fan-out",
@@ -1554,7 +1580,7 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
       result: { success: false, score: 0, learnings: [], summary: "n/a" },
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
-    await swarmRunner.execute({
+    await executeWithFakePolls({
       taskId: "parent-g",
       runId: "run-g",
       title: "fan-out",
@@ -1615,7 +1641,7 @@ describe("V8.4 ledger: child gates from the plan + parent re-verification", () =
       result: { success: true, score: 0.9, learnings: [], summary: "ok" },
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: parentId,
       runId: `run-${parentId}`,
       title: "fan-out",
@@ -1668,7 +1694,7 @@ describe("swarm parent books its planner + reflector spend (cost_ledger)", () =>
     // Submissions fail fast so the poll loop ends at once (as in the
     // "does NOT demote a parallel plan" test above).
     mockSubmitTask.mockRejectedValue(new Error("no capacity"));
-    return swarmRunner.execute({
+    return executeWithFakePolls({
       taskId: "cost-parent",
       runId: "run-cost",
       title: "fan-out",
@@ -1758,7 +1784,7 @@ describe("swarm parent books its planner + reflector spend (cost_ledger)", () =>
       usage: { promptTokens: 40, completionTokens: 4, actualCostUsd: 0.004 },
     } as never);
 
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: "cost-empty",
       runId: "run-empty",
       title: "trivial",
@@ -1830,7 +1856,7 @@ describe("queue 4s-1 (c): ungated swarm children are visible at completion", () 
       usage: { promptTokens: 0, completionTokens: 0 },
     } as never);
     const logSpy = vi.spyOn(console, "log");
-    const result = await swarmRunner.execute({
+    const result = await executeWithFakePolls({
       taskId: parentId,
       runId: `run-${parentId}`,
       title: "fan-out",
