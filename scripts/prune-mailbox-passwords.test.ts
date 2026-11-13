@@ -1571,13 +1571,30 @@ describe("entry", () => {
     for (const s of ["projects/", "solo-disco", "2026-01-02.md", "sintetica", "example.com", root]) expect(text).not.toContain(s);
     for (const v of [...COLLECTED, W]) expect(text).not.toContain(v.slice(0, 6));
   };
+  /**
+   * The console-printing deps of the real entry, with the open-for-writing check answering
+   * "no writers". On the real /proc that check depends on the host: as an unprivileged user
+   * (CI) other users' fd folders cannot be read and it refuses (unknown = writer). The
+   * fault below makes this host look the same, so a test that drops the stub fails here too.
+   */
+  const consoleDeps = () => {
+    fsFault.set("readdir:/proc/1/fd", "EACCES");
+    return {
+      requireOperatorContext: () => {},
+      findDbWriters: okWriters,
+      runPrune,
+      log: (l: string) => console.log(l),
+      error: (l: string) => console.error(l),
+    };
+  };
 
   it("output carries counts only: no value, no fixture sentence, no path or KB file name", () => {
     seed();
     const out = capture();
-    expect(main(ARGV())).toBe(0);
-    expect(main(APPLY())).toBe(0);
-    expect(main(APPLY())).toBe(0);
+    const d = consoleDeps();
+    expect(main(ARGV(), d)).toBe(0);
+    expect(main(APPLY(), d)).toBe(0);
+    expect(main(APPLY(), d)).toBe(0);
     const text = out.text();
     vi.restoreAllMocks();
     expect(text).toContain("collected_fingerprints=");
@@ -1590,7 +1607,7 @@ describe("entry", () => {
     seed();
     exec(`CREATE TRIGGER zz BEFORE UPDATE ON conversations BEGIN SELECT RAISE(ABORT, '${V_CONV} ${dbPath} ${CONV_A.slice(0, 20)}'); END`);
     const out = capture();
-    expect(main(APPLY())).toBe(1);
+    expect(main(APPLY(), consoleDeps())).toBe(1);
     const text = out.text();
     vi.restoreAllMocks();
     expect(text).toContain("store=conversations code=SQLITE_CONSTRAINT_TRIGGER");
@@ -1644,7 +1661,7 @@ describe("entry", () => {
     seed();
     fsFault.set(`rename:${join(kbDir, DISK_ONLY_PATH)}`, "EIO");
     const out = capture();
-    expect(main(APPLY())).toBe(1);
+    expect(main(APPLY(), consoleDeps())).toBe(1);
     const text = out.text();
     vi.restoreAllMocks();
     expect(text).toContain("ERROR store=kb-files code=EIO");
@@ -1676,6 +1693,21 @@ describe("entry", () => {
     expect(run).not.toHaveBeenCalled();
     expect(writers).not.toHaveBeenCalled();
     expect(out).toEqual([`${TAG} REFUSED: --apply needs --i-stopped-the-service (stop the service first)`]);
+  });
+
+  it("--apply refuses when a process cannot be inspected (as an unprivileged user sees others), and writes nothing", () => {
+    seed();
+    const proc = join(root, "proc");
+    mkdirSync(join(proc, "4242", "fd"), { recursive: true });
+    fsFault.set(`readdir:${join(proc, "4242", "fd")}`, "EACCES");
+    const stores = () => folderDigest(join(root, "data")) + folderDigest(kbDir); // not the proc stub
+    const before = stores();
+    const run = vi.fn(runPrune);
+    const out: string[] = [];
+    expect(main(APPLY(), deps({ findDbWriters: (p: string) => findDbWriters(p, proc, 1), runPrune: run }, out))).toBe(2);
+    expect(run).not.toHaveBeenCalled();
+    expect(out).toEqual([`${TAG} REFUSED: 1 process(es) hold the database open for writing or cannot be inspected: pid 4242`]);
+    expect(stores()).toBe(before);
   });
 
   it("--apply refuses when a writer holds the db; the dry run never checks", () => {
