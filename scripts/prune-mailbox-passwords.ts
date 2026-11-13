@@ -34,8 +34,10 @@
  *     fingerprints in their OWN transaction, (d) rewrites the KB files and the archives
  *     (temp file + rename in the same folder; a file with no hit is not touched;
  *     archives keep their mtime, which drives the one-year rotation), (e) updates the
- *     rows in ONE transaction, last (compare-and-set on every pruned column of the row).
- *     `--apply` therefore refuses while the table does not exist (schema below v17).
+ *     rows in ONE transaction (compare-and-set on every pruned column of the row),
+ *     (f) rebuilds the full-text indexes (rule 13), (g) empties the write-ahead log
+ *     (rule 14). `--apply` therefore refuses while the table does not exist (schema
+ *     below v17).
  *  4. A `jarvis_files` row that changes gets `updated_at = now`. The hourly KB reindex
  *     (src/db/jarvis-reindex.ts `newerCopy`) refreshes a row from disk only when the disk
  *     copy is newer than `updated_at` AND differs: between (d) and (e) the disk copy is
@@ -64,19 +66,60 @@
  *     up to SCAN_FILE_CAP, links not followed). Files holding a run whose fingerprint is
  *     being pruned are counted by the folder's position on the command line; a hit
  *     fails the run. A missing folder counts zero and is marked `missing`.
+ * 11. Binary cells: a cell stored as a BLOB is decoded as UTF-8 (invalid bytes become
+ *     U+FFFD, never an error) and read like text, for collection, for the replacement
+ *     check and in the safety net. Binary is never rewritten, because a byte-level edit
+ *     of an unknown format could corrupt it: a hit in a BLOB of a pruned column is
+ *     counted by `table.column` as `binary_hits` and fails the run; a hit in a BLOB of
+ *     any other column counts with `uncovered_hits`. Running again does not clear a
+ *     binary hit: convert or remove that cell by hand with the service stopped, then
+ *     run again.
+ * 12. The apply connection sets `PRAGMA secure_delete = ON` before its first write, so
+ *     the bytes of every rewritten or removed cell and of every freed page are
+ *     overwritten with zeros in the database file instead of staying in free space
+ *     (the service's own connection keeps SQLite's default).
+ * 13. After the row transaction, every full-text index whose content table is a store
+ *     (an fts5 table with `content=<store>` in the schema; skipped when absent) is
+ *     rebuilt from its table with the `'rebuild'` command, each in its own transaction.
+ *     The triggers remove a changed row's old tokens from the index's answers, but the
+ *     bytes stay in older segments until a merge; the rebuild writes the index anew.
+ *     It runs in every apply run that has a fingerprint to prune or already known, so
+ *     repeating the command after a failed rebuild redoes it; a failure is counted
+ *     (`fts_rebuild_failed`) and fails the run. The dry run counts the indexes it would
+ *     rebuild.
+ * 14. The last step of an apply run is `wal_checkpoint(TRUNCATE)`: the write-ahead log
+ *     is copied into the database file and emptied, so no old page image stays in it.
+ *     When another connection keeps it from finishing, the run fails with a line saying
+ *     the log still holds old pages and to run again with the service stopped.
+ * 15. The closing line is `nothing to change` only on a clean run. Whenever anything
+ *     above failed the run, it says `finished with failures: problems=N` instead (N is
+ *     the sum of the failure counts in the notes) and to fix what the notes name, then
+ *     run the same command again; it never says a re-run alone fixes it.
  *
  * The operator's wrapper takes the snapshot before --apply; this script keeps no backup
  * and never runs VACUUM. It opens the database directly (never initDatabase, which would
- * run schema migrations); the dry run opens it read-only and also works while the
- * service runs.
+ * run schema migrations); the dry run opens it read-only, does none of rules 12–14 and
+ * also works while the service runs. The KB files and archives are replaced by a rename
+ * and the write-ahead log is truncated (rule 14); the blocks of the old files and of the
+ * truncated log belong to the file system, outside what this script controls.
+ *
+ * VACUUM (operator, optional, service stopped): with rule 12 the removed bytes are
+ * already zeroed in place, so VACUUM only returns the freed pages to the file system;
+ * it is worth it after a large removal when the file size matters. It may renumber the
+ * rows of a table without an INTEGER PRIMARY KEY: `jarvis_files` is one, and its index
+ * `jarvis_files_fts` is keyed by row number, so after a VACUUM run
+ * `INSERT INTO jarvis_files_fts(jarvis_files_fts) VALUES('rebuild')`.
  *
  * Usage (all three locations are required, in the dry run too; nothing is defaulted):
  *   npx tsx scripts/prune-mailbox-passwords.ts --db <file> --kb <dir> --archive <dir> \
  *     [--scan-only <dir>]...
  *   npx tsx scripts/prune-mailbox-passwords.ts --db <file> --kb <dir> --archive <dir> \
  *     [--scan-only <dir>]... --apply --i-stopped-the-service
- * Exit: 0 done (or nothing to do), 1 finished with failures or stopped by an error
- * (the message says whether to run again), 2 refused (nothing written).
+ * Exit: 0 clean run (closing line `nothing to change` or, in the dry run, the hint to
+ * apply); 1 finished with failures (closing line `finished with failures: problems=N`:
+ * uncovered, binary, scan-only, skipped, file, read, temp, index-rebuild or checkpoint
+ * failures) or stopped by an error (the message says whether to run again); 2 refused
+ * (nothing written).
  */
 
 import BetterSqlite3 from "better-sqlite3";
@@ -769,6 +812,15 @@ export interface PruneResult {
   derived: Map<string, number>;
   scans: ScanCount[];
   tablesAbsent: number;
+  /** `table.column` → BLOB cells of pruned columns that hold a pruned run (rule 11, never rewritten). */
+  binary: Map<string, number>;
+  /** Full-text indexes rebuilt (apply) or that would be rebuilt (dry run), rule 13. */
+  fts: number;
+  ftsFailed: number;
+  /** The final checkpoint could not empty the write-ahead log (rule 14). */
+  checkpointBusy: boolean;
+  /** Sum of every failure count; the run is ok only when it is 0. */
+  problems: number;
 }
 
 class CodeError extends Error {
@@ -829,6 +881,27 @@ function presentStores(db: Database.Database): { present: DbStore[]; absent: num
   return { present, absent };
 }
 
+/** Rule 11: a string as it is; a BLOB decoded as UTF-8 (invalid bytes become U+FFFD); other cells have no text. */
+function cellText(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (Buffer.isBuffer(v)) return v.toString("utf8");
+  return null;
+}
+
+/** Rule 13: the fts5 tables in the schema whose `content=` table is one of `tables`. */
+function ftsIndexesOver(db: Database.Database, tables: ReadonlySet<string>): string[] {
+  const rows = db
+    .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE%'")
+    .all() as Array<{ name: string; sql: string | null }>;
+  const out: string[] = [];
+  for (const r of rows) {
+    const args = /\bUSING\s+fts5\s*\(([\s\S]*)\)\s*$/i.exec(r.sql ?? "")?.[1];
+    const content = args ? /\bcontent\s*=\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/i.exec(args)?.[1] : undefined;
+    if (content !== undefined && tables.has(content)) out.push(r.name);
+  }
+  return out.sort();
+}
+
 function selectStore(db: Database.Database, s: DbStore): Database.Statement {
   const keys = s.key.map((k, i) => `${k === "rowid" ? "rowid" : `"${k}"`} AS "k${i}"`);
   return db.prepare(`SELECT ${[...keys, ...s.columns.map((c) => `"${c}"`)].join(", ")} FROM "${s.table}"`);
@@ -858,7 +931,8 @@ function sweepUncovered(db: Database.Database, fps: ReadonlySet<string>): Map<st
     for (const row of sel.iterate() as Iterable<unknown[]>) {
       for (let i = 0; i < cols.length; i++) {
         const v = row[i];
-        if (typeof v === "string" && hasKnownRun(v, fps)) {
+        const text = cellText(v);
+        if (text !== null && hasKnownRun(text, fps)) {
           const k = `${t}.${cols[i]}`;
           out.set(k, (out.get(k) ?? 0) + 1);
         }
@@ -902,13 +976,22 @@ export function runPrune(opts: PruneOptions): PruneResult {
     derived: new Map(),
     scans: [],
     tablesAbsent: 0,
+    binary: new Map(),
+    fts: 0,
+    ftsFailed: 0,
+    checkpointBusy: false,
+    problems: 0,
   };
   const db = opts.apply ? new BetterSqlite3(opts.dbPath, { fileMustExist: true }) : openForDryRun(opts.dbPath);
   // Set once the fingerprints are durable: from then on any failure leaves a run that a
   // re-run finishes, and the message must say so.
   let committed = false;
   try {
-    if (opts.apply) db.pragma("busy_timeout = 5000");
+    if (opts.apply) {
+      db.pragma("busy_timeout = 5000");
+      // Rule 12: freed and rewritten bytes are zeroed, before the first write.
+      db.pragma("secure_delete = ON");
+    }
     result.seenTable =
       db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(SEEN_TABLE) !== undefined;
     // Rule 3: without the table the collected set cannot be made durable.
@@ -942,7 +1025,8 @@ export function runPrune(opts: PruneOptions): PruneResult {
         let gave = 0;
         for (const c of s.columns) {
           const v = row[c];
-          if (typeof v === "string") gave += collectFromText(v, mine);
+          const text = cellText(v);
+          if (text !== null) gave += collectFromText(text, mine);
           else if (v !== null && v !== undefined) nonText++;
         }
         if (gave > 0) n++;
@@ -1047,6 +1131,12 @@ export function runPrune(opts: PruneOptions): PruneResult {
           let unsafe = false;
           for (const c of s.columns) {
             const v = row[c];
+            if (Buffer.isBuffer(v)) {
+              // Rule 11: binary is read, never rewritten; a hit is counted and fails the run.
+              const k = `${s.table}.${c}`;
+              if (hasKnownRun(v.toString("utf8"), fps)) result.binary.set(k, (result.binary.get(k) ?? 0) + 1);
+              continue;
+            }
             if (typeof v !== "string") continue;
             const r = replaceCollected(v, fps);
             if (r.unsafe) unsafe = true;
@@ -1183,6 +1273,19 @@ export function runPrune(opts: PruneOptions): PruneResult {
         throw new StoreFailure(failedTable, errorCode(err), true);
       }
     }
+    // (f) Rule 13: each full-text index over a store is rebuilt from its table, after the rows are final.
+    const fts = fps.size > 0 ? ftsIndexesOver(db, new Set(present.map((s) => s.table))) : [];
+    result.fts = fts.length;
+    if (opts.apply) {
+      for (const name of fts) {
+        try {
+          db.transaction(() => db.prepare(`INSERT INTO "${name}"("${name}") VALUES('rebuild')`).run()).immediate();
+        } catch (err) {
+          result.ftsFailed++;
+          log(`${TAG} ERROR store=fts index=${name} code=${errorCode(err)}`);
+        }
+      }
+    }
     for (const s of present) {
       const skipped = skippedRows.get(s.table) ?? 0;
       stores.push({
@@ -1211,24 +1314,33 @@ export function runPrune(opts: PruneOptions): PruneResult {
           : `${TAG} leftover temp files found=${kb.temps.length + ar.temps.length} (removed by --apply)`,
       );
     }
-    const skippedAny = [...skippedRows.values()].some((n) => n > 0) || arSkipped.json > 0;
-    const uncoveredAny = [...result.uncovered.values()].some((n) => n > 0);
-    const scanAny = result.scans.some((s) => s.hits > 0 || s.overCap > 0 || s.unreadable > 0);
-    if (
-      kbFailed > 0 ||
-      arFailed > 0 ||
-      kb.unreadable > 0 ||
-      kbLinks > 0 ||
-      kbRead.failed + kbRead.notUtf8 + arRead.failed + arRead.notUtf8 > 0 ||
-      arSkipped.symlinks > 0 ||
-      arSkipped.links > 0 ||
-      skippedAny ||
-      tempsFailed > 0 ||
-      uncoveredAny ||
-      scanAny
-    ) {
-      result.ok = false;
+    // (g) Rule 14: last, the write-ahead log is copied into the file and emptied.
+    if (opts.apply) {
+      const [cp] = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+      result.checkpointBusy = cp !== undefined && cp.busy !== 0;
     }
+
+    const sum = (m: Map<string, number>): number => [...m.values()].reduce((a, n) => a + n, 0);
+    result.problems =
+      kbFailed +
+      arFailed +
+      kb.unreadable +
+      kbLinks +
+      kbRead.failed +
+      kbRead.notUtf8 +
+      arRead.failed +
+      arRead.notUtf8 +
+      arSkipped.symlinks +
+      arSkipped.links +
+      sum(skippedRows) +
+      arSkipped.json +
+      tempsFailed +
+      sum(result.uncovered) +
+      result.scans.reduce((a, s) => a + s.hits + s.overCap + s.unreadable, 0) +
+      sum(result.binary) +
+      result.ftsFailed +
+      (result.checkpointBusy ? 1 : 0);
+    result.ok = result.problems === 0;
 
     report(log, opts.apply, result, tCollect - t0, tSweep - tCollect, sweepMs);
     return result;
@@ -1292,6 +1404,16 @@ function report(
   const uncovered = [...r.uncovered.values()].reduce((a, n) => a + n, 0);
   log(`${TAG} uncovered_hits=${uncovered}`);
   for (const [col, n] of r.uncovered) log(`${TAG} uncovered column=${col} cells=${n} (not rewritten)`);
+  log(`${TAG} binary_hits=${[...r.binary.values()].reduce((a, n) => a + n, 0)}`);
+  for (const [col, n] of r.binary) log(`${TAG} binary column=${col} cells=${n} (binary, not rewritten: this script never rewrites binary; convert or remove that cell by hand with the service stopped, then run again)`);
+  log(
+    apply
+      ? `${TAG} fts_rebuilt=${r.fts - r.ftsFailed}${r.ftsFailed > 0 ? ` fts_rebuild_failed=${r.ftsFailed}` : ""}`
+      : `${TAG} fts_to_rebuild=${r.fts}`,
+  );
+  if (r.checkpointBusy) {
+    log(`${TAG} checkpoint busy: the write-ahead log file still holds old pages — run the same command again with the service stopped`);
+  }
   for (const s of r.scans) {
     const notes = [
       s.missing ? "missing" : "",
@@ -1302,9 +1424,13 @@ function report(
     log(`${TAG} scan_only=${s.position} files=${s.files} scan_only_hits=${s.hits}${notes.length > 0 ? ` ${notes.join(" ")}` : ""}`);
   }
   const pending = r.stores.reduce((a, s) => a + s.hit, 0);
-  if (pending === 0) log(`${TAG} nothing to change`);
-  else if (!apply) log(`${TAG} dry run — nothing written; pass --apply --i-stopped-the-service to write`);
-  if (!r.ok) log(`${TAG} finished with failures (see the notes above); fix them and run the same command again`);
+  if (pending > 0 && !apply) log(`${TAG} dry run — nothing written; pass --apply --i-stopped-the-service to write`);
+  // Rule 15: "nothing to change" only on a clean run.
+  if (!r.ok) {
+    log(`${TAG} finished with failures: problems=${r.problems} (see the notes above); fix them and run the same command again`);
+  } else if (pending === 0) {
+    log(`${TAG} nothing to change`);
+  }
   log(`${TAG} timing collect_ms=${collectMs} rest_ms=${restMs} sweep_ms=${sweepMs}`);
 }
 

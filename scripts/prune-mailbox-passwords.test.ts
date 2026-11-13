@@ -324,6 +324,40 @@ function rowSnapshotWithout(table: string): string {
   }
 }
 
+const FTS_INDEXES = ["conversations_fts", "jarvis_files_fts", "jme_facts_fts"] as const;
+const asHex = (_k: string, v: unknown) => (Buffer.isBuffer(v) ? v.toString("hex") : v);
+/** Every row of the given tables, each table's rows sorted, BLOBs as hex, through a fresh connection. */
+function tableRows(tables: readonly string[]): string {
+  const db = ro();
+  try {
+    return JSON.stringify(tables.map((t) => [t, db.prepare(`SELECT * FROM "${t}"`).all().map((r) => JSON.stringify(r, asHex)).sort()]));
+  } finally {
+    db.close();
+  }
+}
+/** Every row of every ordinary main table (full rows: every column; shadow and virtual tables are left out). */
+function dbRows(): string {
+  const db = ro();
+  let tables: string[];
+  try {
+    tables = (db.prepare("PRAGMA table_list").all() as Array<{ schema: string; name: string; type: string }>)
+      .filter((t) => t.schema === "main" && t.type === "table" && !t.name.startsWith("sqlite_"))
+      .map((t) => t.name)
+      .sort();
+  } finally {
+    db.close();
+  }
+  return tableRows(tables);
+}
+/** The shadow tables of the three full-text indexes (segments, segment index, sizes, config). */
+function ftsState(): string {
+  return tableRows(FTS_INDEXES.flatMap((t) => ["data", "idx", "docsize", "config"].map((s) => `${t}_${s}`)));
+}
+/** One MATCH answer per index, in FTS_INDEXES order. */
+function ftsAnswers(words: readonly [string, string, string]): number[] {
+  return FTS_INDEXES.map((t, i) => count(`SELECT COUNT(*) FROM ${t} WHERE ${t} MATCH ?`, words[i]));
+}
+
 function prune(apply: boolean, extra: Partial<PruneOptions> = {}) {
   return runPrune({ dbPath, kbRoot: kbDir, archiveDir: arDir, apply, log: quiet, ...extra });
 }
@@ -791,16 +825,26 @@ describe("stores", () => {
     expect(readdirSync(arDir).sort()).toEqual([ARCH_HIT, ARCH_MISS]); // no temp left
   });
 
-  it("idempotent: a second run finds nothing, changes nothing and says so", () => {
+  it("idempotent: a second run finds nothing, changes no row or file and says so (the indexes are rebuilt again, rule 13)", () => {
     seed();
+    exec("INSERT INTO jme_facts (source_task, ts, fact_text, category) VALUES ('t1', 1, 'jmefacto sin nada', 'event')");
+    const words = ["Recordatorio", "turnoalfa", "jmefacto"] as const;
     prune(true);
-    const before = folderDigest(root);
-    const { r, nothing } = pruneLogged(true);
+    const before = folderDigest(kbDir) + folderDigest(arDir);
+    const rowsBefore = dbRows();
+    const indexBefore = ftsState();
+    expect(ftsAnswers(words)).toEqual([1, 1, 1]);
+    const { r, lines, nothing } = pruneLogged(true);
     expect(r.distinct).toBe(0);
     expect(r.known).toBe(EXPECTED_FPS.size);
     expect(r.stores.every((s) => s.hit === 0 && s.changed === 0)).toBe(true);
     expect(nothing).toBe(true);
-    expect(folderDigest(root)).toBe(before);
+    expect(lines).toContain(`${TAG} fts_rebuilt=3`);
+    expect(folderDigest(kbDir) + folderDigest(arDir)).toBe(before);
+    expect(dbRows()).toBe(rowsBefore);
+    // The rebuild is byte-deterministic: the index tables and their answers are what they were.
+    expect(ftsState()).toBe(indexBefore);
+    expect(ftsAnswers(words)).toEqual([1, 1, 1]);
   });
 
   it("fingerprints: every candidate is added once, and the known ones are pruned too", () => {
@@ -833,18 +877,32 @@ describe("stores", () => {
     expect(remaining([docId])).toEqual([]);
   });
 
-  it("known fingerprints that appear nowhere: a no-op (database file unchanged), not a failure", () => {
+  it("known fingerprints that appear nowhere: a no-op on every row (the indexes are rebuilt, rule 13), not a failure", () => {
     seedRows(["nada aqui"], (db) => {
       const ins = db.prepare("INSERT INTO mailbox_password_seen (fingerprint) VALUES (?)");
       for (let i = 0; i < 50; i++) ins.run(fp(`Zz${i}Yy${i}Xx${i}Ww${i}Vv`));
+      db.prepare(
+        "INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, priority, related_to) VALUES ('b', 'b.md', 'T', 'kbuno sin nada', '[]', 'workspace', 90, '[]')",
+      ).run();
+      db.prepare("INSERT INTO jme_facts (source_task, ts, fact_text, category) VALUES ('t1', 1, 'jmefacto sin nada', 'event')").run();
     });
     writeKb("n.md", "texto sin nada\n");
-    const before = readFileSync(dbPath);
+    const words = ["aqui", "kbuno", "jmefacto"] as const;
+    const before = dbRows();
     const r = pruneLogged(true);
     expect(r.r.ok).toBe(true);
     expect(r.r.known).toBe(50);
     expect(r.nothing).toBe(true);
-    expect(readFileSync(dbPath).equals(before)).toBe(true);
+    expect(dbRows()).toBe(before);
+    expect(ftsAnswers(words)).toEqual([1, 1, 1]);
+    // A second run leaves the rebuilt index tables byte-identical.
+    const indexBefore = ftsState();
+    const again = pruneLogged(true);
+    expect(again.r.ok).toBe(true);
+    expect(again.nothing).toBe(true);
+    expect(dbRows()).toBe(before);
+    expect(ftsState()).toBe(indexBefore);
+    expect(ftsAnswers(words)).toEqual([1, 1, 1]);
   });
 
   it("without the seen table: --apply refuses and writes nothing; the dry run says the table is absent", () => {
@@ -1438,6 +1496,189 @@ describe("store table and safety net", () => {
 });
 
 // ── a re-run after any interruption finishes the job ───────────────────────
+
+// ── binary cells, closing line, on-disk removal ────────────────────────────
+
+describe("binary cells, closing line and what stays on disk", () => {
+  const Y = "Pv4Bq5Cn6Dm7Ek8Fj";
+
+  /** One value per indexed store (conversations, jarvis_files, jme_facts), each next to a word of its own. */
+  function seedIndexed(): void {
+    seedRows([`mailbox ops@example.com password: ${W} vecinoalfa`, "otra fila sin nada vecinocero"], (db) => {
+      db.prepare(
+        "INSERT INTO jarvis_files (id, path, title, content, tags, qualifier, priority, related_to) VALUES ('a', 'a.md', 'T', ?, '[]', 'workspace', 90, '[]')",
+      ).run(`buzón x@example.com password: ${X} vecinobeta`);
+      db.prepare("INSERT INTO jme_facts (source_task, ts, fact_text, category) VALUES ('t1', 1, ?, 'event')").run(`buzón password ${Y} vecinogama`);
+    });
+  }
+  /** The database file and its write-ahead log as bytes (this test's own temp files). */
+  function dbBytes(): Buffer {
+    return Buffer.concat([dbPath, `${dbPath}-wal`].filter((p) => existsSync(p)).map((p) => readFileSync(p)));
+  }
+  /** 8-character pieces of the value, as written and lowercased (the full-text token), found in the bytes. */
+  function fragmentsIn(bytes: Buffer, v: string): number {
+    let n = 0;
+    for (const s of [v, v.toLowerCase()]) for (let i = 0; i + 8 <= s.length; i++) if (bytes.includes(s.slice(i, i + 8))) n++;
+    return n;
+  }
+  const matches = (index: string, q: string) => count(`SELECT COUNT(*) FROM ${index} WHERE ${index} MATCH ?`, q);
+
+  it("a BLOB of a pruned column is read (invalid UTF-8 does not throw); its hit is counted on its own line, never rewritten, and fails the run in both modes", () => {
+    const blob = Buffer.concat([Buffer.from([0xff, 0xc3, 0x28]), Buffer.from(` mailbox ops@example.com password: ${W} `), Buffer.from([0xe2, 0x82])]);
+    seedRows([`Recordatorio ${W} sigue.`], (db) => db.prepare("INSERT INTO conversations (bank, content) VALUES ('mc-jarvis', ?)").run(blob));
+    for (const apply of [false, true]) {
+      const { r, lines, nothing } = pruneLogged(apply);
+      expect(r.ok).toBe(false);
+      expect([...r.binary]).toEqual([["conversations.content", 1]]);
+      expect(r.uncovered.size).toBe(0);
+      expect(lines).toContain(`${TAG} binary_hits=1`);
+      expect(lines).toContain(`${TAG} binary column=conversations.content cells=1 (binary, not rewritten: this script never rewrites binary; convert or remove that cell by hand with the service stopped, then run again)`);
+      expect(nothing).toBe(false);
+      expect(lines.join("\n")).not.toContain(W);
+    }
+    expect((cell("SELECT content FROM conversations WHERE id = 2") as Buffer).equals(blob)).toBe(true);
+    // The value's context is only in the BLOB: the text row is pruned because the BLOB was collected.
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`Recordatorio ${PH} sigue.`);
+    expect(main(APPLY(), deps())).toBe(1);
+  });
+
+  it("a BLOB outside the pruned columns is swept: its hit counts with uncovered_hits", () => {
+    seedRows([`mailbox ops@example.com password: ${W}`], (db) =>
+      db.prepare("INSERT INTO conversations (bank, content) VALUES (?, 'nada')").run(Buffer.from(`banco ${W}`)),
+    );
+    for (const apply of [false, true]) {
+      const { r, lines } = pruneLogged(apply);
+      expect(r.ok).toBe(false);
+      expect([...r.uncovered]).toEqual([["conversations.bank", 1]]);
+      expect(r.binary.size).toBe(0);
+      expect(lines).toContain(`${TAG} uncovered column=conversations.bank cells=1 (not rewritten)`);
+    }
+  });
+
+  it("the closing line says 'nothing to change' only on a clean run; a failed run with nothing pending says so by count", () => {
+    seedRows([`mailbox ops@example.com password: ${W}`], (db) =>
+      db.prepare("INSERT INTO conversations (bank, content) VALUES (?, 'nada')").run(`banco ${W}`),
+    );
+    expect(prune(true).ok).toBe(false); // the row is pruned; the bank column still holds the value
+    for (const apply of [false, true]) {
+      const { r, lines, nothing } = pruneLogged(apply);
+      expect(r.stores.every((s) => s.hit === 0)).toBe(true);
+      expect(r.problems).toBe(1);
+      expect(nothing).toBe(false);
+      expect(lines).toContain(`${TAG} finished with failures: problems=1 (see the notes above); fix them and run the same command again`);
+    }
+    exec("UPDATE conversations SET bank = 'mc-jarvis'");
+    const clean = pruneLogged(true);
+    expect(clean.r.ok).toBe(true);
+    expect(clean.nothing).toBe(true);
+    expect(clean.lines.some((l) => l.includes("finished with failures"))).toBe(false);
+  });
+
+  it("apply leaves no piece of a pruned value in the database file or its log, index pages included; a neighbouring word still finds each row", () => {
+    seedIndexed();
+    const before = dbBytes();
+    for (const v of [W, X, Y]) expect(fragmentsIn(before, v)).toBeGreaterThan(0);
+    const { r, lines } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(r.fts).toBe(3);
+    expect(lines).toContain(`${TAG} fts_rebuilt=3`);
+    expect([W, X, Y].map((v) => fragmentsIn(dbBytes(), v))).toEqual([0, 0, 0]);
+    expect(matches("conversations_fts", `"${W}"`)).toBe(0);
+    expect(matches("conversations_fts", "vecinoalfa")).toBe(1);
+    expect(matches("jarvis_files_fts", "vecinobeta")).toBe(1);
+    expect(matches("jme_facts_fts", "vecinogama")).toBe(1);
+    const db = new BetterSqlite3(dbPath);
+    try {
+      for (const t of ["conversations_fts", "jarvis_files_fts", "jme_facts_fts"]) {
+        expect(() => db.exec(`INSERT INTO ${t}(${t}, rank) VALUES('integrity-check', 1)`)).not.toThrow();
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("the dry run counts the indexes it would rebuild and writes nothing; an absent index is skipped", () => {
+    seedIndexed();
+    const before = folderDigest(join(root, "data"));
+    const dry = pruneLogged(false);
+    expect(dry.r.ok).toBe(true);
+    expect(dry.r.fts).toBe(3);
+    expect(dry.lines).toContain(`${TAG} fts_to_rebuild=3`);
+    expect(folderDigest(join(root, "data"))).toBe(before);
+    exec("DROP TRIGGER jme_facts_ai; DROP TRIGGER jme_facts_ad; DROP TRIGGER jme_facts_au; DROP TABLE jme_facts_fts");
+    const { r, lines } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(r.fts).toBe(2);
+    expect(lines).toContain(`${TAG} fts_rebuilt=2`);
+  });
+
+  it("a failed index rebuild fails the run with 'run again'; repeating the command once the cause is gone finishes it", () => {
+    seedIndexed();
+    // An index over a store whose rebuild cannot read its content table.
+    exec("CREATE VIRTUAL TABLE zz_fts USING fts5(content, falta, content='conversations', content_rowid='id')");
+    const first = pruneLogged(true);
+    expect(first.r.ok).toBe(false);
+    expect([first.r.fts, first.r.ftsFailed]).toEqual([4, 1]);
+    expect(first.lines).toContain(`${TAG} ERROR store=fts index=zz_fts code=SQLITE_ERROR`);
+    expect(first.lines).toContain(`${TAG} fts_rebuilt=3 fts_rebuild_failed=1`);
+    expect(first.lines).toContain(`${TAG} finished with failures: problems=1 (see the notes above); fix them and run the same command again`);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`mailbox ops@example.com password: ${PH} vecinoalfa`);
+    exec("DROP TABLE zz_fts");
+    const again = pruneLogged(true);
+    expect(again.r.ok).toBe(true);
+    expect([again.r.fts, again.r.ftsFailed]).toEqual([3, 0]);
+    expect(again.nothing).toBe(true);
+    expect([W, X, Y].map((v) => fragmentsIn(dbBytes(), v))).toEqual([0, 0, 0]);
+  });
+
+  it("a long value on overflow pages leaves no piece after apply (freed overflow pages are zeroed: secure_delete ON, not FAST)", () => {
+    const pad = "relleno ".repeat(3000); // ~24 KB per row: the value sits on overflow pages
+    seedRows([`${pad} mailbox ops@example.com password: ${W} ${pad}`, `${pad} otra ${pad}`]);
+    expect(fragmentsIn(dbBytes(), W)).toBeGreaterThan(0);
+    const { r } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(fragmentsIn(dbBytes(), W)).toBe(0);
+  });
+
+  it("the write-ahead log is emptied last: with another connection open the log file is 0 bytes after apply", () => {
+    seedIndexed();
+    const held = new BetterSqlite3(dbPath);
+    try {
+      held.prepare("SELECT COUNT(*) FROM conversations").get();
+      const r = prune(true);
+      expect(r.ok).toBe(true);
+      expect(r.checkpointBusy).toBe(false);
+      expect(statSync(`${dbPath}-wal`).size).toBe(0);
+    } finally {
+      held.close();
+    }
+  });
+
+  it("checkpoint busy (another connection holds a read transaction): the run fails, says the log still holds old pages and to run again with the service stopped", () => {
+    seedIndexed();
+    const reader = new BetterSqlite3(dbPath, { readonly: true });
+    let busy: ReturnType<typeof pruneLogged>;
+    try {
+      reader.exec("BEGIN");
+      reader.prepare("SELECT COUNT(*) FROM conversations").get();
+      busy = pruneLogged(true);
+    } finally {
+      reader.close();
+    }
+    expect(busy.r.ok).toBe(false);
+    expect(busy.r.checkpointBusy).toBe(true);
+    expect(busy.r.problems).toBe(1);
+    expect(busy.lines).toContain(
+      `${TAG} checkpoint busy: the write-ahead log file still holds old pages — run the same command again with the service stopped`,
+    );
+    expect(busy.nothing).toBe(false);
+    expect(busy.lines).toContain(`${TAG} finished with failures: problems=1 (see the notes above); fix them and run the same command again`);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`mailbox ops@example.com password: ${PH} vecinoalfa`);
+    const again = pruneLogged(true);
+    expect(again.r.ok).toBe(true);
+    expect(again.r.checkpointBusy).toBe(false);
+  });
+});
 
 describe("re-run after an interruption", () => {
   const V = V_CONV; // context only in a row
