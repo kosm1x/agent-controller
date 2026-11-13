@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Status 2026-11-13 23:12 UTC — COMMITTED, not yet deployed: the explanatory line for replies that show the placeholder `698183b7` (4ej), the failed-check rule and two more small rules `0ae77614` (4el). The operator wrapper for the removal run is reviewed and placed (4ee). In build: the delivery-path follow-up (4ej) and the script for copies outside the service's stores (4ef). Opened: 4em, 4en, 4eo.**
+
 **Status 2026-11-13 22:09 UTC — COMMITTED, not yet deployed: the removal script's hardening `e61df834` (4ee), the path-check error rule `032ed2f7` (4eh), a machine-dependent test fixed `ade414e7` (4ek). In review: the explanatory line for replies that show the placeholder (4ej). In draft: the operator wrapper for the removal run. Opened: 4el (three small follow-ups, detail off-repo).**
 
 **Status 2026-11-13 21:00 UTC — standing store rule COMMITTED `fd926c2b` (queue 4ed, operator request of 2026-11-12), not yet deployed: a mailbox password the mailbox tool has printed is never written to a durable store; the reply check decides what the operator sees. Two review rounds. In build: the explanatory line for replies assembled from stored output (4ej), the removal script's hardening (4ee), error handling inside the path check (4eh).**
