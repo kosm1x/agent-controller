@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Status 2026-11-13 20:50 UTC — second shell write check commit DONE `ab065098` (queue 4dq, ruled yes on 2026-11-13), not yet deployed: copy and move commands are judged by where each file lands; the cost of one hostile command is bounded per tool call; never looser than the committed check in any review round. Follow-ups in 4eh. Next: the operator's read-only replay of past commands (counts only), then the third commit of that series.**
+
 **Status 2026-11-11 18:38 UTC — second shell write check commit: three review rounds, never looser than the committed check in any of them; round 3 found one cost point on a nested-command path, the third cost point in three rounds, so the work stopped for a ruling (queue 4dq). Uncommitted until ruled.**
 
 **Status 2026-11-11 07:33 UTC — shell write check, first commit COMMITTED `a7ed9174` (queue 4dj), not yet deployed; three review rounds, round 3 passed; the operator runs the read-only replay before the deploy that carries it. Next: second commit, then the third after the replay.**
@@ -110,6 +112,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 Guard tests today: of 24 cells (four write-capable tools × six forbidden-path categories) 5 have a behavioural test, 5 a unit-only test, 14 none. The parity table test of S1 fills all 24.
 
 ### Batch 2 — Deploy path (rulings 5, 6)
+
+**Status 2026-11-13 20:50 UTC — in-chat deploy hand-over COMMITTED `1908b9fb` (queue 4cm (a), 4ei), not yet deployed: asked to deploy, the agent answers with the line the operator runs; the deploy script with its checks is the only deploy path. The read-only protection for source and build output is installed on the host and becomes active at the next restart. The tool's model-visible wording waits for the one evaluation run of batch 10.**
 
 **Status 2026-11-11 04:29 UTC — DEPLOYED 2026-11-11 04:27 UTC as build `555c888f` (queue 4dg): the new deploy script ran for the first time on a real deploy and ended with verdict OK; the per-build deploy and rollback piece (2c) still waits for rulings (4cw).**
 
