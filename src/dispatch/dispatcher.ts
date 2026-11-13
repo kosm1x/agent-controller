@@ -303,6 +303,24 @@ const containerQueue: QueuedContainerTask[] = [];
 const activeAborts = new Map<string, AbortController>();
 
 /**
+ * Tasks with a run in flight whose cancel `cancelTask()` has announced on the
+ * bus. The run's cancelled close announces only when its task is not here, so
+ * a cancel is announced exactly once whichever way it arrived. An entry lives
+ * exactly as long as the task's `activeAborts` entry.
+ */
+const announcedCancels = new Set<string>();
+
+/** @internal Test seam only: how many runs hold a registered abort controller. */
+export function _activeAbortCountForTests(): number {
+  return activeAborts.size;
+}
+
+/** @internal Test seam only: how many announced-cancel records are held. */
+export function _announcedCancelCountForTests(): number {
+  return announcedCancels.size;
+}
+
+/**
  * V8.3 seam origin for a submission: `operator` iff the submitter named the
  * operator thread it answers (`threadId`); otherwise `undefined` so
  * `enterRunToolContext` inherits the parent run's origin (nested dispatch)
@@ -832,6 +850,13 @@ function persistLongRootAnswer(
   }
 }
 
+/** Task statuses after which a late abort signal no longer cancels the run. */
+const TERMINAL_TASK_STATUSES = new Set([
+  "completed",
+  "completed_with_concerns",
+  "failed",
+]);
+
 /**
  * Execute a task that already has any required container slot acquired.
  * Releases the slot on completion.
@@ -887,7 +912,6 @@ async function dispatchWithSlot(
   }
 
   const abortController = submission.abortController ?? new AbortController();
-  activeAborts.set(taskId, abortController);
 
   const input: RunnerInput = {
     taskId,
@@ -937,6 +961,60 @@ async function dispatchWithSlot(
   // `finally` releases it. The fallback releases it EARLY (before the container-
   // less fast re-run) and sets this so the `finally` doesn't double-release.
   let containerSlotReleased = false;
+  // Has this task been cancelled? The task row decides: a cancel written
+  // there counts whoever wrote it (another process never reaches the
+  // signal), and a signal that fires after the row is already completed or
+  // failed does not. The signal answers alone while the row is not terminal,
+  // or when the row cannot be read: a broken read never fails a good run.
+  const isCancelled = (): boolean => {
+    let status: string | undefined;
+    try {
+      status = (
+        db
+          .prepare("SELECT status FROM tasks WHERE task_id = ?")
+          .get(taskId) as { status?: string } | undefined
+      )?.status;
+    } catch (err) {
+      log.warn(
+        { taskId, err: errMsg(err) },
+        "cancel check: task status unreadable, deciding by the abort signal",
+      );
+      return abortController.signal.aborted;
+    }
+    if (status === "cancelled") return true;
+    return (
+      abortController.signal.aborted &&
+      !TERMINAL_TASK_STATUSES.has(status ?? "")
+    );
+  };
+  // A cancel is announced on the bus exactly once. cancelTask() records the
+  // cancels it announced; any other cancel (a row written by another
+  // process, or an abort whose caller never got a cancel announced) is
+  // announced here by the cancelled close.
+  const announceCancelUnlessRecorded = (): void => {
+    if (announcedCancels.has(taskId)) return;
+    try {
+      getEventBus().emitEvent(
+        "task.cancelled",
+        abortController.signal.aborted
+          ? {
+              task_id: taskId,
+              cancelled_by: "signal",
+              reason: "Run aborted without a cancel request",
+            }
+          : {
+              task_id: taskId,
+              cancelled_by: "db",
+              reason: "Cancelled in the task store",
+            },
+      );
+    } catch {
+      // best-effort: the cancel is already recorded in the task row
+    }
+  };
+  // Registered on the line before the try whose finally removes it: a throw
+  // above must not leave an entry (or a cancel record) behind.
+  activeAborts.set(taskId, abortController);
   try {
     const start = Date.now();
     // Ritual tasks: wrap the runner's entire async execution in ritualContext
@@ -969,9 +1047,11 @@ async function dispatchWithSlot(
     // A cancelled task is closed as cancelled, whatever the runner handed back
     // after the abort: never a completed run, never a completed delivery of the
     // partial text, never a failure alarm (task.failed feeds the reaction
-    // engine). cancelTask already marked the task and emitted task.cancelled.
-    // No fallback re-run, retry or completion ledger; the spend is still booked.
-    if (abortController.signal.aborted) {
+    // engine). The cancel entry point already marked the task and announced
+    // the cancel. Nothing runs after the point of detection (no fallback
+    // re-run, retry or completion ledger); the spend is still booked. Called
+    // wherever the answer to isCancelled() can have changed.
+    const closeCancelled = (out: RunnerOutput, spendBooked = false): void => {
       const cancelledMs = Date.now() - start;
       db.prepare(
         `
@@ -988,36 +1068,46 @@ async function dispatchWithSlot(
       `,
       ).run({
         runId,
-        output: result.output
-          ? stringifyRedacted(result.output, ["pendingConfirmation"])
+        output: out.output
+          ? stringifyRedacted(out.output, ["pendingConfirmation"])
           : null,
-        error: redactCredentialsForPersist(result.error),
-        tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
-        toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
+        error: redactCredentialsForPersist(out.error),
+        tokenUsage: out.tokenUsage ? JSON.stringify(out.tokenUsage) : null,
+        toolCalls: out.toolCalls ? JSON.stringify(out.toolCalls) : "[]",
         durationMs: cancelledMs,
       });
       updateTaskStatus(taskId, "cancelled");
-      recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
+      // spendBooked: this usage was already booked (a first attempt whose
+      // re-run threw); the row keeps it, the ledger does not get it twice.
+      if (!spendBooked) {
+        recordRunCost(out, runId, taskId, agentType, effectiveAgentType);
+      }
       // The one terminal timeline row of a cancelled run: counts and enum
       // values only, no runner text.
       emitTraceEvent({
         taskId,
         runId,
         name: "task.cancelled",
-        tokensIn: result.tokenUsage?.promptTokens,
-        tokensOut: result.tokenUsage?.completionTokens,
-        costUsd: result.tokenUsage?.actualCostUsd,
+        tokensIn: out.tokenUsage?.promptTokens,
+        tokensOut: out.tokenUsage?.completionTokens,
+        costUsd: out.tokenUsage?.actualCostUsd,
         latencyMs: cancelledMs,
-        ...(result.toolCalls?.length && {
-          tool: result.toolCalls[result.toolCalls.length - 1],
+        ...(out.toolCalls?.length && {
+          tool: out.toolCalls[out.toolCalls.length - 1],
         }),
         attrs: {
           status: "cancelled",
           termination_reason: "aborted",
           agent_type: effectiveAgentType,
-          tool_calls: result.toolCalls?.length ?? 0,
+          tool_calls: out.toolCalls?.length ?? 0,
         },
       });
+      announceCancelUnlessRecorded();
+    };
+
+    // After the first runner.
+    if (isCancelled()) {
+      closeCancelled(result);
       return;
     }
 
@@ -1088,8 +1178,9 @@ async function dispatchWithSlot(
         db.prepare(
           "UPDATE tasks SET started_at = datetime('now'), updated_at = datetime('now') WHERE task_id = ? AND status = 'running'",
         ).run(taskId);
+        let fb: RunnerOutput | undefined;
         try {
-          const fb = await runWithExecutionContext(gateContext, () =>
+          fb = await runWithExecutionContext(gateContext, () =>
             enterRunToolContext(
               taskId,
               () => fastRunner.execute(input),
@@ -1110,6 +1201,12 @@ async function dispatchWithSlot(
           }
         } catch (err) {
           log.error({ err, taskId }, "fast-runner fallback threw");
+        }
+        // After the fallback re-run: the row carries the re-run's own usage,
+        // or the first attempt's when the re-run threw (booked above already).
+        if (isCancelled()) {
+          closeCancelled(fb ?? result, fb === undefined);
+          return;
         }
       }
     }
@@ -1207,6 +1304,12 @@ async function dispatchWithSlot(
         (t) => !calledTools.includes(t),
       );
       if (missing.length > 0) {
+        // Both branches act outward (a retry task, a warning); a cancelled
+        // task gets neither and takes the cancelled close.
+        if (isCancelled()) {
+          closeCancelled(result);
+          return;
+        }
         // The runner's own stated reason (2026-09-19: a dead model login read
         // only "Required tools not called" here — the cause sat in the output).
         const why = result.concerns?.[0]
@@ -1357,6 +1460,14 @@ async function dispatchWithSlot(
       }
     }
 
+    // After the post-run awaits (completion ledger, result persistence) and
+    // before the cost, the terminal timeline row and the bus event: nothing
+    // below awaits, so no cancel can land between this check and the emit.
+    if (isCancelled()) {
+      closeCancelled(result);
+      return;
+    }
+
     recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
 
     // V8.5 Phase 6: terminal trace event. For a failed task the last
@@ -1439,6 +1550,7 @@ async function dispatchWithSlot(
     }
   } catch (err) {
     const errorMsg = errMsg(err);
+    const cancelled = isCancelled();
     db.prepare(
       `
       UPDATE runs SET status = @status, error = @error, completed_at = datetime('now')
@@ -1446,14 +1558,19 @@ async function dispatchWithSlot(
     `,
     ).run({
       runId,
-      // A runner that throws on its abort was cancelled, not failed.
-      status: abortController.signal.aborted ? "cancelled" : "failed",
+      // A run whose task was cancelled closes as cancelled, thrown or not.
+      status: cancelled ? "cancelled" : "failed",
       error: redactCredentialsForPersist(errorMsg),
     });
 
-    updateTaskStatus(taskId, "failed", undefined, errorMsg);
+    updateTaskStatus(
+      taskId,
+      cancelled ? "cancelled" : "failed",
+      undefined,
+      errorMsg,
+    );
     emitTraceEvent(
-      abortController.signal.aborted
+      cancelled
         ? {
             taskId,
             runId,
@@ -1475,8 +1592,10 @@ async function dispatchWithSlot(
             },
           },
     );
+    if (cancelled) announceCancelUnlessRecorded();
   } finally {
     activeAborts.delete(taskId);
+    announcedCancels.delete(taskId);
     taskCompleted(agentType);
     // V8.4: free the numbers-provenance corpus on every exit path (the
     // consumer already took it on the normal path; this covers early returns
@@ -1847,7 +1966,8 @@ export function cancelTask(taskId: string): boolean {
   // (releasing its container slot in dispatchWithSlot's finally).
   const queued = containerQueue.findIndex((q) => q.taskId === taskId);
   if (queued >= 0) containerQueue.splice(queued, 1);
-  activeAborts.get(taskId)?.abort();
+  const inFlight = activeAborts.get(taskId);
+  inFlight?.abort();
 
   try {
     getEventBus().emitEvent("task.cancelled", {
@@ -1855,6 +1975,10 @@ export function cancelTask(taskId: string): boolean {
       cancelled_by: "api",
       reason: "User requested cancellation",
     });
+    // Recorded only once the emit returned: a failed emit leaves the
+    // announcement to the run's cancelled close. The close cannot run before
+    // this line (it resumes after an await), and the run's finally drops it.
+    if (inFlight) announcedCancels.add(taskId);
   } catch {
     // Event emission should not block
   }

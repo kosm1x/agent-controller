@@ -74,6 +74,25 @@ vi.mock("../observability/task-trace.js", () => ({
 
 vi.mock("../rituals/scheduler.js", () => ({ recordRitualFailure: vi.fn() }));
 
+// The real completion ledger, with a hook a test can use to act inside its
+// await (a cancel that lands while the ledger runs).
+type LedgerArgs = Parameters<
+  typeof import("../lib/v8-4/consumer.js").applyCompletionLedger
+>[0];
+const ledgerHook = vi.hoisted(() => ({
+  before: undefined as undefined | ((args: LedgerArgs) => Promise<void>),
+}));
+vi.mock("../lib/v8-4/consumer.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../lib/v8-4/consumer.js")>();
+  return {
+    ...real,
+    applyCompletionLedger: async (args: LedgerArgs) => {
+      if (ledgerHook.before) await ledgerHook.before(args);
+      return real.applyCompletionLedger(args);
+    },
+  };
+});
+
 // Shared so the queue-4f tests can read the `[report-persist]` line.
 const logMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../lib/logger.js", () => ({
@@ -103,6 +122,8 @@ import {
   undeclaredRunFailure,
   gateContextFor,
   LONG_ANSWER_PERSIST_MIN_CHARS,
+  _announcedCancelCountForTests,
+  _activeAbortCountForTests,
 } from "./dispatcher.js";
 import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordRitualFailure } from "../rituals/scheduler.js";
@@ -945,6 +966,632 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
       thrown: true,
     });
   });
+});
+
+// The cancel can land after the first runner returned: during the fallback
+// re-run, during the completion ledger, or as a row another process wrote.
+// Each closes the run as cancelled with one task.cancelled timeline row and no
+// completion or failure event on the bus (that event drives retries and
+// alarms). A run that was not cancelled keeps its rows and its bus order.
+describe("dispatchTask: a cancel that lands after the first runner returned", () => {
+  const STATUS_SQL = "SELECT status FROM tasks WHERE task_id = ?";
+  afterEach(() => {
+    ledgerHook.before = undefined;
+    emitEventMock.mockReset();
+    emitTraceMock.mockReset();
+    mockPrepare.mockImplementation((_sql: string) => ({
+      run: mockRun,
+      get: mockGet,
+      all: mockAll,
+    }));
+  });
+
+  const busNames = () => emitEventMock.mock.calls.map((c) => c[0] as string);
+  const terminalTraces = () =>
+    emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter(
+        (t) =>
+          t.name.startsWith("task.") &&
+          t.name !== "task.started" &&
+          t.name !== "task.fallback",
+      );
+  const runStatuses = () =>
+    mockRun.mock.calls
+      .map((c) => c[0] as { runId?: string; status?: string } | undefined)
+      .filter((p) => p?.runId !== undefined && p.status !== undefined)
+      .map((p) => p!.status);
+  const runWrites = () =>
+    mockPrepare.mock.calls
+      .map((c) => String(c[0]))
+      .filter((q) => /UPDATE runs SET/.test(q) && /run_id = @runId/.test(q));
+  const CANCELLED_RUN = /status = 'cancelled'/;
+  // Closed one way or the other: a terminal timeline row, a terminal bus
+  // event, or the cancelled run-row write.
+  const settled = () => {
+    if (
+      !terminalTraces().length &&
+      !busNames().some((n) => n === "task.completed" || n === "task.failed") &&
+      !runWrites().some((q) => CANCELLED_RUN.test(q))
+    ) {
+      throw new Error("run not closed yet");
+    }
+  };
+  const cancelRunning = (taskId: string) => {
+    mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+    mockAll.mockReturnValueOnce([]); // no subtasks
+    expect(cancelTask(taskId)).toBe(true);
+  };
+  // Answers the dispatcher's task-status read through `decide`; every other
+  // statement keeps the shared mocks.
+  const installStatusRow = (decide: (id: unknown) => unknown) => {
+    const statusGet = vi.fn();
+    statusGet.mockImplementation(decide);
+    mockPrepare.mockImplementation((sql: string) => ({
+      run: mockRun,
+      get: sql === STATUS_SQL ? statusGet : mockGet,
+      all: mockAll,
+    }));
+    return statusGet;
+  };
+  const cancelPayloads = () =>
+    emitEventMock.mock.calls
+      .filter((c) => c[0] === "task.cancelled")
+      .map((c) => c[1] as { cancelled_by?: string });
+  const expectCancelledClose = () => {
+    expect(terminalTraces().map((t) => t.name)).toEqual(["task.cancelled"]);
+    expect(runWrites().at(-1)).toMatch(CANCELLED_RUN);
+    expect(busNames()).not.toContain("task.completed");
+    expect(busNames()).not.toContain("task.failed");
+  };
+
+  it("a cancel during the fallback re-run closes the run as cancelled; no task.failed on the bus", async () => {
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: "nanoclaw",
+      score: 5,
+      reason: "coding",
+      explicit: false,
+      modelTier: "standard",
+    } as unknown as ReturnType<typeof classify>);
+    registerRunner({
+      type: "nanoclaw",
+      // A no-op sandbox failure (no error) → the in-process fast fallback.
+      execute: async () => ({ success: false }) as RunnerOutput,
+    });
+    let fallbackStarted = false;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        fallbackStarted = true;
+        await new Promise<void>((resolve) => {
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        const out: RunnerOutput = {
+          success: false,
+          error: "cancelled",
+          terminationReason: "aborted",
+          toolCalls: ["web_search"],
+          tokenUsage: { promptTokens: 40, completionTokens: 3 },
+          durationMs: 1,
+        };
+        return out;
+      },
+    });
+    const { taskId } = await submitTask({
+      title: "misrouted chat",
+      description: "d",
+      tags: ["messaging"],
+    });
+    await vi.waitFor(() => {
+      if (!fallbackStarted) throw new Error("fallback not started");
+    });
+    cancelRunning(taskId);
+    await vi.waitFor(settled);
+
+    expect(emitTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "task.fallback" }),
+    );
+    expectCancelledClose();
+    // The fallback's own usage is what the cancelled row carries.
+    expect(terminalTraces()[0]).toMatchObject({
+      tokensIn: 40,
+      tokensOut: 3,
+      tool: "web_search",
+    });
+    // The failed-run write is never reached.
+    expect(runStatuses()).toEqual([]);
+    // The reaction engine acts on bus task.failed; the only bus event after
+    // the create is the cancel entry point's own announcement.
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+  });
+
+  it("a cancel during the completion ledger closes the run as cancelled; no task.completed on the bus", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        const out: RunnerOutput = {
+          success: true,
+          status: "DONE",
+          output: "Example Corp has three offices",
+          toolCalls: ["file_read", "file_write"],
+          tokenUsage: { promptTokens: 70, completionTokens: 8 },
+          durationMs: 1,
+        };
+        return out;
+      },
+    });
+    ledgerHook.before = async ({ taskId }) => cancelRunning(taskId);
+    await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    expect(terminalTraces()[0]).toMatchObject({ tool: "file_write" });
+    expect(terminalTraces()[0].attrs).toMatchObject({ tool_calls: 2 });
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    // The spend is booked once.
+    expect(recordCost).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordCost).mock.calls[0][0]).toMatchObject({
+      promptTokens: 70,
+      completionTokens: 8,
+    });
+  });
+
+  it("a cancel written to the task row by another process closes the run as cancelled and is announced once", async () => {
+    let idSeen = "";
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        idSeen = input.taskId;
+        return { success: true, status: "DONE", output: "ok", durationMs: 1 } as RunnerOutput;
+      },
+    });
+    // The row turns cancelled while the ledger runs; nothing aborts the signal.
+    // Only this task's row says so.
+    let rowCancelled = false;
+    ledgerHook.before = async () => {
+      rowCancelled = true;
+    };
+    const statusGet = installStatusRow((id) => ({
+      status: id === idSeen && rowCancelled ? "cancelled" : "running",
+    }));
+    const { taskId } = await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    // No entry point announced this cancel, so the close does, once.
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "db" }),
+    ]);
+    // The status read names this task.
+    expect(statusGet.mock.calls.length).toBeGreaterThan(0);
+    expect(new Set(statusGet.mock.calls.map((c) => c[0]))).toEqual(new Set([taskId]));
+  });
+
+  it.each(["completed", "completed_with_concerns", "failed"])(
+    "an abort that fires after the task row is already %s leaves the normal close",
+    async (terminalStatus) => {
+      const ac = new AbortController();
+      let idSeen = "";
+      let rowDone = false;
+      registerRunner({
+        type: "fast",
+        execute: async (input) => {
+          idSeen = input.taskId;
+          return { success: true, status: "DONE", output: "ok", durationMs: 1 } as RunnerOutput;
+        },
+      });
+      installStatusRow((id) => ({
+        status: id === idSeen && rowDone ? terminalStatus : "running",
+      }));
+      ledgerHook.before = async () => {
+        rowDone = true;
+        ac.abort();
+      };
+      await submitTask({ title: "answer me", description: "d", abortController: ac });
+      await vi.waitFor(settled);
+
+      expect(terminalTraces().map((t) => t.name)).toEqual(["task.completed"]);
+      expect(busNames()).toEqual(["task.created", "task.completed"]);
+      expect(runStatuses()).toEqual(["completed"]);
+      expect(runWrites().some((q) => CANCELLED_RUN.test(q))).toBe(false);
+    },
+  );
+
+  it("a status read that throws while the signal is set closes the run as cancelled, announced once", async () => {
+    const ac = new AbortController();
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    installStatusRow(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    ledgerHook.before = async () => {
+      ac.abort();
+    };
+    const { taskId } = await submitTask({ title: "answer me", description: "d", abortController: ac });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "signal" }),
+    ]);
+  });
+
+  it("a cancel whose own announcement failed is announced once, by the close", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    // The entry point's emit throws once; the cancel must not count as announced.
+    let failedOnce = false;
+    emitEventMock.mockImplementation((type: string) => {
+      if (type === "task.cancelled" && !failedOnce) {
+        failedOnce = true;
+        throw new Error("event store unavailable");
+      }
+    });
+    ledgerHook.before = async ({ taskId }) => cancelRunning(taskId);
+    const { taskId } = await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    const delivered = emitEventMock.mock.calls
+      .map((c, i) => ({ type: c[0], data: c[1], outcome: emitEventMock.mock.results[i].type }))
+      .filter((e) => e.type === "task.cancelled" && e.outcome === "return")
+      .map((e) => e.data);
+    expect(delivered).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "signal" }),
+    ]);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("a throw before the run starts leaves no abort entry and no cancel record", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    emitTraceMock.mockImplementation((e: { name: string }) => {
+      if (e.name === "task.started") throw new Error("trace sink down");
+    });
+    const { taskId } = await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(() => {
+      if (!logMock.error.mock.calls.some((c) => c[1] === "failed to dispatch task")) {
+        throw new Error("dispatch not failed yet");
+      }
+    });
+
+    expect(_activeAbortCountForTests()).toBe(0);
+    // A later cancel request for the same id finds no run to record against.
+    cancelRunning(taskId);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("a runner that throws while the signal is set marks the task row cancelled, not failed", async () => {
+    const ac = new AbortController();
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        ac.abort();
+        throw new Error("This operation was aborted");
+      },
+    });
+    const taskWrites: Array<[string, unknown[]]> = [];
+    const runningRow = vi.fn();
+    runningRow.mockReturnValue({ status: "running" });
+    mockPrepare.mockImplementation((sql: string) => {
+      const run = vi.fn();
+      run.mockImplementation((...args: unknown[]) => {
+        if (sql.startsWith("UPDATE tasks SET status")) taskWrites.push([sql, args]);
+        return mockRun(...args);
+      });
+      return { run, get: sql === STATUS_SQL ? runningRow : mockGet, all: mockAll };
+    });
+    await submitTask({ title: "answer me", description: "d", abortController: ac });
+    await vi.waitFor(settled);
+
+    expect(runStatuses()).toEqual(["cancelled"]);
+    expect(taskWrites.some(([q]) => q.includes("status = 'failed'"))).toBe(false);
+    expect(taskWrites.filter(([, a]) => a[0] === "cancelled")).toHaveLength(1);
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([expect.objectContaining({ cancelled_by: "signal" })]);
+  });
+
+  it("an abort whose cancelTask call is refused (row already cancelled) is announced once, by the close", async () => {
+    const ac = new AbortController();
+    let idSeen = "";
+    let rowCancelled = false;
+    let refused: boolean | undefined;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        idSeen = input.taskId;
+        return { success: true, status: "DONE", output: "ok", durationMs: 1 } as RunnerOutput;
+      },
+    });
+    installStatusRow((id) => ({
+      status: id === idSeen && rowCancelled ? "cancelled" : "running",
+    }));
+    // Another process cancelled the row; then the caller aborts and asks
+    // cancelTask, which refuses an already-cancelled task and announces nothing.
+    ledgerHook.before = async ({ taskId }) => {
+      rowCancelled = true;
+      ac.abort();
+      mockGet.mockReturnValueOnce({ task_id: taskId, status: "cancelled" });
+      refused = cancelTask(taskId);
+    };
+    const { taskId } = await submitTask({ title: "answer me", description: "d", abortController: ac });
+    await vi.waitFor(settled);
+
+    expect(refused).toBe(false);
+    expectCancelledClose();
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "signal" }),
+    ]);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("an abort with no cancel request at all is announced once, by the close, as a signal cancel", async () => {
+    const ac = new AbortController();
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    installStatusRow(() => ({ status: "running" }));
+    // A caller that gives up and aborts before it knows the task id never
+    // calls cancelTask; the row stays running.
+    ledgerHook.before = async () => {
+      ac.abort();
+    };
+    const { taskId } = await submitTask({ title: "answer me", description: "d", abortController: ac });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "signal" }),
+    ]);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("an ordinary cancelTask is announced by the entry point only, and its record ends with the run", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    let heldDuringRun = -1;
+    ledgerHook.before = async ({ taskId }) => {
+      cancelRunning(taskId);
+      heldDuringRun = _announcedCancelCountForTests();
+    };
+    const { taskId } = await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: taskId, cancelled_by: "api" }),
+    ]);
+    expect(heldDuringRun).toBe(1);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("a cancelTask on a task with no run in flight leaves no record", () => {
+    mockGet.mockReturnValueOnce({ task_id: "t-queued", status: "queued" });
+    mockAll.mockReturnValueOnce([]);
+    expect(cancelTask("t-queued")).toBe(true);
+    expect(cancelPayloads()).toEqual([
+      expect.objectContaining({ task_id: "t-queued", cancelled_by: "api" }),
+    ]);
+    expect(_announcedCancelCountForTests()).toBe(0);
+  });
+
+  it("a status read that throws leaves a good run exactly as it was", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, status: "DONE", output: "ok", durationMs: 1 }) as RunnerOutput,
+    });
+    installStatusRow(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expect(busNames()).toEqual(["task.created", "task.completed"]);
+    expect(emitTraceMock.mock.calls.map((c) => c[0].name)).toEqual([
+      "attribution.resolved",
+      "task.started",
+      "numbers.audited",
+      "task.completed",
+    ]);
+    expect(runStatuses()).toEqual(["completed"]);
+    // One warn line per failed read (after the runner, before the terminal).
+    expect(
+      logMock.warn.mock.calls.filter(
+        (c) => c[1] === "cancel check: task status unreadable, deciding by the abort signal",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("a runner that throws after a row-only cancel closes the run as cancelled, announced once", async () => {
+    let idSeen = "";
+    let rowCancelled = false;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        idSeen = input.taskId;
+        rowCancelled = true;
+        throw new Error("tool loop broke");
+      },
+    });
+    installStatusRow((id) => ({
+      status: id === idSeen && rowCancelled ? "cancelled" : "running",
+    }));
+    await submitTask({ title: "answer me", description: "d" });
+    await vi.waitFor(settled);
+
+    expect(terminalTraces()).toEqual([
+      expect.objectContaining({
+        name: "task.cancelled",
+        attrs: { status: "cancelled", termination_reason: "aborted", thrown: true },
+      }),
+    ]);
+    expect(runStatuses()).toEqual(["cancelled"]);
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+    expect(cancelPayloads()).toEqual([expect.objectContaining({ cancelled_by: "db" })]);
+  });
+
+  it("a fallback that throws after the cancel books the first attempt's spend once; the row keeps it", async () => {
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: "nanoclaw",
+      score: 5,
+      reason: "coding",
+      explicit: false,
+      modelTier: "standard",
+    } as unknown as ReturnType<typeof classify>);
+    registerRunner({
+      type: "nanoclaw",
+      execute: async () =>
+        ({ success: false, tokenUsage: { promptTokens: 10, completionTokens: 5 } }) as RunnerOutput,
+    });
+    let fallbackStarted = false;
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        fallbackStarted = true;
+        await new Promise<void>((resolve) => {
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        throw new Error("This operation was aborted");
+      },
+    });
+    const { taskId } = await submitTask({
+      title: "misrouted chat",
+      description: "d",
+      tags: ["messaging"],
+    });
+    await vi.waitFor(() => {
+      if (!fallbackStarted) throw new Error("fallback not started");
+    });
+    cancelRunning(taskId);
+    await vi.waitFor(settled);
+
+    expectCancelledClose();
+    expect(recordCost).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordCost).mock.calls[0][0]).toMatchObject({
+      agentType: "nanoclaw",
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    const cancelledRow = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, unknown> | undefined)
+      .find((p) => p?.runId !== undefined && "tokenUsage" in p && !("status" in p));
+    expect(JSON.parse(String(cancelledRow!.tokenUsage))).toEqual({
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+  });
+
+  it.each([
+    ["first attempt (would submit a retry task)", false],
+    ["retry attempt (would raise the warning)", true],
+  ])(
+    "required tools missing on a cancelled task, %s: no retry, no warning, cancelled close",
+    async (_label, isRetry) => {
+      let idSeen = "";
+      registerRunner({
+        type: "fast",
+        execute: async (input) => {
+          idSeen = input.taskId;
+          return {
+            success: true,
+            status: "DONE",
+            output: "ok",
+            toolCalls: ["file_read"],
+            durationMs: 1,
+          } as RunnerOutput;
+        },
+      });
+      // The first read (right after the runner) sees the task running; the
+      // row is cancelled by the time the required-tools check acts.
+      let reads = 0;
+      installStatusRow((id) => ({
+        status: id === idSeen && ++reads > 1 ? "cancelled" : "running",
+      }));
+      await submitTask({
+        title: "needs a search",
+        description: "d",
+        requiredTools: ["web_search"],
+        ...(isRetry && { _isRequiredToolRetry: true }),
+      });
+      await vi.waitFor(settled);
+
+      expectCancelledClose();
+      expect(busNames()).toEqual(["task.created", "task.cancelled"]);
+      expect(busNames()).not.toContain("notification.warning");
+      const inserts = mockPrepare.mock.calls
+        .map((c) => String(c[0]))
+        .filter((q) => q.includes("INSERT INTO tasks"));
+      expect(inserts).toHaveLength(1); // the task itself, no retry task
+    },
+  );
+
+  it.each([
+    [true, "task.completed", "completed"],
+    [false, "task.failed", "failed"],
+  ])(
+    "not cancelled (success=%s): run row, timeline and bus order unchanged",
+    async (success, terminal, runStatus) => {
+      registerRunner({
+        type: "fast",
+        execute: async () =>
+          ({
+            success,
+            output: "ok",
+            ...(success ? {} : { error: "boom" }),
+            tokenUsage: { promptTokens: 5, completionTokens: 1 },
+            durationMs: 1,
+          }) as RunnerOutput,
+      });
+      await submitTask({ title: "plain", description: "d" });
+      await vi.waitFor(() => {
+        if (!busNames().includes(terminal)) throw new Error("no terminal yet");
+      });
+      expect(busNames()).toEqual(["task.created", terminal]);
+      expect(emitTraceMock.mock.calls.map((c) => c[0].name)).toEqual([
+        "attribution.resolved",
+        "task.started",
+        "numbers.audited", // the completion ledger's own row
+        terminal,
+      ]);
+      expect(runStatuses()).toEqual([runStatus]);
+      expect(runWrites().some((q) => CANCELLED_RUN.test(q))).toBe(false);
+      // The spend is booked before the terminal timeline row, which comes
+      // before the terminal bus event.
+      expect(recordCost).toHaveBeenCalledTimes(1);
+      const costAt = vi.mocked(recordCost).mock.invocationCallOrder[0];
+      const traceAt =
+        emitTraceMock.mock.invocationCallOrder[
+          emitTraceMock.mock.calls.findIndex((c) => c[0].name === terminal)
+        ];
+      const busAt =
+        emitEventMock.mock.invocationCallOrder[
+          emitEventMock.mock.calls.findIndex((c) => c[0] === terminal)
+        ];
+      expect(costAt).toBeLessThan(traceAt);
+      expect(traceAt).toBeLessThan(busAt);
+    },
+  );
 });
 
 // 2026-09-29: the fast runner's DENUE guard reads ONLY the text the user (or
