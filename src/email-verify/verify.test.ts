@@ -1,11 +1,24 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, afterAll, vi } from "vitest";
 import { EmailVerifier, deriveMailDomain, discoverFqdn, envelopeConfigError } from "./verify.js";
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { tmpdir, hostname } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_GOVERNANCE } from "./governance.js";
 import { startFakeSmtp, type FakeSmtpScript, type FakeSmtpServer } from "../test-utils/fake-smtp-server.js";
+
+// discoverFqdn reads os.hostname(): pin it so no expectation depends on the machine.
+const host = vi.hoisted(() => ({ name: "box" }));
+vi.mock("node:os", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:os")>()), hostname: () => host.name }));
+
+// Synthetic hosts files only; the real /etc/hosts is never read by these tests.
+const hostsDir = mkdtempSync(join(tmpdir(), "verify-hosts-"));
+let hostsN = 0;
+function hostsFile(text: string): string {
+  const p = join(hostsDir, `hosts-${hostsN++}`);
+  writeFileSync(p, text);
+  return p;
+}
+afterAll(() => rmSync(hostsDir, { recursive: true, force: true }));
 
 const servers: FakeSmtpServer[] = [];
 afterEach(async () => {
@@ -315,7 +328,7 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
 describe("EmailVerifier — stages before SMTP", () => {
   it("invalid syntax never touches DNS or the network", async () => {
     let dns = 0;
-    const v = new EmailVerifier({ mxLookup: async () => (dns++, []), probe: async () => { throw new Error("no"); } });
+    const v = new EmailVerifier({ heloName: "mail.example.com", mxLookup: async () => (dns++, []), probe: async () => { throw new Error("no"); } });
     const r = await v.verify("not an email");
     expect(r.verdict).toBe("invalid");
     expect(r.reason).toMatch(/^syntax:/);
@@ -324,7 +337,7 @@ describe("EmailVerifier — stages before SMTP", () => {
 
   it("disposable domains are risky without a probe", async () => {
     let probes = 0;
-    const v = new EmailVerifier({ mxLookup: async () => [{ exchange: "mx.x", priority: 1 }], probe: async () => (probes++, null as never) });
+    const v = new EmailVerifier({ heloName: "mail.example.com", mxLookup: async () => [{ exchange: "mx.x", priority: 1 }], probe: async () => (probes++, null as never) });
     const r = await v.verify("user1@mailinator.com");
     expect(r.verdict).toBe("risky");
     expect(r.reason).toBe("disposable_domain");
@@ -333,6 +346,7 @@ describe("EmailVerifier — stages before SMTP", () => {
 
   it("no MX → invalid with a typo suggestion; DNS error → unknown", async () => {
     const v = new EmailVerifier({
+      heloName: "mail.example.com",
       mxLookup: async (d) => {
         if (d === "gmial.com") throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" });
         throw Object.assign(new Error("ETIMEOUT"), { code: "ETIMEOUT" });
@@ -350,6 +364,7 @@ describe("EmailVerifier — stages before SMTP", () => {
   it("skipSmtp stops after MX and never probes", async () => {
     let probes = 0;
     const v = new EmailVerifier({
+      heloName: "mail.example.com",
       mxLookup: async () => [{ exchange: "aspmx.l.google.com", priority: 1 }],
       probe: async () => (probes++, null as never),
     });
@@ -414,43 +429,33 @@ describe("EmailVerifier.verifyMany", () => {
 });
 
 describe("envelope configuration guard (audit R4 C-1)", () => {
-  it("discoverFqdn resolves the short hostname through /etc/hosts without spawning", () => {
-    const short = hostname();
-    const hosts = join(tmpdir(), `hosts-${process.pid}`);
-    writeFileSync(hosts, `127.0.0.1 localhost\n# comment\n127.0.1.1 ${short}.example.test ${short}\n`);
-    if (short.includes(".")) {
-      expect(discoverFqdn(hosts)).toBe(short);
-    } else {
-      expect(discoverFqdn(hosts)).toBe(`${short}.example.test`);
-    }
-    expect(discoverFqdn("/nonexistent/hosts")).toBe(short);
+  it("discoverFqdn resolves the short hostname through the hosts file without spawning", () => {
+    const cases: Array<[string, string]> = [
+      // the FQDN before or after the short name on its line
+      ["127.0.0.1 localhost\n# comment\n127.0.1.1 box.example.test box\n", "box.example.test"],
+      ["127.0.1.1 box box.example.test\n", "box.example.test"],
+      // a dotted name on a line that does not name the short host is not ours
+      ["10.0.0.9 other.example.test other\n127.0.1.1 box.example.test box\n", "box.example.test"],
+      // an earlier line naming only the short host does not end the search
+      ["127.0.1.1 box\n10.0.0.5 box.example.test box\n", "box.example.test"],
+      // comments, tabs, IPv6 and CRLF line ends
+      ["127.0.0.1 localhost # loopback\r\n::1\tbox.example.test\tbox\r\n", "box.example.test"],
+      // a commented-out line, or the short name only inside a longer name: no match
+      ["# 127.0.1.1 box.example.test box\n10.0.0.9 boxer.example.test boxer\n", "box"],
+      // the first column is the address (hosts(5)): a line without one names nothing
+      ["box box.example.test\n", "box"],
+    ];
+    for (const [text, want] of cases) expect(discoverFqdn(hostsFile(text)), JSON.stringify(text)).toBe(want);
+    expect(discoverFqdn(join(hostsDir, "missing"))).toBe("box");
   });
 
-  it("discoverFqdn matches `hostname -f` on this box when /etc/hosts carries it", () => {
-    let fqdn = "";
+  it("discoverFqdn returns a dotted kernel hostname as is", () => {
+    host.name = "box.example.com";
     try {
-      fqdn = execFileSync("hostname", ["-f"], { encoding: "utf8" }).trim();
-    } catch {
-      return; // no hostname binary here
+      expect(discoverFqdn(hostsFile("127.0.1.1 other.example.test box.example.com\n"))).toBe("box.example.com");
+    } finally {
+      host.name = "box";
     }
-    if (!fqdn.includes(".")) return; // box without a FQDN: nothing to prove
-    let hosts = "";
-    try {
-      hosts = readFileSync("/etc/hosts", "utf8");
-    } catch {
-      return; // no readable /etc/hosts here
-    }
-    // `hostname -f` may answer from DNS (e.g. an EC2 runner's
-    // `*.compute.internal`); discoverFqdn reads only /etc/hosts by design, so
-    // a DNS-derived FQDN is outside its contract. Assert only when one hosts
-    // line names both the short hostname and the FQDN.
-    const short = hostname();
-    const carries = hosts.split("\n").some((l) => {
-      const names = l.split("#")[0].split(/\s+/);
-      return names.includes(short) && names.includes(fqdn);
-    });
-    if (!carries) return;
-    expect(discoverFqdn()).toBe(fqdn);
   });
 
   it("names the defect for a short, bogus or IP-literal HELO and an unroutable sender", () => {
