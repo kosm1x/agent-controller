@@ -14,8 +14,8 @@ import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
-import { realResolve } from "./write-guard.js";
-import { checkWriteBoundary, RITUAL_WRITABLE_DOCS, type BoundaryVerdict } from "./write-boundary.js";
+import { realResolve, realResolveParent } from "./write-guard.js";
+import { checkWriteBoundary, RITUAL_WRITABLE_DOCS, type BoundaryVerdict, type WriteOp } from "./write-boundary.js";
 import {
   buildFlailingBlockMessage,
   checkFlailing,
@@ -840,21 +840,23 @@ const WRITE_INDICATOR_EXEMPT = new Set([
  * "outside allowed paths" sentence that task-gate evidence quotes
  * (gate-check.test.ts, consumer.test.ts pin it).
  */
-function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdict, { allowed: true }>, relative = false): string {
+function shellBoundaryReason(targetPath: string, verdict: Exclude<BoundaryVerdict, { allowed: true }>, relative = false, removal = false): string {
+  // A removal is what mv moves away from its source path.
+  const [to, act] = removal ? ["removing", "removal"] : ["write to", "write"];
   if (relative && verdict.rule === "primary-checkout") {
-    return `write blocked: ${verdict.reason} A relative path resolves against the shell's working directory, which is the service's own unless the command cds first: write under /tmp/ or cd into the worktree first.`;
+    return `${act} blocked: ${verdict.reason} A relative path resolves against the shell's working directory, which is the service's own unless the command cds first: ${act === "write" ? "write under /tmp/" : "use an absolute path"} or cd into the worktree first.`;
   }
   switch (verdict.rule) {
     case "immutable":
-      return `write to immutable core file blocked: ${targetPath}`;
+      return `${to} immutable core file blocked: ${targetPath}`;
     case "operator-config":
-      return `write to operator config blocked: ${targetPath}`;
+      return `${to} operator config blocked: ${targetPath}`;
     case "system-dir":
     case "operator-home":
     case "outside-allow-list":
-      return `write to '${targetPath}' outside allowed paths`;
+      return `${to} '${targetPath}' outside allowed paths`;
     default:
-      return `write blocked: ${verdict.reason}`;
+      return `${act} blocked: ${verdict.reason}`;
   }
 }
 
@@ -919,12 +921,18 @@ const CD_TRANSPARENT = new Set(["{", "!", "if", "then", "do", "else", "elif", "w
 const MAX_TEXT_DEPTH = 4;
 /** A flat brace group with more alternatives than this is not judged. */
 const MAX_BRACE_ALTERNATIVES = 64;
+/** cp/mv/scp: the landing files judged in one tool call add up to at most this many path bytes. */
+const MAX_COPY_LANDING_BYTES = 32768;
+/** The landing budget of the tool call being checked: created by the outermost validateShellCommand, spent by every nested check. */
+let landingBudget: { landingBytes: number } | undefined;
 const PROCESS_SUBSTITUTION_REASON = "process substitution <() or >() is blocked";
 
 /** A file a command writes: the word as spelled (`raw`), its value after quote
  *  removal (`value`, what is judged) and whether the write appends (`>>`, `&>>`,
- *  `tee -a`); or, with `refuse`, why the command is refused without judging. */
-type WriteTarget = { raw: string; value: string; isAppend: boolean; refuse?: string; relative?: boolean };
+ *  `tee -a`); or, with `refuse`, why the command is refused without judging.
+ *  `op: "delete"` is a file the command removes (what `mv` moves away); with `unknownName`
+ *  (the source word), a directory an unknown name lands in or is taken from, judged as a removal. */
+type WriteTarget = { raw: string; value: string; isAppend: boolean; refuse?: string; relative?: boolean; op?: WriteOp; unknownName?: string };
 /** A shell word: as spelled, after quote removal, with every quoted or escaped character as NUL,
  *  and whether any part of it was quoted or escaped. */
 type ShellWord = { raw: string; value: string; bare: string; quoted: boolean };
@@ -1008,7 +1016,8 @@ function braceExpansion(w: ShellWord): ShellWord[] | undefined {
  * one in a pipeline, a background job or a subshell). Judged so: every write
  * redirection word except a `>&` dup, tee's files, and for cp/mv/scp in
  * command position the `-t` directory or else the last of two or more
- * positionals. A `$PWD` head is the cwd; a word from another variable, or an
+ * positionals, each source's landing file in it and mv's sources (removals).
+ * An absolute landing or mv source is judged in any position. A `$PWD` head is the cwd; a word from another variable, or an
  * scp `host:x`, is not a local path. With an unknowable cwd, a `~name` head,
  * or past MAX_RELATIVE_TARGET_BYTES, a relative target is refused. Judged text keeps absolute targets only: a heredoc body or a
  * quoted string may be prose (`> quote`, `a -> b`).
@@ -1091,8 +1100,10 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
         } else if (ch === '"') {
           let j = i + 1;
           for (; j < n && s[j] !== '"'; j++) {
-            if (s[j] === "\\" && s[j + 1] === "\n") j++;
-            else if (s[j] === "\\" && '\\"$`'.includes(s[j + 1] ?? "x")) value += s[++j];
+            if (s[j] === "\\" && s[j + 1] === "\n") {
+              j++;
+              continue;
+            } else if (s[j] === "\\" && '\\"$`'.includes(s[j + 1] ?? "x")) value += s[++j];
             else value += s[j];
             bare += "\0";
           }
@@ -1131,24 +1142,27 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
   const relative = !commandText && !opts.reentry;
   let cwd = opts.cwd ?? process.cwd();
   let relativeBytes = MAX_RELATIVE_TARGET_BYTES; // what is left of the budget
+  const budget = landingBudget ?? { landingBytes: MAX_COPY_LANDING_BYTES }; // cp/mv/scp landing files: one for the whole tool call
   const home = process.env.HOME ?? "/root";
   const spellOut = (raw: string, why: string): void =>
     refuse(raw, `write target '${raw}' ${why} and cannot be checked — spell the directory out (an absolute path, or an absolute \`cd\` first)`);
   // A relative word is joined to the cwd unnormalised: realResolve walks `..` after symlinks, as the kernel does.
-  const land = (a: ShellWord, isAppend: boolean, rel: boolean): void => {
+  // The absolute path a word names (undefined when it is skipped or refused).
+  const place = (a: ShellWord, rel: boolean): { value: string; relative?: true } | undefined => {
     const v = a.value;
-    if (v.startsWith("/")) {
-      out.push({ raw: a.raw, value: v, isAppend });
-      return;
-    }
+    if (v.startsWith("/")) return { value: v };
     if (!rel || !v) return;
     const head = /^\$(?:HOME|\{HOME\}|PWD|\{PWD\})(?=\/|$)/.exec(v)?.[0] ?? (a.raw[0] === "~" && v[0] === "~" ? /^~[^/]*/.exec(v)![0] : "");
-    if (head === "~" || head.includes("HOME")) out.push({ raw: a.raw, value: home + v.slice(head.length), isAppend });
+    if (head === "~" || head.includes("HOME")) return { value: home + v.slice(head.length) };
     else if (head[0] === "~") spellOut(a.raw, "names another user's home directory"); // `~name`
     else if (v[0] === "$" && !head) return; // another variable: not a local path
     else if (cwd === UNKNOWN_CWD) spellOut(a.raw, "is relative to an unknowable cwd");
     else if ((relativeBytes -= cwd.length + 1 + v.length - head.length) < 0) spellOut(a.raw, "takes this command's relative write targets past the total path length checked in one command");
-    else out.push({ raw: a.raw, value: `${cwd}/${v.slice(head.length)}`, isAppend, relative: true }); // `$PWD/x` too
+    else return { value: `${cwd}/${v.slice(head.length)}`, relative: true }; // `$PWD/x` too
+  };
+  const land = (a: ShellWord, isAppend: boolean, rel: boolean, extra?: Pick<WriteTarget, "op" | "unknownName">): void => {
+    const p = place(a, rel);
+    if (p) out.push({ raw: a.raw, ...p, isAppend, ...extra });
   };
   // A judged word: every word its brace expansion produces; an expansion that is not judged is
   // refused when it can produce a judged path (`/…`, `{…`, or any word but a `$` one under `rel`).
@@ -1227,10 +1241,57 @@ function captureWriteTargets(s: string, opts: { reentry?: boolean; depth?: numbe
     }
     // In command position (or right after find's `-exec`), relative words are judged too: tee's files;
     // mv/cp/scp's `-t` directory, else the last of two or more positionals (find's `;`/`+` dropped).
-    if (!relative || (at !== commandAt(words) && !/^-(?:exec|execdir|ok|okdir)$/.test(words[at - 1]?.value ?? ""))) return;
+    const commandPosition = at === commandAt(words) || /^-(?:exec|execdir|ok|okdir)$/.test(words[at - 1]?.value ?? "");
+    const rel = relative && commandPosition;
     const positionals = /^[;+]$/.test(files[files.length - 1]?.value ?? "") ? files.slice(0, -1) : files;
     const dest = op === "tee" ? positionals : dirs.length > 0 ? dirs : positionals.length >= 2 ? positionals.slice(-1) : [];
-    for (const w of dest) if (!w.value.startsWith("/") && !(op === "scp" && /^[^/]*:/.test(w.value))) judge(w, isAppend, true); // scp `host:x` is remote
+    const remote = (w: ShellWord): boolean => op === "scp" && /^[^/]*:/.test(w.value); // scp `host:x` is remote
+    if (rel) for (const w of dest) if (!w.value.startsWith("/") && !remote(w)) judge(w, isAppend, true);
+    if (op === "tee") return;
+    // Each source lands at DEST/<its last path component> (no stat: if DEST is a file, that path is
+    // never written and judging it is harmless); mv also removes the source. A remote scp source names
+    // its file after the colon. A name with `$`, a backtick, a brace or an unquoted glob (any glob on
+    // the remote side), or a `-t DIR` with no source word, is unknown: in command position it may land
+    // only in, and mv may take it only from, a directory the boundary lets be removed, so that
+    // directory is judged as a removal (`unknownName`); elsewhere it is skipped.
+    const sources = dirs.length > 0 ? positionals : positionals.slice(0, -1);
+    if (op === "mv") for (const w of sources) land(w, false, rel, { op: "delete" });
+    const into = new Map<string, ShellWord>(); // DEST without trailing `/`: each landing path once
+    for (const d of dest) if (d.value && !remote(d) && (rel || d.value.startsWith("/"))) into.set(d.value.replace(/\/+$/, ""), d);
+    let unknown = dirs.length > 0 && sources.length === 0 ? words[at]!.raw : undefined;
+    const names = new Set<string>();
+    for (const w of sources) {
+      const host = remote(w) ? w.value.replace(/^(?:[^/@]*@)?\[[^\]/]*\]/, "") : ""; // `[::1]:x`, `u@[::1]:x`
+      const v = (remote(w) ? host.slice(host.indexOf(":") + 1) : w.value).replace(/\/+$/, "");
+      const name = v.replace(/^.*\//, "");
+      if (name === "" || name === "." || name === "..") {
+        unknown ??= w.raw; // a directory's contents land under their own names
+        continue;
+      }
+      // `bare` has NUL for each quoted character, so a quoted glob character names itself.
+      const glob = remote(w) ? name : (w.bare || w.value).slice(v.lastIndexOf("/") + 1, v.length);
+      if (!/[$`{]/.test(name) && !/[*?[]/.test(glob)) {
+        names.add(name);
+        continue;
+      }
+      unknown ??= w.raw;
+      // `mv dir/$f`: an unknown name taken out of `dir` (a word that is all variable is not a local path).
+      if (op === "mv" && commandPosition && v.includes("/")) land({ ...w, value: v.slice(0, v.lastIndexOf("/")) || "/" }, false, rel, { op: "delete", unknownName: w.raw });
+    }
+    let nameBytes = 0;
+    for (const name of names) nameBytes += name.length + 1;
+    for (const [dir, d] of into) {
+      if (unknown !== undefined && commandPosition) land({ ...d, value: dir || "/" }, false, rel, { op: "delete", unknownName: unknown });
+      // DEST is walked once; each landing is <real DEST>/<name>, whose last component is judged as any write's is.
+      const p = names.size > 0 && budget.landingBytes >= 0 ? place({ ...d, value: dir || "/" }, rel) : undefined;
+      if (!p) continue;
+      const real = realResolve(p.value).replace(/\/$/, "");
+      if ((budget.landingBytes -= names.size * real.length + nameBytes) < 0) {
+        refuse(words[at]!.raw, `this command line names too many copy targets to check in one command (their paths pass ${MAX_COPY_LANDING_BYTES} bytes) — split it into smaller commands`);
+        return;
+      }
+      for (const name of names) out.push({ raw: d.raw, value: `${real}/${name}`, isAppend: false, relative: p.relative });
+    }
   };
 
   // Shell words in one simple command, its command name from a variable, and its quoted text.
@@ -2957,6 +3018,20 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean;
   allowed: boolean;
   reason?: string;
 } {
+  // A `bash -c`/`eval` string or a package.json script body is validated again from inside this call: it spends the same landing budget.
+  if (landingBudget) return validateCommandText(command, opts);
+  landingBudget = { landingBytes: MAX_COPY_LANDING_BYTES };
+  try {
+    return validateCommandText(command, opts);
+  } finally {
+    landingBudget = undefined;
+  }
+}
+
+function validateCommandText(command: string, opts: { reentry?: boolean; cwd?: string }): {
+  allowed: boolean;
+  reason?: string;
+} {
   // The command runs as ONE `sh -c` argv string, which the kernel refuses
   // (E2BIG) at MAX_ARG_STRLEN; nothing longer could run, and refusing it here
   // bounds the regex scans below (audit 2026-10-01 W3).
@@ -3121,7 +3196,7 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean;
   // Check write paths: every target, absolute or resolved against the cwd, goes to the write boundary.
   // The raw command: captureWriteTargets skips every heredoc body itself and
   // judges the opener line, so the stripped form's heuristics do not steer it.
-  for (const { raw: rawTarget, value, isAppend, refuse, relative } of captureWriteTargets(command, { reentry: opts.reentry, cwd: opts.cwd })) {
+  for (const { raw: rawTarget, value, isAppend, refuse, relative, op, unknownName } of captureWriteTargets(command, { reentry: opts.reentry, cwd: opts.cwd })) {
     if (refuse) return { allowed: false, reason: refuse };
     // Discard sinks (/dev/null, /dev/stderr, /dev/stdout) match the same
     // `>` redirect shape but are not real writes — exempt them (the unquoted
@@ -3130,12 +3205,20 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean;
     // realpath so an in-domain symlink can't point the write outside the gates.
     // Security decisions below use this resolved path; the ritual-doc append regex
     // further down still matches the RAW target against the original command text.
-    const targetPath = realResolve(value);
+    // A removal (`op: "delete"`, what mv moves away) does not follow its last component: mv moves a link.
+    // An unknown name's directory is followed: the file lands where the link points.
+    const targetPath = op === "delete" && !unknownName ? realResolveParent(value) : realResolve(value);
     // The shared write boundary (same decision as file_write / file_edit /
-    // file_delete), then shell_exec's own text rules below.
-    const verdict = checkWriteBoundary(targetPath, "write", getJarvisKbRoot());
+    // file_delete), then shell_exec's own text rules below; a removal is never an append.
+    const verdict = checkWriteBoundary(targetPath, op ?? "write", getJarvisKbRoot());
+    if (!verdict.allowed && unknownName) {
+      return {
+        allowed: false,
+        reason: `copied or moved name '${unknownName}' cannot be checked in ${targetPath}, which holds protected paths: its last path component is a variable, a substitution or a brace, or no source is named — spell the file name out, or use a directory that holds no protected file`,
+      };
+    }
     if (!verdict.allowed) {
-      return { allowed: false, reason: shellBoundaryReason(targetPath, verdict, relative) };
+      return { allowed: false, reason: shellBoundaryReason(targetPath, verdict, relative, op === "delete") };
     }
     for (const deny of DENY_WRITE_PATTERNS) {
       if (deny.pattern.test(targetPath)) {

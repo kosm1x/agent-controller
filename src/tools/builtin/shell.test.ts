@@ -1872,7 +1872,7 @@ describe("execGroupKill — timeout reaps the whole process group", () => {
   }, 15_000);
 
   // Host rule: signal-sending cases run on CI only.
-  it.skipIf(!process.env.CI)("helper kills a grandchild directly (jarvis_test_run / vps_deploy path)", async () => {
+  it.skipIf(!process.env.CI)("helper kills a grandchild directly (jarvis_test_run path)", async () => {
     const err = (await execGroupKill(
       "sh -c 'sleep 30 & echo $!; sleep 30'",
       { timeout: 200, maxBuffer: 1024, env: process.env, cwd: tmpdir() },
@@ -1893,7 +1893,7 @@ describe("execGroupKill — timeout reaps the whole process group", () => {
     expect(gone).toBe(true);
   }, 5_000);
 
-  it("runs the command in opts.cwd (jarvis_test_run / vps_deploy pass MC_DIR)", async () => {
+  it("runs the command in opts.cwd (jarvis_test_run path)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "egk-cwd-"));
     try {
       const { stdout } = await execGroupKill("pwd", {
@@ -4231,5 +4231,228 @@ describe("validateShellCommand — relative and post-cd write targets reach the 
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe("validateShellCommand — cp/mv/scp: the file that lands in the destination, and what mv takes away", () => {
+  const P = MC_PRIMARY_ROOT.replace(/\/$/, "");
+  const W = MC_WORKTREE_ROOT.replace(/\/$/, "");
+  const B = `${W}/src/tools/builtin`; // a directory holding protected files
+  const K = getJarvisKbRoot();
+  const files = (n: number, dir = "/tmp/src"): string => Array.from({ length: n }, (_, k) => `${dir}/f${k}.txt`).join(" ");
+
+  const WRITE = (path: string): string => `write to immutable core file blocked: ${path}`;
+  const REMOVE = (path: string): string => `removing immutable core file blocked: ${path}`;
+  const PRIMARY = `${MC_PRIMARY_ROOT} is protected: it is the operator's checkout. Jarvis's mission-control changes go in ${MC_WORKTREE_ROOT} (jarvis_dev).`;
+  it.each([
+    // The landing file DEST/<basename of the source> is judged as a write.
+    [`cp /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`cp /tmp/shell.ts ${B}`, WRITE(`${B}/shell.ts`)],
+    [`cp -t ${B} /tmp/shell.ts`, WRITE(`${B}/shell.ts`)],
+    [`cp --target-directory=${B} /tmp/shell.ts`, WRITE(`${B}/shell.ts`)],
+    [`cp -t${B} /tmp/shell.ts`, WRITE(`${B}/shell.ts`)],
+    [`cp -- /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`nohup cp /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`timeout 5 cp /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`mv /tmp/shell.ts ${B}`, WRITE(`${B}/shell.ts`)],
+    [`cd ${B} && cp /tmp/shell.ts .`, WRITE(`${B}/shell.ts`)],
+    [`cd ${W}/src/tools && cp /tmp/shell.ts builtin/`, WRITE(`${B}/shell.ts`)],
+    [`cp /tmp/notes.md /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`cp /tmp/x/shell.ts/ ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`scp /tmp/shell.ts ${B}/`, WRITE(`${B}/shell.ts`)],
+    [`cp /tmp/{a,shell.ts} ${B}/`, WRITE(`${B}/shell.ts`)],
+    // What mv moves away is judged as a removal.
+    [`mv ${B}/shell.ts /tmp/s.ts`, REMOVE(`${B}/shell.ts`)],
+    [`mv -t /tmp/x ${W}/vitest.config.ts`, REMOVE(`${W}/vitest.config.ts`)],
+    [`mv ${W}/src/tools /tmp/t`, REMOVE(`${W}/src/tools`)],
+    [`cd ${W} && mv src/tools/builtin/shell.ts /tmp/out/`, REMOVE(`${B}/shell.ts`)],
+    [`mv ${P}/docs/EVOLUTION-LOG.md /tmp/log.md`, `removal blocked: ${PRIMARY}`],
+    [`mv /tmp/a ${B}/shell.ts /tmp/d/`, WRITE(`${B}/shell.ts`)],
+  ])("refuses: %s", (cmd, reason) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp" }).reason).toBe(reason);
+  });
+
+  it("a removal goes through the text deny rules too (a standing-orders path by name)", () => {
+    expect(validateShellCommand("mv /tmp/jarvis-kb/directives/a.md /tmp/b.md", { cwd: "/tmp" }).reason).toContain("standing orders");
+  });
+
+  it("mv moves a symlink, not its target; a later operand is still judged as a write through it", () => {
+    const base = mkdtempSync(join(tmpdir(), "mc-shell-mv-"));
+    try {
+      symlinkSync(`${B}/shell.ts`, `${base}/lnk`); // a link to a protected file (never followed by a removal)
+      expect(validateShellCommand(`mv ${base}/lnk /tmp/x`, { cwd: "/tmp" })).toEqual({ allowed: true });
+      expect(validateShellCommand(`mv /tmp/x ${base}/lnk`, { cwd: "/tmp" }).reason).toBe(WRITE(`${B}/shell.ts`));
+      expect(validateShellCommand(`mv /tmp/a ${base}/lnk /tmp/d/`, { cwd: "/tmp" }).reason).toBe(WRITE(`${B}/shell.ts`));
+      expect(validateShellCommand(`cp /tmp/lnk ${base}/`, { cwd: "/tmp" }).reason).toBe(WRITE(`${B}/shell.ts`)); // a landing name that is a link is followed
+      symlinkSync(B, `${base}/dir`); // the directory part of a removal is followed
+      expect(validateShellCommand(`mv ${base}/dir/shell.ts /tmp/x`, { cwd: "/tmp" }).reason).toBe(REMOVE(`${B}/shell.ts`));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  // An unknown name (a variable, a substitution or a brace in the last component, or `-t DIR` with no
+  // source word) may land only in, and mv may take it only from, a directory that may be removed.
+  const UNKNOWN = /copied or moved name .* cannot be checked in .*spell the file name out, or use a directory that holds no protected file/s;
+  it.each([
+    `cp "$f" ${B}/`,
+    `cp -t ${B} "$f"`,
+    `cp /tmp/a\${x}b ${B}`,
+    `find /tmp/in -name '*.ts' -exec cp {} ${B}/ \\;`,
+    `xargs cp -t ${B}/`,
+    `cd ${W}/src/tools && cp $f builtin/`,
+    `mv ${B}/$f /tmp/out/`,
+    `cd ${W}/src/tools && mv builtin/$f /tmp/out/`,
+    `cp $f ${K}/skills/x/`,
+    `cp $f ${K}/logs/day-logs/`,
+  ])("an unknown name into or out of a directory holding protected paths is refused: %s", (cmd) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp" }).reason).toMatch(UNKNOWN);
+  });
+
+  it("an unknown name into the primary checkout or the standing orders is refused (the directory itself already is)", () => {
+    expect(validateShellCommand(`cp $f ${P}/docs/`, { cwd: "/tmp" }).reason).toBe(`write blocked: ${PRIMARY}`);
+    expect(validateShellCommand(`cp $f ${K}/directives/`, { cwd: "/tmp" }).reason).toContain(`${K}/directives is a standing order`);
+  });
+
+  it("an unknown name follows a destination link to the directory it names", () => {
+    const base = mkdtempSync(join(tmpdir(), "mc-shell-cp-"));
+    try {
+      symlinkSync(B, `${base}/lnk`); // a link to a directory holding protected files
+      expect(validateShellCommand(`cp $f ${base}/lnk/`, { cwd: "/tmp" }).reason).toMatch(UNKNOWN);
+      expect(validateShellCommand(`cp $f ${base}/`, { cwd: "/tmp" })).toEqual({ allowed: true });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    'cp "$f" /tmp/out/',
+    "mv $f /tmp/out/",
+    "mv /tmp/in/$f /tmp/out/",
+    'for f in *.md; do cp "$f" /tmp/out/; done',
+    "find /tmp/in -name '*.log' -exec cp {} /tmp/out/ \\;",
+    "cp '$x' /tmp/out/",
+    "xargs cp -t /tmp/out/",
+    'cp "$f" /root/claude/proj/',
+    `echo cp $f ${B}/`,
+  ])("an unknown name into or out of a directory with no protected path is allowed: %s", (cmd) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp" })).toEqual({ allowed: true });
+  });
+
+  it("a refused removal says it is a removal", () => {
+    expect(validateShellCommand(`mv ${B}/shell.ts /tmp/s.ts`, { cwd: "/tmp" }).reason).toBe(`removing immutable core file blocked: ${B}/shell.ts`);
+  });
+
+  // A glob in the last component cannot be read from the command (a quoted one names itself), nor
+  // can a remote scp name holding one; such a name is unknown, as above.
+  it.each([
+    `cp /tmp/*.ts ${B}/`,
+    `cp /tmp/sh?ll.ts ${B}/`,
+    `cp [a-z]*.ts ${W}/`,
+    `cp -r /tmp/x/* ${B}/`,
+    `mv ${B}/* /tmp/out/`,
+    `mv ${B}/sh?ll.ts /tmp/x`,
+    `cp /tmp/* ${K}/skills/x/`,
+    `scp host:'/x/*.ts' ${B}/`,
+    `scp 'host:a*:x' ${B}/`, // the name is what follows the first colon after the host
+    `cp "\\\n"/tmp/sh* ${B}/`, // a backslash-newline in double quotes is no character at all
+    `cp -t ${B} "\\\n"/tmp/sh*`,
+    `mv "\\\n"${B}/sh* /tmp/out/`,
+  ])("a glob name into or out of a directory holding protected paths is refused: %s", (cmd) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp" }).reason).toMatch(UNKNOWN);
+  });
+
+  // A source named `.`, `..` or nothing at all copies a directory's contents under their own names.
+  it.each([
+    [`cp -r /tmp/x/. ${B}/`, "/tmp"],
+    [`cp -r . ${B}/`, "/tmp/x"],
+    [`scp -r host: ${B}/`, "/tmp"],
+  ])("a source that names a directory's contents is an unknown name: %s", (cmd, cwd) => {
+    expect(validateShellCommand(cmd, { cwd }).reason).toMatch(UNKNOWN);
+  });
+
+  it.each([
+    ["cp *.log /tmp/out/", "/tmp"],
+    [`cp /tmp/*/new-tool.ts ${B}/`, "/tmp"], // a glob in a directory component: the name is still known
+    ["cp -r /tmp/x/. /tmp/out/", "/tmp"],
+    ["cp -r . /tmp/out/", "/tmp/x"],
+    ["mv /tmp/x/* /tmp/y/", "/tmp"],
+    ["mv src/intel/*.ts src/finance/", W],
+    ["cp '/tmp/a*b' /tmp/out/", "/tmp"],
+    [`cp '/tmp/a*b.ts' ${B}/`, "/tmp"], // a quoted glob character names itself
+    ["scp host:/x/a.txt /tmp/out/", "/tmp"],
+    ['scp "$f" host:x', "/tmp"],
+  ])("a glob name or a remote source into a directory with no protected path is allowed: %s", (cmd, cwd) => {
+    expect(validateShellCommand(cmd, { cwd })).toEqual({ allowed: true });
+  });
+
+  it.each([`scp host:/x/shell.ts ${B}/`, `scp host:shell.ts ${B}/`, `scp [::1]:shell.ts ${B}/`, `scp user@[::1]:shell.ts ${B}/`])("a remote scp source lands by the name after its colon: %s", (cmd) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp" }).reason).toBe(`write to immutable core file blocked: ${B}/shell.ts`);
+  });
+
+  it("bounds the landing paths judged in one command line by bytes; under the bound each is judged", () => {
+    const BUDGET = /names too many copy targets to check in one command .*split it/;
+    const fill = (n: number): string[] => Array.from({ length: n }, (_, k) => `/tmp/s/f${String(k).padStart(7, "0")}`);
+    const n = Math.floor(32768 / (B.length + 1 + "shell.ts".length)); // every name is 8 characters
+    const under = ["/tmp/s/shell.ts", ...fill(n - 1)].join(" ");
+    expect(validateShellCommand(`cp ${under} ${B}/`, { cwd: "/tmp" }).reason).toBe(`write to immutable core file blocked: ${B}/shell.ts`);
+    expect(validateShellCommand(`cp ${under} /tmp/s/f9999999 ${B}/`, { cwd: "/tmp" }).reason).toMatch(BUDGET);
+    // One bound for the whole line, not one per cp.
+    expect(validateShellCommand(`cp ${fill(1000).join(" ")} /tmp/out/`, { cwd: "/tmp" })).toEqual({ allowed: true });
+    expect(validateShellCommand(`cp ${fill(1000).join(" ")} /tmp/out/; cp ${fill(1000).join(" ")} /tmp/out/`, { cwd: "/tmp" }).reason).toMatch(BUDGET);
+    expect(validateShellCommand(`cp ${files(300)} /tmp/out/`, { cwd: "/tmp" })).toEqual({ allowed: true });
+    // Text a shell runs (a quoted string, a heredoc body) spends the same bound, once per time it is judged.
+    expect(validateShellCommand(`sh -c "cp ${fill(500).join(" ")} /tmp/out/"`, { cwd: "/tmp" })).toEqual({ allowed: true });
+    expect(validateShellCommand(`sh -c "cp ${fill(500).join(" ")} /tmp/out/"; sh -c "cp ${fill(500).join(" ")} /tmp/out/"`, { cwd: "/tmp" }).reason).toMatch(BUDGET);
+  });
+
+  it("a string a nested shell or eval validates again spends the bound of the whole tool call, which the next call gets afresh", () => {
+    const BUDGET = /names too many copy targets to check in one command .*split it/;
+    const cp = (n: number): string => `cp ${Array.from({ length: n }, (_, k) => `/tmp/s/f${String(k).padStart(7, "0")}`).join(" ")} /tmp/out/`;
+    // [largest that fits, smallest past the bound]: each copy is charged once per check that judges it.
+    for (const [fits, past] of [
+      [`eval ${cp(900)}`, `eval ${cp(1000)}`],
+      [`eval eval ${cp(600)}`, `eval eval ${cp(650)}`],
+      [`sh -c "${cp(640)}"`, `sh -c "${cp(700)}"`],
+      [`sh -c "sh -c '${cp(300)}'"`, `sh -c "sh -c '${cp(350)}'"`],
+    ]) {
+      expect(validateShellCommand(fits!, { cwd: "/tmp" })).toEqual({ allowed: true });
+      expect(validateShellCommand(past!, { cwd: "/tmp" }).reason).toMatch(BUDGET);
+      expect(validateShellCommand(fits!, { cwd: "/tmp" })).toEqual({ allowed: true });
+    }
+  });
+
+  it("each tool call gets its own copy-target bound, also after a check that threw", () => {
+    const cp = (n: number): string => `cp ${Array.from({ length: n }, (_, k) => `/tmp/s/f${String(k).padStart(7, "0")}`).join(" ")} /tmp/out/`;
+    // The nested copy spends more than half of the bound; then the check reads its cwd, which throws here.
+    const throwing = {
+      get cwd(): string {
+        throw new Error("cwd unavailable");
+      },
+    };
+    expect(() => validateShellCommand(`sh -c "${cp(1000)}"`, throwing)).toThrow("cwd unavailable");
+    expect(validateShellCommand(cp(1000), { cwd: "/tmp" })).toEqual({ allowed: true });
+  });
+
+  it.each([
+    `cp README.md ${W}/`,
+    `cp /tmp/new-tool.ts ${B}/`,
+    `cp -t ${B} /tmp/new-tool.ts`,
+    "mv /tmp/a /tmp/b",
+    "mv a b",
+    "cp -r a /tmp/d/",
+    "scp a host:x",
+    'scp "$f" host:x',
+    "scp host:/etc/x /tmp/in/",
+    "aws s3 cp a s3://b",
+    "git -C /root/claude/proj mv a b",
+    "echo mv a b",
+    "echo cp $f /tmp/out/",
+    "cp *.log /tmp/out/",
+    "cp /tmp/x/ /tmp/y/",
+    "cp a/. /tmp/y/",
+    `cp ${files(200)} /tmp/out/`,
+  ])("allows (cwd /tmp/w): %s", (cmd) => {
+    expect(validateShellCommand(cmd, { cwd: "/tmp/w" })).toEqual({ allowed: true });
   });
 });
