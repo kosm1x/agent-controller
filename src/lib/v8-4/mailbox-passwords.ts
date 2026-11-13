@@ -97,20 +97,36 @@ function segmentRunsVerifying(segment: string): boolean {
   return VERIFYING_COMMANDS.includes(program);
 }
 
+/** The index after any backslash-newline pairs starting at `i`. */
+function afterContinuations(command: string, i: number): number {
+  while (command[i] === "\\" && command[i + 1] === "\n") i += 2;
+  return i;
+}
+
 /**
  * True when a verifying command is the PROGRAM of a command segment. One
  * pass tracks single and double quotes and backslash escapes; outside
  * quotes a segment ends at `;`, `&`, `|`, a newline, `(` or `)`. In each
  * segment the leading prefix words (`PREFIX_WORDS`, `NAME=value`, `timeout`
  * with the word after it) are skipped; the next word, without quote removal,
- * reduced to its basename, must equal a verifying name exactly. Linear.
+ * reduced to its basename, must equal a verifying name exactly. Outside
+ * quotes, a `#` that starts a word begins a comment: the scan of that line
+ * ends there (the text before it is still read); a backslash-newline does
+ * not change whether a word starts. An unquoted `<<` (a here-document or
+ * here-string, also when split by backslash-newlines) makes the whole
+ * command non-qualifying: its
+ * body is text, and the verifying command is never run with one. Linear.
  */
 export function namesVerifyingCommand(command: string): boolean {
   let quote = "";
   let start = 0;
+  let wordStart = true;
   for (let i = 0; i < command.length; i++) {
     const ch = command[i];
     if (ch === "\\" && quote !== "'") {
+      // The shell removes a backslash-newline: it does not change whether
+      // the next character starts a word.
+      if (command[i + 1] !== "\n") wordStart = false;
       i++;
       continue;
     }
@@ -120,12 +136,28 @@ export function namesVerifyingCommand(command: string): boolean {
     }
     if (ch === "'" || ch === '"') {
       quote = ch;
+      wordStart = false;
+      continue;
+    }
+    if (ch === "<" && command[afterContinuations(command, i + 1)] === "<") {
+      return false;
+    }
+    if (ch === "#" && wordStart) {
+      if (segmentRunsVerifying(command.slice(start, i))) return true;
+      const eol = command.indexOf("\n", i);
+      if (eol < 0) return false;
+      // Resume at the newline, which ends the (empty) segment after it.
+      start = eol;
+      i = eol - 1;
       continue;
     }
     if (SEGMENT_ENDS.includes(ch)) {
       if (segmentRunsVerifying(command.slice(start, i))) return true;
       start = i + 1;
+      wordStart = true;
+      continue;
     }
+    wordStart = ch === " " || ch === "\t";
   }
   return segmentRunsVerifying(command.slice(start));
 }

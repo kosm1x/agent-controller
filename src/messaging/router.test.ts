@@ -4098,6 +4098,30 @@ describe("MessageRouter", () => {
       expect(waAdapter.sentMessages[1].text).not.toContain("goalSummary");
     });
 
+    it("an object with no canonical field is shown as its dump; after the password check the dump shown is the checked one, with the line", async () => {
+      // The ledger's password check (consumer.ts) gives such an object a
+      // `text` field: its checked JSON dump plus the line. The router then
+      // delivers that text instead of dumping the object itself.
+      const leaves = { toolCalls: ["shell_exec"], data: { pass: PASSWORD_WITHHELD_PLACEHOLDER } };
+      const checked = { ...leaves, text: `${JSON.stringify(leaves)}\n\n${PASSWORD_WITHHELD_LINE}` };
+      const deliver = async (result: unknown) => {
+        waAdapter.sentMessages.length = 0;
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: "dame los datos de la caja",
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result, duration_ms: 5 },
+        });
+        return waAdapter.sentMessages[1].text;
+      };
+      expect(await deliver(leaves)).toBe(JSON.stringify(leaves));
+      expect(await deliver(checked)).toBe(checked.text);
+    });
+
     it("delivers heavy finalAnswer, not the reflector meta-summary (2026-07-11)", async () => {
       // heavy-runner output carries BOTH `content` (reflector's meta-summary
       // ABOUT the work) and `finalAnswer` (the agent's actual report). The
@@ -8220,6 +8244,14 @@ describe("holdScopeAsks — streaming guard (2026-09-06)", () => {
       const feed = holdScopeAsks(s);
       feed("clave ");
       for (const ch of STALE) feed(ch);
+      expect(s.st.shown).toBe("⏳");
+    });
+
+    it("a seen value right after a literal \\uXXXX escape is held when it streams one character at a time", () => {
+      seenStub.fps.add(passwordFingerprint(STALE));
+      const s = screen();
+      const feed = holdScopeAsks(s);
+      for (const ch of `clave: \\u00e9${STALE}`) feed(ch);
       expect(s.st.shown).toBe("⏳");
     });
 

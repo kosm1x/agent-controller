@@ -29,7 +29,7 @@
 import type { AgentType, RunnerOutput } from "../../runners/types.js";
 import { getConfig } from "../../config.js";
 import { getDatabase } from "../../db/index.js";
-import { extractDeliverableText } from "../deliverable.js";
+import { extractDeliverableText, hasDeliverableField } from "../deliverable.js";
 import {
   formatNoQuedo,
   formatSinReleer,
@@ -88,6 +88,7 @@ import {
 import {
   PASSWORD_WITHHELD_LINE,
   replaceUnprovenValues,
+  withPasswordWithheldLine,
   type PasswordValueCheck,
 } from "./password-gate.js";
 import { passwordCheckFor, provenPasswords } from "./mailbox-passwords.js";
@@ -244,6 +245,83 @@ function withholdUnprovenInOutput(
     output as Record<string, unknown>,
     check,
   ) as RunnerOutput["output"];
+}
+
+/** Bounds of the walk over an object with no deliverable text. */
+const LEAF_MAX_DEPTH = 8;
+const LEAF_MAX_CONTAINERS = 2000;
+
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Every string leaf loses each seen-and-unproven value. Past LEAF_MAX_DEPTH
+ * levels, past LEAF_MAX_CONTAINERS arrays/objects, or at an object that is
+ * not a plain one (a Date), the subtree is checked as one JSON text and,
+ * when that withholds a value, replaced by the checked text: past the bounds
+ * the check still runs, only the structure is given up. Keys are kept as
+ * they are; the dump that is shown is checked whole.
+ */
+function withholdInLeaves(
+  value: unknown,
+  check: PasswordValueCheck,
+  budget: { containers: number },
+  depth: number,
+): unknown {
+  if (typeof value === "string") return replaceUnprovenValues(value, check).text;
+  if (!value || typeof value !== "object") return value;
+  budget.containers--;
+  if (
+    depth >= LEAF_MAX_DEPTH ||
+    budget.containers < 0 ||
+    !isPlainContainer(value)
+  ) {
+    const res = replaceUnprovenValues(JSON.stringify(value) ?? "", check);
+    return res.withheld > 0 ? res.text : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => withholdInLeaves(v, check, budget, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [
+      k,
+      withholdInLeaves(v, check, budget, depth + 1),
+    ]),
+  );
+}
+
+/**
+ * An object output with no deliverable text, called only when its JSON text
+ * withholds a value. The router shows an object with no canonical text field
+ * at all as its JSON dump: here the leaves are checked and the checked dump,
+ * with the one line, becomes its `text` field, so the reply is that dump
+ * with the placeholder. An object whose canonical fields are all empty is
+ * not shown (the router sends its failure line): its leaves are checked and
+ * no line is added. An array (no field to hold the line) becomes its checked
+ * dump with the line, as a string.
+ */
+function withholdInUnshapedObject(
+  output: object,
+  check: PasswordValueCheck,
+): RunnerOutput["output"] {
+  const budget = { containers: LEAF_MAX_CONTAINERS };
+  if (Array.isArray(output)) {
+    const items = withholdInLeaves(output, check, budget, 0);
+    const text = typeof items === "string" ? items : JSON.stringify(items);
+    return withPasswordWithheldLine(replaceUnprovenValues(text, check).text);
+  }
+  const leaves = Object.fromEntries(
+    Object.entries(output).map(([k, v]) => [
+      k,
+      withholdInLeaves(v, check, budget, 1),
+    ]),
+  );
+  if (hasDeliverableField(output)) return leaves;
+  const dump = replaceUnprovenValues(JSON.stringify(leaves), check).text;
+  return { ...leaves, text: withPasswordWithheldLine(dump) };
 }
 
 /** The object of a JSON-encoded carrier whose deliverable comes from it. */
@@ -569,11 +647,19 @@ export async function applyCompletionLedger(
   // failure the text passes unchanged. Counts only — a value or fingerprint
   // never reaches a log line or a trace.
   try {
-    if (deliverable) {
+    // An object with no deliverable text is checked as its JSON text: that
+    // is what the router shows for an object of unknown shape. The text the
+    // later steps read stays empty for it, as before.
+    const unshaped =
+      !deliverable && !!output && typeof output === "object";
+    const scanned = unshaped ? JSON.stringify(output) : deliverable;
+    if (scanned) {
       const check = passwordCheckFor(provenPasswords(taskId));
-      const audit = replaceUnprovenValues(deliverable, check);
+      const audit = replaceUnprovenValues(scanned, check);
       if (audit.checked > 0) {
-        if (audit.withheld > 0) {
+        if (audit.withheld > 0 && unshaped) {
+          output = withholdInUnshapedObject(output as object, check);
+        } else if (audit.withheld > 0) {
           const next = withholdUnprovenInOutput(output, check);
           deliverable = extractDeliverableText(next) ?? "";
           output = next;

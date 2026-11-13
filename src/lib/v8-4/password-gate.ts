@@ -69,6 +69,25 @@ function isAsciiAlnum(code: number): boolean {
   );
 }
 
+const BACKSLASH = 92;
+const LOWER_U = 117;
+/** A `\uXXXX` escape: `u` and four hex digits before the value. */
+const UNICODE_ESCAPE_LEN = 5;
+/** The longest run that can hold a candidate (a `\uXXXX` escape + 64). */
+const RUN_REACH = PASSWORD_MAX_LEN + UNICODE_ESCAPE_LEN;
+
+function isHexDigit(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 70) ||
+    (code >= 97 && code <= 102)
+  );
+}
+
+function isCandidateLen(len: number): boolean {
+  return len >= PASSWORD_MIN_LEN && len <= PASSWORD_MAX_LEN;
+}
+
 export interface CandidateRun {
   start: number;
   end: number;
@@ -76,9 +95,18 @@ export interface CandidateRun {
 
 /**
  * Maximal letter/digit runs of length 16–64 that end at or after `from`.
- * A run cut by `from` is walked back to its start, at most 65 characters: a
- * walk that stops inside the run leaves 65 or more of it ahead, which is
- * too long to be a candidate. Linear.
+ * A run directly after a backslash may start with an escape (`\n`, `\t`,
+ * `é` in an encoded text), so it also yields, in this order and each
+ * only when its length is 16–64: the run without its first character, and,
+ * when the run starts with a lowercase `u` and four hex digits, the run
+ * without its first five. At most three candidates per run, all ending
+ * where the run ends. So after a backslash: a run of 16 yields only itself;
+ * of 17, itself and the 16 after its first character; of 65, only the 64
+ * after its first character; after `\uXXXX`, a run of 21–69 also yields the
+ * 16–64 after the escape.
+ * A run cut by `from` is walked back to its start, at most 69 characters: a
+ * walk that stops inside the run leaves 70 or more of it, which is too long
+ * to hold a candidate even without five characters. Linear.
  */
 export function candidateRuns(text: string, from = 0): CandidateRun[] {
   const out: CandidateRun[] = [];
@@ -87,7 +115,7 @@ export function candidateRuns(text: string, from = 0): CandidateRun[] {
   let back = 0;
   while (
     i > 0 &&
-    back <= PASSWORD_MAX_LEN &&
+    back < RUN_REACH &&
     isAsciiAlnum(text.charCodeAt(i - 1))
   ) {
     i--;
@@ -101,8 +129,18 @@ export function candidateRuns(text: string, from = 0): CandidateRun[] {
     const start = i;
     while (i < n && isAsciiAlnum(text.charCodeAt(i))) i++;
     const len = i - start;
-    if (len >= PASSWORD_MIN_LEN && len <= PASSWORD_MAX_LEN) {
-      out.push({ start, end: i });
+    if (isCandidateLen(len)) out.push({ start, end: i });
+    if (start === 0 || text.charCodeAt(start - 1) !== BACKSLASH) continue;
+    if (isCandidateLen(len - 1)) out.push({ start: start + 1, end: i });
+    if (
+      isCandidateLen(len - UNICODE_ESCAPE_LEN) &&
+      text.charCodeAt(start) === LOWER_U &&
+      isHexDigit(text.charCodeAt(start + 1)) &&
+      isHexDigit(text.charCodeAt(start + 2)) &&
+      isHexDigit(text.charCodeAt(start + 3)) &&
+      isHexDigit(text.charCodeAt(start + 4))
+    ) {
+      out.push({ start: start + UNICODE_ESCAPE_LEN, end: i });
     }
   }
   return out;
@@ -130,9 +168,13 @@ export function hasUnprovenValue(
   check: PasswordValueCheck,
   from = 0,
 ): boolean {
+  let seenUntil = 0;
   for (const r of candidateRuns(text, from)) {
+    if (r.start < seenUntil) continue;
     const fp = passwordFingerprint(text.slice(r.start, r.end));
-    if (check.isSeen(fp) && !check.isProven(fp)) return true;
+    if (!check.isSeen(fp)) continue;
+    if (!check.isProven(fp)) return true;
+    seenUntil = r.end;
   }
   return false;
 }
@@ -145,7 +187,11 @@ export interface PasswordGateResult {
   withheld: number;
 }
 
-/** Replaces each seen-and-unproven occurrence; appends nothing. */
+/**
+ * Replaces each seen-and-unproven occurrence; appends nothing. When a full
+ * run is seen, the shorter candidate inside it (a run after a backslash) is
+ * not looked at: the full run decides.
+ */
 export function replaceUnprovenValues(
   text: string,
   check: PasswordValueCheck,
@@ -154,9 +200,12 @@ export function replaceUnprovenValues(
   let withheld = 0;
   let out = "";
   let last = 0;
+  let seenUntil = 0;
   for (const r of candidateRuns(text)) {
+    if (r.start < seenUntil) continue;
     const fp = passwordFingerprint(text.slice(r.start, r.end));
     if (!check.isSeen(fp)) continue;
+    seenUntil = r.end;
     checked++;
     if (check.isProven(fp)) continue;
     withheld++;

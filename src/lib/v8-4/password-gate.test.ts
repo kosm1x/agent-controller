@@ -85,6 +85,152 @@ describe("password gate — candidates", () => {
   });
 });
 
+describe("password gate — a run right after a backslash", () => {
+  const BS = "\\";
+
+  it("also yields the run without its first character: at most one extra candidate", () => {
+    const text = `clave:${BS}n${STALE} fin`;
+    const at = text.indexOf(STALE);
+    expect(candidateRuns(text)).toEqual([
+      { start: at - 1, end: at + STALE.length },
+      { start: at, end: at + STALE.length },
+    ]);
+    expect(candidateFingerprints(text)).toContain(passwordFingerprint(STALE));
+  });
+
+  it.each([
+    ["\\n", `clave:${BS}n${STALE}`],
+    ["\\t", `clave:${BS}t${STALE}`],
+    ["\\r", `clave:${BS}r${STALE}`],
+    ["a doubly encoded \\n", `clave:${BS}${BS}n${STALE}`],
+    ["a quoted field", `{"answer":"clave:${BS}n${STALE}"}`],
+  ])("a seen value after %s is withheld and the escape stays", (_name, text) => {
+    const res = replaceUnprovenValues(text, check([STALE]));
+    expect(res).toEqual({
+      text: text.replace(STALE, PASSWORD_WITHHELD_PLACEHOLDER),
+      checked: 1,
+      withheld: 1,
+    });
+    expect(hasUnprovenValue(text, check([STALE]))).toBe(true);
+  });
+
+  it("the full run wins when it is the seen value; the shorter one is not looked at", () => {
+    const text = `x${BS}${STALE}`;
+    expect(replaceUnprovenValues(text, check([STALE, STALE.slice(1)]))).toEqual({
+      text: `x${BS}${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      checked: 1,
+      withheld: 1,
+    });
+    // The full run proven: the stream hold and the final check agree it passes.
+    const proven = check([STALE, STALE.slice(1)], [STALE]);
+    expect(replaceUnprovenValues(text, proven)).toEqual({ text, checked: 1, withheld: 0 });
+    expect(hasUnprovenValue(text, proven)).toBe(false);
+  });
+
+  it("lengths: 17 → the 16 after the letter counts; 16 → only the full run; 65 → the 64 after the letter counts", () => {
+    const lens = (text: string) => candidateRuns(text).map((r) => r.end - r.start);
+    expect(lens(`${BS}${A(17)}`)).toEqual([17, 16]);
+    expect(lens(`${BS}${A(16)}`)).toEqual([16]);
+    expect(lens(`${BS}${A(65)}`)).toEqual([64]);
+    expect(lens(`${BS}${A(66)}`)).toEqual([]);
+    expect(lens(`-${A(17)}`)).toEqual([17]);
+  });
+
+  it("a scan from an offset inside the run still sees the backslash before it", () => {
+    const text = `clave:${BS}n${STALE}`;
+    expect(hasUnprovenValue(text, check([STALE]), text.length - 3)).toBe(true);
+    const long = `${BS}n${A(64)}`; // 65 after the backslash: only the 64 counts
+    expect(candidateRuns(long, long.length).map((r) => r.end - r.start)).toEqual([64]);
+  });
+
+  it("stays linear: 20,000 escaped candidates", () => {
+    const text = `${BS}n${STALE} `.repeat(20_000);
+    const started = Date.now();
+    expect(replaceUnprovenValues(text, check([STALE])).withheld).toBe(20_000);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe("password gate — a run right after a \\uXXXX escape", () => {
+  const BS = "\\";
+  const lens = (text: string, from = 0) =>
+    candidateRuns(text, from).map((r) => r.end - r.start);
+
+  it("also yields the run without its first five characters: the full run, minus one, minus five", () => {
+    const text = `clave:${BS}u00e9${STALE}`;
+    const at = text.indexOf(STALE);
+    expect(candidateRuns(text)).toEqual([
+      { start: at - 5, end: at + STALE.length },
+      { start: at - 4, end: at + STALE.length },
+      { start: at, end: at + STALE.length },
+    ]);
+    expect(candidateFingerprints(text)).toContain(passwordFingerprint(STALE));
+  });
+
+  it.each([
+    ["a lowercase escape", `clave:${BS}u00e9${STALE}`],
+    ["an uppercase hex escape", `clave:${BS}uDC00${STALE}`],
+    ["a control character escape", `{"data":"${BS}u0001${STALE}"}`],
+  ])("%s: the seen value is withheld and the escape stays", (_name, text) => {
+    expect(replaceUnprovenValues(text, check([STALE]))).toEqual({
+      text: text.replace(STALE, PASSWORD_WITHHELD_PLACEHOLDER),
+      checked: 1,
+      withheld: 1,
+    });
+    expect(hasUnprovenValue(text, check([STALE]))).toBe(true);
+  });
+
+  it("lengths: minus five counts when 16–64; four hex digits and a lowercase u are required", () => {
+    expect(lens(`${BS}u00e9${A(16)}`)).toEqual([21, 20, 16]);
+    expect(lens(`${BS}u00e9${A(15)}`)).toEqual([20, 19]);
+    expect(lens(`${BS}u00e9${A(64)}`)).toEqual([64]);
+    expect(lens(`${BS}u00e9${A(65)}`)).toEqual([]);
+    expect(lens(`${BS}u00g9${A(16)}`)).toEqual([21, 20]);
+    expect(lens(`${BS}U00e9${A(16)}`)).toEqual([21, 20]);
+    expect(lens(`-u00e9${A(16)}`)).toEqual([21]);
+  });
+
+  it("the first seen candidate decides: a proven longer reading hides the shorter ones", () => {
+    const text = `x${BS}u00e9${STALE}`;
+    const minusOne = `00e9${STALE}`;
+    const proven = check([minusOne, STALE], [minusOne]);
+    expect(replaceUnprovenValues(text, proven)).toEqual({ text, checked: 1, withheld: 0 });
+    expect(hasUnprovenValue(text, proven)).toBe(false);
+    expect(replaceUnprovenValues(text, check([minusOne, STALE]))).toEqual({
+      text: `x${BS}u${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      checked: 1,
+      withheld: 1,
+    });
+  });
+
+  it.each([
+    ["a 24-character value", STALE],
+    ["a 64-character value", A(64)],
+  ])("%s: the stream and the final check agree at every split point", (_name, value) => {
+    const text = `clave: ${BS}u00e9${value}`;
+    const c = check([value]);
+    expect(replaceUnprovenValues(text, c).withheld).toBe(1);
+    for (let k = 0; k <= text.length; k++) {
+      const held =
+        hasUnprovenValue(text.slice(0, k), c) || hasUnprovenValue(text, c, k);
+      expect(held, `split at ${k}`).toBe(true);
+    }
+    expect(lens(text, text.length)).toContain(value.length);
+  });
+
+  it("a scan from an offset inside a run of 70 or more skips it", () => {
+    const text = `${BS}u00e9${A(65)}`;
+    expect(lens(text, text.length)).toEqual([]);
+  });
+
+  it("stays linear: 20,000 \\uXXXX-escaped candidates", () => {
+    const text = `${BS}u00e9${STALE} `.repeat(20_000);
+    const started = Date.now();
+    expect(replaceUnprovenValues(text, check([STALE])).withheld).toBe(20_000);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
+
 describe("password gate — the check", () => {
   it("a seen value with no proof is withheld in every layout; the wording around it does not matter", () => {
     const layouts = [

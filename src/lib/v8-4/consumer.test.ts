@@ -1725,6 +1725,169 @@ describe("applyCompletionLedger — a mailbox password needs proof from this run
     });
   });
 
+  describe("a value right after a literal backslash escape, in a text the JSON path does not parse", () => {
+    const shapes: Array<[string, (v: string) => string]> = [
+      ["no deliverable field", (v) => JSON.stringify({ answer: `clave:\n${v}` })],
+      ["a top-level array", (v) => JSON.stringify([`clave:\n${v}`])],
+      ["a doubly encoded string", (v) => JSON.stringify(JSON.stringify({ text: `clave:\n${v}` }))],
+      ["plain text holding backslash + n", (v) => `clave:\\n${v}`],
+      ["plain text holding a \\u00e9 escape", (v) => `clave:\\u00e9${v}`],
+    ];
+    it.each(shapes)("%s: withheld, the escape kept, the line once", async (_name, make) => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult(make(STALE)) }));
+      expect(out.output).toBe(`${make(PASSWORD_WITHHELD_PLACEHOLDER)}\n\n${PASSWORD_WITHHELD_LINE}`);
+    });
+
+    it.each(shapes)("%s: proven, byte-identical", async (_name, make) => {
+      seenEarlier(STALE);
+      provedNow(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult(make(STALE)) }));
+      expect(out.output).toBe(make(STALE));
+    });
+  });
+
+  describe("an object with no deliverable text is checked leaf by leaf", () => {
+    const shown = (o: unknown) => `${JSON.stringify(o)}\n\n${PASSWORD_WITHHELD_LINE}`;
+
+    it("no canonical field: every string leaf loses the value; text = the checked dump + the line", async () => {
+      seenEarlier(STALE);
+      const output = {
+        toolCalls: ["shell_exec"],
+        data: { box: BOX, pass: STALE, list: [`x ${STALE}`, 7, null, true] },
+      };
+      const out = await applyCompletionLedger(base({ result: okResult(output) }));
+      const leaves = {
+        toolCalls: ["shell_exec"],
+        data: {
+          box: BOX,
+          pass: PASSWORD_WITHHELD_PLACEHOLDER,
+          list: [`x ${PASSWORD_WITHHELD_PLACEHOLDER}`, 7, null, true],
+        },
+      };
+      expect(out.output).toEqual({ ...leaves, text: shown(leaves) });
+      expect(JSON.stringify(out.output)).not.toContain(STALE);
+      expect(textOf(out.output).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+      expect(traceNames("t1").find((t) => t.name === "password.checked")?.attrs).toEqual({ checked: 2, withheld: 2 });
+    });
+
+    it("a canonical field holding an object is no deliverable text: checked the same way", async () => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult({ output: { pass: STALE } }) }));
+      const leaves = { output: { pass: PASSWORD_WITHHELD_PLACEHOLDER } };
+      expect(out.output).toEqual({ ...leaves, text: shown(leaves) });
+    });
+
+    it("a value right after an escape inside a leaf is withheld", async () => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult({ data: `a\\n${STALE}` }) }));
+      const leaves = { data: `a\\n${PASSWORD_WITHHELD_PLACEHOLDER}` };
+      expect(out.output).toEqual({ ...leaves, text: shown(leaves) });
+    });
+
+    it.each([
+      ["a control character", "\u0001"],
+      ["a lone surrogate", "\udc00"],
+    ])("a leaf with %s right before the value (written as \\uXXXX in the dump) is withheld", async (_name, ch) => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult({ data: `${ch}${STALE}` }) }));
+      const leaves = { data: `${ch}${PASSWORD_WITHHELD_PLACEHOLDER}` };
+      expect(out.output).toEqual({ ...leaves, text: shown(leaves) });
+      expect(JSON.stringify(out.output)).not.toContain(STALE);
+    });
+
+    it("a key that holds the value: the delivered text is checked whole", async () => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult({ [STALE]: 1 }) }));
+      expect(textOf(out.output)).toBe(
+        `${JSON.stringify({ [PASSWORD_WITHHELD_PLACEHOLDER]: 1 })}\n\n${PASSWORD_WITHHELD_LINE}`,
+      );
+    });
+
+    it("past the depth bound the subtree is checked as one JSON text and replaced by it", async () => {
+      seenEarlier(STALE);
+      let deep: unknown = { pass: STALE };
+      for (let i = 0; i < 12; i++) deep = { n: deep };
+      const out = await applyCompletionLedger(base({ result: okResult({ deep }) }));
+      expect(JSON.stringify(out.output)).not.toContain(STALE);
+      expect(textOf(out.output).split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+      expect(textOf(out.output)).toContain(PASSWORD_WITHHELD_PLACEHOLDER);
+    });
+
+    it("past the size bound the remaining subtrees are still checked", async () => {
+      seenEarlier(STALE);
+      const rows = Array.from({ length: 5000 }, (_, i) => ({ i }));
+      rows.push({ i: -1, pass: STALE } as { i: number });
+      const out = await applyCompletionLedger(base({ result: okResult({ rows }) }));
+      expect(JSON.stringify(out.output)).not.toContain(STALE);
+      const kept = (out.output as { rows: unknown[] }).rows;
+      expect(kept).toHaveLength(5001);
+      expect(kept[0]).toEqual({ i: 0 });
+      // Past the 2,000-container budget the row with the hit is its checked JSON text.
+      const checkedRow = JSON.stringify({ i: -1, pass: PASSWORD_WITHHELD_PLACEHOLDER });
+      expect(kept[5000]).toBe(checkedRow);
+      expect(textOf(out.output)).toContain(JSON.stringify(checkedRow));
+    });
+
+    it("an object that is not plain (a Date) is checked as its JSON text and kept when clean", async () => {
+      seenEarlier(STALE);
+      const when = new Date(0);
+      const out = await applyCompletionLedger(base({ result: okResult({ when, pass: STALE }) }));
+      expect((out.output as { when: unknown }).when).toBe(when);
+    });
+
+    it("a top-level array (no field for the line) becomes its checked dump with the line", async () => {
+      seenEarlier(STALE);
+      const rows = [{ pass: STALE }, `x ${STALE}`];
+      const out = await applyCompletionLedger(
+        base({ result: okResult(rows as unknown as RunnerOutput["output"]) }),
+      );
+      expect(out.output).toBe(shown([{ pass: PASSWORD_WITHHELD_PLACEHOLDER }, `x ${PASSWORD_WITHHELD_PLACEHOLDER}`]));
+    });
+
+    it("a top-level array holding an object keyed by the value: the delivered dump is checked whole", async () => {
+      seenEarlier(STALE);
+      const rows = [{ [STALE]: 1 }];
+      const out = await applyCompletionLedger(
+        base({ result: okResult(rows as unknown as RunnerOutput["output"]) }),
+      );
+      expect(out.output).toBe(shown([{ [PASSWORD_WITHHELD_PLACEHOLDER]: 1 }]));
+      expect(out.output as string).not.toContain(STALE);
+    });
+
+    it("a proven value: the object is returned as it came, no text added", async () => {
+      seenEarlier(STALE);
+      provedNow(STALE);
+      const output = { data: { pass: STALE } };
+      const out = await applyCompletionLedger(base({ result: okResult(output) }));
+      expect(out.output).toEqual(output);
+      expect(traceNames("t1").find((t) => t.name === "password.checked")?.attrs).toEqual({ checked: 1, withheld: 0 });
+    });
+
+    it("no seen value: unchanged and no trace", async () => {
+      const output = { data: { pass: STALE } };
+      const out = await applyCompletionLedger(base({ result: okResult(output) }));
+      expect(out.output).toEqual(output);
+      expect(traceNames("t1").some((t) => t.name === "password.checked")).toBe(false);
+    });
+
+    it("canonical fields present but empty (the router sends its failure line): leaves checked, no line", async () => {
+      seenEarlier(STALE);
+      const out = await applyCompletionLedger(base({ result: okResult({ text: "", extra: STALE }) }));
+      expect(out.output).toEqual({ text: "", extra: PASSWORD_WITHHELD_PLACEHOLDER });
+    });
+
+    it("is idempotent: a second pass over its own output changes nothing", async () => {
+      seenEarlier(STALE);
+      const first = await applyCompletionLedger(base({ result: okResult({ data: { pass: STALE } }) }));
+      const second = await applyCompletionLedger(
+        base({ taskId: "t2", runId: "r2", result: okResult(first.output) }),
+      );
+      expect(textOf(second.output)).toBe(textOf(first.output));
+      expect((second.output as { data: unknown }).data).toEqual({ pass: PASSWORD_WITHHELD_PLACEHOLDER });
+    });
+  });
+
   it("every text field of the output loses the value, not only the delivered one", async () => {
     seenEarlier(STALE);
     const out = await applyCompletionLedger(

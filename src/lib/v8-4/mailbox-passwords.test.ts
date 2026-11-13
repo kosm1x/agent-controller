@@ -150,6 +150,19 @@ describe("registerMailboxResult", () => {
       "stalwart-inbox set-password box | tee /tmp/box-notes.txt",
       "echo 'a;b'; stalwart-inbox show box",
       "cat notes.md\nstalwart-inbox show box",
+      "stalwart-inbox show box # la caja nueva",
+      "# primero la caja\nstalwart-inbox show box",
+      "stalwart-inbox show box#1",
+      "echo a#b; stalwart-inbox show box",
+      "echo 'x'#y; stalwart-inbox show box",
+      "echo 'a # b'; stalwart-inbox show box",
+      "echo \\#x; stalwart-inbox show box",
+      "echo 'a << b'; stalwart-inbox show box",
+      // An escaped space is part of the word, so the # after it is not a comment.
+      "echo \\ #; stalwart-inbox show box",
+      // A single < is an input redirection, not a here-document.
+      "stalwart-inbox show box < /dev/null",
+      "stalwart-inbox show \\\nbox",
     ];
     it.each(qualifying)("seen and proven: %s", (command) => {
       expect(registerMailboxResult("shell_exec", { command }, shellResult(verifiedBlock(PW)), "t1")).toEqual({
@@ -182,6 +195,22 @@ describe("registerMailboxResult", () => {
       "echo x\\;stalwart-inbox show box",
       '"stalwart-inbox" show box',
       "timeout stalwart-inbox show box",
+      // A here-document anywhere makes the command non-qualifying: its body is text.
+      "cat <<EOF\nstalwart-inbox\npassword: x\nEOF",
+      "cat <<'EOF'\nstalwart-inbox show box\nEOF",
+      "cat <<-EOF\n\tstalwart-inbox show box\nEOF",
+      "stalwart-inbox show box <<EOF\nx\nEOF",
+      "cat<<EOF\nstalwart-inbox\nEOF",
+      // Text after an unquoted # that starts a word is a comment, not a segment.
+      "echo hola # ; stalwart-inbox show box",
+      "true #(stalwart-inbox show box)",
+      "#stalwart-inbox show box",
+      "echo x;# stalwart-inbox show box",
+      "cat notes.md\t#; stalwart-inbox show box",
+      "timeout # stalwart-inbox show box",
+      // A backslash-newline is removed by the shell: it neither starts nor ends a word.
+      "cat notes.md \\\n#; stalwart-inbox show box",
+      "cat <\\\n<EOF\nstalwart-inbox show box\nEOF",
     ];
     it.each(notQualifying)("not a mailbox command, nothing registered: %s", (command) => {
       expect(registerMailboxResult("shell_exec", { command }, shellResult(verifiedBlock(PW)), "t1")).toBeNull();
@@ -211,8 +240,11 @@ describe("registerMailboxResult", () => {
       expect(provenPasswords("t1").has(fp(PW))).toBe(true);
     });
 
-    it("the command check is linear on a long command", () => {
-      const command = "grep 'a;b' stalwart-inbox; ".repeat(20_000) + "stalwart-inbox show box";
+    it.each([
+      ["segments", "grep 'a;b' stalwart-inbox; "],
+      ["comment lines", "true # stalwart-inbox 'x\n"],
+    ])("the command check is linear on a long command: %s", (_name, piece) => {
+      const command = piece.repeat(20_000) + "stalwart-inbox show box";
       const started = Date.now();
       expect(registerMailboxResult("shell_exec", { command }, shellResult(verifiedBlock(PW)), "t1")).toEqual({
         seen: 1,
