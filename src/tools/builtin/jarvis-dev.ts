@@ -525,7 +525,7 @@ function testsGreen(tests: string): boolean {
 }
 
 async function actionTest(): Promise<string> {
-  // Same one-at-a-time lock as jarvis_test_run and vps_deploy (ruling 4).
+  // Same one-at-a-time lock as jarvis_test_run (ruling 4).
   // actionPr reaches the gate only through here and holds no lock itself.
   // The branch is read AFTER the lock is taken (queue 4ao (g)), so the
   // reported branch and the cache key (preState.branch) describe one tree.

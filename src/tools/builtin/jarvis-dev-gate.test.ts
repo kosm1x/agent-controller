@@ -216,7 +216,7 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
     await first;
   });
 
-  it("jarvis_test_run and vps_deploy are refused while the jarvis_dev gate runs; released after", async () => {
+  it("jarvis_test_run is refused while the jarvis_dev gate runs (vps_deploy only hands over the operator line); released after", async () => {
     let release: Cb | undefined;
     answer((cb) => (release = cb));
     const gate = test();
@@ -226,8 +226,9 @@ describe("jarvis_dev test gate — shares the one-at-a-time lock (ruling 4)", ()
     expect(await jarvisTestRunTool.execute({})).toBe(
       `❌ Tests: ${SUITE_RUN_BUSY}`,
     );
-    expect(await vpsDeployTool.execute({})).toBe(
-      `❌ Deploy aborted: ${SUITE_RUN_BUSY}`,
+    // Deploying is the operator's: no lock, no child, the same handover.
+    expect(JSON.parse(await vpsDeployTool.execute({})).error).toContain(
+      "cd /root/claude/mission-control && ./scripts/deploy.sh",
     );
     answer("Test Files  1 passed (1)\nTests  2 passed (2)");
     release!(null, { stdout: "", stderr: "" });

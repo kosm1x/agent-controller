@@ -1,16 +1,16 @@
 /**
- * Operator ruling 4 (2026-10-01) — "changed files only". jarvis_test_run,
- * vps_deploy and jarvis_dev's test gate (action=test, and action=pr through
- * it) run typecheck plus ONLY the tests related to the files that changed.
+ * Operator ruling 4 (2026-10-01) — "changed files only". jarvis_test_run
+ * and jarvis_dev's test gate (action=test, and action=pr through it) run
+ * typecheck plus ONLY the tests related to the files that changed.
  * The full suite runs where it already runs: the pre-commit hook and CI.
- * The related run still starts from the live service (jarvis_test_run and
- * vps_deploy children sit in its cgroup; jarvis_dev's in the jarvis-gate
- * slice). What bounds it: one run at a time (withSuiteRunLock), the existing
- * timeouts with process-group kill, and vitest.config's maxWorkers. It is NOT
+ * The related run still starts from the live service (jarvis_test_run
+ * children sit in its cgroup; jarvis_dev's in the jarvis-gate slice). What
+ * bounds it: one run at a time (withSuiteRunLock), the existing timeouts with
+ * process-group kill, and vitest.config's maxWorkers. It is NOT
  * bounded in size: a hub file (src/db/index.ts, src/tools/registry.ts)
  * selects 312 of 494 test files (measured 2026-10-01).
  *
- * "Changed" — one definition for all three, in the cwd the tool runs in:
+ * "Changed" — one definition for both, in the cwd the tool runs in:
  *   commits on HEAD not on origin/main   git diff --name-only origin/main...HEAD
  *   + staged and unstaged edits          git diff --name-only HEAD
  *   + untracked files                    git ls-files --others --exclude-standard

@@ -1,17 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Everything that could build, test or restart is mocked: this suite must
-// never deploy.
-// `git -z` listings (changed-tests, still execFileSync) answer the
-// changed-file set (ruling 4); everything else "". The vps tools' own children
-// run through async execFile (2026-10-26, MCEventLoopBlock): `childImpl`
-// answers them by command, delivered on setImmediate like a real child.
+// Every child seam is mocked: this suite never builds, tests or restarts.
+// `git -z` listings (changed-tests, still execFileSync, reached through
+// jarvis_test_run) answer the changed-file set (ruling 4); everything else "".
+// The vps tools' own children run through async execFile (2026-10-26,
+// MCEventLoopBlock): `childImpl` answers them by command, delivered on
+// setImmediate like a real child.
 type ChildErr = Error & { stdout?: string; stderr?: string };
 type ChildCb = (err: ChildErr | null, stdout: string, stderr: string) => void;
 
-const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
-  vi.hoisted(() => {
+const {
+  execGroupKill,
+  execFileSync,
+  execFile,
+  otherChildren,
+  childImpl,
+  stdinEnds,
+  changed,
+} = vi.hoisted(() => {
     const changed = { ahead: "", worktree: "", fail: false };
+    // The remaining child_process entry points: any call is a spawned child.
+    const otherChildren = {
+      spawn: vi.fn(),
+      spawnSync: vi.fn(),
+      exec: vi.fn(),
+      execSync: vi.fn(),
+      fork: vi.fn(),
+    };
     // One stdin.end() mock per spawned child, in spawn order.
     const stdinEnds: Array<ReturnType<typeof vi.fn>> = [];
     // (cmd, args?, opts) without the callback → stdout, a promise of it (to
@@ -53,6 +68,7 @@ const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
     );
     return {
       changed,
+      otherChildren,
       stdinEnds,
       childImpl,
       execFile,
@@ -66,7 +82,13 @@ const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
     };
   });
 vi.mock("./shell.js", () => ({ execGroupKill }));
-vi.mock("child_process", () => ({ execFileSync, execFile }));
+// Both specifiers, same mocks: a child through either one is counted.
+vi.mock("child_process", () => ({ execFileSync, execFile, ...otherChildren }));
+vi.mock("node:child_process", () => ({
+  execFileSync,
+  execFile,
+  ...otherChildren,
+}));
 vi.mock("fs", async (orig) => ({
   ...(await orig<typeof import("fs")>()),
   existsSync: vi.fn(() => true),
@@ -75,19 +97,25 @@ vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
 
 import { vpsDeployTool, vpsLogsTool, vpsStatusTool } from "./vps-management.js";
 import { jarvisTestRunTool, SUITE_RUN_BUSY } from "./jarvis-self-repair.js";
+import * as nodeChildProcess from "node:child_process";
 
-const MC_DIR = "/root/claude/mission-control";
-const ok = (stdout = "") => Promise.resolve({ stdout, stderr: "" });
-const fail = (fields: Record<string, unknown>) =>
-  Promise.reject(Object.assign(new Error("exit 1"), fields));
-const restartCalls = () =>
-  childImpl.mock.calls.filter(
-    (c) =>
-      (c as unknown[])[0] === "systemctl" &&
-      ((c as unknown[])[1] as string[])[0] === "restart",
-  );
-const NOT_SINCE_DEPLOY =
-  'Note: the running build\'s commit is not recorded, so "changed" here is commits ahead of origin/main + uncommitted changes, NOT everything since the last deploy.';
+const OPERATOR_LINE = "cd /root/claude/mission-control && ./scripts/deploy.sh";
+// The model-visible description is frozen here: a description change goes
+// through the eval gate in its own batch, never as a side effect.
+const DEPLOY_DESCRIPTION = `Build and deploy mission-control. Gates on the tests related to changed files (not the full suite) — will NOT restart if they fail.
+
+USE WHEN:
+- After merging a Jarvis PR (jarvis_dev workflow)
+- User says "haz deploy", "deploy", "restart Jarvis"
+
+WORKFLOW:
+1. Runs npx tsc (build)
+2. Runs the tests related to changed .ts files (none changed → skipped)
+3. If tests pass: systemctl restart mission-control
+4. Waits 5s, checks health endpoint
+5. Reports success or rollback instructions
+
+CRITICAL: This restarts the service. All running tasks will be orphaned (shutdown hook marks them failed).`;
 
 /** Healthy box: one canned stdout per vps_status / vps_logs child. */
 const STATUS_OUT: Record<string, string> = {
@@ -127,6 +155,7 @@ beforeEach(() => {
   execFileSync.mockClear();
   childImpl.mockReset();
   childImpl.mockImplementation(byCommand);
+  for (const fn of Object.values(otherChildren)) fn.mockClear();
   stdinEnds.length = 0;
   Object.assign(changed, { ahead: "src/x.ts\0", worktree: "", fail: false });
 });
@@ -134,167 +163,72 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("vps_deploy — group-kill runner, same output shape", () => {
-  it("pass path: build, the RELATED tests only, then the (mocked) no-block restart (ruling 4)", async () => {
-    execGroupKill
-      .mockImplementationOnce(() => ok())
-      .mockImplementationOnce(() =>
-        ok("Test Files  2 passed (2)\nTests  10 passed (10)"),
-      );
+// Deploying is the operator's: deploy.sh carries the checks the deploy needs
+// (clean tree, lockfile match, no running tasks, pre-migration snapshot,
+// post-deploy health and channels). The tool only hands over the line.
+describe("vps_deploy — hands the deploy to the operator, spawns nothing", () => {
+  it("returns an {error} refusal that names the operator and the deploy line", async () => {
     const out = await vpsDeployTool.execute({});
-    expect(out).toContain("✅ Build: PASS");
-    expect(out).toContain("✅ Tests: 10 passed");
-    expect(out).toContain(
-      "Scope: related tests only: 1 changed source file(s) → 2 test file(s)",
-    );
-    expect(out).toContain(NOT_SINCE_DEPLOY);
-    expect(out).toContain(
-      "✅ Build + related tests passed. Initiating restart",
-    );
-    expect(execGroupKill).toHaveBeenNthCalledWith(1, "npx tsc", {
-      cwd: MC_DIR,
-      timeout: 60_000,
-      maxBuffer: 1024 * 1024,
-      env: expect.any(Object),
-    });
-    expect(execGroupKill).toHaveBeenNthCalledWith(
-      2,
-      "npx vitest related --run --reporter=dot --passWithNoTests ./src/x.ts",
-      {
-        cwd: MC_DIR,
-        timeout: 120_000,
-        maxBuffer: 1024 * 1024,
-        env: expect.any(Object),
-      },
-    );
-    expect(restartCalls()).toHaveLength(1);
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual(["error"]);
+    expect(typeof parsed.error).toBe("string");
+    expect(parsed.error).toMatch(/lo hace solo el operador/);
+    expect(parsed.error).toMatch(/no compila, no corre tests ni reinicia/);
+    expect((parsed.error as string).endsWith(`: ${OPERATOR_LINE}`)).toBe(true);
+    // The confirmation flow adds `confirmed: true` to the call: same refusal.
+    expect(await vpsDeployTool.execute({ confirmed: true })).toBe(out);
   });
 
-  it("no changed .ts files → build only, says tests were skipped, still restarts", async () => {
-    changed.ahead = "";
-    execGroupKill.mockImplementation(() => ok());
-    const out = await vpsDeployTool.execute({});
-    expect(out).toContain(
-      "⏭️ tests: skipped (no changed files; the full suite runs in pre-commit/CI)",
-    );
-    expect(out).toContain(NOT_SINCE_DEPLOY);
-    expect(out).toContain(
-      "✅ Build passed (tests skipped, see above). Initiating restart",
-    );
-    expect(out).not.toContain("Build + related tests passed");
-    expect(execGroupKill).toHaveBeenCalledTimes(1);
-    expect(restartCalls()).toHaveLength(1);
+  it("no build, no test run, no restart: no child of any kind", async () => {
+    for (const fn of Object.values(otherChildren))
+      expect(vi.isMockFunction(fn)).toBe(true);
+    // The `node:` specifier resolves to the same mocks.
+    expect(nodeChildProcess.spawn).toBe(otherChildren.spawn);
+    expect(nodeChildProcess.execFile).toBe(execFile);
+    await vpsDeployTool.execute({});
+    await vpsDeployTool.execute({ confirmed: true });
+    // A child deferred to a timer or an immediate is counted too.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setImmediate(r));
+    expect(execGroupKill).not.toHaveBeenCalled();
+    expect(childImpl).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+    for (const fn of Object.values(otherChildren))
+      expect(fn).not.toHaveBeenCalled();
+    expect(stdinEnds).toHaveLength(0);
   });
 
-  it("changed set unknown (git error) → aborts before the restart", async () => {
-    changed.fail = true;
-    execGroupKill.mockImplementation(() => ok());
-    const out = await vpsDeployTool.execute({});
-    expect(out).toMatch(
-      /^❌ Deploy aborted: tests NOT RUN — could not determine changed files/,
-    );
-    expect(execGroupKill).toHaveBeenCalledTimes(1);
-    expect(restartCalls()).toHaveLength(0);
-  });
-
-  it("build failure aborts before the suite and the restart", async () => {
-    execGroupKill.mockImplementationOnce(() => fail({ stderr: "TS1005" }));
-    expect(await vpsDeployTool.execute({})).toBe(
-      "❌ Deploy aborted: build failed\nTS1005",
-    );
-    expect(execGroupKill).toHaveBeenCalledTimes(1);
-    expect(restartCalls()).toHaveLength(0);
-  });
-
-  it("test failure (or timeout) aborts before the restart", async () => {
-    execGroupKill
-      .mockImplementationOnce(() => ok())
-      .mockImplementationOnce(() =>
-        fail({ killed: true, stdout: "Tests  1 failed | 9 passed" }),
-      );
-    expect(await vpsDeployTool.execute({})).toBe(
-      "❌ Deploy aborted: tests failed\nTests  1 failed | 9 passed\nScope: related tests only: 1 changed source file(s) → ? test file(s) (changed = commits ahead of origin/main + uncommitted + untracked); the full suite runs in pre-commit/CI",
-    );
-    expect(restartCalls()).toHaveLength(0);
-  });
-
-  it("is refused while jarvis_test_run holds the suite lock (W4)", async () => {
+  it("the refusal does not depend on the suite lock (held by jarvis_test_run)", async () => {
     let release!: (v: { stdout: string; stderr: string }) => void;
     execGroupKill.mockImplementation(() => new Promise((r) => (release = r)));
     const first = jarvisTestRunTool.execute({ typecheck_only: true });
-    await Promise.resolve();
-    expect(await vpsDeployTool.execute({})).toBe(
-      `❌ Deploy aborted: ${SUITE_RUN_BUSY}`,
-    );
-    expect(restartCalls()).toHaveLength(0);
-    // jarvis_test_run may spawn an async child (git branch) before tsc.
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const out = await vpsDeployTool.execute({});
+    expect(out).not.toContain(SUITE_RUN_BUSY);
+    expect(JSON.parse(out).error).toContain(OPERATOR_LINE);
+    expect(execGroupKill).toHaveBeenCalledTimes(1); // jarvis_test_run's tsc only
     release({ stdout: "", stderr: "" });
     await first;
   });
-});
 
-// Queue 3h: the tsc / vitest children run task-writable code (a test file can
-// read its env), so they get the base allow-list, never the service env.
-describe("vps_deploy — child env is an allow-list, never the service env (queue 3h)", () => {
-  const CANARIES: Record<string, string> = {
-    CANARY_API_KEY: "canary-value-1",
-    FIREWORKS_API_KEY: "canary-value-2",
-    TELEGRAM_BOT_TOKEN: "canary-value-3",
-    SOME_UNRELATED_SETTING: "canary-value-4",
-  };
-  beforeEach(() => {
-    for (const [k, v] of Object.entries(CANARIES)) vi.stubEnv(k, v);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("tsc and vitest related get PATH/HOME and none of the canaries", async () => {
-    execGroupKill
-      .mockImplementationOnce(() => ok())
-      .mockImplementationOnce(() => ok("Tests  1 passed (1)"));
-    await vpsDeployTool.execute({});
-    expect(execGroupKill).toHaveBeenCalledTimes(2);
-    for (const call of execGroupKill.mock.calls) {
-      const opts = (call as unknown[])[1] as { env: Record<string, string> };
-      expect(opts.env).not.toBe(process.env);
-      expect(opts.env.PATH).toBe(process.env.PATH);
-      expect(opts.env.HOME).toBe(process.env.HOME);
-      for (const name of Object.keys(CANARIES))
-        expect(opts.env).not.toHaveProperty(name);
-      expect(JSON.stringify(opts.env)).not.toContain("canary-value");
-    }
-  });
-});
-
-describe("vps_deploy — self-restart runs async, same semantics", () => {
-  it("restart is a no-block systemctl child with the same timeout, stdin closed", async () => {
-    execGroupKill.mockImplementation(() => ok());
-    changed.ahead = "";
-    const out = await vpsDeployTool.execute({});
-    expect(restartCalls()).toEqual([
-      [
-        "systemctl",
-        ["restart", "--no-block", "mission-control"],
-        { timeout: 5_000 },
-      ],
-    ]);
-    expect(out).not.toContain("❌ systemctl restart failed");
-    expect(stdinEnds).toHaveLength(1);
-    expect(stdinEnds[0]).toHaveBeenCalledTimes(1);
-  });
-
-  it("a failing restart child keeps the same error line", async () => {
-    execGroupKill.mockImplementation(() => ok());
-    changed.ahead = "";
-    childImpl.mockImplementation(() => {
-      throw Object.assign(new Error("Command failed: systemctl restart"), {
-        code: 1,
-      });
+  it("stays the same tool to the model: name, hints, schema, description", () => {
+    expect(vpsDeployTool.name).toBe("vps_deploy");
+    expect(vpsDeployTool.definition.function.name).toBe("vps_deploy");
+    expect(vpsDeployTool.definition.function.description).toBe(
+      DEPLOY_DESCRIPTION,
+    );
+    expect(vpsDeployTool.definition.function.parameters).toEqual({
+      type: "object",
+      properties: {},
     });
-    const out = await vpsDeployTool.execute({});
-    expect(out.split("\n").at(-1)).toBe("❌ systemctl restart failed");
+    expect(vpsDeployTool).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+      requiresConfirmation: true,
+      deferred: true,
+    });
   });
 });
 

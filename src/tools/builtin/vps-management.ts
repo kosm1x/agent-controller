@@ -1,8 +1,8 @@
 /**
  * VPS Management tools — v6.0 S4.
  *
- * Jarvis can monitor, back up, deploy, and read logs on the VPS.
- * vps_deploy requires tests to pass before restarting.
+ * Jarvis can monitor, back up and read logs on the VPS. Deploying is the
+ * operator's: vps_deploy hands over the deploy line and spawns nothing.
  */
 
 import { execFile } from "child_process";
@@ -10,18 +10,8 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
-import { execGroupKill } from "./shell.js";
-import { buildChildEnv } from "../../mcp/env-deny.js";
-import { SUITE_RUN_BUSY, withSuiteRunLock } from "./jarvis-self-repair.js";
-import {
-  CHANGED_BASE_REF,
-  relatedScopeSummary,
-  relatedTestCommand,
-  resolveTestScope,
-} from "./changed-tests.js";
 
 const MC_DIR = "/root/claude/mission-control";
-const DEPLOY_SCOPE_NOTE = `Note: the running build's commit is not recorded, so "changed" here is commits ahead of ${CHANGED_BASE_REF} + uncommitted changes, NOT everything since the last deploy.`;
 const DB_PATH = join(MC_DIR, "data", "mc.db");
 const BACKUP_DIR = join(MC_DIR, "backups");
 const BACKUP_RETENTION_DAYS = 7;
@@ -184,6 +174,14 @@ AFTER CHECKING: Report the key metrics concisely.`,
 // vps_deploy
 // ---------------------------------------------------------------------------
 
+const DEPLOY_OPERATOR_LINE = `cd ${MC_DIR} && ./scripts/deploy.sh`;
+const DEPLOY_HANDOVER =
+  "El deploy de mission-control lo hace solo el operador con el script de deploy, " +
+  "que antes de compilar rechaza código sin commit, dependencias que no coinciden con el lockfile y tareas en curso, " +
+  "respalda la base de datos antes de una migración y después verifica salud y canales. " +
+  "Esta herramienta no compila, no corre tests ni reinicia el servicio. " +
+  `Pásale al operador esta línea para la terminal del servidor: ${DEPLOY_OPERATOR_LINE}`;
+
 export const vpsDeployTool: Tool = {
   name: "vps_deploy",
   readOnlyHint: false,
@@ -214,88 +212,13 @@ CRITICAL: This restarts the service. All running tasks will be orphaned (shutdow
     },
   },
 
+  // Deploying is the operator's (ruling 4cm): deploy.sh refuses uncommitted
+  // code, a dependency folder that does not match the lockfile and running
+  // tasks, snapshots the database before a migrating deploy and verifies
+  // health and channels afterwards. This tool spawns nothing on any path; it
+  // hands the operator the line to run.
   async execute(): Promise<string> {
-    const run = await withSuiteRunLock(async () => {
-      const lines: string[] = ["🚀 **Deploy**"];
-
-      // 1. Build
-      try {
-        // Group-kill on timeout, off the event loop (orphaned-worker incident).
-        await execGroupKill("npx tsc", {
-          cwd: MC_DIR,
-          timeout: 60_000,
-          maxBuffer: 1024 * 1024,
-          env: buildChildEnv(),
-        });
-        lines.push("✅ Build: PASS");
-      } catch (err) {
-        const msg =
-          (err as { stderr?: string }).stderr?.slice(0, 300) ?? "build error";
-        return `❌ Deploy aborted: build failed\n${msg}`;
-      }
-
-      // 2. Tests related to the changed files only (operator ruling 4). The
-      // running build's commit is recorded nowhere, so "changed" cannot mean
-      // "since the last deploy" — say so in the output.
-      const scope = resolveTestScope(MC_DIR);
-      if (scope.kind === "error") {
-        return `❌ Deploy aborted: tests NOT RUN — ${scope.reason}`;
-      }
-      if (scope.kind === "skip") {
-        lines.push(`⏭️ tests: skipped (${scope.reason})`);
-      } else {
-        try {
-          const { stdout: output } = await execGroupKill(
-            relatedTestCommand(scope.files),
-            {
-              cwd: MC_DIR,
-              timeout: 120_000,
-              maxBuffer: 1024 * 1024,
-              env: buildChildEnv(),
-            },
-          );
-          const match = output.match(/Tests\s+(\d+)\s+passed/);
-          lines.push(
-            `✅ Tests: ${match?.[1] ?? "?"} passed`,
-            `Scope: ${relatedScopeSummary(scope, output)}`,
-          );
-        } catch (err) {
-          const stdout =
-            (err as { stdout?: string }).stdout?.slice(-300) ?? "test error";
-          return `❌ Deploy aborted: tests failed\n${stdout}\nScope: ${relatedScopeSummary(scope)}`;
-        }
-      }
-      lines.push(DEPLOY_SCOPE_NOTE);
-
-      // 3. Restart — NOTE: this kills the current process.
-      // The response is returned BEFORE the restart takes effect via
-      // systemctl's --no-block flag. Jarvis should call vps_status after
-      // to confirm health.
-      lines.push(
-        scope.kind === "related"
-          ? "✅ Build + related tests passed. Initiating restart..."
-          : "✅ Build passed (tests skipped, see above). Initiating restart...",
-      );
-      lines.push(
-        "⚠️ The service will restart momentarily. Call vps_status in ~10s to confirm health.",
-      );
-
-      try {
-        const p = execFileAsync(
-          "systemctl",
-          ["restart", "--no-block", "mission-control"],
-          // execFile always pipes stdio (the sync `stdio: "pipe"` is implied).
-          { timeout: 5_000 },
-        );
-        p.child.stdin?.end();
-        await p;
-      } catch {
-        lines.push("❌ systemctl restart failed");
-      }
-
-      return lines.join("\n");
-    });
-    return run ?? `❌ Deploy aborted: ${SUITE_RUN_BUSY}`;
+    return JSON.stringify({ error: DEPLOY_HANDOVER });
   },
 };
 

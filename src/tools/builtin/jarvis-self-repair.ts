@@ -33,7 +33,7 @@ const execFileAsync = promisify(execFile);
  * which blocked the event loop and so could never overlap; now that they are
  * async, two concurrent tasks could each start the full suite, which OOMs
  * this box. Returns null (fn not run) when a run is already in flight.
- * Shared by jarvis_test_run, vps_deploy and jarvis_dev's test gate (ruling 4:
+ * Shared by jarvis_test_run and jarvis_dev's test gate (ruling 4:
  * related tests only now, but still one run at a time).
  */
 let suiteRunInFlight = false;
