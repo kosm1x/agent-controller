@@ -26,6 +26,7 @@ vi.mock("../../google/client.js", () => ({
 }));
 
 vi.mock("node:fs", () => ({
+  lstatSync: () => { throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" }); },
   mkdirSync: mocks.mockMkdirSync,
   writeFileSync: mocks.mockWriteFileSync,
   realpathSync: mocks.mockRealpathSync,

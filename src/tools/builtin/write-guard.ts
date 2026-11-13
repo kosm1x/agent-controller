@@ -24,14 +24,19 @@ const CLAUDE_HOME = "/root/claude/";
  * from the spelling. path.resolve() and realpathSync both collapse `evil/..`
  * as text, which named a different file than the one the write lands in when
  * `evil` is a directory symlink (audit 2026-09-22 R1 C1, R2 C2). From the
- * first component that does not exist (or when lstat fails, e.g. a mocked fs)
- * the rest is joined as text: the write creates it, and a `..` below a
- * missing directory fails with ENOENT anyway. After 40 symlink hops the
- * kernel refuses with ELOOP; the literal path is returned.
+ * first component the file system reports it cannot follow (PATH_ERRNO) the
+ * rest is joined as text: the write creates it, and a `..` below a missing
+ * directory fails with ENOENT anyway. Any other error (EIO, ENOMEM, a
+ * RangeError from an exhausted stack, a Node argument error) is not evidence
+ * about the path: it is thrown, so the caller's check fails closed. After 40
+ * symlink hops the kernel refuses with ELOOP; the literal path is returned.
  */
 export function realResolve(p: string): string {
   return kernelWalk(p).path;
 }
+
+/** The probe errors that say something about the path itself, not about the machine's state. */
+const PATH_ERRNO = new Set(["ENOENT", "ENOTDIR", "EACCES", "ELOOP", "ENAMETOOLONG"]);
 
 /**
  * `/proc/<pid>/{root,cwd,exe}`, `fd/<n>` and `map_files/<range>` are magic
@@ -75,7 +80,10 @@ export function kernelWalk(p: string): {
         continue;
       }
       target = readlinkSync(next);
-    } catch {
+    } catch (e) {
+      // Only these codes say something about the path itself; an error about the
+      // machine's state is not evidence that a component is missing.
+      if (!(e instanceof Error) || e instanceof RangeError || !PATH_ERRNO.has((e as NodeJS.ErrnoException).code ?? "")) throw e;
       return { path: resolve(next, ...pending), procLink: null };
     }
     if (++hops > 40) return { path: resolve(p), procLink: null };

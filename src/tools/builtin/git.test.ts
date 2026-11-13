@@ -72,7 +72,9 @@ vi.mock("child_process", () => ({
 
 // Only for the cross-module lock test (jarvis_dev action=status): its
 // worktree bootstrap must neither spawn nor symlink; jarvis-self-repair's db
-// and shell imports are inert here. Every other fs call is the real one.
+// and shell imports are inert here. Every other fs call is the real one, except
+// that a test can make the path walk's lstat of one path throw.
+const walkProbe = vi.hoisted(() => ({ fail: undefined as ((p: string) => unknown) | undefined }));
 vi.mock("fs", async (orig) => {
   const actual = await orig<typeof import("fs")>();
   const wt = "/root/claude/mission-control-jarvis";
@@ -83,6 +85,11 @@ vi.mock("fs", async (orig) => {
     symlinkSync: () => {
       throw new Error("test: symlinkSync is not allowed");
     },
+    lstatSync: ((p: string, ...rest: unknown[]) => {
+      const err = walkProbe.fail?.(p);
+      if (err !== undefined) throw err;
+      return (actual.lstatSync as (...a: unknown[]) => unknown)(p, ...rest);
+    }) as typeof actual.lstatSync,
   };
 });
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
@@ -147,6 +154,24 @@ describe("git tools", () => {
         .mockReturnValueOnce("main"); // branch — won't be called since status is truthy
       const result = await gitStatusTool.execute({});
       expect(result).toContain("src/foo.ts");
+    });
+
+    // Only a file-system error about the path lets the walk fall back to the
+    // spelling; any other throw while resolving the working directory refuses.
+    it("refuses without running git when the walk of the working directory throws", async () => {
+      const { mkdtempSync } = await import("fs");
+      const { tmpdir } = await import("os");
+      const { join } = await import("path");
+      const cwd = mkdtempSync(join(tmpdir(), "git-walk-"));
+      mockExec.mockClear();
+      walkProbe.fail = (p) => (p === cwd ? new RangeError("Maximum call stack size exceeded") : undefined);
+      try {
+        const result = JSON.parse(await gitStatusTool.execute({ cwd }));
+        expect(result.error).toMatch(/Maximum call stack size exceeded/);
+        expect(mockExec).not.toHaveBeenCalled();
+      } finally {
+        walkProbe.fail = undefined;
+      }
     });
   });
 

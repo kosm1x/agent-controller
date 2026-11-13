@@ -35,6 +35,21 @@ vi.mock("child_process", async (importOriginal) => {
   };
 });
 
+// The real fs, with a hook that makes the lstat of one path throw a chosen value
+// (the path walk's probe), so a test can make one listed entry's walk fail.
+const walkProbe = vi.hoisted(() => ({ fail: undefined as ((p: string) => unknown) | undefined }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  return {
+    ...actual,
+    lstatSync: ((p: string, ...rest: unknown[]) => {
+      const err = walkProbe.fail?.(p);
+      if (err !== undefined) throw err;
+      return (actual.lstatSync as (...a: unknown[]) => unknown)(p, ...rest);
+    }) as typeof actual.lstatSync,
+  };
+});
+
 // A stand-in for the operator's Claude home (`/root/.claude/`) inside this
 // file's own temp root, so the session-store case never creates or removes
 // anything under the real one. The read guard sees a path under the stand-in
@@ -871,5 +886,37 @@ describe("NorthStar retired — grep / glob / list_dir refuse jarvis-kb/NorthSta
     symlinkSync(`${KB}/NorthStar`, link);
     const g = JSON.parse(await grepTool.execute({ pattern: "needle-ns", path: link }));
     expect(String(g.error)).toMatch(/NORTHSTAR_RETIRED/);
+  });
+});
+
+// A walk that throws (an error that says nothing about the path) ends the
+// search in an error result: no entry is listed on an unjudged path.
+describe("search results fail closed when the path walk throws", () => {
+  beforeEach(() => {
+    mkdirSync(TEST_DIR, { recursive: true });
+    writeFileSync(`${TEST_DIR}/a.ts`, "const foo = 1;\n");
+    writeFileSync(`${TEST_DIR}/b.ts`, "const foo = 2;\n");
+  });
+  afterEach(() => {
+    walkProbe.fail = undefined;
+    rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+  const failOnB = (p: string) =>
+    p.endsWith("/b.ts") ? new RangeError("Maximum call stack size exceeded") : undefined;
+
+  it("grep: a matched file whose walk throws ends in an error, nothing listed", async () => {
+    expect(JSON.parse(await grepTool.execute({ pattern: "foo", path: TEST_DIR })).matches).toContain("b.ts");
+    walkProbe.fail = failOnB;
+    const r = JSON.parse(await grepTool.execute({ pattern: "foo", path: TEST_DIR }));
+    expect(r.error).toMatch(/Maximum call stack size exceeded/);
+    expect(r.matches).toBeUndefined();
+  });
+
+  it("list_dir: an entry whose walk throws ends in an error, nothing listed", async () => {
+    expect(JSON.parse(await listDirTool.execute({ path: TEST_DIR })).entries).toContain("b.ts");
+    walkProbe.fail = failOnB;
+    const r = JSON.parse(await listDirTool.execute({ path: TEST_DIR }));
+    expect(r.error).toMatch(/Maximum call stack size exceeded/);
+    expect(r.entries).toBeUndefined();
   });
 });

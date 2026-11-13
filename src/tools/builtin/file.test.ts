@@ -6,13 +6,15 @@
  * Tier B contract: structured envelope on large files + lines parameter.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockExecFileSync: vi.fn(() => "main"),
   mockStatSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  // The path walk's probe: no component exists, so a path is judged as spelled.
+  mockLstatSync: vi.fn((_p: string): never => { throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" }); }),
   upsertFromDiskWrite: vi.fn(),
   declareReadbackGate: vi.fn(),
 }));
@@ -23,6 +25,7 @@ vi.mock("fs", () => ({
   mkdirSync: vi.fn(),
   rmSync: vi.fn(),
   statSync: mocks.mockStatSync,
+  lstatSync: mocks.mockLstatSync,
 }));
 
 vi.mock("child_process", () => ({
@@ -459,6 +462,54 @@ describe("file_write — KB registry parity (item 11)", () => {
     expect(mocks.mockWriteFileSync).toHaveBeenCalledTimes(1);
     // The gate is declared anyway, so the stale row fails the read-back.
     expect(mocks.declareReadbackGate).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Only an error reported by the file system means a path component is missing;
+// any other error from the walk's probe ends the check, and nothing is written.
+describe("file_write — the path walk fails closed", () => {
+  const missing = mocks.mockLstatSync.getMockImplementation()!;
+  const WRITE = { path: "/tmp/mc-file-test-out/w.md", content: "x" };
+  /** Walk `n` of the path (each walk probes `/tmp` once) throws a RangeError; `n` 0 = every walk. Returns the walk count. */
+  const throwOnWalk = (n: number) => {
+    const walks = { count: 0 };
+    mocks.mockLstatSync.mockImplementation((p: string): never => {
+      if (p === "/tmp" && (++walks.count === n || n === 0)) throw new RangeError("Maximum call stack size exceeded");
+      return missing(p);
+    });
+    return walks;
+  };
+
+  beforeEach(() => mocks.mockWriteFileSync.mockReset());
+  afterEach(() => {
+    mocks.mockLstatSync.mockImplementation(missing);
+  });
+
+  it("throws without writing when every walk of the path fails with an error that is not about the path", async () => {
+    throwOnWalk(0);
+    const { fileWriteTool } = await import("./file.js");
+    await expect(fileWriteTool.execute(WRITE)).rejects.toThrow(RangeError);
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("throws without writing when only the first walk (the /proc-link check) fails", async () => {
+    throwOnWalk(1);
+    const { fileWriteTool } = await import("./file.js");
+    await expect(fileWriteTool.execute(WRITE)).rejects.toThrow(RangeError);
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("throws without writing when only the write-boundary walk fails", async () => {
+    const { fileWriteTool } = await import("./file.js");
+    // The path is walked four times: the path-safety check's /proc-link check and
+    // write resolve, the write boundary's resolve, then the registry path.
+    const baseline = throwOnWalk(-1);
+    await fileWriteTool.execute(WRITE);
+    expect(baseline.count).toBe(4);
+    mocks.mockWriteFileSync.mockReset();
+    throwOnWalk(3);
+    await expect(fileWriteTool.execute(WRITE)).rejects.toThrow(RangeError);
+    expect(mocks.mockWriteFileSync).not.toHaveBeenCalled();
   });
 });
 

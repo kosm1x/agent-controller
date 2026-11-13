@@ -24,6 +24,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 vi.mock("node:fs", () => ({
+  lstatSync: () => { throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" }); },
   writeFileSync: mocks.writeFileSync,
   statSync: mocks.statSync,
   existsSync: mocks.existsSync,

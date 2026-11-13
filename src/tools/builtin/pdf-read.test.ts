@@ -12,6 +12,7 @@ vi.mock("../../lib/pdf.js", () => ({
 
 // Mock fs for existsSync and writeFile
 vi.mock("fs", () => ({
+  lstatSync: () => { throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" }); },
   existsSync: vi.fn(() => true),
 }));
 
