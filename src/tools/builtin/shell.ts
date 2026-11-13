@@ -6,7 +6,7 @@
  */
 
 import { exec, spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { isBlockedEnvFile, NORTHSTAR_DISK_REASON } from "./immutable-core.js";
@@ -14,7 +14,7 @@ import { homedir } from "os";
 import { dirname, resolve as resolvePath } from "path";
 import { fileURLToPath } from "url";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
-import { realResolve, realResolveParent } from "./write-guard.js";
+import { isPathError, realResolve, realResolveParent } from "./write-guard.js";
 import { checkWriteBoundary, RITUAL_WRITABLE_DOCS, type BoundaryVerdict, type WriteOp } from "./write-boundary.js";
 import {
   buildFlailingBlockMessage,
@@ -923,8 +923,10 @@ const MAX_TEXT_DEPTH = 4;
 const MAX_BRACE_ALTERNATIVES = 64;
 /** cp/mv/scp: the landing files judged in one tool call add up to at most this many path bytes. */
 const MAX_COPY_LANDING_BYTES = 32768;
-/** The landing budget of the tool call being checked: created by the outermost validateShellCommand, spent by every nested check. */
-let landingBudget: { landingBytes: number } | undefined;
+/** Command text validated again from inside a check (`bash -c`, `sh -c`, `eval`) is refused past this many levels. */
+const MAX_REENTRY_DEPTH = 8;
+/** The per-call holder of the tool call being checked: created by the outermost validateShellCommand, spent by every nested check (landing bytes, re-entry levels). */
+let landingBudget: { landingBytes: number; reentryDepth: number } | undefined;
 const PROCESS_SUBSTITUTION_REASON = "process substitution <() or >() is blocked";
 
 /** A file a command writes: the word as spelled (`raw`), its value after quote
@@ -2753,7 +2755,17 @@ function checkPackageJsonScript(pm: string, name: string, rest: string[], cwd: s
   let scripts: Record<string, unknown> | undefined;
   for (let dir = root; ; dir = resolvePath(dir, "..")) {
     const file = resolvePath(dir, "package.json");
-    if (existsSync(file)) {
+    let here = true;
+    try {
+      statSync(file);
+    } catch (e) {
+      // Only a path error means "no manifest here, look further up"; any other
+      // error says nothing about the manifest, and walking past it would leave
+      // the script body unchecked.
+      if (!isPathError(e)) return `\`${pm} run ${name}\`: whether ${file} exists could not be determined, so its script body cannot be checked — ${OPERATOR}`;
+      here = false;
+    }
+    if (here) {
       try {
         scripts = (JSON.parse(readFileSync(file, "utf-8")) as { scripts?: Record<string, unknown> }).scripts;
       } catch {
@@ -3019,8 +3031,19 @@ export function validateShellCommand(command: string, opts: { reentry?: boolean;
   reason?: string;
 } {
   // A `bash -c`/`eval` string or a package.json script body is validated again from inside this call: it spends the same landing budget.
-  if (landingBudget) return validateCommandText(command, opts);
-  landingBudget = { landingBytes: MAX_COPY_LANDING_BYTES };
+  if (landingBudget) {
+    // A fixed depth: each level is validated again from the start, so the work must stay bounded.
+    if (landingBudget.reentryDepth >= MAX_REENTRY_DEPTH) {
+      return { allowed: false, reason: `command text nested more than ${MAX_REENTRY_DEPTH} levels deep (\`bash -c\`, \`sh -c\`, \`eval\`) is not judged — run the inner command directly, or report the exact command for the operator instead` };
+    }
+    landingBudget.reentryDepth++;
+    try {
+      return validateCommandText(command, opts);
+    } finally {
+      landingBudget.reentryDepth--;
+    }
+  }
+  landingBudget = { landingBytes: MAX_COPY_LANDING_BYTES, reentryDepth: 0 };
   try {
     return validateCommandText(command, opts);
   } finally {

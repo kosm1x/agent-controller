@@ -6,10 +6,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // qa R5 W5-3: the shim-missing branch of runShellCheck is pinned by flipping the probe.
-const shimProbe = vi.hoisted(() => ({ missing: null as string | null }));
+// The validator is hooked the same way: `validatorThrows` makes it throw.
+const shimProbe = vi.hoisted(() => ({ missing: null as string | null, validatorThrows: undefined as unknown }));
 vi.mock("../../tools/builtin/shell.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../tools/builtin/shell.js")>();
-  return { ...actual, pmShimMissing: (dir?: string) => shimProbe.missing ?? actual.pmShimMissing(dir) };
+  return {
+    ...actual,
+    pmShimMissing: (dir?: string) => shimProbe.missing ?? actual.pmShimMissing(dir),
+    validateShellCommand: (...a: Parameters<typeof actual.validateShellCommand>) => {
+      if (shimProbe.validatorThrows !== undefined) throw shimProbe.validatorThrows;
+      return actual.validateShellCommand(...a);
+    },
+  };
 });
 import { closeDatabase, getDatabase, initDatabase } from "../../db/index.js";
 import { declareGates, gateSpecsFromGoal, listGates, recordGateResult } from "./gates.js";
@@ -315,6 +323,117 @@ describe("runCheck", () => {
   });
 });
 
+// A check whose command cannot be judged or started is a FAILED check, like
+// one that ran and failed: the gate stays closed, and nothing escapes the runner.
+describe("a check that cannot be judged or started FAILS, closed", () => {
+  afterEach(() => {
+    shimProbe.validatorThrows = undefined;
+  });
+
+  it("a validator that throws fails the check without running it", async () => {
+    shimProbe.validatorThrows = new RangeError("Maximum call stack size exceeded");
+    let ran = 0;
+    const exec: CheckExecutor = async () => (ran++, { output: "ok", exitCode: 0, timedOut: false });
+    const outcome = await runCheck({ check_cmd: "echo ok", expect: "ok" }, { timeoutMs: 1000, exec });
+    expect(outcome).toMatchObject({ ok: false, exitCode: null, timedOut: false });
+    expect(outcome.notRunnable).toBeUndefined();
+    expect(outcome.evidence).toMatch(/^the check command could not be judged: Maximum call stack size exceeded/);
+    expect(ran).toBe(0);
+  });
+
+  it("the ledger records the gate FAILED and its verdict is failed", async () => {
+    declareGates("t-unjudged", [{ id: "G1", criterion: "c", check: "echo ok", expect: "ok" }], "plan");
+    shimProbe.validatorThrows = new Error("no code");
+    const exec: CheckExecutor = async () => ({ output: "ok", exitCode: 0, timedOut: false });
+    const v = await evaluateLedger({ taskId: "t-unjudged", exec, timeoutMs: 1000 });
+    expect(v.verdict).toBe("failed");
+    expect(listGates("t-unjudged")[0]).toMatchObject({ state: "failed" });
+  });
+
+  it("a command spawn refuses outright resolves notStarted, and EXPECT never sees the error text", async () => {
+    const r = await runShellCheck("echo a\0b", { timeoutMs: 5000 });
+    expect(r).toMatchObject({ exitCode: null, timedOut: false, notStarted: true });
+    expect(r.output).toMatch(/^the check command could not be started: /);
+    const outcome = await runCheck(
+      { check_cmd: "echo started", expect: "/.*/" },
+      { timeoutMs: 5000, exec: () => runShellCheck("echo a\0b", { timeoutMs: 5000 }) },
+    );
+    expect(outcome).toMatchObject({ ok: false, exitCode: null });
+    expect(outcome.notRunnable).toBeUndefined();
+  });
+
+  it("the could-not-be-judged and could-not-be-started evidence is secret-redacted and capped", async () => {
+    const token = "sk-abcdefghijklmnopqrstuvwxyz0123";
+    const message = `boom ${token} ${"x".repeat(1000)}`;
+    shimProbe.validatorThrows = new Error(message);
+    const exec: CheckExecutor = async () => ({ output: "ok", exitCode: 0, timedOut: false });
+    const judged = await runCheck({ check_cmd: "echo ok", expect: "ok" }, { timeoutMs: 1000, exec });
+    expect(judged.evidence).toMatch(/^the check command could not be judged: /);
+    expect(judged.evidence).not.toContain(token);
+    expect(judged.evidence.length).toBeLessThanOrEqual("the check command could not be judged: ".length + 200);
+    shimProbe.validatorThrows = undefined;
+    const notStarted: CheckExecutor = async () => ({
+      output: `the check command could not be started: ${message}`,
+      exitCode: null,
+      timedOut: false,
+      notStarted: true,
+    });
+    const started = await runCheck({ check_cmd: "echo ok", expect: "ok" }, { timeoutMs: 1000, exec: notStarted });
+    expect(started.evidence).toMatch(/^the check command could not be started: /);
+    expect(started.evidence).not.toContain(token);
+    expect(started.evidence.length).toBeLessThanOrEqual(200);
+  });
+
+  it("a shell that cannot start in its directory fails, even when EXPECT matches the error text", async () => {
+    const cwd = join(tmpdir(), `gate-check-no-such-dir-${process.pid}-${Date.now()}`);
+    const r = await runShellCheck("echo started", { cwd, timeoutMs: 5000 });
+    expect(r).toMatchObject({ exitCode: null, timedOut: false, notStarted: true });
+    const outcome = await runCheck({ check_cmd: "echo started", expect: "spawn" }, { cwd, timeoutMs: 5000, exec: runShellCheck });
+    expect(outcome).toMatchObject({ ok: false, exitCode: null });
+    expect(outcome.evidence).toMatch(/spawn error/);
+  });
+});
+
+// A check that TIMED OUT reports as timed out even when the child then errors:
+// `spawn` is replaced by a fake child with no pid, so no process exists and no
+// signal is sent; fake timers pass the timeout.
+describe("runShellCheck — a timed-out check is reported as timed out, not as not started", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.doUnmock("node:child_process");
+    vi.resetModules();
+  });
+
+  it("an error after the timeout keeps timedOut and no not-started mark", async () => {
+    const { EventEmitter } = await import("node:events");
+    const child = Object.assign(new EventEmitter(), {
+      pid: undefined,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn(() => true),
+    });
+    vi.resetModules();
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: vi.fn(() => child),
+    }));
+    vi.doUnmock("../../tools/builtin/shell.js");
+    const fresh = await import("./gate-check.js");
+    vi.useFakeTimers();
+    const pending = fresh.runShellCheck("echo never-runs", { timeoutMs: 1000 });
+    vi.advanceTimersByTime(1001);
+    child.emit("error", new Error("late error"));
+    const r = await pending;
+    expect(r).toMatchObject({ timedOut: true, notStarted: false, exitCode: null });
+    const outcome = await fresh.runCheck(
+      { check_cmd: "echo never-runs", expect: null },
+      { timeoutMs: 1000, exec: async () => r },
+    );
+    expect(outcome).toMatchObject({ ok: false, timedOut: true });
+    expect(outcome.evidence).toMatch(/^timed out after 1000ms/);
+  });
+});
+
 // The check's env carries an empty gh config directory created on first use.
 // When it cannot be created nothing runs and the check FAILS (fail closed):
 // the promise resolves, and EXPECT is never matched against the error text.
@@ -362,7 +481,11 @@ describe("runShellCheck (real subprocess)", () => {
     shimProbe.missing = "[pm-shim] missing: /nowhere/npm — test";
     try {
       const r = await runShellCheck("echo CHILD-RAN", { timeoutMs: 5000 });
-      expect(r).toEqual({ output: "[pm-shim] missing: /nowhere/npm — test", exitCode: 126, timedOut: false });
+      expect(r).toEqual({ output: "[pm-shim] missing: /nowhere/npm — test", exitCode: 126, timedOut: false, notStarted: true });
+      // An EXPECT that matches the shim's own message still FAILS: nothing ran.
+      const outcome = await runCheck({ check_cmd: "echo CHILD-RAN", expect: "pm-shim" }, { timeoutMs: 5000, exec: runShellCheck });
+      expect(outcome).toMatchObject({ ok: false, exitCode: null });
+      expect(outcome.notRunnable).toBeUndefined();
     } finally {
       shimProbe.missing = null;
     }
@@ -380,7 +503,8 @@ describe("runShellCheck (real subprocess)", () => {
       spy.mockRestore();
     }
   });
-  it("captures output and exit code, and kills a hung process group on timeout", async () => {
+  // Host rule: signal-sending cases run on CI only.
+  it.skipIf(!process.env.CI)("captures output and exit code, and kills a hung process group on timeout", async () => {
     const ok = await runShellCheck("echo hello; echo world >&2", {
       timeoutMs: 5000,
     });

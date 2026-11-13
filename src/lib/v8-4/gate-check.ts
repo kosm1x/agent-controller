@@ -152,7 +152,8 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
     // Same fail-closed rule as shell_exec: no shim, no child (qa R4 W-1).
     const shimMissing = pmShimMissing();
     if (shimMissing) {
-      resolve({ output: shimMissing, exitCode: 126, timedOut: false });
+      // Nothing ran: the message is the harness's, never matched against EXPECT.
+      resolve({ output: shimMissing, exitCode: 126, timedOut: false, notStarted: true });
       return;
     }
     // Same package-manager shim as shell_exec — a check may not do what the tool may not do.
@@ -179,12 +180,24 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
       });
       return;
     }
-    const child = spawn("/bin/sh", ["-c", command], {
-      cwd: opts.cwd,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env,
-    });
+    // A command spawn refuses outright (a NUL byte) never started: a FAILED check, not a rejection.
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("/bin/sh", ["-c", command], {
+        cwd: opts.cwd,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env,
+      });
+    } catch (err) {
+      resolve({
+        output: `the check command could not be started: ${err instanceof Error ? err.message : String(err)}`,
+        exitCode: null,
+        timedOut: false,
+        notStarted: true,
+      });
+      return;
+    }
     let buf = "";
     let timedOut = false;
     const append = (chunk: Buffer): void => {
@@ -212,6 +225,8 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
         output: `spawn error: ${err.message}`,
         exitCode: null,
         timedOut,
+        // Its text is the runtime's, not the command's: never matched against EXPECT.
+        notStarted: !timedOut,
       });
     });
     child.on("close", (code) => {
@@ -240,7 +255,20 @@ export async function runCheck(
     };
   }
   // Same guard as shell_exec — a check may not do what the tool may not do.
-  const guard = validateShellCommand(row.check_cmd, { cwd: opts.cwd });
+  // A guard that throws has not judged the command: the check FAILS and the
+  // gate stays closed, like a check that ran and failed — never an exception
+  // that leaves the ledger unadjudicated.
+  let guard: ReturnType<typeof validateShellCommand>;
+  try {
+    guard = validateShellCommand(row.check_cmd, { cwd: opts.cwd });
+  } catch (err) {
+    return {
+      ok: false,
+      evidence: `the check command could not be judged: ${evidenceTail(err instanceof Error ? err.message : String(err), 200)}`,
+      exitCode: null,
+      timedOut: false,
+    };
+  }
   if (!guard.allowed) {
     // Nothing ran, so nothing was observed: ABANDONED with the reason, not
     // FAILED — a guard-refused check (`$(...)`, task 35f4f5e5 on 2026-09-14)

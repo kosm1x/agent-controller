@@ -51,6 +51,18 @@ vi.mock("../../lib/secret-refs.js", async (importOriginal) => ({
   scrubSecrets: (t: string) => t.split(SCRUB_SYN).join("[oculto]"),
 }));
 
+// The `npm run` manifest probe is hooked: `manifestProbe.fail(p)` returns the error to throw for `p`.
+const manifestProbe = vi.hoisted(() => ({ fail: undefined as ((p: string) => unknown) | undefined }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  const statSync = (p: unknown, ...rest: unknown[]): unknown => {
+    const err = manifestProbe.fail?.(String(p));
+    if (err !== undefined) throw err;
+    return (actual.statSync as (...a: unknown[]) => unknown)(p, ...rest);
+  };
+  return { ...actual, statSync };
+});
+
 // The checkout under test: the package-manager gate resolves `npx` bins against
 // real node_modules, so the tests must not assume the VPS path (CI checks out
 // elsewhere).
@@ -1666,7 +1678,8 @@ describe("shellTool exec contract", () => {
     expect(bad.stderr).not.toContain(key);
   });
 
-  it("flags a timed-out command distinctly (exit_code -2), not as a generic failure", async () => {
+  // Host rule: signal-sending cases run on CI only.
+  it.skipIf(!process.env.CI)("flags a timed-out command distinctly (exit_code -2), not as a generic failure", async () => {
     const parsed = JSON.parse(
       await shellTool.execute({ command: "sleep 2", timeout_ms: 100 }),
     );
@@ -4454,5 +4467,64 @@ describe("validateShellCommand — cp/mv/scp: the file that lands in the destina
     `cp ${files(200)} /tmp/out/`,
   ])("allows (cwd /tmp/w): %s", (cmd) => {
     expect(validateShellCommand(cmd, { cwd: "/tmp/w" })).toEqual({ allowed: true });
+  });
+});
+
+describe("command text validated again from inside a check is judged at most 8 levels deep", () => {
+  // Quoted nesting meets the quoted-text bound first (a JSON-quoted `bash -c`
+  // string nested 5 deep is refused there); `eval` re-enters with no quoting,
+  // so only the re-entry bound stops it.
+  /** `inner` behind `n` levels of `eval`. */
+  const nest = (n: number, inner = "echo ok"): string => "eval ".repeat(n) + inner;
+
+  it("a quoted `bash -c` string is refused by the quoted-text bound before the re-entry bound", () => {
+    let c = "echo ok";
+    for (let k = 0; k < 5; k++) c = `bash -c ${JSON.stringify(c)}`;
+    expect(validateShellCommand(c).reason).toMatch(/text nested 5 deep/);
+  });
+
+  it("8 levels are judged and allowed; 9 are refused", () => {
+    expect(validateShellCommand(nest(8))).toEqual({ allowed: true });
+    const r = validateShellCommand(nest(9));
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/nested more than 8 levels deep/);
+  });
+
+  it("below the bound the inner command still decides", () => {
+    const r = validateShellCommand(nest(8, `npm ${"inst"}all x`));
+    expect(r.allowed).toBe(false);
+    expect(r.reason).not.toMatch(/levels deep/);
+  });
+
+  it("the bound counts levels, not siblings", () => {
+    const siblings = Array.from({ length: 12 }, () => `bash -c "echo ok"`).join(" && ");
+    expect(validateShellCommand(siblings)).toEqual({ allowed: true });
+  });
+});
+
+describe("npm run: the manifest probe looks further up only past a path error", () => {
+  const coded = (code: string): Error => Object.assign(new Error(`${code}: probe (test)`), { code });
+
+  it("a path error keeps walking up; any other error refuses with a plain message", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "mc-manifest-"));
+    try {
+      const sub = join(tmp, "sub");
+      mkdirSync(sub);
+      writeFileSync(join(tmp, "package.json"), JSON.stringify({ scripts: { inst: `npm ${"inst"}all lodash` } }));
+      writeFileSync(join(sub, "package.json"), JSON.stringify({ scripts: { inst: "echo ok" } }));
+      const body = (): string | null => checkPackageManagerMutation("npm run inst", sub);
+      expect(body()).toBeNull(); // the nearest manifest is the real one
+      for (const code of ["ENOENT", "ENOTDIR", "EACCES", "ELOOP", "ENAMETOOLONG"]) {
+        manifestProbe.fail = (p) => (p === join(sub, "package.json") ? coded(code) : undefined);
+        expect(body(), code).toMatch(/inside package.json script `inst`.*mutates/);
+      }
+      for (const err of [coded("EIO"), coded("EPERM"), new RangeError("Maximum call stack size exceeded"), { code: "ENOENT" }, "not an error"]) {
+        manifestProbe.fail = (p) => (p === join(sub, "package.json") ? err : undefined);
+        expect(body(), JSON.stringify(err)).toMatch(/whether .*package\.json exists could not be determined, so its script body cannot be checked/);
+      }
+    } finally {
+      manifestProbe.fail = undefined;
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

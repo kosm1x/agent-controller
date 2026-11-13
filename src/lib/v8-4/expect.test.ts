@@ -3,8 +3,10 @@
  * fail. The refused table is the LIVE ledger of 2026-09-12 (task_gates rows
  * recorded MET in enforce mode); the kept table is every other live shape.
  */
-import { describe, expect, it } from "vitest";
+import vm from "node:vm";
+import { describe, expect, it, vi } from "vitest";
 import {
+  REGEX_DEADLINE_MS,
   compareNumber,
   isComparatorExpect,
   isUnsettleableExpect,
@@ -162,11 +164,20 @@ describe("isUnsettleableExpect — the live ledger's can't-fail family is refuse
 
   it("the failure-output probe uses the real shell shape (trailing newline) and the sandboxed matcher", () => {
     expect(isUnsettleableExpect("/zero|^0\\n$/")).toMatch(/satisfied by the failure output "0\\n"/);
-    // A 420-char alternation bomb must come back bounded, not hang the API loop.
+    // A 420-char alternation bomb must come back bounded, not hang the API loop:
+    // every probe of it runs in the sandbox, each call under the matcher's deadline.
     const bomb = "/" + "(a|a|a|a|a|a|a|a|a|a)".repeat(20) + "/";
-    const t0 = Date.now();
-    isUnsettleableExpect(bomb);
-    expect(Date.now() - t0).toBeLessThan(2000);
+    const sandbox = vi.spyOn(vm, "runInNewContext");
+    try {
+      isUnsettleableExpect(bomb);
+      expect(sandbox).toHaveBeenCalled();
+      for (const call of sandbox.mock.calls) expect(call[2]).toEqual({ timeout: REGEX_DEADLINE_MS });
+      // The deadline itself is short: a pathological pattern costs at most a quarter second per probe.
+      expect(REGEX_DEADLINE_MS).toBeGreaterThan(0);
+      expect(REGEX_DEADLINE_MS).toBeLessThanOrEqual(250);
+    } finally {
+      sandbox.mockRestore();
+    }
   });
 
   it("regexNamesALiteral strips only the non-literal machinery", () => {

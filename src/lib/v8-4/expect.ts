@@ -50,7 +50,7 @@ export const EXPECT_GRAMMAR =
   "gte 10, lte 3.5, gt 0, eq 1, neq 1, between 2 4 (the check prints the number as its LAST line — `wc -l < f`, not `wc -l f`), a substring, or a /regex/ that names a word";
 
 const NESTED_QUANTIFIER_RE = /\([^)]*[+*}][^)]*\)\s*[+*{]|[+*]\s*[+*]/;
-const REGEX_DEADLINE_MS = 250;
+export const REGEX_DEADLINE_MS = 250;
 
 /**
  * Regex test with a hard deadline: compiled and executed inside a fresh vm

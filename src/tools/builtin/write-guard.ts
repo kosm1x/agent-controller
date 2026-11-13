@@ -38,6 +38,11 @@ export function realResolve(p: string): string {
 /** The probe errors that say something about the path itself, not about the machine's state. */
 const PATH_ERRNO = new Set(["ENOENT", "ENOTDIR", "EACCES", "ELOOP", "ENAMETOOLONG"]);
 
+/** True for a probe error that says the path is not there to follow (PATH_ERRNO); false for anything about the machine's state. */
+export function isPathError(e: unknown): boolean {
+  return e instanceof Error && !(e instanceof RangeError) && PATH_ERRNO.has((e as NodeJS.ErrnoException).code ?? "");
+}
+
 /**
  * `/proc/<pid>/{root,cwd,exe}`, `fd/<n>` and `map_files/<range>` are magic
  * links: the kernel jumps into the target PROCESS's view (for a container,
@@ -83,7 +88,7 @@ export function kernelWalk(p: string): {
     } catch (e) {
       // Only these codes say something about the path itself; an error about the
       // machine's state is not evidence that a component is missing.
-      if (!(e instanceof Error) || e instanceof RangeError || !PATH_ERRNO.has((e as NodeJS.ErrnoException).code ?? "")) throw e;
+      if (!isPathError(e)) throw e;
       return { path: resolve(next, ...pending), procLink: null };
     }
     if (++hops > 40) return { path: resolve(p), procLink: null };
