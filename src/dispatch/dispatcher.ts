@@ -972,6 +972,7 @@ async function dispatchWithSlot(
     // engine). cancelTask already marked the task and emitted task.cancelled.
     // No fallback re-run, retry or completion ledger; the spend is still booked.
     if (abortController.signal.aborted) {
+      const cancelledMs = Date.now() - start;
       db.prepare(
         `
         UPDATE runs SET
@@ -993,10 +994,30 @@ async function dispatchWithSlot(
         error: redactCredentialsForPersist(result.error),
         tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
         toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : "[]",
-        durationMs: Date.now() - start,
+        durationMs: cancelledMs,
       });
       updateTaskStatus(taskId, "cancelled");
       recordRunCost(result, runId, taskId, agentType, effectiveAgentType);
+      // The one terminal timeline row of a cancelled run: counts and enum
+      // values only, no runner text.
+      emitTraceEvent({
+        taskId,
+        runId,
+        name: "task.cancelled",
+        tokensIn: result.tokenUsage?.promptTokens,
+        tokensOut: result.tokenUsage?.completionTokens,
+        costUsd: result.tokenUsage?.actualCostUsd,
+        latencyMs: cancelledMs,
+        ...(result.toolCalls?.length && {
+          tool: result.toolCalls[result.toolCalls.length - 1],
+        }),
+        attrs: {
+          status: "cancelled",
+          termination_reason: "aborted",
+          agent_type: effectiveAgentType,
+          tool_calls: result.toolCalls?.length ?? 0,
+        },
+      });
       return;
     }
 
@@ -1431,16 +1452,29 @@ async function dispatchWithSlot(
     });
 
     updateTaskStatus(taskId, "failed", undefined, errorMsg);
-    emitTraceEvent({
-      taskId,
-      runId,
-      name: "task.failed",
-      attrs: {
-        termination_reason: "error",
-        error: redactCredentialsForPersist(errorMsg)!.slice(0, 300),
-        thrown: true,
-      },
-    });
+    emitTraceEvent(
+      abortController.signal.aborted
+        ? {
+            taskId,
+            runId,
+            name: "task.cancelled",
+            attrs: {
+              status: "cancelled",
+              termination_reason: "aborted",
+              thrown: true,
+            },
+          }
+        : {
+            taskId,
+            runId,
+            name: "task.failed",
+            attrs: {
+              termination_reason: "error",
+              error: redactCredentialsForPersist(errorMsg)!.slice(0, 300),
+              thrown: true,
+            },
+          },
+    );
   } finally {
     activeAborts.delete(taskId);
     taskCompleted(agentType);

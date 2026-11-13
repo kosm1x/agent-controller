@@ -83,6 +83,26 @@ describe("emitTraceEvent / getTrace", () => {
     expect(getTrace("ghost")).toEqual([]);
   });
 
+  it("a cancelled run ends on its own terminal name, task.cancelled", () => {
+    emitTraceEvent({ taskId: "t-c", runId: "r-c", name: "task.started" });
+    emitTraceEvent({
+      taskId: "t-c",
+      runId: "r-c",
+      name: "task.cancelled",
+      tokensIn: 120,
+      tokensOut: 9,
+      latencyMs: 800,
+      attrs: { status: "cancelled", termination_reason: "aborted" },
+    });
+    const trace = getTrace("t-c");
+    expect(trace.map((e) => e.name)).toEqual(["task.started", "task.cancelled"]);
+    expect(trace[1].tokens_in).toBe(120);
+    expect(JSON.parse(trace[1].attrs!)).toEqual({
+      status: "cancelled",
+      termination_reason: "aborted",
+    });
+  });
+
   it("round-trips tool.called arg_keys attrs (queue 4ah-c)", () => {
     emitTraceEvent({
       taskId: "t-ak",

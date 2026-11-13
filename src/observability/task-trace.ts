@@ -2,7 +2,7 @@
  * Task-trace store — V8.5 Phase 6 (plan §7b, merged from plan-9-10 Sprint 1).
  *
  * Per-task forensic timeline: `task.started → tool.called / turn.completed →
- * task.completed | task.failed`, correlated by task_id in the
+ * task.completed | task.failed | task.cancelled`, correlated by task_id in the
  * `task_trace_events` table (created in db/index.ts init). Answers "which
  * tool/round killed this task" without journalctl archaeology. Viewer:
  * `mc-ctl trace <task_id>`.
@@ -59,6 +59,9 @@ export type TraceEventName =
   | "turn.completed"
   | "task.completed"
   | "task.failed"
+  // The task was cancelled while its run was in flight: the terminal row of
+  // a cancelled run (never task.completed or task.failed)
+  | "task.cancelled"
   | "task.watchdog_failed"
   // V8.1 gate (ruling 2026-10-06): explicit operator feedback on a task,
   // emitted whether or not the task has a task_outcomes row

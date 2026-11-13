@@ -815,8 +815,10 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
           success,
           output: { text: "Example Corp has three off" },
           ...(success ? { status: "DONE" as const } : { error: "cancelled" }),
-          toolCalls: [],
-          tokenUsage: { promptTokens: 120, completionTokens: 9 },
+          // Neither is the required tool: a run that reached the required-tools
+          // check would spawn a retry task and write task.failed.
+          toolCalls: ["file_read", "file_write"],
+          tokenUsage: { promptTokens: 120, completionTokens: 9, actualCostUsd: 0.0123 },
           durationMs: 1,
         };
         return out;
@@ -839,6 +841,10 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
       if (!vi.mocked(recordCost).mock.calls.length) throw new Error("cost not booked yet");
     });
 
+    // The cancelled branch returns before the required-tools check.
+    expect(logMock.warn.mock.calls.map((c) => c[1])).not.toContain(
+      "required tools missing, auto-retrying once",
+    );
     const runRowStatuses = mockRun.mock.calls
       .map((c) => c[0] as { runId?: string; status?: string } | undefined)
       .filter((p) => p?.runId !== undefined && p.status !== undefined)
@@ -853,6 +859,7 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
     expect(JSON.parse(String(cancelledRow!.tokenUsage))).toEqual({
       promptTokens: 120,
       completionTokens: 9,
+      actualCostUsd: 0.0123,
     });
     expect(String(cancelledRow!.output)).toContain("Example Corp has three off");
     const sqls = mockPrepare.mock.calls.map((c) => String(c[0]));
@@ -873,6 +880,27 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
       taskId,
       promptTokens: 120,
       completionTokens: 9,
+    });
+
+    // The timeline ends on exactly one terminal row, named for the cancel.
+    const traces = emitTraceMock.mock.calls.map((c) => c[0]);
+    const terminals = traces.filter(
+      (t) => t.name.startsWith("task.") && t.name !== "task.started",
+    );
+    expect(terminals.map((t) => t.name)).toEqual(["task.cancelled"]);
+    expect(terminals[0]).toMatchObject({
+      tokensIn: 120,
+      tokensOut: 9,
+      costUsd: 0.0123,
+      // The last tool the run called, as on the normal terminal row.
+      tool: "file_write",
+    });
+    expect(typeof terminals[0].latencyMs).toBe("number");
+    expect(terminals[0].attrs).toEqual({
+      status: "cancelled",
+      termination_reason: "aborted",
+      agent_type: "fast",
+      tool_calls: 2,
     });
   });
 
@@ -907,6 +935,15 @@ describe("dispatchTask: a result that arrives after its task was cancelled", () 
     });
     expect(runRowStatuses()).toEqual(["cancelled"]);
     expect(emitEventMock.mock.calls.map((c) => c[0])).not.toContain("task.failed");
+    const terminals = emitTraceMock.mock.calls
+      .map((c) => c[0])
+      .filter((t) => t.name.startsWith("task.") && t.name !== "task.started");
+    expect(terminals.map((t) => t.name)).toEqual(["task.cancelled"]);
+    expect(terminals[0].attrs).toEqual({
+      status: "cancelled",
+      termination_reason: "aborted",
+      thrown: true,
+    });
   });
 });
 
