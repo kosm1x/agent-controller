@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Status 2026-11-13 21:00 UTC — standing store rule COMMITTED `fd926c2b` (queue 4ed, operator request of 2026-11-12), not yet deployed: a mailbox password the mailbox tool has printed is never written to a durable store; the reply check decides what the operator sees. Two review rounds. In build: the explanatory line for replies assembled from stored output (4ej), the removal script's hardening (4ee), error handling inside the path check (4eh).**
+
 **Status 2026-11-13 20:50 UTC — second shell write check commit DONE `ab065098` (queue 4dq, ruled yes on 2026-11-13), not yet deployed: copy and move commands are judged by where each file lands; the cost of one hostile command is bounded per tool call; never looser than the committed check in any review round. Follow-ups in 4eh. Next: the operator's read-only replay of past commands (counts only), then the third commit of that series.**
 
 **Status 2026-11-11 18:38 UTC — second shell write check commit: three review rounds, never looser than the committed check in any of them; round 3 found one cost point on a nested-command path, the third cost point in three rounds, so the work stopped for a ruling (queue 4dq). Uncommitted until ruled.**
