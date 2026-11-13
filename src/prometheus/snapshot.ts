@@ -9,6 +9,10 @@
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import type { Goal, GoalResult, OrchestratorConfig } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+import {
+  storeReplacer,
+  withholdForStore,
+} from "../lib/v8-4/store-withhold.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,12 +68,14 @@ export function saveSnapshot(snapshot: PrometheusSnapshot): void {
          (task_id, goal_graph, goal_results, execution_state, task_description, tool_names, config, exit_reason)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
+      // Mailbox-password store rule (store-withhold.ts): goal results and
+      // the description carry model text; leaf strings only, so it parses.
       .run(
         snapshot.taskId,
-        JSON.stringify(snapshot.goalGraph),
-        JSON.stringify(snapshot.goalResults),
-        JSON.stringify(snapshot.executionState),
-        snapshot.taskDescription,
+        JSON.stringify(snapshot.goalGraph, storeReplacer),
+        JSON.stringify(snapshot.goalResults, storeReplacer),
+        JSON.stringify(snapshot.executionState, storeReplacer),
+        withholdForStore(snapshot.taskDescription),
         snapshot.toolNames ? JSON.stringify(snapshot.toolNames) : null,
         snapshot.config ? JSON.stringify(snapshot.config) : null,
         snapshot.exitReason,

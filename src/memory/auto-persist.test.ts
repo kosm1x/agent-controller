@@ -20,6 +20,14 @@ import {
   autoPersistConversation,
 } from "./auto-persist.js";
 import type { AutoPersistInput } from "./auto-persist.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -186,3 +194,43 @@ describe("autoPersistConversation — ruling 3c (audit R3 S2)", () => {
     expect(String(path)).not.toContain(SCRUB_SYN.slice(0, 10));
   });
 });
+
+// Mailbox-password store rule: each text is withheld before its cut, so a
+// value standing across a cut leaves no 16-character piece in what is kept.
+describe("autoPersistConversation — mailbox-password store rule", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const KEPT = 20;
+  const across = (cut: number) =>
+    "a ".repeat(cut).slice(0, cut - KEPT - 1) + ` ${PW} fin`;
+  const fragments = (stored: string) =>
+    Array.from({ length: PW.length - 15 }, (_, i) => PW.slice(i, i + 16)).filter(
+      (f) => stored.includes(f),
+    );
+  const written = () =>
+    JSON.stringify(upsertFileSpy.mock.calls) + JSON.stringify(retainSpy.mock.calls);
+  const head = PASSWORD_WITHHELD_PLACEHOLDER.slice(0, 15);
+
+  afterEach(() => {
+    _resetStoreWithhold();
+    upsertFileSpy.mockClear();
+    retainSpy.mockClear();
+  });
+
+  it.each([
+    ["the title (60)", { userText: across(60) }],
+    ["the summary's user line (200)", { userText: across(200) }],
+    ["the summary's response (2000)", { responseText: across(2000) }],
+  ])("%s is cut after the rule", async (_l, over) => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    // Long answer + several tools: worth persisting (shouldAutoPersist).
+    const tools = ["file_read", "web_search", "shell_exec", "file_write"];
+    await autoPersistConversation(
+      input({ responseText: "x ".repeat(1100), toolCalls: tools, ...over }),
+    );
+    expect(upsertFileSpy).toHaveBeenCalledTimes(1);
+    expect(fragments(written())).toEqual([]);
+    expect(written()).toContain(head);
+  });
+});
+

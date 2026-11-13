@@ -25,6 +25,14 @@ import {
   updateGeneralEvent,
 } from "./general-events.js";
 
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 const mockEmbed = vi.mocked(embed);
 
 /** A deterministic 1536-dim embedding so embed() returns a non-null vector. */
@@ -286,5 +294,48 @@ describe("episodic links", () => {
     expect(() => unlinkEpisodic("v77-spine-3-s5-skills", "task", "")).toThrow(
       /episodic_ref is required/,
     );
+  });
+});
+
+describe("mailbox-password store rule on general events", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  beforeEach(() => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+  });
+  afterEach(() => _resetStoreWithhold());
+
+  it("create: the row and the embedded text hold the placeholder", async () => {
+    const ev = await createGeneralEvent({
+      ...baseInput,
+      title: `Buzón ${PW}`,
+      summary: `contraseña ${PW}`,
+    });
+    expect(ev.title).toBe(`Buzón ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(ev.summary).toBe(`contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(JSON.stringify(mockEmbed.mock.calls)).not.toContain(PW);
+    expect(JSON.stringify(mockEmbed.mock.calls)).toContain(
+      PASSWORD_WITHHELD_PLACEHOLDER,
+    );
+  });
+
+  it("update: the row and the re-embedded text hold the placeholder", async () => {
+    await createGeneralEvent(baseInput);
+    mockEmbed.mockClear();
+    const updated = await updateGeneralEvent(baseInput.event_id, {
+      summary: `nueva ${PW}`,
+    });
+    expect(updated.summary).toBe(`nueva ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(mockEmbed).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mockEmbed.mock.calls)).not.toContain(PW);
+  });
+
+  it("update: a title holding the value is stored with the placeholder", async () => {
+    await createGeneralEvent(baseInput);
+    const updated = await updateGeneralEvent(baseInput.event_id, {
+      title: `Buzón ${PW}`,
+    });
+    expect(updated.title).toBe(`Buzón ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(JSON.stringify(mockEmbed.mock.calls)).not.toContain(PW);
   });
 });

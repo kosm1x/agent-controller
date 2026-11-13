@@ -7,6 +7,7 @@
 
 import { upsertFile, deleteFile, listFiles, getFile } from "../db/jarvis-fs.js";
 import { errMsg } from "../lib/err-msg.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 const CHECKPOINT_PREFIX = "workspace/checkpoints/";
 const CHECKPOINT_TTL_MS = 30 * 60_000; // 30 minutes
@@ -75,7 +76,8 @@ export function writeCheckpoint(opts: {
     `The task ran out of rounds before finishing. The user needs to say "continúa" to resume.`,
     ``,
     `## Last Response (truncated)`,
-    `${opts.responseText.slice(0, 1000)}`,
+    // Store rule before the cut (store-withhold.ts): no fragment survives.
+    `${withholdForStore(opts.responseText).slice(0, 1000)}`,
     ``,
     `## Scope Groups`,
     `${opts.scopeGroups.join(", ")}`,

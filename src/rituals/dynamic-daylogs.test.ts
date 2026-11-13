@@ -37,6 +37,14 @@ import {
   watchScheduledTask,
 } from "./dynamic.js";
 import { enqueueDeferral } from "./ritual-controls.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 const SYNC_ID = "sync-under-test";
 const SYNC_PROMPT =
@@ -289,5 +297,61 @@ describe("Morning Sync — harness-loaded day-logs", () => {
     expect(sub.title).toMatch(/^\[Retry\] Morning Sync/);
     expect(sub.description).toContain("⟦BEGIN DAY-LOG HOY");
     expect(sub.description.endsWith("⟦END DAY-LOG HOY⟧")).toBe(true);
+  });
+});
+
+describe("mailbox-password store rule on scheduled tasks", () => {
+  afterEach(() => _resetStoreWithhold());
+  it("the stored name and prompt hold the placeholder", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    createSchedule({
+      scheduleId: "sched-store-rule",
+      name: `Revisar ${pw}`,
+      description: `entra con la contraseña ${pw}`,
+      cronExpr: "0 9 * * *",
+      tools: [],
+      delivery: "telegram",
+    });
+    const row = getDatabase()
+      .prepare("SELECT name, description FROM scheduled_tasks WHERE schedule_id = ?")
+      .get("sched-store-rule") as { name: string; description: string };
+    expect(row).toEqual({
+      name: `Revisar ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      description: `entra con la contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    });
+  });
+
+  it("the stored email subject holds the placeholder; no subject stays null", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const base = {
+      cronExpr: "0 9 * * *",
+      tools: [],
+      delivery: "email" as const,
+    };
+    createSchedule({
+      ...base,
+      scheduleId: "sched-store-subject",
+      name: "Informe",
+      description: "envía el informe",
+      emailSubject: `Acceso ${pw}`,
+    });
+    createSchedule({
+      ...base,
+      scheduleId: "sched-store-nosubject",
+      name: "Informe 2",
+      description: "envía el informe",
+    });
+    const subject = (id: string) =>
+      (
+        getDatabase()
+          .prepare("SELECT email_subject FROM scheduled_tasks WHERE schedule_id = ?")
+          .get(id) as { email_subject: string | null }
+      ).email_subject;
+    expect(subject("sched-store-subject")).toBe(`Acceso ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(subject("sched-store-nosubject")).toBeNull();
   });
 });

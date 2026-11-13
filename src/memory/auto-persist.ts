@@ -14,6 +14,7 @@ import { safeSlice } from "../lib/unicode-safe.js";
 import { getOutcomeTag } from "./outcome-tag.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 export interface AutoPersistInput {
   userText: string;
@@ -192,8 +193,9 @@ export async function autoPersistConversation(
   const { toolCalls, channel, taskId } = input;
   // Ruling 3c (audit R3 S2): stored credential values never reach the title,
   // the topic path or the summary — scrubbed before any cut.
-  const userText = scrubSecrets(input.userText);
-  const responseText = scrubSecrets(input.responseText);
+  // The mailbox-password store rule (store-withhold.ts) also runs before any cut.
+  const userText = withholdForStore(scrubSecrets(input.userText));
+  const responseText = withholdForStore(scrubSecrets(input.responseText));
 
   // Build a compact summary (no LLM call — keep it mechanical and fast)
   const toolList = [...new Set(toolCalls)].slice(0, 10).join(", ");

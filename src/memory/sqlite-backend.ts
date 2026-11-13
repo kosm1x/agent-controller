@@ -31,6 +31,7 @@ import type {
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 import { emitTraceEvent } from "../observability/task-trace.js";
 import { noteWriteFailure } from "../observability/failure-counters.js";
 import {
@@ -282,8 +283,9 @@ export class SqliteMemoryBackend implements MemoryService {
   async retain(content: string, options: RetainOptions): Promise<void> {
     try {
       const db = getDatabase();
-      // Ruling 3c: a stored credential pasted in chat is not kept in clear.
-      const clean = scrubSecrets(content);
+      // Ruling 3c: a stored credential pasted in chat is not kept in clear;
+      // nor a mailbox password the tool printed (store-withhold.ts).
+      const clean = withholdForStore(scrubSecrets(content));
       const tags = JSON.stringify(options.tags ?? []);
       const trustTier = options.trustTier ?? 3;
       const source = options.source ?? "agent";

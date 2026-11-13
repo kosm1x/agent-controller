@@ -20,6 +20,10 @@ import {
   visibleDestinationError,
 } from "../../lib/secret-refs.js";
 
+/** user_fact_set result when the value holds a mailbox password (store rule). */
+const MAILBOX_PASSWORD_NOT_A_FACT =
+  "No guardo contraseñas de buzón como dato del usuario: la contraseña vigente sale solo de la herramienta del buzón (stalwart-inbox vía shell_exec). Ejecútala para obtenerla.";
+
 // ---------------------------------------------------------------------------
 // user_fact_set
 // ---------------------------------------------------------------------------
@@ -115,7 +119,9 @@ BOUNDARY: user_fact_set is for SHORT, permanent facts (name, age, API keys, cred
       }
     }
 
-    setUserFact(category, key, value, "conversation");
+    if (!setUserFact(category, key, value, "conversation")) {
+      return JSON.stringify({ error: MAILBOX_PASSWORD_NOT_A_FACT });
+    }
 
     // Ruling 3c: a credential is confirmed by its by-name placeholder, never echoed.
     return `Fact stored: [${category}] ${key} = ${factDisplayValue({ category, key, value })}. This will be included in all future conversations.`;

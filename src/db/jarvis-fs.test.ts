@@ -16,6 +16,18 @@ vi.mock("./drive-sync.js", async (importOriginal) => ({
   syncMoveToDrive: driveSync.syncMoveToDrive,
   isDriveSyncEnabled: () => driveSync.enabled,
 }));
+// The vector copy: a pass-through spy so a test can read what it was handed.
+const pgvector = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+vi.mock("./pgvector-sync.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pgvector-sync.js")>();
+  return {
+    ...actual,
+    syncToPgvector: (...args: Parameters<typeof actual.syncToPgvector>) => {
+      pgvector.calls.push(args);
+      return actual.syncToPgvector(...args);
+    },
+  };
+});
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +50,15 @@ import {
 } from "./jarvis-fs.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { invalidateSecretRefs, scrubSecrets } from "../lib/secret-refs.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
+import { readFileSync } from "node:fs";
 
 let testKbDir: string;
 
@@ -532,5 +553,58 @@ describe("upsertFile — Drive hand-off carries the row's updated_at", () => {
     expect(driveSync.syncToDrive).not.toHaveBeenCalled();
     expect(driveSync.syncDeleteToDrive).not.toHaveBeenCalled();
     expect(driveSync.syncMoveToDrive).not.toHaveBeenCalled();
+  });
+});
+
+describe("mailbox-password store rule on KB writes", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  beforeEach(() => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    driveSync.syncToDrive.mockClear();
+    pgvector.calls.length = 0;
+  });
+  afterEach(() => _resetStoreWithhold());
+
+  it("upsertFile: the row, the disk mirror, the vector copy and the Drive copy hold the placeholder", () => {
+    const path = "workspace/reports/store-rule.md";
+    upsertFile(path, `Buzón ${PW}`, `la contraseña es ${PW}`, ["report"], "workspace");
+    const row = getFile(path)!;
+    expect(row.content).toBe(`la contraseña es ${P}`);
+    expect(row.title).toBe(`Buzón ${P}`);
+    expect(readFileSync(join(testKbDir, path), "utf-8")).not.toContain(PW);
+    const [, dTitle, dContent] = driveSync.syncToDrive.mock.calls[0]!;
+    expect([dTitle, dContent]).toEqual([`Buzón ${P}`, `la contraseña es ${P}`]);
+    expect(pgvector.calls[0]!.slice(0, 3)).toEqual([
+      path,
+      `Buzón ${P}`,
+      `la contraseña es ${P}`,
+    ]);
+  });
+
+  it("appendToFile: the whole text written holds the placeholder, in the row, the mirror and both remote copies", () => {
+    const path = "workspace/notes/append-rule.md";
+    upsertFile(path, "Notas", "inicio", [], "workspace");
+    driveSync.syncToDrive.mockClear();
+    pgvector.calls.length = 0;
+    expect(appendToFile(path, `nueva: ${PW}`)).toBe(true);
+    const want = `inicio\n\nnueva: ${P}`;
+    expect(getFile(path)!.content).toBe(want);
+    expect(readFileSync(join(testKbDir, path), "utf-8")).toBe(want);
+    expect(driveSync.syncToDrive.mock.calls[0]![2]).toBe(want);
+    expect(pgvector.calls[0]![2]).toBe(want);
+  });
+
+  it("appendToFile: a value already in the stored content is withheld in the new row too", () => {
+    const path = "workspace/notes/append-old-value.md";
+    upsertFile(path, "Notas", "inicio", [], "workspace");
+    // A row written before the value was seen: put in place directly.
+    getDatabase()
+      .prepare("UPDATE jarvis_files SET content = ? WHERE path = ?")
+      .run(`antes: ${PW}`, path);
+    expect(appendToFile(path, "nueva línea")).toBe(true);
+    expect(getFile(path)!.content).toBe(`antes: ${P}\n\nnueva línea`);
+    expect(readFileSync(join(testKbDir, path), "utf-8")).not.toContain(PW);
   });
 });

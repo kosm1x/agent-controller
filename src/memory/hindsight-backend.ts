@@ -32,6 +32,7 @@ import type {
 } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 // applyOutcomeFilter (binary drop) replaced by applyOutcomeBias (drop +
 // score adjustment + re-sort). 2026-05-07 queue #7 part 2. See
@@ -134,7 +135,9 @@ export class HindsightMemoryBackend implements MemoryService {
     try {
       await this.ensureBank(options.bank);
       await this.client.retain(options.bank, {
-        content: scrubSecrets(content), // ruling 3c (the fallback scrubs its own copy)
+        // Ruling 3c and the mailbox-password store rule (store-withhold.ts);
+        // the fallback applies both to its own copy.
+        content: withholdForStore(scrubSecrets(content)),
         tags: options.tags,
         async: options.async ?? true,
       });

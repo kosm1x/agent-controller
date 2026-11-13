@@ -191,6 +191,7 @@ import {
   provenPasswords,
   recordUserPasswordProof,
 } from "../lib/v8-4/mailbox-passwords.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 import { currentRunTaskId } from "../tools/rule-of-two.js";
 import {
   detectScopeMiss,
@@ -1270,7 +1271,10 @@ function ensureCriticalDataPersisted(userText: string, taskId: string): void {
 
     // Auto-store detected credentials
     for (const cred of detected) {
-      setUserFact("projects", cred.key, cred.value, "auto-detected");
+      if (!setUserFact("projects", cred.key, cred.value, "auto-detected")) {
+        console.log("[router] Auto-persist skipped a mailbox password");
+        continue;
+      }
       console.log(
         `[router] Auto-persisted critical data: projects/${cred.key} (LLM missed user_fact_set)`,
       );
@@ -1287,8 +1291,10 @@ function pushToThread(
   opts: { verified?: boolean } = {},
 ): void {
   hydrateThreadIfNeeded(channel);
-  // Ruling 3c: a stored credential pasted in chat is not kept in clear.
-  exchange = scrubSecrets(exchange);
+  // Ruling 3c: a stored credential pasted in chat is not kept in clear. The
+  // mailbox-password store rule (store-withhold.ts): what the thread holds is
+  // replayed to the model next turn, so a repeat request goes to the tool.
+  exchange = withholdForStore(scrubSecrets(exchange));
   const verified = opts.verified === true;
   // Check for poisoned responses before adding to the thread buffer.
   // Without this, poisoned entries live in-memory until the next restart
@@ -1721,7 +1727,8 @@ function hydrateThreadIfNeeded(tk: string): void {
       const thread: ThreadEntry[] = rows
         .reverse()
         .map((r) => ({
-          text: scrubSecrets(r.content),
+          // Mailbox-password store rule (store-withhold.ts) after the scrub.
+          text: withholdForStore(scrubSecrets(r.content)),
           // Queue 4g: a verified exchange survives a restart unfiltered.
           ...(r.verified === 1 ? { verified: true } : {}),
         }));
@@ -1782,8 +1789,6 @@ export function formatConfirmationResult(
         ? `✅ ${ok} archivo(s) escrito(s); ${err} error(es).`
         : `✅ ${ok} archivo(s) escrito(s).`;
     }
-    case "vps_deploy":
-      return `✅ Deploy ejecutado.`;
     case "schedule_delete":
       return `✅ Schedule eliminado.`;
     case "run_schedule":
@@ -2033,8 +2038,10 @@ function appendDayLog(role: "USER" | "JARVIS", text: string): void {
 
     const path = `logs/day-logs/${date}.md`;
     // Ruling 3c (audit R3 S3): stored credential values scrubbed before the cut;
-    // dayLogEntryText then cuts and marks a truncated entry with "…".
-    const entry = `- [${time}] **${role}**: ${dayLogEntryText(scrubSecrets(text)).replace(/\n/g, " ")}\n`;
+    // the mailbox-password store rule (store-withhold.ts) too, so a cut never
+    // leaves part of a value; dayLogEntryText then cuts and marks a truncated
+    // entry with "…".
+    const entry = `- [${time}] **${role}**: ${dayLogEntryText(withholdForStore(scrubSecrets(text))).replace(/\n/g, " ")}\n`;
 
     // Synchronous read-append-write via jarvis_files DB (atomic per SQLite)
     const existing = getFile(path);
@@ -3309,7 +3316,11 @@ export class MessageRouter {
         this.sendToChannel(msg.channel, msg.from, out);
         appendDayLog("JARVIS", out);
 
-        const cappedResponse = capThreadReply(out, THREAD_LAST_RESPONSE_CAP);
+        // Store rule before the cut (store-withhold.ts): no fragment survives.
+        const cappedResponse = capThreadReply(
+          withholdForStore(out),
+          THREAD_LAST_RESPONSE_CAP,
+        );
         pushToThread(tk, `User: ${msg.text}\nJarvis: ${cappedResponse}`);
 
         try {
@@ -4431,21 +4442,28 @@ export class MessageRouter {
         // Keep the END: the ledger block / read-back lines are appended
         // last, after the numbers footer and the citation note (Phase 3 R2
         // audit W-7 — a start-anchored cap cut «No quedó» first).
-        const tail = rawTail
-          ? rawTail.length > 800
-            ? "…" + rawTail.slice(-800)
-            : rawTail
-          : undefined;
-        const capped = body.length > 500 ? body.slice(0, 500) + "..." : body;
-        const summary = tail ? `${capped}\n\n${tail}` : capped;
-        const notification = `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}${confirmLine ? `\n\n${confirmLine}` : ""}\n\n_Escribe "mis agentes" para ver el historial._`;
+        const notice = (b: string, rt: string): string => {
+          const tail = rt
+            ? rt.length > 800
+              ? "…" + rt.slice(-800)
+              : rt
+            : undefined;
+          const capped = b.length > 500 ? b.slice(0, 500) + "..." : b;
+          const summary = tail ? `${capped}\n\n${tail}` : capped;
+          return `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}${confirmLine ? `\n\n${confirmLine}` : ""}\n\n_Escribe "mis agentes" para ver el historial._`;
+        };
+        const notification = notice(body, rawTail);
         // Background-agent notification IS LLM-derived (summary contains LLM
         // output); route through the gate so community-manager mailboxes get
         // the same write-gate protection as direct LLM replies.
         this.sendLLMReplyToChannel(pending.channel, pending.to, notification);
         appendDayLog(
           "JARVIS",
-          `[Agente background] ${notification.slice(0, 200)}`,
+          // The day-log copy is built from the withheld body and tail (store
+          // rule before every cut, store-withhold.ts); delivery is unchanged.
+          `[Agente background] ${withholdForStore(
+            notice(withholdForStore(body), withholdForStore(rawTail)),
+          ).slice(0, 200)}`,
         );
       } else {
         appendDayLog("JARVIS", resultText);
@@ -4475,7 +4493,11 @@ export class MessageRouter {
 
       // Push to in-memory conversation thread (chronological, instant).
       // Queue 4h: stored up to the 12k bound; the 3000 cut is read-time.
-      const cappedResult = capThreadReply(resultText, THREAD_LAST_RESPONSE_CAP);
+      // Store rule before the cut (store-withhold.ts): no fragment survives.
+      const cappedResult = capThreadReply(
+        withholdForStore(resultText),
+        THREAD_LAST_RESPONSE_CAP,
+      );
       pushToThread(
         pending.tk,
         `User: ${pending.originalText}\nJarvis: ${cappedResult}`,
@@ -4935,7 +4957,11 @@ export class MessageRouter {
     if (deliveredRunnerText) {
       // qa-audit I3: cap like the completed path — a long `blocked`
       // description must not enter the thread buffer uncapped.
-      const cappedMsg = capThreadReply(failMsg, THREAD_LAST_RESPONSE_CAP);
+      // Store rule before the cut (store-withhold.ts).
+      const cappedMsg = capThreadReply(
+        withholdForStore(failMsg),
+        THREAD_LAST_RESPONSE_CAP,
+      );
       pushToThread(
         pending.tk,
         `User: ${pending.originalText}\nJarvis: ${cappedMsg}`,
@@ -4948,13 +4974,17 @@ export class MessageRouter {
     // conversations. Recall-side bias against negative precedents lands in
     // Part 2 of the same queue item.
     try {
-      const errorText = (data.error ?? "Unknown error").slice(0, 500);
+      // Store rule (store-withhold.ts) on each piece before its cut.
+      const errorText = withholdForStore(data.error ?? "Unknown error").slice(
+        0,
+        500,
+      );
       // W8 audit fix: cap user text at 2000 to prevent oversized rows.
-      const userText = safeSlice(pending.originalText, 2000);
+      const userText = safeSlice(withholdForStore(pending.originalText), 2000);
       // Retain what the operator actually saw: the runner's delivered
       // question, or the failure marker otherwise.
       const exchange = deliveredRunnerText
-        ? `User: ${userText}\nJarvis: ${safeSlice(failMsg, 2000)}`
+        ? `User: ${userText}\nJarvis: ${safeSlice(withholdForStore(failMsg), 2000)}`
         : `User: ${userText}\nJarvis: [Task failed] ${errorText}`;
       getMemoryService()
         .retain(exchange, {
@@ -5018,8 +5048,9 @@ export class MessageRouter {
     // map to outcome:failed via statusToOutcomeTag. We retain the user prompt
     // so a future similar query can be ranked against this negative precedent.
     try {
-      const reason = (data.reason ?? "cancelled").slice(0, 500);
-      const userText = safeSlice(pending.originalText, 2000); // W8 audit fix
+      // Store rule (store-withhold.ts) on each piece before its cut.
+      const reason = withholdForStore(data.reason ?? "cancelled").slice(0, 500);
+      const userText = safeSlice(withholdForStore(pending.originalText), 2000); // W8 audit fix
       const exchange = `User: ${userText}\nJarvis: [Task cancelled by ${data.cancelled_by}] ${reason}`;
       getMemoryService()
         .retain(exchange, {

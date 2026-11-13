@@ -19,6 +19,7 @@
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import { embed, serializeEmbedding } from "../memory/embeddings.js";
 import { recordGeneralEventOp } from "../observability/prometheus.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 export type GeneralEventLevel = "lifetime" | "general" | "episodic-cluster";
 export type EpisodicKind =
@@ -172,8 +173,10 @@ export async function createGeneralEvent(
       `invalid event_id "${input.event_id}" — expected kebab-case slug (3-64 chars, a-z0-9-)`,
     );
   }
-  const title = input.title.trim();
-  const summary = input.summary.trim();
+  // Mailbox-password store rule (store-withhold.ts), before the embedding
+  // call: the row and the embedded text both get the withheld text.
+  const title = withholdForStore(input.title.trim());
+  const summary = withholdForStore(input.summary.trim());
   if (!title) throw new GeneralEventError("title is required");
   if (!summary) throw new GeneralEventError("summary is required");
   if (!input.start_at) throw new GeneralEventError("start_at is required");
@@ -284,8 +287,11 @@ export async function updateGeneralEvent(
     throw new GeneralEventError(`event_id "${eventId}" not found`);
   }
 
-  const nextTitle = patch.title?.trim() ?? existing.title;
-  const nextSummary = patch.summary?.trim() ?? existing.summary;
+  // Store rule (store-withhold.ts), as on create.
+  const nextTitle = withholdForStore(patch.title?.trim() ?? existing.title);
+  const nextSummary = withholdForStore(
+    patch.summary?.trim() ?? existing.summary,
+  );
   if (!nextTitle) throw new GeneralEventError("title cannot be emptied");
   if (!nextSummary) throw new GeneralEventError("summary cannot be emptied");
   const nextEndAt = patch.end_at !== undefined ? patch.end_at : existing.end_at;

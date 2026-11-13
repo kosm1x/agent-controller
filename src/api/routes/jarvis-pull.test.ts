@@ -72,6 +72,15 @@ vi.mock("../../db/index.js", () => ({
 
 import { jarvisPull, JARVIS_PULL_TOOLS } from "./jarvis-pull.js";
 import { buildExternalJarvisSystemPrompt } from "../../messaging/router.js";
+import { stringifyRedacted } from "../mcp-server/redact.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../../lib/v8-4/store-withhold.js";
 
 const app = new Hono();
 app.route("/api", jarvisPull);
@@ -478,5 +487,34 @@ describe("POST /api/jarvis-pull — validation + log", () => {
     const all = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(all).not.toContain("anunciantes");
     expect(all).not.toContain("Cuenta secreta");
+  });
+});
+
+// The CRM pull path answers from the in-memory completion event: the store
+// rule rewrites only the persisted copy (the event bus writes data through
+// stringifyRedacted), never the answer the caller receives.
+describe("POST /api/jarvis-pull — mailbox-password store rule", () => {
+  afterEach(() => _resetStoreWithhold());
+  it("the response carries the delivered value; the persisted event copy holds the placeholder", async () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    let eventData: Record<string, unknown> | null = null;
+    submitThen((taskId) => {
+      eventData = {
+        task_id: taskId,
+        agent_id: "fast",
+        result: `Acceso: contraseña ${pw}`,
+        duration_ms: 10,
+      };
+      mocks.emit("task.completed", eventData);
+    });
+    const json = (await (await post({ query: QUERY })).json()) as {
+      response: string;
+    };
+    expect(json.response).toContain(`contraseña ${pw}`);
+    const persisted = stringifyRedacted(eventData);
+    expect(persisted).not.toContain(pw);
+    expect(persisted).toContain(PASSWORD_WITHHELD_PLACEHOLDER);
   });
 });

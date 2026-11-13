@@ -343,6 +343,10 @@ import {
   passwordFingerprint,
 } from "../lib/v8-4/password-gate.js";
 import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
+import {
   _resetMailboxPasswords,
   forgetProvenPasswords,
   provenPasswords,
@@ -634,6 +638,295 @@ describe("MessageRouter", () => {
       fastPathStub.reply =
         'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Output blocked by content filtering policy"}}';
       await expectFallThrough();
+    });
+  });
+
+  // Store rule (store-withhold.ts): the operator's channel is served from
+  // the in-memory result, so a value this run proved reaches it; every store
+  // the router writes in that turn holds the placeholder instead.
+  describe("mailbox-password store rule: delivered value, stored placeholder", () => {
+    const owner = "owner@s.whatsapp.net";
+    const PW = "PriorTestPassWordQRS2345";
+    const dayLogWrites = () =>
+      dbRun.mock.calls
+        .map((c) => JSON.stringify(c))
+        .filter((c) => c.includes("day-logs"));
+
+    beforeEach(() => {
+      const fp = passwordFingerprint(PW);
+      setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    });
+    afterEach(() => {
+      _resetStoreWithhold();
+      _testSeedThread(threadKey("whatsapp", owner), []);
+    });
+
+    it("task path: the channel receives the value; the day log and the thread entry hold the placeholder", async () => {
+      vi.mocked(submitTask).mockResolvedValueOnce({
+        taskId: "task-store-rule",
+        agentType: "fast",
+        classification: { score: 1, reason: "test", explicit: false },
+      });
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: owner,
+        text: "dame la contraseña del buzón",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+      const logsBefore = dayLogWrites().length;
+      findHandler("task.completed")!({
+        data: {
+          task_id: "task-store-rule",
+          agent_id: "fast",
+          result: `Listo: box@example.test, contraseña: ${PW}`,
+          duration_ms: 5,
+        },
+      });
+
+      const sent = waAdapter.sentMessages.map((m) => m.text);
+      expect(sent.some((t) => t.includes(`contraseña: ${PW}`))).toBe(true);
+      const logged = dayLogWrites().slice(logsBefore).join(" ");
+      expect(logged).toContain(`contraseña: ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+      expect(logged).not.toContain(PW);
+      const last = _testThreadEntries(threadKey("whatsapp", owner)).at(-1)!;
+      expect(last.text).toContain(PASSWORD_WITHHELD_PLACEHOLDER);
+      expect(last.text).not.toContain(PW);
+    });
+
+    // The rule runs before every cut: a value standing across a cut leaves
+    // no piece of itself in the stored text (no 16-character fragment).
+    const PIECE = 16;
+    const fragmentsIn = (stored: string): string[] =>
+      Array.from({ length: PW.length - PIECE + 1 }, (_, i) =>
+        PW.slice(i, i + PIECE),
+      ).filter((f) => stored.includes(f));
+    const KEPT = 20; // characters of the value before the cut
+    const THREAD_CUT = 12_000; // the stored thread-reply bound
+    const DAY_LOG_CUT = 500; // the day-log entry bound
+    /** Text of exactly `n` characters, ending in a space, no long word. */
+    const pad = (n: number) => "a ".repeat(Math.ceil(n / 2)).slice(0, n - 1) + " ";
+    /** The value starts KEPT characters before `cut`. */
+    const across = (cut: number) => `${pad(cut - KEPT)}${PW} fin`;
+    const placeholderHead = PASSWORD_WITHHELD_PLACEHOLDER.slice(0, 15);
+    const tk = threadKey("whatsapp", owner);
+    const lastThreadText = () => _testThreadEntries(tk).at(-1)!.text;
+    const retained = () =>
+      memoryRetainSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const ask = (text: string) =>
+      router.handleInbound({ channel: "whatsapp", from: owner, text, timestamp: new Date() });
+    const complete = (result: string) =>
+      findHandler("task.completed")!({
+        data: { task_id: "test-task-123", agent_id: "fast", result, duration_ms: 1 },
+      });
+
+    it("fast path: the thread entry is cut after the rule", async () => {
+      fastPathStub.reply = across(THREAD_CUT);
+      try {
+        await ask("Buenos días");
+        expect(fragmentsIn(lastThreadText())).toEqual([]);
+        expect(lastThreadText()).toContain(placeholderHead);
+      } finally {
+        fastPathStub.reply = null;
+      }
+    });
+
+    it("task path: the thread entry is cut after the rule", async () => {
+      await ask("prepara el informe largo");
+      router.startEventListeners();
+      complete(across(THREAD_CUT));
+      expect(fragmentsIn(lastThreadText())).toEqual([]);
+      expect(lastThreadText()).toContain(placeholderHead);
+    });
+
+    it("the day-log entry is cut after the rule", async () => {
+      await ask("prepara el resumen");
+      router.startEventListeners();
+      const logsBefore = dayLogWrites().length;
+      complete(across(DAY_LOG_CUT));
+      const logged = dayLogWrites().slice(logsBefore).join(" ");
+      expect(fragmentsIn(logged)).toEqual([]);
+      expect(logged).toContain(placeholderHead);
+    });
+
+    it("background notice: delivered as built; its day-log copy is cut after the rule", async () => {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: sync KB",
+        status: "completed",
+        agent_type: "fast",
+      });
+      try {
+        await ask("lanza el agente");
+        router.startEventListeners();
+        const logsBefore = dayLogWrites().length;
+        const head = "[Agente background] 🤖 **Agente terminó:** sync KB\n\n";
+        const body = `${pad(200 - head.length - KEPT)}${PW} fin`;
+        complete(body);
+        expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+          `🤖 **Agente terminó:** sync KB\n\n${body}\n\n_Escribe "mis agentes" para ver el historial._`,
+        );
+        const logged = dayLogWrites().slice(logsBefore).join(" ");
+        expect(logged).toContain("[Agente background]");
+        expect(fragmentsIn(logged)).toEqual([]);
+        expect(logged).toContain(placeholderHead);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("background notice: a ledger tail past its cut is withheld before the cut in the day-log copy", async () => {
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: sync KB",
+        status: "completed",
+        agent_type: "fast",
+      });
+      try {
+        await ask("lanza el agente");
+        router.startEventListeners();
+        const logsBefore = dayLogWrites().length;
+        const TAIL_CUT = 800; // the notice keeps the tail's last 800 characters
+        const first = `⚠️ No quedó: ${PW}`;
+        const rest = "\nGates: " + pad(TAIL_CUT - KEPT - "\nGates: ".length);
+        // The value ends KEPT characters into the kept part of the tail.
+        complete(`Resumen.\n\n${first}${rest.slice(0, -1)}x`);
+        const logged = dayLogWrites().slice(logsBefore).join(" ");
+        expect(logged).toContain("[Agente background]");
+        expect(fragmentsIn(logged)).toEqual([]);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("failed task, runner text delivered: the thread entry is cut after the rule", async () => {
+      dbStatusGet.mockReturnValue({ spawn_type: "root", title: "Chat: x", status: "needs_context" });
+      try {
+        await ask("revisa el buzón");
+        router.startEventListeners();
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: { text: across(THREAD_CUT), toolCalls: [] },
+          },
+        });
+        expect(fragmentsIn(lastThreadText())).toEqual([]);
+        expect(lastThreadText()).toContain(placeholderHead);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("failed task, runner text delivered: the retained user text and reply are cut after the rule", async () => {
+      dbStatusGet.mockReturnValue({ spawn_type: "root", title: "Chat: x", status: "needs_context" });
+      memoryRetainSpy.mockClear();
+      try {
+        await ask(across(2000));
+        router.startEventListeners();
+        findHandler("task.failed")!({
+          data: {
+            task_id: "test-task-123",
+            agent_id: "fast",
+            error: "Unknown error",
+            recoverable: false,
+            attempts: 1,
+            result: { text: across(2000), toolCalls: [] },
+          },
+        });
+        const exchange = retained();
+        expect(exchange).toContain("Jarvis: ");
+        expect(fragmentsIn(exchange)).toEqual([]);
+        expect(exchange.split(placeholderHead)).toHaveLength(3);
+      } finally {
+        dbStatusGet.mockReturnValue(undefined);
+      }
+    });
+
+    it("failed task, failure marker: the retained user text and error are cut after the rule", async () => {
+      memoryRetainSpy.mockClear();
+      await ask(across(2000));
+      router.startEventListeners();
+      findHandler("task.failed")!({
+        data: {
+          task_id: "test-task-123",
+          agent_id: "fast",
+          error: across(500),
+          recoverable: false,
+          attempts: 1,
+        },
+      });
+      const exchange = retained();
+      expect(exchange).toContain("[Task failed] ");
+      expect(fragmentsIn(exchange)).toEqual([]);
+      expect(exchange.split(placeholderHead)).toHaveLength(3);
+    });
+
+    it("cancelled task: the retained user text and reason are cut after the rule", async () => {
+      memoryRetainSpy.mockClear();
+      await ask(across(2000));
+      router.startEventListeners();
+      findHandler("task.cancelled")!({
+        data: { task_id: "test-task-123", cancelled_by: "user", reason: across(500) },
+      });
+      const exchange = retained();
+      expect(exchange).toContain("[Task cancelled by user] ");
+      expect(fragmentsIn(exchange)).toEqual([]);
+      expect(exchange.split(placeholderHead)).toHaveLength(3);
+    });
+
+    it("a thread hydrated from stored conversations holds the placeholder", () => {
+      const hk = "telegram-hydrate-store-rule";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [{ content: `User: dame la clave\nJarvis: contraseña: ${PW}` }]
+          : [],
+      );
+      _testPushToThread(hk, "User: hola\nJarvis: hola");
+      const entries = _testThreadEntries(hk);
+      expect(entries[0]!.text).toBe(
+        `User: dame la clave\nJarvis: contraseña: ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      );
+      expect(JSON.stringify(entries)).not.toContain(PW);
+    });
+
+    it("a verified row hydrated from stored conversations holds the placeholder too", () => {
+      const hk = "telegram-hydrate-store-rule-verified";
+      dbAll.mockImplementationOnce((sql: string) =>
+        sql.includes("FROM conversations")
+          ? [{ content: `User: dame la clave\nJarvis: contraseña: ${PW}`, verified: 1 }]
+          : [],
+      );
+      _testPushToThread(hk, "User: hola\nJarvis: hola");
+      const entries = _testThreadEntries(hk);
+      expect(entries[0]!.verified).toBe(true);
+      expect(entries[0]!.text).toBe(
+        `User: dame la clave\nJarvis: contraseña: ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      );
+    });
+
+    it("the credential safety net skips a value the fact store refused, logging one fixed line", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      userFactsMock.setUserFact.mockImplementation(
+        (_c: string, _k: string, value: string) => value !== PW,
+      );
+      try {
+        await ask(`guarda esto: password: ${PW}`);
+        router.startEventListeners();
+        complete("Listo.");
+        const lines = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(
+          lines.filter((l) => l === "[router] Auto-persist skipped a mailbox password"),
+        ).toHaveLength(1);
+        expect(lines.filter((l) => l.includes("Auto-persisted critical data"))).toEqual([]);
+        expect(logSpy.mock.calls.flat().join(" ")).not.toContain(PW);
+      } finally {
+        logSpy.mockRestore();
+        userFactsMock.setUserFact.mockReset();
+      }
     });
   });
 
@@ -2531,7 +2824,7 @@ describe("MessageRouter", () => {
     it("ruling 3c: the critical-data safety net stores a detected credential too, and logs names only", async () => {
       const PASTED = ["Zq", "7".repeat(4), "Kx".repeat(4)].join("");
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      userFactsMock.setUserFact.mockImplementation(() => {});
+      userFactsMock.setUserFact.mockImplementation(() => true);
       try {
         await router.handleInbound({
           channel: "whatsapp",
@@ -2567,6 +2860,7 @@ describe("MessageRouter", () => {
       userFactsMock.setUserFact.mockImplementation(
         (_c: string, _k: string, value: string) => {
           storedSecrets.add(value);
+          return true;
         },
       );
       try {

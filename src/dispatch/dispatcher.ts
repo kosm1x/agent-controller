@@ -49,6 +49,7 @@ import {
   stringifyRedacted,
 } from "../api/mcp-server/redact.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
+import { storeReplacer, withholdForStore } from "../lib/v8-4/store-withhold.js";
 import {
   declareGates,
   freezeGates,
@@ -580,7 +581,9 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   // Insert task. retry_count defaults to 0 for fresh submissions; the
   // _isRequiredToolRetry path at line ~471 and the swarm-retry-policy
   // pass retryCount=predecessor.retry_count+1 to budget the per-sub-task
-  // retry window (queue #231).
+  // retry window (queue #231). Title, description and input pass the
+  // mailbox-password store rule (store-withhold.ts); the runner still gets
+  // the submission as it came.
   db.prepare(
     `
     INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata, retry_count, project_slug, project_source)
@@ -590,12 +593,14 @@ export async function submitTask(submission: TaskSubmission): Promise<{
     taskId,
     parentTaskId: submission.parentTaskId ?? null,
     spawnType: submission.spawnType ?? "root",
-    title: submission.title,
-    description: cleanDescription,
+    title: withholdForStore(submission.title),
+    description: withholdForStore(cleanDescription),
     priority: submission.priority ?? "medium",
     agentType: classification.agentType,
     classification: JSON.stringify(classification),
-    input: submission.input ? JSON.stringify(submission.input) : null,
+    input: submission.input
+      ? JSON.stringify(submission.input, storeReplacer)
+      : null,
     // Persist metadata when ANY of tags/tools/ritualId is set. The earlier
     // `tags ? {tags, tools} : null` shape silently dropped `tools` for
     // submissions that had tools but no tags (e.g. ritual factories like
@@ -895,7 +900,7 @@ async function dispatchWithSlot(
     // here duplicated ~57 MB (audit 2026-09-22). Keep the length only (no
     // marker text). RunnerInput below still carries the full description.
     input: JSON.stringify({
-      title: submission.title,
+      title: withholdForStore(submission.title),
       descriptionChars: stripCacheMarker(submission.description).length,
     }),
   });
@@ -1269,13 +1274,15 @@ async function dispatchWithSlot(
       // Credential-redacted: output, error, trace. Raw by design:
       // output.pendingConfirmation (router executes its args on "sí"; the
       // hash-bound copy is tool_approvals.args_json), goal_graph (resume
-      // input), token_usage (numbers).
+      // input; the mailbox-password store rule only), token_usage (numbers).
       output: result.output
         ? stringifyRedacted(result.output, ["pendingConfirmation"])
         : null,
       error: redactCredentialsForPersist(result.error),
       tokenUsage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
-      goalGraph: result.goalGraph ? JSON.stringify(result.goalGraph) : null,
+      goalGraph: result.goalGraph
+        ? JSON.stringify(result.goalGraph, storeReplacer)
+        : null,
       trace: result.trace ? stringifyRedacted(result.trace) : null,
       // queue #231: persist bare tool names for the swarm-retry classifier.
       // Defensive JSON-encode of an empty array if toolCalls is missing —
@@ -1767,8 +1774,10 @@ export function updateTaskStatus(
 ): void {
   const db = getDatabase();
 
-  // tasks.error is credential-redacted at write; tasks.output stays raw on
-  // purpose — swarm parents deliver child tasks.output to the user verbatim.
+  // tasks.error is credential-redacted at write; tasks.output keeps
+  // credentials on purpose — swarm parents deliver child tasks.output to the
+  // user verbatim — and passes the mailbox-password store rule only
+  // (store-withhold.ts).
 
   // C2 fix (queue #7 audit, 2026-05-07): once a task reaches a terminal
   // status (cancelled / completed / failed) it should NEVER be flipped to
@@ -1784,11 +1793,11 @@ export function updateTaskStatus(
   } else if (status === "completed") {
     db.prepare(
       `UPDATE tasks SET status = 'completed', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
-    ).run(output ? JSON.stringify(output) : null, taskId);
+    ).run(output ? JSON.stringify(output, storeReplacer) : null, taskId);
   } else if (status === "completed_with_concerns") {
     db.prepare(
       `UPDATE tasks SET status = 'completed_with_concerns', progress = 100, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
-    ).run(output ? JSON.stringify(output) : null, taskId);
+    ).run(output ? JSON.stringify(output, storeReplacer) : null, taskId);
   } else if (status === "needs_context" || status === "blocked") {
     db.prepare(
       `UPDATE tasks SET status = ?, error = ?, updated_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
@@ -1801,7 +1810,7 @@ export function updateTaskStatus(
       `UPDATE tasks SET status = 'failed', error = ?, output = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE task_id = ? AND status NOT IN ('cancelled','completed','failed','completed_with_concerns')`,
     ).run(
       redactCredentialsForPersist(error),
-      output ? JSON.stringify(output) : null,
+      output ? JSON.stringify(output, storeReplacer) : null,
       taskId,
     );
   } else {

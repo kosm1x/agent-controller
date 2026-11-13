@@ -40,6 +40,7 @@ import {
   passwordFingerprint,
   type PasswordValueCheck,
 } from "./password-gate.js";
+import { setStoreSeenCheck } from "./store-withhold.js";
 
 export {
   forgetProvenPasswords,
@@ -325,6 +326,36 @@ export function registerMailboxResult(
     return null;
   }
 }
+
+const NOTHING_SEEN: ReadonlySet<string> = new Set();
+
+/**
+ * The seen set for the store rule. The KB seed writes during database init
+ * before the schema migration creates the table: until the table exists
+ * nothing has been seen, which is not a failure. Any other error is thrown
+ * (the store rule then writes as before and warns once).
+ */
+function storeSeenSet(): ReadonlySet<string> {
+  try {
+    return seenSet();
+  } catch (err) {
+    const db = currentDb();
+    const exists =
+      db !== null &&
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(SEEN_TABLE) !== undefined;
+    if (!exists) return NOTHING_SEEN;
+    throw err;
+  }
+}
+
+// The store rule (store-withhold.ts) asks this process's seen set; the first
+// ask loads it lazily, like the reply check's.
+setStoreSeenCheck({
+  size: () => storeSeenSet().size,
+  has: (fingerprint) => storeSeenSet().has(fingerprint),
+});
 
 /** @internal test hook */
 export function _resetMailboxPasswords(): void {

@@ -11,6 +11,7 @@
 import { getDatabase } from "./index.js";
 import { redactCredentials } from "../api/mcp-server/redact.js";
 import { factSecretDisplay, invalidateSecretRefs } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 export interface UserFact {
   category: string;
@@ -652,6 +653,7 @@ export function factDisplayValue(
 
 /**
  * Set (upsert) a user fact. If (category, key) exists, updates the value.
+ * Returns false, writing nothing, when the value holds a mailbox password.
  * Ruling 3c: a credential-style fact is stored like any other; every reader
  * shows it by its reference name only (factDisplayValue / lib/secret-refs.ts).
  */
@@ -660,7 +662,12 @@ export function setUserFact(
   key: string,
   value: string,
   source = "conversation",
-): void {
+): boolean {
+  // A mailbox password is never a stored fact: the mailbox tool is its
+  // source (store rule, store-withhold.ts). The write is skipped, not
+  // stored as the placeholder (a stored fact would become a by-name
+  // reference), and an existing row is left as it is.
+  if (withholdForStore(value) !== value) return false;
   const db = getDatabase();
   db.prepare(
     `INSERT INTO user_facts (category, key, value, source, updated_at)
@@ -671,6 +678,7 @@ export function setUserFact(
                    updated_at = datetime('now')`,
   ).run(category, key, value, source);
   invalidateSecretRefs();
+  return true;
 }
 
 /**

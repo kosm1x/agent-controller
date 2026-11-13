@@ -29,6 +29,12 @@ const mockDb = {
   prepare: vi.fn(),
 };
 
+import { passwordFingerprint } from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
+
 vi.mock("./index.js", () => ({
   getDatabase: () => mockDb,
 }));
@@ -56,6 +62,22 @@ describe("user-facts", () => {
         "30",
         "conversation",
       );
+    });
+  });
+
+  describe("mailbox-password store rule", () => {
+    afterEach(() => _resetStoreWithhold());
+    it("a value the mailbox tool printed is not written, under any name, and the caller is told", () => {
+      const pw = "FakeTestPassWordXYZ2345";
+      const fp = passwordFingerprint(pw);
+      setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+      const runMock = vi.fn();
+      mockDb.prepare.mockReturnValue({ run: runMock });
+      expect(setUserFact("work", "buzon_password", `es ${pw}`, "conversation")).toBe(false);
+      expect(mockDb.prepare).not.toHaveBeenCalled();
+      expect(runMock).not.toHaveBeenCalled();
+      expect(setUserFact("work", "otro", "valor normal", "conversation")).toBe(true);
+      expect(runMock).toHaveBeenCalledWith("work", "otro", "valor normal", "conversation");
     });
   });
 

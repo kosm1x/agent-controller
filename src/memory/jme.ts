@@ -27,6 +27,7 @@ import {
 } from "./embeddings.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 import { logRecall, redactSecrets } from "./recall-utility.js";
 import { REDACTION_PLACEHOLDER_SOURCE } from "../lib/redact-secrets.js";
 import { pruneTombstones, recordTombstone, tombstoneMode, traceTombstoneSkipped } from "./tombstones.js";
@@ -154,7 +155,9 @@ export const SIGNAL_FOLLOWUP_WINDOW_MS = 30 * 60 * 1000;
 export function writeEpisodic(turn: JmeTurn): void {
   const db = getDatabase();
   const now = Date.now();
-  const content = scrubSecrets(turn.content); // ruling 3c: no stored credential in clear
+  // Ruling 3c: no stored credential in clear; nor a mailbox password the
+  // tool printed (store-withhold.ts). The signal snippet below reuses it.
+  const content = withholdForStore(scrubSecrets(turn.content));
   writeWithRetry(() => {
     db.prepare(
       `INSERT INTO jme_turns (task_id, ts, role, content, channel)

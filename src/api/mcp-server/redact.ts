@@ -18,6 +18,10 @@
  */
 
 import { redactSecretText } from "../../lib/redact-secrets.js";
+import {
+  storeReplacer,
+  withholdForStore,
+} from "../../lib/v8-4/store-withhold.js";
 
 /** Apply redaction patterns to a string. Returns a new string. */
 export function redactSecrets(input: string | null | undefined): string {
@@ -47,30 +51,34 @@ function persistRedactFailed(err: unknown): void {
 
 /**
  * redactCredentials for a string bound for a durable column (tasks.error,
- * runs.error). null/undefined stay null. Fail-open: a redactor bug must never
- * lose the write it guards, so a throw returns the raw string (warned once).
+ * runs.error), plus the mailbox-password store rule (store-withhold.ts).
+ * null/undefined stay null. Fail-open: a redactor bug must never lose the
+ * write it guards, so a throw returns the raw string (warned once).
  */
 export function redactCredentialsForPersist(
   input: string | null | undefined,
 ): string | null {
   if (input == null) return null;
   try {
-    return redactCredentials(input);
+    return withholdForStore(redactCredentials(input));
   } catch (err) {
     persistRedactFailed(err);
-    return input;
+    // The store rule never throws: it still applies to the raw string.
+    return withholdForStore(input);
   }
 }
 
-const redactStringValue = (_key: string, v: unknown): unknown =>
-  typeof v === "string" ? redactCredentials(v) : v;
+const redactStringValue = (key: string, v: unknown): unknown =>
+  typeof v === "string" ? storeReplacer(key, redactCredentials(v)) : v;
 
 /**
  * JSON.stringify for a durable column (events.data, runs.output, runs.trace,
  * trace attrs, SSE frames) with redactCredentials applied to every string
  * VALUE at any depth, inside the serialization pass — never a regex over JSON
- * text. Keys are not touched; the input is never mutated. `keepRaw` names
- * top-level keys of a plain-object root that are serialized verbatim (by key,
+ * text, and the mailbox-password store rule on the same string values
+ * (store-withhold.ts). Keys are not touched; the input is never mutated.
+ * `keepRaw` names top-level keys of a plain-object root that are serialized
+ * verbatim, without the store rule either (by key,
  * not by object identity, so a reference shared with another field stays
  * redacted there). Fail-open like redactCredentialsForPersist; a genuine
  * serialization error (cycle, BigInt) still throws as JSON.stringify would.
@@ -80,31 +88,42 @@ export function stringifyRedacted(
   keepRaw: readonly string[] = [],
 ): string {
   try {
-    if (
-      keepRaw.length === 0 ||
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value) ||
-      typeof (value as { toJSON?: unknown }).toJSON === "function"
-    ) {
-      return JSON.stringify(value, redactStringValue);
-    }
-    // One field at a time, wrapped so toJSON(key), undefined-skipping and key
-    // order match a single JSON.stringify of the whole object.
-    const fields: string[] = [];
-    for (const key of Object.keys(value)) {
-      const one = JSON.stringify(
-        { [key]: (value as Record<string, unknown>)[key] },
-        keepRaw.includes(key) ? undefined : redactStringValue,
-      );
-      if (one !== "{}") fields.push(one.slice(1, -1));
-    }
-    return `{${fields.join(",")}}`;
+    return stringifyKeeping(value, keepRaw, redactStringValue);
   } catch (err) {
-    const plain = JSON.stringify(value);
+    // The store rule still applies here (storeReplacer never throws), and
+    // keepRaw fields stay verbatim on this branch too.
+    const plain = stringifyKeeping(value, keepRaw, storeReplacer);
     persistRedactFailed(err);
     return plain;
   }
+}
+
+/** JSON.stringify with `replacer`, except keepRaw top-level keys of a plain-object root. */
+function stringifyKeeping(
+  value: unknown,
+  keepRaw: readonly string[],
+  replacer: (key: string, v: unknown) => unknown,
+): string {
+  if (
+    keepRaw.length === 0 ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof (value as { toJSON?: unknown }).toJSON === "function"
+  ) {
+    return JSON.stringify(value, replacer);
+  }
+  // One field at a time, wrapped so toJSON(key), undefined-skipping and key
+  // order match a single JSON.stringify of the whole object.
+  const fields: string[] = [];
+  for (const key of Object.keys(value)) {
+    const one = JSON.stringify(
+      { [key]: (value as Record<string, unknown>)[key] },
+      keepRaw.includes(key) ? undefined : replacer,
+    );
+    if (one !== "{}") fields.push(one.slice(1, -1));
+  }
+  return `{${fields.join(",")}}`;
 }
 
 /**

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import { withholdForStore } from "./v8-4/store-withhold.js";
 
 // Outside the read-blocked mission-control data tree so file_read can open
 // what the preview points at; under root-owned /root so no other account can
@@ -44,7 +45,9 @@ export function evictToFile(
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const suffix = randomBytes(4).toString("hex");
     filePath = join(dir, `${filenamePrefix}-${Date.now()}-${suffix}.txt`);
-    writeFileSync(filePath, content, "utf-8");
+    // The spill file is a store: mailbox-password store rule
+    // (store-withhold.ts). The preview below is the tool result and stays.
+    writeFileSync(filePath, withholdForStore(content), "utf-8");
   } catch {
     // Disk full or permissions error — fall back to simple truncation
     return {

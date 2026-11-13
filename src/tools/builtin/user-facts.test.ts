@@ -5,6 +5,11 @@ import {
   secretEnvForCommand,
   secretPlaceholder,
 } from "../../lib/secret-refs.js";
+import { passwordFingerprint } from "../../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../../lib/v8-4/store-withhold.js";
 
 // Real db/user-facts module, mocked database.
 const mockDb = { prepare: vi.fn() };
@@ -251,5 +256,54 @@ describe("user_fact_list (Ruling 3)", () => {
     const out = await userFactListTool.execute({});
     expect(out).not.toContain(".env");
     expect(out.split("\n")).toHaveLength(1);
+  });
+});
+
+// Store rule: a value the mailbox tool printed is not a user fact. The
+// tool refuses it, writes nothing and leaves an existing row as it was, so
+// the secret-reference index never learns the value.
+describe("user_fact_set — mailbox password", () => {
+  afterEach(() => {
+    _resetStoreWithhold();
+    invalidateSecretRefs();
+    vi.restoreAllMocks();
+  });
+
+  it("refuses a value the mailbox tool printed: nothing written, the existing row kept, no index entry", async () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const prior = SYN("prior");
+    const rows = [
+      {
+        category: "projects",
+        key: "buzon_password",
+        value: prior,
+        source: "conversation",
+        updated_at: "2026-10-01 12:00:00",
+      },
+    ];
+    const run = vi.fn();
+    mockDb.prepare.mockImplementation(() => ({ run, all: () => rows }));
+    invalidateSecretRefs();
+
+    const out = await userFactSetTool.execute({
+      category: "projects",
+      key: "buzon_password",
+      value: pw,
+    });
+    expect(JSON.parse(out)).toEqual({
+      error:
+        "No guardo contraseñas de buzón como dato del usuario: la contraseña vigente sale solo de la herramienta del buzón (stalwart-inbox vía shell_exec). Ejecútala para obtenerla.",
+    });
+    expect(out).not.toContain(pw);
+    expect(run).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.value).toBe(prior);
+    invalidateSecretRefs();
+    const name = "SECRET_PROJECTS_BUZON_PASSWORD";
+    const env = secretEnvForCommand(`echo "$${name}"`);
+    expect(env).toEqual({ [name]: prior });
+    expect(JSON.stringify(env)).not.toContain(pw);
   });
 });

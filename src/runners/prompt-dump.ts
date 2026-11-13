@@ -25,6 +25,7 @@ import { scrubSecrets } from "../lib/secret-refs.js";
 import { redactCredentials } from "../api/mcp-server/redact.js";
 import { getJarvisKbRoot } from "../db/jarvis-fs.js";
 import { errMsg } from "../lib/err-msg.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 
 const MAX_DUMPS = 50;
 /** Only files this module wrote; retention never touches anything else. */
@@ -63,7 +64,10 @@ export function dumpPrompt(
       throw new Error("PROMPT_DUMP_DIR is inside the KB root");
     }
     const blocks = messages.map((m, i) => {
-      const text = redactCredentials(scrubSecrets(contentText(m.content)));
+      // Mailbox-password store rule (store-withhold.ts) on the dumped copy.
+      const text = withholdForStore(
+        redactCredentials(scrubSecrets(contentText(m.content))),
+      );
       const cacheable = m.cacheable === undefined ? "unset" : m.cacheable;
       return {
         text,

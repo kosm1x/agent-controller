@@ -25,6 +25,14 @@ import { scrubSecrets } from "../lib/secret-refs.js";
 import { redactCredentials } from "../api/mcp-server/redact.js";
 import { getJarvisKbRoot } from "../db/jarvis-fs.js";
 import { dumpPrompt } from "./prompt-dump.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 const scrub = vi.mocked(scrubSecrets);
 const redact = vi.mocked(redactCredentials);
@@ -94,6 +102,20 @@ describe("dumpPrompt", () => {
     expect(scrub.mock.invocationCallOrder[0]).toBeLessThan(
       redact.mock.invocationCallOrder[0],
     );
+  });
+
+  it("mailbox-password store rule: the dumped copy holds the placeholder", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    try {
+      dumpPrompt(dir, "task-pw", [{ role: "user", content: `contraseña ${pw}` }]);
+    } finally {
+      _resetStoreWithhold();
+    }
+    const text = onlyFile();
+    expect(text).not.toContain(pw);
+    expect(text).toContain(`contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`);
   });
 
   it("scrub throws (index cold) → no file, one warn", () => {

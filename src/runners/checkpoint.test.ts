@@ -13,6 +13,11 @@ vi.mock("../db/jarvis-fs.js", () => ({
   getFile: (...args: unknown[]) => mockGetFile(...args),
 }));
 
+import { passwordFingerprint } from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 import {
   writeCheckpoint,
   findRecentCheckpoint,
@@ -419,5 +424,33 @@ describe("R3 audit W3 — thread-scoped checkpoints", () => {
     });
     const content = mockUpsertFile.mock.calls[0][2] as string;
     expect(content).toContain("**Thread:** telegram");
+  });
+});
+
+describe("writeCheckpoint — mailbox-password store rule", () => {
+  afterEach(() => _resetStoreWithhold());
+  it("the response excerpt is cut after the rule: a value across the cut leaves no fragment", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const kept = 20;
+    const pad = "a ".repeat(500).slice(0, 1000 - kept - 1) + " ";
+    writeCheckpoint({
+      taskId: "test-store",
+      title: "Revisar buzón",
+      userMessage: "revisa el buzón",
+      toolsCalled: ["shell_exec"],
+      scopeGroups: [],
+      exitReason: "max_rounds",
+      roundsCompleted: 35,
+      maxRounds: 35,
+      responseText: `${pad}${pw} fin`,
+    });
+    const content = String(mockUpsertFile.mock.calls[0]![2]);
+    const fragments = Array.from({ length: pw.length - 15 }, (_, i) =>
+      pw.slice(i, i + 16),
+    ).filter((f) => content.includes(f));
+    expect(fragments).toEqual([]);
+    expect(content).toContain("[contraseña ret");
   });
 });

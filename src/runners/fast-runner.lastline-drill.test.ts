@@ -93,8 +93,15 @@ const sdk = vi.hoisted(() => ({
 }));
 const traceMock = vi.hoisted(() => vi.fn());
 const retryOutcome = vi.hoisted(() => vi.fn());
+// Every database access throws; each call records its stack so a seal can
+// name the one caller allowed to ask (the store rule's seen-set read).
+const dbStacks = vi.hoisted(() => [] as string[]);
 const dbGuard = vi.hoisted(() =>
   vi.fn(() => {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 60;
+    dbStacks.push(new Error().stack ?? "");
+    Error.stackTraceLimit = limit;
     throw new Error("drill: database access");
   }),
 );
@@ -402,15 +409,31 @@ const WRITE_ARGS = { path: "/drill/notes.txt", content: "Example Corp" };
 
 /** Every request went to the fallback provider with the fallback model, none
  *  to the other configured provider or back to the SDK, and no database was
- *  touched. */
-function expectSealed(): void {
+ *  touched — except, when `storeRuleReads` is given, exactly that many asks
+ *  for the handle, each made by the mailbox-password store rule's seen-set
+ *  read inside the persisted-error helper (it throws here, so the rule
+ *  writes the text as before). */
+function expectSealed(storeRuleReads = 0): void {
   for (const c of wire.calls) {
     expect(c.url.startsWith(`${FALLBACK_BASE}/`)).toBe(true);
     expect(c.url.startsWith(`${PRIMARY_BASE}/`)).toBe(false);
     expect(c.body.model).toBe(FALLBACK_MODEL);
   }
   expect(sdk.queryClaudeSdkAsInfer).not.toHaveBeenCalled();
-  expect(dbGuard).not.toHaveBeenCalled();
+  if (storeRuleReads === 0) {
+    expect(dbGuard).not.toHaveBeenCalled();
+    return;
+  }
+  expect(dbGuard).toHaveBeenCalledTimes(storeRuleReads);
+  expect(dbStacks).toHaveLength(storeRuleReads);
+  for (const stack of dbStacks) {
+    expect(stack).toMatch(/\bstoreSeenSet\b/);
+    expect(stack).toMatch(/\bwithholdForStore\b/);
+    expect(stack).toMatch(/\bredactCredentialsForPersist\b/);
+  }
+  // The failed read is the no-database branch, not a loader failure.
+  const warned = (console.warn as unknown as MockInstance).mock.calls.flat().join(" ");
+  expect(warned).not.toContain("store-withhold");
 }
 
 let consoleSpies: MockInstance[] = [];
@@ -426,6 +449,7 @@ beforeEach(() => {
   traceMock.mockClear();
   retryOutcome.mockClear();
   dbGuard.mockClear();
+  dbStacks.length = 0;
   wire.queue = [];
   wire.calls = [];
   consoleSpies = [
@@ -590,7 +614,9 @@ describe("SDK last line — end to end through the real runner and adapter", () 
     expect(outputOf(r)?.text).toBe("Example Corp answer after compaction.");
     expect(outputOf(r)?.exitReason).toBe("natural");
     expect(outputOf(r)?.roundsCompleted).toBe(1);
-    expectSealed();
+    // The refused request's error text goes through the persisted-error
+    // helper, whose store rule asks once for the seen set.
+    expectSealed(1);
   });
 
   it("a cancellation inside the first tool call stops the loop: no request after it, and no retry leg runs a tool", async () => {

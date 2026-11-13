@@ -9,7 +9,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
-import { updateTaskStatus } from "./dispatcher.js";
+import { getTaskWithRuns, updateTaskStatus } from "./dispatcher.js";
+import { tasks as tasksRoute } from "../api/routes/tasks.js";
+import { mcTaskToA2ATask } from "../a2a/mapper.js";
+import { registerJarvisTools } from "../api/mcp-server/tools.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 function insertTask(taskId: string, status = "running"): void {
   getDatabase()
@@ -136,5 +147,83 @@ describe("updateTaskStatus — tasks.error is credential-redacted at write", () 
     const row = getTaskRow("t-red-5");
     expect(row.status).toBe("failed");
     expect(row.error).toBe(err);
+  });
+});
+
+// Mailbox-password store rule (store-withhold.ts): tasks.output keeps every
+// other credential but never a value the mailbox tool printed.
+describe("updateTaskStatus — mailbox-password store rule", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  afterEach(() => _resetStoreWithhold());
+
+  it.each(["completed", "completed_with_concerns", "failed"])(
+    "%s: the stored output holds the placeholder; keys and numbers unchanged",
+    (status) => {
+      const fp = passwordFingerprint(PW);
+      setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+      insertTask(`t-store-${status}`);
+      updateTaskStatus(
+        `t-store-${status}`,
+        status,
+        { finalAnswer: `contraseña: ${PW}`, score: 0.5 },
+        status === "failed" ? `error ${PW}` : undefined,
+      );
+      const row = getTaskRow(`t-store-${status}`);
+      expect(JSON.parse(row.output!)).toEqual({
+        finalAnswer: `contraseña: ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+        score: 0.5,
+      });
+      expect(JSON.stringify(row)).not.toContain(PW);
+    },
+  );
+
+  it.each(["needs_context", "blocked"])(
+    "%s: the stored error holds the placeholder",
+    (status) => {
+      const fp = passwordFingerprint(PW);
+      setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+      insertTask(`t-store-err-${status}`);
+      updateTaskStatus(`t-store-err-${status}`, status, undefined, "pregunta " + PW);
+      expect(getTaskRow(`t-store-err-${status}`).error).toBe(
+        `pregunta ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+      );
+    },
+  );
+
+  it("the read-back surfaces show the stored placeholder: REST task detail, A2A task, MCP task detail", async () => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    insertTask("t-store-read");
+    updateTaskStatus("t-store-read", "completed", {
+      finalAnswer: `contraseña: ${PW}`,
+    });
+    const shown: string[] = [];
+
+    const res = await tasksRoute.request("/t-store-read");
+    expect(res.status).toBe(200);
+    shown.push(await res.text());
+
+    const data = getTaskWithRuns("t-store-read")!;
+    shown.push(JSON.stringify(mcTaskToA2ATask(data.task, data.runs)));
+
+    const handlers = new Map<string, (a: Record<string, unknown>) => Promise<unknown>>();
+    registerJarvisTools(
+      {
+        registerTool: (name: string, _c: unknown, h: (a: Record<string, unknown>) => Promise<unknown>) =>
+          handlers.set(name, h),
+      } as unknown as Parameters<typeof registerJarvisTools>[0],
+      {
+        db: getDatabase() as unknown as Parameters<typeof registerJarvisTools>[1]["db"],
+        memory: {} as Parameters<typeof registerJarvisTools>[1]["memory"],
+        startedAt: Date.now(),
+      },
+    );
+    shown.push(JSON.stringify(await handlers.get("jarvis_task_detail")!({ task_id: "t-store-read" })));
+
+    for (const text of shown) {
+      expect(text).toContain("contrase");
+      expect(text).toContain(PASSWORD_WITHHELD_PLACEHOLDER.slice(1, 11));
+      expect(text).not.toContain(PW);
+    }
   });
 });

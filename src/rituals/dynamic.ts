@@ -17,6 +17,7 @@ import { getRouter } from "../messaging/index.js";
 import cron, { type ScheduledTask } from "node-cron";
 import { scheduleCron } from "../lib/cron.js";
 import { errMsg } from "../lib/err-msg.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 import { PAUSE_SCHEDULE_TAG } from "../messaging/deliverable-filter.js";
 import { cronMatchesAt } from "./cron-next.js";
 import { applyRitualDeliveryPolicy } from "./delivery-policy.js";
@@ -186,18 +187,20 @@ export function getScheduleRuns(
 
 export function createSchedule(params: CreateScheduleParams): void {
   const db = getDatabase();
+  // Mailbox-password store rule (store-withhold.ts): the stored prompt and
+  // name and the email subject never keep a value the tool printed.
   db.prepare(
     `INSERT INTO scheduled_tasks (schedule_id, name, description, cron_expr, tools, delivery, email_to, email_subject, gates)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.scheduleId,
-    params.name,
-    params.description,
+    withholdForStore(params.name),
+    withholdForStore(params.description),
     params.cronExpr,
     JSON.stringify(params.tools),
     params.delivery,
     params.emailTo ?? null,
-    params.emailSubject ?? null,
+    params.emailSubject == null ? null : withholdForStore(params.emailSubject),
     params.gates?.length ? JSON.stringify(parseGateSpecs(params.gates)) : null,
   );
 }

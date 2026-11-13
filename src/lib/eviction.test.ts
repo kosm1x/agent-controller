@@ -8,6 +8,11 @@ import {
   hasEvictedPath,
   isEvictedPath,
 } from "./eviction.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "./v8-4/password-gate.js";
+import { _resetStoreWithhold, setStoreSeenCheck } from "./v8-4/store-withhold.js";
 
 // Per-run scratch dir: tests never write the live eviction directory.
 // The eviction dir itself does not exist yet, so evictToFile creates it.
@@ -150,5 +155,23 @@ describe("hasEvictedPath", () => {
 
   it("returns false for normal content", () => {
     expect(hasEvictedPath("Just a normal tool result")).toBe(false);
+  });
+});
+
+describe("mailbox-password store rule on the spill file", () => {
+  it("the file holds the placeholder; the preview returned to the caller keeps the text", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    try {
+      const content = `password: ${pw}\n` + "y".repeat(500);
+      const { preview, filePath } = evictToFile(content, "test-pw", 100);
+      expect(preview).toContain(pw);
+      const stored = readFileSync(filePath!, "utf-8");
+      expect(stored).not.toContain(pw);
+      expect(stored.startsWith(`password: ${PASSWORD_WITHHELD_PLACEHOLDER}\n`)).toBe(true);
+    } finally {
+      _resetStoreWithhold();
+    }
   });
 });

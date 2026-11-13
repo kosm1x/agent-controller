@@ -9,6 +9,19 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// A switch that makes the shared credential redactor throw (fallback tests).
+const redactorFails = vi.hoisted(() => ({ on: false }));
+vi.mock("../../lib/redact-secrets.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/redact-secrets.js")>();
+  return {
+    ...actual,
+    redactSecretText: (...args: Parameters<typeof actual.redactSecretText>) => {
+      if (redactorFails.on) throw new Error("redactor failure");
+      return actual.redactSecretText(...args);
+    },
+  };
+});
 import {
   redactCredentials,
   redactCredentialsForPersist,
@@ -18,6 +31,14 @@ import {
   stringifyRedacted,
 } from "./redact.js";
 import { literalEnvValueError } from "../../mcp/record-env.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../../lib/v8-4/store-withhold.js";
 
 // Fragment-assembled fake fixtures (see file header).
 const SK = "sk-" + "abcdefghijklmnop1234567890ABCD";
@@ -331,5 +352,115 @@ describe("WS3b R1 W4 sweep: BEARER is a secret-shaped record env literal name", 
     const err = literalEnvValueError("ACME_API_BEARER", "synthetic-literal");
     expect(err).toContain('"BEARER"');
     expect(err).not.toContain("synthetic-literal");
+  });
+});
+
+describe("mailbox-password store rule in the durable-sink helpers", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+
+  // The helpers as they behave without the store rule (credential shapes
+  // only): the reference an empty seen set must reproduce byte for byte.
+  const credOnly = (_k: string, v: unknown): unknown =>
+    typeof v === "string" ? redactCredentials(v) : v;
+  function referenceStringify(
+    value: unknown,
+    keepRaw: readonly string[] = [],
+  ): string {
+    if (
+      keepRaw.length === 0 ||
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      typeof (value as { toJSON?: unknown }).toJSON === "function"
+    ) {
+      return JSON.stringify(value, credOnly);
+    }
+    const fields: string[] = [];
+    for (const key of Object.keys(value)) {
+      const one = JSON.stringify(
+        { [key]: (value as Record<string, unknown>)[key] },
+        keepRaw.includes(key) ? undefined : credOnly,
+      );
+      if (one !== "{}") fields.push(one.slice(1, -1));
+    }
+    return `{${fields.join(",")}}`;
+  }
+
+  const CORPUS: Array<[unknown, string[]]> = [
+    [`contraseña: ${PW}`, []],
+    [`token ${SK} y ${PW}`, []],
+    [42, []],
+    [null, []],
+    [true, []],
+    [[PW, 1, null, { a: PW }, [SK]], []],
+    [{ a: PW, b: { c: [PW, { d: `x\n${PW}` }] }, n: 1, z: null, u: undefined }, []],
+    [{ text: PW, pendingConfirmation: { toolName: "t", args: { body: PW } } }, ["pendingConfirmation"]],
+    [{ [PW]: PW, when: new Date(0), k: SK }, []],
+    [{ keep: { s: SK, p: PW }, other: PW }, ["keep"]],
+  ];
+
+  afterEach(() => _resetStoreWithhold());
+
+  it("with no seen check and with an empty seen set, stringifyRedacted and redactCredentialsForPersist are byte-identical to the credential-only helpers", () => {
+    for (const setup of [
+      () => _resetStoreWithhold(),
+      () => setStoreSeenCheck({ size: () => 0, has: () => false }),
+    ]) {
+      setup();
+      for (const [value, keepRaw] of CORPUS) {
+        expect(stringifyRedacted(value, keepRaw)).toBe(
+          referenceStringify(value, keepRaw),
+        );
+      }
+      for (const s of [`contraseña: ${PW}`, `token ${SK}`, "", "plain"]) {
+        expect(redactCredentialsForPersist(s)).toBe(redactCredentials(s));
+      }
+      expect(redactCredentialsForPersist(null)).toBeNull();
+    }
+  });
+
+  it("with a seen value: only matching string values change, keys and non-string leaves never, keepRaw stays verbatim, and the JSON parses", () => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const value = {
+      [PW]: PW,
+      n: 7,
+      deep: { list: [PW, `x\n${PW}`, 3, null] },
+      pendingConfirmation: { toolName: "t", args: { body: PW } },
+    };
+    const out = stringifyRedacted(value, ["pendingConfirmation"]);
+    expect(JSON.parse(out)).toEqual({
+      [PW]: P,
+      n: 7,
+      deep: { list: [P, `x\n${P}`, 3, null] },
+      pendingConfirmation: { toolName: "t", args: { body: PW } },
+    });
+    // No keepRaw: the same object is withheld everywhere, keys excepted.
+    expect(JSON.parse(stringifyRedacted(value))).toEqual({
+      [PW]: P,
+      n: 7,
+      deep: { list: [P, `x\n${P}`, 3, null] },
+      pendingConfirmation: { toolName: "t", args: { body: P } },
+    });
+    expect(redactCredentialsForPersist(`error: ${PW}`)).toBe(`error: ${P}`);
+  });
+
+  it("with the credential redactor throwing: keepRaw fields stay verbatim, other strings get the placeholder, and the persist helper still applies the rule", () => {
+    redactorFails.on = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const out = stringifyRedacted(
+      { pendingConfirmation: { args: { body: PW } }, text: PW },
+      ["pendingConfirmation"],
+    );
+    expect(JSON.parse(out)).toEqual({
+      pendingConfirmation: { args: { body: PW } },
+      text: P,
+    });
+    expect(redactCredentialsForPersist(`error with ${PW}`)).toBe(`error with ${P}`);
+    redactorFails.on = false;
+    vi.restoreAllMocks();
   });
 });

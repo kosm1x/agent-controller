@@ -23,6 +23,7 @@ import {
 } from "./drive-sync.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
+import { withholdForStore } from "../lib/v8-4/store-withhold.js";
 import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "./live-db.js";
 
 export { isLiveDatabaseFile } from "./live-db.js";
@@ -277,7 +278,10 @@ export function upsertFile(
 ): void {
   // Write-side guard (audit W7): a Buffer stored here is what produced the
   // 2 BLOB rows — coerce so the TEXT contract holds at the source too.
-  content = asText(content);
+  // Mailbox-password store rule (store-withhold.ts): the row, the disk
+  // mirror, the vector copy and the Drive copy all get the withheld text.
+  content = withholdForStore(asText(content));
+  title = withholdForStore(title);
   const db = getDatabase();
   // Sync-driven writes (skipUserEdit=true) must not bump user_edit_time.
   // Real user edits (default) bump both updated_at and user_edit_time.
@@ -370,7 +374,11 @@ export function appendToFile(path: string, content: string): boolean {
     .get(path) as { content: unknown } | undefined;
   if (!existing) return false;
 
-  const newContent = `${asText(existing.content)}\n\n${content}`;
+  // Store rule (store-withhold.ts) on the whole text written: row, mirror,
+  // vector copy and Drive copy below.
+  const newContent = withholdForStore(
+    `${asText(existing.content)}\n\n${content}`,
+  );
   db.prepare(
     "UPDATE jarvis_files SET content = ?, updated_at = datetime('now') WHERE path = ?",
   ).run(newContent, path);

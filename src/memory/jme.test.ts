@@ -171,6 +171,23 @@ describe("JME — episodic store", () => {
     ]);
   });
 
+  it("mailbox-password store rule: the stored turn holds the placeholder", async () => {
+    const { writeEpisodic, getTurnsForTask } = await getJme();
+    const sw = await import("../lib/v8-4/store-withhold.js");
+    const pg = await import("../lib/v8-4/password-gate.js");
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = pg.passwordFingerprint(pw);
+    sw.setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    try {
+      writeEpisodic({ taskId: "t-pw", role: "jarvis", content: `contraseña ${pw}` });
+    } finally {
+      sw._resetStoreWithhold();
+    }
+    expect(getTurnsForTask("t-pw").map((t) => t.content)).toEqual([
+      `contraseña ${pg.PASSWORD_WITHHELD_PLACEHOLDER}`,
+    ]);
+  });
+
   it("getTurnsForTask returns only turns for the given task", async () => {
     const { writeEpisodic, getTurnsForTask } = await getJme();
     writeEpisodic({ taskId: "t1", role: "user", content: "task 1 msg" });

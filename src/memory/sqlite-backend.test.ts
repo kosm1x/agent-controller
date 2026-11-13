@@ -11,6 +11,14 @@
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import promClient from "prom-client";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 // getDatabase throws → recallHybrid's outer try/catch returns [] — a
 // deterministic empty `raw` so the wrapper assertions don't depend on DB
@@ -176,6 +184,27 @@ describe("SqliteMemoryBackend — retain (ruling 3c)", () => {
     expect(run.mock.calls[0]).toContain("Usuario: la clave es [oculto]");
     expect(JSON.stringify(run.mock.calls)).not.toContain(SCRUB_SYN);
     expect(embedSpy).toHaveBeenCalledWith("Usuario: la clave es [oculto]");
+  });
+
+  it("mailbox-password store rule: the stored and embedded copy hold the placeholder", async () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    try {
+      const run = vi.fn(() => ({ lastInsertRowid: 1 }));
+      vi.mocked(getDatabase).mockReturnValueOnce({
+        prepare: () => ({ run }),
+      } as unknown as ReturnType<typeof getDatabase>);
+      await new SqliteMemoryBackend().retain(`Jarvis: contraseña ${pw}`, {
+        bank: "mc-jarvis",
+      });
+      const want = `Jarvis: contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`;
+      expect(run.mock.calls[0]).toContain(want);
+      expect(JSON.stringify(run.mock.calls)).not.toContain(pw);
+      expect(embedSpy).toHaveBeenCalledWith(want);
+    } finally {
+      _resetStoreWithhold();
+    }
   });
 
   describe("write failures", () => {

@@ -6,6 +6,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HindsightMemoryBackend } from "./hindsight-backend.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 // Mock the client module
 vi.mock("./hindsight-client.js", () => {
@@ -92,6 +100,24 @@ describe("HindsightMemoryBackend", () => {
         expect.objectContaining({ content: "la clave es [oculto]" }),
       );
       expect(JSON.stringify(mockClient.retain.mock.calls)).not.toContain(SCRUB_SYN);
+    });
+
+    it("mailbox-password store rule: the remote service receives the placeholder", async () => {
+      const pw = "FakeTestPassWordXYZ2345";
+      const fp = passwordFingerprint(pw);
+      setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+      try {
+        await backend.retain(`contraseña ${pw}`, { bank: "mc-operational" });
+      } finally {
+        _resetStoreWithhold();
+      }
+      expect(mockClient.retain).toHaveBeenCalledWith(
+        "mc-operational",
+        expect.objectContaining({
+          content: `contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+        }),
+      );
+      expect(JSON.stringify(mockClient.retain.mock.calls)).not.toContain(pw);
     });
 
     it("should default async to true", async () => {

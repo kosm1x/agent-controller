@@ -35,6 +35,14 @@ import {
   pruneExpiredSnapshots,
   type PrometheusSnapshot,
 } from "./snapshot.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 function makeSnapshot(
   overrides: Partial<PrometheusSnapshot> = {},
@@ -237,5 +245,68 @@ describe("pruneExpiredSnapshots", () => {
       .prepare("SELECT COUNT(*) as n FROM prometheus_snapshots")
       .get() as { n: number };
     expect(remaining.n).toBe(1);
+  });
+});
+
+describe("mailbox-password store rule on snapshots", () => {
+  it("goal results and the description hold the placeholder; keys and numbers do not change", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const base = makeSnapshot();
+    try {
+      saveSnapshot(
+        makeSnapshot({
+          taskDescription: `revisa ${pw}`,
+          goalResults: {
+            "g-1": { ...base.goalResults["g-1"]!, result: `contraseña ${pw}` },
+          },
+        }),
+      );
+    } finally {
+      _resetStoreWithhold();
+    }
+    const raw = mockDb
+      .prepare("SELECT * FROM prometheus_snapshots")
+      .get() as Record<string, string>;
+    expect(JSON.stringify(raw)).not.toContain(pw);
+    const loaded = loadSnapshot("test-task-1")!;
+    expect(loaded.taskDescription).toBe(`revisa ${PASSWORD_WITHHELD_PLACEHOLDER}`);
+    expect(loaded.goalResults["g-1"]!.result).toBe(
+      `contraseña ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    );
+    expect(loaded.goalResults["g-1"]!.durationMs).toBe(1000);
+    expect(Object.keys(loaded.goalGraph.goals)).toEqual(["g-1", "g-2"]);
+  });
+
+  it("the goal graph holds the placeholder; its ids and links do not change", () => {
+    const pw = "FakeTestPassWordXYZ2345";
+    const fp = passwordFingerprint(pw);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+    const base = makeSnapshot();
+    try {
+      saveSnapshot(
+        makeSnapshot({
+          goalGraph: {
+            ...base.goalGraph,
+            goals: {
+              ...base.goalGraph.goals,
+              "g-2": { ...base.goalGraph.goals["g-2"]!, description: `entra con ${pw}` },
+            },
+          },
+        }),
+      );
+    } finally {
+      _resetStoreWithhold();
+    }
+    const raw = mockDb
+      .prepare("SELECT * FROM prometheus_snapshots")
+      .get() as Record<string, string>;
+    expect(JSON.stringify(raw)).not.toContain(pw);
+    const loaded = loadSnapshot("test-task-1")!;
+    expect(loaded.goalGraph.goals["g-2"]!.description).toBe(
+      `entra con ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    );
+    expect(loaded.goalGraph.goals["g-2"]!.dependsOn).toEqual(["g-1"]);
   });
 });

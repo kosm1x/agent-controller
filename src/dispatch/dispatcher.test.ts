@@ -148,6 +148,14 @@ import { outsideRunToolContext } from "../tools/rule-of-two.js";
 import { classify } from "./classifier.js";
 import { recordCost } from "../budget/service.js";
 import { takeConcernDetail } from "../db/task-outcomes.js";
+import {
+  PASSWORD_WITHHELD_PLACEHOLDER,
+  passwordFingerprint,
+} from "../lib/v8-4/password-gate.js";
+import {
+  _resetStoreWithhold,
+  setStoreSeenCheck,
+} from "../lib/v8-4/store-withhold.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -2482,6 +2490,196 @@ describe("dispatchTask redacts credentials in runs.output / runs.error / tasks.e
         (c) => typeof c[0] === "string" && c[0].includes(`here ${SECRET}`),
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mailbox-password store rule (store-withhold.ts): a value the mailbox tool
+// printed is stored as the placeholder in every task and run column that
+// holds text; the runner and the bus get the value as it came (delivery is
+// decided by the reply check, not here). pendingConfirmation stays verbatim.
+// ---------------------------------------------------------------------------
+
+describe("dispatchTask: mailbox-password store rule on task and run rows", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  beforeEach(() => {
+    const fp = passwordFingerprint(PW);
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === fp });
+  });
+  afterEach(() => {
+    _resetStoreWithhold();
+    ledgerHook.before = undefined;
+  });
+
+  const runsUpdate = () =>
+    mockRun.mock.calls.find(
+      (c) => c[0] && typeof c[0] === "object" && "runnerStatus" in c[0],
+    )?.[0] as Record<string, string | null> | undefined;
+  const terminal = () => {
+    const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+    if (!names.some((n) => n === "task.completed" || n === "task.failed" || n === "task.cancelled"))
+      throw new Error("not terminal yet");
+  };
+
+  it("submit: the task row's title, description and input, and the run row's title, hold the placeholder; the runner gets the value", async () => {
+    let seen = "";
+    registerRunner({
+      type: "fast",
+      execute: async (input) => {
+        seen = input.description;
+        return { success: true, output: "ok" } as RunnerOutput;
+      },
+    });
+    await submitTask({
+      title: `Buzón ${PW}`,
+      description: `entra con ${PW}`,
+      input: { note: `contraseña ${PW}`, n: 3 },
+    });
+    await vi.waitFor(terminal);
+    const insert = mockRun.mock.calls[0]![0] as Record<string, string>;
+    expect(insert.title).toBe(`Buzón ${P}`);
+    expect(insert.description).toBe(`entra con ${P}`);
+    expect(JSON.parse(insert.input!)).toEqual({ note: `contraseña ${P}`, n: 3 });
+    const runInsert = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, string> | undefined)
+      .find((a) => a && typeof a === "object" && "agentType" in a && "runId" in a && "input" in a)!;
+    expect(JSON.parse(runInsert.input!).title).toBe(`Buzón ${P}`);
+    expect(seen).toBe(`entra con ${PW}`);
+    expect(JSON.stringify(mockRun.mock.calls)).not.toContain(PW);
+  });
+
+  it("completed: tasks.output, runs.output, runs.trace and runs.goal_graph hold the placeholder; the bus result and pendingConfirmation keep the value", async () => {
+    const pendingConfirmation = { toolName: "gmail_send", args: { body: `clave ${PW}` } };
+    const goalGraph = { goals: { "g-1": { id: "g-1", description: `entra con ${PW}`, dependsOn: [] } } };
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({
+          success: true,
+          output: { finalAnswer: `contraseña: ${PW}`, pendingConfirmation },
+          trace: [{ type: "note", text: `vi ${PW}` }],
+          goalGraph,
+        }) as unknown as RunnerOutput,
+    });
+    await submitTask({ title: "store rule", description: "d" });
+    await vi.waitFor(terminal);
+    const run = runsUpdate()!;
+    const out = JSON.parse(run.output!);
+    expect(out.finalAnswer).toBe(`contraseña: ${P}`);
+    expect(out.pendingConfirmation).toEqual(pendingConfirmation);
+    expect(run.trace).not.toContain(PW);
+    expect(JSON.parse(run.goalGraph!).goals["g-1"].description).toBe(`entra con ${P}`);
+    expect(JSON.parse(run.goalGraph!).goals["g-1"].id).toBe("g-1");
+    const taskOutput = mockRun.mock.calls
+      .map((c) => c[0])
+      .find((a) => typeof a === "string" && a.includes('"finalAnswer"')) as string;
+    expect(JSON.parse(taskOutput).finalAnswer).toBe(`contraseña: ${P}`);
+    const completed = emitEventMock.mock.calls.find((c) => c[0] === "task.completed")!;
+    expect(JSON.stringify(completed[1])).toContain(`contraseña: ${PW}`);
+  });
+
+  it("submit: a value inside an array of the input is stored as the placeholder", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () => ({ success: true, output: "ok" }) as RunnerOutput,
+    });
+    await submitTask({ title: "lista", description: "d", input: { list: ["a " + PW] } });
+    await vi.waitFor(terminal);
+    const insert = mockRun.mock.calls[0]![0] as Record<string, string>;
+    expect(JSON.parse(insert.input!)).toEqual({ list: [`a ${P}`] });
+  });
+
+  it("completed: every string of the goal graph is withheld, whatever its key or depth", async () => {
+    const goalGraph = {
+      goals: {
+        "g-1": {
+          id: "g-1",
+          description: "revisar",
+          completionCriteria: ["usa " + PW],
+          metadata: { note: PW },
+        },
+      },
+    };
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: true, output: "ok", goalGraph }) as unknown as RunnerOutput,
+    });
+    await submitTask({ title: "grafo", description: "d" });
+    await vi.waitFor(terminal);
+    const stored = JSON.parse(runsUpdate()!.goalGraph!);
+    expect(stored.goals["g-1"].completionCriteria).toEqual([`usa ${P}`]);
+    expect(stored.goals["g-1"].metadata).toEqual({ note: P });
+    expect(JSON.stringify(stored)).not.toContain(PW);
+  });
+
+  it("failed: tasks.output and tasks.error hold the placeholder", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({ success: false, error: `falló con ${PW}`, output: { finalAnswer: `intenté ${PW}` } }) as unknown as RunnerOutput,
+    });
+    await submitTask({ title: "store rule failed", description: "d" });
+    await vi.waitFor(terminal);
+    const flat = mockRun.mock.calls.flat().filter((a) => typeof a === "string") as string[];
+    expect(flat).toContain(`falló con ${P}`);
+    expect(flat.some((a) => a.includes(`"intenté ${P}"`))).toBe(true);
+    expect(JSON.stringify(mockRun.mock.calls)).not.toContain(PW);
+  });
+
+  it("cancelled close: the cancelled run row's output and error hold the placeholder", async () => {
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({
+          success: true,
+          status: "DONE",
+          output: `contraseña: ${PW}`,
+          error: `nota ${PW}`,
+          durationMs: 1,
+        }) as RunnerOutput,
+    });
+    ledgerHook.before = async ({ taskId }) => {
+      mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+      mockAll.mockReturnValueOnce([]);
+      expect(cancelTask(taskId)).toBe(true);
+    };
+    await submitTask({ title: "store rule cancelled", description: "d" });
+    await vi.waitFor(terminal);
+    const cancelledRun = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, string | null> | undefined)
+      .find((a) => a && typeof a === "object" && "durationMs" in a && !("runnerStatus" in a))!;
+    expect(JSON.parse(cancelledRun.output!)).toBe(`contraseña: ${P}`);
+    expect(cancelledRun.error).toBe(`nota ${P}`);
+    expect(JSON.stringify(mockRun.mock.calls)).not.toContain(PW);
+  });
+
+  it("cancelled close: pendingConfirmation stays verbatim, the other output text is withheld", async () => {
+    const pendingConfirmation = { toolName: "gmail_send", args: { body: PW } };
+    registerRunner({
+      type: "fast",
+      execute: async () =>
+        ({
+          success: true,
+          status: "DONE",
+          output: { pendingConfirmation, text: PW },
+          durationMs: 1,
+        }) as unknown as RunnerOutput,
+    });
+    ledgerHook.before = async ({ taskId }) => {
+      mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+      mockAll.mockReturnValueOnce([]);
+      expect(cancelTask(taskId)).toBe(true);
+    };
+    await submitTask({ title: "store rule cancelled keep", description: "d" });
+    await vi.waitFor(terminal);
+    const cancelledRun = mockRun.mock.calls
+      .map((c) => c[0] as Record<string, string | null> | undefined)
+      .find((a) => a && typeof a === "object" && "durationMs" in a && !("runnerStatus" in a))!;
+    const out = JSON.parse(cancelledRun.output!);
+    expect(out.pendingConfirmation).toEqual(pendingConfirmation);
+    expect(out.text).toBe(P);
   });
 });
 
