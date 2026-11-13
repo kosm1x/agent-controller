@@ -19,7 +19,10 @@
  *
  * Fail: every seen-and-unproven occurrence is replaced by
  * `PASSWORD_WITHHELD_PLACEHOLDER` and `PASSWORD_WITHHELD_LINE` is appended
- * once. Never blocked, never an error, never a second model call.
+ * once. The line goes with every delivered placeholder, also one the check
+ * did not put there (a durable store keeps only the placeholder, and a reply
+ * built from stored text repeats it). Never blocked, never an error, never a
+ * second model call.
  * Idempotent: the placeholder and the line hold no candidate.
  *
  * Pure: no store, no log. Values are compared by fingerprint
@@ -33,8 +36,11 @@
  *     outside this check;
  *   - it protects against handing over a password that was not just
  *     confirmed; it is not a confidentiality control (which is why a partial
- *     value may flash in a stream before the hold, and why stored run output
- *     is not rewritten);
+ *     value may flash in a stream before the hold); stored text keeps only
+ *     the placeholder, never a seen value (store-withhold.ts);
+ *   - a placeholder quoted from someone else's text (a mail body, a page a
+ *     tool read, a user typing it) also gets the line: it adds a sentence and
+ *     never changes what is withheld;
  *   - streaming: the live message is reset as soon as a seen-and-unproven
  *     value is in the streamed text, so the value can be on screen for a
  *     moment before the reset; the final message is always the checked
@@ -49,7 +55,7 @@ export const PASSWORD_MAX_LEN = 64;
 
 export const PASSWORD_WITHHELD_PLACEHOLDER = "[contraseña retenida]";
 
-/** The one line appended when at least one value was withheld. */
+/** The one line appended whenever a checked text holds the placeholder. */
 export const PASSWORD_WITHHELD_LINE = `${PASSWORD_WITHHELD_PREFIX} con la herramienta en esta respuesta lo que marqué como ${PASSWORD_WITHHELD_PLACEHOLDER} y lo retuve; cuando me lo vuelvas a pedir, lo leeré con la herramienta antes de contestar.`;
 
 const FINGERPRINT_PREFIX = "mission-control/mailbox-password/v1:";
@@ -223,13 +229,16 @@ export function withPasswordWithheldLine(text: string): string {
     : `${text}\n\n${PASSWORD_WITHHELD_LINE}`;
 }
 
-/** `replaceUnprovenValues` plus the one line when anything was withheld. */
+/**
+ * `replaceUnprovenValues` plus the one line whenever the checked text holds
+ * the placeholder: withheld here, or already in it (a stored text repeated).
+ */
 export function withholdUnprovenValues(
   text: string,
   check: PasswordValueCheck,
 ): PasswordGateResult {
   const res = replaceUnprovenValues(text, check);
-  return res.withheld > 0
+  return res.text.includes(PASSWORD_WITHHELD_PLACEHOLDER)
     ? { ...res, text: withPasswordWithheldLine(res.text) }
     : res;
 }

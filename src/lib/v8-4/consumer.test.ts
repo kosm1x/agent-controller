@@ -1944,3 +1944,113 @@ describe("applyCompletionLedger — a mailbox password needs proof from this run
     expect(lines).toEqual(["[v8-4] password-gate task=t1 check failed — text passed through unchanged"]);
   });
 });
+
+// A durable store keeps only the placeholder (store-withhold.ts), so a reply
+// built from stored text can repeat it with no value this check withholds:
+// the line goes with every delivered placeholder, once.
+describe("applyCompletionLedger — a delivered placeholder always comes with the line", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const BOX = "box@example.test";
+  const lines = (s: string) => s.split(L).length - 1;
+  const textOf = (o: RunnerOutput["output"]) =>
+    typeof o === "string" ? o : (o as { text: string }).text;
+
+  beforeEach(() => {
+    _resetMailboxPasswords();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a plain string holding the placeholder gets the line once; no log line and no trace", async () => {
+    const log = vi.mocked(console.log);
+    const out = await applyCompletionLedger(base({ result: okResult(`${BOX}: ${P}`) }));
+    expect(out.output).toBe(`${BOX}: ${P}\n\n${L}`);
+    expect(lines(out.output as string)).toBe(1);
+    expect(traceNames("t1").some((t) => t.name === "password.checked")).toBe(false);
+    expect(log.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("password-gate"))).toEqual([]);
+  });
+
+  it("an object's delivered field gets the line once; the other fields are untouched", async () => {
+    const out = await applyCompletionLedger(
+      base({ result: okResult({ finalAnswer: `${BOX}: ${P}`, content: "resumen" }) }),
+    );
+    expect(out.output).toEqual({
+      finalAnswer: `${BOX}: ${P}\n\n${L}`,
+      content: "resumen",
+      numbers_audit: expect.anything(),
+    });
+  });
+
+  it("a JSON-encoded carrier stays valid JSON with the line inside its text field", async () => {
+    const out = await applyCompletionLedger(
+      base({ result: okResult(JSON.stringify({ text: `clave:\n${P}` })) }),
+    );
+    expect(JSON.parse(out.output as string)).toEqual({ text: `clave:\n${P}\n\n${L}` });
+    expect(lines(out.output as string)).toBe(1);
+  });
+
+  it("an object with no deliverable text: text = its dump + the line", async () => {
+    const output = { data: { pass: P } };
+    const out = await applyCompletionLedger(base({ result: okResult(output) }));
+    expect(out.output).toEqual({ ...output, text: `${JSON.stringify(output)}\n\n${L}` });
+    expect(lines(textOf(out.output))).toBe(1);
+  });
+
+  it("a top-level array becomes its dump + the line", async () => {
+    const rows = [`x ${P}`];
+    const out = await applyCompletionLedger(
+      base({ result: okResult(rows as unknown as RunnerOutput["output"]) }),
+    );
+    expect(out.output).toBe(`${JSON.stringify(rows)}\n\n${L}`);
+  });
+
+  it("a text that already carries the line is byte-identical (the line stays once)", async () => {
+    const text = `${BOX}: ${P}\n\n${L}`;
+    const asString = await applyCompletionLedger(base({ result: okResult(text) }));
+    expect(asString.output).toBe(text);
+    const asObject = await applyCompletionLedger(
+      base({ taskId: "t2", runId: "r2", result: okResult({ text }) }),
+    );
+    expect(textOf(asObject.output)).toBe(text);
+  });
+
+  it("a text that carries the line in the middle is left as it is: present anywhere counts", async () => {
+    const text = `${BOX}: ${P}\n\n${L}\n\nOtro párrafo.`;
+    const asString = await applyCompletionLedger(base({ result: okResult(text) }));
+    expect(asString.output).toBe(text);
+    const asObject = await applyCompletionLedger(
+      base({ taskId: "t2", runId: "r2", result: okResult({ text }) }),
+    );
+    expect(textOf(asObject.output)).toBe(text);
+  });
+
+  it("a placeholder only in a field that is not delivered: no line", async () => {
+    const output = { finalAnswer: "Listo.", content: `resumen ${P}` };
+    const out = await applyCompletionLedger(base({ result: okResult(output) }));
+    expect(out.output).toEqual({ ...output, numbers_audit: expect.anything() });
+  });
+
+  it.each<[string, RunnerOutput["output"]]>([
+    ["a plain string", `${BOX}: Listo.`],
+    ["a JSON carrier", JSON.stringify({ text: `${BOX}: Listo.` })],
+    ["an object with no deliverable text", { data: { box: BOX } }],
+  ])("%s with no placeholder is passed on unchanged", async (_name, output) => {
+    const out = await applyCompletionLedger(base({ result: okResult(output) }));
+    expect(out.output).toBe(output);
+  });
+
+  it("an object with no placeholder: its text is unchanged (only the numbers audit is added, as before)", async () => {
+    const output = { text: `${BOX}: Listo.` };
+    const out = await applyCompletionLedger(base({ result: okResult(output) }));
+    expect(out.output).toEqual({ ...output, numbers_audit: expect.anything() });
+  });
+
+  it("the user typing the placeholder string: a reply that repeats it gets the line", async () => {
+    recordUserPasswordProof("t1", `¿qué significa ${P}?`);
+    const out = await applyCompletionLedger(base({ result: okResult(`Significa ${P}.`) }));
+    expect(out.output).toBe(`Significa ${P}.\n\n${L}`);
+  });
+});

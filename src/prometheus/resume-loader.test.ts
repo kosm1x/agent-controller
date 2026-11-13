@@ -16,6 +16,10 @@ vi.mock("../db/index.js", () => ({
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus } from "./types.js";
 import { loadResumableRun } from "./resume-loader.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+} from "../lib/v8-4/password-gate.js";
 
 // --- Fixtures ---------------------------------------------------------------
 
@@ -228,6 +232,31 @@ describe("loadResumableRun — happy path", () => {
       completionTokens: 0,
     });
     expect(loaded!.priorResult.durationMs).toBe(0);
+  });
+});
+
+// The loader is not a delivery seam: a resumed run's answer comes from a new
+// reflection, and the only caller is the operator's resume CLI, which prints
+// counts. A stored placeholder is read back as stored, no line added here;
+// any reply built from it gets the line from the completion check.
+describe("loadResumableRun — a stored placeholder is read back as stored", () => {
+  it("the prior summary and goal text keep the placeholder byte-identical, with no line", () => {
+    const g = new GoalGraph();
+    g.addGoal({ id: "g-1", description: `abrir buzón con ${PASSWORD_WITHHELD_PLACEHOLDER}` });
+    g.updateStatus("g-1", GoalStatus.FAILED);
+    const summary = `clave del buzón: ${PASSWORD_WITHHELD_PLACEHOLDER}`;
+    insertRun({
+      runId: "run-p",
+      taskId: "task-p",
+      goalGraph: JSON.stringify(g.toJSON()),
+      output: JSON.stringify({ content: summary }),
+    });
+    const loaded = loadResumableRun("task-p")!;
+    expect(loaded.priorResult.reflection.summary).toBe(summary);
+    expect(loaded.graph.getGoal("g-1").description).toBe(
+      `abrir buzón con ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    );
+    expect(JSON.stringify(loaded)).not.toContain(PASSWORD_WITHHELD_LINE);
   });
 });
 

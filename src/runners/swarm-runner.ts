@@ -37,6 +37,7 @@ import { recordSwarmSubtaskRetry } from "../observability/prometheus.js";
 import { errMsg } from "../lib/err-msg.js";
 import { gateSpecsFromGoal, gatesMode } from "../lib/v8-4/gates.js";
 import { SWARM_FOOTER_PREFIX } from "../lib/v8-4/ledger-lines.js";
+import { PASSWORD_WITHHELD_LINE } from "../lib/v8-4/password-gate.js";
 import {
   proseGradeSpecsFromGoal,
   registerGradeSpecs,
@@ -588,10 +589,13 @@ function buildExecutionResults(
       // when no canonical field exists.
       // Track 3: the child's "## Shared findings" section is agent-to-agent
       // scaffolding — never part of the operator's joined final answer.
+      // A child's text may carry the password-withheld line; the parent's own
+      // completion check adds it once to the joined answer, so each child's
+      // copy is dropped here (the join trims what is left around it).
       result: tracker.output
         ? stripSharedFindings(
             extractDeliverableText(tracker.output) ?? tracker.output,
-          )
+          ).replaceAll(PASSWORD_WITHHELD_LINE, "")
         : tracker.output,
       error: tracker.error,
       durationMs: 0, // Not tracked per sub-task

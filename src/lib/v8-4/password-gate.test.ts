@@ -284,6 +284,24 @@ describe("password gate — the check", () => {
     expect(res.text).not.toContain(PW2);
   });
 
+  it("a text that already holds the placeholder and nothing to withhold gets the line once", () => {
+    // A stored text keeps only the placeholder; a reply that repeats it
+    // carries the explanation too.
+    const text = `${BOX}: ${PASSWORD_WITHHELD_PLACEHOLDER}`;
+    expect(withholdUnprovenValues(text, check([]))).toEqual({
+      text: `${text}\n\n${PASSWORD_WITHHELD_LINE}`,
+      checked: 0,
+      withheld: 0,
+    });
+    const once = `${text}\n\n${PASSWORD_WITHHELD_LINE}`;
+    expect(withholdUnprovenValues(once, check([])).text).toBe(once);
+  });
+
+  it("a text that carries the line in the middle is left as it is: present anywhere counts", () => {
+    const middle = `${BOX}: ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}\n\nOtro párrafo.`;
+    expect(withholdUnprovenValues(middle, check([])).text).toBe(middle);
+  });
+
   it("is idempotent: a second pass over its own output changes nothing", () => {
     const first = withholdUnprovenValues(`${BOX} ${STALE}`, check([STALE]));
     const second = withholdUnprovenValues(first.text, check([STALE]));

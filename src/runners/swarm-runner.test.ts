@@ -2,7 +2,7 @@
  * Tests for swarm runner sibling context injection.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 // Mock dispatcher before importing swarm-runner (it auto-registers).
 // getRunToolCalls added 2026-05-23 (queue #231) for the retry-policy taint check.
@@ -69,6 +69,8 @@ vi.mock("../lib/v8-4/consumer.js", async () => {
   return {
     reverifyChildLedger: v84.reverify,
     appendToDeliverable: actual.appendToDeliverable,
+    // The real completion check, for the stored-placeholder cases below.
+    applyCompletionLedger: actual.applyCompletionLedger,
   };
 });
 
@@ -102,9 +104,19 @@ import { reflect } from "../prometheus/reflector.js";
 const mockPlan = vi.mocked(plan);
 const mockReflect = vi.mocked(reflect);
 import { GoalGraph } from "../prometheus/goal-graph.js";
-import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
+import {
+  isLedgerLine,
+  PASSWORD_WITHHELD_PREFIX,
+  SWARM_FOOTER_PREFIX,
+} from "../lib/v8-4/ledger-lines.js";
 import { extractDeliverableText } from "../lib/deliverable.js";
 import { GoalStatus } from "../prometheus/types.js";
+import { applyCompletionLedger } from "../lib/v8-4/consumer.js";
+import { closeDatabase, initDatabase } from "../db/index.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+} from "../lib/v8-4/password-gate.js";
 import {
   getTask,
   submitTask,
@@ -1968,5 +1980,195 @@ describe("queue 4s-1 (c): ungated swarm children are visible at completion", () 
     expect(output.ungatedChildren).toEqual([]);
     expect(output.selfScoreVerified).toBe(true);
     expect(completeLine).toContain(", ungated=0");
+  }, 30_000);
+});
+
+// A durable store keeps only the placeholder, so a parent built from its
+// children's STORED output can deliver it with no value its own check
+// withholds: the parent's completion check adds the line, once.
+describe("swarm parent built from stored child output: a placeholder comes with the line", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const lines = (s: string) => s.split(L).length - 1;
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+  afterEach(async () => {
+    // initDatabase seeds files through upsertFile, whose fire-and-forget
+    // import("./jarvis-index.js") arms a 5 s index timer: settle it under real
+    // time, so the timer does not land in the next case's simulated polls.
+    await vi.dynamicImportSettled();
+    closeDatabase();
+    vi.clearAllMocks();
+    v84.reverify.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  /** The parent's result as the dispatcher hands it to its completion check
+   *  (the database opens after the run: the swarm's polls run in fake time). */
+  const checked = (taskId: string, result: Awaited<ReturnType<typeof swarmRunner.execute>>) => {
+    initDatabase(":memory:");
+    return applyCompletionLedger({
+      taskId,
+      runId: `run-${taskId}`,
+      agentType: "swarm",
+      tags: [],
+      taskDescription: "process items",
+      result,
+      taskStatus: "completed",
+    });
+  };
+
+  async function fanOut(parentId: string, childText: (id: string) => string) {
+    const g = new GoalGraph();
+    g.addGoal({ id: "g-1", description: "item 1" });
+    g.addGoal({ id: "g-2", description: "item 2" });
+    mockPlan.mockResolvedValue({ graph: g, usage: { promptTokens: 0, completionTokens: 0 } } as never);
+    let n = 0;
+    mockSubmitTask.mockImplementation(
+      async () => ({ taskId: `${parentId}-child-${++n}`, agentType: "fast" }) as never,
+    );
+    mockGetTask.mockImplementation(
+      (id: string) =>
+        ({ task_id: id, status: "completed", output: JSON.stringify({ text: childText(id) }) }) as never,
+    );
+    v84.reverify.mockResolvedValue(null);
+    mockReflect.mockResolvedValue({
+      result: { success: true, score: 0.9, learnings: [], summary: "ok" },
+      usage: { promptTokens: 0, completionTokens: 0 },
+    } as never);
+    return executeWithFakePolls({
+      taskId: parentId,
+      runId: `run-${parentId}`,
+      title: "fan-out",
+      description: "process items",
+    });
+  }
+
+  it("fan-out: a child's stored placeholder reaches the joined answer and the parent's check adds the line once", async () => {
+    const result = await fanOut("parent-p", (id) =>
+      id.endsWith("-1") ? `Buzón listo, clave: ${P}` : "Segundo buzón listo.",
+    );
+    const joined = extractDeliverableText(result.output)!;
+    expect(joined).toContain(P);
+    expect(lines(joined)).toBe(0);
+    const out = await checked("parent-p", result);
+    const delivered = extractDeliverableText(out.output)!;
+    expect(delivered).toBe(`${joined}\n\n${L}`);
+    expect(lines(delivered)).toBe(1);
+  }, 30_000);
+
+  it("fan-out: two children whose stored text each carries the line give the parent's answer the line once, at its end", async () => {
+    const result = await fanOut("parent-w", (id) => `Buzón ${id} listo, clave: ${P}\n\n${L}`);
+    const joined = extractDeliverableText(result.output)!;
+    expect(joined.split(P).length - 1).toBe(2);
+    expect(lines(joined)).toBe(0);
+    const out = await checked("parent-w", result);
+    const delivered = extractDeliverableText(out.output)!;
+    expect(delivered).toBe(`${joined}\n\n${L}`);
+    expect(lines(delivered)).toBe(1);
+  }, 30_000);
+
+  it("fan-out: one child with the line and one without give the line once, at the end", async () => {
+    const result = await fanOut("parent-x", (id) =>
+      id.endsWith("-1") ? `Buzón listo, clave: ${P}\n\n${L}` : "Segundo buzón listo.",
+    );
+    const joined = extractDeliverableText(result.output)!;
+    expect(lines(joined)).toBe(0);
+    const out = await checked("parent-x", result);
+    const delivered = extractDeliverableText(out.output)!;
+    expect(delivered).toBe(`${joined}\n\n${L}`);
+    expect(lines(delivered)).toBe(1);
+  }, 30_000);
+
+  it("fan-out: a child whose text carries the line twice gives the parent's answer the line once, at the end", async () => {
+    const result = await fanOut("parent-y", (id) =>
+      id.endsWith("-1") ? `Buzón listo, clave: ${P}\n\n${L}\n\n${L}` : "Segundo buzón listo.",
+    );
+    const joined = extractDeliverableText(result.output)!;
+    expect(lines(joined)).toBe(0);
+    const out = await checked("parent-y", result);
+    const delivered = extractDeliverableText(out.output)!;
+    expect(delivered).toBe(`${joined}\n\n${L}`);
+    expect(lines(delivered)).toBe(1);
+  }, 30_000);
+
+  it("fan-out: a child that quotes only the start of the line keeps its text byte for byte", async () => {
+    const quoted = `Buzón listo.\n${PASSWORD_WITHHELD_PREFIX} el envío del informe.`;
+    const result = await fanOut("parent-z", (id) => (id.endsWith("-1") ? quoted : "Segundo buzón listo."));
+    const joined = extractDeliverableText(result.output)!;
+    expect(joined.slice(0, joined.indexOf(SWARM_FOOTER_PREFIX))).toBe(
+      `${quoted}\n\nSegundo buzón listo.\n\n`,
+    );
+  }, 30_000);
+
+  it("fan-out with no placeholder: the parent's output passes its check unchanged", async () => {
+    const result = await fanOut("parent-q", (id) => `Buzón ${id} listo.`);
+    // The children's texts are joined byte for byte, up to the swarm footer.
+    const joined = extractDeliverableText(result.output)!;
+    expect(joined.slice(0, joined.indexOf(SWARM_FOOTER_PREFIX))).toBe(
+      "Buzón parent-q-child-1 listo.\n\nBuzón parent-q-child-2 listo.\n\n",
+    );
+    const before = result.output as Record<string, unknown>;
+    const out = await checked("parent-q", result);
+    expect(out.output).toEqual({ ...before, numbers_audit: expect.anything() });
+  }, 30_000);
+
+  async function demoted(parentId: string, childOutput: Record<string, unknown>) {
+    const g = new GoalGraph();
+    g.addGoal({ id: "g-1", description: "step 1" });
+    g.addGoal({ id: "g-2", description: "step 2", dependsOn: ["g-1"] });
+    mockPlan.mockResolvedValue({ graph: g, usage: { promptTokens: 0, completionTokens: 0 } } as never);
+    mockSubmitTask.mockResolvedValue({ taskId: `${parentId}-heavy`, agentType: "heavy" } as never);
+    mockGetTask.mockReturnValue({
+      task_id: `${parentId}-heavy`,
+      status: "completed",
+      output: JSON.stringify(childOutput),
+    } as never);
+    return executeWithFakePolls({
+      taskId: parentId,
+      runId: `run-${parentId}`,
+      title: "chain",
+      description: "do a sequential analysis",
+    });
+  }
+
+  it("demoted chain: the mirrored stored output's placeholder gets the line once at the parent", async () => {
+    const result = await demoted("parent-d", {
+      content: "resumen",
+      finalAnswer: `Paso 2 listo, clave: ${P}`,
+    });
+    expect((result.output as { finalAnswer: string }).finalAnswer).toBe(`Paso 2 listo, clave: ${P}`);
+    const out = await checked("parent-d", result);
+    expect(out.output).toEqual({
+      content: "resumen",
+      finalAnswer: `Paso 2 listo, clave: ${P}\n\n${L}`,
+      numbers_audit: expect.anything(),
+    });
+  }, 30_000);
+
+  it("demoted chain: a mirrored output that already carries the line keeps it once", async () => {
+    const result = await demoted("parent-f", {
+      content: "resumen",
+      finalAnswer: `Paso 2 listo, clave: ${P}\n\n${L}`,
+    });
+    const out = await checked("parent-f", result);
+    expect(out.output).toEqual({
+      content: "resumen",
+      finalAnswer: `Paso 2 listo, clave: ${P}\n\n${L}`,
+      numbers_audit: expect.anything(),
+    });
+  }, 30_000);
+
+  it("demoted chain with no placeholder: unchanged", async () => {
+    const result = await demoted("parent-e", { content: "resumen", finalAnswer: "Paso 2 listo." });
+    const out = await checked("parent-e", result);
+    expect(out.output).toEqual({
+      content: "resumen",
+      finalAnswer: "Paso 2 listo.",
+      numbers_audit: expect.anything(),
+    });
   }, 30_000);
 });

@@ -87,6 +87,7 @@ import {
 
 import {
   PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
   replaceUnprovenValues,
   withPasswordWithheldLine,
   type PasswordValueCheck,
@@ -221,7 +222,8 @@ function withholdInObject(
 
 /**
  * password-gate.ts at the one seam where the final text and the run's proof
- * are both in hand. Called only when the delivered text had a hit: then
+ * are both in hand. Called only when the checked delivered text holds the
+ * placeholder (withheld here, or already in it): then
  * every text field (not only the delivered one) loses each seen-and-unproven
  * value and the one line is appended to the delivered text. A JSON-encoded
  * string carrier (the shape `extractDeliverableText` parses) is rewritten as
@@ -294,11 +296,11 @@ function withholdInLeaves(
 }
 
 /**
- * An object output with no deliverable text, called only when its JSON text
- * withholds a value. The router shows an object with no canonical text field
- * at all as its JSON dump: here the leaves are checked and the checked dump,
- * with the one line, becomes its `text` field, so the reply is that dump
- * with the placeholder. An object whose canonical fields are all empty is
+ * An object output with no deliverable text, called only when its checked
+ * JSON text holds the placeholder. The router shows an object with no
+ * canonical text field at all as its JSON dump: here the leaves are checked
+ * and the checked dump, with the one line, becomes its `text` field, so the
+ * reply is that dump with the placeholder. An object whose canonical fields are all empty is
  * not shown (the router sends its failure line): its leaves are checked and
  * no line is added. An array (no field to hold the line) becomes its checked
  * dump with the line, as a string.
@@ -656,14 +658,18 @@ export async function applyCompletionLedger(
     if (scanned) {
       const check = passwordCheckFor(provenPasswords(taskId));
       const audit = replaceUnprovenValues(scanned, check);
+      // A delivered placeholder always comes with the line, also one this
+      // check did not put there (a stored text the run read back): one
+      // substring search over the checked text.
+      const explain = audit.text.includes(PASSWORD_WITHHELD_PLACEHOLDER);
+      if (explain && unshaped) {
+        output = withholdInUnshapedObject(output as object, check);
+      } else if (explain) {
+        const next = withholdUnprovenInOutput(output, check);
+        deliverable = extractDeliverableText(next) ?? "";
+        output = next;
+      }
       if (audit.checked > 0) {
-        if (audit.withheld > 0 && unshaped) {
-          output = withholdInUnshapedObject(output as object, check);
-        } else if (audit.withheld > 0) {
-          const next = withholdUnprovenInOutput(output, check);
-          deliverable = extractDeliverableText(next) ?? "";
-          output = next;
-        }
         console.log(
           `[v8-4] password-gate task=${taskId} checked=${audit.checked} withheld=${audit.withheld}`,
         );

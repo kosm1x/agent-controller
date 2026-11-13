@@ -624,6 +624,20 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("a fast-path reply that repeats the placeholder from the thread is delivered with the line once", async () => {
+      const repeated = `¡Hola! La clave de box@example.test quedó como ${PASSWORD_WITHHELD_PLACEHOLDER}.`;
+      fastPathStub.reply = repeated;
+      await greet();
+      const delivered = `${repeated}\n\n${PASSWORD_WITHHELD_LINE}`;
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([delivered]);
+      expect(delivered.split(PASSWORD_WITHHELD_LINE)).toHaveLength(2);
+
+      waAdapter.sentMessages.length = 0;
+      fastPathStub.reply = delivered;
+      await greet();
+      expect(waAdapter.sentMessages.map((m) => m.text)).toEqual([delivered]);
+    });
+
     it("a reply that is empty after filtering is not sent and falls through to the normal path", async () => {
       fastPathStub.reply = " \n\n ";
       await expectFallThrough();
