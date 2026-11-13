@@ -207,6 +207,8 @@ Not worth doing: chasing a coverage percentage; rewriting mock-heavy tests; loca
 
 ### Batch 6 — Emergency inference path drill (ruling 8)
 
+**Status 2026-11-13 19:57 UTC — late-cancel fix COMMITTED `97655dcf` (queue 4dy), not yet deployed: a cancel that arrives late in a run (during the fallback run, the required-tools check or the closing work) still ends the run as cancelled, is announced exactly once, and a run that throws after a cancel leaves run and task rows in agreement. Three review rounds with mutation tests; follow-ups in 4eg. The drill itself now allows one database ask in its size-refusal scenario, pinned to its caller, and still proves the path completes when that ask fails (comes with the store-rule piece, not yet committed).**
+
 **Status 2026-11-12 17:19 UTC — the drill's findings COMMITTED `addecf81` (queue 4dy), not yet deployed: a cancelled run is recorded as cancelled on every path and nothing follows it; a size refusal is resent inside its round; a caller's cancellation is not a provider failure; the comment corrected; the authentication guard tested. One review round, 20 mutants. Left: a terminal trace event for a cancelled task, three runners that do not stop on a cancel, and the paid drill (a later operator decision).**
 
 **Status 2026-11-12 02:08 UTC — mocked drill COMMITTED `4146e642` (queue 4dy): five scenarios through the real runner and adapters, no real model call. Left in this batch: the fix for a cancelled run reported as completed, one untrue comment, one missing guard test; the paid drill stays a later operator decision.**
