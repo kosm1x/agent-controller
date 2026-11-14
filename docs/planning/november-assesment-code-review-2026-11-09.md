@@ -201,6 +201,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-14 05:32 UTC — real-database tests: pieces 24–29 COMMITTED (`11ddbeb2`, `115982fe`; twenty-nine of thirty done; suite 645 files, 17,416 tests). The last piece is being built in two halves. Test safety, same commit `115982fe`: tests cannot reach the live vector store, and two of the three older video tests work in a throwaway folder (queue 4ey; the third waits for the yes/no in 4ex). The host commit check still waits for the operator's install line (4db). Left: the last piece with the Q2 cancel-pattern test, 4er, the follow-up pieces in 4ey.**
+
 **Status 2026-11-14 04:48 UTC — real-database tests: pieces 19–23 COMMITTED `17a1cb5b` (twenty-three of thirty done; suite 635 files, 17,383 tests). Pieces 24–26 are being built. Found on the way: three older host-only video tests leave folders behind in the service's video working folder on every commit run, and one of them calls an outside service (queue 4ex). The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, seven more pieces, 4er.**
 
 **Status 2026-11-14 03:43 UTC — real-database tests: pieces 13–18 COMMITTED `629c5f52` (eighteen of thirty done; suite 631 files, 17,347 tests). They found one live defect (the nightly signal baselines were never written; fix in progress) and one question (the hold-back for repeated alerts is recorded but never applied), both in queue 4ew. The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, twelve more pieces, 4er.**
