@@ -64,9 +64,11 @@ Rules only; mechanism + history → §Invariants.
 Tests: `src/**/*.test.ts` (vitest, colocated with source).
 
 - Mock `infer`/`inferWithTools` via `vi.mock("../inference/adapter.js")` — never call real LLM in tests
+- The test setup (`vitest.setup-env.ts`) enforces this suite-wide and does the same for the network: a test that reaches the model entry point, or opens a connection to another machine, gets an error at the caller AND is failed by a check after the test (a caller may swallow the error). Hand the code a stand-in, or a listener on `127.0.0.1`. Never loosen the setup or its helpers under `src/test-utils/` to make a test pass; child processes and workers are not covered.
 - Mock `getDatabase` when testing components that touch SQLite
 - Every new type field must have assertions in existing tests (cascading type changes break silently)
 - **Agent-run test runs are fenced (operator ruling 2026-11-08, queue 4ca)**: every vitest invocation by an agent (audits, mutation runs, bisects, scoped runs) is launched as `systemd-run --scope -p MemoryMax=6G -p MemorySwapMax=0 --quiet -- npx vitest run <scoped path>`. Why: on 11-07 a qa-auditor mutant raised `OPEN_WORK_SCAN_LIMIT` to 1e9 and one synchronous insert loop (`open-work.test.ts:282`) grew to 14.5 GB of native better-sqlite3 memory before the kernel killed it; `--max-old-space-size`, `testTimeout` and `maxWorkers` cannot stop that, only a process ceiling does. Scoping rules unchanged: never a bare run, never `src/`; `--poolOptions.forks.singleFork` breaks the suite (prometheus double-register), use `--no-file-parallelism` for sequential runs.
+- **One heavy run at a time on the VPS (operator alert 2026-11-14)**: the same command first checks that no test runner and no typecheck is running — counted by program name (`ps -o comm=`), never by command-line text, which also matches the shells that wait — and that the 1-minute load is below 2.5, all chained with `&&` to the fenced run; wait with ONE background loop that sleeps between checks. A commit (its hook runs the whole suite and the typecheck on the working tree) waits until no other agent has an uncommitted or temporary edit in the tree, and is followed by a quiet gap.
 
 ## Agent Design Principles
 
@@ -100,6 +102,7 @@ Harness recipe, cutover/revert scripts, scope classifier, JME, Hindsight → §I
   npm run build && systemctl restart mission-control   # manual
   ```
   After deploy, always verify: `systemctl is-active mission-control` → `journalctl -u mission-control --since '30 sec ago'` → test one affected endpoint/workflow.
+- **`public/` is live without a deploy**: the running service serves the dashboard folder straight from the working tree, so a saved change there is in production at once. Replace a file by ONE atomic rename of a checked copy (`node --check` for a script); never make a temporary or fault edit of a served file.
 - **Risky / never-run paths**: debut with a `scripts/validate-*.ts` harness, NOT against live state; gate real spend behind `--run`.
 - **tsx cache**: `rm -rf /tmp/tsx-0/ && systemctl restart mission-control` when live behavior ≠ source.
 - **Deferred tools**: **A tool at the head of a scope group's call distribution must not be `deferred: true`**; re-run `npx tsx scripts/validate-tool-search.ts --run` after changing any `deferred` flag.

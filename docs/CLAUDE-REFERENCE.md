@@ -55,6 +55,7 @@ Jarvis's `git_commit` and `jarvis_dev action=pr` commit with `--no-verify` on `j
 Tests: `src/**/*.test.ts` (vitest, colocated with source).
 
 - Mock `infer`/`inferWithTools` via `vi.mock("../inference/adapter.js")` — never call real LLM in tests
+- The test setup (`vitest.setup-env.ts`) enforces this suite-wide and does the same for the network: a test that reaches the model entry point, or opens a connection to another machine, gets an error at the caller AND is failed by a check after the test (a caller may swallow the error). Hand the code a stand-in, or a listener on `127.0.0.1`. Never loosen the setup or its helpers under `src/test-utils/` to make a test pass; child processes and workers are not covered.
 - Mock `getDatabase` when testing components that touch SQLite
 - Every new type field must have assertions in existing tests (cascading type changes break silently)
 

@@ -325,10 +325,12 @@ confirmation rules as a scheduled task.
 
 Testing rules:
 
-- Run scoped tests (one file, or the narrowest directory). The whole suite, about 590 test files,
+- Run scoped tests (one file, or the narrowest directory). The whole suite, about 680 test files,
   can run out of memory on a small machine. CI (`.github/workflows/ci.yml`) runs it in 3 shards.
 - Tests never call a real LLM. Mock `infer`/`inferWithTools` with
   `vi.mock("../inference/adapter.js")`.
+- The test setup (`vitest.setup-env.ts`) backs this up: a test that reaches a real model, or opens a
+  connection to another machine, is failed. Give the code a stand-in or a listener on `127.0.0.1`.
 - Optional pre-commit hook (typecheck plus `vitest related` on staged `.ts` files):
   `git config core.hooksPath scripts/git-hooks`.
 
