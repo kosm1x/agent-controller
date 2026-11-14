@@ -150,43 +150,109 @@ describe("placeholders keep each caller's style", () => {
   });
 });
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
+/** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
+const GROWTH_BOUND = 8;
+
+/**
+ * How the CPU time of `fn` grows from input `make(n)` to input `make(4 * n)`. Both sizes repeat
+ * the call the same number of times, doubled until one run of the smaller size takes 40 ms, so
+ * the figure is not lost in timer noise. Linear work grows about 4x and quadratic work about 16x,
+ * whatever the machine's speed or load. The ratio is measured up to three times and the smallest
+ * is kept, stopping at the first one under GROWTH_BOUND: on a busy machine one noisy measurement
+ * can push a single ratio over the bound, but the noise does not repeat three times, while a real
+ * super-linear change measures about 16x on every attempt and still fails. `largeMs` is the larger
+ * size's CPU ms per call from the first attempt.
+ */
+function growth4x<T>(
+  make: (size: number) => T,
+  n: number,
+  fn: (input: T) => unknown,
+): { ratio: number; largeMs: number; label: string } {
+  const small = make(n);
+  const large = make(4 * n);
+  let reps = 1;
+  fn(small);
+  for (;;) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn(small);
+    const d = process.cpuUsage(c0);
+    if ((d.user + d.system) / 1000 >= 40 || reps >= 1_000_000) break;
+    reps *= 2;
+  }
+  let ratio = Infinity;
+  let largeMs = NaN;
+  let label = "";
+  for (let attempt = 1; attempt <= 3 && ratio >= GROWTH_BOUND; attempt++) {
+    const a = cpuMsPerCall(() => fn(small), reps);
+    const b = cpuMsPerCall(() => fn(large), reps);
+    if (attempt === 1) largeMs = b;
+    if (b / a < ratio) {
+      ratio = b / a;
+      label = `${b.toFixed(3)} ms / ${a.toFixed(3)} ms per call, ${reps} calls per run, attempt ${attempt}`;
+    }
+  }
+  return { ratio, largeMs, label };
+}
+
+/** The first `len` characters of `unit` repeated. */
+const repeatTo = (unit: string, len: number) => unit.repeat(Math.ceil(len / unit.length)).slice(0, len);
+
 describe("linear time on large input", () => {
-  it("each entry point redacts 1 MB of mixed text in well under a second", () => {
+  it("each entry point stays linear, and under 1 s on 1 MB of mixed text", () => {
     const unit = `line ${"gh" + "p_" + A(36)} and ${"-eyJ" + A(20)} sk-sk-sk- KEY_KEY_KEY ${"a=".repeat(8)} `;
-    const big = unit.repeat(Math.ceil(1_000_000 / unit.length)).slice(0, 1_000_000);
     for (const [entry, fn] of ENTRY_POINTS) {
-      const t0 = performance.now();
-      fn(big);
-      const ms = performance.now() - t0;
-      console.log(`[timing] ${entry} on 1 MB of mixed text: ${ms.toFixed(1)} ms`);
-      expect(ms, entry).toBeLessThan(1000);
+      // 25 KB to 100 KB: about 4x for linear work, about 16x for quadratic (both sizes under
+      // 128 KB, where the growth measures closer to linear); the original 1 s ceiling at 1 MB.
+      const g = growth4x((len) => repeatTo(unit, len), 25_000, fn);
+      expect(g.ratio, `${entry}: ${g.label}`).toBeLessThan(GROWTH_BOUND);
+      const big = repeatTo(unit, 1_000_000);
+      expect(cpuMsPerCall(() => fn(big)), entry).toBeLessThan(1000);
     }
   });
 
-  it("the shared function stays linear on inputs built to make a pattern backtrack", () => {
-    const hostile = [
-      "-eyJ" + "a".repeat(30), // JWT start with no dots
-      "sk-".repeat(5),
-      "KEY_".repeat(5),
-      "a=".repeat(5),
-      '"password":"' + "x".repeat(30), // unterminated JSON field
-      "f".repeat(60) + "g", // hex run ending in a word char
-      "jrvs_" + "a".repeat(40) + "z",
-      "Authorization" + " ".repeat(30),
-      "a_token=" + "1".repeat(40) + " ", // secret-like: digits-only value skipped
-      "x_TOKEN_2=" + "disabled&", // secret-like: settings word skipped
-      "\\n" + "%3D", // leading-anchor alternatives back to back
-    ];
-    for (const namedValues of ["any", "secret-like"] as const) {
-      for (const unit of hostile) {
-        const big = unit.repeat(Math.ceil(1_000_000 / unit.length)).slice(0, 1_000_000);
-        const t0 = performance.now();
-        redactSecretText(big, { style: "generic", hexBlobs: true, namedValues });
-        const ms = performance.now() - t0;
-        console.log(`[timing] ${namedValues}: 1 MB of ${JSON.stringify(unit.slice(0, 16))}…: ${ms.toFixed(1)} ms`);
-        expect(ms, unit).toBeLessThan(1000);
-      }
+  const hostile = [
+    "-eyJ" + "a".repeat(30), // JWT start with no dots
+    "sk-".repeat(5),
+    "KEY_".repeat(5),
+    "a=".repeat(5),
+    '"password":"' + "x".repeat(30), // unterminated JSON field
+    "f".repeat(60) + "g", // hex run ending in a word char
+    "jrvs_" + "a".repeat(40) + "z",
+    "Authorization" + " ".repeat(30),
+    "a_token=" + "1".repeat(40) + " ", // secret-like: digits-only value skipped
+    "x_TOKEN_2=" + "disabled&", // secret-like: settings word skipped
+    "\\n" + "%3D", // leading-anchor alternatives back to back
+  ];
+  // One case per input and mode, so each stays well inside the runner's test timeout. Both modes
+  // run the same patterns, and `secret-like` only adds a check on each match, so the growth is
+  // measured in that mode; both modes keep the 1 s ceiling at 1 MB.
+  it.each(
+    (["any", "secret-like"] as const).flatMap((namedValues) => hostile.map((unit) => [namedValues, unit] as const)),
+  )("the shared function stays linear on inputs built to make a pattern backtrack (%s: %j)", (namedValues, unit) => {
+    const redact = (text: string) => redactSecretText(text, { style: "generic", hexBlobs: true, namedValues });
+    if (namedValues === "secret-like") {
+      const g = growth4x((len) => repeatTo(unit, len), 25_000, redact);
+      expect(g.ratio, g.label).toBeLessThan(GROWTH_BOUND);
     }
+    const big = repeatTo(unit, 1_000_000);
+    expect(cpuMsPerCall(() => redact(big))).toBeLessThan(1000);
   });
 });
 

@@ -291,26 +291,98 @@ describe("bot token never leaves the adapter (2026-10-03)", () => {
 
 // Audit fold (2026-10-03): the converter runs on the event loop with up to
 // 20 MB in; every pathological shape must stay linear.
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
+/** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
+const GROWTH_BOUND = 8;
+
+/**
+ * How the CPU time of `fn` grows from input `make(n)` to input `make(4 * n)`. Both sizes repeat
+ * the call the same number of times, doubled until one run of the smaller size takes 40 ms, so
+ * the figure is not lost in timer noise. Linear work grows about 4x and quadratic work about 16x,
+ * whatever the machine's speed or load. The ratio is measured up to three times and the smallest
+ * is kept, stopping at the first one under GROWTH_BOUND: on a busy machine one noisy measurement
+ * can push a single ratio over the bound, but the noise does not repeat three times, while a real
+ * super-linear change measures about 16x on every attempt and still fails. `largeMs` is the larger
+ * size's CPU ms per call from the first attempt.
+ */
+function growth4x<T>(
+  make: (size: number) => T,
+  n: number,
+  fn: (input: T) => unknown,
+): { ratio: number; largeMs: number; label: string } {
+  const small = make(n);
+  const large = make(4 * n);
+  let reps = 1;
+  fn(small);
+  for (;;) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn(small);
+    const d = process.cpuUsage(c0);
+    if ((d.user + d.system) / 1000 >= 40 || reps >= 1_000_000) break;
+    reps *= 2;
+  }
+  let ratio = Infinity;
+  let largeMs = NaN;
+  let label = "";
+  for (let attempt = 1; attempt <= 3 && ratio >= GROWTH_BOUND; attempt++) {
+    const a = cpuMsPerCall(() => fn(small), reps);
+    const b = cpuMsPerCall(() => fn(large), reps);
+    if (attempt === 1) largeMs = b;
+    if (b / a < ratio) {
+      ratio = b / a;
+      label = `${b.toFixed(3)} ms / ${a.toFixed(3)} ms per call, ${reps} calls per run, attempt ${attempt}`;
+    }
+  }
+  return { ratio, largeMs, label };
+}
+
 describe("htmlToText is linear and capped", () => {
   const MB = 1_000_000;
-  it.each([
-    ["unclosed <script", "<script>" + "a".repeat(MB)],
-    ["repeated <script", "<script".repeat(MB / 7)],
-    ["repeated <", "<".repeat(MB)],
-    ["repeated <!--", "<!--".repeat(MB / 4)],
-    ["repeated < br", "< br".repeat(MB / 4)],
-    ["repeated <title", "<title".repeat(MB / 6)],
-    ["repeated &aaaa", ("&" + "a".repeat(40)).repeat(MB / 41)],
-  ])("%s (1 MB) converts well under 1 s", (_name, html) => {
-    const t0 = performance.now();
-    htmlToText(html);
-    expect(performance.now() - t0).toBeLessThan(1_000);
+  const KB = 1_024;
+  // Each shape grows from 16 KB to 64 KB: about 4x for linear work, 16x for a pattern that
+  // rescans from each opener. Both sizes stay under 128 KB: across that size the cheapest shapes
+  // measured a growth above 20x although the conversion is linear. CEILING_MS is per call at
+  // 64 KB: the original 1 s at 1 MB, scaled to this size.
+  const CEILING_MS = 64;
+  it.each<[string, (size: number) => string]>([
+    ["unclosed <script", (size) => "<script>" + "a".repeat(size)],
+    ["repeated <script", (size) => "<script".repeat(size / 7)],
+    ["repeated <", (size) => "<".repeat(size)],
+    ["repeated <!--", (size) => "<!--".repeat(size / 4)],
+    ["repeated < br", (size) => "< br".repeat(size / 4)],
+    ["repeated <title", (size) => "<title".repeat(size / 6)],
+    ["repeated &aaaa", (size) => ("&" + "a".repeat(40)).repeat(size / 41)],
+  ])("%s converts in linear time (16 KB to 64 KB)", (_name, html) => {
+    const g = growth4x(html, 16 * KB, (text) => htmlToText(text));
+    expect(g.ratio, g.label).toBeLessThan(GROWTH_BOUND);
+    expect(g.largeMs, g.label).toBeLessThan(CEILING_MS);
+  });
+
+  it("repeated <!-- at the 1 MB input cap converts in bounded CPU time", () => {
+    const html = "<!--".repeat(MB / 4);
+    expect(cpuMsPerCall(() => htmlToText(html))).toBeLessThan(1_000);
   });
 
   it("input over 1 MB is cut and the output says so", () => {
-    const t0 = performance.now();
+    // No elapsed-time bound (it would fail on a busy machine): the cut is proven by the message
+    // below, and the runner's test timeout guards against a hang.
     const out = htmlToText("<p>x</p>" + "<".repeat(20 * MB));
-    expect(performance.now() - t0).toBeLessThan(1_000);
     expect(out).toMatch(
       /^\[HTML truncado: solo se convirtieron los primeros 1,000,000 de 20,000,008 caracteres\]/,
     );

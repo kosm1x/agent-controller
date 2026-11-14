@@ -41,6 +41,23 @@ import {
 } from "../../lib/v8-4/store-withhold.js";
 
 // Fragment-assembled fake fixtures (see file header).
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 const SK = "sk-" + "abcdefghijklmnop1234567890ABCD";
 const SK_PROJ = "sk-" + "proj-abcdefghijklmnop1234567890ABCD";
 const GHP = "ghp" + "_abcdefghijklmnopqrstu";
@@ -151,9 +168,11 @@ describe("redactSecrets", () => {
   });
 
   it("stays linear on a long snake_case run with no '=' (R1 W3)", () => {
-    const t0 = performance.now();
-    redactSecrets("KEY_".repeat(12_500));
-    expect(performance.now() - t0).toBeLessThan(100);
+    // CPU time against a bound: linear work on this input is too small for a stable growth
+    // ratio; a pattern that restarts at every position takes seconds on these 50,000 characters.
+    const text = "KEY_".repeat(12_500);
+    expect(redactSecrets(text)).toBe(text);
+    expect(cpuMsPerCall(() => redactSecrets(text))).toBeLessThan(100);
   });
 
   it("redacts Telegram bot tokens", () => {

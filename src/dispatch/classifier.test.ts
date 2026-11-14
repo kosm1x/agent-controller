@@ -24,6 +24,23 @@ import type {
   FeedbackStats,
 } from "../db/task-outcomes.js";
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 describe("classifier", () => {
   it("should classify short simple tasks as fast", () => {
     const result = classify({
@@ -1188,11 +1205,10 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
 
   it("isStrategyRelayOrReadback is bounded on a long single-sentence message (logic audit F1: 1 s at 686 chars, ~4x per 60 chars)", () => {
     const text = "escribe la estrategia" + " en el doc para revision ahora".repeat(24) + " zzqq";
-    const t0 = performance.now();
-    const out = isStrategyRelayOrReadback(text);
-    const ms = performance.now() - t0;
-    expect(out).toBe(false);
-    expect(ms).toBeLessThan(100);
+    expect(isStrategyRelayOrReadback(text)).toBe(false);
+    // The length guard makes this constant work, so no doubling ratio applies: CPU time, with
+    // a bound far above the guarded cost and far below the unguarded one (about a second).
+    expect(cpuMsPerCall(() => isStrategyRelayOrReadback(text))).toBeLessThan(100);
   });
 
   it("isCodingTask: code authoring → true; host git ops / prose / strategy → false", () => {
@@ -1351,18 +1367,17 @@ describe("classifier — coding/heavy routing predicates (2026-06-19)", () => {
     expect((pad + "y responde con 1) sí 2) no o 3) luego").length).toBeGreaterThanOrEqual(160);
   });
 
-  it("isEnumeratedWorkOrder stays linear on hostile input", () => {
-    const text =
-      "1)" + " ".repeat(50_000) + "1) ".repeat(20_000) + "(1".repeat(20_000);
-    const t0 = performance.now();
-    const out = isEnumeratedWorkOrder(text);
-    const ms = performance.now() - t0;
-    expect(out).toBe(false);
-    expect(ms).toBeLessThan(100);
+  it("isEnumeratedWorkOrder is bounded on hostile input", () => {
+    const text = "1)" + " ".repeat(50_000) + "1) ".repeat(20_000) + "(1".repeat(20_000);
+    expect(isEnumeratedWorkOrder(text)).toBe(false);
+    // This input takes well under a millisecond, too little for a stable growth ratio: CPU time
+    // against a bound far above that cost and far below a backtracking pattern's (seconds).
+    expect(cpuMsPerCall(() => isEnumeratedWorkOrder(text))).toBeLessThan(200);
+    // This input holds 40,000 match objects at once and its growth ratio is not linear, so a
+    // ratio is not a clean signal here: CPU time against a generous bound instead.
     const restarts = "1) a ".repeat(40_000);
-    const t1 = performance.now();
     expect(isEnumeratedWorkOrder(restarts)).toBe(false);
-    expect(performance.now() - t1).toBeLessThan(200);
+    expect(cpuMsPerCall(() => isEnumeratedWorkOrder(restarts))).toBeLessThan(1000);
   });
 
   it("INVARIANT: a non-messaging (auto) coding task is containerized → nanoclaw", () => {

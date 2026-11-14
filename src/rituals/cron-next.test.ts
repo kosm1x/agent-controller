@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   cronMatchesAt,
   describeCron,
@@ -93,9 +93,17 @@ describe("nextCronFire", () => {
     for (const expr of ["0 8 * * *", "50 23 * * *", "30 16 * * 1-5", "0 20 * * 5", "0 1 * * 2,4,6", "*/30 * * * *", "0 9 27 7 *"]) {
       expect(nextCronFire(expr, from, MX)?.toISOString() ?? null).toBe(brute(expr));
     }
-    const t0 = performance.now();
-    for (let i = 0; i < 10; i++) nextCronFire("0 9 27 7 *", from, MX);
-    expect(performance.now() - t0).toBeLessThan(200); // 10 yearly scans; was 188 ms EACH
+    // Work done, not elapsed time (a fixed bound in ms fails on a busy machine): a fixed-minute
+    // expression needs at most one probe per hour of the 8-day window, 192 probes, where a
+    // minute-by-minute scan probes 11,520 times. Each probe reads the zoned parts once.
+    const probes = vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts");
+    try {
+      for (let i = 0; i < 10; i++) expect(nextCronFire("0 9 27 7 *", from, MX)).toBeNull();
+      expect(probes.mock.calls.length).toBeGreaterThan(0);
+      expect(probes.mock.calls.length).toBeLessThanOrEqual(10 * 8 * 24);
+    } finally {
+      probes.mockRestore();
+    }
   });
 
   it("returns null for a one-shot outside the 8-day window", () => {

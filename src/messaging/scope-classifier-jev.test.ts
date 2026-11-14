@@ -258,21 +258,27 @@ describe("classifyScopeGroups wiring", () => {
   });
 
   it("gives up on the vendor at 1.5 s and falls through", async () => {
-    let abortedAt = 0;
-    const started = performance.now();
+    // The deadline is the request signal's own timeout: its value is asserted
+    // and its expiry is triggered here, so the case does not depend on how
+    // busy the machine is.
+    const deadline = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(deadline.signal);
     mockFetch.mockImplementation(
       (_url: string, init: { signal: AbortSignal }) =>
-        new Promise((_, reject) =>
-          init.signal.addEventListener("abort", () => {
-            abortedAt = performance.now() - started;
-            reject(init.signal.reason);
-          }),
-        ),
+        new Promise((_, reject) => {
+          init.signal.addEventListener("abort", () =>
+            reject(init.signal.reason),
+          );
+          deadline.abort(new DOMException("deadline", "TimeoutError"));
+        }),
     );
     expect(await ask("revisa el deploy")).toBeNull();
-    expect(abortedAt).toBeGreaterThan(1000);
-    expect(abortedAt).toBeLessThan(2500);
-  }, 4000);
+    expect(timeout).toHaveBeenCalledTimes(1);
+    expect(timeout).toHaveBeenCalledWith(1500);
+    expect(mockFetch.mock.calls[0][1].signal).toBe(deadline.signal);
+  });
 
   it("goes straight to Sonnet when the kill switch is set", async () => {
     vi.stubEnv("SCOPE_CLASSIFIER_PROVIDER", "sonnet");

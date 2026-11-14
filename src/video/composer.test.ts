@@ -48,13 +48,14 @@ vi.mock("child_process", async (importOriginal) => {
   };
 });
 
-// Pin worker-pool sizing so the parallelism assertion below isn't host-dependent.
-// Without this, a 1- or 2-core CI box yields pool size 1 and the `peak > 1`
-// assertion fails for environment reasons rather than code reasons.
+// Pin worker-pool sizing so the parallelism assertion below does not depend on
+// the host's core count or free memory. The pinned functions go on the default
+// export as well as the named ones: src/video/worker-pool.ts reads the default
+// import (`os.cpus()`), and pinning only the named exports leaves the host's
+// real values in charge.
 vi.mock("os", async (importOriginal) => {
   const orig = (await importOriginal()) as typeof import("os");
-  return {
-    ...orig,
+  const pinned = {
     cpus: () =>
       Array(8).fill({
         model: "mock",
@@ -63,6 +64,7 @@ vi.mock("os", async (importOriginal) => {
       }) as ReturnType<typeof orig.cpus>,
     freemem: () => 4 * 1024 * 1024 * 1024, // 4 GB free
   };
+  return { ...orig, ...pinned, default: { ...orig, ...pinned } };
 });
 
 describe("buildOverlayFilterGraph", () => {
@@ -185,8 +187,9 @@ describe("composeVideo — v7.4 S1.1 parallel scene-clip generation", () => {
 
     // Parallelism observable: with 8 mocked CPUs + 4GB mocked free mem,
     // computePoolSize() returns min(MAX_WORKERS=4, 8*0.5=4, 4096/512=8) = 4.
-    // 4-task fan-out → peak inflight should hit 4 (or at least 2 worst case).
-    expect(peak).toBeGreaterThanOrEqual(2);
+    // All four clip calls start before the first one finishes, so the peak
+    // equals the pool size exactly.
+    expect(peak).toBe(4);
 
     // Assembly steps (concat + final encode) run via async execFile too — a
     // sync exec here would block the whole single-process orchestrator for

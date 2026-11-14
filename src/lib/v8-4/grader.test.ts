@@ -388,13 +388,30 @@ describe("runGrader — fail paths are pending, never met", () => {
       signal = (o as Opts).abortSignal;
       return new Promise(() => {});
     });
-    const res = await runGrader(INPUT, { budgetMs: 30 });
-    expect(res.reason).toBe("budget_exhausted");
-    expect(res.model).toBeNull();
-    expect(signal?.aborted).toBe(true);
-    expect(res.verdicts.every((v) => v.verdict === "pending")).toBe(true);
-    expect(res.verdicts[0]!.evidence).toMatch(/budget exhausted after 30 ms/);
-    expect(res.latencyMs).toBeGreaterThanOrEqual(25);
+    // Fake timers: the budget fires exactly at 30 ms of simulated time, so the
+    // latency is asserted as a value instead of against a busy machine's clock.
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      const pending = runGrader(INPUT, { budgetMs: 30 });
+      void pending.then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(29);
+      expect(done).toBe(false);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done).toBe(true);
+      const res = await pending;
+      expect(res.reason).toBe("budget_exhausted");
+      expect(res.model).toBeNull();
+      expect(signal?.aborted).toBe(true);
+      expect(res.verdicts.every((v) => v.verdict === "pending")).toBe(true);
+      expect(res.verdicts[0]!.evidence).toMatch(/budget exhausted after 30 ms/);
+      expect(res.latencyMs).toBe(30);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("budget: the result carries `settled`, resolved only once the orphaned call settles (resolve or reject); a settled call returns none (11b)", async () => {
@@ -558,28 +575,42 @@ describe("runGrader — grounding tools", () => {
             late = () => resolve({ ...SDK_RESULT, toolCalls: [] });
           }),
       );
-      const res = await runGrader(INPUT, {
-        budgetMs: 10,
-        orphanMaxHoldMs: 20,
-        provenance: [],
-      });
-      expect(res.reason).toBe("budget_exhausted");
-      const t = Date.now();
-      await res.settled;
-      expect(Date.now() - t).toBeLessThan(100);
-      expect(closeSpy).toHaveBeenCalledTimes(1);
-      expect((closeSpy.mock.contexts[0] as Database.Database).open).toBe(false);
-      expect(mockLogWarn).toHaveBeenCalledTimes(1);
-      expect(mockLogWarn.mock.calls[0]).toEqual([
-        { taskId: INPUT.taskId },
-        expect.stringMatching(
-          /^\[grader\] orphaned call still running after \d+ ms — slot and connection released$/,
-        ),
-      ]);
-      late(); // the real settle, long after release
-      await new Promise((r) => setTimeout(r, 10));
-      expect(closeSpy).toHaveBeenCalledTimes(1); // no double close
-      expect(mockLogWarn).toHaveBeenCalledTimes(1);
+      // Fake timers: the release happens exactly at the hold deadline (budget
+      // 10 ms + hold 20 ms of simulated time), not at whatever a busy
+      // machine's clock reads.
+      vi.useFakeTimers();
+      try {
+        const pending = runGrader(INPUT, {
+          budgetMs: 10,
+          orphanMaxHoldMs: 20,
+          provenance: [],
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        const res = await pending;
+        expect(res.reason).toBe("budget_exhausted");
+        let released = false;
+        void res.settled!.then(() => {
+          released = true;
+        });
+        await vi.advanceTimersByTimeAsync(19);
+        expect(released).toBe(false);
+        expect(closeSpy).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(released).toBe(true);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect((closeSpy.mock.contexts[0] as Database.Database).open).toBe(false);
+        expect(mockLogWarn).toHaveBeenCalledTimes(1);
+        expect(mockLogWarn.mock.calls[0]).toEqual([
+          { taskId: INPUT.taskId },
+          "[grader] orphaned call still running after 30 ms — slot and connection released",
+        ]);
+        late(); // the real settle, long after release
+        await vi.advanceTimersByTimeAsync(10);
+        expect(closeSpy).toHaveBeenCalledTimes(1); // no double close
+        expect(mockLogWarn).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

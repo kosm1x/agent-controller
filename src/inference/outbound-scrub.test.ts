@@ -117,6 +117,67 @@ import { askJev } from "../jev/client.js";
 import { enterRunToolContext } from "../tools/rule-of-two.js";
 
 // Synthetic values. STORED / PROJ are stored; PASTED is new this turn.
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
+/** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
+const GROWTH_BOUND = 8;
+
+/**
+ * How the CPU time of `fn` grows from input `make(n)` to input `make(4 * n)`. Both sizes repeat
+ * the call the same number of times, doubled until one run of the smaller size takes 40 ms, so
+ * the figure is not lost in timer noise. Linear work grows about 4x and quadratic work about 16x,
+ * whatever the machine's speed or load. The ratio is measured up to three times and the smallest
+ * is kept, stopping at the first one under GROWTH_BOUND: on a busy machine one noisy measurement
+ * can push a single ratio over the bound, but the noise does not repeat three times, while a real
+ * super-linear change measures about 16x on every attempt and still fails. `largeMs` is the larger
+ * size's CPU ms per call from the first attempt.
+ */
+function growth4x<T>(
+  make: (size: number) => T,
+  n: number,
+  fn: (input: T) => unknown,
+): { ratio: number; largeMs: number; label: string } {
+  const small = make(n);
+  const large = make(4 * n);
+  let reps = 1;
+  fn(small);
+  for (;;) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn(small);
+    const d = process.cpuUsage(c0);
+    if ((d.user + d.system) / 1000 >= 40 || reps >= 1_000_000) break;
+    reps *= 2;
+  }
+  let ratio = Infinity;
+  let largeMs = NaN;
+  let label = "";
+  for (let attempt = 1; attempt <= 3 && ratio >= GROWTH_BOUND; attempt++) {
+    const a = cpuMsPerCall(() => fn(small), reps);
+    const b = cpuMsPerCall(() => fn(large), reps);
+    if (attempt === 1) largeMs = b;
+    if (b / a < ratio) {
+      ratio = b / a;
+      label = `${b.toFixed(3)} ms / ${a.toFixed(3)} ms per call, ${reps} calls per run, attempt ${attempt}`;
+    }
+  }
+  return { ratio, largeMs, label };
+}
+
 const STORED = "pw-" + "z".repeat(14);
 const PROJ = "dp-" + "y".repeat(16);
 const PASTED = "np-" + "q".repeat(16);
@@ -664,28 +725,29 @@ describe("failure policy and performance", () => {
     }
     invalidateSecretRefs();
     const filler = "lorem ipsum dolor sit amet, consectetur adipiscing ".repeat(20);
-    let system = "";
-    while (system.length < 50_000) system += filler;
-    system += ` ${STORED} `;
-    const messages: ChatMessage[] = [{ role: "system", content: system }];
-    for (let i = 0; i < 20; i++) {
-      messages.push({
-        role: i % 2 ? "assistant" : "user",
-        content: filler + (i === 7 ? PROJ : ""),
-      });
-    }
+    /** A request of `k` times the realistic size: k x 50 KB of system prompt, k x 20 turns. */
+    const request = (k: number): ChatMessage[] => {
+      let system = "";
+      while (system.length < k * 50_000) system += filler;
+      system += ` ${STORED} `;
+      const messages: ChatMessage[] = [{ role: "system", content: system }];
+      for (let i = 0; i < Math.round(k * 20); i++) {
+        messages.push({
+          role: i % 2 ? "assistant" : "user",
+          content: filler + (i === 7 ? PROJ : ""),
+        });
+      }
+      return messages;
+    };
+    const messages = request(1);
     const size = messages.reduce((n, m) => n + String(m.content).length, 0);
     expect(size).toBeGreaterThan(65_000);
     scrubOutboundMessages(messages); // warm-up (index build)
-    const runs = 50;
-    const t0 = performance.now();
-    let out: ChatMessage[] = [];
-    for (let i = 0; i < runs; i++) out = scrubOutboundMessages(messages);
-    const ms = (performance.now() - t0) / runs;
-    expectScrubbed(JSON.stringify(out));
-    console.info(
-      `[outbound-scrub perf] ${Math.round(size / 1024)} KB / 40 secrets: ${ms.toFixed(2)} ms per request`,
-    );
-    expect(ms).toBeLessThan(25);
+    expectScrubbed(JSON.stringify(scrubOutboundMessages(messages)));
+    // From a quarter of the realistic size to the realistic size: about 4x for linear work, 16x
+    // for work that grows with the square of the request; the original 25 ms ceiling per request.
+    const g = growth4x(request, 0.25, (m) => scrubOutboundMessages(m));
+    expect(g.ratio, g.label).toBeLessThan(GROWTH_BOUND);
+    expect(g.largeMs, g.label).toBeLessThan(25);
   });
 });

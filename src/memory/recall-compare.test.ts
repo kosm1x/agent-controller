@@ -96,24 +96,37 @@ describe("compareBackends", () => {
   });
 
   it("times out a slow backend without blocking the other", async () => {
-    // Hindsight takes 1s, SQLite returns immediately.
-    hindsightRecallSpy.mockImplementation(
-      () =>
-        new Promise((resolve) =>
-          setTimeout(() => resolve({ results: [{ text: "late" }] }), 1000),
-        ),
-    );
-    sqliteRecallSpy.mockResolvedValue([{ content: "sqlite fast" }]);
+    // Fake timers: the comparison settles exactly at the timeout, not before
+    // and not at the slow backend's 1 s, whatever the machine's load.
+    vi.useFakeTimers();
+    try {
+      // Hindsight takes 1s, SQLite returns immediately.
+      hindsightRecallSpy.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ results: [{ text: "late" }] }), 1000),
+          ),
+      );
+      sqliteRecallSpy.mockResolvedValue([{ content: "sqlite fast" }]);
 
-    const start = Date.now();
-    const r = await compareBackends("q", "mc-jarvis", { timeoutMs: 100 });
-    const elapsed = Date.now() - start;
+      let settled = false;
+      const pending = compareBackends("q", "mc-jarvis", { timeoutMs: 100 });
+      void pending.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(99);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      const r = await pending;
 
-    // Should have completed at the timeout boundary, not waited the full 1s
-    expect(elapsed).toBeLessThan(500);
-    expect(r.hindsight.error).toContain("timeout");
-    expect(r.hindsight.results).toEqual([]);
-    expect(r.sqlite.results[0].content).toBe("sqlite fast");
+      expect(r.hindsight.error).toContain("timeout");
+      expect(r.hindsight.latencyMs).toBe(100);
+      expect(r.hindsight.results).toEqual([]);
+      expect(r.sqlite.results[0].content).toBe("sqlite fast");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("trims long content to ≤200 chars with ellipsis", async () => {

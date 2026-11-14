@@ -49,6 +49,12 @@ vi.mock("../observability/task-trace.js", async (importOriginal) => ({
   emitTraceEvent: traceMock.emitTraceEvent,
 }));
 
+// Pass-through spy: the redaction-cap case reads how much text reached the shared redactor.
+vi.mock("../lib/redact-secrets.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/redact-secrets.js")>();
+  return { ...actual, redactSecretText: vi.fn(actual.redactSecretText) };
+});
+
 // Mock tool registry
 vi.mock("../tools/registry.js", () => ({
   toolRegistry: {
@@ -67,6 +73,7 @@ vi.mock("../tools/registry.js", () => ({
 }));
 
 import { executeGoal, executeGraph, selfAssess, classifyError } from "./executor.js";
+import { redactSecretText } from "../lib/redact-secrets.js";
 import { ErrorStrategy } from "./types.js";
 
 describe("classifyError (logic audit F8)", () => {
@@ -991,9 +998,13 @@ describe("selfAssess — tool-call audit + truncation window (2026-05-26)", () =
     const huge = JSON.stringify({ h: "Authorization: Bearer token ".repeat(40_000) });
     expect(huge.length).toBeGreaterThan(1_000_000);
     const goal = makeGoal({ completionCriteria: ["c1"] });
-    const t0 = performance.now();
+    // Work done, not elapsed time (a fixed bound in ms fails on a busy machine): the shared
+    // redactor only ever sees the capped prefix, never the 1 MB argument.
+    const redactor = vi.mocked(redactSecretText);
+    redactor.mockClear();
     await selfAssess(goal, "output", [{ name: "http_request", args: huge }]);
-    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(redactor).toHaveBeenCalled();
+    for (const [text] of redactor.mock.calls) expect(text.length).toBeLessThan(10_000);
     const line = capturedUserContent.split("\n").find((l) => l.startsWith("1. http_request("))!;
     // 400 displayed chars + "…" + ")" after the name.
     expect(line.length).toBe("1. http_request(".length + 400 + 2);

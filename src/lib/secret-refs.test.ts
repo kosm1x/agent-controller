@@ -18,6 +18,23 @@ vi.mock("../db/index.js", () => ({
 }));
 
 // Combined audit 2026-10-03 (should-fix 2): refusals are trace events.
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
 vi.mock("../observability/task-trace.js", () => traceMock);
 
@@ -891,12 +908,10 @@ describe("scrubSecrets", () => {
     let big = "";
     while (big.length < 1_000_000) big += chunk + COOKIE + " ";
     scrubSecrets("warm-up");
-    const t0 = performance.now();
-    const out = scrubSecrets(big);
-    const ms = performance.now() - t0;
-    expect(out).not.toContain(COOKIE);
-    console.log(`[secret-refs perf] 1MB / 40 secrets: ${ms.toFixed(1)} ms`);
-    expect(ms).toBeLessThan(500);
+    expect(scrubSecrets(big)).not.toContain(COOKIE);
+    // CPU time against the original bound. The work grows with the number of occurrences as well
+    // as with the length, so a growth ratio over length alone is not a clean signal.
+    expect(cpuMsPerCall(() => scrubSecrets(big))).toBeLessThan(500);
   });
 });
 

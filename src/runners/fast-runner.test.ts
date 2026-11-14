@@ -16,6 +16,23 @@ import {
 import type { ChatMessage } from "../inference/adapter.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 describe("detectsHallucinatedExecution", () => {
   // --- Layer 1: Full hallucination (zero tools) ---
   it("returns false when write tools were called", () => {
@@ -1566,14 +1583,21 @@ describe("linear STATUS strippers ≡ the regexes they replaced", () => {
   });
 
   it("50,000 consecutive newlines in under 50 ms", () => {
+    // CPU time against a bound: the linear scan does too little work here for a stable growth
+    // ratio; a regex over the newline run takes seconds.
     const t = "Parte 1" + "\n".repeat(50_000) + "fin";
-    const start = performance.now();
+    const u = "Parte 1" + "\n".repeat(50_000) + "STATUS: DONE_WITH_CONCERNS — x";
     expect(stripConcernsTrailer(t)).toBe(t);
     expect(stripFinalStatusLine(t)).toBe(t);
-    const u = "Parte 1" + "\n".repeat(50_000) + "STATUS: DONE_WITH_CONCERNS — x";
     expect(stripConcernsTrailer(u)).toBe("Parte 1");
     expect(stripFinalStatusLine(u)).toBe("Parte 1");
-    expect(performance.now() - start).toBeLessThan(50);
+    const stripAll = () => {
+      stripConcernsTrailer(t);
+      stripFinalStatusLine(t);
+      stripConcernsTrailer(u);
+      stripFinalStatusLine(u);
+    };
+    expect(cpuMsPerCall(stripAll)).toBeLessThan(50);
   });
 });
 

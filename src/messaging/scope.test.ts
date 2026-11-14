@@ -39,6 +39,23 @@ import {
 } from "./scope.js";
 import type { ScopeOptions } from "./scope.js";
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 const ALL_ON: ScopeOptions = {
   hasGoogle: true,
   hasWordpress: true,
@@ -748,11 +765,14 @@ describe("scope pattern matching", () => {
     // Both new patterns use {0,5} and {0,8} bounded slop. A pathological
     // input should still complete in linear time.
     const long = "a".repeat(2000) + " proyecto " + "b".repeat(2000);
-    const start = Date.now();
-    for (const p of DEFAULT_SCOPE_PATTERNS) {
-      p.pattern.test(long);
-    }
-    expect(Date.now() - start).toBeLessThan(200);
+    // CPU time against a bound: bounded patterns do too little work on 4,000 characters for a
+    // stable growth ratio; a backtracking one takes seconds.
+    const testAll = () => {
+      for (const p of DEFAULT_SCOPE_PATTERNS) {
+        p.pattern.test(long);
+      }
+    };
+    expect(cpuMsPerCall(testAll)).toBeLessThan(200);
   });
 
   it("Lightpanda core tools always available, extras scope-gated", () => {

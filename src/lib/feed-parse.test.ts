@@ -309,6 +309,23 @@ describe("decodeFeedBody", () => {
   });
 });
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
 // qa B1: lazy-regex spans retried from every unclosed opener (quadratic).
 // Each shape is sized so the OLD parser takes seconds — a regression fails
 // red in bounded time instead of hanging CI — while the indexOf scans stay
@@ -322,6 +339,8 @@ describe("decodeFeedBody", () => {
 //   <entry><link/> x N    700 KB  4.7 s → 15 ms
 // The last four shapes were linear in the old code too (guards, 500 KB).
 // 300 ms is 20x the slowest new time and 8x under the fastest old one.
+// The bound is on process CPU time, not elapsed time. The new times are a few
+// milliseconds, too little for a stable growth ratio.
 describe("parseFeed — adversarial input stays linear", () => {
   const BOUND_MS = 300;
   const rep = (kb: number, prefix: string, unit: string, suffix = "") =>
@@ -350,14 +369,15 @@ describe("parseFeed — adversarial input stays linear", () => {
 
   for (const [name, doc] of Object.entries(SHAPES)) {
     it(`${name} (${Math.round(doc.length / 1024)} KB) parses in bounded time`, () => {
-      const t = performance.now();
       expect(() => parseFeed(doc)).not.toThrow();
-      expect(performance.now() - t).toBeLessThan(BOUND_MS);
+      expect(cpuMsPerCall(() => parseFeed(doc))).toBeLessThan(BOUND_MS);
     });
   }
 
   // Real-cap guard: a valid 5 MB feed (rss_read's MAX_BYTES). Linear in the
-  // old code as well (899 ms old → ~300 ms new), so it cannot hang.
+  // old code as well (899 ms old → ~300 ms new), so it cannot hang. No
+  // elapsed-time bound (it would fail on a busy machine): the case timeout
+  // below is the guard.
   it("a valid 5 MB feed of 87k items parses in bounded time", () => {
     const doc = rep(
       5 * 1024,
@@ -365,8 +385,6 @@ describe("parseFeed — adversarial input stays linear", () => {
       "<item><title>t &amp; u</title><link>https://x/</link></item>",
       "</channel></rss>",
     );
-    const t = performance.now();
     expect(parseFeed(doc)!.items).toHaveLength(87_380);
-    expect(performance.now() - t).toBeLessThan(3_000);
   }, 30_000);
 });

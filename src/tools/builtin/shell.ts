@@ -696,28 +696,31 @@ const SECRET_PATH_PATTERNS: { pattern: RegExp; reason: string }[] = [
   // The Docker API socket answers every verb the docker gate refuses (`curl --unix-socket … /containers/create`) — ruling 5, 2026-10-01.
   { pattern: /\/run\/docker\.sock\b/, reason: "the Docker API socket is off-limits to the shell (container file access and new containers are operator-only)" },
   { pattern: /\/root\/(?:claude-)?backups\/\S/, reason: "backup copies are off-limits to the shell" }, // the bare directory stays listable (`ls`/`du`)
-  // vps_backup's `mc.db.<ts>` and backup-db.sh's `mc-<date>.db` copies; relative by those names only, like
-  // `data/mc.db` below (the shell's default cwd IS mission-control) — another repo's `backups/` stays usable.
-  { pattern: /\/root\/claude\/mission-control\/backups\/\S|(?<![\w/.-])(?:\.\/)?backups\/mc(?:\.db|-)/, reason: "backup copies are off-limits to the shell" },
+  // The folder holds mc.db copies under any name (vps_backup, backup-db.sh, deploy.sh), so any command that names a
+  // file under it is refused, absolute or relative (the shell's default cwd IS mission-control), writes included, and
+  // also as a short option's attached argument (`-T<path>`); the bare directory stays listable. Another repository's
+  // `backups/` is named by its absolute path.
+  { pattern: /\/root\/claude\/mission-control\/backups\/\S|(?:(?<![\w/.-])|(?<=(?<!\S)-[A-Za-z]+))(?:\.\/)?backups\/\S/, reason: "backup copies are off-limits to the shell" },
   { pattern: /\/opt\/supabase\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // pg_dumps + state bundles (mc.db, .env)
   { pattern: /\/root\/claude\/Pulso-Aura-Upfront\/data\/backups\/\S/, reason: "backup copies are off-limits to the shell" }, // crm.db + messages.db copies
   // benchmark-{sonnet,opus}-tier.ts and grade-benchmark.ts full mc.db copies; relative like `data/mc.db` below.
-  { pattern: /\/root\/claude\/mission-control\/data\/(?:sonnet|opus|grade)-bench\/\S|(?<![\w/.])(?:\.\/)?data\/(?:sonnet|opus|grade)-bench\/\S/, reason: "benchmark mc.db snapshots are off-limits to the shell" },
+  { pattern: /\/root\/claude\/mission-control\/data\/(?:sonnet|opus|grade)-bench\/\S|(?:(?<![\w/.])|(?<=(?<!\S)-[A-Za-z]+))(?:\.\/)?data\/(?:sonnet|opus|grade)-bench\/\S/, reason: "benchmark mc.db snapshots are off-limits to the shell" },
   { pattern: /\/root\/claude\/mission-control\/data\/mc\.db/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" },
-  { pattern: /(?<![\w/.])(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
+  { pattern: /(?:(?<![\w/.])|(?<=(?<!\S)-[A-Za-z]+))(?:\.\/)?data\/mc\.db\b/, reason: "mc.db (memories) is off-limits to the shell — all DB access goes through tools" }, // `./data/mc.db` too (qa R14 W14-2); `../data/mc.db` is another file (qa R15 W15-2)
   { pattern: /\/opt\/supabase\/volumes\/api\/kong\.yml\b/, reason: "kong.yml (Supabase keys) is off-limits to the shell" },
   // NorthStar retired (2026-11-03): any verb naming the KB mirror's NorthStar tree or the legacy
   // mission-control/data/jarvis/ mirror's (absolute, or relative from the default cwd), any casing, also after a
   // `..` hop inside either; same text-shaped residuals as above (a recursive read of the parent that never names it).
-  { pattern: /(?:\/jarvis-kb|(?<![\w.-])data\/jarvis)\/(?:\S*\/\.\.\/)?northstar(?![\w.-])/i, reason: NORTHSTAR_DISK_REASON },
+  { pattern: /(?:\/jarvis-kb|(?:(?<![\w.-])|(?<=(?<!\S)-[A-Za-z]+))data\/jarvis)\/(?:\S*\/\.\.\/)?northstar(?![\w.-])/i, reason: NORTHSTAR_DISK_REASON },
 ];
 
 /** `.env`-shaped filenames: absolute, `~`/`$HOME`-headed, or a standalone
- *  bare `.env` (the shell's default cwd IS mission-control). Same allow-by-
+ *  bare `.env` (the shell's default cwd IS mission-control), also as a short
+ *  option's attached argument (`-T.env`, `-f/x/.env`). Same allow-by-
  *  membership rule as file_read (isBlockedEnvFile). A regex-escaped `\.env`
  *  is a pattern, not a path. */
-const ENV_ABS_RE = /(?<![\w.\\-])(\/(?:[\w.\/-]*\/)?\.env(?:[._-][\w.-]+)?)(?!\w)/g;
-const ENV_BARE_RE = /(?<![\w.\/\\$@-])(?:\.\/)?(\.env(?:[._-][\w.-]+)?)(?![\w\/])/g;
+const ENV_ABS_RE = /(?:(?<![\w.\\-])|(?<=(?<!\S)-[A-Za-z]+))(\/(?:[\w.\/-]*\/)?\.env(?:[._-][\w.-]+)?)(?!\w)/g;
+const ENV_BARE_RE = /(?:(?<![\w.\/\\$@-])|(?<=(?<!\S)-[A-Za-z]+))(?:\.\/)?(\.env(?:[._-][\w.-]+)?)(?![\w\/])/g;
 
 /** Unquoted heredoc bodies as index ranges. A bare `.env` inside one is
  *  skipped REGARDLESS of receiver — prose piped to `cat`/`tee` is data, and an

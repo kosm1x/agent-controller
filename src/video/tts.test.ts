@@ -1,15 +1,30 @@
 /**
  * TTS engine tests (v6.2 V1).
  * Tests pure functions (splitTextAtSentences, resolveVoice, listVoices).
- * ffprobe and edge-tts tests require the binaries installed.
+ * The listVoices cases need edge-tts on PATH and skip themselves without it.
  */
 
 import { describe, it, expect } from "vitest";
+import { accessSync, constants } from "fs";
+import { delimiter, join } from "path";
 import {
   splitTextAtSentences,
   resolveVoice,
   probeAudioDuration,
 } from "./tts.js";
+
+// listVoices runs the real edge-tts binary, which fetches the voice list over
+// the network. Its cases run only where an executable edge-tts is on PATH (the
+// same PATH the call searches) and skip themselves elsewhere, such as on a
+// stock CI runner.
+const hasEdgeTts = (process.env.PATH ?? "").split(delimiter).some((dir) => {
+  try {
+    accessSync(join(dir, "edge-tts"), constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+});
 
 describe("splitTextAtSentences", () => {
   it("returns single chunk for short text", () => {
@@ -95,11 +110,10 @@ describe("probeAudioDuration", () => {
   });
 });
 
-describe("listVoices", () => {
+describe.skipIf(!hasEdgeTts)("listVoices", () => {
   it("returns voices (requires edge-tts installed)", async () => {
     const { listVoices } = await import("./tts.js");
     const voices = listVoices();
-    // edge-tts is installed on this VPS
     expect(voices.length).toBeGreaterThan(100);
   });
 

@@ -357,6 +357,67 @@ describe("injectContentWikilinks — code-safety review folds", () => {
 // Frontmatter merge (rulings R1-R4, 2026-10-16)
 // ---------------------------------------------------------------------------
 
+// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
+// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
+// for a processor.
+
+/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
+function cpuMsPerCall(fn: () => unknown, reps = 1): number {
+  fn();
+  let best = Infinity;
+  for (let r = 0; r < 3; r++) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn();
+    const d = process.cpuUsage(c0);
+    best = Math.min(best, (d.user + d.system) / 1000);
+  }
+  return best / reps;
+}
+
+/** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
+const GROWTH_BOUND = 8;
+
+/**
+ * How the CPU time of `fn` grows from input `make(n)` to input `make(4 * n)`. Both sizes repeat
+ * the call the same number of times, doubled until one run of the smaller size takes 40 ms, so
+ * the figure is not lost in timer noise. Linear work grows about 4x and quadratic work about 16x,
+ * whatever the machine's speed or load. The ratio is measured up to three times and the smallest
+ * is kept, stopping at the first one under GROWTH_BOUND: on a busy machine one noisy measurement
+ * can push a single ratio over the bound, but the noise does not repeat three times, while a real
+ * super-linear change measures about 16x on every attempt and still fails. `largeMs` is the larger
+ * size's CPU ms per call from the first attempt.
+ */
+function growth4x<T>(
+  make: (size: number) => T,
+  n: number,
+  fn: (input: T) => unknown,
+): { ratio: number; largeMs: number; label: string } {
+  const small = make(n);
+  const large = make(4 * n);
+  let reps = 1;
+  fn(small);
+  for (;;) {
+    const c0 = process.cpuUsage();
+    for (let i = 0; i < reps; i++) fn(small);
+    const d = process.cpuUsage(c0);
+    if ((d.user + d.system) / 1000 >= 40 || reps >= 1_000_000) break;
+    reps *= 2;
+  }
+  let ratio = Infinity;
+  let largeMs = NaN;
+  let label = "";
+  for (let attempt = 1; attempt <= 3 && ratio >= GROWTH_BOUND; attempt++) {
+    const a = cpuMsPerCall(() => fn(small), reps);
+    const b = cpuMsPerCall(() => fn(large), reps);
+    if (attempt === 1) largeMs = b;
+    if (b / a < ratio) {
+      ratio = b / a;
+      label = `${b.toFixed(3)} ms / ${a.toFixed(3)} ms per call, ${reps} calls per run, attempt ${attempt}`;
+    }
+  }
+  return { ratio, largeMs, label };
+}
+
 const UPDATED_AT = "2026-10-16 18:30:00"; // UTC -> 2026-10-16 in Mexico City
 
 /** Frontmatter lines of an output (between the first fence pair). */
@@ -703,15 +764,14 @@ describe("frontmatter merge — CRLF and BOM", () => {
 });
 
 describe("frontmatter merge — large files", () => {
-  it("merges a 600 KB body with a 5-line block quickly", () => {
+  it("merges a 600 KB body with a 5-line block", () => {
     const line = "Texto de relleno con projects/foo/a.md y mas palabras.\n";
     const body = line.repeat(Math.ceil(600_000 / line.length));
     const block = ["a: 1", "b: 2", "c: 3", "d: 4", "e: 5"];
     const content = `---\n${block.join("\n")}\n---\n${body}`;
-    const t0 = performance.now();
+    // Correctness, not a benchmark: no elapsed-time bound (it would fail on a busy machine);
+    // the runner's test timeout is the guard against a hang.
     const out = toObsidianContent("notes/big.md", "Big", content, { updatedAt: UPDATED_AT });
-    const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(5000); // generous: correctness, not a benchmark
     expect(headLines(out).slice(-5)).toEqual(block);
     expect(bodyOf(out)).toBe(injectContentWikilinks(body));
   });
@@ -1039,14 +1099,17 @@ describe("QA fold W2 — open-span guard is linear", () => {
   // 5,000 paths in 300 KB stayed under 1 s even with the old per-match
   // rescan, so this uses the audit's measured shape (20,000 paths, 320 KB:
   // about 3.6 s before the fix) to go red without it.
-  it("wraps 20,000 paths on one 320 KB line quickly", () => {
+  it("wraps 20,000 paths on one 320 KB line in linear time", () => {
     const line = "projects/f/a.md ".repeat(20_000);
     expect(line.length).toBe(320_000);
-    const t0 = performance.now();
     const out = injectContentWikilinks(line);
-    const ms = performance.now() - t0;
     expect(out.match(/\[\[projects\/f\/a\|a\]\]/g)).toHaveLength(20_000);
-    expect(ms).toBeLessThan(1000);
+    // Linear, by CPU-time growth from 20,000 to 80,000 characters of the line (about 4x; a
+    // per-match rescan about 16x; both sizes under 128 KB, where the growth measures closer to
+    // linear), and under the original 1 s ceiling on the whole line.
+    const g = growth4x((size) => line.slice(0, size), 20_000, (text) => injectContentWikilinks(text));
+    expect(g.ratio, g.label).toBeLessThan(GROWTH_BOUND);
+    expect(cpuMsPerCall(() => injectContentWikilinks(line))).toBeLessThan(1000);
   });
 
   it("tracks spans across lines and multiple links on one line", () => {
