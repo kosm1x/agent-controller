@@ -63,7 +63,7 @@ function priorityBadge(priority) {
   const colors = {
     critical: "#ef4444",
     high: "#f59e0b",
-    normal: "#3b82f6",
+    medium: "#3b82f6",
     low: "#6b7280",
   };
   const color = colors[priority] || "#6b7280";
@@ -533,7 +533,7 @@ export function renderSubmitForm(container, onSubmit, onClose) {
           <div class="form-group">
             <label>Priority</label>
             <select id="submit-priority">
-              <option value="normal" selected>Normal</option>
+              <option value="medium" selected>Medium</option>
               <option value="low">Low</option>
               <option value="high">High</option>
               <option value="critical">Critical</option>

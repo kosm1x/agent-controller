@@ -20,7 +20,7 @@ import {
   type PasswordValueCheck,
 } from "./password-gate.js";
 import { isLedgerLine } from "./ledger-lines.js";
-import { cpuMsPerCall } from "../../test-utils/cpu-time.js";
+import { cpuMsPerCall, GROWTH_BOUND, growth4x } from "../../test-utils/cpu-time.js";
 
 const PW = "FakeTestPassWordXYZ2345";
 const PW2 = "FakeTestPassWordXYZ6789";
@@ -34,50 +34,6 @@ function check(seen: string[], proven: string[] = []): PasswordValueCheck {
 }
 
 const A = (n: number) => "Ab3".repeat(30).slice(0, n);
-
-/** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
-const GROWTH_BOUND = 8;
-
-/**
- * How the CPU time of `fn` grows from input `make(n)` to input `make(4 * n)`. Both sizes repeat
- * the call the same number of times, doubled until one run of the smaller size takes 40 ms, so
- * the figure is not lost in timer noise. Linear work grows about 4x and quadratic work about 16x,
- * whatever the machine's speed or load. The ratio is measured up to three times and the smallest
- * is kept, stopping at the first one under GROWTH_BOUND: on a busy machine one noisy measurement
- * can push a single ratio over the bound, but the noise does not repeat three times, while a real
- * super-linear change measures about 16x on every attempt and still fails. `largeMs` is the larger
- * size's CPU ms per call from the first attempt.
- */
-function growth4x<T>(
-  make: (size: number) => T,
-  n: number,
-  fn: (input: T) => unknown,
-): { ratio: number; largeMs: number; label: string } {
-  const small = make(n);
-  const large = make(4 * n);
-  let reps = 1;
-  fn(small);
-  for (;;) {
-    const c0 = process.cpuUsage();
-    for (let i = 0; i < reps; i++) fn(small);
-    const d = process.cpuUsage(c0);
-    if ((d.user + d.system) / 1000 >= 40 || reps >= 1_000_000) break;
-    reps *= 2;
-  }
-  let ratio = Infinity;
-  let largeMs = NaN;
-  let label = "";
-  for (let attempt = 1; attempt <= 3 && ratio >= GROWTH_BOUND; attempt++) {
-    const a = cpuMsPerCall(() => fn(small), reps);
-    const b = cpuMsPerCall(() => fn(large), reps);
-    if (attempt === 1) largeMs = b;
-    if (b / a < ratio) {
-      ratio = b / a;
-      label = `${b.toFixed(3)} ms / ${a.toFixed(3)} ms per call, ${reps} calls per run, attempt ${attempt}`;
-    }
-  }
-  return { ratio, largeMs, label };
-}
 
 describe("password gate — candidates", () => {
   it("are maximal ASCII letter/digit runs of 16 to 64: 15 and 65 are not", () => {

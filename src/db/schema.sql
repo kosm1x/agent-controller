@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id             INTEGER PRIMARY KEY,
   task_id        TEXT UNIQUE NOT NULL,
   parent_task_id TEXT REFERENCES tasks(task_id),
-  spawn_type     TEXT DEFAULT 'root' CHECK(spawn_type IN ('root','subtask')),
+  spawn_type     TEXT DEFAULT 'root' CHECK(spawn_type IN ('root','subtask','user-background')),
   title          TEXT NOT NULL,
   description    TEXT NOT NULL,
   priority       TEXT DEFAULT 'medium' CHECK(priority IN ('critical','high','medium','low')),

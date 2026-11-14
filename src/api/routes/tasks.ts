@@ -46,6 +46,27 @@ tasks.post("/", apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }), async (c) 
   if (!description || typeof description !== "string") {
     return c.json({ error: "description is required (string)" }, 400);
   }
+  if (
+    priority != null &&
+    !["critical", "high", "medium", "low"].includes(priority)
+  ) {
+    return c.json(
+      { error: "priority must be one of critical, high, medium, low" },
+      400,
+    );
+  }
+  // The classifier and the runners treat both as lists of names.
+  for (const [name, value] of [
+    ["tags", tags],
+    ["tools", tools],
+  ] as const) {
+    if (
+      value != null &&
+      !(Array.isArray(value) && value.every((v) => typeof v === "string"))
+    ) {
+      return c.json({ error: `${name} must be an array of strings` }, 400);
+    }
+  }
   // V8.4: optional acceptance gates (source "submission"). Validated HERE so a
   // malformed ledger is a 400, never a task that silently runs ungated.
   let gateSpecs: GateSpec[] | undefined;
@@ -63,10 +84,10 @@ tasks.post("/", apiRateLimit({ windowMs: 60_000, maxPerWindow: 30 }), async (c) 
     const result = await submitTask({
       title,
       description,
-      priority,
+      priority: priority ?? undefined,
       agentType: agent_type,
-      tags,
-      tools,
+      tags: tags ?? undefined,
+      tools: tools ?? undefined,
       input,
       ...(gateSpecs?.length && { gates: gateSpecs }),
       // An API task has no chat to confirm a high-risk action in: interactive

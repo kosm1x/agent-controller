@@ -53,6 +53,7 @@ import {
   registerRunner,
   submitTask,
   updateTaskStatus,
+  type TaskSubmission,
 } from "./dispatcher.js";
 
 const OLD_STARTED = "2001-01-01 00:00:01";
@@ -408,6 +409,18 @@ const CLASSIFIED = {
   modelTier: "standard",
 };
 
+// Every value of the submission's spawn-type and priority unions, each exactly
+// once: a value added to or removed from a union without this list fails the
+// test typecheck.
+const SPAWN_TYPES = { root: true, subtask: true, "user-background": true } satisfies Record<
+  NonNullable<TaskSubmission["spawnType"]>,
+  true
+>;
+const PRIORITIES = { critical: true, high: true, medium: true, low: true } satisfies Record<
+  NonNullable<TaskSubmission["priority"]>,
+  true
+>;
+
 const stubRunnerExecute = vi.fn(async () => {
   throw new Error("stub runner must never execute in this file");
 });
@@ -550,5 +563,81 @@ describe("submitTask on the real schema (dispatch stops at a refused claim)", ()
 
   // Every spawn type the submission type allows must be storable on a database
   // built from the schema file.
-  it.todo("a background-agent submission is stored with its spawn type");
+  it("a background-agent submission is stored with its spawn type", async () => {
+    const neighboursBefore = allTasks();
+    const r = await submitTask({
+      title: "bg title",
+      description: "bg description",
+      spawnType: "user-background",
+    });
+    const row = taskRow(r.taskId);
+    expect(row).toEqual({
+      id: expect.any(Number),
+      task_id: r.taskId,
+      parent_task_id: null,
+      spawn_type: "user-background",
+      title: "bg title",
+      description: "bg description",
+      priority: "medium",
+      status: "queued",
+      agent_type: "fast",
+      classification: JSON.stringify(CLASSIFIED),
+      assigned_to: null,
+      input: null,
+      output: null,
+      error: null,
+      progress: 0,
+      metadata: null,
+      created_at: expect.stringMatching(STAMP_RE),
+      updated_at: expect.stringMatching(STAMP_RE),
+      started_at: null,
+      completed_at: null,
+      retry_count: 0,
+      project_slug: null,
+      project_source: null,
+    });
+    expect(atClaim!.task).toEqual(row);
+    expect(allTasks().filter((t) => t.task_id !== r.taskId)).toEqual(neighboursBefore);
+  });
+
+  // The schema rule and the submission type list the same values: the rule
+  // lists nothing else, and a value outside it is refused by the database.
+  function expectRuleIsExactly(column: string, values: string[], outside: string[]): void {
+    const tableSql = (
+      getDatabase().prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get() as {
+        sql: string;
+      }
+    ).sql;
+    const rule = tableSql.match(new RegExp(`CHECK\\(${column} IN \\(([^)]*)\\)\\)`));
+    expect(rule).not.toBeNull();
+    expect(rule![1].split(",").map((v) => v.trim().replace(/^'|'$/g, "")).sort()).toEqual([...values].sort());
+
+    const before = allTasks();
+    for (const value of outside) {
+      expect(() =>
+        getDatabase()
+          .prepare(`INSERT INTO tasks (task_id, title, description, ${column}) VALUES ('outside-1', 't', 'd', ?)`)
+          .run(value),
+      ).toThrow(/CHECK constraint failed/);
+    }
+    expect(allTasks()).toEqual(before);
+  }
+
+  it("every spawn type of the submission type is stored as given; the schema rule allows no other", async () => {
+    const values = Object.keys(SPAWN_TYPES) as Array<keyof typeof SPAWN_TYPES>;
+    for (const spawnType of values) {
+      const r = await submitTask({ title: `t ${spawnType}`, description: "d", spawnType });
+      expect(taskRow(r.taskId).spawn_type).toBe(spawnType);
+    }
+    expectRuleIsExactly("spawn_type", values, ["user_background", "background", ""]);
+  });
+
+  it("every priority of the submission type is stored as given; the schema rule allows no other", async () => {
+    const values = Object.keys(PRIORITIES) as Array<keyof typeof PRIORITIES>;
+    for (const priority of values) {
+      const r = await submitTask({ title: `t ${priority}`, description: "d", priority });
+      expect(taskRow(r.taskId).priority).toBe(priority);
+    }
+    expectRuleIsExactly("priority", values, ["normal", "urgent", ""]);
+  });
 });
