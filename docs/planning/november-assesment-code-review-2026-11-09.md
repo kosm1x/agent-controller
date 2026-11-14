@@ -201,6 +201,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-14 10:22 UTC — the last unreached database statements are under test and two more input checks are in, COMMITTED `ae1ba977` (suite 674 files, 17,717 tests): the run phase of task dispatch runs in-process behind stubs that fail closed, pinning six statements plus the pull route's cost reader (4fc (3)); a wrong nested value in a batch file write is refused in the tool's own words, and the provider of a stored market bar has a type that matches the database rule (4fd (1)(2)). Left in this batch: the comment sweep (4fc (4)), seven assertions that need a source seam (4fa (1)), the network stand-in follow-up (4fb), the sweep leftovers (4fd (3)–(6)), the host commit check install (4db, operator).**
+
 **Status 2026-11-14 09:55 UTC — two source defects found by the sweep are FIXED and the second measuring helper is shared, COMMITTED `62c725eb` (suite 671 files, 17,695 tests): the schema file's spawn-type rule matches the submission type, the task route refuses a malformed priority, tags or tools with a clear message, and the dashboard's task form no longer defaults to a priority the database refuses (4fc (1)(2)); six test files import one growth-ratio helper instead of carrying a copy (4fa (2) complete). Left in this batch: the seven statements that need a seam and the comment sweep (4fc (3)(4)), seven assertions that need a source seam (4fa (1)), the network stand-in follow-up (4fb), the sweep leftovers (4fd), the host commit check install (4db, operator).**
 
 **Status 2026-11-14 09:21 UTC — quiet-fault sweep COMPLETE and the per-call measuring helper shared, COMMITTED `9818be69` (suite 671 files, 17,663 tests): twelve more real-schema test files pin sixty-three statements in fifteen modules (4ez), thirteen test files import one helper instead of carrying a copy (4fa). The sweep also found two small source defects, now queued as fixes (4fc): the schema file is narrower than the running database for one task column, and one local API route passes a value to the database unchecked. Left in this batch: those two fixes and the seven statements that need a seam (4fc), seven assertions that need a source seam and the ratio helper (4fa), the network stand-in follow-up (4fb), the host commit check install (4db, operator).**
@@ -295,6 +297,8 @@ Order that survived refutation: fix the violations first (batch 3), then four or
 Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called; over 134 days 86 never; 0-call areas = 26,923 of 195,264 lines; their share of the classifier prompt ≈ 20 %. No ruling needed: narrow the CI exclusion (Q10).
 
 ### Batch 10 — Model-visible fixes, one eval-gate run (ruling 15)
+
+**Note 2026-11-14 10:22 UTC — for the list of this batch's single evaluation run: `ae1ba977` adds one new error sentence that the batch file tool returns for a wrong nested value (it replaces a raw database message; no description or schema text changed).**
 
 **Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4dd): 17 plain-failure sites (not 18) plus 19 siblings in the same handlers; three more wrong texts found; the eval run cannot see failure shapes or the planner prompt, which get unit tests instead.**
 
