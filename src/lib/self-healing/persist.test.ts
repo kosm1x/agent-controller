@@ -1,9 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
 import { ensureSelfHealingTables } from "./schema.js";
 import { persistTriageReport, hasOpenTriageWithin } from "./persist.js";
+import { runTriageAnalysis } from "./analyze.js";
+import { queryClaudeSdk } from "../../inference/claude-sdk.js";
+import { CONFIDENCE_VALUES, SEVERITY_VALUES } from "./types.js";
 import type { Anomaly, TriageReport } from "./types.js";
+
+// The analysis is run only to read the submit tool it hands to the model. No
+// model call: the SDK seam is replaced whole (any other export is absent and
+// throws if used), and the cost ledger write is a no-op, so no database opens.
+vi.mock("../../inference/claude-sdk.js", () => ({
+  HAIKU_MODEL_ID: "stub-model",
+  queryClaudeSdk: vi.fn(async () => ({
+    model: "stub-model",
+    costUsd: 0,
+    usage: { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+  })),
+}));
+vi.mock("../../budget/service.js", () => ({ recordCost: vi.fn() }));
 
 const anomalies: Anomaly[] = [
   {
@@ -82,7 +98,8 @@ describe("triage_report.severity and .confidence — the report type and the sch
   });
   afterEach(() => db.close());
 
-  const ruleValues = (column: string): string[] => {
+  // The values a column's CHECK rule lists, in the order it lists them.
+  const ruleList = (column: string): string[] => {
     const tableSql = (
       db
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'triage_report'")
@@ -90,11 +107,9 @@ describe("triage_report.severity and .confidence — the report type and the sch
     ).sql;
     const rule = tableSql.match(new RegExp(`CHECK \\(${column} IN \\(([^)]*)\\)\\)`));
     expect(rule).not.toBeNull();
-    return rule![1]
-      .split(",")
-      .map((v) => v.trim().replace(/^'|'$/g, ""))
-      .sort();
+    return rule![1].split(",").map((v) => v.trim().replace(/^'|'$/g, ""));
   };
+  const ruleValues = (column: string): string[] => ruleList(column).sort();
   const stored = (id: string) =>
     db
       .prepare("SELECT severity, confidence FROM triage_report WHERE report_id = ?")
@@ -129,5 +144,25 @@ describe("triage_report.severity and .confidence — the report type and the sch
       );
     }
     expect(db.prepare("SELECT COUNT(*) AS n FROM triage_report").get()).toEqual({ n: 0 });
+  });
+
+  // The model fills the submit schema; the database refuses anything its rule
+  // does not list. All three must name the same values, and the schema's order
+  // is what the model sees, so the list, the rule and the schema agree in order.
+  it("the value lists, the schema rules and the triage model's submit schema name the same values in the same order", async () => {
+    await runTriageAnalysis(anomalies);
+    const calls = vi.mocked(queryClaudeSdk).mock.calls;
+    expect(calls).toHaveLength(1);
+    const tools = calls[0][0].extraTools ?? [];
+    expect(tools.map((t) => t.name)).toEqual(["submit_triage_report"]);
+    const shape = tools[0].inputSchema as Record<string, { options: readonly string[] }>;
+
+    expect([...SEVERITY_VALUES]).toEqual(ruleList("severity"));
+    expect(shape.severity.options).toEqual([...SEVERITY_VALUES]);
+    expect([...SEVERITY_VALUES].sort()).toEqual(Object.keys(SEVERITIES).sort());
+
+    expect([...CONFIDENCE_VALUES]).toEqual(ruleList("confidence"));
+    expect(shape.confidence.options).toEqual([...CONFIDENCE_VALUES]);
+    expect([...CONFIDENCE_VALUES].sort()).toEqual(Object.keys(CONFIDENCES).sort());
   });
 });

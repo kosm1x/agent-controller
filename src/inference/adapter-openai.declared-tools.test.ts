@@ -228,6 +228,23 @@ describe("audit S2: declared tool list bounds the openai path", () => {
     );
   });
 
+  // The declaration is the set of names the run may use; the request carries
+  // the handed-in definitions that are in it, in the order they were handed
+  // in, never the declaration's order.
+  it("no list → every handed-in definition; a list → only the declared ones, in handed-in order, an undeclared or unknown name adding nothing", async () => {
+    const handedIn = [def("web_search"), def("file_read"), def("gdrive_delete")];
+    const declared = ["gdrive_delete", "not_a_tool", "web_search"];
+    await inContext(declared, async () =>
+      expect([...declaredToolSetForRun()!]).toEqual(declared),
+    );
+
+    const none = await run(undefined, handedIn, []);
+    expect(none.sentTools[0]).toEqual(["web_search", "file_read", "gdrive_delete"]);
+
+    const listed = await run(declared, handedIn, []);
+    expect(listed.sentTools[0]).toEqual(["web_search", "gdrive_delete"]);
+  });
+
   it("nothing dropped (no list, or every definition declared) → no tools.declared_filtered trace", async () => {
     await run(undefined, [def("web_search")], []);
     await run(["web_search"], [def("web_search")], []);

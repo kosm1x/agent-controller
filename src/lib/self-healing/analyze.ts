@@ -20,12 +20,13 @@ import {
 import { randomUUID } from "node:crypto";
 import { recordCost } from "../../budget/service.js";
 import type { Anomaly, Severity, TriageReport } from "./types.js";
+import { CONFIDENCE_VALUES, SEVERITY_VALUES } from "./types.js";
 
 const SUBMIT_TOOL = "submit_triage_report";
 
 const triageSchema = {
   severity: z
-    .enum(["critical", "high", "medium", "low"])
+    .enum(SEVERITY_VALUES)
     .describe("overall severity of the root cause for the operator"),
   root_cause: z
     .string()
@@ -43,7 +44,7 @@ const triageSchema = {
       "actions FOR THE HUMAN OPERATOR to take by hand. Diagnosis only — nothing here is auto-executed.",
     ),
   confidence: z
-    .enum(["high", "medium", "low"])
+    .enum(CONFIDENCE_VALUES)
     .describe("confidence in the root-cause hypothesis given the evidence"),
 };
 
@@ -52,7 +53,7 @@ interface TriageCapture {
   root_cause: string;
   affected_components: string[];
   recommended_actions: string[];
-  confidence: "high" | "medium" | "low";
+  confidence: TriageReport["confidence"];
 }
 
 const SYSTEM_PROMPT = `You are a READ-ONLY root-cause analyst for Mission Control, an AI agent orchestrator (TypeScript, SQLite, multi-provider inference, Docker runners, WhatsApp/Telegram messaging).

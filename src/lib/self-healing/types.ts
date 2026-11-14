@@ -7,7 +7,15 @@
  * (absence of a remediation path), not a runtime boolean.
  */
 
-export type Severity = "critical" | "high" | "medium" | "low";
+/** Every severity, in the order the triage model's submit schema lists them.
+ *  The type and the submit schema derive from this list; a test holds the
+ *  table's CHECK rule to it. */
+export const SEVERITY_VALUES = ["critical", "high", "medium", "low"] as const;
+
+export type Severity = (typeof SEVERITY_VALUES)[number];
+
+/** Every confidence a triage report may carry, in submit-schema order (same rule). */
+export const CONFIDENCE_VALUES = ["high", "medium", "low"] as const;
 
 export type AnomalyKind =
   | "stuck_tasks"
@@ -36,7 +44,7 @@ export interface TriageReport {
   rootCause: string;
   affectedComponents: string[];
   recommendedActions: string[];
-  confidence: "high" | "medium" | "low";
+  confidence: (typeof CONFIDENCE_VALUES)[number];
 }
 
 export interface TriageTickResult {
