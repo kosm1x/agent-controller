@@ -197,6 +197,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-14 02:09 UTC — Q8 STARTED: thirty test-only pieces planned, the first six COMMITTED (`2e394dc8`, `906ba0ee`, `3aa669d6`), CI green (queue 4es). They found two defects: the memory clean-up kept the less trusted copy of a duplicate (FIXED `906ba0ee`), and a class of database times read or compared the wrong way (fix in flight, 4et). The suite's memory use was measured during these commits: about 1.3 GB at its peak, far below the limit of the new host commit check (in its second review round). Left: the Q2 cancel-pattern test, twenty-four Q8 pieces, the host commit check hand-over, 4er.**
+
 **Status 2026-11-14 01:04 UTC — Q10 COMMITTED `bd9158b8`, CI green: four video test files are excluded by name, thirteen gate CI again (queue 4ec). Three of the four could gate CI after small test changes (4er). Left: the Q2 cancel-pattern test, Q8, the operator-applied host commit check (Q3 + Q6).**
 
 **Status 2026-11-12 18:17 UTC — first part COMMITTED `782b6945` + `f5c254c8` + `9e5949ed` + `547137a8` (queue 4ec): Q5 (every script type-checked), the small Q2 cases, Q9 with the two live-folder hazards, the racing test, Q4 (simulated time in both slow files). Left: the Q2 cancel-pattern test, Q8, Q10, the process-group cases of the shell test (CI-only), and the operator-applied host commit check (Q3 + Q6).**
