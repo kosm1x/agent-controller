@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
+import { initDatabase, closeDatabase } from "../../db/index.js";
 
 const mockWebReadExecute = vi.fn();
 vi.mock("./web-read.js", () => ({
@@ -21,17 +21,6 @@ import { adsBrandDnaTool } from "./ads-brand-dna.js";
 
 beforeEach(() => {
   initDatabase(":memory:");
-  getDatabase().exec(`
-    CREATE TABLE IF NOT EXISTS ads_brand_profiles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      domain TEXT NOT NULL,
-      source_url TEXT,
-      brand_name TEXT,
-      profile TEXT,
-      raw_source_preview TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
   mockWebReadExecute.mockReset();
   mockInfer.mockReset();
 });

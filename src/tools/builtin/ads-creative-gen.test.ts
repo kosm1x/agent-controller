@@ -14,28 +14,6 @@ import { adsCreativeGenTool } from "./ads-creative-gen.js";
 
 beforeEach(() => {
   initDatabase(":memory:");
-  const db = getDatabase();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ads_brand_profiles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      domain TEXT NOT NULL,
-      source_url TEXT,
-      brand_name TEXT,
-      profile TEXT,
-      raw_source_preview TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS ads_creatives (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      brand_name TEXT NOT NULL,
-      framework TEXT NOT NULL,
-      platform TEXT NOT NULL,
-      objective TEXT NOT NULL,
-      brief_id INTEGER,
-      variants TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
   mockInfer.mockReset();
 });
 afterEach(() => {

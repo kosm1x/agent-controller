@@ -127,20 +127,6 @@ describe("ads_audit", () => {
 
   it("persists to ads_audits when the schema exists", async () => {
     const db = getDatabase();
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_audits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        account_name TEXT NOT NULL,
-        platform TEXT NOT NULL,
-        score INTEGER,
-        grade TEXT,
-        raw_weighted REAL,
-        max_weighted REAL,
-        findings TEXT,
-        snapshot TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-    `);
     const out = JSON.parse(
       await adsAuditTool.execute({
         platform: "google_ads",
