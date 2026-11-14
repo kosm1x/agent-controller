@@ -72,16 +72,17 @@ jobs:
           cache: "npm"
       - run: npm ci
       - name: vitest (shard ${{ matrix.shard }}/3)
-        # Video tests require host binaries GitHub runners don't have (snap
-        # Chromium, edge-tts, ffmpeg) — they had CI red on EVERY push since
-        # at least 2026-07-11, which (a) spammed failure mail per push and
-        # (b) killed CI as an instrument: a red gate nobody reads catches
-        # nothing. They still run locally via the pre-commit hook, where the
-        # binaries exist. If a video test must gate here, it needs a
-        # runner-installable substitute first.
+        # A test file is excluded here only when one of its cases needs
+        # something a stock runner lacks: a host binary (Chromium, edge-tts,
+        # ffmpeg), a host folder outside the checkout and the temp folder, or
+        # the host's core count. Each is excluded by name; every other video
+        # test gates CI. The excluded files still run in the host's commit
+        # check, which runs the whole suite whenever TypeScript is staged.
         run: >
           npx vitest run --shard=${{ matrix.shard }}/3 --reporter=dot
-          --exclude "src/video/**"
-          --exclude "src/tools/builtin/video.test.ts"
+          --exclude "src/video/composer.test.ts"
+          --exclude "src/video/html-renderer.test.ts"
+          --exclude "src/video/overlay-e2e.test.ts"
+          --exclude "src/video/tts.test.ts"
         env:
           CI: "true"
