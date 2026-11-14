@@ -10,7 +10,10 @@
  * 3. Consolidate — deduplicate similar entries (same bank+content prefix)
  * 4. Prune — delete aged-out entries (no VACUUM — it stalls the event loop)
  *
- * Safety: Never deletes tier-1 or tier-2 (verified/inferred).
+ * Safety: trust_tier 1 is the most trusted tier. The age-based prune never
+ * deletes tier-1 or tier-2 (verified/inferred). The duplicate phase deletes,
+ * in any tier, rows of the same bank that share their first 100 characters,
+ * keeping the most trusted, newest one.
  * Never deletes bank="mc-system" (directives).
  */
 
@@ -58,7 +61,7 @@ function orient(): Record<string, number> {
 /**
  * Phase 2+3: Gather stale candidates and deduplicate.
  * Finds entries with same bank + first 100 chars of content (likely duplicates).
- * Keeps the most recent / highest tier. Deletes the rest.
+ * Keeps the most trusted (lowest trust_tier), then newest, copy. Deletes the rest.
  */
 function consolidateDuplicates(): number {
   const db = getDatabase();
@@ -66,8 +69,9 @@ function consolidateDuplicates(): number {
   // Single-pass windowed dedup (2026-07-05 efficiency audit): the previous
   // per-group loop re-prepared two statements per duplicate group, and each
   // ran a full table scan (SUBSTR(content,1,100) is non-sargable — no index
-  // helps). One windowed DELETE keeps the identical survivor per group
-  // (highest trust_tier, then most recent) in a single scan.
+  // helps). One windowed DELETE keeps the identical survivor per group in a
+  // single scan: 1 is the most trusted tier, so the most trusted copy (lowest
+  // trust_tier) wins, then the most recent.
   const bankExclusions = [...PROTECTED_BANKS].map(() => "?").join(",");
   const result = writeWithRetry(() =>
     db
@@ -76,7 +80,7 @@ function consolidateDuplicates(): number {
            SELECT id FROM (
              SELECT id, ROW_NUMBER() OVER (
                PARTITION BY bank, SUBSTR(content, 1, 100)
-               ORDER BY trust_tier DESC, created_at DESC
+               ORDER BY trust_tier ASC, created_at DESC
              ) AS rn
              FROM conversations
              WHERE bank NOT IN (${bankExclusions})
@@ -143,16 +147,19 @@ export async function runConsolidation(): Promise<ConsolidationReport> {
     );
   }
 
-  // Count stale candidates (for reporting — before prune)
+  // Count stale candidates (for reporting — before prune). Same protected-bank
+  // exclusion as the prune, so the figure is what the prune can act on.
   const db = getDatabase();
+  const staleBankExclusions = [...PROTECTED_BANKS].map(() => "?").join(",");
   const staleCount = (
     db
       .prepare(
         `SELECT COUNT(*) as cnt FROM conversations
-         WHERE (trust_tier = 4 AND created_at < datetime('now', '-60 days'))
-            OR (trust_tier = 3 AND created_at < datetime('now', '-180 days'))`,
+         WHERE ((trust_tier = 4 AND created_at < datetime('now', '-60 days'))
+            OR (trust_tier = 3 AND created_at < datetime('now', '-180 days')))
+           AND bank NOT IN (${staleBankExclusions})`,
       )
-      .get() as { cnt: number }
+      .get(...PROTECTED_BANKS) as { cnt: number }
   ).cnt;
 
   // Phase 4: Prune
