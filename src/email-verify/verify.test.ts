@@ -248,20 +248,8 @@ describe("EmailVerifier — SMTP verdicts against a scripted server", () => {
     expect(r.syntax.suggestion).toBe("user2@gmail.com");
   });
 
-  it("connect timeout is bounded independently of the per-step timeout", async () => {
-    // 10.255.255.1 is non-routable: the SYN is never answered.
-    const v = verifier([25], {
-      timeoutMs: 20_000,
-      mxLookup: async () => [{ exchange: "10.255.255.1", priority: 10 }],
-      resolveTargets: async () => [{ address: "10.255.255.1", family: 4 }],
-      probe: async (o) => (await import("./smtp-client.js")).probeMailbox({ ...o, connectTimeoutMs: 150 }),
-    });
-    const t0 = Date.now();
-    const r = await v.verify("user1@example.com");
-    expect(Date.now() - t0).toBeLessThan(2_000);
-    // Blackholed here (timeout); a host with a route to 10/8 gets an immediate E*UNREACH instead.
-    expect(r.reason).toMatch(/smtp_unreachable: connect: connect (timeout after 150ms|E[A-Z]+)/);
-  });
+  // The connect deadline being independent of the per-step timeout is pinned with a
+  // stand-in socket and fake timers in probe-deadline.test.ts (no outbound connection).
 
   it("daily cap counts connections: a second MX host is not tried once the cap is spent", async () => {
     const dead = await server({ dropOnConnect: true, rcpt: {} });

@@ -40,6 +40,8 @@ export interface ProbeOptions {
   readonly addresses?: readonly LookupAddress[];
   /** Tests connect to loopback; production refuses private/loopback MX targets. */
   readonly allowPrivateAddresses?: boolean;
+  /** Opens the TCP connection; default `net.createConnection`. Tests hand in a stand-in socket. */
+  readonly createConnection?: (options: net.NetConnectOpts) => net.Socket;
 }
 
 /** A hostile or broken MX streaming continuation lines must not grow memory unboundedly. */
@@ -211,7 +213,7 @@ export async function resolveMxTargets(host: string, allowPrivate: boolean): Pro
  * costs ~300 ms, not the full connect timeout. Never re-resolves, so the
  * private/own-host filter cannot be bypassed by a flipping DNS record.
  */
-function connect(host: string, addrs: LookupAddress[], port: number, timeoutMs: number, budgetClipped = false): Promise<net.Socket> {
+function connect(host: string, addrs: LookupAddress[], port: number, timeoutMs: number, budgetClipped = false, open: (options: net.NetConnectOpts) => net.Socket = net.createConnection): Promise<net.Socket> {
   const lookup: net.LookupFunction = (_hostname, options, callback) => {
     if (options.all) {
       (callback as (err: null, addresses: LookupAddress[]) => void)(null, addrs);
@@ -220,7 +222,7 @@ function connect(host: string, addrs: LookupAddress[], port: number, timeoutMs: 
     }
   };
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({
+    const socket = open({
       host,
       port,
       lookup,
@@ -266,7 +268,7 @@ export async function probeMailbox(opts: ProbeOptions): Promise<ProbeResult> {
   if (addrs.length === 0) throw new ProbeError("connect", `MX ${opts.host} ${REFUSED_MSG}`);
   const connectTimeout = opts.connectTimeoutMs ?? Math.min(opts.timeoutMs, 5_000);
   const left = deadlineAt - Date.now();
-  const socket = await connect(opts.host, [...addrs], opts.port, Math.max(1, Math.min(connectTimeout, left)), left < connectTimeout);
+  const socket = await connect(opts.host, [...addrs], opts.port, Math.max(1, Math.min(connectTimeout, left)), left < connectTimeout, opts.createConnection);
   const address = socket.remoteAddress ?? addrs[0].address;
   const conv = new Conversation(socket, opts.timeoutMs, deadlineAt);
 

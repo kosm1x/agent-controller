@@ -146,8 +146,12 @@ export type CheckExecutor = (
   notStarted?: boolean;
 }>;
 
-/** Default executor: /bin/sh -c in its own process group, killed whole on timeout. */
-export const runShellCheck: CheckExecutor = (command, opts) =>
+/** Default executor: /bin/sh -c in its own process group, killed whole on timeout (`killGroup`: tests record it instead). */
+export const runShellCheck = (
+  command: string,
+  opts: Parameters<CheckExecutor>[1],
+  killGroup: (pid: number, signal: NodeJS.Signals) => void = (pid, signal) => process.kill(pid, signal),
+): ReturnType<CheckExecutor> =>
   new Promise((resolve) => {
     // Same fail-closed rule as shell_exec: no shim, no child (qa R4 W-1).
     const shimMissing = pmShimMissing();
@@ -210,7 +214,7 @@ export const runShellCheck: CheckExecutor = (command, opts) =>
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
+        if (child.pid) killGroup(-child.pid, "SIGKILL");
       } catch {
         try {
           child.kill("SIGKILL");

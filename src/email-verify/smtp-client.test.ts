@@ -79,15 +79,7 @@ describe("probeMailbox — address handling", () => {
     await expect(resolveMxTargets("mx.does-not-exist.invalid", true)).rejects.toThrow(/cannot resolve/);
   });
 
-  it("bounds the whole conversation by totalBudgetMs, not per step", async () => {
-    const s = await server({ delayMs: 250, rcpt: { default: "250 Ok" } });
-    const t0 = Date.now();
-    const err = await probeMailbox(opts(s.port, { timeoutMs: 400, totalBudgetMs: 500, skipCatchAll: false })).catch((e: unknown) => e);
-    const wall = Date.now() - t0;
-    expect(err).toBeInstanceOf(ProbeError);
-    expect((err as ProbeError).message).toMatch(/probe budget exhausted/);
-    expect(wall).toBeLessThan(900);
-  });
+  // The total budget clipping every step is pinned with a stand-in socket and fake timers in probe-deadline.test.ts.
 });
 
 describe("probeMailbox — conversation", () => {

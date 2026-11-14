@@ -1,7 +1,8 @@
 /**
  * V8.4 gate-check runner: EXPECT decides over exit code, timeouts fail with
- * evidence and kill the process group, evaluateLedger honors ABANDON, never
- * touches manual gates, and only re-runs met gates on `rerun`.
+ * evidence, evaluateLedger honors ABANDON, never touches manual gates, and
+ * only re-runs met gates on `rerun`. The process-group stop at a check's limit
+ * is pinned with a stand-in child in gate-check-deadline.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -503,8 +504,9 @@ describe("runShellCheck (real subprocess)", () => {
       spy.mockRestore();
     }
   });
-  // Host rule: signal-sending cases run on CI only.
-  it.skipIf(!process.env.CI)("captures output and exit code, and kills a hung process group on timeout", async () => {
+  // Host rule: real-child cases whose limit timer would stop a process group run on CI only.
+  // The stop of a hung check's process group at its limit is pinned with a stand-in child in gate-check-deadline.test.ts.
+  it.skipIf(!process.env.CI)("captures output and exit code", async () => {
     const ok = await runShellCheck("echo hello; echo world >&2", {
       timeoutMs: 5000,
     });
@@ -513,10 +515,6 @@ describe("runShellCheck (real subprocess)", () => {
     expect(ok.output).toContain("world");
     const bad = await runShellCheck("exit 3", { timeoutMs: 5000 });
     expect(bad.exitCode).toBe(3);
-    const t0 = Date.now();
-    const slow = await runShellCheck("sleep 5 & wait", { timeoutMs: 200 });
-    expect(slow.timedOut).toBe(true);
-    expect(Date.now() - t0).toBeLessThan(3000);
   }, 10_000);
 
   // GitHub children run under the agent's own account; nothing falls back to
@@ -839,12 +837,9 @@ describe("guard parity (qa C1)", () => {
 });
 
 describe("regex deadline (qa C2)", () => {
-  it("a catastrophic pattern returns false quickly instead of wedging the loop", () => {
-    const t0 = Date.now();
-    // Overlapping alternation — not caught by the nested-quantifier heuristic, so
-    // this exercises the vm deadline itself.
-    expect(safeRegexTest("(a|aa)+b", "", "a".repeat(40))).toBe(false);
-    expect(Date.now() - t0).toBeLessThan(2000);
+  // A runaway match ended by the vm deadline (a non-match, never a hang) is pinned with a
+  // stand-in sandbox in gate-check-deadline.test.ts.
+  it("nested quantifiers are rejected outright; sane patterns match with their flags", () => {
     // Nested quantifiers are rejected outright.
     expect(safeRegexTest("(a+)+b", "", "aaab")).toBe(false);
     expect(safeRegexTest("x**", "", "x")).toBe(false);
