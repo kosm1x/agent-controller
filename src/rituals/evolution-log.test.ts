@@ -1,25 +1,26 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type Database from "better-sqlite3";
 
-// createEvolutionLogEntry() reads conversations + tasks via getDatabase().
-// Back it with a synthetic in-memory SQLite (never the live mc.db).
-const h = vi.hoisted(() => ({ db: null as unknown }));
-vi.mock("../db/index.js", () => ({ getDatabase: () => h.db }));
-
+// createEvolutionLogEntry() reads conversations + tasks via getDatabase():
+// the real schema in memory (never the live mc.db), so its queries run
+// against the real columns and constraints.
+import { initDatabase, closeDatabase } from "../db/index.js";
 import { createEvolutionLogEntry } from "./evolution-log.js";
 import { RITUALS_TIMEZONE } from "./config.js";
 
-function freshDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.exec(`CREATE TABLE conversations (bank TEXT, tags TEXT, created_at TEXT);
-           CREATE TABLE tasks (status TEXT, completed_at TEXT, updated_at TEXT);`);
-  h.db = db;
-  return db;
-}
-freshDb();
+let db: Database.Database;
+beforeEach(() => {
+  db = initDatabase(":memory:");
+});
+afterEach(() => {
+  closeDatabase();
+});
 
 describe("createEvolutionLogEntry — append-only / no-overwrite invariants (2026-06-17 fix)", () => {
-  const sub = createEvolutionLogEntry("2026-06-17", null);
+  let sub: ReturnType<typeof createEvolutionLogEntry>;
+  beforeEach(() => {
+    sub = createEvolutionLogEntry("2026-06-17", null);
+  });
 
   it("does NOT grant file_write — the overwrite footgun is excluded by construction", () => {
     // 2026-06-17: file_write truncated the 45 KB log to a single entry when the
@@ -112,23 +113,27 @@ describe("createEvolutionLogEntry — harness-computed metrics (2026-10-09)", ()
   // 06:00:01 UTC on MX day d = just after MX midnight (always <= now for today).
   const at = (d: string): string => `${d} 06:00:01`;
 
-  let db: Database.Database;
-  beforeEach(() => {
-    db = freshDb();
-  });
-
-  const addConv = (createdAt: string, bank = "mc-jarvis") =>
+  const addConv = (
+    createdAt: string,
+    bank = "mc-jarvis",
+    tags = '["conversation","telegram"]',
+  ) =>
     db
-      .prepare("INSERT INTO conversations VALUES (?, ?, ?)")
-      .run(bank, '["conversation","telegram"]', createdAt);
+      .prepare(
+        "INSERT INTO conversations (bank, tags, content, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(bank, tags, "synthetic message", createdAt);
+  let taskSeq = 0;
   const addTask = (
     status: string,
     completedAt: string | null,
     updatedAt: string,
   ) =>
     db
-      .prepare("INSERT INTO tasks VALUES (?, ?, ?)")
-      .run(status, completedAt, updatedAt);
+      .prepare(
+        "INSERT INTO tasks (task_id, title, description, status, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(`t-${++taskSeq}`, "synthetic task", "synthetic", status, completedAt, updatedAt);
 
   it("leaves no snapshot placeholder in the prompt", () => {
     const d = createEvolutionLogEntry("2026-10-09", null).description;
@@ -159,13 +164,27 @@ describe("createEvolutionLogEntry — harness-computed metrics (2026-10-09)", ()
     expect(d).toContain("| Total tasks | 3 |");
   });
 
+  it("counts today's mc-jarvis conversations by channel from the MX day start", () => {
+    addConv(at(mxDay(0)));
+    addConv(at(mxDay(0)));
+    // MX yesterday 23:59:59, another bank today and a memory row without the
+    // "conversation" tag never count.
+    addConv(`${mxDay(0)} 05:59:59`);
+    addConv(at(mxDay(0)), "jarvis");
+    addConv(at(mxDay(0)), "mc-jarvis", '["telegram"]');
+    const d = createEvolutionLogEntry("2026-10-09", null).description;
+    expect(d).toContain("- Conversations today: 2");
+    expect(d).toContain("| Conversations today | 2 (telegram: 2) |");
+  });
+
   it("streak counts consecutive MX days with a conversation, ending today", () => {
     addConv(at(mxDay(0)));
     addConv(at(mxDay(1)));
     addConv(`${mxDay(2)} 23:00:00`);
     addConv(at(mxDay(4)));
-    // Other banks never count.
+    // Other banks and rows without the "conversation" tag never count.
     addConv(at(mxDay(3)), "jarvis");
+    addConv(at(mxDay(3)), "mc-jarvis", '["telegram"]');
     const d = createEvolutionLogEntry("2026-10-09", null).description;
     expect(d).toContain("| Streak days | 3 |");
     expect(d).toContain("- Streak days: 3");
@@ -180,11 +199,9 @@ describe("createEvolutionLogEntry — harness-computed metrics (2026-10-09)", ()
   });
 
   it("a malformed tags value does not abort the build and never counts", () => {
-    db.prepare("INSERT INTO conversations VALUES (?, ?, ?)").run(
-      "mc-jarvis",
-      "not json",
-      at(mxDay(0)),
-    );
+    db.prepare(
+      "INSERT INTO conversations (bank, tags, content, created_at) VALUES (?, ?, ?, ?)",
+    ).run("mc-jarvis", "not json", "synthetic message", at(mxDay(0)));
     addConv(at(mxDay(1)));
     let d = "";
     expect(() => {

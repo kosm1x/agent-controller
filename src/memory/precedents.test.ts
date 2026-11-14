@@ -17,14 +17,8 @@
  *   7. `MEMORY_PRECEDENTS_MODE` folds anything but `off` to `shadow`.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import Database from "better-sqlite3";
-
-let mockDb: Database.Database;
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => mockDb,
-  writeWithRetry: (fn: () => void) => fn(),
-}));
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 
 const logRecallMock = vi.fn();
 vi.mock("./recall-utility.js", async (importOriginal) => {
@@ -60,7 +54,7 @@ interface SeedTask {
 }
 
 function seed(t: SeedTask): void {
-  mockDb
+  getDatabase()
     .prepare(
       `INSERT INTO tasks (task_id, spawn_type, title, description, status, output, error, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -77,36 +71,24 @@ function seed(t: SeedTask): void {
     );
 }
 
+// `source` must be one the real CHECK accepts (submission|ritual|plan|harness).
 function gate(taskId: string, state: string): void {
-  mockDb
+  getDatabase()
     .prepare(
-      `INSERT INTO task_gates (task_id, gate_id, criterion, state, source) VALUES (?, ?, 'c', ?, 'test')`,
+      `INSERT INTO task_gates (task_id, gate_id, criterion, state, source) VALUES (?, ?, 'c', ?, 'harness')`,
     )
     .run(taskId, `g-${Math.random()}`, state);
 }
 
+// The real schema, fresh per test: the `tasks` CHECKs and the `task_gates`
+// state/source CHECKs and primary key apply to every seed.
 beforeEach(() => {
-  mockDb = new Database(":memory:");
-  mockDb.exec(`
-    CREATE TABLE tasks (
-      task_id TEXT UNIQUE NOT NULL,
-      spawn_type TEXT DEFAULT 'root',
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      status TEXT DEFAULT 'pending',
-      output TEXT,
-      error TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE task_gates (
-      task_id TEXT NOT NULL,
-      gate_id TEXT NOT NULL,
-      criterion TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      source TEXT NOT NULL
-    );
-  `);
+  initDatabase(":memory:");
   logRecallMock.mockClear();
+});
+
+afterEach(() => {
+  closeDatabase();
 });
 
 const QUERY = "deploy the caddy config for trustr and restart the service";
@@ -283,7 +265,7 @@ describe("shadowLogPrecedents", () => {
   });
 
   it("swallows DB errors instead of throwing into the caller", async () => {
-    mockDb.exec("DROP TABLE tasks");
+    getDatabase().exec("DROP TABLE tasks");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(() => shadowLogPrecedents(QUERY, { now: NOW })).not.toThrow();
     await flush();

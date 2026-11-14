@@ -1,32 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 
-afterEach(() => {
-  vi.restoreAllMocks();
+// The real schema, fresh per test: the snapshot table is the one the service
+// creates, so a drift between it and the module's SQL fails here.
+beforeEach(() => {
+  initDatabase(":memory:");
 });
 
-// Mock getDatabase + writeWithRetry with in-memory SQLite
-const mockDb = new Database(":memory:");
-mockDb.exec(`CREATE TABLE prometheus_snapshots (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id          TEXT NOT NULL,
-  goal_graph       TEXT NOT NULL,
-  goal_results     TEXT NOT NULL,
-  execution_state  TEXT NOT NULL,
-  task_description TEXT NOT NULL,
-  tool_names       TEXT,
-  config           TEXT,
-  exit_reason      TEXT NOT NULL,
-  created_at       TEXT DEFAULT (datetime('now'))
-)`);
-mockDb.exec(
-  "CREATE INDEX IF NOT EXISTS idx_prom_snap_task ON prometheus_snapshots(task_id, created_at DESC)",
-);
-
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => mockDb,
-  writeWithRetry: (fn: () => unknown) => fn(),
-}));
+afterEach(() => {
+  closeDatabase();
+  vi.restoreAllMocks();
+});
 
 import {
   saveSnapshot,
@@ -104,10 +88,6 @@ function makeSnapshot(
   };
 }
 
-beforeEach(() => {
-  mockDb.exec("DELETE FROM prometheus_snapshots");
-});
-
 describe("PrometheusSnapshot", () => {
   it("round-trips save + load", () => {
     const snap = makeSnapshot();
@@ -133,7 +113,7 @@ describe("PrometheusSnapshot", () => {
     saveSnapshot(snap);
 
     // Manually backdate the created_at to 2 hours ago
-    mockDb
+    getDatabase()
       .prepare(
         "UPDATE prometheus_snapshots SET created_at = datetime('now', '-2 hours')",
       )
@@ -153,7 +133,7 @@ describe("PrometheusSnapshot", () => {
   it("returns most recent snapshot when multiple exist", () => {
     saveSnapshot(makeSnapshot({ exitReason: "timeout" }));
     // Backdate the first one so the second is clearly newer
-    mockDb
+    getDatabase()
       .prepare(
         "UPDATE prometheus_snapshots SET created_at = datetime('now', '-1 hour') WHERE exit_reason = 'timeout'",
       )
@@ -162,6 +142,22 @@ describe("PrometheusSnapshot", () => {
 
     const loaded = loadSnapshot("test-task-1");
     expect(loaded!.exitReason).toBe("budget_exhausted");
+  });
+
+  it("saving again for a task replaces its earlier snapshot and leaves other tasks alone", () => {
+    saveSnapshot(makeSnapshot({ taskId: "other-task" }));
+    saveSnapshot(makeSnapshot({ exitReason: "timeout" }));
+    saveSnapshot(makeSnapshot({ exitReason: "budget_exhausted" }));
+
+    const rows = getDatabase()
+      .prepare(
+        "SELECT task_id, exit_reason FROM prometheus_snapshots ORDER BY task_id",
+      )
+      .all();
+    expect(rows).toEqual([
+      { task_id: "other-task", exit_reason: "timeout" },
+      { task_id: "test-task-1", exit_reason: "budget_exhausted" },
+    ]);
   });
 
   it("preserves goal statuses through serialization", () => {
@@ -177,11 +173,6 @@ describe("PrometheusSnapshot", () => {
 });
 
 describe("pruneExpiredSnapshots", () => {
-  beforeEach(() => {
-    // Each test starts from a clean table
-    mockDb.exec("DELETE FROM prometheus_snapshots");
-  });
-
   it("returns 0 when the table is empty", () => {
     expect(pruneExpiredSnapshots()).toBe(0);
   });
@@ -190,7 +181,7 @@ describe("pruneExpiredSnapshots", () => {
     saveSnapshot(makeSnapshot({ taskId: "fresh-task" }));
     saveSnapshot(makeSnapshot({ taskId: "stale-task" }));
     // Backdate the stale row to 2 hours ago (older than 1h TTL)
-    mockDb
+    getDatabase()
       .prepare(
         "UPDATE prometheus_snapshots SET created_at = datetime('now', '-2 hours') WHERE task_id = 'stale-task'",
       )
@@ -199,7 +190,7 @@ describe("pruneExpiredSnapshots", () => {
     const deleted = pruneExpiredSnapshots();
     expect(deleted).toBe(1);
 
-    const remaining = mockDb
+    const remaining = getDatabase()
       .prepare("SELECT task_id FROM prometheus_snapshots")
       .all() as Array<{ task_id: string }>;
     expect(remaining).toHaveLength(1);
@@ -210,7 +201,7 @@ describe("pruneExpiredSnapshots", () => {
     saveSnapshot(makeSnapshot({ taskId: "task-a" }));
     saveSnapshot(makeSnapshot({ taskId: "task-b" }));
     // Backdate both 2 seconds so a 1-second-TTL sweep catches them
-    mockDb
+    getDatabase()
       .prepare(
         "UPDATE prometheus_snapshots SET created_at = datetime('now', '-2 seconds')",
       )
@@ -219,7 +210,7 @@ describe("pruneExpiredSnapshots", () => {
     const deleted = pruneExpiredSnapshots(1000);
     expect(deleted).toBe(2);
 
-    const remaining = mockDb
+    const remaining = getDatabase()
       .prepare("SELECT COUNT(*) as n FROM prometheus_snapshots")
       .get() as { n: number };
     expect(remaining.n).toBe(0);
@@ -234,14 +225,14 @@ describe("pruneExpiredSnapshots", () => {
     // delete a snapshot a resume call is about to load.
     saveSnapshot(makeSnapshot({ taskId: "edge-task" }));
     // 1 hour TTL minus 1 second → 59:59 old → must survive
-    mockDb
+    getDatabase()
       .prepare(
         "UPDATE prometheus_snapshots SET created_at = datetime('now', '-59 minutes', '-59 seconds')",
       )
       .run();
 
     expect(pruneExpiredSnapshots()).toBe(0);
-    const remaining = mockDb
+    const remaining = getDatabase()
       .prepare("SELECT COUNT(*) as n FROM prometheus_snapshots")
       .get() as { n: number };
     expect(remaining.n).toBe(1);
@@ -266,7 +257,7 @@ describe("mailbox-password store rule on snapshots", () => {
     } finally {
       _resetStoreWithhold();
     }
-    const raw = mockDb
+    const raw = getDatabase()
       .prepare("SELECT * FROM prometheus_snapshots")
       .get() as Record<string, string>;
     expect(JSON.stringify(raw)).not.toContain(pw);
@@ -299,7 +290,7 @@ describe("mailbox-password store rule on snapshots", () => {
     } finally {
       _resetStoreWithhold();
     }
-    const raw = mockDb
+    const raw = getDatabase()
       .prepare("SELECT * FROM prometheus_snapshots")
       .get() as Record<string, string>;
     expect(JSON.stringify(raw)).not.toContain(pw);

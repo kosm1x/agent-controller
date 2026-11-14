@@ -1,18 +1,11 @@
 /**
  * resume-loader — reconstruct a resumable OrchestratorResult from a persisted
- * `runs` row. Real :memory: better-sqlite3 DB (mirrors the live runs columns
- * this loader reads); getDatabase() is mocked to return it.
+ * `runs` row. Real schema through `initDatabase(":memory:")`: the `runs` FK to
+ * `tasks`, its `status` CHECK and `input` NOT NULL apply to every seed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
-
-let db: Database.Database;
-
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => db,
-}));
-
+import { closeDatabase, getDatabase, initDatabase } from "../db/index.js";
 import { GoalGraph } from "./goal-graph.js";
 import { GoalStatus } from "./types.js";
 import { loadResumableRun } from "./resume-loader.js";
@@ -66,10 +59,16 @@ function insertRun(opts: {
   durationMs?: number | null;
   createdAt?: string;
 }): void {
+  const db = getDatabase();
+  // The parent task first: runs.task_id references tasks(task_id).
+  db.prepare(
+    `INSERT INTO tasks (task_id, title, description) VALUES (?, 'synthetic task', 'synthetic description')
+     ON CONFLICT(task_id) DO NOTHING`,
+  ).run(opts.taskId);
   db.prepare(
     `INSERT INTO runs
-       (run_id, task_id, agent_type, status, goal_graph, output, trace, token_usage, duration_ms, created_at)
-     VALUES (@runId, @taskId, 'heavy', @status, @goalGraph, @output, @trace, @tokenUsage, @durationMs, @createdAt)`,
+       (run_id, task_id, agent_type, status, goal_graph, input, output, trace, token_usage, duration_ms, created_at)
+     VALUES (@runId, @taskId, 'heavy', @status, @goalGraph, 'synthetic input', @output, @trace, @tokenUsage, @durationMs, @createdAt)`,
   ).run({
     runId: opts.runId,
     taskId: opts.taskId,
@@ -84,28 +83,11 @@ function insertRun(opts: {
 }
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  // Mirror only the runs columns loadResumableRun reads (representative subset
-  // of the live schema.sql runs table).
-  db.exec(`
-    CREATE TABLE runs (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id       TEXT UNIQUE NOT NULL,
-      task_id      TEXT NOT NULL,
-      agent_type   TEXT NOT NULL,
-      status       TEXT,
-      goal_graph   TEXT,
-      output       TEXT,
-      trace        TEXT,
-      token_usage  TEXT,
-      duration_ms  INTEGER,
-      created_at   TEXT DEFAULT (datetime('now'))
-    );
-  `);
+  initDatabase(":memory:");
 });
 
 afterEach(() => {
-  db.close();
+  closeDatabase();
   vi.restoreAllMocks();
 });
 
@@ -203,6 +185,14 @@ describe("loadResumableRun — happy path", () => {
       goalGraph: buildGraphJson(),
       output: JSON.stringify({ content: "new" }),
       createdAt: "2026-07-05 11:00:00",
+    });
+    // A newer run of another task must not be picked up.
+    insertRun({
+      runId: "run-other-task",
+      taskId: "task-other",
+      goalGraph: buildGraphJson(),
+      output: JSON.stringify({ content: "other" }),
+      createdAt: "2026-07-05 12:00:00",
     });
 
     const loaded = loadResumableRun("task-multi");

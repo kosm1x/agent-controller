@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 
-const mem = vi.hoisted(() => ({ db: null as unknown }));
-vi.mock("../db/index.js", () => ({ getDatabase: () => mem.db }));
-
+// The real `signals` table (initDatabase → ensureIntelTables) in memory.
+import { initDatabase, closeDatabase } from "../db/index.js";
 import {
   computeTrackedMoves,
   formatMove,
@@ -14,13 +13,9 @@ import {
 
 const NOW = new Date("2026-08-24T12:00:00Z");
 
+let db: Database.Database;
+
 function seed(rows: [string, string, number, string][]) {
-  const db = mem.db as Database.Database;
-  db.exec(`CREATE TABLE signals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, domain TEXT NOT NULL,
-    signal_type TEXT NOT NULL, key TEXT NOT NULL, value_numeric REAL, value_text TEXT,
-    metadata TEXT, geo_lat REAL, geo_lon REAL, content_hash TEXT,
-    collected_at TEXT NOT NULL, source_timestamp TEXT)`);
   const ins = db.prepare(
     "INSERT INTO signals (source, domain, signal_type, key, value_numeric, collected_at) VALUES (?, 'financial', 'numeric', ?, ?, ?)",
   );
@@ -29,10 +24,10 @@ function seed(rows: [string, string, number, string][]) {
 
 describe("computeTrackedMoves", () => {
   beforeEach(() => {
-    mem.db = new Database(":memory:");
+    db = initDatabase(":memory:");
   });
   afterEach(() => {
-    (mem.db as Database.Database).close();
+    closeDatabase();
     vi.restoreAllMocks();
   });
 
@@ -50,6 +45,29 @@ describe("computeTrackedMoves", () => {
     expect(moves[0].pct).toBeCloseTo(22, 0);
     expect(formatMove(moves[0])).toBe("BTC +22.0% (24h)");
     expect(formatMove(moves[1])).toBe("MXN −11.1% (24h)");
+  });
+
+  it("compares against the newest prior inside the 20–48 h span, not an older one", () => {
+    seed([
+      ["coingecko", "bitcoin", 73000, "2026-08-23 00:00:00"], // 35.75 h before latest
+      ["coingecko", "bitcoin", 60000, "2026-08-23 11:30:00"], // 24.25 h before latest
+      ["coingecko", "bitcoin", 73200, "2026-08-24 11:45:00"],
+    ]);
+    const moves = computeTrackedMoves(NOW);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({ key: "bitcoin", from: 60000, to: 73200 });
+  });
+
+  it("a row stamped after `now` is not the latest", () => {
+    seed([
+      ["coingecko", "bitcoin", 60000, "2026-08-23 11:30:00"],
+      ["coingecko", "bitcoin", 73200, "2026-08-24 11:45:00"],
+      ["coingecko", "bitcoin", 90000, "2026-08-24 13:00:00"], // one hour after NOW
+    ]);
+    const moves = computeTrackedMoves(NOW);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({ from: 60000, to: 73200 });
+    expect(moves[0].pct).toBeCloseTo(22, 0);
   });
 
   it("no prior value ≥24 h old → no move (a fresh series cannot spike)", () => {
@@ -98,6 +116,10 @@ describe("computeTrackedMoves", () => {
   });
 
   it("safeTrackedMoves swallows a missing table", () => {
+    // The real schema always has the table; drop it to reach the error path.
+    db.exec("DROP TABLE signals");
+    vi.spyOn(console, "error").mockImplementation(() => {});
     expect(safeTrackedMoves(NOW)).toEqual([]);
+    expect(console.error).toHaveBeenCalledTimes(1);
   });
 });
