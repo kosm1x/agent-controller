@@ -21,7 +21,10 @@ export interface BaselineRow {
   computed_at: string;
 }
 
-const WINDOWS: Array<{ name: string; hours: number }> = [
+/** A baseline window: the `signal_baselines.window` rule lists exactly these. */
+export type BaselineWindow = "1h" | "6h" | "24h" | "7d" | "30d";
+
+const WINDOWS: Array<{ name: BaselineWindow; hours: number }> = [
   { name: "24h", hours: 24 },
   { name: "7d", hours: 168 },
 ];

@@ -16,6 +16,7 @@ import {
   computeAllBaselines,
   computeBaseline,
   getBaselines,
+  type BaselineWindow,
 } from "./baselines.js";
 import { METRICS } from "./delta-engine.js";
 
@@ -210,5 +211,51 @@ describe("computeAllBaselines on the real tables", () => {
     expect(lines[0]).toContain("synthetic write failure");
     expect(getBaselines(bad.source, bad.key)).toEqual([]);
     expect(getBaselines(good.source, good.key).map((b) => b.window)).toEqual(["24h", "7d"]);
+  });
+});
+
+// Every window a baseline may carry, each exactly once: a value added to or
+// removed from the window type without this list fails the test typecheck.
+const BASELINE_WINDOWS = {
+  "1h": true,
+  "6h": true,
+  "24h": true,
+  "7d": true,
+  "30d": true,
+} satisfies Record<BaselineWindow, true>;
+
+describe("signal_baselines.window — the window type and the schema rule agree", () => {
+  it("a row of every window is stored and read back, ordered by window text", () => {
+    // computeBaseline writes only the 24h and 7d windows (pinned above); the
+    // other windows of the type are written directly so the rule is shown to
+    // accept each of them.
+    const windows = Object.keys(BASELINE_WINDOWS) as BaselineWindow[];
+    windows.forEach((w, i) => baseline("src", "k", w, 10 + i));
+
+    expect(getBaselines("src", "k").map((b) => [b.window, b.mean])).toEqual(
+      windows.map((w, i) => [w, 10 + i]).sort(([a], [b]) => (a < b ? -1 : 1)),
+    );
+  });
+
+  it("the schema rule lists exactly the baseline windows and refuses any other", () => {
+    const tableSql = (
+      getDatabase()
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'signal_baselines'")
+        .get() as { sql: string }
+    ).sql;
+    const rule = tableSql.match(/CHECK \(window IN \(([^)]*)\)\)/);
+    expect(rule).not.toBeNull();
+    expect(
+      rule![1]
+        .split(",")
+        .map((v) => v.trim().replace(/^'|'$/g, ""))
+        .sort(),
+    ).toEqual(Object.keys(BASELINE_WINDOWS).sort());
+
+    // An unknown window, a known one in the wrong case, and an empty name.
+    for (const w of ["12h", "24H", ""]) {
+      expect(() => baseline("src", "k", w, 1)).toThrow(/CHECK constraint failed/);
+    }
+    expect(getBaselines("src", "k")).toEqual([]);
   });
 });

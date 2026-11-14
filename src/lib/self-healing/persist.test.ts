@@ -61,3 +61,73 @@ describe("persistTriageReport / hasOpenTriageWithin", () => {
     expect(hasOpenTriageWithin(db, 6)).toBe(false);
   });
 });
+
+// Every severity and confidence a triage report may carry, each exactly once:
+// a value added to or removed from the report type without these lists fails
+// the test typecheck.
+const SEVERITIES = { critical: true, high: true, medium: true, low: true } satisfies Record<
+  TriageReport["severity"],
+  true
+>;
+const CONFIDENCES = { high: true, medium: true, low: true } satisfies Record<
+  TriageReport["confidence"],
+  true
+>;
+
+describe("triage_report.severity and .confidence — the report type and the schema rules agree", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new BetterSqlite3(":memory:");
+    ensureSelfHealingTables(db);
+  });
+  afterEach(() => db.close());
+
+  const ruleValues = (column: string): string[] => {
+    const tableSql = (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'triage_report'")
+        .get() as { sql: string }
+    ).sql;
+    const rule = tableSql.match(new RegExp(`CHECK \\(${column} IN \\(([^)]*)\\)\\)`));
+    expect(rule).not.toBeNull();
+    return rule![1]
+      .split(",")
+      .map((v) => v.trim().replace(/^'|'$/g, ""))
+      .sort();
+  };
+  const stored = (id: string) =>
+    db
+      .prepare("SELECT severity, confidence FROM triage_report WHERE report_id = ?")
+      .get(id);
+
+  it("a report of every severity and of every confidence is written and read back with it", () => {
+    for (const severity of Object.keys(SEVERITIES) as Array<TriageReport["severity"]>) {
+      const id = persistTriageReport(db, { ...report, severity, confidence: "medium" }, anomalies);
+      expect(stored(id)).toEqual({ severity, confidence: "medium" });
+    }
+    for (const confidence of Object.keys(CONFIDENCES) as Array<TriageReport["confidence"]>) {
+      const id = persistTriageReport(db, { ...report, severity: "critical", confidence }, anomalies);
+      expect(stored(id)).toEqual({ severity: "critical", confidence });
+    }
+  });
+
+  it("the schema rules list exactly the report's severities and confidences and refuse any other", () => {
+    expect(ruleValues("severity")).toEqual(Object.keys(SEVERITIES).sort());
+    expect(ruleValues("confidence")).toEqual(Object.keys(CONFIDENCES).sort());
+
+    // An unknown value, a known one in the wrong case, and an empty name — in
+    // each column while the other holds an allowed value.
+    const insert = db.prepare(
+      "INSERT INTO triage_report (report_id, severity, root_cause, confidence) VALUES (?, ?, 'rc', ?)",
+    );
+    for (const severity of ["info", "HIGH", ""]) {
+      expect(() => insert.run(`s-${severity}`, severity, "low")).toThrow(/CHECK constraint failed/);
+    }
+    for (const confidence of ["none", "Low", ""]) {
+      expect(() => insert.run(`c-${confidence}`, "low", confidence)).toThrow(
+        /CHECK constraint failed/,
+      );
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM triage_report").get()).toEqual({ n: 0 });
+  });
+});

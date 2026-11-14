@@ -178,3 +178,45 @@ describe("alert listings on the real signal_alerts table", () => {
     expect(ids(getRecentAlerts(24))).toEqual([recent, mid]);
   });
 });
+
+// Every tier an alert candidate may carry, each exactly once: a value added to
+// or removed from the tier type without this list fails the test typecheck.
+const ALERT_TIERS = { FLASH: true, PRIORITY: true, ROUTINE: true } satisfies Record<
+  AlertTier,
+  true
+>;
+
+describe("signal_alerts.tier — the tier type and the schema rule agree", () => {
+  it("an alert of every tier is written and read back with its tier", () => {
+    const tiers = Object.keys(ALERT_TIERS) as AlertTier[];
+    const written = tiers.map((tier) => createAlert(candidate({ tier, contentHash: `h-${tier}` })));
+    expect(written.map((id) => [row(id).tier, row(id).content_hash])).toEqual(
+      tiers.map((tier) => [tier, `h-${tier}`]),
+    );
+  });
+
+  it("the schema rule lists exactly the alert tiers and refuses any other", () => {
+    const tableSql = (
+      getDatabase()
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'signal_alerts'")
+        .get() as { sql: string }
+    ).sql;
+    const rule = tableSql.match(/CHECK \(tier IN \(([^)]*)\)\)/);
+    expect(rule).not.toBeNull();
+    expect(
+      rule![1]
+        .split(",")
+        .map((v) => v.trim().replace(/^'|'$/g, ""))
+        .sort(),
+    ).toEqual(Object.keys(ALERT_TIERS).sort());
+
+    // An unknown tier, a known one in the wrong case, and an empty name.
+    const insert = getDatabase().prepare(
+      "INSERT INTO signal_alerts (tier, domain, title, body, signals_json) VALUES (?, 'd', 't', 'b', '[]')",
+    );
+    for (const tier of ["URGENT", "flash", ""]) {
+      expect(() => insert.run(tier)).toThrow(/CHECK constraint failed/);
+    }
+    expect(getDatabase().prepare("SELECT COUNT(*) AS n FROM signal_alerts").get()).toEqual({ n: 0 });
+  });
+});

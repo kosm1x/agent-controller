@@ -1,5 +1,6 @@
-import { afterAll, afterEach, vi } from "vitest";
+import { afterAll, afterEach, expect, vi } from "vitest";
 import { dropOutsideCallEnv } from "./src/test-utils/outside-call-env.js";
+import { recordOutsideConnections } from "./src/test-utils/outside-connect-record.js";
 
 // 2026-10-30: a pre-commit run from a linked worktree exported GIT_DIR/GIT_INDEX_FILE to the
 // suite; a fixture's `git init` inherited them and reinitialized the real repo as bare.
@@ -24,6 +25,18 @@ delete process.env.COMMIT_DB_KEY;
 // runs (pinned by src/lib/test-env.guard.test.ts).
 (globalThis as typeof globalThis & { __outsideCallEnvDropped?: number })
   .__outsideCallEnvDropped = dropOutsideCallEnv(process.env);
+
+// Every attempt a test makes to connect to a host other than this machine is
+// recorded, and nothing is refused: the list of outside connections the suite
+// opens has to exist before any of them can be refused without turning
+// unknown tests red. Each attempt adds one line (test file, test name, host,
+// port) to mc-test-outside-connections.jsonl in the folder TMPDIR names and
+// then proceeds unchanged. Child processes and worker threads are not covered
+// (pinned by src/lib/test-env-connect.guard.test.ts).
+recordOutsideConnections(() => {
+  const state = expect.getState();
+  return { path: state.testPath, name: state.currentTestName };
+});
 
 // No test reaches a real model, whatever the code under test does. Every model
 // call in the source ends in the agent SDK's `query`, and the shell that starts
