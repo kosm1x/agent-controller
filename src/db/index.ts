@@ -1582,6 +1582,47 @@ function setUpDatabase(_db: Database.Database): void {
 }
 
 /**
+ * The version of the last SCHEMA_MIGRATIONS entry: what `user_version` reads on a
+ * database this code has fully set up. Bump it with every appended migration
+ * (index-readonly.test.ts pins it against a fresh initDatabase).
+ */
+export const SCHEMA_MIGRATION_HEAD = 17;
+
+/**
+ * Opens an EXISTING database read-only for an operator script that runs next to
+ * the service: no directory, no pragma, no schema file, no ensure step, no seed,
+ * no migration — a write through the handle fails (SQLITE_READONLY). Refuses
+ * (error code SCHEMA_MISMATCH, handle closed) unless `user_version` equals
+ * SCHEMA_MIGRATION_HEAD, i.e. the file was set up by this exact code. Installs
+ * the handle as the module's database so getDatabase() readers work; closeDatabase
+ * closes it without a checkpoint.
+ */
+export function openDatabaseReadOnly(dbPath: string): Database.Database {
+  if (_db) {
+    throw Object.assign(new Error("a database is already open in this process"), {
+      code: "DB_ALREADY_OPEN",
+    });
+  }
+  const db = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+  let version: unknown;
+  try {
+    version = db.pragma("user_version", { simple: true });
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  if (version !== SCHEMA_MIGRATION_HEAD) {
+    db.close();
+    throw Object.assign(
+      new Error(`schema version ${String(version)} is not the code's ${SCHEMA_MIGRATION_HEAD}`),
+      { code: "SCHEMA_MISMATCH" },
+    );
+  }
+  _db = db;
+  return db;
+}
+
+/**
  * Get the database instance.
  * @throws if initDatabase() hasn't been called.
  */
@@ -1659,10 +1700,13 @@ export function reconcileOrphanedTasks(
  */
 export function closeDatabase(): void {
   if (_db) {
-    try {
-      _db.pragma("wal_checkpoint(PASSIVE)");
-    } catch {
-      // Best-effort — non-fatal
+    // A read-only handle (openDatabaseReadOnly) is closed as it is: no checkpoint.
+    if (!_db.readonly) {
+      try {
+        _db.pragma("wal_checkpoint(PASSIVE)");
+      } catch {
+        // Best-effort — non-fatal
+      }
     }
     _db.close();
     _db = null;

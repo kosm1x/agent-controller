@@ -956,6 +956,47 @@ describe("reformatDriveFiles / backfillToDrive options", () => {
     expect(r.updated).toBe(rows.length);
   });
 
+  it("reformat: exactPath selects only that path, never a neighbour with the same prefix", async () => {
+    mapAll();
+    getDatabase()
+      .prepare("INSERT INTO jarvis_files (id, path, title, content, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run("skills/a/SKILL.md.bak", "skills/a/SKILL.md.bak", "T", "body", "2026-10-08 12:00:00");
+    getDatabase()
+      .prepare("INSERT INTO drive_file_map (path, drive_id) VALUES (?, ?)")
+      .run("skills/a/SKILL.md.bak", "id-skills/a/SKILL.md.bak");
+    drive.googleFetch.mockResolvedValue({});
+    const r = await reformatDriveFiles({ exactPath: "skills/a/SKILL.md", pathPrefix: "skills/", limit: 5 });
+    expect(r).toEqual({ updated: 1, skipped: 0, failed: 0 });
+    const urls = drive.googleFetch.mock.calls.map((c) => String(c[0]));
+    expect(urls).toEqual([expect.stringContaining(encodeURI("id-skills/a/SKILL.md?"))]);
+  });
+
+  it("reformat: exactPath is byte-exact: a path differing only in case is never selected", async () => {
+    mapAll();
+    drive.googleFetch.mockResolvedValue({});
+    const r = await reformatDriveFiles({ exactPath: "skills/upper.md" }); // only "Skills/upper.md" exists
+    expect(r).toEqual({ updated: 0, skipped: 0, failed: 0 });
+    expect(drive.googleFetch).not.toHaveBeenCalled();
+    const r2 = await reformatDriveFiles({ exactPath: "Skills/upper.md" });
+    expect(r2).toEqual({ updated: 1, skipped: 0, failed: 0 });
+  });
+
+  it("reformat: an empty exactPath selects nothing, never every row", async () => {
+    mapAll();
+    drive.googleFetch.mockResolvedValue({});
+    const r = await reformatDriveFiles({ exactPath: "" });
+    expect(r).toEqual({ updated: 0, skipped: 0, failed: 0 });
+    expect(drive.googleFetch).not.toHaveBeenCalled();
+  });
+
+  it("reformat: exactPath with no such row selects nothing and reports zero updated", async () => {
+    mapAll();
+    drive.googleFetch.mockResolvedValue({});
+    const r = await reformatDriveFiles({ exactPath: "skills/a" });
+    expect(r).toEqual({ updated: 0, skipped: 0, failed: 0 });
+    expect(drive.googleFetch).not.toHaveBeenCalled();
+  });
+
   it("backfill: honours pathPrefix + limit and passes updated_at", async () => {
     drive.googleFetch.mockImplementation(async (url: string) =>
       url.includes("uploadType=multipart") ? { id: "new-id" } : { files: [{ id: "folder" }] },

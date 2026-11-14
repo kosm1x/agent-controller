@@ -47,6 +47,8 @@ export interface DriveBatchOptions {
   pathPrefix?: string;
   /** Process at most this many rows (after ordering by path). */
   limit?: number;
+  /** Only the row whose path is exactly this (pathPrefix is then ignored). */
+  exactPath?: string;
 }
 
 /**
@@ -1159,6 +1161,9 @@ function selectDriveRows(opts: DriveBatchOptions): DriveRow[] {
   const db = getDatabase();
   const cols =
     "SELECT id, path, title, content, tags, qualifier, priority, condition, related_to, updated_at FROM jarvis_files";
+  if (opts.exactPath !== undefined) {
+    return db.prepare(`${cols} WHERE path = ?`).all(opts.exactPath) as DriveRow[];
+  }
   const prefix = opts.pathPrefix;
   let rows = prefix
     ? (db
