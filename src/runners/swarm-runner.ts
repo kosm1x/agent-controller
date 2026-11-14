@@ -149,7 +149,12 @@ export function buildSubTaskDescription(
         // tracker.output is the JSON-stringified tasks.output blob (see the
         // results mapping below) — unwrap the deliverable text FIRST; an
         // anchored parser over the raw blob can never match (qa-audit R2 C4).
-        const text = extractDeliverableText(tracker.output) ?? tracker.output;
+        // The password-withheld line is for the reader of a delivered reply,
+        // never prompt material: dropped here as in the join (the placeholder
+        // stays).
+        const text = (
+          extractDeliverableText(tracker.output) ?? tracker.output
+        ).replaceAll(PASSWORD_WITHHELD_LINE, "");
         // Memory plan v2.0 Track 3: a sibling's "## Shared findings" section
         // is forwarded in full (capped) INSTEAD of the 200-char status slice
         // — the slice is not a channel for facts other goals must not

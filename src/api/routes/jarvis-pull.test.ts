@@ -61,6 +61,16 @@ vi.mock("../../messaging/router.js", () => ({
   CACHE_BREAK_MARKER: "\n<!--CACHE_BREAK_v1-->\n",
 }));
 vi.mock("../../inference/adapter.js", () => ({ infer: mocks.infer }));
+// The seen store reads the database, mocked here: a test names the
+// fingerprints the mailbox tool "printed" (synthetic).
+const seenStub = vi.hoisted(() => ({ fps: new Set<string>(), fail: false }));
+vi.mock("../../lib/v8-4/mailbox-passwords.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/v8-4/mailbox-passwords.js")>()),
+  isSeenPassword: (fp: string) => {
+    if (seenStub.fail) throw new Error("seen store unavailable");
+    return seenStub.fps.has(fp);
+  },
+}));
 vi.mock("../../db/jarvis-fs.js", () => ({
   getFilesByQualifier: () => mocks.kbRows,
 }));
@@ -74,6 +84,7 @@ import { jarvisPull, JARVIS_PULL_TOOLS } from "./jarvis-pull.js";
 import { buildExternalJarvisSystemPrompt } from "../../messaging/router.js";
 import { stringifyRedacted } from "../mcp-server/redact.js";
 import {
+  PASSWORD_WITHHELD_LINE,
   PASSWORD_WITHHELD_PLACEHOLDER,
   passwordFingerprint,
 } from "../../lib/v8-4/password-gate.js";
@@ -516,5 +527,114 @@ describe("POST /api/jarvis-pull — mailbox-password store rule", () => {
     const persisted = stringifyRedacted(eventData);
     expect(persisted).not.toContain(pw);
     expect(persisted).toContain(PASSWORD_WITHHELD_PLACEHOLDER);
+  });
+});
+
+// The fallback answer is one model call with no task and no tools: the
+// request's own text is the only proof (the router's fast-path rule). The
+// sources footer follows the checked answer; an answer without a seen value
+// is delivered byte for byte as before.
+describe("POST /api/jarvis-pull — fallback answer passes the reply check", () => {
+  const PW = "FakeTestPassWordXYZ2345";
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const FOOT = {
+    deadline: "📎 Fuentes: Análisis propio (sin herramientas: se agotó el tiempo de investigación)",
+    error: "📎 Fuentes: Análisis propio (sin herramientas: falló la investigación)",
+    busy: "📎 Fuentes: Análisis propio (sin herramientas: Jarvis atiende otras consultas)",
+  };
+  // Each case comes from its own socket address: the route's per-address
+  // rate limit (30 a minute) is shared by the whole file.
+  let addr = 0;
+  let from = "";
+  // Every case carries a caller-built context: only the question is proof.
+  let context = "Cuenta sintética, sin claves.";
+  const postFrom = (query: string) =>
+    app.request(
+      "/api/jarvis-pull",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, context }),
+      },
+      { incoming: { socket: { remoteAddress: from } } },
+    );
+  const answerWith = (content: string) =>
+    mocks.infer.mockResolvedValue({
+      content: `${content}\n📎 Fuentes: GDELT`,
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+  /** One request answered on the fallback of `mode`; returns the response. */
+  async function fallback(
+    mode: "deadline" | "error" | "busy",
+    query = QUERY,
+  ): Promise<string> {
+    if (mode === "deadline") submitThen(null);
+    else if (mode === "error")
+      submitThen((taskId) => mocks.emit("task.failed", { task_id: taskId, error: "boom" }));
+    else {
+      submitThen(null);
+      const held = [postFrom(QUERY), postFrom(QUERY), postFrom(QUERY)];
+      await vi.waitFor(() => expect(mocks.submitTask).toHaveBeenCalledTimes(3));
+      const busy = (await (await postFrom(query)).json()) as { response: string };
+      await Promise.all(held);
+      return busy.response;
+    }
+    return ((await (await postFrom(query)).json()) as { response: string }).response;
+  }
+
+  beforeEach(() => {
+    from = `10.9.0.${++addr}`;
+    context = "Cuenta sintética, sin claves.";
+    seenStub.fps.add(passwordFingerprint(PW));
+  });
+  afterEach(() => seenStub.fps.clear());
+
+  for (const mode of ["deadline", "error", "busy"] as const) {
+    it(`${mode}: a seen value the request did not carry is withheld, with the line, before the sources footer`, async () => {
+      answerWith(`Acceso del buzón: ${PW}`);
+      expect(await fallback(mode)).toBe(`Acceso del buzón: ${P}\n\n${L}\n\n${FOOT[mode]}`);
+      expect(
+        logSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("password-gate")),
+      ).toContain("[jarvis-pull] password-gate fallback checked=1 withheld=1");
+    });
+
+    it(`${mode}: a value the caller's question carries passes unchanged`, async () => {
+      answerWith(`Acceso del buzón: ${PW}`);
+      expect(await fallback(mode, `${QUERY} usa ${PW}`)).toBe(
+        `Acceso del buzón: ${PW}\n\n${FOOT[mode]}`,
+      );
+    });
+
+    it(`${mode}: an answer without a seen value is byte-identical and logs no count`, async () => {
+      answerWith("- Respuesta sin herramientas, token AbcdefGhijkl12345678 sin clave vista.");
+      expect(await fallback(mode)).toBe(
+        `- Respuesta sin herramientas, token AbcdefGhijkl12345678 sin clave vista.\n\n${FOOT[mode]}`,
+      );
+      expect(
+        logSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("password-gate fallback checked=1 withheld=1")),
+      ).toEqual([]);
+    });
+  }
+
+  it("a seen value present only in the caller-built context is withheld: the context proves nothing", async () => {
+    context = `Notas del CRM: la clave es ${PW}`;
+    answerWith(`Acceso del buzón: ${PW}`);
+    expect(await fallback("error")).toBe(`Acceso del buzón: ${P}\n\n${L}\n\n${FOOT.error}`);
+  });
+
+  it("a check that throws lets the fallback answer through unchanged and says so in one fixed line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seenStub.fail = true;
+    try {
+      answerWith(`Acceso del buzón: ${PW}`);
+      expect(await fallback("error")).toBe(`Acceso del buzón: ${PW}\n\n${FOOT.error}`);
+      expect(warn).toHaveBeenCalledWith(
+        "[jarvis-pull] password-gate fallback check failed — text passed through unchanged",
+      );
+    } finally {
+      seenStub.fail = false;
+      warn.mockRestore();
+    }
   });
 });

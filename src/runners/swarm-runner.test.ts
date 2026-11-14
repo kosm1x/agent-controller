@@ -296,6 +296,43 @@ describe("buildSubTaskDescription — sibling context", () => {
   });
 });
 
+// The password-withheld line is for the reader of a delivered reply, never
+// prompt material: a finished child's line does not reach a sibling's prompt
+// (the short slice or the shared-findings section); the placeholder does.
+describe("buildSubTaskDescription — the password-withheld line is not sibling context", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const describeFor = (output: string) => {
+    const graph = makeGraph();
+    return buildSubTaskDescription(
+      graph.getGoal("g-1"),
+      graph,
+      new Map<string, Tracker>([
+        ["g-2", { goalId: "g-2", taskId: "t-2", status: "completed", output }],
+      ]) as Map<string, any>,
+    );
+  };
+
+  it("the short slice keeps the placeholder and drops the line", () => {
+    const desc = describeFor(`${L}\n\nBuzón listo: ${P}`);
+    expect(desc).toContain(`Result: \n\nBuzón listo: ${P}`);
+    expect(desc).not.toContain(L);
+  });
+
+  it("the shared-findings section keeps the placeholder and drops the line", () => {
+    const desc = describeFor(
+      `# Report\n${SHARED_FINDINGS_HEADING}\n- buzón: ${P}\n\n${L}`,
+    );
+    expect(desc).toContain(`- buzón: ${P}`);
+    expect(desc).not.toContain(L);
+  });
+
+  it("a child text without the line is forwarded as before", () => {
+    const out = `Buzón listo: ${P}. ${"A".repeat(300)}`;
+    expect(describeFor(out)).toContain(`Result: ${out.slice(0, 200)}`);
+  });
+});
+
 describe("buildSubTaskDescription — ownership + shared findings (memory plan v2.0, Track 3)", () => {
   it("forwards a completed sibling's '## Shared findings' section in full, not the 200-char slice", () => {
     const graph = makeGraph();

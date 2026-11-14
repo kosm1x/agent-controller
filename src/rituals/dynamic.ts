@@ -151,11 +151,16 @@ function updateScheduleRun(
   status: string,
   resultSummary?: string,
 ): void {
+  // The summary is run output: like every stored run text it passes the
+  // store rule, on every status. The rule sees the whole text; the cut comes
+  // after, so a value crossing the cut is never stored as a fragment.
+  const summary =
+    resultSummary == null ? null : withholdForStore(resultSummary).slice(0, 500);
   getDatabase()
     .prepare(
       "UPDATE schedule_runs SET status = ?, result_summary = ? WHERE task_id = ?",
     )
-    .run(status, resultSummary?.slice(0, 2000) ?? null, taskId);
+    .run(status, summary, taskId);
 }
 
 export interface ScheduleRunRow {
@@ -740,7 +745,7 @@ export function handleScheduledTaskResult(
       console.warn(
         `[schedules] DELIVERY MISS — retrying "${meta.name}" (attempt ${meta.retryCount + 1})`,
       );
-      updateScheduleRun(taskId, "delivery_miss", result?.slice(0, 500));
+      updateScheduleRun(taskId, "delivery_miss", result);
       const schedule = getSchedule(meta.scheduleId);
       if (schedule) {
         retryScheduledTask(schedule, meta.retryCount + 1).catch((err) => {
@@ -771,7 +776,7 @@ export function handleScheduledTaskResult(
   }
 
   // Delivery verified — mark as completed in audit trail (after delivery check, audit C2)
-  updateScheduleRun(taskId, "completed", result?.slice(0, 500));
+  updateScheduleRun(taskId, "completed", result);
 
   // Phase 0.3 (operator ruling 1, 2026-08-22): a schedule whose prompt
   // decides it has repeated unanswered too often ends its text with
@@ -885,7 +890,7 @@ export function handleScheduledTaskFailure(
   const meta = pendingScheduled.get(taskId);
   if (!meta) return;
   pendingScheduled.delete(taskId);
-  updateScheduleRun(taskId, "failed", error?.slice(0, 500));
+  updateScheduleRun(taskId, "failed", error);
   alertScheduleFailed(meta.name, error);
 }
 

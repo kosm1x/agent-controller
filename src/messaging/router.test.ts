@@ -5966,6 +5966,270 @@ describe("MessageRouter", () => {
     });
   });
 
+  // Every text a run delivers passes the reply check, keyed on the run's own
+  // task id; a cut made after the check keeps the withheld-password line
+  // whole and last (password-gate.ts). Texts without a candidate value are
+  // delivered byte for byte as before.
+  describe("run texts outside the completion check: password check and cuts", () => {
+    const PW = "PriorTestPassWordQRS2345";
+    const P = PASSWORD_WITHHELD_PLACEHOLDER;
+    const L = PASSWORD_WITHHELD_LINE;
+    const lineCount = (t: string) => t.split(L).length - 1;
+    const background = () =>
+      dbStatusGet.mockReturnValue({
+        spawn_type: "user-background",
+        title: "🤖 Agente: sync KB",
+        status: "completed",
+        agent_type: "fast",
+      });
+    const launch = async () => {
+      await router.handleInbound({
+        channel: "whatsapp",
+        from: "owner@s.whatsapp.net",
+        text: "lanza el agente",
+        timestamp: new Date(),
+      });
+      router.startEventListeners();
+    };
+    const fail = (error: string, taskId = "test-task-123") =>
+      findHandler("task.failed")!({
+        data: { task_id: taskId, agent_id: "fast", error, recoverable: false, attempts: 1 },
+      });
+    const complete = (result: string) =>
+      findHandler("task.completed")!({
+        data: { task_id: "test-task-123", agent_id: "fast", result, duration_ms: 1 },
+      });
+    const failNotice = (error: string) =>
+      `🤖❌ **Agente falló:** sync KB\nError: ${error}`;
+
+    beforeEach(() => {
+      _resetMailboxPasswords();
+      seenStub.fps.add(passwordFingerprint(PW));
+    });
+    afterEach(() => {
+      seenStub.fps.clear();
+      _resetMailboxPasswords();
+      dbStatusGet.mockReturnValue(undefined);
+    });
+
+    it("background failure: a value the mailbox tool printed and this run did not prove is withheld, with the line", async () => {
+      background();
+      await launch();
+      fail(`login rechazado con clave ${PW}`);
+      expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+        `${failNotice(`login rechazado con clave ${P}`)}\n\n${L}`,
+      );
+    });
+
+    it("background failure: a value this run proved passes, as on the success path", async () => {
+      background();
+      await launch();
+      recordUserPasswordProof("test-task-123", `usa ${PW}`);
+      fail(`login rechazado con clave ${PW}`);
+      expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+        failNotice(`login rechazado con clave ${PW}`),
+      );
+    });
+
+    it("background failure: an error without a seen value is delivered byte for byte", async () => {
+      background();
+      await launch();
+      fail("timeout tras 300 s; token AbcdefGhijkl12345678 no es una clave vista");
+      expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+        failNotice("timeout tras 300 s; token AbcdefGhijkl12345678 no es una clave vista"),
+      );
+    });
+
+    it("scheduled failure alert: the error passes the same check before the broadcast", async () => {
+      const { watchScheduledTask } = await import("../rituals/dynamic.js");
+      messagingIndex.router = router;
+      try {
+        watchScheduledTask("task-sched-fail", {
+          name: "Sintético",
+          delivery: "telegram",
+          email_to: null,
+          schedule_id: "sched-fail",
+        } as unknown as Parameters<typeof watchScheduledTask>[1]);
+        router.startEventListeners();
+        const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        fail(`login rechazado con clave ${PW}`, "task-sched-fail");
+        await vi.waitFor(() =>
+          expect(waAdapter.sentMessages.some((m) => m.text.includes("FAILED:"))).toBe(true),
+        );
+        const alert = waAdapter.sentMessages.find((m) => m.text.includes("FAILED:"))!.text;
+        expect(alert).toBe(
+          `⚠️ Scheduled task "Sintético" FAILED: login rechazado con clave ${P}\n\n${L}`,
+        );
+        expect(errSpy.mock.calls.map((c) => c.join(" ")).join("\n")).not.toContain(PW);
+        errSpy.mockRestore();
+      } finally {
+        messagingIndex.router = null;
+      }
+    });
+
+    it("background notice: a kept placeholder whose line the 500-char cut removed ends with the full line once", async () => {
+      background();
+      await launch();
+      const body = `Clave del buzón: ${P}. ` + "x".repeat(700);
+      complete(`${body}\n\n${L}`);
+      const text = waAdapter.sentMessages.at(-1)!.text;
+      expect(text).toContain(`Clave del buzón: ${P}.`);
+      expect(text).toContain("..."); // the body WAS capped
+      expect(lineCount(text)).toBe(1);
+      // The hint stays last; the line closes the cut summary, before it.
+      expect(text.endsWith(`...\n\n${L}\n\n_Escribe "mis agentes" para ver el historial._`)).toBe(true);
+    });
+
+    it("background notice: a line the 800-char tail cut would halve is delivered whole, once, last", async () => {
+      background();
+      await launch();
+      const later = Array.from(
+        { length: 12 },
+        (_, i) => `⚠️ No quedó: KB projects/p${i}.md escrito — no existe tras la escritura`,
+      ).join("\n");
+      complete(`Resumen: ${P}\n\n${L}\n${later}`);
+      const text = waAdapter.sentMessages.at(-1)!.text;
+      expect(text).toContain(`Resumen: ${P}`);
+      expect(lineCount(text)).toBe(1);
+      expect(text.endsWith(`\n\n${L}\n\n_Escribe "mis agentes" para ver el historial._`)).toBe(true);
+      expect(text).not.toContain(L.slice(L.length / 2) + "\n⚠️");
+    });
+
+    it("background notice: a placeholder the 500-char cut removed leaves no line", async () => {
+      background();
+      await launch();
+      complete(`${"x".repeat(600)} ${P}\n\n${L}`);
+      const text = waAdapter.sentMessages.at(-1)!.text;
+      expect(text).not.toContain(P);
+      expect(lineCount(text)).toBe(0);
+    });
+
+    it("background notice: a text that already ends with the line and is not cut is unchanged", async () => {
+      background();
+      await launch();
+      complete(`Listo: ${P}\n\n${L}`);
+      expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+        `🤖 **Agente terminó:** sync KB\n\nListo: ${P}\n\n${L}\n\n_Escribe "mis agentes" para ver el historial._`,
+      );
+    });
+
+    it("operator warning: the runner text passes the check and its 500-char cut keeps the line whole", async () => {
+      router.startEventListeners();
+      findHandler("notification.warning")!({
+        data: {
+          title: "Required tools not called",
+          message: `runner: clave ${PW} ${"y".repeat(600)}\n\n${L}`,
+          source: "dispatcher",
+          context: { taskId: "t-1" },
+        },
+      });
+      await vi.waitFor(() => expect(waAdapter.sentMessages).toHaveLength(1));
+      const text = waAdapter.sentMessages[0].text;
+      expect(text).not.toContain(PW);
+      expect(text).toContain(`runner: clave ${P} y`);
+      expect(lineCount(text)).toBe(1);
+      expect(text.endsWith(`\n\n${L}\n./mc-ctl task t-1`)).toBe(true);
+    });
+
+    // A failure text is checked without the run's proof: the completion
+    // ledger frees the proof before it emits the failure, so a value the run
+    // proved is withheld here, with the line.
+    it("background failure after the ledger freed the run's proof: the value is withheld, with the line", async () => {
+      background();
+      await launch();
+      recordUserPasswordProof("test-task-123", `usa ${PW}`);
+      forgetProvenPasswords("test-task-123");
+      fail(`login rechazado con clave ${PW}`);
+      expect(waAdapter.sentMessages.at(-1)!.text).toBe(
+        `${failNotice(`login rechazado con clave ${P}`)}\n\n${L}`,
+      );
+    });
+
+    it("operator warning without the placeholder: the text handed to delivery is byte-identical to the plain cut", async () => {
+      const brief = vi.spyOn(router, "sendBriefingToOwner");
+      router.startEventListeners();
+      const handler = findHandler("notification.warning")!;
+      const short = "runner: sin clave en este texto";
+      const long = `runner: ${"z".repeat(700)}`;
+      for (const message of [short, long]) {
+        handler({
+          data: { title: "Required tools not called", message, source: "dispatcher", context: { taskId: "t-1" } },
+        });
+      }
+      await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(2));
+      expect(brief.mock.calls.map((c) => c[0])).toEqual([
+        `⚠️ Required tools not called\n${short}\n./mc-ctl task t-1`,
+        `⚠️ Required tools not called\n${long.slice(0, 500)}\n./mc-ctl task t-1`,
+      ]);
+    });
+
+    it("operator warning: a check that throws lets the text through unchanged and says so in one fixed line", async () => {
+      const brief = vi.spyOn(router, "sendBriefingToOwner");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      seenStub.fail = true;
+      try {
+        router.startEventListeners();
+        const message = `runner: clave ${PW}`;
+        findHandler("notification.warning")!({
+          data: { title: "Required tools not called", message, source: "dispatcher", context: { taskId: "t-1" } },
+        });
+        await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(1));
+        expect(brief.mock.calls[0][0]).toBe(`⚠️ Required tools not called\n${message}\n./mc-ctl task t-1`);
+        expect(warnSpy).toHaveBeenCalledWith(
+          "[router] password-gate run-text check failed — text passed through unchanged",
+        );
+      } finally {
+        seenStub.fail = false;
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("operator warning: the title passes the same check as the message, and the line is added once, after the message", async () => {
+      const brief = vi.spyOn(router, "sendBriefingToOwner");
+      router.startEventListeners();
+      const handler = findHandler("notification.warning")!;
+      handler({
+        data: { title: `Acceso ${PW}`, message: "runner falló", source: "dispatcher", context: { taskId: "t-1" } },
+      });
+      handler({
+        data: { title: `Acceso ${PW}`, message: `runner: clave ${PW}`, source: "dispatcher", context: { taskId: "t-1" } },
+      });
+      await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(2));
+      expect(brief.mock.calls.map((c) => c[0])).toEqual([
+        `⚠️ Acceso ${P}\nrunner falló\n\n${L}\n./mc-ctl task t-1`,
+        `⚠️ Acceso ${P}\nrunner: clave ${P}\n\n${L}\n./mc-ctl task t-1`,
+      ]);
+    });
+
+    it("operator warning: a title that already holds the placeholder gets the line once, after the message; an empty message stacks no blank lines", async () => {
+      const brief = vi.spyOn(router, "sendBriefingToOwner");
+      router.startEventListeners();
+      const handler = findHandler("notification.warning")!;
+      handler({
+        data: { title: `Acceso ${P}`, message: "runner falló", source: "dispatcher", context: { taskId: "t-1" } },
+      });
+      handler({
+        data: { title: `Acceso ${PW}`, message: "", source: "dispatcher", context: { taskId: "t-1" } },
+      });
+      await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(2));
+      expect(brief.mock.calls.map((c) => c[0])).toEqual([
+        `⚠️ Acceso ${P}\nrunner falló\n\n${L}\n./mc-ctl task t-1`,
+        `⚠️ Acceso ${P}\n${L}\n./mc-ctl task t-1`,
+      ]);
+    });
+
+    it("operator warning: a value the run proved passes unchanged in the title — the title is checked with the run's task id", async () => {
+      const brief = vi.spyOn(router, "sendBriefingToOwner");
+      router.startEventListeners();
+      recordUserPasswordProof("t-1", `usa ${PW}`);
+      findHandler("notification.warning")!({
+        data: { title: `Acceso ${PW}`, message: "runner falló", source: "dispatcher", context: { taskId: "t-1" } },
+      });
+      await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(1));
+      expect(brief.mock.calls[0][0]).toBe(`⚠️ Acceso ${PW}\nrunner falló\n./mc-ctl task t-1`);
+    });
+  });
+
   describe("notification.warning → operator", () => {
     const warn = (message: string, source = "dispatcher") =>
       findHandler("notification.warning")!({
@@ -8867,6 +9131,48 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
       expect(lines.filter((l) => l.includes(MARKER))).toEqual([]);
     } finally {
       for (const s of spies) s.mockRestore();
+    }
+  });
+
+  it("a confirmed call's result is tool output: a seen value it carries is withheld, with the line", async () => {
+    const PW = "PriorTestPassWordQRS2345";
+    seenStub.fps.add(passwordFingerprint(PW));
+    gatedExec.executeGatedCapability.mockResolvedValue(
+      JSON.stringify({ error: `login rechazado con clave ${PW}` }),
+    );
+    try {
+      await gatedTurn();
+      queueTask("task-cont");
+      await say("sí");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+      const sent = waAdapter.sentMessages.map((m) => m.text);
+      expect(sent.join("\n")).not.toContain(PW);
+      expect(sent).toContain(
+        `Error: login rechazado con clave ${PASSWORD_WITHHELD_PLACEHOLDER}\n\n${PASSWORD_WITHHELD_LINE}`,
+      );
+    } finally {
+      seenStub.fps.clear();
+    }
+  });
+
+  // Deliberate: approval shows exactly what will run.
+  it("the confirmation card shows the stored arguments unchanged, a seen value included", async () => {
+    const PW = "PriorTestPassWordQRS2345";
+    seenStub.fps.add(passwordFingerprint(PW));
+    try {
+      queueTask("task-orig");
+      await say("borra el post 7 de wordpress");
+      runOutput({ toolName: "wp_delete", args: { id: 7, motivo: `clave ${PW}` } });
+      complete("task-orig", "Voy a borrar el post 7 «Hola». ¿Procedo?");
+      dbStatusGet.mockReturnValue(undefined);
+      const args = getPendingConfirmation(tk)?.args;
+      expect(args).toEqual({ id: 7, motivo: `clave ${PW}` });
+      expect(waAdapter.sentMessages.at(-1)!.text).toContain(
+        renderConfirmationSummary("wp_delete", args!),
+      );
+    } finally {
+      seenStub.fps.clear();
     }
   });
 

@@ -7,6 +7,7 @@
  */
 
 import type { Bot } from "grammy";
+import { cutKeepingWithheldLine } from "../../lib/v8-4/password-gate.js";
 import { formatForTelegram } from "../formatter.js";
 
 const EDIT_THROTTLE_MS = 1_500;
@@ -108,7 +109,13 @@ export class TelegramStreamController {
       console.error("[telegram-stream] Finalize failed:", err);
       // Last resort: send as new message
       try {
-        await this.bot.api.sendMessage(this.chatId, fullText.slice(0, 4000));
+        // The withheld-password line stays whole inside the same limit.
+        await this.bot.api.sendMessage(
+          this.chatId,
+          cutKeepingWithheldLine(fullText, (t, room) =>
+            t.slice(0, 4000 - room),
+          ),
+        );
       } catch {
         /* give up */
       }

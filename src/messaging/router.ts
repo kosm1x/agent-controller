@@ -183,8 +183,13 @@ import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
 import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
   candidateFingerprints,
+  cutKeepingWithheldLine,
   hasUnprovenValue,
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
   withholdUnprovenValues,
+  withoutWithheldLine,
+  withPasswordWithheldLine,
 } from "../lib/v8-4/password-gate.js";
 import {
   isSeenPassword,
@@ -2933,7 +2938,12 @@ export class MessageRouter {
             : lines.map(
                 (l, i) => `${i + 1}. ${resultLabel(approved.items[i])}: ${l}`,
               );
-        const userResponse = shown.join("\n");
+        // The executed calls' results are tool output: the reply check, keyed
+        // on the task that showed the card.
+        const userResponse = this.withholdRunText(
+          shown.join("\n"),
+          approved.taskId ?? undefined,
+        );
         this.sendToChannel(msg.channel, msg.from, userResponse);
         // USER line already day-logged at the top of handleInbound.
         appendDayLog("JARVIS", userResponse);
@@ -3921,13 +3931,27 @@ export class MessageRouter {
     data: NotificationPayload,
   ): Promise<void> {
     const taskId = data.context?.taskId;
+    const runId = typeof taskId === "string" ? taskId : undefined;
+    // The title is run text too: same check, same task, as the message.
+    // Every delivered placeholder comes with its line: a checked title that
+    // holds one gets the line once, after the message.
+    const title = withoutWithheldLine(this.withholdRunText(data.title, runId));
+    const cutMessage = cutKeepingWithheldLine(
+      this.withholdRunText(data.message, runId),
+      (t) => t.slice(0, 500),
+    );
+    const message = !title.includes(PASSWORD_WITHHELD_PLACEHOLDER)
+      ? cutMessage
+      : cutMessage
+        ? withPasswordWithheldLine(cutMessage)
+        : PASSWORD_WITHHELD_LINE;
     const { sent } = await this.sendBriefingToOwner(
-      `⚠️ ${data.title}\n${data.message.slice(0, 500)}` +
+      `⚠️ ${title}\n${message}` +
         (typeof taskId === "string" ? `\n./mc-ctl task ${taskId}` : ""),
     );
     if (sent === 0) {
       console.error(
-        `[router] notification.warning not delivered to any operator channel: ${data.title} (${data.source})`,
+        `[router] notification.warning not delivered to any operator channel: ${title} (${data.source})`,
       );
     }
   }
@@ -4442,17 +4466,34 @@ export class MessageRouter {
         // Keep the END: the ledger block / read-back lines are appended
         // last, after the numbers footer and the citation note (Phase 3 R2
         // audit W-7 — a start-anchored cap cut «No quedó» first).
-        const notice = (b: string, rt: string): string => {
+        const summaryOf = (b: string, rt: string): string => {
           const tail = rt
             ? rt.length > 800
               ? "…" + rt.slice(-800)
               : rt
             : undefined;
           const capped = b.length > 500 ? b.slice(0, 500) + "..." : b;
-          const summary = tail ? `${capped}\n\n${tail}` : capped;
-          return `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}${confirmLine ? `\n\n${confirmLine}` : ""}\n\n_Escribe "mis agentes" para ver el historial._`;
+          return tail ? `${capped}\n\n${tail}` : capped;
         };
-        const notification = notice(body, rawTail);
+        const wrap = (summary: string): string =>
+          `🤖 **Agente terminó:** ${bgTitle}\n\n${summary}${confirmLine ? `\n\n${confirmLine}` : ""}\n\n_Escribe "mis agentes" para ver el historial._`;
+        const notice = (b: string, rt: string): string => wrap(summaryOf(b, rt));
+        // A summary the caps cut keeps the withheld-password line whole, at
+        // its end (password-gate.ts), so the line still reads before the
+        // confirm line and the history hint; one they leave whole is built
+        // as it is.
+        const notification =
+          body.length > 500 || rawTail.length > 800
+            ? wrap(
+                cutKeepingWithheldLine(resultText, (t) => {
+                  const cut = splitLedgerTail(
+                    t,
+                    (l) => !!failureLine && l === failureLine,
+                  );
+                  return summaryOf(cut.body, cut.tail);
+                }),
+              )
+            : notice(body, rawTail);
         // Background-agent notification IS LLM-derived (summary contains LLM
         // output); route through the gate so community-manager mailboxes get
         // the same write-gate protection as direct LLM replies.
@@ -4826,9 +4867,15 @@ export class MessageRouter {
       handleProactiveFailure(taskId);
     }
 
+    // A run's error text reaches the user: the same check as its reply.
+    const error =
+      data.error === undefined
+        ? undefined
+        : this.withholdRunText(data.error, taskId);
+
     // Alert on scheduled task failures
     if (isScheduledTask(taskId)) {
-      handleScheduledTaskFailure(taskId, data.error ?? "Unknown error");
+      handleScheduledTaskFailure(taskId, error ?? "Unknown error");
     }
 
     const pending = this.pendingReplies.get(taskId);
@@ -4856,7 +4903,7 @@ export class MessageRouter {
         | { spawn_type: string; title: string; status: string | null }
         | undefined;
       if (task?.spawn_type === "user-background") {
-        failMsg = `🤖❌ **Agente falló:** ${task.title.replace("🤖 Agente: ", "")}\nError: ${data.error ?? "desconocido"}`;
+        failMsg = `🤖❌ **Agente falló:** ${task.title.replace("🤖 Agente: ", "")}\nError: ${error ?? "desconocido"}`;
       } else if (
         task?.status === "needs_context" ||
         task?.status === "blocked"
@@ -5704,6 +5751,33 @@ export class MessageRouter {
     } catch {
       console.warn(
         "[router] password-gate fast-path check failed — text passed through unchanged",
+      );
+      return text;
+    }
+  }
+
+  /**
+   * password-gate.ts on a run's own text that the router delivers outside
+   * the completion check (a failure's error, a warning's message, approved
+   * calls' results): the success path's check, keyed on the run's task id.
+   * Counts only in the log line; on any failure the text passes unchanged.
+   */
+  private withholdRunText(text: string, taskId: string | undefined): string {
+    try {
+      const proven = provenPasswords(taskId);
+      const gated = withholdUnprovenValues(text, {
+        isSeen: isSeenPassword,
+        isProven: (fp) => proven.has(fp),
+      });
+      if (gated.checked > 0) {
+        console.log(
+          `[router] password-gate run-text checked=${gated.checked} withheld=${gated.withheld}`,
+        );
+      }
+      return gated.text;
+    } catch {
+      console.warn(
+        "[router] password-gate run-text check failed — text passed through unchanged",
       );
       return text;
     }

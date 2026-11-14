@@ -11,10 +11,12 @@ import {
   PASSWORD_WITHHELD_PLACEHOLDER,
   candidateFingerprints,
   candidateRuns,
+  cutKeepingWithheldLine,
   hasUnprovenValue,
   passwordFingerprint,
   replaceUnprovenValues,
   withholdUnprovenValues,
+  withoutWithheldLine,
   type PasswordValueCheck,
 } from "./password-gate.js";
 import { isLedgerLine } from "./ledger-lines.js";
@@ -332,5 +334,75 @@ describe("password gate — the check", () => {
     expect(hasUnprovenValue(text, check([STALE], [STALE]))).toBe(false);
     expect(hasUnprovenValue(text, check([STALE]), text.length)).toBe(true);
     expect(hasUnprovenValue(`${text} y más texto`, check([STALE]), text.length + 3)).toBe(false);
+  });
+});
+
+// A cut after the check (word cap, length limit) runs on the text without
+// the line; a kept placeholder gets the full line back once, at the end.
+describe("cutKeepingWithheldLine", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const head = (n: number) => (t: string, room: number) =>
+    t.length > n - room ? t.slice(0, n - room) : t;
+
+  it("a text without the placeholder goes to the cut as it is, with no room taken", () => {
+    const seen: [string, number][] = [];
+    const out = cutKeepingWithheldLine("abc def", (t, room) => {
+      seen.push([t, room]);
+      return t.slice(0, 3);
+    });
+    expect(out).toBe("abc");
+    expect(seen).toEqual([["abc def", 0]]);
+  });
+
+  it("the cut sees the text without the line and the line's length as room", () => {
+    const seen: [string, number][] = [];
+    cutKeepingWithheldLine(`a ${P} b\n\n${L}`, (t, room) => {
+      seen.push([t, room]);
+      return t;
+    });
+    expect(seen).toEqual([[`a ${P} b`, L.length + 2]]);
+  });
+
+  it("a text the cut leaves whole comes back as it was (line in the middle included)", () => {
+    const text = `a ${P}\n\n${L}\n\nGates: 1/1 met`;
+    expect(cutKeepingWithheldLine(text, (t) => t)).toBe(text);
+  });
+
+  it("kept placeholder → the full line once at the end, inside the limit", () => {
+    const out = cutKeepingWithheldLine(`a ${P} ${"x".repeat(500)}\n\n${L}`, head(300));
+    expect(out.length).toBeLessThanOrEqual(300);
+    expect(out.startsWith(`a ${P} x`)).toBe(true);
+    expect(out.endsWith(`\n\n${L}`)).toBe(true);
+    expect(out.split(L)).toHaveLength(2);
+  });
+
+  it("a limit that falls inside the line delivers one full line, not half of it", () => {
+    const body = `a ${P} ${"x".repeat(200)}`;
+    const text = `${body}\n\n${L}`;
+    const limit = body.length + 2 + Math.floor(L.length / 2);
+    expect(text.slice(0, limit).endsWith(L)).toBe(false); // a plain cut halves it
+    const out = cutKeepingWithheldLine(text, head(limit));
+    expect(out.length).toBeLessThanOrEqual(limit);
+    expect(out.endsWith(`\n\n${L}`)).toBe(true);
+    expect(out.split(L)).toHaveLength(2);
+  });
+
+  it("placeholder cut away → no line", () => {
+    const out = cutKeepingWithheldLine(`${"x".repeat(100)} ${P}\n\n${L}`, (t) => t.slice(0, 50));
+    expect(out).toBe("x".repeat(50));
+  });
+
+  it("two copies of the line come back as one", () => {
+    const out = cutKeepingWithheldLine(`a ${P}\n\n${L}\n\n${L} ${"x".repeat(50)}`, (t) => t.slice(0, 2 + P.length));
+    expect(out.split(L)).toHaveLength(2);
+    expect(out.endsWith(L)).toBe(true);
+  });
+
+  it("withoutWithheldLine drops every copy and returns a text without one unchanged", () => {
+    expect(withoutWithheldLine(`a\n\n${L}`)).toBe("a");
+    expect(withoutWithheldLine(`${L}\nb\n\n${L}`)).toBe("\nb");
+    const plain = `a ${P} b`;
+    expect(withoutWithheldLine(plain)).toBe(plain);
   });
 });

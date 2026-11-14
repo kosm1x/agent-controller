@@ -31,6 +31,7 @@ import {
   executeScheduleNow,
   promptExtras,
   getSchedule,
+  handleScheduledTaskFailure,
   handleScheduledTaskResult,
   startDynamicScheduler,
   stopDynamicScheduler,
@@ -353,5 +354,75 @@ describe("mailbox-password store rule on scheduled tasks", () => {
       ).email_subject;
     expect(subject("sched-store-subject")).toBe(`Acceso ${PASSWORD_WITHHELD_PLACEHOLDER}`);
     expect(subject("sched-store-nosubject")).toBeNull();
+  });
+});
+
+describe("mailbox-password store rule on the run summary row", () => {
+  // The summary row stores run output; every stored run text passes the
+  // store rule, whatever the run's status.
+  const pw = "FakeTestPassWordXYZ2345";
+  afterEach(() => _resetStoreWithhold());
+  function startRun(taskId: string) {
+    getDatabase()
+      .prepare("INSERT INTO schedule_runs (schedule_id, task_id) VALUES (?, ?)")
+      .run(SYNC_ID, taskId);
+    watchScheduledTask(taskId, getSchedule(SYNC_ID)!);
+  }
+  const summary = (taskId: string) =>
+    (
+      getDatabase()
+        .prepare("SELECT status, result_summary FROM schedule_runs WHERE task_id = ?")
+        .get(taskId) as { status: string; result_summary: string | null }
+    );
+
+  it("a failed run's error holds the placeholder", () => {
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === passwordFingerprint(pw) });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    startRun("t-run-failed");
+    handleScheduledTaskFailure("t-run-failed", `login rechazado con ${pw}`);
+    err.mockRestore();
+    expect(summary("t-run-failed")).toEqual({
+      status: "failed",
+      result_summary: `login rechazado con ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    });
+  });
+
+  it("a completed run's result holds the placeholder", () => {
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === passwordFingerprint(pw) });
+    startRun("t-run-done");
+    handleScheduledTaskResult("t-run-done", `entré con ${pw}`, "completed", []);
+    expect(summary("t-run-done")).toEqual({
+      status: "completed",
+      result_summary: `entré con ${PASSWORD_WITHHELD_PLACEHOLDER}`,
+    });
+  });
+
+  it("a summary without a seen value is stored as before: whole when short, its first 500 characters when long", () => {
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === passwordFingerprint(pw) });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const short = "timeout tras 3 intentos: OtroValorCualquiera9876 sin cambios";
+    const long = `timeout: ${"intento fallido; ".repeat(60)}`;
+    startRun("t-run-plain");
+    handleScheduledTaskFailure("t-run-plain", short);
+    startRun("t-run-long");
+    handleScheduledTaskResult("t-run-long", long, "completed", []);
+    err.mockRestore();
+    expect(summary("t-run-plain").result_summary).toBe(short);
+    expect(long.length).toBeGreaterThan(500);
+    expect(summary("t-run-long").result_summary).toBe(long.slice(0, 500));
+  });
+
+  // The rule sees the whole text, the cut comes after: a value crossing the
+  // cut is never stored as a fragment the rule cannot recognise.
+  it("a seen value crossing character 500 is withheld whole before the cut: no fragment is stored", () => {
+    setStoreSeenCheck({ size: () => 1, has: (f) => f === passwordFingerprint(pw) });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const head = "x".repeat(490);
+    startRun("t-run-cross");
+    handleScheduledTaskFailure("t-run-cross", `${head} ${pw} fin`);
+    err.mockRestore();
+    const stored = summary("t-run-cross").result_summary!;
+    expect(stored).toBe(`${head} ${PASSWORD_WITHHELD_PLACEHOLDER} fin`.slice(0, 500));
+    expect(stored).not.toContain(pw.slice(0, 500 - head.length - 1));
   });
 });

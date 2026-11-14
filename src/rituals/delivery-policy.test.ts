@@ -12,10 +12,15 @@ import {
   applyRitualDeliveryPolicy,
   budgetUsed,
   capWords,
+  countWords,
   decideRitualDelivery,
   fingerprintReport,
 } from "./delivery-policy.js";
 import { GLOBAL_MUTE_ID, pendingDeferrals, setMutedUntil } from "./ritual-controls.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+} from "../lib/v8-4/password-gate.js";
 
 const ZERO_DAY_1 = `**PM diario — 2026-08-20**
 
@@ -689,5 +694,111 @@ describe("Phase 5 seam — sent-before (5.1/5.2), word cap (5.3), signal lead (5
   it("no signals table → no lead line, digest still delivers", () => {
     const d = applyRitualDeliveryPolicy("signal-intelligence", "t1", DIGEST, { now: NOW });
     expect(d.text).toBe(DIGEST);
+  });
+});
+
+// The word cap runs after the reply check: a kept placeholder is always
+// explained by the full line, once, last; the line never counts against the
+// cap; a text without the placeholder is cut exactly as before.
+describe("word cap after the reply check: the password-withheld line survives whole", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  const lines = (s: string) => s.split(L).length - 1;
+  const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+  const filler = (n: number) =>
+    Array.from({ length: n }, (_, i) => `línea ${i} con seis palabras aquí`).join("\n");
+  const PTR = "📄 Completo: /rituales completo 1";
+
+  beforeEach(() => {
+    mem.db = new Database(":memory:");
+    seedSync();
+  });
+  afterEach(() => {
+    db().close();
+    vi.restoreAllMocks();
+  });
+
+  it(`a Telegram-only push over ${TELEGRAM_PUSH_WORD_CAP} words keeps its placeholder and ends with the full line once`, () => {
+    const post = `Buzón listo, clave: ${P}\n${filler(120)}\n\n${L}`;
+    const d = applyRitualDeliveryPolicy("schedule:williams", "t1", post, {
+      displayName: "Williams Journal",
+      scheduleId: "williams",
+      now: NOW,
+    });
+    expect(d.deliver).toBe(true);
+    expect(d.text.endsWith(`\n\n${L}`)).toBe(true);
+    expect(lines(d.text)).toBe(1);
+    expect(d.text).toContain(`clave: ${P}`);
+    const [body, rest] = d.text.split("\n\n📄 ");
+    expect(words(body)).toBeLessThanOrEqual(TELEGRAM_PUSH_WORD_CAP);
+    expect(rest).toMatch(new RegExp(`^Completo: /rituales completo \\d+\\n\\n`));
+  });
+
+  it("the capped log line reports the count the decision used: the line excluded", () => {
+    const body = `Buzón listo, clave: ${P}\n${filler(120)}`;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    applyRitualDeliveryPolicy("schedule:williams", "t1", `${body}\n\n${L}`, {
+      displayName: "Williams Journal",
+      scheduleId: "williams",
+      now: NOW,
+    });
+    const capped = log.mock.calls.map((c) => String(c[0])).filter((m) => m.includes(": capped "));
+    expect(capped).toHaveLength(1);
+    expect(capped[0]).toContain(`capped ${countWords(body)} → ${TELEGRAM_PUSH_WORD_CAP} words`);
+  });
+
+  // The emailed share is a word budget too: the line counts against it no more
+  // than against the cap, so it never turns a delivery into a deferral.
+  it(`an emailed push cut to ${EMAILED_PUSH_WORD_CAP} words keeps the line whole after the inbox pointer, inside the emailed share`, () => {
+    const digest = `- clave del buzón: ${P}\n${Array.from({ length: 80 }, (_, i) => `- señal ${i} con ocho palabras en la línea aquí`).join("\n")}\n\n${L}`;
+    const d = applyRitualDeliveryPolicy("signal-intelligence", "t1", digest, { now: NOW });
+    expect({ deliver: d.deliver, reason: d.reason }).toEqual({ deliver: true, reason: "default" });
+    expect(d.text.endsWith(`📄 Completo en el correo · mc-ctl task t1\n\n${L}`)).toBe(true);
+    expect(lines(d.text)).toBe(1);
+    expect(words(d.text.split("\n\n📄 ")[0])).toBeLessThanOrEqual(EMAILED_PUSH_WORD_CAP);
+  });
+
+  it("a placeholder the cap cut away leaves no line", () => {
+    const text = `${filler(60)}\nclave: ${P}\n\n${L}`;
+    const out = capWords(text, 20, PTR);
+    expect(out).not.toContain(P);
+    expect(lines(out)).toBe(0);
+    expect(out.endsWith(PTR)).toBe(true);
+  });
+
+  it("a text exactly at the cap is unchanged: the line is not counted", () => {
+    const body = `clave: ${P} ${"uno ".repeat(17).trim()}`;
+    expect(words(body)).toBe(20);
+    const text = `${body}\n\n${L}`;
+    expect(capWords(text, 20, PTR)).toBe(text);
+  });
+
+  it("a cap smaller than the line itself still delivers the whole line", () => {
+    const text = `clave: ${P}\nuno dos tres cuatro cinco seis\n\n${L}`;
+    expect(words(L)).toBeGreaterThan(5);
+    expect(capWords(text, 5, PTR)).toBe(`clave: ${P}\n\n${PTR}\n\n${L}`);
+  });
+
+  it("a text that already ends with the line and is within the cap is unchanged", () => {
+    const text = `Listo, clave: ${P}\n\n${L}`;
+    expect(capWords(text, TELEGRAM_PUSH_WORD_CAP, PTR)).toBe(text);
+  });
+
+  it("a placeholder without its line, kept by the cut, gets the line once at the end", () => {
+    const text = `clave: ${P}\n${filler(10)}`;
+    expect(capWords(text, 10, PTR)).toBe(`clave: ${P}\nlínea 0 con seis palabras aquí\n\n${PTR}\n\n${L}`);
+  });
+
+  it("a Telegram-only text over the cap only because of the line is delivered whole, with no deferral", () => {
+    const body = `clave: ${P} ${"palabra ".repeat(TELEGRAM_PUSH_WORD_CAP - 3).trim()}`;
+    expect(words(body)).toBe(TELEGRAM_PUSH_WORD_CAP);
+    const text = `${body}\n\n${L}`;
+    const d = applyRitualDeliveryPolicy("schedule:williams", "t1", text, {
+      displayName: "Williams Journal",
+      scheduleId: "williams",
+      now: NOW,
+    });
+    expect(d.text).toBe(text);
+    expect(deferrals()).toEqual([]);
   });
 });

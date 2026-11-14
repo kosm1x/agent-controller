@@ -38,6 +38,10 @@
  */
 
 import { getDatabase } from "../db/index.js";
+import {
+  cutKeepingWithheldLine,
+  withoutWithheldLine,
+} from "../lib/v8-4/password-gate.js";
 import { sanitizeDeliverable } from "../messaging/deliverable-filter.js";
 import { RITUALS_TIMEZONE } from "./config.js";
 import {
@@ -257,9 +261,14 @@ export function decideRitualDelivery(
 
 /**
  * Cut `text` to at most `cap` words at a line boundary and append the
- * pointer. A text within the cap is returned untouched.
+ * pointer. A text within the cap is returned untouched. The password-withheld
+ * line is not counted and survives the cut whole (password-gate.ts).
  */
 export function capWords(text: string, cap: number, pointer: string): string {
+  return cutKeepingWithheldLine(text, (body) => capBodyWords(body, cap, pointer));
+}
+
+function capBodyWords(text: string, cap: number, pointer: string): string {
   if (countWords(text) <= cap) return text;
   const lines = text.split("\n");
   const kept: string[] = [];
@@ -470,15 +479,20 @@ export function applyRitualDeliveryPolicy(
       }
     } else if (emailed) {
       text = capWords(text, explicitCap ?? EMAILED_PUSH_WORD_CAP, `📄 Completo en el correo · mc-ctl task ${taskId}`);
-    } else if (countWords(text) > (explicitCap ?? TELEGRAM_PUSH_WORD_CAP)) {
+    } else if (
+      countWords(withoutWithheldLine(text)) >
+      (explicitCap ?? TELEGRAM_PUSH_WORD_CAP)
+    ) {
       const id = enqueueDeferral(ritualId, taskId, title, text, "capped");
+      // The log reports the count the decision used (line excluded).
       console.log(
-        `[rituals] ${ritualId}: capped ${countWords(text)} → ${explicitCap ?? TELEGRAM_PUSH_WORD_CAP} words, full text = /rituales completo ${id}`,
+        `[rituals] ${ritualId}: capped ${countWords(withoutWithheldLine(text))} → ${explicitCap ?? TELEGRAM_PUSH_WORD_CAP} words, full text = /rituales completo ${id}`,
       );
       text = capWords(text, explicitCap ?? TELEGRAM_PUSH_WORD_CAP, `📄 Completo: /rituales completo ${id}`);
     }
 
-    const words = deliveredWords(text);
+    // The withheld-password line counts against no cap, the budget included.
+    const words = deliveredWords(withoutWithheldLine(text));
     const exempt = opts.forced === true || anchor;
 
     if (!exempt) {

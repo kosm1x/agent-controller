@@ -19,6 +19,10 @@ import {
   setMutedUntil,
   setRitualPaused,
 } from "./ritual-controls.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+} from "../lib/v8-4/password-gate.js";
 
 describe("ritual controls", () => {
   beforeEach(() => {
@@ -93,6 +97,21 @@ describe("ritual controls", () => {
     expect(block).toContain("### Row 0 ");
     expect(block).not.toContain(`### Row ${DEFERRED_BLOCK_MAX} `);
     expect(block).toContain("FUENTE AUTORIZADA");
+  });
+
+  // The deferral block is prompt material for the Morning Sync: the
+  // password-withheld line is for the reader of a delivered reply, so it is
+  // dropped there; the placeholder stays, and the stored row keeps both.
+  it("the block drops the password-withheld line and keeps the placeholder; other texts render as before", () => {
+    const P = PASSWORD_WITHHELD_PLACEHOLDER;
+    const L = PASSWORD_WITHHELD_LINE;
+    const id = enqueueDeferral("schedule:x", "t1", "Buzón", `clave: ${P}\n\n${L}`, "budget");
+    enqueueDeferral("schedule:y", "t2", "Plain", "SPY −1.2%", "budget");
+    const { block } = deferredBlock();
+    expect(block).toContain(`clave: ${P}`);
+    expect(block).not.toContain(L);
+    expect(block).toContain("SPY −1.2%");
+    expect(getDeferral(id)?.text).toBe(`clave: ${P}\n\n${L}`);
   });
 
   it("a 'capped' row is stored pre-consumed: reachable by id, never folded", () => {

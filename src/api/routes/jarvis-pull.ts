@@ -47,6 +47,11 @@ import {
   JARVIS_PULL_MAX_INFLIGHT,
 } from "../../config/constants.js";
 import { errMsg } from "../../lib/err-msg.js";
+import {
+  candidateFingerprints,
+  withholdUnprovenValues,
+} from "../../lib/v8-4/password-gate.js";
+import { isSeenPassword } from "../../lib/v8-4/mailbox-passwords.js";
 import { apiRateLimit } from "../rate-limit.js";
 
 const jarvisPull = new Hono();
@@ -151,6 +156,33 @@ function pullAddendum(role: CrmRole, deadlineMs: number): string {
     "Nunca cites una fuente que no consultaste. " +
     "Esta línea es lo primero que el agente CRM ve — sin ella, el agente no puede citar la fuente."
   );
+}
+
+/**
+ * password-gate.ts on the tool-less fallback answer (no task, no tools): the
+ * caller's question is the only proof, as the typed text is on the router's
+ * fast path; the caller-built context proves nothing. Counts
+ * only in the log line; on any failure the text passes through unchanged.
+ */
+function withholdFallbackPasswords(text: string, query: string): string {
+  try {
+    const proven = new Set(candidateFingerprints(query));
+    const gated = withholdUnprovenValues(text, {
+      isSeen: isSeenPassword,
+      isProven: (fp) => proven.has(fp),
+    });
+    if (gated.checked > 0) {
+      console.log(
+        `[jarvis-pull] password-gate fallback checked=${gated.checked} withheld=${gated.withheld}`,
+      );
+    }
+    return gated.text;
+  } catch {
+    console.warn(
+      "[jarvis-pull] password-gate fallback check failed — text passed through unchanged",
+    );
+    return text;
+  }
 }
 
 /**
@@ -469,7 +501,10 @@ jarvisPull.post(
             ? "busy"
             : "error";
       // No tool ran on this path: any sources the model named are its own.
-      const answer = bare.content.replace(FUENTES_RE, "").trim();
+      const answer = withholdFallbackPasswords(
+        bare.content.replace(FUENTES_RE, "").trim(),
+        String(body.query),
+      );
       text = `${answer}\n\n${FALLBACK_FUENTES[reason]}`;
     } else {
       // Budget spent (or the fallback failed after a partial answer): the

@@ -11,6 +11,7 @@
 
 import { getDatabase } from "../db/index.js";
 import { getSyncSurfaceScheduleId } from "../lib/v8-2/flags.js";
+import { PASSWORD_WITHHELD_LINE } from "../lib/v8-4/password-gate.js";
 
 export const GLOBAL_MUTE_ID = "*";
 
@@ -204,10 +205,13 @@ export function deferredBlock(now = new Date()): DeferredBlock {
   const more = all.length - rows.length;
   const body = rows
     .map((r) => {
+      // The password-withheld line is for the reader of a delivered reply,
+      // never prompt material (the placeholder stays).
+      const full = r.text.replaceAll(PASSWORD_WITHHELD_LINE, "");
       const text =
-        r.text.length > DEFERRAL_TEXT_CAP
-          ? `${r.text.slice(0, DEFERRAL_TEXT_CAP).trimEnd()}…`
-          : r.text;
+        full.length > DEFERRAL_TEXT_CAP
+          ? `${full.slice(0, DEFERRAL_TEXT_CAP).trimEnd()}…`
+          : full;
       const ageH = (now.getTime() - Date.parse(r.created_at + "Z")) / 3_600_000;
       const age = ageH > STALE_AFTER_HOURS ? ` — de hace ${Math.round(ageH / 24)} días` : "";
       return `### ${r.title} (${r.reason === "muted" ? "silenciado" : "presupuesto de lectura"}${age}) — completo: /rituales completo ${r.id}\n${text}`;

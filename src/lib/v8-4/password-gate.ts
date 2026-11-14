@@ -229,6 +229,38 @@ export function withPasswordWithheldLine(text: string): string {
     : `${text}\n\n${PASSWORD_WITHHELD_LINE}`;
 }
 
+/** The text without any copy of the line (and the blank line before it). */
+export function withoutWithheldLine(text: string): string {
+  return text.includes(PASSWORD_WITHHELD_LINE)
+    ? text
+        .replaceAll(`\n\n${PASSWORD_WITHHELD_LINE}`, "")
+        .replaceAll(PASSWORD_WITHHELD_LINE, "")
+    : text;
+}
+
+/**
+ * A cut applied to a text that already passed the check (a word cap, a length
+ * limit). `cut` runs on the text without the line, so the line never counts
+ * against the cap and is never halved; when what the cut kept still holds the
+ * placeholder, the full line follows it once, at the end, and when the
+ * placeholder was cut away no line is left. A text the cut leaves whole comes
+ * back as it was, and a text without the placeholder goes to `cut` as it is.
+ * `room` is the length the appended line takes, for a cut bound by a hard
+ * length limit (0 when no line can follow).
+ */
+export function cutKeepingWithheldLine(
+  text: string,
+  cut: (body: string, room: number) => string,
+): string {
+  if (!text.includes(PASSWORD_WITHHELD_PLACEHOLDER)) return cut(text, 0);
+  const body = withoutWithheldLine(text);
+  const out = cut(body, PASSWORD_WITHHELD_LINE.length + 2);
+  if (out === body) return text;
+  return out.includes(PASSWORD_WITHHELD_PLACEHOLDER)
+    ? `${out}\n\n${PASSWORD_WITHHELD_LINE}`
+    : out;
+}
+
 /**
  * `replaceUnprovenValues` plus the one line whenever the checked text holds
  * the placeholder: withheld here, or already in it (a stored text repeated).

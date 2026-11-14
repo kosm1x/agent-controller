@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { TelegramStreamController } from "./telegram-stream.js";
+import {
+  PASSWORD_WITHHELD_LINE,
+  PASSWORD_WITHHELD_PLACEHOLDER,
+} from "../../lib/v8-4/password-gate.js";
 
 function fakeBot() {
   const edits: string[] = [];
@@ -203,5 +207,51 @@ describe("TelegramStreamController onShow", () => {
     void ctl.finalize("otra vez");
     ctl.reset("⏳");
     expect(onShow).toHaveBeenCalledTimes(3);
+  });
+});
+
+// The last-resort send cuts the reply to Telegram's limit after the reply
+// check: a kept placeholder still ends with the full line, once, inside the
+// same limit; a text without the placeholder is cut exactly as before.
+describe("TelegramStreamController.finalize() last resort: the password-withheld line", () => {
+  const P = PASSWORD_WITHHELD_PLACEHOLDER;
+  const L = PASSWORD_WITHHELD_LINE;
+  async function lastResort(fullText: string): Promise<string> {
+    const { bot } = fakeBot();
+    bot.api.editMessageText.mockRejectedValue(new Error("edit refused"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const ctl = new TelegramStreamController(
+        bot as unknown as ConstructorParameters<typeof TelegramStreamController>[0],
+        "12345",
+      );
+      await ctl.sendPlaceholder("⏳");
+      await ctl.finalize(fullText);
+    } finally {
+      errSpy.mockRestore();
+    }
+    return String(bot.api.sendMessage.mock.calls.at(-1)![1]);
+  }
+
+  it("a long reply with a kept placeholder ends with the full line once, within 4000 characters", async () => {
+    const sent = await lastResort(`Clave: ${P}\n${"z".repeat(5000)}\n\n${L}`);
+    expect(sent.length).toBeLessThanOrEqual(4000);
+    expect(sent.startsWith(`Clave: ${P}\n`)).toBe(true);
+    expect(sent.endsWith(`\n\n${L}`)).toBe(true);
+    expect(sent.split(L)).toHaveLength(2);
+  });
+
+  it("a placeholder past the cut leaves no line", async () => {
+    const sent = await lastResort(`${"z".repeat(5000)} ${P}\n\n${L}`);
+    expect(sent).toBe("z".repeat(4000 - L.length - 2));
+  });
+
+  it("a reply within the limit that ends with the line is sent unchanged", async () => {
+    const text = `Clave: ${P}\n\n${L}`;
+    expect(await lastResort(text)).toBe(text);
+  });
+
+  it("a reply without the placeholder is cut at 4000 as before", async () => {
+    expect(await lastResort("z".repeat(5000))).toBe("z".repeat(4000));
   });
 });
