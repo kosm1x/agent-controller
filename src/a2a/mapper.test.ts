@@ -2,7 +2,7 @@
  * A2A mapper tests — bidirectional MC <-> A2A conversion.
  */
 
-import { describe, it, expect, vi , afterEach } from "vitest";
+import { describe, it, expect, vi , afterEach, beforeEach } from "vitest";
 
 // Mock the database module
 vi.mock("../db/index.js", () => {
@@ -22,7 +22,10 @@ import {
   mcTaskToA2ATask,
   a2aMessageToSubmission,
   mcEventToA2AStatusEvent,
+  resolveContext,
+  createContext,
 } from "./mapper.js";
+import { getDatabase } from "../db/index.js";
 import type { TaskRow } from "../dispatch/dispatcher.js";
 
 function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
@@ -285,5 +288,59 @@ describe("mcEventToA2AStatusEvent", () => {
     expect(result!.status.state).toBe("working");
     expect(result!.status.message).toBe("50% done");
     expect(result!.final).toBe(false);
+  });
+});
+
+// Context rows on the real schema: getDatabase is switched to a real
+// in-memory handle, so a wrong column or table in the context SQL fails here.
+describe("A2A contexts on the real schema", () => {
+  type RealIndex = typeof import("../db/index.js");
+  let real: RealIndex;
+
+  beforeEach(async () => {
+    real = await vi.importActual<RealIndex>("../db/index.js");
+    // initDatabase's own setup code reaches the handle through the mocked
+    // getDatabase, so it serves the real handle before the database opens.
+    vi.mocked(getDatabase).mockImplementation(() => real.getDatabase());
+    real.initDatabase(":memory:");
+    real
+      .getDatabase()
+      .prepare(
+        "INSERT INTO tasks (task_id, title, description) VALUES ('task-123', 't', 'd'), ('task-456', 't', 'd')",
+      )
+      .run();
+  });
+  afterEach(() => {
+    real.closeDatabase();
+    vi.mocked(getDatabase).mockReset();
+  });
+
+  it("createContext stores the mapping that resolveContext and mcTaskToA2ATask read back", () => {
+    expect(resolveContext("ctx-1")).toBeNull();
+    createContext("ctx-1", "task-123");
+    expect(resolveContext("ctx-1")).toBe("task-123");
+    expect(mcTaskToA2ATask(makeTask()).contextId).toBe("ctx-1");
+    // A task without a stored context falls back to its own id.
+    expect(mcTaskToA2ATask(makeTask({ task_id: "task-456" })).contextId).toBe(
+      "task-456",
+    );
+  });
+
+  it("createContext moves an existing context id to the new task", () => {
+    createContext("ctx-1", "task-123");
+    createContext("ctx-1", "task-456");
+    expect(resolveContext("ctx-1")).toBe("task-456");
+    const rows = real
+      .getDatabase()
+      .prepare("SELECT context_id, task_id FROM a2a_contexts")
+      .all();
+    expect(rows).toEqual([{ context_id: "ctx-1", task_id: "task-456" }]);
+  });
+
+  it("createContext refuses a task that does not exist (foreign key)", () => {
+    expect(() => createContext("ctx-2", "task-missing")).toThrow(
+      /FOREIGN KEY/,
+    );
+    expect(resolveContext("ctx-2")).toBeNull();
   });
 });

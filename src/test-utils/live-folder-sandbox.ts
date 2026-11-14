@@ -12,6 +12,17 @@
  * - A live path while the throwaway root is unset or missing is refused, never
  *   recreated, so a broken mapping fails the case instead of reaching a live
  *   folder.
+ * - `fs/promises` (any spelling) gets the same guard through
+ *   `liveFolderSandboxPromises`; a test mocks it next to `fs`, because a
+ *   module that imports it by name does not go through the `fs` mock.
+ *
+ * Limits:
+ * - A path is recognised by its text (after resolving `.` and `..`), not by
+ *   where it leads: a symbolic link that points into a live folder is not
+ *   recognised, so a test must never create one.
+ * - A refused call throws at once, also for callback-style and promise-style
+ *   functions: the error is not passed to the callback nor returned as a
+ *   rejected promise.
  *
  * It never imports `fs`: the caller passes the real module from
  * `importOriginal`, so the helper cannot pick up the mock it builds.
@@ -124,6 +135,13 @@ export function liveFolderSandboxFs<T extends object>(
     };
   }
   out.promises = guardAll(fs.promises, "promises.");
+  out.default = out;
+  return out as T;
+}
+
+/** The `fs/promises` module for a test's `vi.mock("fs/promises")`. */
+export function liveFolderSandboxPromises<T extends object>(real: T): T {
+  const out = guardAll(real, "promises.");
   out.default = out;
   return out as T;
 }

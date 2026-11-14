@@ -22,6 +22,7 @@ import {
   persistAttributedClaims,
   markClaimsContradicted,
   countContradictions,
+  replaceAttributedClaims,
   resolveCitations,
   splitSentences,
   toAttributedClaimRows,
@@ -355,5 +356,75 @@ describe("persistAttributedClaims — real in-memory DB", () => {
     // a different judgment id flips nothing here
     expect(markClaimsContradicted(jid + 999, [0], getDatabase())).toBe(0);
     expect(countContradictions(jid, getDatabase())).toBe(0);
+  });
+});
+
+describe("replaceAttributedClaims — real in-memory DB", () => {
+  beforeEach(() => {
+    initDatabase(":memory:");
+  });
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  type ClaimRow = {
+    claim_id: number;
+    claim_text: string;
+    evidence_id: string;
+    evidence_excerpt: string;
+    resolver_status: string;
+  };
+  const claims = (jid: number) =>
+    getDatabase()
+      .prepare(
+        "SELECT claim_id, claim_text, evidence_id, evidence_excerpt, resolver_status FROM attributed_claims WHERE judgment_id = ? ORDER BY claim_id, evidence_id",
+      )
+      .all(jid) as ClaimRow[];
+
+  it("replaces one judgment's claims, contradicted marks included, and leaves another judgment's claims as they were", () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO proposed_briefings (briefing_id, surface, generated_at, briefing_json, expires_at)
+       VALUES (?,?,?,?,?)`,
+    ).run("b1", "morning", T0, "{}", FUTURE);
+    const judgment = (subject: string) =>
+      Number(
+        db
+          .prepare(
+            `INSERT INTO judgments (briefing_id, subject, posture, prose, created_at)
+             VALUES (?,?,?,?,?)`,
+          )
+          .run("b1", subject, "at_risk", "prose", T0).lastInsertRowid,
+      );
+    const jid = judgment("CRM pilot");
+    const other = judgment("Other subject");
+    const { resolved: first } = resolveCitations(
+      "The pilot is blocked [1]. Conversion up but stalling [1][2].",
+      LEDGER,
+    );
+    persistAttributedClaims(jid, first, db);
+    persistAttributedClaims(other, first, db);
+    markClaimsContradicted(jid, [1], db);
+    const otherBefore = claims(other);
+    expect(otherBefore).toHaveLength(3);
+
+    const { resolved: revised } = resolveCitations(
+      "Growth target holds [3].",
+      LEDGER,
+    );
+    expect(replaceAttributedClaims(jid, revised, db)).toBe(1);
+
+    expect(claims(jid)).toEqual([
+      {
+        claim_id: 0,
+        claim_text: revised[0].claim_text,
+        evidence_id: "ns-1",
+        evidence_excerpt: "grow MX",
+        resolver_status: "resolved",
+      },
+    ]);
+    expect(revised[0].claim_text).toContain("Growth target holds");
+    expect(countContradictions(jid, db)).toBe(0);
+    expect(claims(other)).toEqual(otherBefore);
   });
 });

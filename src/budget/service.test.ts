@@ -403,4 +403,58 @@ describe("budget service", () => {
       expect(result.window).toBe("hourly");
     });
   });
+
+  // Real SQL on a real in-memory schema: the mocked prepare delegates to it,
+  // so a wrong column or window in a spend read fails here. Each row's
+  // created_at is computed by the database clock with the same boundary
+  // expression the read uses, so no case depends on the host clock or zone.
+  describe("spend reads on the real schema", () => {
+    type RealIndex = typeof import("../db/index.js");
+    let real: RealIndex;
+
+    beforeEach(async () => {
+      real = await vi.importActual<RealIndex>("../db/index.js");
+      real.initDatabase(":memory:");
+      const db = real.getDatabase();
+      mockDb.prepare.mockImplementation((sql: string) => db.prepare(sql));
+    });
+    afterEach(() => {
+      real.closeDatabase();
+    });
+
+    /** One ledger row; `createdAtSql` is a fixed SQL datetime expression. */
+    function spend(runId: string, costUsd: number, createdAtSql: string): void {
+      real
+        .getDatabase()
+        .prepare(
+          `INSERT INTO cost_ledger (run_id, task_id, agent_type, cost_usd, created_at)
+           VALUES (?, 'task-1', 'fast', ?, ${createdAtSql})`,
+        )
+        .run(runId, costUsd);
+    }
+
+    const HOUR_START = "strftime('%Y-%m-%d %H:00:00', 'now')";
+    const MONTH_START =
+      "datetime(strftime('%Y-%m-01 00:00:00', 'now', 'localtime'), 'utc')";
+
+    it("getDailySpend sums the last 24 hours only, 0 on an empty ledger", () => {
+      expect(getDailySpend()).toBe(0);
+      spend("r1", 1.25, "datetime('now', '-1 hours')");
+      spend("r2", 0.5, "datetime('now', '-23 hours')");
+      spend("r3", 4, "datetime('now', '-25 hours')");
+      expect(getDailySpend()).toBeCloseTo(1.75, 6);
+    });
+
+    it("getHourlySpend sums from the start of the current clock hour", () => {
+      spend("r1", 0.25, HOUR_START);
+      spend("r2", 3, `datetime(${HOUR_START}, '-1 seconds')`);
+      expect(getHourlySpend()).toBeCloseTo(0.25, 6);
+    });
+
+    it("getMonthlySpend sums from the start of the calendar month", () => {
+      spend("r1", 2, MONTH_START);
+      spend("r2", 7, `datetime(${MONTH_START}, '-1 seconds')`);
+      expect(getMonthlySpend()).toBeCloseTo(2, 6);
+    });
+  });
 });

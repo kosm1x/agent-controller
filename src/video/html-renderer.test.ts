@@ -11,7 +11,7 @@ import {
 import type { ParsedHtmlComposition } from "./html-parser.js";
 
 // The renderer hard-codes the service's frame and output folders. While this
-// file runs, `fs` is the sandbox of live-folder-sandbox.test-helper.ts: paths
+// file runs, `fs` is the sandbox of src/test-utils/live-folder-sandbox.ts: paths
 // under a live video folder are mapped onto a throwaway tree this file owns
 // and removes, any other `fs` call on a live folder is refused, and writes
 // outside the tree are refused, so no case can create, change or remove
@@ -20,9 +20,17 @@ const sandbox = vi.hoisted(() => ({ root: "" }));
 
 vi.mock("fs", async (importOriginal) => {
   const { liveFolderSandboxFs } = await import(
-    "./live-folder-sandbox.test-helper.js"
+    "../test-utils/live-folder-sandbox.js"
   );
   return liveFolderSandboxFs(await importOriginal<typeof import("fs")>(), sandbox);
+});
+vi.mock("fs/promises", async (importOriginal) => {
+  const { liveFolderSandboxPromises } = await import(
+    "../test-utils/live-folder-sandbox.js"
+  );
+  return liveFolderSandboxPromises(
+    await importOriginal<typeof import("fs/promises")>(),
+  );
 });
 
 // A folder this file owns, never a live video folder: it holds the
