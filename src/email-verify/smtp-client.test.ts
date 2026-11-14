@@ -64,14 +64,6 @@ describe("probeMailbox — guards", () => {
 });
 
 describe("probeMailbox — address handling", () => {
-  it("connects through the pre-filtered address list, never re-resolving the hostname", async () => {
-    // "mx.fake.test" does not exist in DNS: if the socket resolved the name itself this would fail.
-    const s = await server({ rcpt: { "user1@example.com": "250 Ok" } });
-    const r = await probeMailbox(opts(s.port, { host: "mx.fake.test", addresses: [{ address: "127.0.0.1", family: 4 }] }));
-    expect(r.rcpt?.code).toBe(250);
-    expect(r.address).toBe("127.0.0.1");
-  });
-
   it("resolveMxTargets orders IPv4 before IPv6 and filters private/own addresses", async () => {
     const own = await resolveMxTargets("localhost", true);
     expect(own.length).toBeGreaterThan(0);

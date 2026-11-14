@@ -6228,6 +6228,39 @@ describe("MessageRouter", () => {
       await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(1));
       expect(brief.mock.calls[0][0]).toBe(`⚠️ Acceso ${PW}\nrunner falló\n./mc-ctl task t-1`);
     });
+
+    // A warning that reached no channel is logged with its title after the
+    // same check the delivery applies, never with the title as the run gave
+    // it: the log must not keep what the delivery would have withheld.
+    it("operator warning that reached no channel: the log line prints the title after the check", async () => {
+      const brief = vi
+        .spyOn(router, "sendBriefingToOwner")
+        .mockResolvedValue({ sent: 0, failed: 1 });
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      // Every level the router writes on this path: none may hold the raw title.
+      const otherSpies = (["log", "warn"] as const).map((level) =>
+        vi.spyOn(console, level).mockImplementation(() => {}),
+      );
+      try {
+        router.startEventListeners();
+        findHandler("notification.warning")!({
+          data: { title: `Acceso ${PW}`, message: "runner falló", source: "dispatcher", context: { taskId: "t-1" } },
+        });
+        await vi.waitFor(() => expect(brief).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() =>
+          expect(errSpy).toHaveBeenCalledWith(
+            `[router] notification.warning not delivered to any operator channel: Acceso ${P} (dispatcher)`,
+          ),
+        );
+        const logged = [errSpy, ...otherSpies]
+          .flatMap((s) => s.mock.calls.map((c) => c.join(" ")))
+          .join("\n");
+        expect(logged).not.toContain(PW);
+      } finally {
+        errSpy.mockRestore();
+        for (const s of otherSpies) s.mockRestore();
+      }
+    });
   });
 
   describe("notification.warning → operator", () => {

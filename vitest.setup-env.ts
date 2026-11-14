@@ -1,6 +1,9 @@
 import { afterAll, afterEach, expect, vi } from "vitest";
 import { dropOutsideCallEnv } from "./src/test-utils/outside-call-env.js";
-import { recordOutsideConnections } from "./src/test-utils/outside-connect-record.js";
+import {
+  recordOutsideConnections,
+  takeRefusedConnections,
+} from "./src/test-utils/outside-connect-record.js";
 
 // 2026-10-30: a pre-commit run from a linked worktree exported GIT_DIR/GIT_INDEX_FILE to the
 // suite; a fixture's `git init` inherited them and reinitialized the real repo as bare.
@@ -26,16 +29,36 @@ delete process.env.COMMIT_DB_KEY;
 (globalThis as typeof globalThis & { __outsideCallEnvDropped?: number })
   .__outsideCallEnvDropped = dropOutsideCallEnv(process.env);
 
-// Every attempt a test makes to connect to a host other than this machine is
-// recorded, and nothing is refused: the list of outside connections the suite
-// opens has to exist before any of them can be refused without turning
-// unknown tests red. Each attempt adds one line (test file, test name, host,
-// port) to mc-test-outside-connections.jsonl in the folder TMPDIR names and
-// then proceeds unchanged. Child processes and worker threads are not covered
-// (pinned by src/lib/test-env-connect.guard.test.ts).
-recordOutsideConnections(() => {
+// No test connects to another machine. An attempt to a host that is not this
+// machine (a loopback address in any form, localhost or a name under
+// .localhost, the ip6-localhost and ip6-loopback aliases, a local socket path)
+// is refused before anything is resolved or dialled: the caller gets an
+// ordinary connection error naming the host, the port and the rule. A caller's
+// catch can swallow that error, so each attempt is also recorded (one line:
+// test file, test name, host, port, in mc-test-outside-connections.jsonl in
+// the folder TMPDIR names) and the afterEach below fails the test that made
+// it; an attempt made while the file loads or in a beforeAll fails the first
+// test, and the afterAll fails the file for one made after its last test. A
+// test hands the code a stand-in for the connection or a listener on
+// 127.0.0.1; one that wants a refusal empties the record itself. Child
+// processes and worker threads are not covered (pinned by
+// src/lib/test-env-connect.guard.test.ts).
+const connectGuard = recordOutsideConnections(() => {
   const state = expect.getState();
   return { path: state.testPath, name: state.currentTestName };
+});
+
+afterEach(() => {
+  const failure = takeRefusedConnections(
+    connectGuard.hits,
+    "in this test (or while the file loaded, or in a hook before it)",
+  );
+  if (failure) throw new Error(failure);
+});
+
+afterAll(() => {
+  const failure = takeRefusedConnections(connectGuard.hits, "after the last test");
+  if (failure) throw new Error(failure);
 });
 
 // No test reaches a real model, whatever the code under test does. Every model

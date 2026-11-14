@@ -1,6 +1,7 @@
 /**
- * The probe's deadlines, driven by fake timers against a stand-in socket handed
- * in through `createConnection`: no listener, no connection, no name lookup.
+ * The probe's deadlines and the addresses it connects through, driven by fake
+ * timers against a stand-in socket handed in through `createConnection`: no
+ * listener, no connection, no name lookup.
  * `node:net` and `node:dns` are replaced by versions that throw, so any path
  * that would reach a real socket or resolver fails the case instead.
  */
@@ -198,5 +199,75 @@ describe("EmailVerifier — a dead MX host costs the connect deadline, not the s
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ host: "mx.example.test", timeoutMs: 20_000 });
     expect(v.governor.usage().usedToday).toBe(1);
+  });
+});
+
+// The probe connects through the caller's pre-filtered addresses and never
+// resolves the MX name itself: the name reaches the connection only beside a
+// `lookup` that answers with exactly those addresses, in both the
+// one-address and the all-addresses shape Node asks for, and nothing else in
+// the options would make the socket resolve. `node:dns` throws here, so a real
+// lookup anywhere on the path fails the case.
+describe("probeMailbox — the caller's addresses, never a lookup of the MX name", () => {
+  it("hands the connection a lookup that answers with exactly the given addresses, and runs the conversation on that socket", async () => {
+    const c = connector();
+    const addresses = [
+      { address: "192.0.2.10", family: 4 },
+      { address: "2001:db8::10", family: 6 },
+    ];
+    const run = track(
+      probeMailbox({
+        host: "mx.example.test",
+        port: 25,
+        heloName: "probe.example.net",
+        fromEmail: "postmaster@example.net",
+        toEmail: "user1@example.com",
+        domain: "example.com",
+        skipCatchAll: true,
+        timeoutMs: 400,
+        addresses,
+        createConnection: c.open,
+      }),
+    );
+    expect(c.opened).toEqual([
+      {
+        host: "mx.example.test",
+        port: 25,
+        lookup: expect.any(Function),
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 300,
+      },
+    ]);
+    const lookup = (c.opened[0] as net.TcpNetConnectOpts).lookup as (
+      hostname: string,
+      options: { all?: boolean; family?: number },
+      callback: (...args: unknown[]) => void,
+    ) => void;
+    const answers: unknown[][] = [];
+    lookup("other-name.example", { all: true }, (...args) => answers.push(args));
+    lookup("other-name.example", { family: 0 }, (...args) => answers.push(args));
+    expect(answers).toEqual([
+      [null, addresses],
+      [null, "192.0.2.10", 4],
+    ]);
+
+    const sock = c.sockets[0]!;
+    sock.emit("connect");
+    await vi.advanceTimersByTimeAsync(0);
+    for (const reply of ["220 ready", "250 hello", "250 sender ok"]) {
+      sock.emit("data", `${reply}\r\n`);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(sock.writes).toEqual([
+      "EHLO probe.example.net\r\n",
+      "MAIL FROM:<postmaster@example.net>\r\n",
+      "RCPT TO:<user1@example.com>\r\n",
+    ]);
+    sock.emit("data", "250 2.1.5 Ok\r\n");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.done).toBe(true);
+    expect(run.error).toBeUndefined();
+    expect(run.value).toMatchObject({ rcpt: { code: 250 }, envelopeFailure: null, address: "192.0.2.10" });
+    expect(sock.ends).toEqual(["QUIT\r\n"]);
   });
 });
