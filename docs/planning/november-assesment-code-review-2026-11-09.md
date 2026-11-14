@@ -143,6 +143,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-14 03:43 UTC — one more live defect, found by the batch 5 tests: the nightly signal baselines were never written (queue 4ew); its fix is being built as its own reviewed piece.**
+
 **Status 2026-11-11 07:33 UTC — six more fixes COMMITTED `a823bbf9` (queue 4dk), not yet deployed: stop sequence (direct calls, isolated steps, triggers stopped), adapters stop independently, notice character, fast-path filter, usage kept on the fallback switch. Every batch 3 item that needs no ruling is committed; three wait for rulings.**
 
 **Status 2026-11-11 06:33 UTC — four more fixes COMMITTED `e59234af` (queue 4di), not yet deployed: cancel leaves completed-with-concerns alone, cost booked on the required-tools retry, usage summed after an authentication retry, failed database start-up leaves no handle. Ten of the fourteen that need no ruling are committed; the next group (stop sequence, adapter stop, notice character, fast-path filter, plus one new item: usage on the fallback switch) is in build.**
@@ -196,6 +198,8 @@ Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next 
 Not worth doing: migrating the ~900 console calls; a logging framework; Result types.
 
 ### Batch 5 — Tests (ruling 7)
+
+**Status 2026-11-14 03:43 UTC — real-database tests: pieces 13–18 COMMITTED `629c5f52` (eighteen of thirty done; suite 631 files, 17,347 tests). They found one live defect (the nightly signal baselines were never written; fix in progress) and one question (the hold-back for repeated alerts is recorded but never applied), both in queue 4ew. The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, twelve more pieces, 4er.**
 
 **Status 2026-11-14 03:25 UTC — real-database tests: pieces 7–12 COMMITTED `815afc1a` (twelve of thirty done; suite 626 files, 17,324 tests), pieces 13–18 in flight. One finding needs a decision before it is fixed (skills switched off by the nightly review, queue 4ev). The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, eighteen more pieces, 4er.**
 
