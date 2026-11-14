@@ -39,25 +39,9 @@ import {
   _resetStoreWithhold,
   setStoreSeenCheck,
 } from "../../lib/v8-4/store-withhold.js";
+import { cpuMsPerCall } from "../../test-utils/cpu-time.js";
 
 // Fragment-assembled fake fixtures (see file header).
-// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
-// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
-// for a processor.
-
-/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
-function cpuMsPerCall(fn: () => unknown, reps = 1): number {
-  fn();
-  let best = Infinity;
-  for (let r = 0; r < 3; r++) {
-    const c0 = process.cpuUsage();
-    for (let i = 0; i < reps; i++) fn();
-    const d = process.cpuUsage(c0);
-    best = Math.min(best, (d.user + d.system) / 1000);
-  }
-  return best / reps;
-}
-
 const SK = "sk-" + "abcdefghijklmnop1234567890ABCD";
 const SK_PROJ = "sk-" + "proj-abcdefghijklmnop1234567890ABCD";
 const GHP = "ghp" + "_abcdefghijklmnopqrstu";

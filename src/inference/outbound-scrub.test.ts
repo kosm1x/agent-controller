@@ -115,25 +115,9 @@ import { describeImage } from "./vision.js";
 import { generateEmbeddings } from "./embeddings.js";
 import { askJev } from "../jev/client.js";
 import { enterRunToolContext } from "../tools/rule-of-two.js";
+import { cpuMsPerCall } from "../test-utils/cpu-time.js";
 
 // Synthetic values. STORED / PROJ are stored; PASTED is new this turn.
-// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
-// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
-// for a processor.
-
-/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
-function cpuMsPerCall(fn: () => unknown, reps = 1): number {
-  fn();
-  let best = Infinity;
-  for (let r = 0; r < 3; r++) {
-    const c0 = process.cpuUsage();
-    for (let i = 0; i < reps; i++) fn();
-    const d = process.cpuUsage(c0);
-    best = Math.min(best, (d.user + d.system) / 1000);
-  }
-  return best / reps;
-}
-
 /** Bound on `growth4x().ratio`: linear work measures about 4, quadratic work about 16. */
 const GROWTH_BOUND = 8;
 

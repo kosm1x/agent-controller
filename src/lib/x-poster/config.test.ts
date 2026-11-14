@@ -248,11 +248,13 @@ const VALUES = {
 const xSecrets = (...handles: string[]) =>
   handles.flatMap((h) => [`SECRET_X_AUTH_TOKEN__${h}`, `SECRET_X_CT0__${h}`]);
 
-function seedDb(projects: Array<{ slug: string; config: Record<string, unknown> }>): void {
+/** `status` defaults to active; the account lookup reads every project row whatever its status. */
+function seedDb(projects: Array<{ slug: string; config: Record<string, unknown>; status?: string }>): void {
   initDatabase(":memory:");
   const db = getDatabase();
-  const p = db.prepare("INSERT INTO projects (id, slug, name, status, config) VALUES (?, ?, ?, 'active', ?)");
-  for (const [i, pr] of projects.entries()) p.run(`p${i}`, pr.slug, pr.slug, JSON.stringify(pr.config));
+  const p = db.prepare("INSERT INTO projects (id, slug, name, status, config) VALUES (?, ?, ?, ?, ?)");
+  for (const [i, pr] of projects.entries())
+    p.run(`p${i}`, pr.slug, pr.slug, pr.status ?? "active", JSON.stringify(pr.config));
   const t = db.prepare("INSERT INTO tasks (task_id, title, description, project_slug) VALUES (?, 't', 'd', ?)");
   t.run("t-news", "acme-news");
   t.run("t-brand", "acme-brand");
@@ -311,7 +313,7 @@ describe("S6 ruling 5b — record-declared X accounts", () => {
     beforeEach(() =>
       seedDb([
         { slug: "acme-news", config: { secrets: [...xSecrets("ACMENEWS", "ACMEDESK"), "SECRET_ACME_NEWS_DB_PASSWORD"] } },
-        { slug: "acme-brand", config: { secrets: xSecrets("ACMEBRAND") } },
+        { slug: "acme-brand", config: { secrets: xSecrets("ACMEBRAND") }, status: "paused" },
         { slug: "acme-plain", config: { aliases: ["plain"] } },
       ]),
     );

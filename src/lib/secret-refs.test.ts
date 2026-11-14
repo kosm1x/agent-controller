@@ -18,23 +18,6 @@ vi.mock("../db/index.js", () => ({
 }));
 
 // Combined audit 2026-10-03 (should-fix 2): refusals are trace events.
-// CPU-time measurement. Process CPU time, not elapsed time: a fixed bound on elapsed time fails
-// on a busy machine although nothing is wrong, while CPU time leaves out the time spent waiting
-// for a processor.
-
-/** CPU ms per call of `fn`: one warm-up call, then the minimum of 3 runs of `reps` calls each. */
-function cpuMsPerCall(fn: () => unknown, reps = 1): number {
-  fn();
-  let best = Infinity;
-  for (let r = 0; r < 3; r++) {
-    const c0 = process.cpuUsage();
-    for (let i = 0; i < reps; i++) fn();
-    const d = process.cpuUsage(c0);
-    best = Math.min(best, (d.user + d.system) / 1000);
-  }
-  return best / reps;
-}
-
 const traceMock = vi.hoisted(() => ({ emitTraceEvent: vi.fn() }));
 vi.mock("../observability/task-trace.js", () => traceMock);
 
@@ -99,6 +82,7 @@ import { dataSummarizeTool } from "../tools/builtin/data-summarize.js";
 import { mkdtempSync, readFileSync as readFs, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { cpuMsPerCall } from "../test-utils/cpu-time.js";
 
 // Synthetic secrets and names. A cookie with characters URL-encoding changes.
 const COOKIE = "AE" + "Q".repeat(30) + "/+=" + "r".repeat(12);
