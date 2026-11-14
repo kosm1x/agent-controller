@@ -2,10 +2,11 @@
  * Agent-memory 5-layer playbook — test battery (plan §3 P0, paper §"8 tests").
  *
  * Each `it` is one of the paper's tests run against the REAL Jarvis store
- * code on an in-memory SQLite (no mocks of the code under test). The paper
- * names eight; three are executable today, five are `it.todo` with the
- * reason each one waits on a later phase. Keep the todo list honest: turn
- * one green only when the phase that makes it meaningful ships.
+ * code on an in-memory database with the real schema (no mocks of the code
+ * under test). The paper names eight; three are executable today, five are
+ * `it.todo` with the reason each one waits on a later phase. Keep the todo
+ * list honest: turn one green only when the phase that makes it meaningful
+ * ships.
  *
  *   amnesia       — a retained memory survives a new backend instance      ✔
  *   isolation     — bank A's memory never surfaces from bank B             ✔
@@ -17,14 +18,14 @@
  *   continuity    — P3 (compaction → memory handoff not built)
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase } from "../db/index.js";
 
-let mockDb: Database.Database;
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => mockDb,
-  writeWithRetry: (fn: () => unknown) => fn(),
-}));
+// Real schema through initDatabase(":memory:"): the FTS5 tables and their
+// triggers, the `jme_facts.category` CHECK and the embeddings FK are the live
+// ones, so a recall here runs the statements the service runs.
+let db: Database.Database;
 
 // No embeddings in the battery — forces the FTS5 / LIKE paths, which is
 // exactly what runs live when the embedder is cold.
@@ -46,49 +47,6 @@ vi.mock("../inference/claude-sdk.js", () => ({ HAIKU_MODEL_ID: "test" }));
 import { SqliteMemoryBackend } from "./sqlite-backend.js";
 import { queryMemory, pruneExpiredFacts } from "./jme.js";
 
-function applySchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE conversations (
-      id         INTEGER PRIMARY KEY,
-      bank       TEXT NOT NULL DEFAULT 'mc-jarvis',
-      tags       TEXT DEFAULT '[]',
-      content    TEXT NOT NULL,
-      trust_tier INTEGER NOT NULL DEFAULT 3,
-      source     TEXT DEFAULT 'agent',
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE VIRTUAL TABLE conversations_fts USING fts5(
-      content, content='conversations', content_rowid='id'
-    );
-    CREATE TRIGGER conversations_ai AFTER INSERT ON conversations BEGIN
-      INSERT INTO conversations_fts(rowid, content) VALUES (new.id, new.content);
-    END;
-    CREATE TABLE conversation_embeddings (
-      conversation_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL
-    );
-    CREATE TABLE jme_facts (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      source_task TEXT NOT NULL,
-      ts          INTEGER NOT NULL,
-      fact_text   TEXT NOT NULL,
-      category    TEXT NOT NULL,
-      embedding   BLOB,
-      expires_at  INTEGER,
-      confidence  REAL NOT NULL DEFAULT 1.0
-    );
-    CREATE VIRTUAL TABLE jme_facts_fts USING fts5(
-      fact_text, content='jme_facts', content_rowid='id'
-    );
-    CREATE TRIGGER jme_facts_ai AFTER INSERT ON jme_facts BEGIN
-      INSERT INTO jme_facts_fts(rowid, fact_text) VALUES (new.id, new.fact_text);
-    END;
-    CREATE TRIGGER jme_facts_ad AFTER DELETE ON jme_facts BEGIN
-      INSERT INTO jme_facts_fts(jme_facts_fts, rowid, fact_text)
-        VALUES('delete', old.id, old.fact_text);
-    END;
-  `);
-}
-
 /**
  * BM25 needs a corpus. On a 1-row bank FTS5's rank is ~-2e-6, the backend
  * normalizer floors `max` at 0.001, and the lone hit lands at 0.002 — under
@@ -96,7 +54,7 @@ function applySchema(db: Database.Database): void {
  * fires there; the filler keeps the battery on the realistic path.
  */
 function seedFiller(bank: string): void {
-  const ins = mockDb.prepare(
+  const ins = db.prepare(
     "INSERT INTO conversations (bank, content) VALUES (?, ?)",
   );
   for (const c of [
@@ -107,10 +65,14 @@ function seedFiller(bank: string): void {
 }
 
 beforeEach(() => {
-  mockDb = new Database(":memory:");
-  applySchema(mockDb);
+  db = initDatabase(":memory:");
   seedFiller("mc-operational");
   seedFiller("mc-jarvis");
+});
+
+afterEach(() => {
+  closeDatabase();
+  vi.useRealTimers();
 });
 
 describe("playbook battery", () => {
@@ -156,9 +118,31 @@ describe("playbook battery", () => {
     );
   });
 
+  it("recall finds an accented memory from an unaccented query through the FTS layer", async () => {
+    // The FTS5 tokenizer folds diacritics; the LIKE fallback does not, and
+    // the target is older than the filler, so the newest-rows tail with one
+    // result cannot return it either. Only the FTS statement can.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2001, 0, 2, 0, 0, 0));
+    db.prepare(
+      "INSERT INTO conversations (bank, content, created_at) VALUES (?, ?, ?)",
+    ).run("mc-operational", "Revisión de migración pendiente", "2001-01-01 00:00:00");
+
+    const hits = await new SqliteMemoryBackend(false).recall(
+      "revision migracion",
+      { bank: "mc-operational", maxResults: 1 },
+    );
+    expect(hits.map((h) => h.content)).toEqual([
+      "Revisión de migración pendiente",
+    ]);
+  });
+
   it("staleness: an expired JME fact is neither recalled nor retained by prune", async () => {
-    const now = Date.now();
-    const insert = mockDb.prepare(
+    // A fixed clock: expiry is compared with Date.now() inside the module.
+    const now = Date.UTC(2001, 0, 15, 12, 0, 0);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    const insert = db.prepare(
       `INSERT INTO jme_facts (source_task, ts, fact_text, category, expires_at)
        VALUES (?, ?, ?, 'event', ?)`,
     );
@@ -171,7 +155,7 @@ describe("playbook battery", () => {
     expect(texts).not.toContain("deploy window moved to friday");
 
     expect(pruneExpiredFacts()).toBe(1);
-    const left = mockDb.prepare("SELECT fact_text FROM jme_facts").all() as {
+    const left = db.prepare("SELECT fact_text FROM jme_facts").all() as {
       fact_text: string;
     }[];
     expect(left.map((r) => r.fact_text)).toEqual(["deploy window stays on monday"]);

@@ -8,44 +8,48 @@
  * task.failed events for the normal reaction + notification pipeline.
  */
 
-import { describe, it, expect } from "vitest";
-import BetterSqlite3 from "better-sqlite3";
-import { reconcileOrphanedTasks } from "./index.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase, reconcileOrphanedTasks } from "./index.js";
 
-function makeDb() {
-  const db = new BetterSqlite3(":memory:");
-  // Minimal tasks + runs table shapes — only the columns the reconcile touches.
-  db.exec(`
-    CREATE TABLE tasks (
-      task_id      TEXT PRIMARY KEY,
-      status       TEXT NOT NULL,
-      error        TEXT,
-      completed_at TEXT,
-      updated_at   TEXT
-    );
-    CREATE TABLE runs (
-      run_id       TEXT PRIMARY KEY,
-      task_id      TEXT NOT NULL,
-      status       TEXT NOT NULL,
-      error        TEXT,
-      completed_at TEXT
-    );
-  `);
-  return db;
+// Real schema through initDatabase(":memory:"): the `tasks` status CHECK and
+// NOT NULL title/description, the `runs` FK to `tasks` and its NOT NULL
+// agent_type/input apply to every seed, so the sweep runs on the live shape.
+let db: Database.Database;
+
+beforeEach(() => {
+  db = initDatabase(":memory:");
+});
+
+afterEach(() => {
+  closeDatabase();
+});
+
+function insTask(taskId: string, status: string): void {
+  db.prepare(
+    "INSERT INTO tasks (task_id, title, description, status) VALUES (?, 't', 'd', ?)",
+  ).run(taskId, status);
+}
+
+function insRun(
+  runId: string,
+  taskId: string,
+  status: string,
+  error: string | null = null,
+): void {
+  db.prepare(
+    "INSERT INTO runs (run_id, task_id, agent_type, input, status, error) VALUES (?, ?, 'fast', '{}', ?, ?)",
+  ).run(runId, taskId, status, error);
 }
 
 describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
   it("marks running/pending/queued rows as failed and returns the IDs", () => {
-    const db = makeDb();
-    const insert = db.prepare(
-      "INSERT INTO tasks (task_id, status) VALUES (?, ?)",
-    );
-    insert.run("r1", "running");
-    insert.run("p1", "pending");
-    insert.run("q1", "queued");
-    insert.run("c1", "completed"); // must not be touched
-    insert.run("f1", "failed"); // must not be touched
-    insert.run("b1", "blocked"); // must not be touched (budget-gated)
+    insTask("r1", "running");
+    insTask("p1", "pending");
+    insTask("q1", "queued");
+    insTask("c1", "completed"); // must not be touched
+    insTask("f1", "failed"); // must not be touched
+    insTask("b1", "blocked"); // must not be touched (budget-gated)
 
     const reconciled = reconcileOrphanedTasks(db);
     // Round-2 C-RES-6: returns the IDs, not a count. Caller uses these
@@ -53,11 +57,14 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
     expect([...reconciled].sort()).toEqual(["p1", "q1", "r1"]);
 
     const rows = db
-      .prepare("SELECT task_id, status, error FROM tasks ORDER BY task_id")
+      .prepare(
+        "SELECT task_id, status, error, completed_at FROM tasks ORDER BY task_id",
+      )
       .all() as Array<{
       task_id: string;
       status: string;
       error: string | null;
+      completed_at: string | null;
     }>;
 
     const byId = Object.fromEntries(rows.map((r) => [r.task_id, r]));
@@ -65,6 +72,8 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
     expect(byId.r1.status).toBe("failed");
     expect(byId.r1.error).toContain("Orphaned across non-graceful restart");
     expect(byId.r1.error).toContain("running");
+    // completed_at starts NULL on a task row; the sweep stamps it.
+    expect(byId.r1.completed_at).not.toBeNull();
 
     expect(byId.p1.status).toBe("failed");
     expect(byId.p1.error).toContain("pending");
@@ -74,6 +83,7 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
 
     expect(byId.c1.status).toBe("completed");
     expect(byId.c1.error).toBeNull();
+    expect(byId.c1.completed_at).toBeNull();
 
     expect(byId.f1.status).toBe("failed");
     // Must not overwrite error on rows we didn't touch — pre-existing
@@ -84,22 +94,14 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
   });
 
   it("is idempotent — second call on already-reconciled DB is a no-op", () => {
-    const db = makeDb();
-    db.prepare("INSERT INTO tasks (task_id, status) VALUES (?, ?)").run(
-      "r1",
-      "running",
-    );
+    insTask("r1", "running");
 
     expect(reconcileOrphanedTasks(db)).toEqual(["r1"]);
     expect(reconcileOrphanedTasks(db)).toEqual([]);
   });
 
   it("returns empty array when no orphans are present", () => {
-    const db = makeDb();
-    db.prepare("INSERT INTO tasks (task_id, status) VALUES (?, ?)").run(
-      "c1",
-      "completed",
-    );
+    insTask("c1", "completed");
     expect(reconcileOrphanedTasks(db)).toEqual([]);
   });
 
@@ -108,28 +110,20 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
   // 'running' because no path swept runs; the boot task-sweep cleaned the task
   // but not its run.
   it("cascades orphaned run rows to failed, including runs whose parent task is ALREADY terminal", () => {
-    const db = makeDb();
-    const insTask = db.prepare(
-      "INSERT INTO tasks (task_id, status) VALUES (?, ?)",
-    );
-    const insRun = db.prepare(
-      "INSERT INTO runs (run_id, task_id, status, error) VALUES (?, ?, ?, ?)",
-    );
-
     // A: task still 'running' at boot → task + its run both orphaned.
-    insTask.run("tA", "running");
-    insRun.run("runA", "tA", "running", null);
+    insTask("tA", "running");
+    insRun("runA", "tA", "running", null);
     // B: task ALREADY 'failed' (cleaned in a prior boot) but run left 'running'
     //    — the dominant row class. Drained only because the run sweep is
     //    unconditional (no orphaned task drives it).
-    insTask.run("tB", "failed");
-    insRun.run("runB", "tB", "running", null);
+    insTask("tB", "failed");
+    insRun("runB", "tB", "running", null);
     // C: a completed run must not be touched.
-    insTask.run("tC", "completed");
-    insRun.run("runC", "tC", "completed", null);
+    insTask("tC", "completed");
+    insRun("runC", "tC", "completed", null);
     // D: a run that already failed with a real captured error — preserve it.
-    insTask.run("tD", "failed");
-    insRun.run("runD", "tD", "failed", "real OOM error");
+    insTask("tD", "failed");
+    insRun("runD", "tD", "failed", "real OOM error");
 
     reconcileOrphanedTasks(db);
 
@@ -160,14 +154,8 @@ describe("reconcileOrphanedTasks (Dim-4 R3 fix + round-2 C-RES-6)", () => {
   });
 
   it("drains an orphaned run even when there are zero orphaned tasks (unconditional run sweep)", () => {
-    const db = makeDb();
-    db.prepare("INSERT INTO tasks (task_id, status) VALUES (?, ?)").run(
-      "tB",
-      "failed",
-    );
-    db.prepare(
-      "INSERT INTO runs (run_id, task_id, status) VALUES (?, ?, ?)",
-    ).run("runB", "tB", "running");
+    insTask("tB", "failed");
+    insRun("runB", "tB", "running");
 
     // No running/pending/queued tasks → the returned task-id list is empty…
     expect(reconcileOrphanedTasks(db)).toEqual([]);
