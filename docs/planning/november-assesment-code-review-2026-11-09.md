@@ -86,6 +86,8 @@ Sizes: S = under a day, M = one to three days, including audit. Every code batch
 
 ### Batch 1 — Security (ruling 1–4, 14) — detail off-repo
 
+**Status 2026-11-14 00:46 UTC — COMMITTED, not yet deployed: the delivery-path rules for the withheld-password line `fcde0feb` (4ej) and the removal script for copies outside the service's stores `ea9f0e5f` (4ef), each after three review rounds. Both operator wrappers for the removal runs are reviewed and placed; they are run after the next deploy, the first one first. With this the code for the mailbox-password work is complete; what is left is the deploy and the two operator runs. Opened: 4ep, 4eq.**
+
 **Status 2026-11-13 23:12 UTC — COMMITTED, not yet deployed: the explanatory line for replies that show the placeholder `698183b7` (4ej), the failed-check rule and two more small rules `0ae77614` (4el). The operator wrapper for the removal run is reviewed and placed (4ee). In build: the delivery-path follow-up (4ej) and the script for copies outside the service's stores (4ef). Opened: 4em, 4en, 4eo.**
 
 **Status 2026-11-13 22:09 UTC — COMMITTED, not yet deployed: the removal script's hardening `e61df834` (4ee), the path-check error rule `032ed2f7` (4eh), a machine-dependent test fixed `ade414e7` (4ek). In review: the explanatory line for replies that show the placeholder (4ej). In draft: the operator wrapper for the removal run. Opened: 4el (three small follow-ups, detail off-repo).**
