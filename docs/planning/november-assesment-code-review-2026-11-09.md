@@ -197,6 +197,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-14 02:36 UTC — the class of database times read or compared in the wrong zone, found by the real-database tests, is FIXED `14da59d8` (twenty expressions in thirteen source files, two fix sets, each independently reviewed; queue 4et, follow-ups 4eu). The host commit check (Q3 + Q6) is built, reviewed twice and waits for the operator's install line (4db). Q8 pieces 7–12 are in flight. Left: the Q2 cancel-pattern test, eighteen more Q8 pieces, 4er.**
+
 **Status 2026-11-14 02:09 UTC — Q8 STARTED: thirty test-only pieces planned, the first six COMMITTED (`2e394dc8`, `906ba0ee`, `3aa669d6`), CI green (queue 4es). They found two defects: the memory clean-up kept the less trusted copy of a duplicate (FIXED `906ba0ee`), and a class of database times read or compared the wrong way (fix in flight, 4et). The suite's memory use was measured during these commits: about 1.3 GB at its peak, far below the limit of the new host commit check (in its second review round). Left: the Q2 cancel-pattern test, twenty-four Q8 pieces, the host commit check hand-over, 4er.**
 
 **Status 2026-11-14 01:04 UTC — Q10 COMMITTED `bd9158b8`, CI green: four video test files are excluded by name, thirteen gate CI again (queue 4ec). Three of the four could gate CI after small test changes (4er). Left: the Q2 cancel-pattern test, Q8, the operator-applied host commit check (Q3 + Q6).**
