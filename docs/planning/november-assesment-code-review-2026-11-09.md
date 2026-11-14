@@ -143,6 +143,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-14 04:48 UTC — the signal-baseline defect is FIXED `9ec11c45` (reviewed twice). Correction to the line below: the computation was not failing nightly — its only caller, the overnight tuning routine, is switched off on the live service and never runs; the query defect would have failed it whenever it ran. Whether baselines get their own nightly schedule is a yes/no in queue 4ex.**
+
 **Status 2026-11-14 03:43 UTC — one more live defect, found by the batch 5 tests: the nightly signal baselines were never written (queue 4ew); its fix is being built as its own reviewed piece.**
 
 **Status 2026-11-11 07:33 UTC — six more fixes COMMITTED `a823bbf9` (queue 4dk), not yet deployed: stop sequence (direct calls, isolated steps, triggers stopped), adapters stop independently, notice character, fast-path filter, usage kept on the fallback switch. Every batch 3 item that needs no ruling is committed; three wait for rulings.**
@@ -198,6 +200,8 @@ Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next 
 Not worth doing: migrating the ~900 console calls; a logging framework; Result types.
 
 ### Batch 5 — Tests (ruling 7)
+
+**Status 2026-11-14 04:48 UTC — real-database tests: pieces 19–23 COMMITTED `17a1cb5b` (twenty-three of thirty done; suite 635 files, 17,383 tests). Pieces 24–26 are being built. Found on the way: three older host-only video tests leave folders behind in the service's video working folder on every commit run, and one of them calls an outside service (queue 4ex). The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, seven more pieces, 4er.**
 
 **Status 2026-11-14 03:43 UTC — real-database tests: pieces 13–18 COMMITTED `629c5f52` (eighteen of thirty done; suite 631 files, 17,347 tests). They found one live defect (the nightly signal baselines were never written; fix in progress) and one question (the hold-back for repeated alerts is recorded but never applied), both in queue 4ew. The host commit check still waits for the operator's install line (4db). Left: the Q2 cancel-pattern test, twelve more pieces, 4er.**
 
