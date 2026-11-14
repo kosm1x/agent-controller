@@ -6,10 +6,11 @@
  * load-bearing assertions.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   loadActiveAlertsForBrief,
   formatAlertSection,
+  formatRelativeTime,
   isSundayInMxTime,
   composeMorningBriefDriftSection,
   ALERT_SECTION_CAP,
@@ -449,3 +450,35 @@ describe("formatAlertSection — markdown shape sanity (LLM copies verbatim)", (
     expect(formatAlertSection(set)).toContain("mc_whatsapp_disconnects_total");
   });
 });
+
+// drift_alerts.triggered_at is SQLite datetime('now') text: UTC with no zone
+// marker. The alert age must read it as UTC whatever the process time zone.
+describe.each(["America/Mexico_City", "Asia/Tokyo"])(
+  "formatRelativeTime in process time zone %s",
+  (zone) => {
+    let prevTz: string | undefined;
+    beforeEach(() => {
+      prevTz = process.env.TZ;
+      process.env.TZ = zone;
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-03-04T12:00:00Z"));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      if (prevTz === undefined) delete process.env.TZ;
+      else process.env.TZ = prevTz;
+    });
+
+    it("reads a database time five minutes old as five minutes", () => {
+      expect(formatRelativeTime("2026-03-04 11:55:00")).toBe("hace 5 min");
+    });
+
+    it("reads a database time three hours old as three hours", () => {
+      expect(formatRelativeTime("2026-03-04 09:00:00")).toBe("hace 3 h");
+    });
+
+    it("reads an ISO time with a zone marker unchanged", () => {
+      expect(formatRelativeTime("2026-03-04T11:55:00.000Z")).toBe("hace 5 min");
+    });
+  },
+);

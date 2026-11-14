@@ -458,21 +458,43 @@ describe("ReactionManager", () => {
     expect(getReactionsBySourceTask(db, "task-jarvis-pull")).toHaveLength(0);
   });
 
-  it("respects cooldown (no rapid-fire reactions)", async () => {
-    // First reaction goes through
-    await triggerTaskFailed("task-1", "ECONNRESET");
-    expect(mockSubmitTask).toHaveBeenCalledTimes(1);
-
-    // Second reaction within cooldown should be skipped
-    await triggerTaskFailed("task-1", "ECONNRESET again");
-    expect(mockSubmitTask).toHaveBeenCalledTimes(1); // Still 1
-  });
-
   // reactions.created_at is SQLite datetime('now') text: UTC with no zone
-  // marker. The cooldown parses it with new Date(), which reads such text as
-  // LOCAL time, so the 30 s window shifts by the process UTC offset.
-  it.todo(
-    "cooldown measures the 30 s window from reactions.created_at read as UTC, whatever the process time zone",
+  // marker. The 30 s cooldown must read it as UTC whatever the process time
+  // zone, so each case runs in a zone west of UTC and one east of it.
+  describe.each(["America/Mexico_City", "Asia/Tokyo"])(
+    "cooldown in process time zone %s",
+    (zone) => {
+      let prevTz: string | undefined;
+      beforeEach(() => {
+        prevTz = process.env.TZ;
+        process.env.TZ = zone;
+      });
+      afterEach(() => {
+        if (prevTz === undefined) delete process.env.TZ;
+        else process.env.TZ = prevTz;
+      });
+
+      it("respects cooldown (no rapid-fire reactions)", async () => {
+        // First reaction goes through
+        await triggerTaskFailed("task-1", "ECONNRESET");
+        expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+
+        // Second reaction within cooldown should be skipped
+        await triggerTaskFailed("task-1", "ECONNRESET again");
+        expect(mockSubmitTask).toHaveBeenCalledTimes(1); // Still 1
+      });
+
+      it("reacts again once the 30 s window since the last reaction has passed", async () => {
+        await triggerTaskFailed("task-1", "ECONNRESET");
+        expect(mockSubmitTask).toHaveBeenCalledTimes(1);
+        db.prepare(
+          "UPDATE reactions SET created_at = datetime('now', '-60 seconds') WHERE source_task_id = ?",
+        ).run("task-1");
+
+        await triggerTaskFailed("task-1", "ECONNRESET again");
+        expect(mockSubmitTask).toHaveBeenCalledTimes(2);
+      });
+    },
   );
 
   it("checkStuckTasks cascades ONLY the stuck task's run to failed (scoped, not blanket)", () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -113,6 +113,52 @@ describe("PolymarketPaperAdapter.getMarketData", () => {
     const adapter = new PolymarketPaperAdapter({ clock: new FixedClock(NOW) });
     await expect(adapter.getMarketData("0xm1:Yes")).rejects.toThrow(/stale/);
   });
+
+  // prediction_markets.fetched_at is SQLite datetime('now') text: UTC with no
+  // zone marker. The 5-day stale gate and the quote's ISO asOf must read it as
+  // UTC whatever the process time zone.
+  describe.each(["America/Mexico_City", "Asia/Tokyo"])(
+    "database fetched_at in process time zone %s",
+    (zone) => {
+      let prevTz: string | undefined;
+      beforeEach(() => {
+        prevTz = process.env.TZ;
+        process.env.TZ = zone;
+      });
+      afterEach(() => {
+        if (prevTz === undefined) delete process.env.TZ;
+        else process.env.TZ = prevTz;
+      });
+
+      it("a quote fetched 119 h ago is fresh and its asOf is ISO UTC", async () => {
+        seedMarket({
+          marketId: "0xm1",
+          yesPrice: 0.4,
+          fetchedAt: "2026-04-15 17:00:00",
+        });
+        const adapter = new PolymarketPaperAdapter({
+          clock: new FixedClock(NOW),
+        });
+        const q = await adapter.getMarketData("0xm1:Yes");
+        expect(q.price).toBe(0.4);
+        expect(q.asOf).toBe("2026-04-15T17:00:00.000Z");
+      });
+
+      it("a quote fetched 121 h ago is stale", async () => {
+        seedMarket({
+          marketId: "0xm1",
+          yesPrice: 0.4,
+          fetchedAt: "2026-04-15 15:00:00",
+        });
+        const adapter = new PolymarketPaperAdapter({
+          clock: new FixedClock(NOW),
+        });
+        await expect(adapter.getMarketData("0xm1:Yes")).rejects.toThrow(
+          /stale/,
+        );
+      });
+    },
+  );
 });
 
 describe("PolymarketPaperAdapter.placeOrder (buy)", () => {

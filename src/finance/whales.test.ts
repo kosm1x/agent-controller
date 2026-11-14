@@ -161,6 +161,35 @@ describe("persistWhaleTrades + queryRecentWhales", () => {
     expect(rows[0].wallet).toBe("0x1");
   });
 
+  it("bounds the hours window in the column's ISO format, with and without market_id", () => {
+    // `occurred_at` is ISO text (`T…Z`) from the trade normaliser; a zone-less
+    // datetime() bound would let a trade just past the edge on its date through.
+    const isoAgo = (ms: number): string => new Date(Date.now() - ms).toISOString();
+    const day = 24 * 60 * 60 * 1000;
+    persistWhaleTrades([
+      {
+        source: "polymarket",
+        wallet: "0xIN",
+        marketId: "m1",
+        side: "buy",
+        sizeUsd: 10_000,
+        occurredAt: isoAgo(day - 60_000),
+      },
+      {
+        source: "polymarket",
+        wallet: "0xOUT",
+        marketId: "m1",
+        side: "buy",
+        sizeUsd: 10_000,
+        occurredAt: isoAgo(day + 1_000),
+      },
+    ]);
+    expect(queryRecentWhales().map((w) => w.wallet)).toEqual(["0xIN"]);
+    expect(queryRecentWhales({ marketId: "m1" }).map((w) => w.wallet)).toEqual([
+      "0xIN",
+    ]);
+  });
+
   it("empty persist input returns 0", () => {
     expect(persistWhaleTrades([])).toBe(0);
   });

@@ -325,8 +325,10 @@ export function evaluateActivationGate(opts?: {
   //
   // `cost_ledger.created_at` defaults to `datetime('now')` (UTC); the window
   // bound below is UTC too, so the comparison is timezone-correct even though
-  // the service runs TZ=America/Mexico_City. The same holds for the 7-day
-  // briefing query — `generated_at` is written via `Date.toISOString()` (UTC).
+  // the service runs TZ=America/Mexico_City. The 7-day briefing query is UTC
+  // too, but `generated_at` is written via `Date.toISOString()` (`T…Z`), so its
+  // bound is built in that same ISO format: a zone-less datetime() bound would
+  // sort below every ISO value of its own calendar date.
   const coldStartPlaceholders = GATE_COLD_START_AGENT_TYPES.map(() => "?").join(
     ",",
   );
@@ -381,7 +383,7 @@ export function evaluateActivationGate(opts?: {
               COALESCE(SUM(status='expired'),0)   AS expired,
               COALESCE(SUM(status='pending'),0)   AS pending
          FROM proposed_briefings
-        WHERE generated_at > datetime('now','-7 days')
+        WHERE generated_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
         GROUP BY surface`,
     )
     .all() as HealthRow[];

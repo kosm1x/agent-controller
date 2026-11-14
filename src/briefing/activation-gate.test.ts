@@ -334,6 +334,27 @@ describe("evaluateActivationGate", () => {
     expect(morning.promoteRatePct).toBe(100);
   });
 
+  it("counts an ISO-stamped brief just inside the 7-day window and drops one just outside", () => {
+    // `generated_at` is written with toISOString() (`T…Z`); the bound must be
+    // ISO too, or a brief just past the edge on the edge's calendar date counts.
+    const ins = getDatabase().prepare(
+      `INSERT INTO proposed_briefings
+         (briefing_id, surface, generated_at, briefing_json, status, expires_at)
+       VALUES (?, 'morning', ?, '{}', ?, ?)`,
+    );
+    const isoAgo = (ms: number): string => new Date(Date.now() - ms).toISOString();
+    const week = 7 * 86_400_000;
+    ins.run(crypto.randomUUID(), isoAgo(week - 60_000), "promoted", isoAgo(0));
+    ins.run(crypto.randomUUID(), isoAgo(week + 1_000), "discarded", isoAgo(0));
+
+    const morning = evaluateActivationGate(SCORING).briefingHealth.find(
+      (h) => h.surface === "morning",
+    )!;
+    expect(morning.generated).toBe(1);
+    expect(morning.promoted).toBe(1);
+    expect(morning.discarded).toBe(0);
+  });
+
   it("does NOT let an EXPIRED (unanswered) brief count as a rejection", () => {
     // Since promotion requires an explicit "sirve"/"descarta", an unanswered
     // brief expires. Charging that silence against the promote-rate would fail

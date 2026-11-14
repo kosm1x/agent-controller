@@ -5,7 +5,7 @@
  * for the persist path so SQL is exercised.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   detectBursts,
   persistBurstBundle,
@@ -15,6 +15,8 @@ import {
 } from "./burst.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
 import type { DriftAlertRecord } from "./evaluator.js";
+import { evaluateSignal } from "./evaluator.js";
+import { insertSignalIfMissing, loadAllSignals } from "./registry.js";
 
 beforeEach(() => initDatabase(":memory:"));
 afterEach(() => closeDatabase());
@@ -232,5 +234,80 @@ describe("loadRecentUnbundledAlerts — SQL query", () => {
     const recent = loadRecentUnbundledAlerts();
     expect(recent.length).toBe(1);
     expect(recent[0].deviation_kind).toBe("above");
+  });
+});
+
+// The evaluator writes `triggered_at` with datetime('now'): UTC text without a
+// zone marker. The window bound must be in that format too — an ISO bound
+// (`T…Z`) sorts above every zone-less value of the same calendar date, so the
+// five-minute window would match nothing.
+describe("loadRecentUnbundledAlerts — alerts as the evaluator writes them", () => {
+  function seedSignal(name: string): number {
+    return insertSignalIfMissing({
+      signal_name: name,
+      signal_kind: "k",
+      source_substrate: "x",
+      baseline_query: "SELECT n FROM zone_window_missing_table",
+      baseline_value_json: "{}",
+      tolerance_json: "{}",
+      cadence: "hourly",
+      alert_priority: "P1",
+      established_at: "2026-01-01",
+      established_by: "test",
+    });
+  }
+
+  it("loads a burst the evaluator just wrote, so it gets bundled", async () => {
+    seedSignal("zone-a");
+    seedSignal("zone-b");
+    seedSignal("zone-c");
+    // A failing baseline query makes the evaluator write a query_failure alert.
+    for (const s of loadAllSignals()) await evaluateSignal(s);
+    const written = getDatabase()
+      .prepare("SELECT triggered_at FROM drift_alerts")
+      .all() as Array<{ triggered_at: string }>;
+    expect(written).toHaveLength(3);
+    for (const r of written) {
+      expect(r.triggered_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    }
+
+    const recent = loadRecentUnbundledAlerts();
+    expect(recent).toHaveLength(3);
+    const bundles = detectBursts(recent);
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0].members).toHaveLength(3);
+  });
+
+  it("keeps a zone-less alert just inside the window and drops one just outside", () => {
+    const id = seedSignal("zone-edge");
+    const ins = getDatabase().prepare(
+      `INSERT INTO drift_alerts
+         (signal_id, triggered_at, observed_value_json, baseline_value_json,
+          deviation_kind, severity, delivery_status)
+       VALUES (?, datetime('now', ?), '{}', '{}', ?, 'P1', 'pending')`,
+    );
+    ins.run(id, `-${BURST_WINDOW_MS / 1000 - 60} seconds`, "above"); // inside
+    ins.run(id, `-${BURST_WINDOW_MS / 1000 + 60} seconds`, "below"); // outside
+    const recent = loadRecentUnbundledAlerts();
+    expect(recent.map((r) => r.deviation_kind)).toEqual(["above"]);
+  });
+
+  it("includes an alert exactly on the window's first second and drops one a second earlier", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-03-10T12:00:00.000Z")); // bound: 11:55:00
+      const id = seedSignal("zone-bound");
+      const ins = getDatabase().prepare(
+        `INSERT INTO drift_alerts
+           (signal_id, triggered_at, observed_value_json, baseline_value_json,
+            deviation_kind, severity, delivery_status)
+         VALUES (?, ?, '{}', '{}', ?, 'P1', 'pending')`,
+      );
+      ins.run(id, "2026-03-10 11:55:00", "above"); // on the bound: inclusive
+      ins.run(id, "2026-03-10 11:54:59", "below"); // one second before
+      expect(loadRecentUnbundledAlerts().map((r) => r.deviation_kind)).toEqual(["above"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

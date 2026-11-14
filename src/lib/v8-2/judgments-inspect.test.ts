@@ -14,6 +14,7 @@ import {
   getRecentJudgments,
   getJudgmentClaimSummary,
   getAttributedClaimRows,
+  insertJudgment,
 } from "./judgments-store.js";
 
 const FUTURE = "2030-01-01T00:00:00.000Z";
@@ -119,6 +120,21 @@ describe("getRecentJudgments", () => {
     expect(win.map((r) => r.subject)).toEqual(["recent"]);
     // windowDays 0/absent = no filter
     expect(getRecentJudgments().length).toBe(2);
+  });
+
+  it("bounds the N-day window in the column's ISO format (a row just outside stays out)", () => {
+    // `created_at` is written by insertJudgment as toISOString() text (`T…Z`);
+    // a zone-less bound would let a row just past the edge on its date through.
+    seedBriefing();
+    const isoAgo = (ms: number): string => new Date(Date.now() - ms).toISOString();
+    const week = 7 * 86_400_000;
+    for (const [subject, createdAt] of [
+      ["inside", isoAgo(week - 60_000)],
+      ["outside", isoAgo(week + 1_000)],
+    ]) {
+      insertJudgment({ briefingId: "b1", subject, posture: "at_risk", prose: "p", createdAt });
+    }
+    expect(getRecentJudgments({ windowDays: 7 }).map((r) => r.subject)).toEqual(["inside"]);
   });
 });
 

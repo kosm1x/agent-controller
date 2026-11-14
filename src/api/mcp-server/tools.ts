@@ -204,8 +204,20 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
           params.push(args.status);
         }
         if (args.since) {
+          // `tasks.created_at` is UTC text without a zone marker; bind `since`
+          // in that format so an ISO value compares by time, not by its `T`.
+          // A value without a zone is read as UTC; one that is not a
+          // `YYYY-MM-DD…` date or does not parse is bound as given.
+          const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(args.since);
+          const ms = /^\d{4}-\d{2}-\d{2}/.test(args.since)
+            ? Date.parse(zoned ? args.since : args.since.replace(" ", "T") + "Z")
+            : NaN;
           clauses.push("created_at >= ?");
-          params.push(args.since);
+          params.push(
+            Number.isNaN(ms)
+              ? args.since
+              : new Date(ms).toISOString().slice(0, 19).replace("T", " "),
+          );
         }
 
         const where =
@@ -410,7 +422,9 @@ export function registerJarvisTools(server: McpServer, deps: McpDeps): void {
         // `hours` to a positive int, but the previous `-${hours} hours`
         // pattern was a latent SQLi trap — one schema relaxation and the
         // authenticated endpoint becomes an injection vector.
-        const clauses: string[] = ["timestamp >= datetime('now', ?)"];
+        // `events.timestamp` holds ISO text (event bus) and zone-less UTC text
+        // (audit writer); datetime() puts both in one format before comparing.
+        const clauses: string[] = ["datetime(timestamp) >= datetime('now', ?)"];
         const params: unknown[] = [`-${hours} hours`];
         if (args.category) {
           clauses.push("category = ?");

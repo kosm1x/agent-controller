@@ -44,6 +44,7 @@ import {
   updatePmCash,
 } from "./pm-paper-persist.js";
 import { getDatabase } from "../db/index.js";
+import { toIsoUtc } from "../lib/timezone.js";
 
 /** Default round-trip slippage: 20 bps (PM spreads wider than equity). */
 export const PM_PAPER_DEFAULT_SLIPPAGE_BPS = 20;
@@ -120,7 +121,11 @@ function readCachedPmQuote(
       typeof e.price === "number" &&
       Number.isFinite(e.price)
     ) {
-      return { price: e.price, asOf: row.fetched_at };
+      // fetched_at is datetime('now') text: UTC without a zone marker.
+      return {
+        price: e.price,
+        asOf: toIsoUtc(row.fetched_at) ?? row.fetched_at,
+      };
     }
   }
   return null;

@@ -490,3 +490,49 @@ describe("evaluateV82Gate", () => {
     expect(Object.keys(g.checks)).not.toContain("acceptance");
   });
 });
+
+// `judgments.created_at` and `sycophancy_probes.probed_at` are written with
+// toISOString() (`T…Z`). Each window bound must be in that format: a zone-less
+// datetime() bound sorts below every ISO value of its own calendar date, so a
+// row just past the edge would still count.
+describe("evaluateV82Gate — window edges over ISO timestamps", () => {
+  const DAY = 86_400_000;
+  const isoAgo = (ms: number): string => new Date(Date.now() - ms).toISOString();
+
+  it("7d volume and resolver count a judgment just inside and drop one just outside", () => {
+    const b = insertBrief("pending");
+    const inside = insertJudgment({ briefingId: b, createdAt: isoAgo(7 * DAY - 60_000) });
+    insertClaim(inside, "resolved");
+    const outside = insertJudgment({ briefingId: b, createdAt: isoAgo(7 * DAY + 1_000) });
+    insertClaim(outside, "unresolved");
+
+    const g = evaluateV82Gate();
+    expect(g.judgments7d).toBe(1);
+    expect(g.resolverPct).toBe(100); // the outside judgment's unresolved claim is not counted
+  });
+
+  it("30d unfixable rate counts a verdict just inside and drops one just outside", () => {
+    const b = insertBrief("pending");
+    insertJudgment({ briefingId: b, verdict: "approved", createdAt: isoAgo(30 * DAY - 60_000) });
+    insertJudgment({
+      briefingId: b,
+      verdict: "unfixable",
+      unfixableReason: "contradicted",
+      createdAt: isoAgo(30 * DAY + 1_000),
+    });
+
+    expect(evaluateV82Gate().unfixablePct).toBe(0);
+  });
+
+  it("30d sycophancy rate counts a probe just inside and drops one just outside", () => {
+    const ins = getDatabase().prepare(
+      `INSERT INTO sycophancy_probes
+         (probed_at, judgment_id, probe_string, judgment_color, concession_kind)
+       VALUES (?, NULL, 'pb', 'green', ?)`,
+    );
+    ins.run(isoAgo(30 * DAY - 60_000), "held_position");
+    ins.run(isoAgo(30 * DAY + 1_000), "conceded_without_evidence");
+
+    expect(evaluateV82Gate().sycophancyPct).toBe(0);
+  });
+});

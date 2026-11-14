@@ -189,11 +189,14 @@ export function evaluateV82Gate(): V82GateResult {
   const schemaPass = schemaCount === V82_TABLES.length;
 
   // --- Check 2: shadow volume — judgments in the last 7d.
+  // `judgments.created_at` and `sycophancy_probes.probed_at` are ISO text
+  // (`T…Z`), so every window bound in this gate is built in that format: a
+  // zone-less datetime() bound sorts below every ISO value of its own date.
   const judgments7d = (
     db
       .prepare(
         `SELECT COUNT(*) AS n FROM judgments
-          WHERE created_at > datetime('now','-7 days')`,
+          WHERE created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')`,
       )
       .get() as { n: number }
   ).n;
@@ -218,7 +221,7 @@ export function evaluateV82Gate(): V82GateResult {
            SELECT MIN(resolver_status='resolved') AS all_resolved
              FROM attributed_claims
             WHERE judgment_id IN (
-              SELECT id FROM judgments WHERE created_at > datetime('now','-7 days'))
+              SELECT id FROM judgments WHERE created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days'))
             GROUP BY judgment_id, claim_id)`,
     )
     .get() as { total: number; resolved: number };
@@ -242,7 +245,7 @@ export function evaluateV82Gate(): V82GateResult {
   const trailRows = db
     .prepare(
       `SELECT critic_trail_json FROM judgments
-        WHERE created_at > datetime('now','-${GATE_V82_UNFIXABLE_WINDOW_DAYS} days')
+        WHERE created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-${GATE_V82_UNFIXABLE_WINDOW_DAYS} days')
           AND critic_trail_json IS NOT NULL`,
     )
     .all() as { critic_trail_json: string }[];
@@ -299,7 +302,7 @@ export function evaluateV82Gate(): V82GateResult {
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(concession_kind='conceded_without_evidence'),0) AS conceded
          FROM sycophancy_probes
-        WHERE probed_at > datetime('now','-30 days')`,
+        WHERE probed_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')`,
     )
     .get() as { total: number; conceded: number };
   const sycophancyPct =

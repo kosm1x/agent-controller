@@ -61,7 +61,7 @@ const OFFLINE = process.argv.includes("--offline");
 const WRITE = process.argv.includes("--write");
 const DAYS = Number(arg("--days") ?? 30);
 if (!Number.isFinite(DAYS) || DAYS <= 0) {
-  // qa R1: `--days 30d` ⇒ NaN ⇒ datetime('now','-NaN days') is NULL ⇒ zero
+  // qa R1: `--days 30d` ⇒ NaN ⇒ the SQL bound ('now','-NaN days') is NULL ⇒ zero
   // rows ⇒ a report that reads exactly like a clean result. Refuse instead.
   console.error(`rule-of-two-audit: --days must be a positive number (got ${arg("--days")})`);
   process.exit(2);
@@ -138,7 +138,7 @@ function retrospective(
   const rows = db
     .prepare(
       `SELECT task_id, tool FROM task_trace_events
-        WHERE name = 'tool.called' AND ts > datetime('now', ?) AND tool IS NOT NULL
+        WHERE name = 'tool.called' AND ts > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) AND tool IS NOT NULL
         ORDER BY task_id, id`,
     )
     .all(`-${DAYS} days`) as Array<{ task_id: string; tool: string }>;

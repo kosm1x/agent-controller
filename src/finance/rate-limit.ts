@@ -15,6 +15,7 @@
  */
 
 import type { Provider } from "./types.js";
+import { toIsoUtc } from "../lib/timezone.js";
 
 const WINDOW_MS = 60_000;
 export const DAY_WINDOW_MS = 86_400_000;
@@ -95,7 +96,8 @@ export function msUntilAvailable(provider: Provider): number {
 
 /**
  * Seed the limiter from the DB for a provider. Call at boot so restarts
- * don't desync. Takes raw ISO-timestamp strings from api_call_budget.
+ * don't desync. Takes api_call_budget call times (UTC text without a zone
+ * marker); ISO text is also accepted; unparseable values are dropped.
  * Callers should pass history covering the provider's longest window
  * (24h for daily-quota providers, 1 minute otherwise).
  */
@@ -104,7 +106,8 @@ export function seedFromHistory(provider: Provider, isoTimes: string[]): void {
   const now = Date.now();
   const cutoff = now - retentionMs(provider);
   const ms = isoTimes
-    .map((t) => Date.parse(t))
+    // call_time is datetime('now') text: UTC without a zone marker.
+    .map((t) => Date.parse(toIsoUtc(t) ?? t))
     .filter((t) => Number.isFinite(t) && t >= cutoff)
     .sort((a, b) => a - b);
   state.set(provider, ms);

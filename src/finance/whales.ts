@@ -99,6 +99,7 @@ export function queryRecentWhales(opts: WhaleQueryOpts = {}): WhaleTrade[] {
   const minSize = opts.minSizeUsd ?? DEFAULT_WHALE_USD;
   const hours = opts.hours ?? 24;
   const limit = Math.min(opts.limit ?? 20, 200);
+  // `occurred_at` is ISO text (`T…Z`): the window bound is built in that format.
   const rows = (
     opts.marketId
       ? db
@@ -107,7 +108,7 @@ export function queryRecentWhales(opts: WhaleQueryOpts = {}): WhaleTrade[] {
              FROM whale_trades
              WHERE size_usd >= ?
                AND market_id = ?
-               AND occurred_at > datetime('now', ?)
+               AND occurred_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
              ORDER BY occurred_at DESC
              LIMIT ?`,
           )
@@ -117,7 +118,7 @@ export function queryRecentWhales(opts: WhaleQueryOpts = {}): WhaleTrade[] {
             `SELECT source, wallet, market_id, side, size_usd, price, occurred_at, metadata
              FROM whale_trades
              WHERE size_usd >= ?
-               AND occurred_at > datetime('now', ?)
+               AND occurred_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
              ORDER BY occurred_at DESC
              LIMIT ?`,
           )

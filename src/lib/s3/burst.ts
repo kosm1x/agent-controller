@@ -88,7 +88,13 @@ export function detectBursts(alerts: DriftAlertRecord[]): BurstBundle[] {
 export function loadRecentUnbundledAlerts(
   windowMs: number = BURST_WINDOW_MS,
 ): DriftAlertRecord[] {
-  const sinceIso = new Date(Date.now() - windowMs).toISOString();
+  // `triggered_at` is datetime('now') text: UTC without a zone marker. Bind the
+  // bound in that format — an ISO `T…Z` bound sorts above every zone-less value
+  // of the same calendar date, so the window would match nothing.
+  const sinceIso = new Date(Date.now() - windowMs)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
   return getDatabase()
     .prepare(
       `SELECT id, signal_id, triggered_at, observed_value_json,

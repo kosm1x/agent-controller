@@ -176,11 +176,12 @@ The overlay engine uses per-scene TTS with individual timing, so each image appe
     const topic = args.topic as string;
     if (!topic) return JSON.stringify({ error: "topic is required" });
 
-    // Lazy cleanup of expired jobs (24h TTL)
+    // Lazy cleanup of expired jobs (24h TTL). `expires_at` is ISO text, so the
+    // bound is ISO too (a zone-less bound sorts below it all day).
     try {
       const expired = getDatabase()
         .prepare(
-          "SELECT job_id FROM video_jobs WHERE expires_at < datetime('now') AND status IN ('completed','failed')",
+          "SELECT job_id FROM video_jobs WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ','now') AND status IN ('completed','failed')",
         )
         .all() as Array<{ job_id: string }>;
       const deleteJob = getDatabase().prepare(

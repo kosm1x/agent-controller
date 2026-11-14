@@ -88,4 +88,34 @@ describe("rate-limit", () => {
     ]);
     expect(currentWindow().polygon).toBe(1);
   });
+
+  // api_call_budget.call_time is SQLite datetime('now') text: UTC with no
+  // zone marker. Seeding must read it as UTC whatever the process time zone.
+  describe.each(["America/Mexico_City", "Asia/Tokyo"])(
+    "seedFromHistory with database times in process time zone %s",
+    (zone) => {
+      let prevTz: string | undefined;
+      beforeEach(() => {
+        prevTz = process.env.TZ;
+        process.env.TZ = zone;
+      });
+      afterEach(() => {
+        if (prevTz === undefined) delete process.env.TZ;
+        else process.env.TZ = prevTz;
+      });
+
+      it("calls 30 s ago still fill the minute window", () => {
+        seedFromHistory("polygon", Array(4).fill("2026-07-14 11:59:30"));
+        expect(currentWindow().polygon).toBe(4);
+        expect(canCall("polygon")).toBe(false);
+        expect(msUntilAvailable("polygon")).toBe(30_000);
+      });
+
+      it("calls 90 s ago are outside the minute window", () => {
+        seedFromHistory("polygon", Array(4).fill("2026-07-14 11:58:30"));
+        expect(currentWindow().polygon).toBe(0);
+        expect(canCall("polygon")).toBe(true);
+      });
+    },
+  );
 });

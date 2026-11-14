@@ -24,6 +24,7 @@ import {
   getLatestReaction,
 } from "./store.js";
 import { errMsg } from "../lib/err-msg.js";
+import { toIsoUtc } from "../lib/timezone.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -239,7 +240,10 @@ export class ReactionManager {
     // Cooldown check: don't react if we just reacted to this task
     const latest = getLatestReaction(this.db, taskId);
     if (latest) {
-      const elapsed = Date.now() - new Date(latest.created_at).getTime();
+      // created_at is datetime('now') text: UTC without a zone marker.
+      const elapsed =
+        Date.now() -
+        new Date(toIsoUtc(latest.created_at) ?? latest.created_at).getTime();
       if (elapsed < COOLDOWN_MS) return;
     }
 

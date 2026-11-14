@@ -491,15 +491,15 @@ function main(): void {
       `SELECT COUNT(DISTINCT f.task_id) AS n FROM task_trace_events f
          JOIN task_trace_events s ON s.task_id = f.task_id AND s.id > f.id
         WHERE f.name = 'task.failed' AND s.name = 'task.completed'
-          AND f.ts >= datetime('now','-90 days')`,
+          AND f.ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-90 days')`,
     ),
     fallbackEvents90d: c(
       `SELECT COUNT(*) AS n FROM task_trace_events
-        WHERE name = 'task.fallback' AND ts >= datetime('now','-90 days')`,
+        WHERE name = 'task.fallback' AND ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-90 days')`,
     ),
     tasksWithGe2Rounds90d: c(
       `SELECT COUNT(*) AS n FROM (SELECT task_id FROM task_trace_events
-         WHERE name = 'turn.completed' AND ts >= datetime('now','-90 days')
+         WHERE name = 'turn.completed' AND ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-90 days')
          GROUP BY task_id HAVING COUNT(DISTINCT round) >= 2)`,
     ),
   };

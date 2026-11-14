@@ -167,12 +167,13 @@ export function getRecentJudgments(
   const windowDays =
     opts.windowDays && opts.windowDays > 0 ? Math.trunc(opts.windowDays) : 0;
   const order = `ORDER BY created_at DESC, id DESC LIMIT ?`;
+  // `created_at` is ISO text (`T…Z`): the window bound is built in that format.
   const rows = (
     windowDays > 0
       ? db
           .prepare(
             `SELECT ${SELECT_COLS} FROM judgments
-              WHERE created_at > datetime('now', ?) ${order}`,
+              WHERE created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) ${order}`,
           )
           .all(`-${windowDays} days`, limit)
       : db.prepare(`SELECT ${SELECT_COLS} FROM judgments ${order}`).all(limit)

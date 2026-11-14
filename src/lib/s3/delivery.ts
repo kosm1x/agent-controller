@@ -26,6 +26,7 @@
 import { getDatabase } from "../../db/index.js";
 import { loadAgingBaselines, formatAgingSection } from "./aging.js";
 import { errMsg } from "../err-msg.js";
+import { toIsoUtc } from "../timezone.js";
 
 export interface BriefAlertRow {
   id: number;
@@ -259,7 +260,8 @@ function extractObserved(json: string): string {
  * to the raw ISO string on parse failure.
  */
 export function formatRelativeTime(iso: string): string {
-  const t = Date.parse(iso);
+  // triggered_at is datetime('now') text: UTC without a zone marker.
+  const t = Date.parse(toIsoUtc(iso) ?? iso);
   if (Number.isNaN(t)) return iso;
   const ageMs = Date.now() - t;
   const ageMin = Math.floor(ageMs / 60_000);
