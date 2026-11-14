@@ -47,8 +47,10 @@ export async function executeOvernightTuning(): Promise<void> {
 
   // Compute Intel Depot baselines (rolling stats for z-score anomaly detection)
   try {
-    computeAllBaselines();
-    console.log("[rituals] overnight-tuning: Intel baselines computed");
+    const { ok, failed } = computeAllBaselines();
+    console.log(
+      `[rituals] overnight-tuning: Intel baselines — ${ok} metrics ok, ${failed} failed`,
+    );
   } catch (err) {
     console.warn("[rituals] baseline computation failed (non-fatal):", err);
   }

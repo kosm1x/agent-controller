@@ -32,7 +32,9 @@ vi.mock("../config.js", () => ({
 vi.mock("../tuning/test-cases.js", () => ({ seedTestCases: vi.fn() }));
 vi.mock("../tuning/schema.js", () => ({ countTestCases: () => 1 }));
 vi.mock("../tuning/case-miner.js", () => ({ mineTestCases: vi.fn() }));
-vi.mock("../intel/baselines.js", () => ({ computeAllBaselines: vi.fn() }));
+vi.mock("../intel/baselines.js", () => ({
+  computeAllBaselines: vi.fn(() => ({ ok: 0, failed: 0 })),
+}));
 vi.mock("../tuning/overnight-loop.js", () => ({
   runOvernightTuning: () => Promise.resolve(mockAll.runResult.value),
 }));
@@ -45,6 +47,7 @@ vi.mock("../dispatch/dispatcher.js", () => ({
 }));
 
 import { executeOvernightTuning } from "./overnight-tuning.js";
+import { computeAllBaselines } from "../intel/baselines.js";
 
 describe("overnight-tuning delivery", () => {
   beforeEach(() => {
@@ -73,6 +76,16 @@ describe("overnight-tuning delivery", () => {
     mockAll.router.value = null;
     await expect(executeOvernightTuning()).resolves.toBeUndefined();
     expect(mockAll.broadcastToAll).not.toHaveBeenCalled();
+  });
+
+  it("logs how many baseline metrics finished and how many failed", async () => {
+    vi.mocked(computeAllBaselines).mockReturnValueOnce({ ok: 15, failed: 1 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await executeOvernightTuning();
+    const lines = log.mock.calls.map((c) => c.map(String).join(" "));
+    expect(lines.filter((l) => l.includes("Intel baselines"))).toEqual([
+      "[rituals] overnight-tuning: Intel baselines — 15 metrics ok, 1 failed",
+    ]);
   });
 
   it("skips delivery when the run produced no report", async () => {

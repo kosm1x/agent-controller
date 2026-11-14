@@ -26,7 +26,6 @@
     "src/inference/anthropic.ts": 1,
     "src/inference/guards.ts": 2,
     "src/inference/transcription.ts": 1,
-    "src/intel/baselines.ts": 1,
     "src/intelligence/correction-loop.ts": 1,
     "src/intelligence/enrichment.ts": 3,
     "src/intelligence/execution-patterns.ts": 1,

@@ -7,6 +7,7 @@
 
 import { getDatabase, writeWithRetry } from "../db/index.js";
 import { METRICS } from "./delta-engine.js";
+import { errMsg } from "../lib/err-msg.js";
 
 export interface BaselineRow {
   source: string;
@@ -33,23 +34,25 @@ export function computeBaseline(source: string, key: string): void {
   const db = getDatabase();
 
   // Statements prepared once, reused across the windows loop.
-  // Algebraic identity: STDDEV = SQRT(E[x^2] - E[x]^2) — avoids correlated subqueries
+  // Algebraic identity: STDDEV = SQRT(E[x^2] - E[x]^2) — avoids correlated subqueries.
+  // The variance is clamped at 0: for a constant series floating-point rounding
+  // can make it slightly negative, and SQRT of a negative is NULL.
   const selectStmt = db.prepare(
     `SELECT
        AVG(value_numeric) as mean,
        CASE WHEN COUNT(*) > 1
-         THEN SQRT(
+         THEN SQRT(MAX(0,
            (SUM(value_numeric * value_numeric) - SUM(value_numeric) * SUM(value_numeric) / COUNT(*))
            / (COUNT(*) - 1)
-         )
+         ))
          ELSE 0
        END as stddev,
        MIN(value_numeric) as min_val,
        MAX(value_numeric) as max_val,
        COUNT(*) as sample_count
      FROM signals
-     WHERE source = ?1 AND key = ?2 AND value_numeric IS NOT NULL
-       AND collected_at >= datetime('now', '-' || ?3 || ' hours')`,
+     WHERE source = ? AND key = ? AND value_numeric IS NOT NULL
+       AND collected_at >= datetime('now', '-' || ? || ' hours')`,
   );
   const upsertStmt = db.prepare(
     `INSERT INTO signal_baselines (source, key, window, mean, stddev, min_val, max_val, sample_count)
@@ -89,15 +92,22 @@ export function computeBaseline(source: string, key: string): void {
   }
 }
 
-/** Compute baselines for all known metrics. */
-export function computeAllBaselines(): void {
+/**
+ * Compute baselines for all known metrics. A failing metric is logged and
+ * counted; it does not stop the others. `ok` counts metrics whose compute did
+ * not throw, including those with too few samples to write a row.
+ */
+export function computeAllBaselines(): { ok: number; failed: number } {
+  let failed = 0;
   for (const m of METRICS) {
     try {
       computeBaseline(m.source, m.key);
-    } catch {
-      // Non-fatal — individual metric failure shouldn't block others
+    } catch (err) {
+      failed++;
+      console.warn(`[intel] baseline ${m.source}/${m.key} failed: ${errMsg(err)}`);
     }
   }
+  return { ok: METRICS.length - failed, failed };
 }
 
 /** Get all baselines for a metric across all windows. */
