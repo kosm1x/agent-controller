@@ -10,9 +10,26 @@ import {
 } from "./html-renderer.js";
 import type { ParsedHtmlComposition } from "./html-parser.js";
 
-// A folder this file owns, never the live composition folder
-// (/root/tmp-video-html/): the browser is mocked, so any readable path works.
+// The renderer hard-codes the service's frame and output folders. While this
+// file runs, `fs` is the sandbox of live-folder-sandbox.test-helper.ts: paths
+// under a live video folder are mapped onto a throwaway tree this file owns
+// and removes, any other `fs` call on a live folder is refused, and writes
+// outside the tree are refused, so no case can create, change or remove
+// anything in a live folder.
+const sandbox = vi.hoisted(() => ({ root: "" }));
+
+vi.mock("fs", async (importOriginal) => {
+  const { liveFolderSandboxFs } = await import(
+    "./live-folder-sandbox.test-helper.js"
+  );
+  return liveFolderSandboxFs(await importOriginal<typeof import("fs")>(), sandbox);
+});
+
+// A folder this file owns, never a live video folder: it holds the
+// compositions (the browser is mocked, so any readable path works) and, under
+// the mapping above, every frame and output the renderer writes.
 const TMP_HTML_DIR = mkdtempSync(join(tmpdir(), "mc-test-video-render-"));
+sandbox.root = TMP_HTML_DIR;
 
 afterAll(() => {
   rmSync(TMP_HTML_DIR, { recursive: true, force: true });

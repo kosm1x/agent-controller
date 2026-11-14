@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { detectAnomalies, type DetectDeps } from "./detect.js";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import type Database from "better-sqlite3";
+import { closeDatabase, initDatabase } from "../../db/index.js";
+import {
+  detectAnomalies,
+  getStuckTaskCount,
+  recentTaskErrors,
+  type DetectDeps,
+} from "./detect.js";
 
 const P_SUCCESS = "min(mc_provider_success_rate)";
 const P_TOOLERR = "sum(increase(mc_tool_errors_total[10m]))";
@@ -89,5 +96,66 @@ describe("detectAnomalies", () => {
     expect(a.map((x) => x.kind).sort()).toEqual(
       ["inference_degraded", "stuck_tasks", "tool_error_spike"].sort(),
     );
+  });
+});
+
+// The two DB signals run on the real `tasks` table (status CHECK, NOT NULL
+// title/description). Both helpers swallow errors into 0 / [], so every case
+// asserts a non-empty result: a broken statement must not pass as "nothing".
+describe("detector statements on the real schema", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = initDatabase(":memory:");
+  });
+  afterEach(() => closeDatabase());
+
+  // started_at uses the database clock, the same clock the statement reads.
+  function seed(taskId: string, status: string, startedAgo: string | null): void {
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, status, started_at)
+       VALUES (?, 'synthetic task', 'synthetic description', ?,
+               CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)`,
+    ).run(taskId, status, startedAgo, startedAgo);
+  }
+
+  it("counts only running tasks started longer ago than the window", () => {
+    seed("stuck-60", "running", "-60 minutes");
+    seed("stuck-45", "running", "-45 minutes");
+    seed("fresh-10", "running", "-10 minutes");
+    seed("never-started", "running", null);
+    seed("finished", "completed", "-120 minutes");
+    expect(getStuckTaskCount(db)).toBe(2);
+    expect(getStuckTaskCount(db, 50)).toBe(1);
+    expect(getStuckTaskCount(db, 5)).toBe(3);
+  });
+
+  function seedFailed(
+    taskId: string,
+    status: string,
+    error: string | null,
+    updatedAt: string,
+  ): void {
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, status, error, updated_at)
+       VALUES (?, 'synthetic task', 'synthetic description', ?, ?, ?)`,
+    ).run(taskId, status, error, updatedAt);
+  }
+
+  it("returns failed-task errors newest first, skips empty ones, truncates to 500 chars", () => {
+    seedFailed("f1", "failed", "error one", "2026-01-01 10:00:00");
+    seedFailed("f2", "failed", "error two", "2026-01-01 11:00:00");
+    seedFailed("f3", "failed", "error three", "2026-01-01 12:00:00");
+    seedFailed("f4", "failed", "x".repeat(600), "2026-01-01 13:00:00");
+    seedFailed("f-null", "failed", null, "2026-01-01 14:00:00");
+    seedFailed("f-empty", "failed", "", "2026-01-01 15:00:00");
+    seedFailed("done", "completed", "not a failure", "2026-01-01 16:00:00");
+    expect(recentTaskErrors(db)).toEqual([
+      "x".repeat(500),
+      "error three",
+      "error two",
+      "error one",
+    ]);
+    expect(recentTaskErrors(db, 2)).toEqual(["x".repeat(500), "error three"]);
   });
 });

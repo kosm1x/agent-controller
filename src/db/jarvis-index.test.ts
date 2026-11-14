@@ -1,37 +1,42 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
 
 const state = vi.hoisted(() => ({
-  db: null as unknown as import("better-sqlite3").Database,
   written: [] as string[],
 }));
 
-vi.mock("./index.js", () => ({ getDatabase: () => state.db }));
-vi.mock("./jarvis-fs.js", () => ({
+// The statements under test are the two reads of the real `jarvis_files`
+// table; the INDEX.md write is recorded instead of performed. The real
+// `seedDirectives` stays because `initDatabase` calls it.
+vi.mock("./jarvis-fs.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jarvis-fs.js")>()),
   upsertFile: (_path: string, _title: string, content: string) => {
     state.written.push(content);
   },
 }));
 
+import { closeDatabase, getDatabase, initDatabase } from "./index.js";
 import { cancelPendingRegeneration, markIndexDirty, regenerateIndex } from "./jarvis-index.js";
 
 function add(path: string, content = "x"): void {
-  state.db
+  getDatabase()
     .prepare(
-      "INSERT INTO jarvis_files (path, title, content, updated_at) VALUES (?, ?, ?, datetime('now'))",
+      "INSERT INTO jarvis_files (id, path, title, content, updated_at) VALUES (?, ?, ?, ?, datetime('now'))",
     )
-    .run(path, path, content);
+    .run(path, path, path, content);
 }
 
 describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
   beforeEach(() => {
-    state.db = new Database(":memory:");
-    state.db.exec(
-      "CREATE TABLE jarvis_files (path TEXT PRIMARY KEY, title TEXT, content TEXT, updated_at TEXT)",
-    );
+    initDatabase(":memory:");
     state.written = [];
     add("knowledge/a.md");
     add("projects/alpha/README.md");
+  });
+  // The seeded directive writes mark the index dirty; cancel that timer so it
+  // never fires into a later case.
+  afterEach(() => {
+    closeDatabase();
+    cancelPendingRegeneration();
   });
 
   it("is byte-identical after a write to an existing directory", () => {
@@ -63,6 +68,26 @@ describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
     expect(state.written[1]).toContain("[[inbox/|inbox]]");
   });
 
+  it("lists directories and projects in ascending order, whatever the insert order", () => {
+    add("archive/old.md");
+    add("projects/gamma/README.md");
+    add("projects/beta/README.md");
+    regenerateIndex();
+    const [, structure, projects] = state.written[0]!.split(/^## .*$/m);
+    const links = (section: string | undefined) => section?.match(/\[\[[^\]]+\]\]/g);
+    expect(links(structure)).toEqual([
+      "[[archive/|archive]]",
+      "[[directives/|directives]]",
+      "[[knowledge/|knowledge]]",
+      "[[projects/|projects]]",
+    ]);
+    expect(links(projects)).toEqual([
+      "[[projects/alpha/|alpha]]",
+      "[[projects/beta/|beta]]",
+      "[[projects/gamma/|gamma]]",
+    ]);
+  });
+
   it("NorthStar retired (2026-11-03): no NorthStar dir or line even while rows exist", () => {
     add("NorthStar/goals/y.md");
     add("NorthStar/x.md");
@@ -76,6 +101,8 @@ describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
 });
 
 describe("markIndexDirty timer (2026-10-20)", () => {
+  // A mark left by an earlier case would make this one a no-op.
+  beforeEach(() => cancelPendingRegeneration());
   afterEach(() => {
     cancelPendingRegeneration();
     vi.restoreAllMocks();

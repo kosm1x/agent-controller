@@ -4,3 +4,9 @@
 for (const key of Object.keys(process.env)) {
   if (key.startsWith("GIT_")) delete process.env[key];
 }
+
+// The vector-store client switches on when its key is merely present, and every
+// in-memory database seeds directives that it syncs: no worker keeps an inherited
+// key, so no test can write to the live store. A test that needs the client on
+// sets its own dummy key after this file runs (pinned by src/lib/test-env.guard.test.ts).
+delete process.env.COMMIT_DB_KEY;

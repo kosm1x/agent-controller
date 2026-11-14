@@ -1,5 +1,29 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { buildOverlayFilterGraph } from "./composer.js";
+
+// The composer hard-codes the service's work folder. While this file runs,
+// `fs` is the sandbox of live-folder-sandbox.test-helper.ts: paths under a
+// live video folder are mapped onto a throwaway tree this file owns and
+// removes, any other `fs` call on a live folder is refused, and writes outside
+// the tree are refused, so no case can create, change or remove anything in a
+// live folder.
+const sandbox = vi.hoisted(() => ({ root: "" }));
+
+vi.mock("fs", async (importOriginal) => {
+  const { liveFolderSandboxFs } = await import(
+    "./live-folder-sandbox.test-helper.js"
+  );
+  return liveFolderSandboxFs(await importOriginal<typeof import("fs")>(), sandbox);
+});
+
+sandbox.root = mkdtempSync(join(tmpdir(), "mc-test-composer-"));
+
+afterAll(() => {
+  rmSync(sandbox.root, { recursive: true, force: true });
+});
 
 // Mock child_process for the per-scene clip fan-out test (no real ffmpeg)
 const childProcessMocks = vi.hoisted(() => ({
@@ -121,8 +145,9 @@ describe("composeVideo — v7.4 S1.1 parallel scene-clip generation", () => {
     childProcessMocks.execFileSync.mockImplementation(() => Buffer.from(""));
 
     const { composeVideo } = await import("./composer.js");
+    const jobId = `test-${Date.now()}`;
     const result = await composeVideo({
-      jobId: `test-${Date.now()}`,
+      jobId,
       script: {
         title: "t",
         scenes: [
@@ -141,6 +166,10 @@ describe("composeVideo — v7.4 S1.1 parallel scene-clip generation", () => {
     });
 
     expect(result).toMatch(/output\.mp4$/);
+    // The job's work folder was written in the throwaway tree.
+    expect(
+      existsSync(join(sandbox.root, "video-jobs", jobId, "concat.txt")),
+    ).toBe(true);
 
     // Verify all 4 clip ffmpeg calls happened
     const clipCalls = callTimes.filter((c) => c.kind === "clip");

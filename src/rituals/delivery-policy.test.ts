@@ -3,6 +3,18 @@ import Database from "better-sqlite3";
 
 const mem = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("../db/index.js", () => ({ getDatabase: () => mem.db }));
+// dynamic.js is imported only for its scheduled_tasks DDL; nothing here may
+// submit a task or reach a channel, so both fail closed.
+vi.mock("../dispatch/dispatcher.js", () => ({
+  submitTask: () => {
+    throw new Error("submitTask must not be called by the delivery policy");
+  },
+}));
+vi.mock("../messaging/index.js", () => ({
+  getRouter: () => {
+    throw new Error("getRouter must not be called by the delivery policy");
+  },
+}));
 
 import {
   EMAILED_PUSH_WORD_CAP,
@@ -17,6 +29,8 @@ import {
   fingerprintReport,
 } from "./delivery-policy.js";
 import { GLOBAL_MUTE_ID, pendingDeferrals, setMutedUntil } from "./ritual-controls.js";
+import { ensureScheduledTasksTable } from "./dynamic.js";
+import { ensureIntelTables } from "../db/intel-schema.js";
 import {
   PASSWORD_WITHHELD_LINE,
   PASSWORD_WITHHELD_PLACEHOLDER,
@@ -308,16 +322,20 @@ function fillBudget(n: number, wordsEach = 10) {
   for (let i = 0; i < n; i++) optional(i, wordsEach);
 }
 
-/** The deferral consumer: an ACTIVE Morning Sync row (identity by name — env unset in tests). */
+/** The Morning Sync row, seeded in the table the scheduler itself creates (description and
+ *  cron_expr have no default there). Nothing in the policy chain reads it: the paused-row cases
+ *  guard the rule that a paused sync never voids the budget or a mute. */
 function seedSync(active = 1) {
   delete process.env.V82_SYNC_SCHEDULE_ID;
-  db().exec(`CREATE TABLE IF NOT EXISTS scheduled_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '', cron_expr TEXT NOT NULL DEFAULT '0 8 * * *', active INTEGER DEFAULT 1)`);
-  db().prepare("INSERT OR REPLACE INTO scheduled_tasks (schedule_id, name, active) VALUES ('ms', 'Morning Sync — Piotr 8am', ?)").run(active);
+  ensureScheduledTasksTable();
+  db()
+    .prepare(
+      "INSERT OR REPLACE INTO scheduled_tasks (schedule_id, name, description, cron_expr, active) VALUES ('ms', 'Morning Sync — 8am', 'synthetic sync prompt', '0 8 * * *', ?)",
+    )
+    .run(active);
 }
 
-const SYNC = { displayName: "Morning Sync — Piotr 8am", scheduleId: "ms", now: NOW };
+const SYNC = { displayName: "Morning Sync — 8am", scheduleId: "ms", now: NOW };
 
 const DIGEST = `**Señales — hoy**
 - Anthropic lanza Claude Agent SDK 2.0 — https://example.com/sdk2
@@ -527,7 +545,7 @@ describe("Phase 5 seam — ledger columns and reading budget (5.6, plan-literal)
   it("the Morning Sync is identified by V82_SYNC_SCHEDULE_ID when set (name is the fallback only)", () => {
     process.env.V82_SYNC_SCHEDULE_ID = "ms";
     fillBudget(PUSH_CAP - 2);
-    const impostor = applyRitualDeliveryPolicy("schedule:x", "t1", "hola", { displayName: "Morning Sync — Piotr 8am", scheduleId: "x", now: NOW });
+    const impostor = applyRitualDeliveryPolicy("schedule:x", "t1", "hola", { displayName: "Morning Sync — 8am", scheduleId: "x", now: NOW });
     expect(impostor).toMatchObject({ deliver: false, reason: "budget" });
     const renamed = applyRitualDeliveryPolicy("schedule:ms", "t2", "hola", { displayName: "Briefing matutino", scheduleId: "ms", now: NOW });
     expect(renamed.deliver).toBe(true);
@@ -674,11 +692,7 @@ describe("Phase 5 seam — sent-before (5.1/5.2), word cap (5.3), signal lead (5
   });
 
   it("signal digest: a ≥10 % tracked move is prepended deterministically and 'estables' is flagged", () => {
-    db().exec(`CREATE TABLE signals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, domain TEXT NOT NULL,
-      signal_type TEXT NOT NULL, key TEXT NOT NULL, value_numeric REAL, value_text TEXT,
-      metadata TEXT, geo_lat REAL, geo_lon REAL, content_hash TEXT,
-      collected_at TEXT NOT NULL, source_timestamp TEXT)`);
+    ensureIntelTables(db());
     const ins = db().prepare(
       "INSERT INTO signals (source, domain, signal_type, key, value_numeric, collected_at) VALUES ('coingecko','financial','numeric','bitcoin',?,?)",
     );
