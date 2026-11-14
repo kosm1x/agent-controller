@@ -658,3 +658,88 @@ describe("DataLayer.getWeekly — Polygon weekly", () => {
     expect(poly.fetchWeekly).toHaveBeenCalledTimes(2);
   });
 });
+
+// Every provider a stored bar may carry, each exactly once: a value added to or
+// removed from the stored-bar type without this list fails the test typecheck.
+const STORED_BAR_PROVIDERS = {
+  alpha_vantage: true,
+  polygon: true,
+  fmp: true,
+  fred: true,
+  manual: true,
+} satisfies Record<MarketBar["provider"], true>;
+
+describe("market_data.provider — the stored-bar type and the schema rule agree", () => {
+  beforeEach(() => {
+    __resetForTests();
+    db = freshDb();
+  });
+
+  it("a bar of every stored-bar provider is persisted and read back with its provider", async () => {
+    const providers = Object.keys(STORED_BAR_PROVIDERS) as Array<
+      MarketBar["provider"]
+    >;
+    const bars = providers.map((provider, i) =>
+      makeBar({
+        provider,
+        timestamp: `2020-01-0${i + 2}T16:00:00-05:00`,
+        close: 520 + i,
+      }),
+    );
+    await new DataLayer(makeAvStub(bars), null, null).getDaily("SPY", {
+      lookback: providers.length,
+    });
+    // persistBars inserts with OR IGNORE, which swallows a CHECK refusal: the
+    // rows themselves are the evidence.
+    expect(
+      db
+        .prepare(
+          "SELECT provider, timestamp, close FROM market_data ORDER BY timestamp",
+        )
+        .all(),
+    ).toEqual(
+      bars.map((b) => ({
+        provider: b.provider,
+        timestamp: b.timestamp,
+        close: b.close,
+      })),
+    );
+  });
+
+  it("the schema rule lists exactly the stored-bar providers and refuses any other", () => {
+    const tableSql = (
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'market_data'",
+        )
+        .get() as { sql: string }
+    ).sql;
+    const rule = tableSql.match(/CHECK\(provider IN \(([^)]*)\)\)/);
+    expect(rule).not.toBeNull();
+    expect(
+      rule![1]
+        .split(",")
+        .map((v) => v.trim().replace(/^'|'$/g, ""))
+        .sort(),
+    ).toEqual(Object.keys(STORED_BAR_PROVIDERS).sort());
+
+    // The budget-only providers of the wide type, and an empty name.
+    const insert = db.prepare(
+      `INSERT INTO market_data (symbol, provider, interval, timestamp, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const provider of [
+      "polymarket",
+      "alternative_me",
+      "coinmarketcap",
+      "binance",
+      "",
+    ]) {
+      expect(() =>
+        insert.run("SPY", provider, "daily", "2020-01-02T16:00:00-05:00", 1, 1, 1, 1, 1),
+      ).toThrow(/CHECK constraint failed/);
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM market_data").get()).toEqual({
+      n: 0,
+    });
+  });
+});

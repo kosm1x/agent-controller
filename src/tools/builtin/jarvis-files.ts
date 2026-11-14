@@ -1081,6 +1081,15 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
     const results: Array<{ path: string; status: string; error?: string }> = [];
     let ok = 0;
     let errors = 0;
+    // An entry's qualifier must be one this tool's schema offers: the adapter
+    // checks only top-level enums, and the database rule refuses in its own words.
+    const qualifiers = (
+      jarvisFilesBatchWriteTool.definition.function.parameters as {
+        properties: {
+          files: { items: { properties: { qualifier: { enum: string[] } } } };
+        };
+      }
+    ).properties.files.items.properties.qualifier.enum;
 
     for (const f of files) {
       const path = (f.path as string) ?? "";
@@ -1130,6 +1139,18 @@ RESPONSE SHAPE: {success, total, ok, errors, results: [{path, status, error?}, .
             path,
             status: "error",
             error: "title and content are required strings",
+          });
+          errors++;
+          continue;
+        }
+        if (
+          f.qualifier != null &&
+          !qualifiers.includes(f.qualifier as string)
+        ) {
+          results.push({
+            path,
+            status: "error",
+            error: `qualifier must be one of: ${qualifiers.join(", ")}`,
           });
           errors++;
           continue;

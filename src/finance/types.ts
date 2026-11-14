@@ -25,12 +25,17 @@ export type Interval =
 
 export type IntradayInterval = "1min" | "5min" | "15min" | "60min";
 
-export type Provider =
+/** Provider of a stored bar: the `market_data.provider` rule lists exactly these. */
+export type BarProvider =
   | "alpha_vantage"
   | "polygon"
   | "fmp"
   | "fred"
-  | "manual"
+  | "manual";
+
+/** Every provider whose calls are budgeted: the bar providers plus non-bar sources. */
+export type Provider =
+  | BarProvider
   | "polymarket"
   | "alternative_me"
   | "coinmarketcap"
@@ -51,7 +56,7 @@ export interface MarketBar {
   close: number;
   volume: number;
   adjustedClose?: number;
-  provider: Provider;
+  provider: BarProvider;
   interval: Interval;
 }
 

@@ -19,6 +19,7 @@ import { getDatabase } from "../db/index.js";
 import {
   DataUnavailableError,
   type AssetClass,
+  type BarProvider,
   type FetchResult,
   type IntradayInterval,
   type MacroPoint,
@@ -66,7 +67,7 @@ const L1_MAX_ENTRIES = 500;
 
 interface DbBarRow {
   symbol: string;
-  provider: Provider;
+  provider: BarProvider;
   interval: "daily" | "weekly" | "monthly";
   timestamp: string;
   open: number;

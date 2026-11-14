@@ -323,7 +323,7 @@ async function runPullTask(
   }
 }
 
-function ledgerFor(taskId: string): { tokens: number; costUsd: number } {
+export function ledgerFor(taskId: string): { tokens: number; costUsd: number } {
   try {
     const row = getDatabase()
       .prepare(
