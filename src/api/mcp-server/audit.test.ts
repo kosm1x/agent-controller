@@ -7,14 +7,18 @@
  * logged-error path.
  */
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import type Database from "better-sqlite3";
+import { closeDatabase, initDatabase } from "../../db/index.js";
+import { PersistentEventBus } from "../../lib/events/bus.js";
 
 const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
 }));
 
-vi.mock("../../lib/logger.js", () => ({
+// Partial: the real database layer imports the logger's other exports.
+vi.mock("../../lib/logger.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/logger.js")>()),
   logger: {
     error: mocks.loggerError,
     info: vi.fn(),
@@ -25,24 +29,21 @@ vi.mock("../../lib/logger.js", () => ({
 
 import { logMcpCall } from "./audit.js";
 
+let bus: PersistentEventBus | undefined;
+
+// The real schema: initDatabase plus the events table, which belongs to the
+// event bus and is created by constructing it.
 function makeDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE events (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL,
-      category TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      workspace_id TEXT NOT NULL,
-      data TEXT NOT NULL,
-      correlation_id TEXT NOT NULL DEFAULT '',
-      causation_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+  const db = initDatabase(":memory:");
+  bus = new PersistentEventBus({ db, cleanupIntervalMs: 0 });
   return db;
 }
+
+afterEach(() => {
+  bus?.destroy();
+  bus = undefined;
+  closeDatabase();
+});
 
 const TOKEN = {
   id: 7,

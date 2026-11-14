@@ -1,13 +1,17 @@
 /**
  * Tests for the jarvis_* MCP tool handlers.
  *
- * Uses an in-memory SQLite DB + mocked MemoryService so we don't touch
- * real state. Exercises each tool through a minimal McpServer-like
+ * Runs on the real schema (initDatabase(":memory:"), the lazy
+ * scheduled_tasks table and the event bus's events table) with a mocked
+ * MemoryService. Exercises each tool through a minimal McpServer-like
  * shim that captures registered handlers.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type Database from "better-sqlite3";
+import { closeDatabase, initDatabase } from "../../db/index.js";
+import { PersistentEventBus } from "../../lib/events/bus.js";
+import { ensureScheduledTasksTable } from "../../rituals/dynamic.js";
 import { registerJarvisTools } from "./tools.js";
 import type { McpDeps } from "./types.js";
 import type { MemoryItem, RecallOptions } from "../../memory/types.js";
@@ -25,72 +29,17 @@ class ToolRegistry {
 }
 
 let db: Database.Database;
+let bus: PersistentEventBus;
 let registry: ToolRegistry;
 let deps: McpDeps;
 let recallResult: MemoryItem[];
 let memoryHealthy: boolean;
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE tasks (
-      task_id TEXT PRIMARY KEY,
-      parent_task_id TEXT,
-      spawn_type TEXT DEFAULT 'root',
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      priority TEXT DEFAULT 'medium',
-      status TEXT NOT NULL,
-      agent_type TEXT,
-      classification TEXT,
-      assigned_to TEXT,
-      input TEXT,
-      output TEXT,
-      error TEXT,
-      progress INTEGER DEFAULT 0,
-      metadata TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      started_at TEXT,
-      completed_at TEXT
-    );
-    CREATE TABLE scheduled_tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      schedule_id TEXT UNIQUE NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL,
-      cron_expr TEXT NOT NULL,
-      delivery TEXT DEFAULT 'telegram',
-      email_to TEXT,
-      active INTEGER DEFAULT 1,
-      last_run_at TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE events (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL,
-      category TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      workspace_id TEXT NOT NULL,
-      data TEXT NOT NULL,
-      correlation_id TEXT NOT NULL DEFAULT '',
-      causation_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE reflector_gap_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      llm_score REAL NOT NULL,
-      heuristic_score REAL NOT NULL,
-      abs_diff REAL NOT NULL,
-      llm_available INTEGER NOT NULL,
-      goals_total INTEGER NOT NULL,
-      goals_completed INTEGER NOT NULL,
-      goals_failed INTEGER NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
+  db = initDatabase(":memory:");
+  // Tables created on first use, not by initDatabase.
+  ensureScheduledTasksTable();
+  bus = new PersistentEventBus({ db, cleanupIntervalMs: 0 });
 
   // Seed tasks
   db.prepare(
@@ -146,6 +95,11 @@ beforeEach(() => {
   );
 });
 
+afterEach(() => {
+  bus.destroy();
+  closeDatabase();
+});
+
 function parseResult(r: { content: Array<{ type: "text"; text: string }> }): {
   ok: boolean;
   data?: unknown;
@@ -170,6 +124,10 @@ describe("registerJarvisTools", () => {
   });
 
   it("jarvis_status returns pid, uptime, task counts", async () => {
+    // Outside the 24-hour window: counted in the total, not in tasksLast24h.
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status, agent_type, created_at) VALUES ('t-old', 'Old task', 'desc', 'completed', 'fast', datetime('now','-2 days'))",
+    ).run();
     const result = parseResult(
       await registry.handlers.get("jarvis_status")!({}),
     );
@@ -178,13 +136,15 @@ describe("registerJarvisTools", () => {
       pid: number;
       uptimeSec: number;
       totalTasks: number;
+      tasksLast24h: number;
       tasksByStatus: Record<string, number>;
       memoryHealthy: boolean;
     };
     expect(data.pid).toBe(process.pid);
     expect(data.uptimeSec).toBeGreaterThanOrEqual(0);
-    expect(data.totalTasks).toBe(3);
-    expect(data.tasksByStatus.completed).toBe(2);
+    expect(data.totalTasks).toBe(4);
+    expect(data.tasksLast24h).toBe(3);
+    expect(data.tasksByStatus.completed).toBe(3);
     expect(data.tasksByStatus.failed).toBe(1);
     expect(data.memoryHealthy).toBe(true);
   });
@@ -446,7 +406,7 @@ describe("registerJarvisTools", () => {
   // Raw exception messages must NOT leak through the MCP surface.
   it("jarvis_task_detail error response includes correlation id, not exception message", async () => {
     // Force an error by closing the DB
-    db.close();
+    closeDatabase();
     const result = parseResult(
       await registry.handlers.get("jarvis_task_detail")!({
         task_id: "anything",

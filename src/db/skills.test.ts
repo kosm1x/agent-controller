@@ -86,6 +86,7 @@ describe("skills", () => {
       expect(mockDb.prepare).toHaveBeenCalledWith(
         expect.stringContaining("WHERE active = ?"),
       );
+      expect(mockDb.prepare.mock.results[0].value.all).toHaveBeenCalledWith(1);
     });
   });
 

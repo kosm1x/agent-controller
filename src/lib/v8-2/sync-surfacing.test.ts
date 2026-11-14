@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase } from "../../db/index.js";
 import {
   firstSentences,
   markJudgmentSurfaced,
@@ -9,22 +10,21 @@ import {
   type SyncJudgmentRow,
 } from "./sync-surfacing.js";
 
-/** Post-migration-v4 shape (base DDL + `surfaced_at`). */
+/** The real schema (posture/confidence CHECKs, `briefing_id` FK ON,
+ *  `surfaced_at` from migration v4) with the parent briefing every seeded
+ *  judgment points at. */
 function makeDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.exec(`CREATE TABLE judgments (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    briefing_id       TEXT NOT NULL,
-    subject           TEXT NOT NULL,
-    posture           TEXT NOT NULL,
-    prose             TEXT NOT NULL,
-    confidence        TEXT,
-    created_at        TEXT NOT NULL,
-    critic_trail_json TEXT,
-    surfaced_at       TEXT
-  )`);
+  const db = initDatabase(":memory:");
+  db.prepare(
+    `INSERT INTO proposed_briefings (briefing_id, surface, generated_at, briefing_json, expires_at)
+     VALUES ('brief-1', 'morning', '2999-01-01 05:00:00', '{}', '2999-01-02 05:00:00')`,
+  ).run();
   return db;
 }
+
+afterEach(() => {
+  closeDatabase();
+});
 
 const APPROVED = JSON.stringify({ verdict: "approved" });
 const UNFIXABLE = JSON.stringify({ verdict: "unfixable" });
@@ -47,7 +47,7 @@ function seed(db: Database.Database, opts: SeedOpts = {}): number {
     )
     .run(
       "brief-1",
-      opts.subject ?? "PipeSong",
+      opts.subject ?? "Proyecto Demo",
       opts.posture ?? "momentum",
       "El proyecto avanza. Segundo enunciado con detalle.",
       opts.confidence === undefined ? "green" : opts.confidence,
@@ -123,11 +123,19 @@ describe("pickSyncJudgment", () => {
   });
 
   it("sorts an unknown posture behind the known ones", () => {
+    // Stands in for a posture the CHECK admits but the priority table lacks.
+    db.pragma("ignore_check_constraints = ON");
     const weird = seed(db, { posture: "someday_new_posture" });
     const noted = seed(db, { posture: "noted" });
     expect(pickSyncJudgment(db)?.id).toBe(noted);
     db.prepare("DELETE FROM judgments WHERE id = ?").run(noted);
     expect(pickSyncJudgment(db)?.id).toBe(weird);
+  });
+
+  it("the posture CHECK rejects a posture outside the ranked four", () => {
+    expect(() => seed(db, { posture: "someday_new_posture" })).toThrow(
+      /CHECK constraint failed/,
+    );
   });
 });
 
@@ -139,7 +147,7 @@ describe("markJudgmentSurfaced", () => {
     const first = db
       .prepare("SELECT surfaced_at FROM judgments WHERE id = ?")
       .get(id) as { surfaced_at: string };
-    expect(first.surfaced_at).toBeTruthy();
+    expect(first.surfaced_at).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
     expect(markJudgmentSurfaced(id, db)).toBe(false);
     const second = db
       .prepare("SELECT surfaced_at FROM judgments WHERE id = ?")
@@ -184,7 +192,7 @@ describe("firstSentences", () => {
 describe("renderers", () => {
   const row: SyncJudgmentRow = {
     id: 42,
-    subject: "PipeSong",
+    subject: "Proyecto Demo",
     prose: "El proyecto avanza. Segundo enunciado con detalle.",
     confidence: "green",
     posture: "highest_leverage",
@@ -195,7 +203,7 @@ describe("renderers", () => {
     const line = renderSyncStrategicLine(row);
     expect(line).toContain("🧭 Lectura estratégica");
     expect(line).toContain("🟢");
-    expect(line).toContain("PipeSong");
+    expect(line).toContain("Proyecto Demo");
     expect(renderSyncStrategicLine({ ...row, confidence: "yellow" })).toContain(
       "🟡",
     );
@@ -204,7 +212,7 @@ describe("renderers", () => {
   it("prompt block carries subject, prose, and the weave instruction", () => {
     const block = renderSyncPromptContext(row);
     expect(block).toContain("LECTURA ESTRATÉGICA DE HOY");
-    expect(block).toContain("PipeSong");
+    expect(block).toContain("Proyecto Demo");
     expect(block).toContain(row.prose);
     expect(block).toContain("téjelo en la narrativa");
   });

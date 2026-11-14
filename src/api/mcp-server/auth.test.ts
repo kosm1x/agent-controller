@@ -1,22 +1,15 @@
 /**
  * Tests for the bearer-token auth middleware.
  *
- * Uses an in-memory better-sqlite3 DB so we don't touch the real mc.db.
+ * Runs on the real `mcp_tokens` schema from initDatabase(":memory:") so the
+ * revoked / expiry predicate is checked against the table it gates.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-
-const mocks = vi.hoisted(() => ({
-  getDatabase: vi.fn(),
-}));
-
-vi.mock("../../db/index.js", () => ({
-  getDatabase: mocks.getDatabase,
-}));
-
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { closeDatabase, initDatabase } from "../../db/index.js";
 import { mcpAuth } from "./auth.js";
 
 let db: Database.Database;
@@ -44,20 +37,11 @@ const TOKEN_E = "jrvs_e55555555555555555555555555555555555555555555";
 const TOKEN_F = "jrvs_f66666666666666666666666666666666666666666666";
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE mcp_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      token_hash TEXT NOT NULL UNIQUE,
-      client_name TEXT NOT NULL,
-      scope TEXT NOT NULL DEFAULT 'read_only' CHECK(scope IN ('read_only')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      last_used_at TEXT,
-      expires_at TEXT,
-      revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))
-    );
-  `);
-  mocks.getDatabase.mockReturnValue(db);
+  db = initDatabase(":memory:");
+});
+
+afterEach(() => {
+  closeDatabase();
 });
 
 function makeApp() {

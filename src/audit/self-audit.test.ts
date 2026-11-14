@@ -1,11 +1,12 @@
 /**
  * V8 substrate S2 — self-audit tests.
  *
- * Pure analytic tests use synthetic Sample[]; metric runners use an
- * in-memory mc.db with the recall_audit + cost_ledger schemas.
+ * Pure analytic tests use synthetic Sample[]; metric runners read the real
+ * recall_audit + cost_ledger schema from initDatabase(":memory:"), so a
+ * renamed column fails here instead of yielding 0 samples in audit-claim.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   auditAggregate,
   parseWindow,
@@ -201,59 +202,24 @@ describe("renderAuditResult", () => {
 // Metric runners — DB-backed
 // ---------------------------------------------------------------------------
 
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { closeDatabase, initDatabase } from "../db/index.js";
 
 let testDb: Database.Database;
 
-vi.mock("../db/index.js", () => ({
-  getDatabase: () => testDb,
-}));
-
 beforeEach(() => {
-  testDb = new Database(":memory:");
-  testDb.exec(`
-    CREATE TABLE recall_audit (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      bank TEXT NOT NULL,
-      query TEXT NOT NULL DEFAULT '',
-      source TEXT NOT NULL,
-      result_count INTEGER NOT NULL DEFAULT 0,
-      result_snippets TEXT NOT NULL DEFAULT '[]',
-      latency_ms INTEGER,
-      was_used INTEGER,
-      used_count INTEGER,
-      task_id TEXT,
-      checked_at TEXT,
-      excluded_count INTEGER NOT NULL DEFAULT 0,
-      match_type TEXT,
-      overlap_score REAL
-    );
-    CREATE TABLE cost_ledger (
-      id INTEGER PRIMARY KEY,
-      run_id TEXT NOT NULL DEFAULT '',
-      task_id TEXT NOT NULL DEFAULT '',
-      agent_type TEXT NOT NULL,
-      model TEXT NOT NULL DEFAULT 'unknown',
-      prompt_tokens INTEGER NOT NULL DEFAULT 0,
-      completion_tokens INTEGER NOT NULL DEFAULT 0,
-      cost_usd REAL NOT NULL DEFAULT 0.0,
-      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
+  testDb = initDatabase(":memory:");
 });
 
 afterEach(() => {
-  testDb.close();
+  closeDatabase();
 });
 
 describe("runAudit — utility metric", () => {
   it("reproduces the trilogy bank-stratified split from synthetic data", async () => {
     // 69 mc-operational rows at 88% utility; 50 mc-jarvis rows at 7%
     const ins = testDb.prepare(
-      "INSERT INTO recall_audit (bank, source, was_used) VALUES (?, ?, ?)",
+      "INSERT INTO recall_audit (bank, query, source, was_used) VALUES (?, 'q', ?, ?)",
     );
     for (let i = 0; i < 69; i++)
       ins.run("mc-operational", "hindsight", i < 61 ? 1 : 0); // ~88%
@@ -282,13 +248,12 @@ describe("runAudit — utility metric", () => {
 
   it("respects the time window — only rows in last N hours counted", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO recall_audit (bank, source, was_used, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO recall_audit (bank, query, source, was_used, created_at) VALUES (?, 'q', ?, ?, datetime('now', ?))",
     );
     // 30 fresh rows in window
-    for (let i = 0; i < 30; i++) ins.run("a", "hindsight", 1, "now");
+    for (let i = 0; i < 30; i++) ins.run("a", "hindsight", 1, "-10 minutes");
     // 30 stale rows outside window
-    for (let i = 0; i < 30; i++)
-      ins.run("a", "hindsight", 0, "2020-01-01 00:00:00");
+    for (let i = 0; i < 30; i++) ins.run("a", "hindsight", 0, "-2 hours");
 
     const { runAudit } = await import("./self-audit.js");
     const r = runAudit({ metric: "utility", window: "1h" });
@@ -298,7 +263,7 @@ describe("runAudit — utility metric", () => {
 
   it("excludes rows where was_used IS NULL (pending matches)", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO recall_audit (bank, source, was_used) VALUES (?, ?, ?)",
+      "INSERT INTO recall_audit (bank, query, source, was_used) VALUES (?, 'q', ?, ?)",
     );
     for (let i = 0; i < 20; i++) ins.run("a", "hindsight", 1);
     for (let i = 0; i < 80; i++) ins.run("a", "hindsight", null);
@@ -307,12 +272,39 @@ describe("runAudit — utility metric", () => {
     const r = runAudit({ metric: "utility", window: "24h" });
     expect(r.n).toBe(20);
   });
+
+  // Shadow rows are computed, never injected: they measure relevance, not
+  // delivered utility or latency, so only a stratified view shows them.
+  it("keeps precedents-shadow rows out of the unstratified utility and latency headlines", async () => {
+    const ins = testDb.prepare(
+      "INSERT INTO recall_audit (bank, query, source, was_used, latency_ms) VALUES ('a', 'q', ?, ?, ?)",
+    );
+    for (let i = 0; i < 10; i++) ins.run("hindsight", 1, 100);
+    for (let i = 0; i < 10; i++) ins.run("precedents-shadow", 0, 900);
+
+    const { runAudit } = await import("./self-audit.js");
+    const utility = runAudit({ metric: "utility", window: "24h" });
+    expect(utility.n).toBe(10);
+    expect(utility.mean).toBe(1);
+    const latency = runAudit({ metric: "latency", window: "24h" });
+    expect(latency.n).toBe(10);
+    expect(latency.mean).toBe(100);
+    const bySource = runAudit({
+      metric: "utility",
+      window: "24h",
+      stratifyBy: "source",
+    });
+    expect(bySource.n).toBe(20);
+    expect(
+      bySource.stratification.find((b) => b.bucket === "precedents-shadow")?.n,
+    ).toBe(10);
+  });
 });
 
 describe("runAudit — cache-hit metric", () => {
   it("computes cache_read / prompt ratio and stratifies by agent_type", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO cost_ledger (agent_type, prompt_tokens, cache_read_tokens) VALUES (?, ?, ?)",
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, prompt_tokens, cache_read_tokens) VALUES ('r', 't', ?, ?, ?)",
     );
     // fast: 50 rows, 90% cache hit
     for (let i = 0; i < 50; i++) ins.run("fast", 1000, 900);
@@ -338,7 +330,7 @@ describe("runAudit — cache-hit metric", () => {
 
   it("skips rows with prompt_tokens=0 to avoid divide-by-zero", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO cost_ledger (agent_type, prompt_tokens, cache_read_tokens) VALUES (?, ?, ?)",
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, prompt_tokens, cache_read_tokens) VALUES ('r', 't', ?, ?, ?)",
     );
     for (let i = 0; i < 30; i++) ins.run("fast", 1000, 800);
     for (let i = 0; i < 30; i++) ins.run("fast", 0, 0); // junk rows
@@ -352,7 +344,7 @@ describe("runAudit — cache-hit metric", () => {
 describe("runAudit — latency metric (continuous)", () => {
   it("uses adaptive divergence threshold for ms-scale values", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO recall_audit (bank, source, latency_ms) VALUES (?, ?, ?)",
+      "INSERT INTO recall_audit (bank, query, source, latency_ms) VALUES (?, 'q', ?, ?)",
     );
     // sqlite: 50 rows at ~400ms; hindsight: 50 rows at ~5000ms
     // aggregate ~2700ms; 15% threshold = ~405ms; both buckets diverge
@@ -377,10 +369,15 @@ describe("runAudit — latency metric (continuous)", () => {
 describe("runAudit — cost metric (continuous)", () => {
   it("aggregates cost_usd and stratifies", async () => {
     const ins = testDb.prepare(
-      "INSERT INTO cost_ledger (agent_type, cost_usd) VALUES (?, ?)",
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, cost_usd) VALUES ('r', 't', ?, ?)",
     );
     for (let i = 0; i < 30; i++) ins.run("fast", 0.001);
     for (let i = 0; i < 30; i++) ins.run("heavy", 0.05);
+    // Outside the 24-hour window: never counted.
+    const stale = testDb.prepare(
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, cost_usd, created_at) VALUES ('r', 't', ?, ?, datetime('now','-2 days'))",
+    );
+    for (let i = 0; i < 10; i++) stale.run("heavy", 5);
 
     const { runAudit } = await import("./self-audit.js");
     const r = runAudit({
