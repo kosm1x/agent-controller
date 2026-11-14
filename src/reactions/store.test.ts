@@ -1,9 +1,12 @@
 /**
- * Tests for reaction store.
+ * Tests for reaction store, on the real schema (initDatabase(":memory:")):
+ * ensureReactionsTable adds its indexes to the real task_outcomes and tasks
+ * tables, and the failure count reads the real task_outcomes columns.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase } from "../db/index.js";
 import {
   ensureReactionsTable,
   recordReaction,
@@ -18,31 +21,12 @@ import {
 let db: Database.Database;
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  // Create dependent tables BEFORE ensureReactionsTable (it adds indexes on these)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS task_outcomes (
-      id INTEGER PRIMARY KEY,
-      task_id TEXT,
-      classified_as TEXT,
-      ran_on TEXT,
-      tools_used TEXT,
-      duration_ms INTEGER,
-      success INTEGER,
-      feedback_signal TEXT DEFAULT 'neutral',
-      tags TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id INTEGER PRIMARY KEY,
-      task_id TEXT UNIQUE,
-      status TEXT DEFAULT 'queued',
-      started_at TEXT
-    )
-  `);
+  db = initDatabase(":memory:");
   ensureReactionsTable(db);
+});
+
+afterEach(() => {
+  closeDatabase();
 });
 
 describe("reaction store", () => {
@@ -56,6 +40,19 @@ describe("reaction store", () => {
         )
         .all();
       expect(tables).toHaveLength(1);
+    });
+
+    it("adds the reaction-query indexes to the real task_outcomes and tasks tables", () => {
+      const idx = (name: string) =>
+        db
+          .prepare(
+            "SELECT tbl_name FROM sqlite_master WHERE type='index' AND name=?",
+          )
+          .get(name);
+      expect(idx("idx_outcomes_classified_date")).toEqual({
+        tbl_name: "task_outcomes",
+      });
+      expect(idx("idx_tasks_status_started")).toEqual({ tbl_name: "tasks" });
     });
   });
 
@@ -79,6 +76,34 @@ describe("reaction store", () => {
       expect(rows[0].action).toBe("retry");
       expect(rows[0].spawned_task_id).toBe("task-2");
       expect(rows[0].status).toBe("executing");
+    });
+  });
+
+  describe("getReactionsBySourceTask", () => {
+    it("returns the task's reactions oldest first by created_at", () => {
+      const first = recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-1",
+        action: "retry",
+        attempt: 1,
+      });
+      const second = recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-1",
+        action: "escalate",
+        attempt: 2,
+      });
+      // The first-inserted row is made the NEWER one, so insertion order
+      // cannot stand in for created_at.
+      const setAt = db.prepare(
+        "UPDATE reactions SET created_at = ? WHERE reaction_id = ?",
+      );
+      setAt.run("2026-01-01 00:00:05", first);
+      setAt.run("2026-01-01 00:00:00", second);
+
+      expect(
+        getReactionsBySourceTask(db, "task-1").map((r) => r.reaction_id),
+      ).toEqual([second, first]);
     });
   });
 
@@ -210,6 +235,11 @@ describe("reaction store", () => {
         `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags)
          VALUES (?, ?, ?, '[]', 100, 1, '[]')`,
       ).run("t3", "fast", "fast");
+      // A failure older than 24h (should not count)
+      db.prepare(
+        `INSERT INTO task_outcomes (task_id, classified_as, ran_on, tools_used, duration_ms, success, tags, created_at)
+         VALUES (?, ?, ?, '[]', 100, 0, '[]', datetime('now', '-2 days'))`,
+      ).run("t4", "fast", "fast");
 
       expect(countRecentClassificationFailures(db, "fast")).toBe(2);
       expect(countRecentClassificationFailures(db, "heavy")).toBe(0);
@@ -229,6 +259,22 @@ describe("reaction store", () => {
 
       const rows = getReactionsBySourceTask(db, "task-1");
       expect(rows[0].status).toBe("completed");
+      expect(rows[0].completed_at).not.toBeNull();
+    });
+
+    it("updates status to failed with timestamp", () => {
+      const id = recordReaction(db, {
+        trigger: "task_failed",
+        sourceTaskId: "task-1",
+        action: "retry",
+        attempt: 1,
+      });
+
+      updateReactionStatus(db, id, "failed");
+
+      const rows = getReactionsBySourceTask(db, "task-1");
+      expect(rows[0].status).toBe("failed");
+      expect(rows[0].completed_at).not.toBeNull();
     });
 
     it("updates status to suppressed without timestamp", () => {
@@ -243,6 +289,7 @@ describe("reaction store", () => {
 
       const rows = getReactionsBySourceTask(db, "task-1");
       expect(rows[0].status).toBe("suppressed");
+      expect(rows[0].completed_at).toBeNull();
     });
   });
 

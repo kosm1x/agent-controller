@@ -5,10 +5,21 @@
  * heavy orchestrator's dead heartbeat stayed invisible to 129 green tests
  * (qa R2 #1/#10, 2026-09-03): `eventBus.emit` (the EventEmitter facade) never
  * reaches `subscribe()` handlers — only `emitEvent` does. This file uses the
- * real PersistentEventBus on an in-memory DB and pins both doors.
+ * real PersistentEventBus on the real schema (initDatabase(":memory:")) and
+ * pins both doors.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase } from "../db/index.js";
 
 vi.mock("../dispatch/dispatcher.js", () => ({
   getTask: vi.fn(() => undefined),
@@ -25,37 +36,24 @@ describe("task.progress → tasks liveness (real PersistentEventBus)", () => {
   let db: Database.Database;
   let manager: ReactionManager;
 
+  // One database for the file: the event bus is a module singleton bound to
+  // the first handle it sees, so a per-test database would leave the bus on
+  // a closed one. Each test starts from a fresh live-1 row instead.
+  beforeAll(() => {
+    db = initDatabase(":memory:");
+    initEventBus(db);
+  });
+
+  afterAll(() => {
+    closeDatabase();
+  });
+
   beforeEach(() => {
-    db = new Database(":memory:");
     db.exec(`
-      CREATE TABLE tasks (
-        id INTEGER PRIMARY KEY,
-        task_id TEXT UNIQUE,
-        parent_task_id TEXT,
-        spawn_type TEXT DEFAULT 'root',
-        title TEXT,
-        description TEXT,
-        priority TEXT DEFAULT 'medium',
-        status TEXT DEFAULT 'queued',
-        agent_type TEXT,
-        classification TEXT,
-        assigned_to TEXT,
-        input TEXT,
-        output TEXT,
-        error TEXT,
-        progress INTEGER DEFAULT 0,
-        metadata TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        started_at TEXT,
-        completed_at TEXT
-      );
-      CREATE TABLE runs (id INTEGER PRIMARY KEY, run_id TEXT UNIQUE, task_id TEXT NOT NULL, status TEXT DEFAULT 'running', error TEXT, completed_at TEXT);
-      CREATE TABLE task_outcomes (id INTEGER PRIMARY KEY, task_id TEXT, classified_as TEXT, ran_on TEXT, tools_used TEXT, duration_ms INTEGER, success INTEGER, feedback_signal TEXT DEFAULT 'neutral', tags TEXT, created_at TEXT DEFAULT (datetime('now')));
-      INSERT INTO tasks (task_id, status, title, progress, started_at, updated_at)
-        VALUES ('live-1', 'running', 'Live', 0, datetime('now','-20 minutes'), datetime('now','-20 minutes'));
+      DELETE FROM tasks;
+      INSERT INTO tasks (task_id, title, description, status, progress, started_at, updated_at)
+        VALUES ('live-1', 'Live', 'd', 'running', 0, datetime('now','-20 minutes'), datetime('now','-20 minutes'));
     `);
-    initEventBus(db); // module singleton — the first DB of this file wins
     manager = new ReactionManager(db);
     manager.start();
   });

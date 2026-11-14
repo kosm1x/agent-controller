@@ -1,9 +1,14 @@
 /**
  * Tests for ReactionManager.
+ *
+ * The database is the real schema (initDatabase(":memory:")): the watchdog
+ * and progress statements run against the real tasks/runs CHECK, NOT NULL
+ * and FK constraints, so a run row needs its task row first.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { initDatabase, closeDatabase } from "../db/index.js";
 import { ReactionManager } from "./manager.js";
 import { getReactionsBySourceTask } from "./store.js";
 
@@ -152,66 +157,7 @@ describe("ReactionManager", () => {
 
   beforeEach(() => {
     capturedHandlers = new Map();
-    db = new Database(":memory:");
-    // Create dependent tables BEFORE ensureReactionsTable (it adds indexes on these)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY,
-        task_id TEXT UNIQUE,
-        parent_task_id TEXT,
-        spawn_type TEXT DEFAULT 'root',
-        title TEXT,
-        description TEXT,
-        priority TEXT DEFAULT 'medium',
-        status TEXT DEFAULT 'queued',
-        agent_type TEXT,
-        classification TEXT,
-        assigned_to TEXT,
-        input TEXT,
-        output TEXT,
-        error TEXT,
-        progress INTEGER DEFAULT 0,
-        metadata TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        started_at TEXT,
-        completed_at TEXT
-      )
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS task_outcomes (
-        id INTEGER PRIMARY KEY,
-        task_id TEXT,
-        classified_as TEXT,
-        ran_on TEXT,
-        tools_used TEXT,
-        duration_ms INTEGER,
-        success INTEGER,
-        feedback_signal TEXT DEFAULT 'neutral',
-        tags TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-      )
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runs (
-        id INTEGER PRIMARY KEY,
-        run_id TEXT UNIQUE,
-        task_id TEXT NOT NULL,
-        status TEXT DEFAULT 'running',
-        error TEXT,
-        tool_calls TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        completed_at TEXT
-      )
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS task_trace_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        tool TEXT
-      )
-    `);
+    db = initDatabase(":memory:");
 
     mockSubmitTask.mockClear();
     mockEmitEvent.mockClear();
@@ -223,6 +169,7 @@ describe("ReactionManager", () => {
 
   afterEach(() => {
     manager.stop();
+    closeDatabase();
   });
 
   async function triggerTaskFailed(
@@ -398,10 +345,15 @@ describe("ReactionManager", () => {
 
   // A non-interactive retry skips the confirm gate, so a send the failed
   // attempt already made would go out twice (round-2 audit W2, 2026-09-29).
-  const recordRun = (taskId: string, toolCalls: string[] | null) =>
-    db
-      .prepare("INSERT INTO runs (run_id, task_id, status, tool_calls) VALUES (?, ?, 'failed', ?)")
-      .run(`run-${taskId}`, taskId, toolCalls ? JSON.stringify(toolCalls) : null);
+  // getTask is mocked, but the runs FK still needs the task row.
+  const recordRun = (taskId: string, toolCalls: string[] | null) => {
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status) VALUES (?, 't', 'd', 'failed')",
+    ).run(taskId);
+    db.prepare(
+      "INSERT INTO runs (run_id, task_id, agent_type, input, status, tool_calls) VALUES (?, ?, 'fast', 'in', 'failed', ?)",
+    ).run(`run-${taskId}`, taskId, toolCalls ? JSON.stringify(toolCalls) : null);
+  };
 
   it("scheduled task whose attempt called a high-risk tool escalates instead of retrying", async () => {
     recordRun("task-scheduled", ["web_search", "gmail_send"]);
@@ -419,6 +371,21 @@ describe("ReactionManager", () => {
     )?.[1];
     expect(note.message).toContain("attempt already called gmail_send");
     expect(note.context.reason).toContain("gmail_send");
+  });
+
+  it("the newest run of the task decides: an earlier low-risk run does not hide the latest attempt's send", async () => {
+    db.prepare(
+      "INSERT INTO tasks (task_id, title, description, status) VALUES ('task-scheduled', 't', 'd', 'failed')",
+    ).run();
+    const run = db.prepare(
+      "INSERT INTO runs (run_id, task_id, agent_type, input, status, tool_calls, created_at) VALUES (?, 'task-scheduled', 'fast', 'in', 'failed', ?, ?)",
+    );
+    // Inserted newest first, so insertion order cannot stand in for created_at.
+    run.run("run-new", JSON.stringify(["gmail_send"]), "2026-01-01 00:00:05");
+    run.run("run-old", JSON.stringify(["web_search"]), "2026-01-01 00:00:00");
+    await triggerTaskFailed("task-scheduled", "Request timeout after 30s");
+    expect(mockSubmitTask).not.toHaveBeenCalled();
+    expect(getReactionsBySourceTask(db, "task-scheduled")[0].action).toBe("escalate");
   });
 
   it("a recorded mcp__jarvis__ name is normalized before the tier lookup", async () => {
@@ -501,22 +468,29 @@ describe("ReactionManager", () => {
     expect(mockSubmitTask).toHaveBeenCalledTimes(1); // Still 1
   });
 
+  // reactions.created_at is SQLite datetime('now') text: UTC with no zone
+  // marker. The cooldown parses it with new Date(), which reads such text as
+  // LOCAL time, so the 30 s window shifts by the process UTC offset.
+  it.todo(
+    "cooldown measures the 30 s window from reactions.created_at read as UTC, whatever the process time zone",
+  );
+
   it("checkStuckTasks cascades ONLY the stuck task's run to failed (scoped, not blanket)", () => {
     // Stuck task: started 20 min ago and never reported progress since
     // (updated_at = started_at > 15 min threshold), still running.
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
+      `INSERT INTO tasks (task_id, description, status, title, started_at, updated_at) VALUES (?, 'd', 'running', ?, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
     ).run("stuck-1", "Stuck one");
     db.prepare(
-      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-stuck', 'stuck-1', 'running')`,
+      `INSERT INTO runs (run_id, task_id, agent_type, input, status) VALUES ('run-stuck', 'stuck-1', 'fast', 'in', 'running')`,
     ).run();
     // A different, healthy task whose run is live — must be left alone. A
     // blanket `WHERE status='running'` cascade would wrongly fail this too.
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at) VALUES (?, 'running', ?, datetime('now'))`,
+      `INSERT INTO tasks (task_id, description, status, title, started_at) VALUES (?, 'd', 'running', ?, datetime('now'))`,
     ).run("live-1", "Live one");
     db.prepare(
-      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-live', 'live-1', 'running')`,
+      `INSERT INTO runs (run_id, task_id, agent_type, input, status) VALUES ('run-live', 'live-1', 'fast', 'in', 'running')`,
     ).run();
 
     // Invoke the private poll handler directly.
@@ -532,18 +506,36 @@ describe("ReactionManager", () => {
     expect(stuckRun.status).toBe("failed");
     expect(stuckRun.completed_at).not.toBeNull();
     expect(liveRun.status).toBe("running"); // scoped — untouched
+    // The task row itself flips to failed with the watchdog's reason, and the
+    // kill leaves its own terminal row in the task trace.
+    expect(
+      db
+        .prepare(
+          "SELECT status, error, completed_at IS NOT NULL AS done FROM tasks WHERE task_id='stuck-1'",
+        )
+        .get(),
+    ).toEqual({
+      status: "failed",
+      error: "Stuck task detected (no progress for 15 minutes)",
+      done: 1,
+    });
+    expect(
+      db
+        .prepare("SELECT task_id, name FROM task_trace_events ORDER BY id")
+        .all(),
+    ).toEqual([{ task_id: "stuck-1", name: "task.watchdog_failed" }]);
   });
 
   it('a /loop task (tag "loop" in metadata) is NEVER marked stuck — operator-instructed unbounded run', () => {
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at, updated_at, metadata) VALUES (?, 'running', ?, datetime('now','-3 hours'), datetime('now','-3 hours'), ?)`,
+      `INSERT INTO tasks (task_id, description, status, title, started_at, updated_at, metadata) VALUES (?, 'd', 'running', ?, datetime('now','-3 hours'), datetime('now','-3 hours'), ?)`,
     ).run(
       "loop-1",
       "Loop one",
       JSON.stringify({ tags: ["messaging", "telegram", "loop"] }),
     );
     db.prepare(
-      `INSERT INTO runs (run_id, task_id, status) VALUES ('run-loop', 'loop-1', 'running')`,
+      `INSERT INTO runs (run_id, task_id, agent_type, input, status) VALUES ('run-loop', 'loop-1', 'fast', 'in', 'running')`,
     ).run();
 
     (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
@@ -561,11 +553,11 @@ describe("ReactionManager", () => {
   it("a long-running task that keeps reporting progress is NOT stuck — liveness is updated_at, not started_at (2026-09-03 swarm roots 9036/9043)", () => {
     // Swarm root: started 25 min ago, last progress report 1 min ago.
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-25 minutes'), datetime('now','-1 minute'))`,
+      `INSERT INTO tasks (task_id, description, status, title, started_at, updated_at) VALUES (?, 'd', 'running', ?, datetime('now','-25 minutes'), datetime('now','-1 minute'))`,
     ).run("live-long", "Swarm root");
     // Same age, but silent for 16 min — that one IS stuck.
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, started_at, updated_at) VALUES (?, 'running', ?, datetime('now','-25 minutes'), datetime('now','-16 minutes'))`,
+      `INSERT INTO tasks (task_id, description, status, title, started_at, updated_at) VALUES (?, 'd', 'running', ?, datetime('now','-25 minutes'), datetime('now','-16 minutes'))`,
     ).run("silent-long", "Silent");
 
     (manager as unknown as { checkStuckTasks(): void }).checkStuckTasks();
@@ -582,10 +574,10 @@ describe("ReactionManager", () => {
 
   it("task.progress persists progress and refreshes the liveness stamp — only while running", () => {
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, progress, started_at, updated_at) VALUES (?, 'running', ?, 0, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
+      `INSERT INTO tasks (task_id, description, status, title, progress, started_at, updated_at) VALUES (?, 'd', 'running', ?, 0, datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
     ).run("prog-1", "Running");
     db.prepare(
-      `INSERT INTO tasks (task_id, status, title, progress, started_at, updated_at, completed_at) VALUES (?, 'completed', ?, 100, datetime('now','-20 minutes'), datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
+      `INSERT INTO tasks (task_id, description, status, title, progress, started_at, updated_at, completed_at) VALUES (?, 'd', 'completed', ?, 100, datetime('now','-20 minutes'), datetime('now','-20 minutes'), datetime('now','-20 minutes'))`,
     ).run("done-1", "Done");
 
     const handler = capturedHandlers.get("task.progress");

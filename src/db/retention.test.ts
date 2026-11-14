@@ -1,11 +1,14 @@
 /**
  * tasks/runs retention sweep — safety invariants (2026-07-05, Phase 4.4).
- * Real :memory: DB: the invariants live in SQL + the fixpoint exclusion,
- * which mocks can't exercise.
+ * Real schema through initDatabase(":memory:"): the invariants live in SQL +
+ * the fixpoint exclusion, and the batch-ordering invariant only exists under
+ * the real FK topology (tasks self-FK on parent_task_id, runs + a2a_contexts
+ * referencing tasks, foreign_keys=ON), so the tests run on the real tables
+ * with their CHECK and NOT NULL constraints.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import {
   existsSync,
   readFileSync,
@@ -19,13 +22,7 @@ import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-let db: Database.Database;
-
-vi.mock("./index.js", () => ({
-  getDatabase: () => db,
-  writeWithRetry: <T>(fn: () => T): T => fn(),
-}));
-
+import { initDatabase, closeDatabase } from "./index.js";
 import {
   runTasksRetention,
   pruneTelemetry,
@@ -43,52 +40,21 @@ function insertTask(
   parent: string | null = null,
 ): void {
   db.prepare(
-    `INSERT INTO tasks (task_id, parent_task_id, status, created_at, updated_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tasks (task_id, parent_task_id, title, description, status, created_at, updated_at, completed_at)
+     VALUES (?, ?, 't', 'd', ?, ?, ?, ?)`,
   ).run(id, parent, status, at, at, at);
 }
 
+let db: Database.Database;
 let dataDir: string;
 
 beforeEach(() => {
-  db = new Database(":memory:");
-  // Mirror the LIVE FK topology (R1 audit): tasks has a self-FK on
-  // parent_task_id, runs + a2a_contexts reference tasks, and the real DB runs
-  // with foreign_keys=ON — the batch-ordering invariant only exists under
-  // these constraints, so the tests must carry them.
-  db.pragma("foreign_keys = ON");
-  db.exec(`
-    CREATE TABLE tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT UNIQUE NOT NULL,
-      parent_task_id TEXT REFERENCES tasks(task_id),
-      status TEXT,
-      title TEXT DEFAULT 't',
-      error TEXT,
-      created_at TEXT,
-      updated_at TEXT,
-      completed_at TEXT
-    );
-    CREATE TABLE runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL REFERENCES tasks(task_id),
-      output TEXT
-    );
-    CREATE TABLE a2a_contexts (
-      context_id TEXT PRIMARY KEY,
-      task_id TEXT REFERENCES tasks(task_id),
-      created_at TEXT
-    );
-    CREATE TABLE task_outcomes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL
-    );
-  `);
+  db = initDatabase(":memory:");
   dataDir = mkdtempSync(join(tmpdir(), "retention-test-"));
 });
 
 afterEach(() => {
-  db.close();
+  closeDatabase();
   rmSync(dataDir, { recursive: true, force: true });
   delete process.env.TASKS_RETENTION_DAYS;
 });
@@ -96,19 +62,25 @@ afterEach(() => {
 describe("runTasksRetention", () => {
   it("archives then deletes old terminal tasks with their runs and outcomes", () => {
     insertTask("old-done", "completed", OLD);
-    db.prepare("INSERT INTO runs (task_id, output) VALUES (?, ?)").run(
-      "old-done",
-      "big blob",
-    );
-    db.prepare("INSERT INTO task_outcomes (task_id) VALUES (?)").run(
-      "old-done",
-    );
+    db.prepare(
+      "INSERT INTO runs (run_id, task_id, agent_type, input, output) VALUES (?, ?, 'fast', 'in', ?)",
+    ).run("run-old-done", "old-done", "big blob");
+    db.prepare(
+      "INSERT INTO task_outcomes (task_id, classified_as, ran_on) VALUES (?, 'fast', 'fast')",
+    ).run("old-done");
+    // A task inside the window with its own run: neither is archived.
+    insertTask("recent-keep", "completed", RECENT);
+    db.prepare(
+      "INSERT INTO runs (run_id, task_id, agent_type, input) VALUES ('run-recent-keep', 'recent-keep', 'fast', 'in')",
+    ).run();
 
     const r = runTasksRetention(dataDir, NOW);
     expect(r.tasksDeleted).toBe(1);
     expect(r.runsDeleted).toBe(1);
     expect(r.outcomesDeleted).toBe(1);
-    expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT task_id FROM tasks").all()).toEqual([
+      { task_id: "recent-keep" },
+    ]);
 
     // Archive exists and contains both rows
     expect(r.archivePath).not.toBeNull();
@@ -118,17 +90,39 @@ describe("runTasksRetention", () => {
       .trim()
       .split("\n")
       .map((l) => JSON.parse(l));
-    expect(lines.some((l) => l.table === "tasks")).toBe(true);
-    expect(lines.some((l) => l.table === "runs")).toBe(true);
+    // Exactly the deleted rows are archived, nothing from the kept task.
+    const archived = (table: string, key: string) =>
+      lines.filter((l) => l.table === table).map((l) => l.row[key]);
+    expect(archived("tasks", "task_id")).toEqual(["old-done"]);
+    expect(archived("runs", "run_id")).toEqual(["run-old-done"]);
+    // Full real rows (SELECT *), so a restore has every NOT NULL column.
+    expect(lines.find((l) => l.table === "tasks")?.row).toMatchObject({
+      task_id: "old-done",
+      title: "t",
+      description: "d",
+      retry_count: 0,
+    });
+    expect(lines.find((l) => l.table === "runs")?.row).toMatchObject({
+      run_id: "run-old-done",
+      task_id: "old-done",
+      agent_type: "fast",
+      input: "in",
+      output: "big blob",
+    });
   });
 
   it("NEVER touches in-flight tasks regardless of age", () => {
-    for (const status of ["running", "pending", "queued", "needs_context"]) {
+    // Every non-terminal status the real status CHECK allows, except
+    // `blocked` (closed by its own rule below).
+    const inFlight = ["running", "pending", "classifying", "queued", "needs_context"];
+    for (const status of inFlight) {
       insertTask(`old-${status}`, status, OLD);
     }
     const r = runTasksRetention(dataDir, NOW);
     expect(r.tasksDeleted).toBe(0);
-    expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 4 });
+    expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({
+      n: inFlight.length,
+    });
     expect(r.archivePath).toBeNull(); // nothing to archive
   });
 
@@ -138,10 +132,27 @@ describe("runTasksRetention", () => {
     expect(r.tasksDeleted).toBe(0);
   });
 
+  it("boundary: only rows strictly older than the 90 d cutoff are pruned — a row exactly at it survives", () => {
+    const CUTOFF = "2026-04-06 12:00:00"; // NOW - 90 d exactly
+    insertTask("at-cutoff", "completed", CUTOFF);
+    // Created earlier, last lifecycle stamp exactly at the cutoff.
+    db.prepare(
+      `INSERT INTO tasks (task_id, title, description, status, created_at, updated_at, completed_at)
+       VALUES ('completed-at-cutoff', 't', 'd', 'completed', ?, ?, ?)`,
+    ).run(OLD, CUTOFF, CUTOFF);
+    insertTask("past-cutoff", "completed", "2026-04-06 11:59:59"); // 1 s older
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.cutoff).toBe(CUTOFF);
+    expect(r.tasksDeleted).toBe(1);
+    expect(
+      db.prepare("SELECT task_id FROM tasks ORDER BY task_id").all(),
+    ).toEqual([{ task_id: "at-cutoff" }, { task_id: "completed-at-cutoff" }]);
+  });
+
   it("ages by the LATEST lifecycle timestamp — old created_at but recent completion survives", () => {
     db.prepare(
-      `INSERT INTO tasks (task_id, status, created_at, updated_at, completed_at)
-       VALUES ('long-runner', 'completed', ?, ?, ?)`,
+      `INSERT INTO tasks (task_id, title, description, status, created_at, updated_at, completed_at)
+       VALUES ('long-runner', 't', 'd', 'completed', ?, ?, ?)`,
     ).run(OLD, RECENT, RECENT);
     const r = runTasksRetention(dataDir, NOW);
     expect(r.tasksDeleted).toBe(0);
@@ -197,14 +208,24 @@ describe("runTasksRetention", () => {
     // foreign_keys=ON. The leaf-first depth sort must make this pass.
     insertTask("mega-parent", "completed", OLD);
     const insert = db.prepare(
-      `INSERT INTO tasks (task_id, parent_task_id, status, created_at, updated_at, completed_at)
-       VALUES (?, 'mega-parent', 'completed', ?, ?, ?)`,
+      `INSERT INTO tasks (task_id, parent_task_id, title, description, status, created_at, updated_at, completed_at)
+       VALUES (?, 'mega-parent', 't', 'd', 'completed', ?, ?, ?)`,
     );
     for (let i = 0; i < 600; i++) insert.run(`child-${i}`, OLD, OLD, OLD);
 
     const r = runTasksRetention(dataDir, NOW);
     expect(r.tasksDeleted).toBe(601);
     expect(db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
+    // Every deleted task is archived, across both 500-row batches.
+    const archivedIds = gunzipSync(readFileSync(r.archivePath!))
+      .toString()
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.table === "tasks")
+      .map((l) => l.row.task_id as string);
+    expect(archivedIds).toHaveLength(601);
+    expect(new Set(archivedIds).size).toBe(601);
   });
 
   it("deletes a2a_contexts rows referencing deleted tasks (FK holder)", () => {
@@ -255,7 +276,7 @@ describe("stale blocked close (queue 4au)", () => {
 
   it("closes a blocked row idle 8 d as cancelled with the note, completed_at set, never pruned in the same run", () => {
     db.prepare(
-      "INSERT INTO tasks (task_id, status, created_at, updated_at) VALUES ('b8', 'blocked', ?, ?)",
+      "INSERT INTO tasks (task_id, title, description, status, created_at, updated_at) VALUES ('b8', 't', 'd', 'blocked', ?, ?)",
     ).run(D8, D8);
     const r = runTasksRetention(dataDir, NOW);
     expect(r.staleBlockedClosed).toBe(1);
@@ -317,6 +338,8 @@ describe("stale blocked close (queue 4au)", () => {
     insertTask("b8", "blocked", D8);
     insertTask("old-done", "completed", OLD);
     const realPrepare = db.prepare.bind(db);
+    // The real writeWithRetry retries a busy error a bounded number of times,
+    // then rethrows it; the sweep must warn with that error and go on.
     const prep = vi
       .spyOn(db, "prepare")
       .mockImplementation(((sql: string) => {
@@ -375,14 +398,14 @@ describe("stale blocked close (queue 4au)", () => {
 
 describe("pruneTelemetry (design audit D5)", () => {
   it("drops scope_telemetry older than 90 d and recall_audit older than 180 d (all-time mc-ctl readers keep their baseline), nothing else", () => {
-    db.exec(`
-      CREATE TABLE scope_telemetry (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
-      CREATE TABLE recall_audit (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
-    `);
     const D120 = "2026-03-07 00:00:00"; // 120 d before NOW: past 90, inside 180
     for (const t of [OLD, D120, RECENT]) {
-      db.prepare("INSERT INTO scope_telemetry (created_at) VALUES (?)").run(t);
-      db.prepare("INSERT INTO recall_audit (created_at) VALUES (?)").run(t);
+      db.prepare(
+        "INSERT INTO scope_telemetry (message, created_at) VALUES ('m', ?)",
+      ).run(t);
+      db.prepare(
+        "INSERT INTO recall_audit (bank, query, source, created_at) VALUES ('b', 'q', 's', ?)",
+      ).run(t);
     }
     const r = pruneTelemetry(NOW);
     expect(r).toEqual({ scopeTelemetry: 2, recallAudit: 1 });
