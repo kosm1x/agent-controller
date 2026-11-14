@@ -14,6 +14,18 @@ import {
   isExclusivelyBriefVerdict,
   resolveBriefingOnOperatorReply,
 } from "./promote.js";
+import { queryClaudeSdk } from "../inference/claude-sdk.js";
+
+// A test never reaches a real model, whatever the code under test does: a case
+// that injects no `classify` falls back to the real classifier, so the SDK
+// entry point it would call throws instead. The classifier swallows that throw,
+// so afterEach also fails any case in which the stub was called.
+vi.mock("../inference/claude-sdk.js", async (importActual) => ({
+  ...(await importActual<typeof import("../inference/claude-sdk.js")>()),
+  queryClaudeSdk: vi.fn(async () => {
+    throw new Error("promote.test: real model call refused (queryClaudeSdk stub)");
+  }),
+}));
 
 // Dynamic, not a hardcoded date: insertProposedBriefing() defaults expires_at
 // to generated_at + 24h, so a fixed past date silently rots — every briefing
@@ -88,6 +100,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDatabase();
+  const sdk = vi.mocked(queryClaudeSdk);
+  const calls = sdk.mock.calls.length;
+  sdk.mockClear();
+  expect(calls).toBe(0);
 });
 
 describe("resolveBriefingOnOperatorReply", () => {
