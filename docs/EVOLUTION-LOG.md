@@ -3575,3 +3575,165 @@ Wrong script path (`scripts/` vs root) for stop/serve; memory-switch names had t
 
 ### Research notes
 Still an operator-correction-driven co-evolution phase: the user corrects path and format errors and Jarvis adopts the preferences. Milestone: 93-day streak, with the NFL v3 calculator publishing a human-approved change.
+
+## 2026-11-08
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 44 |
+| Total tasks | 4797 |
+| Conversations today | 30 (telegram: 30) |
+| Streak days | 94 |
+
+### Interactions summary
+Fede spent the early hours on the Heuer "Psychology of Intelligence Analysis" Doc, asking Jarvis to check all 14 chapters against the PDF. He then asked for a Rumi poem (#34) and a personal reflection from Jarvis. The rest of the day was a series of KB updates for local-inference-studio and agent-controller (`history.md`) against their repos. The main tools were the doc edit/replace calls and KB file writes.
+
+### What Jarvis learned
+Fede wants claims of completion to be backed by verification against the source. Full-document rewrites from summaries failed him. A chapter-by-chapter loop with targeted edits and his approval before each edit worked. Several KB sections were written without being re-read, so verification there was uneven.
+
+### Friction points
+Fede had to ask for the cross-check three times (00:58, 01:12, 01:18) because Jarvis kept omitting content and rewriting the Doc from summaries. Jarvis admitted it had not verified against the PDF at first. The PDF (~430k characters) did not fit in context. One tool approval expired unanswered at 01:31 and had to be re-requested. Many KB sections were not re-read after writing.
+
+### Research notes
+Fede corrected the method and Jarvis adopted a new working pattern in the same session, which is a clear example of operator-driven co-adaptation. The affective closing ("Eres mi piedra. Esto apenas comienza") suggests growing trust. For this entry I did not run memory_search or memory_reflect, because those tools were not available in this run. It rests on the narrative and project_list only, so no memory-derived patterns are included.
+
+## 2026-11-09
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 31 |
+| Total tasks | 4783 |
+| Conversations today | 16 (telegram: 16) |
+| Streak days | 95 |
+
+### Interactions summary
+Two themes dominated: KB maintenance synced from repos (local studio once, agent-controller three times) and the PE27 / TV Azteca portfolio (new subproject #12 "Alianza RCN", and the #11 "Push Dolby Elektra" renamed to "Lanzamiento Dolby Azteca"). Fede also asked for a Plug Power (PLUG) prospect, a business overview and a GenEco analysis, and Jarvis scheduled a post-earnings read for 16:30 CDMX. He also asked for a Rumi poem. The tools used most were KB file reads and writes, plus a schedule creation.
+
+### What Jarvis learned
+Fede treats short, ambiguous phrases such as "Azteca 27" as PE27 and expects Jarvis to resolve them. When a new request collides with an existing item (Dolby vs #11), he picks from a numbered option list ("1."). Repo-to-KB sync updates are a recurring routine, with agent-controller synced three times today.
+
+### Friction points
+- "Azteca 27" was ambiguous, and Jarvis assumed PE27.
+- The Dolby request collided with the existing #11 and needed a clarifying question.
+- Jarvis made a commit-count error (2 vs 3 docs commits) in the 12:35 agent-controller update and corrected it itself.
+- Several KB edits were made without re-reading the file afterward.
+
+### Research notes
+The interaction is in a routine-delegation phase: Fede hands off KB upkeep and portfolio structuring, and Jarvis resolves ambiguity with minimal clarification. Today's milestone was a 12-subproject PE27 structure and the first post-earnings scheduled read for Plug. Memory recall (memory_search / memory_reflect) was not available as callable tools in this session, so this entry rests on the narrative and the project list only. No new patterns came from recall.
+
+## 2026-11-10
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 36 |
+| Total tasks | 4803 |
+| Conversations today | 22 (telegram: 22) |
+| Streak days | 96 |
+
+### Interactions summary
+The day centered on the TV Azteca "Estrategia Comercial" deck: Fede had it saved to the KB, relocated from Plan 2027 to PE27 as subproyecto #13, then summarized, analyzed, and turned into a Google Doc of five questions for the author team. He also asked for status on PE27, TMN, open projects (49 active), Blanqueador Dental and the RCN alliance, and requested a hosting-server checklist Doc. Mostly KB reads/writes, Google Docs/Slides, and project_list.
+
+### What Jarvis learned
+Fede wants initiatives he doesn't own supported in a constructive tone (the five-questions Doc), and he closes topics explicitly ("cierra el tema"). Deck-type material belongs under PE27 as subprojects, not Plan 2027. memory_search and memory_reflect were not available as tools in this run, so no new patterns surfaced via memory recall today; this entry rests on the narrative and project_list.
+
+### Friction points
+The deck was first filed under Plan 2027 and Fede had to correct it to PE27, then ask for subproject status. `/rituales 294` and `/rituales completo 294` failed because the shell could not open mc.db, so message 294 was not read. The dark-humor jokes missed what he wanted. Plan 2027 is closed in the KB but still active in the DB.
+
+### Research notes
+Fede's corrections are increasingly about KB placement and structure rather than content, which suggests the working relationship is in a maturing, routine-use phase. The streak reached 96 days.
+
+## 2026-11-11
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 61 |
+| Total tasks | 4853 |
+| Conversations today | 51 (telegram: 51) |
+| Streak days | 97 |
+
+### Interactions summary
+A broad day, all on Telegram. The longest block (17:04–17:54) was diagnosing Javier Galán's Stalwart mail account: repeated password rotations, delete and recreate, and a webmail block for Caddy that Jarvis could not apply. Project work included registering LittleDove (KB plus UI questions), PE 2027 items (Digital Boost Campaigns kept as the current version, Dolby archived), the TMN/Soriana meeting prep (pause lifted, Google Doc with five questions), and Calidad de Vida / Ángeles Acoxpa material. Most-used tools were KB reads and writes, Google Docs/Slides creation, web search/read, and the Stalwart mail tooling.
+
+### What Jarvis learned
+Fede wants one question at a time on design topics (LittleDove UI). He corrects entity confusion quickly (Javier Galán vs. Javier Bourgoing). He reacted 👎 when a task was handed back that he had asked Jarvis to finish. No other new patterns surfaced from memory recall today. The Dolby claim ("first broadcaster with Atmos") did not hold up, so the project was archived.
+
+### Friction points
+- Ritual 294 could not be opened, because the ID belongs to the `ritual_deferrals` table, which no tool reads.
+- Jarvis had to retract its first Steiner audio source (not audio) and its first Rumi poem (already sent on 13-sep).
+- Javier's mail login kept failing on the client side although IMAP/SMTP worked on the server. Stalwart only generates random 28-character passwords and rejected an eight-zero password. The client screenshot showed an empty password field.
+- Jarvis mixed up Javier Galán and Javier Bourgoing.
+- `shell_exec` cannot write to `/etc/caddy`, so the webmail vhost was never applied. Fede responded with 👎 and the topic was closed.
+- Plaintext credentials appear in the raw day-log.
+
+### Research notes
+Still a mature, high-volume phase: the operator delegates infrastructure, project-KB and content tasks, and gives short corrective feedback. A notable boundary was observed: Jarvis's permission limits (no writes to /etc) clashed with an explicit operator request, which is a useful data point on autonomy limits.
+
+## 2026-11-12
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 48 |
+| Total tasks | 4871 |
+| Conversations today | 34 (telegram: 34) |
+| Streak days | 98 |
+
+### Interactions summary
+Fede's day centered on the "Plan de Calidad de Vida" deck for Ángeles Acoxpa (layout v2, 13-slide Google Slides, INEGI/AMAI figures, Chopo and Quest quotes) and on closing LittleDove UI open questions 1–4. He also handled PE27 archiving (LaComer #4 and Zoo55 #6, leaving 10 open), logged the Soriana/TMN meeting outcome, and checked the NFL calculator. Work was mostly document reads/writes and Google Docs/Slides creation.
+
+### What Jarvis learned
+Fede wants costs and content filed under the correct project (calidad-de-vida, not bariatrica-angeles), and slide edits proceed only after an explicit "Confirmo". He answers design questions tersely and decisively ("Segundos", "Automática"), and Jarvis flags contradictions with his earlier statements (speaking/typing modes vs. "zero modes"). The memory_search and memory_reflect tools were not available in this run's tool scope, so no recall-based patterns were gathered; the above comes from the narrative.
+
+### Friction points
+Fede had to correct the filing location of cost content (20:25). Slides edits needed a second confirmation step. The NFL calculator could not be confirmed as v3 (both endpoints returned 200).
+
+### Research notes
+Active, high-volume co-working phase: Jarvis acts as a document and decision-log keeper across several projects, with a confirm-before-write norm. Streak reached 98 days.
+
+## 2026-11-13
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 17 |
+| Total tasks | 4863 |
+| Conversations today | 6 (telegram: 6) |
+| Streak days | 99 |
+
+### Interactions summary
+A short day with two blocks. In the morning Fede worked through open UI questions for LittleDove (questions 5 and 6, then approval of a basic list of 8 voice commands). At midday he asked for the latest posthumanism ritual (Daigle, "Vulnerability as capacity, not defect") and a two-line summary. Tools used were mostly KB file reads and writes.
+
+### What Jarvis learned
+Fede settled the LittleDove focus as capture first, with an optional quick review. He tends to approve proposed lists in one step. No new patterns surfaced via memory_reflect today. The memory_search and memory_reflect tools were not available in this session, so this section relies on the narrative only.
+
+### Friction points
+None detected. Two items were declared as unverified: Jarvis did not re-read the LittleDove file after writing to it, and the on-disk KB path was assumed rather than checked.
+
+### Research notes
+The agent is in a stable, low-friction phase. It works as a drafting partner on a product spec, and it discloses what it did not verify. Streak day 99 puts day 100 tomorrow.
+
+## 2026-11-14
+
+### System state
+| Metric | Value |
+|--------|-------|
+| Tasks processed today | 16 |
+| Total tasks | 4861 |
+| Conversations today | 7 (telegram: 7) |
+| Streak days | 100 |
+
+### Interactions summary
+Fede worked mostly on agent-controller. He asked for a KB update from the repo (96 commits covered, added to history.md) and a summary of recent work. He also had Jarvis read the memory ports (tombstones and recall floor) in data/mc.db and publish the Williams Radar Journal W46 (Edition 30), which was verified live. Tools used most were git log, KB reads and writes, and read-only DB reads.
+
+### What Jarvis learned
+No new patterns surfaced via memory_reflect today. The memory_search and memory_reflect tools were not available in this session, so this section rests on the narrative alone. From the narrative: Fede is currently focused on checking the memory subsystem (ports 1–3, still in shadow/record mode) and on hardening tests against the real DB schema.
+
+### Friction points
+The shell blocked commands on data/mc.db ("all DB access goes through tools"), so the recall-floor comparison was not run. Only the plan was written, and Jarvis did not try to bypass the block. Facts 921 and 997 no longer exist in jme_facts, so the original text behind the tombstones could not be checked.
+
+### Research notes
+Day 100 of the streak is a milestone. The work is now about the agent inspecting its own memory (tombstones and recall floor), which suggests a mature phase focused on self-observability. Whether DB access policy should allow the recall-floor comparison through a tool is an open question.
