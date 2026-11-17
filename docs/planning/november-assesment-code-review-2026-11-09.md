@@ -121,6 +121,8 @@ Guard tests today: of 24 cells (four write-capable tools × six forbidden-path c
 
 ### Batch 2 — Deploy path (rulings 5, 6)
 
+**Status 2026-11-17 19:21 UTC — DEPLOYED 2026-11-17 19:18 UTC as build `aad72f4c` (queue 4fh): every piece on this page marked "COMMITTED, not yet deployed" (batches 1 to 6) is live since this deploy; the deploy script's own checks all passed (verdict OK). The two one-time removal scripts are still to be run by the operator. One finding for this batch: a schema change can reach the live database before its deploy, through any script that runs from source (three new pieces in 4fh).**
+
 **Status 2026-11-13 20:50 UTC — in-chat deploy hand-over COMMITTED `1908b9fb` (queue 4cm (a), 4ei), not yet deployed: asked to deploy, the agent answers with the line the operator runs; the deploy script with its checks is the only deploy path. The read-only protection for source and build output is installed on the host and becomes active at the next restart. The tool's model-visible wording waits for the one evaluation run of batch 10.**
 
 **Status 2026-11-11 04:29 UTC — DEPLOYED 2026-11-11 04:27 UTC as build `555c888f` (queue 4dg): the new deploy script ran for the first time on a real deploy and ended with verdict OK; the per-build deploy and rollback piece (2c) still waits for rulings (4cw).**
