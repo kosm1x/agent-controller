@@ -11,15 +11,33 @@
  *  1. Values are read the way the reply check reads them: its `candidateRuns` gives, per
  *     letter/digit run, the run and (after a backslash) the run without an escape
  *     letter or a `\uXXXX` escape, each only at 16–64 characters. A run is COLLECTED
- *     when one of its candidates has a lowercase, an uppercase and a digit, it starts
- *     fewer than REACH units after a password word (KEYWORDS, any case, not preceded by
- *     a letter), and the text also has a mailbox context (an `@domain.tld`, a verifying
- *     command name from mailbox-passwords.ts, or MAILBOX_WORDS). Then the fingerprint
- *     of EVERY candidate of that run is collected, so the one the reply check computes
- *     for the true value is always among them. A unit is one character, except that a
- *     whole run and a whole placeholder count as one unit, and a password word inside a
- *     placeholder is not a password word: a replacement never moves another run into
- *     reach, so a second run collects nothing new.
+ *     when one of its candidates has the generated shape (exactly GENERATED_PASSWORD_LEN
+ *     characters with a digit, a lowercase and an uppercase letter, or with no digit and
+ *     at least DIGIT_FREE_MIN_PER_CASE lowercase and as many uppercase letters: the
+ *     mailbox tool generates every mailbox password at that length, drawing each
+ *     character from letters and digits without forcing any class, so a real value may
+ *     have no digit and requiring one would miss it; such a value has its letters drawn
+ *     from both cases about half each, while a name a person or a program writes (a
+ *     camelCase identifier, joined words) has only a few capitals and is left alone; a
+ *     digit-free value with fewer of one case is the accepted cost, about one in eighty
+ *     of the already rare digit-free values; a run of another length after a password
+ *     word is usually an identifier, a link id or a key of something else, and replacing
+ *     it would damage text that holds no mailbox password, so it is not collected), it
+ *     starts fewer than REACH units after a password word (KEYWORDS, any case, not
+ *     preceded by a letter), and the text also has a mailbox context (an `@domain.tld`,
+ *     a verifying command name from mailbox-passwords.ts, or MAILBOX_WORDS). Then the
+ *     fingerprint of EVERY candidate of that run is collected: the value itself and,
+ *     after a backslash, the run with the escape letter or `\uXXXX` still in front, or
+ *     without its first character. Each one is the value with at most (part of) its
+ *     escape in front, or a part of the value, and the true value is the candidate of the
+ *     generated shape, so the fingerprint the reply check computes for it is always among
+ *     them. Known limit: a value glued to other letters or digits (for example right after
+ *     a percent escape such as `%3D`, whose two hex digits join the run) is a run of
+ *     another length, so its context does not collect it; such a copy is removed only
+ *     when its fingerprint is already in `mailbox_password_seen` (rule 3 (b)). A unit is
+ *     one character, except that a whole run and a whole placeholder count as one unit,
+ *     and a password word inside a placeholder is not a password word: a replacement
+ *     never moves another run into reach, so a second run collects nothing new.
  *  2. Replacement: wherever a run has a collected candidate, in every store below and
  *     whatever the words around it, that candidate becomes PASSWORD_WITHHELD_PLACEHOLDER;
  *     the longest one in plain text (no character of the value is left), and in a text
@@ -160,6 +178,32 @@ export const KEYWORDS = ["password", "contraseña", "contrasena", "clave", "pass
 export const MAILBOX_WORDS = ["buzón", "buzon", "mailbox", "correo"];
 /** A value starts fewer than REACH units after the end of a password word. */
 export const REACH = 80;
+/**
+ * Rule 1: the only length a collected value has. The mailbox tool generates every
+ * mailbox password itself, always as this many ASCII letters and digits, each drawn at
+ * random with no class forced (its set-password takes no value): a collected value needs
+ * a digit, a lowercase and an uppercase letter, or, with no digit, at least
+ * DIGIT_FREE_MIN_PER_CASE letters of each case (a digit is not required, since requiring
+ * one would miss a real value that happens to have none). A longer or shorter run after a
+ * password word is usually something else (a file or document identifier, a link id, a
+ * key of another system), and replacing it would damage text that holds no mailbox
+ * password, so it is not collected. Known limit: a value glued to other letters or
+ * digits (for example right after a percent escape such as `%3D`, whose two hex digits
+ * join the run) is also a run of another length, so its context does not collect it;
+ * such a copy is removed only when its fingerprint is already in the fingerprint table.
+ * Values already in the fingerprint table are pruned whatever their length (rule 3 (b)).
+ */
+export const GENERATED_PASSWORD_LEN = 28;
+/**
+ * Rule 1: a value of the generated length with no digit needs at least this many
+ * lowercase AND at least this many uppercase letters. A generated value without a digit
+ * has its letters drawn at random from both cases, about half each, so fewer than this
+ * of one case practically never happens; a name a person or a program writes (a camelCase
+ * identifier, joined words) has only a few capitals and must not be withheld for good.
+ * A digit-free generated value below the threshold (about one in eighty of the already
+ * rare digit-free values) is the accepted cost. With a digit the threshold does not apply.
+ */
+export const DIGIT_FREE_MIN_PER_CASE = 8;
 /** How deep a JSON string holding JSON is checked to keep parsing (rule 2). */
 export const NEST_DEPTH = 8;
 /** `--scan-only` reads files up to this size; a larger one is counted `over_cap` and fails the run. */
@@ -179,7 +223,8 @@ const R = ["rowid"] as const;
  * Every pruned column, by table: the ONE list (tests iterate it). A table that does not
  * exist is skipped (counted `tables_absent`); a listed column missing from a present
  * table is a refusal (the list and the schema disagree: nothing is written). `projects`
- * is deliberately absent: it is the credential store.
+ * is deliberately absent: it is the credential store. A gate's criterion and check
+ * command are free text written from the task like its evidence, so all three are listed.
  */
 export const DB_STORES: ReadonlyArray<DbStore> = [
   { table: "conversations", key: R, columns: ["content"] },
@@ -205,7 +250,7 @@ export const DB_STORES: ReadonlyArray<DbStore> = [
   { table: "schedule_runs", key: R, columns: ["result_summary"] },
   { table: "scheduled_tasks", key: R, columns: ["description"] },
   { table: "ritual_deferrals", key: R, columns: ["text"] },
-  { table: "task_gates", key: R, columns: ["evidence"] },
+  { table: "task_gates", key: R, columns: ["criterion", "check_cmd", "evidence"] },
   { table: "skill_test_runs", key: R, columns: ["actual_output_json"] },
   { table: "skill_failures", key: R, columns: ["input_json", "error_detail"] },
   { table: "attributed_claims", key: R, columns: ["claim_text", "evidence_excerpt"] },
@@ -350,17 +395,24 @@ function isDomain(token: string): boolean {
   return /^[A-Za-z]{2,}$/.test(labels[labels.length - 1]!);
 }
 
-function hasMixedClasses(text: string, s: Span): boolean {
-  let lower = false;
-  let upper = false;
-  let digit = false;
-  for (let i = s.start; i < s.end; i++) {
-    const c = text.charCodeAt(i);
-    if (c >= 97 && c <= 122) lower = true;
-    else if (c >= 65 && c <= 90) upper = true;
-    else if (c >= 48 && c <= 57) digit = true;
+/**
+ * Rule 1: a candidate has the shape the mailbox tool generates: the generated length,
+ * and either a digit, a lowercase and an uppercase letter, or no digit and at least
+ * DIGIT_FREE_MIN_PER_CASE letters of each case.
+ */
+function hasGeneratedShape(text: string, c: Span): boolean {
+  if (c.end - c.start !== GENERATED_PASSWORD_LEN) return false;
+  let lower = 0;
+  let upper = 0;
+  let digit = 0;
+  for (let i = c.start; i < c.end; i++) {
+    const k = text.charCodeAt(i);
+    if (k >= 97 && k <= 122) lower++;
+    else if (k >= 65 && k <= 90) upper++;
+    else if (k >= 48 && k <= 57) digit++;
   }
-  return lower && upper && digit;
+  if (digit > 0) return lower > 0 && upper > 0;
+  return lower >= DIGIT_FREE_MIN_PER_CASE && upper >= DIGIT_FREE_MIN_PER_CASE;
 }
 
 /**
@@ -414,7 +466,7 @@ export function collectFromText(text: string, into: Set<string>): number {
     const e = ends[k]!;
     if (e > g.start) continue;
     if (unit[g.start]! - unit[e]! >= REACH) continue;
-    if (!g.candidates.some((c) => hasMixedClasses(text, c))) continue;
+    if (!g.candidates.some((c) => hasGeneratedShape(text, c))) continue;
     for (const c of g.candidates) into.add(passwordFingerprint(text.slice(c.start, c.end)));
     given++;
   }
