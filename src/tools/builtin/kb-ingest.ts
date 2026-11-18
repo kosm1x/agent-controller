@@ -172,7 +172,12 @@ them later if needed.`,
       pdfPath,
       manifest,
     );
-    const failure = ingestFailure(result.chunks.length, batch, manifest);
+    const failure = ingestFailure(
+      result.chunks.length,
+      batch,
+      manifest,
+      result.counts.truncated,
+    );
     return failure ? JSON.stringify({ error: failure, summary }) : summary;
   },
 };
@@ -328,29 +333,38 @@ const MANIFEST_NOTE: Record<LineageSourceOutcome, string> = {
 
 /**
  * An approved ingest that was only partly carried out is a failure, and its
- * one line says what did happen (counts only: the summary beside it carries
- * the rest). Failed when a chunk failed to be written, when the manifest was
+ * one line says what did happen (counts and what was not done: the summary
+ * beside it carries the rest). Failed when a chunk failed to be written, when the manifest was
  * not written (its cascade or its upsert failed, so stale chunks stay live),
  * or when nothing was written at all: an ingest that stored nothing is not a
  * completed action, and a document that yields no chunks (a scan without a
  * text layer) after a changed manifest has had its older chunks marked stale,
  * so it drops out of search. The batch upsert counts an unchanged chunk it
  * rewrote as written, so a re-ingest of the same document is not "nothing
- * written". Noise rows next to written ones, chunks kept without an
- * embedding and truncation (the chunk cap) stay a success.
- * Null = success.
+ * written". A document cut off at the chunk cap is a failure too: the
+ * part past the cap was never stored, so the action was carried out only in
+ * part. Noise rows next to written ones and chunks kept without an embedding
+ * stay a success. Null = success.
  */
 function ingestFailure(
   chunks: number,
   batch: { success: number; failed: number; rejected: number },
   manifest: LineageSourceOutcome,
+  truncated: boolean,
 ): string | null {
   const manifestFailed =
     manifest === "failed" || manifest === "cascade_failed";
   const failed =
-    batch.failed > 0 || manifestFailed || batch.success === 0;
+    batch.failed > 0 ||
+    manifestFailed ||
+    batch.success === 0 ||
+    truncated;
   if (!failed) return null;
-  const counts = `ingest incomplete: ${batch.success} of ${chunks} chunks written, ${batch.failed} failed, ${batch.rejected} rejected as noise`;
+  const counts =
+    `ingest incomplete: ${batch.success} of ${chunks} chunks written, ${batch.failed} failed, ${batch.rejected} rejected as noise` +
+    (truncated
+      ? "; cut off at the chunk cap, the rest of the document was not stored"
+      : "");
   return manifestFailed
     ? `${counts}; manifest ${MANIFEST_NOTE[manifest]}`
     : counts;

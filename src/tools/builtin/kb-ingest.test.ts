@@ -190,7 +190,7 @@ describe("kbIngestPdfStructuredTool", () => {
     expect(out).toMatch(/Embedding failures: 1/);
   });
 
-  it("surfaces truncated flag in summary", async () => {
+  it("a truncated run is a failure whose summary keeps the TRUNCATED line", async () => {
     mockIngestPdf.mockResolvedValue({
       parentDocId: "p",
       docTitle: "t",
@@ -201,7 +201,9 @@ describe("kbIngestPdfStructuredTool", () => {
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/big.pdf",
     })) as string;
-    expect(out).toMatch(/TRUNCATED/);
+    const parsed = JSON.parse(out);
+    expect(parsed.error).toContain("cut off at the chunk cap");
+    expect(parsed.summary).toMatch(/TRUNCATED/);
   });
 
   // 4o lineage: the manifest goes first through pgUpsertLineageSource.
@@ -295,6 +297,9 @@ describe("kbIngestPdfStructuredTool", () => {
       })) as string;
 
     const STALE = "changed: previous chunks marked stale";
+    const TRUNCATED_LINE =
+      "  TRUNCATED: exceeded max_chunks — some content not ingested";
+    const CUT = "; cut off at the chunk cap, the rest of the document was not stored";
     const HINT =
       "  Hint: if this is the first v7.13 ingest, confirm the schema migration was applied (modality / parent_doc_id / section_path / chunk_position columns on kb_entries).";
 
@@ -390,20 +395,64 @@ describe("kbIngestPdfStructuredTool", () => {
         plain(2, { success: 2, failed: 0, rejected: 0 }, "unchanged"),
       ],
       [
-        "a truncated document with every row written",
-        2,
-        { success: 2, failed: 0, rejected: 0 },
+        "a document not cut off with every row written",
+        3,
+        { success: 3, failed: 0, rejected: 0 },
         "written",
-        true,
-        plain(2, { success: 2, failed: 0, rejected: 0 }, STALE, [
-          "  TRUNCATED: exceeded max_chunks — some content not ingested",
-        ]),
+        false,
+        plain(3, { success: 3, failed: 0, rejected: 0 }, STALE),
       ],
     ] as const)(
       "%s → the plain summary",
       async (_case, chunks, batch, manifest, truncated, text) => {
         seed(chunks, batch, manifest, truncated);
         expect(await run()).toBe(text);
+      },
+    );
+
+    // Cut off at the chunk cap: the part past the cap was never stored, so the
+    // run failed even when every chunk up to the cap was written. Chunk counts
+    // differ from the not-truncated failures above, so the clause is tied to
+    // the flag, not to a count.
+    it.each([
+      [
+        "cut off with every chunk up to the cap written",
+        3,
+        { success: 3, failed: 0, rejected: 0 },
+        "written",
+        `ingest incomplete: 3 of 3 chunks written, 0 failed, 0 rejected as noise${CUT}`,
+        plain(3, { success: 3, failed: 0, rejected: 0 }, STALE, [
+          TRUNCATED_LINE,
+        ]),
+      ],
+      [
+        "cut off and one chunk failed",
+        4,
+        { success: 3, failed: 1, rejected: 0 },
+        "written",
+        `ingest incomplete: 3 of 4 chunks written, 1 failed, 0 rejected as noise${CUT}`,
+        plain(4, { success: 3, failed: 1, rejected: 0 }, STALE, [
+          TRUNCATED_LINE,
+        ]),
+      ],
+      [
+        "cut off and the manifest cascade failed",
+        3,
+        { success: 3, failed: 0, rejected: 0 },
+        "cascade_failed",
+        `ingest incomplete: 3 of 3 chunks written, 0 failed, 0 rejected as noise${CUT}; manifest cascade FAILED, manifest not advanced: next ingest retries`,
+        plain(
+          3,
+          { success: 3, failed: 0, rejected: 0 },
+          "cascade FAILED, manifest not advanced: next ingest retries",
+          [TRUNCATED_LINE],
+        ),
+      ],
+    ] as const)(
+      "%s → {error, summary}",
+      async (_case, chunks, batch, manifest, error, summary) => {
+        seed(chunks, batch, manifest, true);
+        expect(JSON.parse(await run())).toEqual({ error, summary });
       },
     );
 
@@ -418,7 +467,7 @@ describe("kbIngestPdfStructuredTool", () => {
     });
 
     it("a failure result read by JSON.parse alone has a non-empty one-line error first", async () => {
-      seed(3, { success: 1, failed: 1, rejected: 1 }, "cascade_failed");
+      seed(3, { success: 1, failed: 1, rejected: 1 }, "cascade_failed", true);
       const out = await run();
       expect(out.startsWith('{"error":')).toBe(true);
       const { error } = JSON.parse(out) as { error: unknown };
