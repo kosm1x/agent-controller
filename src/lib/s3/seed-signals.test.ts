@@ -10,9 +10,78 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SEED_SIGNALS, seedSignalsIdempotent } from "./seed-signals.js";
 import { initDatabase, closeDatabase, getDatabase } from "../../db/index.js";
+import {
+  GATE_CACHEABLE_AGENT_PREFIX,
+  GATE_CACHEABLE_AGENT_TYPES,
+  GATE_COLD_START_AGENT_TYPES,
+} from "../../briefing/activation-gate.js";
 
 beforeEach(() => initDatabase(":memory:"));
 afterEach(() => closeDatabase());
+
+/** The cache-ratio seed query's population: its `IN (...)` names and `LIKE` prefix. */
+function cacheRatioPopulation(): { names: string[]; prefix: string } {
+  const q = SEED_SIGNALS.find(
+    (s) => s.signal_name === "s1_tool_cache_read_ratio",
+  )!.baseline_query;
+  const lists = [...q.matchAll(/agent_type IN \(([^)]*)\)/g)];
+  const likes = [...q.matchAll(/agent_type LIKE '([^'%]*)%'/g)];
+  expect(lists).toHaveLength(1);
+  expect(likes).toHaveLength(1);
+  const names = [...lists[0][1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  return { names, prefix: likes[0][1] };
+}
+
+describe("s1_tool_cache_read_ratio — same population as the §13 cache gate", () => {
+  // The drift signal and the gate measure one thing; a job type that one
+  // counts and the other does not makes them disagree with no failure.
+  it("the seed's IN list equals GATE_CACHEABLE_AGENT_TYPES as a set, and its LIKE prefix equals GATE_CACHEABLE_AGENT_PREFIX", () => {
+    const { names, prefix } = cacheRatioPopulation();
+    expect(new Set(names).size).toBe(names.length);
+    expect([...names].sort()).toEqual([...GATE_CACHEABLE_AGENT_TYPES].sort());
+    expect(prefix).toBe(GATE_CACHEABLE_AGENT_PREFIX);
+    // The whole query, so no extra clause, lost grouping or other window can
+    // widen the population while the parsed names still match.
+    const list = GATE_CACHEABLE_AGENT_TYPES.map((n) => `'${n}'`).join(",");
+    expect(
+      SEED_SIGNALS.find((s) => s.signal_name === "s1_tool_cache_read_ratio")!
+        .baseline_query,
+    ).toBe(
+      `SELECT CAST(SUM(cache_read_tokens) AS REAL) / NULLIF(SUM(prompt_tokens), 0) FROM cost_ledger WHERE (agent_type IN (${list}) OR agent_type LIKE '${GATE_CACHEABLE_AGENT_PREFIX}%') AND created_at > datetime('now', '-1 day')`,
+    );
+  });
+
+  it("no structurally cold-start job type is in the seed population", () => {
+    const { names, prefix } = cacheRatioPopulation();
+    for (const cold of GATE_COLD_START_AGENT_TYPES) {
+      expect(names).not.toContain(cold);
+      expect(cold.startsWith(prefix)).toBe(false);
+    }
+  });
+
+  it("rows of excluded job types do not move the ratio", () => {
+    const db = getDatabase();
+    const insert = db.prepare(
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, prompt_tokens, cache_read_tokens) VALUES (?, ?, ?, ?, ?)",
+    );
+    insert.run("r1", "t1", "fast", 100, 90);
+    insert.run("r2", "t2", "skill:demo", 100, 70);
+    // Cold-start and never-cacheable rows: 0 cache reads over 100 prompt tokens each.
+    insert.run("r3", "t3", "nanoclaw", 100, 0);
+    insert.run("r4", "t4", "swarm", 100, 0);
+    insert.run("r5", "t5", "heavy", 100, 0);
+    insert.run("r6", "t6", "chat:demo", 100, 0);
+    // A listed type outside the one-day window (aged by SQLite's own clock).
+    db.prepare(
+      "INSERT INTO cost_ledger (run_id, task_id, agent_type, prompt_tokens, cache_read_tokens, created_at) VALUES ('r7', 't7', 'fast', 100, 0, datetime('now', '-2 days'))",
+    ).run();
+    const q = SEED_SIGNALS.find(
+      (s) => s.signal_name === "s1_tool_cache_read_ratio",
+    )!.baseline_query;
+    const row = db.prepare(q).get() as Record<string, number | null>;
+    expect(Object.values(row)[0]).toBeCloseTo(0.8, 10);
+  });
+});
 
 describe("SEED_SIGNALS — static invariants", () => {
   it("exactly 14 seed signals (13 from Spine 2 + recall_coherence_suppression_rate from Spine 6)", () => {
