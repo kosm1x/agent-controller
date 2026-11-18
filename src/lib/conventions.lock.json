@@ -1,0 +1,234 @@
+{
+  "rawCron": [],
+  "secondDatabaseHandle": [
+    {
+      "file": "src/lib/v8-2/critic.ts",
+      "text": "new Database(path, {readonly: true})",
+      "reason": "read-only handle so a model-written query cannot write"
+    },
+    {
+      "file": "src/lib/v8-4/grader.ts",
+      "text": "new Database(main.name, {readonly: true})",
+      "reason": "read-only handle so a model-written query cannot write"
+    }
+  ],
+  "columnChangeOutsideMigrations": [
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE cost_ledger ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE cost_ledger ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE jarvis_files ADD COLUMN user_edit_time TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE proposed_briefings ADD COLUMN delivered_at TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN match_type TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN mode TEXT CHECK (mode IS NULL OR mode IN ('coherence','correspondence','unfiltered'))",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN outcome_breakdown TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN overlap_score REAL",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE recall_audit ADD COLUMN top_k_ids TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN body_path TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN current_version_id INTEGER",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN description_embedding BLOB",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN inputs_json TEXT NOT NULL DEFAULT '[]'",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN is_certified INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN last_failure_at TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN last_used TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN output_type TEXT NOT NULL DEFAULT 'text'",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN registry_sha TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN tests_json TEXT NOT NULL DEFAULT '[]'",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN trigger_examples_json TEXT NOT NULL DEFAULT '[]'",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE skills ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE task_outcomes ADD COLUMN concern_reason TEXT DEFAULT NULL",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/index.ts",
+      "text": "ALTER TABLE task_outcomes ADD COLUMN model_tier TEXT DEFAULT NULL",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/video-schema.ts",
+      "text": "ALTER TABLE video_jobs ADD COLUMN cost_cents INTEGER DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/video-schema.ts",
+      "text": "ALTER TABLE video_jobs ADD COLUMN ffmpeg_pid INTEGER",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/video-schema.ts",
+      "text": "ALTER TABLE video_jobs ADD COLUMN frame_hash TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/video-schema.ts",
+      "text": "ALTER TABLE video_jobs ADD COLUMN manifest_json TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/intelligence/scope-telemetry.ts",
+      "text": "ALTER TABLE scope_telemetry ADD COLUMN tool_chain TEXT DEFAULT ''",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/delivery-policy.ts",
+      "text": "ALTER TABLE ritual_deliveries ADD COLUMN anchor INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/delivery-policy.ts",
+      "text": "ALTER TABLE ritual_deliveries ADD COLUMN day TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/delivery-policy.ts",
+      "text": "ALTER TABLE ritual_deliveries ADD COLUMN emailed INTEGER NOT NULL DEFAULT 0",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/delivery-policy.ts",
+      "text": "ALTER TABLE ritual_deliveries ADD COLUMN words INTEGER",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/dynamic.ts",
+      "text": "ALTER TABLE scheduled_tasks ADD COLUMN gates TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/rituals/sent-before.ts",
+      "text": "ALTER TABLE ritual_sent_items ADD COLUMN tokens TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/tuning/schema.ts",
+      "text": "ALTER TABLE ${table} ADD COLUMN ${column} ${typeDecl}",
+      "reason": "column-change helper: each of its calls is listed as an entry of its own, so a new call fails here; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/tuning/schema.ts",
+      "text": "ALTER TABLE tune_variants ADD COLUMN code_fingerprint TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/tuning/schema.ts",
+      "text": "addColumnIfMissing(\"tune_experiments\", \"confidence_avg\", \"REAL\")",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/tuning/schema.ts",
+      "text": "addColumnIfMissing(\"tune_experiments\", \"failure_source\", \"TEXT\")",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    }
+  ],
+  "containerCallOutsideSeam": [
+    {
+      "file": "src/rituals/scheduler.ts",
+      "text": "execFileAsync(\"docker\", [\"container\", \"ls\", \"-a\", \"--filter\", \"status=exited\", \"--format\", \"{{.ID}}\\t{{.Names}}\\t{{.CreatedAt}}\"])",
+      "reason": "the stale-container clean-up lists exited runner containers; it starts none"
+    },
+    {
+      "file": "src/rituals/scheduler.ts",
+      "text": "execFileAsync(\"docker\", [\"container\", \"rm\", id])",
+      "reason": "the stale-container clean-up removes exited runner containers its strict name filter selected; it starts none"
+    },
+    {
+      "file": "src/tools/builtin/vps-management.ts",
+      "text": "execFileAsync(\"docker\", [\"ps\", \"--format\", \"{{.Names}}\\t{{.Status}}\", \"--no-trunc\"])",
+      "reason": "read-only container listing for the operator status report; it starts none"
+    }
+  ]
+}
