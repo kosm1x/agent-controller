@@ -275,6 +275,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-18 06:02 UTC — the ratchet is COMMITTED `9e46f239` (queue 4fk): a lock test compares the tree's import cycles (3 today: 26, 8 and 4 files) and its 63 mutual directory pairs with a baseline in both directions, so a new one fails and every cut lowers the baseline in the same commit. Next: the two redundant dynamic imports, then the cuts.**
+
 **Status 2026-11-11 08:21 UTC — first piece COMMITTED `71b42aa2` (queue 4dl), not yet deployed: the ritual failure recorder is a leaf module and one import loop is gone. The rest of the batch (cycle cuts, ratchet, pure moves) keeps its place in the order.**
 
 **Status 2026-11-11 03:31 UTC — re-checked by a read-only reviewer with a parse-only import graph (queue 4dc): cycles unchanged (25 / 8 / 4 / 2 files), mutual directory pairs 60 (57 at the review); the failure recorder moves first because batch 4 needs it; seven of the listed moves are pure, six wait (A2, A4, B3, C1, D1, F1).**
@@ -297,6 +299,8 @@ Prerequisites for ANY file move (new in this review): seven source-text test pin
 Not now: an interceptor table (tried and dropped 07-05); splitting the two inference loops; the 4-file inference cycle (real recursion); a directory layer rule (42 of 45 directories are mutually reachable); bulk dynamic→static conversion.
 
 ### Batch 8 — Conventions (no ruling needed)
+
+**Status 2026-11-18 06:02 UTC — first piece COMMITTED `f6ac3444` (queue 4fl): four of the five rules (scheduling, database handle, column changes, container seam) are pinned by one parser-based lock test with a 45-entry named allow-list compared in both directions. The fifth rule (plain-string failures in tool handlers) waits for batch 10; the description check, the ledger constants and the three sentences are still to do.**
 
 **Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): five rules in one compiler-parsed lock test with named allow-lists; three sentences of the agent instructions corrected; hand-typed ledger prefixes are 10 sites, not 7; one new defect found on the way (queue 4df).**
 
