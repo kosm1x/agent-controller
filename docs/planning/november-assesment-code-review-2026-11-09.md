@@ -145,6 +145,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-18 19:37 UTC — the two producers that could still hide a failure from the confirmation card now say error: a failed or partly written structured PDF ingest (one short line with the counts, the full summary beside it) and a post failure without a message, `abab5262` (queue 4ga). Left of V2: an exception without a message at the gated layer, in a file the removal scripts load.**
+
 **Status 2026-11-18 18:45 UTC — V2 (the false success mark) is FIXED `ff537668` (queue 4fy): the operator ruled on 2026-11-18 that the failed check step, the partly failed batch delete and the memory forget whose correction stayed all count as failures; one rule in the router decides, reviewed twice. Not covered, listed in 4fy: plain-text failures of the structured PDF ingest and a failure with an empty error text. Still waiting for rulings: D8 and D3 (queue 4cx b, c).**
 
 **Status 2026-11-14 04:48 UTC — the signal-baseline defect is FIXED `9ec11c45` (reviewed twice). Correction to the line below: the computation was not failing nightly — its only caller, the overnight tuning routine, is switched off on the live service and never runs; the query defect would have failed it whenever it ran. Whether baselines get their own nightly schedule is a yes/no in queue 4ex.**
