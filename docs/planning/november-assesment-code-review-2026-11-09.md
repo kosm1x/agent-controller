@@ -275,6 +275,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-18 07:40 UTC — the eight remaining dynamic imports of already-loaded modules are static, COMMITTED `dbc663a2` (queue 4fq); baseline unchanged; three calls gained their first test. Next in batch 7: the messaging trio (two leaf modules out of the router, then how the router is constructed).**
+
 **Status 2026-11-18 07:18 UTC — the two dynamic imports of already-loaded modules (router, fast runner) are static, COMMITTED `f0d93a9e` (queue 4fp); baseline unchanged; four new test cases. Next in batch 7: the eight identical places the sweep found, then the messaging trio.**
 
 **Status 2026-11-18 06:02 UTC — the ratchet is COMMITTED `9e46f239` (queue 4fk): a lock test compares the tree's import cycles (3 today: 26, 8 and 4 files) and its 63 mutual directory pairs with a baseline in both directions, so a new one fails and every cut lowers the baseline in the same commit. Next: the two redundant dynamic imports, then the cuts.**
