@@ -479,9 +479,10 @@ export const WRITE_TOOLS = new Set([
   // v7.7.2 Layer 4b retry-swap fix: jarvis_propose_directive is not
   // strictly a "write" tool, but it IS a tool where narrating success
   // without calling it is a hallucination. Including it here lets the
-  // fast-runner retry path (line ~1218) swap in the retry output when
-  // the LLM finally calls the tool on the second pass. Same rationale
-  // as google_workspace_cli above — the set tracks "narrate = must-call".
+  // fast-runner hallucination retry (`retryCalledWrite`) swap in the retry
+  // output when the LLM finally calls the tool on the second pass. Same
+  // rationale as google_workspace_cli above — the set tracks
+  // "narrate = must-call".
   "jarvis_propose_directive",
   // File system
   "file_write",
@@ -1162,9 +1163,10 @@ const fastRunnerBranches = {
         }
         // 4. VARIABLE: variable persona + per-call extras (pattern,
         // checkpoint, relevant userFacts, enrichment) come right after the cache
-        // boundary. Tagged `cacheable: false` so the claude-sdk shim routes
-        // it to a user-message prefix; without this, per-task byte-drift
-        // here invalidates the entire systemPrompt cache prefix (the SDK path
+        // boundary. Tagged `cacheable: false` so `splitSystemMessagesByCache`
+        // on the SDK path below routes it to the user-prompt prefix; without
+        // this, per-task byte-drift here invalidates the entire systemPrompt
+        // cache prefix (the SDK path
         // joins the stable system messages into ONE `systemPrompt` string,
         // cached as one prefix — the `systemPrompt` option of `Options` in
         // `@anthropic-ai/claude-agent-sdk`).
@@ -2067,10 +2069,11 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         // Safety net: if the LLM returned substantial content but reported
         // BLOCKED/NEEDS_CONTEXT (e.g. a confirmation prompt for a destructive
         // action), promote to DONE_WITH_CONCERNS so the content gets delivered.
-        // Mirrors the OpenAI path (below, ~line 896). Without this, confirmation
-        // prompts from the claude-sdk path get silently dropped because
-        // result.success=false → dispatcher marks the task failed and the
-        // messaging router sends a generic failure message instead of the text.
+        // Mirrors the OpenAI path's safety net below. Without this,
+        // confirmation prompts from the claude-sdk path get silently dropped
+        // because result.success=false → dispatcher marks the task failed and
+        // the messaging router sends a generic failure message instead of the
+        // text.
         if (
           (parsed.status === "BLOCKED" || parsed.status === "NEEDS_CONTEXT") &&
           parsed.cleanContent.length > 100
@@ -2123,7 +2126,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
         }
 
         // Scope telemetry — record tool execution on the SDK path. The
-        // openai-path does this ~100 lines below (after inferWithTools),
+        // openai-path records it further below (its own `recordToolExecution` call),
         // but the SDK branch returns early so a separate record call is
         // required. Without this, scope_telemetry.tools_called is always
         // "[]" for Sonnet-routed tasks, and deferred-tool activation
@@ -2809,7 +2812,7 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
           // Sprint 1 R-1: record retry outcome counter for R-5's measurement.
           // Only count "success" when we actually ran the retry (not when no
           // hallucination existed in the first place — that path is excluded
-          // by the outer `if (detectsHallucinatedExecution)` at line 1338).
+          // by the outer `!hasVision && detectsHallucinatedExecution(...)` condition).
           if (shouldRetry) {
             recordFastRetryOutcome("success");
             emitTraceEvent({

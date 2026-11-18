@@ -120,8 +120,9 @@ export function listFirstPartySkills(): FirstPartySkill[] {
  * Filter the catalog to skills whose `requiresTool` is in the supplied tool
  * list. Used by `availableSkillsSection` so the prompt never advertises a
  * skill whose parent tool isn't currently scoped — addresses the H1 contract
- * violation against the identity rule "no menciones herramientas que no están
- * en tu lista" (`identitySection` in messaging/prompt-sections.ts, section
+ * violation against the identity rule "NO intentes usar, mencionar, ni
+ * describir herramientas que no están en tu lista" (`identitySection` in
+ * messaging/prompt-sections.ts, section
  * "REGLA CRÍTICA: Solo usa herramientas disponibles").
  *
  * Match semantics: exact equality via Set lookup. Substring / prefix matches

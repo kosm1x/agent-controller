@@ -4,9 +4,10 @@
  *
  * The dispatcher persists three Prometheus artifacts per run (the `UPDATE runs`
  * that writes `goal_graph` in `dispatchWithSlot`, src/dispatch/dispatcher.ts):
- *   runs.goal_graph — JSON.stringify(OrchestratorResult.goalGraph) = { goals }
- *   runs.trace      — JSON.stringify(OrchestratorResult.trace)     = TraceEvent[]
- *   runs.output     — JSON.stringify(heavy-runner output)          =
+ *   runs.goal_graph — JSON.stringify(OrchestratorResult.goalGraph, storeReplacer)
+ *                     = { goals }
+ *   runs.trace      — stringifyRedacted(OrchestratorResult.trace) = TraceEvent[]
+ *   runs.output     — stringifyRedacted(heavy-runner output)      =
  *                     { content, score, learnings, finalAnswer }
  *
  * PERSISTENCE GAP (intentional, documented): `runs.output` is the heavy-runner's

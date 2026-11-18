@@ -204,7 +204,7 @@ async function main(): Promise<void> {
 
   // Round-2 C-RES-6 fix: fire `task.failed` events for the rows reconcile
   // just flipped. Must happen after initEventBus above but before reaction
-  // manager starts (line ~172) — the reaction manager subscribes on start()
+  // manager starts (`reactionManager.start()` below) — it subscribes on start()
   // and immediately drains any unread events, so ordering matters.
   if (orphanedTaskIds.length > 0) {
     const { writeCheckpoint } = await import("./runners/checkpoint.js");

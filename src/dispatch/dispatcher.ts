@@ -136,11 +136,10 @@ export interface TaskSubmission {
    */
   replyTracked?: boolean;
   /**
-   * @internal Set on a retry submission so the new task's `retry_count`
-   * column starts at the predecessor's value + 1. Used by both the
-   * dispatcher's _isRequiredToolRetry path AND the swarm-retry-policy
-   * to enforce the shared per-sub-task retry budget (queue #231).
-   * Defaults to 0 for fresh submissions.
+   * @internal Set on a retry submission: the value stored in the new
+   * task's `retry_count` column. Passed by the required-tool retry in
+   * `dispatchWithSlot` and by `attemptSubtaskRetry` in
+   * src/runners/swarm-runner.ts. Defaults to 0 for fresh submissions.
    */
   retryCount?: number;
   /**
@@ -540,11 +539,11 @@ export async function submitTask(submission: TaskSubmission): Promise<{
 
   // v8 S1: strip cache-break marker for persistence + classifier + events.
   // The marker is preserved on `submission.description` for the in-memory
-  // RunnerInput path (line ~360) so the fast-runner chat branch still splits
-  // on it. DB / dashboards / mc-ctl / classifier / event listeners see clean
-  // text. Retries fetched from DB will lack the marker — they fall back
-  // gracefully (whole description treated as stable, no cache benefit on
-  // retry, no functional break).
+  // `RunnerInput` built in `dispatchWithSlot`, so the fast-runner chat branch
+  // still splits on it. DB / dashboards / mc-ctl / classifier / event
+  // listeners see clean text. Retries fetched from DB will lack the marker —
+  // they fall back gracefully (whole description treated as stable, no cache
+  // benefit on retry, no functional break).
   const cleanDescription = stripCacheMarker(submission.description);
 
   // Classify
@@ -579,11 +578,11 @@ export async function submitTask(submission: TaskSubmission): Promise<{
   });
 
   // Insert task. retry_count defaults to 0 for fresh submissions; the
-  // _isRequiredToolRetry path at line ~471 and the swarm-retry-policy
-  // pass retryCount=predecessor.retry_count+1 to budget the per-sub-task
-  // retry window (queue #231). Title, description and input pass the
-  // mailbox-password store rule (store-withhold.ts); the runner still gets
-  // the submission as it came.
+  // required-tool retry in `dispatchWithSlot` and `attemptSubtaskRetry` in
+  // src/runners/swarm-runner.ts pass a `retryCount` to budget the
+  // per-sub-task retry window (queue #231). Title, description and input pass
+  // the mailbox-password store rule (store-withhold.ts); the runner still
+  // gets the submission as it came.
   db.prepare(
     `
     INSERT INTO tasks (task_id, parent_task_id, spawn_type, title, description, priority, status, agent_type, classification, input, metadata, retry_count, project_slug, project_source)
