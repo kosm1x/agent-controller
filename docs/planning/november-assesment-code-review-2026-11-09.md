@@ -330,6 +330,8 @@ Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called
 
 ### Batch 11 — Comments (ruling 12)
 
+**Status 2026-11-18 17:05 UTC — C1 remaining false statements outside the removal list COMMITTED `047b1174`; C2 citations by name, first part COMMITTED `0ef41ba4` (queue 4fw): 36 of 46 rows rewritten in 18 files, 1 already gone, 9 left in five files the removal scripts load. Still open in this batch: seven C1 findings and nine C2 rows in those files, and C3 (the shrink-only check on added comment lines).**
+
 **Status 2026-11-18 15:42 UTC — C1 first part COMMITTED `fd7c7ca5` (queue 4fu): thirteen false comments corrected in eleven files, comments only (identical code tokens, checked twice). Left of C1: seven findings in files the removal scripts load, and one false echo string in a pre-deploy script. C2 (line citations → symbol names) and C3 (the shrink-only check on added lines) not started.**
 
 **Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): 22 false comments with corrected text, 46 file-and-line citations (about 10 right); C3 becomes a shrink-only test instead of a workflow step.**
