@@ -300,6 +300,8 @@ Not now: an interceptor table (tried and dropped 07-05); splitting the two infer
 
 ### Batch 8 — Conventions (no ruling needed)
 
+**Status 2026-11-18 06:39 UTC — the description check is COMMITTED `551fa483` (queue 4fm): it now reads every host-defined tool (197) and the whole not-for block, and the legacy list shrank from 97 to 82. The three wrong sentences of the agent instructions are corrected (4fn). Left: the ledger prefix constants (after the removal scripts) and the plain-string failure rule (with batch 10).**
+
 **Status 2026-11-18 06:02 UTC — first piece COMMITTED `f6ac3444` (queue 4fl): four of the five rules (scheduling, database handle, column changes, container seam) are pinned by one parser-based lock test with a 45-entry named allow-list compared in both directions. The fifth rule (plain-string failures in tool handlers) waits for batch 10; the description check, the ledger constants and the three sentences are still to do.**
 
 **Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): five rules in one compiler-parsed lock test with named allow-lists; three sentences of the agent instructions corrected; hand-typed ledger prefixes are 10 sites, not 7; one new defect found on the way (queue 4df).**
