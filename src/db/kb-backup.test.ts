@@ -28,6 +28,7 @@ vi.mock("./jarvis-fs.js", async (importOriginal) => {
 });
 
 import {
+  deleteBackupRow,
   restoreKbFromRemote,
   stripNulBytes,
   syncKbToRemote,
@@ -218,6 +219,79 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
     delete process.env.COMMIT_DB_KEY;
     const result = await syncKbToRemote();
     expect(result).toMatchObject({ pushed: 0, errors: 0 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteBackupRow — one row by exact path, true only on a success status", () => {
+  const OLD_KEY = process.env.COMMIT_DB_KEY;
+
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.COMMIT_DB_KEY;
+    else process.env.COMMIT_DB_KEY = OLD_KEY;
+    vi.restoreAllMocks();
+  });
+
+  const P = "notas/a,b (c)*.md";
+  const answer = (body: string, status = 200) => new Response(body, { status });
+
+  it("sends one DELETE: eq. filter on the encoded path, the path column only, the deleted rows returned", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(answer(JSON.stringify([{ path: P }])));
+    expect(await deleteBackupRow(P)).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(
+      `https://db.mycommit.net/rest/v1/jarvis_kb_backup?path=eq.${encodeURIComponent(P)}&select=path`,
+    );
+    expect(init.method).toBe("DELETE");
+    expect((init.headers as Record<string, string>).Prefer).toBe(
+      "return=representation",
+    );
+    expect(init.body).toBeUndefined();
+  });
+
+  // Success means the server deleted exactly the one row asked for: zero rows, several
+  // rows or another path are all a failure, and so is any answer that cannot be read.
+  it("true only for exactly one deleted row with exactly this path", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const cases: Array<[string, Response | Error]> = [
+      ["no row", answer("[]")],
+      ["two rows", answer(JSON.stringify([{ path: P }, { path: P }]))],
+      ["another path", answer(JSON.stringify([{ path: "notas/a,b (c).md" }]))],
+      ["the path with a trailing space", answer(JSON.stringify([{ path: `${P} ` }]))],
+      ["a row without a path", answer(JSON.stringify([{}]))],
+      ["a null row", answer("[null]")],
+      ["not an array", answer(JSON.stringify({ path: P }))],
+      ["not JSON", answer("not json")],
+      ["an empty success body", new Response(null, { status: 204 })],
+      ["a client error", answer(JSON.stringify([{ path: P }]), 400)],
+      ["a server error", answer("{}", 503)],
+      ["a thrown fetch", new Error("synthetic")],
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    for (const [name, a] of cases) {
+      fetchSpy.mockImplementationOnce(async () => {
+        if (a instanceof Error) throw a;
+        return a;
+      });
+      expect(await deleteBackupRow(P), name).toBe(false);
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(cases.length);
+  });
+
+  it("an empty or blank path and a missing key send nothing and are false", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(answer(JSON.stringify([{ path: "" }])));
+    expect(await deleteBackupRow("")).toBe(false);
+    expect(await deleteBackupRow(" ")).toBe(false);
+    expect(await deleteBackupRow("\n")).toBe(false);
+    delete process.env.COMMIT_DB_KEY;
+    expect(await deleteBackupRow("notas/a.md")).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -73,8 +73,11 @@ const V_LOG_NOW = "Cj4Dk5El6Fm7Gn8Ho9Ip";
 const V_MEM = "Ue2Vf3Wg4Xh5Yi6Zj7";
 const V_DIRTY = "Rt1Sy2Tu3Uv4Vw5Wx6";
 const NOT_SEEN = "Lm3Nn4Oo5Pp6Qq7Rr8Ss"; // value-shaped, not in the fingerprint table
-const VALUES = [V_SYNC, V_ORPH, V_SPLIT, V_SPLIT_A, V_SPLIT_B, V_BACK, V_LOG_OLD, V_LOG_NOW, V_MEM, V_DIRTY];
-const SEEN = [V_SYNC, V_ORPH, V_SPLIT, V_BACK, V_LOG_OLD, V_LOG_NOW, V_MEM, V_DIRTY];
+// The producer's shape (28 letters and digits): one in the fingerprint table, one not.
+const V_BACK2 = "Mx4Np7Qr2St9Uv3Wy6Za8Bc5De1F";
+const NOT_SEEN2 = "Gh5Jk8Lm2Np4Qr7St1Uv9Wx3Yz6A";
+const VALUES = [V_SYNC, V_ORPH, V_SPLIT, V_SPLIT_A, V_SPLIT_B, V_BACK, V_LOG_OLD, V_LOG_NOW, V_MEM, V_DIRTY, V_BACK2, NOT_SEEN2];
+const SEEN = [V_SYNC, V_ORPH, V_SPLIT, V_BACK, V_LOG_OLD, V_LOG_NOW, V_MEM, V_DIRTY, V_BACK2];
 
 const P_SYNC = "notes/sintetica-resync.md";
 const P_SPLIT = "notes/sintetica-split.md";
@@ -95,6 +98,23 @@ function passesFilter(raw: string): boolean {
   if (!line.startsWith(`${TAG} `)) return false;
   const rest = line.slice(TAG.length + 1);
   return COUNT_LINE_RE.test(rest) && !looksLikeValue(rest);
+}
+// ── the operator wrapper's verdict on a run (judge_outside), for exit codes 0 and 1, on the lines its filter shows ──
+function wrapperVerdict(mode: "dry" | "apply", rc: number, raw: string[]): string {
+  const shown = raw.filter(passesFilter).map((l) => l.replaceAll("—", "-"));
+  const has = (s: string): boolean => shown.includes(`${TAG} ${s}`);
+  const some = (re: RegExp): boolean => shown.some((l) => re.test(l));
+  const ok = has("nothing to change");
+  const dry = has("dry run - nothing written; pass --apply to act");
+  const fail = some(/^\[prune-mailbox-passwords-outside\] finished with failures: problems=[0-9]+ /);
+  const acted = some(/^\[prune-mailbox-passwords-outside\] acted=[0-9]+: run the same command again/);
+  const timing = some(/^\[prune-mailbox-passwords-outside\] timing ms=[0-9]+$/);
+  if (rc === 1) return fail && timing ? "dirty" : "unknown";
+  if (rc !== 0 || fail || !timing || Number(ok) + Number(dry) + Number(acted) !== 1) return "unknown";
+  if (ok) return "clean";
+  if (dry && mode === "dry") return "found";
+  if (acted && mode === "apply") return "changed";
+  return "unknown";
 }
 function assertSafe(lines: string[]): void {
   expect(lines.length).toBeGreaterThan(0);
@@ -177,10 +197,12 @@ function remoteFixture(): Record<RemoteTable, Map<string, RemoteRow>> {
 
 type Mock = OutsideDeps & {
   tables: Record<RemoteTable, Map<string, RemoteRow>>;
-  writes: { resync: LocalRow[]; delete: string[]; reupload: string[] };
-  failOn: { list?: RemoteTable; resync?: string; delete?: string; reupload?: string; get?: string };
+  writes: { resync: LocalRow[]; delete: string[]; backupDelete: string[]; reupload: string[] };
+  failOn: { list?: RemoteTable; resync?: string; delete?: string; backupDelete?: string; reupload?: string; get?: string };
   /** When false, a re-sync does not change the remote row (a rejected upsert). */
   resyncLands: boolean;
+  /** When false, a backup delete reports success but the row stays. */
+  backupDeleteLands: boolean;
   /** Runs on each listing (after the local rows were read, before any write). */
   onList?: () => void;
   /** Runs inside a re-upload call. */
@@ -190,9 +212,10 @@ type Mock = OutsideDeps & {
 function mockDeps(over: Partial<OutsideDeps["settings"]> = {}): Mock {
   const d: Mock = {
     tables: remoteFixture(),
-    writes: { resync: [], delete: [], reupload: [] },
+    writes: { resync: [], delete: [], backupDelete: [], reupload: [] },
     failOn: {},
     resyncLands: true,
+    backupDeleteLands: true,
     settings: { searchDb: true, embedding: true, drive: true, ...over },
     async list(t) {
       if (d.failOn.list === t) throw Object.assign(new Error("synthetic"), { code: "ECONNRESET" });
@@ -213,6 +236,12 @@ function mockDeps(over: Partial<OutsideDeps["settings"]> = {}): Mock {
       d.writes.delete.push(p);
       if (d.failOn.delete === p) throw new Error("synthetic");
       return d.tables.kb_entries.delete(p) || true; // the real pgDelete is ok also for 0 rows
+    },
+    async deleteBackupRow(p) {
+      d.writes.backupDelete.push(p);
+      if (d.failOn.backupDelete === p) throw new Error("synthetic");
+      if (d.backupDeleteLands) d.tables.jarvis_kb_backup.delete(p);
+      return true; // the real delete is ok also for 0 rows
     },
     async settle() {},
     async reupload(p) {
@@ -243,7 +272,8 @@ function opts(over: Partial<OutsideOptions> = {}): OutsideOptions & { lines: str
   };
 }
 
-const writeCount = (d: Mock): number => d.writes.resync.length + d.writes.delete.length + d.writes.reupload.length;
+const writeCount = (d: Mock): number =>
+  d.writes.resync.length + d.writes.delete.length + d.writes.backupDelete.length + d.writes.reupload.length;
 const line = (lines: string[], prefix: string): string => lines.find((l) => l.startsWith(`${TAG} ${prefix}`)) ?? "";
 const driveDoneOf = (records: unknown[][]): Set<string> =>
   new Set(records.filter((r) => r[0] === "drive_reuploaded").map((r) => `${String(r[1])}\0${String(r[2])}`));
@@ -418,15 +448,16 @@ describe("runOutside", () => {
     const r = await runOutside(o, d);
     expect(writeCount(d)).toBe(0);
     expect(o.records).toEqual([]);
-    expect(r).toEqual({ ok: false, problems: 1, pending: 5 }); // the backup orphan needs a decision
+    expect(r).toEqual({ ok: true, problems: 0, pending: 6 }); // the backup orphan is a pending delete
     expect(line(o.lines, "search_copy table=")).toBe(
       `${TAG} search_copy table=kb_entries rows=4 hits=3 with_local_row=2 without_local_row=1 local_row_not_clean=0`,
     );
     expect(line(o.lines, "search_copy would_")).toBe(`${TAG} search_copy would_resync=2 would_delete=1 delete_bound=${DELETE_BOUND}`);
-    expect(line(o.lines, "backup_copy")).toContain("rows=3 hits=2 fixed_by_nightly_push=1 local_row_not_clean=0 needs_decision=1");
+    expect(line(o.lines, "backup_copy table=")).toContain("rows=3 hits=2 fixed_by_nightly_push=1 local_row_not_clean=0 without_local_row=1");
+    expect(line(o.lines, "backup_copy would_")).toContain("would_delete=1 would_delete_total=2");
     expect(line(o.lines, "drive_copy to_")).toBe(`${TAG} drive_copy to_reupload=2 already_reuploaded=0 local_row_not_clean=0`);
     expect(o.lines).toContain(`${TAG} memory_service=not_contacted`);
-    expect(o.lines.at(-2)).toBe(`${TAG} finished with failures: problems=1 (see the notes above); fix them and run the same command again`);
+    expect(o.lines.at(-2)).toBe(`${TAG} dry run — nothing written; pass --apply to act`);
     assertSafe(o.lines);
   });
 
@@ -468,7 +499,7 @@ describe("runOutside", () => {
     assertSafe(o.lines);
 
     for (const apply of [true, false]) {
-      d.writes = { resync: [], delete: [], reupload: [] };
+      d.writes = { resync: [], delete: [], backupDelete: [], reupload: [] };
       const o2 = opts({ apply, driveDone: driveDoneOf(o.records) });
       const r2 = await runOutside(o2, d);
       expect(r2).toEqual({ ok: true, problems: 0, pending: 0 });
@@ -483,6 +514,7 @@ describe("runOutside", () => {
     seedDb();
     seedCleanOutside();
     const d = mockDeps();
+    d.tables.jarvis_kb_backup.delete(P_BACK_ORPH); // search orphans only here; both copies together below
     for (let i = 0; i <= DELETE_BOUND; i++) {
       const p = `extracted/sintetico-${i}.md`;
       d.tables.kb_entries.set(p, { path: p, title: "Hecho", content: `valor ${V_ORPH} extraído` });
@@ -512,6 +544,7 @@ describe("runOutside", () => {
       [DELETE_BOUND + 1, DELETE_BOUND + 1],
     ] as const) {
       const d = mockDeps();
+      d.tables.jarvis_kb_backup.delete(P_BACK_ORPH); // search orphans only here; both copies together below
       for (let i = 0; i < extra; i++) {
         const p = `extracted/sintetico-${i}.md`;
         d.tables.kb_entries.set(p, { path: p, title: "Hecho", content: `valor ${V_ORPH}` });
@@ -757,8 +790,311 @@ describe("runOutside", () => {
   });
 });
 
+// The nightly push rewrites only the backup rows of notes that exist locally, so a removed
+// value in the row of a note deleted locally would stay there for good. Such a row (a hit
+// with no local row) is deleted; every other row stays, because the backup exists to keep
+// notes, including notes deleted locally.
+describe("backup copy: only a row that holds a removed value and has no local row is deleted", () => {
+  const P_BACK_KEEP = "lessons/sintetica-sin-valor.md";
+  /** The fixture plus the backup row of a note deleted locally that holds no known value. */
+  function withKeptOrphan(): Mock {
+    const d = mockDeps();
+    d.tables.jarvis_kb_backup.set(P_BACK_KEEP, { path: P_BACK_KEEP, title: "Lección vieja", content: `Sin valor visto: ${NOT_SEEN2}.` });
+    return d;
+  }
+
+  it("a hit without a local row: pending in a dry run, deleted and read back in apply; the next run is clean", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = withKeptOrphan();
+    const dry = opts();
+    expect(await runOutside(dry, d)).toEqual({ ok: true, problems: 0, pending: 6 });
+    expect(writeCount(d)).toBe(0);
+    expect(dry.records).toEqual([]);
+    expect(line(dry.lines, "backup_copy table=")).toBe(
+      `${TAG} backup_copy table=jarvis_kb_backup rows=4 hits=2 fixed_by_nightly_push=1 local_row_not_clean=0 without_local_row=1 path_empty=0 (the nightly push at 22:30 service time rewrites every path that has a local row; a hit without one is deleted here)`,
+    );
+    expect(line(dry.lines, "backup_copy would_")).toBe(
+      `${TAG} backup_copy would_delete=1 would_delete_total=2 delete_bound=${DELETE_BOUND} (the bound and --confirm-delete count both copies together)`,
+    );
+    assertSafe(dry.lines);
+
+    const o = opts({ apply: true });
+    expect(await runOutside(o, d)).toEqual({ ok: true, problems: 0, pending: 6 });
+    expect(d.writes.backupDelete).toEqual([P_BACK_ORPH]);
+    expect([...d.tables.jarvis_kb_backup.keys()].sort()).toEqual([P_SYNC, P_CLEAN, P_BACK_KEEP].sort());
+    expect(o.records).toContainEqual(["backup_deleted", P_BACK_ORPH]);
+    expect(line(o.lines, "backup_copy deleted")).toBe(`${TAG} backup_copy deleted=1 verified=1 failed=0 unconfirmed_gone=0 not_verified=0 changed_since_listing=0`);
+    expect(o.lines.at(-2)).toBe(`${TAG} acted=6: run the same command again; it must find nothing to do`);
+    assertSafe(o.lines);
+
+    for (const apply of [true, false]) {
+      d.writes = { resync: [], delete: [], backupDelete: [], reupload: [] };
+      const o2 = opts({ apply, driveDone: driveDoneOf(o.records) });
+      expect(await runOutside(o2, d)).toEqual({ ok: true, problems: 0, pending: 0 });
+      expect(writeCount(d)).toBe(0);
+      expect(line(o2.lines, "backup_copy table=")).toContain("rows=3 hits=1 fixed_by_nightly_push=1 local_row_not_clean=0 without_local_row=0");
+      expect(o2.lines.at(-2)).toBe(`${TAG} nothing to change`);
+    }
+  });
+
+  it("a row that holds no removed value is never deleted, with or without a local row (dry run and apply)", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = withKeptOrphan();
+    d.tables.jarvis_kb_backup.delete(P_BACK_ORPH);
+    for (const apply of [false, true]) {
+      const o = opts({ apply });
+      expect((await runOutside(o, d)).ok).toBe(true);
+      expect(d.writes.backupDelete).toEqual([]);
+      expect([...d.tables.jarvis_kb_backup.keys()].sort()).toEqual([P_SYNC, P_CLEAN, P_BACK_KEEP].sort());
+      expect(line(o.lines, "backup_copy table=")).toContain("rows=3 hits=1 fixed_by_nightly_push=1 local_row_not_clean=0 without_local_row=0");
+      expect(line(o.lines, apply ? "backup_copy deleted" : "backup_copy would_")).toBe(
+        apply ? "" : `${TAG} backup_copy would_delete=0 would_delete_total=1 delete_bound=${DELETE_BOUND} (the bound and --confirm-delete count both copies together)`,
+      );
+    }
+  });
+
+  it("a hit whose local row still holds a value is a failure and is not deleted; a hit with a clean local row is only counted", async () => {
+    seedDb({
+      extra: (db) => db.prepare("UPDATE jarvis_files SET content = ? WHERE path = ?").run(`Sigue aquí ${V_DIRTY}`, P_SPLIT),
+    });
+    seedCleanOutside();
+    const d = mockDeps();
+    d.tables.kb_entries.clear();
+    d.tables.jarvis_kb_backup.delete(P_BACK_ORPH);
+    d.tables.jarvis_kb_backup.set(P_SPLIT, { path: P_SPLIT, title: "Nota partida", content: `Copia con ${V_BACK2}.` });
+    const o = opts({ apply: true });
+    const r = await runOutside(o, d);
+    expect(r).toEqual({ ok: false, problems: 1, pending: 2 }); // pending: the two drive heads
+    expect(d.writes.backupDelete).toEqual([]);
+    expect([...d.tables.jarvis_kb_backup.keys()].sort()).toEqual([P_SYNC, P_CLEAN, P_SPLIT].sort());
+    expect(line(o.lines, "backup_copy table=")).toContain("rows=3 hits=2 fixed_by_nightly_push=1 local_row_not_clean=1 without_local_row=0");
+    expect(line(o.lines, "backup_copy deleted")).toBe("");
+    expect(o.lines.at(-2)).toContain("finished with failures: problems=1 ");
+    assertSafe(o.lines);
+  });
+
+  it("the bound counts the deletions of both copies together, decided before the first write", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps(); // already one search orphan and one backup orphan
+    const searchN = 25;
+    const backupN = DELETE_BOUND + 1 - searchN;
+    const total = DELETE_BOUND + 1;
+    for (let i = 1; i < searchN; i++) {
+      const p = `extracted/sintetico-${i}.md`;
+      d.tables.kb_entries.set(p, { path: p, title: "Hecho", content: `valor ${V_ORPH} extraído` });
+    }
+    for (let i = 1; i < backupN; i++) {
+      const p = `lessons/sintetica-${i}.md`;
+      d.tables.jarvis_kb_backup.set(p, { path: p, title: "Lección", content: `Lección con ${V_BACK2} dentro.` });
+    }
+    const dry = opts();
+    await runOutside(dry, d);
+    expect(line(dry.lines, "search_copy would_")).toContain(`would_delete=${searchN} `);
+    expect(line(dry.lines, "backup_copy would_")).toContain(`would_delete=${backupN} would_delete_total=${total} delete_bound=${DELETE_BOUND}`);
+
+    const o = opts({ apply: true });
+    await expect(runOutside(o, d)).rejects.toMatchObject({ code: "DELETE_BOUND" });
+    expect(writeCount(d)).toBe(0);
+    expect(o.lines).toEqual([
+      `${TAG} REFUSED: would_delete=${total} is above the bound of ${DELETE_BOUND}; check the fingerprint table, then repeat the run with --confirm-delete ${total}; nothing written`,
+    ]);
+    assertSafe(o.lines);
+    for (const part of [searchN, backupN]) {
+      const m = opts({ apply: true, confirmDelete: part });
+      await expect(runOutside(m, d)).rejects.toMatchObject({ code: "CONFIRM_MISMATCH" });
+      expect(writeCount(d)).toBe(0);
+      expect(m.lines).toEqual([`${TAG} REFUSED: --confirm-delete does not match would_delete=${total}; nothing written`]);
+    }
+
+    const ok = opts({ apply: true, confirmDelete: total });
+    expect((await runOutside(ok, d)).ok).toBe(true);
+    expect(d.writes.delete).toHaveLength(searchN);
+    expect(d.writes.backupDelete).toHaveLength(backupN);
+  });
+
+  it("exactly the bound in total, both copies together, proceeds without the flag", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps(); // already one search orphan and one backup orphan
+    const searchN = 25;
+    const backupN = DELETE_BOUND - searchN;
+    for (let i = 1; i < searchN; i++) {
+      const p = `extracted/sintetico-${i}.md`;
+      d.tables.kb_entries.set(p, { path: p, title: "Hecho", content: `valor ${V_ORPH} extraído` });
+    }
+    for (let i = 1; i < backupN; i++) {
+      const p = `lessons/sintetica-${i}.md`;
+      d.tables.jarvis_kb_backup.set(p, { path: p, title: "Lección", content: `Lección con ${V_BACK2} dentro.` });
+    }
+    const o = opts({ apply: true });
+    expect((await runOutside(o, d)).ok).toBe(true);
+    expect(d.writes.delete.length + d.writes.backupDelete.length).toBe(DELETE_BOUND);
+    expect(d.writes.backupDelete).toHaveLength(backupN);
+  });
+
+  it("a hit whose path is empty or blank is a failure and is never deleted (dry run and apply)", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps();
+    d.tables.jarvis_kb_backup.delete(P_BACK_ORPH);
+    for (const p of ["", " "]) d.tables.jarvis_kb_backup.set(p, { path: p, title: "Sin ruta", content: `Copia con ${V_BACK2}.` });
+    for (const apply of [false, true]) {
+      const o = opts({ apply });
+      const r = await runOutside(o, d);
+      expect(r, String(apply)).toMatchObject({ ok: false, problems: 2 });
+      expect(d.writes.backupDelete).toEqual([]);
+      expect(d.tables.jarvis_kb_backup.has("") && d.tables.jarvis_kb_backup.has(" ")).toBe(true);
+      expect(line(o.lines, "backup_copy table=")).toContain("hits=3 fixed_by_nightly_push=1 local_row_not_clean=0 without_local_row=0 path_empty=2 ");
+      expect(o.lines.at(-2)).toContain("finished with failures: problems=2 ");
+      assertSafe(o.lines);
+    }
+  });
+
+  // The service keeps running during the script: between the listing and a delete the
+  // note can come back locally or the remote row can change or go. Each candidate is read
+  // again right before its delete and left for the next run unless it is still a hit
+  // without a local row; the other candidates of the run are still deleted.
+  it("each candidate is checked again right before its delete; a changed one is left and counted", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps();
+    const [pLocal, pClean, pGone, pThrows, pOther] = ["local", "limpia", "ida", "error", "otra"].map((x) => `lessons/sintetica-${x}.md`);
+    for (const p of [pLocal, pClean, pGone, pThrows, pOther]) {
+      d.tables.jarvis_kb_backup.set(p!, { path: p!, title: "Lección", content: `Lección con ${V_BACK2} dentro.` });
+    }
+    let once = false;
+    d.onList = () => {
+      if (once) return;
+      once = true;
+      rw((db) =>
+        db
+          .prepare("INSERT INTO jarvis_files (id, path, title, content, updated_at) VALUES ('8', ?, 'Vuelve', 'nota limpia', '2026-11-13 03:00:00')")
+          .run(pLocal),
+      );
+    };
+    const inner = d.get.bind(d);
+    const before = new Set<string>();
+    d.get = async (t, p) => {
+      const first = t === "jarvis_kb_backup" && !before.has(p);
+      if (first) before.add(p);
+      if (first && p === pClean) return { path: p, title: "Lección", content: "ya limpia" };
+      if (first && p === pGone) return null;
+      if (first && p === pThrows) throw new Error("synthetic");
+      if (first && p === pOther) return { path: `${p} `, title: "Lección", content: `Lección con ${V_BACK2} dentro.` };
+      return inner(t, p);
+    };
+    const o = opts({ apply: true });
+    const r = await runOutside(o, d);
+    expect(d.writes.backupDelete).toEqual([P_BACK_ORPH]);
+    for (const p of [pLocal, pClean, pGone, pThrows, pOther]) expect(d.tables.jarvis_kb_backup.has(p!), p).toBe(true);
+    expect(line(o.lines, "backup_copy deleted")).toBe(
+      `${TAG} backup_copy deleted=1 verified=1 failed=0 unconfirmed_gone=0 not_verified=0 changed_since_listing=5`,
+    );
+    expect(r).toMatchObject({ ok: false, problems: 5 });
+    expect(o.lines.at(-2)).toContain("finished with failures: problems=5 ");
+    assertSafe(o.lines);
+  });
+
+  it("a delete reported done whose row is still there, or whose read-back fails, is not verified: a failure", async () => {
+    seedDb();
+    seedCleanOutside();
+    for (const how of ["row_stays", "read_back_throws"] as const) {
+      const d = mockDeps();
+      if (how === "row_stays") d.backupDeleteLands = false;
+      else {
+        // only the read-back after the delete fails; the re-read before it succeeds
+        const inner = d.get.bind(d);
+        d.get = async (t, p) => {
+          if (t === "jarvis_kb_backup" && d.writes.backupDelete.includes(p)) throw new Error("synthetic");
+          return inner(t, p);
+        };
+      }
+      const o = opts({ apply: true });
+      const r = await runOutside(o, d);
+      expect(d.writes.backupDelete, how).toEqual([P_BACK_ORPH]);
+      expect(line(o.lines, "backup_copy deleted"), how).toBe(`${TAG} backup_copy deleted=1 verified=0 failed=0 unconfirmed_gone=0 not_verified=1 changed_since_listing=0`);
+      expect(r, how).toMatchObject({ ok: false, problems: 1 });
+      expect(o.lines.at(-2), how).toContain("finished with failures: problems=1 ");
+    }
+  });
+
+  it("a delete that throws is a failure; the other rows still proceed and the run ends with failures", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps();
+    const p2 = "lessons/sintetica-otra.md";
+    d.tables.jarvis_kb_backup.set(p2, { path: p2, title: "Otra", content: `Otra con ${V_BACK2}.` });
+    d.failOn = { backupDelete: P_BACK_ORPH };
+    const o = opts({ apply: true });
+    const r = await runOutside(o, d);
+    expect(d.writes.backupDelete).toEqual([P_BACK_ORPH, p2]);
+    expect(d.tables.jarvis_kb_backup.has(P_BACK_ORPH)).toBe(true);
+    expect(d.tables.jarvis_kb_backup.has(p2)).toBe(false);
+    expect(o.records).toContainEqual(["backup_deleted", p2]);
+    expect(o.records).not.toContainEqual(["backup_deleted", P_BACK_ORPH]);
+    expect(line(o.lines, "backup_copy deleted")).toBe(`${TAG} backup_copy deleted=1 verified=1 failed=1 unconfirmed_gone=0 not_verified=0 changed_since_listing=0`);
+    expect(d.writes.reupload.sort()).toEqual([P_PH, P_SYNC]); // the later kinds still ran
+    expect(r).toMatchObject({ ok: false, problems: 1 });
+    assertSafe(o.lines);
+  });
+
+  it("a delete that cannot be confirmed must not disappear from the record: recorded, read back once, gone counted on its own, always a failure", async () => {
+    seedDb();
+    seedCleanOutside();
+    // How the delete of P_BACK_ORPH ends, whether its row is gone afterwards, whether the read-back fails.
+    for (const [how, gone, readBackThrows] of [
+      ["answers_false", true, false],
+      ["answers_false", false, false],
+      ["throws", true, false],
+      ["throws", false, false],
+      ["answers_false", true, true],
+    ] as const) {
+      const name = `${how} gone=${gone} read_back_throws=${readBackThrows}`;
+      const d = mockDeps();
+      const p2 = "lessons/sintetica-otra.md";
+      d.tables.jarvis_kb_backup.set(p2, { path: p2, title: "Otra", content: `Otra con ${V_BACK2}.` });
+      const innerDelete = d.deleteBackupRow.bind(d);
+      d.deleteBackupRow = async (p) => {
+        if (p !== P_BACK_ORPH) return innerDelete(p);
+        d.writes.backupDelete.push(p);
+        if (gone) d.tables.jarvis_kb_backup.delete(p);
+        if (how === "throws") throw new Error("synthetic");
+        return false;
+      };
+      const reads: string[] = [];
+      const innerGet = d.get.bind(d);
+      d.get = async (t, p) => {
+        if (t !== "jarvis_kb_backup") return innerGet(t, p);
+        reads.push(p);
+        if (readBackThrows && p === P_BACK_ORPH && d.writes.backupDelete.includes(p)) throw new Error("synthetic");
+        return innerGet(t, p);
+      };
+      const o = opts({ apply: true });
+      const r = await runOutside(o, d);
+      expect(d.writes.backupDelete, name).toEqual([P_BACK_ORPH, p2]);
+      expect(o.records, name).toContainEqual(["backup_delete_unconfirmed", P_BACK_ORPH]);
+      expect(o.records, name).not.toContainEqual(["backup_deleted", P_BACK_ORPH]);
+      // a confirmed delete is unchanged: its own record only, read back and verified
+      expect(o.records, name).toContainEqual(["backup_deleted", p2]);
+      expect(o.records, name).not.toContainEqual(["backup_delete_unconfirmed", p2]);
+      // one re-read before the delete, exactly one read-back after it
+      expect(reads.filter((p) => p === P_BACK_ORPH), name).toHaveLength(2);
+      const goneSeen = gone && !readBackThrows;
+      expect(line(o.lines, "backup_copy deleted"), name).toBe(
+        `${TAG} backup_copy deleted=1 verified=1 failed=${goneSeen ? 0 : 1} unconfirmed_gone=${goneSeen ? 1 : 0} not_verified=0 changed_since_listing=0`,
+      );
+      expect(r, name).toMatchObject({ ok: false, problems: 1 });
+      expect(o.lines.at(-2), name).toContain("finished with failures: problems=1 ");
+      assertSafe(o.lines);
+    }
+  });
+});
+
 // ── the search database's REST interface, in process (no network) ──
-type Seen = { method: string; url: URL };
+type Seen = { method: string; url: URL; raw: string; prefer: string | null };
 function fakeRest(
   rows: RemoteRow[],
   o: {
@@ -772,19 +1108,25 @@ function fakeRest(
 ): { fetch: typeof fetch; seen: Seen[]; rows: RemoteRow[] } {
   const store = [...rows].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const seen: Seen[] = [];
-  const f = (async (input: string, init?: { method?: string }) => {
+  const f = (async (input: string, init?: { method?: string; headers?: Record<string, string> }) => {
     const url = new URL(input);
     const method = init?.method ?? "GET";
+    const prefer = init?.headers?.Prefer ?? null;
     o.onRequest?.(seen.length);
-    seen.push({ method, url });
+    seen.push({ method, url, raw: input, prefer });
     if (o.status) return new Response("{}", { status: o.status });
     const req = seen.length - 1;
     const filter = url.searchParams.get("path");
     const match = (r: RemoteRow): boolean =>
       filter === null ? true : filter.startsWith("eq.") ? r.path === filter.slice(3) : filter.startsWith("gt.") ? r.path > filter.slice(3) : false;
     if (method === "DELETE") {
-      for (let i = store.length - 1; i >= 0; i--) if (match(store[i]!)) store.splice(i, 1);
-      return new Response(null, { status: 204 });
+      const gone: RemoteRow[] = [];
+      for (let i = store.length - 1; i >= 0; i--) if (match(store[i]!)) gone.push(...store.splice(i, 1));
+      if (prefer !== "return=representation") return new Response(null, { status: 204 });
+      // As the server answers: the deleted rows, only the columns `select` names (all without it).
+      const cols = url.searchParams.get("select")?.split(",");
+      const shown = gone.map((r) => (cols ? Object.fromEntries(cols.map((c) => [c, r[c as keyof RemoteRow]])) : r));
+      return new Response(JSON.stringify(shown), { status: 200 });
     }
     const all = store.filter(match);
     const limit = Number(url.searchParams.get("limit") ?? all.length);
@@ -868,6 +1210,108 @@ describe("realDeps against an in-process REST fake", () => {
       [["path", "eq.notas/a&b.md"]],
       [["path", "eq.eq.notas/x.md"]],
     ]);
+  });
+
+  it("the backup delete addresses exactly one backup row by exact path, special characters included", async () => {
+    // Whitespace inside a path is part of it: a path with a leading or trailing space or a
+    // trailing newline addresses that row, never its trimmed neighbour.
+    const SPECIAL = [
+      "notas/a,b.md",
+      "notas/(x).md",
+      `notas/it's "q".md`,
+      "notas/50%.md",
+      "notas/a*b.md",
+      "notas/a\\b.md",
+      ".notas/oculta.md",
+      "eq.notas/x.md",
+      "notas/a&b.md",
+      " notas/x.md",
+      "notas/x.md ",
+      "notas/x.md\n",
+    ];
+    const NEIGHBOURS = ["notas/a.md", "notas/x.md", "notas/a,b.md.bak", "notas/(x).md.bak", "notas/50%25.md", "notas/a"];
+    const f = fakeRest([...SPECIAL, ...NEIGHBOURS].map((p) => ({ path: p, title: "t", content: "c" })));
+    process.env.COMMIT_DB_KEY = "synthetic-test-key";
+    globalThis.fetch = f.fetch;
+    const deps = await realDeps();
+    const left = new Set([...SPECIAL, ...NEIGHBOURS]);
+    for (const p of SPECIAL) {
+      expect(await deps.deleteBackupRow(p), p).toBe(true);
+      left.delete(p);
+      expect(f.rows.map((r) => r.path).sort(), p).toEqual([...left].sort());
+      const s = f.seen.at(-1)!;
+      expect(s.method, p).toBe("DELETE");
+      expect(s.raw, p).toBe(`https://db.mycommit.net/rest/v1/jarvis_kb_backup?path=eq.${encodeURIComponent(p)}&select=path`);
+      expect([...s.url.searchParams.entries()], p).toEqual([
+        ["path", `eq.${p}`],
+        ["select", "path"],
+      ]);
+      expect(s.prefer, p).toBe("return=representation");
+    }
+    expect(f.seen).toHaveLength(SPECIAL.length);
+    // An empty or blank path cannot address one row: false, and no request at all.
+    for (const p of ["", " ", "\n"]) expect(await deps.deleteBackupRow(p), JSON.stringify(p)).toBe(false);
+    expect(f.seen).toHaveLength(SPECIAL.length);
+    expect(f.rows.map((r) => r.path).sort()).toEqual([...left].sort());
+  });
+
+  it("a single-row read asks for at most two rows by exact path; more than one row for a path is ROW_NOT_UNIQUE", async () => {
+    const f = fakeRest([
+      { path: "notas/x.md", title: "a", content: "c" },
+      { path: "notas/x.md", title: "b", content: "c" },
+      { path: "notas/a&b.md", title: "t", content: "c" },
+    ]);
+    process.env.COMMIT_DB_KEY = "synthetic-test-key";
+    globalThis.fetch = f.fetch;
+    const deps = await realDeps();
+    for (const t of ["jarvis_kb_backup", "kb_entries"] as const) {
+      await expect(deps.get(t, "notas/x.md")).rejects.toMatchObject({ code: "ROW_NOT_UNIQUE" });
+      expect((await deps.get(t, "notas/a&b.md"))?.path).toBe("notas/a&b.md");
+      expect(await deps.get(t, "notas/z.md")).toBeNull();
+    }
+    expect(f.seen.map((s) => [s.method, s.raw])).toEqual(
+      (["jarvis_kb_backup", "kb_entries"] as const).flatMap((t) =>
+        ["notas/x.md", "notas/a&b.md", "notas/z.md"].map((p) => [
+          "GET",
+          `https://db.mycommit.net/rest/v1/${t}?path=eq.${encodeURIComponent(p)}&select=path,title,content&limit=2`,
+        ]),
+      ),
+    );
+  });
+});
+
+describe("a backup path that reads as more than one remote row is never deleted", () => {
+  it("one delete by that path would remove every row of it, the last copy of a row that should stay among them: skipped and counted, the others still deleted", async () => {
+    seedDb();
+    seedCleanOutside();
+    const d = mockDeps();
+    const p2 = "lessons/sintetica-otra.md";
+    d.tables.jarvis_kb_backup.set(p2, { path: p2, title: "Otra", content: `Otra con ${V_BACK2}.` });
+    // The remote holds two rows under P_BACK_ORPH: the first still holds a removed value, the second does not.
+    const f = fakeRest([
+      { ...d.tables.jarvis_kb_backup.get(P_BACK_ORPH)! },
+      { path: P_BACK_ORPH, title: "Lección", content: "Otra copia sin nada que quitar." },
+      { ...d.tables.jarvis_kb_backup.get(p2)! },
+    ]);
+    process.env.COMMIT_DB_KEY = "synthetic-test-key";
+    globalThis.fetch = f.fetch;
+    const real = await realDeps();
+    const inner = d.get.bind(d);
+    d.get = (t, p) => (t === "jarvis_kb_backup" ? real.get(t, p) : inner(t, p));
+    d.deleteBackupRow = (p) => real.deleteBackupRow(p);
+    const o = opts({ apply: true });
+    const r = await runOutside(o, d);
+    expect(f.seen.filter((s) => s.method === "DELETE").map((s) => s.url.searchParams.get("path"))).toEqual([`eq.${p2}`]);
+    expect(f.rows.filter((x) => x.path === P_BACK_ORPH)).toHaveLength(2);
+    expect(f.rows.some((x) => x.path === p2)).toBe(false);
+    expect(o.records).toContainEqual(["backup_deleted", p2]);
+    expect(o.records.filter((x) => x[1] === P_BACK_ORPH)).toEqual([]);
+    expect(line(o.lines, "backup_copy deleted")).toBe(
+      `${TAG} backup_copy deleted=1 verified=1 failed=0 unconfirmed_gone=0 not_verified=0 changed_since_listing=1`,
+    );
+    expect(r).toMatchObject({ ok: false, problems: 1 });
+    expect(o.lines.at(-2)).toContain("finished with failures: problems=1 ");
+    assertSafe(o.lines);
   });
 });
 
@@ -975,7 +1419,8 @@ describe("main", () => {
 
   it("finished with failures → exit 1; a refusal → exit 2 and nothing written", async () => {
     ready();
-    const d = mockDeps(); // the backup orphan needs a decision
+    const d = mockDeps();
+    d.failOn = { list: "jarvis_kb_backup" }; // a copy that cannot be read is a failure
     expect(await run(argv(join(root, STAMP_LOG)), d).p).toBe(1);
 
     const d2 = mockDeps({ searchDb: false });
@@ -983,6 +1428,68 @@ describe("main", () => {
     expect(await r.p).toBe(2);
     expect(r.err).toEqual([`${TAG} REFUSED code=SETTINGS_ABSENT name=search_db — nothing written`]);
     assertSafe(r.err);
+  });
+
+  it("backup orphans alone read to the wrapper as found, then changed, then clean", async () => {
+    seedDb({ extra: (db) => db.exec("DELETE FROM drive_file_map") });
+    seedCleanOutside();
+    seedBuild();
+    const d = mockDeps();
+    d.tables.kb_entries = new Map([[P_CLEAN, d.tables.kb_entries.get(P_CLEAN)!]]);
+    const steps = [
+      ["dry", [], "found"],
+      ["apply", ["--apply"], "changed"],
+      ["apply", ["--apply"], "clean"],
+    ] as const;
+    for (const [i, [mode, extra, verdict]] of steps.entries()) {
+      const r = run(argv(join(root, STAMP_LOG.replace("120000Z", `12000${i}Z`)), ...extra), d);
+      const rc = await r.p;
+      expect(rc, mode).toBe(0);
+      assertSafe([...r.out, ...r.err]);
+      expect(wrapperVerdict(mode, rc, [...r.out, ...r.err]), `${i}`).toBe(verdict);
+    }
+    expect(d.writes.backupDelete).toEqual([P_BACK_ORPH]);
+    expect(d.tables.jarvis_kb_backup.has(P_SYNC)).toBe(true);
+  });
+
+  it("a candidate left because it changed since the listing reads to the wrapper as dirty, never as changed or clean", async () => {
+    seedDb({ extra: (db) => db.exec("DELETE FROM drive_file_map") });
+    seedCleanOutside();
+    seedBuild();
+    const d = mockDeps();
+    d.tables.kb_entries = new Map([[P_CLEAN, d.tables.kb_entries.get(P_CLEAN)!]]);
+    const p2 = "lessons/sintetica-otra.md";
+    d.tables.jarvis_kb_backup.set(p2, { path: p2, title: "Otra", content: `Otra con ${V_BACK2}.` });
+    const inner = d.get.bind(d);
+    d.get = async (t, p) => (t === "jarvis_kb_backup" && p === P_BACK_ORPH ? null : inner(t, p)); // gone at the re-read
+    const r = run(argv(join(root, STAMP_LOG), "--apply"), d);
+    const rc = await r.p;
+    expect(rc).toBe(1);
+    expect(d.writes.backupDelete).toEqual([p2]);
+    expect(r.out).toContain(`${TAG} backup_copy deleted=1 verified=1 failed=0 unconfirmed_gone=0 not_verified=0 changed_since_listing=1`);
+    assertSafe([...r.out, ...r.err]);
+    expect(wrapperVerdict("apply", rc, [...r.out, ...r.err])).toBe("dirty");
+  });
+
+  it("a delete that could not be confirmed reads to the wrapper as dirty even when its row is gone, and stays in the acted log", async () => {
+    seedDb({ extra: (db) => db.exec("DELETE FROM drive_file_map") });
+    seedCleanOutside();
+    seedBuild();
+    const d = mockDeps();
+    d.tables.kb_entries = new Map([[P_CLEAN, d.tables.kb_entries.get(P_CLEAN)!]]);
+    d.deleteBackupRow = async (p) => {
+      d.writes.backupDelete.push(p);
+      d.tables.jarvis_kb_backup.delete(p); // the row went, the answer did not confirm it
+      return false;
+    };
+    const log = join(root, STAMP_LOG);
+    const r = run(argv(log, "--apply"), d);
+    const rc = await r.p;
+    expect(rc).toBe(1);
+    expect(r.out).toContain(`${TAG} backup_copy deleted=0 verified=0 failed=0 unconfirmed_gone=1 not_verified=0 changed_since_listing=0`);
+    expect(readFileSync(log, "utf8")).toContain(JSON.stringify(["backup_delete_unconfirmed", P_BACK_ORPH]));
+    assertSafe([...r.out, ...r.err]);
+    expect(wrapperVerdict("apply", rc, [...r.out, ...r.err])).toBe("dirty");
   });
 
   describe("the code that runs must be the code the service runs", () => {
@@ -1157,7 +1664,15 @@ describe("readDriveDone", () => {
     writeFileSync(join(root, self), `${JSON.stringify(["drive_reuploaded", "a", "1"])}\n`);
     writeFileSync(
       join(root, other),
-      [JSON.stringify(["drive_reuploaded", "b", "2"]), JSON.stringify(["deleted", "c"]), "not json", ""].join("\n"),
+      [
+        JSON.stringify(["drive_reuploaded", "b", "2"]),
+        JSON.stringify(["deleted", "c"]),
+        // only the kind decides: an unconfirmed delete, even shaped like a re-upload, is never read as one
+        JSON.stringify(["backup_delete_unconfirmed", "e", "4"]),
+        JSON.stringify(["backup_deleted", "f", "5"]),
+        "not json",
+        "",
+      ].join("\n"),
     );
     writeFileSync(join(root, "unrelated.log"), `${JSON.stringify(["drive_reuploaded", "d", "3"])}\n`);
     expect([...readDriveDone(root, self)]).toEqual(["b\u00002"]);

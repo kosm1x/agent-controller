@@ -26,15 +26,29 @@
  *     own `syncToPgvector`; a hit with no local row (extracted facts, lessons, ingested
  *     chunks) is deleted with the code's own `pgDelete`. Every acted row is read back:
  *     a re-synced row must hold no known value, a deleted one must be gone. More than
- *     DELETE_BOUND deletions refuse unless `--confirm-delete <n>` repeats the exact
- *     count the dry run printed; a `--confirm-delete` with any other number refuses too
- *     (a wrong fingerprint table must not empty the store). A hit whose local row still
- *     holds a value is never re-synced (it would push the value again): it fails the
- *     run, and the local removal must be finished first.
- *  2. Nightly backup copy (`jarvis_kb_backup`): count only. A hit with a local row is
- *     fixed by the nightly push (src/rituals/scheduler.ts `kb-backup`, 22:30 service
- *     time, every jarvis_files row upserted by path); a hit without one stays and needs
- *     a decision (the code has no delete for that table).
+ *     DELETE_BOUND deletions in the whole run (this kind and kind 2 together, decided
+ *     before the first write) refuse unless `--confirm-delete <n>` repeats that exact
+ *     total (`would_delete_total` of the dry run); a `--confirm-delete` with any other
+ *     number refuses too (a wrong fingerprint table must not empty the store). A hit
+ *     whose local row still holds a value is never re-synced (it would push the value
+ *     again): it fails the run, and the local removal must be finished first.
+ *  2. Nightly backup copy (`jarvis_kb_backup`): a hit with a local row is fixed by the
+ *     nightly push (src/rituals/scheduler.ts `kb-backup`, 22:30 service time, every
+ *     jarvis_files row upserted by path), so it is only counted; a hit whose local row
+ *     still holds a value fails the run. A hit WITHOUT a local row is never rewritten by
+ *     that push, so the removed value would stay in it: it is deleted with
+ *     `deleteBackupRow` (src/db/kb-backup.ts, one row by exact path) under the same
+ *     bound, and read back (it must be gone). Right before each delete the note must
+ *     still have no local row and the remote row of that exact path must still hit, else
+ *     it is left for the next run (`changed_since_listing`, a failure); a path that reads
+ *     as more than one remote row is left the same way (one delete would remove them all,
+ *     the last copy of a row that should stay among them). A delete whose answer does not
+ *     confirm exactly one row is recorded (`backup_delete_unconfirmed`) and read back once:
+ *     gone is `unconfirmed_gone`, still there or unreadable is `failed`; both are
+ *     failures, so a row that may have gone unconfirmed never reads as clean. A hit with an
+ *     empty path is a failure (`path_empty`), never deleted. A row that does not hit is
+ *     never touched, with or without a local row: the table keeps notes deleted locally
+ *     on purpose.
  *  3. Cloud-drive mirror: no content is read. The paths re-synced in kind 1, plus every
  *     local row that holds the placeholder (the local removal records no path), that
  *     are in `drive_file_map` get their head revision rewritten from the row with the
@@ -144,6 +158,8 @@ export interface OutsideDeps {
   resync(row: LocalRow): void | Promise<void>;
   /** `pgDelete`: the search row of that path is deleted. */
   deleteSearchRow(path: string): Promise<boolean>;
+  /** `deleteBackupRow`: the backup row of exactly that path is deleted. */
+  deleteBackupRow(path: string): Promise<boolean>;
   /** Waits for the re-syncs started above. */
   settle(): Promise<void>;
   /** `reformatDriveFiles({ exactPath })`: true only when that path's drive file was rewritten. */
@@ -324,14 +340,39 @@ export async function runOutside(opts: OutsideOptions, deps: OutsideDeps): Promi
     else driveCandidates.push(l);
   }
 
+  // A backup row is a delete candidate only when it holds a known value AND its note no
+  // longer exists locally (the nightly push never rewrites it). Any other row stays. A hit
+  // without a usable path cannot be addressed as one row: a failure, never a candidate.
+  const backupOrphans: string[] = [];
+  let backupHits = 0;
+  let backupFixed = 0;
+  let backupDirty = 0;
+  let backupNoPath = 0;
+  if (typeof backup !== "string") {
+    for (const r of backup) {
+      if (!pairHit(r.title, r.content, fps)) continue;
+      backupHits++;
+      if (r.path.trim() === "") {
+        backupNoPath++;
+        continue;
+      }
+      const l = local.rows.get(r.path);
+      if (!l) backupOrphans.push(r.path);
+      else if (localClean(l)) backupFixed++;
+      else backupDirty++;
+    }
+  }
+
+  // One bound for every deletion of the run, both copies together, before the first write.
+  const wouldDelete = orphans.length + backupOrphans.length;
   if (opts.apply) {
-    if (opts.confirmDelete !== undefined && opts.confirmDelete !== orphans.length) {
-      log(`${TAG} REFUSED: --confirm-delete does not match would_delete=${orphans.length}; nothing written`);
+    if (opts.confirmDelete !== undefined && opts.confirmDelete !== wouldDelete) {
+      log(`${TAG} REFUSED: --confirm-delete does not match would_delete=${wouldDelete}; nothing written`);
       throw new Refusal("CONFIRM_MISMATCH");
     }
-    if (orphans.length > DELETE_BOUND && opts.confirmDelete === undefined) {
+    if (wouldDelete > DELETE_BOUND && opts.confirmDelete === undefined) {
       log(
-        `${TAG} REFUSED: would_delete=${orphans.length} is above the bound of ${DELETE_BOUND}; check the fingerprint table, then repeat the run with --confirm-delete ${orphans.length}; nothing written`,
+        `${TAG} REFUSED: would_delete=${wouldDelete} is above the bound of ${DELETE_BOUND}; check the fingerprint table, then repeat the run with --confirm-delete ${wouldDelete}; nothing written`,
       );
       throw new Refusal("DELETE_BOUND");
     }
@@ -428,23 +469,78 @@ export async function runOutside(opts: OutsideOptions, deps: OutsideDeps): Promi
     failures++;
     log(`${TAG} backup_copy table=jarvis_kb_backup read_failed code=${backup}`);
   } else {
-    let hits = 0;
-    let fixed = 0;
-    let dirty = 0;
-    let orphan = 0;
-    for (const r of backup) {
-      if (!pairHit(r.title, r.content, fps)) continue;
-      hits++;
-      const l = local.rows.get(r.path);
-      if (!l) orphan++;
-      else if (localClean(l)) fixed++;
-      else dirty++;
-    }
-    failures += dirty;
-    decisions += orphan;
+    failures += backupDirty + backupNoPath;
     log(
-      `${TAG} backup_copy table=jarvis_kb_backup rows=${backup.length} hits=${hits} fixed_by_nightly_push=${fixed} local_row_not_clean=${dirty} needs_decision=${orphan} (count only: the nightly push at 22:30 service time rewrites every path that has a local row; the code has no delete for this table)`,
+      `${TAG} backup_copy table=jarvis_kb_backup rows=${backup.length} hits=${backupHits} fixed_by_nightly_push=${backupFixed} local_row_not_clean=${backupDirty} without_local_row=${backupOrphans.length} path_empty=${backupNoPath} (the nightly push at 22:30 service time rewrites every path that has a local row; a hit without one is deleted here)`,
     );
+    if (!opts.apply) {
+      pending += backupOrphans.length;
+      log(
+        `${TAG} backup_copy would_delete=${backupOrphans.length} would_delete_total=${wouldDelete} delete_bound=${DELETE_BOUND} (the bound and --confirm-delete count both copies together)`,
+      );
+    } else if (backupOrphans.length > 0) {
+      let deleteFailed = 0;
+      let changed = 0;
+      const deleted: string[] = [];
+      const unconfirmed: string[] = [];
+      for (const p of backupOrphans) {
+        // The service runs meanwhile: right before the delete the note must still be gone
+        // locally and the remote row of exactly this path must still hold a known value and
+        // be the only row of that path (a read of more than one throws and lands here).
+        let same = false;
+        try {
+          if (rowNow(opts.db, p) === null) {
+            const now = await deps.get("jarvis_kb_backup", p);
+            same = now !== null && now.path === p && pairHit(now.title, now.content, fps);
+          }
+        } catch {
+          same = false;
+        }
+        if (!same) {
+          changed++;
+          continue;
+        }
+        let ok = false;
+        try {
+          ok = await deps.deleteBackupRow(p);
+        } catch {
+          ok = false;
+        }
+        if (ok) {
+          deleted.push(p);
+          opts.acted(["backup_deleted", p]);
+        } else {
+          // The request may have gone out and the row may be gone even though the answer
+          // did not confirm it: the record keeps the path of a delete that cannot be confirmed.
+          unconfirmed.push(p);
+          opts.acted(["backup_delete_unconfirmed", p]);
+        }
+      }
+      let verified = 0;
+      let notVerified = 0;
+      for (const p of deleted) {
+        try {
+          if ((await deps.get("jarvis_kb_backup", p)) === null) verified++;
+          else notVerified++;
+        } catch {
+          notVerified++;
+        }
+      }
+      let unconfirmedGone = 0;
+      for (const p of unconfirmed) {
+        try {
+          if ((await deps.get("jarvis_kb_backup", p)) === null) unconfirmedGone++;
+          else deleteFailed++;
+        } catch {
+          deleteFailed++;
+        }
+      }
+      failures += deleteFailed + unconfirmedGone + notVerified + changed;
+      pending += deleted.length;
+      log(
+        `${TAG} backup_copy deleted=${deleted.length} verified=${verified} failed=${deleteFailed} unconfirmed_gone=${unconfirmedGone} not_verified=${notVerified} changed_since_listing=${changed}`,
+      );
+    }
   }
 
   // ── 3. drive mirror ──
@@ -615,20 +711,25 @@ export async function listTable(
   throw new CodeError("LISTING_INCOMPLETE");
 }
 
-/** One row by exact path, or null. */
+/**
+ * One row by exact path, or null. Nothing guarantees a path is unique remotely, so up to
+ * two rows are asked for and more than one is an error (`ROW_NOT_UNIQUE`): reading only the
+ * first would let a delete by that path remove a row that was never checked.
+ */
 export async function getRow(
   table: RemoteTable,
   path: string,
   fetchImpl: FetchLike,
   headers: Record<string, string>,
 ): Promise<RemoteRow | null> {
-  const res = await fetchImpl(`${REST}/${table}?path=eq.${encodeURIComponent(path)}&select=path,title,content&limit=1`, {
+  const res = await fetchImpl(`${REST}/${table}?path=eq.${encodeURIComponent(path)}&select=path,title,content&limit=2`, {
     headers,
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new CodeError(`HTTP_${res.status}`);
   const rows = (await res.json()) as unknown;
   if (!Array.isArray(rows)) throw new CodeError("READ_UNREADABLE");
+  if (rows.length > 1) throw new CodeError("ROW_NOT_UNIQUE");
   return rows.length > 0 ? rowOf(rows[0]) : null;
 }
 
@@ -737,6 +838,7 @@ export async function realDeps(): Promise<OutsideDeps> {
   const emb = await import("../src/inference/embeddings.js");
   const drive = await import("../src/db/drive-sync.js"); // settings only; the re-upload is reuploadExact
   const google = await import("../src/google/auth.js");
+  const backup = await import("../src/db/kb-backup.js");
   const headers = (): Record<string, string> => {
     const key = pg.getApiKey();
     if (!key) throw new CodeError("SETTINGS_ABSENT");
@@ -754,6 +856,7 @@ export async function realDeps(): Promise<OutsideDeps> {
       sync.syncToPgvector(r.path, r.title, r.content, r.tags, r.qualifier, r.priority, r.condition);
     },
     deleteSearchRow: (p) => pg.pgDelete(p),
+    deleteBackupRow: (p) => backup.deleteBackupRow(p),
     settle: () => sync.settlePgvectorSyncs(),
     reupload: reuploadExact,
     gitLog: evolutionLogHistory,

@@ -152,6 +152,43 @@ export async function syncKbToRemote(): Promise<BackupResult> {
 }
 
 /**
+ * Delete the ONE backup row whose path equals `path` (an `eq.` filter on the
+ * path column, the value URL-encoded; never a pattern or a range). The nightly
+ * push never rewrites the row of a note that no longer exists locally, so this
+ * is the only way such a row leaves the table. The server returns the path of
+ * every row it deleted (that column only, never note text): true only when that
+ * is exactly one row with exactly this path. An empty path sends nothing.
+ */
+export async function deleteBackupRow(path: string): Promise<boolean> {
+  if (path.trim() === "") return false;
+  const apiKey = getApiKey();
+  if (!apiKey) return false;
+  try {
+    const res = await fetch(
+      `${COMMIT_DB_URL}/jarvis_kb_backup?path=eq.${encodeURIComponent(path)}&select=path`,
+      {
+        method: "DELETE",
+        headers: {
+          apikey: apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          Prefer: "return=representation",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return false;
+    const rows = (await res.json()) as unknown;
+    return (
+      Array.isArray(rows) &&
+      rows.length === 1 &&
+      (rows[0] as { path?: unknown } | null)?.path === path
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Restore jarvis_files from remote Postgres backup.
  * Pulls all rows and upserts into local SQLite.
  * Use after a VPS rebuild or DB reset.
