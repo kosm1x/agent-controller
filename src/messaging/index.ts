@@ -5,7 +5,7 @@
  * If no channels are enabled, messaging is a no-op.
  */
 
-import { MessageRouter } from "./router.js";
+import type { MessageRouter } from "./router.js";
 import { withTimeout } from "../lib/with-timeout.js";
 import { errMsg } from "../lib/err-msg.js";
 
@@ -14,8 +14,15 @@ let router: MessageRouter | null = null;
 /** Per-channel init window. A channel's start() must not exceed this. */
 const CHANNEL_START_TIMEOUT_MS = 20_000;
 
-export async function initMessaging(): Promise<MessageRouter | null> {
-  router = new MessageRouter();
+/**
+ * The caller constructs the router and hands it in, so this module — imported
+ * by many others for its accessors — needs the router only as a type and does
+ * not load the router module itself.
+ */
+export async function initMessaging(
+  instance: MessageRouter,
+): Promise<MessageRouter | null> {
+  router = instance;
 
   // Channel init is ISOLATED: a channel whose start() throws — or HANGS — must
   // not take down the others. WhatsApp's start() resolves only on a successful

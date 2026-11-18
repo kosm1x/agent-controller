@@ -49,6 +49,7 @@ import {
   stopDynamicScheduler,
 } from "./rituals/dynamic.js";
 import { initMessaging, shutdownMessaging } from "./messaging/index.js";
+import { MessageRouter } from "./messaging/router.js";
 import { initMemoryService } from "./memory/index.js";
 import { migrateLearningsToHindsight } from "./memory/migrate-learnings.js";
 import { seedMentalModels } from "./intelligence/mental-models.js";
@@ -633,7 +634,7 @@ async function main(): Promise<void> {
   startIntelCollectors();
 
   // Start messaging channels (WhatsApp/Telegram) if enabled
-  const router = await initMessaging();
+  const router = await initMessaging(new MessageRouter());
 
   // Wire MCP alerts + intel alerts to Telegram (after messaging is ready)
   if (router) {
