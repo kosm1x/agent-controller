@@ -145,6 +145,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-18 21:28 UTC — the three remaining operator rulings of this batch are in (queue 4ge): one shared output-path check with unchanged error texts — yes; the test tool refuses when the agent's worktree is missing — yes (built with batch 10); critic gate on fast-path community replies — not now, to be counted in the Security and privacy dimension. Builds start after the removal has said clean.**
+
 **Status 2026-11-18 19:52 UTC — a structured PDF ingest cut off at the chunk cap is reported as failed too, with the counts and the fact that the rest was not stored, `f57bca71` (queue 4gb).**
 
 **Status 2026-11-18 19:37 UTC — the two producers that could still hide a failure from the confirmation card now say error: a failed or partly written structured PDF ingest (one short line with the counts, the full summary beside it) and a post failure without a message, `abab5262` (queue 4ga). Left of V2: an exception without a message at the gated layer, in a file the removal scripts load.**

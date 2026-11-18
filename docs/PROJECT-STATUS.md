@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-18 21:28 UTC (LIVE build and removal state unchanged, see the lines below. New: the operator ruled the three open points of the live-defects batch, queue 4ge — one shared output-path check: yes; the test tool refuses on a missing worktree: yes; critic gate on fast-path community replies: not now. Nothing is built until the removal has said clean; one trial run after the next nightly backup push is owed for that.)
+
 > Last updated: 2026-11-18 20:10 UTC (LIVE build unchanged, see the line below. Since then the operator ran the second removal script: trial run, then the real run, which deleted the one backup row without a local row and verified it, no failure (queue 4gd). Still with the operator, after one nightly backup push: one more trial run that must say clean, then deleting the removal logs and the snapshot folder. No code is committed until then.)
 
 > Last updated: 2026-11-18 20:03 UTC (LIVE build `29e95dd3` since 2026-11-18 20:01 UTC = the head of the code; deployed by the operator, queue 4gc. It carries the fixes that make a failed confirmed action, a failed or cut-off PDF ingest and a post failure without a message show as an error. No code is committed until the removal has said clean, so this build serves for the second removal script. Still with the operator, after one nightly backup push: the second removal script (trial run, real run, a run that says clean), then deleting the removal logs and the snapshot folder.)
