@@ -275,6 +275,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-18 14:28 UTC — the entry point constructs the router and hands it in, COMMITTED `6e3f8d1e` (queue 4fs): the runtime cycle around the router is 7 modules (was 8), 11 with dynamic imports (was 18). The two leaf modules out of the router are BUILT and set aside (queue 4fr): every move of code out of a protected file waits until the protected list can take the new file in the same commit.**
+
 **Status 2026-11-18 07:40 UTC — the eight remaining dynamic imports of already-loaded modules are static, COMMITTED `dbc663a2` (queue 4fq); baseline unchanged; three calls gained their first test. Next in batch 7: the messaging trio (two leaf modules out of the router, then how the router is constructed).**
 
 **Status 2026-11-18 07:18 UTC — the two dynamic imports of already-loaded modules (router, fast runner) are static, COMMITTED `f0d93a9e` (queue 4fp); baseline unchanged; four new test cases. Next in batch 7: the eight identical places the sweep found, then the messaging trio.**
