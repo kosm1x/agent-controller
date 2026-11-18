@@ -1043,4 +1043,20 @@ describe("write-class outcome (queue 2026-10-08 late item 10)", () => {
     expect(takeWriteOutcome("t-r6")).toBeUndefined();
     expect(ran).toBe(0);
   });
+
+  // A failure that also carries its full summary is detected only while
+  // `error` is the FIRST key: the error-result check reads the text's start.
+  it("an {error, summary} result is a failed write with the error line, and its targets are not run writes", async () => {
+    const { reg, add, enterRunToolContext, takeWriteOutcome } = await setup();
+    const { hasRunWrites } = await import("../lib/v8-4/numbers.js");
+    const line = "ingest incomplete: 1 of 2 chunks written, 1 failed, 0 rejected as noise";
+    add("kb_ingest_pdf_structured", () =>
+      JSON.stringify({ error: line, summary: "kb_ingest_pdf_structured: /tmp/amn.pdf\n  Inserted: 1 | Rejected (noise): 0 | Failed: 1" }),
+    );
+    await enterRunToolContext("t-k1", () =>
+      reg.execute("kb_ingest_pdf_structured", { namespace: "plan-2027", pdf_path: "/tmp/amn.pdf" }),
+    );
+    expect(hasRunWrites("t-k1")).toBe(false);
+    expect(takeWriteOutcome("t-k1")).toEqual({ tool: "kb_ingest_pdf_structured", ok: false, error: line });
+  });
 });

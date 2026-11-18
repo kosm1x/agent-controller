@@ -181,8 +181,12 @@ happen.`,
         })),
       });
     } catch (err) {
+      // A failure must carry a non-empty error: an empty one reads as success
+      // to the confirmation card. Fall back to the class name, then fixed text.
       return JSON.stringify({
-        error: err instanceof Error ? err.message : String(err),
+        error:
+          (err instanceof Error ? err.message || err.name : String(err)) ||
+          "post failed (no error message)",
       });
     }
   },

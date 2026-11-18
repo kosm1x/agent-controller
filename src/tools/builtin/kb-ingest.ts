@@ -110,7 +110,10 @@ them later if needed.`,
       return JSON.stringify({ error: "pdf_path is required" });
     }
     if (!isPgvectorEnabled()) {
-      return "kb_ingest_pdf_structured: pgvector is not configured — cannot persist. Set SUPABASE_URL + SUPABASE_API_KEY to enable.";
+      return JSON.stringify({
+        error:
+          "pgvector is not configured — cannot persist. Set SUPABASE_URL + SUPABASE_API_KEY to enable.",
+      });
     }
 
     const namespace = args.namespace as string | undefined;
@@ -118,7 +121,9 @@ them later if needed.`,
     // Audit W3: reject non-UUID parent_doc_id up front — the Supabase column
     // is `uuid` type and a non-UUID value would 400 the whole batch.
     if (parentDocId !== undefined && !UUID_RE.test(parentDocId)) {
-      return `kb_ingest_pdf_structured: parent_doc_id must be a UUID (got '${parentDocId}'). Omit it to auto-generate.`;
+      return JSON.stringify({
+        error: `parent_doc_id must be a UUID (got '${parentDocId}'). Omit it to auto-generate.`,
+      });
     }
     const tags = args.tags as string[] | undefined;
     const maxChunks = Number.isFinite(Number(args.max_chunks))
@@ -134,7 +139,9 @@ them later if needed.`,
         maxChunks,
       });
     } catch (err) {
-      return `kb_ingest_pdf_structured: failed to parse ${pdfPath} — ${err instanceof Error ? err.message : err}`;
+      return JSON.stringify({
+        error: `failed to parse ${pdfPath} — ${err instanceof Error ? err.message : err}`,
+      });
     }
 
     // Embed each chunk sequentially (bounded by Gemini rate limits).
@@ -158,13 +165,15 @@ them later if needed.`,
     // so a document's own cascade never stales its new chunks.
     const manifest = await pgUpsertLineageSource(result.manifest);
     const batch = await pgBatchUpsert(result.chunks);
-    return formatIngestSummary(
+    const summary = formatIngestSummary(
       result,
       batch,
       embedFailures,
       pdfPath,
       manifest,
     );
+    const failure = ingestFailure(result.chunks.length, batch, manifest);
+    return failure ? JSON.stringify({ error: failure, summary }) : summary;
   },
 };
 
@@ -316,6 +325,36 @@ const MANIFEST_NOTE: Record<LineageSourceOutcome, string> = {
   cascade_failed: "cascade FAILED, manifest not advanced: next ingest retries",
   failed: "upsert FAILED: previous chunks not marked stale",
 };
+
+/**
+ * An approved ingest that was only partly carried out is a failure, and its
+ * one line says what did happen (counts only: the summary beside it carries
+ * the rest). Failed when a chunk failed to be written, when the manifest was
+ * not written (its cascade or its upsert failed, so stale chunks stay live),
+ * or when nothing was written at all: an ingest that stored nothing is not a
+ * completed action, and a document that yields no chunks (a scan without a
+ * text layer) after a changed manifest has had its older chunks marked stale,
+ * so it drops out of search. The batch upsert counts an unchanged chunk it
+ * rewrote as written, so a re-ingest of the same document is not "nothing
+ * written". Noise rows next to written ones, chunks kept without an
+ * embedding and truncation (the chunk cap) stay a success.
+ * Null = success.
+ */
+function ingestFailure(
+  chunks: number,
+  batch: { success: number; failed: number; rejected: number },
+  manifest: LineageSourceOutcome,
+): string | null {
+  const manifestFailed =
+    manifest === "failed" || manifest === "cascade_failed";
+  const failed =
+    batch.failed > 0 || manifestFailed || batch.success === 0;
+  if (!failed) return null;
+  const counts = `ingest incomplete: ${batch.success} of ${chunks} chunks written, ${batch.failed} failed, ${batch.rejected} rejected as noise`;
+  return manifestFailed
+    ? `${counts}; manifest ${MANIFEST_NOTE[manifest]}`
+    : counts;
+}
 
 function formatIngestSummary(
   result: Awaited<ReturnType<typeof ingestPdf>>,

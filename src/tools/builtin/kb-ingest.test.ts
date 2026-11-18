@@ -67,21 +67,22 @@ describe("kbIngestPdfStructuredTool", () => {
     expect(JSON.parse(out as string).error).toMatch(/pdf_path/);
   });
 
-  it("returns graceful message when pgvector disabled", async () => {
+  it("pgvector disabled → {error}", async () => {
     mockIsPgvectorEnabled.mockReturnValue(false);
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/test.pdf",
     })) as string;
-    expect(out).toMatch(/pgvector is not configured/);
+    expect(JSON.parse(out).error).toMatch(/^pgvector is not configured/);
   });
 
-  it("handles extractor errors gracefully", async () => {
+  it("extractor error → {error} naming the parse failure", async () => {
     mockIngestPdf.mockRejectedValue(new Error("file not found"));
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/missing.pdf",
     })) as string;
-    expect(out).toMatch(/failed to parse/);
-    expect(out).toMatch(/file not found/);
+    expect(JSON.parse(out).error).toBe(
+      "failed to parse /tmp/missing.pdf — file not found",
+    );
   });
 
   it("happy path: embeds + persists + summary includes breakdown", async () => {
@@ -153,12 +154,14 @@ describe("kbIngestPdfStructuredTool", () => {
     });
   });
 
-  it("rejects non-UUID parent_doc_id (audit W3)", async () => {
+  it("rejects non-UUID parent_doc_id with {error}", async () => {
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/t.pdf",
       parent_doc_id: "not-a-uuid",
     })) as string;
-    expect(out).toMatch(/parent_doc_id must be a UUID/);
+    expect(JSON.parse(out).error).toBe(
+      "parent_doc_id must be a UUID (got 'not-a-uuid'). Omit it to auto-generate.",
+    );
     expect(mockIngestPdf).not.toHaveBeenCalled();
   });
 
@@ -220,7 +223,7 @@ describe("kbIngestPdfStructuredTool", () => {
     expect(out).toContain("Manifest: pdf-ingest/test-doc.manifest.md");
   });
 
-  it("summary flags a failed manifest upsert", async () => {
+  it("a failed manifest upsert is a failure whose summary flags it", async () => {
     mockPgUpsertLineageSource.mockResolvedValue("failed");
     mockIngestPdf.mockResolvedValue({
       parentDocId: "p",
@@ -232,7 +235,198 @@ describe("kbIngestPdfStructuredTool", () => {
     const out = (await kbIngestPdfStructuredTool.execute({
       pdf_path: "/tmp/t.pdf",
     })) as string;
-    expect(out).toMatch(/upsert FAILED/);
+    expect(JSON.parse(out).summary).toMatch(/upsert FAILED/);
+  });
+
+  // An approved ingest that was only partly carried out is a failure:
+  // `{error: <one line with the counts>, summary: <the full plain summary>}`.
+  // Everything else is a success in the plain summary text.
+  describe("failure rule", () => {
+    const DOC_ID = "11111111-2222-3333-4444-555555555555";
+    type Batch = { success: number; failed: number; rejected: number };
+
+    function seed(
+      chunks: number,
+      batch: Batch,
+      manifest = "written",
+      truncated = false,
+    ) {
+      mockIngestPdf.mockResolvedValue({
+        parentDocId: DOC_ID,
+        docTitle: "t",
+        manifest: MANIFEST,
+        chunks: Array.from({ length: chunks }, (_, i) => ({
+          path: `pdf-ingest/test-doc/s/000${i}`,
+          title: "t",
+          content: `chunk ${i}`,
+          modality: "text",
+          parent_doc_id: DOC_ID,
+          section_path: ["s"],
+          chunk_position: i,
+        })),
+        counts: { text: chunks, table: 0, sections: 1, truncated },
+      });
+      mockPgBatchUpsert.mockResolvedValue(batch);
+      mockPgUpsertLineageSource.mockResolvedValue(manifest);
+    }
+
+    /** The plain summary, byte for byte, for a document seeded by `seed`. */
+    function plain(
+      chunks: number,
+      b: Batch,
+      note: string,
+      extra: string[] = [],
+    ): string {
+      return [
+        "kb_ingest_pdf_structured: /tmp/t.pdf",
+        `  parent_doc_id: ${DOC_ID}`,
+        "  Doc title: t",
+        `  Manifest: ${MANIFEST.path} (${note})`,
+        `  Chunks: ${chunks} (text ${chunks}, table 0)`,
+        "  Sections: 1",
+        `  Inserted: ${b.success} | Rejected (noise): ${b.rejected} | Failed: ${b.failed}`,
+        ...extra,
+      ].join("\n");
+    }
+
+    const run = async () =>
+      (await kbIngestPdfStructuredTool.execute({
+        pdf_path: "/tmp/t.pdf",
+      })) as string;
+
+    const STALE = "changed: previous chunks marked stale";
+    const HINT =
+      "  Hint: if this is the first v7.13 ingest, confirm the schema migration was applied (modality / parent_doc_id / section_path / chunk_position columns on kb_entries).";
+
+    it.each([
+      [
+        "a chunk failed to be written",
+        2,
+        { success: 1, failed: 1, rejected: 0 },
+        "written",
+        "ingest incomplete: 1 of 2 chunks written, 1 failed, 0 rejected as noise",
+        plain(2, { success: 1, failed: 1, rejected: 0 }, STALE),
+      ],
+      [
+        "every chunk failed to be written",
+        2,
+        { success: 0, failed: 2, rejected: 0 },
+        "written",
+        "ingest incomplete: 0 of 2 chunks written, 2 failed, 0 rejected as noise",
+        plain(2, { success: 0, failed: 2, rejected: 0 }, STALE, [HINT]),
+      ],
+      [
+        "the manifest upsert failed",
+        2,
+        { success: 2, failed: 0, rejected: 0 },
+        "failed",
+        "ingest incomplete: 2 of 2 chunks written, 0 failed, 0 rejected as noise; manifest upsert FAILED: previous chunks not marked stale",
+        plain(
+          2,
+          { success: 2, failed: 0, rejected: 0 },
+          "upsert FAILED: previous chunks not marked stale",
+        ),
+      ],
+      [
+        "the manifest cascade failed",
+        2,
+        { success: 2, failed: 0, rejected: 0 },
+        "cascade_failed",
+        "ingest incomplete: 2 of 2 chunks written, 0 failed, 0 rejected as noise; manifest cascade FAILED, manifest not advanced: next ingest retries",
+        plain(
+          2,
+          { success: 2, failed: 0, rejected: 0 },
+          "cascade FAILED, manifest not advanced: next ingest retries",
+        ),
+      ],
+      [
+        "chunks were produced and none was written",
+        2,
+        { success: 0, failed: 0, rejected: 2 },
+        "written",
+        "ingest incomplete: 0 of 2 chunks written, 0 failed, 2 rejected as noise",
+        plain(2, { success: 0, failed: 0, rejected: 2 }, STALE),
+      ],
+      [
+        "a document that produced no chunks after a changed manifest",
+        0,
+        { success: 0, failed: 0, rejected: 0 },
+        "written",
+        "ingest incomplete: 0 of 0 chunks written, 0 failed, 0 rejected as noise",
+        plain(0, { success: 0, failed: 0, rejected: 0 }, STALE),
+      ],
+      [
+        "a document that produced no chunks with an unchanged manifest",
+        0,
+        { success: 0, failed: 0, rejected: 0 },
+        "unchanged",
+        "ingest incomplete: 0 of 0 chunks written, 0 failed, 0 rejected as noise",
+        plain(0, { success: 0, failed: 0, rejected: 0 }, "unchanged"),
+      ],
+    ] as const)(
+      "%s → {error, summary}",
+      async (_case, chunks, batch, manifest, error, summary) => {
+        seed(chunks, batch, manifest);
+        const out = await run();
+        expect(JSON.parse(out)).toEqual({ error, summary });
+      },
+    );
+
+    it.each([
+      [
+        "all rows written beside rejected noise rows",
+        3,
+        { success: 2, failed: 0, rejected: 1 },
+        "written",
+        false,
+        plain(3, { success: 2, failed: 0, rejected: 1 }, STALE),
+      ],
+      [
+        "an unchanged manifest with every row written",
+        2,
+        { success: 2, failed: 0, rejected: 0 },
+        "unchanged",
+        false,
+        plain(2, { success: 2, failed: 0, rejected: 0 }, "unchanged"),
+      ],
+      [
+        "a truncated document with every row written",
+        2,
+        { success: 2, failed: 0, rejected: 0 },
+        "written",
+        true,
+        plain(2, { success: 2, failed: 0, rejected: 0 }, STALE, [
+          "  TRUNCATED: exceeded max_chunks — some content not ingested",
+        ]),
+      ],
+    ] as const)(
+      "%s → the plain summary",
+      async (_case, chunks, batch, manifest, truncated, text) => {
+        seed(chunks, batch, manifest, truncated);
+        expect(await run()).toBe(text);
+      },
+    );
+
+    it("embedding failures with every row written → the plain summary", async () => {
+      seed(2, { success: 2, failed: 0, rejected: 0 });
+      mockEmbed.mockResolvedValue(null);
+      expect(await run()).toBe(
+        plain(2, { success: 2, failed: 0, rejected: 0 }, STALE, [
+          "  Embedding failures: 2 (chunks inserted with FTS-only retrieval)",
+        ]),
+      );
+    });
+
+    it("a failure result read by JSON.parse alone has a non-empty one-line error first", async () => {
+      seed(3, { success: 1, failed: 1, rejected: 1 }, "cascade_failed");
+      const out = await run();
+      expect(out.startsWith('{"error":')).toBe(true);
+      const { error } = JSON.parse(out) as { error: unknown };
+      expect(typeof error).toBe("string");
+      expect((error as string).length).toBeGreaterThan(0);
+      expect(error).not.toMatch(/[\r\n]/);
+      expect(error).not.toContain("/tmp/t.pdf");
+    });
   });
 
   describe("fetch order with the real pgUpsertLineageSource + pgBatchUpsert", () => {
@@ -359,7 +553,7 @@ describe("kbIngestPdfStructuredTool", () => {
       ],
       ["cascade search 503", { search: 503 }, ["cascade-search"]],
     ] as const) {
-      it(`${name}: no manifest POST, chunks written, summary flags; a healthy re-ingest retries the cascade`, async () => {
+      it(`${name}: no manifest POST, chunks written, a failure whose summary flags it; a healthy re-ingest retries the cascade`, async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         stubFetch("an-older-hash", fail);
         const out = (await kbIngestPdfStructuredTool.execute({
@@ -370,7 +564,11 @@ describe("kbIngestPdfStructuredTool", () => {
           ...failed,
           "chunks-post",
         ]);
-        expect(out).toContain(
+        const parsed = JSON.parse(out);
+        expect(parsed.error).toBe(
+          "ingest incomplete: 1 of 1 chunks written, 0 failed, 0 rejected as noise; manifest cascade FAILED, manifest not advanced: next ingest retries",
+        );
+        expect(parsed.summary).toContain(
           "cascade FAILED, manifest not advanced: next ingest retries",
         );
 
