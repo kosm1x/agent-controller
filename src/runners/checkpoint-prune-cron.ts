@@ -84,7 +84,7 @@ export function runCheckpointPrune(log: PruneLog = DEFAULT_LOG): {
   // Both prune functions are best-effort and SHOULD never throw — but the
   // node-cron scheduler must NEVER see an unhandled exception (it has no
   // missed-fire catchup and would stall the whole hourly tick). Same
-  // defensive shape as `cohort/rollup-cron.ts:70-82`.
+  // defensive shape as `runCohortRollup` in `cohort/rollup-cron.ts`.
   let snapshots = 0;
   let checkpoints = 0;
   try {

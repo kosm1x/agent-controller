@@ -3,7 +3,8 @@
  * text prompt (nanoclaw / heavy / swarm).
  *
  * The router's chat contract packs the CURRENT user message as the LAST
- * user turn of conversationHistory (see fast-runner.ts:743) — fast-runner
+ * user turn of conversationHistory (see the `lastUserMsg` derivation in
+ * `fastRunnerBranches.execute`, fast-runner.ts) — fast-runner
  * consumes it, but the prompt-blob runners historically read only
  * `title + description`, where the instruction survives as a 60-char
  * truncated title and the description is the persona/context blob.

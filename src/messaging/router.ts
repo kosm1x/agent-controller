@@ -5873,7 +5873,7 @@ export class MessageRouter {
 
     // Positive default-deny: any email channel that is NOT explicitly
     // owner-only gets the gate. Matches applyCommunityChannelScopeOverride's
-    // fail-safe semantic (scope.ts:479): undefined mode on an email channel
+    // fail-safe semantic (its doc in scope.ts): undefined mode on an email channel
     // is treated as community-manager. R1-W2 from the Phase 2b audit.
     const needsGate = isEmailChannel(channel) && adapter.mode !== "owner-only";
     if (!needsGate) {

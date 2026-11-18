@@ -312,8 +312,10 @@ export function defaultConfig(
  * History (v7.6 Spine 1 G8): the previous Error subclass embedded "Raw
  * (first 500 chars): ..." directly in the message. That message rode the
  * `Planning failed: ${err.message}` chain through `task.failed` events and
- * surfaced verbatim to users in router.ts:2321 (background-agent failures)
- * and rituals/dynamic.ts:574 (scheduled-task broadcasts). Same prompt-
+ * surfaced verbatim to users in the background-agent failure notice of
+ * `MessageRouter.handleTaskFailed` (messaging/router.ts) and in the
+ * scheduled-task failure broadcast (`alertScheduleFailed`,
+ * rituals/dynamic.ts). Same prompt-
  * enhancer-leakage class as the original CIRICD bug — error path leaking
  * unparsed LLM output.
  */

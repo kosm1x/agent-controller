@@ -194,8 +194,8 @@ export async function decomposeQuestion(
   } catch (e) {
     // The call threw (abort / API error). If the handler already captured the
     // angles, a timeout that races a successful tool_use still has a valid
-    // artifact — fall through to finalize rather than discard it (mirrors
-    // critic.ts:261 abort-during-handler handling). Only a throw with NOTHING
+    // artifact — fall through to finalize rather than discard it (mirrors the
+    // abort-during-handler handling in `runCritic`, src/audit/critic.ts). Only a throw with NOTHING
     // captured is a real call failure.
     if (!sink.captured) {
       throw new DecompositionError(`decomposition call failed: ${errMsg(e)}`);

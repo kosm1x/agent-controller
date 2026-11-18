@@ -121,7 +121,8 @@ export function listFirstPartySkills(): FirstPartySkill[] {
  * list. Used by `availableSkillsSection` so the prompt never advertises a
  * skill whose parent tool isn't currently scoped — addresses the H1 contract
  * violation against the identity rule "no menciones herramientas que no están
- * en tu lista" (prompt-sections.ts:65-66).
+ * en tu lista" (`identitySection` in messaging/prompt-sections.ts, section
+ * "REGLA CRÍTICA: Solo usa herramientas disponibles").
  *
  * Match semantics: exact equality via Set lookup. Substring / prefix matches
  * do NOT count — e.g., a tool list containing `video_html_compose_v2` does

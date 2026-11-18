@@ -92,7 +92,7 @@ if (!process.argv.includes("--run")) {
   process.exit(3);
 }
 
-// 5) Register the builtin tool source (index.ts:203-217) so `fast` sub-agents have
+// 5) Register the builtin tool source (as `main` in src/index.ts does) so `fast` sub-agents have
 // tools — without this they fail with "No tools available." (harness-only setup;
 // the live service registers builtin + MCP + Google + Memory + Skills sources).
 const { toolRegistry } = await import("../src/tools/registry.js");

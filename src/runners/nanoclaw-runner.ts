@@ -228,7 +228,7 @@ export const nanoclawRunner: Runner = {
         };
       }
 
-      // Parse structured output from the worker (mirrors heavy-runner.ts:94-125)
+      // Parse structured output from the worker (mirrors `executeInContainer` in heavy-runner.ts)
       const parsed = JSON.parse(containerOutput.result ?? "{}") as {
         success?: boolean;
         content?: string;

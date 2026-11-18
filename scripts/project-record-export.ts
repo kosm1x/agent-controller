@@ -133,7 +133,8 @@ export function buildRecordFromRow(
   };
   // The owned keys are validated TOGETHER, never one at a time: a key's
   // validity can depend on another (a `capabilities.mcp[].env` `{name, secret}`
-  // must name an entry of `secrets`, src/projects/record.ts:157), so a key
+  // must name an entry of `secrets`: the `superRefine` of `projectContractSchema`
+  // in src/projects/record.ts), so a key
   // probed alone is judged wrongly (incident 2026-10-12: eurekams lost its
   // `capabilities`). Pass 1: every present owned key. On failure, the keys an
   // issue names (`path[0]`) are invalid and the rest are re-probed together

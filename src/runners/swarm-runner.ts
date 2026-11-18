@@ -374,7 +374,8 @@ function attemptSubtaskRetry(
   const childGates = gateSpecsFromGoal(goal.id, goal.metadata);
 
   // submitTask is async; fire-and-forget here matches the existing
-  // dispatcher pattern at dispatcher.ts:471 (_isRequiredToolRetry path).
+  // dispatcher pattern (the `_isRequiredToolRetry` resubmission in
+  // `dispatchWithSlot`, dispatch/dispatcher.ts).
   // The tracker rewire happens synchronously below so the next poll sees
   // the new state.
   //

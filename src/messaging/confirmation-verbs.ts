@@ -3,7 +3,7 @@
  *
  * Two parallel CONFIRM_PATTERN regexes existed before v7.6 Spine 1:
  *   - messaging/confirmations.ts (pending-tool re-execution flow)
- *   - runners/fast-runner.ts:104 (deletion confirmation flow)
+ *   - runners/fast-runner.ts (deletion confirmation flow, `hasUserConfirmedDeletion`)
  * They diverged silently — neither covered the natural Spanish imperative-clitic
  * replies users produce in response to LLM-asked confirmation questions like
  * "¿Subo el archivo?" / "¿Creo el evento?" / "¿Lanzo el experimento?". This
@@ -149,8 +149,9 @@ export const DECLINE_SRC =
  *
  * Audit refinement (round 2, 2026-05-08): the round-1 strict mode dropped
  * action verbs entirely; this regressed the deletion two-step where users
- * naturally reply "Dale" to "¿Confirmo la eliminación?" (existing test at
- * `runners/fast-runner.test.ts:723`). Fix: action verbs are op-indifferent
+ * naturally reply "Dale" to "¿Confirmo la eliminación?" (existing test
+ * "returns true when assistant asked and user said dale" in the
+ * `hasUserConfirmedDeletion` block of `runners/fast-runner.test.ts`). Fix: action verbs are op-indifferent
  * and stay in strict; only verb-typed clitics are gated by op semantics.
  */
 export function buildConfirmRegex(mode: "lax" | "strict" = "lax"): RegExp {

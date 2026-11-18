@@ -1164,9 +1164,10 @@ const fastRunnerBranches = {
         // checkpoint, relevant userFacts, enrichment) come right after the cache
         // boundary. Tagged `cacheable: false` so the claude-sdk shim routes
         // it to a user-message prefix; without this, per-task byte-drift
-        // here invalidates the entire systemPrompt cache prefix (the SDK
-        // collapses every system message into ONE cache_control marker —
-        // verified against `@anthropic-ai/claude-agent-sdk` sdk.d.ts:1472).
+        // here invalidates the entire systemPrompt cache prefix (the SDK path
+        // joins the stable system messages into ONE `systemPrompt` string,
+        // cached as one prefix — the `systemPrompt` option of `Options` in
+        // `@anthropic-ai/claude-agent-sdk`).
         if (variableDescPart) {
           messages.push({
             role: "system",
@@ -2181,7 +2182,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
             // qa-audit C2 fold (2026-05-23): gate on costAuthoritative so the
             // abort/timeout path (where costUsd stayed at its initial 0) does
             // NOT override the dispatcher's calculateCost() fallback. Without
-            // this gate, dispatcher.ts:505's optional-spread sees `0 !==
+            // this gate, the `costUsdOverride` optional-spread in
+            // `recordRunCost` (dispatch/dispatcher.ts) sees `0 !==
             // undefined` and writes a phantom-$0 row to cost_ledger over the
             // accumulated per-turn tokens we just preserved (see #225 fix in
             // claude-sdk.ts).

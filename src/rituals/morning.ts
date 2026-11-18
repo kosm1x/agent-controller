@@ -158,7 +158,8 @@ IMPORTANT: Do NOT write to the journal. The journal is exclusively for the user'
       "submit_report",
     ],
     // requiredTools is the dispatcher's hard-fail-and-retry contract
-    // (dispatcher.ts:430-481 — missing required tool fails the task AND
+    // (the `requiredTools` check in `dispatchWithSlot`, dispatch/dispatcher.ts
+    // — missing required tool fails the task AND
     // re-submits the whole brief). If submit_report were here and the LLM
     // skipped it, the dispatcher would re-run morning_brief AFTER gmail_send
     // already shipped — producing two morning briefs in the user's inbox.

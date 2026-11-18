@@ -32,7 +32,7 @@ export type OutcomeTag =
  * Map a tasks.status value to an outcome tag.
  * Pure function — exposed for testing without DB.
  *
- * Keep this switch in sync with `src/db/schema.sql:11` (tasks.status CHECK).
+ * Keep this switch in sync with the tasks.status CHECK in `src/db/schema.sql`.
  * Status enum (observed in production 2026-04-29 + dispatcher.ts updates):
  *   completed              → success
  *   completed_with_concerns → concerns
@@ -68,7 +68,7 @@ export function statusToOutcomeTag(
  * retain path (which is itself fire-and-forget upstream).
  *
  * Performance: tasks.task_id has both UNIQUE constraint and idx_tasks_task_id
- * (schema.sql:5 + 29) so this is an O(log n) point lookup. Better-sqlite3 in
+ * (the `tasks` table and the index, both in schema.sql) so this is an O(log n) point lookup. Better-sqlite3 in
  * WAL mode reads from a consistent snapshot, so a concurrent UPDATE on the
  * same row will not corrupt the read.
  */

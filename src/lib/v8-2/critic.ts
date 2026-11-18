@@ -436,7 +436,8 @@ function buildCostCheckTool(db: Database.Database): InlineSdkTool {
 }
 
 /** FTS5 MATCH needs sanitization — bare reserved operators raise syntax errors
- *  (sqlite-backend.ts:94). Quote each alnum token and OR them for recall breadth.
+ *  (see the reserved-operator filter in `extractKeywords`, src/memory/fts-terms.ts).
+ *  Quote each alnum token and OR them for recall breadth.
  *  Token classes are UNICODE (\p{L}\p{N}), NOT [a-z0-9]: the ASCII class treated
  *  every accented letter as a separator, splitting "ángeles" into the
  *  unmatchable token "ngeles" (0 FTS hits on an entity 14 KB files contained —

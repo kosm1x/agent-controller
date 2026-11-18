@@ -2,7 +2,8 @@
  * Resume loader — reconstruct a resumable OrchestratorResult from a persisted
  * `runs` row so a partially-failed Prometheus run can be re-executed.
  *
- * The dispatcher persists three Prometheus artifacts per run (dispatcher.ts:587):
+ * The dispatcher persists three Prometheus artifacts per run (the `UPDATE runs`
+ * that writes `goal_graph` in `dispatchWithSlot`, src/dispatch/dispatcher.ts):
  *   runs.goal_graph — JSON.stringify(OrchestratorResult.goalGraph) = { goals }
  *   runs.trace      — JSON.stringify(OrchestratorResult.trace)     = TraceEvent[]
  *   runs.output     — JSON.stringify(heavy-runner output)          =

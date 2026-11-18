@@ -14,8 +14,8 @@
  *
  * Empty alerts → empty string returned. Caller (morning.ts) omits the
  * "do you want to inject this?" branch when the section is empty, matching
- * the existing "OMIT the section entirely" pattern from morning.ts:39
- * (spaced-repetition section).
+ * the existing "OMIT the section" pattern of the spaced-repetition step in
+ * the `createMorningBriefing` prompt (morning.ts).
  *
  * Spec §8 does NOT mutate delivery_status in this bundle. Alerts keep
  * appearing every day until they auto-resolve (observed value moves back
