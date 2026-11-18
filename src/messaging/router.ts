@@ -9,6 +9,7 @@
 import { randomBytes } from "crypto";
 import { submitTask, cancelTask } from "../dispatch/dispatcher.js";
 import {
+  recordCommunityGateVerdict,
   recordMemoryInjection,
   recordPromptSectionDropped,
 } from "../observability/prometheus.js";
@@ -5920,8 +5921,6 @@ export class MessageRouter {
         outbound = COMMUNITY_REPLY_FALLBACK;
       }
       try {
-        const { recordCommunityGateVerdict } =
-          await import("../observability/prometheus.js");
         recordCommunityGateVerdict(verdictBucket);
       } catch {
         /* metric registration shouldn't block delivery */

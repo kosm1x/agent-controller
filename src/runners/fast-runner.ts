@@ -49,7 +49,11 @@ import { CACHE_BREAK_MARKER } from "../messaging/router.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 import { getConfig } from "../config.js";
-import { toolSearchEnabled } from "../inference/claude-sdk.js";
+import {
+  queryClaudeSdk,
+  toolSearchEnabled,
+  type ClaudeSdkImage,
+} from "../inference/claude-sdk.js";
 
 // Re-export for back-compat with existing imports (e.g. tests).
 export { conditionMatches };
@@ -1646,10 +1650,6 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       // the SDK needs and bypass inferWithTools entirely.
       // ---------------------------------------------------------------
       sdkPath: if (getConfig().inferencePrimaryProvider === "claude-sdk") {
-        const { queryClaudeSdk } = await import("../inference/claude-sdk.js");
-        type ClaudeSdkImage =
-          import("../inference/claude-sdk.js").ClaudeSdkImage;
-
         // Route `cacheable:false` system messages to the user-prompt prefix
         // so per-task byte-drift doesn't invalidate the cached systemPrompt.
         // Shares one implementation with `flattenMessagesForSdk` via the

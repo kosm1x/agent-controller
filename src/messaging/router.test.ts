@@ -94,6 +94,7 @@ vi.mock("./community-reply-gate.js", () => ({
 }));
 
 import {
+  recordCommunityGateVerdict,
   recordMemoryInjection,
   recordPromptSectionDropped,
 } from "../observability/prometheus.js";
@@ -7688,6 +7689,75 @@ describe("MessageRouter — community-reply write-gate (v7.7 Phase 2b)", () => {
     await Promise.allSettled([...(router as any).gateInflight]);
 
     expect(adapter.sentMessages[0].text).toBe("FALLBACK_TEXT_FOR_TEST");
+  });
+
+  it("community-manager email: every gate verdict is counted once in its bucket (pass, fail, error)", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    const { gateCommunityReply } = await import("./community-reply-gate.js");
+    vi.mocked(gateCommunityReply)
+      .mockResolvedValueOnce({ verdict: "pass", critique: "", latencyMs: 5, error: false })
+      .mockResolvedValueOnce({ verdict: "fail", critique: "unsourced", latencyMs: 5, error: false })
+      .mockResolvedValueOnce({ verdict: "fail", critique: "upstream 503", latencyMs: 5, error: true });
+
+    for (const text of ["uno", "dos", "tres"]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (router as any).sendLLMReplyToChannel("email:comunidades", "alice@example.com", text);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await Promise.allSettled([...(router as any).gateInflight]);
+    }
+
+    expect(vi.mocked(recordCommunityGateVerdict).mock.calls).toEqual([["pass"], ["fail"], ["error"]]);
+    expect(adapter.sentMessages.map((m) => m.text)).toEqual([
+      "uno",
+      "FALLBACK_TEXT_FOR_TEST",
+      "FALLBACK_TEXT_FOR_TEST",
+    ]);
+  });
+
+  it("community-manager email: the verdict is counted before the send, so a failed send still records it", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    adapter.send.mockRejectedValueOnce(new Error("SMTP 421"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sent = await (router as any).sendLLMReplyToChannel("email:comunidades", "alice@example.com", "hola");
+      expect(sent).toBe(false);
+      expect(vi.mocked(recordCommunityGateVerdict).mock.calls).toEqual([["pass"]]);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("community-manager email: a metric that throws never blocks the delivery", async () => {
+    const adapter = createEmailAdapter(
+      "email:comunidades",
+      "community-manager",
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.registerChannel(adapter as any);
+    vi.mocked(recordCommunityGateVerdict).mockImplementationOnce(() => {
+      throw new Error("metric registry unavailable");
+    });
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sent = await (router as any).sendLLMReplyToChannel("email:comunidades", "alice@example.com", "hola");
+      expect(sent).toBe(true);
+      expect(adapter.sentMessages.map((m) => m.text)).toEqual(["hola"]);
+      expect(vi.mocked(recordCommunityGateVerdict)).toHaveBeenCalledOnce();
+    } finally {
+      // Drops an unconsumed throwing implementation so later cases see the plain mock.
+      vi.mocked(recordCommunityGateVerdict).mockReset();
+    }
   });
 
   it("owner-only email: gate NOT called → original shipped", async () => {

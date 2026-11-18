@@ -2818,6 +2818,24 @@ describe("fastRunner heartbeat lifecycle", () => {
   });
 });
 
+describe("claude-sdk path: vision", () => {
+  it("an image on the user turn reaches the SDK call with its media type and data", async () => {
+    mockGetConfig.mockReturnValue(SDK_CONFIG);
+    mockQuerySdk.mockResolvedValueOnce(makeSdkResult());
+    await fastRunner.execute({
+      taskId: "task-vision-sdk",
+      runId: "run-vision-sdk",
+      title: "t",
+      description: "describe la imagen",
+      conversationHistory: [
+        { role: "user", content: "¿qué ves?", imageUrl: "data:image/png;base64,iVBORw0KGgo=" },
+      ],
+    });
+    const args = mockQuerySdk.mock.calls[0]![0] as { images?: unknown };
+    expect(args.images).toEqual([{ mediaType: "image/png", data: "iVBORw0KGgo=" }]);
+  });
+});
+
 // ────────────────────────────────────────────────────────────────────
 // Audit 2026-09-22 batch C — prefix stability
 // ────────────────────────────────────────────────────────────────────
