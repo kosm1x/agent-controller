@@ -27,7 +27,11 @@ import {
   scoreClassification,
   computeCompositeScore,
 } from "./scorer.js";
-import { detectActiveGroups, CODE_SCOPE_PATTERNS } from "../messaging/scope.js";
+import {
+  detectActiveGroups,
+  CODE_SCOPE_PATTERNS,
+  scopeToolsForMessage,
+} from "../messaging/scope.js";
 import { classify, type ClassificationInput } from "../dispatch/classifier.js";
 import { normalizeForMatching } from "../messaging/normalize.js";
 import { recentContextOf } from "./jev-scope-chain.js";
@@ -94,7 +98,6 @@ async function evalToolSelection(
     .map((t) => t.content);
 
   // For eval, assume all optional features are available
-  const { scopeToolsForMessage } = await import("../messaging/scope.js");
   const scopedToolNames = scopeToolsForMessage(
     message,
     recentMessages,

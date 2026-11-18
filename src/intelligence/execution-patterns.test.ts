@@ -246,3 +246,37 @@ describe("audit R4 S1: extractPattern never sends or stores a stored value", () 
     expect(stored).not.toContain(EP_SYN);
   });
 });
+
+describe("extractPattern prune at the cap", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("at 50 stored patterns deletes the five oldest by updated_at", async () => {
+    // Listed newest first, so the five oldest are the last five entries.
+    const base = Date.UTC(2026, 0, 1);
+    mocks.listFiles.mockReturnValue(
+      Array.from({ length: 50 }, (_, i) => ({
+        path: `p/${i}.md`,
+        title: "Pattern: x",
+        tags: ["execution-pattern"],
+        updated_at: new Date(base + (49 - i) * 3_600_000).toISOString(),
+      })),
+    );
+    vi.mocked(infer).mockResolvedValue({
+      content: "NONE",
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      provider: "test",
+      latency_ms: 1,
+    });
+    await extractPattern({
+      taskId: "t-prune",
+      title: "x",
+      toolsCalled: ["shell_exec", "file_read"],
+      scopeGroups: ["coding"],
+      userMessage: "hi",
+      result: "a".repeat(200),
+    });
+    expect(mocks.deleteFile.mock.calls).toEqual(
+      [49, 48, 47, 46, 45].map((i) => [`p/${i}.md`]),
+    );
+  });
+});

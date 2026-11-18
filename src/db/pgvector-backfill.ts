@@ -7,7 +7,7 @@
  * Run via: npx tsx src/db/pgvector-backfill.ts (operator context only, queue 3c/4y(i))
  */
 
-import { getDatabase } from "./index.js";
+import { getDatabase, initDatabase } from "./index.js";
 import { generateEmbeddings } from "../inference/embeddings.js";
 import { pgBatchUpsert, contentHash, coerceKbQualifier } from "./pgvector.js";
 import type { KbEntry } from "./pgvector.js";
@@ -141,7 +141,6 @@ export async function backfillToPgvector(): Promise<{
 export async function main(): Promise<void> {
   requireOperatorContext("pgvector-backfill", { tty: false });
   // Initialize SQLite database when running as standalone script
-  const { initDatabase } = await import("./index.js");
   initDatabase(process.env.MC_DB_PATH ?? "./data/mc.db");
 
   const result = await backfillToPgvector();

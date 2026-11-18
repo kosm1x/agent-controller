@@ -1557,7 +1557,10 @@ USE WHEN:
 
 import { HTML_MOTION_IDS } from "../../video/html-motion.js";
 import { htmlCompositionSkillSection } from "../../video/html-skills.js";
-import { validateViewport } from "../../video/html-renderer.js";
+import {
+  validateViewport,
+  renderHtmlComposition,
+} from "../../video/html-renderer.js";
 
 const HTML_COMPOSE_DEFAULT_FPS = 24 as const;
 const HTML_COMPOSE_DEFAULT_WIDTH = 1920;
@@ -1737,8 +1740,6 @@ Requires confirmation (cost-bearing). Returns a job_id to track with video_statu
     // Fire-and-forget render. Errors surface via DB row.
     (async () => {
       try {
-        const { renderHtmlComposition } =
-          await import("../../video/html-renderer.js");
         const result = await renderHtmlComposition(composition, jobId, {
           fps,
           width,

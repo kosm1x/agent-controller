@@ -8,7 +8,7 @@
  * personal "when Fede says X, he means Y" dictionary over time.
  */
 
-import { contentHash } from "../db/pgvector.js";
+import { contentHash, pgUpsert, isPgvectorEnabled } from "../db/pgvector.js";
 
 /**
  * Extract what changed between two messages and persist as a correction.
@@ -23,7 +23,6 @@ export async function extractAndPersistCorrection(
 
   try {
     const { infer } = await import("../inference/adapter.js");
-    const { pgUpsert, isPgvectorEnabled } = await import("../db/pgvector.js");
     const { generateEmbedding } = await import("../inference/embeddings.js");
 
     if (!isPgvectorEnabled()) return;

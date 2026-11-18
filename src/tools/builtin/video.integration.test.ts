@@ -360,6 +360,7 @@ describe("video_html_compose on the real schema", () => {
 
     const row = await settled(out.jobId);
     expect(statusAtRender).toBe("composing");
+    expect(m.renderHtmlComposition).toHaveBeenCalledWith(COMPOSITION, out.jobId, { fps: 24, width: 1080, height: 1920 });
     expect(row).toMatchObject({
       status: "completed",
       topic: "html: /synthetic/composition.html",

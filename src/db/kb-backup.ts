@@ -5,7 +5,12 @@
  * Push-only: SQLite → Postgres. Runs periodically or on-demand.
  */
 
-import { listFilePaths, getFile, parseTagsSafe } from "./jarvis-fs.js";
+import {
+  listFilePaths,
+  getFile,
+  parseTagsSafe,
+  upsertFile,
+} from "./jarvis-fs.js";
 import { errMsg } from "../lib/err-msg.js";
 
 const COMMIT_DB_URL = "https://db.mycommit.net/rest/v1";
@@ -159,8 +164,6 @@ export async function restoreKbFromRemote(): Promise<{
   if (!apiKey) {
     return { restored: 0, errors: 0 };
   }
-
-  const { upsertFile } = await import("./jarvis-fs.js");
 
   try {
     const res = await fetch(

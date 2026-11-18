@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
     err.code = "ENOENT";
     throw err;
   }),
+  // Not a path error, like reading an export the mock does not define: only
+  // the content_file case answers its own synthetic path.
+  mockReadFileSync: vi.fn((p: string): string => {
+    throw new Error(`readFileSync not stubbed: ${p}`);
+  }),
 }));
 
 vi.mock("../../google/client.js", () => ({
@@ -30,6 +35,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mocks.mockMkdirSync,
   writeFileSync: mocks.mockWriteFileSync,
   realpathSync: mocks.mockRealpathSync,
+  readFileSync: mocks.mockReadFileSync,
 }));
 
 import { gdriveDownloadTool, gdriveListTool, gdriveUploadTool } from "./google-drive.js";
@@ -39,6 +45,40 @@ describe("gdrive_upload — description", () => {
     const d = gdriveUploadTool.definition.function.description;
     expect(d).toContain("DO NOT USE for knowledge base files");
     expect(d).not.toMatch(/knowledge base files to Drive|Obsidian sync/);
+  });
+});
+
+describe("gdrive_upload — content_file", () => {
+  const SRC = "/synthetic/gdrive-upload-src.md";
+
+  afterEach(() => {
+    mocks.mockGoogleFetch.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("uploads the text read from content_file as the new file's body", async () => {
+    const read = mocks.mockReadFileSync.getMockImplementation()!;
+    mocks.mockReadFileSync.mockImplementation((p: string) =>
+      p === SRC ? "FILE BODY" : read(p),
+    );
+    mocks.mockGoogleFetch.mockResolvedValue({
+      id: "f-1",
+      name: "n.md",
+      webViewLink: "https://drive.example/f-1",
+    });
+    try {
+      const out = JSON.parse(
+        await gdriveUploadTool.execute({ name: "n.md", content_file: SRC }),
+      );
+      expect(out).toMatchObject({ created: true, file_id: "f-1" });
+      expect(mocks.mockReadFileSync).toHaveBeenCalledWith(SRC, "utf-8");
+      const init = mocks.mockGoogleFetch.mock.calls[0]![1] as {
+        rawBody: string;
+      };
+      expect(init.rawBody).toContain("\r\n\r\nFILE BODY\r\n");
+    } finally {
+      mocks.mockReadFileSync.mockImplementation(read);
+    }
   });
 });
 

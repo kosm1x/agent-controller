@@ -8,7 +8,12 @@
  * Matching: scope group + keyword overlap.
  */
 
-import { upsertFile, listFiles, getFile } from "../db/jarvis-fs.js";
+import {
+  upsertFile,
+  listFiles,
+  getFile,
+  deleteFile,
+} from "../db/jarvis-fs.js";
 import { infer } from "../inference/adapter.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
@@ -62,7 +67,6 @@ export async function extractPattern(opts: {
       (a, b) =>
         new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime(),
     );
-    const { deleteFile } = await import("../db/jarvis-fs.js");
     for (let i = 0; i < 5 && i < sorted.length; i++) {
       deleteFile(sorted[i].path);
     }

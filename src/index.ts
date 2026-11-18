@@ -31,7 +31,7 @@ import {
   cancelPendingRegeneration,
 } from "./db/jarvis-index.js";
 import { getJarvisKbRoot, getKbMirrorWriteDir } from "./db/jarvis-fs.js";
-import { initEventBus } from "./lib/event-bus.js";
+import { initEventBus, getEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
 import { startTriggers, stopTriggers } from "./triggers/index.js";
 import { createApp } from "./api/index.js";
@@ -206,7 +206,6 @@ async function main(): Promise<void> {
   // manager starts (line ~172) — the reaction manager subscribes on start()
   // and immediately drains any unread events, so ordering matters.
   if (orphanedTaskIds.length > 0) {
-    const { getEventBus } = await import("./lib/event-bus.js");
     const { writeCheckpoint } = await import("./runners/checkpoint.js");
     const { emitTraceEvent } = await import("./observability/task-trace.js");
     const bus = getEventBus();

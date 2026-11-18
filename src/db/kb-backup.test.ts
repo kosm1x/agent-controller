@@ -10,9 +10,10 @@ import {
 
 // syncKbToRemote reads jarvis_files via these — mock them so the backup logic
 // is exercisable without a live DB. vi.hoisted per project testing convention.
-const { mockListFilePaths, mockGetFile } = vi.hoisted(() => ({
+const { mockListFilePaths, mockGetFile, mockUpsertFile } = vi.hoisted(() => ({
   mockListFilePaths: vi.fn(),
   mockGetFile: vi.fn(),
+  mockUpsertFile: vi.fn(),
 }));
 vi.mock("./jarvis-fs.js", async (importOriginal) => {
   // The real parseTagsSafe, so the tags-normalisation case checks production
@@ -22,10 +23,15 @@ vi.mock("./jarvis-fs.js", async (importOriginal) => {
     listFilePaths: mockListFilePaths,
     getFile: mockGetFile,
     parseTagsSafe: actual.parseTagsSafe,
+    upsertFile: mockUpsertFile,
   };
 });
 
-import { stripNulBytes, syncKbToRemote } from "./kb-backup.js";
+import {
+  restoreKbFromRemote,
+  stripNulBytes,
+  syncKbToRemote,
+} from "./kb-backup.js";
 
 // Regression coverage for the 2026-06-09→11 nightly kb-backup failure: a single
 // jarvis_files row stored with SQLite storage-class BLOB hydrated as a Buffer
@@ -213,5 +219,45 @@ describe("syncKbToRemote — per-row blast-radius containment", () => {
     const result = await syncKbToRemote();
     expect(result).toMatchObject({ pushed: 0, errors: 0 });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("restoreKbFromRemote — every fetched row goes through upsertFile", () => {
+  const OLD_KEY = process.env.COMMIT_DB_KEY;
+
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.COMMIT_DB_KEY;
+    else process.env.COMMIT_DB_KEY = OLD_KEY;
+    mockUpsertFile.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("upserts each row with its parsed tags and counts a row whose upsert throws as an error", async () => {
+    process.env.COMMIT_DB_KEY = "test-key";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const row = (path: string) => ({
+      path,
+      title: `t-${path}`,
+      content: "body",
+      tags: '["a"]',
+      qualifier: "default",
+      priority: 5,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([row("ok.md"), row("bad.md")]), {
+        status: 200,
+      }),
+    );
+    mockUpsertFile.mockImplementation((path: string) => {
+      if (path === "bad.md") throw new Error("simulated write failure");
+    });
+
+    const result = await restoreKbFromRemote();
+
+    expect(result).toEqual({ restored: 1, errors: 1 });
+    expect(mockUpsertFile.mock.calls).toEqual([
+      ["ok.md", "t-ok.md", "body", ["a"], "default", 5],
+      ["bad.md", "t-bad.md", "body", ["a"], "default", 5],
+    ]);
   });
 });

@@ -2,7 +2,12 @@
  * Google Drive tools — list, create, share, delete, move, upload, download.
  */
 
-import { mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  realpathSync,
+  readFileSync,
+} from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import type { Tool } from "../types.js";
 import { googleFetch } from "../../google/client.js";
@@ -706,7 +711,6 @@ IMPORTANT: Always use parent_folder_id when creating new files to place them in 
         });
       }
       try {
-        const { readFileSync } = await import("node:fs");
         content = readFileSync(contentFile, "utf-8");
       } catch {
         return JSON.stringify({
