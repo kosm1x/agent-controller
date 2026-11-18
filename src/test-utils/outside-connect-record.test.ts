@@ -126,7 +126,6 @@ describe("the connection guard on a stand-in target", () => {
     ["127.0.0.1", [{ host: "127.0.0.1", port: 1 }]],
     ["another address in 127.0.0.0/8", [{ host: "127.8.9.10", port: 1 }]],
     ["::1", [{ host: "::1", port: 1 }]],
-    ["::1 in brackets", [{ host: "[::1]", port: 1 }]],
     ["an IPv4-mapped loopback address", [{ host: "::ffff:127.0.0.1", port: 1 }]],
     ["localhost in capitals", [{ host: "LOCALHOST", port: 1 }]],
     ["localhost with a trailing dot", [{ host: "localhost.", port: 1 }]],
@@ -170,9 +169,10 @@ describe("the connection guard on a stand-in target", () => {
     ["IPv4 loopback with an octal first part", "0177.0.0.1", "0127.0.0.1"],
     ["the top of the IPv4 loopback range", "127.255.255.255", "126.255.255.255"],
     ["IPv6 loopback with a leading zero group", "0::1", "::2"],
-    ["IPv6 loopback written out, in brackets", "[0:0:0:0:0:0:0:1]", "[0:0:0:0:0:0:0:2]"],
     ["IPv6 loopback with a zone", "::1%lo", "fe80::1%lo"],
     ["IPv4-mapped loopback in hex groups", "::ffff:7f00:1", "::ffff:8000:1"],
+    ["localhost with a trailing dot", "localhost.", `${OUTSIDE}.`],
+    ["localhost with one trailing dot, not two", "localhost.", "localhost.."],
   ])("%s (%s) is this machine; its neighbour %s is not", async (_, local, neighbour) => {
     const near = fakeTarget();
     const nearRecorder = install(near.target);
@@ -188,6 +188,30 @@ describe("the connection guard on a stand-in target", () => {
     await nextTick();
     expect(near.target.destroyed).toEqual([]);
     expect(far.target.destroyed).toHaveLength(1);
+  });
+
+  // An address with a trailing dot or in brackets is not an address to Node or
+  // the system resolver: the socket hands it to a name lookup, which goes
+  // wherever the host's name configuration sends it, so it is refused like the
+  // same decoration on an outside address. Only a name keeps its trailing dot.
+  it.each<[string, string, string]>([
+    ["IPv4 loopback with a trailing dot", "127.0.0.1.", "192.0.2.1."],
+    ["IPv4 loopback written short, with a trailing dot", "127.1.", "128.1."],
+    ["IPv4 loopback as one number, with a trailing dot", "2130706433.", "2147483649."],
+    ["IPv6 loopback in brackets", "[::1]", "[2001:db8::1]"],
+    ["IPv6 loopback written out, in brackets", "[0:0:0:0:0:0:0:1]", "[0:0:0:0:0:0:0:2]"],
+    ["IPv4 loopback in brackets", "[127.0.0.1]", "[192.0.2.1]"],
+    ["localhost in brackets", "[localhost]", `[${OUTSIDE}]`],
+  ])("%s (%s) is refused like its neighbour %s", async (_, decorated, neighbour) => {
+    for (const host of [decorated, neighbour]) {
+      const { target, calls } = fakeTarget();
+      const recorder = install(target);
+      expect(target.connect({ host, port: 1 })).toBe(target);
+      expect(calls).toEqual([]);
+      expect(recorder.hits).toEqual([{ ...SAMPLE, host, port: 1 }]);
+      await nextTick();
+      expect(target.destroyed).toHaveLength(1);
+    }
   });
 
   it("passes the original's error for a call to this machine through unchanged", () => {

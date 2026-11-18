@@ -30,9 +30,11 @@ delete process.env.COMMIT_DB_KEY;
   .__outsideCallEnvDropped = dropOutsideCallEnv(process.env);
 
 // No test connects to another machine. An attempt to a host that is not this
-// machine (a loopback address in any form, localhost or a name under
-// .localhost, the ip6-localhost and ip6-loopback aliases, a local socket path)
-// is refused before anything is resolved or dialled: the caller gets an
+// machine (a loopback address in any form the runtime reads as an address,
+// localhost or a name under .localhost, the ip6-localhost and ip6-loopback
+// aliases, a local socket path; an address with a trailing dot or in brackets
+// is a name to the runtime, so it is not this machine) is refused before
+// anything is resolved or dialled: the caller gets an
 // ordinary connection error naming the host, the port and the rule. A caller's
 // catch can swallow that error, so each attempt is also recorded (one line:
 // test file, test name, host, port, in mc-test-outside-connections.jsonl in
@@ -46,19 +48,6 @@ delete process.env.COMMIT_DB_KEY;
 const connectGuard = recordOutsideConnections(() => {
   const state = expect.getState();
   return { path: state.testPath, name: state.currentTestName };
-});
-
-afterEach(() => {
-  const failure = takeRefusedConnections(
-    connectGuard.hits,
-    "in this test (or while the file loaded, or in a hook before it)",
-  );
-  if (failure) throw new Error(failure);
-});
-
-afterAll(() => {
-  const failure = takeRefusedConnections(connectGuard.hits, "after the last test");
-  if (failure) throw new Error(failure);
 });
 
 // No test reaches a real model, whatever the code under test does. Every model
@@ -98,20 +87,32 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
   },
 }));
 
+// One check after every test and one after the last test serve both guards
+// above. The runner stops at the first after-hook that throws, so with one
+// check per guard a test that tripped both would leave the second finding
+// over for the next test (or lose it after the last one). The check empties
+// both records every time and fails once with both findings, the connection
+// finding first (pinned by src/lib/test-env-connect.guard.test.ts).
+function takeGuardFailures(when: "in this test" | "after the last test"): string | null {
+  const calls = modelGuard.hits.splice(0);
+  const connections = takeRefusedConnections(
+    connectGuard.hits,
+    when === "in this test" ? "in this test (or while the file loaded, or in a hook before it)" : when,
+  );
+  const models =
+    calls.length > 0
+      ? `${calls.length} model call(s) reached the test guard ${when}; first call:\n${calls[0]}`
+      : null;
+  const found = [connections, models].filter((f) => f !== null);
+  return found.length > 0 ? found.join("\n\n") : null;
+}
+
 afterEach(() => {
-  const hits = modelGuard.hits.splice(0);
-  if (hits.length > 0) {
-    throw new Error(
-      `${hits.length} model call(s) reached the test guard in this test; first call:\n${hits[0]}`,
-    );
-  }
+  const failure = takeGuardFailures("in this test");
+  if (failure) throw new Error(failure);
 });
 
 afterAll(() => {
-  const hits = modelGuard.hits.splice(0);
-  if (hits.length > 0) {
-    throw new Error(
-      `${hits.length} model call(s) reached the test guard after the last test; first call:\n${hits[0]}`,
-    );
-  }
+  const failure = takeGuardFailures("after the last test");
+  if (failure) throw new Error(failure);
 });

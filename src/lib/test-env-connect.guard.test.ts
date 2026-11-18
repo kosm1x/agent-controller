@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, onTestFailed } from "vitest";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, rmSync, mkdtempSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
@@ -86,6 +87,15 @@ const GUARD_FAILURE = new RegExp(
   `^test guard: 1 connection attempt\\(s\\) to another machine refused ${AFTER_EACH}: ` +
     `192\\.0\\.2\\.10 port 8443 from ${THIS_FILE.replace(/\./g, "\\.")}\\. Rule: a test may connect only to this machine`,
 );
+const BOTH_FAILURE = new RegExp(
+  `${GUARD_FAILURE.source}[^\\n]*127\\.0\\.0\\.1\\n\\n` +
+    `1 model call\\(s\\) reached the test guard in this test; first call:\\n` +
+    `Error: test guard: @anthropic-ai/claude-agent-sdk query\\(\\) is blocked under vitest`,
+);
+
+function modelHits(): string[] | undefined {
+  return (globalThis as typeof globalThis & { __modelCallGuardHits?: string[] }).__modelCallGuardHits;
+}
 
 describe(SUITE, () => {
   it("the setup installed the guard in this process, writing to the fixed file in TMPDIR", () => {
@@ -191,13 +201,43 @@ describe(SUITE, () => {
     });
   });
 
+  // Rule: one check after each test covers both guards. The runner stops at
+  // the first after-hook that throws, so with one check per guard the second
+  // finding would be left over and fail the next test instead. The setup's
+  // one check empties both records every time and fails the test once, the
+  // connection finding first and the model finding after it.
+  describe("a test that trips both guards", () => {
+    const seen: { failures?: string[]; refusal?: { message: string; calls: number } } = {};
+    it.fails("fails once", async () => {
+      onTestFailed(({ task }) => {
+        seen.failures = (task.result?.errors ?? []).map((e) => e.message);
+      });
+      seen.refusal = await swallowedAttempt();
+      // Checked before the call: if the stub were not in place, calling the
+      // real export would start a real model session.
+      expect(query.name).toBe("blockedModelQuery");
+      try {
+        query({ prompt: "guard probe" });
+      } catch {
+        // Swallowed on purpose: the check after the test must still fail it.
+      }
+    });
+    it("…with both findings in one message, connection first, and the next test starts with both records empty", () => {
+      expect(seen.refusal?.calls).toBe(0);
+      expect(seen.failures).toEqual([expect.stringMatching(BOTH_FAILURE)]);
+      expect(installed().hits).toEqual([]);
+      expect(modelHits()).toEqual([]);
+    });
+  });
+
   // A file-level failure cannot be pinned by its effect without failing this
-  // file, so the setup's text is read for the afterAll that catches an attempt
-  // made after the last test.
+  // file, so the setup's text is read: the afterAll runs the same check as the
+  // afterEach, and each guard has no check of its own besides that one.
   it("the setup also fails the file for an attempt made after its last test", () => {
     const setup = readFileSync(new URL("../../vitest.setup-env.ts", import.meta.url), "utf8");
     expect(setup).toMatch(
-      /\nafterAll\(\(\) => \{\n {2}const failure = takeRefusedConnections\(connectGuard\.hits, "after the last test"\);\n {2}if \(failure\) throw new Error\(failure\);\n\}\);\n/,
+      /\nafterAll\(\(\) => \{\n {2}const failure = takeGuardFailures\("after the last test"\);\n {2}if \(failure\) throw new Error\(failure\);\n\}\);\n/,
     );
+    expect(setup.match(/^after(Each|All)\(/gm)).toEqual(["afterEach(", "afterAll("]);
   });
 });

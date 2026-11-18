@@ -16,20 +16,23 @@
  * code that opens its own sockets.
  *
  * This machine is: a loopback or unspecified address in any form Node or the
- * system resolver reads as one (`127.1`, `0::1`, `::ffff:7f00:1`, brackets, a
- * zone), `localhost` and any name under `.localhost`, the two conventional
- * loopback aliases `ip6-localhost` and `ip6-loopback`, and a local socket path.
- * Nothing else is, not even the machine's own interface addresses: a test has
- * no reason to use them.
+ * system resolver reads as one (`127.1`, `0::1`, `::ffff:7f00:1`, a zone),
+ * `localhost` and any name under `.localhost` (with or without one trailing
+ * dot), the two conventional loopback aliases `ip6-localhost` and
+ * `ip6-loopback`, and a local socket path. Nothing else is, not even the
+ * machine's own interface addresses: a test has no reason to use them.
  *
  * Limits of that rule. The guard judges the host handed to the socket, never
  * the address it resolves to: a caller-supplied lookup function decides the
  * address, so a local-looking name with its own lookup is dialled wherever
  * that lookup points. `localhost`, the two aliases and names under
  * `.localhost` are this machine only through the host's name configuration.
- * A numeric loopback form with a trailing dot or in brackets counts as this
- * machine, although the operating system would hand it to a name lookup
- * rather than dial it. The record is per process, not per test: with
+ * An address with a trailing dot (`127.0.0.1.`) or in brackets (`[::1]`) is
+ * not this machine: neither Node nor the system resolver reads it as an
+ * address, so the socket hands it to a name lookup, which goes wherever the
+ * host's name configuration sends it. A URL's bracketed host is not affected:
+ * `fetch` and the `http` modules hand the socket the address without the
+ * brackets. The record is per process, not per test: with
  * concurrent tests in one file a refused attempt fails whichever test's check
  * runs next.
  *
@@ -248,11 +251,13 @@ let loopback: BlockList | undefined;
  * connection on this system also reaches the machine itself through. An
  * address is judged by Node's own parser (`BlockList`, whose IPv4 rules also
  * match IPv4-mapped IPv6 addresses); the short IPv4 forms the system resolver
- * accepts are first written out as four parts.
+ * accepts are first written out as four parts. A trailing dot is dropped from
+ * a name only: an address with one, or in brackets, is a name to the system.
  */
 function isThisMachine(host: string): boolean {
-  const h = host.toLowerCase().replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "");
-  if (LOCAL_NAMES.has(h) || h.endsWith(".localhost")) return true;
+  const h = host.toLowerCase();
+  const name = h.replace(/\.$/, "");
+  if (LOCAL_NAMES.has(name) || name.endsWith(".localhost")) return true;
   if (!loopback) {
     loopback = new BlockList();
     loopback.addSubnet("127.0.0.0", 8, "ipv4");
