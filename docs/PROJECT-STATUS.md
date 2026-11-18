@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-18 07:18 UTC (LIVE build `aad72f4c` since 2026-11-17 19:18 UTC. Since the line below: two dynamic imports of already-loaded modules in the message router and the fast runner are static, `f0d93a9e` (queue 4fp; needs the next deploy); 682 test files, 17,943 tests. Still with the operator, in order: third dry run of the removal script, real run, a deploy, the second removal script, then the one-row update.)
+
 > Last updated: 2026-11-18 06:56 UTC (LIVE build `aad72f4c` since 2026-11-17 19:18 UTC. Since the line below: the cache-ratio drift signal measures the same job types as the briefing gate, `2a550c19` (queue 4fo; needs the next deploy and one operator update of the stored row); 682 test files, 17,939 tests. Still with the operator, in order: third dry run of the removal script, real run, a deploy, the second removal script, then the one-row update.)
 
 > Last updated: 2026-11-18 06:39 UTC (LIVE build `aad72f4c` since 2026-11-17 19:18 UTC. Since the line below: the tool-description check reads every host-defined tool and the whole not-for block, `551fa483` (queue 4fm, tests only); three sentences of the agent instructions corrected to what the code does (4fn, docs only); 682 test files, 17,936 tests. Still with the operator, in order: third dry run of the removal script, real run, a deploy, then the second removal script.)
