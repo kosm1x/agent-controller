@@ -1,7 +1,7 @@
 -- 2026-04-25 — allow type='correction' in kb_entries.
 -- v6.4 correction-loop ships type='correction' (see
 -- src/intelligence/correction-loop.ts and the type-aware min-length
--- guard in src/db/pgvector.ts:136), but the CHECK constraint on
+-- guard in `validateKbEntry`, src/db/pgvector.ts), but the CHECK constraint on
 -- Supabase Postgres was never updated, so 0 corrections ever
 -- persisted. This script applied live 2026-04-25.
 --

@@ -1,5 +1,6 @@
 -- 2026-04-25 — allow type='ingested' + qualifier='pdf' in kb_entries.
--- v7.13 structured PDF ingestion at src/kb/pdf-structured-ingest.ts:395-396
+-- v7.13 structured PDF ingestion in src/kb/pdf-structured-ingest.ts
+-- (`makeChunk` for every chunk, `structureMarkdown` for the manifest)
 -- ships these values, but neither was in the original allow-list. Result:
 -- every PDF chunk upsert returned HTTP 400 / SQLSTATE 23514. Live count of
 -- entries with type='ingested' or qualifier='pdf' was 0 prior to this fix.
