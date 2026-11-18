@@ -1753,6 +1753,78 @@ function hydrateThreadIfNeeded(tk: string): void {
 // Writes to jarvis_files table (where jarvis_file_read reads from) + disk mirror.
 // ---------------------------------------------------------------------------
 
+/**
+ * Tools whose failure can be `{error: <response body>}` with an empty body
+ * (key present, value falsy) and whose successes never carry the key. Not
+ * every tool: a remote tool's JSON success may carry `"error": null`.
+ */
+const EMPTY_ERROR_FAILURE_TOOLS: ReadonlySet<string> = new Set([
+  "wp_delete",
+  "wp_raw_api",
+]);
+
+/**
+ * Tools whose `{ok: false}` envelope is a failure without an `error` key
+ * (the skill runner). Not every tool: a remote JSON success may carry
+ * `"ok": false` as data.
+ */
+const OK_FALSE_FAILURE_TOOLS: ReadonlySet<string> = new Set(["skill_run"]);
+
+/**
+ * The failure text of a confirmed call's result, or null when the call
+ * succeeded by its tool's own convention. A failure stops the card exactly
+ * like `{error}` does: later items are declined and the original request is
+ * not resumed, so a failed action is never shown as done.
+ * - JSON `{error: truthy}` (every tool);
+ * - JSON with the `error` key but a falsy value (EMPTY_ERROR_FAILURE_TOOLS);
+ * - JSON `{ok: false}` (OK_FALSE_FAILURE_TOOLS);
+ * - the development tool's test action with checks that did not pass or did
+ *   not run (`ready_for_pr: false`), the batch delete with a failed deletion
+ *   (`success: false`), the memory forget whose correction was not deleted;
+ * - text that leads with the cross mark or the word `Error` (the same
+ *   markers the registry counts as an error result). Other text is success:
+ *   remote tools and several local tools answer in plain text.
+ */
+function confirmedActionFailure(toolName: string, result: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result);
+  } catch {
+    return /^\s*(?:❌|Error\b)/.test(result) ? result.trim() : null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  if (obj.error) return String(obj.error);
+  if ("error" in obj && EMPTY_ERROR_FAILURE_TOOLS.has(toolName)) {
+    return String(obj.http_status ?? obj.error);
+  }
+  if (obj.ok === false && OK_FALSE_FAILURE_TOOLS.has(toolName)) {
+    return String(obj.errorDetail || obj.errorClass);
+  }
+  if (toolName === "jarvis_dev" && obj.ready_for_pr === false) {
+    // Each check that did not pass, as the gate reported it: one line, capped.
+    return (["typecheck", "tests"] as const)
+      .filter((k) => !/^(PASS|SKIPPED)/.test(String(obj[k])))
+      .map((k) => `${k}: ${plainResultDetail(toolName, { message: String(obj[k]) }) ?? ""}`)
+      .join("; ");
+  }
+  if (toolName === "jarvis_files_batch_delete" && obj.success === false) {
+    const nf = Number(obj.not_found ?? 0);
+    return [
+      `${obj.ok ?? 0} archivo(s) eliminado(s)`,
+      ...(nf > 0 ? [`${nf} no encontrado(s)`] : []),
+      `${obj.errors ?? 0} error(es)`,
+    ].join("; ");
+  }
+  if (toolName === "memory_forget" && obj.correction_deleted === false) {
+    return [
+      ...(typeof obj.invalidated === "number" ? [`${obj.invalidated} hecho(s) invalidado(s)`] : []),
+      String(obj.correction_error),
+    ].join("; ");
+  }
+  return null;
+}
+
 /** Format a human-readable confirmation result based on tool name. */
 export function formatConfirmationResult(
   toolName: string,
@@ -1795,7 +1867,7 @@ export function formatConfirmationResult(
         ? `✅ ${ok} archivo(s) escrito(s); ${err} error(es).`
         : `✅ ${ok} archivo(s) escrito(s).`;
     }
-    case "schedule_delete":
+    case "delete_schedule":
       return `✅ Schedule eliminado.`;
     case "run_schedule":
       // Started, not finished: the tool's message says where the result lands.
@@ -2886,16 +2958,16 @@ export class MessageRouter {
               ),
             );
             // Format result for user — human-readable confirmation
-            try {
-              const parsed = JSON.parse(result);
-              if (parsed.error) {
-                line = `Error: ${parsed.error}`;
-              } else {
+            const failure = confirmedActionFailure(item.toolName, result);
+            if (failure !== null) {
+              line = `Error: ${failure}`;
+            } else {
+              try {
+                const parsed = JSON.parse(result);
                 line = formatConfirmationResult(item.toolName, item.args, parsed);
-                raw = result;
+              } catch {
+                line = `✅ ${item.toolName} ejecutado.`;
               }
-            } catch {
-              line = `✅ ${item.toolName} ejecutado.`;
               raw = result;
             }
           } catch (err) {

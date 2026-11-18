@@ -8984,6 +8984,14 @@ describe("holdScopeAsks — streaming guard (2026-09-06)", () => {
   });
 });
 
+describe("formatConfirmationResult — delete_schedule", () => {
+  it("a confirmed delete_schedule gets its own line", () => {
+    expect(
+      formatConfirmationResult("delete_schedule", { schedule_id: "s1" }, { success: true, message: "Schedule s1 deleted." }),
+    ).toBe("✅ Schedule eliminado.");
+  });
+});
+
 describe("formatConfirmationResult — run_schedule", () => {
   it("echoes the tool's started-and-where message, never a bare 'ejecutado'", () => {
     const line = formatConfirmationResult(
@@ -9666,6 +9674,428 @@ describe("confirmation gate → router: store, confirm, continue (2026-09-29)", 
       `1. ${lbl(DOC_A)}: Error ejecutando ${GWS}: gws caído\n2. ${lbl(DOC_B)}: ⏭ No se ejecutó (se detuvo tras el error)`,
     );
     expect(submitTask).toHaveBeenCalledTimes(1);
+  });
+
+  // A confirmed action that failed is never shown as done: every failure
+  // shape a confirmed tool returns stops the card the way `{error}` does.
+  const MAIL = { to: "b@example.com", subject: "s", body: "b" };
+  const MAIL_SENT = JSON.stringify({ sent: true, to: MAIL.to, subject: "s", messageId: "m1" });
+  /** A card of two items: `toolName` first, then a gmail_send. */
+  async function pairTurn(toolName: string, args: Record<string, unknown>): Promise<void> {
+    queueTask("task-pair");
+    await say("haz las dos cosas y luego avísame");
+    runOutput({
+      toolName,
+      args,
+      items: [
+        { toolName, args },
+        { toolName: "gmail_send", args: MAIL },
+      ],
+    });
+    complete("task-pair", "¿Procedo?");
+    dbStatusGet.mockReturnValue(undefined);
+  }
+  /** Confirms a two-item card whose first item returns `result`; the shown lines. */
+  async function confirmPair(
+    toolName: string,
+    args: Record<string, unknown>,
+    result: string,
+  ): Promise<string[]> {
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("INSERT INTO tool_approvals") ? [{ id: 201 }, { id: 202 }] : [],
+    );
+    await pairTurn(toolName, args);
+    gatedExec.executeGatedCapability.mockResolvedValueOnce(result).mockResolvedValueOnce(MAIL_SENT);
+    queueTask("task-cont");
+    await say("sí");
+    await vi.advanceTimersByTimeAsync(0);
+    return waAdapter.sentMessages.at(-1)!.text.split("\n");
+  }
+
+  it.each([
+    ["{error: truthy}", "wp_delete", { id: 7 }, JSON.stringify({ error: "post not found" }), "post not found"],
+    [
+      "wp_delete: error key with an empty body",
+      "wp_delete",
+      { id: 7 },
+      JSON.stringify({ site: "blog", http_status: 404, error: "" }),
+      "404",
+    ],
+    [
+      "wp_raw_api: error key with a null body",
+      "wp_raw_api",
+      { method: "POST", path: "/wp/v2/posts" },
+      JSON.stringify({ site: "blog", http_status: 500, error: null }),
+      "500",
+    ],
+    [
+      "skill_run: {ok: false}",
+      "skill_run",
+      { name: "resumen", args: {} },
+      JSON.stringify({ ok: false, skillName: "resumen", errorClass: "timeout", errorDetail: "skill exceeded 30s" }),
+      "skill exceeded 30s",
+    ],
+    [
+      "google_workspace_cli: {ok: false, error}",
+      GWS,
+      DOC_A,
+      JSON.stringify({ ok: false, error: "403 forbidden", exitCode: 1 }),
+      "403 forbidden",
+    ],
+    [
+      "jarvis_apply_proposal: text leading with the cross mark",
+      "jarvis_apply_proposal",
+      { proposal_slug: "p1" },
+      '❌ Proposal "p1" not found in knowledge/proposals/.',
+      '❌ Proposal "p1" not found in knowledge/proposals/.',
+    ],
+    [
+      "a remote tool: text leading with Error after whitespace",
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      "  Error: rate limited",
+      "Error: rate limited",
+    ],
+    [
+      "skill_run: an empty detail falls through to the class",
+      "skill_run",
+      { name: "resumen", args: {} },
+      JSON.stringify({ ok: false, skillName: "resumen", errorClass: "timeout", errorDetail: "" }),
+      "timeout",
+    ],
+    [
+      "jarvis_dev test action whose checks failed",
+      "jarvis_dev",
+      { action: "test" },
+      JSON.stringify({ branch: "jarvis/fix-x", typecheck: "FAIL: TS2322", tests: "FAIL: 2 failed", ready_for_pr: false }),
+      "typecheck: FAIL: TS2322; tests: FAIL: 2 failed",
+    ],
+    [
+      "jarvis_dev test action whose checks did not run",
+      "jarvis_dev",
+      { action: "test" },
+      JSON.stringify({
+        branch: "jarvis/fix-x",
+        typecheck: "NOT RUN",
+        tests: "FAIL: a test run is already in progress — retry when it finishes",
+        ready_for_pr: false,
+      }),
+      "typecheck: NOT RUN; tests: FAIL: a test run is already in progress — retry when it finishes",
+    ],
+    [
+      "jarvis_dev test action: only the failed check, one line, capped",
+      "jarvis_dev",
+      { action: "test" },
+      JSON.stringify({
+        branch: "jarvis/fix-x",
+        typecheck: `FAIL: ${"src/a.ts(1,1): error TS2322: x\n".repeat(20)}`,
+        tests: "SKIPPED (no changed source files)",
+        ready_for_pr: false,
+      }),
+      `typecheck: ${`FAIL: ${"src/a.ts(1,1): error TS2322: x\n".repeat(20)}`.replace(/\s+/g, " ").trim().slice(0, 120)}`,
+    ],
+    [
+      "jarvis_files_batch_delete with some deletions failed",
+      "jarvis_files_batch_delete",
+      { paths: ["notes/a.md", "notes/b.md"] },
+      JSON.stringify({
+        success: false,
+        total: 2,
+        ok: 1,
+        not_found: 0,
+        errors: 1,
+        results: [
+          { path: "notes/a.md", status: "ok" },
+          { path: "notes/b.md", status: "error", error: "locked" },
+        ],
+      }),
+      "1 archivo(s) eliminado(s); 1 error(es)",
+    ],
+    [
+      "jarvis_files_batch_delete with failed and missing paths",
+      "jarvis_files_batch_delete",
+      { paths: ["notes/a.md", "notes/b.md", ""] },
+      JSON.stringify({
+        success: false,
+        total: 3,
+        ok: 0,
+        not_found: 1,
+        errors: 2,
+        results: [
+          { path: "notes/a.md", status: "error", error: "locked" },
+          { path: "notes/b.md", status: "not_found" },
+          { path: "", status: "error", error: "path must be a non-empty string" },
+        ],
+      }),
+      "0 archivo(s) eliminado(s); 1 no encontrado(s); 2 error(es)",
+    ],
+    [
+      "memory_forget whose correction was not deleted",
+      "memory_forget",
+      { correction_path: "corrections/0123456789ab.md", reason: "r" },
+      JSON.stringify({
+        reason: "r",
+        correction_path: "corrections/0123456789ab.md",
+        correction_deleted: false,
+        correction_error: "delete request failed (see logs)",
+      }),
+      "delete request failed (see logs)",
+    ],
+    [
+      "memory_forget whose correction store is not enabled",
+      "memory_forget",
+      { correction_path: "corrections/0123456789ab.md", reason: "r" },
+      JSON.stringify({
+        reason: "r",
+        correction_deleted: false,
+        correction_error: "pgvector KB is not enabled in this deployment",
+      }),
+      "pgvector KB is not enabled in this deployment",
+    ],
+    [
+      "memory_forget with a subject: facts invalidated, correction not deleted",
+      "memory_forget",
+      { subject: "x", correction_path: "corrections/0123456789ab.md", reason: "r" },
+      JSON.stringify({
+        reason: "r",
+        subject: "x",
+        invalidated: 2,
+        invalidated_facts: ["x status_is a", "x owner_is b"],
+        correction_path: "corrections/0123456789ab.md",
+        correction_deleted: false,
+        correction_error: "delete request failed (see logs)",
+      }),
+      "2 hecho(s) invalidado(s); delete request failed (see logs)",
+    ],
+    [
+      "memory_forget with a subject that had no active facts, correction not deleted",
+      "memory_forget",
+      { subject: "x", correction_path: "corrections/0123456789ab.md", reason: "r" },
+      JSON.stringify({
+        reason: "r",
+        subject: "x",
+        invalidated: 0,
+        invalidated_facts: [],
+        correction_deleted: false,
+        correction_error: "pgvector KB is not enabled in this deployment",
+      }),
+      "0 hecho(s) invalidado(s); pgvector KB is not enabled in this deployment",
+    ],
+  ] as const)(
+    "a confirmed action that failed (%s) stops the card: failure line, later item declined, no continuation",
+    async (_shape, toolName, args, result, shown) => {
+      try {
+        const lines = await confirmPair(toolName, args as Record<string, unknown>, result);
+        expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(1);
+        expect(lines).toHaveLength(2);
+        expect(lines[0].endsWith(`: Error: ${shown}`)).toBe(true);
+        expect(lines[0]).not.toContain("✅");
+        expect(lines[1]).toMatch(/^2\. .*: ⏭ No se ejecutó \(se detuvo tras el error\)$/);
+        const declined = dbRun.mock.calls.filter(([sql]) => sql.includes("decision = 'declined'"));
+        expect(declined).toHaveLength(1);
+        expect(declined[0].slice(1)).toEqual([202]);
+        expect(tracedEvents("confirmation.list_aborted")).toEqual([
+          expect.objectContaining({
+            attrs: { items: 2, failed_index: 1, failed_tool: toolName, declined: 1 },
+          }),
+        ]);
+        expect(submitTask).toHaveBeenCalledTimes(1);
+        expect(tracedEvents("confirmation.continuation_skipped")).toEqual([
+          expect.objectContaining({ attrs: expect.objectContaining({ reason: "action_error" }) }),
+        ]);
+        expect(tracedEvents("confirmation.continuation_started")).toEqual([]);
+      } finally {
+        dbAll.mockReset().mockImplementation(() => []);
+      }
+    },
+  );
+
+  it.each([
+    ["a remote tool's plain-text success", "xpoz__xpoz_publish", { id: 1 }, "Posted 3 items.", "✅ xpoz__xpoz_publish ejecutado."],
+    [
+      "jarvis_apply_proposal's success text",
+      "jarvis_apply_proposal",
+      { proposal_slug: "p1" },
+      "✅ **Propuesta aplicada:** p1\nTarget: knowledge/x.md (add)\nDecision logged: logs/decisions/p1.md",
+      "✅ jarvis_apply_proposal ejecutado.",
+    ],
+    [
+      "kb_ingest_pdf_structured's success summary",
+      "kb_ingest_pdf_structured",
+      { pdf_path: "/tmp/a.pdf" },
+      "kb_ingest_pdf_structured: /tmp/a.pdf\n  parent_doc_id: 0b6e\n  Inserted: 3 | Rejected (noise): 0 | Failed: 0",
+      "✅ kb_ingest_pdf_structured ejecutado.",
+    ],
+    [
+      "a JSON success with unrelated falsy fields and no ok key",
+      "jarvis_dev",
+      { action: "status" },
+      JSON.stringify({ branch: "main", is_jarvis_branch: false, uncommitted_changes: 0, diff_summary: "", cwd: "/x" }),
+      "✅ jarvis_dev ejecutado correctamente.",
+    ],
+    [
+      'a remote tool\'s JSON success carrying "error": null',
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      JSON.stringify({ data: { id: 1 }, error: null }),
+      "✅ xpoz__xpoz_publish ejecutado correctamente.",
+    ],
+    [
+      "a success text that contains Error and the cross mark later",
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      "Report sent. Error count: 0 ❌ none",
+      "✅ xpoz__xpoz_publish ejecutado.",
+    ],
+    [
+      "a remote text leading with Errors (not the word Error)",
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      "Errors: 0 — 3 items posted.",
+      "✅ xpoz__xpoz_publish ejecutado.",
+    ],
+    [
+      "a remote text leading with lowercase error",
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      "error log rotated; 3 items posted.",
+      "✅ xpoz__xpoz_publish ejecutado.",
+    ],
+    [
+      'a remote tool\'s JSON success carrying "ok": false as data',
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      JSON.stringify({ ok: false, pending: 2 }),
+      "✅ xpoz__xpoz_publish ejecutado correctamente.",
+    ],
+    [
+      'a remote tool\'s JSON success carrying "success": false as data',
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      JSON.stringify({ success: false, retries: 0 }),
+      "✅ xpoz__xpoz_publish ejecutado correctamente.",
+    ],
+    [
+      'a remote tool\'s JSON success carrying "ready_for_pr": false as data',
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      JSON.stringify({ ready_for_pr: false }),
+      "✅ xpoz__xpoz_publish ejecutado correctamente.",
+    ],
+    [
+      'a remote tool\'s JSON success carrying "correction_deleted": false as data',
+      "xpoz__xpoz_publish",
+      { id: 1 },
+      JSON.stringify({ correction_deleted: false, correction_error: "x" }),
+      "✅ xpoz__xpoz_publish ejecutado correctamente.",
+    ],
+    [
+      "jarvis_dev test action with every check passed",
+      "jarvis_dev",
+      { action: "test" },
+      JSON.stringify({ branch: "jarvis/fix-x", typecheck: "PASS", tests: "PASS (12 tests; 2 files)", ready_for_pr: true }),
+      "✅ jarvis_dev ejecutado correctamente.",
+    ],
+    [
+      "jarvis_files_batch_delete with every deletion done",
+      "jarvis_files_batch_delete",
+      { paths: ["notes/a.md", "notes/b.md"] },
+      JSON.stringify({
+        success: true,
+        total: 2,
+        ok: 2,
+        not_found: 0,
+        errors: 0,
+        results: [
+          { path: "notes/a.md", status: "ok" },
+          { path: "notes/b.md", status: "ok" },
+        ],
+      }),
+      "✅ 2 archivo(s) eliminado(s).",
+    ],
+    [
+      "memory_forget with no correction requested",
+      "memory_forget",
+      { subject: "x", reason: "r" },
+      JSON.stringify({ reason: "r", subject: "x", invalidated: 0, invalidated_facts: [] }),
+      "✅ memory_forget ejecutado correctamente.",
+    ],
+    [
+      "memory_forget with the correction deleted",
+      "memory_forget",
+      { correction_path: "corrections/0123456789ab.md", reason: "r" },
+      JSON.stringify({ reason: "r", correction_path: "corrections/0123456789ab.md", correction_deleted: true }),
+      "✅ memory_forget ejecutado correctamente.",
+    ],
+  ] as const)(
+    "a confirmed action that succeeded (%s) stays a green line: the next item runs and the request resumes",
+    async (_shape, toolName, args, result, shown) => {
+      try {
+        const lines = await confirmPair(toolName, args as Record<string, unknown>, result);
+        expect(gatedExec.executeGatedCapability).toHaveBeenCalledTimes(2);
+        expect(lines[0].endsWith(`: ${shown}`)).toBe(true);
+        expect(lines.join("\n")).not.toContain("Error: ");
+        expect(dbRun.mock.calls.filter(([sql]) => sql.includes("decision = 'declined'"))).toEqual([]);
+        expect(submitTask).toHaveBeenCalledTimes(2);
+        expect(tracedEvents("confirmation.continuation_started")).toHaveLength(1);
+      } finally {
+        dbAll.mockReset().mockImplementation(() => []);
+      }
+    },
+  );
+
+  it("a failure on the SECOND item of three: the first is shown done, the third is declined and never runs", async () => {
+    const DEL = { paths: ["notes/a.md", "notes/b.md"] };
+    const MAIL2 = { ...MAIL, to: "c@example.com" };
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("INSERT INTO tool_approvals") ? [{ id: 301 }, { id: 302 }, { id: 303 }] : [],
+    );
+    try {
+      queueTask("task-three");
+      await say("haz las tres cosas y luego avísame");
+      runOutput({
+        toolName: "gmail_send",
+        args: MAIL,
+        items: [
+          { toolName: "gmail_send", args: MAIL },
+          { toolName: "jarvis_files_batch_delete", args: DEL },
+          { toolName: "gmail_send", args: MAIL2 },
+        ],
+      });
+      complete("task-three", "¿Procedo?");
+      dbStatusGet.mockReturnValue(undefined);
+      gatedExec.executeGatedCapability
+        .mockResolvedValueOnce(MAIL_SENT)
+        .mockResolvedValueOnce(
+          JSON.stringify({ success: false, total: 2, ok: 1, not_found: 0, errors: 1, results: [] }),
+        );
+      queueTask("task-cont");
+      await say("sí");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(gatedExec.executeGatedCapability.mock.calls.map((c) => c[0])).toEqual([
+        "gmail_send",
+        "jarvis_files_batch_delete",
+      ]);
+      const text = waAdapter.sentMessages.at(-1)!.text;
+      expect(text).toMatch(/^1\. .*: ✅ Correo enviado a b@example\.com\.\nAsunto: s\n2\. /);
+      expect(text).toMatch(/\n2\. .*: Error: 1 archivo\(s\) eliminado\(s\); 1 error\(es\)\n3\. /);
+      expect(text).toMatch(/\n3\. .*: ⏭ No se ejecutó \(se detuvo tras el error\)$/);
+      const declined = dbRun.mock.calls.filter(([sql]) => sql.includes("decision = 'declined'"));
+      expect(declined).toHaveLength(1);
+      expect(declined[0].slice(1)).toEqual([303]);
+      expect(tracedEvents("confirmation.list_aborted")).toEqual([
+        expect.objectContaining({
+          attrs: { items: 3, failed_index: 2, failed_tool: "jarvis_files_batch_delete", declined: 1 },
+        }),
+      ]);
+      expect(submitTask).toHaveBeenCalledTimes(1);
+      expect(tracedEvents("confirmation.continuation_skipped")).toEqual([
+        expect.objectContaining({ attrs: expect.objectContaining({ reason: "action_error" }) }),
+      ]);
+    } finally {
+      dbAll.mockReset().mockImplementation(() => []);
+    }
   });
 
   it("4l: one 'no' declines the whole card — nothing runs", async () => {
