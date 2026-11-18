@@ -61,7 +61,7 @@ const DEFAULT_TIMEOUT_MS = 300_000; // same as container.ts
  * still reaps the sandbox if mission-control dies mid-task (zombie class,
  * queue 2026-07-14): no host ⇒ no renew ⇒ reaped at last-activity + TTL.
  */
-export const TTL_GRACE_S = 120; // MUST exceed 2× the workers' heartbeat interval (60 s in nanoclaw-worker.ts / heavy-worker.ts) so a renew gap never lets the TTL lapse
+export const TTL_GRACE_S = 120; // MUST be at least 2× the workers' heartbeat interval (60 s in nanoclaw-worker.ts / heavy-worker.ts) so a renew gap never lets the TTL lapse
 /** Don't hit /renew-expiration more than once per this many ms. */
 const RENEW_MIN_INTERVAL_MS = 60_000;
 /** Ready wait: image is local; execd staging is a few seconds. */

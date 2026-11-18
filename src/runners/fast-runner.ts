@@ -65,9 +65,9 @@ export { conditionMatches };
  * end); variable parts are routed to the head of the user-message blob so
  * per-task byte-drift doesn't invalidate the cached systemPrompt prefix.
  *
- * Extracted 2026-05-23 (qa-audit C1 fold) so the fast-runner direct path
- * (`fast-runner.ts:1108`) shares one tested implementation with
- * `flattenMessagesForSdk`. Both call sites apply the same routing rules.
+ * Used by the fast-runner SDK path. `flattenMessagesForSdk` applies the same
+ * `cacheable === false` routing rule with its own loop (it does not call this
+ * helper), so a change to the rule must be made in both places.
  */
 export function splitSystemMessagesByCache(messages: ChatMessage[]): {
   stable: string[];
@@ -1652,10 +1652,8 @@ Sanity geo: Benito Juárez CDMX=09014, Iztapalapa=09007, Cuauhtémoc=09015, Guad
       sdkPath: if (getConfig().inferencePrimaryProvider === "claude-sdk") {
         // Route `cacheable:false` system messages to the user-prompt prefix
         // so per-task byte-drift doesn't invalidate the cached systemPrompt.
-        // Shares one implementation with `flattenMessagesForSdk` via the
-        // exported helper (qa-audit C1 fold 2026-05-23). Variable text lands
-        // FIRST in userParts below so the model still sees it before the
-        // user turn.
+        // Variable text lands FIRST in userParts below so the model still
+        // sees it before the user turn.
         const { stable: stableSystemParts, variable: variableSystemParts } =
           splitSystemMessagesByCache(messages);
         const systemPrompt = stableSystemParts.join("\n\n");

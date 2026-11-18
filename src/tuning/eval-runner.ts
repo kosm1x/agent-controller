@@ -1,9 +1,9 @@
 /**
  * Eval runner — executes test cases against a sandbox config.
  *
- * Supports three evaluation modes:
+ * Supports four evaluation modes:
  * - tool_selection: calls inferWithTools to see which tools the LLM chooses (costs API tokens)
- * - scope_accuracy: runs pure scopeTools function (free, deterministic)
+ * - scope_accuracy: runs pure scopeToolsForMessage function (free, deterministic)
  * - classification: runs pure classify function (free, deterministic)
  * - scope_prompt (queue 3j): each scope_accuracy case replayed through the LLM
  *   scope classifier (`sandbox.scopePromptClassifier`; one call per case,
@@ -374,7 +374,8 @@ export async function defaultInferFunction(
   tools: ToolDefinition[],
   opts?: { probeRounds?: number },
 ): Promise<InferResult> {
-  // Dynamic import to avoid circular deps at module load time
+  // Dynamic import: importing this module never loads the inference adapter;
+  // only a run that uses this default inference function does.
   const { infer } = await import("../inference/adapter.js");
 
   const result = await infer({

@@ -1219,10 +1219,6 @@ function transcriptLine(role: JmeTurnRole, content: string): string {
   return `${role === "user" ? "Fede" : "Jarvis"}: ${text}`;
 }
 
-/** Emit schedule.run_failed for the nightly consolidator. Dynamic import
- * keeps the scheduler's module graph out of jme (prevents Prometheus
- * double-registration in test suites). The event's phase enum has no
- * "extract" slot, so the stage rides in the message. */
 const JME_FACT_CATEGORIES: readonly JmeFactCategory[] = [
   "decision",
   "preference",
@@ -1266,6 +1262,9 @@ function parseExtractedFact(f: unknown): {
   };
 }
 
+/** Emit schedule.run_failed for the nightly consolidator. The dynamic import
+ * keeps the scheduler's module graph out of jme's static imports. The event's
+ * phase enum has no "extract" slot, so the stage rides in the message. */
 function reportConsolidateFailure(stage: string, err: unknown): void {
   import("../rituals/scheduler.js")
     .then(({ recordRitualFailure }) =>

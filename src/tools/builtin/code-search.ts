@@ -186,8 +186,9 @@ export function rgRecordMapper(searchPath: string): (f: string) => string {
 /**
  * Ruling 3c (audit round 8, B-2): parse NUL-delimited line-mode output
  * (`path\0lineno:line\n`) into per-line records, dropping every record whose
- * file the read denylist refuses (the same fail-closed check as
- * `dropBlockedFiles`). Always run in line mode so each line's text can be
+ * file the read denylist refuses (fail closed: `validatePathSafety` in "read"
+ * mode must accept the name and every newline-separated part of it, and an
+ * empty name is dropped). Always run in line mode so each line's text can be
  * inspected for stored-value spans; files / count are derived from the kept
  * lines, never from the raw tool's own `-l` / `-c` output.
  */

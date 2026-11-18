@@ -191,11 +191,11 @@ const MSG_SHIP_PATTERNS: readonly RegExp[] = [
   /\bship[- ]?it\b/i,
 ];
 
-// "codebase"/"código" unambiguously name source code — a strong noun. But it is
-// verb-BLIND: it marks AUTHORING only alongside an authoring action. A task that
-// READS / EXTRACTS / EXPLAINS / TRANSLATES-to-a-human-language code is research,
-// NOT authoring, and must NOT reach the authoring-only nanoclaw sandbox (see
-// `isCodeReadOrExplainTask`). Kept as its OWN const so that guard can exclude it
+// "codebase"/"código" unambiguously name source code — a strong noun; on its own
+// it makes `isCodingTask` true. But it is verb-BLIND: a task that only READS /
+// EXTRACTS / EXPLAINS / TRANSLATES code from an EXTERNAL website cannot run in
+// the mission-control-only nanoclaw sandbox (see `referencesExternalWebTarget`).
+// Kept as its OWN const so that guard can exclude it
 // from the "is there an authoring signal?" check. (Misroute 2026-06-26: "Extrae
 // el código y traduce al español lo que se visualiza" → nanoclaw → 0 output.)
 const CODE_NOUN_STRONG = /\b(codebase|c[oó]digo)\b/i;

@@ -3559,8 +3559,6 @@ export class MessageRouter {
     // to inherit (DENUE incident 2026-05-06: task #2's empty result blocked
     // task #3's inheritance), there's no journalctl evidence of what was
     // actually stored. Stable per-turn line, ≤120 chars, safe for grep.
-    // TODO(2026-06-06): if no scope-inheritance failures are observed in 30d,
-    // gate this behind `DEBUG_SCOPE_INHERIT=true` to reduce journald volume.
     console.log(
       `[router] Stored prior scope tk=${tk.slice(-12)}: [${baseGroups.join(", ")}] (turn ran with [${[...activeGroups].join(", ")}])`,
     );

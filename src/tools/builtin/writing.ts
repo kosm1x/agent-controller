@@ -1,8 +1,9 @@
 /**
  * AI Writing Humanization Tool (v6.3 W1)
  *
- * Detects and removes AI writing patterns using the avoid-ai-writing
- * framework (109 tiered words, 36 pattern categories).
+ * Detects and removes AI writing patterns using a subset of the
+ * avoid-ai-writing framework (its Tier 1 words, chatbot artifacts and
+ * structural signals).
  * Two modes: "detect" (audit) and "rewrite" (edit).
  */
 

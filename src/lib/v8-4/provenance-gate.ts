@@ -135,7 +135,6 @@ function taskDescription(taskId: string): string {
   }
 }
 
-/** A read-tool name in a `fuente` must name a tool that actually RAN this turn (R3 audit C-3). */
 /**
  * UNANCHORED on purpose — it must mirror the admitter (`CHECKABLE_SOURCE_RE`
  * also matches a tool name anywhere in the value): "**Fuente:** \`shell_exec
@@ -144,6 +143,7 @@ function taskDescription(taskId: string): string {
 const TOOL_NAME_RE =
   /\b(shell_exec|gsheets_read|gdocs_read(?:_full)?|gdrive_\w+|web_read|expand_read|web_search|exa_search|jina_search|file_read|data_summarize|pdf_read|http_fetch|market_\w+|prediction_markets|crm_query|intel_\w+|jarvis_file_read|task_history|code_search|[\w-]+__\w+)\b/i;
 
+/** A read-tool name in a `fuente` must name a tool that actually RAN this turn. */
 export function fuenteIsCheckable(rawFuente: string): boolean {
   if (!CHECKABLE_SOURCE_RE.test(rawFuente)) return false;
   const tool = TOOL_NAME_RE.exec(rawFuente)?.[1];

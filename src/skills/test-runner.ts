@@ -467,8 +467,8 @@ function writeTestRun(
     taskId,
   );
 
-  // Counter bump via dynamic import to avoid a hard cycle (test-runner →
-  // prometheus → … ). Matches Spine 2 B2's pattern for mc_s3_evaluator_errors.
+  // Counter bump via dynamic import: importing this module never loads the
+  // metrics module, which registers its metrics when it loads.
   // R1-W2 fold: log the import failure instead of swallowing it silently
   // — per `feedback_prometheus_counter_recovery_path`, the counter's
   // failure path is itself a load-bearing surface.

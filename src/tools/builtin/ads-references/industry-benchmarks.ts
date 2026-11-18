@@ -56,7 +56,7 @@ export interface Benchmark {
 }
 
 /**
- * Not exhaustive — ~70 rows covering the most commonly-asked combos. Gaps
+ * Not exhaustive — covers the most commonly-asked combos. Gaps
  * (e.g. Apple Search Ads for legal) are normal; the tool returns "no
  * benchmark available" rather than fabricating.
  */
