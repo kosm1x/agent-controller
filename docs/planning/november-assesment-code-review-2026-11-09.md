@@ -145,6 +145,8 @@ Interim operating rule until R1 ships: **a deploy that stops before the restart 
 
 ### Batch 3 — Live defects (ruling 13 only)
 
+**Status 2026-11-18 18:45 UTC — V2 (the false success mark) is FIXED `ff537668` (queue 4fy): the operator ruled on 2026-11-18 that the failed check step, the partly failed batch delete and the memory forget whose correction stayed all count as failures; one rule in the router decides, reviewed twice. Not covered, listed in 4fy: plain-text failures of the structured PDF ingest and a failure with an empty error text. Still waiting for rulings: D8 and D3 (queue 4cx b, c).**
+
 **Status 2026-11-14 04:48 UTC — the signal-baseline defect is FIXED `9ec11c45` (reviewed twice). Correction to the line below: the computation was not failing nightly — its only caller, the overnight tuning routine, is switched off on the live service and never runs; the query defect would have failed it whenever it ran. Whether baselines get their own nightly schedule is a yes/no in queue 4ex.**
 
 **Status 2026-11-14 03:43 UTC — one more live defect, found by the batch 5 tests: the nightly signal baselines were never written (queue 4ew); its fix is being built as its own reviewed piece.**
@@ -202,6 +204,8 @@ Today: 0 logger error lines and 0 journal lines at error priority in 24 h, next 
 Not worth doing: migrating the ~900 console calls; a logging framework; Result types.
 
 ### Batch 5 — Tests (ruling 7)
+
+**Status 2026-11-18 18:45 UTC — the last test that reached the network in the commit check is offline: the speech tests stub every child process fail-closed, `43c39e9d` (queue 4fy); writing them found and fixed a not-a-number duration.**
 
 **Status 2026-11-14 12:03 UTC — tests can no longer connect to another machine, COMMITTED `0372b969` (suite 680 files, 17,819 tests): the setup refuses the attempt and fails the test (4fe (1)(2)); the spend-window reads and one warning log line are pinned without the wall clock (4ez (2)(3), 4ep test part). Work on this batch is PAUSED at the operator's request. Left in this batch: the three shell tool assertions (4fa (1)), the comment sweep (4fc (4)), the sweep leftovers (4fd (3), 4fe (4)(7) and the two small follow-ups noted there), the fixture names (4ey (3)), the host commit check install (4db, operator).**
 
