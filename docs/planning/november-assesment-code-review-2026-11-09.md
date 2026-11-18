@@ -330,6 +330,8 @@ Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called
 
 ### Batch 11 — Comments (ruling 12)
 
+**Status 2026-11-18 15:42 UTC — C1 first part COMMITTED `fd7c7ca5` (queue 4fu): thirteen false comments corrected in eleven files, comments only (identical code tokens, checked twice). Left of C1: seven findings in files the removal scripts load, and one false echo string in a pre-deploy script. C2 (line citations → symbol names) and C3 (the shrink-only check on added lines) not started.**
+
 **Status 2026-11-11 03:52 UTC — re-checked by a read-only reviewer (queue 4de): 22 false comments with corrected text, 46 file-and-line citations (about 10 right); C3 becomes a shrink-only test instead of a workflow step.**
 
 23 % of non-blank lines are comments (41,718); 2,191 carry a date, queue id or audit-round tag. Two independent samples: about two-thirds of those carry a real constraint (18 % a constraint found nowhere else, 47 % one that a test also pins), a quarter are narrative, **one in twenty is stale or false**. Stripping them would be wrong; trusting them is also wrong. What rots is not the date but the reference to other code: of 27 `file:line` citations 3 are right, 21 point at the wrong line and 3 past the end of the file; of 30 "keep in sync / same as" claims checked, 6 are false (one of them on a write guard — S1). Harm on record: `8311e655` (a comment claimed an isolation that did not exist; audits trusted it for four months) and `2cc8000a` (a ruling made from a stale comment).

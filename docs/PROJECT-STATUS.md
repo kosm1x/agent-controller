@@ -1,5 +1,7 @@
 # Project Status — Agent Controller (Mission Control)
 
+> Last updated: 2026-11-18 15:42 UTC (LIVE build `0995ca0d` since 2026-11-18 14:55 UTC. Since the line below: the first password-removal script had its real run and the database is clean; the deploy followed; the second script's trial run leaves one case it cannot yet handle, and that addition is being built (queue 4ft); false comments corrected, `fd7c7ca5` (queue 4fu, comments only); 683 test files, 17,949 tests. Still with the operator, later: a deploy, then the second removal script, then the one-row update of a cost alarm's stored setting.)
+
 > Last updated: 2026-11-18 14:28 UTC (LIVE build `aad72f4c` since 2026-11-17 19:18 UTC. Since the line below: the entry point constructs the message router and hands it to the messaging init, `6e3f8d1e` (queue 4fs; needs the next deploy); two leaf modules out of the router are built and set aside until the protected list can be changed (queue 4fr); 683 test files, 17,949 tests. Still with the operator, in order: third dry run of the removal script, real run, a deploy, the second removal script, then the one-row update.)
 
 > Last updated: 2026-11-18 07:40 UTC (LIVE build `aad72f4c` since 2026-11-17 19:18 UTC. Since the line below: the eight remaining dynamic imports of already-loaded modules are static, `dbc663a2` (queue 4fq; needs the next deploy); 682 test files, 17,946 tests. Still with the operator, in order: third dry run of the removal script, real run, a deploy, the second removal script, then the one-row update.)
