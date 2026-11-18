@@ -20,6 +20,10 @@
  *                 full-Drive run (queue 3z). Each path is re-checked against
  *                 jarvis_files right before its trash (SKIP-LIVE if re-created).
  *
+ * The dry run opens the database read-only (the file must exist) and never
+ * through the service's opener, so it cannot change the schema; --apply opens
+ * it through initDatabase because it deletes map rows.
+ *
  * Env: nothing loads dotenv; src/google/auth.ts reads GOOGLE_CLIENT_ID,
  * GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN from process.env, so pass
  * `--env-file=.env` to tsx as above (never shell-source .env). Resumable: a
@@ -27,6 +31,7 @@
  * exactly the failures. Drive "trash" is recoverable for 30 days.
  */
 
+import Database from "better-sqlite3";
 import { initDatabase, getDatabase, closeDatabase } from "../src/db/index.js";
 import { isLiveDatabaseFile, LIVE_DB_PATH, openDbFile } from "../src/db/live-db.js";
 import { googleFetch } from "../src/google/client.js";
@@ -245,7 +250,7 @@ async function trashOne(o: Orphan): Promise<"trashed" | "gone"> {
   }
 }
 
-/** The deps main() runs with; `db` is the open singleton (openDbFile reads the same one). */
+/** The deps main() runs with. Only apply calls isLiveDb, and there `db` is the open singleton (openDbFile reads the same one). */
 export function buildMainDeps(db: ReturnType<typeof getDatabase>): RunDeps {
   return {
     ...dbDeps(db),
@@ -256,14 +261,38 @@ export function buildMainDeps(db: ReturnType<typeof getDatabase>): RunDeps {
   };
 }
 
-async function main(flags: Flags): Promise<number> {
-  initDatabase(DB_PATH);
-  try {
-    const r = await runReconcile(flags, buildMainDeps(getDatabase()));
-    return r.exitCode;
-  } finally {
-    closeDatabase();
+/**
+ * Runs `fn` on the handle for this mode, then closes it. Dry run: a read-only
+ * handle of its own on an existing file, so a listing cannot migrate the schema
+ * or hold a write handle next to the service. Apply: the service's opener (it
+ * deletes map rows; isLiveDb judges the module's open db).
+ */
+export async function withReconcileDb<T>(
+  flags: Pick<Flags, "apply">,
+  dbPath: string,
+  fn: (db: ReturnType<typeof getDatabase>) => Promise<T>,
+): Promise<T> {
+  if (flags.apply) {
+    initDatabase(dbPath);
+    try {
+      return await fn(getDatabase());
+    } finally {
+      closeDatabase();
+    }
   }
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return await fn(db);
+  } finally {
+    db.close();
+  }
+}
+
+async function main(flags: Flags): Promise<number> {
+  const r = await withReconcileDb(flags, DB_PATH, (db) =>
+    runReconcile(flags, buildMainDeps(db)),
+  );
+  return r.exitCode;
 }
 
 if (isMainModule(import.meta.url)) {

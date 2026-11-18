@@ -4,9 +4,12 @@
  * and the SQL deps on a throwaway in-memory db. Synthetic paths only.
  */
 
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
-import { closeDatabase, getDatabase, initDatabase } from "../src/db/index.js";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { closeDatabase, getDatabase, initDatabase, SCHEMA_MIGRATION_HEAD } from "../src/db/index.js";
 import {
   APPLY_LIMIT_MAX,
   buildMainDeps,
@@ -16,6 +19,8 @@ import {
   selectOrphans,
   validateApplyFlags,
   validateFlags,
+  withReconcileDb,
+  type Flags,
   type Orphan,
   type RunDeps,
 } from "./reconcile-kb-drive.js";
@@ -390,5 +395,199 @@ describe("buildMainDeps", () => {
     } finally {
       closeDatabase();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withReconcileDb: the handle main() runs on, on synthetic database files in
+// this file's own temp folder (never a real database). A dry run must not be
+// able to write or migrate; apply still opens through the service's opener.
+// ---------------------------------------------------------------------------
+
+describe("withReconcileDb", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "reconcile-kb-drive-"));
+  });
+  afterEach(() => closeDatabase());
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** The orphan map row only the file `name` holds, so a run proves which file it read. */
+  const ownRow = (name: string): Orphan => ({ path: `own/${name}.md`, drive_id: `own-${name}` });
+
+  /**
+   * A real-schema file holding the fixture map rows, one map row whose KB path
+   * exists and (unless `own` is false) the row only this file holds. cost_ledger
+   * is dropped because the service's opener creates it on every open, so its
+   * return shows that opener ran. By default the file is one migration behind
+   * the tree (a read-write opening would also stamp the head version); a file
+   * that apply opens stays at the head, so no migration runs twice.
+   */
+  function synthDb(name: string, opts: { version?: number; own?: boolean } = {}): string {
+    const file = join(dir, name);
+    initDatabase(file);
+    try {
+      const db = getDatabase();
+      db.exec(MAP_DDL);
+      const ins = db.prepare("INSERT INTO drive_file_map (path, drive_id) VALUES (?, ?)");
+      for (const o of rows) ins.run(o.path, o.drive_id);
+      if (opts.own !== false) ins.run(ownRow(name).path, ownRow(name).drive_id);
+      ins.run("live.md", "L");
+      db.prepare("INSERT INTO jarvis_files (id, path, title) VALUES (?, ?, ?)").run("f-live", "live.md", "Live");
+      db.exec("DROP TABLE cost_ledger");
+      db.pragma(`user_version = ${opts.version ?? SCHEMA_MIGRATION_HEAD - 1}`);
+    } finally {
+      closeDatabase();
+    }
+    return file;
+  }
+
+  /** Version, tables and map rows, read through a separate read-only handle. */
+  function shape(file: string) {
+    const db = new Database(file, { readonly: true, fileMustExist: true });
+    try {
+      return {
+        version: db.pragma("user_version", { simple: true }),
+        tables: (
+          db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]
+        ).map((r) => r.name),
+        map: db.prepare("SELECT path, drive_id FROM drive_file_map ORDER BY path").all(),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  const failClosed = (what: string) => (): never => {
+    throw new Error(`${what} must not be called here`);
+  };
+
+  /** buildMainDeps with Drive and the live-db check failing closed, output captured. */
+  function capturedDeps(db: Database.Database, lines: string[], keepIsLiveDb = false): RunDeps {
+    const deps = buildMainDeps(db);
+    return {
+      ...deps,
+      isLiveDb: keepIsLiveDb ? deps.isLiveDb : failClosed("isLiveDb"),
+      trash: failClosed("trash"),
+      log: (l) => lines.push(l),
+      warn: (l) => lines.push(l),
+    };
+  }
+
+  const DRY: Flags = { apply: false, unknown: [] };
+
+  it("the dry-run handle is read-only: a write through it throws", async () => {
+    const file = synthDb("dry-write.db");
+    await withReconcileDb(DRY, file, async (db) => {
+      expect(db.readonly).toBe(true);
+      expect(() => db.prepare("INSERT INTO drive_file_map (path, drive_id) VALUES ('w.md', 'W')").run()).toThrow(
+        /readonly/,
+      );
+    });
+    expect(shape(file).map).not.toContainEqual({ path: "w.md", drive_id: "W" });
+  });
+
+  it("a complete dry run leaves the schema version, the tables and the map as they were", async () => {
+    const file = synthDb("dry-shape.db");
+    const before = shape(file);
+    expect(before.version).toBe(SCHEMA_MIGRATION_HEAD - 1);
+    expect(before.tables).toContain("drive_file_map");
+    expect(before.tables).not.toContain("cost_ledger");
+    expect(before.map).toHaveLength(rows.length + 2);
+    const lines: string[] = [];
+    const r = await withReconcileDb(DRY, file, (db) => runReconcile(DRY, capturedDeps(db, lines)));
+    expect(r.exitCode).toBe(0);
+    expect(r.planned).toHaveLength(rows.length + 1);
+    expect(r.planned).toContainEqual(ownRow("dry-shape.db")); // read the file it was given
+    expect(shape(file)).toEqual(before);
+    expect(() => getDatabase()).toThrow(/not initialized/); // the service's opener never ran
+  });
+
+  it("the dry run closes its own handle", async () => {
+    const file = synthDb("dry-close.db");
+    let seen: Database.Database | undefined;
+    await withReconcileDb(DRY, file, async (db) => {
+      seen = db;
+      expect(db.open).toBe(true);
+    });
+    expect(seen?.open).toBe(false);
+  });
+
+  it("the dry run closes its own handle when the run on it throws, and the error reaches the caller", async () => {
+    const file = synthDb("dry-throw.db");
+    let seen: Database.Database | undefined;
+    await expect(
+      withReconcileDb(DRY, file, async (db) => {
+        seen = db;
+        throw new Error("synthetic run failure");
+      }),
+    ).rejects.toThrow("synthetic run failure");
+    expect(seen?.open).toBe(false);
+  });
+
+  it("buildMainDeps prepares the DELETE on the read-only handle; only running it throws", async () => {
+    const file = synthDb("dry-delete.db");
+    await withReconcileDb(DRY, file, async (db) => {
+      const deps = buildMainDeps(db); // prepares the listing, the live check and the DELETE
+      expect(() => deps.drop({ path: "workspace/a.md", drive_id: "id8" })).toThrow(/readonly/);
+    });
+    expect(shape(file).map).toContainEqual({ path: "workspace/a.md", drive_id: "id8" });
+  });
+
+  it("a dry run on a path that does not exist fails and creates no file there", async () => {
+    const missing = join(dir, "missing.db");
+    let ran = false;
+    await expect(
+      withReconcileDb(DRY, missing, async () => {
+        ran = true;
+      }),
+    ).rejects.toThrow(/unable to open database file/);
+    expect(ran).toBe(false);
+    expect(existsSync(missing)).toBe(false);
+    expect(readdirSync(dir).filter((n) => n.startsWith("missing"))).toEqual([]);
+  });
+
+  it("a complete dry run over the file prints the same lines as over the fixture", async () => {
+    const file = synthDb("dry-list.db", { own: false }); // exactly the fixture's rows
+    for (const flags of [
+      DRY,
+      { ...DRY, prefix: "/", limit: 10 },
+      { ...DRY, prefix: "workspace/", limit: 2 },
+      { ...DRY, prefix: "knowledge/execution-patterns/2026-05" },
+    ]) {
+      const expected = fake();
+      await runReconcile(flags, expected.deps);
+      const lines: string[] = [];
+      await withReconcileDb(flags, file, (db) => runReconcile(flags, capturedDeps(db, lines)));
+      expect(lines).toEqual(expected.lines);
+    }
+    const lines: string[] = [];
+    await withReconcileDb(DRY, file, (db) => runReconcile({ ...DRY, prefix: "/", limit: 10 }, capturedDeps(db, lines)));
+    expect(dryListed(lines)).toEqual(["/tmp/junk-a.md", "/tmp/junk-b.md"]);
+    const all: string[] = [];
+    await withReconcileDb(DRY, file, (db) => runReconcile(DRY, capturedDeps(db, all)));
+    expect(dryListed(all)).toEqual(rows.map((o) => o.path));
+  });
+
+  it("apply opens through the service's opener (it re-creates its every-open table), then refuses: not the live db", async () => {
+    const file = synthDb("apply.db", { version: SCHEMA_MIGRATION_HEAD });
+    const before = shape(file);
+    expect(before.version).toBe(SCHEMA_MIGRATION_HEAD);
+    expect(before.tables).not.toContain("cost_ledger");
+    const lines: string[] = [];
+    let singleton = false;
+    const r = await withReconcileDb({ apply: true }, file, (db) => {
+      singleton = db === getDatabase() && !db.readonly;
+      return runReconcile({ apply: true, prefix: "/", limit: 10, unknown: [] }, capturedDeps(db, lines, true));
+    });
+    expect(singleton).toBe(true);
+    expect(r.exitCode).toBe(2);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/REFUSED: --apply needs the live db/);
+    const after = shape(file);
+    expect(after.version).toBe(SCHEMA_MIGRATION_HEAD);
+    expect(after.tables).toContain("cost_ledger");
+    expect(after.map).toEqual(before.map); // refused before any drop
+    expect(() => getDatabase()).toThrow(/not initialized/); // closed after the run
   });
 });
