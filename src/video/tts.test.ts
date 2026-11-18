@@ -1,29 +1,56 @@
 /**
- * TTS engine tests (v6.2 V1).
- * Tests pure functions (splitTextAtSentences, resolveVoice, listVoices).
- * The listVoices cases need edge-tts on PATH and skip themselves without it.
+ * TTS engine tests: splitTextAtSentences, resolveVoice and the duration probe.
+ * listVoices is covered in tts-voices.test.ts.
+ *
+ * No case may depend on a program installed on the host, so the child-process
+ * module is replaced fail-closed: every export refuses and records the call,
+ * and a probe case passes only when it arranged the call itself. The refusal
+ * is also checked after each case because the probe swallows every error.
  */
 
-import { describe, it, expect } from "vitest";
-import { accessSync, constants } from "fs";
-import { delimiter, join } from "path";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const mocks = vi.hoisted(() => {
+  const unexpected: string[] = [];
+  const refuse =
+    (name: string) =>
+    (...args: unknown[]): never => {
+      unexpected.push(`${name} ${JSON.stringify(args)}`);
+      throw new Error(`refused: no child process in this test (${name})`);
+    };
+  return {
+    unexpected,
+    refuse,
+    execFileSync: vi.fn<(...args: unknown[]) => unknown>(),
+  };
+});
+
+vi.mock("child_process", async (importOriginal) => {
+  const real = await importOriginal<typeof import("child_process")>();
+  const refused: Record<string, unknown> = Object.fromEntries(
+    Object.keys(real)
+      .filter((k) => k !== "default")
+      .map((k) => [k, mocks.refuse(k)]),
+  );
+  refused.execFileSync = mocks.execFileSync;
+  return { ...refused, default: refused };
+});
+
 import {
   splitTextAtSentences,
   resolveVoice,
   probeAudioDuration,
 } from "./tts.js";
 
-// listVoices runs the real edge-tts binary, which fetches the voice list over
-// the network. Its cases run only where an executable edge-tts is on PATH (the
-// same PATH the call searches) and skip themselves elsewhere, such as on a
-// stock CI runner.
-const hasEdgeTts = (process.env.PATH ?? "").split(delimiter).some((dir) => {
-  try {
-    accessSync(join(dir, "edge-tts"), constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+beforeEach(() => {
+  mocks.unexpected.length = 0;
+  mocks.execFileSync.mockReset();
+  mocks.execFileSync.mockImplementation(mocks.refuse("execFileSync"));
+});
+
+afterEach(() => {
+  expect(mocks.unexpected).toEqual([]);
+  vi.restoreAllMocks();
 });
 
 describe("splitTextAtSentences", () => {
@@ -68,7 +95,7 @@ describe("splitTextAtSentences", () => {
     expect(result.length).toBeGreaterThan(1);
   });
 
-  it("returns empty array for empty text", () => {
+  it("returns a single empty chunk for empty text", () => {
     expect(splitTextAtSentences("", 2000)).toEqual([""]);
   });
 
@@ -101,34 +128,107 @@ describe("resolveVoice", () => {
 });
 
 describe("probeAudioDuration", () => {
-  it("returns 0 for non-existent file", () => {
-    expect(probeAudioDuration("/tmp/nonexistent-file.mp3")).toBe(0);
+  const MISSING = "/nonexistent/scene-000.mp3";
+
+  // The program and argument list the probe must use, with the path last.
+  function expectProbeCall(path: string): void {
+    expect(mocks.execFileSync).toHaveBeenCalledTimes(1);
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
+      "ffprobe",
+      ["-v", "quiet", "-print_format", "json", "-show_format", path],
+      expect.objectContaining({ encoding: "utf-8", timeout: 10_000 }),
+    );
+  }
+
+  // How the call fails when the program exits non-zero (missing or unreadable
+  // input) and when the program itself is not installed.
+  function exitsNonZero(): never {
+    throw Object.assign(new Error("Command failed: ffprobe"), {
+      status: 1,
+      stdout: "",
+      stderr: "",
+    });
+  }
+  function notFound(): never {
+    throw Object.assign(new Error("spawnSync ffprobe ENOENT"), {
+      code: "ENOENT",
+    });
+  }
+
+  function probe(path: string): unknown {
+    let result: unknown;
+    expect(() => {
+      result = probeAudioDuration(path);
+    }).not.toThrow();
+    return result;
+  }
+
+  it("returns the duration from the answer as a number", () => {
+    mocks.execFileSync.mockImplementationOnce(() =>
+      JSON.stringify({
+        format: { filename: "a.mp3", duration: "12.345000", size: "4096" },
+      }),
+    );
+    const result = probe("a.mp3");
+    expect(result).toBe(12.345);
+    expectProbeCall("a.mp3");
   });
 
-  it("returns 0 for invalid path", () => {
-    expect(probeAudioDuration("")).toBe(0);
-  });
-});
-
-describe.skipIf(!hasEdgeTts)("listVoices", () => {
-  it("returns voices (requires edge-tts installed)", async () => {
-    const { listVoices } = await import("./tts.js");
-    const voices = listVoices();
-    expect(voices.length).toBeGreaterThan(100);
+  it("returns 0 without throwing when the probe exits non-zero for a missing file", () => {
+    mocks.execFileSync.mockImplementationOnce(exitsNonZero);
+    expect(probe(MISSING)).toBe(0);
+    expectProbeCall(MISSING);
   });
 
-  it("filters by language prefix", async () => {
-    const { listVoices } = await import("./tts.js");
-    const esVoices = listVoices("es");
-    expect(esVoices.length).toBeGreaterThan(5);
-    for (const v of esVoices) {
-      expect(v.locale).toMatch(/^es/);
+  it("returns 0 without throwing for an empty path", () => {
+    mocks.execFileSync.mockImplementationOnce(exitsNonZero);
+    expect(probe("")).toBe(0);
+    expectProbeCall("");
+  });
+
+  it("returns 0 without throwing when the probe program is not installed", () => {
+    mocks.execFileSync.mockImplementationOnce(notFound);
+    expect(probe(MISSING)).toBe(0);
+    expectProbeCall(MISSING);
+  });
+
+  it("returns 0 when the answer has no duration", () => {
+    mocks.execFileSync
+      .mockImplementationOnce(() =>
+        JSON.stringify({ format: { filename: "a.mp3", size: "4096" } }),
+      )
+      .mockImplementationOnce(() => JSON.stringify({}));
+    expect(probe("a.mp3")).toBe(0);
+    expect(probe("a.mp3")).toBe(0);
+    expect(mocks.execFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns 0 when the answer is not JSON", () => {
+    mocks.execFileSync.mockImplementationOnce(() => "not json");
+    expect(probe("a.mp3")).toBe(0);
+    expectProbeCall("a.mp3");
+  });
+
+  it("returns 0 when the duration in the answer is not a finite number", () => {
+    for (const duration of ["N/A", "", "Infinity"]) {
+      mocks.execFileSync.mockImplementationOnce(() =>
+        JSON.stringify({ format: { filename: "a.mp3", duration } }),
+      );
+      expect(probe("a.mp3")).toBe(0);
     }
+    expect(mocks.execFileSync).toHaveBeenCalledTimes(3);
   });
 
-  it("returns empty for non-existent language", async () => {
-    const { listVoices } = await import("./tts.js");
-    const voices = listVoices("xx");
-    expect(voices).toEqual([]);
+  it("returns a zero or negative duration unchanged as a number", () => {
+    for (const [duration, expected] of [
+      ["-1.5", -1.5],
+      ["0", 0],
+    ] as const) {
+      mocks.execFileSync.mockImplementationOnce(() =>
+        JSON.stringify({ format: { filename: "a.mp3", duration } }),
+      );
+      expect(probe("a.mp3")).toBe(expected);
+    }
+    expect(mocks.execFileSync).toHaveBeenCalledTimes(2);
   });
 });

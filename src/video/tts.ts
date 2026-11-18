@@ -39,7 +39,8 @@ export function probeAudioDuration(filePath: string): number {
       { timeout: 10_000, encoding: "utf-8" },
     );
     const meta = JSON.parse(output);
-    return parseFloat(meta.format?.duration ?? "0");
+    const duration = parseFloat(meta.format?.duration ?? "0");
+    return Number.isFinite(duration) ? duration : 0;
   } catch {
     return 0;
   }
