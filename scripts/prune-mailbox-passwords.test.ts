@@ -31,19 +31,22 @@ import { PersistentEventBus } from "../src/lib/events/bus.js";
 import { ensureRitualControlTables } from "../src/rituals/ritual-controls.js";
 import { argsSha256 } from "../src/lib/args-sha256.js";
 import {
+  PASSWORD_MIN_LEN,
   PASSWORD_WITHHELD_PLACEHOLDER as PH,
   candidateRuns,
   passwordFingerprint,
   replaceUnprovenValues,
 } from "../src/lib/v8-4/password-gate.js";
-import { VERIFYING_COMMANDS } from "../src/lib/v8-4/mailbox-passwords.js";
+import { SEEN_MAX_ROWS, VERIFYING_COMMANDS } from "../src/lib/v8-4/mailbox-passwords.js";
 import {
   DB_STORES,
   DIGIT_FREE_MIN_PER_CASE,
   GENERATED_PASSWORD_LEN,
+  LABEL_GAP,
   REACH,
   Refusal,
   SCAN_FILE_CAP,
+  addPieceFingerprints,
   collectFromText,
   findDbWriters,
   hasMailboxContext,
@@ -132,16 +135,35 @@ const COLLECTED = [V_CONV, V_TASK, V_ESC, V_RA, V_MTC, V_DAY, V_NOTE, V_DISK, V_
 const W = shaped("Zr5Ty6Ui7Op8As9Df");
 const X = shaped("Hb3Nc4Md5Le6Kf7Jg");
 const fp = passwordFingerprint;
-/** Every candidate of every collected run: the escape run also gives its `n`-prefixed form. */
-const EXPECTED_FPS = new Set([...COLLECTED.map(fp), fp(`n${V_ESC}`)]);
 /**
- * A made-up digit-free value of the generated length with exactly `upper` uppercase
- * letters spread evenly through it (never all at the front) and a lowercase letter in
- * every other place.
+ * What rule 1 (A) records for one free-standing generated value: the value and every
+ * contiguous piece of it with PASSWORD_MIN_LEN or more characters (start and end loops,
+ * written independently of the script's length and offset loops).
  */
-function digitFree(upper: number): string {
-  const at = new Set(Array.from({ length: upper }, (_, j) => Math.floor(((j + 0.5) * GENERATED_PASSWORD_LEN) / upper)));
-  return Array.from({ length: GENERATED_PASSWORD_LEN }, (_, i) => String.fromCharCode((at.has(i) ? 65 : 97) + ((i * 7) % 26))).join("");
+function pieceFps(v: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < v.length; i++) for (let j = i + PASSWORD_MIN_LEN; j <= v.length; j++) out.push(fp(v.slice(i, j)));
+  return out;
+}
+/** The fingerprint table's rows as a set. */
+function seenSet(): Set<string> {
+  const db = ro();
+  try {
+    return new Set((db.prepare("SELECT fingerprint FROM mailbox_password_seen").all() as Array<{ fingerprint: string }>).map((x) => x.fingerprint));
+  } finally {
+    db.close();
+  }
+}
+/** Every candidate of every collected run and every piece of each value: the escape run also gives its `n`-prefixed form. */
+const EXPECTED_FPS = new Set([...COLLECTED.flatMap(pieceFps), fp(`n${V_ESC}`)]);
+/**
+ * A made-up digit-free value of `len` characters (the generated length by default) with
+ * exactly `upper` uppercase letters spread evenly through it (never all at the front) and
+ * a lowercase letter in every other place.
+ */
+function digitFree(upper: number, len = GENERATED_PASSWORD_LEN): string {
+  const at = new Set(Array.from({ length: upper }, (_, j) => Math.floor(((j + 0.5) * len) / upper)));
+  return Array.from({ length: len }, (_, i) => String.fromCharCode((at.has(i) ? 65 : 97) + ((i * 7) % 26))).join("");
 }
 /** [uppercase, lowercase, digit] counts of a value. */
 function classCounts(v: string): [number, number, number] {
@@ -542,11 +564,11 @@ describe("collection rule", () => {
     expect(got(at(80)).size).toBe(0);
   });
 
-  it("generated shape: of mixed runs of 27, 28 and 29 after a password word in a mailbox text only the 28 is collected", () => {
+  it("generated shape: of mixed runs of 27, 28 and 29 after a password word (not directly after a label) in a mailbox text only the 28 is collected", () => {
     expect(GENERATED_PASSWORD_LEN).toBe(28);
     const [v27, v28, v29] = [shaped("Mk3Nj4Oh5Pg6Qf7Re8", 27), shaped("Sd9Tc8Ub7Va6Wz5Xy4"), shaped("Yx1Zw2Av3Bu4Ct5Ds6", 29)];
     expect([v27.length, v28.length, v29.length]).toEqual([27, 28, 29]);
-    const at = (v: string) => `buzón ops@example.com — contraseña: ${v}`;
+    const at = (v: string) => `contraseña del buzón ops@example.com — ${v}`;
     expect(got(at(v27)).size).toBe(0);
     expect(got(at(v28))).toEqual(new Set([fp(v28)]));
     expect(got(at(v29)).size).toBe(0);
@@ -562,8 +584,8 @@ describe("collection rule", () => {
     const s = got(ev);
     expect(s).toEqual(new Set([fp(v), fp(`n${v}`)]));
     expect(JSON.parse(replaceCollected(ev, s).text)).toEqual({ m: `correo ops@example.com contraseña:\n${PH}` });
-    // The same letters with no backslash before them: one 29-run, no candidate of 28.
-    const plain = `correo ops@example.com contraseña: n${v}`;
+    // The same letters with no backslash before them (and no label): one 29-run, no candidate of 28.
+    const plain = `contraseña del correo ops@example.com — n${v}`;
     expect(got(plain).size).toBe(0);
     // The candidate of the generated length must be the mixed one: an uppercase escape
     // letter in front of 28 letters and digits with no uppercase gives nothing.
@@ -777,11 +799,15 @@ describe("collection rule", () => {
     expect(hasMailboxContext("nothing here @ all")).toBe(false);
   });
 
-  it("linear on long texts", () => {
+  it("linear on long texts; the pieces of a value seen 25 000 times are listed once", () => {
     const hostile = `${"@a-".repeat(100_000)}${"password ".repeat(50_000)}${"\\nAb1".repeat(50_000)}${`pwd \\n${V_CONV} `.repeat(25_000)}a@example.com`;
     const t = Date.now();
     const s = new Set<string>();
-    expect(collectFromText(hostile, s)).toBe(25_000);
+    const values = new Set<string>();
+    expect(collectFromText(hostile, s, values)).toBe(25_000);
+    expect([...values]).toEqual([V_CONV]);
+    addPieceFingerprints(values, s);
+    expect(s).toEqual(new Set([fp(`n${V_CONV}`), ...pieceFps(V_CONV)]));
     expect(replaceCollected(hostile, s).replaced).toBe(25_000);
     hasMailboxContext(hostile);
     expect(Date.now() - t).toBeLessThan(3000);
@@ -807,6 +833,432 @@ describe("collection rule", () => {
     const nestedMs = Date.now() - t;
     console.log(`PERF json-fallback 5MB/200 hits: flat_ms=${flatMs} none_fits_ms=${noneMs} nested_ms=${nestedMs}`);
   }, 300_000);
+});
+
+// ── rule 1 (A): the pieces of a generated value ────────────────────────────
+
+/** A made-up generated value whose 28 characters are all different, so no two pieces are equal. */
+const PV = "AbCdEfGhIjKlMnOpQrStUvWxYz01";
+const PV_CTX = `buzón ops@example.com — contraseña: ${PV} fin`;
+/** A mixed 16-run that is a piece of no collected value. */
+const OTHER16 = "Zy9Xw8Vu7Ts6Rq5P";
+
+describe("rule 1 (A): cut-off copies of a generated value", () => {
+  const collect = (text: string) => {
+    const s = new Set<string>();
+    const values = new Set<string>();
+    collectFromText(text, s, values);
+    return { s, values };
+  };
+
+  it("one generated value adds its candidates and every piece of PASSWORD_MIN_LEN or more characters: 91 free-standing, 92 after an escape letter; never a piece of 15", () => {
+    expect([PV.length, new Set(PV).size, PASSWORD_MIN_LEN]).toEqual([GENERATED_PASSWORD_LEN, GENERATED_PASSWORD_LEN, 16]);
+    const free = collect(PV_CTX);
+    expect([...free.values]).toEqual([PV]);
+    expect(free.s).toEqual(new Set([fp(PV)])); // collectFromText never lists pieces itself
+    addPieceFingerprints(free.values, free.s);
+    expect(free.s.size).toBe(91); // the value + 90 pieces: 13 of 16 characters, 12 of 17, …, 2 of 27
+    expect(free.s).toEqual(new Set(pieceFps(PV)));
+    for (const piece of [PV.slice(0, 16), PV.slice(-16), PV.slice(6, 22), PV.slice(0, 27), PV.slice(1)]) expect(free.s.has(fp(piece))).toBe(true);
+    for (let i = 0; i + 15 <= PV.length; i++) expect(free.s.has(fp(PV.slice(i, i + 15)))).toBe(false);
+    const esc = collect(JSON.stringify({ m: `correo ops@example.com contraseña:\n${PV}` }));
+    expect([...esc.values]).toEqual([PV]);
+    addPieceFingerprints(esc.values, esc.s);
+    expect(esc.s.size).toBe(92); // + the run with its escape letter
+    expect(esc.s).toEqual(new Set([fp(`n${PV}`), ...pieceFps(PV)]));
+  });
+
+  it("pieces only from the true value: an escape letter + 27 makes a run of the generated shape that is collected as before, with no piece", () => {
+    const v27 = PV.slice(0, 27);
+    const esc = collect(JSON.stringify({ m: `correo ops@example.com contraseña:\n${v27}` }));
+    expect(esc.values.size).toBe(0);
+    expect(esc.s).toEqual(new Set([fp(`n${v27}`), fp(v27)]));
+    addPieceFingerprints(esc.values, esc.s);
+    expect(esc.s.size).toBe(2);
+  });
+
+  it("pieces are listed once per distinct value: a text with the value 500 times hands out one value and gives the same set as a text with it once", () => {
+    const once = collect(`buzón ops@example.com password: ${PV}`);
+    const many = collect(`buzón ops@example.com ${`password: ${PV} `.repeat(500)}`);
+    expect([...many.values]).toEqual([PV]);
+    addPieceFingerprints(once.values, once.s);
+    addPieceFingerprints(many.values, many.s);
+    expect(many.s).toEqual(once.s);
+  });
+
+  it("pieces only for the generated shape: a labelled value of another length hands out no value and adds no piece", () => {
+    const L = "Tq4Wm8Rk2Zp6Xv3Nb7Hj5";
+    const got = collect(`buzón ops@example.com contraseña: ${L} fin`);
+    expect(got.values.size).toBe(0);
+    addPieceFingerprints(got.values, got.s);
+    expect(got.s).toEqual(new Set([fp(L)]));
+  });
+
+  it("in the stores: a free-standing start of 16, an end, a middle and a 27 piece are replaced; a start of 15, a run that is a piece of nothing and a glued copy stay byte for byte; the 15-piece is in no set", () => {
+    const rows = [
+      PV_CTX,
+      `fragmento ${PV.slice(0, 16)} fin`,
+      `fragmento ${PV.slice(-16)} fin`,
+      `fragmento ${PV.slice(5, 23)} fin`,
+      `fragmento ${PV.slice(0, 27)} fin`,
+      `fragmento ${PV.slice(1)} fin`,
+      `fragmento ${PV.slice(0, 15)} fin`,
+      `fragmento ${OTHER16} fin`,
+      `fragmento x${PV} fin`,
+    ];
+    seedRows(rows);
+    const dry = pruneLogged(false);
+    expect(dry.r.ok).toBe(true);
+    expect(dry.r.distinct).toBe(91);
+    expect(dry.r.stores.find((s) => s.store === "conversations")).toMatchObject({ hit: 6, changed: 0 });
+    const { r, lines } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(r.uncovered.size).toBe(0);
+    expect(lines).toContain(`${TAG} uncovered_hits=0`);
+    const conv = (id: number) => cell("SELECT content FROM conversations WHERE id = ?", id);
+    expect(rows.map((_, i) => conv(i + 1))).toEqual([
+      PV_CTX.replace(PV, PH),
+      `fragmento ${PH} fin`,
+      `fragmento ${PH} fin`,
+      `fragmento ${PH} fin`,
+      `fragmento ${PH} fin`,
+      `fragmento ${PH} fin`,
+      ...rows.slice(6),
+    ]);
+    const seen = seenSet();
+    expect(seen).toEqual(new Set(pieceFps(PV)));
+    expect(seen.has(fp(PV.slice(0, 15)))).toBe(false);
+  });
+
+  it("a value that is in the stores only as a cut-off copy (no full copy anywhere) is not removed and the run reports nothing", () => {
+    const cut = PV.slice(0, 20);
+    seedRows([`fragmento ${cut} fin`, `contraseña del buzón ops@example.com — ${cut} fin`]);
+    const rows = dbRows();
+    for (const apply of [false, true]) {
+      const { r, lines, nothing } = pruneLogged(apply);
+      expect(r.ok).toBe(true);
+      expect([r.distinct, r.fingerprintsAdded]).toEqual([0, 0]);
+      expect(r.stores.every((s) => s.hit === 0 && s.changed === 0)).toBe(true);
+      expect(lines).toContain(`${TAG} uncovered_hits=0`);
+      expect(nothing).toBe(true);
+    }
+    expect(dbRows()).toBe(rows);
+    expect(count("SELECT COUNT(*) FROM mailbox_password_seen")).toBe(0);
+  });
+
+  it("a piece in a column outside the cleaned list is reported by the safety net as uncovered and never rewritten", () => {
+    seedRows([PV_CTX], (db) => db.prepare("INSERT INTO conversations (bank, content) VALUES (?, 'nada')").run(`banco ${PV.slice(3, 20)}`));
+    for (const apply of [false, true]) {
+      const { r, lines } = pruneLogged(apply);
+      expect(r.ok).toBe(false);
+      expect([...r.uncovered]).toEqual([["conversations.bank", 1]]);
+      expect(lines).toContain(`${TAG} uncovered column=conversations.bank cells=1 (not rewritten)`);
+    }
+    expect(cell("SELECT bank FROM conversations WHERE content = 'nada'")).toBe(`banco ${PV.slice(3, 20)}`);
+  });
+
+  it("a piece in a --scan-only folder counts as a hit; a 15-character start does not", () => {
+    seedRows([PV_CTX]);
+    const dir = join(root, "spill");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "a.txt"), `copia ${PV.slice(0, 16)}\n`);
+    writeFileSync(join(dir, "b.txt"), `copia ${PV.slice(0, 15)}\n`);
+    const { r, lines } = pruneLogged(false, { scanOnly: [dir] });
+    expect(lines).toContain(`${TAG} scan_only=1 files=2 scan_only_hits=1`);
+    expect(r.ok).toBe(false);
+  });
+
+  it("pieces are durable before any rewrite: an apply interrupted after the full value's only copy was rewritten leaves a cut-off copy that the re-run still removes", () => {
+    const cut = `fragmento ${PV.slice(0, 20)} fin`;
+    seedRows([cut]);
+    writeKb("notes/a-ctx.md", `# a\n\n${PV_CTX}\n`);
+    expect(() => prune(true, crashAt("file"))).toThrow("files:UNKNOWN");
+    expect(readFileSync(join(kbDir, "notes/a-ctx.md"), "utf8").includes(PV)).toBe(false);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(cut);
+    const second = pruneLogged(true);
+    expect(second.r.ok).toBe(true);
+    expect([second.r.distinct, second.r.known]).toEqual([0, 91]); // known from the table alone
+    expect(second.r.stores.find((s) => s.store === "conversations")).toMatchObject({ hit: 1, changed: 1 });
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`fragmento ${PH} fin`);
+    expect(pruneLogged(true).nothing).toBe(true);
+  });
+
+  it("a cut-off copy inside a JSON string (after an escape too) is replaced and the text still parses", () => {
+    seedRows([PV_CTX], (db) =>
+      db
+        .prepare("INSERT INTO recall_audit (bank, query, source, result_snippets) VALUES ('mc-jarvis', 'q-json', 'sqlite', ?)")
+        .run(JSON.stringify([`snippet ${PV.slice(0, 20)}`, `otro\n${PV.slice(0, 18)}`, `corto ${PV.slice(0, 15)}`])),
+    );
+    expect(prune(true).ok).toBe(true);
+    expect(JSON.parse(cell("SELECT result_snippets FROM recall_audit WHERE query = 'q-json'") as string)).toEqual([
+      `snippet ${PH}`,
+      `otro\n${PH}`,
+      `corto ${PV.slice(0, 15)}`,
+    ]);
+  });
+});
+
+// ── rule 1 (B): a value written directly after a password label ────────────
+
+/** Made-up labelled values of other lengths (digit, lowercase and uppercase). */
+const L21 = "Tq4Wm8Rk2Zp6Xv3Nb7Hj5";
+const L16 = "Ab3Cd4Ef5Gh6Jk7M";
+/** A camelCase name: no digit, 2 capitals of 20. */
+const CAMEL20 = "mailboxSettingsPanel";
+
+describe("rule 1 (B): a value written directly after a password label", () => {
+  const got = (text: string): Set<string> => {
+    const s = new Set<string>();
+    collectFromText(text, s);
+    return s;
+  };
+  const lab = (v: string) => `buzón ops@example.com contraseña: ${v} fin`;
+
+  it("label gap: 1 and LABEL_GAP characters collect, LABEL_GAP + 1 does not", () => {
+    // A gap of 0 cannot occur: every password word ends with an ASCII letter, and a run
+    // never starts right after a letter (it would include the word), so no case is faked.
+    expect(LABEL_GAP).toBe(12);
+    const at = (gap: string) => `buzón ops@example.com password${gap}${L21} fin`;
+    expect(got(at(":"))).toEqual(new Set([fp(L21)]));
+    expect(got(at(`:${" ".repeat(LABEL_GAP - 1)}`))).toEqual(new Set([fp(L21)]));
+    expect(got(at(`:${" ".repeat(LABEL_GAP)}`)).size).toBe(0);
+  });
+
+  it("label forms: punctuation, quotes, backticks, asterisks and spaces in the gap collect", () => {
+    for (const f of [`Contraseña: **${L21}**`, `{"password": "${L21}"}`, `clave = ${L21}`, `pwd\t\`${L21}\``]) {
+      expect([f, got(`buzón ops@example.com ${f}`)]).toEqual([f, new Set([fp(L21)])]);
+    }
+  });
+
+  it("a letter (ASCII, accented, Greek) or a digit (ASCII, Arabic-Indic) in the gap: left", () => {
+    for (const gap of [" is: ", " é: ", " λ: ", " 1: ", " ٣: "]) {
+      const t = `buzón ops@example.com password${gap}${L21} fin`;
+      expect([gap, got(t).size]).toEqual([gap, 0]);
+      expect(replaceCollected(t, got(t)).text).toBe(t);
+    }
+  });
+
+  it("a line break in the gap collects, and the same text JSON-encoded collects too with the same removed values", () => {
+    for (const t of [`buzón ops@example.com password:\n${L21} fin`, `buzón ops@example.com password:\n   ${L21} fin`]) {
+      const enc = JSON.stringify({ m: t });
+      expect(got(t)).toEqual(new Set([fp(L21)]));
+      expect(got(enc).has(fp(L21))).toBe(true);
+      expect(replaceCollected(t, got(t)).text).toBe(t.replace(L21, PH));
+      expect(JSON.parse(replaceCollected(enc, got(enc)).text).m).toBe(t.replace(L21, PH));
+    }
+  });
+
+  it("the nearest password word decides: a second run after `password: <name>` is not labelled; a nearer `clave:` labels it", () => {
+    expect(got(`buzón ops@example.com password: ${CAMEL20} y ${L21} fin`).size).toBe(0);
+    expect(got(`buzón ops@example.com password del panel, clave: ${L21} fin`)).toEqual(new Set([fp(L21)]));
+  });
+
+  it("shape at 21 characters: digit + both cases collected, digit + one case left; with no digit exactly 2/7 of each case collected, one below left (each case)", () => {
+    const [up6, up5, lo6, lo5] = [digitFree(6, 21), digitFree(5, 21), digitFree(15, 21), digitFree(16, 21)];
+    expect([up6, up5, lo6, lo5].map(classCounts)).toEqual([
+      [6, 15, 0],
+      [5, 16, 0],
+      [15, 6, 0],
+      [16, 5, 0],
+    ]);
+    expect(7 * 6).toBe(2 * 21); // 6 of 21 is exactly the 2/7 threshold
+    for (const v of [L21, up6, lo6]) expect([v, got(lab(v))]).toEqual([v, new Set([fp(v)])]);
+    for (const v of [L21.toLowerCase(), L21.toUpperCase(), up5, lo5]) expect([v, got(lab(v)).size]).toEqual([v, 0]);
+  });
+
+  it("the last candidate (the value without its escape) decides the shape: an escape letter that adds the only lowercase does not make a one-case value collected", () => {
+    const upperDigits = L21.toUpperCase();
+    const enc = JSON.stringify({ m: `correo ops@example.com contraseña:\n${upperDigits}` });
+    expect(got(enc).size).toBe(0);
+    expect(got(`correo ops@example.com contraseña: \\Q${L21.toLowerCase()}`).size).toBe(0);
+  });
+
+  it("the last candidate decides: a digit-free value exactly at the per-case threshold is collected plain and after `\\n` in a JSON-encoded text", () => {
+    for (const v of [digitFree(6, 21), digitFree(15, 21)]) {
+      const t = `correo ops@example.com contraseña:\n${v}`;
+      const enc = JSON.stringify({ m: t });
+      expect([v, got(t)]).toEqual([v, new Set([fp(v)])]);
+      expect([v, got(enc)]).toEqual([v, new Set([fp(`n${v}`), fp(v)])]);
+      expect(JSON.parse(replaceCollected(enc, got(enc)).text).m).toBe(t.replace(v, PH));
+    }
+  });
+
+  it("label gap with an escape letter in front of the run: the gap ends where the run starts as the reply check sees it (at the escape letter)", () => {
+    const at = (spaces: number) => `buzón ops@example.com password:${" ".repeat(spaces)}\\n${L21} fin`;
+    // `:` + spaces + the backslash: LABEL_GAP characters with 10 spaces, one more with 11.
+    expect(got(at(LABEL_GAP - 2))).toEqual(new Set([fp(`n${L21}`), fp(L21)]));
+    expect(got(at(LABEL_GAP - 1)).size).toBe(0);
+  });
+
+  it("escape letters in the gap: exactly b, f, n, r and t belong to their escape; a backslash before any other letter, or a \\uXXXX escape, leaves the value", () => {
+    for (const e of ["b", "f", "n", "r", "t"]) {
+      expect([e, got(`buzón ops@example.com password:\\${e} ${L21} fin`)]).toEqual([e, new Set([fp(L21)])]);
+    }
+    for (const e of ["q", "a", "N", "u00e9"]) {
+      expect([e, got(`buzón ops@example.com password:\\${e} ${L21} fin`).size]).toEqual([e, 0]);
+    }
+  });
+
+  it("known limit, pinned: the gap counts raw characters, so an encoded line break counts two and a value at the edge is left encoded while its plain form is collected", () => {
+    const t = `buzón ops@example.com password:\n${" ".repeat(LABEL_GAP - 2)}${L21} fin`;
+    expect(got(t)).toEqual(new Set([fp(L21)]));
+    expect(got(JSON.stringify({ m: t })).size).toBe(0);
+  });
+
+  it("accepted cost, pinned: after `clave` a mixed-case identifier with a digit written directly after it in a mailbox text is taken", () => {
+    const id = "Build2024Release";
+    expect(classCounts(id)).toEqual([2, 10, 4]);
+    expect(got(`buzón ops@example.com clave: ${id} fin`)).toEqual(new Set([fp(id)]));
+  });
+
+  it("a camelCase identifier after `clave: ` is left byte for byte", () => {
+    const t = `buzón ops@example.com clave: ${CAMEL20} fin`;
+    expect(got(t).size).toBe(0);
+    expect(replaceCollected(t, got(t)).text).toBe(t);
+  });
+
+  it("lengths: labelled runs of 16 and 64 are collected; 15 and 65 are not seen", () => {
+    const [L15, L64, L65] = [L16.slice(0, 15), shaped(L16, 64), shaped(L16, 65)];
+    expect([L15.length, L16.length, L64.length, L65.length]).toEqual([15, 16, 64, 65]);
+    for (const v of [L16, L64]) expect(got(lab(v))).toEqual(new Set([fp(v)]));
+    for (const v of [L15, L65]) {
+      expect(runGroups(lab(v))).toEqual([]);
+      expect(got(lab(v)).size).toBe(0);
+    }
+  });
+
+  it("no mailbox context: nothing collected", () => {
+    expect(got(`contraseña: ${L21} para el panel`).size).toBe(0);
+  });
+
+  it("the 2/7 proportion is DIGIT_FREE_MIN_PER_CASE at the generated length: at 28 a labelled run and a run in reach give the same verdict; at 27 the labelled rule needs 8 of each case", () => {
+    expect(7 * DIGIT_FREE_MIN_PER_CASE).toBe(2 * GENERATED_PASSWORD_LEN);
+    const inReach = (v: string) => `contraseña del buzón ops@example.com — ${v} fin`;
+    for (const [v, n] of [
+      [DF_8U, 1],
+      [DF_8L, 1],
+      [DF_7U, 0],
+      [DF_7L, 0],
+    ] as const) {
+      expect([v, got(lab(v)).size, got(inReach(v)).size]).toEqual([v, n, n]);
+    }
+    expect([got(lab(digitFree(8, 27))).size, got(lab(digitFree(7, 27))).size]).toEqual([1, 0]);
+  });
+
+  it("in the stores: a labelled value is removed everywhere it stands free (another row, a KB file, an archive); the seen set holds exactly its candidates, no piece", () => {
+    seedRows([JSON.stringify({ m: `buzón ops@example.com contraseña:\n${L21}` }), `recordatorio ${L21} fin`]);
+    writeKb("notes/copia.md", `# c\n\ncopia ${L21}\n`);
+    writeFileSync(join(arDir, ARCH_HIT), gzipSync(`${JSON.stringify({ o: `again ${L21}` })}\n`));
+    const r = prune(true);
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(cell("SELECT content FROM conversations WHERE id = 1") as string)).toEqual({ m: `buzón ops@example.com contraseña:\n${PH}` });
+    expect(cell("SELECT content FROM conversations WHERE id = 2")).toBe(`recordatorio ${PH} fin`);
+    expect(readFileSync(join(kbDir, "notes/copia.md"), "utf8")).toBe(`# c\n\ncopia ${PH}\n`);
+    expect(archiveText(ARCH_HIT)).toBe(`${JSON.stringify({ o: `again ${PH}` })}\n`);
+    expect(seenSet()).toEqual(new Set([fp(L21), fp(`n${L21}`)]));
+  });
+
+  it("in the stores: a camelCase identifier after `clave: ` stays byte for byte in both modes and never enters the seen set", () => {
+    seedRows([`buzón ops@example.com clave: ${CAMEL20} fin`, `otra ${CAMEL20}`]);
+    const rows = dbRows();
+    for (const apply of [false, true]) {
+      const { r, nothing } = pruneLogged(apply);
+      expect(r.ok).toBe(true);
+      expect(r.distinct).toBe(0);
+      expect(nothing).toBe(true);
+    }
+    expect(dbRows()).toBe(rows);
+    expect(count("SELECT COUNT(*) FROM mailbox_password_seen")).toBe(0);
+  });
+
+  it("known limit, pinned: a value glued to a percent escape directly after a label is collected and replaced as one glued run; a bare copy of the value elsewhere is not covered by that fingerprint and stays", () => {
+    const glued = `buzón ops@example.com password%3D${PV}`;
+    const bare = `copia ${PV} fin`;
+    seedRows([glued, bare]);
+    const r = prune(true);
+    expect(r.ok).toBe(true);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`buzón ops@example.com password%${PH}`);
+    expect(cell("SELECT content FROM conversations WHERE id = 2")).toBe(bare);
+    expect(seenSet()).toEqual(new Set([fp(`3D${PV}`)]));
+  });
+});
+
+// ── rule 3, limit: the fingerprint table's cap ─────────────────────────────
+
+describe("rule 3 limit: an apply that would take the fingerprint table above half of SEEN_MAX_ROWS refuses", () => {
+  /** The script may fill at most half of the reply check's table; derived here from the imported cap. */
+  const LIMIT = Math.floor(SEEN_MAX_ROWS / 2);
+  /** Seeds the generated value PV in a row, a KB file, an archive and a leftover temp file; the table holds `fillers` made-up rows plus fp(PV). */
+  const seedAtCap = (fillers: number, knownOfPv: readonly string[] = [fp(PV)]) => {
+    seedRows([PV_CTX], (db) => {
+      const ins = db.prepare("INSERT INTO mailbox_password_seen (fingerprint) VALUES (?)");
+      db.transaction(() => {
+        for (const k of knownOfPv) ins.run(k); // known already and collected again: counted once
+        for (let i = 0; i < fillers; i++) ins.run(fp(`relleno-${i}`));
+      })();
+    });
+    writeKb("notes/cap.md", `# c\n\ncopia ${PV}\n`);
+    writeFileSync(join(arDir, ARCH_HIT), gzipSync(`${JSON.stringify({ o: `again ${PV}` })}\n`));
+    writeFileSync(join(kbDir, "notes", ".cap.md.prune-tmp-123-abcdef012345"), "x");
+  };
+  const capLine = `${TAG} fingerprint_limit=${LIMIT} (half of the table cap ${SEEN_MAX_ROWS}): known plus to_add is above it — --apply refuses (code=SEEN_TABLE_FULL) and writes nothing`;
+
+  it("exactly at the limit: the run goes ahead, the table ends at half of SEEN_MAX_ROWS, and the dry run says nothing about the limit", () => {
+    seedAtCap(LIMIT - 91); // known: LIMIT - 90 (fp(PV) among them, collected again); new: the 90 pieces
+    const dry = pruneLogged(false);
+    expect([dry.r.known, dry.r.fingerprintsAdded]).toEqual([LIMIT - 90, 90]);
+    expect(dry.lines.some((l) => l.includes("fingerprint_limit="))).toBe(false);
+    const { r } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(r.fingerprintsAdded).toBe(90);
+    expect(count("SELECT COUNT(*) FROM mailbox_password_seen")).toBe(LIMIT);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(PV_CTX.replace(PV, PH));
+  });
+
+  it("one above the limit: --apply refuses with SEEN_TABLE_FULL (exit 2) and writes nothing anywhere (table, rows, files, temp files); the dry run says so and still finishes", () => {
+    seedAtCap(LIMIT - 90); // known: LIMIT - 89; new: 90
+    const rows = dbRows();
+    const files = folderDigest(kbDir) + folderDigest(arDir);
+    expect(() => prune(true)).toThrow(Refusal);
+    expect(() => prune(true)).toThrow("SEEN_TABLE_FULL");
+    const out: string[] = [];
+    expect(main(APPLY(), deps({}, out))).toBe(2);
+    expect(out).toEqual([`${TAG} REFUSED code=SEEN_TABLE_FULL — nothing written`]);
+    expect(dbRows()).toBe(rows);
+    expect(folderDigest(kbDir) + folderDigest(arDir)).toBe(files);
+    const dry = pruneLogged(false);
+    expect(dry.r.ok).toBe(true);
+    expect(dry.lines).toContain(capLine);
+    expect(dry.lines).toContain(`${TAG} dry run — nothing written; pass --apply --i-stopped-the-service to write`);
+    expect(dbRows()).toBe(rows);
+  });
+
+  it("table already above the limit, nothing new to add: the apply runs, removes the known value's copies and leaves the table's row count as it was; the dry run prints no limit line", () => {
+    seedAtCap(LIMIT + 1 - 91, pieceFps(PV)); // all 91 of PV's fingerprints known; table at LIMIT + 1
+    const dry = pruneLogged(false);
+    expect([dry.r.known, dry.r.fingerprintsAdded]).toEqual([LIMIT + 1, 0]);
+    expect(dry.lines.some((l) => l.includes("fingerprint_limit="))).toBe(false);
+    const { r } = pruneLogged(true);
+    expect(r.ok).toBe(true);
+    expect(r.fingerprintsAdded).toBe(0);
+    expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(PV_CTX.replace(PV, PH));
+    expect(readFileSync(join(kbDir, "notes/cap.md"), "utf8")).toBe(`# c\n\ncopia ${PH}\n`);
+    expect(archiveText(ARCH_HIT)).toBe(`${JSON.stringify({ o: `again ${PH}` })}\n`);
+    expect(count("SELECT COUNT(*) FROM mailbox_password_seen")).toBe(LIMIT + 1);
+  });
+
+  it("table already above the limit and ONE new fingerprint: --apply refuses and writes nothing; the dry run prints the limit line", () => {
+    const all = pieceFps(PV);
+    seedAtCap(LIMIT + 1 - 90, all.filter((f) => f !== fp(PV.slice(0, 16)))); // 90 of 91 known; table at LIMIT + 1
+    const rows = dbRows();
+    const files = folderDigest(kbDir) + folderDigest(arDir);
+    const dry = pruneLogged(false);
+    expect([dry.r.known, dry.r.fingerprintsAdded]).toEqual([LIMIT + 1, 1]);
+    expect(dry.lines).toContain(capLine);
+    expect(() => prune(true)).toThrow("SEEN_TABLE_FULL");
+    expect(dbRows()).toBe(rows);
+    expect(folderDigest(kbDir) + folderDigest(arDir)).toBe(files);
+  });
 });
 
 // ── stores ─────────────────────────────────────────────────────────────────
@@ -998,9 +1450,9 @@ describe("stores", () => {
     expect(remaining([docId])).toEqual([]);
   });
 
-  it("generated shape in the stores: of runs of 27, 28 and 29 only the 28 is replaced; the others stay byte for byte, never enter the seen set, and the run is clean", () => {
+  it("generated shape in the stores: of runs of 27, 28 and 29 (not directly after a label) only the 28 is replaced; the others stay byte for byte, never enter the seen set, and the run is clean", () => {
     const [v27, v28, v29] = [shaped("Mk3Nj4Oh5Pg6Qf7Re8", 27), shaped("Sd9Tc8Ub7Va6Wz5Xy4"), shaped("Yx1Zw2Av3Bu4Ct5Ds6", 29)];
-    const rows = [v27, v28, v29].map((v) => `buzón ops@example.com — contraseña: ${v} fin`);
+    const rows = [v27, v28, v29].map((v) => `contraseña del buzón ops@example.com — ${v} fin`);
     seedRows([...rows, `repite ${v27} ${v28} ${v29}`]);
     const { r, lines } = pruneLogged(true);
     expect(r.ok).toBe(true);
@@ -1008,14 +1460,7 @@ describe("stores", () => {
     expect(lines).toContain(`${TAG} uncovered_hits=0`);
     const conv = (id: number) => cell("SELECT content FROM conversations WHERE id = ?", id);
     expect([conv(1), conv(2), conv(3), conv(4)]).toEqual([rows[0], rows[1]!.replace(v28, PH), rows[2], `repite ${v27} ${PH} ${v29}`]);
-    const seen = ro();
-    try {
-      expect((seen.prepare("SELECT fingerprint FROM mailbox_password_seen").all() as Array<{ fingerprint: string }>).map((x) => x.fingerprint)).toEqual([
-        fp(v28),
-      ]);
-    } finally {
-      seen.close();
-    }
+    expect(seenSet()).toEqual(new Set(pieceFps(v28)));
   });
 
   it("no digit in the stores: a digit-free 28 with DIGIT_FREE_MIN_PER_CASE letters of each case is replaced, one with 7 of a case or a camelCase name stays byte for byte; with a digit one letter of each case is enough; the run is clean", () => {
@@ -1032,21 +1477,14 @@ describe("stores", () => {
       ...hit.map((v, i) => rows[i]!.replace(v, PH)),
       ...rows.slice(hit.length),
     ]);
-    const seen = ro();
-    try {
-      expect(
-        new Set((seen.prepare("SELECT fingerprint FROM mailbox_password_seen").all() as Array<{ fingerprint: string }>).map((x) => x.fingerprint)),
-      ).toEqual(new Set(hit.map(fp)));
-    } finally {
-      seen.close();
-    }
+    expect(seenSet()).toEqual(new Set(hit.flatMap(pieceFps)));
   });
 
   it("known limit, pinned: a value glued to other letters or digits (after `x`, or right after a percent escape `%3D`) is a run of another length, so its context does not collect it; a free-standing value in the same store is replaced and the run is clean", () => {
     const [g1, g2, free] = [shaped("Ga1Hb2Ic3Jd4Ke5Lf6"), shaped("Mg7Nh8Oi9Pj0Qk1Rl2"), shaped("Sm3Tn4Uo5Vp6Wq7Xr8")];
     const rows = [
-      `buzón ops@example.com — contraseña: x${g1} fin`,
-      `mailbox ops@example.com https://mail.example/login?password%3D${g2} fin`,
+      `contraseña del buzón ops@example.com — x${g1} fin`,
+      `mailbox ops@example.com https://mail.example/login?password%3Dsi%26valor%3D${g2} fin`,
       `buzón ops@example.com — contraseña: ${free} fin`,
     ];
     seedRows(rows);
@@ -1056,19 +1494,12 @@ describe("stores", () => {
     expect(lines).toContain(`${TAG} uncovered_hits=0`);
     const conv = (id: number) => cell("SELECT content FROM conversations WHERE id = ?", id);
     expect([conv(1), conv(2), conv(3)]).toEqual([rows[0], rows[1], rows[2]!.replace(free, PH)]);
-    const seen = ro();
-    try {
-      expect((seen.prepare("SELECT fingerprint FROM mailbox_password_seen").all() as Array<{ fingerprint: string }>).map((x) => x.fingerprint)).toEqual([
-        fp(free),
-      ]);
-    } finally {
-      seen.close();
-    }
+    expect(seenSet()).toEqual(new Set(pieceFps(free)));
   });
 
   it("a value already in the seen set is pruned whatever its length", () => {
     const [v20, v40] = [shaped("Gw3Hx4Iy5Jz6Ka7Lb8Mc", 20), shaped("Nd9Oe8Pf7Qg6Rh5Si4Tj", 40)];
-    seedRows([`la herramienta dijo ${v20}`, `mailbox ops@example.com password: ${v40}`], (db) => {
+    seedRows([`la herramienta dijo ${v20}`, `mailbox ops@example.com password del panel ${v40}`], (db) => {
       const ins = db.prepare("INSERT INTO mailbox_password_seen (fingerprint) VALUES (?)");
       for (const v of [v20, v40]) ins.run(fp(v));
     });
@@ -1077,7 +1508,7 @@ describe("stores", () => {
     expect([r.distinct, r.known, r.fingerprintsAdded]).toEqual([0, 2, 0]);
     expect(r.stores.find((s) => s.store === "conversations")).toMatchObject({ hit: 2, changed: 2 });
     expect(cell("SELECT content FROM conversations WHERE id = 1")).toBe(`la herramienta dijo ${PH}`);
-    expect(cell("SELECT content FROM conversations WHERE id = 2")).toBe(`mailbox ops@example.com password: ${PH}`);
+    expect(cell("SELECT content FROM conversations WHERE id = 2")).toBe(`mailbox ops@example.com password del panel ${PH}`);
   });
 
   it("an identifier of another length after a password word that is also a file name: nothing is replaced anywhere and the safety net reports nothing", () => {
@@ -1150,7 +1581,7 @@ describe("stores", () => {
     expect(after.map(rest)).toEqual(before.map(rest));
     expect(after[3]).toEqual(before[3]);
     expect(cell("SELECT content FROM conversations")).toBe(`sin contexto ${PH} ${PH}`);
-    expect(count("SELECT COUNT(*) FROM mailbox_password_seen")).toBe(2);
+    expect(seenSet()).toEqual(new Set([...pieceFps(G), ...pieceFps(H)]));
   });
 
   it("known fingerprints that appear nowhere: a no-op on every row (the indexes are rebuilt, rule 13), not a failure", () => {

@@ -10,34 +10,77 @@
  * Rules (each one is pinned by scripts/prune-mailbox-passwords.test.ts):
  *  1. Values are read the way the reply check reads them: its `candidateRuns` gives, per
  *     letter/digit run, the run and (after a backslash) the run without an escape
- *     letter or a `\uXXXX` escape, each only at 16–64 characters. A run is COLLECTED
- *     when one of its candidates has the generated shape (exactly GENERATED_PASSWORD_LEN
- *     characters with a digit, a lowercase and an uppercase letter, or with no digit and
- *     at least DIGIT_FREE_MIN_PER_CASE lowercase and as many uppercase letters: the
- *     mailbox tool generates every mailbox password at that length, drawing each
- *     character from letters and digits without forcing any class, so a real value may
- *     have no digit and requiring one would miss it; such a value has its letters drawn
- *     from both cases about half each, while a name a person or a program writes (a
- *     camelCase identifier, joined words) has only a few capitals and is left alone; a
- *     digit-free value with fewer of one case is the accepted cost, about one in eighty
- *     of the already rare digit-free values; a run of another length after a password
- *     word is usually an identifier, a link id or a key of something else, and replacing
- *     it would damage text that holds no mailbox password, so it is not collected), it
- *     starts fewer than REACH units after a password word (KEYWORDS, any case, not
- *     preceded by a letter), and the text also has a mailbox context (an `@domain.tld`,
- *     a verifying command name from mailbox-passwords.ts, or MAILBOX_WORDS). Then the
- *     fingerprint of EVERY candidate of that run is collected: the value itself and,
- *     after a backslash, the run with the escape letter or `\uXXXX` still in front, or
- *     without its first character. Each one is the value with at most (part of) its
- *     escape in front, or a part of the value, and the true value is the candidate of the
- *     generated shape, so the fingerprint the reply check computes for it is always among
- *     them. Known limit: a value glued to other letters or digits (for example right after
- *     a percent escape such as `%3D`, whose two hex digits join the run) is a run of
- *     another length, so its context does not collect it; such a copy is removed only
- *     when its fingerprint is already in `mailbox_password_seen` (rule 3 (b)). A unit is
- *     one character, except that a whole run and a whole placeholder count as one unit,
- *     and a password word inside a placeholder is not a password word: a replacement
- *     never moves another run into reach, so a second run collects nothing new.
+ *     letter or a `\uXXXX` escape, each only at 16–64 characters. Collection needs a
+ *     password word (KEYWORDS, any case, not preceded by a letter) before the run and a
+ *     mailbox context in the same text (an `@domain.tld`, a verifying command name from
+ *     mailbox-passwords.ts, or MAILBOX_WORDS). A run is then COLLECTED in two cases:
+ *     (A) GENERATED: one of its candidates has the generated shape (exactly
+ *     GENERATED_PASSWORD_LEN characters that look random, see below) and the run starts
+ *     fewer than REACH units after the nearest password word. The mailbox tool generates
+ *     every mailbox password itself at that length, so this is the shape of every value
+ *     it ever printed. A copy cut off at some length (a stored snippet) is a shorter run
+ *     that no context names, so for every value collected by (A) the fingerprint of
+ *     EVERY contiguous piece of it with at least PASSWORD_MIN_LEN characters (the reply
+ *     check's own floor) is collected too: its start, its end and every middle part.
+ *     Never a shorter piece: the fingerprint table stores plain SHA-256, the hash of a
+ *     short piece can be guessed by trying every value, and with the hashes of the next
+ *     longer pieces the whole value could then be rebuilt one character at a time; from
+ *     PASSWORD_MIN_LEN random characters upward no such first guess exists. The pieces
+ *     are listed once per distinct value after every store was read (`collectFromText`
+ *     hands the values out, `addPieceFingerprints` lists them), never per occurrence.
+ *     (A) hands a value out for its pieces only when the run's LAST candidate (the run
+ *     without any escape in front) is of the generated shape; a run collected because
+ *     an escape letter plus a shorter run makes the length is collected as before, with
+ *     no pieces, and a generated value written directly after a literal backslash gets
+ *     no pieces from that copy.
+ *     (B) LABELLED: the run does not have the generated shape, but it is written directly
+ *     after the nearest password word (between the word's end and the run's start as the
+ *     reply check sees it, an escape letter in front included, there are 1 to LABEL_GAP
+ *     characters, counted raw as stored, and none is a letter or a digit of any script;
+ *     a JSON escape letter b, f, n, r or t after a backslash, such as the `n` of an
+ *     encoded line break, counts as part of its escape, not as a letter) and the run's
+ *     LAST candidate, the value as plain text holds it, looks random, so a text is judged
+ *     the same plain or JSON-encoded. A value typed by a person or made by another generator after
+ *     `Contraseña:`, `"password": "…"` or `clave = …` is a mailbox password all the
+ *     same. No pieces are listed for (B): such a value may have been chosen by a person,
+ *     and hashes of its pieces would help guessing it.
+ *     LOOKS RANDOM, at any length L: a digit, a lowercase and an uppercase letter; or no
+ *     digit and at least L·DIGIT_FREE_MIN_PER_CASE/GENERATED_PASSWORD_LEN (2/7 of L)
+ *     lowercase AND as many uppercase letters. The mailbox tool draws each character from
+ *     letters and digits without forcing any class, so a real value may have no digit and
+ *     requiring one would miss it; its letters fall in both cases about half each, while
+ *     a name a person or a program writes (a word, a camelCase identifier, joined words)
+ *     has one case only or only a few capitals and is left alone, after `clave` ("key",
+ *     "code") too. A digit-free generated value with fewer of one case is the accepted
+ *     cost, about one in eighty of the already rare digit-free values.
+ *     Then the fingerprint of EVERY candidate of that run is collected: the value itself
+ *     and, after a backslash, the run with the escape letter or `\uXXXX` still in front,
+ *     or without its first character. Each one is the value with at most (part of) its
+ *     escape in front, or a part of the value; the true value is one of the candidates
+ *     (in (A) the one of the generated shape), so the fingerprint the reply check computes
+ *     for it is always among them, and the pieces only add to that set.
+ *     Known limits: a piece shorter than PASSWORD_MIN_LEN of a generated value is not
+ *     removed (the reply check does not see runs that short, and less than that of a
+ *     random value of the generated length is not a usable password); a value glued to
+ *     other letters or digits (for example right after a percent escape such as `%3D`,
+ *     whose two hex digits join the run) is a run of another length, so (A) does not
+ *     collect it; written directly after a label (`password%3D` + value) the glued run
+ *     is collected by (B) and replaced as one run, but its fingerprint covers only that
+ *     glued form, so a bare copy of the value elsewhere stays unless it is collected on
+ *     its own or its fingerprint is already in `mailbox_password_seen`; a labelled value
+ *     with one case only or few capitals is left by design; a password that is neither
+ *     generated nor written directly after a label is not covered; a value known only by
+ *     its fingerprint (rule 3 (b)) has no pieces, since they cannot be listed from a
+ *     hash; in the label gap an encoded line break or quote counts two characters and a
+ *     `\uXXXX` escape counts as letters and digits, so near the edge, or after an escaped
+ *     non-ASCII character, an encoded value is left (conservative). The accepted cost of
+ *     (B): after the word `clave` (also "key", "code") a mixed-case identifier WITH a
+ *     digit written directly after it in a mailbox text is taken as a password; the dry
+ *     run's safety net (rule 8) shows where such a value also stands in other columns
+ *     before a real run, and the dry run's counts show what would be replaced. A unit is one character, except
+ *     that a whole run and a whole placeholder count as one unit, and a password word
+ *     inside a placeholder is not a password word: a replacement never moves another run
+ *     into reach or next to a label, so a second run collects nothing new.
  *  2. Replacement: wherever a run has a collected candidate, in every store below and
  *     whatever the words around it, that candidate becomes PASSWORD_WITHHELD_PLACEHOLDER;
  *     the longest one in plain text (no character of the value is left), and in a text
@@ -55,7 +98,23 @@
  *     rows in ONE transaction (compare-and-set on every pruned column of the row),
  *     (f) rebuilds the full-text indexes (rule 13), (g) empties the write-ahead log
  *     (rule 14). `--apply` therefore refuses while the table does not exist (schema
- *     below v17).
+ *     below v17). Limit: the table belongs to the reply check, which keeps only its
+ *     newest SEEN_MAX_ROWS rows; once a write takes it above that, the service deletes
+ *     the OLDEST rows, so a full table would later drop fingerprints silently, full
+ *     values included, and the reply check would stop withholding them. Each generated
+ *     value adds about ninety (its pieces). This script may fill at most half of the
+ *     table (SCRIPT_MAX_SEEN_ROWS), so the other half stays free for the fingerprints
+ *     the service records afterwards and no write of the service pushes a row out soon
+ *     after a run: after (a) and (b), before anything is written (leftover temp files
+ *     included), an apply run REFUSES (`SEEN_TABLE_FULL`) when the rows already in the
+ *     table plus the new fingerprints (a known one collected again counts once) would
+ *     exceed SCRIPT_MAX_SEEN_ROWS; exactly that many runs, and a run with no new
+ *     fingerprint never refuses (it writes no row to the table and only removes copies of
+ *     values already known, as when finishing an interrupted apply). The dry run then
+ *     prints one line saying so. After this refusal: the stores hold more generated
+ *     values than half the table can take, and the way forward is a decision to raise
+ *     the reply check's row cap (a source change to SEEN_MAX_ROWS, deployed before the
+ *     run); never delete rows from the table by hand and never edit this script's limit.
  *  4. A `jarvis_files` row that changes gets `updated_at = now`. The hourly KB reindex
  *     (src/db/jarvis-reindex.ts `newerCopy`) refreshes a row from disk only when the disk
  *     copy is newer than `updated_at` AND differs: between (d) and (e) the disk copy is
@@ -71,8 +130,9 @@
  *     cannot be read (while collecting or rewriting) is a counted failure. Symlinked or
  *     hard-linked files with a hit are never written (the other name would keep the old
  *     text, or the write would leave the folder) and fail the run. Temp files left by an
- *     earlier run (they hold pruned text) are removed at the start of an apply run and
- *     counted; one that cannot be removed fails the run.
+ *     earlier run (they hold pruned text) are removed by an apply run once it passed its
+ *     refusals (rule 3), before the fingerprints are committed, and counted; one that
+ *     cannot be removed fails the run.
  *  8. Safety net (read-only, both modes, after the row pass in apply): every other
  *     column of every ordinary table is swept for a run whose fingerprint is being
  *     pruned. A hit there is never rewritten; it is reported by `table.column` as
@@ -162,11 +222,12 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import {
+  PASSWORD_MIN_LEN,
   PASSWORD_WITHHELD_PLACEHOLDER,
   candidateRuns,
   passwordFingerprint,
 } from "../src/lib/v8-4/password-gate.js";
-import { VERIFYING_COMMANDS } from "../src/lib/v8-4/mailbox-passwords.js";
+import { SEEN_MAX_ROWS, VERIFYING_COMMANDS } from "../src/lib/v8-4/mailbox-passwords.js";
 import { requireOperatorContext } from "../src/lib/operator-gate.js";
 import { isMainModule as isEntryModule } from "../src/lib/is-main-module.js";
 
@@ -179,24 +240,27 @@ export const MAILBOX_WORDS = ["buzón", "buzon", "mailbox", "correo"];
 /** A value starts fewer than REACH units after the end of a password word. */
 export const REACH = 80;
 /**
- * Rule 1: the only length a collected value has. The mailbox tool generates every
- * mailbox password itself, always as this many ASCII letters and digits, each drawn at
- * random with no class forced (its set-password takes no value): a collected value needs
- * a digit, a lowercase and an uppercase letter, or, with no digit, at least
- * DIGIT_FREE_MIN_PER_CASE letters of each case (a digit is not required, since requiring
- * one would miss a real value that happens to have none). A longer or shorter run after a
- * password word is usually something else (a file or document identifier, a link id, a
+ * Rule 1 (A): the length of a generated value. The mailbox tool generates every mailbox
+ * password itself, always as this many ASCII letters and digits, each drawn at random
+ * with no class forced (its set-password takes no value). A run of another length after
+ * a password word is usually something else (a file or document identifier, a link id, a
  * key of another system), and replacing it would damage text that holds no mailbox
- * password, so it is not collected. Known limit: a value glued to other letters or
- * digits (for example right after a percent escape such as `%3D`, whose two hex digits
- * join the run) is also a run of another length, so its context does not collect it;
- * such a copy is removed only when its fingerprint is already in the fingerprint table.
- * Values already in the fingerprint table are pruned whatever their length (rule 3 (b)).
+ * password, so it is collected only when it is written directly after a password label
+ * and looks random (rule 1 (B)). A shorter run that is a piece of a collected generated
+ * value (a copy cut off at some length) is removed by the piece fingerprints, down to
+ * PASSWORD_MIN_LEN characters. Known limit: a value glued to other letters or digits
+ * (for example right after a percent escape such as `%3D`, whose two hex digits join the
+ * run) is a run of another length, so (A) does not collect it; written directly after a
+ * label it is collected by (B) as the whole glued run, which covers only that same glued
+ * form, never a bare copy of the value elsewhere. Values already in the fingerprint table
+ * are pruned whatever their length (rule 3 (b)).
  */
 export const GENERATED_PASSWORD_LEN = 28;
 /**
  * Rule 1: a value of the generated length with no digit needs at least this many
- * lowercase AND at least this many uppercase letters. A generated value without a digit
+ * lowercase AND at least this many uppercase letters; at any other length L the same
+ * proportion applies (L·DIGIT_FREE_MIN_PER_CASE/GENERATED_PASSWORD_LEN, 2/7 of L), so the
+ * generated and the labelled rule cannot drift apart. A generated value without a digit
  * has its letters drawn at random from both cases, about half each, so fewer than this
  * of one case practically never happens; a name a person or a program writes (a camelCase
  * identifier, joined words) has only a few capitals and must not be withheld for good.
@@ -204,6 +268,22 @@ export const GENERATED_PASSWORD_LEN = 28;
  * rare digit-free values) is the accepted cost. With a digit the threshold does not apply.
  */
 export const DIGIT_FREE_MIN_PER_CASE = 8;
+/**
+ * Rule 1 (B): a run that is not of the generated shape is collected only when at most
+ * this many characters, none a letter or a digit, stand between the end of the nearest
+ * password word and the run (`Contraseña: **value**`, `"password": "value"`,
+ * `clave = value`). Characters as stored, not REACH units: a line break is allowed, and
+ * a JSON escape letter after a backslash belongs to its escape, but an encoded line
+ * break or quote counts two characters, so near the edge an encoded text is left where
+ * its plain form is collected (conservative, a known limit).
+ */
+export const LABEL_GAP = 12;
+/**
+ * Rule 3, limit: the most rows this script lets the fingerprint table hold, half of the
+ * reply check's SEEN_MAX_ROWS, so the other half stays free for what the service records
+ * afterwards and its oldest-first trim does not drop a fingerprint soon after a run.
+ */
+const SCRIPT_MAX_SEEN_ROWS = Math.floor(SEEN_MAX_ROWS / 2);
 /** How deep a JSON string holding JSON is checked to keep parsing (rule 2). */
 export const NEST_DEPTH = 8;
 /** `--scan-only` reads files up to this size; a larger one is counted `over_cap` and fails the run. */
@@ -396,12 +476,12 @@ function isDomain(token: string): boolean {
 }
 
 /**
- * Rule 1: a candidate has the shape the mailbox tool generates: the generated length,
- * and either a digit, a lowercase and an uppercase letter, or no digit and at least
- * DIGIT_FREE_MIN_PER_CASE letters of each case.
+ * Rule 1: a candidate looks random: a digit, a lowercase and an uppercase letter, or no
+ * digit and, of its length L, at least L·DIGIT_FREE_MIN_PER_CASE/GENERATED_PASSWORD_LEN
+ * (2/7 of L) letters of each case. At the generated length that is exactly
+ * DIGIT_FREE_MIN_PER_CASE of each case: one proportion for both rules.
  */
-function hasGeneratedShape(text: string, c: Span): boolean {
-  if (c.end - c.start !== GENERATED_PASSWORD_LEN) return false;
+function looksRandom(text: string, c: Span): boolean {
   let lower = 0;
   let upper = 0;
   let digit = 0;
@@ -412,14 +492,45 @@ function hasGeneratedShape(text: string, c: Span): boolean {
     else if (k >= 48 && k <= 57) digit++;
   }
   if (digit > 0) return lower > 0 && upper > 0;
-  return lower >= DIGIT_FREE_MIN_PER_CASE && upper >= DIGIT_FREE_MIN_PER_CASE;
+  const need = DIGIT_FREE_MIN_PER_CASE * (c.end - c.start);
+  return lower * GENERATED_PASSWORD_LEN >= need && upper * GENERATED_PASSWORD_LEN >= need;
+}
+
+/** Rule 1 (A): a candidate has the shape the mailbox tool generates: the generated length, and it looks random. */
+function hasGeneratedShape(text: string, c: Span): boolean {
+  return c.end - c.start === GENERATED_PASSWORD_LEN && looksRandom(text, c);
+}
+
+const LETTER_OR_DIGIT_RE = /[\p{L}\p{Nd}]/u;
+/** A JSON escape letter after a backslash (`\n`, `\t`, …): part of its escape, not a letter. */
+const ESCAPE_LETTER_RE = /\\[bfnrt]/g;
+
+/**
+ * Rule 1 (B): the run starts 1 to LABEL_GAP characters after the password word's end
+ * and none of them is a letter or a digit of any script. The gap ends where the run
+ * starts as the reply check sees it, an escape letter in front included (`\n` + value:
+ * the backslash is the gap's last character). Characters are counted raw, as stored, so
+ * an encoded line break or quote counts two. Only the JSON escape letters b, f, n, r
+ * and t after a backslash count as part of their escape; a `\uXXXX` escape in the gap
+ * (an escaped non-ASCII character) holds letters or digits and leaves the value. Both
+ * are conservative: a value is left, never one taken that plain text would not give.
+ * The gap is never 0: every password word ends with an ASCII letter, and a run never
+ * starts right after a letter or digit (it would have started earlier and contain the
+ * word), so such a run is not after the word at all.
+ */
+function isLabelled(text: string, wordEnd: number, runStart: number): boolean {
+  if (runStart - wordEnd > LABEL_GAP) return false;
+  return !LETTER_OR_DIGIT_RE.test(text.slice(wordEnd, runStart).replace(ESCAPE_LETTER_RE, "\\"));
 }
 
 /**
  * Adds to `into` the fingerprints rule 1 collects from one text; returns how many runs
- * the text gave (0 = no hit). Linear in the text length.
+ * the text gave (0 = no hit). Linear in the text length. Each value collected by its
+ * generated shape (rule 1 (A)) is also added to `values`, in memory only, so that
+ * `addPieceFingerprints` lists its pieces once per distinct value after every text was
+ * read; this function never lists pieces itself.
  */
-export function collectFromText(text: string, into: Set<string>): number {
+export function collectFromText(text: string, into: Set<string>, values?: Set<string>): number {
   // Cheap exits first: most stored texts have no candidate run.
   const groups = runGroups(text);
   if (groups.length === 0) return 0;
@@ -466,11 +577,35 @@ export function collectFromText(text: string, into: Set<string>): number {
     const e = ends[k]!;
     if (e > g.start) continue;
     if (unit[g.start]! - unit[e]! >= REACH) continue;
-    if (!g.candidates.some((c) => hasGeneratedShape(text, c))) continue;
+    // The run's last candidate is the run without any escape in front: the value as the
+    // plain text holds it. Pieces are listed from it only, and only when it is itself of
+    // the generated shape, so no string that is not a piece of a generated value is
+    // hashed; given up: a generated value written directly after a literal backslash
+    // (its first character then counts as an escape letter) gets no pieces from that copy.
+    const last = g.candidates[g.candidates.length - 1]!;
+    if (g.candidates.some((c) => hasGeneratedShape(text, c))) {
+      if (hasGeneratedShape(text, last)) values?.add(text.slice(last.start, last.end));
+    } else if (!isLabelled(text, e, g.start) || !looksRandom(text, last)) continue;
     for (const c of g.candidates) into.add(passwordFingerprint(text.slice(c.start, c.end)));
     given++;
   }
   return given;
+}
+
+/**
+ * Rule 1 (A), pieces: adds to `into` the fingerprint of every contiguous piece of each
+ * value with PASSWORD_MIN_LEN or more characters (the value itself included). Only for
+ * values of the generated shape (what `collectFromText` hands out): never a piece shorter
+ * than PASSWORD_MIN_LEN, whose hash could be guessed and would open the way to rebuilding
+ * the value from the hashes of the longer pieces, and never a piece of a labelled value
+ * (rule 1 (B)), which a person may have chosen.
+ */
+export function addPieceFingerprints(values: Iterable<string>, into: Set<string>): void {
+  for (const v of values) {
+    for (let len = PASSWORD_MIN_LEN; len <= v.length; len++) {
+      for (let i = 0; i + len <= v.length; i++) into.add(passwordFingerprint(v.slice(i, i + len)));
+    }
+  }
 }
 
 /** True when a run of the text has a candidate whose fingerprint is in the set. */
@@ -829,7 +964,7 @@ export interface StoreCount {
   changed: number;
   /** Rows / files that gave at least one value with context. */
   sources: number;
-  /** Distinct fingerprints collected (with context) from this store. */
+  /** Distinct fingerprints collected (with context) from this store; pieces (rule 1 (A)) count in the total only. */
   collected: number;
   note?: string;
 }
@@ -851,7 +986,7 @@ export interface PruneOptions {
 
 export interface PruneResult {
   ok: boolean;
-  /** Distinct runs' fingerprints collected from the stores in this run. */
+  /** Distinct fingerprints collected from the stores in this run: every candidate and every piece (rule 1). */
   distinct: number;
   /** Fingerprints already in the seen table before this run. */
   known: number;
@@ -1053,20 +1188,9 @@ export function runPrune(opts: PruneOptions): PruneResult {
     const kb = listKbFiles(opts.kbRoot);
     const ar = listArchives(opts.archiveDir);
 
-    // Leftover temp files hold pruned text from an interrupted run: removed (apply) or counted.
-    let tempsRemoved = 0;
-    let tempsFailed = 0;
-    for (const p of [...kb.temps.map((r) => join(opts.kbRoot, r)), ...ar.temps.map((n) => join(opts.archiveDir, n))]) {
-      if (!opts.apply) continue;
-      try {
-        rmSync(p);
-        tempsRemoved++;
-      } catch {
-        tempsFailed++;
-      }
-    }
-
     // (a) Collect from every store before anything changes; per store for the report.
+    // `values`: the generated values seen (memory only), for their pieces after the loop.
+    const values = new Set<string>();
     const sources = new Map<string, number>();
     const collectedBy = new Map<string, number>();
     let nonText = 0;
@@ -1078,7 +1202,7 @@ export function runPrune(opts: PruneOptions): PruneResult {
         for (const c of s.columns) {
           const v = row[c];
           const text = cellText(v);
-          if (text !== null) gave += collectFromText(text, mine);
+          if (text !== null) gave += collectFromText(text, mine, values);
           else if (v !== null && v !== undefined) nonText++;
         }
         if (gave > 0) n++;
@@ -1107,7 +1231,7 @@ export function runPrune(opts: PruneOptions): PruneResult {
         kbBad.add(rel);
         continue;
       }
-      if (collectFromText(text, kbMine) > 0) kbSources++;
+      if (collectFromText(text, kbMine, values) > 0) kbSources++;
     }
     const arBad = new Set<string>();
     const arRead = { failed: 0, notUtf8: 0 };
@@ -1128,10 +1252,12 @@ export function runPrune(opts: PruneOptions): PruneResult {
         continue;
       }
       let gave = 0;
-      for (const line of text.split("\n")) gave += collectFromText(line, arMine);
+      for (const line of text.split("\n")) gave += collectFromText(line, arMine, values);
       if (gave > 0) archiveSources++;
     }
     for (const f of [...kbMine, ...arMine]) fresh.add(f);
+    // Rule 1 (A): the pieces of every generated value, once per distinct value, before (c).
+    addPieceFingerprints(values, fresh);
     result.distinct = fresh.size;
 
     // (b) Every fingerprint already known is pruned too.
@@ -1144,6 +1270,23 @@ export function runPrune(opts: PruneOptions): PruneResult {
     result.known = known.size;
     const fps = new Set([...fresh, ...known]);
     const toAdd = [...fresh].filter((f) => !known.has(f));
+    // Rule 3, limit: the service deletes the oldest rows once the table is above its cap,
+    // so an apply that would take it there refuses before its first write.
+    // A run that adds nothing never refuses: it only removes copies of values already known.
+    if (opts.apply && toAdd.length > 0 && known.size + toAdd.length > SCRIPT_MAX_SEEN_ROWS) throw new Refusal("SEEN_TABLE_FULL");
+
+    // Leftover temp files hold pruned text from an interrupted run: removed (apply) or counted.
+    let tempsRemoved = 0;
+    let tempsFailed = 0;
+    for (const p of [...kb.temps.map((r) => join(opts.kbRoot, r)), ...ar.temps.map((n) => join(opts.archiveDir, n))]) {
+      if (!opts.apply) continue;
+      try {
+        rmSync(p);
+        tempsRemoved++;
+      } catch {
+        tempsFailed++;
+      }
+    }
 
     // (c) The collected set becomes durable before any rewrite.
     if (opts.apply && toAdd.length > 0) {
@@ -1452,6 +1595,12 @@ function report(
       ? `${TAG} fingerprints_known=${r.known} ${apply ? "fingerprints_added" : "fingerprints_to_add"}=${r.fingerprintsAdded}`
       : `${TAG} fingerprints: table ${SEEN_TABLE} is absent (schema below v17) — --apply refuses until it exists`,
   );
+  // Rule 3, limit: said before the operator stops the service for an apply that would refuse.
+  if (!apply && r.fingerprintsAdded > 0 && r.known + r.fingerprintsAdded > SCRIPT_MAX_SEEN_ROWS) {
+    log(
+      `${TAG} fingerprint_limit=${SCRIPT_MAX_SEEN_ROWS} (half of the table cap ${SEEN_MAX_ROWS}): known plus to_add is above it — --apply refuses (code=SEEN_TABLE_FULL) and writes nothing`,
+    );
+  }
   for (const [label, n] of r.derived) log(`${TAG} derived_blob=${label} pruned_rows_with_blob=${n} (left as they are)`);
   const uncovered = [...r.uncovered.values()].reduce((a, n) => a + n, 0);
   log(`${TAG} uncovered_hits=${uncovered}`);
