@@ -20,8 +20,11 @@
 #      untracked files, which a build would compile) and, apart, other dirty
 #      tracked files (informational; not build inputs),
 #      `systemctl is-active mission-control`, and which commit the live dist/
-#      was built from (scripts/deploy.sh does not record it: "unknown", plus
-#      dist/index.js build time vs the HEAD commit time).
+#      was built from and whether that build was dirty, as recorded in
+#      dist/build-info.json by the deploy's build-info step ("unknown" when the
+#      file is missing or has no readable commit/dirty field; a build made
+#      another way may leave none or a stale one), plus dist/index.js build
+#      time vs the HEAD commit time.
 #   B. Credential census (ruling 3d) — every user_facts row and every
 #      projects.credentials leaf (nested included) with the NEW code's verdict:
 #      HIDDEN (kept from the model, used by name; its SECRET_… reference name)
@@ -147,7 +150,18 @@ fi
 svc=$(systemctl is-active mission-control 2>/dev/null)
 echo "  systemctl is-active mission-control: ${svc:-unknown}"
 [[ "$svc" == "active" ]] || NOTES+=("mission-control is '${svc:-unknown}', not active")
-echo "  live dist/ built from: unknown (scripts/deploy.sh does not record the built commit)"
+build_info="$MC_DIR/dist/build-info.json"
+if [[ ! -e "$build_info" ]]; then
+  echo "  live dist/ built from: unknown (no dist/build-info.json; the deploy writes it after each build)"
+else
+  bi_commit=$(sed -n 's/^ *"commit": "\([0-9a-f]\{40\}\)",\{0,1\}$/\1/p' "$build_info" 2>/dev/null | tail -1)
+  bi_dirty=$(sed -n 's/^ *"dirty": \(true\|false\),\{0,1\}$/\1/p' "$build_info" 2>/dev/null | tail -1)
+  if [[ -n "$bi_commit" && -n "$bi_dirty" ]]; then
+    echo "  live dist/ built from: ${bi_commit:0:12} (dist/build-info.json; dirty: $bi_dirty)"
+  else
+    echo "  live dist/ built from: unknown (dist/build-info.json has no readable commit/dirty field)"
+  fi
+fi
 if [[ -f "$MC_DIR/dist/index.js" ]]; then
   dist_t=$(stat -c %Y "$MC_DIR/dist/index.js")
   head_t=$(git -C "$MC_DIR" log -1 --format=%ct HEAD 2>/dev/null || echo 0)

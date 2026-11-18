@@ -2,7 +2,9 @@
  * Eval runner — executes test cases against a sandbox config.
  *
  * Supports four evaluation modes:
- * - tool_selection: calls inferWithTools to see which tools the LLM chooses (costs API tokens)
+ * - tool_selection: asks the LLM which tools it would choose (costs API
+ *   tokens). By default through infer(), not inferWithTools: tools are
+ *   offered, never executed. evalToolSelection decides which cases get a call.
  * - scope_accuracy: runs pure scopeToolsForMessage function (free, deterministic)
  * - classification: runs pure classify function (free, deterministic)
  * - scope_prompt (queue 3j): each scope_accuracy case replayed through the LLM

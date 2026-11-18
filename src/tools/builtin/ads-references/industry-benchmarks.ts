@@ -57,8 +57,8 @@ export interface Benchmark {
 
 /**
  * Not exhaustive — covers the most commonly-asked combos. Gaps
- * (e.g. Apple Search Ads for legal) are normal; the tool returns "no
- * benchmark available" rather than fabricating.
+ * (e.g. Apple Search Ads for legal) are normal: lookupBenchmark returns
+ * null and the ads audit adds no benchmark note, rather than fabricating one.
  */
 export const BENCHMARKS: Benchmark[] = [
   // Ecommerce / retail
