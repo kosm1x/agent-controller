@@ -205,6 +205,8 @@ Not worth doing: migrating the ~900 console calls; a logging framework; Result t
 
 ### Batch 5 — Tests (ruling 7)
 
+**Status 2026-11-18 19:20 UTC — the test setup reports both guards in one check, so a finding is never blamed on the next test or lost, and the connection guard no longer treats decorated addresses as local, `e6330f06` (queue 4fz). The small follow-ups of 4fe are closed.**
+
 **Status 2026-11-18 18:45 UTC — the last test that reached the network in the commit check is offline: the speech tests stub every child process fail-closed, `43c39e9d` (queue 4fy); writing them found and fixed a not-a-number duration.**
 
 **Status 2026-11-14 12:03 UTC — tests can no longer connect to another machine, COMMITTED `0372b969` (suite 680 files, 17,819 tests): the setup refuses the attempt and fails the test (4fe (1)(2)); the spend-window reads and one warning log line are pinned without the wall clock (4ez (2)(3), 4ep test part). Work on this batch is PAUSED at the operator's request. Left in this batch: the three shell tool assertions (4fa (1)), the comment sweep (4fc (4)), the sweep leftovers (4fd (3), 4fe (4)(7) and the two small follow-ups noted there), the fixture names (4ey (3)), the host commit check install (4db, operator).**
@@ -333,6 +335,8 @@ Facts only (counts, no prune list): 30-day trace 96 of 196 built-in tools called
 18 tool handlers that return a plain failure string instead of the `{error}` shape; a planner prompt that lists a check binary the shell gate refuses; a shell tool description that recommends a command the gate refuses; 27 schema properties without a description; a false doc comment on the two history flatteners (leave the flatteners themselves).
 
 ### Batch 11 — Comments (ruling 12)
+
+**Status 2026-11-18 19:20 UTC — four leftover file-and-line pointers outside TypeScript comments (two SQL scripts, one note string) name the code, and one more false doc line is corrected, `92dfe270` (queue 4fz). Still open in this batch, all in files the removal scripts load: seven C1 findings, the nine C2 rows on the lock test's list, and a few bare line pointers.**
 
 **Status 2026-11-18 17:47 UTC — C3 COMMITTED `3c09b09e` as a lock test over the comments of every production TypeScript file (shrink-only list of nine leftovers; queue 4fx); bare line-number pointers by name and four more false statements COMMITTED `61604fa3`. Still open in this batch, all in files the removal scripts load: seven C1 findings, the nine C2 rows on the lock test's list, and a few bare line pointers.**
 
