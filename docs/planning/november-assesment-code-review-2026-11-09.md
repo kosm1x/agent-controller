@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-19 06:04 UTC — the cache marker and the poisoned-exchange check are leaf modules, COMMITTED `021068b5` (queue 4gj): with the third edge cut on 2026-11-18 this removes the router's runtime cycle altogether (3 runtime cycles → 2; with dynamic imports 27 / 5 / 3 files); both new files joined the protected list in the same commit. G2 and G4 are done, G1 in its minimal form. Next: the pure moves that touch neither the runners nor the tuning schema (D2, A3, A1, C2); B1, B2 and G3 wait for another session's branch.**
+
 **Status 2026-11-18 14:28 UTC — the entry point constructs the router and hands it in, COMMITTED `6e3f8d1e` (queue 4fs): the runtime cycle around the router is 7 modules (was 8), 11 with dynamic imports (was 18). The two leaf modules out of the router are BUILT and set aside (queue 4fr): every move of code out of a protected file waits until the protected list can take the new file in the same commit.**
 
 **Status 2026-11-18 07:40 UTC — the eight remaining dynamic imports of already-loaded modules are static, COMMITTED `dbc663a2` (queue 4fq); baseline unchanged; three calls gained their first test. Next in batch 7: the messaging trio (two leaf modules out of the router, then how the router is constructed).**
