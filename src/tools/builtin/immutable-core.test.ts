@@ -38,6 +38,8 @@ describe("isImmutableCorePath", () => {
       "src/messaging/router.ts",
       "src/messaging/cache-marker.ts",
       "src/messaging/poisoned-exchange.ts",
+      "src/messaging/confirmation-format.ts",
+      "src/messaging/day-log.ts",
       "src/db/index.ts",
       "src/db/jarvis-fs.ts",
       "src/rituals/scheduler.ts",

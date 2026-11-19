@@ -553,6 +553,23 @@ describe("MessageRouter", () => {
       expect(retained).toEqual([`User: Buenos días\nJarvis: ${clean}`]);
     });
 
+    // Readers of the day log depend on its format: a new day's file opens
+    // with the `# Day Log:` header, and every entry is one line.
+    it("a new day's log opens with the `# Day Log:` header and a multi-line reply is written as one entry line", async () => {
+      fastPathStub.reply = "Primera línea\nsegunda línea\ntercera línea";
+      await greet();
+
+      const contents = dbRun.mock.calls
+        .filter((c) => typeof c[1] === "string" && c[1].startsWith("logs/day-logs/"))
+        .map((c) => c[4] as string);
+      const jarvis = contents.filter((c) => c.includes("**JARVIS**"));
+      expect(jarvis).toHaveLength(1);
+      expect(jarvis[0]).toMatch(/^# Day Log: \d{4}-\d{2}-\d{2}\n\n- \[[^\]\n]+\] \*\*JARVIS\*\*: /);
+      expect(jarvis[0].split("\n\n")[1]).toMatch(
+        /^- \[[^\]\n]+\] \*\*JARVIS\*\*: Primera línea segunda línea tercera línea\n$/,
+      );
+    });
+
     /** The fast path declined: the normal path took the message, and no
      *  fast-path reply was sent, logged, buffered or retained. */
     async function expectFallThrough(): Promise<void> {
@@ -9105,6 +9122,7 @@ describe("renderConfirmationCard (queue 4l)", () => {
     const card = renderConfirmationCard(Array.from({ length: 8 }, (_, i) => `${i}`.repeat(900)));
     expect(card.length).toBeLessThanOrEqual(CONFIRM_CARD_MAX);
     expect(CONFIRM_CARD_MAX).toBeLessThan(4096);
+    expect(CONFIRM_CARD_MAX).toBe(3500);
     expect(card.split("\n")).toHaveLength(10);
     expect(card.split("\n").at(-1)).toBe(partialReplyRefusal(8));
   });

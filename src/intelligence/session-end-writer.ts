@@ -106,7 +106,7 @@ async function checkAndWriteSessionEnd(): Promise<void> {
   const entry = `- [${time}] **JARVIS**: ${summary}\n`;
   const newContent = row.content + entry;
 
-  // Write via direct DB (same pattern as appendDayLog in router.ts)
+  // Write via direct DB (same pattern as appendDayLog in day-log.ts)
   db.prepare(
     `UPDATE jarvis_files SET content = ?, updated_at = datetime('now') WHERE path = ?`,
   ).run(newContent, path);

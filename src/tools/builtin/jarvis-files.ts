@@ -400,7 +400,7 @@ AFTER WRITING: Report what you did — path, title, qualifier. If updating an ex
     }
 
     // Mechanically managed paths — LLM cannot overwrite. `appendDayLog()`
-    // in router.ts is the sole writer for `logs/day-logs/`. Curated
+    // in day-log.ts is the sole writer for `logs/day-logs/`. Curated
     // narratives belong under `logs/day-narratives/`.
     if (path.startsWith("logs/day-logs/")) {
       return JSON.stringify({ error: DAY_LOG_MANAGED });
