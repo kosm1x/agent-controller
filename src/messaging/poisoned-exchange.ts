@@ -83,7 +83,7 @@ const POISONED_RESPONSE_PATTERNS = [
   /timeout.*inference/i,
   // Narrated update claim — LLM claims to have updated NorthStar without tools.
   // NOTE: "Acciones Ejecutadas" removed from here — it's a legitimate header
-  // when tools actually ran. The hallucination guard (fast-runner Layer 2)
+  // when tools actually ran. The hallucination guard (hallucination-guard Layer 2)
   // handles it with tool-call context; the poison filter cannot distinguish.
   /acabo de actualizar\s+NorthStar/i,
   // Confabulated permission-block refusals (2026-06-16). gmail_send and MCP

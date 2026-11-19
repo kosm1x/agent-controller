@@ -13,6 +13,7 @@ import {
   GENERIC_SYSTEM_PROMPT,
   STATUS_SUFFIX,
 } from "./fast-runner.js";
+import * as guard from "./hallucination-guard.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 import { cpuMsPerCall } from "../test-utils/cpu-time.js";
@@ -43,6 +44,15 @@ describe("detectsHallucinatedExecution", () => {
         "✅ Sheet Actualizada - Filas 10-12 Escritas\n\nAcción realizada: Escribí directamente en la Google Sheet.",
         [],
       ),
+    ).toBe(true);
+  });
+
+  it("detects full hallucination: English first-person 'I sent' claim with zero tools", () => {
+    // Only the English first-person write-claim pattern matches this text;
+    // the partial-hallucination layer that also knows "I sent" needs at
+    // least one tool call.
+    expect(
+      detectsHallucinatedExecution("✅ I sent the report to the team.", []),
     ).toBe(true);
   });
 
@@ -356,6 +366,19 @@ describe("detectsHallucinatedExecution", () => {
     ).toBe(false);
   });
 
+  it("detects failed-write hallucination: a lowercase success word is a success marker", () => {
+    // The failed write tool was called, so only the failed-write layer can
+    // decide; its marker matches regardless of case.
+    expect(
+      detectsHallucinatedExecution(
+        "La hoja quedó actualizada exitosamente.",
+        ["gsheets_write"],
+        undefined,
+        ["gsheets_write"],
+      ),
+    ).toBe(true);
+  });
+
   it("allows success when write tool failed first but succeeded on retry within same execution", () => {
     // file_delete: first call → CONFIRMATION_REQUIRED (error),
     // second call after unlock → success. Tool appears in BOTH
@@ -559,7 +582,7 @@ describe("detectsHallucinatedExecution", () => {
 
   // Round-2 audit W2 — parameterize over the FULL 22-verb-stem list so the
   // syntactic guard rejects any future diff that drops a stem. Source of
-  // truth: the FIRST_PERSON_WRITE_RE alternation in fast-runner.ts. If
+  // truth: the FIRST_PERSON_WRITE_RE alternation in hallucination-guard.ts. If
   // someone deletes a stem from the regex, the corresponding test row trips.
   it("regex-source guard: every operator-typed verb stem still flags first-person", () => {
     const ALL_VERB_STEMS = [
@@ -943,11 +966,72 @@ describe("Layer 4b: directive cooldown claim mismatch (SG4)", () => {
       ),
     ).toBe(false);
   });
+
+  it("numeric time and proposal keyword: 120 characters apart flags, 121 does not", () => {
+    // Keyword at index 0, the time claim after a run of spaces, so the
+    // proximity fallback is the only rule that can decide.
+    const at = (distance: number): string =>
+      "propuesta" + " ".repeat(distance - "propuesta".length) + "5 horas";
+    const gap = (text: string): number =>
+      text.indexOf("5 horas") - text.indexOf("propuesta");
+    expect(gap(at(120))).toBe(120);
+    expect(gap(at(121))).toBe(121);
+    expect(detectsHallucinatedExecution(at(120), ["jarvis_file_read"])).toBe(
+      true,
+    );
+    expect(detectsHallucinatedExecution(at(121), ["jarvis_file_read"])).toBe(
+      false,
+    );
+  });
 });
 
 describe("jarvis_propose_directive is in WRITE_TOOLS (Layer 4b retry swap)", () => {
   it("is a member of WRITE_TOOLS so retryCalledWrite gate accepts it", () => {
     expect(WRITE_TOOLS.has("jarvis_propose_directive")).toBe(true);
+  });
+});
+
+describe("WRITE_TOOLS names outside the scope sync", () => {
+  it("holds every write tool that no scope tool list pins", () => {
+    // The sync test derives its expectations from the scope tool lists;
+    // these entries belong to no list it reads, so they are named here.
+    const unpinned = [
+      // Jarvis knowledge base
+      "jarvis_file_write",
+      "jarvis_file_update",
+      "jarvis_file_delete",
+      // Other
+      "schedule_task",
+      "run_schedule",
+      "delete_schedule",
+      "user_fact_set",
+      "user_fact_delete",
+      "skill_save",
+      "memory_store",
+      "memory_forget",
+      "shell_exec",
+      // Teaching
+      "learning_plan_create",
+      "learning_plan_advance",
+      "learning_plan_quiz",
+      "learning_plan_explain_back",
+      "learning_plan_summarize",
+    ];
+    for (const tool of unpinned) {
+      expect(WRITE_TOOLS.has(tool), `Missing from WRITE_TOOLS: ${tool}`).toBe(
+        true,
+      );
+    }
+  });
+});
+
+describe("the claimed-action guard is one copy", () => {
+  it("the fast runner's names are the guard module's own bindings", () => {
+    expect(WRITE_TOOLS).toBe(guard.WRITE_TOOLS);
+    expect(classifyToolError).toBe(guard.classifyToolError);
+    expect(detectsHallucinatedExecution).toBe(
+      guard.detectsHallucinatedExecution,
+    );
   });
 });
 
@@ -1203,6 +1287,12 @@ describe("classifyToolError", () => {
     expect(
       classifyToolError('{"error":"Google API 403: permission denied"}'),
     ).toBe("permanent");
+  });
+
+  it("classifies a bare 403 status as permanent", () => {
+    expect(classifyToolError('{"error":"HTTP 403 Forbidden"}')).toBe(
+      "permanent",
+    );
   });
 
   it("classifies 404 not found as permanent", () => {

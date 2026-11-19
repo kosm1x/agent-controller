@@ -1,5 +1,5 @@
 /**
- * Compile-time sync test — ensures WRITE_TOOLS in fast-runner.ts stays
+ * Compile-time sync test — ensures WRITE_TOOLS in hallucination-guard.ts stays
  * in sync with the write-capable tools defined in scope.ts.
  *
  * From v4.0.18 QA audit: 11 phantom Google tool names went undetected
