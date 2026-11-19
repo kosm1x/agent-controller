@@ -39,6 +39,7 @@ export const MC_CHECKOUT_ROOTS: readonly string[] = [MC_PRIMARY_ROOT, MC_WORKTRE
 /** Exact file paths (relative to each checkout root in MC_CHECKOUT_ROOTS). */
 const IMMUTABLE_FILES: string[] = [
   "src/index.ts",
+  "src/optional-crons.ts", // optional scheduled jobs the entry point registers at boot
   "src/config.ts",
   "src/inference/adapter.ts",
   "src/dispatch/dispatcher.ts",

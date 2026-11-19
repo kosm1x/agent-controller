@@ -30,6 +30,7 @@ describe("isImmutableCorePath", () => {
   describe("immutable files", () => {
     const immutableFiles = [
       "src/index.ts",
+      "src/optional-crons.ts",
       "src/config.ts",
       "src/inference/adapter.ts",
       "src/dispatch/dispatcher.ts",
