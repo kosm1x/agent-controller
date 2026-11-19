@@ -57,6 +57,18 @@ Five decisions. Everything else in "Work ahead" needs no ruling (measurement, or
 
 Considered and **not** recommended: streaming partial answer text (collides with the delivery checks: the final answer is the result text, scope questions are never delivered, every send is sanitised); moving the grader, the gates or the citation check off the wait (rulings); a cheaper model for the heavy tier (ruling); replacing the full test run in the commit check with related tests only (the full run is the one sanctioned gate before a direct push; CI median is 132 s and is not the bottleneck); a worker thread or a second database connection (ruled out in queue 4br); widening the greeting fast path (0 uses in 30 days and it would be a full model call anyway); an index for the skills test sweep (milliseconds).
 
+## Rulings
+
+Given by the operator on 2026-11-19 (UTC), one at a time (queue 4gg).
+
+| # | Ruling | Reason or note |
+| --- | --- | --- |
+| 1 | NO | The typing sign is used for agents with several users, not for a personal one-on-one agent. Not to be proposed again for this agent. |
+| 2 | NO — one hour stays | The operator sometimes returns to a thread after more than 20 minutes. Batch P5 is dropped; not to be proposed again. |
+| 3 | YES | Two failed checks before a restart; operator-installed. |
+| 4 | YES | Follow the design: the effort rating reaches the main model path. Batch 10; ships only on a passing eval-gate run. |
+| 5 | YES — study and propose | Design and numbers only; a build comes back as its own ruling. |
+
 ## Work ahead
 
 Order: the Code build queue finishes first (operator ruling 2026-11-18); Performance builds follow, each piece builder → separate auditor → commit → deploy → proof. Batches P1 and P2 change nothing the model sees.
@@ -81,9 +93,9 @@ Order: the Code build queue finishes first (operator ruling 2026-11-18); Perform
 5. A size check before `file_read` reads and scrubs a whole file on the main thread (protected file; error text for oversize files is model-visible → batch P4 if the text changes).
 6. Root cause, noted and not proposed now: chat tasks store the whole assembled prompt in a column that sits ahead of status and timestamps (average 38,573 characters × 3,645 chat rows ≈ 141 MB of the 178 MB table), so any query that reads those columns without a covering index reads the wide rows. Each fix so far covered one query (queue 4am, 4aq, 4bf, 4br). Moving the prompt to a side table closes the class; it is a large change touching protected files and waits for a ruling of its own.
 
-### Batch P3 — The wait as the operator feels it (rulings 1, 3)
+### Batch P3 — The wait as the operator feels it (ruling 3)
 
-1. Typing sign (ruling 1), and the placeholder sent alongside the pre-task stage instead of before it (0.1–0.4 s).
+1. The placeholder sent alongside the pre-task stage instead of before it (0.1–0.4 s). The typing sign is not built (ruling 1: no).
 2. Second health probe (ruling 3) — operator-installed, like the watchdog change.
 3. Voice messages: the handler waits for download and transcription while Telegram intake handles one update at a time (worst case about 90 s of blocked intake). Count voice messages first (P1.3), then decide.
 
@@ -93,9 +105,9 @@ Order: the Code build queue finishes first (operator ruling 2026-11-18); Perform
 2. Stable tool list: design and numbers only (ruling 5). Inputs already measured: 278 tool-search calls in 30 days, most often followed by the same handful of tools.
 3. Candidates that wait for P1 numbers before they are proposed: what planning and reflecting receive (the full chat prompt today); the second classifier call for 1 in 3 messages; a result-size limit for the largest tool outputs; the `task_history` search (scans every run's output per search word; 55 calls in 30 days).
 
-### Batch P5 — Store lifetime (ruling 2)
+### Batch P5 — Store lifetime (ruling 2: no, dropped)
 
-One setting on the SDK call path, pinned by a test; proof = the write split recorded by P1.5 before and after.
+Not built; one hour stays. The write split of P1.5 is still recorded, as a measurement only.
 
 ## What this review did not answer
 
@@ -109,4 +121,4 @@ One setting on the SDK call path, pinned by a test; proof = the write split reco
 
 ## Next
 
-Rulings 1–5, one at a time. Then, after the Code queue: P1 → P2 → P3 → P5, and P4 with batch 10's eval-gate run. Re-score Performance after the proofs.
+The rulings are in (above). The tool-list study (ruling 5) starts now, read-only. After the Code queue: P1 → P2 → P3, and P4 with batch 10's eval-gate run. Re-score Performance after the proofs.
