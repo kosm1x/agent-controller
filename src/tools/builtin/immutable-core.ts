@@ -46,6 +46,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/dispatch/classifier.ts",
   "src/runners/fast-runner.ts",
   "src/runners/hallucination-guard.ts", // claimed-action guard: write-tool names and the detector
+  "src/runners/denue-guard.ts", // when the DENUE guard fires and which variant it gets
   "src/messaging/router.ts",
   "src/messaging/cache-marker.ts", // system-prompt cache-break marker
   "src/messaging/poisoned-exchange.ts", // patterns that keep a reply out of the thread context

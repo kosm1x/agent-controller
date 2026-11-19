@@ -14,6 +14,7 @@ import {
   STATUS_SUFFIX,
 } from "./fast-runner.js";
 import * as guard from "./hallucination-guard.js";
+import * as denueGuard from "./denue-guard.js";
 import type { ChatMessage } from "../inference/adapter.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 import { cpuMsPerCall } from "../test-utils/cpu-time.js";
@@ -1441,10 +1442,41 @@ describe("denueGuardText + mentionsDenue (2026-09-29 — guard only on a DENUE m
     expect(text).toBe("gracias");
   });
 
+  it("an empty detectionText still wins over the last user turn", () => {
+    const text = denueGuardText({
+      title: "Chat: x",
+      description: persona,
+      detectionText: "",
+      conversationHistory: [{ role: "user", content: "dame el DENUE de Puebla" }],
+    });
+    expect(text).toBe("");
+    expect(mentionsDenue(text)).toBe(false);
+  });
+
+  it("a later non-user turn is skipped: the last USER turn is the text", () => {
+    const text = denueGuardText({
+      title: "Chat: x",
+      description: persona,
+      conversationHistory: [
+        { role: "user", content: "gracias" },
+        { role: "system", content: "consulta el DENUE de Puebla" },
+      ],
+    });
+    expect(text).toBe("gracias");
+  });
+
   it("with neither falls back to title + description (rituals)", () => {
     expect(
       denueGuardText({ title: "Ritual", description: "Consulta el DENUE" }),
     ).toBe("Ritual\nConsulta el DENUE");
+  });
+});
+
+describe("the DENUE guard helpers are one copy", () => {
+  it("the fast runner's names are the denue-guard module's own bindings", () => {
+    expect(denueGuardText).toBe(denueGuard.denueGuardText);
+    expect(mentionsDenue).toBe(denueGuard.mentionsDenue);
+    expect(highStakesGuardVariant).toBe(denueGuard.highStakesGuardVariant);
   });
 });
 
