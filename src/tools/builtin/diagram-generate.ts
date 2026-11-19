@@ -23,10 +23,10 @@ import {
   renameSync,
   unlinkSync,
 } from "node:fs";
-import { resolve, basename } from "node:path";
+import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
-import { realResolve } from "./write-guard.js";
+import { checkOutputPath } from "./output-path.js";
 import { infer } from "../../inference/adapter.js";
 import { svgHtmlSystemPrompt } from "./diagram-svg-prompt.js";
 
@@ -34,8 +34,6 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_DESCRIPTION_CHARS = 8000;
-
-const OUTPUT_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
 
 const FORMATS = ["graphviz", "svg_html"] as const;
 type DiagramFormat = (typeof FORMATS)[number];
@@ -71,41 +69,13 @@ function looksLikeHtml(text: string): boolean {
   return head.startsWith("<!doctype html") || head.startsWith("<html");
 }
 
-function isUnderPrefix(abs: string, prefixes: readonly string[]): boolean {
-  // Audit W4: previously allowed `abs === "/tmp"` via exact match. Accepting
-  // a bare directory path is user-error-prone (writeFileSync EISDIR) and
-  // the validator should reflect actual intent: must be UNDER the prefix.
-  return prefixes.some((p) => abs.startsWith(p));
-}
-
 /** Exported for unit tests. */
 export function resolveOutputPath(
   outputRaw: string | undefined,
   format: DiagramFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
   const ext = format === "svg_html" ? "html" : "svg";
-  if (!outputRaw) {
-    return { ok: true, abs: `/tmp/diagram-${randomUUID()}.${ext}` };
-  }
-  if (!outputRaw.startsWith("/")) {
-    return { ok: false, error: "output_path must be absolute" };
-  }
-  const abs = resolve(outputRaw);
-  if (abs !== outputRaw) {
-    return { ok: false, error: "output_path must be canonical" };
-  }
-  if (!isUnderPrefix(abs, OUTPUT_ALLOW_PREFIXES)) {
-    return {
-      ok: false,
-      error: `output_path must be under one of: ${OUTPUT_ALLOW_PREFIXES.join(", ")}`,
-    };
-  }
-  // The spelling can pass while a symlink under an allowed prefix sends the
-  // write elsewhere (audit 2026-09-22 R2 sweep).
-  if (!isUnderPrefix(realResolve(abs), OUTPUT_ALLOW_PREFIXES)) {
-    return { ok: false, error: "output_path resolves outside the allow-list" };
-  }
-  return { ok: true, abs };
+  return checkOutputPath(outputRaw, `/tmp/diagram-${randomUUID()}.${ext}`);
 }
 
 /** NL description → graphviz DOT source via LLM. Short, opinionated prompt

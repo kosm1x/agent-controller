@@ -23,7 +23,7 @@ import {
 import { resolve, extname, basename, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
-import { realResolve } from "./write-guard.js";
+import { checkOutputPath } from "./output-path.js";
 import { getJarvisKbRoot } from "../../db/jarvis-fs.js";
 
 const execFileAsync = promisify(execFile);
@@ -47,8 +47,6 @@ function getSourceAllowPrefixes(): string[] {
     "/root/claude/mission-control/public/docs/",
   ];
 }
-
-const OUTPUT_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
 
 const TARGET_FORMATS = [
   "txt",
@@ -263,28 +261,7 @@ export function validateOutputPath(
   output: string | undefined,
   target: TargetFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
-  if (!output) {
-    return { ok: true, abs: `/tmp/file-convert-${randomUUID()}.${target}` };
-  }
-  if (!output.startsWith("/")) {
-    return { ok: false, error: "output_path must be absolute" };
-  }
-  const abs = resolve(output);
-  if (abs !== output) {
-    return { ok: false, error: "output_path must be canonical" };
-  }
-  if (!isUnderPrefix(abs, OUTPUT_ALLOW_PREFIXES)) {
-    return {
-      ok: false,
-      error: `output_path must be under one of: ${OUTPUT_ALLOW_PREFIXES.join(", ")}`,
-    };
-  }
-  // The spelling can pass while a symlink under an allowed prefix sends the
-  // write elsewhere (audit 2026-09-22 R2 sweep).
-  if (!isUnderPrefix(realResolve(abs), OUTPUT_ALLOW_PREFIXES)) {
-    return { ok: false, error: "output_path resolves outside the allow-list" };
-  }
-  return { ok: true, abs };
+  return checkOutputPath(output, `/tmp/file-convert-${randomUUID()}.${target}`);
 }
 
 export const fileConvertTool: Tool = {

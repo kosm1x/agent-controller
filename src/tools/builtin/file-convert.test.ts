@@ -322,6 +322,36 @@ describe("file_convert path validation", () => {
     expect(JSON.parse(out).error).toMatch(/canonical/);
     expect(mocks.execFile).not.toHaveBeenCalled();
   });
+
+  it("rejects a bare allowed folder as output_path (a folder is not a file to write)", async () => {
+    for (const bare of ["/tmp", "/workspace"]) {
+      const out = await fileConvertTool.execute({
+        input_path: "/tmp/x.md",
+        target_format: "html",
+        output_path: bare,
+      });
+      expect(JSON.parse(out).error).toBe(
+        "output_path must be under one of: /tmp/, /workspace/",
+      );
+    }
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps a file directly under /tmp/ as output_path", async () => {
+    let seen: { argv: string[] } | null = null;
+    execFileOnce({
+      captureArgv: (_bin, argv) => {
+        seen = { argv };
+      },
+    });
+    const out = await fileConvertTool.execute({
+      input_path: "/tmp/x.md",
+      target_format: "html",
+      output_path: "/tmp/x.html",
+    });
+    expect(seen!.argv).toEqual(["/tmp/x.md", "-o", "/tmp/x.html"]);
+    expect(out).toContain("output: /tmp/x.html");
+  });
 });
 
 describe("file_convert target enum", () => {

@@ -27,10 +27,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFileSync, statSync, renameSync, unlinkSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "../types.js";
-import { realResolve } from "./write-guard.js";
+import { checkOutputPath } from "./output-path.js";
 import { infer } from "../../inference/adapter.js";
 
 const execFileAsync = promisify(execFile);
@@ -38,8 +38,6 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const PNG_CONVERT_TIMEOUT_MS = 20_000;
 const MAX_DESCRIPTION_CHARS = 8000;
-
-const OUTPUT_ALLOW_PREFIXES = ["/tmp/", "/workspace/"];
 
 const THEMES = ["light", "dark", "hand-drawn"] as const;
 type Theme = (typeof THEMES)[number];
@@ -85,37 +83,15 @@ const CURATED_TEMPLATES: Array<{ name: string; useCase: string }> = [
   { name: "chart-column-simple", useCase: "column / bar chart" },
 ];
 
-function isUnderPrefix(abs: string, prefixes: readonly string[]): boolean {
-  return prefixes.some((p) => abs.startsWith(p));
-}
-
 /** Exported for unit tests. */
 export function resolveOutputPath(
   outputRaw: string | undefined,
   format: OutputFormat,
 ): { ok: true; abs: string } | { ok: false; error: string } {
-  if (!outputRaw) {
-    return { ok: true, abs: `/tmp/infographic-${randomUUID()}.${format}` };
-  }
-  if (!outputRaw.startsWith("/")) {
-    return { ok: false, error: "output_path must be absolute" };
-  }
-  const abs = resolve(outputRaw);
-  if (abs !== outputRaw) {
-    return { ok: false, error: "output_path must be canonical" };
-  }
-  if (!isUnderPrefix(abs, OUTPUT_ALLOW_PREFIXES)) {
-    return {
-      ok: false,
-      error: `output_path must be under one of: ${OUTPUT_ALLOW_PREFIXES.join(", ")}`,
-    };
-  }
-  // The spelling can pass while a symlink under an allowed prefix sends the
-  // write elsewhere (audit 2026-09-22 R2 sweep).
-  if (!isUnderPrefix(realResolve(abs), OUTPUT_ALLOW_PREFIXES)) {
-    return { ok: false, error: "output_path resolves outside the allow-list" };
-  }
-  return { ok: true, abs };
+  return checkOutputPath(
+    outputRaw,
+    `/tmp/infographic-${randomUUID()}.${format}`,
+  );
 }
 
 function looksLikeAntvDsl(text: string): boolean {
