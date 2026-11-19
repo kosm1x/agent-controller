@@ -54,7 +54,7 @@ export const nanoclawRunner: Runner = {
       // exit-125 propagates and the circuit-breaker in
       // autonomous-improvement.ts catches the pattern on the next run.
       // Recurrence cause + fix: feedback_nanoclaw_image_recurrence_2026_05_23.md.
-      if (!imageExistsLocally(config.heavyRunnerImage)) {
+      if (!(await imageExistsLocally(config.heavyRunnerImage))) {
         recordNanoclawImageMissing();
         const errMsg =
           `Docker image '${config.heavyRunnerImage}' not found locally. ` +
@@ -72,7 +72,7 @@ export const nanoclawRunner: Runner = {
       // IMAGE's node_modules (RUNTIME_CODE_MOUNTS) — refuse when the image was
       // built from a different package-lock.json. deploy.sh rebuilds on drift,
       // so this fires only when a deploy bypassed it.
-      const drift = imageLockDrift(config.heavyRunnerImage);
+      const drift = await imageLockDrift(config.heavyRunnerImage);
       if (drift) {
         recordNanoclawImageDrift();
         const driftMsg =

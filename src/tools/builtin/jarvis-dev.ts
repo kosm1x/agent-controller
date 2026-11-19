@@ -5,7 +5,7 @@
  * and open PRs for human review. NEVER pushes to main.
  */
 
-import { execFile, execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -53,15 +53,17 @@ const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
  * actions need binaries; Jarvis never npm-installs under a live service, so
  * the shared install is read-only in practice).
  */
-export function ensureJarvisWorktree(): void {
+export async function ensureJarvisWorktree(): Promise<void> {
   if (!existsSync(MC_DIR)) {
-    // Stays sync on purpose: a one-time bootstrap, runs only while MC_DIR
-    // is missing.
-    execFileSync(
+    // A one-time bootstrap (runs only while MC_DIR is missing), async all the
+    // same: checking out the tree takes seconds on the service's event loop.
+    const p = execFileAsync(
       "git",
       ["-C", PRIMARY_DIR, "worktree", "add", "--detach", MC_DIR],
       { timeout: 60_000, encoding: "utf-8", env: buildChildEnv() },
     );
+    p.child.stdin?.end();
+    await p;
   }
   const nm = join(MC_DIR, "node_modules");
   if (!existsSync(nm)) {
@@ -591,7 +593,7 @@ async function runTestGate(branch: string): Promise<string> {
 
   // Tests related to the changed files only (operator ruling 4) — the full
   // suite runs in CI (action=pr commits with --no-verify: no pre-commit hook).
-  const scope = resolveTestScope(MC_DIR, undefined, FULL_SUITE_CI);
+  const scope = await resolveTestScope(MC_DIR, undefined, FULL_SUITE_CI);
   if (scope.kind === "skip") {
     results.tests = `SKIPPED (${scope.reason})`;
   } else if (scope.kind === "error") {
@@ -1080,7 +1082,7 @@ AFTER USING: Report the branch name, action taken, and next step.`,
     const action = args.action as string;
 
     try {
-      ensureJarvisWorktree();
+      await ensureJarvisWorktree();
     } catch (err) {
       return JSON.stringify({
         error: `jarvis worktree bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,

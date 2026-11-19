@@ -316,7 +316,7 @@ IMPORTANT: jarvis_dev action="pr" already gates on tests. This tool is for check
       if (typecheckOnly) return lines.join("\n");
 
       // Tests related to the changed files only (operator ruling 4).
-      const scope = resolveTestScope(MC_DIR);
+      const scope = await resolveTestScope(MC_DIR);
       if (scope.kind === "skip") {
         lines.push(`⏭️ tests: skipped (${scope.reason})`);
       } else if (scope.kind === "error") {

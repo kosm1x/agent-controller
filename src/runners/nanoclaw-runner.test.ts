@@ -19,11 +19,11 @@ vi.mock("./container.js", () => ({
   killContainer: vi.fn(),
   generateContainerName: vi.fn(() => "mc-nanoclaw-test-123"),
   // Default to TRUE so existing tests continue to exercise the spawn path.
-  // Individual pre-flight tests override with mockReturnValueOnce(false).
-  imageExistsLocally: vi.fn(() => true),
+  // Individual pre-flight tests override with mockResolvedValueOnce(false).
+  imageExistsLocally: vi.fn(async () => true),
   // Default to NO lockfile drift so existing tests exercise the spawn path;
   // the drift pre-flight test overrides with mockReturnValueOnce({...}).
-  imageLockDrift: vi.fn(() => null),
+  imageLockDrift: vi.fn(async () => null),
   // Default: host dist/ complete; the assets pre-flight test overrides once.
   missingHostDistAssets: vi.fn((): string[] => []),
   IMAGE_LOCK_LABEL: "mc.lock-sha256",
@@ -86,7 +86,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetConfig.mockReturnValue(makeConfig() as ReturnType<typeof getConfig>);
   // Default: pre-flight passes (image exists). Override in specific tests.
-  mockImageExistsLocally.mockReturnValue(true);
+  mockImageExistsLocally.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -533,7 +533,7 @@ describe("nanoclawRunner", () => {
 
   describe("pre-flight image check", () => {
     it("returns clear error + records metric when image missing, never spawns", async () => {
-      mockImageExistsLocally.mockReturnValueOnce(false);
+      mockImageExistsLocally.mockResolvedValueOnce(false);
 
       const result = await nanoclawRunner.execute({
         taskId: "task-missing-image",
@@ -559,7 +559,7 @@ describe("nanoclawRunner", () => {
     // on the IMAGE's node_modules, so an image built from another lockfile
     // must refuse before spawn — same contract as the missing-image guard.
     it("refuses to spawn on package-lock drift — names the label, the host sha and the rebuild line", async () => {
-      mockImageLockDrift.mockReturnValueOnce({
+      mockImageLockDrift.mockResolvedValueOnce({
         host: "a".repeat(64),
         image: null,
       });
@@ -601,7 +601,7 @@ describe("nanoclawRunner", () => {
     });
 
     it("proceeds to container spawn when pre-flight passes", async () => {
-      mockImageExistsLocally.mockReturnValueOnce(true);
+      mockImageExistsLocally.mockResolvedValueOnce(true);
 
       const containerOutput: ContainerOutput = {
         status: "success",

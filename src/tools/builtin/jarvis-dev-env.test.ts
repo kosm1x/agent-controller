@@ -286,17 +286,15 @@ describe("jarvis_dev — child env is an allow-list, never the service env (queu
     const sync = m.execFileSync.mock.calls as unknown[][];
     const asyncCalls = m.execFileAsync.mock.calls as unknown[][];
     const argv = (c: unknown[]) => `${c[0]} ${(c[1] as string[]).join(" ")}`;
-    // Sync: ensureJarvisWorktree's worktree add (one-time bootstrap) and
-    // changed-tests.ts's -z listings. Async: run() (branch/rev-parse/status/
-    // diff/ls-files/add/commit/push), the porcelain read, gh, the gate.
-    expect(
-      sync
-        .map(argv)
-        .some((a) =>
-          a.startsWith("git -C /root/claude/mission-control worktree add"),
-        ),
-    ).toBe(true);
+    // All async (MCEventLoopBlock), none on execFileSync: ensureJarvisWorktree's
+    // worktree add (one-time bootstrap), changed-tests.ts's -z listings,
+    // run() (branch/rev-parse/status/diff/ls-files/add/commit/push), the
+    // porcelain read, gh, the gate.
+    expect(sync).toHaveLength(0);
     for (const want of [
+      "git -C /root/claude/mission-control worktree add --detach /root/claude/mission-control-jarvis",
+      "git diff --name-only -z origin/main...HEAD --",
+      "git ls-files -z --others --exclude-standard",
       "git branch --show-current",
       "git status --porcelain -z",
       "git commit",
@@ -315,6 +313,28 @@ describe("jarvis_dev — child env is an allow-list, never the service env (queu
       if (isGithubChild(c)) expectAgentEnv(c[2]);
       else expectAllowListEnv(c[2]);
     }
+  });
+
+  it("a failing worktree bootstrap is awaited: the bootstrap error, no other child", async () => {
+    m.fsState.worktreeExists = false;
+    const end = vi.fn();
+    m.execFileAsync.mockImplementationOnce(() =>
+      Object.assign(
+        Promise.reject(new Error("fatal: '/root/claude/mission-control-jarvis' already exists")),
+        { child: { stdin: { end } } },
+      ),
+    );
+    const out = JSON.parse(await jarvisDevTool.execute({ action: "status" }));
+    expect(out.error).toBe(
+      "jarvis worktree bootstrap failed: fatal: '/root/claude/mission-control-jarvis' already exists",
+    );
+    expect(m.execFileAsync).toHaveBeenCalledTimes(1);
+    expect(m.execFileAsync.mock.calls[0].slice(0, 3)).toEqual([
+      "git",
+      ["-C", "/root/claude/mission-control", "worktree", "add", "--detach", "/root/claude/mission-control-jarvis"],
+      { timeout: 60_000, encoding: "utf-8", env: expect.any(Object) },
+    ]);
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });
 

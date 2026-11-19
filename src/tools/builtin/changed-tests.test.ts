@@ -30,6 +30,9 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
       encoding: "utf-8",
       stdio: "pipe",
     });
+  // changedFiles/resolveTestScope take an async reader (their own runs git
+  // through promisify(execFile)); the fixture's sync git answers it.
+  const gitAsync = async (args: string[]) => git(args);
   const write = (f: string, s = f) => {
     mkdirSync(join(repo, f, ".."), { recursive: true });
     writeFileSync(join(repo, f), s);
@@ -63,7 +66,7 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it("unions commits ahead of origin/main, staged, unstaged and untracked files", () => {
+  it("unions commits ahead of origin/main, staged, unstaged and untracked files", async () => {
     git(["checkout", "-q", "-b", "jarvis/fix/x"]);
     write("src/committed.ts");
     commitAll("ahead");
@@ -73,7 +76,7 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     write("src/untracked.ts");
     rmSync(join(repo, "src/gone.ts"));
     write("docs/notes.md");
-    expect(changedFiles(repo, git)).toEqual([
+    expect(await changedFiles(repo, gitAsync)).toEqual([
       "docs/notes.md",
       "src/committed.ts",
       "src/edited.ts",
@@ -82,7 +85,7 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
       "src/untracked.ts",
     ]);
     // Only existing .ts paths reach vitest: no deleted file, no markdown.
-    expect(resolveTestScope(repo, git)).toEqual({
+    expect(await resolveTestScope(repo, gitAsync)).toEqual({
       kind: "related",
       changed: 6,
       files: [
@@ -95,7 +98,7 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     });
   });
 
-  it("does not count commits that exist only on origin/main", () => {
+  it("does not count commits that exist only on origin/main", async () => {
     git(["checkout", "-q", "-b", "jarvis/fix/x"]);
     git(["checkout", "-q", "main"]);
     write("src/upstream.ts");
@@ -103,21 +106,21 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     git(["push", "-q", "origin", "main"]);
     git(["checkout", "-q", "jarvis/fix/x"]);
     git(["fetch", "-q", "origin"]);
-    expect(changedFiles(repo, git)).toEqual([]);
+    expect(await changedFiles(repo, gitAsync)).toEqual([]);
   });
 
-  it("clean tree at origin/main → skip with the explicit full-suite note", () => {
-    expect(resolveTestScope(repo, git)).toEqual({
+  it("clean tree at origin/main → skip with the explicit full-suite note", async () => {
+    expect(await resolveTestScope(repo, gitAsync)).toEqual({
       kind: "skip",
       changed: 0,
       reason: "no changed files; the full suite runs in pre-commit/CI",
     });
   });
 
-  it("only non-TS changes → skip whose reason states the count (audit W1)", () => {
+  it("only non-TS changes → skip whose reason states the count (audit W1)", async () => {
     write("README.md", "edited");
     write("src/tools/builtin/pm-shim/npm.sh");
-    expect(resolveTestScope(repo, git)).toEqual({
+    expect(await resolveTestScope(repo, gitAsync)).toEqual({
       kind: "skip",
       changed: 2,
       reason:
@@ -125,18 +128,18 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     });
   });
 
-  it("the trailing note names where the full suite runs for that path (jarvis_dev: CI)", () => {
-    expect(resolveTestScope(repo, git, "CI")).toMatchObject({
+  it("the trailing note names where the full suite runs for that path (jarvis_dev: CI)", async () => {
+    expect(await resolveTestScope(repo, gitAsync, "CI")).toMatchObject({
       reason: "no changed files; the full suite runs in CI",
     });
     write("src/real.ts");
-    expect(resolveTestScope(repo, git, "CI")).toMatchObject({
+    expect(await resolveTestScope(repo, gitAsync, "CI")).toMatchObject({
       kind: "related",
       note: "the full suite runs in CI",
     });
   });
 
-  it("drops paths under a package.json / vite(st).config.* segment — vitest reruns EVERY test for them (audit N1)", () => {
+  it("drops paths under a package.json / vite(st).config.* segment — vitest reruns EVERY test for them (audit N1)", async () => {
     write("src/package.json/z.ts");
     write("src/vitest.config.d/y.ts");
     write("src/vite.config.x/w.ts");
@@ -144,7 +147,7 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     write("src/package.json.ts");
     write("src/my-vitest.config.ts");
     write("src/real.ts");
-    expect(resolveTestScope(repo, git)).toEqual({
+    expect(await resolveTestScope(repo, gitAsync)).toEqual({
       kind: "related",
       changed: 7,
       files: ["src/my-vitest.config.ts", "src/package.json.ts", "src/real.ts"],
@@ -152,41 +155,41 @@ describe("changed-tests — the one 'changed files' definition (ruling 4)", () =
     });
   });
 
-  it("an untracked file named HEAD does not make the diff ambiguous (audit N2)", () => {
+  it("an untracked file named HEAD does not make the diff ambiguous (audit N2)", async () => {
     write("HEAD", "x");
     write("src/real.ts");
-    expect(changedFiles(repo, git)).toEqual(["HEAD", "src/real.ts"]);
-    expect(resolveTestScope(repo, git).kind).toBe("related");
+    expect(await changedFiles(repo, gitAsync)).toEqual(["HEAD", "src/real.ts"]);
+    expect((await resolveTestScope(repo, gitAsync)).kind).toBe("related");
   });
 
-  it(`more than ${MAX_RELATED_FILES} changed .ts files → skip (typecheck only), never the full suite`, () => {
+  it(`more than ${MAX_RELATED_FILES} changed .ts files → skip (typecheck only), never the full suite`, async () => {
     for (let i = 0; i <= MAX_RELATED_FILES; i++) write(`src/m${i}.ts`);
-    const scope = resolveTestScope(repo, git);
+    const scope = await resolveTestScope(repo, gitAsync);
     expect(scope.kind).toBe("skip");
     expect(scope).toMatchObject({
       reason: `${MAX_RELATED_FILES + 1} changed source files exceed the ${MAX_RELATED_FILES}-file cap for a scoped run, typecheck only; the full suite runs in pre-commit/CI`,
     });
   });
 
-  it("exactly the cap still runs scoped", () => {
+  it("exactly the cap still runs scoped", async () => {
     for (let i = 0; i < MAX_RELATED_FILES; i++) write(`src/m${i}.ts`);
-    const scope = resolveTestScope(repo, git);
+    const scope = await resolveTestScope(repo, gitAsync);
     expect(scope.kind).toBe("related");
   });
 
-  it("an unresolvable base is an error, not an empty (passing) scope", () => {
+  it("an unresolvable base is an error, not an empty (passing) scope", async () => {
     git(["remote", "remove", "origin"]);
-    const scope = resolveTestScope(repo, git);
+    const scope = await resolveTestScope(repo, gitAsync);
     expect(scope.kind).toBe("error");
     expect(scope).toMatchObject({
       reason: expect.stringContaining("could not determine changed files"),
     });
   });
 
-  it("reads names NUL-separated, so unusual names arrive unquoted", () => {
+  it("reads names NUL-separated, so unusual names arrive unquoted", async () => {
     write("src/a b.ts");
     write("src/é.ts");
-    expect(changedFiles(repo, git)).toEqual(["src/a b.ts", "src/é.ts"]);
+    expect(await changedFiles(repo, gitAsync)).toEqual(["src/a b.ts", "src/é.ts"]);
   });
 });
 

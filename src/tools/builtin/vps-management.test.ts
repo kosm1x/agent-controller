@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Every child seam is mocked: this suite never builds, tests or restarts.
-// `git -z` listings (changed-tests, still execFileSync, reached through
-// jarvis_test_run) answer the changed-file set (ruling 4); everything else "".
-// The vps tools' own children run through async execFile (2026-10-26,
-// MCEventLoopBlock): `childImpl` answers them by command, delivered on
-// setImmediate like a real child.
+// Every child runs through async execFile (2026-10-26, MCEventLoopBlock):
+// `git -z` listings (changed-tests, reached through jarvis_test_run) answer
+// the changed-file set (ruling 4) from `gitZ`; the vps tools' own children are
+// answered by `childImpl`, by command; both are delivered on setImmediate like
+// a real child. execFileSync answers "" and must never be called.
 type ChildErr = Error & { stdout?: string; stderr?: string };
 type ChildCb = (err: ChildErr | null, stdout: string, stderr: string) => void;
 
@@ -34,14 +34,25 @@ const {
     const childImpl = vi.fn(
       (..._args: unknown[]): string | Promise<string> => "",
     );
+    const gitZ = (_cmd: unknown, args: unknown): string => {
+      if (changed.fail) throw new Error("unknown revision origin/main");
+      if ((args as string[])[0] === "ls-files") return "";
+      return (args as string[]).includes("HEAD")
+        ? changed.worktree
+        : changed.ahead;
+    };
     const execFile = (...args: unknown[]) => {
       const cb = args.pop() as ChildCb;
+      const impl =
+        args[0] === "git" && Array.isArray(args[1]) && args[1].includes("-z")
+          ? gitZ
+          : childImpl;
       const fail = (e: unknown) => {
         const err = e as ChildErr;
         setImmediate(() => cb(err, err.stdout ?? "", err.stderr ?? ""));
       };
       try {
-        Promise.resolve(childImpl(...args)).then(
+        Promise.resolve(impl(...args)).then(
           (out) => setImmediate(() => cb(null, out, "")),
           fail,
         );
@@ -73,12 +84,7 @@ const {
       childImpl,
       execFile,
       execGroupKill: vi.fn(),
-      execFileSync: vi.fn((_cmd: string, args: string[]) => {
-        if (!args.includes("-z")) return "";
-        if (changed.fail) throw new Error("unknown revision origin/main");
-        if (args[0] === "ls-files") return "";
-        return args.includes("HEAD") ? changed.worktree : changed.ahead;
-      }),
+      execFileSync: vi.fn(() => ""),
     };
   });
 vi.mock("./shell.js", () => ({ execGroupKill }));

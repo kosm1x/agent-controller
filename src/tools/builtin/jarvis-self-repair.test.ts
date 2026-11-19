@@ -8,17 +8,32 @@ type ChildImpl = (
   opts?: unknown,
 ) => string | Promise<string>;
 
-// `git` answers on execFileSync: the changed-file lists (ruling 4), keyed on
-// the -z listings changed-tests.ts issues. Everything else returns "" so a
-// child reverted to execFileSync shows up as empty output.
 // execFile (async since 2026-10-26, MCEventLoopBlock): currentBranch and the
-// two jarvis_diagnose journalctl reads. `childImpl` returns stdout (or a
-// promise of it, to hold the child open) or throws; the result is delivered
-// on setImmediate like a real child. Each child records its own stdin.end.
-const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
-  vi.hoisted(() => {
+// two jarvis_diagnose journalctl reads, and the changed-file lists (ruling 4)
+// changed-tests.ts issues — its `git … -z` listings are answered by `gitZ`
+// from `changed`, every other child by `childImpl`. execFileSync answers ""
+// so a child reverted to it shows up as empty output. `childImpl` returns
+// stdout (or a promise of it, to hold the child open) or throws; the result
+// is delivered on setImmediate like a real child. Each child records its own
+// stdin.end.
+const {
+  execGroupKill,
+  execFileSync,
+  execFile,
+  childImpl,
+  gitZ,
+  stdinEnds,
+  changed,
+} = vi.hoisted(() => {
     const changed = { ahead: "", worktree: "", untracked: "", fail: false };
     const childImpl = vi.fn<ChildImpl>();
+    const gitZ = vi.fn((_cmd: string, args: string[]) => {
+      if (changed.fail) throw new Error("unknown revision origin/main");
+      if (args[0] === "ls-files") return changed.untracked;
+      return args.includes("HEAD") ? changed.worktree : changed.ahead;
+    });
+    const isGitZ = (args: unknown[]) =>
+      args[0] === "git" && Array.isArray(args[1]) && args[1].includes("-z");
     const stdinEnds: Array<ReturnType<typeof vi.fn>> = [];
     const execFile = vi.fn((...args: unknown[]) => {
       const cb = args.pop() as ChildCb;
@@ -27,7 +42,8 @@ const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
         setImmediate(() => cb(err, err.stdout ?? "", err.stderr ?? ""));
       };
       try {
-        Promise.resolve(childImpl(...(args as Parameters<ChildImpl>))).then(
+        const impl = isGitZ(args) ? gitZ : childImpl;
+        Promise.resolve(impl(...(args as Parameters<ChildImpl>))).then(
           (out) => setImmediate(() => cb(null, out, "")),
           fail,
         );
@@ -55,15 +71,11 @@ const { execGroupKill, execFileSync, execFile, childImpl, stdinEnds, changed } =
     return {
       changed,
       childImpl,
+      gitZ,
       stdinEnds,
       execFile,
       execGroupKill: vi.fn(),
-      execFileSync: vi.fn((cmd: string, args: string[]) => {
-        if (cmd !== "git" || !args.includes("-z")) return "";
-        if (changed.fail) throw new Error("unknown revision origin/main");
-        if (args[0] === "ls-files") return changed.untracked;
-        return args.includes("HEAD") ? changed.worktree : changed.ahead;
-      }),
+      execFileSync: vi.fn(() => ""),
     };
   });
 vi.mock("./shell.js", () => ({ execGroupKill }));
@@ -100,6 +112,7 @@ beforeEach(() => {
   execGroupKill.mockReset();
   execFile.mockClear();
   execFileSync.mockClear();
+  gitZ.mockClear();
   childImpl.mockReset();
   childImpl.mockImplementation(defaultChild);
   stdinEnds.length = 0;
@@ -139,15 +152,17 @@ describe("jarvis_test_run — group-kill runner, same output shape", () => {
       maxBuffer: 1024 * 1024,
       env: expect.any(Object),
     });
-    // The changed set is computed in the cwd the tool runs in.
-    for (const c of execFileSync.mock.calls.filter((c) =>
-      (c[1] as string[]).includes("-z"),
-    ))
+    // The changed set is computed in the cwd the tool runs in, by three
+    // async git children (none on execFileSync).
+    expect(gitZ).toHaveBeenCalledTimes(3);
+    for (const c of gitZ.mock.calls)
       expect((c as unknown[])[2]).toMatchObject({
         cwd: MC_DIR,
-        // git's stderr is captured, never written to the service journal.
-        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+        encoding: "utf-8",
+        maxBuffer: 8 * 1024 * 1024,
       });
+    expect(execFileSync).not.toHaveBeenCalled();
   });
 
   it("reject path: typecheck stderr and the failed/passed counts are reported", async () => {

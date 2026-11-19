@@ -422,28 +422,28 @@ describe("RUNTIME_CODE_MOUNTS — the sandbox executes the host's deployed code"
 describe("imageLockDrift — image node_modules must come from the host lockfile", () => {
   const host = "a".repeat(64);
 
-  it("null when the image label equals the host lockfile sha", () => {
-    expect(imageLockDrift("img", { host, readLabel: () => host })).toBeNull();
+  it("null when the image label equals the host lockfile sha", async () => {
+    expect(await imageLockDrift("img", { host, readLabel: async () => host })).toBeNull();
   });
 
-  it("reports drift when the label differs", () => {
+  it("reports drift when the label differs", async () => {
     const other = "b".repeat(64);
-    expect(imageLockDrift("img", { host, readLabel: () => other })).toEqual({
+    expect(await imageLockDrift("img", { host, readLabel: async () => other })).toEqual({
       host,
       image: other,
     });
   });
 
-  it("reports drift (image: null) when the image carries no label — pre-2026-09-01 build or bare `docker build`", () => {
-    expect(imageLockDrift("img", { host, readLabel: () => null })).toEqual({
+  it("reports drift (image: null) when the image carries no label — pre-2026-09-01 build or bare `docker build`", async () => {
+    expect(await imageLockDrift("img", { host, readLabel: async () => null })).toEqual({
       host,
       image: null,
     });
   });
 
-  it("asks the label reader about the image it was given", () => {
-    const readLabel = vi.fn((_image: string) => host);
-    imageLockDrift("mission-control:latest", { host, readLabel });
+  it("asks the label reader about the image it was given", async () => {
+    const readLabel = vi.fn(async (_image: string) => host);
+    await imageLockDrift("mission-control:latest", { host, readLabel });
     expect(readLabel).toHaveBeenCalledWith("mission-control:latest");
   });
 

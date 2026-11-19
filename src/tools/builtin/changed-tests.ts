@@ -17,10 +17,17 @@
  * origin/main is the last FETCHED ref; nothing here fetches.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import { buildChildEnv } from "../../mcp/env-deny.js";
+
+// Async children (MCEventLoopBlock): the three listings ran as sync git
+// children on the service's event loop (30 s timeout each). execFile has no
+// `stdio` option: stdin is closed right after spawn (the sync code ignored
+// it) and stderr is captured into the error as before.
+const execFileAsync = promisify(execFile);
 
 export const CHANGED_BASE_REF = "origin/main";
 /** Above this many changed .ts files a scoped run is refused — typecheck only. */
@@ -44,44 +51,46 @@ export type TestScope =
   | { kind: "skip"; changed: number; reason: string }
   | { kind: "error"; reason: string };
 
-function gitIn(cwd: string): (args: string[]) => string {
-  return (args) =>
-    execFileSync("git", args, {
+function gitIn(cwd: string): (args: string[]) => Promise<string> {
+  return async (args) => {
+    const p = execFileAsync("git", args, {
       cwd,
       timeout: 30_000,
       encoding: "utf-8",
       maxBuffer: 8 * 1024 * 1024,
       // stderr is captured into the error, never the service journal.
-      stdio: ["ignore", "pipe", "pipe"],
       env: buildChildEnv(),
     });
+    p.child.stdin?.end();
+    return (await p).stdout;
+  };
 }
 
 /** Every changed path (repo-relative, sorted, deduped; deleted files included). */
-export function changedFiles(
+export async function changedFiles(
   cwd: string,
-  git: (args: string[]) => string = gitIn(cwd),
-): string[] {
+  git: (args: string[]) => Promise<string> = gitIn(cwd),
+): Promise<string[]> {
   // `--` ends the revisions: an untracked file named HEAD is otherwise an
   // ambiguous argument and fails all three gates.
   const out = [
-    git(["diff", "--name-only", "-z", `${CHANGED_BASE_REF}...HEAD`, "--"]),
-    git(["diff", "--name-only", "-z", "HEAD", "--"]),
-    git(["ls-files", "-z", "--others", "--exclude-standard"]),
+    await git(["diff", "--name-only", "-z", `${CHANGED_BASE_REF}...HEAD`, "--"]),
+    await git(["diff", "--name-only", "-z", "HEAD", "--"]),
+    await git(["ls-files", "-z", "--others", "--exclude-standard"]),
   ].join("\0");
   return [...new Set(out.split("\0").filter(Boolean))].sort();
 }
 
 /** Which tests to run: the existing changed .ts files, or why none run. */
-export function resolveTestScope(
+export async function resolveTestScope(
   cwd: string,
-  git?: (args: string[]) => string,
+  git?: (args: string[]) => Promise<string>,
   fullSuiteIn: string = FULL_SUITE_PRECOMMIT_CI,
-): TestScope {
+): Promise<TestScope> {
   const note = `the full suite runs in ${fullSuiteIn}`;
   let changed: string[];
   try {
-    changed = changedFiles(cwd, git);
+    changed = await changedFiles(cwd, git);
   } catch (err) {
     return {
       kind: "error",

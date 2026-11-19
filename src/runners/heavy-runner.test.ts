@@ -26,10 +26,10 @@ vi.mock("./container.js", () => ({
   killContainer: vi.fn(),
   generateContainerName: vi.fn(() => "mc-heavy-test-123"),
   // Default to TRUE so existing tests continue to exercise the spawn path.
-  // Pre-flight tests override with mockReturnValueOnce(false).
-  imageExistsLocally: vi.fn(() => true),
+  // Pre-flight tests override with mockResolvedValueOnce(false).
+  imageExistsLocally: vi.fn(async () => true),
   // Default to NO lockfile drift so existing tests exercise the spawn path.
-  imageLockDrift: vi.fn(() => null),
+  imageLockDrift: vi.fn(async () => null),
   // Default: host dist/ complete; the assets pre-flight test overrides once.
   missingHostDistAssets: vi.fn((): string[] => []),
   IMAGE_LOCK_LABEL: "mc.lock-sha256",
@@ -805,11 +805,11 @@ describe("heavyRunner container mode — pre-flight image check", () => {
     mockGetConfig.mockReturnValue(
       makeConfig(true) as unknown as ReturnType<typeof getConfig>,
     );
-    mockImageExistsLocally.mockReturnValue(true);
+    mockImageExistsLocally.mockResolvedValue(true);
   });
 
   it("returns clear error + records metric when image missing, never spawns", async () => {
-    mockImageExistsLocally.mockReturnValueOnce(false);
+    mockImageExistsLocally.mockResolvedValueOnce(false);
 
     const result = await heavyRunner.execute({
       taskId: "task-heavy-missing-image",
@@ -830,7 +830,7 @@ describe("heavyRunner container mode — pre-flight image check", () => {
 
   // 2026-09-01: heavy sibling of the nanoclaw lockfile-drift pre-flight.
   it("refuses to spawn on package-lock drift (heavy path), never spawns", async () => {
-    mockImageLockDrift.mockReturnValueOnce({
+    mockImageLockDrift.mockResolvedValueOnce({
       host: "c".repeat(64),
       image: "d".repeat(64),
     });

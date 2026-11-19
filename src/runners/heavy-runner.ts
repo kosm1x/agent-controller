@@ -228,7 +228,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
     // without this guard would re-open the prune-recurrence blocker on the
     // heavy path. Counter reused with the nanoclaw bucket — both feed the
     // same image-prevention dashboard. qa-audit W2 (2026-05-23).
-    if (!imageExistsLocally(config.heavyRunnerImage)) {
+    if (!(await imageExistsLocally(config.heavyRunnerImage))) {
       recordNanoclawImageMissing();
       const errMsg =
         `Docker image '${config.heavyRunnerImage}' not found locally. ` +
@@ -244,7 +244,7 @@ async function executeInContainer(input: RunnerInput): Promise<RunnerOutput> {
 
     // Pre-flight 2 (2026-09-01): host dist/ runs on the image's node_modules
     // (RUNTIME_CODE_MOUNTS) — refuse on package-lock drift; see nanoclaw-runner.
-    const drift = imageLockDrift(config.heavyRunnerImage);
+    const drift = await imageLockDrift(config.heavyRunnerImage);
     if (drift) {
       recordNanoclawImageDrift();
       const driftMsg =

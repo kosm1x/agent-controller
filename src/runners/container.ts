@@ -5,10 +5,11 @@
  * with sentinel-delimited output parsing, and activity-aware timeouts.
  */
 
-import { spawn, execSync, execFile, execFileSync } from "child_process";
+import { spawn, execSync, execFile } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { posix } from "path";
+import { promisify } from "util";
 import type { ChildProcess } from "child_process";
 import { getConfig } from "../config.js";
 import { getEventBus } from "../lib/event-bus.js";
@@ -21,6 +22,12 @@ import { AGENT_GITHUB_ENV_NAMES } from "../lib/github-authority.js";
 
 export const OUTPUT_START_MARKER = "---NANOCLAW_OUTPUT_START---";
 export const OUTPUT_END_MARKER = "---NANOCLAW_OUTPUT_END---";
+// Async children (MCEventLoopBlock): the pre-flight `docker image inspect`
+// calls ran sync on the service's event loop before every container task,
+// with no timeout (a hung daemon held the loop). stdin is closed right after
+// spawn, as execFileSync's was.
+const execFileAsync = promisify(execFile);
+
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const GRACEFUL_STOP_TIMEOUT_MS = 10_000; // 10 seconds
 
@@ -208,12 +215,14 @@ export function generateContainerName(prefix = "task"): string {
  * `false` on any inspect error (image absent, daemon down, permission
  * denied) so callers can fail loud with a rebuild instruction.
  *
- * Uses execFileSync (NOT execSync) to avoid shell interpretation of the
+ * Uses execFile (NOT exec) to avoid shell interpretation of the
  * image name. Local-only, ~50ms typical.
  */
-export function imageExistsLocally(image: string): boolean {
+export async function imageExistsLocally(image: string): Promise<boolean> {
   try {
-    execFileSync("docker", ["image", "inspect", image], { stdio: "pipe" });
+    const p = execFileAsync("docker", ["image", "inspect", image]);
+    p.child.stdin?.end();
+    await p;
     return true;
   } catch {
     return false;
@@ -235,9 +244,9 @@ export function hostLockfileSha256(
 }
 
 /** The image's lockfile label, or null when absent / image not inspectable. */
-export function imageLockLabel(image: string): string | null {
+export async function imageLockLabel(image: string): Promise<string | null> {
   try {
-    const out = execFileSync(
+    const p = execFileAsync(
       "docker",
       [
         "image",
@@ -246,8 +255,10 @@ export function imageLockLabel(image: string): string | null {
         "--format",
         `{{index .Config.Labels "${IMAGE_LOCK_LABEL}"}}`,
       ],
-      { stdio: "pipe", encoding: "utf8" },
-    ).trim();
+      { encoding: "utf8" },
+    );
+    p.child.stdin?.end();
+    const out = (await p).stdout.trim();
     return out || null;
   } catch {
     return null;
@@ -291,12 +302,15 @@ export interface ImageLockDrift {
  * means a deploy bypassed it; the caller fails loud with the rebuild line
  * (same contract as `imageExistsLocally`). `deps` is a test seam.
  */
-export function imageLockDrift(
+export async function imageLockDrift(
   image: string,
-  deps: { host?: string; readLabel?: (image: string) => string | null } = {},
-): ImageLockDrift | null {
+  deps: {
+    host?: string;
+    readLabel?: (image: string) => Promise<string | null>;
+  } = {},
+): Promise<ImageLockDrift | null> {
   const host = deps.host ?? hostLockfileSha256();
-  const found = (deps.readLabel ?? imageLockLabel)(image);
+  const found = await (deps.readLabel ?? imageLockLabel)(image);
   return found === host ? null : { host, image: found };
 }
 
