@@ -16,14 +16,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { sanitizeToolResult } from "./guards.js";
 import { circuitRegistry } from "../lib/circuit-breaker.js";
-// Shared provider-health singleton (defined in adapter-openai.ts). Imported
-// here so the claude-sdk hot path records latency/success/token metrics too —
-// since the 2026-05-10 SDK cutover, providerMetrics was written ONLY from the
-// dormant OpenAI-compat path, so every mc_provider_* series exported zero
-// samples and /health.providers was {}. Import from adapter-openai.js directly
-// (not the adapter.js re-export) — adapter-openai does not import claude-sdk,
-// so no static cycle; the singleton is used only at call time regardless.
-import { providerMetrics } from "./adapter-openai.js";
+// The shared provider-health singleton, from the leaf module provider-metrics.ts.
+// This file records into it so the SDK path's latency, success and token
+// metrics reach the /health view and the exported mc_provider_* series. The
+// leaf imports nothing from the adapter modules, so there is no static cycle.
+import { providerMetrics } from "./provider-metrics.js";
 import type {
   HookCallback,
   Options as SdkOptions,

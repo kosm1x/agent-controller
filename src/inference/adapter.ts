@@ -194,13 +194,13 @@ export {
 } from "./outbound-scrub.js";
 
 // ---------------------------------------------------------------------------
-// OpenAI-compat provider machinery — moved to adapter-openai.ts (Phase 4.2).
-// Re-exported for backward compatibility (health route, observability, and
-// adapter.test.ts import these from adapter.ts).
+// Re-exported so existing importers of adapter.ts keep working: the provider
+// metrics live in the leaf module provider-metrics.ts, the OpenAI-compat
+// helpers listed after them in adapter-openai.ts.
 // ---------------------------------------------------------------------------
 
-export { providerMetrics } from "./adapter-openai.js";
-export type { ProviderHealth, ProviderStats } from "./adapter-openai.js";
+export { providerMetrics } from "./provider-metrics.js";
+export type { ProviderHealth, ProviderStats } from "./provider-metrics.js";
 export {
   stripStaleSignals,
   stripThinkBlocks,

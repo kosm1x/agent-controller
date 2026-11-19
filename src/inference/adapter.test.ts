@@ -54,7 +54,11 @@ import {
   truncateMessageForWrapup,
 } from "./adapter.js";
 import type { ChatMessage } from "./adapter.js";
-import { buildWrapUpContext } from "./adapter-openai.js";
+import {
+  buildWrapUpContext,
+  providerMetrics as providerMetricsViaOpenAi,
+} from "./adapter-openai.js";
+import { providerMetrics as providerMetricsViaLeaf } from "./provider-metrics.js";
 
 beforeEach(() => {
   // Reset metrics between tests by recording nothing (ProviderMetrics has no
@@ -66,6 +70,13 @@ afterEach(() => {
 });
 
 describe("ProviderMetrics", () => {
+  it("is one singleton: adapter.js, adapter-openai.js and the leaf hand out the same object", () => {
+    // Recording paths and the /health and /metrics readers import it through
+    // different modules; two instances would split the samples silently.
+    expect(providerMetrics).toBe(providerMetricsViaLeaf);
+    expect(providerMetricsViaOpenAi).toBe(providerMetricsViaLeaf);
+  });
+
   it("should return null for unknown provider", () => {
     expect(providerMetrics.getStats("nonexistent_provider")).toBeNull();
   });
@@ -296,6 +307,103 @@ describe("ProviderMetrics", () => {
     }
     const badStats = providerMetrics.getStats(unhealthy);
     expect(badStats?.health).toBe("unhealthy");
+  });
+
+  describe("health class boundaries", () => {
+    // Frozen clock: every sample sits inside the 10-min health window.
+    beforeEach(() => {
+      vi.useFakeTimers({ now: new Date("2026-01-15T12:00:00Z") });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const healthOf = (
+      name: string,
+      samples: number,
+      failures: number,
+      latencyMs: number,
+    ) => {
+      for (let i = 0; i < samples; i++) {
+        providerMetrics.record(name, {
+          timestamp: Date.now(),
+          latencyMs,
+          success: i >= failures,
+          promptTokens: 10,
+          completionTokens: 5,
+        });
+      }
+      return providerMetrics.getStats(name)?.health;
+    };
+
+    it("error rate: rates just below and just above the 7% and 20% thresholds", () => {
+      expect(healthOf("test_hb_err_1of15", 15, 1, 1000)).toBe("healthy"); // 6.7%
+      expect(healthOf("test_hb_err_1of14", 14, 1, 1000)).toBe("degraded"); // 7.1%
+      // 2 of 10 stays degraded; the computed rate is just under 20%.
+      expect(healthOf("test_hb_err_2of10", 10, 2, 1000)).toBe("degraded");
+      expect(healthOf("test_hb_err_3of14", 14, 3, 1000)).toBe("unhealthy"); // 21.4%
+    });
+
+    it("avg latency: healthy up to 90s, unhealthy only above 180s", () => {
+      expect(healthOf("test_hb_lat_90000", 5, 0, 90_000)).toBe("healthy");
+      expect(healthOf("test_hb_lat_90001", 5, 0, 90_001)).toBe("degraded");
+      expect(healthOf("test_hb_lat_180000", 5, 0, 180_000)).toBe("degraded");
+      expect(healthOf("test_hb_lat_180001", 5, 0, 180_001)).toBe("unhealthy");
+    });
+
+    it("fewer than 5 samples always classify healthy", () => {
+      expect(healthOf("test_hb_floor_4", 4, 4, 200_000)).toBe("healthy");
+      expect(healthOf("test_hb_floor_5", 5, 5, 200_000)).toBe("unhealthy");
+    });
+  });
+
+  describe("time windows", () => {
+    // Fake clock: samples are aged by advancing it, never by a real wait.
+    beforeEach(() => {
+      vi.useFakeTimers({ now: new Date("2026-01-15T12:00:00Z") });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const sample = (success: boolean, taskId?: string) => ({
+      timestamp: Date.now(),
+      latencyMs: 1000,
+      success,
+      promptTokens: 10,
+      completionTokens: 5,
+      taskId,
+    });
+
+    it("health window: a 7-minute-old sample is still current, not stale", () => {
+      const name = "test_tw_health_7min";
+      providerMetrics.record(name, sample(true));
+      vi.advanceTimersByTime(7 * 60_000);
+      const stats = providerMetrics.getStats(name)!;
+      expect(stats.stale).toBe(false);
+      expect(stats.count).toBe(1);
+    });
+
+    it("error rate counts only samples inside the health window", () => {
+      const name = "test_tw_error_window";
+      for (let i = 0; i < 5; i++) providerMetrics.record(name, sample(false));
+      vi.advanceTimersByTime(11 * 60_000);
+      for (let i = 0; i < 5; i++) providerMetrics.record(name, sample(true));
+      const stats = providerMetrics.getStats(name)!;
+      expect(stats.stale).toBe(false);
+      expect(stats.count).toBe(5);
+      expect(stats.health).toBe("healthy");
+    });
+
+    it("degradation window: a failure burst counts at 2 minutes old, not at 4", () => {
+      const name = "test_tw_degradation_window";
+      // Distinct task ids: failures of one task are capped at two.
+      for (let i = 0; i < 5; i++) providerMetrics.record(name, sample(false, `tw-task-${i}`));
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(providerMetrics.isDegraded(name)).toBe(true);
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(providerMetrics.isDegraded(name)).toBe(false);
+    });
   });
 
   it("tracks cost per provider", () => {
