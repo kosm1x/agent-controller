@@ -52,7 +52,7 @@ const {
         setImmediate(() => cb(err, err.stdout ?? "", err.stderr ?? ""));
       };
       try {
-        Promise.resolve(impl(...args)).then(
+        Promise.resolve(impl(...(args as [unknown, unknown]))).then(
           (out) => setImmediate(() => cb(null, out, "")),
           fail,
         );

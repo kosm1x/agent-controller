@@ -463,7 +463,7 @@ describe("ensureJarvisWorktree — one bootstrap in flight", () => {
     let settle: (err?: Error) => void = () => {};
     m.execFileAsync.mockImplementationOnce(() =>
       Object.assign(
-        new Promise((res, rej) => {
+        new Promise<{ stdout: string; stderr: string }>((res, rej) => {
           settle = (err) => (err ? rej(err) : res({ stdout: "", stderr: "" }));
         }),
         { child: { stdin: { end: vi.fn() } } },
