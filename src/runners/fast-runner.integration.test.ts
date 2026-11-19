@@ -167,9 +167,10 @@ vi.mock("../messaging/kb-injection.js", () => ({
 
 // Jev shadow: log-only side channel; the wiring test below pins the call site.
 vi.mock("../jev/shadow-kb.js", () => ({ shadowKbRows: vi.fn() }));
-// Safe only because router.js and shadow-kb.js (the other static importers
-// of shadow.js) are mocked in this file too; un-mocking one of them fails
-// here. scope-classifier-jev.js also imports it, but only behind a dynamic
+// Safe only because shadow-kb.js (another static importer of shadow.js) is
+// mocked in this file too and router.js (the other) is not loaded here;
+// un-mocking shadow-kb.js or loading router.js fails here.
+// scope-classifier-jev.js also imports it, but only behind a dynamic
 // import this file never reaches.
 vi.mock("../jev/shadow.js", () => ({ shadowMemoryRecall: vi.fn() }));
 // The JME recall, so the memory shadow's inputs can be read. Empty by
@@ -192,10 +193,9 @@ vi.mock("../memory/essentials.js", () => ({
   getEssentialFacts: vi.fn(() => ""),
 }));
 
-// router.ts is a heavy module — mock CACHE_BREAK_MARKER (the only thing
-// fast-runner.ts imports from it) so we don't transitively load the
-// messaging stack.
-vi.mock("../messaging/router.js", () => ({
+// A visible stand-in for the cache-break marker: the split cases below write
+// it into their descriptions.
+vi.mock("../messaging/cache-marker.js", () => ({
   CACHE_BREAK_MARKER: "###CACHE_BREAK###",
 }));
 
@@ -2856,6 +2856,29 @@ describe("prompt prefix stability (audit 2026-09-22 batch C)", () => {
     const ess = msgs.filter((m) => m.content === "ESSENTIALS-BLOCK");
     expect(ess).toHaveLength(1);
     expect(ess[0]!.cacheable).toBe(false);
+  });
+
+  it("splits the description on the cache-break marker: stable half first, variable half in a later cacheable:false message", async () => {
+    mockInferWithTools.mockResolvedValueOnce(
+      makeInferResult({ content: "STATUS: DONE\nok" }),
+    );
+    await fastRunner.execute({
+      taskId: "task-split",
+      runId: "run-split",
+      title: "t",
+      description: "stable###CACHE_BREAK###variable",
+      conversationHistory: [{ role: "user", content: "hola" }],
+    });
+    const msgs = mockInferWithTools.mock.calls[0]![0] as ChatMessage[];
+    expect(msgs[0]!.role).toBe("system");
+    expect(msgs[0]!.content).toMatch(/^stable/);
+    expect(msgs[0]!.content).not.toContain("variable");
+    expect(msgs[0]!.content).not.toContain("###CACHE_BREAK###");
+    const variable = msgs
+      .slice(1)
+      .filter((m) => m.role === "system" && m.content === "variable");
+    expect(variable).toHaveLength(1);
+    expect(variable[0]!.cacheable).toBe(false);
   });
 
   it("context-01 (claude-sdk path): essentials land in the user prompt, not systemPrompt", async () => {

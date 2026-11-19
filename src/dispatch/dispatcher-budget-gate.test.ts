@@ -111,10 +111,6 @@ vi.mock("../observability/prometheus.js", () => ({
   taskCompleted: vi.fn(),
 }));
 
-vi.mock("../messaging/router.js", () => ({
-  stripCacheMarker: (s: string) => s,
-}));
-
 vi.mock("../inference/claude-sdk.js", () => ({
   SONNET_MODEL_ID: "claude-sonnet-4-6",
 }));

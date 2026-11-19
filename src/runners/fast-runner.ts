@@ -45,7 +45,7 @@ import {
 } from "../messaging/kb-injection.js";
 import { shadowKbRows } from "../jev/shadow-kb.js";
 import { shadowMemoryRecall } from "../jev/shadow.js";
-import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import { CACHE_BREAK_MARKER } from "../messaging/cache-marker.js";
 import { buildConfirmRegex } from "../messaging/confirmation-verbs.js";
 import { EXTRACTED_FILE_MARKER } from "../messaging/extracted-file.js";
 import { getConfig } from "../config.js";

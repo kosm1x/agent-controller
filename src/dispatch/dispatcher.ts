@@ -26,7 +26,7 @@ import type {
   RunnerOutput,
 } from "../runners/types.js";
 import { createLogger } from "../lib/logger.js";
-import { stripCacheMarker } from "../messaging/router.js";
+import { stripCacheMarker } from "../messaging/cache-marker.js";
 import { getRouter } from "../messaging/index.js";
 import { SONNET_MODEL_ID } from "../inference/claude-sdk.js";
 import { ritualContext } from "../tools/flailing-guard.js";

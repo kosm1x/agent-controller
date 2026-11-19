@@ -27,7 +27,7 @@ import type {
   TokenUsage,
 } from "../prometheus/types.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
-import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import { CACHE_BREAK_MARKER } from "../messaging/cache-marker.js";
 import {
   classifyRetry,
   buildRetryDescription,

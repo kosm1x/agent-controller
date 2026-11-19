@@ -8,7 +8,7 @@
 
 import { randomUUID } from "crypto";
 import { getDatabase } from "../db/index.js";
-import { stripCacheMarker } from "../messaging/router.js";
+import { stripCacheMarker } from "../messaging/cache-marker.js";
 import type { TaskSubmission, TaskRow } from "../dispatch/dispatcher.js";
 import type {
   A2ATask,

@@ -58,7 +58,6 @@ vi.mock("../../messaging/router.js", () => ({
     stable: "STABLE-PERSONA",
     variable: "VARIABLE-PERSONA",
   })),
-  CACHE_BREAK_MARKER: "\n<!--CACHE_BREAK_v1-->\n",
 }));
 vi.mock("../../inference/adapter.js", () => ({ infer: mocks.infer }));
 // The seen store reads the database, mocked here: a test names the

@@ -45,6 +45,8 @@ const IMMUTABLE_FILES: string[] = [
   "src/dispatch/classifier.ts",
   "src/runners/fast-runner.ts",
   "src/messaging/router.ts",
+  "src/messaging/cache-marker.ts", // system-prompt cache-break marker
+  "src/messaging/poisoned-exchange.ts", // patterns that keep a reply out of the thread context
   "src/db/index.ts",
   "src/db/jarvis-fs.ts",
   "src/rituals/scheduler.ts",

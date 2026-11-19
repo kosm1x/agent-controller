@@ -9,7 +9,7 @@ import { registerRunner } from "../dispatch/dispatcher.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { orchestrate } from "../prometheus/orchestrator.js";
 import { collectFinalAnswer } from "../prometheus/final-answer.js";
-import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import { CACHE_BREAK_MARKER } from "../messaging/cache-marker.js";
 import { getConfig } from "../config.js";
 import {
   IMAGE_LOCK_LABEL,

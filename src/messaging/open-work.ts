@@ -23,7 +23,7 @@ import { getDatabase } from "../db/index.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { safeSlice } from "../lib/unicode-safe.js";
 import { extractContentTokens } from "../memory/recall-utility.js";
-import { isPoisonedExchange } from "./router.js";
+import { isPoisonedExchange } from "./poisoned-exchange.js";
 import { SESSION_IDLE_THRESHOLD_MS } from "./session-summary.js";
 
 export type OpenWorkMode = "off" | "shadow" | "on";

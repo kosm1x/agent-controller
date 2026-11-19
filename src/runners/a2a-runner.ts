@@ -9,7 +9,7 @@
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { A2ARpcClient, agentCardCache } from "../a2a/client.js";
 import { A2A_TERMINAL_STATES } from "../a2a/types.js";
-import { stripCacheMarker } from "../messaging/router.js";
+import { stripCacheMarker } from "../messaging/cache-marker.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
 import { scrubSecrets } from "../lib/secret-refs.js";

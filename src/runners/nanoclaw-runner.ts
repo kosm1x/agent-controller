@@ -12,7 +12,7 @@
 import { getConfig } from "../config.js";
 import { registerRunner } from "../dispatch/dispatcher.js";
 import { getEventBus } from "../lib/event-bus.js";
-import { CACHE_BREAK_MARKER } from "../messaging/router.js";
+import { CACHE_BREAK_MARKER } from "../messaging/cache-marker.js";
 import type { Runner, RunnerInput, RunnerOutput } from "./types.js";
 import {
   IMAGE_LOCK_LABEL,

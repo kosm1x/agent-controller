@@ -34,10 +34,8 @@ import { getEventBus } from "../../lib/event-bus.js";
 import type { Event } from "../../lib/events/types.js";
 import { extractDeliverableText } from "../../lib/deliverable.js";
 import { toolRegistry } from "../../tools/registry.js";
-import {
-  buildExternalJarvisSystemPrompt,
-  CACHE_BREAK_MARKER,
-} from "../../messaging/router.js";
+import { buildExternalJarvisSystemPrompt } from "../../messaging/router.js";
+import { CACHE_BREAK_MARKER } from "../../messaging/cache-marker.js";
 import { timeContextLine } from "../../messaging/prompt-sections.js";
 import { sanitizeDeliverable } from "../../messaging/deliverable-filter.js";
 import { nowMexDate, nowMexTime } from "../../lib/timezone.js";

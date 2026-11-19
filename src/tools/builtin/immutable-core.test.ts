@@ -36,6 +36,8 @@ describe("isImmutableCorePath", () => {
       "src/dispatch/classifier.ts",
       "src/runners/fast-runner.ts",
       "src/messaging/router.ts",
+      "src/messaging/cache-marker.ts",
+      "src/messaging/poisoned-exchange.ts",
       "src/db/index.ts",
       "src/db/jarvis-fs.ts",
       "src/rituals/scheduler.ts",

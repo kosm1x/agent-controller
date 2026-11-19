@@ -159,9 +159,6 @@ vi.mock("../observability/prometheus.js", () => ({
 
 // Heavy messaging / shadow modules the runner imports statically; this
 // drill runs the non-chat path, which never calls them.
-vi.mock("../messaging/router.js", () => ({
-  CACHE_BREAK_MARKER: "###CACHE_BREAK###",
-}));
 vi.mock("../messaging/kb-injection.js", () => ({
   buildKnowledgeBaseSection: vi.fn(() => ""),
   buildKnowledgeBaseSections: vi.fn(() => ({ stable: null, variable: null })),

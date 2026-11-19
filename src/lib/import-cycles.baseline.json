@@ -29,15 +29,6 @@
       "src/tuning/schema.ts"
     ],
     [
-      "src/dispatch/dispatcher.ts",
-      "src/intelligence/outcome-tracker.ts",
-      "src/intelligence/proactive.ts",
-      "src/messaging/open-work.ts",
-      "src/messaging/router.ts",
-      "src/rituals/dynamic.ts",
-      "src/rituals/rituales-command.ts"
-    ],
-    [
       "src/inference/adapter-openai.ts",
       "src/inference/adapter.ts",
       "src/prometheus/compaction-pipeline.ts",
@@ -46,8 +37,8 @@
   ],
   "runtimeWithDynamicCycleSizes": [
     27,
-    11,
-    5
+    5,
+    3
   ],
   "mutualDirectoryPairs": [
     "src <-> src/api",

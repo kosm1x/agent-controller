@@ -35,7 +35,6 @@ vi.mock("../../lib/event-bus.js", () => ({ getEventBus: never.getEventBus }));
 vi.mock("../../tools/registry.js", () => ({ toolRegistry: { get: never.toolRegistryGet } }));
 vi.mock("../../messaging/router.js", () => ({
   buildExternalJarvisSystemPrompt: never.buildExternalJarvisSystemPrompt,
-  CACHE_BREAK_MARKER: "\n<!--CACHE_BREAK_v1-->\n",
 }));
 vi.mock("../../inference/adapter.js", () => ({ infer: never.infer }));
 vi.mock("../../db/jarvis-fs.js", async (importOriginal) => ({
