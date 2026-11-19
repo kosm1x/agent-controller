@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-19 07:42 UTC — C2 is DONE `4d693425` (queue 4gn): the ten optional scheduled jobs register from `src/optional-crons.ts`, on the protected list; the entry point is at 631 lines. The other session's branch landed in between (queue 4go). Next: B1 (brief written), B2, G3, A3 second half, A1.**
+
 **Status 2026-11-19 06:58 UTC — A3 first half is DONE `d6e90da3` (queue 4gl): confirmation formatting and the day-log writer are modules of their own, both on the protected list; the router is at 5,550 lines. A3 second half (critical-data detection, scope helpers) follows as its own piece with its own step 0; whether each block is self-contained is not yet established. Next: the other session's branch lands; then B1, B2, G3, and C2 (brief written). Queue 4gm records a prompt-assembly finding to check.**
 
 **Status 2026-11-19 06:27 UTC — D2 is DONE `4b772678` (queue 4gk): the provider metrics are a leaf module that imports only the pricing helper; one shared object, proven by identity; the health rating's class boundaries are pinned for the first time. Next: A3 in two halves (confirmation formatting and the day log first), then A1 and C2; B1, B2 and G3 wait for another session's branch.**
