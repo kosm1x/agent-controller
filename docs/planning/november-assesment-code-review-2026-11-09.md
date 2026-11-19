@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-19 08:34 UTC — B2 is DONE `ba787fad` (queue 4gq): the DENUE guard helpers are `src/runners/denue-guard.ts`, on the protected list; the fast runner is at 2,616 lines. The guard messages stay in the runner (model-visible; not part of a pure move). Next: G3 (inventory running first), A3 second half, A1.**
+
 **Status 2026-11-19 08:13 UTC — B1 is DONE `3f1ae33d` (queue 4gp): the claimed-action guard is `src/runners/hallucination-guard.ts`, on the protected list; the fast runner is at 2,694 lines. Next: B2 (brief written), G3, A3 second half, A1.**
 
 **Status 2026-11-19 07:42 UTC — C2 is DONE `4d693425` (queue 4gn): the ten optional scheduled jobs register from `src/optional-crons.ts`, on the protected list; the entry point is at 631 lines. The other session's branch landed in between (queue 4go). Next: B1 (brief written), B2, G3, A3 second half, A1.**
