@@ -23,7 +23,7 @@ No test, typecheck or build was run by any reviewer. All numbers are for the 30 
 3. **The service freezes itself.** 79 freezes of over 1 s in 7 days (16 over 5 s; worst 9.1 s; 24.4 s in 30 days). Two causes are proven: a nightly job at 05:59 UTC that reads the whole task table (6–7 s, six nights of six), and a "similar past tasks" lookup that runs on the main thread for every chat message in shadow mode (its result is never shown to the model): 10 of its 50 logged runs this week took over 1 s, worst 6.8 s, and the two longest chat-time freezes fall on the same minutes. 19 of the 79 freezes fell inside the windows of only 76 chat replies.
 4. **The operator sees only a placeholder until the whole answer is ready.** Nothing is streamed on the main path and Telegram shows no typing sign.
 
-**On cost: the ledger's dollars are list-price equivalents computed by the SDK, not an invoice** (the service runs on a plan; only usage beyond the plan's allowance is billed, and the ledger cannot tell which calls those were). In those terms, about 70 % of the fast runner's booked cost is writing prompt text into the one-hour reusable store at twice the input price (47.1 M tokens ≈ $188 of $268), and most of what is written is the per-task conversation text, which is never read again after the task ends. 59 % of tasks start with nothing reusable (677 of 1,155 first calls), mainly because the tool list differs from one kind of message to the next: 71 different tool lists in 14 days, and 42 % of consecutive large calls differ in their tool list, which invalidates everything after it.
+**On cost: the ledger's dollars are list-price equivalents computed by the SDK, not an invoice** (the service runs on a plan; only usage beyond the plan's allowance is billed, and the ledger cannot tell which calls those were). In those terms, about 70 % of the fast runner's booked cost is writing prompt text into the one-hour reusable store at twice the input price (47.1 M tokens ≈ $188 of $268), and most of what is written is the per-task conversation text, which is never read again after the task ends. 59 % of tasks start with nothing reusable (677 of 1,155 first calls), mainly because the tool list differs from one kind of message to the next: 248 of 340 cold starts follow a changed set of up-front tools and 77 the one-hour lifetime (replay in the tool-list study below; the count first given here, 71 lists in 14 days, came from a diagnosis line that also counts tools not loaded up front). A warm start costs less but is not faster.
 
 **Heavy tasks** (52 runs, median 107 s) spend a median of 18.7 s planning, 73.2 s executing, 15.3 s reflecting and 17.8 s (average) in the quality grader. The grader stays (ruling). Planning and reflecting receive the full chat prompt.
 
@@ -53,7 +53,7 @@ Five decisions. Everything else in "Work ahead" needs no ruling (measurement, or
 | 2 | Store the per-task conversation text for five minutes instead of one hour (tool list and instructions stay at one hour) | YES | That text is never read after its task ends, and it is most of what is written at the double price: up to ≈ $70 per 30 days in list-price terms. Not one byte of what the model sees changes. | Small. The real effect on plan usage cannot be measured from here; the proof is the before/after split of writes, which batch P1 starts recording. Reversible by one setting. |
 | 3 | The health probe restarts the service only after two failed checks, not one | YES | A single 10 s probe every 5 minutes restarts the service and kills replies in flight; a freeze or a slow outside database alone can fail it. 8 failed probes in the last 30 days, 1 logged restart. The second watchdog already works this way. | Small; operator-installed script change; a real outage is noticed about 10 s later. |
 | 4 | Let the per-message effort setting reach the main model path, judged by the one eval-gate run of batch 10 | YES | The classifier already decides how hard each message is, but that decision has never reached the main path since it was wired in July: every message runs at one fixed effort. Simple messages could answer faster. | Model-visible → eval gate; ships only if the gate passes. Needs the current fixed value (operator-side setting) recorded first. |
-| 5 | Design and measure (not build) one stable tool list across message kinds | YES | The changing tool list is the main reason 59 % of tasks start with nothing reusable — the largest single lever on both the first-call wait and the booked cost. | Research only; the build would be model-visible and comes back as its own ruling with numbers. |
+| 5 | Design and measure (not build) one stable tool list across message kinds | YES | The changing tool list is the main reason 59 % of tasks start with nothing reusable. (As written before the study this row also called it the largest lever on the first-call wait; the study found no effect on the wait.) | Research only; the build would be model-visible and comes back as its own ruling with numbers. |
 
 Considered and **not** recommended: streaming partial answer text (collides with the delivery checks: the final answer is the result text, scope questions are never delivered, every send is sanitised); moving the grader, the gates or the citation check off the wait (rulings); a cheaper model for the heavy tier (ruling); replacing the full test run in the commit check with related tests only (the full run is the one sanctioned gate before a direct push; CI median is 132 s and is not the bottleneck); a worker thread or a second database connection (ruled out in queue 4br); widening the greeting fast path (0 uses in 30 days and it would be a full model call anyway); an index for the skills test sweep (milliseconds).
 
@@ -68,6 +68,21 @@ Given by the operator on 2026-11-19 (UTC), one at a time (queue 4gg).
 | 3 | YES | Two failed checks before a restart; operator-installed. |
 | 4 | YES | Follow the design: the effort rating reaches the main model path. Batch 10; ships only on a passing eval-gate run. |
 | 5 | YES — study and propose | Design and numbers only; a build comes back as its own ruling. |
+
+## Tool-list study (ruling 5) — result and ruling
+
+Done 2026-11-19 (queue 4gh): one fresh reviewer read the code path from message to request; the orchestrator then replayed 30 days of stored scope rows against the first model call of each task.
+
+| Question | Answer |
+| --- | --- |
+| Is the list unstable because of ordering? | No. It is assembled in a fixed order; what varies is the set of scope groups, which follows the conversation (current message, recent messages, a 45-minute carry-over). |
+| How much variety? | 826 chat tasks: 199 different name lists, 95 different sets of tools loaded up front; the four most common sets cover 313 tasks. |
+| Does the tool set decide a cold start? | Yes. Of 816 large first calls: same list seen in the hour before → 430 of 435 warm; same up-front set, other deferred names → 39 of 49 warm; up-front set not seen in the hour → 248 of 255 cold; no task in the hour → 77 cold. So 248 of 340 cold starts follow a changed tool set and 77 the one-hour lifetime. |
+| What would a warm start save? | About 41 k tokens read instead of written: about $39 per 30 days in list-price terms across those 248 starts. |
+| Does it make a reply faster? | No. Time to the first response is the same warm and cold (median 4.0 s in both groups, deciles overlap). |
+| What does one list cost? | The scope is also a safety boundary: tools outside it are refused. One list means either the most-used tools behind a search step (a failure already seen in September) or shell, mail and delete tools offered on every message. |
+
+**Ruling: one stable tool list is not built.** Taken instead: scheduled jobs that pass a hand-picked short tool list still spend one tool-search call per run (139 such calls in 133 of 377 non-chat tasks in 30 days); an explicit short list is loaded up front. One file; it changes which tools the model has loaded, so it joins batch 10 and its eval-gate run.
 
 ## Work ahead
 
@@ -102,7 +117,7 @@ Order: the Code build queue finishes first (operator ruling 2026-11-18); Perform
 ### Batch P4 — Model-visible, with the one eval-gate run of batch 10 (rulings 4, 5)
 
 1. Effort setting on the main path (ruling 4).
-2. Stable tool list: design and numbers only (ruling 5). Inputs already measured: 278 tool-search calls in 30 days, most often followed by the same handful of tools.
+2. Stable tool list: studied and closed, not built (section above). In its place: an explicit short tool list of a scheduled job is loaded up front.
 3. Candidates that wait for P1 numbers before they are proposed: what planning and reflecting receive (the full chat prompt today); the second classifier call for 1 in 3 messages; a result-size limit for the largest tool outputs; the `task_history` search (scans every run's output per search word; 55 calls in 30 days).
 
 ### Batch P5 — Store lifetime (ruling 2: no, dropped)
@@ -121,4 +136,4 @@ Not built; one hour stays. The write split of P1.5 is still recorded, as a measu
 
 ## Next
 
-The rulings are in (above). The tool-list study (ruling 5) starts now, read-only. After the Code queue: P1 → P2 → P3, and P4 with batch 10's eval-gate run. Re-score Performance after the proofs.
+The rulings are in (above). The tool-list study (ruling 5) is done and closed: no stable list; a small fix for scheduled jobs joins batch 10. After the Code queue: P1 → P2 → P3, and P4 with batch 10's eval-gate run. Re-score Performance after the proofs.
