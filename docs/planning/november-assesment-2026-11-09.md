@@ -115,6 +115,8 @@ One dimension at a time, regardless of the time and effort each takes, in this o
 
 Reading: the per-turn model latency is fine; a chat reply is slow because a turn chain averages about 8 turns per task and enrichment plus scope classification run before the first one. Telegram streaming softens the wait. The swarm path gets almost no cache benefit. 2,024 SDK calls are booked without an owner.
 
+> Corrected 2026-11-19 by the dimension's review (`november-assesment-performance-review-2026-11-19.md`): the trace writes one row per content block, so "about 8 turns per task" is 3.8 model calls (median 3) and the 1.8 s "turn latency" is not a model latency (per call including the tool run before it: median 4.7 s); nothing streams on the main path; booked cost is a list-price equivalent, not an invoice; the calls without an owner are the extraction calls made after a reply is sent; a quarter of the freezes over 1 s fall inside chat replies.
+
 ## 3. Resilience — 7
 
 | Metric (30 days) | Value |
@@ -246,7 +248,7 @@ What would move it: +1 = small-model id through the gate, the A2A 1.0 shim, the 
 | Dimension | Opened | Review | Rulings | Shipped | Re-score |
 | --- | --- | --- | --- | --- | --- |
 | 1 Code | 2026-11-09 | done 2026-11-09 23:13 UTC → `november-assesment-code-review-2026-11-09.md` (8 sub-dimensions, each reviewed, re-checked and refuted) | 15 ruled 2026-11-10 15:07 UTC, all as recommended | — | — |
-| 2 Performance | — | — | — | — | — |
+| 2 Performance | 2026-11-19 | done 2026-11-19 04:21 UTC → `november-assesment-performance-review-2026-11-19.md` (6 sub-dimensions, each reviewed, re-checked and verified adversarially) | 5 to bring, one at a time | — | — |
 | 3 Resilience | — | — | — | — | — |
 | 4 Memory | — | — | — | — | — |
 | 5 Tool use | — | — | — | — | — |
