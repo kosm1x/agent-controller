@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-19 06:58 UTC — A3 first half is DONE `d6e90da3` (queue 4gl): confirmation formatting and the day-log writer are modules of their own, both on the protected list; the router is at 5,550 lines. A3 second half (critical-data detection, scope helpers) follows as its own piece with its own step 0; whether each block is self-contained is not yet established. Next: the other session's branch lands; then B1, B2, G3, and C2 (brief written). Queue 4gm records a prompt-assembly finding to check.**
+
 **Status 2026-11-19 06:27 UTC — D2 is DONE `4b772678` (queue 4gk): the provider metrics are a leaf module that imports only the pricing helper; one shared object, proven by identity; the health rating's class boundaries are pinned for the first time. Next: A3 in two halves (confirmation formatting and the day log first), then A1 and C2; B1, B2 and G3 wait for another session's branch.**
 
 **Status 2026-11-19 06:04 UTC — the cache marker and the poisoned-exchange check are leaf modules, COMMITTED `021068b5` (queue 4gj): with the third edge cut on 2026-11-18 this removes the router's runtime cycle altogether (3 runtime cycles → 2; with dynamic imports 27 / 5 / 3 files); both new files joined the protected list in the same commit. G2 and G4 are done, G1 in its minimal form. Next: the pure moves that touch neither the runners nor the tuning schema (D2, A3, A1, C2); B1, B2 and G3 wait for another session's branch.**
