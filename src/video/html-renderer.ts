@@ -15,12 +15,18 @@
  * and returns the MP4 path. The tool wrapper handles DB rows and job-state.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { mkdirSync, rmSync, existsSync, statSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import { formatFrameTime } from "./frame-clock.js";
 import type { ParsedHtmlComposition } from "./html-parser.js";
 import { errMsg } from "../lib/err-msg.js";
+
+// Async child (MCEventLoopBlock): the sync ffmpeg concat held the service's
+// event loop for up to 120 s. stdin is closed right after spawn, as
+// execFileSync's was.
+const execFileAsync = promisify(execFile);
 
 /** Playwright executable path — the ONLY path proven to survive on this VPS. */
 export const SNAP_CHROMIUM_PATH = "/snap/bin/chromium";
@@ -260,7 +266,7 @@ export async function renderHtmlComposition(
   // Concat PNG sequence → MP4.
   // Use the glob-style -framerate + -i pattern. yuv420p for QuickTime compat.
   try {
-    execFileSync(
+    const p = execFileAsync(
       "ffmpeg",
       [
         "-y",
@@ -278,8 +284,10 @@ export async function renderHtmlComposition(
         "+faststart",
         outputPath,
       ],
-      { stdio: "pipe", timeout: 120_000 },
+      { timeout: 120_000 },
     );
+    p.child.stdin?.end();
+    await p;
   } catch (err) {
     cleanupFramesOnError();
     throw new Error(

@@ -3,9 +3,16 @@
  * Cascade: Pexels (stock) → Gemini (AI) → HuggingFace (AI) → solid color placeholder.
  */
 
+import { execFile } from "child_process";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { promisify } from "util";
 import { errMsg } from "../lib/err-msg.js";
+
+// Async child (MCEventLoopBlock): the sync placeholder ffmpeg held the
+// service's event loop for up to 15 s. stdin is closed right after spawn, as
+// execFileSync's was.
+const execFileAsync = promisify(execFile);
 
 const PEXELS_API_URL = "https://api.pexels.com/v1/search";
 const TIMEOUT_MS = 15_000;
@@ -149,8 +156,7 @@ export async function fetchImage(
   console.warn(
     `[images] All providers failed for "${query}". Using placeholder.`,
   );
-  const { execFileSync } = await import("child_process");
-  execFileSync(
+  const p = execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -164,5 +170,7 @@ export async function fetchImage(
     ],
     { timeout: TIMEOUT_MS },
   );
+  p.child.stdin?.end();
+  await p;
   return outputPath;
 }

@@ -9,7 +9,7 @@
  * Subclips: random start offset, skip first 180s, match target duration.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import {
   createWriteStream,
   existsSync,
@@ -18,11 +18,13 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
 } from "fs";
 import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import type { ReadableStream as WebReadableStream } from "stream/web";
+import { promisify } from "util";
 import { errMsg } from "../lib/err-msg.js";
 import { safeFetch } from "../lib/url-safety.js";
 
@@ -39,6 +41,11 @@ const YTDLP_HOSTS = new Set([
   "vimeo.com",
   "player.vimeo.com",
 ]);
+
+// Async children (MCEventLoopBlock): a sync ffprobe/yt-dlp/ffmpeg held the
+// service's event loop for the child's whole run (yt-dlp: up to 120 s). stdin
+// is closed right after spawn, as execFileSync's was.
+const execFileAsync = promisify(execFile);
 
 const CACHE_DIR = "/tmp/video-backgrounds";
 const SKIP_SECONDS = 180; // skip first 3 minutes (intros, title cards)
@@ -172,13 +179,15 @@ export function listCachedBackgrounds(): CachedBackground[] {
 /**
  * Get video duration in seconds via ffprobe.
  */
-function probeDuration(filePath: string): number {
+async function probeDuration(filePath: string): Promise<number> {
   try {
-    const output = execFileSync(
+    const p = execFileAsync(
       "ffprobe",
       ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
       { timeout: 15_000, encoding: "utf-8" },
     );
+    p.child.stdin?.end();
+    const { stdout: output } = await p;
     return parseFloat(JSON.parse(output).format?.duration ?? "0");
   } catch {
     return 0;
@@ -255,24 +264,45 @@ export async function downloadBackground(
         console.warn(`[backgrounds] Refused yt-dlp host ${host}: ${name}`);
         return null;
       }
-      execFileSync(
-        "yt-dlp",
-        [
-          "-f",
-          "bestvideo[height<=1080][ext=mp4]/best[height<=1080]",
-          "-o",
-          outputPath,
-          "--no-playlist",
-          // Generic follows any embedded URL/redirect; allow-listed hosts
-          // still route odd paths to it (R2).
-          "--use-extractors",
-          "default,-generic",
-          "--quiet",
-          "--",
-          url,
-        ],
-        { timeout: 120_000, stdio: "pipe" },
-      );
+      try {
+        const p = execFileAsync(
+          "yt-dlp",
+          [
+            "-f",
+            "bestvideo[height<=1080][ext=mp4]/best[height<=1080]",
+            "-o",
+            outputPath,
+            "--no-playlist",
+            // Generic follows any embedded URL/redirect; allow-listed hosts
+            // still route odd paths to it (R2).
+            "--use-extractors",
+            "default,-generic",
+            // Same cap as the direct branch; yt-dlp enforces it only when
+            // the size is known up front, so the file is checked below too.
+            "--max-filesize",
+            String(maxBytes),
+            "--quiet",
+            "--",
+            url,
+          ],
+          { timeout: 120_000 },
+        );
+        p.child.stdin?.end();
+        await p;
+      } catch (err) {
+        // A timeout or failed run leaves the partial download behind.
+        for (const f of [outputPath, `${outputPath}.part`, `${outputPath}.ytdl`])
+          rmSync(f, { force: true });
+        throw err;
+      }
+      if (existsSync(outputPath)) {
+        const size = statSync(outputPath).size;
+        if (size > maxBytes) {
+          rmSync(outputPath, { force: true });
+          console.warn(`[backgrounds] Refused ${size} B (cap): ${name}`);
+          return null;
+        }
+      }
     }
 
     if (!existsSync(outputPath)) {
@@ -280,7 +310,7 @@ export async function downloadBackground(
       return null;
     }
 
-    const duration = probeDuration(outputPath);
+    const duration = await probeDuration(outputPath);
     const meta: CachedBackground = {
       name,
       filePath: outputPath,
@@ -312,11 +342,11 @@ export async function downloadBackground(
  * Skips first SKIP_SECONDS (180s) to avoid intros.
  * Returns path to the extracted subclip.
  */
-export function extractSubclip(
+export async function extractSubclip(
   name: string,
   targetDurationSec: number,
   outputPath: string,
-): string | null {
+): Promise<string | null> {
   const meta = getCachedMeta(name);
   if (!meta || !existsSync(meta.filePath)) {
     console.warn(`[backgrounds] ${name} not cached`);
@@ -338,7 +368,7 @@ export function extractSubclip(
   const duration = Math.min(targetDurationSec, available);
 
   try {
-    execFileSync(
+    const p = execFileAsync(
       "ffmpeg",
       [
         "-y",
@@ -355,8 +385,10 @@ export function extractSubclip(
         "-an", // no audio from background video
         outputPath,
       ],
-      { timeout: 60_000, stdio: "pipe" },
+      { timeout: 60_000 },
     );
+    p.child.stdin?.end();
+    await p;
 
     if (!existsSync(outputPath)) return null;
     return outputPath;

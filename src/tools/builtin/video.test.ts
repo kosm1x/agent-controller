@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { randomUUID } from "crypto";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 
 const mockDb = {
   prepare: vi.fn().mockReturnValue({
@@ -17,13 +20,40 @@ vi.mock("../../db/index.js", () => ({
   writeWithRetry: <T>(fn: () => T): T => fn(),
 }));
 
-// Mock execFileSync for transition preview tests (no real ffmpeg invocation)
-const mockExecFileSync = vi.fn();
+// Mock the async children (transition preview ffmpeg, cleanup `du`) — no real
+// process starts. promisify(execFile) gets a promise that settles on a later
+// tick with mockExecFile's answer as stdout (or its throw as the rejection)
+// and carries `.child`, like the real one (MCEventLoopBlock). A sync child is
+// refused.
+const mockExecFile = vi.fn();
+const stdinEnds: Array<ReturnType<typeof vi.fn>> = [];
 vi.mock("child_process", async (importOriginal) => {
   const orig = (await importOriginal()) as typeof import("child_process");
+  const { promisify } = await import("util");
   return {
     ...orig,
-    execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
+    execFileSync: () => {
+      throw new Error("refused: sync child in this test");
+    },
+    execFile: Object.assign(vi.fn(), {
+      [promisify.custom]: (...args: unknown[]) => {
+        const end = vi.fn();
+        stdinEnds.push(end);
+        let out: unknown;
+        let err: unknown;
+        try {
+          out = mockExecFile(...args);
+        } catch (e) {
+          err = e ?? new Error("child failed");
+        }
+        const settled = new Promise((res, rej) =>
+          setImmediate(() =>
+            err ? rej(err) : res({ stdout: out, stderr: "" }),
+          ),
+        );
+        return Object.assign(settled, { child: { stdin: { end } } });
+      },
+    }),
   };
 });
 
@@ -332,7 +362,7 @@ describe("video tools", () => {
     });
 
     it("renders a native transition — passes xfade=fade to ffmpeg", async () => {
-      mockExecFileSync.mockReturnValue(Buffer.from(""));
+      mockExecFile.mockReturnValue("");
       const result = await videoTransitionPreviewTool.execute({
         transition: "fade",
         duration: 1.0,
@@ -343,13 +373,13 @@ describe("video tools", () => {
       expect(parsed.path).toMatch(
         /\/tmp\/video-previews\/transition-fade-\d+\.mp4/,
       );
-      expect(mockExecFileSync).toHaveBeenCalled();
-      const args = mockExecFileSync.mock.calls[0][1] as string[];
+      expect(mockExecFile).toHaveBeenCalled();
+      const args = mockExecFile.mock.calls[0][1] as string[];
       expect(args.some((a) => a.includes("transition=fade"))).toBe(true);
     });
 
     it("falls back to dissolve for GL-only transitions", async () => {
-      mockExecFileSync.mockReturnValue(Buffer.from(""));
+      mockExecFile.mockReturnValue("");
       const warnSpy = vi
         .spyOn(console, "warn")
         .mockImplementation(() => undefined);
@@ -363,7 +393,7 @@ describe("video tools", () => {
     });
 
     it("clamps duration at 0.2 floor", async () => {
-      mockExecFileSync.mockReturnValue(Buffer.from(""));
+      mockExecFile.mockReturnValue("");
       const result = await videoTransitionPreviewTool.execute({
         transition: "fade",
         duration: 0.05,
@@ -373,7 +403,7 @@ describe("video tools", () => {
     });
 
     it("clamps duration at 3.0 ceiling", async () => {
-      mockExecFileSync.mockReturnValue(Buffer.from(""));
+      mockExecFile.mockReturnValue("");
       const result = await videoTransitionPreviewTool.execute({
         transition: "fade",
         duration: 10,
@@ -383,7 +413,7 @@ describe("video tools", () => {
     });
 
     it("handles NaN duration (falls back to default 1.0)", async () => {
-      mockExecFileSync.mockReturnValue(Buffer.from(""));
+      mockExecFile.mockReturnValue("");
       const result = await videoTransitionPreviewTool.execute({
         transition: "fade",
         duration: NaN,
@@ -392,8 +422,17 @@ describe("video tools", () => {
       expect(parsed.duration_seconds).toBe(1.0);
     });
 
+    it("runs ffmpeg as an async child with the 30 s timeout, stdin closed", async () => {
+      mockExecFile.mockReturnValue("");
+      await videoTransitionPreviewTool.execute({ transition: "fade" });
+      const [cmd, , opts] = mockExecFile.mock.calls[0];
+      expect(cmd).toBe("ffmpeg");
+      expect(opts).toEqual({ timeout: 30_000 });
+      expect(stdinEnds.at(-1)).toHaveBeenCalledTimes(1);
+    });
+
     it("cleans up orphan MP4 on ffmpeg throw", async () => {
-      mockExecFileSync.mockImplementationOnce(() => {
+      mockExecFile.mockImplementationOnce(() => {
         throw new Error("ffmpeg timed out");
       });
       const result = await videoTransitionPreviewTool.execute({
@@ -439,6 +478,43 @@ describe("video tools", () => {
       const parsed = JSON.parse(result);
       expect(parsed.removed_count).toBe(0);
       expect(parsed.older_than_hours).toBe(24);
+    });
+
+    it("tallies the bytes `du` answers (async child), then removes the job dir", async () => {
+      const jobId = randomUUID().slice(0, 8);
+      const workDir = join("/tmp", "video-jobs", jobId);
+      mkdirSync(workDir, { recursive: true });
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([{ job_id: jobId }]),
+        run: vi.fn(),
+        get: vi.fn(),
+      });
+      mockExecFile.mockReturnValueOnce(`4096\t${workDir}\n`);
+      const parsed = JSON.parse(await videoJobCleanupTool.execute({}));
+      expect(parsed).toMatchObject({ removed_count: 1, bytes_freed: 4096 });
+      expect(mockExecFile).toHaveBeenCalledWith("du", ["-sb", workDir], {
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(stdinEnds.at(-1)).toHaveBeenCalledTimes(1);
+      expect(existsSync(workDir)).toBe(false);
+    });
+
+    it("a failing `du` still removes the dir, with 0 bytes tallied", async () => {
+      const jobId = randomUUID().slice(0, 8);
+      const workDir = join("/tmp", "video-jobs", jobId);
+      mkdirSync(workDir, { recursive: true });
+      mockDb.prepare.mockReturnValue({
+        all: vi.fn().mockReturnValue([{ job_id: jobId }]),
+        run: vi.fn(),
+        get: vi.fn(),
+      });
+      mockExecFile.mockImplementationOnce(() => {
+        throw new Error("Command failed: du");
+      });
+      const parsed = JSON.parse(await videoJobCleanupTool.execute({}));
+      expect(parsed).toMatchObject({ removed_count: 1, bytes_freed: 0 });
+      expect(existsSync(workDir)).toBe(false);
     });
   });
 
@@ -515,7 +591,7 @@ describe("video tools", () => {
         }),
       );
       expect(parsed.error).toMatch(/slug/);
-      expect(mockExecFileSync).not.toHaveBeenCalled();
+      expect(mockExecFile).not.toHaveBeenCalled();
     });
 
     it("refuses file:// and loopback URLs without downloading", async () => {
@@ -528,7 +604,7 @@ describe("video tools", () => {
         );
         expect(parsed.error, url).toBeTruthy();
       }
-      expect(mockExecFileSync).not.toHaveBeenCalled();
+      expect(mockExecFile).not.toHaveBeenCalled();
     });
   });
 });

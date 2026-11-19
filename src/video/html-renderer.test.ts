@@ -248,21 +248,40 @@ vi.mock("playwright", () => ({
   },
 }));
 
-// Mock execFileSync for ffmpeg step so no real binary runs.
+// Mock the ffmpeg step so no real binary runs. It is an async child since
+// MCEventLoopBlock: promisify(execFile) gets a promise that settles on a later
+// tick (writing the output file then, as ffmpeg would) and carries `.child`.
+// A sync child is refused.
+const ffmpeg = vi.hoisted(() => ({
+  calls: [] as unknown[][],
+  stdinEnds: [] as Array<ReturnType<typeof vi.fn>>,
+  fail: null as Error | null,
+}));
 vi.mock("child_process", async () => {
   const actual =
     await vi.importActual<typeof import("child_process")>("child_process");
+  const { promisify } = await import("util");
   return {
     ...actual,
-    execFileSync: vi.fn((cmd: string, args: string[]) => {
-      if (cmd === "ffmpeg") {
-        // Simulate ffmpeg creating the output file.
-        const outputIdx = args.length - 1;
-        const outputPath = args[outputIdx];
-        writeFileSync(outputPath, Buffer.from([0x00, 0x01, 0x02]));
-        return Buffer.from("");
-      }
-      return Buffer.from("");
+    execFileSync: () => {
+      throw new Error("refused: sync child in this test");
+    },
+    execFile: Object.assign(vi.fn(), {
+      [promisify.custom]: (cmd: string, args: string[], opts: unknown) => {
+        ffmpeg.calls.push([cmd, args, opts]);
+        const end = vi.fn();
+        ffmpeg.stdinEnds.push(end);
+        const settled = new Promise((res, rej) =>
+          setImmediate(() => {
+            if (ffmpeg.fail) return rej(ffmpeg.fail);
+            // Simulate ffmpeg creating the output file.
+            if (cmd === "ffmpeg")
+              writeFileSync(args[args.length - 1], Buffer.from([0x00, 0x01, 0x02]));
+            res({ stdout: "", stderr: "" });
+          }),
+        );
+        return Object.assign(settled, { child: { stdin: { end } } });
+      },
     }),
   };
 });
@@ -277,6 +296,9 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
     mocks.newContextMock.mockReset();
     mocks.closeMock.mockReset();
     mocks.launchMock.mockReset();
+    ffmpeg.calls.length = 0;
+    ffmpeg.stdinEnds.length = 0;
+    ffmpeg.fail = null;
 
     mocks.screenshotMock.mockImplementation(async (opts: { path: string }) => {
       writeFileSync(opts.path, Buffer.from([0xff]));
@@ -314,6 +336,55 @@ describe("html-renderer — renderHtmlComposition (mocked browser)", () => {
     expect(result.outputPath).toBe(outputPath);
     expect(existsSync(outputPath)).toBe(true);
     rmSync(outputPath, { force: true });
+  });
+
+  it("concats the frames with one async ffmpeg child — args and timeout unchanged", async () => {
+    const j = `${jobId}-FF`;
+    const outputPath = join(TMP_HTML_DIR, `${j}.mp4`);
+    await renderHtmlComposition(sampleComposition(), j, {
+      fps: 24,
+      width: 640,
+      height: 480,
+      outputPath,
+    });
+    expect(ffmpeg.calls).toEqual([
+      [
+        "ffmpeg",
+        [
+          "-y",
+          "-framerate",
+          "24",
+          "-i",
+          join(FRAME_ROOT, j, "frame-%06d.png"),
+          "-c:v",
+          "libx264",
+          "-pix_fmt",
+          "yuv420p",
+          "-r",
+          "24",
+          "-movflags",
+          "+faststart",
+          outputPath,
+        ],
+        { timeout: 120_000 },
+      ],
+    ]);
+    expect(ffmpeg.stdinEnds[0]).toHaveBeenCalledTimes(1);
+    rmSync(outputPath, { force: true });
+  });
+
+  it("a failing ffmpeg → 'ffmpeg concat failed: …' and the frames are removed", async () => {
+    const j = `${jobId}-FX`;
+    ffmpeg.fail = new Error("Command failed: ffmpeg -y");
+    await expect(
+      renderHtmlComposition(sampleComposition(), j, {
+        fps: 24,
+        width: 640,
+        height: 480,
+        outputPath: join(TMP_HTML_DIR, `${j}.mp4`),
+      }),
+    ).rejects.toThrow("ffmpeg concat failed: Command failed: ffmpeg -y");
+    expect(existsSync(join(FRAME_ROOT, j))).toBe(false);
   });
 
   it("uses snap Chromium executablePath", async () => {

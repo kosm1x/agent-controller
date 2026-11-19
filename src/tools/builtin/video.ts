@@ -7,9 +7,10 @@
  */
 
 import { randomUUID } from "crypto";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import type { Tool } from "../types.js";
 import { getDatabase, writeWithRetry } from "../../db/index.js";
 import { toMexTime } from "../../lib/timezone.js";
@@ -26,6 +27,11 @@ import {
 } from "../../video/composition-protocol.js";
 
 const MAX_CONCURRENT_JOBS = 2;
+
+// Async children (MCEventLoopBlock): the sync ffmpeg preview and `du` held the
+// service's event loop for their whole run. stdin is closed right after
+// spawn, as execFileSync's was.
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -315,7 +321,7 @@ async function runPipeline(
       );
     }
     const bgSubclip = join(workDir, "bg-subclip.mp4");
-    const subclipResult = extractSubclip(
+    const subclipResult = await extractSubclip(
       bgName,
       ttsResult.totalDuration,
       bgSubclip,
@@ -560,7 +566,7 @@ Long texts (>2000 chars) are automatically split at sentence boundaries with sil
       const { generateNarration, probeAudioDuration } =
         await import("../../video/tts.js");
       const path = await generateNarration(text, outputPath, language, voice);
-      const duration = probeAudioDuration(path);
+      const duration = await probeAudioDuration(path);
       return JSON.stringify({
         path,
         duration_seconds: Math.round(duration * 10) / 10,
@@ -612,7 +618,7 @@ Returns voice names, genders, and locales. Filter by language to narrow results.
     try {
       const { listVoices } = await import("../../video/tts.js");
       const language = args.language as string | undefined;
-      const voices = listVoices(language);
+      const voices = await listVoices(language);
       if (voices.length === 0) {
         return JSON.stringify({
           error: "No voices found. Is edge-tts installed?",
@@ -898,7 +904,7 @@ Returns the path to a small MP4 under /tmp/video-previews/.`,
 
       // Build filter: two 2-second colour cards crossfaded with the resolved xfade.
       const filter = `color=c=red:s=320x180:r=24:d=2[a];color=c=blue:s=320x180:r=24:d=2[b];[a][b]${spec.filterExpr},format=yuv420p[v]`;
-      execFileSync(
+      const p = execFileAsync(
         "ffmpeg",
         [
           "-y",
@@ -922,8 +928,10 @@ Returns the path to a small MP4 under /tmp/video-previews/.`,
           "yuv420p",
           outPath,
         ],
-        { timeout: 30_000, stdio: "pipe" },
+        { timeout: 30_000 },
       );
+      p.child.stdin?.end();
+      await p;
 
       return JSON.stringify({
         path: outPath,
@@ -1321,10 +1329,12 @@ Default: removes jobs that are completed/failed/cancelled AND older than 24h. Re
         try {
           // Tally bytes (best-effort; skip if fails)
           try {
-            const stat = execFileSync("du", ["-sb", workDir], {
+            const du = execFileAsync("du", ["-sb", workDir], {
               encoding: "utf-8",
               timeout: 5_000,
             });
+            du.child.stdin?.end();
+            const { stdout: stat } = await du;
             const match = stat.match(/^(\d+)/);
             if (match) bytesFreed += parseInt(match[1], 10);
           } catch {

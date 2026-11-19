@@ -11,11 +11,17 @@
  * Fallback: silent placeholder (word count → estimated duration)
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { promisify } from "util";
 import type { VideoScene } from "./types.js";
 import { errMsg } from "../lib/err-msg.js";
+
+// Async children (MCEventLoopBlock): each sync edge-tts/ffmpeg/ffprobe call
+// held the service's event loop for its whole run (up to 30 s). stdin is
+// closed right after spawn, as execFileSync's was.
+const execFileAsync = promisify(execFile);
 
 const TIMEOUT_MS = 30_000;
 const MAX_CHARS_PER_CHUNK = 2000;
@@ -31,13 +37,15 @@ const DEFAULT_VOICE_EN = "en-US-AriaNeural";
  * Get the duration of an audio file in seconds via ffprobe.
  * Returns 0 on failure (never throws).
  */
-export function probeAudioDuration(filePath: string): number {
+export async function probeAudioDuration(filePath: string): Promise<number> {
   try {
-    const output = execFileSync(
+    const p = execFileAsync(
       "ffprobe",
       ["-v", "quiet", "-print_format", "json", "-show_format", filePath],
       { timeout: 10_000, encoding: "utf-8" },
     );
+    p.child.stdin?.end();
+    const { stdout: output } = await p;
     const meta = JSON.parse(output);
     const duration = parseFloat(meta.format?.duration ?? "0");
     return Number.isFinite(duration) ? duration : 0;
@@ -136,7 +144,7 @@ async function edgeTts(
 
   // Generate silence gap
   const silencePath = join(dir, "silence.mp3");
-  execFileSync(
+  const silence = execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -150,8 +158,10 @@ async function edgeTts(
       "libmp3lame",
       silencePath,
     ],
-    { timeout: 10_000, stdio: "pipe" },
+    { timeout: 10_000 },
   );
+  silence.child.stdin?.end();
+  await silence;
 
   // Build concat list: part0 silence part1 silence part2...
   const concatList = partFiles
@@ -165,7 +175,7 @@ async function edgeTts(
   writeFileSync(concatFile, concatList, "utf-8");
 
   // Concat via FFmpeg
-  execFileSync(
+  const concat = execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -179,8 +189,10 @@ async function edgeTts(
       "copy",
       outputPath,
     ],
-    { timeout: TIMEOUT_MS, stdio: "pipe" },
+    { timeout: TIMEOUT_MS },
   );
+  concat.child.stdin?.end();
+  await concat;
 
   return outputPath;
 }
@@ -188,23 +200,25 @@ async function edgeTts(
 /**
  * Generate a single MP3 from a text chunk (under 2000 chars).
  */
-function edgeTtsSingle(
+async function edgeTtsSingle(
   text: string,
   outputPath: string,
   voice: string,
-): string {
+): Promise<string> {
   const textFile = outputPath.replace(/\.[^.]+$/, ".txt");
   writeFileSync(textFile, text, "utf-8");
 
   try {
-    execFileSync(
+    const p = execFileAsync(
       "edge-tts",
       ["--voice", voice, "--file", textFile, "--write-media", outputPath],
-      { timeout: TIMEOUT_MS, stdio: "pipe" },
+      { timeout: TIMEOUT_MS },
     );
+    p.child.stdin?.end();
+    await p;
   } catch {
     // Fallback: --text directly (truncated)
-    execFileSync(
+    const p = execFileAsync(
       "edge-tts",
       [
         "--voice",
@@ -214,8 +228,10 @@ function edgeTtsSingle(
         "--write-media",
         outputPath,
       ],
-      { timeout: TIMEOUT_MS, stdio: "pipe" },
+      { timeout: TIMEOUT_MS },
     );
+    p.child.stdin?.end();
+    await p;
   }
 
   if (!existsSync(outputPath)) {
@@ -228,8 +244,11 @@ function edgeTtsSingle(
 // Silent fallback
 // ---------------------------------------------------------------------------
 
-function generateSilence(outputPath: string, durationSec: number): string {
-  execFileSync(
+async function generateSilence(
+  outputPath: string,
+  durationSec: number,
+): Promise<string> {
+  const p = execFileAsync(
     "ffmpeg",
     [
       "-y",
@@ -245,6 +264,8 @@ function generateSilence(outputPath: string, durationSec: number): string {
     ],
     { timeout: TIMEOUT_MS },
   );
+  p.child.stdin?.end();
+  await p;
   return outputPath;
 }
 
@@ -327,7 +348,7 @@ export async function generatePerSceneTTS(
 
     try {
       await edgeTts(scene.text, outputPath, resolvedVoice);
-      const duration = probeAudioDuration(outputPath);
+      const duration = await probeAudioDuration(outputPath);
       files.push(outputPath);
       durations.push(duration > 0 ? duration : scene.duration);
     } catch (err) {
@@ -336,7 +357,7 @@ export async function generatePerSceneTTS(
         errMsg(err),
       );
       // Fallback: silent audio matching scene duration
-      generateSilence(outputPath, scene.duration);
+      await generateSilence(outputPath, scene.duration);
       files.push(outputPath);
       durations.push(scene.duration);
     }
@@ -360,12 +381,14 @@ export interface VoiceInfo {
 /**
  * List available edge-tts voices, optionally filtered by language prefix.
  */
-export function listVoices(languageFilter?: string): VoiceInfo[] {
+export async function listVoices(languageFilter?: string): Promise<VoiceInfo[]> {
   try {
-    const output = execFileSync("edge-tts", ["--list-voices"], {
+    const p = execFileAsync("edge-tts", ["--list-voices"], {
       timeout: 15_000,
       encoding: "utf-8",
     });
+    p.child.stdin?.end();
+    const { stdout: output } = await p;
 
     const lines = output.split("\n").slice(2); // skip header + dashes separator
     const voices: VoiceInfo[] = [];
