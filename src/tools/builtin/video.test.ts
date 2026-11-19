@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
 const mockDb = {
@@ -70,6 +70,7 @@ import {
   videoBrandApplyTool,
   videoHtmlComposeTool,
   videoBackgroundDownloadTool,
+  videoListVoicesTool,
 } from "./video.js";
 
 describe("video tools", () => {
@@ -127,6 +128,52 @@ describe("video tools", () => {
     it("requires text", async () => {
       const result = await videoTtsTool.execute({});
       expect(result).toContain("text is required");
+    });
+
+    it("duration_seconds is the number ffprobe answered (the probe is awaited)", async () => {
+      // edge-tts writes nothing → the silent fallback (ffmpeg) → ffprobe.
+      mockExecFile.mockImplementation((cmd: string) =>
+        cmd === "ffprobe"
+          ? JSON.stringify({ format: { duration: "3.14" } })
+          : "",
+      );
+      const parsed = JSON.parse(await videoTtsTool.execute({ text: "Hola." }));
+      try {
+        expect(parsed.duration_seconds).toBe(3.1);
+        expect(mockExecFile.mock.calls.at(-1)?.[0]).toBe("ffprobe");
+      } finally {
+        // The tool names its files /tmp/tts-<ms>.{txt,mp3}.
+        rmSync(parsed.path, { force: true });
+        rmSync(String(parsed.path).replace(/\.mp3$/, ".txt"), { force: true });
+        mockExecFile.mockReset();
+      }
+    });
+  });
+
+  describe("video_list_voices", () => {
+    it("lists the voices edge-tts answered (the catalog read is awaited)", async () => {
+      mockExecFile.mockReturnValueOnce(
+        [
+          "Name                  Gender    ContentCategories",
+          "--------------------  --------  -----------------",
+          "es-MX-DaliaNeural     Female    General",
+          "es-MX-JorgeNeural     Male      General",
+          "en-US-AriaNeural      Female    News",
+          "",
+        ].join("\n"),
+      );
+      const parsed = JSON.parse(
+        await videoListVoicesTool.execute({ language: "es" }),
+      );
+      expect(parsed).toEqual({
+        count: 2,
+        filter: "es",
+        voices: ["es-MX-DaliaNeural (Female)", "es-MX-JorgeNeural (Male)"],
+      });
+      expect(mockExecFile).toHaveBeenCalledWith("edge-tts", ["--list-voices"], {
+        timeout: 15_000,
+        encoding: "utf-8",
+      });
     });
   });
 

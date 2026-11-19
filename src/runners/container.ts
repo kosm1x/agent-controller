@@ -220,7 +220,9 @@ export function generateContainerName(prefix = "task"): string {
  */
 export async function imageExistsLocally(image: string): Promise<boolean> {
   try {
-    const p = execFileAsync("docker", ["image", "inspect", image]);
+    const p = execFileAsync("docker", ["image", "inspect", image], {
+      timeout: 10_000,
+    });
     p.child.stdin?.end();
     await p;
     return true;
@@ -255,7 +257,7 @@ export async function imageLockLabel(image: string): Promise<string | null> {
         "--format",
         `{{index .Config.Labels "${IMAGE_LOCK_LABEL}"}}`,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: 10_000 },
     );
     p.child.stdin?.end();
     const out = (await p).stdout.trim();

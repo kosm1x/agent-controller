@@ -70,7 +70,13 @@ const argvOf = (cmd: string) =>
   mockExecFile.mock.calls.find((c) => c[0] === cmd)?.[1] as
     | string[]
     | undefined;
-const outOf = (argv: string[]) => argv[argv.indexOf("-o") + 1];
+/** yt-dlp's -o value; an argv without one (ffprobe's) is a test bug, never
+ *  a path to write (indexOf -1 would resolve to argv[0] in the cwd). */
+const outOf = (argv: string[]) => {
+  const i = argv.indexOf("-o");
+  if (i < 0) throw new Error(`no -o in ${argv.join(" ")}`);
+  return argv[i + 1];
+};
 const ffprobeAnswer = (duration: string) =>
   JSON.stringify({ format: { duration } });
 
@@ -232,8 +238,10 @@ describe("downloadBackground fetch paths", () => {
   it("refuses and deletes a yt-dlp file larger than the cap (size unknown up front)", async () => {
     const name = slug();
     const cap = 10;
-    mockExecFile.mockImplementation((_cmd: string, argv: string[]) =>
-      later("", () => writeFileSync(outOf(argv), "x".repeat(cap + 1))),
+    mockExecFile.mockImplementation((cmd: string, argv: string[]) =>
+      cmd === "yt-dlp"
+        ? later("", () => writeFileSync(outOf(argv), "x".repeat(cap + 1)))
+        : later(ffprobeAnswer("1")),
     );
     expect(await downloadBackground(name, YT, "c", cap)).toBeNull();
     expect(existsSync(`/tmp/video-backgrounds/${name}/${name}.mp4`)).toBe(
@@ -311,6 +319,107 @@ describe("downloadBackground fetch paths", () => {
     release();
     expect(await run).toBeNull(); // no file written → "produced no file"
   });
+
+  it("yt-dlp exits 0 without the file → null, leftover .part/.ytdl removed", async () => {
+    const name = slug();
+    const out = `/tmp/video-backgrounds/${name}/${name}.mp4`;
+    mockExecFile.mockImplementation(() =>
+      later("", () => {
+        for (const f of [`${out}.part`, `${out}.ytdl`])
+          writeFileSync(f, "partial");
+      }),
+    );
+    expect(await downloadBackground(name, YT, "c")).toBeNull();
+    for (const f of [out, `${out}.part`, `${out}.ytdl`])
+      expect(existsSync(f), f).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(
+      `[backgrounds] Download produced no file: ${name}`,
+    );
+  });
+});
+
+describe("downloadBackground — one run per name in flight", () => {
+  const ytdlpRuns = () =>
+    mockExecFile.mock.calls.filter((c) => c[0] === "yt-dlp").length;
+  const writesFile = () =>
+    mockExecFile.mockImplementation((cmd: string, argv: string[]) =>
+      cmd === "yt-dlp"
+        ? later("", () => writeFileSync(outOf(argv), "video"))
+        : later(ffprobeAnswer("7")),
+    );
+
+  beforeEach(() => {
+    mockExecFile.mockReset();
+    stdinEnds.length = 0;
+    mockSafeFetch.mockReset();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  it("two concurrent same-name calls start one yt-dlp and get the same result", async () => {
+    const name = slug();
+    writesFile();
+    const [a, b] = await Promise.all([
+      downloadBackground(name, YT, "c"),
+      downloadBackground(name, YT, "c"),
+    ]);
+    expect(ytdlpRuns()).toBe(1);
+    expect(a).toMatchObject({ name, durationSeconds: 7 });
+    expect(b).toBe(a);
+  });
+
+  it("a settled success frees the name: a later call runs again once the cache is gone", async () => {
+    const name = slug();
+    writesFile();
+    expect(await downloadBackground(name, YT, "c")).not.toBeNull();
+    rmSync(`/tmp/video-backgrounds/${name}`, { recursive: true, force: true });
+    expect(await downloadBackground(name, YT, "c")).not.toBeNull();
+    expect(ytdlpRuns()).toBe(2);
+  });
+
+  it("a failed run is shared by its concurrent callers, then cleared: the next call runs a child again", async () => {
+    const name = slug();
+    mockExecFile.mockImplementation(() =>
+      failLater(new Error("Command failed: yt-dlp")),
+    );
+    const [a, b] = await Promise.all([
+      downloadBackground(name, YT, "c"),
+      downloadBackground(name, YT, "c"),
+    ]);
+    expect([a, b]).toEqual([null, null]);
+    expect(ytdlpRuns()).toBe(1);
+    writesFile();
+    expect(await downloadBackground(name, YT, "c")).toMatchObject({ name });
+    expect(ytdlpRuns()).toBe(2);
+  });
+
+  it("different names run independently", async () => {
+    writesFile();
+    const [a, b] = await Promise.all([
+      downloadBackground(slug(), YT, "c"),
+      downloadBackground(slug(), YT, "c"),
+    ]);
+    expect(ytdlpRuns()).toBe(2);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+
+  it("covers the direct branch too: one safeFetch for two same-name calls", async () => {
+    const name = slug();
+    mockSafeFetch.mockImplementation(
+      () =>
+        new Promise((_res, rej) =>
+          setImmediate(() => rej(new Error("synthetic fetch failure"))),
+        ),
+    );
+    const both = await Promise.all([
+      downloadBackground(name, "https://cdn.example/a.mp4", "c"),
+      downloadBackground(name, "https://cdn.example/a.mp4", "c"),
+    ]);
+    expect(both).toEqual([null, null]);
+    expect(mockSafeFetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("extractSubclip — async ffmpeg", () => {
@@ -341,8 +450,10 @@ describe("extractSubclip — async ffmpeg", () => {
 
   it("returns the subclip ffmpeg wrote; args and timeout unchanged", async () => {
     const { name, filePath, out } = cached(600);
-    mockExecFile.mockImplementation((_cmd: string, argv: string[]) =>
-      later("", () => writeFileSync(argv.at(-1)!, "clip")),
+    mockExecFile.mockImplementation((cmd: string, argv: string[]) =>
+      cmd === "ffmpeg"
+        ? later("", () => writeFileSync(argv.at(-1)!, "clip"))
+        : failLater(new Error(`unexpected ${cmd}`)),
     );
     expect(await extractSubclip(name, 10, out)).toBe(out);
     const [cmd, argv, opts] = mockExecFile.mock.calls[0] as [

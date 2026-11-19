@@ -56,6 +56,15 @@ const noImage = () => {
   );
 };
 
+/** What execFile rejects with when its timeout kills the child. */
+const timedOut = () => {
+  throw Object.assign(new Error("Command failed: docker image inspect img"), {
+    killed: true,
+    signal: "SIGTERM",
+    code: null,
+  });
+};
+
 beforeEach(() => {
   child.impl.mockReset();
   child.stdinEnds.length = 0;
@@ -69,6 +78,7 @@ describe("imageExistsLocally — async docker image inspect", () => {
     expect(child.impl.mock.calls[0]).toEqual([
       "docker",
       ["image", "inspect", "mission-control:latest"],
+      { timeout: 10_000 },
     ]);
     expect(child.stdinEnds[0]).toHaveBeenCalledTimes(1);
   });
@@ -92,7 +102,7 @@ describe("imageLockLabel — async docker image inspect --format", () => {
         "--format",
         `{{index .Config.Labels "${IMAGE_LOCK_LABEL}"}}`,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: 10_000 },
     ]);
     expect(child.stdinEnds[0]).toHaveBeenCalledTimes(1);
   });
@@ -112,5 +122,20 @@ describe("imageLockLabel — async docker image inspect --format", () => {
     });
     child.impl.mockReturnValueOnce(`${host}\n`);
     expect(await imageLockDrift("img", { host })).toBeNull();
+  });
+});
+
+// A hung daemon no longer blocks the loop, so without a timeout a runner task
+// would wait forever; with it, a timeout must fail CLOSED at both pre-flights.
+describe("docker inspect timeout fails closed", () => {
+  it("imageExistsLocally → false (the runner refuses: image not found)", async () => {
+    child.impl.mockImplementationOnce(timedOut);
+    expect(await imageExistsLocally("img")).toBe(false);
+  });
+
+  it("imageLockDrift → drift with image: null (the runner refuses), never 'no drift'", async () => {
+    const host = "a".repeat(64);
+    child.impl.mockImplementationOnce(timedOut);
+    expect(await imageLockDrift("img", { host })).toEqual({ host, image: null });
   });
 });

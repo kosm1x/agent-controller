@@ -274,8 +274,19 @@ describe("generateNarration / generatePerSceneTTS — async children", () => {
       (c) => `${c[0]} ${(c[1] as string[]).join(" ")}`,
     );
   /** The output path of an edge-tts (--write-media) or ffmpeg (last) call. */
-  const outputOf = (cmd: string, args: string[]) =>
-    cmd === "edge-tts" ? args[args.indexOf("--write-media") + 1] : args.at(-1)!;
+  const outputOf = (cmd: string, args: string[]) => {
+    const out =
+      cmd === "edge-tts"
+        ? args[args.indexOf("--write-media") + 1]
+        : cmd === "ffmpeg"
+          ? args.at(-1)
+          : undefined;
+    // Only into this test's temp dir: an argv without the expected output
+    // flag (indexOf -1 → args[0]) must not become a path in the cwd.
+    if (!out?.startsWith(`${dir}/`))
+      throw new Error(`${cmd} output outside the test dir: ${out}`);
+    return out;
+  };
   const writes =
     (label = "") =>
     (cmd: unknown, args: unknown) => {

@@ -104,7 +104,7 @@ vi.mock("fs", async (orig) => {
 });
 vi.mock("../../db/index.js", () => ({ getDatabase: vi.fn() }));
 
-import { jarvisDevTool } from "./jarvis-dev.js";
+import { ensureJarvisWorktree, jarvisDevTool } from "./jarvis-dev.js";
 import { withCwdLock } from "./cwd-lock.js";
 
 const CANARIES: Record<string, string> = {
@@ -450,5 +450,75 @@ describe("jarvis_dev action=pr — protected files are checked again before the 
     const mergeBase = at("git -c core.hooksPath=/dev/null merge-base");
     expect(mergeBase).toBeGreaterThan(at("git commit "));
     expect(mergeBase).toBeLessThan(at("git push -u origin"));
+  });
+});
+
+describe("ensureJarvisWorktree — one bootstrap in flight", () => {
+  const worktreeAdds = () =>
+    (m.execFileAsync.mock.calls as unknown[][]).filter((c) =>
+      (c[1] as string[]).includes("worktree"),
+    ).length;
+  /** The next child (the worktree add) is held until the returned settle. */
+  const holdNextChild = () => {
+    let settle: (err?: Error) => void = () => {};
+    m.execFileAsync.mockImplementationOnce(() =>
+      Object.assign(
+        new Promise((res, rej) => {
+          settle = (err) => (err ? rej(err) : res({ stdout: "", stderr: "" }));
+        }),
+        { child: { stdin: { end: vi.fn() } } },
+      ),
+    );
+    return (err?: Error) => settle(err);
+  };
+  const ticks = async (n = 5) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+  };
+
+  it("two concurrent first calls run one `git worktree add` and share its outcome", async () => {
+    m.fsState.worktreeExists = false;
+    const release = holdNextChild();
+    const a = ensureJarvisWorktree();
+    const b = ensureJarvisWorktree();
+    await ticks();
+    expect(worktreeAdds()).toBe(1);
+    release();
+    await Promise.all([a, b]);
+    expect(worktreeAdds()).toBe(1);
+  });
+
+  it("a failed bootstrap rejects every waiter alike, then the next call retries", async () => {
+    m.fsState.worktreeExists = false;
+    const release = holdNextChild();
+    const a = ensureJarvisWorktree();
+    const b = ensureJarvisWorktree();
+    await ticks();
+    release(new Error("fatal: synthetic checkout failure"));
+    await expect(a).rejects.toThrow("fatal: synthetic checkout failure");
+    await expect(b).rejects.toThrow("fatal: synthetic checkout failure");
+    expect(worktreeAdds()).toBe(1);
+    // Cleared on settle: the next call bootstraps again (default mock: ok).
+    await ensureJarvisWorktree();
+    expect(worktreeAdds()).toBe(2);
+  });
+
+  it("a call made mid-checkout (the directory already exists) waits for the bootstrap", async () => {
+    m.fsState.worktreeExists = false;
+    const release = holdNextChild();
+    const first = ensureJarvisWorktree();
+    await ticks();
+    expect(worktreeAdds()).toBe(1);
+    // git has created MC_DIR; the checkout into it is still running.
+    m.fsState.worktreeExists = true;
+    let lateDone = false;
+    const late = ensureJarvisWorktree().then(() => {
+      lateDone = true;
+    });
+    await ticks();
+    expect(lateDone).toBe(false);
+    release();
+    await Promise.all([first, late]);
+    expect(lateDone).toBe(true);
+    expect(worktreeAdds()).toBe(1);
   });
 });

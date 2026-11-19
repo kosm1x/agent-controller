@@ -194,16 +194,37 @@ async function probeDuration(filePath: string): Promise<number> {
   }
 }
 
+// One download per name at a time: both branches write the same cache path,
+// so a second call would race the first's file (and its failure cleanup).
+// The entry is dropped when the run settles, whatever the outcome.
+const inFlight = new Map<string, Promise<CachedBackground | null>>();
+
 /**
  * Download a background video using yt-dlp.
  * Caches the file in /tmp/video-backgrounds/{name}/.
  * Returns the cached metadata on success, null on failure.
+ * A call for a name already downloading gets that download's result.
  */
-export async function downloadBackground(
+export function downloadBackground(
   name: string,
   url: string,
   credit: string,
   maxBytes = MAX_DOWNLOAD_BYTES,
+): Promise<CachedBackground | null> {
+  const running = inFlight.get(name);
+  if (running) return running;
+  const run = runDownload(name, url, credit, maxBytes).finally(() =>
+    inFlight.delete(name),
+  );
+  inFlight.set(name, run);
+  return run;
+}
+
+async function runDownload(
+  name: string,
+  url: string,
+  credit: string,
+  maxBytes: number,
 ): Promise<CachedBackground | null> {
   // Return cached version if available
   const existing = getCachedMeta(name);
@@ -302,6 +323,11 @@ export async function downloadBackground(
           console.warn(`[backgrounds] Refused ${size} B (cap): ${name}`);
           return null;
         }
+      } else {
+        // Exit 0 without the file (e.g. --max-filesize skipped it): drop any
+        // leftover partial; "produced no file" below returns null.
+        for (const f of [`${outputPath}.part`, `${outputPath}.ytdl`])
+          rmSync(f, { force: true });
       }
     }
 

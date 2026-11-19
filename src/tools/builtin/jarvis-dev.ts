@@ -53,7 +53,18 @@ const JARVIS_BRANCH_RE = /^jarvis\/(feat|fix|refactor)\/.+$/;
  * actions need binaries; Jarvis never npm-installs under a live service, so
  * the shared install is read-only in practice).
  */
-export async function ensureJarvisWorktree(): Promise<void> {
+export function ensureJarvisWorktree(): Promise<void> {
+  // Concurrent callers share one bootstrap: a second `worktree add` would race
+  // the first, and a caller arriving mid-checkout would see MC_DIR exist and
+  // run on a half-populated tree. Cleared when it settles.
+  bootstrap ??= bootstrapJarvisWorktree().finally(() => {
+    bootstrap = null;
+  });
+  return bootstrap;
+}
+let bootstrap: Promise<void> | null = null;
+
+async function bootstrapJarvisWorktree(): Promise<void> {
   if (!existsSync(MC_DIR)) {
     // A one-time bootstrap (runs only while MC_DIR is missing), async all the
     // same: checking out the tree takes seconds on the service's event loop.

@@ -31,6 +31,7 @@ vi.mock("child_process", async () => {
         const settled = new Promise((res, rej) =>
           setImmediate(() => {
             if (child.fail) return rej(child.fail);
+            if (cmd !== "ffmpeg") return rej(new Error(`unexpected ${cmd}`));
             write(args[args.length - 1], "png");
             res({ stdout: "", stderr: "" });
           }),

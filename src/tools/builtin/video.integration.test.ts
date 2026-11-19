@@ -27,6 +27,10 @@ const m = vi.hoisted(() => ({
   generateNarration: vi.fn(),
   parseHtmlComposition: vi.fn(),
   renderHtmlComposition: vi.fn(),
+  generatePerSceneTTS: vi.fn(),
+  getCachedMeta: vi.fn(),
+  extractSubclip: vi.fn(),
+  composeOverlayVideo: vi.fn(),
 }));
 
 // Fail closed: folder creation under a live folder is recorded and skipped,
@@ -78,6 +82,11 @@ vi.mock("child_process", async (importOriginal) => {
 vi.mock("../../video/composer.js", () => ({
   cleanupJob: m.cleanupJob,
   composeVideo: m.composeVideo,
+  composeOverlayVideo: m.composeOverlayVideo,
+}));
+vi.mock("../../video/backgrounds.js", () => ({
+  getCachedMeta: m.getCachedMeta,
+  extractSubclip: m.extractSubclip,
 }));
 vi.mock("../../video/script-generator.js", () => ({
   generateScript: m.generateScript,
@@ -88,6 +97,7 @@ vi.mock("../../video/subtitles.js", () => ({
 }));
 vi.mock("../../video/tts.js", () => ({
   generateNarration: m.generateNarration,
+  generatePerSceneTTS: m.generatePerSceneTTS,
 }));
 vi.mock("../../video/html-parser.js", () => ({
   parseHtmlComposition: m.parseHtmlComposition,
@@ -262,6 +272,71 @@ describe("video_create on the real schema", () => {
       error_message: "synthetic script failure",
       template: "landscape",
       duration_seconds: 60,
+    });
+  });
+
+  describe("overlay mode — the background subclip is awaited", () => {
+    /** extractSubclip's answer arrives on a later tick, like the ffmpeg child. */
+    const subclipLater = (answer: (out: string) => string | null) =>
+      m.extractSubclip.mockImplementation(
+        (_name: string, _sec: number, out: string) =>
+          new Promise((res) =>
+            setImmediate(() => {
+              events.push("subclip settled");
+              res(answer(out));
+            }),
+          ),
+      );
+    const events: string[] = [];
+    beforeEach(() => {
+      events.length = 0;
+      m.generatePerSceneTTS.mockResolvedValue({
+        files: ["/synthetic/a.mp3", "/synthetic/b.mp3"],
+        durations: [4, 6],
+        totalDuration: 10,
+      });
+      m.getCachedMeta.mockReturnValue({ name: "ocean-waves" });
+      m.composeOverlayVideo.mockImplementation(async () => {
+        events.push("compose");
+        return "/synthetic/overlay.mp4";
+      });
+    });
+
+    it("the subclip path ffmpeg produced is in place before the overlay compose", async () => {
+      subclipLater((out) => out);
+      const out = JSON.parse(
+        await videoCreateTool.execute({ topic: "t", mode: "overlay" }),
+      ) as { jobId: string };
+      const row = await settled(out.jobId);
+      expect(row).toMatchObject({
+        status: "completed",
+        output_file: "/synthetic/overlay.mp4",
+      });
+      expect(m.extractSubclip).toHaveBeenCalledWith(
+        "ocean-waves",
+        10,
+        `/tmp/video-jobs/${out.jobId}/bg-subclip.mp4`,
+      );
+      expect(events).toEqual(["subclip settled", "compose"]);
+      expect(m.composeOverlayVideo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          backgroundVideo: `/tmp/video-jobs/${out.jobId}/bg-subclip.mp4`,
+        }),
+      );
+    });
+
+    it("no subclip (null) fails the job before any compose", async () => {
+      subclipLater(() => null);
+      const out = JSON.parse(
+        await videoCreateTool.execute({ topic: "t", mode: "overlay" }),
+      ) as { jobId: string };
+      const row = await settled(out.jobId);
+      expect(row).toMatchObject({
+        status: "failed",
+        error_message:
+          'Failed to extract subclip from "ocean-waves". Video may be too short.',
+      });
+      expect(m.composeOverlayVideo).not.toHaveBeenCalled();
     });
   });
 
