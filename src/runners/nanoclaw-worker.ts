@@ -13,6 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { loadConfig } from "../config.js";
 import { initDatabase } from "../db/index.js";
+import { seedDirectives } from "../db/jarvis-fs.js";
 import { initEventBus } from "../lib/event-bus.js";
 import { toolRegistry } from "../tools/registry.js";
 
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
   // Minimal init (mirrors heavy-worker.ts)
   const config = loadConfig();
   const db = initDatabase(process.env.MC_DB_PATH ?? "/tmp/mc.db");
+  seedDirectives(); // fresh database: the task prompt reads these directive rows
   initEventBus(db);
 
   // Register all coding tools

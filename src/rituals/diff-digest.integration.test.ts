@@ -90,7 +90,7 @@ describe("executeDiffDigest — auto-improvement tasks of the last 7 days", () =
 
 describe("executeDiffDigest — knowledge-base changes of the last 7 days", () => {
   it("lists the four watched prefixes newest first and leaves out old or unwatched paths", async () => {
-    // initDatabase seeds directive rows of its own; the cases read only the
+    // The open writes no knowledge-base rows; the cases read only the
     // synthetic paths below.
     file("knowledge/proposals/p-new.md", "-1 days");
     file("knowledge/execution-patterns/e-mid.md", "-2 days");

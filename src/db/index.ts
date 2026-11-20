@@ -10,15 +10,13 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
-import { seedDirectives } from "./jarvis-fs.js";
-import { ensureTuningTables } from "../tuning/schema.js";
+import { ensureTuningTables } from "./tuning-schema.js";
 import { ensureIntelTables } from "./intel-schema.js";
 import { ensureVideoTables } from "./video-schema.js";
 import { ensureSelfHealingTables } from "../lib/self-healing/schema.js";
 import { ensureV83Tables } from "../lib/v8-3/schema.js";
 import { ensureV84Tables } from "../lib/v8-4/schema.js";
 
-import { activateBestVariant } from "../tuning/activation.js";
 import { errMsg } from "../lib/err-msg.js";
 
 let _db: Database.Database | null = null;
@@ -352,7 +350,7 @@ function setUpDatabase(_db: Database.Database): void {
   END`);
   // Backfill: rebuild the FTS index when it doesn't match the source table.
   // The naive "rebuild if empty" check fails on the first boot after this
-  // migration ships, because seedDirectives() (called below) had already
+  // migration ships, because rows written after the triggers existed had already
   // populated the FTS via triggers — making the index look "non-empty" but
   // out of sync with the 1000+ rows that were upserted before the triggers
   // existed. Triggering on count mismatch is the correct invariant.
@@ -1178,10 +1176,7 @@ function setUpDatabase(_db: Database.Database): void {
     "CREATE INDEX IF NOT EXISTS idx_sycophancy_probes_at ON sycophancy_probes(probed_at)",
   );
 
-  // Seed Jarvis file system on first boot
-  seedDirectives();
-
-  ensureTuningTables();
+  ensureTuningTables(_db);
   ensureIntelTables(_db);
   ensureVideoTables(_db);
   ensureSelfHealingTables(_db);
@@ -1191,8 +1186,6 @@ function setUpDatabase(_db: Database.Database): void {
   ensureV83Tables(_db);
   // V8.4 completion ledger (2026-08-16): harness-owned acceptance gates.
   ensureV84Tables(_db);
-  // Activate best variant from archive (v2.28 — HyperAgents pattern)
-  activateBestVariant();
 
   // ── Versioned migrations (2026-07-05, Phase 4.3) ──────────────────────────
   // Runs AFTER all CREATE/ensure DDL so every migration can assume the full

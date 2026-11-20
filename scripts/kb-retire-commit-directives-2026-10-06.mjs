@@ -19,7 +19,7 @@
 // exit 2 = refused, nothing written.
 //
 // --dry-run still opens the database READ-WRITE through initDatabase (schema
-// exec + SCHEMA_MIGRATIONS + directive seeding): idempotent with the deployed
+// exec + SCHEMA_MIGRATIONS): idempotent with the deployed
 // dist/, but not a read-only open. upsertFile's pgvector and Google Drive
 // syncs (and the INDEX.md regeneration) are fire-and-forget: when any row was
 // written, drainKbWrites (dist/db/kb-write-drain.js) settles them before the db

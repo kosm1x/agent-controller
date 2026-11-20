@@ -2033,9 +2033,10 @@ describe("swarm parent built from stored child output: a placeholder comes with 
     vi.spyOn(console, "info").mockImplementation(() => {});
   });
   afterEach(async () => {
-    // initDatabase seeds files through upsertFile, whose fire-and-forget
-    // import("./jarvis-index.js") arms a 5 s index timer: settle it under real
-    // time, so the timer does not land in the next case's simulated polls.
+    // A knowledge-base write through upsertFile fires a fire-and-forget
+    // import("./jarvis-index.js") that arms a 5 s index timer: settle pending
+    // imports under real time, so no such timer lands in the next case's
+    // simulated polls.
     await vi.dynamicImportSettled();
     closeDatabase();
     vi.clearAllMocks();

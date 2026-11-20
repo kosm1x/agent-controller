@@ -29,7 +29,12 @@ import {
   regenerateIndex,
   cancelPendingRegeneration,
 } from "./db/jarvis-index.js";
-import { getJarvisKbRoot, getKbMirrorWriteDir } from "./db/jarvis-fs.js";
+import {
+  getJarvisKbRoot,
+  getKbMirrorWriteDir,
+  seedDirectives,
+} from "./db/jarvis-fs.js";
+import { activateBestVariant } from "./tuning/activation.js";
 import { initEventBus, getEventBus } from "./lib/event-bus.js";
 import { seedReflectionCursors } from "./reflection/cursors.js";
 import { startTriggers, stopTriggers } from "./triggers/index.js";
@@ -133,6 +138,13 @@ async function main(): Promise<void> {
 
   // Initialize database
   const db = initDatabase(config.dbPath);
+  // Opening the database does schema only. The directive rows are seeded
+  // before INDEX.md is regenerated, and the archived tuning variant is
+  // activated before the project scope groups are wired, which read the
+  // activated scope patterns. Activation also precedes tool registration, so
+  // its tool-description overrides find no tool and do not apply at start-up.
+  seedDirectives();
+  activateBestVariant();
   log.info({ path: config.dbPath }, "database initialized");
   // Operator check after deploy: the live service must say "enabled".
   const kbMirrorDir = getKbMirrorWriteDir();

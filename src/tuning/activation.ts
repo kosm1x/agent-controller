@@ -15,9 +15,10 @@
  * 2026-09-12: the only valid row today is the April-2026 variant, which is
  * exactly the population this guard exists for.
  *
- * Known limitation (verified 2026-09-12): this runs inside initDatabase,
- * BEFORE any tool source registers, so toolDescriptionOverrides find no
- * tool and never apply at boot. Only scope-pattern overrides are live.
+ * Known limitation: the programs that need activation call it explicitly
+ * right after the database is opened, BEFORE any tool source registers, so
+ * toolDescriptionOverrides find no tool and never apply at boot. Only
+ * scope-pattern overrides are live.
  */
 
 import {
@@ -62,8 +63,8 @@ export function activateBestVariant(): ActivationResult {
     try {
       config = deserializeSandbox(variant.config_json);
     } catch (err) {
-      // A malformed archived row must not abort boot (this runs inside
-      // initDatabase); skip it like a stale one.
+      // A malformed archived row must not abort boot (callers run this right
+      // after opening the database); skip it like a stale one.
       console.warn(
         `[tuning] variant ${variant.variant_id} has an unreadable config (${err instanceof Error ? err.message : String(err)}) — not activated`,
       );

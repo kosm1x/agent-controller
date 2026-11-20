@@ -7,7 +7,7 @@
  *
  * The proposal file itself is never written: `upsertFile` is a recorder, and
  * the knowledge-base calls the propose tool must not make throw. The rest of
- * the module stays real because `initDatabase` seeds directives through it.
+ * the module stays real.
  * The cooldown compares two JavaScript clock readings, so Date is fixed.
  */
 

@@ -11,8 +11,8 @@
  * activation: mismatch = drift = do not activate.
  *
  * Tool-description overrides are NOT fingerprinted: activation runs
- * inside initDatabase, before any tool source registers, so those
- * overrides have never applied at boot (see activation.ts).
+ * right after the database is opened, before any tool source registers, so
+ * those overrides do not apply at boot (see activation.ts).
  */
 
 import { createHash } from "crypto";

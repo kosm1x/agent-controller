@@ -72,7 +72,7 @@ const row = (path: string) =>
     )
     .get(path) as FileRow | undefined;
 
-// Batch paths only: initDatabase seeds directive rows of its own.
+// Batch paths only: the rows the batch writes under its own folder.
 const batchRows = () =>
   getDatabase()
     .prepare(
@@ -108,7 +108,7 @@ afterAll(() => {
 
 beforeEach(() => {
   initDatabase(":memory:");
-  // initDatabase seeds directive rows through the same writer.
+  // Every case starts with zero recorded mock calls.
   vi.clearAllMocks();
 });
 

@@ -11,6 +11,7 @@
  */
 
 import { initDatabase } from "../db/index.js";
+import { activateBestVariant } from "./activation.js";
 import { seedTestCases } from "./test-cases.js";
 import { countTestCases } from "./schema.js";
 import { runOvernightTuning, type TuningConfig } from "./overnight-loop.js";
@@ -38,6 +39,8 @@ async function main(): Promise<void> {
   // Initialize database
   const dbPath = process.env.MC_DB_PATH ?? "./data/mc.db";
   initDatabase(dbPath);
+  // The mutation prompt lists the scope patterns an activated variant changes.
+  activateBestVariant();
 
   // Seed if needed
   const count = countTestCases();

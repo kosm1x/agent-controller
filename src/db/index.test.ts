@@ -21,14 +21,6 @@ vi.mock("better-sqlite3", () => ({
   })),
 }));
 
-vi.mock("../tuning/schema.js", () => ({
-  ensureTuningTables: vi.fn(),
-}));
-
-vi.mock("../tuning/activation.js", () => ({
-  activateBestVariant: vi.fn(),
-}));
-
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {

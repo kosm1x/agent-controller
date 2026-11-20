@@ -330,9 +330,9 @@ export function registerMailboxResult(
 const NOTHING_SEEN: ReadonlySet<string> = new Set();
 
 /**
- * The seen set for the store rule. The KB seed writes during database init
- * before the schema migration creates the table: until the table exists
- * nothing has been seen, which is not a failure. Any other error is thrown
+ * The seen set for the store rule. While no database is open, or until the
+ * schema migration has created the table, nothing has been seen, which is
+ * not a failure. Any other error is thrown
  * (the store rule then writes as before and warns once).
  */
 function storeSeenSet(): ReadonlySet<string> {

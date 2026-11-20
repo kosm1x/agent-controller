@@ -911,7 +911,7 @@ export function searchFiles(
 }
 
 // ---------------------------------------------------------------------------
-// Seed — called from initDatabase() on first boot
+// Seed — called by the service and the workers right after the database is opened
 // ---------------------------------------------------------------------------
 
 /** Create seed files if they don't exist. Idempotent. */
@@ -985,7 +985,7 @@ Después de una compactación, el contexto anterior se resume. Los datos clave s
       );
     }
   } catch {
-    // jarvis_files is created earlier in setUpDatabase; a failed read or write is
-    // swallowed and every directive not yet written stays absent until the next initDatabase.
+    // jarvis_files exists once the database is open; a failed read or write is
+    // swallowed and every directive not yet written stays absent until the next call.
   }
 }

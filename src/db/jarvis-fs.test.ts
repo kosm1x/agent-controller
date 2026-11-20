@@ -301,7 +301,7 @@ describe("listFilePaths — index-only path listing", () => {
     const sql = prepareSpy.mock.calls.at(-1)![0] as string;
     prepareSpy.mockRestore();
 
-    // initDatabase seeds directive rows: assert the whole list is complete and
+    // Assert the whole list is complete (every row of the table) and
     // sorted, and that ours (priorities inverted vs path order, so ORDER BY
     // priority fails here) come back in path order.
     const ours = ["alpha/a.md", "mid/m.md", "zeta/z.md"];

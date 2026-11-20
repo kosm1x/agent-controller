@@ -2044,7 +2044,7 @@ describe("store table and safety net", () => {
     for (const s of DB_STORES) {
       expect([s.table, r.stores.find((x) => x.store === s.table)]).toMatchObject([s.table, { hit: 1, changed: 1 }]);
       for (const c of s.columns) {
-        const v = cell(`SELECT "${c}" FROM "${s.table}" ORDER BY rowid DESC LIMIT 1`) as string; // initDatabase seeds some tables
+        const v = cell(`SELECT "${c}" FROM "${s.table}" ORDER BY rowid DESC LIMIT 1`) as string; // the newest row is the one this case inserted
         expect([s.table, c, v.includes(V_CONV), v.includes(PH)]).toEqual([s.table, c, false, true]);
       }
     }

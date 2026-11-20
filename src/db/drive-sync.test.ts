@@ -903,8 +903,8 @@ describe("reformatDriveFiles / backfillToDrive options", () => {
 
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    // initDatabase seeds directive rows through upsertFile -> syncToDrive;
-    // those fire-and-forget calls fail against the reset mock: keep quiet.
+    // A fire-and-forget Drive call that fails against the reset mock warns:
+    // keep quiet.
     vi.spyOn(console, "warn").mockImplementation(() => {});
     initDatabase(":memory:");
     const db = getDatabase();
@@ -1324,7 +1324,7 @@ describe("Drive live-db guard", () => {
       "CREATE TABLE IF NOT EXISTS drive_file_map (path TEXT PRIMARY KEY, drive_id TEXT NOT NULL, updated_at TEXT DEFAULT (datetime('now')))",
     );
     db.prepare("INSERT OR REPLACE INTO drive_file_map (path, drive_id) VALUES ('knowledge/x.md', 'id-x')").run();
-    // No mockClear: initDatabase's seed upserts (-> syncToDrive) count too.
+    // No mockClear: every Drive call since the fresh module loaded counts.
 
     for (let round = 0; round < 2; round++) {
       ds.syncToDrive("knowledge/new.md", "New", "body");
@@ -1359,7 +1359,7 @@ describe("Drive live-db guard", () => {
   it("predicate true: syncToDrive creates and syncDeleteToDrive trashes as before", async () => {
     drive.isLive = true;
     initDatabase(":memory:");
-    await flush(); // let the seed's fire-and-forget calls settle
+    await flush(); // let any fire-and-forget call settle
     drive.googleFetch.mockClear();
     warn.mockClear();
 
@@ -1411,7 +1411,7 @@ describe("settleDriveSyncs / findFolder / map helpers", () => {
   });
 
   it("resolves only after an in-flight CREATE has recorded its drive_file_map row", async () => {
-    await settleDriveSyncs(); // the seed upserts' syncs
+    await settleDriveSyncs(); // any sync still in flight
     let upload!: (v: { id: string }) => void;
     drive.googleFetch.mockImplementation((url: string) =>
       url.includes("uploadType=multipart")
@@ -1716,7 +1716,7 @@ describe("Drive sync: stale id, every KB writer, per-path serialization", () => 
     drive.googleFetch.mockReset();
     drive.googleFetch.mockImplementation(fakeDrive);
     initDatabase(":memory:");
-    await settleDriveSyncs(); // the seed upserts' syncs
+    await settleDriveSyncs(); // any sync still in flight
     created = 0;
     drive.googleFetch.mockClear();
     warn.mockClear();

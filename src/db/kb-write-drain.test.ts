@@ -32,7 +32,7 @@ describe("drainKbWrites — real upsertFile, both syncs off", () => {
   });
 
   it("INDEX.md lists a new project before closeDatabase, with no wait for the mark", async () => {
-    // Settle initDatabase's own writes, then make INDEX.md stale on purpose.
+    // Write INDEX.md once with no project in it, then make it stale on purpose.
     await drainKbWrites();
     expect(getFile("INDEX.md")?.content ?? "").not.toContain("zeta-syn");
     upsertFile("projects/zeta-syn/a.md", "A", "synthetic\n", [], "reference", 50, null, []);

@@ -6,7 +6,8 @@ const state = vi.hoisted(() => ({
 
 // The statements under test are the two reads of the real `jarvis_files`
 // table; the INDEX.md write is recorded instead of performed. The real
-// `seedDirectives` stays because `initDatabase` calls it.
+// `seedDirectives` stays: the set-up calls it, as the service does before it
+// regenerates the index.
 vi.mock("./jarvis-fs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./jarvis-fs.js")>()),
   upsertFile: (_path: string, _title: string, content: string) => {
@@ -15,6 +16,7 @@ vi.mock("./jarvis-fs.js", async (importOriginal) => ({
 }));
 
 import { closeDatabase, getDatabase, initDatabase } from "./index.js";
+import { seedDirectives } from "./jarvis-fs.js";
 import { cancelPendingRegeneration, markIndexDirty, regenerateIndex } from "./jarvis-index.js";
 
 function add(path: string, content = "x"): void {
@@ -28,6 +30,7 @@ function add(path: string, content = "x"): void {
 describe("regenerateIndex (audit 2026-09-22 context-02)", () => {
   beforeEach(() => {
     initDatabase(":memory:");
+    seedDirectives();
     state.written = [];
     add("knowledge/a.md");
     add("projects/alpha/README.md");

@@ -1,44 +1,21 @@
 {
   "runtimeCycles": [
     [
-      "src/db/drive-sync.ts",
-      "src/db/index.ts",
-      "src/db/jarvis-fs.ts",
-      "src/db/live-db.ts",
-      "src/db/pgvector-sync.ts",
-      "src/db/user-facts.ts",
-      "src/inference/embeddings.ts",
-      "src/inference/outbound-scrub.ts",
-      "src/lib/secret-ref-trace.ts",
-      "src/lib/secret-refs.ts",
-      "src/lib/v8-3/decisions-store.ts",
-      "src/lib/v8-3/gated-execution.ts",
-      "src/lib/v8-3/judgment-linkage.ts",
-      "src/lib/v8-3/pipeline.ts",
-      "src/lib/v8-3/reversal.ts",
-      "src/lib/v8-4/mailbox-passwords.ts",
-      "src/lib/x-poster/config.ts",
-      "src/mcp/record-env.ts",
-      "src/messaging/scope.ts",
-      "src/observability/task-trace.ts",
-      "src/projects/capabilities.ts",
-      "src/projects/record.ts",
-      "src/tools/registry.ts",
-      "src/tuning/activation.ts",
-      "src/tuning/fingerprint.ts",
-      "src/tuning/schema.ts"
-    ],
-    [
       "src/inference/adapter-openai.ts",
       "src/inference/adapter.ts",
       "src/prometheus/compaction-pipeline.ts",
       "src/prometheus/context-compressor.ts"
+    ],
+    [
+      "src/db/user-facts.ts",
+      "src/lib/secret-refs.ts"
     ]
   ],
   "runtimeWithDynamicCycleSizes": [
-    27,
     5,
-    3
+    3,
+    2,
+    2
   ],
   "mutualDirectoryPairs": [
     "src <-> src/api",
@@ -64,7 +41,6 @@
     "src/db <-> src/projects",
     "src/db <-> src/rituals",
     "src/db <-> src/tools/builtin",
-    "src/db <-> src/tuning",
     "src/dispatch <-> src/intelligence",
     "src/dispatch <-> src/messaging",
     "src/dispatch <-> src/runners",

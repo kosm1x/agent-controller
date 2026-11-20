@@ -139,6 +139,26 @@
       "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
     },
     {
+      "file": "src/db/tuning-schema.ts",
+      "text": "ALTER TABLE ${table} ADD COLUMN ${column} ${typeDecl}",
+      "reason": "column-change helper: each of its calls is listed as an entry of its own, so a new call fails here; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/tuning-schema.ts",
+      "text": "ALTER TABLE tune_variants ADD COLUMN code_fingerprint TEXT",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/tuning-schema.ts",
+      "text": "addColumnIfMissing(db, \"tune_experiments\", \"confidence_avg\", \"REAL\")",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
+      "file": "src/db/tuning-schema.ts",
+      "text": "addColumnIfMissing(db, \"tune_experiments\", \"failure_source\", \"TEXT\")",
+      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
+    },
+    {
       "file": "src/db/video-schema.ts",
       "text": "ALTER TABLE video_jobs ADD COLUMN cost_cents INTEGER DEFAULT 0",
       "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
@@ -191,26 +211,6 @@
     {
       "file": "src/rituals/sent-before.ts",
       "text": "ALTER TABLE ritual_sent_items ADD COLUMN tokens TEXT",
-      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
-    },
-    {
-      "file": "src/tuning/schema.ts",
-      "text": "ALTER TABLE ${table} ADD COLUMN ${column} ${typeDecl}",
-      "reason": "column-change helper: each of its calls is listed as an entry of its own, so a new call fails here; a new column change goes in SCHEMA_MIGRATIONS"
-    },
-    {
-      "file": "src/tuning/schema.ts",
-      "text": "ALTER TABLE tune_variants ADD COLUMN code_fingerprint TEXT",
-      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
-    },
-    {
-      "file": "src/tuning/schema.ts",
-      "text": "addColumnIfMissing(\"tune_experiments\", \"confidence_avg\", \"REAL\")",
-      "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
-    },
-    {
-      "file": "src/tuning/schema.ts",
-      "text": "addColumnIfMissing(\"tune_experiments\", \"failure_source\", \"TEXT\")",
       "reason": "frozen column probe outside the numbered list: databases already rely on it; a new column change goes in SCHEMA_MIGRATIONS"
     }
   ],

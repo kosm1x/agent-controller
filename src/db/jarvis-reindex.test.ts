@@ -18,7 +18,7 @@ import {
   upsertFromDiskWrite,
   registryNewerThanDisk,
 } from "./jarvis-reindex.js";
-import { upsertFile, getFile } from "./jarvis-fs.js";
+import { upsertFile, getFile, seedDirectives } from "./jarvis-fs.js";
 
 let testKbDir: string;
 
@@ -26,6 +26,9 @@ beforeEach(() => {
   testKbDir = mkdtempSync(join(tmpdir(), "mc-reindex-test-"));
   process.env.JARVIS_KB_MIRROR_DIR = testKbDir;
   initDatabase(":memory:");
+  // The service seeds the two directive rows right after opening the
+  // database; the walk below runs against that state.
+  seedDirectives();
 });
 
 afterEach(() => {
@@ -54,7 +57,7 @@ describe("initDatabase and INDEX.md (audit 2026-09-22)", () => {
 });
 
 describe("reindexJarvisKb", () => {
-  // initDatabase() calls seedDirectives() which upserts 2 directive files;
+  // beforeEach calls seedDirectives(), which upserts 2 directive files;
   // those land in testKbDir via mirrorToDisk and are also in the DB. Baseline
   // state of every test: fsCount=0 (directives/ is managed, see below) /
   // dbCount=2 / drift=0.

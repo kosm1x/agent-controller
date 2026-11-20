@@ -356,6 +356,7 @@ const baselineRead = readBaseline(() =>
 //    may carry a migration the live service has not deployed (snapshot
 //    convention, validate-tool-search.ts).
 const { initDatabase } = await import("../src/db/index.js");
+const { activateBestVariant } = await import("../src/tuning/activation.js");
 const dbPath =
   process.env.MC_DB_PATH ?? "/root/claude/mission-control/data/mc.db";
 const snapDir = mkdtempSync(join(tmpdir(), "eval-gate-")); // mode 0700
@@ -374,6 +375,7 @@ const live = new Database(dbPath, { readonly: true, fileMustExist: true });
 live.prepare("VACUUM INTO ?").run(snapPath);
 live.close();
 initDatabase(snapPath);
+activateBestVariant(); // same activation as the service performs at start
 
 const { getActiveTestCases } = await import("../src/tuning/schema.js");
 const { runEvaluation } = await import("../src/tuning/eval-runner.js");
