@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-20 17:52 UTC — G3 is DONE `6e9d929a` (queue 4gs): opening the database does schema only; the seed and the tuning activation are explicit calls at the programs that need them; tuning table creation is the leaf `src/db/tuning-schema.ts`; the import-cycle baseline is lowered (the 26-file cycle is gone). Next: the outcome record of ritual and scheduled tasks (queue 4gt), then A3 second half, A1.**
+
 **Status 2026-11-19 08:34 UTC — B2 is DONE `ba787fad` (queue 4gq): the DENUE guard helpers are `src/runners/denue-guard.ts`, on the protected list; the fast runner is at 2,616 lines. The guard messages stay in the runner (model-visible; not part of a pure move). Next: G3 (inventory running first), A3 second half, A1.**
 
 **Status 2026-11-19 08:13 UTC — B1 is DONE `3f1ae33d` (queue 4gp): the claimed-action guard is `src/runners/hallucination-guard.ts`, on the protected list; the fast runner is at 2,694 lines. Next: B2 (brief written), G3, A3 second half, A1.**

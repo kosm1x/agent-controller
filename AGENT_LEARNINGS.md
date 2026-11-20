@@ -131,3 +131,8 @@
 - **Mistake:** two sentences went into a docs record unread against the code: one about what the remaining router helpers depend on (caught before the write), one about which file another session's branch edits (written, corrected one record later) → a sentence about code not yet read says "not yet established"; a sentence about what another party touches comes from its own file list.
 - **Avoid:** trusting the host commit check for test files — it type-checks product code only; the remote check covers tests too, and a commit that passed here turned main red → both type-checks before every hand-back until the replacement commit check is installed.
 - **Better:** a lock file that counts items per file cannot follow a moved item by a rename; split the count with the total unchanged and let the reviewer rule on it from the lock test's own rule.
+
+## 2026-11-20 — Database open does schema only
+- **Mistake:** the search for comments the change made untrue was declared complete twice and was not (a second builder found two more, the reviewer two more) → search the BEHAVIOUR in every spelling (the function name, "database init", "set-up", "on open", "first boot") under `src scripts`, and have the reviewer repeat it.
+- **Avoid:** adding a text column to a table that is read whole (`SELECT *` behind a getter used by routes and tools) — the new text can surface where the model or a client sees it; a separate table has no readers.
+- **Better:** before fixing a "record is missing for kind X" gap by writing the existing record for X too, list every reader of that table: here a prompt block, skill proposals, classifier signals and a retry rule all read it, so storage went to its own table.
