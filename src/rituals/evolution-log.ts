@@ -151,14 +151,13 @@ ${renderVerbatimBlock("NARRATIVE", narrativePath, narrative)}`
 ${narrativeStep}
 2. Call project_list to see active projects. If a project moved meaningfully today (operator engaged it, KB README touched, it appears in today's narrative), note it; do NOT drill into project READMEs unless one shows up repeatedly in interaction memory.
 3. Call memory_search with query "user interactions" in bank "jarvis" to recall today's interactions.
-4. Call memory_reflect with query "What patterns emerged in today's conversations? What did the user care about? What went well and what caused friction?" in bank "jarvis".
 
 ## How to describe data-collection problems in the entry
 
 Be precise. The log is a longitudinal research record — sloppy language about infrastructure compounds across days. Distinguish two states and describe each accurately:
 
 - **Recall returned data**: use it.
-- **Recall returned nothing**: the memory tools succeeded but had nothing for today (low-friction day, low recall coverage, etc.). Write: "No new patterns surfaced via memory_reflect today" — NOT "API unreachable", NOT "data inaccessible".
+- **Recall returned nothing**: the memory tools succeeded but had nothing for today (low-friction day, low recall coverage, etc.). Use the entry format's own "nothing notable" lines below — NOT "API unreachable", NOT "data inaccessible".
 
 **Do NOT curl http://localhost:8080 (or any loopback API port) as a health check, and do NOT write "API unreachable" / "API timing out" / "self-call deadlock" / "HTTP 000" in the entry.** Health probing is not your job here and adds no signal: this ritual reaches its tools through the in-process runner, not the HTTP API, so an HTTP result tells you nothing about whether your data collection worked. The API serves external callers normally. Do not copy any "self-call deadlock" / "HTTP 000" / "API unreachable" language forward from earlier entries — those entries were wrong.
 
@@ -194,7 +193,7 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
 [1-2 sentences: observations relevant to the agent-user co-evolution paper. What phase are we in? Any milestone crossed?]
 \`\`\`
 
-5. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md using shell_exec with a heredoc append. This is the ONLY authorized way to write this file:
+4. APPEND this entry to /root/claude/mission-control/docs/EVOLUTION-LOG.md using shell_exec with a heredoc append. This is the ONLY authorized way to write this file:
 
    cat >> /root/claude/mission-control/docs/EVOLUTION-LOG.md << 'ENTRY'
 
@@ -202,6 +201,8 @@ Based on the data above, compose a daily log entry in this EXACT format (in Engl
    ENTRY
 
    The \`>>\` operator APPENDS to the end of the file. NEVER use file_write, jarvis_file_write, or a single \`>\` redirect on this file — those OVERWRITE the whole file, and the log is ~45 KB of irreplaceable longitudinal history that a single overwrite destroys every prior day's entry. You do NOT have file_write in scope, by design: the heredoc append above is the only method. Use it and nothing else.
+
+5. Read the end of the file back with shell_exec: \`tail -n 40 /root/claude/mission-control/docs/EVOLUTION-LOG.md\`. Confirm that today's entry (the "## ${dateLabel}" header) is there, and say in your final reply that it was confirmed in the file — or, if it is missing, say that instead.
 
 ## Do NOT run git recovery or commits
 
@@ -225,7 +226,6 @@ If there were zero interactions today, still append an entry noting the quiet da
       "jarvis_file_read",
       "project_list",
       "memory_search",
-      "memory_reflect",
       "file_read",
       "shell_exec",
     ],

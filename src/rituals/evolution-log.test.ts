@@ -67,6 +67,61 @@ describe("createEvolutionLogEntry — append-only / no-overwrite invariants (202
   });
 });
 
+describe("createEvolutionLogEntry — memory tools and read-back (2026-11-20)", () => {
+  // memory_reflect is registered only on the hindsight memory backend; the
+  // sqlite backend's reflect() is a stub that always returns an empty string.
+  // Production runs sqlite, so the step could never run. memory_search is
+  // registered on either memory store since 24a006ff, so it stays in the list.
+  const both = (): Array<ReturnType<typeof createEvolutionLogEntry>> => [
+    createEvolutionLogEntry("2026-11-20", null),
+    createEvolutionLogEntry("2026-11-20", "# synthetic\n"),
+  ];
+
+  it("memory_reflect appears nowhere in the prompt or the tools list", () => {
+    for (const sub of both()) {
+      expect(sub.description).not.toContain("memory_reflect");
+      expect(sub.tools).not.toContain("memory_reflect");
+    }
+  });
+
+  it("memory_search is still in the prompt and the tools list", () => {
+    for (const sub of both()) {
+      expect(sub.description).toContain('Call memory_search with query "user interactions"');
+      expect(sub.tools).toContain("memory_search");
+    }
+  });
+
+  // 2026-11-20: the longest of the 169 entries in the real log is 28 lines, so
+  // a tail shorter than 30 lines could miss the top of today's entry.
+  const MIN_TAIL_LINES = 30;
+
+  it("the step right after the append tails the log through shell_exec and confirms in the final reply, both branches", () => {
+    for (const { description: d } of both()) {
+      const append = /^(\d+)\. APPEND this entry/m.exec(d);
+      expect(append, "append step").not.toBeNull();
+      const nextStep = /^(\d+)\. ([^\n]*)/gm;
+      nextStep.lastIndex = append!.index + append![0].length;
+      const step = nextStep.exec(d);
+      expect(step, "a step after the append").not.toBeNull();
+      expect(Number(step![1])).toBe(Number(append![1]) + 1);
+      const text = step![2]!;
+      expect(text).toContain("shell_exec");
+      const tail = /`tail -n (\d+) \/root\/claude\/mission-control\/docs\/EVOLUTION-LOG\.md`/.exec(text);
+      expect(tail, "tail of the exact log path").not.toBeNull();
+      expect(Number(tail![1])).toBeGreaterThanOrEqual(MIN_TAIL_LINES);
+      expect(text).toContain('"## 2026-11-20"');
+      expect(text).toMatch(/confirm/i);
+      expect(text).toMatch(/final reply/);
+    }
+  });
+
+  it("the instruction steps are numbered 1..N without a gap", () => {
+    const d = createEvolutionLogEntry("2026-11-20", null).description;
+    const steps = [...d.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+    expect(steps).toEqual(steps.map((_, i) => i + 1));
+  });
+});
+
 describe("createEvolutionLogEntry — harness-embedded narrative (2026-10-03)", () => {
   it("embeds today's narrative fenced as data, with no read instruction", () => {
     const tail = "cierre confirmado por el usuario al final";
