@@ -1,0 +1,151 @@
+/**
+ * task_completion_facts — the table (schema migration v18) and its one writer.
+ *
+ * Runs the REAL initDatabase: the table on a fresh DB and the migration on an
+ * existing v17 DB, then the writer's row shape and the shared concern cleaning.
+ */
+import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { closeDatabase, getDatabase, initDatabase } from "./index.js";
+import { recordCompletionFacts } from "./task-completion-facts.js";
+import { cleanConcernDetail } from "./task-outcomes.js";
+
+let tmpDbPath: string | null = null;
+
+afterEach(() => {
+  closeDatabase();
+  if (tmpDbPath) {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        if (existsSync(tmpDbPath + suffix)) unlinkSync(tmpDbPath + suffix);
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+    tmpDbPath = null;
+  }
+});
+
+/** [name, type, notnull, pk, default] per column, in table order. */
+const columns = (db: Database.Database) =>
+  (
+    db.prepare("PRAGMA table_info(task_completion_facts)").all() as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      pk: number;
+      dflt_value: string | null;
+    }>
+  ).map((c) => [c.name, c.type, c.notnull, c.pk, c.dflt_value]);
+
+const EXPECTED_COLUMNS = [
+  ["task_id", "TEXT", 0, 1, null],
+  ["build", "TEXT", 0, 0, null],
+  ["concern_detail", "TEXT", 0, 0, null],
+  ["created_at", "TEXT", 1, 0, "datetime('now')"],
+];
+
+const row = (taskId: string) =>
+  getDatabase()
+    .prepare("SELECT * FROM task_completion_facts WHERE task_id = ?")
+    .get(taskId) as
+    | { task_id: string; build: string | null; concern_detail: string | null; created_at: string }
+    | undefined;
+
+describe("migration v18 — task_completion_facts", () => {
+  it("fresh DB: head is v18 with the four columns, task_id the primary key", () => {
+    initDatabase(":memory:");
+    const db = getDatabase();
+    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(columns(db)).toEqual(EXPECTED_COLUMNS);
+  });
+
+  it("existing v17 DB (no table, rows elsewhere): v18 creates the same columns; a re-run pinned to 17 keeps the rows", () => {
+    tmpDbPath = join(tmpdir(), `mc-completion-facts-${process.pid}-${Date.now()}.db`);
+    initDatabase(tmpDbPath);
+    closeDatabase();
+    const raw = new Database(tmpDbPath);
+    raw.exec(`
+      DROP TABLE task_completion_facts;
+      PRAGMA user_version = 17;
+    `);
+    raw
+      .prepare("INSERT INTO conversations (bank, tags, content, trust_tier, source) VALUES ('mc-jarvis', '[]', 'hola', 2, 'agent')")
+      .run();
+    raw.close();
+
+    initDatabase(tmpDbPath);
+    let db = getDatabase();
+    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(columns(db)).toEqual(EXPECTED_COLUMNS);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM conversations").get()).toEqual({ n: 1 });
+    recordCompletionFacts("t-kept", { build: "abc1234", concernDetail: "nota" });
+
+    closeDatabase();
+    const pin = new Database(tmpDbPath);
+    pin.exec("PRAGMA user_version = 17;");
+    pin.close();
+    expect(() => initDatabase(tmpDbPath!)).not.toThrow();
+    db = getDatabase();
+    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(row("t-kept")).toMatchObject({ build: "abc1234", concern_detail: "nota" });
+  });
+});
+
+describe("recordCompletionFacts", () => {
+  it("writes one row: build, cleaned detail and the database's own time", () => {
+    initDatabase(":memory:");
+    recordCompletionFacts("t-1", { build: "abc1234", concernDetail: "  sin datos del día  " });
+    const r = row("t-1")!;
+    expect(r).toMatchObject({ task_id: "t-1", build: "abc1234", concern_detail: "sin datos del día" });
+    expect(r.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(getDatabase().prepare("SELECT COUNT(*) AS n FROM task_completion_facts").get()).toEqual({ n: 1 });
+  });
+
+  it("a second call for the same task replaces its row", () => {
+    initDatabase(":memory:");
+    recordCompletionFacts("t-2", { build: "abc1234", concernDetail: "primera" });
+    recordCompletionFacts("t-2", { build: "def5678", concernDetail: null });
+    expect(getDatabase().prepare("SELECT COUNT(*) AS n FROM task_completion_facts").get()).toEqual({ n: 1 });
+    expect(row("t-2")).toMatchObject({ build: "def5678", concern_detail: null });
+  });
+
+  it("the stored detail is redacted BEFORE the 500-char cut", () => {
+    initDatabase(":memory:");
+    // Built at runtime — no key-shaped literal in the (public) repo.
+    const key = "AIza" + "b".repeat(35);
+    recordCompletionFacts("t-3", {
+      build: null,
+      concernDetail: ` no pude confirmar con ${key} ${"z".repeat(600)}`,
+    });
+    const detail = row("t-3")!.concern_detail!;
+    expect(detail.startsWith("no pude confirmar con [REDACTED")).toBe(true);
+    expect(detail).not.toMatch(/AIza|bbbbb/);
+    expect(detail.length).toBe(500);
+    expect(detail).toBe(cleanConcernDetail(` no pude confirmar con ${key} ${"z".repeat(600)}`));
+  });
+
+  it("blank or non-string detail and an unknown build are stored as NULL", () => {
+    initDatabase(":memory:");
+    recordCompletionFacts("t-blank", { build: null, concernDetail: "   " });
+    recordCompletionFacts("t-obj", { build: null, concernDetail: { not: "a string" } });
+    recordCompletionFacts("t-none", { build: null, concernDetail: null });
+    for (const id of ["t-blank", "t-obj", "t-none"]) {
+      expect([id, row(id)]).toMatchObject([id, { build: null, concern_detail: null }]);
+    }
+  });
+});
+
+describe("cleanConcernDetail", () => {
+  it("trims, keeps short text, and returns null for blank or non-string input", () => {
+    expect(cleanConcernDetail("  hola  ")).toBe("hola");
+    expect(cleanConcernDetail("")).toBeNull();
+    expect(cleanConcernDetail("   ")).toBeNull();
+    expect(cleanConcernDetail(42)).toBeNull();
+    expect(cleanConcernDetail(null)).toBeNull();
+    expect(cleanConcernDetail(undefined)).toBeNull();
+  });
+});

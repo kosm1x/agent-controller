@@ -86,22 +86,32 @@ const MAX_PENDING_CONCERN_DETAILS = 256;
  * task_outcomes.concern_detail. Held in memory on purpose — the text is
  * storage only: the task.completed payload is persisted to `events` (returned
  * by the jarvis_recent_events MCP tool and the /api/events stream) and the
- * run row is served by getTaskWithRuns (API + A2A). Bounded, because tasks
- * the tracker never records (non-messaging) are never taken.
+ * run row is served by getTaskWithRuns (API + A2A). The dispatcher also keeps
+ * the same cleaned text at rest in task_completion_facts. Bounded, because
+ * tasks the tracker never records (non-messaging) are never taken.
  */
 const pendingConcernDetail = new Map<string, string>();
 
 /**
- * Note the runner's concern for a task: credential-redacted, trimmed, capped
- * at 500 chars. A null/blank/non-string detail clears any earlier note.
+ * The one cleaning rule for a stored runner concern: credential-redacted,
+ * trimmed, capped at 500 chars. Null for a blank or non-string detail.
  */
-export function noteConcernDetail(taskId: string, detail: unknown): void {
-  pendingConcernDetail.delete(taskId);
-  if (typeof detail !== "string") return;
+export function cleanConcernDetail(detail: unknown): string | null {
+  if (typeof detail !== "string") return null;
   // Redact BEFORE the cut: a fixed-length key rule misses a split key.
   const clean = redactCredentialsForPersist(detail)
     ?.trim()
     .slice(0, CONCERN_DETAIL_MAX_CHARS);
+  return clean || null;
+}
+
+/**
+ * Note the runner's concern for a task, cleaned by cleanConcernDetail. A
+ * null/blank/non-string detail clears any earlier note.
+ */
+export function noteConcernDetail(taskId: string, detail: unknown): void {
+  pendingConcernDetail.delete(taskId);
+  const clean = cleanConcernDetail(detail);
   if (!clean) return;
   pendingConcernDetail.set(taskId, clean);
   if (pendingConcernDetail.size > MAX_PENDING_CONCERN_DETAILS) {

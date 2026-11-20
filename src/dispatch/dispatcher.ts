@@ -69,6 +69,8 @@ import { scrubSecrets } from "../lib/secret-refs.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
+import { recordCompletionFacts } from "../db/task-completion-facts.js";
+import { runningBuild } from "../lib/build-info.js";
 import { classifyConcernReason } from "../intelligence/concern-reason.js";
 import { attributeNewTask } from "../projects/attribution.js";
 import { noteWriteFailure } from "../observability/failure-counters.js";
@@ -1526,6 +1528,20 @@ async function dispatchWithSlot(
       );
     } catch {
       // Storage only — must never change the task's outcome
+    }
+
+    // The same concern, at rest for every kind of task that ends on this path
+    // (the note above is only taken for tasks the tracker records), with the
+    // running build. Written BEFORE the emit so a handler in the same tick
+    // sees the row; a failed write is counted and never changes the outcome
+    // or skips the event.
+    try {
+      recordCompletionFacts(taskId, {
+        build: runningBuild(),
+        concernDetail: result.success ? (result.concerns?.[0] ?? null) : null,
+      });
+    } catch (err) {
+      noteWriteFailure("completion_facts", err);
     }
 
     // Emit completion event

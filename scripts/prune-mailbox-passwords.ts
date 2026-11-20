@@ -311,6 +311,7 @@ export const DB_STORES: ReadonlyArray<DbStore> = [
   { table: "tasks", key: R, columns: ["title", "description", "input", "output", "error", "metadata"] },
   { table: "runs", key: R, columns: ["input", "output", "trace", "error", "goal_graph"] },
   { table: "task_outcomes", key: R, columns: ["concern_detail"] },
+  { table: "task_completion_facts", key: R, columns: ["concern_detail"] },
   { table: "recall_audit", key: R, columns: ["query", "result_snippets"] },
   { table: "events", key: R, columns: ["data"] },
   { table: "mined_test_cases", key: R, columns: ["input"] },

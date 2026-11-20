@@ -111,6 +111,28 @@ describe("runTasksRetention", () => {
     });
   });
 
+  it("a deleted task's completion-facts row goes with it, unarchived; a kept task's stays", () => {
+    insertTask("old-facts", "completed_with_concerns", OLD);
+    insertTask("recent-facts", "completed", RECENT);
+    const facts = db.prepare(
+      "INSERT INTO task_completion_facts (task_id, build, concern_detail) VALUES (?, 'abc1234', ?)",
+    );
+    facts.run("old-facts", "sin datos del día");
+    facts.run("recent-facts", null);
+
+    const r = runTasksRetention(dataDir, NOW);
+    expect(r.tasksDeleted).toBe(1);
+    expect(
+      db.prepare("SELECT task_id FROM task_completion_facts ORDER BY task_id").all(),
+    ).toEqual([{ task_id: "recent-facts" }]);
+    const tables = gunzipSync(readFileSync(r.archivePath!))
+      .toString()
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l).table);
+    expect([...new Set(tables)].sort()).toEqual(["tasks"]);
+  });
+
   it("NEVER touches in-flight tasks regardless of age", () => {
     // Every non-terminal status the real status CHECK allows, except
     // `blocked` (closed by its own rule below).

@@ -23,7 +23,8 @@
  *    leaf-first (depth sort), so a parent is never removed in an earlier
  *    batch than one of its children (tasks.parent_task_id is a self-FK).
  *  - task_outcomes rows for deleted tasks are pruned too (analytics windows
- *    are ≤30d; keeping 90d+ orphaned outcome rows only skews joins).
+ *    are ≤30d; keeping 90d+ orphaned outcome rows only skews joins), and so
+ *    are their task_completion_facts rows (neither is archived).
  *    cost_ledger is NEVER touched — spend history stays complete.
  *
  * Disk note: SQLite reuses freed pages, so the file stops GROWING but does
@@ -283,11 +284,11 @@ export function runTasksRetention(
   writeFileSync(archivePath, gzipSync(lines.join("\n") + "\n"));
   report.archivePath = archivePath;
 
-  // Batched deletes: FK holders first (runs, a2a_contexts), then outcomes,
-  // then tasks (leaf-first across batches — see the sort above). Counts are
-  // RETURNED from the retry callback, never accumulated inside it — on a
-  // SQLITE_BUSY retry the tx rolls back but an outer `+=` would keep the
-  // failed attempt's count (see feedback_accumulator_outside_retry).
+  // Batched deletes: FK holders first (runs, a2a_contexts), then outcomes and
+  // completion facts, then tasks (leaf-first across batches — see the sort
+  // above). Counts are RETURNED from the retry callback, never accumulated
+  // inside it — on a SQLITE_BUSY retry the tx rolls back but an outer `+=`
+  // would keep the failed attempt's count.
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
     const batch = ids.slice(i, i + BATCH_SIZE);
     const ph = batch.map(() => "?").join(",");
@@ -302,6 +303,9 @@ export function runTasksRetention(
         const outcomes = db
           .prepare(`DELETE FROM task_outcomes WHERE task_id IN (${ph})`)
           .run(...batch).changes;
+        db.prepare(
+          `DELETE FROM task_completion_facts WHERE task_id IN (${ph})`,
+        ).run(...batch);
         const tasks = db
           .prepare(`DELETE FROM tasks WHERE task_id IN (${ph})`)
           .run(...batch).changes;

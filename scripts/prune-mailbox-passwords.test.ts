@@ -1997,7 +1997,7 @@ describe("store table and safety net", () => {
       "conversations.content",
       "tasks.title tasks.description tasks.input tasks.output tasks.error tasks.metadata",
       "runs.input runs.output runs.trace runs.error runs.goal_graph",
-      "task_outcomes.concern_detail",
+      "task_outcomes.concern_detail task_completion_facts.concern_detail",
       "recall_audit.query recall_audit.result_snippets",
       "events.data",
       "mined_test_cases.input",

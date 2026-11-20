@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describeBuildInfo, readBuildInfo } from "./build-info.js";
+import { buildCommit, buildInfoUrl, describeBuildInfo, readBuildInfo, runningBuild } from "./build-info.js";
 
 describe("describeBuildInfo", () => {
   it("names commit, branch and build time of a clean build", () => {
@@ -33,6 +33,37 @@ describe("describeBuildInfo", () => {
     expect(describeBuildInfo("42")).toBe("build-info.json unreadable");
     expect(describeBuildInfo("null")).toBe("build-info.json unreadable");
     expect(describeBuildInfo(JSON.stringify({ branch: "main" }))).toBe("build-info.json has no commit");
+  });
+});
+
+describe("buildCommit", () => {
+  it("returns the short commit of a normal body, else the first 8 of the full commit", () => {
+    expect(buildCommit(JSON.stringify({ commit: "f".repeat(40), commitShort: "abc1234", branch: "main" }))).toBe("abc1234");
+    expect(buildCommit(JSON.stringify({ commit: "0123456789abcdef" }))).toBe("01234567");
+  });
+
+  it("is null for a body without a commit, for garbage and for an absent file", () => {
+    expect(buildCommit(JSON.stringify({ branch: "main", dirty: false }))).toBeNull();
+    expect(buildCommit(JSON.stringify({ commitShort: "" }))).toBeNull();
+    expect(buildCommit("{not json")).toBeNull();
+    expect(buildCommit("42")).toBeNull();
+    expect(buildCommit("null")).toBeNull();
+    expect(buildCommit(null)).toBeNull();
+  });
+});
+
+describe("buildInfoUrl", () => {
+  it("names the record one folder above the compiled module (nothing is read)", () => {
+    expect(buildInfoUrl("file:///synthetic-root/dist/lib/build-info.js").href).toBe(
+      "file:///synthetic-root/dist/build-info.json",
+    );
+  });
+});
+
+describe("runningBuild", () => {
+  it("is null in a source run (no record next to the source tree) and stays the same on a second read", () => {
+    expect(runningBuild()).toBeNull();
+    expect(runningBuild()).toBeNull();
   });
 });
 

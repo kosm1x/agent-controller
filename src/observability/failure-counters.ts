@@ -25,6 +25,7 @@ export type WriteFailureSite =
   | "mutation_log"
   | "project_log"
   | "user_evidence"
+  | "completion_facts"
   | "unknown";
 
 const NAME = "mc_write_failures_total";

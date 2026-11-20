@@ -14,8 +14,10 @@ import client from "prom-client";
 const mockRun = vi.fn();
 const mockGet = vi.fn();
 const mockAll = vi.fn(() => [] as unknown[]);
-const mockPrepare = vi.fn((_sql: string) => ({
-  run: mockRun,
+// The completion-facts write gets its own spy, so a test can read its values.
+const factsRun = vi.fn();
+const mockPrepare = vi.fn((sql: string) => ({
+  run: sql.includes("task_completion_facts") ? factsRun : mockRun,
   get: mockGet,
   all: mockAll,
 }));
@@ -781,6 +783,99 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
       ),
     ).toBe(true);
     expect(takeConcernDetail(taskId)).toBeNull();
+  });
+});
+
+// Every finished task gets its completion-facts row (build + cleaned concern),
+// not only the tasks a chat reply waits for — nothing here registers one.
+describe("dispatchTask writes the completion facts of every finished task", () => {
+  async function dispatchWith(result: RunnerOutput, parentTaskId?: string): Promise<string> {
+    registerRunner({ type: "fast", execute: async () => result });
+    const { taskId } = await submitTask({
+      title: "Completion facts",
+      description: "completion facts spec",
+      ...(parentTaskId && { parentTaskId }),
+    });
+    await vi.waitFor(() => {
+      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
+      if (!names.some((n) => n === "task.completed" || n === "task.failed")) {
+        throw new Error("no terminal trace event yet");
+      }
+    });
+    return taskId;
+  }
+  const factsFor = (taskId: string) => factsRun.mock.calls.filter((c) => c[0] === taskId);
+  const writeFailures = async () =>
+    (await client.register.getSingleMetric("mc_write_failures_total")?.get())?.values.find(
+      (v) => v.labels.site === "completion_facts",
+    )?.value ?? 0;
+
+  it("with concerns: one row with the cleaned first concern and the build (null in a source run), written BEFORE task.completed", async () => {
+    let rowsAtEmit = -1;
+    emitEventMock.mockImplementation((name: string, data: { task_id: string }) => {
+      if (name === "task.completed") rowsAtEmit = factsFor(data.task_id).length;
+    });
+    let taskId = "";
+    try {
+      taskId = await dispatchWith({
+        success: true,
+        status: "DONE_WITH_CONCERNS",
+        concerns: ["  sin datos del día  ", "second"],
+        output: "x",
+        durationMs: 0,
+      });
+    } finally {
+      emitEventMock.mockReset();
+    }
+    expect(factsFor(taskId)).toEqual([[taskId, null, "sin datos del día"]]);
+    expect(rowsAtEmit).toBe(1);
+  });
+
+  it("clean DONE and a failed run: a row with NULL detail", async () => {
+    const done = await dispatchWith({ success: true, status: "DONE", output: "x", durationMs: 0 });
+    expect(factsFor(done)).toEqual([[done, null, null]]);
+    emitTraceMock.mockClear();
+    const failed = await dispatchWith({
+      success: false,
+      status: "BLOCKED",
+      concerns: ["no aplica"],
+      error: "bloqueado",
+      durationMs: 0,
+    });
+    expect(factsFor(failed)).toEqual([[failed, null, null]]);
+  });
+
+  it("a sub-task with concerns: the row is keyed by the sub-task's own id, never its parent's", async () => {
+    const child = await dispatchWith(
+      { success: true, status: "DONE_WITH_CONCERNS", concerns: ["falta un dato"], output: "x", durationMs: 0 },
+      "parent-facts-1",
+    );
+    expect(child).not.toBe("parent-facts-1");
+    expect(factsRun.mock.calls).toEqual([[child, null, "falta un dato"]]);
+  });
+
+  it("a facts write that throws: the task still completes, the event still fires, the concern is still noted, and the failure is counted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const before = await writeFailures();
+    factsRun.mockImplementationOnce(() => {
+      throw new Error("synthetic disk failure");
+    });
+    const taskId = await dispatchWith({
+      success: true,
+      status: "DONE_WITH_CONCERNS",
+      concerns: ["sin datos del día"],
+      output: "x",
+      durationMs: 0,
+    });
+    const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
+    expect(terminal.name).toBe("task.completed");
+    expect(terminal.attrs).toMatchObject({ status: "completed_with_concerns" });
+    expect(
+      emitEventMock.mock.calls.some((c) => c[0] === "task.completed" && c[1].task_id === taskId),
+    ).toBe(true);
+    expect(takeConcernDetail(taskId)).toBe("sin datos del día");
+    expect(factsFor(taskId)).toHaveLength(1);
+    expect(await writeFailures()).toBe(before + 1);
   });
 });
 

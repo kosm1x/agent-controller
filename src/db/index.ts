@@ -1562,6 +1562,20 @@ function setUpDatabase(_db: Database.Database): void {
           );
         `),
     },
+    {
+      version: 18,
+      description:
+        "task_completion_facts — one row per finished task: the short commit of the running build and the first runner concern (redacted, ≤500 chars), for every kind of task that ends on the normal terminal path; storage only",
+      up: (db) =>
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS task_completion_facts (
+            task_id        TEXT PRIMARY KEY,
+            build          TEXT,
+            concern_detail TEXT,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+        `),
+    },
   ];
   for (const m of SCHEMA_MIGRATIONS) {
     if (schemaVersion < m.version) {
@@ -1579,7 +1593,7 @@ function setUpDatabase(_db: Database.Database): void {
  * database this code has fully set up. Bump it with every appended migration
  * (index-readonly.test.ts pins it against a fresh initDatabase).
  */
-export const SCHEMA_MIGRATION_HEAD = 17;
+export const SCHEMA_MIGRATION_HEAD = 18;
 
 /**
  * Opens an EXISTING database read-only for an operator script that runs next to
