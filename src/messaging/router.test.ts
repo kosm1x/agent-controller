@@ -2927,6 +2927,65 @@ describe("MessageRouter", () => {
       }
     });
 
+    it("the critical-data safety net stores every detected value under the projects category", async () => {
+      const PASTED = ["Zq", "7".repeat(4), "Kx".repeat(4)].join("");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      userFactsMock.setUserFact.mockImplementation(() => true);
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `guarda esto: password: ${PASTED} y la propiedad G-ABCDEF1234`,
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: "Listo.", duration_ms: 1 },
+        });
+        const calls = userFactsMock.setUserFact.mock.calls;
+        expect(calls.map((c) => c[1])).toEqual(expect.arrayContaining(["password", "ga4_measurement_id"]));
+        expect(calls.map((c) => c[0])).toEqual(calls.map(() => "projects"));
+      } finally {
+        logSpy.mockRestore();
+        userFactsMock.setUserFact.mockReset();
+      }
+    });
+
+    it("the critical-data safety net stores nothing when the run's stored output lists the fact tool among its tool calls", async () => {
+      const PASTED = ["Zq", "7".repeat(4), "Kx".repeat(4)].join("");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      userFactsMock.setUserFact.mockImplementation(() => true);
+      try {
+        await router.handleInbound({
+          channel: "whatsapp",
+          from: "owner@s.whatsapp.net",
+          text: `guarda esto: password: ${PASTED}`,
+          timestamp: new Date(),
+        });
+        router.startEventListeners();
+        dbGetBySql.mockImplementation((sql: string, ...a: unknown[]) =>
+          sql.includes("SELECT r.output FROM runs r") && a[0] === "test-task-123"
+            ? { output: JSON.stringify({ toolCalls: ["user_fact_set"] }) }
+            : undefined,
+        );
+        findHandler("task.completed")!({
+          data: { task_id: "test-task-123", agent_id: "fast", result: "Listo.", duration_ms: 1 },
+        });
+        // The check read this run's stored output, and that output named the fact tool.
+        expect(
+          dbGetBySql.mock.calls.some(([sql]) => sql.includes("SELECT r.output FROM runs r")),
+        ).toBe(true);
+        expect(userFactsMock.setUserFact).not.toHaveBeenCalled();
+        expect(
+          logSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("Auto-persisted critical data")),
+        ).toEqual([]);
+      } finally {
+        dbGetBySql.mockReset().mockImplementation(() => undefined);
+        logSpy.mockRestore();
+        userFactsMock.setUserFact.mockReset();
+      }
+    });
+
     it("audit R3 B1a: a thread hydrated from stored conversations comes back scrubbed", () => {
       const tk = "telegram-hydrate-r3";
       dbAll.mockImplementationOnce((sql: string) =>
@@ -6712,6 +6771,24 @@ describe("MessageRouter", () => {
       );
       expect(result.source).toBe("inherited");
       expect([...result.groups]).toEqual(["coding"]);
+    });
+
+    it("the scope wrapper hands the prior scope to the decision: an empty classification inherits it", async () => {
+      const { scopeToolsForMessage } = await import("./message-scope.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const scoped = scopeToolsForMessage("Continúa", [], new Set<string>(), new Set(["coding"]));
+        expect(scoped.baseGroups).toEqual(["coding"]);
+        expect(scoped.activeGroups).toContain("coding");
+        expect(scoped.requestGroups).toEqual([]);
+        expect(
+          logSpy.mock.calls
+            .map((c) => String(c[0]))
+            .some((l) => l.startsWith("[router] Scope groups (inherited from prior turn): ")),
+        ).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+      }
     });
   });
 

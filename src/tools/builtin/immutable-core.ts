@@ -52,6 +52,8 @@ const IMMUTABLE_FILES: string[] = [
   "src/messaging/poisoned-exchange.ts", // patterns that keep a reply out of the thread context
   "src/messaging/confirmation-format.ts", // confirmation card texts and the failure rule of an approved call
   "src/messaging/day-log.ts", // day-log append
+  "src/messaging/critical-data.ts", // credential safety net that stores detected values as facts
+  "src/messaging/message-scope.ts", // per-message tool scope and the streaming hold
   "src/db/index.ts",
   "src/db/jarvis-fs.ts",
   "src/rituals/scheduler.ts",

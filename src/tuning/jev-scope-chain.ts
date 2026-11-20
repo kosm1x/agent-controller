@@ -186,7 +186,7 @@ export function buildChainState(
 }
 
 export interface ChainDeps {
-  /** router.ts `decideActiveGroups` (sticky union / inherit / regex). */
+  /** message-scope.ts `decideActiveGroups` (sticky union / inherit / regex). */
   decide: (
     semantic: Set<string> | null,
     prior: Set<string> | undefined,

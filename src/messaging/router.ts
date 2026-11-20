@@ -58,7 +58,6 @@ import { extractAndPersistCorrection } from "../intelligence/correction-loop.js"
 import {
   formatRelevantUserFactsBlock,
   formatStableUserFactsBlock,
-  setUserFact,
 } from "../db/user-facts.js";
 import { scrubSecrets } from "../lib/secret-refs.js";
 import { formatProjectsBlock } from "../db/projects.js";
@@ -145,7 +144,6 @@ import {
   detectActiveGroups,
   getAllAvailableTools,
   DEFAULT_SCOPE_PATTERNS,
-  CONVERSATIONAL_PATTERN,
   applyCommunityChannelScopeOverride,
   activeProjectGroups,
 } from "./scope.js";
@@ -176,11 +174,9 @@ import {
 import { sanitizeDeliverable } from "./deliverable-filter.js";
 import { EXTRACTED_FILE_MARKER } from "./extracted-file.js";
 import { isLedgerLine } from "../lib/v8-4/ledger-lines.js";
-import { recordToolEvidence } from "../lib/v8-4/numbers.js";
 import {
   candidateFingerprints,
   cutKeepingWithheldLine,
-  hasUnprovenValue,
   PASSWORD_WITHHELD_LINE,
   PASSWORD_WITHHELD_PLACEHOLDER,
   withholdUnprovenValues,
@@ -190,16 +186,13 @@ import {
 import {
   isSeenPassword,
   provenPasswords,
-  recordUserPasswordProof,
 } from "../lib/v8-4/mailbox-passwords.js";
 import { withholdForStore } from "../lib/v8-4/store-withhold.js";
-import { currentRunTaskId } from "../tools/rule-of-two.js";
 import {
   detectScopeMiss,
   stripScopeAskTail,
   groupsForTool,
   scopeMissFallbackLine,
-  looksLikeScopeAsk,
   SCOPE_RERUN_NOTICE,
 } from "./scope-miss.js";
 import {
@@ -233,6 +226,14 @@ import {
   pendingCallsOf,
 } from "./confirmation-format.js";
 import { dayLogEntryText, appendDayLog } from "./day-log.js";
+import { ensureCriticalDataPersisted } from "./critical-data.js";
+import {
+  recordUserEvidence,
+  decideActiveGroups,
+  scopeToolsForMessage,
+  holdScopeAsks,
+  type ScopeSource,
+} from "./message-scope.js";
 
 // Defined in modules of their own that never import the router; re-exported
 // here so existing importers keep working.
@@ -245,6 +246,8 @@ export {
   isWholeCardLiteral,
   dayLogEntryText,
 };
+export { recordUserEvidence, decideActiveGroups, holdScopeAsks };
+export type { ScopeSource };
 
 /**
  * S6 WS2: the project an OPERATOR chat turn names (the KB README detector),
@@ -559,110 +562,6 @@ export function buildExternalJarvisSystemPrompt(tools: string[]): {
   return buildJarvisSystemPrompt(tools, "", "", "", null, false, true);
 }
 
-/**
- * Scope tools to only groups relevant to the current conversation context.
- * Scans the current message + last 3 conversation turns for keyword signals.
- * Always includes core + misc. Activates other groups on demand.
- *
- * Typical reduction: 49 → 15-25 tools = ~5-8K fewer tokens.
- */
-/**
- * Three-way decision for which scope groups to activate. Source of bug class
- * `feedback_classifier_empty_vs_null.md`: prior code collapsed `null` and
- * `empty Set` into the same regex-fallback branch, but they mean different
- * things. The classifier explicitly returns `[]` (→ empty Set) for short
- * follow-ups like "dale", "procede", "continúa" per its own rules; that's a
- * signal to inherit prior scope, not to fall back to regex which can pick
- * the wrong group from prior-turn FPs.
- *
- *   semantic non-empty → use semantic ("semantic")
- *   semantic empty + conversational message → regex_empty (don't inherit
- *     scope onto a topic-closer like "gracias" — qa-audit W2)
- *   semantic empty + prior scope present → inherit prior ("inherited")
- *   semantic empty + no prior → regex_empty
- *   semantic null/undefined → regex fallback ("regex")
- */
-export type ScopeSource = "semantic" | "inherited" | "regex" | "regex_empty";
-
-/** Phase 3: the user's message + recent user turns join the evidence corpus. */
-export function recordUserEvidence(
-  taskId: string,
-  message: string,
-  history: readonly ConversationTurn[] | undefined,
-): void {
-  try {
-    // Only this turn's message is password proof (mailbox-passwords.ts);
-    // the earlier user turns feed the figure corpus alone.
-    recordUserPasswordProof(taskId, message);
-    recordToolEvidence(taskId, message);
-    const userTurns = (history ?? [])
-      .filter((t) => t.role === "user")
-      .slice(-3);
-    for (const t of userTurns) recordToolEvidence(taskId, t.content);
-  } catch {
-    /* evidence is best-effort */
-  }
-}
-
-export function decideActiveGroups(
-  semanticGroups: Set<string> | null | undefined,
-  priorScope: Set<string> | undefined,
-  regexFallback: () => Set<string>,
-  currentMessage?: string,
-  /** Phase 1.1: union prior (within TTL — the caller decides) into semantic. */
-  sticky = true,
-): { groups: Set<string>; source: ScopeSource; base: Set<string> } {
-  // Conversational filter: short greetings/acks should not inherit prior
-  // scope. Mirrors the protection scope.ts:scopeToolsForMessage already
-  // applies to its own regex-inheritance branch (CONVERSATIONAL_PATTERN).
-  const isConversational =
-    !!currentMessage &&
-    currentMessage.trim().length < 80 &&
-    CONVERSATIONAL_PATTERN.test(currentMessage.trim());
-  if (semanticGroups && semanticGroups.size > 0) {
-    // Phase 1.1 sticky scope: a NEW non-empty classification used to REPLACE
-    // the prior set, so "confirmo eliminación" (→ destructive) dropped the
-    // coding group the previous turn needed and the model asked for "usa
-    // shell" again (exchange 11189). Within the TTL the prior groups ride
-    // along; the prior set is bounded by the TTL, not accumulated forever.
-    // `base` is THIS turn's own classification; the caller stores base (not
-    // the union) as the next prior, so the carried set is bounded to one
-    // turn's groups plus any scope-miss widening — never an accumulation.
-    if (sticky && priorScope && priorScope.size > 0 && !isConversational) {
-      return {
-        groups: new Set([...semanticGroups, ...priorScope]),
-        source: "semantic",
-        base: new Set(semanticGroups),
-      };
-    }
-    return {
-      groups: semanticGroups,
-      source: "semantic",
-      base: new Set(semanticGroups),
-    };
-  }
-  const semanticEmpty =
-    semanticGroups !== null &&
-    semanticGroups !== undefined &&
-    semanticGroups.size === 0;
-  if (semanticEmpty && priorScope && priorScope.size > 0 && !isConversational) {
-    // Separate Sets: scopeToolsForMessage MUTATES the groups it receives
-    // (URL/meta injections), and `base` becomes the next turn's prior — an
-    // alias would re-grow the prior to the full injected set (R2 audit C1).
-    return {
-      groups: new Set(priorScope),
-      source: "inherited",
-      base: new Set(priorScope),
-    };
-  }
-  const fallback = regexFallback();
-  return {
-    groups: fallback,
-    source: semanticEmpty ? "regex_empty" : "regex",
-    base: new Set(fallback),
-  };
-}
-
 // Never below the classifier's own budget: Jev's 1500 ms leg runs before Sonnet's, +2000 covers it.
 const INBOUND_STAGE_EFFECTIVE_DEADLINE_MS = Math.max(
   INBOUND_STAGE_DEADLINE_MS,
@@ -707,127 +606,6 @@ async function boundedInboundStage<T>(
     }
     return fallback;
   }
-}
-
-function scopeToolsForMessage(
-  currentMessage: string,
-  conversationHistory: ConversationTurn[],
-  semanticGroups?: Set<string> | null,
-  priorScope?: Set<string>,
-): {
-  tools: string[];
-  activeGroups: string[];
-  baseGroups: string[];
-  requestGroups: string[];
-} {
-  // Scope from recent user messages. Previously slice(-2) to avoid scope
-  // accumulation on hallucinated assistant content, but user messages are
-  // trusted. Widened to -4 so confirmation chains ("Lista X" → "Elimina 6 y 7"
-  // → "Confirmado" → "Confirma el status") preserve the original domain
-  // context (schedule, coding, etc.) across 3-4 turn acknowledgment loops.
-  // The current message (first param) is always scanned separately.
-  const userMsgs = conversationHistory
-    .filter((t) => t.role === "user")
-    .slice(-4)
-    .map((t) => t.content);
-
-  // For assistant messages, extract only google/wp keywords to avoid false triggers
-  const assistantContext = conversationHistory
-    .filter((t) => t.role === "assistant")
-    .slice(-2)
-    .map((t) => {
-      // Only pass through words that match google or wordpress patterns
-      const googleMatch = t.content.match(
-        /\b(emails?|correos?|gmail|calendar|drive|hojas?|sheets?|google|gsheets)/gi,
-      );
-      const wpMatch = t.content.match(
-        /\b(wordpress|wp|posts?|art[ií]culos?|livingjoyfully)/gi,
-      );
-      return [...(googleMatch ?? []), ...(wpMatch ?? [])].join(" ");
-    })
-    .filter((s) => s.length > 0);
-
-  const recentUserMessages = [...userMsgs, ...assistantContext];
-
-  // v6.4 CL1.1: Use semantic classifier groups if available, regex as fallback.
-  // The LLM understands intent ("abre mi northstar", "manda un correo") without
-  // needing exact keyword patterns. Regex stays as safety net for timeouts.
-  // v8 2026-04-26: three-way decision delegated to decideActiveGroups so the
-  // empty-vs-null distinction (was previously collapsed) is unit-testable.
-  const decision = decideActiveGroups(
-    semanticGroups,
-    priorScope,
-    () =>
-      detectActiveGroups(
-        currentMessage,
-        recentUserMessages,
-        DEFAULT_SCOPE_PATTERNS,
-      ),
-    currentMessage,
-  );
-  const activeGroups = decision.groups;
-  // Ruling 3t (audit W1): the groups THIS message produced on its own — the
-  // classifier's answer (before the sticky union and the history safety
-  // net) or the patterns the current text matches; inherited scope → none.
-  // Read by chat attribution only (`chatProject`).
-  const requestGroups =
-    decision.source === "semantic"
-      ? [...decision.base]
-      : decision.source === "inherited"
-        ? []
-        : [...detectActiveGroups(currentMessage, [], DEFAULT_SCOPE_PATTERNS)];
-  if (decision.source === "semantic") {
-    console.log(
-      `[router] Scope groups (semantic): ${[...activeGroups].join(", ")}`,
-    );
-  } else if (decision.source === "inherited") {
-    console.log(
-      `[router] Scope groups (inherited from prior turn): ${[...activeGroups].join(", ")}`,
-    );
-  } else if (
-    (decision.source === "regex" || decision.source === "regex_empty") &&
-    activeGroups.size > 0
-  ) {
-    const tag =
-      decision.source === "regex_empty"
-        ? "regex (post-empty)"
-        : "regex fallback";
-    console.log(
-      `[router] Scope groups (${tag}): ${[...activeGroups].join(", ")}`,
-    );
-  }
-
-  const tools = scopeToolsPure(
-    currentMessage,
-    recentUserMessages,
-    DEFAULT_SCOPE_PATTERNS,
-    {
-      hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
-      hasWordpress: !!process.env.WP_SITES,
-      hasMemory: getMemoryService().backend === "hindsight",
-      hasCrm: !!process.env.CRM_API_TOKEN,
-    },
-    activeGroups,
-  );
-
-  // fullCount = the universe of every tool name scopeToolsForMessage could
-  // return for the current env config. Source of truth co-located with the
-  // assembly logic in scope.ts so adding a new tool group can't silently rot
-  // this denominator (v7.6 Spine 2 — observability backfill).
-  const fullCount = getAllAvailableTools({
-    hasGoogle: !!process.env.GOOGLE_CLIENT_ID,
-    hasWordpress: !!process.env.WP_SITES,
-    hasMemory: getMemoryService().backend === "hindsight",
-    hasCrm: !!process.env.CRM_API_TOKEN,
-  }).size;
-  console.log(`[router] Tool scope: ${tools.length}/${fullCount} tools`);
-
-  return {
-    tools,
-    activeGroups: [...activeGroups],
-    baseGroups: [...decision.base],
-    requestGroups,
-  };
 }
 
 interface PendingReply {
@@ -913,83 +691,6 @@ interface ScopeRerunSpec {
   /** This turn's own classification — what the sticky prior is built from. */
   baseGroups: string[];
   isCodingTask: boolean;
-}
-
-/**
- * The stream hold's password test (password-gate.ts): a value the mailbox
- * tool printed that this run has not proven, from `from` on. The run is the
- * one whose stream this is (the chunk arrives inside its tool context; with
- * no run, nothing is proven). A failing check holds (the safe side).
- */
-function holdForPassword(text: string, from: number): boolean {
-  try {
-    const proven = provenPasswords(currentRunTaskId());
-    return hasUnprovenValue(
-      text,
-      { isSeen: isSeenPassword, isProven: (fp) => proven.has(fp) },
-      from,
-    );
-  } catch {
-    console.warn(
-      "[router] password-gate stream check failed — holding the stream",
-    );
-    return true;
-  }
-}
-
-/**
- * Streaming guard for scope asks (2026-09-06). The Telegram placeholder was
- * edited with the raw reply as it streamed, so «Necesito `shell_exec` para
- * esto.» was on the operator's screen for the seconds before the scope-miss
- * re-run wiped it — the ask the Phase 1.2 filter exists to hide. Once the
- * accumulated text reads as an ask, wipe the placeholder and hold chunks;
- * the re-run's reset() or the final finalize() writes the real reply
- * (finalize always rewrites the whole message, so no content is lost).
- *
- * The hold is re-evaluated per chunk, not latched (qa-audit W1: a latch cost
- * 3.3% of replies their streaming — «necesito que me digas…» mid-answer).
- * When the ask scrolls out of the predicate's tail window the whole
- * accumulation is re-appended (reset() emptied the controller), so a reply
- * that asked and then kept going streams again.
- */
-export function holdScopeAsks(stream: {
-  appendChunk(text: string): void;
-  reset(placeholder?: string): void;
-}): (chunk: string) => void {
-  let accumulated = "";
-  let holding = false;
-  // An unproven mailbox password (password-gate.ts) latches the hold: it is
-  // withheld at completion, so it never stays on screen — finalize() writes
-  // the checked text, and if finalize fails the old message shows only the
-  // placeholder. Only the new tail is scanned (a run cut by the previous
-  // end is walked back), so a long reply stays linear.
-  let passwordHeld = false;
-  let scanned = 0;
-  return (chunk: string) => {
-    accumulated += chunk;
-    if (passwordHeld) return;
-    const from = scanned;
-    scanned = accumulated.length;
-    if (holdForPassword(accumulated, from)) {
-      passwordHeld = true;
-      if (!holding) stream.reset("⏳");
-      holding = true;
-      return;
-    }
-    if (looksLikeScopeAsk(accumulated)) {
-      if (!holding) {
-        holding = true;
-        stream.reset("⏳");
-      }
-      return;
-    }
-    if (holding) {
-      holding = false;
-      stream.appendChunk(accumulated);
-      return;
-    }
-    stream.appendChunk(chunk);
-  };
 }
 
 /** In-memory ring buffer of recent exchanges per channel for thread continuity. */
@@ -1149,138 +850,6 @@ export function isOwnerChannel(
   mode: EmailChannelMode | undefined,
 ): boolean {
   return !isEmailChannel(channel) || mode === "owner-only";
-}
-
-// ---------------------------------------------------------------------------
-// Critical data persistence safety net
-// ---------------------------------------------------------------------------
-
-interface DetectedCredential {
-  key: string;
-  value: string;
-}
-
-/**
- * Scan user text for critical data patterns (API keys, IDs, credentials)
- * that should be persisted regardless of whether the LLM called user_fact_set.
- */
-function detectCriticalData(text: string): DetectedCredential[] {
-  const results: DetectedCredential[] = [];
-
-  // Google API keys: AIzaSy...
-  const googleApiKey = text.match(/\b(AIzaSy[A-Za-z0-9_-]{33})\b/);
-  if (googleApiKey) {
-    results.push({ key: "google_api_key", value: googleApiKey[1] });
-  }
-
-  // GA4 Measurement IDs: G-XXXXXXXXXX (with or without G- prefix)
-  const ga4Full = text.match(/\b(G-[A-Z0-9]{8,12})\b/);
-  if (ga4Full) {
-    results.push({ key: "ga4_measurement_id", value: ga4Full[1] });
-  }
-  // Measurement/Msrmnt ID without G- prefix
-  if (!ga4Full) {
-    const ga4Labeled = text.match(
-      /(?:m(?:e(?:asure)?)?s?rmnt|measurement)\s*id\s*[:\s]*([A-Z0-9]{8,12})\b/i,
-    );
-    if (ga4Labeled) {
-      results.push({
-        key: "ga4_measurement_id",
-        value: `G-${ga4Labeled[1]}`,
-      });
-    }
-  }
-
-  // GA4 Stream IDs: long numeric (10+ digits, preceded by "stream" context)
-  const streamId = text.match(/(?:stream\s*(?:id)?)\s*[:\s]*(\d{10,15})/i);
-  if (streamId) {
-    results.push({ key: "ga4_stream_id", value: streamId[1] });
-  }
-
-  // Generic API keys/tokens: explicit label + value patterns
-  const labeledSecret = text.match(
-    /(?:api[_ ]?key|token|secret)\s*[:\s=]+\s*["']?([A-Za-z0-9_\-.]{20,})/i,
-  );
-  if (labeledSecret && !googleApiKey) {
-    results.push({ key: "api_credential", value: labeledSecret[1] });
-  }
-
-  // Passwords: label + value (allows special chars)
-  const labeledPassword = text.match(
-    /(?:password|contraseña|pswd|pwd|pass)\s*[:\s=]+\s*["']?(\S{8,})/i,
-  );
-  if (labeledPassword) {
-    results.push({ key: "password", value: labeledPassword[1] });
-  }
-
-  // Login/username: label + value
-  const labeledLogin = text.match(
-    /(?:login|user(?:name)?|usuario)\s*[:\s=]+\s*["']?(\S{3,})/i,
-  );
-  if (labeledLogin) {
-    results.push({ key: "login", value: labeledLogin[1] });
-  }
-
-  // WP Application Passwords: 4-char groups separated by spaces (e.g. "BtZU tFsT EUhC l2z5 No4B F4aU")
-  const wpAppPass = text.match(
-    /(?:app(?:lication)?\s*pass(?:word)?|contraseña\s*de\s*aplicación)[^:=\n]*[:\s=]+\s*["']?([A-Za-z0-9]{4}(?:\s+[A-Za-z0-9]{4}){4,})/i,
-  );
-  if (wpAppPass) {
-    results.push({ key: "wp_app_password", value: wpAppPass[1] });
-  }
-
-  // FTP host: ftp://... or sftp://...
-  const ftpHost = text.match(
-    /(?:ftp|sftp)\s*(?:host)?\s*[:\s=]*\s*((?:s?ftp:\/\/)?[\d.]+|(?:s?ftp:\/\/)?[\w.-]+\.\w{2,})/i,
-  );
-  if (ftpHost) {
-    results.push({ key: "ftp_host", value: ftpHost[1] });
-  }
-
-  return results;
-}
-
-/**
- * Post-execution safety net: if user message contained critical data
- * and the LLM didn't call user_fact_set, auto-store it.
- */
-function ensureCriticalDataPersisted(userText: string, taskId: string): void {
-  const detected = detectCriticalData(userText);
-  if (detected.length === 0) return;
-
-  // Check if user_fact_set was called by this task
-  try {
-    const run = getDatabase()
-      .prepare(
-        "SELECT r.output FROM runs r WHERE r.task_id = ? ORDER BY r.created_at DESC LIMIT 1",
-      )
-      .get(taskId) as { output: string | null } | undefined;
-
-    let toolCalls: string[] = [];
-    if (run?.output) {
-      try {
-        const parsed = JSON.parse(run.output);
-        toolCalls = parsed.toolCalls ?? [];
-      } catch {
-        /* bare string output — no tools */
-      }
-    }
-
-    if (toolCalls.includes("user_fact_set")) return; // LLM already stored it
-
-    // Auto-store detected credentials
-    for (const cred of detected) {
-      if (!setUserFact("projects", cred.key, cred.value, "auto-detected")) {
-        console.log("[router] Auto-persist skipped a mailbox password");
-        continue;
-      }
-      console.log(
-        `[router] Auto-persisted critical data: projects/${cred.key} (LLM missed user_fact_set)`,
-      );
-    }
-  } catch (err) {
-    console.error(`[router] Critical data persistence check failed: ${err}`);
-  }
 }
 
 function pushToThread(
