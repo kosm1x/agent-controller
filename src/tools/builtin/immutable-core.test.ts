@@ -45,6 +45,7 @@ describe("isImmutableCorePath", () => {
       "src/messaging/day-log.ts",
       "src/messaging/critical-data.ts",
       "src/messaging/message-scope.ts",
+      "src/messaging/system-prompt.ts",
       "src/db/index.ts",
       "src/db/jarvis-fs.ts",
       "src/rituals/scheduler.ts",

@@ -54,6 +54,7 @@ const IMMUTABLE_FILES: string[] = [
   "src/messaging/day-log.ts", // day-log append
   "src/messaging/critical-data.ts", // credential safety net that stores detected values as facts
   "src/messaging/message-scope.ts", // per-message tool scope and the streaming hold
+  "src/messaging/system-prompt.ts", // system-prompt assembly, tier order and size budget
   "src/db/index.ts",
   "src/db/jarvis-fs.ts",
   "src/rituals/scheduler.ts",

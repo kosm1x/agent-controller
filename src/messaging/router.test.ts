@@ -100,7 +100,7 @@ import {
 } from "../observability/prometheus.js";
 vi.mock("../observability/prometheus.js", () => ({
   recordCommunityGateVerdict: vi.fn(),
-  // agent-memory P0 memory-tax telemetry (router + kb-injection call sites)
+  // agent-memory P0 memory-tax telemetry (system-prompt module + kb-injection call sites)
   recordMemoryInjection: vi.fn(),
   recordPromptSectionDropped: vi.fn(),
 }));
@@ -394,7 +394,18 @@ import {
   formatStableUserFactsBlock,
 } from "../db/user-facts.js";
 import { formatProjectsBlock } from "../db/projects.js";
-import { detectToolFlags, fileSystemSection } from "./prompt-sections.js";
+import {
+  detectToolFlags,
+  fileSystemSection,
+  identitySection,
+  confirmationSection,
+  toolFirstSection,
+  mechanicalVerificationSection,
+  capabilitiesSection,
+  personalDataSection,
+  correctionMemorySection,
+  figuresProvenanceSection,
+} from "./prompt-sections.js";
 import {
   pinFromExchange,
   getPins,
@@ -11129,6 +11140,75 @@ describe("buildJarvisSystemPrompt — profile + projects in the stable half", ()
       expect(half).not.toContain(PROJECTS);
       expect(half).not.toContain(RELEVANT);
     }
+  });
+
+  // The order of the stable prefix decides the provider-side prompt cache.
+  it("(e) the stable half opens with the P1 sections in push order, each followed by one blank line", () => {
+    const flags = detectToolFlags(tools);
+    const p1 = [
+      identitySection({ external: false }),
+      confirmationSection(flags),
+      toolFirstSection(flags),
+      mechanicalVerificationSection(),
+    ];
+    const { stable } = buildJarvisSystemPrompt(tools, stableProfile(), "", "");
+    expect(stable.startsWith(p1.join("\n\n") + "\n\n")).toBe(true);
+  });
+
+  it("(f) a P4 block follows the P3 part of the variable half after one blank line", () => {
+    const relevant = formatRelevantUserFactsBlock(msgA);
+    const p3Only = buildJarvisSystemPrompt(tools, stableProfile(), "", "").variable;
+    expect(p3Only.length).toBeGreaterThan(0); // P3 is populated
+    const { variable } = buildJarvisSystemPrompt(tools, stableProfile(), relevant, "");
+    expect(variable).toBe(`${p3Only}\n\n${relevant}`);
+  });
+
+  it("(g) the external builder is the builder with no blocks, not owner, external: cohort rows stay out", () => {
+    const label = "cohorte sintética de prueba";
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("FROM self_defining_cohort")
+        ? [{ id: 1, member_id: "m-1", member_kind: "project", label, source_ref: "synthetic", salience: 1, signal_json: "{}", first_seen_at: "2026-10-01", last_rolled_at: "2026-10-01", active: 1 }]
+        : [],
+    );
+    // Precondition: an owner build emits the cohort rows.
+    expect(buildJarvisSystemPrompt(tools, "", "", "", null, true).stable).toContain(label);
+    const ext = buildExternalJarvisSystemPrompt(tools);
+    expect(ext.stable.length).toBeGreaterThan(0);
+    expect(ext.stable).not.toContain(label);
+    expect(ext).toEqual(buildJarvisSystemPrompt(tools, "", "", "", null, false, true));
+  });
+
+  it("(h) the whole stable half is the P1 sections then the P2 entries in push order, joined by one blank line", () => {
+    const flags = detectToolFlags(tools);
+    // Preconditions of the fixture: no file-system section, the personal-data section is in.
+    expect(flags.hasJarvisFiles).toBe(false);
+    expect(flags.hasUserFacts).toBe(true);
+    const profile = stableProfile();
+    const expected = [
+      identitySection({ external: false }),
+      confirmationSection(flags),
+      toolFirstSection(flags),
+      mechanicalVerificationSection(),
+      capabilitiesSection(flags),
+      personalDataSection(),
+      correctionMemorySection(),
+      figuresProvenanceSection(),
+      profile,
+    ].join("\n\n");
+    expect(buildJarvisSystemPrompt(tools, profile, "", "").stable).toBe(expected);
+  });
+
+  it("(i) without the owner-channel argument the cohort rows stay out; owner-channel true shows them", () => {
+    const label = "cohorte sintética de prueba";
+    dbAll.mockImplementation((sql: string) =>
+      sql.includes("FROM self_defining_cohort")
+        ? [{ id: 1, member_id: "m-1", member_kind: "project", label, source_ref: "synthetic", salience: 1, signal_json: "{}", first_seen_at: "2026-10-01", last_rolled_at: "2026-10-01", active: 1 }]
+        : [],
+    );
+    expect(buildJarvisSystemPrompt(tools, "", "", "", null, true).stable).toContain(label);
+    const defaulted = buildJarvisSystemPrompt(tools, "", "", "");
+    expect(defaulted.stable).not.toContain(label);
+    expect(defaulted.variable).not.toContain(label);
   });
 });
 

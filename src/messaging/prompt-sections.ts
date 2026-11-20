@@ -1,8 +1,9 @@
 /**
  * System prompt sections for Jarvis — extracted from router.ts for testability.
  *
- * Each function returns a markdown section string. The router orchestrates
- * which sections to include based on scoped tools.
+ * Each function returns a markdown section string. The builder in
+ * `system-prompt.ts` orchestrates which sections to include based on scoped
+ * tools.
  */
 
 import type { CohortMember } from "../cohort/self-defining.js";
@@ -441,8 +442,9 @@ const COHORT_KIND_LABEL: Record<CohortMember["member_kind"], string> = {
  * function, so it is the single source of truth and is unit-testable. See
  * the 2026-05-15 community-manager channel audits for the threat class.
  *
- * Pure: takes the already-fetched member list (the router calls `getCohort()`
- * and passes it in). Belongs in the STABLE prompt layer — the cohort is
+ * Pure: takes the already-fetched member list (the builder in
+ * `system-prompt.ts` calls `getCohort()` and passes it in). Belongs in the
+ * STABLE prompt layer — the cohort is
  * re-rolled once daily by the cron, so it is byte-stable within a day and
  * prompt-cache friendly. Returns "" when empty so the section auto-omits
  * cleanly (mirrors `availableSkillsSection`).
