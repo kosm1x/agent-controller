@@ -3,6 +3,15 @@
 #
 #   bash scripts/complaints-digest.sh [--db <path>] [--days N] [--last N] [--min K]
 #                                     [--type <key>] [--json] [--now <ISO time>]
+#   bash scripts/complaints-digest.sh --verdict --type <key> --since <ISO time>
+#                                     --max-complaints K [--runs N] [--db <path>]
+#                                     [--days N] [--json] [--now <ISO time>]
+#
+# Verdict mode closes a prediction written beforehand, "at most K complaints
+# (concerns + failed) in the type's first N (default 7) finished runs started
+# at or after --since": REFUTED once complaints exceed K, CONFIRMED once the
+# runs left cannot exceed it, else COUNTING; exit 0 for all three. --since
+# must fall inside the --days window (default 30) before --now.
 #
 # With task_completion_facts (schema 18 on), each type also gets a builds line:
 # the runs of the last-N strip grouped by build in order of first appearance,

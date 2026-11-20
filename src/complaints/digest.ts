@@ -107,8 +107,8 @@ const FAILED = "failed";
 const CLEAN = "completed";
 const MX_OFFSET_MS = 6 * 3600 * 1000;
 
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-const isComplaint = (r: TaskRow): boolean => r.status === CONCERNS || r.status === FAILED;
+export const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+export const isComplaint = (r: TaskRow): boolean => r.status === CONCERNS || r.status === FAILED;
 
 function parseJson(text: string | null): unknown {
   if (text === null) return null;
@@ -119,13 +119,13 @@ function parseJson(text: string | null): unknown {
   }
 }
 
-function typeKey(r: TaskRow): string | null {
+export function typeKey(r: TaskRow): string | null {
   if (r.ritual_id) return `ritual:${r.ritual_id}`;
   if (r.schedule_id) return `schedule:${r.schedule_id}`;
   return null;
 }
 
-function stripChar(status: string): string {
+export function stripChar(status: string): string {
   if (status === CLEAN) return ".";
   if (status === CONCERNS) return "C";
   if (status === FAILED) return "F";
@@ -159,10 +159,10 @@ function localDate(createdAt: string): string {
 
 const collapse = (s: string): string => s.replace(/\s+/g, " ").trim();
 /** A run's build as shown: whitespace-collapsed; null, empty or blank is no build. */
-const buildOf = (r: TaskRow): string | null => collapse(r.build ?? "") || null;
+export const buildOf = (r: TaskRow): string | null => collapse(r.build ?? "") || null;
 const chars = (s: string): string[] => Array.from(s);
 
-function evidence(r: TaskRow, facts: boolean): Evidence {
+export function evidence(r: TaskRow, facts: boolean): Evidence {
   const base = { date: localDate(r.created_at), id: r.task_id.slice(0, 8) };
   const build = facts ? { build: buildOf(r) } : {};
   const concern = collapse(r.concern_detail ?? "");

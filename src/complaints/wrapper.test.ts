@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -391,4 +391,132 @@ describe("task_completion_facts (schema 18 on), and databases without it", () =>
     ]);
     expect(code).toContain('case "$*" in');
   });
+});
+
+describe("--verdict: a prediction closed by code", () => {
+  // Ritual "vr" around S = 2026-11-15T12:00:00Z. v0 is one second before S;
+  // v3 never finished. Builds come from task_completion_facts.
+  const VR: [string, string, string, string, string | null][] = [
+    ["v0", "completed_with_concerns", "2026-11-15 11:59:59", '{"text":"v0 reply"}', null],
+    ["v1", "completed", "2026-11-15 12:00:00", "{}", null],
+    ["v2", "completed_with_concerns", "2026-11-16 12:00:00", '{"text":"v2 reply"}', null],
+    ["v3", "running", "2026-11-17 12:00:00", "{}", null],
+    ["v4", "failed", "2026-11-18 12:00:00", "{}", "v4 boom"],
+    ["v5", "completed_with_concerns", "2026-11-19 12:00:00", '{"text":"v5 reply"}', null],
+  ];
+  const VR_FACTS: [string, string, string | null][] = [
+    ["v1", "aaa1111", null],
+    ["v2", "aaa1111", "v2 facts concern"],
+    ["v4", "bbb2222", null],
+    ["v5", "aaa1111", null],
+  ];
+  const S = "2026-11-15T12:00:00Z";
+  const VERDICT_KEYS = ["builds", "complaints", "counted", "ignoredAfterN", "maxComplaints", "now", "runList", "runs", "since", "strip", "type", "unfinished", "verdict"];
+  let vdb: string;
+  const sidecars = () => [`${vdb}-wal`, `${vdb}-shm`].filter((p) => existsSync(p));
+  const clearSidecars = () => {
+    for (const p of [`${vdb}-wal`, `${vdb}-shm`]) rmSync(p, { force: true });
+  };
+  const verdict = (args: string[], path = vdb) => wrapper(["--db", path, "--now", NOW, "--verdict", ...args]);
+  const json = (args: string[], path = vdb) => {
+    const r = verdict([...args, "--json"], path);
+    expect(r.status, r.stderr).toBe(0);
+    return JSON.parse(r.stdout);
+  };
+
+  beforeAll(() => {
+    // WAL mode: any sqlite3 open of the file leaves -wal and -shm beside it,
+    // which is how the flag-error test proves no database was opened.
+    vdb = join(dir, "verdict.db");
+    const inserts = VR.map(
+      ([id, status, created, output, error]) =>
+        `INSERT INTO tasks (task_id, status, created_at, metadata, output, error) VALUES (${[id, status, created, '{"ritualId":"vr"}', output, error].map(lit).join(", ")});`,
+    );
+    inserts.push("CREATE TABLE task_completion_facts (task_id TEXT PRIMARY KEY, build TEXT, concern_detail TEXT, created_at TEXT);");
+    for (const f of VR_FACTS) inserts.push(`INSERT INTO task_completion_facts (task_id, build, concern_detail) VALUES (${f.map(lit).join(", ")});`);
+    const r = spawnSync("/usr/bin/sqlite3", ["-init", "/dev/null", "-bail", vdb], {
+      input: `PRAGMA journal_mode=WAL;\n${SCHEMA}\n${inserts.join("\n")}\n`,
+      encoding: "utf8",
+    });
+    if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
+  });
+
+  it("text: REFUTED at K+1 within N; S included, the run before it out; unfinished and later runs reported; two builds give the caveat", () => {
+    const r = verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "3"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(
+      [
+        "Prediction: ritual:vr has at most 1 complaint(s) (concerns+failed) in its first 3 finished runs started at or after 2026-11-15T12:00:00.000Z; checked at 2026-11-20T18:00:00.000Z",
+        "verdict: REFUTED  counted 3/3  complaints 2 (limit 1)",
+        "  counted runs, oldest left: [.CF]",
+        "  not counted: 1 unfinished, 1 after the first 3",
+        "    2026-11-15 12:00:00 completed @aaa1111",
+        "    2026-11-16 12:00:00 completed_with_concerns @aaa1111 [concern] v2 facts concern",
+        "    2026-11-18 12:00:00 failed @bbb2222 [reply] v4 boom",
+        "  caveat: the counted runs span 2 builds, oldest first: aaa1111 · bbb2222",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("JSON: CONFIRMED with exactly K of N, COUNTING while runs are left, and the documented keys", () => {
+    const confirmed = json(["--type", "ritual:vr", "--since", S, "--max-complaints", "2", "--runs", "3"]);
+    expect(Object.keys(confirmed).sort()).toEqual(VERDICT_KEYS);
+    expect(confirmed).toMatchObject({ verdict: "CONFIRMED", counted: 3, runs: 3, complaints: 2, maxComplaints: 2, since: "2026-11-15T12:00:00.000Z", unfinished: 1, ignoredAfterN: 1, builds: ["aaa1111", "bbb2222"] });
+    expect(confirmed.runList.map((r: { taskId: string }) => r.taskId)).toEqual(["v1", "v2", "v4"]);
+    expect(Object.keys(confirmed.runList[0]).sort()).toEqual(["build", "createdAt", "source", "status", "taskId", "text"]);
+    // N = 7: 3 complaints in 4 runs, 3 left, K = 3: still undecided; the
+    // run one second before S is out.
+    expect(json(["--type", "ritual:vr", "--since", S, "--max-complaints", "3"])).toMatchObject({ verdict: "COUNTING", counted: 4, runs: 7, complaints: 3, ignoredAfterN: 0 });
+    expect(json(["--type", "ritual:vr", "--since", "2026-11-15T11:59:59Z", "--max-complaints", "3"])).toMatchObject({ verdict: "REFUTED", counted: 5, complaints: 4 });
+  });
+
+  it("a type with no runs is COUNTING 0/N; a --since after --now counts nothing; no facts table means no builds", () => {
+    expect(json(["--type", "ritual:nobody", "--since", S, "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, runs: 7, complaints: 0, builds: [], runList: [] });
+    expect(json(["--type", "ritual:vr", "--since", "2026-11-21T00:00:00Z", "--max-complaints", "2"])).toMatchObject({ verdict: "COUNTING", counted: 0, unfinished: 0 });
+    const r = verdict(["--type", "ritual:real-text", "--since", "2026-11-01T00:00:00Z", "--max-complaints", "0"], db);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("verdict: REFUTED  counted 1/7  complaints 1 (limit 0)\n");
+    expect(r.stdout).toContain(`    ${MID} failed @- [reply] real reply\n`);
+    expect(r.stdout).not.toContain("caveat");
+  });
+
+  it("every flag error exits 2 with one line and opens no database (no WAL sidecars appear)", () => {
+    // Control: a valid run does leave the sidecars, so their absence below means something.
+    clearSidecars();
+    expect(verdict(["--type", "ritual:vr", "--since", S, "--max-complaints", "1"]).status).toBe(0);
+    expect(sidecars()).toHaveLength(2);
+    const before = sha(vdb);
+    const bad: string[][] = [
+      ["--verdict"],
+      ["--verdict", "--since", S, "--max-complaints", "1"],
+      ["--verdict", "--type", "ritual:vr", "--max-complaints", "1"],
+      ["--verdict", "--type", "ritual:vr", "--since", S],
+      // "=-1": a bare "-1" after a flag is parseArgs's own (multi-line) error, unchanged here.
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints=-1"],
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "x"],
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "0"],
+      ["--verdict", "--type", "ritual:vr", "--since", S, "--max-complaints", "1", "--runs", "101"],
+      ["--verdict", "--type", "ritual:vr", "--since", "2026-11-15", "--max-complaints", "1"],
+      ["--verdict", "--type", "ritual:vr", "--since", "2026-13-45T12:00:00Z", "--max-complaints", "1"],
+      // The window with --days 30 is (2026-10-21T18:00:00Z, NOW]: its start is out.
+      ["--verdict", "--type", "ritual:vr", "--since", "2026-10-21T18:00:00Z", "--max-complaints", "1"],
+      ["--verdict", "--type", "ritual:vr", "--since", "2026-11-12T00:00:00Z", "--max-complaints", "1", "--days", "7"],
+      ["--verdict", "--type", "vr", "--since", S, "--max-complaints", "1"],
+      ["--since", S],
+      ["--max-complaints", "1"],
+      ["--runs", "3"],
+    ];
+    for (const args of bad) {
+      clearSidecars();
+      const r = wrapper(["--db", vdb, "--now", NOW, ...args]);
+      expect([args, r.status], r.stderr).toEqual([args, 2]);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toMatch(/^complaints-digest: [^\n]+\n$/);
+      expect([args, sidecars()]).toEqual([args, []]);
+    }
+    expect(sha(vdb)).toBe(before);
+    // Just inside the window is accepted.
+    expect(json(["--type", "ritual:vr", "--since", "2026-10-21T18:00:01Z", "--max-complaints", "9"]).verdict).toBe("CONFIRMED");
+  }, 120_000);
 });
