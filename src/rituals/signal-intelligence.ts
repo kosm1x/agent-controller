@@ -31,33 +31,33 @@ Email a structured digest.${movesBlock}
 
 ## Step 0: Check the Intelligence Depot first
 
-Call intel_query with hours=24 to get signals already collected by the depot (earthquakes, weather alerts, FX rates, crypto prices, geopolitical articles, cyber vulnerabilities, breaking news). Also call intel_alert_history with hours=24 for any FLASH/PRIORITY alerts. Use depot data as your PRIMARY signal source — only supplement with web searches for gaps.
+Call intel_query with hours=24 to get signals already collected by the depot (earthquakes, weather alerts, FX rates, crypto prices, geopolitical articles, cyber vulnerabilities, breaking news). Also call intel_alert_history with hours=24 for any FLASH/PRIORITY alerts. Use depot data as your PRIMARY signal source; the seven searches in Step 2 run every time, in addition to the depot.
 
 ## Step 1: Gather context
 
 Call user_fact_list to retrieve:
 - Active projects (category "projects") — these define what's relevant
 
-## Step 2: Collect signals (3 parallel scans — supplement depot data)
+## Step 2: Collect signals (7 searches, run every one — supplement depot data)
 
-Run these searches to cover different signal types:
+Run all seven searches below; they cover different signal types:
 
 ### A. Industry & tech trends
 Use exa_search with category "news" and start_published_date set to yesterday's date (${dateLabel} minus 1 day):
-- "AI agents autonomous systems production deployment" (include_text: true)
-- "LLM tool calling function calling improvements" (include_text: true)
+1. "AI agents autonomous systems production deployment" (include_text: true)
+2. "LLM tool calling function calling improvements" (include_text: true)
 
 ### B. Project-relevant signals
 Use web_search for each active project area:
-- CRM: "AI CRM WhatsApp business automation 2026"
-- Media/advertising: "programmatic advertising Mexico media sales trends"
-- Voice AI: "voice AI phone agents real-time conversation"
+3. CRM: "AI CRM WhatsApp business automation 2026"
+4. Media/advertising: "programmatic advertising Mexico media sales trends"
+5. Voice AI: "voice AI phone agents real-time conversation"
 Adapt queries based on what you find in user_fact_list.
 
 ### C. Competitive intelligence
 Use exa_search with category "company":
-- "AI agent orchestrator platform startup" (competitors to agent-controller)
-- "WhatsApp CRM AI Latin America" (competitors to CRM-Azteca)
+6. "AI agent orchestrator platform startup" (competitors to agent-controller)
+7. "WhatsApp CRM AI Latin America" (competitors to CRM-Azteca)
 
 ## Step 3: Score and filter
 
