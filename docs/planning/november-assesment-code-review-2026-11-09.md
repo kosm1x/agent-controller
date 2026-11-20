@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-20 23:24 UTC — build `d416150f` is LIVE since 23:20 UTC (queue 4he); everything committed is deployed. The start-row piece (4gz) is proven on live tasks. Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: 4gr (4), then the batch leftovers and batch 10.**
+
 **Status 2026-11-20 23:07 UTC — checks 4gm and 4gp (4) answered (queue 4hc); a security fix found by that pass is committed `31c7f6fe` (queue 4hd: a restricted channel keeps its tool restriction). Batch 7 unchanged: pure moves done, D3 not yet done, wait list A2, A4, B3, C1, F1, D1. Next: 4gr (4), then the batch leftovers and batch 10.**
 
 **Status 2026-11-20 22:20 UTC — A1 is DONE `2c105bcc` (queue 4hb): the system-prompt builder is its own module on the protected list; the router is at 4,888 lines. The pure moves of batch 7 are done (D2, C2, B1, B2, A3, A1); D3 is not yet done. Wait list unchanged: A2, A4, B3, C1, F1, D1. Next: the three open checks (4gm, 4gp, 4gr), then the batch leftovers and batch 10.**
