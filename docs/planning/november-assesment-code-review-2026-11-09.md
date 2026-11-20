@@ -289,6 +289,8 @@ Armed, never fired. Five defects on it (a retried write that succeeds is reporte
 
 ### Batch 7 — Coupling and structure (ruling 9)
 
+**Status 2026-11-20 18:56 UTC — the concern text and the build of tasks that end the normal way are kept `8d70e6ae` (queue 4gw; one new table, schema head 18, not deployed). Next: A3 second half, A1.**
+
 **Status 2026-11-20 18:00 UTC — DEPLOYED: build `bd9efc51` is live since 2026-11-20 17:58 UTC (queue 4gu); every structure piece committed so far is in it. Next: the concern text and the build id of every finished task are kept (one new table), then A3 second half, A1.**
 
 **Status 2026-11-20 17:52 UTC — G3 is DONE `6e9d929a` (queue 4gs): opening the database does schema only; the seed and the tuning activation are explicit calls at the programs that need them; tuning table creation is the leaf `src/db/tuning-schema.ts`; the import-cycle baseline is lowered (the 26-file cycle is gone). Next: the outcome record of ritual and scheduled tasks (queue 4gt), then A3 second half, A1.**
