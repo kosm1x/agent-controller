@@ -142,3 +142,7 @@
 - **Mistake:** wrote that a fault in the numbers check can only cause a wrong mark → list every consumer of a module by name (the write gate enforces) before stating what its faults can do.
 - **Avoid:** recording a fact at each END of a flow (a dozen exits) when it is known at the START — one write at the start has no path to a missing row.
 - **Better:** when a guard refuses my staging of a file, hand the operator the one line and prepare the next briefs meanwhile; a helper script that commits must carry the guard's check itself, because the guard reads typed commands only.
+
+## 2026-11-20 — Restriction applied once
+- **Avoid:** a limit applied at the start of a flow and re-derived (or forgotten) by later steps — a re-run and a command intercept each rebuilt the tool list without it.
+- **Better:** record the limit once as data on the thing every later step copies, and list EVERY site that submits work before fixing one; the builder's step-0 table found the second open site.
