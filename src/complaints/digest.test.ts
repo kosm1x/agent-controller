@@ -53,6 +53,11 @@ describe("grouping", () => {
     ]);
   });
 
+  it("a task with both a ritual id and a schedule tag counts once, under the ritual", () => {
+    const d = buildDigest([row({ ritual_id: "a", schedule_id: "s1", schedule_name: "S" })], OPTS);
+    expect(d.types.map((t) => [t.key, t.runs])).toEqual([["ritual:a", 1]]);
+  });
+
   it("--type keeps one type only", () => {
     const d = buildDigest([row({ ritual_id: "a" }), row({ ritual_id: "b" })], { ...OPTS, type: "ritual:b" });
     expect(d.types.map((t) => t.key)).toEqual(["ritual:b"]);
@@ -141,6 +146,16 @@ describe("tool profile", () => {
     const p = profile(['{"exa":9}', '{"exa":9}'], ['{"exa":1}', '{"exa":1}', '{"exa":1}']);
     expect(p.diffs).toEqual([]);
   });
+
+  it("a concern group of 2 runs is not shown", () => {
+    const p = profile(['{"exa":1}', '{"exa":1}', '{"exa":1}'], ['{"exa":9}', '{"exa":9}']);
+    expect(p.diffs).toEqual([]);
+  });
+
+  it("failed runs are in neither group", () => {
+    const t = only([...runs("...CCC", { tools: '{"exa":1}' }), ...runs("FFF", { tools: '{"exa":9}' })]).tools;
+    expect([t.cleanRuns, t.concernRuns, t.diffs]).toEqual([3, 3, []]);
+  });
 });
 
 describe("evidence", () => {
@@ -153,6 +168,11 @@ describe("evidence", () => {
       ["2026-11-05", rs[4].task_id.slice(0, 8)],
       ["2026-11-04", rs[3].task_id.slice(0, 8)],
     ]);
+  });
+
+  it("05:30 UTC is still the previous day in Mexico City (UTC-6, not UTC-5)", () => {
+    const t = only([row({ status: "failed", created_at: "2026-11-10 05:30:00" })]);
+    expect(t.evidence[0].date).toBe("2026-11-09");
   });
 
   it("prefers stored concern text over the reply tail; the tail is whitespace-collapsed, last 500 chars", () => {

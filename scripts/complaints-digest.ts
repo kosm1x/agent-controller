@@ -56,6 +56,9 @@ const type = parsed.type;
 if (type !== undefined && !/^(ritual|schedule):[A-Za-z0-9_-]+$/.test(type)) {
   fail("--type must match ^(ritual|schedule):[A-Za-z0-9_-]+$");
 }
+if (parsed.now !== undefined && !/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/.test(parsed.now)) {
+  fail("--now must be an ISO time with Z or an offset, e.g. 2026-11-20T18:00:00Z");
+}
 const nowMs = parsed.now === undefined ? Date.now() : Date.parse(parsed.now);
 if (Number.isNaN(nowMs)) fail("--now must be a date");
 const now = new Date(nowMs).toISOString();
