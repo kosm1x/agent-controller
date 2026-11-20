@@ -34,7 +34,10 @@ sql="$("$TSX" "$CLI" --print-sql "${args[@]}")"
 errf="$(mktemp)"
 trap 'rm -f "$errf"' EXIT
 if ! rows="$(/usr/bin/sqlite3 -init /dev/null -safe -readonly -bail -json -- "$DB" <<<"$sql" 2>"$errf")"; then
-  echo "complaints-digest: sqlite3 failed on $DB: $(head -n 1 "$errf")" >&2
+  # Some errors (e.g. "file is not a database") go to stdout; never echo the
+  # captured rows, which could hold task text after a mid-stream failure.
+  reason="$(head -n 1 "$errf")"
+  echo "complaints-digest: sqlite3 failed on $DB: ${reason:-(no message on stderr)}" >&2
   exit 1
 fi
 printf '%s' "$rows" | "$TSX" "$CLI" "${args[@]}"

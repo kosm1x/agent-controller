@@ -54,8 +54,8 @@ function buildDb(path: string): void {
   if (r.status !== 0) throw new Error(`fixture sqlite3 failed: ${r.stderr}`);
 }
 
-function wrapper(args: string[], env: NodeJS.ProcessEnv = process.env) {
-  return spawnSync("bash", [WRAPPER, ...args], { cwd: REPO, env, encoding: "utf8", timeout: 60_000 });
+function wrapper(args: string[], env: NodeJS.ProcessEnv = process.env, cwd = REPO) {
+  return spawnSync("bash", [WRAPPER, ...args], { cwd, env, encoding: "utf8", timeout: 60_000 });
 }
 
 const sha = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -132,7 +132,30 @@ describe("complaints-digest.sh over a fixture database", () => {
     expect(r.status).not.toBe(0);
     expect(r.stdout).toBe("");
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
-    expect(r.stderr).toContain("complaints-digest: sqlite3 failed");
+    // sqlite3 prints this error on stdout, which is never echoed; stderr is empty.
+    expect(r.stderr.trim()).toMatch(/^complaints-digest: sqlite3 failed on .*notes\.txt: \(no message on stderr\)$/);
+  }, 60_000);
+
+  it("-readonly is in force: a --db URI asking for read-write is refused, with no digest", () => {
+    const uriDir = join(dir, "uri");
+    mkdirSync(uriDir);
+    // sqlite3 reads the --db value as a URI naming fixture.db; the empty file under the
+    // literal name only satisfies the wrapper's "is it a file" check.
+    buildDb(join(uriDir, "fixture.db"));
+    writeFileSync(join(uriDir, "file:fixture.db?mode=rw"), "");
+    const r = wrapper(["--db", "file:fixture.db?mode=rw", "--now", NOW], process.env, uriDir);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("access mode not allowed: rw");
+  }, 60_000);
+
+  it("the --db value goes after --: a database file named -csv is read as a file, not an option", () => {
+    const dashDir = join(dir, "dash");
+    mkdirSync(dashDir);
+    buildDb(join(dashDir, "-csv"));
+    const r = wrapper(["--db=-csv", "--now", NOW], process.env, dashDir);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("6 recurring type(s)");
   }, 60_000);
 
   it("--now must be a full ISO time with a zone: a bare number and a zone-less time exit 2", () => {
