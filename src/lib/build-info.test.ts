@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,6 +64,32 @@ describe("runningBuild", () => {
   it("is null in a source run (no record next to the source tree) and stays the same on a second read", () => {
     expect(runningBuild()).toBeNull();
     expect(runningBuild()).toBeNull();
+  });
+});
+
+// A fresh module instance with the file read replaced, so the cache is empty
+// and no real file is read; the mock leaves with the case.
+describe("runningBuild reads the record buildInfoUrl names", () => {
+  afterEach(() => {
+    vi.doUnmock("node:fs");
+    vi.resetModules();
+  });
+
+  it("asks for buildInfoUrl of its own module URL, reads once across two calls, and returns the record's commit", async () => {
+    const readFileSync = vi.fn((..._args: unknown[]) => JSON.stringify({ commitShort: "c0ffee1", branch: "main" }));
+    vi.resetModules();
+    vi.doMock("node:fs", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:fs")>()),
+      readFileSync,
+    }));
+    const fresh = await import("./build-info.js");
+    expect(fresh.runningBuild()).toBe("c0ffee1");
+    expect(fresh.runningBuild()).toBe("c0ffee1");
+    expect(readFileSync).toHaveBeenCalledTimes(1);
+    const [path, encoding] = readFileSync.mock.calls[0];
+    expect(path).toBeInstanceOf(URL);
+    expect((path as URL).href).toBe(buildInfoUrl(new URL("./build-info.ts", import.meta.url)).href);
+    expect(encoding).toBe("utf8");
   });
 });
 

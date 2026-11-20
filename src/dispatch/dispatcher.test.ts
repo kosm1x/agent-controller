@@ -68,6 +68,13 @@ vi.mock("./checkout.js", () => ({
   checkoutTask: vi.fn(() => ({ success: true, taskId: "mock-id" })),
 }));
 
+// A synthetic build id, so the start write's build is a value a test can pin.
+const SYN_BUILD = "syn0b1d";
+vi.mock("../lib/build-info.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/build-info.js")>()),
+  runningBuild: () => "syn0b1d",
+}));
+
 // V8.5 Phase 6: trace-emit seam (real module writes SQLite).
 const emitTraceMock = vi.hoisted(() => vi.fn());
 vi.mock("../observability/task-trace.js", () => ({
@@ -148,6 +155,7 @@ import {
 } from "../inference/execution-context.js";
 import { outsideRunToolContext } from "../tools/rule-of-two.js";
 import { classify } from "./classifier.js";
+import { checkoutTask } from "./checkout.js";
 import { recordCost } from "../budget/service.js";
 import { takeConcernDetail } from "../db/task-outcomes.js";
 import {
@@ -786,87 +794,185 @@ describe("dispatchTask notes the runner's concern for task_outcomes.concern_deta
   });
 });
 
-// Every finished task gets its completion-facts row (build + cleaned concern),
-// not only the tasks a chat reply waits for — nothing here registers one.
-describe("dispatchTask writes the completion facts of every finished task", () => {
-  async function dispatchWith(result: RunnerOutput, parentTaskId?: string): Promise<string> {
-    registerRunner({ type: "fast", execute: async () => result });
+// Every task that starts running gets its completion-facts row when it is
+// marked running (the build it started on, no detail), however it ends; the
+// normal end adds the cleaned concern. A task that never starts gets none.
+// Not only the tasks a chat reply waits for — nothing here registers one.
+// Both writes reach factsRun: the start write as (taskId, build), the end
+// write as (taskId, build, detail).
+describe("dispatchTask writes the completion facts of every task that starts running", () => {
+  const TERMINAL = ["task.completed", "task.failed", "task.cancelled"];
+  async function dispatchWith(
+    execute: Parameters<typeof registerRunner>[0]["execute"],
+    extra: Partial<Parameters<typeof submitTask>[0]> = {},
+  ): Promise<string> {
+    registerRunner({ type: "fast", execute });
     const { taskId } = await submitTask({
       title: "Completion facts",
       description: "completion facts spec",
-      ...(parentTaskId && { parentTaskId }),
+      ...extra,
     });
     await vi.waitFor(() => {
-      const names = emitTraceMock.mock.calls.map((c) => c[0].name);
-      if (!names.some((n) => n === "task.completed" || n === "task.failed")) {
+      if (!emitTraceMock.mock.calls.some((c) => c[0].taskId === taskId && TERMINAL.includes(c[0].name))) {
         throw new Error("no terminal trace event yet");
       }
     });
     return taskId;
   }
+  const returning = (result: RunnerOutput) => async () => result;
   const factsFor = (taskId: string) => factsRun.mock.calls.filter((c) => c[0] === taskId);
+  const terminalOf = (taskId: string) =>
+    emitTraceMock.mock.calls.map((c) => c[0]).filter((e) => e.taskId === taskId && TERMINAL.includes(e.name));
   const writeFailures = async () =>
     (await client.register.getSingleMetric("mc_write_failures_total")?.get())?.values.find(
       (v) => v.labels.site === "completion_facts",
     )?.value ?? 0;
 
-  it("with concerns: one row with the cleaned first concern and the build (null in a source run), written BEFORE task.completed", async () => {
+  it("with concerns: the start write (build) before the runner runs, then the cleaned first concern, both BEFORE task.completed", async () => {
     let rowsAtEmit = -1;
     emitEventMock.mockImplementation((name: string, data: { task_id: string }) => {
       if (name === "task.completed") rowsAtEmit = factsFor(data.task_id).length;
     });
+    let atRun: unknown[][] = [];
     let taskId = "";
     try {
-      taskId = await dispatchWith({
-        success: true,
-        status: "DONE_WITH_CONCERNS",
-        concerns: ["  sin datos del día  ", "second"],
-        output: "x",
-        durationMs: 0,
+      taskId = await dispatchWith(async (input) => {
+        atRun = factsFor(input.taskId);
+        return {
+          success: true,
+          status: "DONE_WITH_CONCERNS",
+          concerns: ["  sin datos del día  ", "second"],
+          output: "x",
+          durationMs: 0,
+        };
       });
     } finally {
       emitEventMock.mockReset();
     }
-    expect(factsFor(taskId)).toEqual([[taskId, null, "sin datos del día"]]);
-    expect(rowsAtEmit).toBe(1);
+    expect(atRun).toEqual([[taskId, SYN_BUILD]]);
+    expect(factsFor(taskId)).toEqual([
+      [taskId, SYN_BUILD],
+      [taskId, SYN_BUILD, "sin datos del día"],
+    ]);
+    expect(rowsAtEmit).toBe(2);
   });
 
-  it("clean DONE and a failed run: a row with NULL detail", async () => {
-    const done = await dispatchWith({ success: true, status: "DONE", output: "x", durationMs: 0 });
-    expect(factsFor(done)).toEqual([[done, null, null]]);
-    emitTraceMock.mockClear();
-    const failed = await dispatchWith({
-      success: false,
-      status: "BLOCKED",
-      concerns: ["no aplica"],
-      error: "bloqueado",
-      durationMs: 0,
-    });
-    expect(factsFor(failed)).toEqual([[failed, null, null]]);
+  it("clean DONE and a failed run: the start write, then NULL detail", async () => {
+    const done = await dispatchWith(returning({ success: true, status: "DONE", output: "x", durationMs: 0 }));
+    expect(factsFor(done)).toEqual([
+      [done, SYN_BUILD],
+      [done, SYN_BUILD, null],
+    ]);
+    const failed = await dispatchWith(
+      returning({
+        success: false,
+        status: "BLOCKED",
+        concerns: ["no aplica"],
+        error: "bloqueado",
+        durationMs: 0,
+      }),
+    );
+    expect(factsFor(failed)).toEqual([
+      [failed, SYN_BUILD],
+      [failed, SYN_BUILD, null],
+    ]);
   });
 
-  it("a sub-task with concerns: the row is keyed by the sub-task's own id, never its parent's", async () => {
+  it("a sub-task with concerns: both writes are keyed by the sub-task's own id, never its parent's", async () => {
     const child = await dispatchWith(
-      { success: true, status: "DONE_WITH_CONCERNS", concerns: ["falta un dato"], output: "x", durationMs: 0 },
-      "parent-facts-1",
+      returning({ success: true, status: "DONE_WITH_CONCERNS", concerns: ["falta un dato"], output: "x", durationMs: 0 }),
+      { parentTaskId: "parent-facts-1" },
     );
     expect(child).not.toBe("parent-facts-1");
-    expect(factsRun.mock.calls).toEqual([[child, null, "falta un dato"]]);
+    expect(factsRun.mock.calls).toEqual([
+      [child, SYN_BUILD],
+      [child, SYN_BUILD, "falta un dato"],
+    ]);
   });
 
-  it("a facts write that throws: the task still completes, the event still fires, the concern is still noted, and the failure is counted", async () => {
+  it("a runner that throws: the task keeps its start row (build, no detail)", async () => {
+    const taskId = await dispatchWith(async () => {
+      throw new Error("synthetic runner failure");
+    });
+    expect(terminalOf(taskId)).toMatchObject([{ name: "task.failed", attrs: { thrown: true } }]);
+    expect(factsFor(taskId)).toEqual([[taskId, SYN_BUILD]]);
+  });
+
+  it("a task cancelled mid-run: the task keeps its start row (build, no detail)", async () => {
+    let taskId = "";
+    const pending = dispatchWith(async (input) => {
+      taskId = input.taskId;
+      await new Promise<void>((resolve) => {
+        input.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { success: true, status: "DONE", output: "parcial", durationMs: 0 };
+    });
+    await vi.waitFor(() => {
+      if (!taskId) throw new Error("runner not yet executed");
+    });
+    mockGet.mockReturnValueOnce({ task_id: taskId, status: "running" });
+    mockAll.mockReturnValueOnce([]); // no subtasks
+    expect(cancelTask(taskId)).toBe(true);
+    expect(await pending).toBe(taskId);
+    expect(terminalOf(taskId)).toMatchObject([{ name: "task.cancelled" }]);
+    expect(factsFor(taskId)).toEqual([[taskId, SYN_BUILD]]);
+  });
+
+  it("a task that ends on the required-tools return: it keeps its start row (build, no detail)", async () => {
+    const taskId = await dispatchWith(
+      returning({ success: true, status: "DONE_WITH_CONCERNS", concerns: ["omitida"], output: "x", durationMs: 0, toolCalls: [] }),
+      { requiredTools: ["web_search"], _isRequiredToolRetry: true },
+    );
+    expect(terminalOf(taskId)).toMatchObject([
+      { name: "task.failed", attrs: { termination_reason: "required_tools_missing" } },
+    ]);
+    expect(factsFor(taskId)).toEqual([[taskId, SYN_BUILD]]);
+  });
+
+  it("a task that never starts (no runner registered): no facts write at all", async () => {
+    vi.mocked(classify).mockReturnValueOnce({
+      agentType: "heavy",
+      score: 1,
+      reason: "simple task",
+      explicit: false,
+      modelTier: "standard",
+    } as ReturnType<typeof classify>);
+    await submitTask({ title: "Completion facts", description: "no runner for this type" });
+    await vi.waitFor(() => {
+      if (!mockRun.mock.calls.some((c) => c.includes("No runner registered for type: heavy")))
+        throw new Error("no-runner failure not written yet");
+    });
+    expect(factsRun).not.toHaveBeenCalled();
+  });
+
+  it("a task whose checkout fails (not marked running): no facts write at all", async () => {
+    registerRunner({ type: "fast", execute: returning({ success: true, status: "DONE", output: "x", durationMs: 0 }) });
+    vi.mocked(checkoutTask).mockReturnValueOnce({ success: false, taskId: "x", reason: "already_claimed" });
+    await submitTask({ title: "Completion facts", description: "already claimed" });
+    await vi.waitFor(() => {
+      if (!mockPrepare.mock.calls.some((c) => c[0] === "DELETE FROM runs WHERE run_id = ?"))
+        throw new Error("run row not rolled back yet");
+    });
+    expect(factsRun).not.toHaveBeenCalled();
+  });
+
+  it("an end write that throws: the task still completes, the event still fires, the concern is still noted, and the failure is counted", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const before = await writeFailures();
-    factsRun.mockImplementationOnce(() => {
-      throw new Error("synthetic disk failure");
-    });
-    const taskId = await dispatchWith({
-      success: true,
-      status: "DONE_WITH_CONCERNS",
-      concerns: ["sin datos del día"],
-      output: "x",
-      durationMs: 0,
-    });
+    factsRun
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("synthetic disk failure");
+      });
+    const taskId = await dispatchWith(
+      returning({
+        success: true,
+        status: "DONE_WITH_CONCERNS",
+        concerns: ["sin datos del día"],
+        output: "x",
+        durationMs: 0,
+      }),
+    );
     const terminal = emitTraceMock.mock.calls.map((c) => c[0]).at(-1)!;
     expect(terminal.name).toBe("task.completed");
     expect(terminal.attrs).toMatchObject({ status: "completed_with_concerns" });
@@ -874,8 +980,69 @@ describe("dispatchTask writes the completion facts of every finished task", () =
       emitEventMock.mock.calls.some((c) => c[0] === "task.completed" && c[1].task_id === taskId),
     ).toBe(true);
     expect(takeConcernDetail(taskId)).toBe("sin datos del día");
-    expect(factsFor(taskId)).toHaveLength(1);
+    expect(factsFor(taskId)).toEqual([
+      [taskId, SYN_BUILD],
+      [taskId, SYN_BUILD, "sin datos del día"],
+    ]);
     expect(await writeFailures()).toBe(before + 1);
+  });
+
+  it("a start write that throws: the task still runs, completes and emits, the end write still lands, and the failure is counted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const before = await writeFailures();
+    factsRun.mockImplementationOnce(() => {
+      throw new Error("synthetic disk failure");
+    });
+    let ran = false;
+    const taskId = await dispatchWith(async () => {
+      ran = true;
+      return { success: true, status: "DONE_WITH_CONCERNS", concerns: ["falta un dato"], output: "x", durationMs: 0 };
+    });
+    expect(ran).toBe(true);
+    expect(terminalOf(taskId)).toMatchObject([
+      { name: "task.completed", attrs: { status: "completed_with_concerns" } },
+    ]);
+    expect(
+      emitEventMock.mock.calls.some((c) => c[0] === "task.completed" && c[1].task_id === taskId),
+    ).toBe(true);
+    expect(factsFor(taskId)).toEqual([
+      [taskId, SYN_BUILD],
+      [taskId, SYN_BUILD, "falta un dato"],
+    ]);
+    expect(await writeFailures()).toBe(before + 1);
+  });
+
+  it("a throw after the checkout and before the guarded run: the start row is already written, the runner never runs, the task is failed by the dispatch catch", async () => {
+    let ran = false;
+    registerRunner({
+      type: "fast",
+      execute: async () => {
+        ran = true;
+        return { success: true, status: "DONE", output: "x", durationMs: 0 };
+      },
+    });
+    // Every row read after the checkout throws; the first is the task-row read
+    // for the model tier, which runs outside the guarded section.
+    mockGet.mockImplementation(() => {
+      if (vi.mocked(checkoutTask).mock.calls.length > 0) throw new Error("synthetic row read failure");
+      return undefined;
+    });
+    let taskId = "";
+    try {
+      ({ taskId } = await submitTask({ title: "Completion facts", description: "throws before the run" }));
+      await vi.waitFor(() => {
+        if (!logMock.error.mock.calls.some((c) => c[1] === "failed to dispatch task" && c[0]?.taskId === taskId))
+          throw new Error("dispatch not failed yet");
+      });
+    } finally {
+      mockGet.mockReset();
+    }
+    expect(vi.mocked(checkoutTask)).toHaveBeenCalledTimes(1);
+    expect(factsFor(taskId)).toEqual([[taskId, SYN_BUILD]]);
+    expect(ran).toBe(false);
+    expect(mockRun.mock.calls).toContainEqual(["Error: synthetic row read failure", null, taskId]);
+    expect(_activeAbortCountForTests()).toBe(0);
+    expect(terminalOf(taskId)).toEqual([]);
   });
 });
 

@@ -1,6 +1,6 @@
 /**
- * Names the build this process runs, for one boot log line and for each
- * finished task's completion facts. The record is
+ * Names the build this process runs, for one boot log line and for the
+ * completion-facts row each task gets when it starts running. The record is
  * dist/build-info.json, written by scripts/build-info.sh during a deploy; a
  * build made another way (manual `npm run build`, `tsx` in dev) may have no
  * record or a stale one, so absence and garbage are reported, never thrown.

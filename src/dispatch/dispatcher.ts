@@ -69,7 +69,10 @@ import { scrubSecrets } from "../lib/secret-refs.js";
 import { nowMexIsoDate } from "../lib/timezone.js";
 import { takeToolEvidence } from "../lib/v8-4/numbers.js";
 import { noteConcernDetail } from "../db/task-outcomes.js";
-import { recordCompletionFacts } from "../db/task-completion-facts.js";
+import {
+  recordCompletionFacts,
+  recordTaskBuild,
+} from "../db/task-completion-facts.js";
 import { runningBuild } from "../lib/build-info.js";
 import { classifyConcernReason } from "../intelligence/concern-reason.js";
 import { attributeNewTask } from "../projects/attribution.js";
@@ -917,6 +920,16 @@ async function dispatchWithSlot(
     return;
   }
 
+  // The task is marked running: its completion-facts row gets the running
+  // build NOW, before anything below can throw or see a cancel, so every way
+  // of ending keeps the build it started on. A failed write is counted and
+  // never changes what happens to the task.
+  try {
+    recordTaskBuild(taskId, runningBuild());
+  } catch (err) {
+    noteWriteFailure("completion_facts", err);
+  }
+
   const abortController = submission.abortController ?? new AbortController();
 
   const input: RunnerInput = {
@@ -1531,10 +1544,11 @@ async function dispatchWithSlot(
     }
 
     // The same concern, at rest for every kind of task that ends on this path
-    // (the note above is only taken for tasks the tracker records), with the
-    // running build. Written BEFORE the emit so a handler in the same tick
-    // sees the row; a failed write is counted and never changes the outcome
-    // or skips the event.
+    // (the note above is only taken for tasks the tracker records), added to
+    // the row written when the task was marked running (its build stays as
+    // written then). Written BEFORE the emit so a handler in the same tick
+    // sees it; a failed write is counted and never changes the outcome or
+    // skips the event.
     try {
       recordCompletionFacts(taskId, {
         build: runningBuild(),
