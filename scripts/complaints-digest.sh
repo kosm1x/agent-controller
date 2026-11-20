@@ -30,14 +30,23 @@ done
 
 TSX="$ROOT/node_modules/.bin/tsx"
 CLI="$ROOT/scripts/complaints-digest.ts"
-sql="$("$TSX" "$CLI" --print-sql "${args[@]}")"
 errf="$(mktemp)"
 trap 'rm -f "$errf"' EXIT
-if ! rows="$(/usr/bin/sqlite3 -init /dev/null -safe -readonly -bail -json -- "$DB" <<<"$sql" 2>"$errf")"; then
-  # Some errors (e.g. "file is not a database") go to stdout; never echo the
-  # captured rows, which could hold task text after a mid-stream failure.
+# The one way this script runs sqlite3: SQL on stdin, extra output options
+# (e.g. -json) before the fixed flags' `--` and the path.
+sqlite_ro() {
+  /usr/bin/sqlite3 -init /dev/null -safe -readonly -bail "$@" -- "$DB" 2>"$errf" && return
+  # Some errors (e.g. "file is not a database") go to stdout; the caller never
+  # echoes captured output, which could hold task text after a mid-stream failure.
   reason="$(head -n 1 "$errf")"
   echo "complaints-digest: sqlite3 failed on $DB: ${reason:-(no message on stderr)}" >&2
-  exit 1
-fi
+  return 1
+}
+# Databases before schema 18 have no task_completion_facts: ask first, and
+# the CLI prints the SQL that matches.
+facts="$(sqlite_ro <<<"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'task_completion_facts';")" || exit 1
+facts_flag=()
+if [[ $facts == 1 ]]; then facts_flag=(--facts-table); fi
+sql="$("$TSX" "$CLI" --print-sql "${facts_flag[@]}" "${args[@]}")"
+rows="$(sqlite_ro -json <<<"$sql")" || exit 1
 printf '%s' "$rows" | "$TSX" "$CLI" "${args[@]}"

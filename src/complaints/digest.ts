@@ -15,7 +15,7 @@ export interface TaskRow {
   ritual_id: string | null;
   schedule_id: string | null;
   schedule_name: string | null;
-  /** JSON object text, tool name -> calls in this run. */
+  /** JSON object text, tool name -> calls attempted in this run (tool.called events). */
   tools: string | null;
   /** 1 when the output carries a numbers_audit record. */
   has_audit: number;
@@ -23,6 +23,11 @@ export interface TaskRow {
   unverified: string | null;
   concern_detail: string | null;
   reply_tail: string | null;
+  /**
+   * Short commit id of the build the task ran on; null when unknown. Absent
+   * on a database without task_completion_facts: no build is shown then.
+   */
+  build?: string | null;
 }
 
 export interface DigestOptions {
@@ -37,6 +42,7 @@ export interface DigestOptions {
   type?: string;
 }
 
+/** Mean calls attempted per run (tool.called events) in clean and concern runs. */
 export interface ToolDiff {
   tool: string;
   clean: number;
@@ -48,6 +54,8 @@ export interface Evidence {
   id: string;
   source: "concern" | "reply";
   text: string;
+  /** The run's build (null when unknown); only when rows carry builds. */
+  build?: string | null;
 }
 
 export interface TypeDigest {
@@ -65,8 +73,11 @@ export interface TypeDigest {
     runsWithAudit: number;
     recurring: { figure: string; runs: number }[];
   };
+  /** Profile of calls attempted (tool.called events), not of tools that ran. */
   tools: { cleanRuns: number; concernRuns: number; diffs: ToolDiff[] };
   evidence: Evidence[];
+  /** Distinct builds among the runs, oldest first; only when rows carry builds. */
+  builds?: string[];
 }
 
 export interface Digest {
@@ -135,11 +146,12 @@ function localDate(createdAt: string): string {
 const collapse = (s: string): string => s.replace(/\s+/g, " ").trim();
 const chars = (s: string): string[] => Array.from(s);
 
-function evidence(r: TaskRow): Evidence {
+function evidence(r: TaskRow, facts: boolean): Evidence {
   const base = { date: localDate(r.created_at), id: r.task_id.slice(0, 8) };
+  const build = facts ? { build: r.build ?? null } : {};
   const concern = collapse(r.concern_detail ?? "");
-  if (concern) return { ...base, source: "concern", text: chars(concern).slice(0, 500).join("") };
-  return { ...base, source: "reply", text: chars(collapse(r.reply_tail ?? "")).slice(-500).join("") };
+  if (concern) return { ...base, source: "concern", text: chars(concern).slice(0, 500).join(""), ...build };
+  return { ...base, source: "reply", text: chars(collapse(r.reply_tail ?? "")).slice(-500).join(""), ...build };
 }
 
 function mean(rows: TaskRow[], counts: Map<TaskRow, Record<string, number>>, tool: string): number {
@@ -150,7 +162,7 @@ function mean(rows: TaskRow[], counts: Map<TaskRow, Record<string, number>>, too
 
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
-function digestType(key: string, runs: TaskRow[], opts: DigestOptions): TypeDigest {
+function digestType(key: string, runs: TaskRow[], opts: DigestOptions, facts: boolean): TypeDigest {
   const lastRuns = runs.slice(-opts.last);
   const complaintsLastN = lastRuns.filter(isComplaint).length;
   const tooFewRuns = runs.length < opts.last;
@@ -202,11 +214,15 @@ function digestType(key: string, runs: TaskRow[], opts: DigestOptions): TypeDige
       concernRuns: concern.length,
       diffs: diffs.map(({ tool, clean: c, concern: k }) => ({ tool, clean: c, concern: k })),
     },
-    evidence: runs.filter(isComplaint).slice(-3).reverse().map(evidence),
+    evidence: runs.filter(isComplaint).slice(-3).reverse().map((r) => evidence(r, facts)),
+    ...(facts ? { builds: [...new Set(runs.flatMap((r) => (r.build ? [r.build] : [])))] } : {}),
   };
 }
 
 export function buildDigest(rows: TaskRow[], opts: DigestOptions): Digest {
+  // The facts SQL returns a build column on every row (null included); the SQL
+  // for an older database has none, and then the output is the same as before.
+  const facts = rows.some((r) => r.build !== undefined);
   const sorted = [...rows].sort((a, b) => cmp(a.created_at, b.created_at) || cmp(a.task_id, b.task_id));
   const groups = new Map<string, TaskRow[]>();
   for (const r of sorted) {
@@ -217,7 +233,7 @@ export function buildDigest(rows: TaskRow[], opts: DigestOptions): Digest {
     else groups.set(key, [r]);
   }
   const types = [...groups]
-    .map(([key, runs]) => digestType(key, runs, opts))
+    .map(([key, runs]) => digestType(key, runs, opts, facts))
     .sort((a, b) => b.complaintsLastN - a.complaintsLastN || cmp(a.key, b.key));
   return { now: opts.now, days: opts.days, last: opts.last, min: opts.min, types };
 }
@@ -238,13 +254,17 @@ export function renderDigest(d: Digest): string {
     let line = `  unverified figures: ${u.runsWithUnverified}/${u.runsWithAudit} audited runs`;
     if (u.recurring.length > 0) line += `; recurring: ${u.recurring.map((f) => `${JSON.stringify(f.figure)} x${f.runs}`).join(", ")}`;
     out.push(line);
+    if (t.builds) out.push(`  builds, oldest first: ${t.builds.length > 0 ? t.builds.join(" ") : "none recorded"}`);
     if (t.tools.diffs.length > 0) {
-      out.push(`  tools, mean calls per run (clean n=${t.tools.cleanRuns} / concern n=${t.tools.concernRuns}):`);
+      out.push(`  tools, mean calls attempted per run (clean n=${t.tools.cleanRuns} / concern n=${t.tools.concernRuns}):`);
       for (const x of t.tools.diffs) out.push(`    ${x.tool} ${fmt(x.clean)} / ${fmt(x.concern)}`);
     }
     if (t.evidence.length > 0) {
       out.push("  evidence (newest first):");
-      for (const e of t.evidence) out.push(`    ${e.date} ${e.id} [${e.source}] ${e.text}`);
+      for (const e of t.evidence) {
+        const build = e.build === undefined ? "" : ` @${e.build ?? "-"}`;
+        out.push(`    ${e.date} ${e.id}${build} [${e.source}] ${e.text}`);
+      }
     }
   }
   return `${out.join("\n")}\n`;

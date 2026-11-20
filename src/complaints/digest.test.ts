@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDigest, renderDigest, type DigestOptions, type TaskRow } from "./digest.js";
+import { complaintsSql } from "./query.js";
 
 const OPTS: DigestOptions = { now: "2026-11-20T12:00:00.000Z", days: 30, last: 7, min: 5 };
 
@@ -142,6 +143,19 @@ describe("tool profile", () => {
     expect(p.diffs).toEqual([{ tool: "exa", clean: 1, concern: 0 }]);
   });
 
+  it("the text calls it calls attempted (tool.called events), not calls made", () => {
+    const text = renderDigest(
+      buildDigest(
+        [
+          ...runs("...", { tools: '{"exa":4}' }),
+          ...runs("CCC", { tools: '{"exa":1}', created_at: "2026-11-20 12:00:00" }),
+        ],
+        OPTS,
+      ),
+    );
+    expect(text).toContain("  tools, mean calls attempted per run (clean n=3 / concern n=3):\n    exa 4.0 / 1.0\n");
+  });
+
   it("a group of 2 runs is not shown", () => {
     const p = profile(['{"exa":9}', '{"exa":9}'], ['{"exa":1}', '{"exa":1}', '{"exa":1}']);
     expect(p.diffs).toEqual([]);
@@ -219,5 +233,46 @@ describe("robustness and determinism", () => {
       expect(renderDigest(got)).toBe(renderDigest(expected));
       expect(JSON.stringify(got)).toBe(JSON.stringify(expected));
     }
+  });
+});
+
+describe("builds (rows from the task_completion_facts SQL)", () => {
+  it("rows without a build field: no build anywhere, the same text and JSON as rows of the old SQL", () => {
+    const rs = runs("C.CF.C", { reply_tail: "tail" });
+    const d = buildDigest(rs, OPTS);
+    expect(Object.keys(d.types[0]).sort()).toEqual(
+      ["complaintsLastN", "concerns", "evidence", "failed", "key", "name", "runs", "strip", "tooFewRuns", "tools", "trigger", "unverified"],
+    );
+    expect(Object.keys(d.types[0].evidence[0]).sort()).toEqual(["date", "id", "source", "text"]);
+    expect(renderDigest(d)).not.toMatch(/builds|@/);
+  });
+
+  it("distinct builds among the runs, oldest first; unknown builds are left out of the list", () => {
+    const rs = runs("..C.?F", { ritual_id: "a" });
+    ["bbb", "aaa", null, "bbb", "ccc", null].forEach((b, i) => (rs[i].build = b));
+    const t = only([...rs].reverse());
+    expect(t.builds).toEqual(["bbb", "aaa", "ccc"]);
+    expect(t.evidence.map((e) => [e.id, e.build])).toEqual([
+      [rs[5].task_id.slice(0, 8), null],
+      [rs[2].task_id.slice(0, 8), null],
+    ]);
+  });
+
+  it("text: @build after each evidence id (@- when unknown) and one builds line; none recorded when no run has one", () => {
+    const rs = runs("C.F", { reply_tail: "tail", build: null });
+    rs[0].build = "abc1234";
+    const text = renderDigest(buildDigest(rs, OPTS));
+    expect(text).toContain("  builds, oldest first: abc1234\n");
+    expect(text).toContain(`    2026-11-03 ${rs[2].task_id.slice(0, 8)} @- [reply] tail\n`);
+    expect(text).toContain(`    2026-11-01 ${rs[0].task_id.slice(0, 8)} @abc1234 [reply] tail\n`);
+    expect(renderDigest(buildDigest(runs("C", { build: null }), OPTS))).toContain("  builds, oldest first: none recorded\n");
+  });
+});
+
+describe("query", () => {
+  it("only the facts SQL names task_completion_facts and selects build; neither reads its created_at", () => {
+    expect(complaintsSql(false)).not.toMatch(/task_completion_facts|\bbuild\b/);
+    expect(complaintsSql(true)).toContain("AS build");
+    expect(complaintsSql(true)).not.toMatch(/f\.created_at/);
   });
 });
